@@ -29,6 +29,9 @@ unit_test_deps += [agent_unit_test_dep]
 subdir('descriptors')
 unit_test_deps += [descriptors_unit_test_dep]
 
+subdir('tracing')
+unit_test_deps += [tracing_unit_test_dep]
+
 cpp = meson.get_compiler('cpp')
 azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)
 if enabled_plugins.get('AZURE_BLOB') and azure_storage_blobs.found()

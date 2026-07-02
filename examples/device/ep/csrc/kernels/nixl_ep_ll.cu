@@ -35,7 +35,7 @@ namespace nixl_ep {
 __device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst_rank) {
     if (dst_rank == ctx.rank) return (void*) dst_ptr;
 
-    void *remote_ptr = nixlGetPtr(ctx.remote_mvh, dst_rank);
+    void *remote_ptr = ctx.p2p_ptrs[dst_rank];
     if (remote_ptr == nullptr) return nullptr;
 
     return (void*) ((uint64_t) remote_ptr + ctx.offset_get(dst_ptr));
@@ -43,15 +43,24 @@ __device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst
 
 namespace ep_kernels {
 
-template<bool use_warp_sync = false>
+template<bool use_warp_sync = false, bool use_acquire = true>
 __forceinline__ __device__ bool is_rank_masked(int* mask_buffer_ptr, int rank) {
     if (mask_buffer_ptr == nullptr) {
         return false;
     }
     if constexpr (use_warp_sync) {
-        return __shfl_sync(0xffffffff, ld_acquire_global(mask_buffer_ptr + rank), 0) != 0;
+        if constexpr (use_acquire) {
+            return __shfl_sync(
+                       0xffffffff, ld_acquire_global(mask_buffer_ptr + rank), 0) != 0;
+        } else {
+            return __shfl_sync(0xffffffff, mask_buffer_ptr[rank], 0) != 0;
+        }
     } else {
-        return ld_acquire_global(mask_buffer_ptr + rank) != 0;
+        if constexpr (use_acquire) {
+            return ld_acquire_global(mask_buffer_ptr + rank) != 0;
+        } else {
+            return mask_buffer_ptr[rank] != 0;
+        }
     }
 }
 
@@ -72,7 +81,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
          int* atomic_counter_per_expert, int* atomic_finish_counter_per_expert,
          uint64_t* next_clean, int num_next_clean_int,
          int num_tokens, int num_max_dispatch_tokens_per_rank,
-         int num_topk, int num_experts, int rank, int num_ranks,
+         int num_topk, int active_rank_bound, int num_local_experts, int rank,
          int num_warp_groups, int num_warps_per_group,
          bool round_scale, uint64_t timeout_cycles, int phases, nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
     auto nixl_ctx = *nixl_ctx_ptr;
@@ -81,7 +90,7 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
     const auto warp_id = thread_id / 32, lane_id = get_lane_id();
     const auto num_sms = static_cast<int>(gridDim.x);
     const auto num_warps = num_warp_groups * num_warps_per_group;
-    const auto num_local_experts = num_experts / num_ranks;
+    const int active_expert_bound = active_rank_bound * num_local_experts;
     const auto warp_group_id = warp_id / num_warps_per_group;
     const auto sub_warp_id = warp_id % num_warps_per_group;
     const auto responsible_expert_idx = sm_id * num_warp_groups + warp_group_id;
@@ -175,13 +184,14 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
 
             // Issue NIXL sends
             if (dst_expert_idx >= 0) {
+                EP_DEVICE_ASSERT(dst_expert_idx < active_expert_bound);
                 int slot_idx = lane_id == 0 ? atomicAdd(atomic_counter_per_expert + dst_expert_idx, 1) : 0;
                 slot_idx = __shfl_sync(0xffffffff, slot_idx, 0);
                 const auto dst_rank = dst_expert_idx / num_local_experts;
                 const auto dst_expert_local_idx = dst_expert_idx % num_local_experts;
                 const auto src_ptr = reinterpret_cast<uint64_t>(rdma_x_src_idx);
                 const auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_x) +
-                                     dst_expert_local_idx * num_ranks * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
+                                     dst_expert_local_idx * active_rank_bound * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
                                      rank * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
                                      slot_idx * num_bytes_per_msg;
                 if (not is_rank_masked<true>(mask_buffer_ptr, dst_rank)) {
@@ -215,14 +225,14 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
             // Notify before executing `int_p`
             __syncwarp();
             #pragma unroll
-            for (int i = lane_id; i < num_experts; i += 32)
+            for (int i = lane_id; i < active_expert_bound; i += 32)
                 atomic_add_release_global(atomic_finish_counter_per_expert + i, FINISHED_SUM_TAG);
         }
 
         // This SM should be responsible for some destination experts, read `topk_idx` for them
         int expert_count[kNumMaxWarpGroups] = {0};
         const auto expert_begin_idx = sm_id * num_warp_groups;
-        const auto expert_end_idx = min(expert_begin_idx + num_warp_groups, num_experts);
+        const auto expert_end_idx = min(expert_begin_idx + num_warp_groups, active_expert_bound);
 
         // Per lane count
         #pragma unroll 8
@@ -245,14 +255,14 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
     __syncthreads();
 
     // Issue count sends
-    if (responsible_expert_idx < num_experts and sub_warp_id == 0 and lane_id == 0) {
+    if (responsible_expert_idx < active_expert_bound and sub_warp_id == 0 and lane_id == 0) {
         const auto dst_rank = responsible_expert_idx / num_local_experts;
         const auto dst_expert_local_idx = responsible_expert_idx % num_local_experts;
         const auto num_tokens_sent = shared_num_tokens_sent_per_expert[responsible_expert_idx - sm_id * num_warp_groups];
 
         // Wait local sends issued and send expert counts
         while (ld_acquire_global(atomic_finish_counter_per_expert + responsible_expert_idx) != FINISHED_SUM_TAG * 2);
-        auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_count + dst_expert_local_idx * num_ranks + rank);
+        auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_count + dst_expert_local_idx * active_rank_bound + rank);
         if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
             void* dst_p2p_ptr = p2p_ptr_get(nixl_ctx, dst_ptr, dst_rank);
             if (dst_p2p_ptr == 0) {
@@ -283,18 +293,18 @@ DISPATCH_RECV:
         cg::this_grid().sync();
 
     // Receiving and packing
-    if (responsible_expert_idx < num_experts) {
+    if (responsible_expert_idx < active_expert_bound) {
         const auto src_rank = responsible_expert_idx / num_local_experts;
         const auto local_expert_idx = responsible_expert_idx % num_local_experts;
         const auto rdma_recv_x_uint8 = static_cast<uint8_t*>(rdma_recv_x) +
-                local_expert_idx * num_ranks * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
+                local_expert_idx * active_rank_bound * num_max_dispatch_tokens_per_rank * num_bytes_per_msg +
                 src_rank * num_max_dispatch_tokens_per_rank * num_bytes_per_msg;
         const auto recv_x_int4 = static_cast<int4*>(packed_recv_x) +
-                local_expert_idx * num_ranks * num_max_dispatch_tokens_per_rank * hidden_int4;
-        const auto recv_src_info = packed_recv_src_info + local_expert_idx * num_ranks * num_max_dispatch_tokens_per_rank;
-        const auto recv_range = packed_recv_layout_range + local_expert_idx * num_ranks;
+                local_expert_idx * active_rank_bound * num_max_dispatch_tokens_per_rank * hidden_int4;
+        const auto recv_src_info = packed_recv_src_info + local_expert_idx * active_rank_bound * num_max_dispatch_tokens_per_rank;
+        const auto recv_range = packed_recv_layout_range + local_expert_idx * active_rank_bound;
         const auto num_aligned_scales = align_up<int>(num_scales, sizeof(float) / sizeof(scale_t));
-        const auto recv_x_scales = static_cast<scale_t*>(packed_recv_x_scales) + local_expert_idx * num_ranks * num_max_dispatch_tokens_per_rank * num_aligned_scales;
+        const auto recv_x_scales = static_cast<scale_t*>(packed_recv_x_scales) + local_expert_idx * active_rank_bound * num_max_dispatch_tokens_per_rank * num_aligned_scales;
 
         // Shared between sub-warps in warp groups
         __shared__ int shared_num_recv_tokens[kNumMaxWarpGroups], shared_recv_token_begin_idx[kNumMaxWarpGroups];
@@ -307,7 +317,7 @@ DISPATCH_RECV:
             auto start_time = clock64();
             uint64_t wait_recv_cost = 0;
             if (not is_rank_masked(mask_buffer_ptr, src_rank)) {
-                while ((num_recv_tokens = ld_acquire_sys_global(rdma_recv_count + local_expert_idx * num_ranks + src_rank)) ==
+                while ((num_recv_tokens = ld_acquire_sys_global(rdma_recv_count + local_expert_idx * active_rank_bound + src_rank)) ==
                            0                                                               // data not arrived
                        && (wait_recv_cost = clock64() - start_time) <= timeout_cycles       // not timeout
                 )
@@ -366,7 +376,7 @@ DISPATCH_RECV:
                 const auto num_elems_per_pack = static_cast<int>(sizeof(packed_t) / sizeof(scale_t));
                 const auto token_idx = recv_token_begin_idx + i;
                 const auto token_stride = num_elems_per_pack;
-                const auto pack_stride = num_ranks * num_max_dispatch_tokens_per_rank * num_elems_per_pack;
+                const auto pack_stride = active_rank_bound * num_max_dispatch_tokens_per_rank * num_elems_per_pack;
                 if (lane_id < num_scales) {
                     const auto pack_idx = lane_id / num_elems_per_pack;
                     const auto elem_idx = lane_id % num_elems_per_pack;
@@ -394,25 +404,26 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               const void* x, const topk_idx_t* topk_idx,
               uint64_t* next_clean, int num_next_clean_int,
               int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
-              int num_topk, int num_experts, int rank, int num_ranks,
+              int num_topk, int active_rank_bound, int num_experts_per_rank, int rank,
               bool use_fp8, bool round_scale, bool use_ue8m0,
               uint64_t timeout_cycles,
               void* workspace, int num_device_sms,
               cudaStream_t stream, int phases, nixl_ep::gpu_nixl_ctx* nixl_ctx) {
     constexpr int kNumMaxTopK = 11;
-    const int num_warp_groups = ceil_div(num_experts, num_device_sms);
+    const int active_expert_bound = active_rank_bound * num_experts_per_rank;
+    const int num_warp_groups = ceil_div(active_expert_bound, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
     EP_HOST_ASSERT(num_warp_groups > 0 and num_warps_per_group > 0);
     EP_HOST_ASSERT(kNumMaxTopK + 1 <= num_warp_groups * num_warps_per_group);
 
     const auto num_warps = num_warp_groups * num_warps_per_group;
-    const auto num_sms = ceil_div(num_experts, num_warp_groups);
+    const auto num_sms = ceil_div(active_expert_bound, num_warp_groups);
     EP_HOST_ASSERT(num_topk <= kNumMaxTopK);
 
     // Workspace checks
     auto atomic_counter_per_expert = static_cast<int*>(workspace);
-    auto atomic_finish_counter_per_expert = atomic_counter_per_expert + num_experts;
-    EP_HOST_ASSERT(num_experts * sizeof(int) * 2 <= NUM_WORKSPACE_BYTES);
+    auto atomic_finish_counter_per_expert = atomic_counter_per_expert + active_expert_bound;
+    EP_HOST_ASSERT(active_expert_bound * sizeof(int) * 2 <= NUM_WORKSPACE_BYTES);
 
     // FP8 checks
     if (use_ue8m0)
@@ -436,7 +447,7 @@ LAUNCH_KERNEL(&cfg, dispatch_func, \
               atomic_counter_per_expert, atomic_finish_counter_per_expert, \
               next_clean, num_next_clean_int, \
               num_tokens, num_max_dispatch_tokens_per_rank, \
-              num_topk, num_experts, rank, num_ranks, \
+              num_topk, active_rank_bound, num_experts_per_rank, rank, \
               num_warp_groups, num_warps_per_group, \
               round_scale, timeout_cycles, phases, nixl_ctx); } break
 
@@ -616,7 +627,7 @@ combine(void* combined_x,
         int* atomic_clean_flag,
         int num_combined_tokens, int hidden, int num_topk,
         int num_max_dispatch_tokens_per_rank,
-        int num_experts, int rank, int num_ranks,
+        int active_rank_bound, int num_local_experts, int rank,
         int num_warp_groups, int num_warps_per_group,
         uint64_t timeout_cycles, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
     auto nixl_ctx = *nixl_ctx_ptr;
@@ -625,7 +636,7 @@ combine(void* combined_x,
     const auto thread_id = static_cast<int>(threadIdx.x);
     const auto num_threads = __shfl_sync(0xffffffff, static_cast<int>(blockDim.x), 0);
     const auto warp_id = __shfl_sync(0xffffffff, thread_id / 32, 0), lane_id = get_lane_id();
-    const auto num_local_experts = num_experts / num_ranks;
+    const int active_expert_bound = active_rank_bound * num_local_experts;
     const auto warp_group_id = warp_id / num_warps_per_group;
     const auto sub_warp_id = warp_id % num_warps_per_group;
     const auto responsible_expert_idx = sm_id * num_warp_groups + warp_group_id;
@@ -665,20 +676,20 @@ combine(void* combined_x,
         // Notify before executing `int_p`
         __syncwarp();
         if (lane_id == 0)
-            atomic_add_release_global(atomic_clean_flag, num_experts);
+            atomic_add_release_global(atomic_clean_flag, active_expert_bound);
     }
 
     // Issue NIXL sends
-    if (responsible_expert_idx < num_experts) {
+    if (responsible_expert_idx < active_expert_bound) {
         const auto dst_rank = responsible_expert_idx / num_local_experts;
         const auto local_expert_idx = responsible_expert_idx % num_local_experts;
         const auto global_expert_idx = rank * num_local_experts + local_expert_idx;
-        const auto layout = __ldg(layout_range + local_expert_idx * num_ranks + dst_rank);
+        const auto layout = __ldg(layout_range + local_expert_idx * active_rank_bound + dst_rank);
         const auto local_x = static_cast<const int4*>(x) +
-                local_expert_idx * num_ranks * num_max_dispatch_tokens_per_rank * hidden_bf16_int4;
-        const auto local_src_info = src_info + local_expert_idx * num_ranks * num_max_dispatch_tokens_per_rank;
+                local_expert_idx * active_rank_bound * num_max_dispatch_tokens_per_rank * hidden_bf16_int4;
+        const auto local_src_info = src_info + local_expert_idx * active_rank_bound * num_max_dispatch_tokens_per_rank;
         const auto rdma_send_x_vec = static_cast<uint8_t*>(rdma_send_x) +
-                local_expert_idx * num_ranks * num_max_dispatch_tokens_per_rank * num_bytes_per_slot;
+                local_expert_idx * active_rank_bound * num_max_dispatch_tokens_per_rank * num_bytes_per_slot;
 
         // Unpack layout
         int offset, num_tokens_to_send;
@@ -831,7 +842,7 @@ COMBINE_RECV:
         return;
 
     // Wait all ranks to arrive
-    if (responsible_expert_idx < num_experts) {
+    if (responsible_expert_idx < active_expert_bound) {
         EP_DEVICE_ASSERT(num_warps_per_group > 1);
         if (sub_warp_id == 0 and lane_id == 0) {
             const auto src_rank = responsible_expert_idx / num_local_experts;
@@ -915,7 +926,9 @@ COMBINE_RECV:
                     int topk_idx_reg = __shfl_sync(0xffffffff, topk_idx_by_lane, i);
                     if (topk_idx_reg < 0)
                         continue;
-                    if (is_rank_masked(mask_buffer_ptr, topk_idx_reg / num_local_experts))
+                    EP_DEVICE_ASSERT(topk_idx_reg < active_expert_bound);
+                    if (is_rank_masked<false, false>(
+                            mask_buffer_ptr, topk_idx_reg / num_local_experts))
                         continue;
 
                     mbarrier_wait<true>(empty_barriers[stage_idx], tma_phase, stage_idx);
@@ -955,7 +968,9 @@ COMBINE_RECV:
                     int topk_idx_reg = __shfl_sync(0xffffffff, topk_idx_by_lane, i);
                     if (topk_idx_reg < 0)
                         continue;
-                    if (is_rank_masked(mask_buffer_ptr, topk_idx_reg / num_local_experts))
+                    EP_DEVICE_ASSERT(topk_idx_reg < active_expert_bound);
+                    if (is_rank_masked<false, false>(
+                            mask_buffer_ptr, topk_idx_reg / num_local_experts))
                         continue;
                     const auto& topk_weight = __shfl_sync(0xffffffff, topk_weights_by_lane, i);
 
@@ -1009,18 +1024,19 @@ void combine(void* combined_x,
              int64_t* combine_wait_recv_cost_stats,
              uint64_t* next_clean, int num_next_clean_int,
              int num_combined_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
-             int num_topk, int num_experts, int rank, int num_ranks,
+             int num_topk, int active_rank_bound, int num_experts_per_rank, int rank,
              bool use_logfmt, uint64_t timeout_cycles,
              void* workspace, int num_device_sms,
              cudaStream_t stream, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx) {
     constexpr int kNumMaxTopk = 11;
-    const int num_warp_groups = ceil_div(num_experts, num_device_sms);
+    const int active_expert_bound = active_rank_bound * num_experts_per_rank;
+    const int num_warp_groups = ceil_div(active_expert_bound, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
     const int num_recv_per_sm = ceil_div(num_combined_tokens, num_device_sms);
     EP_HOST_ASSERT(num_warp_groups > 0 and num_warps_per_group > 0 and num_recv_per_sm >= 0);
 
     const auto num_warps = num_warp_groups * num_warps_per_group;
-    const auto num_sms = max(ceil_div(num_experts, num_warp_groups),
+    const auto num_sms = max(ceil_div(active_expert_bound, num_warp_groups),
                              num_recv_per_sm == 0 ? 1 : ceil_div(num_combined_tokens, num_recv_per_sm));
 
     // Check workspace
@@ -1062,7 +1078,7 @@ LAUNCH_KERNEL(&cfg, combine_func, \
               atomic_clean_flag, \
               num_combined_tokens, hidden, num_topk, \
               num_max_dispatch_tokens_per_rank, \
-              num_experts, rank, num_ranks, \
+              active_rank_bound, num_experts_per_rank, rank, \
               num_warp_groups, num_warps_per_group, \
               timeout_cycles, phases, zero_copy, nixl_ctx); } break
 
@@ -1107,20 +1123,20 @@ void update_mask_buffer(int* mask_buffer_ptr, int rank, bool mask, cudaStream_t 
 }
 
 
-template <int kNumThreads> __launch_bounds__(kNumThreads, 1)
-__global__ void clean_mask_buffer(int* mask_buffer_ptr, int num_ranks) {
-    auto thread_id = static_cast<int>(threadIdx.x);
-    #pragma unroll
-    for (int i = thread_id; i < num_ranks; i += kNumThreads)
-    mask_buffer_ptr[i] = 0;
+__global__ void cache_p2p_ptr_kernel(nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr,
+                                     int rank_id) {
+    auto nixl_ctx = *nixl_ctx_ptr;
+    nixl_ctx.p2p_ptrs[rank_id] =
+        nixl_ctx.remote_mvh == nullptr ? nullptr : nixlGetPtr(nixl_ctx.remote_mvh, rank_id);
 }
 
-void clean_mask_buffer(int* mask_buffer_ptr, int num_ranks, cudaStream_t stream) {
+void cache_p2p_ptr(gpu_nixl_ctx* nixl_ctx, int rank_id, cudaStream_t stream) {
     constexpr int num_sms = 1;
-    constexpr int kNumThreads = 32;
+    constexpr int kNumThreads = 1;
     SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
-    LAUNCH_KERNEL(&cfg, clean_mask_buffer<kNumThreads>, mask_buffer_ptr, num_ranks);
+    LAUNCH_KERNEL(&cfg, cache_p2p_ptr_kernel, nixl_ctx, rank_id);
 }
+
 
 template <int kNumThreads>
 __forceinline__ __device__ void barrier(nixl_ep::gpu_nixl_ctx nixl_ctx, int* mask_buffer_ptr, int thread_id, uint64_t timeout_cycles) {

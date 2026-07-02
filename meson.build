@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.1.0',
+project('nixl', 'CPP', version: '1.3.1',
     default_options: ['buildtype=release',
                 'werror=true',
-                'cpp_std=c++17',
+                'cpp_std=c++20',
                 'prefix=/opt/nvidia/nvda_nixl'],
     meson_version: '>= 0.64.0'
 )
@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
 
 enabled_plugins = {}
 
@@ -79,6 +79,41 @@ dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
+# Forced to ignore this error due to:
+# https://github.com/abseil/abseil-cpp/issues/1779
+# This must be global since subprojects cannot be assigned with arguments.
+# Adding this configuration only for release build to consider it while developing.
+# NOTE: Must be declared before any subproject fallback that builds a target
+# (e.g. liburing wrap), because Meson forbids add_global_arguments after targets.
+if get_option('buildtype') == 'release'
+  abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
+  add_global_arguments(abseil_flags, language: 'cpp')
+endif
+
+# Sanitizer build, selected with -Dsanitizer=. Maps to -fsanitize and folds in
+# the third-party build workarounds so a plain `-Dsanitizer=...` build compiles:
+#  - undefined: GCC's UBSan null checks break Abseil's constexpr function-pointer
+#    comparison (GCC #71962, abseil-cpp#1634); drop those sub-checks. ASan still
+#    catches real null dereferences at runtime.
+#  - thread: GCC cannot instrument std::atomic_thread_fence in the Taskflow
+#    headers and -Werror turns the -Wtsan warning fatal; downgrade it.
+sanitizer = get_option('sanitizer')
+if sanitizer != 'none'
+  sanitizer_flag = '-fsanitize=' + sanitizer
+  add_project_arguments(sanitizer_flag, language: 'cpp')
+  add_project_link_arguments(sanitizer_flag, language: 'cpp')
+  sanitizer_parts = sanitizer.split(',')
+  if sanitizer_parts.contains('address')
+    add_project_arguments('-fno-omit-frame-pointer', language: 'cpp')
+  endif
+  if sanitizer_parts.contains('undefined')
+    add_project_arguments(cpp.get_supported_arguments('-fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute'), language: 'cpp')
+  endif
+  if sanitizer_parts.contains('thread')
+    add_project_arguments(cpp.get_supported_arguments('-Wno-error=tsan'), language: 'cpp')
+  endif
+endif
+
 # Check for libaio (for LINUX AIO plugin and test)
 has_linux_aio = false
 linux_aio_dep = cpp.find_library('aio', required: false)
@@ -88,9 +123,22 @@ endif
 
 # Check for liburing
 has_io_uring = false
-io_uring_dep = dependency('liburing', required: false)
+io_uring_dep = dependency('liburing', required: false,
+                          fallback: ['liburing'],
+                          default_options: ['default_library=shared'])
 if io_uring_dep.found()
-    has_io_uring = cpp.has_function('io_uring_queue_init_params', prefix: '#include <liburing.h>',  dependencies: [io_uring_dep])
+  if io_uring_dep.type_name() == 'internal'
+    # Internal (subproject) deps cannot be passed to compiler checks in meson
+    # < 1.5.  Retrieve the include dirs from the already-configured subproject
+    # and probe the header directly.
+    liburing_subproj = subproject('liburing')
+    has_io_uring = cpp.has_header_symbol('liburing.h', 'io_uring_queue_init_params',
+                                         include_directories: liburing_subproj.get_variable('inc'))
+  else
+    has_io_uring = cpp.has_function('io_uring_queue_init_params',
+                                    prefix: '#include <liburing.h>',
+                                    dependencies: [io_uring_dep])
+  endif
 endif
 
 # Check for POSIX aio
@@ -103,15 +151,6 @@ has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 cuobj_dep = dependency('cuobjclient-13.1', required: false)
 if cuobj_dep.found()
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
-endif
-
-# Forced to ignore this error due to:
-# https://github.com/abseil/abseil-cpp/issues/1779
-# This must be global since subprojects cannot be assigned with arguments.
-# Adding this configuration only for release build to consider it while developing.
-if get_option('buildtype') == 'release'
-  abseil_flags = cpp.get_supported_arguments('-Wno-error=maybe-uninitialized', '-Wno-maybe-uninitialized')
-  add_global_arguments(abseil_flags, language: 'cpp')
 endif
 
 # Search for Abseil dependencies in the system first
@@ -195,27 +234,59 @@ if cuda_dep.found()
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
 
-    # Please extend with your arch if not present in the list
-    nvcc_flags = []
-    # nixl ep cannot be built with sm_80
-    if not get_option('build_nixl_ep')
-        nvcc_flags += ['-gencode', 'arch=compute_80,code=sm_80']
+    cuda_arch_list = get_option('nixl_cuda_arch_list').strip()
+    if cuda_arch_list == 'auto'
+        if get_option('build_nixl_ep')
+            cuda_arch_list = '90,100,103,120'
+        else
+            cuda_arch_list = '80,86,89,90,100,103,120'
+        endif
     endif
-    nvcc_flags += ['-gencode', 'arch=compute_90,code=sm_90']
+
+    nvcc_flags = []
+    nvcc_flags_link = []
+    nvcc_ptx_arch_num = 0
+    selected_cuda_archs = []
+    foreach cuda_arch : cuda_arch_list.split(',')
+        cuda_arch = cuda_arch.strip()
+        if cuda_arch == ''
+            continue
+        endif
+        if cuda_arch.startswith('sm_')
+            cuda_arch = cuda_arch.replace('sm_', '')
+        endif
+
+        cuda_arch_num = cuda_arch.to_int()
+        if cuda_arch_num > nvcc_ptx_arch_num
+            nvcc_ptx_arch_num = cuda_arch_num
+        endif
+
+        cuda_compute_arch = 'compute_' + cuda_arch
+        cuda_sm_arch = 'sm_' + cuda_arch
+        nvcc_flags += ['-gencode', 'arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
+        nvcc_flags_link += ['-gencode=arch=' + cuda_compute_arch + ',code=' + cuda_sm_arch]
+        selected_cuda_archs += [cuda_sm_arch]
+    endforeach
+
+    if selected_cuda_archs.length() == 0
+        error('No CUDA targets selected')
+    endif
+
+    nvcc_ptx_arch = 'compute_' + nvcc_ptx_arch_num.to_string()
+    nvcc_flags += ['-gencode', 'arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch]
+    nvcc_flags_link += ['-gencode=arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch]
+
     add_project_arguments(nvcc_flags, language: 'cuda')
 
     # Refer to https://mesonbuild.com/Cuda-module.html
     add_project_arguments('-forward-unknown-to-host-compiler', language: 'cuda')
     add_project_arguments('-rdc=true', language: 'cuda')
+    # Build all CUDA targets with C++20 to match the core's standard and ABI.
+    add_project_arguments('-std=c++20', language: 'cuda')
 
-    nvcc_flags_link = []
-    # nixl ep cannot be built with sm_80
-    if not get_option('build_nixl_ep')
-        nvcc_flags_link += ['-gencode=arch=compute_80,code=sm_80']
-    endif
-    nvcc_flags_link += ['-gencode=arch=compute_90,code=sm_90']
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
     message('nvcc version: ' + nvcc.version())
+    message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
     if nvcc.version().version_compare('>=12.8')
         doca_gpunetio_dep = dependency('doca-gpunetio', required : false)
     else
@@ -235,8 +306,15 @@ if cuda_dep.found()
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
-    warning('CUDA not found, cannot autodetect wheel dir; defaulting to nixl_cu12')
     cuda_wheel_dir = 'nixl_cu12'
+endif
+
+# Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
+# without otherwise affecting the build. Non-empty value wins over the
+# autodetected CUDA-major value above: e.g. -Dwheel_variant=rocm -> nixl_rocm.
+wheel_variant = get_option('wheel_variant').strip()
+if wheel_variant != ''
+    cuda_wheel_dir = 'nixl_' + wheel_variant
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
@@ -337,6 +415,55 @@ endif
 if get_option('buildtype') == 'release'
     # Used by Abseil to strip DCHECK assertions and DVLOG at compile time
     add_project_arguments('-DNDEBUG', language: 'cpp')
+endif
+
+# ---- Tracing (nixl::trace) -------------------------------------------------
+# Two gates: build/packaging (which backend plugins are built, as separate .so
+# modules under src/plugins/tracing) and runtime (which built plugins the caller
+# activates via NIXL_TRACE_BACKENDS / nsys auto-load). The facade itself is
+# always compiled into libnixl.
+nixl_trace_enabled = get_option('with_trace')
+nixl_trace_nvtx_enabled = false
+
+if nixl_trace_enabled
+    # 'cuda' is only an enabled language when cuda_dep.found() (add_languages('CUDA')
+    # above); passing it unconditionally breaks a non-CUDA with_trace configure.
+    nixl_trace_arg_langs = ['cpp']
+    if cuda_dep.found()
+        nixl_trace_arg_langs += ['cuda']
+    endif
+    add_project_arguments('-DNIXL_TRACE_ENABLED', language: nixl_trace_arg_langs)
+
+    requested_trace_backends = []
+    foreach b : get_option('trace_backends').split(',')
+        b_stripped = b.strip()
+        if b_stripped != ''
+            requested_trace_backends += [b_stripped]
+        endif
+    endforeach
+
+    # NVTX: header-only; ships with the CUDA toolkit (nvtx3). Detect-then-disable
+    # gracefully so non-CUDA / werror builds stay green. Built as a separately
+    # loaded plugin (src/plugins/tracing/nvtx), not linked into libnixl; nvtx_inc_dep
+    # is consumed there.
+    if 'nvtx' in requested_trace_backends
+        if cuda_dep.found()
+            nvtx_inc_dep = cuda_dep.partial_dependency(includes: true, compile_args: true)
+            if cpp.has_header('nvtx3/nvToolsExt.h', dependencies: nvtx_inc_dep)
+                nixl_trace_nvtx_enabled = true
+                message('nixl::trace: NVTX backend plugin enabled (CUDA-bundled nvtx3 headers)')
+            else
+                warning('nixl::trace: nvtx requested but nvtx3 headers not found; NVTX backend disabled')
+            endif
+        else
+            warning('nixl::trace: nvtx requested but CUDA not found; NVTX backend disabled')
+        endif
+    endif
+
+    summary({
+        'Tracing facade'      : nixl_trace_enabled,
+        'NVTX backend plugin' : nixl_trace_nvtx_enabled,
+    }, section: 'Tracing', bool_yn: true)
 endif
 
 static_plugins = []

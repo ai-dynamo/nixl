@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '1.1.0',
+project('nixlbench', 'CPP', version: '1.3.1',
     default_options: ['buildtype=release',
                 'werror=true',
-                'cpp_std=c++17',
+                'cpp_std=c++20',
                 'prefix=/usr/local/nixlbench'],
     meson_version: '>= 0.64.0'
 )
@@ -57,9 +57,37 @@ if not nixl_lib.found() or not nixl_build.found() or not nixl_serdes.found()
     error('NIXL Libraries not found. Exiting.')
 endif
 
-# CUDA
+# ROCm (mutually exclusive with CUDA; default off)
+rocm_available = false
+use_rocm = get_option('use_rocm')
+if use_rocm
+    rocm_path = get_option('rocm_path')
+    if rocm_path == ''
+        rocm_path = '/opt/rocm'
+    endif
+    if not fs.exists(rocm_path)
+        error('use_rocm=true but ROCm install root not found at ' + rocm_path +
+              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
+    endif
+    rocm_lib_path = rocm_path + '/lib'
+    rocm_inc_path = rocm_path + '/include'
+    rocm_dep = declare_dependency(
+        link_args : ['-L' + rocm_lib_path, '-lamdhip64', '-lhiprtc'],
+        include_directories : include_directories(rocm_inc_path))
+    add_project_arguments('-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations',
+                          language: 'cpp')
+    if rocm_dep.found()
+        rocm_available = true
+    endif
+endif
+
+# CUDA (skipped when use_rocm=true)
 cuda_available = false
-if cuda_lib_path == ''
+if use_rocm
+    # Placeholder dep so unconditional references to cuda_dep don't error;
+    # cuda_available=false gates real use.
+    cuda_dep = declare_dependency()
+elif cuda_lib_path == ''
     cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda' ])
     if not cuda_dep.found()
         # Meson is not detecting CUDA reliably on ARM, fallback to default
@@ -149,8 +177,16 @@ if cuda_available
     add_project_arguments('-DHAVE_CUDA', language: 'cpp')
 endif
 
+if rocm_available
+    add_project_arguments('-DHAVE_ROCM', language: 'cpp')
+endif
+
 if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
+endif
+
+if not cuda_available and not rocm_available
+    warning('Neither CUDA nor ROCm found. VRAM support will be disabled.')
 endif
 
 # Subprojects
@@ -165,6 +201,7 @@ configure_file(
         'HAVE_ETCD': etcd_available ? '1' : '0',
         'HAVE_NVSHMEM': nvshmem_available ? '1' : '0',
         'HAVE_CUDA': cuda_available ? '1' : '0',
+        'HAVE_ROCM': rocm_available ? '1' : '0',
         'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
     },
     install: true,
@@ -178,6 +215,8 @@ if etcd_available
 endif
 if cuda_available
     deps += [cuda_dep]
+elif rocm_available
+    deps += [rocm_dep]
 endif
 if nvshmem_available
     deps += [nvshmem_lib]

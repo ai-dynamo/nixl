@@ -87,6 +87,13 @@ public:
     void
     addDescs(nixlSecDescList &&other);
 
+    void
+    remDescs(std::vector<size_t> indices, order ord = order::UNSORTED);
+
+    template<class... Args>
+    nixlSectionDesc &
+    emplace(Args &&...args) = delete;
+
     // Shadow the parent's non-const operator[] to return a const ref,
     // this prevents mutation of descriptor fields after insertion
     const nixlSectionDesc &
@@ -119,6 +126,20 @@ private:
 using nixl_sec_dlist_t = nixlSecDescList;
 using section_map_t = std::map<section_key_t, nixlSecDescList>;
 
+/**
+ * @brief Normalize a section descriptor for file-like segments.
+ *
+ * For BLK_SEG, OBJ_SEG, and FILE_SEG, a zero-length registration is stored
+ * internally with len = SIZE_MAX (unlimited range).
+ */
+inline nixlBasicDesc
+normalizeSecDesc(const nixlBasicDesc &desc, nixl_mem_t type) {
+    if ((type == BLK_SEG || type == OBJ_SEG || type == FILE_SEG) && desc.len == 0) {
+        return nixlBasicDesc(desc.addr, SIZE_MAX, desc.devId);
+    }
+    return desc;
+}
+
 class nixlMemSection {
     protected:
         std::array<backend_set_t, FILE_SEG+1>         memToBackend;
@@ -140,6 +161,11 @@ class nixlMemSection {
         nixl_status_t populate (const nixl_xfer_dlist_t &query,
                                 nixlBackendEngine* backend,
                                 nixl_meta_dlist_t &resp) const;
+
+        nixl_status_t
+        populate(const nixl_xfer_dlist_t &query,
+                 nixlBackendEngine *backend,
+                 nixl_stride_dlist_t &resp) const;
 
         [[nodiscard]] nixl_status_t
         addElement(const nixlRemoteDesc &query,
@@ -172,12 +198,20 @@ class nixlLocalSection : public nixlMemSection {
 class nixlRemoteSection : public nixlMemSection {
     private:
         std::string agentName;
+        // Per-connection id: a peer may reconnect under the same agentName, so
+        // invalidation matches this generation to avoid tearing down a newer connection.
+        uint64_t generation_;
 
         nixl_status_t addDescList (
                            const nixl_reg_dlist_t &mem_elms,
                            nixlBackendEngine *backend);
     public:
         explicit nixlRemoteSection(std::string agent_name) noexcept;
+
+        [[nodiscard]] uint64_t
+        getGeneration() const noexcept {
+            return generation_;
+        }
 
         nixl_status_t loadRemoteData (nixlSerDes* deserializer,
                                       backend_map_t &backendToEngineMap);

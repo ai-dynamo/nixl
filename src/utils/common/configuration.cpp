@@ -16,6 +16,7 @@
  */
 
 #include "configuration.h"
+#include "exception.h"
 
 namespace nixl::config {
 
@@ -31,7 +32,7 @@ namespace {
             return toml::parse_file(file.native());
         }
         catch (const std::exception &e) {
-            internal::throwRuntimeError("Error ", e.what(), " reading TOML config file ", file);
+            throwRuntimeError("Error ", e.what(), " reading TOML config file ", file);
         }
     }
 
@@ -73,10 +74,15 @@ namespace {
         return toml::table();
     }
 
+    [[nodiscard]] toml::table &
+    staticConfig() {
+        static toml::table config = readFile();
+        return config;
+    }
+
     [[nodiscard]] const toml::table &
     getConfig() {
-        static const toml::table config = readFile();
-        return config;
+        return staticConfig();
     }
 
 } // namespace
@@ -125,6 +131,16 @@ namespace internal {
         if (getConfig().at_path(toml::path(path))) {
             NIXL_DEBUG << "Ignoring config file entry '" << path << "' for environment variable";
         }
+    }
+
+    // The refresh function's handling of the config is NOT multi-thread-safe;
+    // this function should only be used by the one unit test that needs it,
+    // and when it is used then nothing else that might access the config is
+    // is allowed to run in parallel in the same process in other threads.
+
+    void
+    refreshConfigFileForUnitTest() {
+        staticConfig() = readFile();
     }
 
 } // namespace internal

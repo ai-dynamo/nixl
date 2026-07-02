@@ -29,7 +29,6 @@ extern "C" {
 #include "rkey.h"
 #include "ucx_enums.h"
 
-#include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
@@ -37,24 +36,6 @@ inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22
 inline constexpr unsigned ucp_version_mem_type_rdma = UCP_VERSION(1, 22);
-
-template<typename T>
-[[nodiscard]] T
-nixl_b_params_get(const nixl_b_params_t *custom_params, const std::string &key, T default_value) {
-    if (!custom_params) {
-        return default_value;
-    }
-
-    auto it = custom_params->find(key);
-    if (it == custom_params->end()) {
-        return default_value;
-    }
-
-    if constexpr (std::is_same_v<T, int>) {
-        T result;
-        return absl::SimpleAtoi(it->second, &result) ? result : default_value;
-    }
-}
 
 using nixlUcxReq = void *;
 
@@ -218,7 +199,7 @@ public:
     /* Connection */
     [[nodiscard]] std::string
     epAddr();
-    absl::StatusOr<std::unique_ptr<nixlUcxEp>>
+    [[nodiscard]] std::unique_ptr<nixlUcxEp>
     connect(void *addr, size_t size);
 
     /* Active message handling */

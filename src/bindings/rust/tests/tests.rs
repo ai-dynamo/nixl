@@ -23,6 +23,9 @@ use nixl_sys::*;
 use std::time::{Duration, Instant};
 use std::{env, thread};
 use std::collections::HashMap;
+
+mod env_guard;
+use env_guard::EnvGuard;
 // Helper function to create an agent with error handling
 fn create_test_agent(name: &str) -> Result<Agent, NixlError> {
     Agent::new(name)
@@ -38,6 +41,25 @@ fn setup_agent_with_backend(agent: &Agent) -> Result<OptArgs, NixlError> {
     let _ = opt_args.add_backend(&agent.get_backend("UCX").unwrap());
 
     Ok(opt_args)
+}
+
+/// Enables telemetry into a freshly created temporary directory for the
+/// lifetime of `env_guard`. The returned `TempDir` removes the directory when
+/// dropped (panic-safe), so callers must keep it alive for the whole test.
+fn enable_telemetry_with_temp_dir(env_guard: &EnvGuard, test_name: &str) -> tempfile::TempDir {
+    let telemetry_dir = tempfile::Builder::new()
+        .prefix(&format!("nixl-rust-telemetry-{test_name}-"))
+        .tempdir()
+        .expect("failed to create telemetry directory");
+    env_guard.set("NIXL_TELEMETRY_ENABLE", "1");
+    env_guard.set(
+        "NIXL_TELEMETRY_DIR",
+        telemetry_dir
+            .path()
+            .to_str()
+            .expect("telemetry directory path is not valid UTF-8"),
+    );
+    telemetry_dir
 }
 
 fn create_agent_with_backend(name: &str) -> Result<(Agent, OptArgs), NixlError> {
@@ -435,11 +457,11 @@ fn test_multiple_storage_descriptors() {
 
 #[test]
 fn test_memory_registration() {
-    let agent = Agent::new("test_agent").unwrap();
+    let (agent, opt_args) = create_agent_with_backend("test_agent").unwrap();
     let mut storage = SystemStorage::new(1024).unwrap();
 
     // Register memory
-    storage.register(&agent, None).unwrap();
+    storage.register(&agent, Some(&opt_args)).unwrap();
 
     // Verify we can still access the memory
     storage.memset(0xAA);
@@ -448,29 +470,29 @@ fn test_memory_registration() {
 
 #[test]
 fn test_registration_handle_drop() {
-    let agent = Agent::new("test_agent").unwrap();
+    let (agent, opt_args) = create_agent_with_backend("test_agent").unwrap();
     let mut storage = SystemStorage::new(1024).unwrap();
 
     // Register memory
-    storage.register(&agent, None).unwrap();
+    storage.register(&agent, Some(&opt_args)).unwrap();
 
     // Drop the storage, which should trigger deregistration
     drop(storage);
 
     // Create new storage to verify we can register again
     let mut new_storage = SystemStorage::new(1024).unwrap();
-    new_storage.register(&agent, None).unwrap();
+    new_storage.register(&agent, Some(&opt_args)).unwrap();
 }
 
 #[test]
 fn test_multiple_registrations() {
-    let agent = Agent::new("test_agent").unwrap();
+    let (agent, opt_args) = create_agent_with_backend("test_agent").unwrap();
     let mut storage1 = SystemStorage::new(1024).unwrap();
     let mut storage2 = SystemStorage::new(2048).unwrap();
 
     // Register both storages
-    storage1.register(&agent, None).unwrap();
-    storage2.register(&agent, None).unwrap();
+    storage1.register(&agent, Some(&opt_args)).unwrap();
+    storage2.register(&agent, Some(&opt_args)).unwrap();
 
     // Verify we can still access both memories
     storage1.memset(0xAA);
@@ -1489,7 +1511,8 @@ fn test_query_xfer_backend_invalid_request() {
 // Tests for get_xfer_telemetry API
 #[test]
 fn test_get_xfer_telemetry_success() {
-    env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+    let env_guard = EnvGuard::new(["NIXL_TELEMETRY_ENABLE", "NIXL_TELEMETRY_DIR"]);
+    let _telemetry_dir = enable_telemetry_with_temp_dir(&env_guard, "success");
 
     let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
     let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
@@ -1560,7 +1583,8 @@ fn test_get_xfer_telemetry_success() {
 
 #[test]
 fn test_get_xfer_telemetry_from_request() {
-    env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+    let env_guard = EnvGuard::new(["NIXL_TELEMETRY_ENABLE", "NIXL_TELEMETRY_DIR"]);
+    let _telemetry_dir = enable_telemetry_with_temp_dir(&env_guard, "from-request");
 
     let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
     let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
@@ -1611,7 +1635,9 @@ fn test_get_xfer_telemetry_from_request() {
 
 #[test]
 fn test_get_xfer_telemetry_without_telemetry_enabled() {
-    env::remove_var("NIXL_TELEMETRY_ENABLE");
+    let env_guard = EnvGuard::new(["NIXL_TELEMETRY_ENABLE", "NIXL_TELEMETRY_DIR"]);
+    env_guard.remove("NIXL_TELEMETRY_ENABLE");
+    env_guard.remove("NIXL_TELEMETRY_DIR");
 
     let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
     let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
@@ -1664,7 +1690,10 @@ fn test_get_xfer_telemetry_without_telemetry_enabled() {
 
 #[test]
 fn test_get_xfer_telemetry_before_posting() {
-    env::set_var("NIXL_TELEMETRY_ENABLE", "1");
+    // Configure a real sink so telemetry is actually active; this test must
+    // fail because the transfer was not posted, not because telemetry is off.
+    let env_guard = EnvGuard::new(["NIXL_TELEMETRY_ENABLE", "NIXL_TELEMETRY_DIR"]);
+    let _telemetry_dir = enable_telemetry_with_temp_dir(&env_guard, "before-posting");
 
     let (agent1, opt_args) = create_agent_with_backend("agent1").expect("Failed to create agent");
     let (agent2, opt_args_remote) = create_agent_with_backend("agent2").expect("Failed to create agent");
@@ -1688,15 +1717,17 @@ fn test_get_xfer_telemetry_before_posting() {
             None
         ).expect("Failed to create transfer request");
 
-        // Try to get telemetry before posting the request - should fail
+        // Telemetry is active, so this must fail for the "not posted" reason:
+        // getXferTelemetry returns NIXL_ERR_NOT_POSTED, which the binding
+        // surfaces as BackendError.
         let telemetry_result = xfer_req.get_telemetry();
         assert!(telemetry_result.is_err(), "get_xfer_telemetry should fail before transfer is posted");
         let error = telemetry_result.err().unwrap();
         match error {
-            NixlError::NoTelemetry | NixlError::BackendError => {
+            NixlError::BackendError => {
                 println!("Got expected error before posting: {:?}", error);
             }
-            other => panic!("Expected NoTelemetry or BackendError, got: {:?}", other),
+            other => panic!("Expected BackendError (transfer not posted), got: {:?}", other),
         }
 
         println!("Successfully tested telemetry before posting - got expected error");

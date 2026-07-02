@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,13 +19,15 @@
 #include "uccl_backend.h"
 
 namespace {
-nixl_b_params_t
+
+[[nodiscard]] nixl_b_params_t
 get_uccl_options() {
     nixl_b_params_t params;
-    params["in_python"] = "";
-    params["num_cpus"] = "";
+    params["in_python"] = "true";
+    params["num_cpus"] = "4";
     return params;
 }
+
 } // namespace
 
 // Plugin type alias for convenience

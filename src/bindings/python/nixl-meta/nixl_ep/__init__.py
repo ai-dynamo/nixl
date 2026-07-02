@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""nixl_ep meta-dispatcher: selects the correct CUDA and torch ABI backend."""
+
+import importlib
+import sys
+from typing import TYPE_CHECKING
+
+
+def _get_torch_cuda_major() -> int | None:
+    """Return the CUDA major version that torch was built for, or None."""
+    from torch.version import cuda as _torch_cuda_ver
+
+    return int(_torch_cuda_ver.split(".")[0]) if _torch_cuda_ver else None
+
+
+def _load_ep_module() -> str:
+    cuda_major = _get_torch_cuda_major()
+    if cuda_major is not None:
+        pip_name = f"nixl-cu{cuda_major}"
+        mod_name = f"nixl_ep_cu{cuda_major}"
+        try:
+            return importlib.import_module(mod_name).__name__
+        except ModuleNotFoundError as e:
+            if e.name != mod_name:
+                raise
+            raise ImportError(
+                f"torch reports CUDA {cuda_major} but {pip_name} is not installed"
+            ) from e
+    # CPU-only torch — use whatever backend is installed
+    errors: list[BaseException] = []
+    for mod_name in ("nixl_ep_cu13", "nixl_ep_cu12"):
+        try:
+            return importlib.import_module(mod_name).__name__
+        except (ImportError, OSError) as e:
+            if isinstance(e, ModuleNotFoundError) and e.name != mod_name:
+                raise
+            errors.append(e)
+            continue
+    raise ImportError("No usable nixl_ep CUDA backend found") from errors[0]
+
+
+_pkg = sys.modules[_load_ep_module()]
+
+submodules = ["buffer", "utils"]
+for sub_name in submodules:
+    # Import submodule from actual wheel
+    module = importlib.import_module(f"{_pkg.__name__}.{sub_name}")
+    # Make it accessible as nixl_ep.buffer, nixl_ep.utils
+    sys.modules[f"nixl_ep.{sub_name}"] = module
+    # Also add the submodule itself to the nixl_ep namespace
+    setattr(sys.modules[__name__], sub_name, module)
+
+    # Expose all public symbols from the submodule under the nixl_ep namespace
+    for attr in dir(module):
+        if not attr.startswith("_"):
+            setattr(sys.modules[__name__], attr, getattr(module, attr))
+
+# Expose public symbols from the backend __init__ (Config, topk_idx_t, etc.)
+for attr in dir(_pkg):
+    if not attr.startswith("_"):
+        setattr(sys.modules[__name__], attr, getattr(_pkg, attr))
+
+if TYPE_CHECKING:
+    import torch
+    from nixl_ep.buffer import Buffer  # noqa: F401
+    from nixl_ep.utils import EventOverlap  # noqa: F401
+
+    topk_idx_t: torch.dtype

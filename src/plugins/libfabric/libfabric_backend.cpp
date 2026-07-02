@@ -21,19 +21,121 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 
+#include <cstdint>
 #include <dlfcn.h>
-#include <limits>
 #include <cstring>
 #include <unistd.h>
 
+#include <algorithm>
+#include <deque>
+#include <functional>
 #include <iomanip>
 #include <numeric>
-
-#include "absl/strings/numbers.h"
+#include <stdexcept>
+#include <thread>
 
 /****************************************
  * Neuron Address Query
  *****************************************/
+namespace {
+
+constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_THREADS = 0;
+constexpr size_t NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE = 1024;
+constexpr const char *NIXL_LIBFABRIC_POST_THREADS_PARAM = "num_threads";
+constexpr const char *NIXL_LIBFABRIC_POST_SPLIT_BATCH_SIZE_PARAM = "split_batch_size";
+constexpr size_t NIXL_LIBFABRIC_POST_THREAD_HW_MULTIPLIER = 4;
+
+void
+storeFirstError(std::atomic<int> &status, nixl_status_t new_status) {
+    int expected = static_cast<int>(NIXL_SUCCESS);
+    status.compare_exchange_strong(expected, static_cast<int>(new_status));
+}
+
+} // namespace
+
+class nixlLibfabricPostThreadPool {
+public:
+    explicit nixlLibfabricPostThreadPool(size_t thread_count) {
+        workers_.reserve(thread_count);
+        try {
+            for (size_t i = 0; i < thread_count; ++i) {
+                workers_.emplace_back([this]() { workerLoop(); });
+            }
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << "Failed to create libfabric post worker threads: " << e.what();
+            stopAndJoin();
+            throw;
+        }
+        catch (...) {
+            NIXL_ERROR << "Failed to create libfabric post worker threads";
+            stopAndJoin();
+            throw;
+        }
+    }
+
+    ~nixlLibfabricPostThreadPool() {
+        stopAndJoin();
+    }
+
+    bool
+    submit(std::function<void()> task) {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            if (stop_) {
+                NIXL_WARN << "Ignoring libfabric post task submission after thread pool stop";
+                return false;
+            }
+            tasks_.emplace_back(std::move(task));
+        }
+        cv_.notify_one();
+        return true;
+    }
+
+private:
+    void
+    stopAndJoin() {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            stop_ = true;
+        }
+        // Workers drain tasks queued before stop_; submit() rejects new tasks after this point.
+        cv_.notify_all();
+
+        for (auto &worker : workers_) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+    }
+
+    void
+    workerLoop() {
+        while (true) {
+            std::function<void()> task;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                cv_.wait(lock, [this]() { return stop_ || !tasks_.empty(); });
+
+                if (stop_ && tasks_.empty()) {
+                    return;
+                }
+
+                task = std::move(tasks_.front());
+                tasks_.pop_front();
+            }
+
+            task();
+        }
+    }
+
+    std::vector<std::thread> workers_;
+    std::deque<std::function<void()>> tasks_;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool stop_ = false;
+};
+
 namespace {
 
 void *
@@ -198,6 +300,7 @@ nixlLibfabricEngine::vramUpdateCtx(void *address, uint64_t devId, bool &restart_
 
     restart_reqd = false;
 
+    const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
     if (!cuda_addr_wa_) {
         return 0; // Nothing to do
     }
@@ -213,6 +316,7 @@ nixlLibfabricEngine::vramUpdateCtx(void *address, uint64_t devId, bool &restart_
 
 int
 nixlLibfabricEngine::vramApplyCtx() {
+    const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
     if (!cuda_addr_wa_) {
         return 0; // Nothing to do
     }
@@ -221,6 +325,7 @@ nixlLibfabricEngine::vramApplyCtx() {
 
 void
 nixlLibfabricEngine::vramFiniCtx() {
+    const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
     cudaCtx_.reset();
 }
 #endif
@@ -292,18 +397,20 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     : nixlBackendEngine(init_params),
       progress_thread_enabled_(init_params->enableProgTh),
       progress_thread_delay_(std::chrono::microseconds(init_params->pthrDelay)),
-      rail_manager(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
+      rail_manager_(NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD),
+      post_thread_count_(NIXL_LIBFABRIC_DEFAULT_POST_THREADS),
+      post_split_batch_size_(NIXL_LIBFABRIC_DEFAULT_POST_SPLIT_BATCH_SIZE),
       runtime_(FI_HMEM_SYSTEM) {
 
     NIXL_INFO << "Initializing Libfabric Backend";
 
     // this is required for loading rail selection policy by configuration
-    if (rail_manager.init(getCustomParams()) != NIXL_SUCCESS) {
+    if (rail_manager_.init(getCustomParams()) != NIXL_SUCCESS) {
         throw std::runtime_error("Failed to initialize the rail manager");
     }
 
     // Query system runtime type from rail manager (determined once at topology discovery)
-    runtime_ = rail_manager.getRuntime();
+    runtime_ = rail_manager_.getRuntime();
 
     NIXL_INFO << "System runtime: "
               << (runtime_ == FI_HMEM_CUDA       ? "CUDA" :
@@ -342,23 +449,24 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (default)";
     }
 
+    initPostThreadPool();
     // Initialize Rail Manager which will discover the topology and create all rails.
     try {
-        NIXL_INFO << "Rail Manager created with " << rail_manager.getNumRails() << " rails";
+        NIXL_INFO << "Rail Manager created with " << rail_manager_.getNumRails() << " rails";
 
         // Set up notification callback on rail 0
         size_t notification_rail_id = 0;
         NIXL_DEBUG << "Set notification processor for rail 0";
-        rail_manager.getRail(notification_rail_id)
+        rail_manager_.getRail(notification_rail_id)
             .setNotificationCallback([this](const std::string &serialized_notif) {
                 processNotification(serialized_notif);
             });
 
         // Set up XFER_ID tracking callbacks for all rails
-        NIXL_DEBUG << "Setting up XFER_ID tracking callbacks for " << rail_manager.getNumRails()
+        NIXL_DEBUG << "Setting up XFER_ID tracking callbacks for " << rail_manager_.getNumRails()
                    << " rails";
-        for (size_t rail_id = 0; rail_id < rail_manager.getNumRails(); ++rail_id) {
-            rail_manager.getRail(rail_id).setXferIdCallback([this](uint64_t imm_data) {
+        for (size_t rail_id = 0; rail_id < rail_manager_.getNumRails(); ++rail_id) {
+            rail_manager_.getRail(rail_id).setXferIdCallback([this](uint64_t imm_data) {
                 // Extract XFER_ID from immediate data
                 uint16_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(imm_data);
                 addReceivedXferId(xfer_id);
@@ -368,12 +476,12 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
         // Create self-connection
         std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> data_endpoints(
-            rail_manager.getNumRails());
+            rail_manager_.getNumRails());
         // Prepare rail endpoints
-        for (size_t rail_id = 0; rail_id < rail_manager.getNumRails(); ++rail_id) {
+        for (size_t rail_id = 0; rail_id < rail_manager_.getNumRails(); ++rail_id) {
             std::memcpy(data_endpoints[rail_id].data(),
-                        rail_manager.getRail(rail_id).ep_name,
-                        sizeof(rail_manager.getRail(rail_id).ep_name));
+                        rail_manager_.getRail(rail_id).ep_name,
+                        sizeof(rail_manager_.getRail(rail_id).ep_name));
         }
         // Create self-connection using common method
         nixl_status_t conn_status = createAgentConnection(localAgent, data_endpoints);
@@ -384,12 +492,12 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         }
 
         NIXL_INFO << "Created self-connection for agent: " << localAgent << " on "
-                  << rail_manager.getNumRails() << " rails";
+                  << rail_manager_.getNumRails() << " rails";
 
         // Start Progress thread for rail completion processing
         if (progress_thread_enabled_) {
-            for (size_t i = 0; i < rail_manager.getNumRails(); ++i) {
-                rail_manager.getRail(i).setProgressThreadEnabled(true);
+            for (size_t i = 0; i < rail_manager_.getNumRails(); ++i) {
+                rail_manager_.getRail(i).setProgressThreadEnabled(true);
             }
 
             NIXL_INFO << "Starting Progress thread for rails with delay: "
@@ -413,10 +521,34 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     }
 }
 
+void
+nixlLibfabricEngine::initPostThreadPool() {
+    LibfabricUtils::getCustomIntParam(
+        getCustomParams(), NIXL_LIBFABRIC_POST_THREADS_PARAM, post_thread_count_);
+    const size_t max_post_thread_count =
+        static_cast<size_t>(std::max(1u, std::thread::hardware_concurrency())) *
+        NIXL_LIBFABRIC_POST_THREAD_HW_MULTIPLIER;
+    if (post_thread_count_ > max_post_thread_count) {
+        NIXL_WARN << "Capping libfabric post thread count from " << post_thread_count_ << " to "
+                  << max_post_thread_count;
+        post_thread_count_ = max_post_thread_count;
+    }
+    LibfabricUtils::getCustomIntParam(
+        getCustomParams(), NIXL_LIBFABRIC_POST_SPLIT_BATCH_SIZE_PARAM, post_split_batch_size_);
+    if (post_thread_count_ > 0) {
+        post_thread_pool_ = std::make_unique<nixlLibfabricPostThreadPool>(post_thread_count_);
+        NIXL_DEBUG << "Libfabric descriptor post thread pool enabled with " << post_thread_count_
+                   << " threads, split_batch_size=" << post_split_batch_size_;
+    } else {
+        NIXL_DEBUG << "Libfabric descriptor post thread pool disabled";
+    }
+}
+
 nixlLibfabricEngine::~nixlLibfabricEngine() {
     NIXL_DEBUG
         << "Destructor starting, stopping all threads FIRST to prevent timing report interruption";
 
+    post_thread_pool_.reset();
     if (progress_thread_enabled_) {
         progress_thread_stop_.store(true);
     }
@@ -439,24 +571,24 @@ nixlLibfabricEngine::~nixlLibfabricEngine() {
 nixl_status_t
 nixlLibfabricEngine::getConnInfo(std::string &str) const {
     // Verify all rail endpoints are initialized
-    for (size_t rail_id = 0; rail_id < rail_manager.getNumRails(); ++rail_id) {
-        if (!rail_manager.getRail(rail_id).endpoint) {
+    for (size_t rail_id = 0; rail_id < rail_manager_.getNumRails(); ++rail_id) {
+        if (!rail_manager_.getRail(rail_id).endpoint) {
             NIXL_ERROR << "Rail " << rail_id << " endpoint not initialized";
             return NIXL_ERR_BACKEND;
         }
     }
 
-    NIXL_DEBUG << "Retrieving local endpoint addresses for all " << rail_manager.getNumRails()
+    NIXL_DEBUG << "Retrieving local endpoint addresses for all " << rail_manager_.getNumRails()
                << " rails";
 
     // Use Rail Manager's connection SerDes method with "dest" prefix for remote consumption
-    nixl_status_t status = rail_manager.serializeConnectionInfo("dest", str);
+    nixl_status_t status = rail_manager_.serializeConnectionInfo("dest", str);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager serializeConnectionInfo failed";
         return status;
     }
 
-    NIXL_DEBUG << "Rail Manager serialized connection info for " << rail_manager.getNumRails()
+    NIXL_DEBUG << "Rail Manager serialized connection info for " << rail_manager_.getNumRails()
                << " rails, total size=" << str.length();
 
     return NIXL_SUCCESS;
@@ -476,14 +608,14 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    NIXL_DEBUG << "Processing " << rail_manager.getNumRails()
+    NIXL_DEBUG << "Processing " << rail_manager_.getNumRails()
                << " rails for agent: " << remote_agent;
 
     // Use Rail Manager's connection SerDes method with "dest" prefix (remote is sending us their
     // endpoints as "dest")
     std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> data_endpoints;
     nixl_status_t status =
-        rail_manager.deserializeConnectionInfo("dest", remote_conn_info, data_endpoints);
+        rail_manager_.deserializeConnectionInfo("dest", remote_conn_info, data_endpoints);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed";
         return status;
@@ -496,7 +628,7 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
     }
 
     NIXL_INFO << "Successfully stored multirail connection for " << remote_agent << " on "
-              << rail_manager.getNumRails() << " rails";
+              << rail_manager_.getNumRails() << " rails";
     return NIXL_SUCCESS;
 }
 
@@ -576,8 +708,8 @@ nixlLibfabricEngine::createAgentConnection(
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if (data_rail_endpoints.size() != rail_manager.getNumRails()) {
-        NIXL_WARN << "Rail count mismatch (local: " << rail_manager.getNumRails()
+    if (data_rail_endpoints.size() != rail_manager_.getNumRails()) {
+        NIXL_WARN << "Rail count mismatch (local: " << rail_manager_.getNumRails()
                   << ", remote: " << data_rail_endpoints.size() << ")";
     }
 
@@ -589,10 +721,10 @@ nixlLibfabricEngine::createAgentConnection(
     }
 
     conn->remoteAgent_ = agent_name;
-    conn->rail_remote_addr_list_.reserve(rail_manager.getNumRails());
+    conn->rail_remote_addr_list_.reserve(rail_manager_.getNumRails());
 
     // Process all rails in one operation
-    nixl_status_t data_status = rail_manager.insertAllAddresses(
+    nixl_status_t data_status = rail_manager_.insertAllAddresses(
         data_rail_endpoints, conn->rail_remote_addr_list_, conn->src_ep_names_);
     if (data_status != NIXL_SUCCESS) {
         NIXL_ERROR << "insertAllAddresses failed for rails with status: " << data_status;
@@ -612,7 +744,7 @@ nixlLibfabricEngine::createAgentConnection(
     connections_[agent_name] = conn;
 
     NIXL_INFO << "Successfully created connection for agent: " << agent_name << " on "
-              << rail_manager.getNumRails() << " rails";
+              << rail_manager_.getNumRails() << " rails";
 
     return NIXL_SUCCESS;
 }
@@ -635,9 +767,9 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
     }
 
     // Verify we have addresses for all rails
-    if (it->second->rail_remote_addr_list_.size() != rail_manager.getNumRails()) {
+    if (it->second->rail_remote_addr_list_.size() != rail_manager_.getNumRails()) {
         NIXL_ERROR << "Remote connection has " << it->second->rail_remote_addr_list_.size()
-                   << " rails, expected " << rail_manager.getNumRails();
+                   << " rails, expected " << rail_manager_.getNumRails();
         return NIXL_ERR_BACKEND;
     }
 
@@ -711,19 +843,31 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
         if (runtime_ == FI_HMEM_CUDA) {
             // CUDA-specific address query
             // For multi-GPU support, skip CUDA address workaround
-            if (cuda_addr_wa_) {
+            bool use_cuda_addr_wa = false;
+            {
+                const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
+                use_cuda_addr_wa = cuda_addr_wa_;
+            }
+            if (use_cuda_addr_wa) {
                 bool need_restart;
                 if (vramUpdateCtx((void *)mem.addr, mem.devId, need_restart)) {
                     NIXL_INFO << "Multi-GPU detected (device " << mem.devId
                               << "), using cudaSetDevice fallback";
-                    cuda_addr_wa_ = false;
+                    {
+                        const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
+                        cuda_addr_wa_ = false;
+                    }
                 } else if (need_restart) {
                     NIXL_DEBUG << "CUDA context updated, restarting progress thread";
                     vramApplyCtx();
                 }
             }
             // Fallback: set device via runtime API (uses primary context)
-            if (!cuda_addr_wa_) {
+            {
+                const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
+                use_cuda_addr_wa = cuda_addr_wa_;
+            }
+            if (!use_cuda_addr_wa) {
                 cudaError_t cuda_ret = cudaSetDevice(mem.devId);
                 if (cuda_ret != cudaSuccess) {
                     NIXL_ERROR << "Failed to set CUDA device " << mem.devId << ": "
@@ -760,9 +904,9 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     }
 
     // Initialize vectors to accommodate all possible rails (for indexing consistency)
-    priv->rail_mr_list_.resize(rail_manager.getNumRails(), nullptr);
+    priv->rail_mr_list_.resize(rail_manager_.getNumRails(), nullptr);
     priv->rail_key_list_.clear();
-    priv->rail_key_list_.resize(rail_manager.getNumRails(), FI_KEY_NOTAVAIL);
+    priv->rail_key_list_.resize(rail_manager_.getNumRails(), FI_KEY_NOTAVAIL);
 
 #ifdef HAVE_CUDA
     // Set CUDA context before libfabric operations for VRAM
@@ -776,14 +920,14 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
                << " mem_type=" << nixl_mem << " devId=" << mem.devId
                << (nixl_mem == VRAM_SEG ? " pci_bus_id=" + pci_bus_id : "");
 
-    nixl_status_t status = rail_manager.registerMemory((void *)mem.addr,
-                                                       mem.len,
-                                                       nixl_mem,
-                                                       mem.devId,
-                                                       pci_bus_id,
-                                                       priv->rail_mr_list_,
-                                                       priv->rail_key_list_,
-                                                       priv->selected_rails_);
+    nixl_status_t status = rail_manager_.registerMemory((void *)mem.addr,
+                                                        mem.len,
+                                                        nixl_mem,
+                                                        mem.devId,
+                                                        pci_bus_id,
+                                                        priv->rail_mr_list_,
+                                                        priv->rail_key_list_,
+                                                        priv->selected_rails_);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager registerMemory failed";
         return status;
@@ -806,7 +950,7 @@ nixlLibfabricEngine::deregisterMem(nixlBackendMD *meta) {
     auto *priv = static_cast<nixlLibfabricPrivateMetadata *>(meta);
     // Use Rail Manager for centralized memory deregistration
     nixl_status_t status =
-        rail_manager.deregisterMemory(priv->selected_rails_, priv->rail_mr_list_);
+        rail_manager_.deregisterMemory(priv->selected_rails_, priv->rail_mr_list_);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager deregisterMemory failed";
         // Continue with cleanup even if deregistration failed
@@ -821,7 +965,7 @@ nixlLibfabricEngine::getPublicData(const nixlBackendMD *meta, std::string &str) 
     const nixlLibfabricPrivateMetadata *priv =
         static_cast<const nixlLibfabricPrivateMetadata *>(meta);
 
-    return rail_manager.serializeMemoryKeys(priv->rail_key_list_, priv->buffer_, str);
+    return rail_manager_.serializeMemoryKeys(priv->rail_key_list_, priv->buffer_, str);
 }
 
 nixl_status_t
@@ -867,10 +1011,10 @@ nixlLibfabricEngine::loadRemoteMD(const nixlBlobDesc &input,
     std::vector<uint64_t> remote_keys;
     uint64_t remote_addr;
     nixl_status_t status =
-        rail_manager.deserializeMemoryKeys(input.metaInfo,
-                                           conn_it->second->rail_remote_addr_list_.at(0).size(),
-                                           remote_keys,
-                                           remote_addr);
+        rail_manager_.deserializeMemoryKeys(input.metaInfo,
+                                            conn_it->second->rail_remote_addr_list_.at(0).size(),
+                                            remote_keys,
+                                            remote_addr);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager deserializeMemoryKeys failed";
         return status;
@@ -963,6 +1107,97 @@ nixlLibfabricEngine::estimateXferCost(const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
+nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
+                                         const nixl_meta_dlist_t &local,
+                                         const nixl_meta_dlist_t &remote,
+                                         const std::shared_ptr<nixlLibfabricConnection> &conn,
+                                         nixlLibfabricBackendH *backend_handle,
+                                         int start_idx,
+                                         int end_idx,
+                                         int desc_count,
+                                         size_t xfer_base_offset,
+                                         size_t &submitted_count) const {
+    submitted_count = 0;
+
+#ifdef HAVE_CUDA
+    const bool is_cuda_vram = local.getType() == VRAM_SEG && runtime_ == FI_HMEM_CUDA;
+    bool use_cuda_addr_wa = false;
+    int current_cuda_device = -1;
+    if (is_cuda_vram) {
+        const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
+        use_cuda_addr_wa = cuda_addr_wa_;
+        if (use_cuda_addr_wa && cudaCtx_ && !cudaCtx_->cudaSetCtx()) {
+            NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
+            return NIXL_ERR_BACKEND;
+        }
+    }
+
+    auto prepare_cuda_descriptor_post = [&](int device_id, int desc_idx) -> nixl_status_t {
+        if (!is_cuda_vram || use_cuda_addr_wa || device_id == current_cuda_device) {
+            return NIXL_SUCCESS;
+        }
+        cudaError_t cuda_ret = cudaSetDevice(device_id);
+        if (cuda_ret != cudaSuccess) {
+            NIXL_ERROR << "Failed to set CUDA device " << device_id << " while posting descriptor "
+                       << desc_idx << ": " << cudaGetErrorString(cuda_ret);
+            return NIXL_ERR_BACKEND;
+        }
+        current_cuda_device = device_id;
+        return NIXL_SUCCESS;
+    };
+#endif
+
+    for (int desc_idx = start_idx; desc_idx < end_idx; ++desc_idx) {
+        auto *local_md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
+        auto *remote_md = static_cast<nixlLibfabricPublicMetadata *>(remote[desc_idx].metadataP);
+
+        void *transfer_addr = (void *)local[desc_idx].addr;
+        size_t transfer_size = local[desc_idx].len;
+        int device_id = local[desc_idx].devId;
+
+#ifdef HAVE_CUDA
+        if (nixl_status_t status = prepare_cuda_descriptor_post(device_id, desc_idx);
+            status != NIXL_SUCCESS) {
+            return status;
+        }
+#endif
+
+        uint64_t remote_target_addr = remote[desc_idx].addr;
+        uint64_t remote_registered_base = remote_md->remote_buf_addr_;
+
+        size_t desc_submitted_count = 0;
+        nixl_status_t status = rail_manager_.prepareAndSubmitTransfer(
+            op_type,
+            transfer_addr,
+            transfer_size,
+            remote_target_addr,
+            remote_registered_base,
+            local_md->selected_rails_,
+            local_md->rail_mr_list_,
+            remote_md->rail_remote_key_list_,
+            remote_md->remote_selected_endpoints_,
+            conn->rail_remote_addr_list_,
+            conn->agent_index_,
+            backend_handle->post_xfer_id,
+            [backend_handle]() { backend_handle->increment_completed_requests(); },
+            desc_submitted_count,
+            desc_idx,
+            desc_count,
+            xfer_base_offset);
+
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
+                       << " device " << device_id;
+            return status;
+        }
+
+        submitted_count += desc_submitted_count;
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
 nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                               const nixl_meta_dlist_t &local,
                               const nixl_meta_dlist_t &remote,
@@ -987,6 +1222,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         }
         NIXL_DEBUG << "Established new connection with remote_agent: " << remote_agent;
     }
+    auto conn = conn_it->second;
 
     NIXL_DEBUG << "Posting transfer for remote_agent: " << remote_agent
                << ", handle address: " << handle;
@@ -1023,12 +1259,13 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     op_type = (operation == NIXL_WRITE) ? nixlLibfabricReq::WRITE : nixlLibfabricReq::READ;
 
     // Set initial submit request count to maximum possible requests for this xfer.
-    size_t max_possible_requests = desc_count * rail_manager.getNumRails();
+    size_t max_possible_requests = desc_count * rail_manager_.getNumRails();
     backend_handle->init_request_tracking(max_possible_requests);
 
     size_t total_submitted = 0;
 
-    // Core transfer submission to process each descriptor with direct submission
+    // Validate metadata before posting. The parallel path may post descriptors out of order, so
+    // simple input errors should be caught before any worker submits RDMA operations.
     for (int desc_idx = 0; desc_idx < desc_count; ++desc_idx) {
         auto *local_md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
         auto *remote_md = static_cast<nixlLibfabricPublicMetadata *>(remote[desc_idx].metadataP);
@@ -1038,59 +1275,110 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         }
 
         // Validate connection for this descriptor
-        if (remote_md->conn_ != conn_it->second) {
+        if (remote_md->conn_ != conn) {
             NIXL_ERROR << "Connection mismatch for descriptor " << desc_idx;
             return NIXL_ERR_MISMATCH;
         }
-        // Get transfer info for THIS descriptor
-        void *transfer_addr = (void *)local[desc_idx].addr;
-        size_t transfer_size = local[desc_idx].len;
-        int device_id = local[desc_idx].devId;
+    }
 
-        NIXL_DEBUG << "Processing descriptor " << desc_idx << " device " << device_id
-                   << " local_addr: " << transfer_addr << " size=" << transfer_size
-                   << " remote_addr=" << (void *)remote[desc_idx].addr;
+    // Reserve base_offset once per transfer so all descriptors see a stable rail assignment.
+    const size_t xfer_base_offset = rail_manager_.reserveBaseOffset();
+    const bool use_post_pool = post_thread_pool_ && post_thread_count_ > 0 && desc_count > 0 &&
+        static_cast<size_t>(desc_count) >= post_split_batch_size_;
 
-        NIXL_DEBUG << "DEBUG: remote_agent='" << remote_agent << "' localAgent='" << localAgent
-                   << "'";
-
-        // Prepare and submit transfer for remote agents
-        // Use descriptor's specific target address
-        uint64_t remote_target_addr = remote[desc_idx].addr;
-
-        uint64_t remote_registered_base = remote_md->remote_buf_addr_;
-
-        size_t submitted_count = 0;
-        nixl_status_t status = rail_manager.prepareAndSubmitTransfer(
-            op_type,
-            transfer_addr,
-            transfer_size,
-            remote_target_addr,
-            remote_registered_base,
-            local_md->selected_rails_,
-            local_md->rail_mr_list_,
-            remote_md->rail_remote_key_list_,
-            remote_md->remote_selected_endpoints_,
-            conn_it->second->rail_remote_addr_list_,
-            conn_it->second->agent_index_,
-            backend_handle->post_xfer_id,
-            [backend_handle]() {
-                backend_handle->increment_completed_requests();
-            }, // Completion callback
-            submitted_count);
-
+    if (!use_post_pool) {
+        nixl_status_t status = postXferDescriptors(op_type,
+                                                   local,
+                                                   remote,
+                                                   conn,
+                                                   backend_handle,
+                                                   0,
+                                                   desc_count,
+                                                   desc_count,
+                                                   xfer_base_offset,
+                                                   total_submitted);
         if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
-                       << " device " << device_id;
+            return status;
+        }
+    } else {
+        const size_t num_chunks = std::min(post_thread_count_, static_cast<size_t>(desc_count));
+        const size_t chunk_size = (desc_count + num_chunks - 1) / num_chunks;
+        std::atomic<size_t> parallel_total_submitted{0};
+        std::atomic<int> first_status{static_cast<int>(NIXL_SUCCESS)};
+        std::mutex done_mutex;
+        std::condition_variable done_cv;
+        size_t remaining = num_chunks;
+        size_t submitted_chunks = 0;
+
+        for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
+            const int start_idx = static_cast<int>(chunk_idx * chunk_size);
+            const int end_idx = static_cast<int>(
+                std::min(static_cast<size_t>(desc_count), (chunk_idx + 1) * chunk_size));
+
+            if (!post_thread_pool_->submit([&, start_idx, end_idx]() {
+                    nixl_status_t status = NIXL_SUCCESS;
+                    size_t chunk_submitted = 0;
+
+                    try {
+                        status = postXferDescriptors(op_type,
+                                                     local,
+                                                     remote,
+                                                     conn,
+                                                     backend_handle,
+                                                     start_idx,
+                                                     end_idx,
+                                                     desc_count,
+                                                     xfer_base_offset,
+                                                     chunk_submitted);
+                    }
+                    catch (const std::exception &e) {
+                        NIXL_ERROR << "Exception while posting libfabric descriptors [" << start_idx
+                                   << ", " << end_idx << "): " << e.what();
+                        status = NIXL_ERR_BACKEND;
+                    }
+                    catch (...) {
+                        NIXL_ERROR << "Unknown exception while posting libfabric descriptors ["
+                                   << start_idx << ", " << end_idx << ")";
+                        status = NIXL_ERR_BACKEND;
+                    }
+
+                    if (status != NIXL_SUCCESS) {
+                        storeFirstError(first_status, status);
+                    } else {
+                        parallel_total_submitted.fetch_add(chunk_submitted);
+                    }
+
+                    {
+                        const std::lock_guard<std::mutex> lock(done_mutex);
+                        remaining--;
+                    }
+                    done_cv.notify_one();
+                })) {
+                NIXL_ERROR << "Failed to submit libfabric descriptor post task";
+                break;
+            }
+            submitted_chunks++;
+        }
+
+        if (submitted_chunks != num_chunks) {
+            std::unique_lock<std::mutex> lock(done_mutex);
+            done_cv.wait(lock, [&remaining, num_chunks, submitted_chunks]() {
+                return remaining == num_chunks - submitted_chunks;
+            });
+            return NIXL_ERR_BACKEND;
+        }
+
+        {
+            std::unique_lock<std::mutex> lock(done_mutex);
+            done_cv.wait(lock, [&remaining]() { return remaining == 0; });
+        }
+
+        nixl_status_t status = static_cast<nixl_status_t>(first_status.load());
+        if (status != NIXL_SUCCESS) {
             return status;
         }
 
-        // Add submitted requests to the total count
-        total_submitted += submitted_count;
-
-        NIXL_DEBUG << "Successfully processed descriptor " << desc_idx << " with "
-                   << submitted_count << " requests submitted (accumulated: " << total_submitted
-                   << ")";
+        total_submitted = parallel_total_submitted.load();
     }
 
     NIXL_DEBUG << "Processing complete: submitted " << total_submitted << " requests from "
@@ -1122,7 +1410,7 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // Progress rails to kick off transfers
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager.progressActiveRails();
+        nixl_status_t progress_status = rail_manager_.progressActiveRails();
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in postXfer";
             return progress_status;
@@ -1153,7 +1441,7 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
     auto backend_handle = static_cast<nixlLibfabricBackendH *>(handle);
 
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager.progressActiveRails();
+        nixl_status_t progress_status = rail_manager_.progressActiveRails();
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in checkXfer";
             return progress_status;
@@ -1321,7 +1609,7 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
         size_t rail_id = 0;
         size_t max_size = BinaryNotification::MAX_FRAGMENT_SIZE;
         nixlLibfabricReq *control_request =
-            rail_manager.getRail(rail_id).allocateControlRequest(max_size, notif_xfer_id);
+            rail_manager_.getRail(rail_id).allocateControlRequest(max_size, notif_xfer_id);
 
         if (!control_request) {
             NIXL_ERROR << "Failed to allocate control request for notification fragment " << seq_id;
@@ -1338,7 +1626,7 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                    << " notif_xfer_id=" << header.notif_xfer_id;
 
         // Use rail 0's remote address since notifications now use rails
-        nixl_status_t status = rail_manager.postControlMessage(
+        nixl_status_t status = rail_manager_.postControlMessage(
             nixlLibfabricRailManager::ControlMessageType::NOTIFICATION,
             control_request,
             connection->rail_remote_addr_list_[rail_id][0],
@@ -1352,7 +1640,7 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
 
         // Progress rail 0 to ensure the message is sent
         if (!progress_thread_enabled_) {
-            status = rail_manager.getRail(rail_id).progressCompletionQueue();
+            status = rail_manager_.getRail(rail_id).progressCompletionQueue();
             if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
                 NIXL_ERROR << "Failed to progress rail 0 in notifSendPriv";
                 return status;
@@ -1381,7 +1669,7 @@ nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string
 nixl_status_t
 nixlLibfabricEngine::getNotifs(notif_list_t &notif_list) {
     if (!progress_thread_enabled_) {
-        nixl_status_t progress_status = rail_manager.progressActiveRails();
+        nixl_status_t progress_status = rail_manager_.progressActiveRails();
         if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
             NIXL_ERROR << "Failed to progress rails in getNotifs";
             return progress_status;
@@ -1422,7 +1710,7 @@ nixlLibfabricEngine::progressThread() {
     while (!progress_thread_stop_.load()) {
         // Process completions only on rails (non-blocking)
         bool any_completions = false;
-        nixl_status_t status = rail_manager.progressActiveRails();
+        nixl_status_t status = rail_manager_.progressActiveRails();
         if (status == NIXL_SUCCESS) {
             any_completions = true;
             NIXL_DEBUG << "PT: Processed completions on rails";
@@ -1624,6 +1912,7 @@ nixlLibfabricEngine::checkPendingNotifications() {
 void
 nixlLibfabricEngine::cleanup() {
     NIXL_DEBUG << "Cleaning up all resources";
+    post_thread_pool_.reset();
 #ifdef HAVE_CUDA
     // Cleanup CUDA context
     vramFiniCtx();

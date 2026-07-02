@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,9 +29,11 @@
 #include <variant>
 #include <future>
 #include <atomic>
+#include "common/backend.h"
 #include "common/nixl_log.h"
 #include "gds_mt_backend.h"
 #include "gds_mt_utils.h"
+#include "file/file_path_mode.h"
 #include "file/file_utils.h"
 #include <taskflow/taskflow.hpp>
 #include <unordered_map>
@@ -41,8 +43,11 @@ const size_t default_thread_count = std::max (1u, std::thread::hardware_concurre
 
 struct FileSegData {
     std::shared_ptr<gdsMtFileHandle> handle;
+    uint64_t devId;
 
-    FileSegData(std::shared_ptr<gdsMtFileHandle> h) : handle(std::move(h)) {}
+    FileSegData(std::shared_ptr<gdsMtFileHandle> h, uint64_t devid)
+        : handle(std::move(h)),
+          devId(devid) {}
 };
 
 struct MemSegData {
@@ -72,9 +77,9 @@ struct GdsMtTransferRequestH {
 
 class nixlGdsMtMetadata : public nixlBackendMD {
 public:
-    explicit nixlGdsMtMetadata (std::shared_ptr<gdsMtFileHandle> file_handle)
-        : nixlBackendMD (true),
-          data_ (FileSegData{std::move (file_handle)}) {}
+    nixlGdsMtMetadata(std::shared_ptr<gdsMtFileHandle> file_handle, uint64_t devid)
+        : nixlBackendMD(true),
+          data_(FileSegData{std::move(file_handle), devid}) {}
 
     explicit nixlGdsMtMetadata (void *addr, size_t size, int flags)
         : nixlBackendMD (true),
@@ -103,26 +108,12 @@ public:
     std::atomic<nixl_status_t> overall_status;
 };
 
-size_t
-getThreadCount (const nixlBackendInitParams *init_params) {
-    size_t thread_count = default_thread_count;
-
-    nixl_b_params_t *custom_params = init_params->customParams;
-    if (custom_params) {
-        if (custom_params->count ("thread_count") > 0) {
-            try {
-                size_t tcount = std::stoul ((*custom_params)["thread_count"]);
-                if (tcount != 0) {
-                    thread_count = tcount;
-                }
-            }
-            catch (const std::exception &e) {
-                throw std::runtime_error ("GDS_MT: Invalid thread_count parameter: " +
-                                          std::string (e.what()));
-            }
-        }
-    }
-    return thread_count;
+[[nodiscard]] size_t
+getThreadCount(const nixlBackendInitParams *init_params) {
+    nixl_b_params_t *params = init_params->customParams;
+    const size_t count =
+        nixl::getBackendParamDefaulted(params, "thread_count", default_thread_count);
+    return (count > 0) ? count : default_thread_count;
 }
 
 void
@@ -158,7 +149,6 @@ runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_sta
 nixl_status_t
 extractTransferParams (const nixlMetaDesc &mem_desc,
                        const nixlMetaDesc &file_desc,
-                       const std::unordered_map<int, std::weak_ptr<gdsMtFileHandle>> &file_map,
                        void *&base_addr,
                        size_t &total_size,
                        size_t &base_offset,
@@ -167,15 +157,17 @@ extractTransferParams (const nixlMetaDesc &mem_desc,
     total_size = mem_desc.len;
     base_offset = (size_t)file_desc.addr;
 
-    auto it = file_map.find (file_desc.devId);
-    if (it == file_map.end()) {
-        NIXL_ERROR << "GDS_MT: error: file metadata not found";
+    const auto *md = static_cast<const nixlGdsMtMetadata *>(file_desc.metadataP);
+    if (!md) {
+        NIXL_ERROR << "GDS_MT: missing FILE_SEG metadata at xfer time";
         return NIXL_ERR_NOT_FOUND;
     }
-
-    auto handle = it->second.lock();
-    NIXL_ASSERT (handle);
-    cu_fhandle = handle->cu_fhandle;
+    auto *file_data = std::get_if<FileSegData>(&md->data_);
+    if (!file_data || !file_data->handle) {
+        NIXL_ERROR << "GDS_MT: file metadata is not a FILE_SEG variant";
+        return NIXL_ERR_NOT_FOUND;
+    }
+    cu_fhandle = file_data->handle->cu_fhandle;
     return NIXL_SUCCESS;
 }
 } // namespace
@@ -200,26 +192,42 @@ nixlGdsMtEngine::registerMem (const nixlBlobDesc &mem,
                               nixlBackendMD *&out) {
     switch (nixl_mem) {
     case FILE_SEG: {
-        auto it = gds_mt_file_map_.find (mem.devId);
-        std::shared_ptr<gdsMtFileHandle> handle;
-        if (it != gds_mt_file_map_.end()) {
-            handle = it->second.lock();
-            if (handle) {
-                out = new nixlGdsMtMetadata (handle);
-                return NIXL_SUCCESS;
-            }
-            gds_mt_file_map_.erase (it);
+        auto resv = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
+        if (!resv.ok()) {
+            NIXL_ERROR << "GDS_MT: path-mode requires a unique devId per file (devId=" << mem.devId
+                       << " already registered)";
+            return NIXL_ERR_INVALID_PARAM;
         }
-
+        nixl::FileFd file_fd;
         try {
-            handle = std::make_shared<gdsMtFileHandle> (mem.devId);
+            file_fd = nixl::FileFd(mem.devId, mem.metaInfo);
         }
-        catch (const std::exception &e) {
-            NIXL_ERROR << "GDS_MT: failed to create file handle: " << e.what();
+        catch (const std::system_error &e) {
+            NIXL_ERROR << "GDS_MT: path-mode open failed: " << e.what();
             return NIXL_ERR_BACKEND;
         }
-        gds_mt_file_map_[mem.devId] = handle;
-        out = new nixlGdsMtMetadata (handle);
+        int fd = file_fd.fd();
+
+        std::shared_ptr<gdsMtFileHandle> handle;
+        if (auto it = gds_mt_file_map_.find(fd); it != gds_mt_file_map_.end()) {
+            handle = it->second.lock();
+            if (!handle) {
+                gds_mt_file_map_.erase(it);
+            }
+            // Cache hit: drop file_fd (~FileFd closes any duplicate owned fd).
+        }
+        if (!handle) {
+            try {
+                handle = std::make_shared<gdsMtFileHandle>(std::move(file_fd));
+            }
+            catch (const std::exception &e) {
+                NIXL_ERROR << "GDS_MT: failed to create file handle: " << e.what();
+                return NIXL_ERR_BACKEND;
+            }
+            gds_mt_file_map_[fd] = handle;
+        }
+        out = new nixlGdsMtMetadata(std::move(handle), mem.devId);
+        resv.commit();
         return NIXL_SUCCESS;
     }
 
@@ -251,11 +259,14 @@ nixlGdsMtEngine::registerMem (const nixlBlobDesc &mem,
 
 nixl_status_t
 nixlGdsMtEngine::deregisterMem (nixlBackendMD *meta) {
-    std::unique_ptr<nixlGdsMtMetadata> md ((nixlGdsMtMetadata *)meta);
+    std::unique_ptr<nixlGdsMtMetadata> md((nixlGdsMtMetadata *)meta);
 
     if (auto *file_data = std::get_if<FileSegData> (&md->data_)) {
         if (file_data->handle) {
-            int key = file_data->handle->fd;
+            int key = file_data->handle->file_fd.fd();
+            if (!file_data->handle->file_fd.path().empty()) {
+                path_mode_devids_.release(file_data->devId);
+            }
             md.reset(); // Release metadata first
 
             auto it = gds_mt_file_map_.find (key);
@@ -263,7 +274,7 @@ nixlGdsMtEngine::deregisterMem (nixlBackendMD *meta) {
                 gds_mt_file_map_.erase (it);
             }
 
-            // No need to close fd since we're not opening files
+            // owned fds: closed by ~FileFd (RAII) on last shared_ptr drop.
         }
     }
 
@@ -304,7 +315,6 @@ nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
         if (is_local_file) {
             param_status = extractTransferParams (remote[i],
                                                   local[i],
-                                                  gds_mt_file_map_,
                                                   base_addr,
                                                   total_size,
                                                   base_offset,
@@ -312,7 +322,6 @@ nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
         } else {
             param_status = extractTransferParams (local[i],
                                                   remote[i],
-                                                  gds_mt_file_map_,
                                                   base_addr,
                                                   total_size,
                                                   base_offset,
