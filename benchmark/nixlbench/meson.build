@@ -189,6 +189,12 @@ if not cuda_available and not rocm_available
     warning('Neither CUDA nor ROCm found. VRAM support will be disabled.')
 endif
 
+if get_option('enable_inmemkv')
+    add_project_arguments('-DNIXLBENCH_ENABLE_INMEMKV=1', language: 'cpp')
+else
+    add_project_arguments('-DNIXLBENCH_ENABLE_INMEMKV=0', language: 'cpp')
+endif
+
 # Subprojects
 subdir('src/utils')
 subdir('src/runtime')
