@@ -23,7 +23,9 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
+ARG UCX_REPO="https://github.com/openucx/ucx.git"
 ARG UCX_REF="v1.21.x"
+ARG UCX_SONAME_SUFFIX=""
 ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
 ARG UCX_PREFIX="/usr"
@@ -183,12 +185,29 @@ RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /usr/local/src && \
-     git clone https://github.com/openucx/ucx.git && \
+     git clone "$UCX_REPO" ucx && \
      cd ucx && \
      echo "=== Using UCX_REF=$UCX_REF ===" && \
      git checkout $UCX_REF && \
      if [ "$BUILD_NIXL_EP" = "true" ]; then EXPERIMENTAL_API_PARAM="--enable-experimental-api"; else EXPERIMENTAL_API_PARAM=""; fi && \
      ./autogen.sh && \
+     if [ -n "$UCX_SONAME_SUFFIX" ]; then \
+         if ./configure --help | grep -q -- "--with-soname-suffix"; then \
+             UCX_SONAME_PARAM="--with-soname-suffix=$UCX_SONAME_SUFFIX"; \
+         else \
+             echo "UCX_REF=$UCX_REF does not support --with-soname-suffix" >&2; \
+             exit 1; \
+         fi; \
+         if ./configure --help | grep -q -- "--enable-module-deepbind"; then \
+             UCX_MODULE_DEEPBIND_PARAM="--enable-module-deepbind"; \
+         else \
+             echo "UCX_REF=$UCX_REF does not support --enable-module-deepbind" >&2; \
+             exit 1; \
+         fi; \
+     else \
+         UCX_SONAME_PARAM=""; \
+         UCX_MODULE_DEEPBIND_PARAM=""; \
+     fi && \
      ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
          --enable-shared             \
@@ -202,7 +221,9 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --without-gdrcopy           \
-         --with-efa  &&              \
+         --with-efa                  \
+         $UCX_SONAME_PARAM           \
+         $UCX_MODULE_DEEPBIND_PARAM && \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
@@ -298,12 +319,16 @@ RUN cd src/bindings/rust && cargo build --release --locked
 # Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
 RUN mkdir -p dist && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAGS="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; else EP_BUILD_FLAGS=""; fi && \
+    if [ -n "$UCX_SONAME_SUFFIX" ]; then \
+        UCX_PLUGIN_SONAME_FLAG="--plugin-soname-suffix $UCX_SONAME_SUFFIX"; \
+    else UCX_PLUGIN_SONAME_FLAG=""; fi && \
     ./contrib/build-wheel.sh \
     --python-version $DEFAULT_PYTHON_VERSION \
     --platform manylinux_2_39_$ARCH \
     --ucx-plugins-dir $UCX_PLUGIN_DIR \
     --nixl-plugins-dir $NIXL_PLUGIN_DIR \
     --output-dir /workspace/nixl/dist \
+    $UCX_PLUGIN_SONAME_FLAG \
     $EP_BUILD_FLAGS
 
 RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
