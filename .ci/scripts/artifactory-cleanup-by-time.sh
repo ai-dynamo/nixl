@@ -1,23 +1,17 @@
 #!/bin/bash
-# Artifactory cleanup by time (Docker images)
-# Deletes Docker images in a JFrog Artifactory repository that are older than a given age.
-# Only manifest.json (and list.manifest.json) are queried; image age is based on the
-# manifest's last modified date. The entire image folder is then deleted.
+# Artifactory cleanup by time
+# Deletes artifacts in a JFrog Artifactory repository that are older than a given age,
+# using last-downloaded time when available, modified time otherwise.
 #
 # Usage:
 #   export ARTIFACTORY_URL="https://your-instance.jfrog.io/artifactory"
 #   export ARTIFACTORY_USER="user"
 #   export ARTIFACTORY_TOKEN="password-or-api-key"
-#   ./artifactory-cleanup-by-time.sh [OPTIONS] REPO_KEY [AGE]
-#
-# Arguments:
-#   REPO_KEY   Repository key (e.g. sw-nbu-swx-nixl-docker-local)
-#   AGE        Age threshold: delete images whose manifest was last modified before this (default: 4w)
-#              Examples: 4w (weeks), 30d (days), 2m (months)
+#   ./artifactory-cleanup-by-time.sh [OPTIONS] --policy <policy.json>
 #
 # Options:
 #   --dry-run       Only list images that would be deleted, do not delete
-#   --path PATH     Only consider images under this path (AQL path match)
+#   --policy        Path to a JSON policy file describing what and when to delete
 #
 # Environment:
 #   ARTIFACTORY_URL       Base Artifactory URL (required)
@@ -26,150 +20,148 @@
 #   ARTIFACTORY_API_KEY   Alternative to ARTIFACTORY_TOKEN
 #
 # Example:
-#   ./artifactory-cleanup-by-time.sh --dry-run sw-nbu-swx-nixl-docker-local 4w
-#   ./artifactory-cleanup-by-time.sh --path "verification/nixl/" sw-nbu-swx-nixl-docker-local 4w
+#   ./artifactory-cleanup-by-time.sh --dry-run --policy cleanup-policy.json
+#   ./artifactory-cleanup-by-time.sh --policy cleanup-policy.json
 
 set -e
+export JFROG_CLI_LOG_LEVEL=ERROR
 
 DRY_RUN=false
-PATH_FILTER=""
+POLICY_FILE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --dry-run)
-            DRY_RUN=true
-            shift
-            ;;
-        --path)
-            if [[ $# -lt 2 || "$2" == -* ]]; then
-                echo "Missing value for --path" >&2
-                exit 1
-            fi
-            PATH_FILTER="$2"
-            shift 2
-            ;;
-        -*)
-            echo "Unknown option: $1" >&2
-            exit 1
-            ;;
-        *)
-            break
-            ;;
+        --dry-run) DRY_RUN=true; shift ;;
+        --policy)
+            [[ $# -lt 2 ]] && { echo "Missing value for --policy" >&2; exit 1; }
+            POLICY_FILE="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
 
-if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 [--dry-run] [--path PATH] REPO_KEY [AGE]" >&2
-    echo "  AGE default: 4w (4 weeks)" >&2
-    exit 1
-fi
-
-REPO_KEY="$1"
-AGE="${2:-4w}"
-
-# Parse age (e.g. 4w, 30d, 2m) and compute cutoff via epoch (portable)
-if [[ "$AGE" =~ ^([0-9]+)([wdm])$ ]]; then
-    NUM="${BASH_REMATCH[1]}"
-    UNIT="${BASH_REMATCH[2]}"
-else
-    echo "Invalid AGE format: $AGE (e.g. 4w, 30d, 2m)" >&2
-    exit 1
-fi
-
-NOW_EPOCH=$(date +%s)
-case "$UNIT" in
-    w) SECS_AGO=$((NUM * 7 * 24 * 3600)) ;;
-    d) SECS_AGO=$((NUM * 24 * 3600)) ;;
-    m) SECS_AGO=$((NUM * 30 * 24 * 3600)) ;;
-    *) echo "Invalid age unit: $UNIT (use w, d, or m)" >&2; exit 1 ;;
-esac
-CUTOFF_EPOCH=$((NOW_EPOCH - SECS_AGO))
-
-if date -u -d "@${CUTOFF_EPOCH}" +"%Y-%m-%dT%H:%M:%S.000Z" &>/dev/null; then
-    CUTOFF=$(date -u -d "@${CUTOFF_EPOCH}" +"%Y-%m-%dT%H:%M:%S.000Z")
-elif date -u -r "${CUTOFF_EPOCH}" +"%Y-%m-%dT%H:%M:%S.000Z" &>/dev/null; then
-    CUTOFF=$(date -u -r "${CUTOFF_EPOCH}" +"%Y-%m-%dT%H:%M:%S.000Z")
-else
-    echo "Cannot convert epoch to ISO date" >&2
-    exit 1
-fi
+[[ -z "$POLICY_FILE" ]] && { echo "Usage: $0 [--dry-run] --policy <policy.json>" >&2; exit 1; }
+[[ -f "$POLICY_FILE" ]] || { echo "Policy file not found: $POLICY_FILE" >&2; exit 1; }
 
 ARTIFACTORY_URL="${ARTIFACTORY_URL:-https://artifactory.nvidia.com/artifactory}"
 TOKEN="${ARTIFACTORY_TOKEN:-${ARTIFACTORY_API_KEY:?Set ARTIFACTORY_TOKEN or ARTIFACTORY_API_KEY}}"
-USER="${ARTIFACTORY_USER:-}"
+USER="${ARTIFACTORY_USER:?Set ARTIFACTORY_USER}"
 
-if [[ -n "$USER" ]]; then
-    CURL_AUTH=(-u "$USER:$TOKEN")
-else
-    CURL_AUTH=(-H "X-JFrog-Art-Api: $TOKEN")
-fi
-
-# Build AQL: only manifest files; filter by last modified date. Use $and so $or is valid.
-if [[ -n "$PATH_FILTER" ]]; then
-    PATH_MATCH="${PATH_FILTER%/}"
-    AQL='items.find({"$and":[{"repo":"'"$REPO_KEY"'"},{"path":{"$match":"'"$PATH_MATCH"'/*"}},{"$or":[{"name":"manifest.json"},{"name":"list.manifest.json"}]},{"modified":{"$lt":"'"$CUTOFF"'"}}]}).include("repo","path","name")'
-else
-    AQL='items.find({"$and":[{"repo":"'"$REPO_KEY"'"},{"$or":[{"name":"manifest.json"},{"name":"list.manifest.json"}]},{"modified":{"$lt":"'"$CUTOFF"'"}}]}).include("repo","path","name")'
-fi
-
-echo "Current time (UTC): $(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
-echo "Cutoff: images with manifest last modified before $CUTOFF will be deleted (repo: $REPO_KEY)"
-if [[ -n "$PATH_FILTER" ]]; then
-    echo "Path filter: $PATH_FILTER"
-fi
-if [[ "$DRY_RUN" = true ]]; then echo "DRY RUN: no artifacts will be deleted"; fi
-
-RESPONSE=$(curl -s -w "\n%{http_code}" "${CURL_AUTH[@]}" -X POST \
-    "${ARTIFACTORY_URL}/api/search/aql" \
-    -H "Content-Type: text/plain" \
-    -d "$AQL") || { echo "AQL request failed"; exit 1; }
-
-# Split body and HTTP code (last line)
-HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-RESPONSE_BODY=$(echo "$RESPONSE" | sed '$d')
-
-if ! echo "$RESPONSE_BODY" | jq -e . >/dev/null 2>&1; then
-    echo "Artifactory response is not valid JSON (HTTP $HTTP_CODE). First 500 chars:"
-    echo "$RESPONSE_BODY" | head -c 500
-    echo ""
+# Configure JFrog CLI for Artifactory access
+JF_CONFIG_ARGS=(
+    --artifactory-url "${ARTIFACTORY_URL}"
+    --password "${TOKEN}"
+    --interactive=false
+    --user "${USER}"
+    )
+jf config add artifactory "${JF_CONFIG_ARGS[@]}"
+if ! jf rt ping; then
+    echo "ERROR: Artifactory ping failed — check ARTIFACTORY_URL and credentials" >&2
     exit 1
 fi
 
-# Check for AQL errors in JSON body
-if echo "$RESPONSE_BODY" | jq -e '.errors' >/dev/null 2>&1; then
-    echo "AQL error:"
-    echo "$RESPONSE_BODY" | jq -r '.errors[]? // .'
-    exit 1
-fi
-
-RESULTS_COUNT=$(echo "$RESPONSE_BODY" | jq -r '(.results // []) | length')
-echo "AQL returned ${RESULTS_COUNT} manifest(s) matching criteria."
-
-# Each result is a manifest file; the image folder is repo/path (parent of manifest). Dedupe by folder.
-COUNT=0
-FAILED=0
-while IFS= read -r image_path; do
-    [[ -z "$image_path" ]] && continue
-    if [[ "$DRY_RUN" = true ]]; then
-        echo "  [dry-run] would delete image: $image_path"
-        COUNT=$((COUNT + 1))
+compute_cutoff() {
+    if [[ "$1" =~ ^([0-9]+)([wdm])$ ]]; then
+        NUM="${BASH_REMATCH[1]}"
+        UNIT="${BASH_REMATCH[2]}"
     else
-        echo "  Deleting image: $image_path"
-        if curl -sSf "${CURL_AUTH[@]}" -X DELETE "${ARTIFACTORY_URL}/${image_path}"; then
+        echo "Invalid age: $1" >&2; return 1
+    fi
+    case "$UNIT" in
+        d) SECS_AGO=$((NUM * 86400)) ;;
+        w) SECS_AGO=$((NUM * 604800)) ;;
+        m) SECS_AGO=$((NUM * 2592000)) ;;
+        *) echo "Invalid age unit: $UNIT (use d, w, m)" >&2; return 1 ;;
+    esac
+    CUTOFF_EPOCH=$(( $(date +%s) - SECS_AGO ))
+    date -u -d "@${CUTOFF_EPOCH}" +"%Y-%m-%dT%H:%M:%S.000Z" 2>/dev/null || \
+    date -u -r "${CUTOFF_EPOCH}" +"%Y-%m-%dT%H:%M:%S.000Z"
+}
+
+# Build AQL path/exclude clauses and name filter, then run the query.
+run_aql() {
+    local repo="$1" path="$2" exclude_path="$3" name_filter="$4" cutoff="$5"
+    local path_clause="" exclude_clause=""
+    [[ -n "$path" ]]         && path_clause=',{"path":{"$match":"'"${path%/}/*"'"}}'
+    [[ -n "$exclude_path" ]] && exclude_clause=',{"path":{"$nmatch":"'"${exclude_path%/}/*"'"}}'
+    local aql='items.find({"$and":[{"repo":"'"${repo}"'"}'"${path_clause}${exclude_clause},${name_filter}"',{"modified":{"$lt":"'"${cutoff}"'"}}]}).include("repo","path","name","modified","stat.downloaded")'
+    jf rt curl -s -XPOST "/api/search/aql" -H "Content-Type: text/plain" --data "$aql"
+}
+
+TOTAL_COUNT=0
+TOTAL_FAILED=0
+ENTRY_COUNT=$(jq 'length' "$POLICY_FILE")
+
+echo "Policy: $POLICY_FILE ($ENTRY_COUNT entries)"
+echo "Dry-run: $DRY_RUN"
+echo "Current time (UTC): $(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
+echo ""
+
+for (( i=0; i<ENTRY_COUNT; i++ )); do
+    DESCRIPTION=$(jq -r ".[$i].description"   "$POLICY_FILE")
+    REPO=$(        jq -r ".[$i].repo"          "$POLICY_FILE")
+    PATH_FILTER=$( jq -r ".[$i].path // \"\""  "$POLICY_FILE")
+    EXCLUDE_PATH=$(jq -r ".[$i].exclude_path // \"\"" "$POLICY_FILE")
+    TYPE=$(        jq -r ".[$i].type"           "$POLICY_FILE")
+    AGE=$(         jq -r ".[$i].age"            "$POLICY_FILE")
+    CUTOFF=$(compute_cutoff "$AGE") || { echo "  ERROR: bad age '$AGE' in entry $((i+1)) — skipping" >&2; TOTAL_FAILED=$((TOTAL_FAILED + 1)); continue; }
+
+    echo "--- [$((i+1))/$ENTRY_COUNT] $DESCRIPTION ---"
+    echo "Repo: $REPO | Path: ${PATH_FILTER:-<root>} | Age: $AGE | Cutoff: $CUTOFF"
+
+    case "$TYPE" in
+        docker) NAME_FILTER='{"$or":[{"name":"manifest.json"},{"name":"list.manifest.json"}]}' ;;
+        pypi)   NAME_FILTER='{"name":{"$match":"*.whl"}}' ;;
+        *)      echo "Unknown type: $TYPE - skipping" >&2; continue ;;
+    esac
+
+    if ! RESPONSE=$(run_aql "$REPO" "$PATH_FILTER" "$EXCLUDE_PATH" "$NAME_FILTER" "$CUTOFF"); then
+        echo "  ERROR: AQL query failed for $REPO — skipping" >&2
+        TOTAL_FAILED=$((TOTAL_FAILED + 1)); continue
+    fi
+
+    case "$TYPE" in
+        docker)
+            TARGETS=$(jq -r --arg cutoff "$CUTOFF" '
+              def newest_ts: if .stats then (.stats[0].downloaded // .modified) else .modified end;
+              (.results // []) | group_by("\(.repo)/\(.path)") | .[] |
+              { folder: "\(.[0].repo)/\(.[0].path)", newest: (map(newest_ts) | max) } |
+              select(.newest < $cutoff) | "\(.folder)\t\(.newest)"' <<< "$RESPONSE")
+            ;;
+        pypi)
+            TARGETS=$(jq -r --arg cutoff "$CUTOFF" '
+              def newest_ts: if .stats then (.stats[0].downloaded // .modified) else .modified end;
+              (.results // [])[] |
+              { path: "\(.repo)/\(.path)/\(.name)", newest: newest_ts } |
+              select(.newest < $cutoff) | "\(.path)\t\(.newest)"' <<< "$RESPONSE")
+            ;;
+    esac
+
+    COUNT=0
+    FAILED=0
+    while IFS=$'\t' read -r target ts; do
+        [[ -z "$target" ]] && continue
+        if [[ "$DRY_RUN" = true ]]; then
+            echo "  [dry-run] would delete: $target  ($ts)"
             COUNT=$((COUNT + 1))
         else
-            echo "  ERROR: delete failed for $image_path" >&2
-            FAILED=$((FAILED + 1))
+            echo "  Deleting: $target  ($ts)"
+            if DEL_OUTPUT=$(jf rt del "$target" --quiet 2>&1); then
+                COUNT=$((COUNT + 1))
+            else
+                echo "  ERROR: delete failed for $target" >&2
+                echo "$DEL_OUTPUT" >&2
+                FAILED=$((FAILED + 1))
+            fi
         fi
-    fi
-done < <(echo "$RESPONSE_BODY" | jq -r '(.results // [])[] | "\(.repo)/\(.path)"' | sort -u)
+    done <<< "$TARGETS"
 
-if [[ "$DRY_RUN" = true ]]; then
-    echo "Done. $COUNT image(s) would be deleted."
-else
-    if [[ "$FAILED" -gt 0 ]]; then
-        echo "Done. $COUNT image(s) deleted, $FAILED failed." >&2
-        exit 1
-    fi
-    echo "Done. $COUNT image(s) deleted."
-fi
+    echo "  Result: $COUNT deleted${FAILED:+, $FAILED failed}"
+    echo ""
+    TOTAL_COUNT=$((TOTAL_COUNT + COUNT))
+    TOTAL_FAILED=$((TOTAL_FAILED + FAILED))
+done
+
+{ [[ "$DRY_RUN" = true ]] && DRY_RUN_LABEL="would be "; } || DRY_RUN_LABEL=""
+
+echo "=== Total: $TOTAL_COUNT artifact(s) ${DRY_RUN_LABEL}deleted${TOTAL_FAILED:+, $TOTAL_FAILED failed} ==="
+[[ "$TOTAL_FAILED" -gt 0 ]] && exit 1 || exit 0

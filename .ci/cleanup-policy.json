@@ -1,0 +1,45 @@
+[
+  {
+    "description": "PR Docker images",
+    "repo": "sw-nbu-swx-nixl-docker-local",
+    "path": "ci/pr",
+    "type": "docker",
+    "age": "1d"
+  },
+  {
+    "description": "CI base Docker images",
+    "repo": "sw-nbu-swx-nixl-docker-local",
+    "path": "ci",
+    "exclude_path": "ci/pr",
+    "type": "docker",
+    "age": "2w"
+  },
+  {
+    "description": "Verification nixl Docker images",
+    "repo": "sw-nbu-swx-nixl-docker-local",
+    "path": "verification/nixl",
+    "type": "docker",
+    "age": "3m"
+  },
+  {
+    "description": "Verification nixlbench Docker images",
+    "repo": "sw-nbu-swx-nixl-docker-local",
+    "path": "verification/nixlbench",
+    "type": "docker",
+    "age": "3m"
+  },
+  {
+    "description": "Verification LLM Docker images",
+    "repo": "sw-nbu-swx-nixl-docker-local",
+    "path": "verification/llm",
+    "type": "docker",
+    "age": "3m"
+  },
+  {
+    "description": "Verification PyPI wheels",
+    "repo": "sw-nbu-swx-nixl-pypi-local",
+    "path": "verification",
+    "type": "pypi",
+    "age": "3m"
+  }
+]

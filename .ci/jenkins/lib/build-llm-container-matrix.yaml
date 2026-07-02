@@ -58,7 +58,6 @@ env:
   REGISTRY_REPO_NAME: "sw-nbu-swx-nixl-docker-local"
   REGISTRY_REPO_PATH: "verification/llm"
   ARTIFACTORY_REGISTRY_URL: "${REGISTRY_HOST_NAME}/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}"
-  ARTIFACTORY_CLEANUP_AGE: '3m' # 3 months
   WHEELS_REPO_NAME: "sw-dynamo-nixl-pypi-local"
   WHEELS_ARTIFACTORY_URL: "https://${REGISTRY_HOST_NAME}/artifactory/${WHEELS_REPO_NAME}"
   WHEELS_DIR: "${WORKSPACE}/llm-wheels"
@@ -453,7 +452,4 @@ pipeline_stop:
           ${publishSucceeded && params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
         """
       )
-    }
-    withCredentials([usernamePassword(credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN')]) {
-      sh "yum install -y jq > /dev/null && .ci/scripts/artifactory-cleanup-by-time.sh --path ${REGISTRY_REPO_PATH} ${REGISTRY_REPO_NAME} ${ARTIFACTORY_CLEANUP_AGE}"
     }
