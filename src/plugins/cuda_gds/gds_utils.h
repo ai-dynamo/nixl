@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,64 +14,69 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __GDS_UTILS_H
-#define __GDS_UTILS_H
+#ifndef NIXL_SRC_PLUGINS_CUDA_GDS_GDS_UTILS_H
+#define NIXL_SRC_PLUGINS_CUDA_GDS_GDS_UTILS_H
 
 #include <fcntl.h>
 #include <unistd.h>
+
 #include <nixl.h>
 #include <cufile.h>
 
+#include "file/file_path_mode.h"
+
+// RAII cuFile file handle. Registers a CUfileHandle_t for the owned fd on
+// construction and deregisters it on destruction. Shared (via shared_ptr) so a
+// single underlying handle is refcounted across multiple registrations of the
+// same fd.
 class gdsFileHandle {
-    public:
-        int fd;
-        // -1 means inf size file?
-        size_t size;
-        std::string metadata;
-        CUfileHandle_t cu_fhandle;
+public:
+    explicit gdsFileHandle(nixl::FileFd &&fd);
+    ~gdsFileHandle();
+
+    gdsFileHandle(const gdsFileHandle &) = delete;
+    gdsFileHandle &
+    operator=(const gdsFileHandle &) = delete;
+    gdsFileHandle(gdsFileHandle &&) = delete;
+    gdsFileHandle &
+    operator=(gdsFileHandle &&) = delete;
+
+    nixl::FileFd file_fd;
+    CUfileHandle_t cu_fhandle{nullptr};
 };
 
+// RAII cuFile buffer registration. Registration failure is non-fatal (falls
+// back to compat mode); in that case the buffer is not deregistered.
 class gdsMemBuf {
-    public:
-        void *base;
-        size_t size;
+public:
+    gdsMemBuf(void *ptr, size_t sz, int flags = 0);
+    ~gdsMemBuf();
+
+    gdsMemBuf(const gdsMemBuf &) = delete;
+    gdsMemBuf &
+    operator=(const gdsMemBuf &) = delete;
+    gdsMemBuf(gdsMemBuf &&) = delete;
+    gdsMemBuf &
+    operator=(gdsMemBuf &&) = delete;
+
+private:
+    void *base_{nullptr};
+    bool registered_{false};
 };
 
-class nixlGdsIOBatch {
-    public:
-        nixlGdsIOBatch(unsigned int size);
-        ~nixlGdsIOBatch();
+// RAII cuFile driver handle. Opens the driver on construction (throws on
+// failure) and closes it on destruction.
+class gdsDriverHandle {
+public:
+    gdsDriverHandle();
+    ~gdsDriverHandle();
 
-        nixl_status_t addToBatch(CUfileHandle_t fh, void *buffer,
-                                size_t size, size_t file_offset,
-                                size_t ptr_offset, CUfileOpcode_t type);
-        nixl_status_t submitBatch(int flags);
-        nixl_status_t checkStatus();
-        nixl_status_t cancelBatch();
-        void reset();
-
-    private:
-        CUfileBatchHandle_t batch_handle;
-        CUfileIOEvents_t *io_batch_events = nullptr;
-        CUfileIOParams_t *io_batch_params = nullptr;
-        CUfileError_t init_err = {CU_FILE_SUCCESS};
-        unsigned int max_reqs = 0;
-        unsigned int batch_size = 0;
-        unsigned int entries_completed = 0;
-        nixl_status_t current_status = NIXL_ERR_NOT_POSTED;
+    gdsDriverHandle(const gdsDriverHandle &) = delete;
+    gdsDriverHandle &
+    operator=(const gdsDriverHandle &) = delete;
+    gdsDriverHandle(gdsDriverHandle &&) = delete;
+    gdsDriverHandle &
+    operator=(gdsDriverHandle &&) = delete;
 };
 
-class gdsUtil {
-    public:
-        gdsUtil() {}
-        ~gdsUtil() {}
-        nixl_status_t registerFileHandle(int fd, size_t size,
-                                       std::string metaInfo,
-                                       gdsFileHandle& handle);
-        nixl_status_t registerBufHandle(void *ptr, size_t size, int flags);
-        void deregisterFileHandle(gdsFileHandle& handle);
-        nixl_status_t deregisterBufHandle(void *ptr);
-        nixl_status_t openGdsDriver();
-        void closeGdsDriver();
-};
-#endif
+#endif // NIXL_SRC_PLUGINS_CUDA_GDS_GDS_UTILS_H

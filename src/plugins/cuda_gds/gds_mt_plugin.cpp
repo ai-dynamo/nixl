@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,26 +15,37 @@
  * limitations under the License.
  */
 
+#include <string>
+
 #include "backend/backend_plugin.h"
-#include "gds_mt_backend.h"
-#include "common/nixl_log.h"
-#include <exception>
+#include "gds_mt_engine.h"
 
+namespace {
+nixl_b_params_t
+getGdsMtBackendOptions() {
+    return {{"thread_count", std::to_string(defaultGdsMtThreadCount())}};
+}
 
-// Plugin type alias for convenience
 using gds_mt_plugin_t = nixlBackendPluginCreator<nixlGdsMtEngine>;
+} // namespace
 
 #ifdef STATIC_PLUGIN_GDS_MT
 nixlBackendPlugin *
 createStaticGDS_MTPlugin() {
-    return gds_mt_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+    return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                   "GDS_MT",
+                                   "0.1.0",
+                                   getGdsMtBackendOptions(),
+                                   {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return gds_mt_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
+    return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                   "GDS_MT",
+                                   "0.1.0",
+                                   getGdsMtBackendOptions(),
+                                   {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
