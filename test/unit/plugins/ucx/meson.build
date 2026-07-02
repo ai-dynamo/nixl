@@ -13,13 +13,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ROCm detection (mutually exclusive with CUDA; default off)
+rocm_path = get_option('rocm_path')
+if rocm_path != ''
+    if rocm_path == 'default'
+        rocm_path = '/opt/rocm'
+    endif
+    if not fs.exists(rocm_path)
+        error('rocm_path set but ROCm install root not found at ' + rocm_path +
+              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
+    endif
+    rocm_lib_path = rocm_path + '/lib'
+    rocm_inc_path = rocm_path + '/include'
+    rocm_dep = declare_dependency(
+        link_args : ['-L' + rocm_lib_path, '-lamdhip64', '-lhiprtc'],
+        include_directories : include_directories(rocm_inc_path))
+else
+    rocm_dep = disabler()
+endif
+
 ucx_test_dep = [ ucx_dep, nixl_common_deps, ucx_backend_interface]
 
-if cuda_dep.found()
+if rocm_dep.found()
+    ucx_test_dep += [ rocm_dep ]
+    cpp_args = ['-DHAVE_GPU', '-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
+elif cuda_dep.found()
     ucx_test_dep += [ cuda_dep ]
-    cpp_args = '-DHAVE_CUDA'
+    cpp_args = ['-DHAVE_GPU', '-DHAVE_CUDA']
 else
-    cpp_args = '-UHAVE_CUDA'
+    cpp_args = ['-UHAVE_CUDA']
 endif
 
 ucx_backend_test_dep = [nixl_dep, nixl_infra, thread_dep] + ucx_test_dep + nixl_test_utils_dep
@@ -47,12 +69,12 @@ if get_option('buildtype') != 'release'
                include_directories: ucx_test_include_directories,
                install: true)
 
-    if cuda_dep.found()
-        ucx_worker_cuda_bin = executable('ucx_worker_test_cuda',
+    if cuda_dep.found() or rocm_dep.found()
+        ucx_worker_gpu_bin = executable('ucx_worker_test_gpu',
                        'ucx_worker_test.cpp',
                        dependencies: ucx_test_dep,
                        include_directories: ucx_test_include_directories,
-                       cpp_args : '-DUSE_VRAM',
+                       cpp_args : ['-DUSE_VRAM'] + cpp_args,
                        install: true)
     endif
 
