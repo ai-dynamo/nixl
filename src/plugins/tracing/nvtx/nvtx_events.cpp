@@ -81,14 +81,6 @@ namespace {
         return ev;
     }
 
-    [[nodiscard]] nvtxEventAttributes_t
-    makeEvent(const char *ascii_name, const Kind kind) {
-        nvtxEventAttributes_t ev = makeEventBase(kind);
-        ev.messageType = NVTX_MESSAGE_TYPE_ASCII;
-        ev.message.ascii = ascii_name;
-        return ev;
-    }
-
     [[nodiscard]] nvtxStringHandle_t
     lookupRegistered(std::string_view name,
                      const std::vector<nvtxStringHandle_t> &handles) noexcept {
@@ -115,13 +107,17 @@ registerSpanNames(const nvtxDomainHandle_t domain) {
 nvtxEventAttributes_t
 eventForName(const std::string_view name,
              const Kind kind,
-             const std::vector<nvtxStringHandle_t> &registered_handles,
-             std::string &fallback_storage) {
-    if (const nvtxStringHandle_t registered = lookupRegistered(name, registered_handles)) {
-        return makeEvent(registered, kind);
+             const nvtxDomainHandle_t domain,
+             const std::vector<nvtxStringHandle_t> &registered_handles) {
+    nvtxStringHandle_t handle = lookupRegistered(name, registered_handles);
+    if (handle == nullptr) {
+        // Not one of the fixed nixl::* names: register it now so the event still
+        // carries the real label. Registered strings need no caller-owned storage
+        // (unlike an ASCII message), keeping the call sites simple.
+        const std::string owned(name);
+        handle = nvtxDomainRegisterStringA(domain, owned.c_str());
     }
-    fallback_storage.assign(name);
-    return makeEvent(fallback_storage.c_str(), kind);
+    return makeEvent(handle, kind);
 }
 
 } // namespace nixl::trace::nvtx_internal

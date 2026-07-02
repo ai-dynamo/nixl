@@ -194,7 +194,7 @@ private:
  */
 class CorrelationScope {
 public:
-    CorrelationScope(Tracer *tracer, std::uint64_t id) noexcept : tracer_(tracer) {
+    [[nodiscard]] CorrelationScope(Tracer *tracer, std::uint64_t id) : tracer_(tracer) {
         if (tracer_ != nullptr) {
             tracer_->pushCorrelationId(id);
         }

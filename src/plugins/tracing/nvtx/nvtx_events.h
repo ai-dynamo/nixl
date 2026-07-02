@@ -31,12 +31,14 @@ namespace nixl::trace::nvtx_internal {
 [[nodiscard]] std::vector<nvtxStringHandle_t>
 registerSpanNames(nvtxDomainHandle_t domain);
 
-/** @brief Build NVTX event attributes for a span/mark name and operation kind. */
+/** @brief Build NVTX event attributes for a span/mark name and operation kind.
+ *         Uses a pre-registered string handle; an unknown name is registered on
+ *         @p domain on demand, so the event always carries a registered label. */
 [[nodiscard]] nvtxEventAttributes_t
 eventForName(std::string_view name,
              Kind kind,
-             const std::vector<nvtxStringHandle_t> &registered_handles,
-             std::string &fallback_storage);
+             nvtxDomainHandle_t domain,
+             const std::vector<nvtxStringHandle_t> &registered_handles);
 
 } // namespace nixl::trace::nvtx_internal
 
