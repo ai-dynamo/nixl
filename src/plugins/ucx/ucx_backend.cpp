@@ -19,6 +19,7 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/backend.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 
 #include <optional>
@@ -31,6 +32,10 @@
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include <asio.hpp>
+
+// A transfer to a single endpoint posts at most three requests:
+// one data request, one flush request, and one notification request.
+constexpr size_t single_ep_request_count = 3;
 
 /****************************************
  * Backend request management
@@ -75,6 +80,25 @@ public:
     };
 
     std::optional<Notif> notif;
+
+#ifdef HAVE_UCX_SGL_API
+    struct sglBuffers {
+        std::vector<void *> localAddrs;
+        std::vector<uint64_t> remoteAddrs;
+        std::vector<size_t> lengths;
+        std::vector<ucp_mem_h> memhs;
+        std::vector<ucp_rkey_h> rkeys;
+
+        void
+        resize(size_t count) {
+            localAddrs.resize(count);
+            remoteAddrs.resize(count);
+            lengths.resize(count);
+            memhs.resize(count);
+            rkeys.resize(count);
+        }
+    } sgl;
+#endif
 
     nixlUcxBackendReqH(nixlUcxWorker *worker, size_t worker_id)
         : worker_(worker),
@@ -826,6 +850,17 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     const auto engine_config =
         nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
+    sglEnabled_ = nixl::config::getValueOptional<bool>("NIXL_UCX_SGL_ENABLE").value_or(false);
+#ifdef HAVE_UCX_SGL_API
+    NIXL_DEBUG << "UCX SGL offload " << (sglEnabled_ ? "enabled" : "disabled");
+#else
+    if (sglEnabled_) {
+        NIXL_WARN << "NIXL_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL "
+                     "support";
+        sglEnabled_ = false;
+    }
+#endif
+
     uc = std::make_unique<nixlUcxContext>(devs,
                                           init_params.enableProgTh,
                                           num_workers,
@@ -1201,6 +1236,73 @@ nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
     return result;
 }
 
+#ifdef HAVE_UCX_SGL_API
+nixl_status_t
+nixlUcxEngine::sendXferSgl(const nixl_meta_dlist_t &local,
+                           const nixl_meta_dlist_t &remote,
+                           const std::string &remote_agent,
+                           nixlBackendReqH *handle,
+                           size_t start_idx,
+                           size_t end_idx) const {
+    const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    const size_t worker_id = int_handle->getWorkerId();
+    const ucx_connection_ptr_t conn = getConnection(remote_agent);
+    if (!conn) {
+        NIXL_ERROR << "No connection found for remote agent: " << remote_agent;
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    const size_t count = end_idx - start_idx;
+    auto &sgl = int_handle->sgl;
+    sgl.resize(count);
+    for (size_t i = start_idx; i < end_idx; ++i) {
+        const size_t out = i - start_idx;
+        const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
+        const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
+        NIXL_ASSERT(local[i].len == remote[i].len);
+
+        sgl.localAddrs[out] = reinterpret_cast<void *>(local[i].addr);
+        sgl.remoteAddrs[out] = static_cast<uint64_t>(remote[i].addr);
+        sgl.lengths[out] = local[i].len;
+        sgl.memhs[out] = lmd->getMem().getMemh();
+        sgl.rkeys[out] = rmd->getRkey(worker_id).get();
+    }
+
+    const ucp_dt_local_sgl_t local_sgl = {
+        .field_mask = UCP_DT_LOCAL_SGL_FIELD_BUFFERS | UCP_DT_LOCAL_SGL_FIELD_LENGTHS |
+            UCP_DT_LOCAL_SGL_FIELD_MEMHS,
+        .buffers = sgl.localAddrs.data(),
+        .lengths = sgl.lengths.data(),
+        .memhs = sgl.memhs.data(),
+    };
+    const ucp_dt_remote_sgl_t remote_sgl = {
+        .field_mask = UCP_DT_REMOTE_SGL_FIELD_REMOTE_ADDRS | UCP_DT_REMOTE_SGL_FIELD_LENGTHS |
+            UCP_DT_REMOTE_SGL_FIELD_RKEYS,
+        .remote_addrs = sgl.remoteAddrs.data(),
+        .lengths = sgl.lengths.data(),
+        .rkeys = sgl.rkeys.data(),
+    };
+
+    auto &ep = conn->getEp(worker_id);
+
+    int_handle->reserve(single_ep_request_count);
+
+    nixlUcxReq req;
+    const nixl_status_t post_ret = ep->postSgl(local_sgl, remote_sgl, count, req);
+    if (int_handle->append(post_ret, req, conn) != NIXL_SUCCESS) {
+        return post_ret;
+    }
+
+    nixlUcxReq flush_req;
+    const nixl_status_t flush_ret = ep->flushEp(flush_req);
+    if (int_handle->append(flush_ret, flush_req, conn) != NIXL_SUCCESS) {
+        return flush_ret;
+    }
+
+    return NIXL_SUCCESS;
+}
+#endif
+
 nixl_status_t
 nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
                              const nixl_meta_dlist_t &local,
@@ -1216,9 +1318,13 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    /* Assuming we have a single EP, we need 3 requests: one pending request,
-     * one flush request, and one notification request */
-    int_handle->reserve(3);
+#ifdef HAVE_UCX_SGL_API
+    if (sglEnabled_ && operation == NIXL_WRITE) {
+        return sendXferSgl(local, remote, remote_agent, handle, start_idx, end_idx);
+    }
+#endif
+
+    int_handle->reserve(single_ep_request_count);
 
     for (size_t i = start_idx; i < end_idx;) {
         /* Send requests to a single EP */
