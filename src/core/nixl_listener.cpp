@@ -307,6 +307,15 @@ public:
 
             if (response.is_ok()) {
                 metadata = response.value().as_string();
+                if (metadata.empty()) {
+                    // A present-but-empty value is never a valid MD blob (e.g. the
+                    // agent-prefix anchor, or a key observed mid-write). Treat as
+                    // not-found so the caller watches/retries instead of handing an
+                    // empty blob to loadRemoteMD.
+                    NIXL_INFO << "Fetched empty value for key: " << metadata_key
+                              << "; treating as not found";
+                    return NIXL_ERR_NOT_FOUND;
+                }
                 NIXL_DEBUG << "Successfully fetched key: " << metadata_key
                            << " (rev " << response.value().modified_index() << ")";
                 return NIXL_SUCCESS;
