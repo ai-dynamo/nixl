@@ -80,6 +80,16 @@ kubernetes:
 # build-container.sh runs podman/docker inside this container to build the wheel image
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+  # wheel_base: built and pushed by CI-demo when Dockerfile.manylinux changes.
+  # No step selects this container, so it is never used as a runner — only as a cached deps image.
+  # name/tag cannot use matrix axes (${manylinux}, ${arch}) — those resolve only inside steps.
+  # manylinux is hardcoded to 2_28 (the only matrix value); arch is handled by ci-demo per node.
+  - {
+      file: 'contrib/Dockerfile.manylinux',
+      name: "nixl-wheel-base-manylinux_2_28",
+      tag: "${CI_IMAGE_TAG}",
+      build_args: '--build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${BASE_TAG} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
+    }
 
 # =============================================================================
 # Build Matrix Configuration
@@ -88,8 +98,6 @@ runs_on_dockers:
 # Each combination runs in parallel
 matrix:
   axes:
-    manylinux:
-      - "2_28"
     # Python versions supported by NIXL
     # Each version gets its own wheel with appropriate ABI tags
     python_version:
@@ -106,10 +114,12 @@ matrix:
 # =============================================================================
 # Global environment variables for the build process
 env:
-  NPROC: 16
+  NPROC: 32
   GRPC_NPROC: 10
   BASE_IMAGE: "${registry_host}/sw-nbu-swx-nixl-docker-local/base/cuda"
   BASE_TAG: '13.0-devel-manylinux--25.09'
+  CI_IMAGE_TAG: "20260701-1"
+  WHL_TORCH_VERSIONS: "2.13"
 
 steps:
   # =============================================================================
@@ -120,6 +130,7 @@ steps:
   - name: Prepare
     credentialsId: 'svc-nixl-new-artifactory-token'
     parallel: false
+    containerSelector: "{name: 'manylinux'}"
     run: |
       # Setup podman and dependencies
       rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
@@ -135,6 +146,7 @@ steps:
   # This step uses the build-wheel.sh script to package everything into wheels
   - name: Build Wheel
     parallel: false
+    containerSelector: "{name: 'manylinux'}"
     run: |
       set -x
       export NPROC=$NPROC
@@ -142,13 +154,14 @@ steps:
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
-        --wheel-base "manylinux_${manylinux}" \
+        --wheel-base "manylinux_2_28" \
         --python-versions "${python_version}" \
         --arch ${arch} \
-        --dockerfile contrib/Dockerfile.manylinux
+        --dockerfile contrib/Dockerfile.manylinux \
+        --wheel-base-image "${registry_host}${registry_path}/${arch}/nixl-wheel-base-manylinux_2_28:${CI_IMAGE_TAG}"
 
 # =============================================================================
 # Task Naming Convention
 # =============================================================================
 # Unique identifier for each matrix combination
-taskName: '${name}_${manylinux}/${arch}/python_${python_version}'
+taskName: '${name}/${arch}/python_${python_version}'

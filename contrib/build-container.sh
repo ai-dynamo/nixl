@@ -135,6 +135,14 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --wheel-base-image)
+            if [ "$2" ]; then
+                WHEEL_BASE_IMAGE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --)
             shift
             break
@@ -218,6 +226,7 @@ fi
 
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
+BUILD_ARGS+=" --build-arg WHL_TORCH_VERSIONS=${WHL_TORCH_VERSIONS:-2.11,2.12,2.13}"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
@@ -227,6 +236,11 @@ BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 
+if [ -n "$WHEEL_BASE_IMAGE" ]; then
+    BUILD_ARGS+=" --build-arg wheel_base=$WHEEL_BASE_IMAGE"
+    BUILD_TARGET="--target wheel"
+fi
+
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${BUILD_TARGET:-} $BUILD_CONTEXT
