@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-#include <algorithm>
 #include <iostream>
 #include <chrono>
 #include <iostream>
@@ -115,7 +114,7 @@ namespace nixl::trace {
 // True when the process runs under Nsight Systems: nsys injects
 // NVTX_INJECTION64_PATH into the profiled process's environment (its presence
 // means "running under nsys", not merely that nsys is installed).
-bool
+[[nodiscard]] bool
 runningUnderNsys() {
     return nixl::config::checkExistence("NVTX_INJECTION64_PATH");
 }
@@ -124,7 +123,7 @@ runningUnderNsys() {
 // backend-agnostic facade so nsys/NVTX specifics never reach makeTracer()).
 // Running under nsys auto-enables NVTX *in addition to* any explicitly requested
 // backends; a set-but-empty NIXL_TRACE_BACKENDS is a hard "off" that beats it.
-std::vector<std::string>
+[[nodiscard]] std::vector<std::string>
 resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under_nsys) {
     std::set<std::string> backends;
     bool explicit_off = false;
