@@ -107,6 +107,9 @@ private:
     void
     registerCounter(const std::string &name, const std::string &help);
 
+    void
+    registerErrorCounters();
+
     // event_name is the lookup key exportEvent() uses (the telemetry event
     // name); metric_name is the exposed Prometheus series name. They differ for
     // last-operation gauges, e.g. the AGENT_TX_BYTES event ("agent_tx_bytes")

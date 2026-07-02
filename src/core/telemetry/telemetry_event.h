@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_CORE_TELEMETRY_TELEMETRY_EVENT_H
 #define NIXL_SRC_CORE_TELEMETRY_TELEMETRY_EVENT_H
 
+#include <array>
 #include <cstdint>
 #include <string_view>
 
@@ -56,6 +57,21 @@ enum class nixl_telemetry_event_type_t : uint32_t {
 
 [[nodiscard]] nixl_telemetry_event_type_t
 nixlTelemetryEventTypeForStatus(nixl_status_t s);
+
+inline constexpr std::array telemetry_error_event_types = {
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED,
+    nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM,
+    nixl_telemetry_event_type_t::AGENT_ERR_BACKEND,
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND,
+    nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH,
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED,
+    nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE,
+    nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN,
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED,
+    nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT,
+    nixl_telemetry_event_type_t::AGENT_ERR_CANCELED,
+    nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY,
+};
 
 namespace nixlEnumStrings {
 [[nodiscard]] constexpr std::string_view
@@ -104,7 +120,47 @@ telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
     }
     return "unknown_event";
 }
+
+[[nodiscard]] constexpr const char *
+telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
+    switch (type) {
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
+        return "not_posted";
+    case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
+        return "invalid_param";
+    case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
+        return "backend";
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND:
+        return "not_found";
+    case nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH:
+        return "mismatch";
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED:
+        return "not_allowed";
+    case nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE:
+        return "repost_active";
+    case nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN:
+        return "unknown";
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED:
+        return "not_supported";
+    case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
+        return "remote_disconnect";
+    case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
+        return "canceled";
+    case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
+        return "no_telemetry";
+    case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
+    case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
+    case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
+    case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
+    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
+    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
+    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
+    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
+        return nullptr;
+    }
+    return nullptr;
 }
+} // namespace nixlEnumStrings
 
 /**
  * @struct nixlTelemetryEvent

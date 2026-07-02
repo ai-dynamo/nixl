@@ -68,6 +68,11 @@ stream:
   `agent_memory_deregistered_last_bytes` -- on both exporters. This is purely an
   exporter-side derivation: no new event type is emitted and the buffer format is
   unchanged.
+- **Error counters**: the Prometheus and DOCA exporters expose error events as
+  `agent_errors_total{status="<status>"}`. The `status` label is bounded by the
+  fixed `AGENT_ERR_*` event set: `not_posted`, `invalid_param`, `backend`,
+  `not_found`, `mismatch`, `not_allowed`, `repost_active`, `unknown`,
+  `not_supported`, `remote_disconnect`, `canceled`, and `no_telemetry`.
 
 ### Metric naming convention
 
