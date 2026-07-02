@@ -19,6 +19,7 @@
 #include "nixl.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+
 #include <dlfcn.h>
 #include <filesystem>
 #include <dirent.h>
@@ -30,10 +31,14 @@
 
 using lock_guard = const std::lock_guard<std::mutex>;
 
+namespace {
+
 const std::string backendPluginPrefix = "libplugin_";
 const std::string telemetryPluginPrefix = "libtelemetry_exporter_";
 const std::string tracePluginPrefix = "libtrace_backend_";
 const std::string kPluginSuffix = ".so";
+
+} // namespace
 
 // pluginHandle implementation
 nixlBackendPluginHandle::nixlBackendPluginHandle(void *handle, nixlBackendPlugin *plugin)
@@ -348,7 +353,8 @@ nixlPluginManager::discoverPluginsFromList(const std::string &filename) {
 }
 
 namespace {
-std::string
+
+[[nodiscard]] std::string
 getPluginDir() {
     // Environment variable takes precedence
     if (const auto plugin_dir = nixl::config::getValueOptional<std::string>("NIXL_PLUGIN_DIR")) {
@@ -364,26 +370,55 @@ getPluginDir() {
     }
     return (std::filesystem::path(info.dli_fname).parent_path() / "plugins").string();
 }
+
 } // namespace
 
 // PluginManager implementation
 nixlPluginManager::nixlPluginManager() {
-    // Force levels right before logging
-#ifdef NIXL_USE_PLUGIN_FILE
-    NIXL_DEBUG << "Loading plugins from file: " << NIXL_USE_PLUGIN_FILE;
-    std::string plugin_file = NIXL_USE_PLUGIN_FILE;
-    if (std::filesystem::exists(plugin_file)) {
-        discoverPluginsFromList(plugin_file);
-    }
-#endif
+    processPluginFile();
+    processPluginDir();
+    registerBuiltinPlugins();
+}
 
-    std::string plugin_dir = getPluginDir();
+void
+nixlPluginManager::processPluginDir() {
+    const std::string plugin_dir = getPluginDir();
     if (!plugin_dir.empty()) {
         NIXL_DEBUG << "Loading plugins from: " << plugin_dir;
         plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);
         discoverPluginsFromDir(plugin_dir);
     }
+}
 
+void
+nixlPluginManager::processPluginFile() {
+    // Force levels right before logging
+#ifdef NIXL_USE_PLUGIN_FILE
+    NIXL_DEBUG << "Loading plugins from file: " << NIXL_USE_PLUGIN_FILE;
+    const std::string plugin_file = NIXL_USE_PLUGIN_FILE;
+    if (std::filesystem::exists(plugin_file)) {
+        discoverPluginsFromList(plugin_file);
+    }
+#endif
+}
+
+void
+nixlPluginManager::reinitializeForUnitTest() {
+    // Lock scope
+    {
+        const std::lock_guard lg(lock);
+
+        loaded_backend_plugins_.clear();
+        loaded_telemetry_plugins_.clear();
+        loaded_trace_plugins_.clear();
+        discovered_backend_plugins_.clear();
+        explicit_plugin_paths_.clear();
+        plugin_dirs_.clear();
+        backend_static_plugins_.clear();
+        telemetry_static_plugins_.clear();
+    }
+    processPluginFile();
+    processPluginDir();
     registerBuiltinPlugins();
 }
 
@@ -559,25 +594,17 @@ nixlPluginManager::loadTracePlugin(const std::string &plugin_name) {
 }
 
 namespace {
-static bool
-startsWith(const std::string &str, const std::string &prefix) {
-    return str.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), str.begin());
-}
 
-static bool
-endsWith(const std::string &str, const std::string &suffix) {
-    return str.size() >= suffix.size() && std::equal(suffix.rbegin(), suffix.rend(), str.rbegin());
-}
-
-static std::string
+[[nodiscard]] std::string
 extractPluginName(const std::string &filename, const std::string &prefix) {
     return filename.substr(prefix.size(), filename.size() - prefix.size() - kPluginSuffix.size());
 }
+
 } // namespace
 
 void
 nixlPluginManager::discoverBackendPlugin(const std::string &filename) {
-    if (startsWith(filename, backendPluginPrefix) && endsWith(filename, kPluginSuffix)) {
+    if (filename.starts_with(backendPluginPrefix) && filename.ends_with(kPluginSuffix)) {
         std::string plugin_name = extractPluginName(filename, backendPluginPrefix);
 
         const lock_guard lg(lock);
@@ -590,7 +617,7 @@ nixlPluginManager::discoverBackendPlugin(const std::string &filename) {
 
 void
 nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
-    if (startsWith(filename, telemetryPluginPrefix) && endsWith(filename, kPluginSuffix)) {
+    if (filename.starts_with(telemetryPluginPrefix) && filename.ends_with(kPluginSuffix)) {
         std::string plugin_name = extractPluginName(filename, telemetryPluginPrefix);
         NIXL_INFO << "Discovered telemetry plugin: " << plugin_name;
     }
@@ -598,7 +625,7 @@ nixlPluginManager::discoverTelemetryPlugin(const std::string &filename) {
 
 void
 nixlPluginManager::discoverTracePlugin(const std::string &filename) {
-    if (startsWith(filename, tracePluginPrefix) && endsWith(filename, kPluginSuffix)) {
+    if (filename.starts_with(tracePluginPrefix) && filename.ends_with(kPluginSuffix)) {
         std::string plugin_name = extractPluginName(filename, tracePluginPrefix);
         NIXL_INFO << "Discovered trace plugin: " << plugin_name;
     }
