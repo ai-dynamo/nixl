@@ -121,9 +121,10 @@ nixlUcxEp::setState(nixl::ucx::ep_state_t new_state) {
 }
 
 nixl_status_t
-nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags) {
+nixlUcxEp::closeImpl() {
     ucs_status_ptr_t request = nullptr;
-    ucp_request_param_t req_param = {.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS, .flags = flags};
+    const ucp_request_param_t req_param = {.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+                                           .flags = closeFlags_};
 
     switch (state) {
     case nixl::ucx::ep_state_t::UNINITIALIZED:
@@ -156,7 +157,11 @@ nixlUcxEp::closeImpl(ucp_ep_close_flags_t flags) {
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode) {
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
+                     void *addr,
+                     ucp_err_handling_mode_t err_handling_mode,
+                     uint32_t close_flags)
+    : closeFlags_{close_flags} {
     ucp_ep_params_t ep_params;
     nixl_status_t status;
 
@@ -185,7 +190,7 @@ nixlUcxEp::~nixlUcxEp() {
 
 nixl_status_t
 nixlUcxEp::disconnect_nb() {
-    nixl_status_t status = closeImpl(ucp_ep_close_flags_t(0));
+    const nixl_status_t status = closeImpl();
 
     // At step of disconnect we can ignore the remote disconnect error.
     return (status == NIXL_ERR_REMOTE_DISCONNECT) ? NIXL_SUCCESS : status;
@@ -513,9 +518,12 @@ nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
     return worker;
 }
 
-nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx, ucp_err_handling_mode_t err_handling_mode)
+nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
+                             ucp_err_handling_mode_t err_handling_mode,
+                             uint32_t ep_close_flags)
     : worker(createUcpWorker(ctx), &ucp_worker_destroy),
-      err_handling_mode_(err_handling_mode) {}
+      err_handling_mode_(err_handling_mode),
+      epCloseFlags_(ep_close_flags) {}
 
 std::string
 nixlUcxWorker::epAddr() {
@@ -536,7 +544,7 @@ nixlUcxWorker::epAddr() {
 std::unique_ptr<nixlUcxEp>
 nixlUcxWorker::connect(void *addr, std::size_t size) {
     try {
-        return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_);
+        return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, epCloseFlags_);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "UCX endpoint create failed: " << e.what();
