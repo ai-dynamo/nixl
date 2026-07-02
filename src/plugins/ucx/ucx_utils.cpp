@@ -18,6 +18,7 @@
 #include "ucx_utils.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <exception>
 #include <stdexcept>
@@ -30,6 +31,10 @@
 #include "common/nixl_log.h"
 #include "config.h"
 #include "serdes/serdes.h"
+
+#ifdef HAVE_CUDA
+#include <cuda.h>
+#endif
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
@@ -548,6 +553,40 @@ nixlUcxWorker::connect(void *addr, std::size_t size) {
  * Memory management
  * =========================================== */
 
+#ifdef HAVE_CUDA
+namespace {
+// CUDA VMM allocations (cuMemCreate/cuMemMap, e.g. PyTorch's
+// expandable_segments:True) cannot be exported through the legacy
+// cuIpcGetMemHandle mechanism that UCX's cuda_ipc transport relies on, so
+// intra-node transfers silently degrade to UCX's software-emulated path when
+// no RDMA NIC is available. Warn once at registration so the degradation is
+// diagnosable. See README.md.
+void
+warnIfNotCudaIpcCapable(const void *addr, size_t size) {
+    int is_legacy_ipc_capable = 0;
+    const CUresult status = cuPointerGetAttribute(&is_legacy_ipc_capable,
+                                                  CU_POINTER_ATTRIBUTE_IS_LEGACY_CUDA_IPC_CAPABLE,
+                                                  reinterpret_cast<CUdeviceptr>(addr));
+    if (status != CUDA_SUCCESS || is_legacy_ipc_capable) {
+        return;
+    }
+
+    static std::atomic<bool> warned{false};
+    if (warned.exchange(true)) {
+        return;
+    }
+
+    NIXL_WARN << "Registered CUDA region at " << addr << " (" << size
+              << " bytes) is not legacy CUDA IPC-capable (e.g. PyTorch "
+                 "expandable_segments:True / CUDA VMM allocations). UCX cannot "
+                 "export it through the cuda_ipc transport, so intra-node "
+                 "transfers with no RDMA NIC available fall back to UCX's slow "
+                 "software-emulated path instead of the cuda_ipc zero-copy path. "
+                 "Allocate the transfer buffer with expandable_segments disabled "
+                 "to keep the fast path. See src/plugins/ucx/README.md.";
+}
+} // namespace
+#endif
 
 int
 nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl_mem_type) {
@@ -584,6 +623,12 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
             ucp_mem_unmap(ctx, mem.memh);
             return -1;
         }
+
+#ifdef HAVE_CUDA
+        if (attr.mem_type == UCS_MEMORY_TYPE_CUDA) {
+            warnIfNotCudaIpcCapable(addr, size);
+        }
+#endif
     }
 
     return 0;
