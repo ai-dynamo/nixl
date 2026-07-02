@@ -303,6 +303,29 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                       << "]: " << dev.device_path << " (" << dev.security_flags << ")"
                       << ", offset = " << dev.dev_offset << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_DOCA_MEMOS)) {
+        // Set DOCA_MEMOS backend parameters
+        backend_params["device_name"] = xferBenchConfig::doca_memos_device_name;
+        backend_params["num_tasks"] = std::to_string(xferBenchConfig::doca_memos_num_tasks);
+        backend_params["query_mem_mode"] = xferBenchConfig::doca_memos_query_mem_mode;
+        if (!xferBenchConfig::doca_memos_nguid.empty()) {
+            backend_params["nguid"] = xferBenchConfig::doca_memos_nguid;
+        }
+        if (xferBenchConfig::doca_memos_ignore_read_not_found) {
+            backend_params["ignore_read_not_found"] = "true";
+        }
+
+        std::cout << "DOCA_MEMOS backend initialized:" << std::endl;
+        std::cout << "  Device: " << xferBenchConfig::doca_memos_device_name << std::endl;
+        std::cout << "  Num tasks: " << xferBenchConfig::doca_memos_num_tasks << std::endl;
+        std::cout << "  Query mem mode: " << xferBenchConfig::doca_memos_query_mem_mode
+                  << std::endl;
+        if (!xferBenchConfig::doca_memos_nguid.empty()) {
+            std::cout << "  Namespace GUID: " << xferBenchConfig::doca_memos_nguid << std::endl;
+        }
+        if (xferBenchConfig::doca_memos_ignore_read_not_found) {
+            std::cout << "  Ignore read not found: true" << std::endl;
+        }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
         std::cout << "UCCL backend" << std::endl;
         backend_params["in_python"] = "0";
@@ -958,7 +981,30 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     opt_args.backends.push_back(backend_engine);
 
-    if (xferBenchConfig::isObjStorageBackend()) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_DOCA_MEMOS) {
+        size_t max_batch = xferBenchConfig::max_batch_size;
+        size_t total_keys = 0;
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                for (size_t b = 0; b < max_batch; b++) {
+                    int dev_id =
+                        static_cast<int>(list_idx * num_devices * max_batch + i * max_batch + b);
+                    auto basic_desc = initBasicDescObj(buffer_size, dev_id, "");
+                    if (basic_desc) {
+                        iov_list.push_back(basic_desc.value());
+                    }
+                }
+            }
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            total_keys += iov_list.size();
+            remote_iovs.push_back(iov_list);
+        }
+        std::cout << "DOCA_MEMOS: Registered " << total_keys << " keys across " << num_threads
+                  << " threads x " << num_devices << " devices x " << max_batch << " batch"
+                  << std::endl;
+    } else if (xferBenchConfig::isObjStorageBackend()) {
         buffer_size = xferBenchConfig::max_block_size;
 
         struct timeval tv;
@@ -968,7 +1014,6 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
-                std::optional<xferBenchIOV> basic_desc;
                 std::string unique_name = "nixlbench_obj" + std::to_string(list_idx) + "_" +
                     std::to_string(i) + "_" + std::to_string(timestamp);
 
@@ -980,7 +1025,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 }
 
                 int obj_dev_id = list_idx * num_devices + i;
-                basic_desc = initBasicDescObj(buffer_size, obj_dev_id, unique_name);
+                auto basic_desc = initBasicDescObj(buffer_size, obj_dev_id, unique_name);
                 if (basic_desc) {
                     std::cout << "Creating obj: " << unique_name << std::endl;
                     iov_list.push_back(basic_desc.value());
@@ -1096,7 +1141,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
 
             if (basic_desc) {
-                if (!remote_regs_.empty()) {
+                if (!remote_regs_.empty() &&
+                    xferBenchConfig::backend != XFERBENCH_BACKEND_DOCA_MEMOS) {
                     basic_desc.value().metaInfo = remote_regs_[list_idx].iovs()[i].metaInfo;
                 }
                 iov_list.push_back(basic_desc.value());
@@ -1133,9 +1179,22 @@ void
 xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     // Ordering: deregister remote regions before local ones
     // (remote registrations may reference local buffers).
-    // NixlMemRegion::release() handles deregisterMem + per-IOV cleanup.
+
+    // DOCA_MEMOS remote IOVs are stored separately from NixlMemRegion because
+    // the generic OBJ_SEG cleanup path calls rmObj, which DOCA_MEMOS doesn't support.
+    if (!remote_iovs.empty()) {
+        nixl_opt_args_t opt_args;
+        opt_args.backends.push_back(backend_engine);
+        for (auto &iov_list : remote_iovs) {
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
+        }
+        remote_iovs.clear();
+    }
+
+    // NixlMemRegion::release() handles deregisterMem + per-IOV cleanup for all
+    // other backends. xferFileState RAII closes backing fds after deregistrations.
     remote_regs_.clear();
-    // xferFileState RAII closes backing fds after deregistrations complete.
     remote_fds.clear();
     local_regs_.clear();
     iov_lists.clear();
@@ -1218,6 +1277,25 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             const auto &iov_list = local_iovs[list_idx];
             std::vector<xferBenchIOV> remote_iov_list;
             size_t num_devices = iov_list.size();
+
+            if (XFERBENCH_BACKEND_DOCA_MEMOS == xferBenchConfig::backend) {
+                const size_t remote_size = remote_iovs[list_idx].size();
+                if (remote_size == 0 || iov_list.size() % remote_size != 0) {
+                    std::cerr << "DOCA_MEMOS: local IOV count " << iov_list.size()
+                              << " is not a positive multiple of remote IOV count " << remote_size
+                              << std::endl;
+                    std::exit(EXIT_FAILURE);
+                }
+                const size_t entries_per_key = iov_list.size() / remote_size;
+                for (size_t idx = 0; idx < iov_list.size(); idx++) {
+                    xferBenchIOV remote_iov(remote_iovs[list_idx][idx / entries_per_key]);
+                    remote_iov.len = iov_list[idx].len;
+                    remote_iov_list.push_back(remote_iov);
+                }
+                res.push_back(remote_iov_list);
+                continue;
+            }
+
             for (size_t devidx = 0; devidx < num_devices; devidx++) {
                 const auto &iov = iov_list[devidx];
                 if (xferBenchConfig::isObjStorageBackend()) {
@@ -1721,6 +1799,62 @@ execTransfer(nixlAgent *agent,
     return ret;
 }
 
+// Execute queryMem iterations across threads, measuring latency
+static int
+execQuery(nixlAgent *agent,
+          nixlBackendH *backend,
+          const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
+          const int num_iter,
+          const int num_threads,
+          xferBenchStats &stats,
+          const std::atomic<int> *terminate_ptr = nullptr) {
+    int ret = 0;
+    stats.clear();
+
+    xferBenchTimer total_timer;
+#pragma omp parallel num_threads(num_threads)
+    {
+        xferBenchStats thread_stats;
+        thread_stats.reserve(num_iter);
+        xferBenchTimer timer;
+        const int tid = omp_get_thread_num();
+        const auto &remote_iov = remote_iovs[tid];
+
+        nixl_opt_args_t opt_args;
+        opt_args.backends.push_back(backend);
+
+        thread_stats.prepare_duration.add(timer.lap());
+
+        for (int i = 0; i < num_iter; ++i) {
+            if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+                break;
+            }
+
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
+
+            std::vector<nixl_query_resp_t> resp;
+            nixl_status_t rc = agent->queryMem(desc_list, resp, &opt_args);
+            // queryMem is synchronous so the full latency lands in
+            // transfer_duration; prepare_/post_duration stay zero.
+            thread_stats.transfer_duration.add(timer.lap());
+
+            if (__builtin_expect(rc != NIXL_SUCCESS, 0)) {
+                std::cerr << "queryMem failed: " << nixlEnumStrings::statusStr(rc) << std::endl;
+#pragma omp atomic write
+                ret = -1;
+                break;
+            }
+        }
+
+#pragma omp critical
+        { stats.add(thread_stats); }
+    }
+
+    const nixlTime::us_t total_duration = total_timer.lap();
+    stats.total_duration.add(total_duration);
+    return ret;
+}
+
 std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
@@ -1729,11 +1863,119 @@ xferBenchNixlWorker::transfer(size_t block_size,
     int skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
     xferBenchStats stats;
     int ret = 0;
+
+    // QUERY op_type: benchmark queryMem instead of read/write transfers
+    if (xferBenchConfig::op_type == XFERBENCH_OP_QUERY) {
+        // For DOCA_MEMOS: pre-populate keys so EXIST operations can find them (actual mode)
+        if (xferBenchConfig::backend == XFERBENCH_BACKEND_DOCA_MEMOS) {
+            xferBenchStats prepop_stats;
+            std::cout << "DOCA_MEMOS: Pre-populating keys with " << block_size
+                      << " byte values before QUERY test..." << std::endl;
+
+            ret = execTransfer(agent,
+                               backend_engine,
+                               local_iovs,
+                               remote_iovs,
+                               NIXL_WRITE,
+                               1,
+                               xferBenchConfig::num_threads,
+                               prepop_stats);
+            if (ret < 0) {
+                std::cerr << "DOCA_MEMOS: Failed to pre-populate keys for QUERY (block_size="
+                          << block_size << ")" << std::endl;
+                return std::variant<xferBenchStats, int>(ret);
+            }
+            std::cout << "DOCA_MEMOS: Key pre-population complete" << std::endl;
+        }
+
+        // Reduce iterations for large block sizes
+        if (block_size > LARGE_BLOCK_SIZE) {
+            skip /= xferBenchConfig::large_blk_iter_ftr;
+            num_iter /= xferBenchConfig::large_blk_iter_ftr;
+        }
+
+        if (skip > 0) {
+            ret = execQuery(agent,
+                            backend_engine,
+                            remote_iovs,
+                            skip,
+                            xferBenchConfig::num_threads,
+                            stats,
+                            &terminate);
+            if (ret < 0) {
+                return std::variant<xferBenchStats, int>(ret);
+            }
+        }
+
+        synchronize();
+        stats.clear();
+
+        ret = execQuery(agent,
+                        backend_engine,
+                        remote_iovs,
+                        num_iter,
+                        xferBenchConfig::num_threads,
+                        stats,
+                        &terminate);
+        if (ret < 0) {
+            return std::variant<xferBenchStats, int>(ret);
+        }
+
+        synchronize();
+        return std::variant<xferBenchStats, int>(stats);
+    }
+
     nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == xferBenchConfig::op_type ? NIXL_READ : NIXL_WRITE;
 
     if (!rt->checkKeepAlive()) { // also refreshes the lease internally.
         std::cerr << "nixlbench: keepalive failed before transfer — aborting" << std::endl;
         return std::variant<xferBenchStats, int>(-1);
+    }
+
+    // For DOCA_MEMOS READ: pre-populate keys by writing them first with the correct block_size.
+    // DOCA_MEMOS stores exact key-value pairs; a retrieve fails with IO_FAILED if the stored
+    // value length doesn't match the read buffer length. This mirrors fio's approach of
+    // running a write job before the read job.
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_DOCA_MEMOS &&
+        xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+        xferBenchStats prepop_stats;
+        std::cout << "DOCA_MEMOS: Pre-populating keys with " << block_size
+                  << " byte values before READ test..." << std::endl;
+
+        ret = execTransfer(agent,
+                           backend_engine,
+                           local_iovs,
+                           remote_iovs,
+                           NIXL_WRITE,
+                           1,
+                           xferBenchConfig::num_threads,
+                           prepop_stats);
+        if (ret < 0) {
+            std::cerr << "DOCA_MEMOS: Failed to pre-populate keys for READ (block_size="
+                      << block_size << ")" << std::endl;
+            return std::variant<xferBenchStats, int>(ret);
+        }
+        std::cout << "DOCA_MEMOS: Key pre-population complete" << std::endl;
+
+        // Verify pre-population by retrieving each object
+        std::cout << "DOCA_MEMOS: Verifying pre-populated keys..." << std::endl;
+        xferBenchStats verify_stats;
+        ret = execTransfer(agent,
+                           backend_engine,
+                           local_iovs,
+                           remote_iovs,
+                           NIXL_READ,
+                           1,
+                           xferBenchConfig::num_threads,
+                           verify_stats);
+        if (ret < 0) {
+            std::cerr << "DOCA_MEMOS: Verification failed - retrieve operations failed after "
+                         "pre-population (block_size="
+                      << block_size << ")" << std::endl;
+            return std::variant<xferBenchStats, int>(ret);
+        }
+        std::cout << "DOCA_MEMOS: Verification complete - all keys verified successfully"
+                  << std::endl;
     }
 
     // Reduce skip by 10x for large block sizes

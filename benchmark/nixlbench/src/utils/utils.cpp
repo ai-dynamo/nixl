@@ -63,7 +63,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-              "GUSLI, AZURE_BLOB] (only used with nixl worker)");
+              "GUSLI, AZURE_BLOB, DOCA_MEMOS] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -74,7 +74,7 @@ NB_ARG_STRING(target_seg_type,
               "remote type automatically.");
 NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, manytoone, onetomany, tp");
 NB_ARG_STRING(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc)");
-NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
+NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE, QUERY");
 NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check");
 NB_ARG_UINT64(total_buffer_size,
               8LL * 1024 * (1 << 20),
@@ -235,6 +235,16 @@ NB_ARG_STRING(gusli_device_security,
               "For GUSLI backend, use device_list in format 'id:type:path' where type is F (file) "
               "or K (kernel device).");
 
+// DOCA_MEMOS options - only used when backend is DOCA_MEMOS
+NB_ARG_STRING(doca_memos_device_name, "/dev/nvme0n1", "DOCA_MEMOS device name");
+NB_ARG_INT32(doca_memos_num_tasks, 8192, "DOCA_MEMOS number of tasks");
+NB_ARG_STRING(doca_memos_query_mem_mode,
+              "assume_success",
+              "DOCA_MEMOS queryMem mode [assume_success, actual]");
+NB_ARG_STRING(doca_memos_nguid, "", "DOCA_MEMOS namespace GUID (32 hex chars, optional)");
+NB_ARG_BOOL(doca_memos_ignore_read_not_found,
+            false,
+            "DOCA_MEMOS: treat key-not-found on read as success");
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
@@ -312,6 +322,11 @@ int xferBenchConfig::gusli_max_simultaneous_requests = 0;
 std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
+std::string xferBenchConfig::doca_memos_device_name = "/dev/nvme0n1";
+int xferBenchConfig::doca_memos_num_tasks = 8192;
+std::string xferBenchConfig::doca_memos_query_mem_mode = "assume_success";
+std::string xferBenchConfig::doca_memos_nguid = "";
+bool xferBenchConfig::doca_memos_ignore_read_not_found = false;
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -436,6 +451,23 @@ xferBenchConfig::loadParams(void) {
             gusli_config_file = NB_ARG(gusli_config_file);
             gusli_device_byte_offsets = NB_ARG(gusli_device_byte_offsets);
             gusli_device_security = NB_ARG(gusli_device_security);
+        }
+
+        // Load DOCA_MEMOS-specific configurations if backend is DOCA_MEMOS
+        if (backend == XFERBENCH_BACKEND_DOCA_MEMOS) {
+            doca_memos_device_name = NB_ARG(doca_memos_device_name);
+            doca_memos_num_tasks = NB_ARG(doca_memos_num_tasks);
+            doca_memos_query_mem_mode = NB_ARG(doca_memos_query_mem_mode);
+            doca_memos_nguid = NB_ARG(doca_memos_nguid);
+            doca_memos_ignore_read_not_found = NB_ARG(doca_memos_ignore_read_not_found);
+
+            // The generic consistency check reads written data back through the
+            // S3/Azure object helpers, which DOCA_MEMOS does not implement. The
+            // plugin verifies retrieved data internally on READ instead.
+            if (NB_ARG(check_consistency)) {
+                std::cerr << "DOCA_MEMOS backend does not support --check_consistency" << std::endl;
+                return -1;
+            }
         }
 
         // Load OBJ-specific configurations if backend is OBJ
@@ -679,8 +711,9 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB])",
-                    backend);
+        printOption(
+            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB,DOCA_MEMOS])",
+            backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
@@ -771,7 +804,7 @@ xferBenchConfig::printConfig() {
     printOption("Target seg type (--target_seg_type=[DRAM,VRAM])", target_seg_type);
     printOption("Scheme (--scheme=[pairwise,manytoone,onetomany,tp])", scheme);
     printOption("Mode (--mode=[SG,MG])", mode);
-    printOption("Op type (--op_type=[READ,WRITE])", op_type);
+    printOption("Op type (--op_type=[READ,WRITE,QUERY])", op_type);
     printOption("Check consistency (--check_consistency=[0,1])", std::to_string(check_consistency));
     printOption("Total buffer size (--total_buffer_size=N)", std::to_string(total_buffer_size));
     printOption("Num initiator dev (--num_initiator_dev=N)", std::to_string(num_initiator_dev));
@@ -825,14 +858,22 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_DOCA_MEMOS == xferBenchConfig::backend);
 }
 
 bool
 xferBenchConfig::isObjStorageBackend() {
     return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_DOCA_MEMOS == xferBenchConfig::backend);
+};
+
+bool
+xferBenchConfig::hasObjectStorageHelpers() {
+    return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
 };
 
 
@@ -1027,7 +1068,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                         exit(EXIT_FAILURE);
                     }
                     is_allocated = true;
-                    if (xferBenchConfig::isObjStorageBackend()) {
+                    if (xferBenchConfig::hasObjectStorageHelpers()) {
                         if (!xferBenchUtils::getObj(iov.metaInfo)) {
                             std::cerr << "Failed to get object: " << iov.metaInfo << std::endl;
                             exit(EXIT_FAILURE);
