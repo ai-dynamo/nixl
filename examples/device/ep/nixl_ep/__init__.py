@@ -48,7 +48,9 @@ def _rtld_deepbind_import():
 
 with _rtld_deepbind_import():
     _torch_mm = "".join(torch.__version__.split(".")[:2])
-    _nixl_ep_cpp = importlib.import_module(f".nixl_ep_cpp_torch{_torch_mm}", __package__)
+    _nixl_ep_cpp = importlib.import_module(
+        f".nixl_ep_cpp_torch{_torch_mm}", __package__
+    )
 # Alias the torch-versioned extension as `nixl_ep_cpp` so the static
 # `from .nixl_ep_cpp import ...` imports in buffer.py / utils.py resolve.
 sys.modules[f"{__package__}.nixl_ep_cpp"] = _nixl_ep_cpp
