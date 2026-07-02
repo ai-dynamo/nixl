@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Weights-base image: pinned upstream SGLang + baked-in test model weights.
+# NIXL is intentionally NOT installed here; the per-PR build (Dockerfile.sglang)
+# layers the freshly-built PR wheels on top of this image.
+# BASE_IMAGE is pinned to a concrete version so the per-PR gsm8k accuracy gate is
+# reproducible; bump it (and CI_IMAGE_TAG) deliberately to move to a newer SGLang.
+ARG BASE_IMAGE=docker.io/lmsysorg/sglang:v0.5.13.post1
+FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
+
+ARG MODEL_ID=Qwen/Qwen3-1.7B
+ARG MODEL_DIR=/models
+
+ENV NIXL_SANITY_MODEL_ID=${MODEL_ID}
+ENV NIXL_SANITY_MODEL_DIR=${MODEL_DIR}
+ENV HF_HOME=${MODEL_DIR}/hf-home
+
+# iproute2 provides `ss`, used by the sanity's get_next_tcp_port helper to skip occupied
+# host ports (concurrent jobs share a SLURM node under host networking).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends iproute2 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Use the `hf` CLI (huggingface-cli is removed in recent huggingface_hub). Pin the version
+# so rebuilds don't drift to a newer PyPI release.
+RUN python3 -m pip install --no-cache-dir "huggingface_hub[cli]==1.21.0" \
+ && hf download "${MODEL_ID}" \
+      --local-dir "${MODEL_DIR}/${MODEL_ID}" \
+ && ls -la "${MODEL_DIR}/${MODEL_ID}"
+
+# PD-disaggregation load balancer. Recent SGLang dropped the in-core
+# sglang.srt.disaggregation.mini_lb in favor of the standalone sglang-router
+# package, which the sanity test uses to route prefill<->decode requests. Pinned so
+# rebuilds don't drift (and `python3 -m sglang_router.launch_router` can't silently break).
+RUN python3 -m pip install --no-cache-dir "sglang-router==0.3.2"
+
+# GSM8K test set for the PD accuracy sanity (sglang.test.few_shot_gsm8k --data-path),
+# baked in so the test never downloads it at runtime. Pinned to a commit SHA (not master)
+# so the exact questions behind GSM8K_MIN_ACCURACY can't silently change between rebuilds.
+RUN mkdir -p /opt/gsm8k \
+ && curl -fL --retry 3 --retry-delay 2 \
+      https://raw.githubusercontent.com/openai/grade-school-math/3101c7d5072418e28b9008a6636bde82a006892c/grade_school_math/data/test.jsonl \
+      -o /opt/gsm8k/test.jsonl \
+ && wc -l /opt/gsm8k/test.jsonl
