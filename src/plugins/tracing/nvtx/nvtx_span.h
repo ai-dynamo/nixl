@@ -18,19 +18,22 @@
 #define NIXL_SRC_PLUGINS_TRACING_NVTX_NVTX_SPAN_H
 
 #include <cstdint>
-#include <memory>
+#include <list>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include <nvtx3/nvToolsExt.h>
+#include <nvtx3/nvToolsExtPayload.h>
 
 #include "nvtx_payload_schemas.h"
 #include "tracing/trace.h"
 
 namespace nixl::trace::nvtx_internal {
 
-/** @brief One active NVTX range; typed attributes are attached on pop. */
+/**
+ * @brief One active NVTX range. Attributes are buffered as typed payloads and
+ *        attached to the range when it is popped in the destructor.
+ */
 class NvtxSpan final : public SpanBackend {
 public:
     NvtxSpan(nvtxDomainHandle_t domain, PayloadSchemaIds schema_ids) noexcept;
@@ -56,18 +59,23 @@ public:
     }
 
 private:
-    struct StoredPayload;
+    // Backing storage for one attribute payload. Held in a std::list so nodes
+    // never move: record.key / value.string_value point into these strings and
+    // must stay valid until the range is popped.
+    struct StoredPayload {
+        std::string key;
+        std::string string_value; // only used for string attributes
+        AttrPayload record{};
+        nvtxPayloadData_t data{};
+    };
 
-    void
-    emitInt64Attr(std::string_view key, std::int64_t value);
-    void
-    emitDoubleAttr(std::string_view key, double value);
-    void
-    emitStrAttr(std::string_view key, std::string_view value);
+    // Append a payload with its key set; caller fills the value + schema id.
+    [[nodiscard]] StoredPayload &
+    addPayload(std::string_view key);
 
     nvtxDomainHandle_t domain_;
     PayloadSchemaIds schemaIds_;
-    std::vector<std::unique_ptr<StoredPayload>> payloads_;
+    std::list<StoredPayload> payloads_;
 };
 
 } // namespace nixl::trace::nvtx_internal

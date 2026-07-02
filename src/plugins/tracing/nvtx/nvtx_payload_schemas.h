@@ -23,11 +23,27 @@
 
 namespace nixl::trace::nvtx_internal {
 
+/**
+ * @brief Record backing every typed attribute payload: a key plus a value at a
+ *        fixed offset. Each schema (int64/double/string) describes the value
+ *        with its own NVTX entry type but identical offsets, so one struct backs
+ *        all three (only one value member is live per record).
+ */
+struct AttrPayload {
+    const char *key;
+
+    union {
+        std::int64_t int64_value;
+        double double_value;
+        const char *string_value;
+    } value;
+};
+
 /** @brief Domain-registered schema IDs for typed span attribute payloads. */
 struct PayloadSchemaIds {
     std::uint64_t int64_attr{};
     std::uint64_t double_attr{};
-    std::uint64_t str_attr{};
+    std::uint64_t string_attr{};
 };
 
 /** @brief Register the static attribute payload schemas on @p domain. */
