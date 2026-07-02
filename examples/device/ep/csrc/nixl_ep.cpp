@@ -20,52 +20,48 @@
  * limitations under the License.
  */
 
-#include <ATen/cuda/CUDAContext.h>
+#include "nixl_ep.hpp"
+
+#include "cuda_warn.hpp"
+#include "kernels/api.cuh"
+
+#include <pybind11/functional.h>
+
 #include <ATen/cuda/CUDADataType.h>
+#include <torch/python.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
-#include <cuda_runtime.h>
-#include <memory>
-#include <optional>
-#include <pybind11/functional.h>
-#include <torch/python.h>
-
-#include "nixl_ep.hpp"
-#include "kernels/api.cuh"
-#include "kernels/configs.cuh"
 #include <cstdio>
-#include <fstream>
-#include <unistd.h>
-#include <stdio.h>
-#include "kernels/exception.cuh"
-#include "nixl.h"
-#include <ifaddrs.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <net/if.h>
-#include <sstream>
+#include <limits>
 #include <unordered_set>
 
 #define NIXL_ETCD_WATCH_TIMEOUT std::chrono::microseconds(1000000000) // 1000 seconds
 
-namespace nixl_ep {
-
 namespace {
-
-void sleep_ms(int milliseconds) {
+void
+sleep_ms(int milliseconds) {
     std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
 
-uint64_t milliseconds_to_cycles(uint64_t milliseconds, int device_clock_rate_khz) {
+uint64_t
+milliseconds_to_cycles(uint64_t milliseconds, int device_clock_rate_khz) {
     EP_HOST_ASSERT(device_clock_rate_khz > 0);
     return milliseconds * static_cast<uint64_t>(device_clock_rate_khz);
 }
 
+void
+stream_wait(const at::cuda::CUDAStream &stream_0, const at::cuda::CUDAStream &stream_1) {
+    EP_HOST_ASSERT(stream_0.id() != stream_1.id());
+    nixl_ep::cuda::Event event;
+    event.record(stream_1);
+    CUDA_CHECK(cudaStreamWaitEvent(stream_0, event.get(), 0));
+}
 } // namespace
+
+namespace nixl_ep {
 
 void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes)
 {
@@ -279,10 +275,7 @@ torch::Stream Buffer::get_comm_stream() const {
 
 void Buffer::destroy() {
     auto warn_cuda = [](cudaError_t status, const char *operation) noexcept {
-        if (status != cudaSuccess) {
-            std::cerr << "WARNING: destroy() failed to " << operation << ": "
-                      << cudaGetErrorString(status) << '\n';
-        }
+        cuda::warn(status, "Buffer::destroy()", operation);
     };
 
     auto warn_nixl = [](nixl_status_t status, const char* operation) noexcept {
@@ -568,8 +561,8 @@ Buffer::get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts,
     }
 
     // Wait previous tasks to be finished
-    if (previous_event.has_value()) {
-        stream_wait(comm_stream, previous_event.value());
+    if (previous_event) {
+        previous_event->stream_wait(comm_stream);
     } else {
         stream_wait(comm_stream, compute_stream);
     }
@@ -724,8 +717,8 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     }
 
     // Wait previous tasks to be finished
-    if (previous_event.has_value()) {
-        stream_wait(comm_stream, previous_event.value());
+    if (previous_event) {
+        previous_event->stream_wait(comm_stream);
     } else {
         stream_wait(comm_stream, compute_stream);
     }
@@ -943,8 +936,8 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
     }
 
     // Wait previous tasks to be finished
-    if (previous_event.has_value()) {
-        stream_wait(comm_stream, previous_event.value());
+    if (previous_event) {
+        previous_event->stream_wait(comm_stream);
     } else {
         stream_wait(comm_stream, compute_stream);
     }
