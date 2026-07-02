@@ -360,7 +360,7 @@ public:
      *  is decoded from the imm_data the sender shipped with fi_writedata,
      *  via the handshake-negotiated agent_idx encoding. */
     void
-    setXferIdCallback(std::function<void(uint32_t, uint16_t)> callback);
+    setXferIdCallback(std::function<void(uint64_t, uint16_t)> callback);
 
     // Optimized resource management methods
     /** Allocate control request with size validation */
@@ -400,7 +400,7 @@ private:
     // (its index in OUR table, as told to it via the handshake) decoded from
     // the imm_data the sender shipped.
     std::function<void(const std::string &, uint16_t)> notificationCallback;
-    std::function<void(uint32_t, uint16_t)> xferIdCallback;
+    std::function<void(uint64_t, uint16_t)> xferIdCallback;
     std::function<void(const std::string &)> handshakeCallback;
 
     // Separate request pools for optimal performance

@@ -28,8 +28,17 @@
 #include "libfabric/libfabric_rail.h"
 
 /** Multi-rail connection metadata for remote agents */
-class nixlLibfabricConnection : public nixlBackendConnMD {
-private:
+struct nixlLibfabricConnection : public nixlBackendConnMD {
+    nixlLibfabricConnection(const std::string &remote_agent, size_t agent_index);
+
+    /** Transition to CONNECTED state. */
+    nixl_status_t
+    establish();
+
+    /** Transition to DISCONNECTED state. Returns success if already disconnected. */
+    nixl_status_t
+    disconnect();
+
     size_t agent_index_; // Unique agent identifier in agent_names vector
     std::string remoteAgent_; // Remote agent name
     std::unordered_map<size_t, std::vector<fi_addr_t>>
@@ -44,19 +53,6 @@ private:
     uint16_t local_agent_idx_at_remote_ = 0; // valid only when handshake_received_
     std::mutex handshake_mutex_;
     std::condition_variable handshake_cv_;
-
-public:
-    nixlLibfabricConnection(const std::string &remote_agent, size_t agent_index);
-
-    /** Transition to CONNECTED state. */
-    nixl_status_t
-    establish();
-
-    /** Transition to DISCONNECTED state. Returns success if already disconnected. */
-    nixl_status_t
-    disconnect();
-
-    friend class nixlLibfabricEngine;
 };
 
 #endif // NIXL_SRC_PLUGINS_LIBFABRIC_LIBFABRIC_CONNECTION_H

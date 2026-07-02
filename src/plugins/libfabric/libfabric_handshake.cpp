@@ -45,9 +45,9 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
 
     // Include connection info if peer hasn't sent us a handshake yet (meaning
     // they likely don't have our connection info to create a connection).
-    std::string conn_info;
+    std::string piggybacked_conn_info;
     if (!conn.handshake_received_.load(std::memory_order_acquire)) {
-        nixl_status_t ci_status = getConnInfo(conn_info);
+        nixl_status_t ci_status = getConnInfo(piggybacked_conn_info);
         if (ci_status != NIXL_SUCCESS) {
             NIXL_ERROR << "getConnInfo failed in sendHandshakeTo for '" << conn.remoteAgent_
                        << "': status=" << ci_status;
@@ -58,10 +58,10 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     nixlSerDes sd;
     sd.addBuf(NIXL_HANDSHAKE_TAG_IDX, &assigned_idx, sizeof(assigned_idx));
     sd.addStr(NIXL_HANDSHAKE_TAG_NAME, my_name);
-    uint8_t has_conn = conn_info.empty() ? 0 : 1;
+    uint8_t has_conn = piggybacked_conn_info.empty() ? 0 : 1;
     sd.addBuf(NIXL_HANDSHAKE_TAG_HAS_CONN, &has_conn, sizeof(has_conn));
     if (has_conn) {
-        sd.addStr(NIXL_HANDSHAKE_TAG_CONN, conn_info);
+        sd.addStr(NIXL_HANDSHAKE_TAG_CONN, piggybacked_conn_info);
     }
     std::string payload = sd.exportStr();
 
@@ -84,7 +84,8 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     req->buffer_size = payload.size();
 
     NIXL_DEBUG << "Sending handshake to '" << conn.remoteAgent_ << "' assigned_idx=" << assigned_idx
-               << " (my agent_name='" << my_name << "', conn_info_len=" << conn_info.size() << ")";
+               << " (my agent_name='" << my_name
+               << "', piggybacked_conn_info_len=" << piggybacked_conn_info.size() << ")";
     return rail_manager.postControlMessage(nixlLibfabricRailManager::ControlMessageType::HANDSHAKE,
                                            req,
                                            conn.rail_remote_addr_list_.at(kRailId)[0],
@@ -134,17 +135,20 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
         NIXL_ERROR << "Handshake missing 'has_conn' field";
         return;
     }
-    std::string conn_info;
+    // The handshake may optionally carry the sender's connection info, for peers that
+    // haven't had their connection info loaded via loadRemoteConnInfo() yet.
+    std::string piggybacked_conn_info;
     if (has_conn) {
-        conn_info = sd.getStr(NIXL_HANDSHAKE_TAG_CONN);
-        if (conn_info.empty()) {
+        piggybacked_conn_info = sd.getStr(NIXL_HANDSHAKE_TAG_CONN);
+        if (piggybacked_conn_info.empty()) {
             NIXL_ERROR << "Handshake has_conn=1 but 'conn' field is empty";
             return;
         }
     }
 
     NIXL_DEBUG << "Received handshake from peer '" << peer_agent_name
-               << "' assigned_idx=" << assigned_idx << " conn_info_len=" << conn_info.size();
+               << "' assigned_idx=" << assigned_idx
+               << " piggybacked_conn_info_len=" << piggybacked_conn_info.size();
 
     // Process the decoded handshake.
     std::shared_ptr<nixlLibfabricConnection> conn;
@@ -165,19 +169,20 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
                        << "); will apply on createAgentConnection";
         }
 
-        if (conn_info.empty()) {
-            // Code should not reach here. When conn_info is empty, the handshake source
-            // should have received a handshake message from this side, which means
+        if (piggybacked_conn_info.empty()) {
+            // Code should not reach here. When piggybacked_conn_info is empty, the handshake
+            // source should have received a handshake message from this side, which means
             // a connection ('conn' above) should have been created.
             NIXL_ERROR << "Connection not found for peer agent: " << peer_agent_name
-                       << ", and no conn_info provided in handshake";
+                       << ", and no piggybacked_conn_info provided in handshake";
             return;
         } else {
-            nixl_status_t load_status = this->loadRemoteConnInfo(peer_agent_name, conn_info);
+            nixl_status_t load_status =
+                this->loadRemoteConnInfo(peer_agent_name, piggybacked_conn_info);
             if (load_status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to loadRemoteConnInfo() received with handshake. "
                            << "peer agent: " << peer_agent_name
-                           << ", conn_info size: " << conn_info.size();
+                           << ", piggybacked_conn_info size: " << piggybacked_conn_info.size();
             }
             return; // loadRemoteConnInfo will take care of draining the
                     // buffered handshake as part of connection creation.

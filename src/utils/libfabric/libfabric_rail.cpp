@@ -714,7 +714,7 @@ nixlLibfabricRail::setProgressThreadEnabled(bool enabled) {
 }
 
 void
-nixlLibfabricRail::setXferIdCallback(std::function<void(uint32_t, uint16_t)> callback) {
+nixlLibfabricRail::setXferIdCallback(std::function<void(uint64_t, uint16_t)> callback) {
     xferIdCallback = callback;
 }
 

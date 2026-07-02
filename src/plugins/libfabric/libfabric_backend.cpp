@@ -601,39 +601,40 @@ nixlLibfabricEngine::getConnInfo(std::string &str) const {
 nixl_status_t
 nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
                                         const std::string &remote_conn_info) {
+
+    NIXL_DEBUG << "Loading remote info for agent: " << remote_agent
+               << ", info length=" << remote_conn_info.length() << ", info (hex): "
+               << LibfabricUtils::hexdump(remote_conn_info.data(), remote_conn_info.length());
+
+    if (remote_conn_info.empty()) {
+        NIXL_ERROR << "Empty remote connection info received";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_DEBUG << "Processing " << rail_manager_.getNumRails()
+               << " rails for agent: " << remote_agent;
+
+    // Use Rail Manager's connection SerDes method with "dest" prefix
+    // (remote is sending us their endpoints as "dest")
+    std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> data_endpoints;
+    nixl_status_t status =
+        rail_manager_.deserializeConnectionInfo("dest", remote_conn_info, data_endpoints);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed";
+        return status;
+    }
+
     std::shared_ptr<nixlLibfabricConnection> conn_for_handshake;
     {
         std::lock_guard<std::mutex> lock(connection_state_mutex_);
 
-        NIXL_DEBUG << "Loading remote info for agent: " << remote_agent
-                   << ", info length=" << remote_conn_info.length() << ", info (hex): "
-                   << LibfabricUtils::hexdump(remote_conn_info.data(), remote_conn_info.length());
-
-        if (remote_conn_info.empty()) {
-            NIXL_ERROR << "Empty remote connection info received";
-            return NIXL_ERR_INVALID_PARAM;
-        }
-
-        // If connection already exists, this function has been called previously, even if it may
-        // not have completed.
-        if (connections_.find(remote_agent) != connections_.end()) {
+        bool already_exists = (connections_.find(remote_agent) != connections_.end());
+        if (already_exists) {
             NIXL_INFO << "Connection for " << remote_agent
                       << " already exists, skipping duplicate loadRemoteConnInfo";
             return NIXL_SUCCESS;
         }
 
-        NIXL_DEBUG << "Processing " << rail_manager_.getNumRails()
-                   << " rails for agent: " << remote_agent;
-
-        // Use Rail Manager's connection SerDes method with "dest" prefix
-        // (remote is sending us their endpoints as "dest")
-        std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> data_endpoints;
-        nixl_status_t status =
-            rail_manager_.deserializeConnectionInfo("dest", remote_conn_info, data_endpoints);
-        if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed";
-            return status;
-        }
         nixl_status_t conn_status = createAgentConnection(remote_agent, data_endpoints);
         if (conn_status != NIXL_SUCCESS) {
             NIXL_ERROR << "createAgentConnection failed with status: " << conn_status;
@@ -641,10 +642,7 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
         }
 
         if (remote_agent != localAgent) {
-            auto it = connections_.find(remote_agent);
-            if (it != connections_.end()) {
-                conn_for_handshake = it->second;
-            }
+            conn_for_handshake = connections_[remote_agent];
         }
     }
 
@@ -700,7 +698,7 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
     }
 
     nixl_status_t status = it->second->disconnect();
-    connections_.erase(remote_agent);
+    connections_.erase(it);
     return status;
 }
 
@@ -710,13 +708,6 @@ nixlLibfabricEngine::createAgentConnection(
     const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_rail_endpoints) {
 
     NIXL_DEBUG << "Creating connection for agent: " << agent_name;
-
-    auto existing = connections_.find(agent_name);
-    if (existing != connections_.end()) {
-        NIXL_INFO << "Connection already exists for agent: " << agent_name
-                  << ", reusing existing connection";
-        return NIXL_SUCCESS;
-    }
 
     if (data_rail_endpoints.empty()) {
         NIXL_ERROR << "Remote agent " << agent_name << " published zero rail endpoints";
@@ -732,6 +723,13 @@ nixlLibfabricEngine::createAgentConnection(
         NIXL_ERROR << "Cannot add agent '" << agent_name << "': agent index " << agent_names_.size()
                    << " exceeds 8-bit wire limit (" << NIXL_AGENT_INDEX_MASK << ")";
         return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    auto existing = connections_.find(agent_name);
+    if (existing != connections_.end()) {
+        NIXL_INFO << "Connection already exists for agent: " << agent_name
+                  << ", reusing existing connection";
+        return NIXL_SUCCESS;
     }
 
     auto conn = std::make_shared<nixlLibfabricConnection>(agent_name, agent_names_.size());
