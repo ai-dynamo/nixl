@@ -205,6 +205,9 @@ def copytree(src, dst):
         # files with no symlinks form a group of one. Non-so files (and any
         # .so we cannot stat, e.g. a broken symlink) are copied right away so
         # nothing is silently dropped.
+        # First decide what to copy: (dst_name, src_path) pairs. Shared libs
+        # are resolved per inode group below; everything else is copied as-is.
+        to_copy = []
         inode_groups = collections.defaultdict(list)
         for file in files:
             src_file = os.path.join(root, file)
@@ -218,9 +221,7 @@ def copytree(src, dst):
                 except OSError:
                     pass
 
-            dst_file = os.path.join(dst_dir, file)
-            shutil.copy2(src_file, dst_file)
-            copied_files.append(dst_file)
+            to_copy.append((file, src_file))
 
         for group in inode_groups.values():
             # Prefer the real (non-symlink) file; among equals keep the
@@ -228,13 +229,16 @@ def copytree(src, dst):
             # module loader dlopens).
             group.sort(key=lambda f: (os.path.islink(os.path.join(root, f)), -len(f)))
             kept = group[0]
-            real_src = os.path.realpath(os.path.join(root, kept))
-            dst_file = os.path.join(dst_dir, kept)
-            shutil.copy2(real_src, dst_file)
-            copied_files.append(dst_file)
+            to_copy.append((kept, os.path.realpath(os.path.join(root, kept))))
             for removed in group[1:]:
                 dedup_map[removed] = kept
                 logger.info("Deduplicated symlink: %s -> %s", removed, kept)
+
+        # Single copy site for both plain files and deduplicated libraries.
+        for dst_name, src_path in to_copy:
+            dst_file = os.path.join(dst_dir, dst_name)
+            shutil.copy2(src_path, dst_file)
+            copied_files.append(dst_file)
 
     return copied_files, dedup_map
 
@@ -283,42 +287,40 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
     for fname in copied_files:
         logger.debug("Patching %s", fname)
         fpath = os.path.join(pkg_plugins_dir, fname)
-        if os.path.isfile(fpath) and ".so" in fname:
-            rpath = os.popen(f"patchelf --print-rpath {fpath}").read().strip()
-            if not rpath:
-                rpath = "$ORIGIN/..:$ORIGIN"
-            else:
-                rpath = "$ORIGIN/..:$ORIGIN:" + rpath
-            logger.debug("Setting rpath for %s to %s", fpath, rpath)
-            ret = os.system(f"patchelf --set-rpath '{rpath}' {fpath}")
-            if ret != 0:
-                raise RuntimeError(f"Failed to set rpath for {fpath}")
-            # Replace the original libs with the patched one
-            for libname, _ in get_lib_deps(fpath).items():
-                # "libuct.so.0" -> "libuct"
-                base_name = libname.split(".")[0]
-                if base_name in name_map:
-                    packaged_name = name_map[base_name]
-                    logger.debug(
-                        "Replacing %s with %s in %s", libname, packaged_name, fpath
+        if not os.path.isfile(fpath) or not _is_shared_lib(fname):
+            continue
+        rpath = os.popen(f"patchelf --print-rpath {fpath}").read().strip()
+        if not rpath:
+            rpath = "$ORIGIN/..:$ORIGIN"
+        else:
+            rpath = "$ORIGIN/..:$ORIGIN:" + rpath
+        logger.debug("Setting rpath for %s to %s", fpath, rpath)
+        ret = os.system(f"patchelf --set-rpath '{rpath}' {fpath}")
+        if ret != 0:
+            raise RuntimeError(f"Failed to set rpath for {fpath}")
+        # Replace the original libs with the patched one
+        for libname, _ in get_lib_deps(fpath).items():
+            # "libuct.so.0" -> "libuct"
+            base_name = libname.split(".")[0]
+            if base_name in name_map:
+                packaged_name = name_map[base_name]
+                logger.debug(
+                    "Replacing %s with %s in %s", libname, packaged_name, fpath
+                )
+                ret = os.system(
+                    f"patchelf --replace-needed {libname} {packaged_name} {fpath}"
+                )
+                if ret != 0:
+                    raise RuntimeError(
+                        f"Failed to replace {libname} with {packaged_name} in {fpath}"
                     )
-                    ret = os.system(
-                        f"patchelf --replace-needed {libname} {packaged_name} {fpath}"
-                    )
-                    if ret != 0:
-                        raise RuntimeError(
-                            f"Failed to replace {libname} with {packaged_name} in {fpath}"
-                        )
-            # Check that there is no breakage introduced in the patched lib
-            logger.debug("Checking that %s loads", fpath)
-            original_deps = get_lib_deps(os.path.join(sys_plugins_dir, fname))
-            for libname, libpath in get_lib_deps(fpath).items():
-                if libpath is None:
-                    if (
-                        libname not in original_deps
-                        or original_deps[libname] is not None
-                    ):
-                        raise RuntimeError(f"Library {libname} not loaded by {fpath}")
+        # Check that there is no breakage introduced in the patched lib
+        logger.debug("Checking that %s loads", fpath)
+        original_deps = get_lib_deps(os.path.join(sys_plugins_dir, fname))
+        for libname, libpath in get_lib_deps(fpath).items():
+            if libpath is None:
+                if libname not in original_deps or original_deps[libname] is not None:
+                    raise RuntimeError(f"Library {libname} not loaded by {fpath}")
 
     # Replace inter-plugin DT_NEEDED entries that reference removed symlink
     # names (e.g. libuct_ib.so.0) with the kept real file name
