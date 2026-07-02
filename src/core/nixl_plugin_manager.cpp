@@ -19,14 +19,14 @@
 #include "nixl.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include <cstdlib>
 #include <dlfcn.h>
-#include <filesystem>
 #include <dirent.h>
+#include <filesystem>
 #include <unistd.h>  // For access() and F_OK
 #include <fstream>
-#include <string>
 #include <map>
-#include <dlfcn.h>
+#include <string>
 
 using lock_guard = const std::lock_guard<std::mutex>;
 
@@ -199,79 +199,7 @@ telemetryLoader(void *handle, const std::string &plugin_path) {
 }
 } // namespace
 
-nixlTracePluginHandle::nixlTracePluginHandle(void *handle, nixlTracePlugin *plugin)
-    : nixlPluginHandle(handle),
-      plugin_(plugin) {}
-
-nixlTracePluginHandle::~nixlTracePluginHandle() {
-    if (handle_) {
-        typedef void (*fini_func_t)();
-        fini_func_t fini = (fini_func_t)dlsym(handle_, "nixl_trace_plugin_fini");
-        if (fini) {
-            fini();
-        }
-        dlclose(handle_);
-        handle_ = nullptr;
-        plugin_ = nullptr;
-    }
-}
-
-std::unique_ptr<nixl::trace::TraceBackend>
-nixlTracePluginHandle::createBackend(const nixlTraceBackendInitParams &init_params) const {
-    if (plugin_ && plugin_->create_backend) {
-        return plugin_->create_backend(init_params);
-    }
-    return nullptr;
-}
-
-const char *
-nixlTracePluginHandle::getName() const {
-    if (plugin_) {
-        return plugin_->getName().c_str();
-    }
-    return "unknown";
-}
-
-const char *
-nixlTracePluginHandle::getVersion() const {
-    if (plugin_) {
-        return plugin_->getVersion().c_str();
-    }
-    return "unknown";
-}
-
 namespace {
-// Trace plugin loader
-std::shared_ptr<const nixlPluginHandle>
-traceLoader(void *handle, const std::string &plugin_path) {
-    typedef nixlTracePlugin *(*init_func_t)();
-    init_func_t init = (init_func_t)dlsym(handle, "nixl_trace_plugin_init");
-    if (!init) {
-        NIXL_ERROR << "Failed to find nixl_trace_plugin_init in " << plugin_path << ": "
-                   << dlerror();
-        dlclose(handle);
-        return nullptr;
-    }
-
-    nixlTracePlugin *plugin = init();
-    if (!plugin) {
-        NIXL_ERROR << "Plugin initialization failed for " << plugin_path;
-        dlclose(handle);
-        return nullptr;
-    }
-
-    if (plugin->api_version != nixl_trace_plugin_api_version::V1) {
-        NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
-                   << static_cast<unsigned int>(nixl_trace_plugin_api_version::V1) << ", got "
-                   << static_cast<unsigned int>(plugin->api_version);
-        dlclose(handle);
-        return nullptr;
-    }
-
-    return std::make_shared<const nixlTracePluginHandle>(handle, plugin);
-}
-} // namespace
-
 std::map<nixl_backend_t, std::string>
 loadPluginList(const std::string &filename) {
     std::map<nixl_backend_t, std::string> plugins;
@@ -295,20 +223,24 @@ loadPluginList(const std::string &filename) {
             std::string name = line.substr(0, pos);
             std::string path = line.substr(pos + 1);
 
-            auto trim = [](std::string& s) {
-                s.erase(0, s.find_first_not_of(" \t"));
-                s.erase(s.find_last_not_of(" \t") + 1);
+            auto trim = [](std::string &s) {
+                s.erase(0, s.find_first_not_of(" \t\r"));
+                s.erase(s.find_last_not_of(" \t\r") + 1);
             };
             trim(name);
             trim(path);
 
-            // Add to map
-            plugins[name] = path;
+            // Add to map, rejecting duplicates
+            const auto [it, inserted] = plugins.emplace(name, path);
+            if (!inserted) {
+                NIXL_ERROR << "Duplicate plugin entry in " << filename << ": " << name;
+            }
         }
     }
 
     return plugins;
 }
+} // namespace
 
 std::shared_ptr<const nixlPluginHandle>
 nixlPluginManager::loadPluginFromPath(const std::string &plugin_path, nixlPluginLoaderFunc loader) {
@@ -559,17 +491,17 @@ nixlPluginManager::loadTracePlugin(const std::string &plugin_name) {
 }
 
 namespace {
-static bool
+bool
 startsWith(const std::string &str, const std::string &prefix) {
     return str.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), str.begin());
 }
 
-static bool
+bool
 endsWith(const std::string &str, const std::string &suffix) {
     return str.size() >= suffix.size() && std::equal(suffix.rbegin(), suffix.rend(), str.rbegin());
 }
 
-static std::string
+std::string
 extractPluginName(const std::string &filename, const std::string &prefix) {
     return filename.substr(prefix.size(), filename.size() - prefix.size() - kPluginSuffix.size());
 }

@@ -26,6 +26,10 @@ endif
 subdir('agent')
 unit_test_deps += [agent_unit_test_dep]
 
+if enabled_plugins.get('LIBBLKIO') and has_libblkio_plugin
+    subdir('plugins/libblkio')
+    unit_test_deps += [libblkio_unit_test_dep]
+endif
 subdir('descriptors')
 unit_test_deps += [descriptors_unit_test_dep]
 

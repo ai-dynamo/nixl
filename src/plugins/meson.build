@@ -140,6 +140,14 @@ if enabled_plugins.get('GPUNETIO')
     endif
 endif
 
+if enabled_plugins.get('LIBBLKIO')
+    if not has_libblkio_plugin and is_explicit_enable
+        error('LIBBLKIO plugin requested but libblkio dependency not found')
+    elif has_libblkio_plugin
+        subdir('libblkio')
+    endif
+endif
+
 subdir('telemetry')
 
 if nixl_trace_enabled
