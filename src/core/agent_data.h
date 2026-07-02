@@ -63,12 +63,62 @@ using nixl_socket_peer_t = std::pair<std::string, int>;
 
 using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
 
-class nixlAgentData {
+class nixlMDManager;
+
+/**
+ * @class nixlMetadataContext
+ * @brief Core-internal interface: the agent-side operations a metadata backend
+ *        needs.
+ *
+ * Implemented by nixlAgentData. Backends hold a reference to this interface
+ * instead of the concrete agent, so they never reference nixlAgent (no cycle)
+ * and need no friendship for the comm queue.
+ */
+class nixlMetadataContext {
+public:
+    virtual ~nixlMetadataContext() = default;
+
+    /// Serialize this agent's full local metadata blob.
+    [[nodiscard]] virtual nixl_status_t
+    getLocalMD(nixl_blob_t &blob) = 0;
+
+    /// Serialize a partial local metadata blob for the given descriptors.
+    [[nodiscard]] virtual nixl_status_t
+    getLocalPartialMD(const nixl_reg_dlist_t &descs,
+                      nixl_blob_t &blob,
+                      const nixl_opt_args_t *extra_params) = 0;
+
+    /// This agent's name; used by centralized backends to build their KV keys.
+    [[nodiscard]] virtual const std::string &
+    getName() const = 0;
+
+    /// Deserialize a received metadata blob into the remote-section cache,
+    /// returning the embedded remote agent name. Used by backends (e.g.
+    /// TCPStore) that read the blob directly instead of via the comm thread.
+    [[nodiscard]] virtual nixl_status_t
+    loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) = 0;
+
+    /// Post a metadata request to the agent's communication thread.
+    virtual void
+    enqueueCommWork(nixl_comm_req_t request) = 0;
+};
+
+// Implements nixlMetadataContext so metadata backends reach the serialization
+// primitives and the comm thread without referencing nixlAgent.
+// Preserve the grandfathered 8-space class layout below.
+// clang-format off
+class nixlAgentData : public nixlMetadataContext {
     private:
         const std::string name_;
         const nixlAgentConfig config_;
         const bool useEtcd_;
+        // Set when NIXL_TCPSTORE_ENDPOINTS is configured; selects the TCPStore
+        // centralized backend (manager-only, no inline path).
+        const bool useTcpStore_;
         const bool needsCommThread_;
+        // When set (NIXL_USE_MD_MANAGER), the public metadata methods route to
+        // the agent-owned nixlMDManager instead of the inline path.
+        const bool useMdManager_;
         nixlLock        lock;
         std::atomic<bool> efaWarningChecked = false;
 
@@ -87,6 +137,8 @@ class nixlAgentData {
 
         // State/methods for listener thread
         std::unique_ptr<nixlMDStreamListener> listener;
+        // Agent-owned metadata manager; built when metadata exchange is enabled.
+        const std::unique_ptr<nixlMDManager> md_;
         nixl_socket_map_t remoteSockets;
         std::thread commThread;
         std::vector<nixl_comm_req_t> commQueue;
@@ -111,7 +163,20 @@ class nixlAgentData {
         commWorker(nixlAgent &myAgent) noexcept;
         void
         commWorkerInternal(nixlAgent *myAgent);
-        void enqueueCommWork(nixl_comm_req_t request);
+        // nixlMetadataContext impl; private as before (backends call via the interface).
+        [[nodiscard]] nixl_status_t
+        getLocalMD(nixl_blob_t &blob) override;
+        [[nodiscard]] nixl_status_t
+        getLocalPartialMD(const nixl_reg_dlist_t &descs,
+                          nixl_blob_t &blob,
+                          const nixl_opt_args_t *extra_params) override;
+        [[nodiscard]] const std::string &
+        getName() const override {
+            return name_;
+        }
+        [[nodiscard]] nixl_status_t
+        loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) override;
+        void enqueueCommWork(nixl_comm_req_t request) override;
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
         nixl_status_t
         loadConnInfo(const std::string &remote_name,
@@ -140,6 +205,8 @@ class nixlAgentData {
 
     friend class nixlAgent;
 };
+
+// clang-format on
 
 class nixlBackendEngine;
 

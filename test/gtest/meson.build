@@ -85,6 +85,7 @@ gtest_sources = [
     'error_handling.cpp',
     'test_transfer.cpp',
     'metadata_exchange.cpp',
+    'md_manager.cpp',
     'common.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
