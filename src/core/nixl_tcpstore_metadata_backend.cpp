@@ -127,6 +127,14 @@ nixlTcpStoreMetadataBackend::fetchRemote(const std::string &remote_name,
             return NIXL_ERR_NOT_FOUND;
         }
         const nixl_blob_t blob = client_->get(key);
+        if (blob.empty()) {
+            // The key was deleted between check() and get() (raced invalidate);
+            // an empty read is never a valid MD blob. Report not-found so the
+            // caller retries instead of failing on a deserialize error.
+            NIXL_DEBUG << "[" << ctx_.getName()
+                       << "] TCPStore key vanished between check and get: " << key;
+            return NIXL_ERR_NOT_FOUND;
+        }
         std::string loaded_name;
         const nixl_status_t ret = ctx_.loadRemoteMD(blob, loaded_name);
         if (ret < 0) {
