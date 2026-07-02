@@ -55,7 +55,9 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) return VRAM_SEG;
+    if (neuronCoreCount() > 0) {
+        return VRAM_SEG;
+    }
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
@@ -333,9 +335,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
-    remote_regs_.clear();
+    remoteRegs_.clear();
     remote_fds.clear();
-    local_regs_.clear();
+    localRegs_.clear();
 
     delete rt;
     rt = nullptr;
@@ -793,7 +795,9 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
         write_ptr += rc;
     }
 
-    if (end_offset > fstate.file_size) fstate.file_size = end_offset;
+    if (end_offset > fstate.file_size) {
+        fstate.file_size = end_offset;
+    }
 
     return ret;
 }
@@ -866,7 +870,9 @@ xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t
 bool
 xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size) {
     int flags = O_RDWR | O_CREAT | O_LARGEFILE;
-    if (xferBenchConfig::storage_enable_direct) flags |= O_DIRECT;
+    if (xferBenchConfig::storage_enable_direct) {
+        flags |= O_DIRECT;
+    }
 
     int fd = open(device.device_path.c_str(), flags, 0744);
     if (fd < 0) {
@@ -988,7 +994,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
             nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
+            remoteRegs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
         }
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         // GUSLI backend uses block device descriptors
@@ -1019,7 +1025,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
             nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, BLK_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
+            remoteRegs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
         }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
@@ -1064,11 +1070,13 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     iov_list.push_back(basic_desc.value());
                 }
                 file_idx += 1;
-                if (file_idx >= num_files) file_idx = 0;
+                if (file_idx >= num_files) {
+                    file_idx = 0;
+                }
             }
             nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, FILE_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_regs_.emplace_back(*agent, backend_engine, FILE_SEG, std::move(iov_list));
+            remoteRegs_.emplace_back(*agent, backend_engine, FILE_SEG, std::move(iov_list));
         }
     }
 
@@ -1096,8 +1104,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
 
             if (basic_desc) {
-                if (!remote_regs_.empty()) {
-                    basic_desc.value().metaInfo = remote_regs_[list_idx].iovs()[i].metaInfo;
+                // Copy the remote metaInfo only when this exact (list_idx, i) slot
+                // exists: earlier paths can skip failed descriptors, so a non-empty
+                // remoteRegs_ does not guarantee the index is in bounds.
+                if (static_cast<size_t>(list_idx) < remoteRegs_.size() &&
+                    static_cast<size_t>(i) < remoteRegs_[list_idx].iovs().size()) {
+                    basic_desc.value().metaInfo = remoteRegs_[list_idx].iovs()[i].metaInfo;
                 }
                 iov_list.push_back(basic_desc.value());
             }
@@ -1106,7 +1118,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, seg_type);
         CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
 
-        local_regs_.emplace_back(*agent, backend_engine, seg_type, iov_list);
+        localRegs_.emplace_back(*agent, backend_engine, seg_type, iov_list);
 
         /*
          * Workaround for a GUSLI registration bug which resets memory to 0, this initialization
@@ -1114,7 +1126,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
          * here to avoid memsetting the memory again.
          */
         if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
-            for (auto &iov : local_regs_.back().iovs()) {
+            for (auto &iov : localRegs_.back().iovs()) {
                 if (isInitiator()) {
                     memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, iov.len);
                 } else if (isTarget()) {
@@ -1134,10 +1146,10 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
     // Ordering: deregister remote regions before local ones
     // (remote registrations may reference local buffers).
     // NixlMemRegion::release() handles deregisterMem + per-IOV cleanup.
-    remote_regs_.clear();
+    remoteRegs_.clear();
     // xferFileState RAII closes backing fds after deregistrations complete.
     remote_fds.clear();
-    local_regs_.clear();
+    localRegs_.clear();
     iov_lists.clear();
 }
 
@@ -1338,6 +1350,175 @@ getRemoteSegType() {
     return GET_SEG_TYPE(false);
 }
 
+// Fill a transfer buffer with a single byte. For VRAM the fill targets the
+// device that owns the buffer, so multi-GPU runs poison the right device.
+static void
+fillTransferBuffer(nixl_mem_t seg_type, uintptr_t addr, size_t len, uint8_t value, int dev_id) {
+    if (seg_type != VRAM_SEG) {
+        std::memset(reinterpret_cast<void *>(addr), value, len);
+        return;
+    }
+    if (neuronCoreCount() > 0) {
+        std::vector<uint8_t> src(len, value);
+        CHECK_NEURON_ERROR(
+            neuronMemcpy(reinterpret_cast<void *>(addr), src.data(), len, neuronMemcpyHostToDevice),
+            "fillTransferBuffer: neuronMemcpy failed");
+        return;
+    }
+#if HAVE_CUDA
+    CHECK_CUDA_ERROR(cudaSetDevice(dev_id), "fillTransferBuffer: cudaSetDevice failed");
+    CHECK_CUDA_ERROR(cudaMemset(reinterpret_cast<void *>(addr), value, len),
+                     "fillTransferBuffer: cudaMemset failed");
+#elif HAVE_ROCM
+    CHECK_CUDA_ERROR(hipSetDevice(dev_id), "fillTransferBuffer: hipSetDevice failed");
+    CHECK_CUDA_ERROR(hipMemset(reinterpret_cast<void *>(addr), value, len),
+                     "fillTransferBuffer: hipMemset failed");
+#else
+    (void)dev_id;
+    std::cerr << "VRAM consistency check needs CUDA, ROCm or Neuron" << std::endl;
+    exit(EXIT_FAILURE);
+#endif
+}
+
+// Return a host-readable view of a transfer buffer. DRAM is returned in place;
+// VRAM is copied from its owning device into host_scratch (never dereferenced
+// as host memory directly).
+static const uint8_t *
+hostView(nixl_mem_t seg_type,
+         uintptr_t addr,
+         size_t len,
+         std::vector<uint8_t> &host_scratch,
+         int dev_id) {
+    if (seg_type != VRAM_SEG) {
+        return reinterpret_cast<const uint8_t *>(addr);
+    }
+    host_scratch.resize(len);
+    if (neuronCoreCount() > 0) {
+        CHECK_NEURON_ERROR(
+            neuronMemcpy(
+                host_scratch.data(), reinterpret_cast<void *>(addr), len, neuronMemcpyDeviceToHost),
+            "hostView: neuronMemcpy failed");
+        return host_scratch.data();
+    }
+#if HAVE_CUDA
+    CHECK_CUDA_ERROR(cudaSetDevice(dev_id), "hostView: cudaSetDevice failed");
+    CHECK_CUDA_ERROR(
+        cudaMemcpy(
+            host_scratch.data(), reinterpret_cast<void *>(addr), len, cudaMemcpyDeviceToHost),
+        "hostView: cudaMemcpy failed");
+#elif HAVE_ROCM
+    CHECK_CUDA_ERROR(hipSetDevice(dev_id), "hostView: hipSetDevice failed");
+    CHECK_CUDA_ERROR(
+        hipMemcpy(host_scratch.data(), reinterpret_cast<void *>(addr), len, hipMemcpyDeviceToHost),
+        "hostView: hipMemcpy failed");
+#else
+    (void)dev_id;
+    std::cerr << "VRAM consistency check needs CUDA, ROCm or Neuron" << std::endl;
+    exit(EXIT_FAILURE);
+#endif
+    return host_scratch.data();
+}
+
+// Verify a storage WRITE without touching local disk.
+//
+// The data has just been written to the remote backend. Rather than download
+// the object to a local file and re-read it (the file/device path other storage
+// backends use), read the objects back over the same transport into the
+// initiator buffers and compare them to the byte the initiator wrote
+// (XFERBENCH_INITIATOR_BUFFER_ELEMENT). This verifies the round-trip end to end
+// and needs no local copy, so it also covers backends that materialize none.
+//
+// The buffers are poisoned with a different byte first, so a read that moves
+// nothing is caught instead of passing by coincidence. `local_lists` are the
+// initiator buffers; `remote_lists` the matching object descriptors.
+bool
+xferBenchNixlWorker::verifyWriteByReadback(std::vector<std::vector<xferBenchIOV>> &local_lists,
+                                           std::vector<std::vector<xferBenchIOV>> &remote_lists) {
+    constexpr uint8_t poison = 0x00;
+    static_assert(poison != XFERBENCH_INITIATOR_BUFFER_ELEMENT,
+                  "poison value must differ from the initiator sentinel");
+
+    if (local_lists.size() != remote_lists.size()) {
+        std::cerr << "verifyWriteByReadback: list count mismatch (" << local_lists.size()
+                  << " local vs " << remote_lists.size() << " remote)" << std::endl;
+        return false;
+    }
+
+    bool pass = true;
+    for (size_t list_idx = 0; list_idx < local_lists.size(); list_idx++) {
+        if (local_lists[list_idx].size() != remote_lists[list_idx].size()) {
+            std::cerr << "verifyWriteByReadback: descriptor count mismatch in list " << list_idx
+                      << std::endl;
+            return false;
+        }
+
+        for (const auto &iov : local_lists[list_idx]) {
+            fillTransferBuffer(seg_type, iov.addr, iov.len, poison, iov.devId);
+        }
+
+        nixl_xfer_dlist_t local_desc(seg_type);
+        nixl_xfer_dlist_t remote_desc(getRemoteSegType());
+        prepareTransferDescriptors(
+            local_desc, remote_desc, local_lists[list_idx], remote_lists[list_idx]);
+
+        std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
+        nixl_opt_args_t params;
+        nixlXferReqH *req = nullptr;
+        nixl_status_t rc =
+            agent->createXferReq(NIXL_READ, local_desc, remote_desc, target, req, &params);
+        if (NIXL_SUCCESS != rc) {
+            std::cerr << "verifyWriteByReadback: createXferReq failed for list " << list_idx
+                      << std::endl;
+            return false;
+        }
+        rc = agent->postXferReq(req);
+        if (NIXL_SUCCESS != rc && NIXL_IN_PROG != rc) {
+            std::cerr << "verifyWriteByReadback: postXferReq failed for list " << list_idx
+                      << std::endl;
+            agent->releaseXferReq(req);
+            return false;
+        }
+        // Bounded wait: a stalled backend/peer must not hang the benchmark, and
+        // the terminal status is preserved so a transport failure is reported as
+        // such rather than misattributed to a data mismatch in the check below.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (NIXL_IN_PROG == (rc = agent->getXferStatus(req))) {
+            if ((rt && !rt->areAllPeersAlive()) || std::chrono::steady_clock::now() >= deadline) {
+                std::cerr << "verifyWriteByReadback: read-back timed out for list " << list_idx
+                          << std::endl;
+                agent->releaseXferReq(req);
+                return false;
+            }
+        }
+        agent->releaseXferReq(req);
+        if (NIXL_SUCCESS != rc) {
+            std::cerr << "verifyWriteByReadback: read-back failed for list " << list_idx << ": "
+                      << nixlEnumStrings::statusStr(rc) << std::endl;
+            return false;
+        }
+
+        size_t iov_idx = 0;
+        for (const auto &iov : local_lists[list_idx]) {
+            std::vector<uint8_t> host_scratch;
+            const uint8_t *bytes = hostView(seg_type, iov.addr, iov.len, host_scratch, iov.devId);
+            for (size_t b = 0; b < iov.len; b++) {
+                if (bytes[b] != XFERBENCH_INITIATOR_BUFFER_ELEMENT) {
+                    std::cerr << "Consistency check failed for iov " << list_idx << ":" << iov_idx
+                              << " at byte " << b << std::endl;
+                    pass = false;
+                    break;
+                }
+            }
+            iov_idx++;
+        }
+    }
+
+    if (!pass) {
+        std::cerr << "Consistency check failed" << std::endl;
+    }
+    return pass;
+}
+
 // Register local and remote memory with the agent.
 static nixl_status_t
 registerIterationMem(nixlAgent *agent,
@@ -1357,6 +1538,8 @@ registerIterationMem(nixlAgent *agent,
         nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
         rc = agent->registerMem(remote_reg, &reg_args);
         if (rc != NIXL_SUCCESS) {
+            // Unwind the local registration so a partial failure leaves nothing pinned.
+            agent->deregisterMem(local_reg, &reg_args);
             return rc;
         }
     }
@@ -1375,19 +1558,18 @@ deregisterIterationMem(nixlAgent *agent,
 
     nixl_reg_dlist_t local_reg = iovListToNixlRegDlist(local_iov, GET_SEG_TYPE(true));
     nixl_status_t rc = agent->deregisterMem(local_reg, &reg_args);
-    if (rc != NIXL_SUCCESS) {
-        return rc;
-    }
 
+    // Always attempt the remote deregistration even if the local one failed, so a
+    // partial teardown does not leak the remote registration. Surface the first error.
     if (xferBenchConfig::isStorageBackend()) {
         nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
-        rc = agent->deregisterMem(remote_reg, &reg_args);
-        if (rc != NIXL_SUCCESS) {
-            return rc;
+        const nixl_status_t remote_rc = agent->deregisterMem(remote_reg, &reg_args);
+        if (rc == NIXL_SUCCESS) {
+            rc = remote_rc;
         }
     }
 
-    return NIXL_SUCCESS;
+    return rc;
 }
 
 // Per-slot state for execTransferLoop. A slot owns its slice of the IOV
