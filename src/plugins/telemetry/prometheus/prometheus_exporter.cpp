@@ -125,6 +125,7 @@ nixlTelemetryPrometheusExporter::initializeMetrics() {
     registerCounter("agent_memory_deregistered", "Cumulative memory deregistered");
     registerCounter("agent_xfer_time", "Start to Complete (per request)");
     registerCounter("agent_xfer_post_time", "Start to posting to Back-End (per request)");
+    registerErrorCounters();
 
     registerGauge("agent_tx_bytes", "agent_tx_last_bytes", "Bytes sent by the last request");
     registerGauge("agent_rx_bytes", "agent_rx_last_bytes", "Bytes received by the last request");
@@ -145,6 +146,26 @@ nixlTelemetryPrometheusExporter::registerCounter(const std::string &name, const 
         family.Remove(&metric);
     }
     NIXL_ASSERT(inserted);
+}
+
+void
+nixlTelemetryPrometheusExporter::registerErrorCounters() {
+    auto &family = prometheus::BuildCounter()
+                       .Name("agent_errors_total")
+                       .Help("Cumulative error count by status")
+                       .Register(*registry_);
+
+    for (const auto event_type : telemetry_error_event_types) {
+        const char *const status = nixlEnumStrings::telemetryErrorStatusLabel(event_type);
+        auto &metric =
+            family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}, {"status", status}});
+        const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event_type));
+        const auto inserted = counters_.try_emplace(event_name, &family, &metric).second;
+        if (!inserted) {
+            family.Remove(&metric);
+        }
+        NIXL_ASSERT(inserted);
+    }
 }
 
 void

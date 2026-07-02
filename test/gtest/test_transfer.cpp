@@ -25,6 +25,7 @@
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -844,5 +845,37 @@ TEST_P(TestTransferTracing, NvtxDemoWalkthrough) {
 
 NIXL_INSTANTIATE_TEST(ucx_tracing, TestTransferTracing, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_tracing_no_pt, TestTransferTracing, "UCX", false, 2, 0, "");
+
+// Auto-enable path (NIX-1576): with NIXL_TRACE_BACKENDS unset, a process running
+// under Nsight Systems (nsys injects NVTX_INJECTION64_PATH) must activate the
+// NVTX backend on its own. Reuses TestTransferTracing's plugin-dir registration
+// and transfer body; only the environment differs.
+class TestTransferTracingNsysAuto : public TestTransferTracing {
+protected:
+    void
+    SetUp() override {
+        if (!nvtxPluginAvailable_) {
+            GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+        }
+        env.addVar("NIXL_TELEMETRY_ENABLE", "n");
+        // Leave NIXL_TRACE_BACKENDS unset so the NVTX backend can only come from
+        // nsys auto-enable. Under a real nsys run NVTX_INJECTION64_PATH is already
+        // set (real injection library) -- don't clobber it. Otherwise simulate an
+        // nsys process; the path need not exist, as the NVTX runtime falls back to
+        // no-op ranges when injection is absent.
+        if (std::getenv("NVTX_INJECTION64_PATH") == nullptr) {
+            env.addVar("NVTX_INJECTION64_PATH", "/nonexistent/libInjectionNvtx64.so");
+        }
+        for (size_t i = 0; i < 2; i++) {
+            addAgent(i);
+        }
+    }
+};
+
+TEST_P(TestTransferTracingNsysAuto, AutoEnabledTransferLoop) {
+    runTracingTransferTest();
+}
+
+NIXL_INSTANTIATE_TEST(ucx_tracing_nsys_auto, TestTransferTracingNsysAuto, "UCX", true, 2, 0, "");
 
 } // namespace gtest
