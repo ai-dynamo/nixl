@@ -169,8 +169,6 @@ else
         echo "Using PyTorch from system site-packages"
     else
         echo "System torch check failed: ${_torch_check_err}" >&2
-        echo "Using PyTorch from system site-packages"
-    else
         cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
         if [ -z "$cuda_version" ]; then
             echo "ERROR: unable to determine CUDA version from nvcc" >&2
