@@ -19,7 +19,7 @@ build-backend = "mesonpy"
 
 [project]
 name = "nixl-cu12"
-version = "1.3.0"
+version = "1.3.1"
 description = "NIXL Python API"
 readme = "README.md"
 license = "MIT AND Apache-2.0"
@@ -34,8 +34,10 @@ dependencies = ["torch", "numpy"]
 [tool.mypy]
 mypy_path = ["src/bindings/python/nixl-meta"]
 ignore_missing_imports = true
-# Meta dispatcher (nixl-meta/nixl_ep/) and EP sources (examples/device/ep/nixl_ep/)
-# share the module name; explicit_package_bases avoids duplicate-module errors.
+# Two `nixl_ep/__init__.py` files coexist legitimately: the meta-dispatcher
+# under `src/bindings/python/nixl-meta/nixl_ep/` and the actual EP source
+# under `examples/device/ep/nixl_ep/`. Without explicit_package_bases mypy
+# refuses to resolve them and errors with "Duplicate module named nixl_ep".
 explicit_package_bases = true
 
 [tool.isort]
