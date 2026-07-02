@@ -17,14 +17,40 @@
 
 #include "nvtx_trace_backend.h"
 
+#include <cstdint>
 #include <memory>
+#include <stack>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "nvtx_events.h"
 #include "nvtx_span.h"
 
 namespace nixl::trace::nvtx_internal {
+namespace {
+
+    using CorrelationStack = std::stack<std::uint64_t, std::vector<std::uint64_t>>;
+
+    // static thread_local is shared across backend instances on a thread, which
+    // is safe here: push/pop are balanced within a single agent call, so the
+    // stack is empty between calls.
+    [[nodiscard]] CorrelationStack &
+    correlationStack() noexcept {
+        static thread_local CorrelationStack stack;
+        return stack;
+    }
+
+    void
+    applyCorrelation(nvtxEventAttributes_t &ev) noexcept {
+        const CorrelationStack &stack = correlationStack();
+        if (!stack.empty()) {
+            ev.payloadType = NVTX_PAYLOAD_TYPE_UNSIGNED_INT64;
+            ev.payload.ullValue = stack.top();
+        }
+    }
+
+} // namespace
 
 NvtxTraceBackend::NvtxTraceBackend(const std::string_view domain)
     : domainName_(domain),
@@ -39,7 +65,8 @@ NvtxTraceBackend::~NvtxTraceBackend() {
 std::unique_ptr<SpanBackend>
 NvtxTraceBackend::beginSpan(const std::string_view name, const Kind kind) {
     std::string fallback;
-    const nvtxEventAttributes_t ev = eventForName(name, kind, registeredHandles_, fallback);
+    nvtxEventAttributes_t ev = eventForName(name, kind, registeredHandles_, fallback);
+    applyCorrelation(ev);
     auto span = std::make_unique<NvtxSpan>(domain_, schemaIds_);
     nvtxDomainRangePushEx(domain_, &ev);
     return span;
@@ -48,8 +75,22 @@ NvtxTraceBackend::beginSpan(const std::string_view name, const Kind kind) {
 void
 NvtxTraceBackend::mark(const std::string_view name, const Kind kind) {
     std::string fallback;
-    const nvtxEventAttributes_t ev = eventForName(name, kind, registeredHandles_, fallback);
+    nvtxEventAttributes_t ev = eventForName(name, kind, registeredHandles_, fallback);
+    applyCorrelation(ev);
     nvtxDomainMarkEx(domain_, &ev);
+}
+
+void
+NvtxTraceBackend::pushCorrelationId(const std::uint64_t id) {
+    correlationStack().push(id);
+}
+
+void
+NvtxTraceBackend::popCorrelationId() {
+    CorrelationStack &stack = correlationStack();
+    if (!stack.empty()) {
+        stack.pop();
+    }
 }
 
 } // namespace nixl::trace::nvtx_internal

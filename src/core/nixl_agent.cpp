@@ -1082,6 +1082,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    // Request-handle address is a stable id shared with the completion below,
+    // so the two link even when posted and polled from different threads.
+    NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), reinterpret_cast<std::uint64_t>(req_hndl));
     NIXL_TRACE_SCOPE(trace_span,
                      data->tracer_.get(),
                      req_hndl->backendOp == NIXL_WRITE ? "nixl::postXferReq.write" :
@@ -1213,6 +1216,8 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
             }
         }
         if (req_hndl->status == NIXL_SUCCESS) {
+            NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(),
+                                         reinterpret_cast<std::uint64_t>(req_hndl));
             NIXL_TRACE_MARK(
                 data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
         }

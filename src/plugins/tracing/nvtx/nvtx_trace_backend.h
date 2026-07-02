@@ -42,10 +42,10 @@ public:
     mark(std::string_view name, Kind kind) override;
 
     void
-    pushCorrelationId(std::uint64_t) override {}
+    pushCorrelationId(std::uint64_t id) override;
 
     void
-    popCorrelationId() override {}
+    popCorrelationId() override;
 
     [[nodiscard]] std::string_view
     name() const noexcept override {
