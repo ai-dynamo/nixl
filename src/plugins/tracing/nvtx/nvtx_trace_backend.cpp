@@ -30,20 +30,20 @@
 namespace nixl::trace::nvtx_internal {
 namespace {
 
-    using CorrelationStack = std::stack<std::uint64_t, std::vector<std::uint64_t>>;
+    using correlation_stack_t = std::stack<std::uint64_t, std::vector<std::uint64_t>>;
 
     // static thread_local is shared across backend instances on a thread, which
     // is safe here: push/pop are balanced within a single agent call, so the
     // stack is empty between calls.
-    [[nodiscard]] CorrelationStack &
+    [[nodiscard]] correlation_stack_t &
     correlationStack() noexcept {
-        static thread_local CorrelationStack stack;
+        static thread_local correlation_stack_t stack;
         return stack;
     }
 
     void
     applyCorrelation(nvtxEventAttributes_t &ev) noexcept {
-        const CorrelationStack &stack = correlationStack();
+        const correlation_stack_t &stack = correlationStack();
         if (!stack.empty()) {
             ev.payloadType = NVTX_PAYLOAD_TYPE_UNSIGNED_INT64;
             ev.payload.ullValue = stack.top();
@@ -87,7 +87,7 @@ NvtxTraceBackend::pushCorrelationId(const std::uint64_t id) {
 
 void
 NvtxTraceBackend::popCorrelationId() {
-    CorrelationStack &stack = correlationStack();
+    correlation_stack_t &stack = correlationStack();
     if (!stack.empty()) {
         stack.pop();
     }
