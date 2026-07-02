@@ -41,10 +41,10 @@ class nixlMetadataBackend;
  */
 class nixlMDManager {
 public:
-    // `use_etcd` mirrors nixlAgentData::useEtcd_ (env read once in the agent
-    // ctor); when set, the centralized-store (ETCD) backend is selected, else
-    // P2P. A later PR adds TCPStore as another store option.
-    nixlMDManager(nixlMetadataContext &ctx, bool use_etcd);
+    // `use_etcd` / `use_tcpstore` mirror nixlAgentData's cached env checks (read
+    // once in the agent ctor). When one is set the matching centralized-store
+    // backend is selected, else P2P. The two stores are mutually exclusive.
+    nixlMDManager(nixlMetadataContext &ctx, bool use_etcd, bool use_tcpstore);
     ~nixlMDManager();
 
     nixlMDManager(const nixlMDManager &) = delete;

@@ -116,6 +116,13 @@ detectEtcd() {
 #endif
 }
 
+// TCPStore backend selection. Manager-only (no inline path), so it does not
+// need the comm thread; the manager does its store I/O synchronously.
+[[nodiscard]] bool
+detectTcpStore() {
+    return nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINTS");
+}
+
 // Opt-in routing of the public metadata methods through the agent-owned
 // nixlMDManager. Off by default; the inline path is used unless set.
 [[nodiscard]] bool
@@ -158,12 +165,13 @@ makeAgentTracer(const std::string &name) {
 
 // Build the manager (via the nixlMetadataContext interface) when metadata
 // exchange is enabled; null otherwise, so nixlAgentData can hold it as const.
+// TCPStore needs the manager but not the comm thread, so it is a separate gate.
 [[nodiscard]] std::unique_ptr<nixlMDManager>
-makeMDManager(nixlMetadataContext &ctx, bool needs_comm_thread, bool use_etcd) {
-    if (!needs_comm_thread) {
+makeMDManager(nixlMetadataContext &ctx, bool build, bool use_etcd, bool use_tcpstore) {
+    if (!build) {
         return nullptr;
     }
-    return std::make_unique<nixlMDManager>(ctx, use_etcd);
+    return std::make_unique<nixlMDManager>(ctx, use_etcd, use_tcpstore);
 }
 
 } // namespace
@@ -172,10 +180,11 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
     : name_(name),
       config_(config),
       useEtcd_(detectEtcd()),
+      useTcpStore_(detectTcpStore()),
       needsCommThread_(useEtcd_ || config.useListenThread),
       useMdManager_(detectMdManager()),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
-      md_(makeMDManager(*this, needsCommThread_, useEtcd_)),
+      md_(makeMDManager(*this, needsCommThread_ || useTcpStore_, useEtcd_, useTcpStore_)),
       tracer_(makeAgentTracer(name)) {
 #if HAVE_ETCD
     NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");
@@ -1629,6 +1638,85 @@ nixlAgentData::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     return NIXL_SUCCESS;
 }
 
+// Manager-path copy of nixlAgent::loadRemoteMD, exposed via nixlMetadataContext
+// so a store backend can load a fetched blob into the cache without going
+// through the public agent method. The two are collapsed in PR4.
+nixl_status_t
+nixlAgentData::loadRemoteMD(const nixl_blob_t &remote_metadata, std::string &out_name) {
+    nixlSerDes sd;
+    nixl_blob_t conn_info;
+    nixl_backend_t nixl_backend;
+    nixl_status_t ret;
+
+    NIXL_LOCK_GUARD(lock);
+    ret = sd.importStr(remote_metadata);
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR_FUNC << "failed to deserialize remote metadata";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    const std::string remote_agent = sd.getStr("Agent");
+    if (remote_agent.empty()) {
+        NIXL_ERROR_FUNC << "error in deserializing remote agent name";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    if (remote_agent == name_) {
+        NIXL_ERROR_FUNC << "remote agent name same as local agent, "
+                           "no need to load metadata";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
+
+    size_t conn_cnt;
+    ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR_FUNC << "error getting connection count: " << ret;
+        return NIXL_ERR_MISMATCH;
+    }
+
+    int count = 0;
+    for (size_t i = 0; i < conn_cnt; ++i) {
+        nixl_backend = sd.getStr("t");
+        conn_info = sd.getStr("c");
+
+        if (nixl_backend.empty() || conn_info.empty()) {
+            NIXL_ERROR_FUNC << "failed to deserialize remote metadata";
+            return NIXL_ERR_MISMATCH;
+        }
+
+        ret = loadConnInfo(remote_agent, nixl_backend, conn_info);
+        if (ret == NIXL_SUCCESS) {
+            count++;
+        } else if (ret != NIXL_ERR_NOT_SUPPORTED) {
+            NIXL_ERROR_FUNC << "error loading connection info for backend '" << nixl_backend
+                            << "' with status " << ret;
+            return ret;
+        }
+    }
+
+    if ((count == 0) && (conn_cnt > 0)) {
+        NIXL_ERROR_FUNC << "no common backend found";
+        return NIXL_ERR_BACKEND;
+    }
+
+    if (sd.getStr("") != "MemSection") {
+        NIXL_ERROR_FUNC << "failed to deserialize remote metadata";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    ret = loadRemoteSections(remote_agent, sd);
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR_FUNC << "error loading remote metadata for agent '" << remote_agent
+                        << "' with status " << ret;
+        return ret;
+    }
+
+    out_name = remote_agent;
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t
 nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
                              nixl_blob_t &str,
@@ -1823,7 +1911,8 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
     // Opt-in: route through the agent-owned metadata manager (P2P when an
     // address is given, otherwise the centralized-store backend).
     if (data->md_ && data->useMdManager_ &&
-        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_)) {
+        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_ ||
+         data->useTcpStore_)) {
         return data->md_->sendLocalMD(extra_params);
     }
 
@@ -1861,7 +1950,8 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
     // Opt-in: route through the agent-owned metadata manager (P2P when an
     // address is given, otherwise the centralized-store backend).
     if (data->md_ && data->useMdManager_ &&
-        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_)) {
+        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_ ||
+         data->useTcpStore_)) {
         return data->md_->sendLocalPartialMD(descs, extra_params);
     }
 
@@ -1902,7 +1992,8 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
     // Opt-in: route through the agent-owned metadata manager (P2P when an
     // address is given, otherwise the centralized-store backend).
     if (data->md_ && data->useMdManager_ &&
-        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_)) {
+        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_ ||
+         data->useTcpStore_)) {
         return data->md_->fetchRemoteMD(remote_name, extra_params);
     }
 
@@ -1934,7 +2025,8 @@ nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
     // Opt-in: route through the agent-owned metadata manager (P2P when an
     // address is given, otherwise the centralized-store backend).
     if (data->md_ && data->useMdManager_ &&
-        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_)) {
+        ((extra_params && !extra_params->ipAddr.empty()) || data->useEtcd_ ||
+         data->useTcpStore_)) {
         return data->md_->invalidateLocalMD(extra_params);
     }
 
