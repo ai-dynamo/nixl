@@ -17,15 +17,27 @@
 
 import argparse
 import base64
+import collections
 import csv
 import hashlib
 import logging
 import os
+import re
 import shutil
+import subprocess
 import tempfile
 import zipfile
 
 logger = logging.getLogger(__name__)
+
+# Matches shared-library names such as ``libfoo.so``, ``libfoo.so.0`` and
+# ``libfoo.so.0.0.0`` while rejecting unrelated names like ``foo.sol``.
+_SHARED_LIB_RE = re.compile(r"\.so(\.\d+)*$")
+
+
+def _is_shared_lib(name):
+    """Return True if @name looks like a shared library file name."""
+    return bool(_SHARED_LIB_RE.search(name))
 
 
 def extract_wheel(wheel_path):
@@ -180,32 +192,35 @@ def copytree(src, dst):
     """
     copied_files = []
     dedup_map = {}
-    for root, dirs, files in os.walk(src):
+    for root, _dirs, files in os.walk(src):
         rel_path = os.path.relpath(root, src)
         dst_dir = os.path.join(dst, rel_path)
         os.makedirs(dst_dir, exist_ok=True)
 
-        inode_groups = {}
+        # Group shared libraries by the underlying file they point at.
+        # os.stat() follows symlinks, so a symlink and its target return the
+        # same (st_dev, st_ino) pair and therefore land in the same group;
+        # files with no symlinks form a group of one. Non-so files (and any
+        # .so we cannot stat, e.g. a broken symlink) are copied right away so
+        # nothing is silently dropped.
+        inode_groups = collections.defaultdict(list)
         for file in files:
             src_file = os.path.join(root, file)
 
-            if ".so" not in file:
-                dst_file = os.path.join(dst_dir, file)
-                shutil.copy2(src_file, dst_file)
-                copied_files.append(dst_file)
-                continue
+            if _is_shared_lib(file):
+                try:
+                    stat_info = os.stat(src_file)
+                    key = (stat_info.st_dev, stat_info.st_ino)
+                    inode_groups[key].append(file)
+                    continue
+                except OSError:
+                    pass
 
-            try:
-                stat_info = os.stat(src_file)
-                key = (stat_info.st_dev, stat_info.st_ino)
-            except OSError:
-                dst_file = os.path.join(dst_dir, file)
-                shutil.copy2(src_file, dst_file)
-                copied_files.append(dst_file)
-                continue
-            inode_groups.setdefault(key, []).append(file)
+            dst_file = os.path.join(dst_dir, file)
+            shutil.copy2(src_file, dst_file)
+            copied_files.append(dst_file)
 
-        for _key, group in inode_groups.items():
+        for group in inode_groups.values():
             # Prefer the real (non-symlink) file; among equals keep the
             # longest name (the fully-versioned .so.X.Y.Z form that UCX's
             # module loader dlopens).
@@ -308,15 +323,28 @@ def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
     # (e.g. libuct_ib.so.0.0.0).
     if dedup_map:
         for fname in copied_files:
-            if os.path.isfile(fname) and ".so" in fname:
-                for old_name, new_name in dedup_map.items():
-                    ret = os.system(
-                        f"patchelf --replace-needed '{old_name}' '{new_name}' '{fname}'"
+            if not os.path.isfile(fname) or not _is_shared_lib(os.path.basename(fname)):
+                continue
+            for old_name, new_name in dedup_map.items():
+                result = subprocess.run(
+                    ["patchelf", "--replace-needed", old_name, new_name, fname],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    logger.error(
+                        "patchelf --replace-needed %s %s %s failed (exit %d)\n"
+                        "stdout: %s\nstderr: %s",
+                        old_name,
+                        new_name,
+                        fname,
+                        result.returncode,
+                        result.stdout.strip(),
+                        result.stderr.strip(),
                     )
-                    if ret != 0:
-                        raise RuntimeError(
-                            f"Failed to replace {old_name} with {new_name} in {fname}"
-                        )
+                    raise RuntimeError(
+                        f"Failed to replace {old_name} with {new_name} in {fname}"
+                    )
 
     create_wheel(wheel_path, temp_dir)
     shutil.rmtree(temp_dir)
