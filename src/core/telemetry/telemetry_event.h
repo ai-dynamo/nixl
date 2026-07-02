@@ -58,6 +58,21 @@ enum class nixl_telemetry_event_type_t : uint32_t {
 [[nodiscard]] nixl_telemetry_event_type_t
 nixlTelemetryEventTypeForStatus(nixl_status_t s);
 
+inline constexpr std::array telemetry_error_event_types = {
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED,
+    nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM,
+    nixl_telemetry_event_type_t::AGENT_ERR_BACKEND,
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND,
+    nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH,
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED,
+    nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE,
+    nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN,
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED,
+    nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT,
+    nixl_telemetry_event_type_t::AGENT_ERR_CANCELED,
+    nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY,
+};
+
 namespace nixlEnumStrings {
 [[nodiscard]] constexpr std::string_view
 telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
@@ -105,21 +120,6 @@ telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
     }
     return "unknown_event";
 }
-
-inline constexpr std::array<nixl_telemetry_event_type_t, 12> telemetry_error_event_types{{
-    nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED,
-    nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM,
-    nixl_telemetry_event_type_t::AGENT_ERR_BACKEND,
-    nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND,
-    nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH,
-    nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED,
-    nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE,
-    nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN,
-    nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED,
-    nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT,
-    nixl_telemetry_event_type_t::AGENT_ERR_CANCELED,
-    nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY,
-}};
 
 [[nodiscard]] constexpr const char *
 telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
