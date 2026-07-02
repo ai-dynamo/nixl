@@ -88,6 +88,18 @@ public:
                       nixl_blob_t &blob,
                       const nixl_opt_args_t *extra_params) = 0;
 
+    /** This agent's name; used by centralized backends to build their KV keys. */
+    [[nodiscard]] virtual const std::string &
+    getName() const = 0;
+
+    /**
+     * Deserialize a received metadata blob into the remote-section cache,
+     * returning the embedded remote agent name. Used by backends (e.g. TCPStore)
+     * that read the blob directly instead of via the comm thread.
+     */
+    [[nodiscard]] virtual nixl_status_t
+    loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) = 0;
+
     /** Post a metadata request to the agent's communication thread. */
     virtual void
     enqueueCommWork(nixl_comm_req_t request) = 0;
@@ -157,6 +169,12 @@ class nixlAgentData : public nixlMetadataContext {
         getLocalPartialMD(const nixl_reg_dlist_t &descs,
                           nixl_blob_t &blob,
                           const nixl_opt_args_t *extra_params) override;
+        [[nodiscard]] const std::string &
+        getName() const override {
+            return name_;
+        }
+        [[nodiscard]] nixl_status_t
+        loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) override;
         void enqueueCommWork(nixl_comm_req_t request) override;
         void getCommWork(std::vector<nixl_comm_req_t> &req_list);
         nixl_status_t

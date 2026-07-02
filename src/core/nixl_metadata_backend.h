@@ -31,7 +31,7 @@
  * @class nixlMetadataBackend
  * @brief Metadata-exchange operations that nixlMDManager dispatches to.
  *
- * Each transport implements this contract (P2P for now; ETCD/TCPStore later).
+ * Each transport implements this contract (P2P, ETCD, TCPStore).
  * Core-internal: not part of the installed public headers, so backend
  * dependencies never leak into the public API. Operational addressing
  * (`ipAddr`/`port`, `metadataLabel`) is carried in `nixl_opt_args_t`.

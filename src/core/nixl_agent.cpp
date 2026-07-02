@@ -1683,6 +1683,85 @@ nixlAgentData::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     return NIXL_SUCCESS;
 }
 
+// Manager-path copy of nixlAgent::loadRemoteMD, exposed via nixlMetadataContext
+// so a store backend can load a fetched blob into the cache without going
+// through the public agent method. The two are collapsed in PR4.
+nixl_status_t
+nixlAgentData::loadRemoteMD(const nixl_blob_t &remote_metadata, std::string &out_name) {
+    nixlSerDes sd;
+    nixl_blob_t conn_info;
+    nixl_backend_t nixl_backend;
+    nixl_status_t ret;
+
+    NIXL_LOCK_GUARD(lock);
+    ret = sd.importStr(remote_metadata);
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR_FUNC << "failed to deserialize remote metadata";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    const std::string remote_agent = sd.getStr("Agent");
+    if (remote_agent.empty()) {
+        NIXL_ERROR_FUNC << "error in deserializing remote agent name";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    if (remote_agent == name_) {
+        NIXL_ERROR_FUNC << "remote agent name same as local agent, "
+                           "no need to load metadata";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
+
+    size_t conn_cnt;
+    ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR_FUNC << "error getting connection count: " << ret;
+        return NIXL_ERR_MISMATCH;
+    }
+
+    int count = 0;
+    for (size_t i = 0; i < conn_cnt; ++i) {
+        nixl_backend = sd.getStr("t");
+        conn_info = sd.getStr("c");
+
+        if (nixl_backend.empty() || conn_info.empty()) {
+            NIXL_ERROR_FUNC << "failed to deserialize remote metadata";
+            return NIXL_ERR_MISMATCH;
+        }
+
+        ret = loadConnInfo(remote_agent, nixl_backend, conn_info);
+        if (ret == NIXL_SUCCESS) {
+            count++;
+        } else if (ret != NIXL_ERR_NOT_SUPPORTED) {
+            NIXL_ERROR_FUNC << "error loading connection info for backend '" << nixl_backend
+                            << "' with status " << ret;
+            return ret;
+        }
+    }
+
+    if ((count == 0) && (conn_cnt > 0)) {
+        NIXL_ERROR_FUNC << "no common backend found";
+        return NIXL_ERR_BACKEND;
+    }
+
+    if (sd.getStr("") != "MemSection") {
+        NIXL_ERROR_FUNC << "failed to deserialize remote metadata";
+        return NIXL_ERR_MISMATCH;
+    }
+
+    ret = loadRemoteSections(remote_agent, sd);
+    if (ret != NIXL_SUCCESS) {
+        NIXL_ERROR_FUNC << "error loading remote metadata for agent '" << remote_agent
+                        << "' with status " << ret;
+        return ret;
+    }
+
+    out_name = remote_agent;
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t
 nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
                              nixl_blob_t &str,
