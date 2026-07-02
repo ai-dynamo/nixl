@@ -20,18 +20,18 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | [Claude Code Review](#claude-code-review-claude-reviewyml) | GitHub Actions | `pull_request` (opened/synchronize/reopened) | Yes |
 | [External Contributor](#external-contributor-external_contributoryaml) | GitHub Actions | `pull_request_target` (opened, fork only) | Yes (fork PRs only) |
 | [Blossom-CI](#blossom-ci-blossom-ciyml) | GitHub Actions | `/build` PR comment, or `workflow_dispatch` | No — manual |
-| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`, `test-sanitizers` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | No — only after `/build`, but these 6 are the *only* Jenkins jobs in the PR CI path |
+| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | No — only after `/build`, but these 7 are the *only* Jenkins jobs in the PR CI path |
 | `nixl-ci-build-container` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
 | `nixl-ci-build-wheel-nightly` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
 | `nixl-ci-build-llm-container` | Jenkins (standalone) | Manual only | No — never runs as part of PR CI |
 | `nixl-ci-test-llm-container` | Jenkins (standalone) | Manual, or chained from `build-llm-container` via `RUN_TEST` | No — never runs as part of PR CI |
 
-> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 10 Jenkins jobs, but only the
-> 6 that `nixl-ci-dispatcher` fans out to are ever part of the PR CI flow. The
-> other 4 (`build-container`, `build-wheel-nightly`, `build-llm-container`,
-> `test-llm-container`) are entirely standalone — they run only on a nightly
-> cron or when someone triggers them manually from the Jenkins UI, and are
-> never invoked by the dispatcher or by a PR event.
+> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 12 Jenkins jobs: the
+> dispatcher, the 7 jobs it fans out to (the PR CI flow), and 4 standalone jobs
+> (`build-container`, `build-wheel-nightly`, `build-llm-container`,
+> `test-llm-container`). The standalone ones run only on a nightly cron or when
+> someone triggers them manually from the Jenkins UI, and are never invoked by
+> the dispatcher or by a PR event.
 
 ## GitHub Actions workflows
 
@@ -98,7 +98,7 @@ sequenceDiagram
     participant Scan as Vulnerability-scan (Black Duck)
     participant Trigger as Job-trigger
     participant Jenkins as nixl-ci-dispatcher
-    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, build-wheel,<br/>test-sanitizers)
+    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, build-wheel,<br/>test-sanitizers, build-container-pr)
 
     User->>GH: comment "/build"
     GH->>Blossom: issue_comment event
@@ -128,22 +128,22 @@ Step by step, matching the jobs in `blossom-ci.yml`:
    Duck-based vulnerability scan via the `NVIDIA/blossom-action`.
 5. **Job-trigger** calls `blossom-ci` with `OPERATION: START-CI-JOB`, which
    triggers the Jenkins `nixl-ci-dispatcher` job.
-6. `nixl-ci-dispatcher` fans out in parallel to its six child jobs
+6. `nixl-ci-dispatcher` fans out in parallel to its seven child jobs
    (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`,
-   `test-sanitizers` — see [Jenkins jobs](#jenkins-jobs) below).
+   `test-sanitizers`, `build-container-pr` — see [Jenkins jobs](#jenkins-jobs) below).
 7. Each child job reports its own status back as an individual GitHub PR
    check, so the PR shows per-job pass/fail rather than one aggregate check.
 
 ## Jenkins jobs
 
-All 10 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
+All 12 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
 (Jenkins Job Builder config) and run through the shared pipeline entry point
 `.ci/jenkins/pipeline/Jenkinsfile`. None of them run directly off GitHub
 events — they only start via the Jenkins webhook fired by Blossom-CI, or via
 their own nightly/manual trigger. They split into two groups:
 
 - **Dispatcher-triggered (part of the PR CI path):** `nixl-ci-dispatcher` and
-  the 6 jobs it fans out to. This is the *only* way any Jenkins job runs
+  the 7 jobs it fans out to. This is the *only* way any Jenkins job runs
   against a PR, and only after a `/build` comment.
 - **Standalone (never run against a PR):** `nixl-ci-build-container`,
   `nixl-ci-build-wheel-nightly`, `nixl-ci-build-llm-container`,
@@ -152,14 +152,20 @@ their own nightly/manual trigger. They split into two groups:
 
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
-- **What it does:** Fans out in parallel to six downstream Jenkins jobs, waiting on all of them:
+- **What it does:** Fans out in parallel to seven downstream Jenkins jobs, waiting on all of them:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com)
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (nixl_ep elastic tests on dlcluster.nvidia.com)
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
+  - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
 - **Automatic on every PR:** No — only runs after a `/build` comment triggers Blossom-CI. Each sub-job also aborts any stale in-flight run for the same PR before starting.
+
+### `nixl-ci-build-container-pr` (dispatcher-triggered)
+- **Trigger:** Fan-out from `nixl-ci-dispatcher` (same as the other PR CI jobs).
+- **What it does:** Build-only verification (no push) of the `nixl` (EP + debug) and `nixlbench` container images — one matrix cell per target, x86_64 only. It runs the same `contrib/build-container.sh` / `benchmark/nixlbench/contrib/build.sh` the standalone `nixl-ci-build-container` job runs, so container/packaging breakage (e.g. a missing `--torch-versions`, or an EP nvlink register-count failure) is caught on the PR instead of only by the nightly job. Skips the build when the PR touches no build-affecting files (`contrib/`, `benchmark/`, `.ci/`, `meson.build`/`meson.options`, `pyproject.toml`, `setup.py`), reporting green fast so it can be a required check without hanging unrelated PRs.
+- **Automatic on every PR:** No — only after a `/build` comment (like the other dispatcher jobs).
 
 ### `nixl-ci-build-container` (standalone)
 - **Trigger:** Nightly cron (builds `nixlbench` and `nixl` targets, on both the default CUDA base image and the DLFW PyTorch daily image, ~3–4 AM), or manual run with parameters (`BUILD_TARGET`, `NIXL_VERSION`, `UCX_VERSION`, base image overrides, etc.).
