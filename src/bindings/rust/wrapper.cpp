@@ -1408,12 +1408,17 @@ nixl_capi_prep_xfer_dlist(nixl_capi_agent_t agent,
     }
 
     try {
-        *dlist_handle = new nixl_capi_xfer_dlist_handle_s;
+        auto h = new nixl_capi_xfer_dlist_handle_s;
         nixl_status_t ret = agent->inner->prepXferDlist(std::string(agent_name),
                                                         *descs->dlist,
-                                                        (*dlist_handle)->handle,
+                                                        h->handle,
                                                         opt_args ? &opt_args->args : nullptr);
-        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        if (ret != NIXL_SUCCESS) {
+            delete h;
+            return NIXL_CAPI_ERROR_BACKEND;
+        }
+        *dlist_handle = h;
+        return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;
