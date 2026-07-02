@@ -123,15 +123,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 
     agent->getAvailPlugins(plugins);
 
-    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_LIBFABRIC) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
-        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL) ||
-        xferBenchConfig::isStorageBackend()) {
-        backend_name = xferBenchConfig::backend;
-    } else {
-        std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
+    backend_name = xferBenchConfig::backend;
+    if (xferBenchConfig::backend_mems.empty()) {
+        std::cerr << "NIXLBench backend '" << backend_name
+                  << "' is not available or reports no supported memory types" << std::endl;
         exit(EXIT_FAILURE);
     }
 
@@ -330,6 +325,18 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 
     CHECK_NIXL_ERROR(agent->createBackend(backend_name, backend_params, backend_engine),
                      "createBackend failed!");
+
+    // Refresh the cached mem list from the instantiated engine. Plugins like LIBFABRIC
+    // only report VRAM_SEG after runtime feature detection (e.g. CUDA HMEM), so the
+    // post-instantiation list can be a strict superset of the plugin-reported one.
+    {
+        nixl_mem_list_t engine_mems;
+        nixl_b_params_t engine_params;
+        if (agent->getBackendParams(backend_engine, engine_mems, engine_params) == NIXL_SUCCESS &&
+            !engine_mems.empty()) {
+            xferBenchConfig::backend_mems = engine_mems;
+        }
+    }
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
@@ -1313,10 +1320,10 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
                            nixl_xfer_dlist_t &remote_desc,
                            const std::vector<xferBenchIOV> &local_iov,
                            const std::vector<xferBenchIOV> &remote_iov) {
-    // Set remote descriptor type based on backend
+    // Pick the remote descriptor mem type from the storage taxonomy of the active backend.
     if (xferBenchConfig::isObjStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
-    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+    } else if (xferBenchConfig::isBlkStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
