@@ -42,7 +42,7 @@ env:
   TEST_TIMEOUT: 90
   UCX_TLS: "^shm"
   STORAGE_DRIVER: 'overlay'
-  CI_IMAGE_TAG: "20260701-3"
+  CI_IMAGE_TAG: "20260701-4"
 
 runs_on_dockers:
   # TSan-instrumented dependency image for the tsan build (DEPS_SANITIZE=thread

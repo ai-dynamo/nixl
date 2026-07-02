@@ -347,7 +347,12 @@ else
       $SUDO ninja install && \
       $SUDO ldconfig && \
       cd .. && \
-      rm -rf Mooncake
+      rm -rf Mooncake &&
+      # Mooncake's dependencies.sh pulls libboost-mpi and openmpi, which conflict
+      # with the MPI/UCX from the base image. Remove them after the mooncake build.
+      $SUDO apt-get purge -y 'libopenmpi*' 'libboost-mpi*' 'libboost-graph-parallel*' \
+        openmpi-bin openmpi-common libcoarrays-openmpi-dev libcaf-openmpi-3t64 || true &&
+      $SUDO ldconfig
     )
 
     ( \
