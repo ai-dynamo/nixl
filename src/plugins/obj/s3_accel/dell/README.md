@@ -17,36 +17,45 @@ limitations under the License.
 
 # NIXL Dell ObjectScale accelerated S3 engine
 
-This vendor-specific accelerated engine provides S3 over RDMA for Dell ObjectScale.  This engine utilizes the CUDA Toolkit CUObject Client library and the AWS S3 SDK.
+> **Note:** This Dell vendor engine (selected via `accelerated=true, type=dell`)
+> is a vendor-specific engine for servers that use vendor-specific
+> RDMA headers: it uses the `x-rdma-info` header and selects its engine
+> statically at backend creation. The standard-S3 engine
+> (`accelerated=true` with no `type`, or `type=s3`) is preferred because it
+> complies with the proposed S3-over-RDMA protocol, using the standard
+> `x-amz-rdma-*` headers with no per-vendor code. See the main
+> [object plugin README](../../README.md#gpu-direct-s3-over-rdma).
+
+This vendor-specific accelerated engine provides S3 over RDMA for Dell ObjectScale. This engine utilizes the CUDA Toolkit CUObject Client library and the AWS S3 SDK.
 
 If a Dell ObjectScale endpoint is utilized, but RDMA is not enabled, the standard S3 engine should be used instead.
 
 ## Dependencies
 
-This engine requires aws-sdk-cpp.  This dependency and steps to install it are provided in the OBJ backend documentation.
+This engine requires aws-sdk-cpp. This dependency and steps to install it are provided in the OBJ backend documentation.
 
 This engine requires the CUDA Toolkit version 13.1.1 or later to be installed.
 
 [CUDA GDS Install and Setup](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)
 
-The CUDA toolkit provides the CUObject Client library, which is required for this engine to function.  The library is included in the CUDA Toolkit installation.
+The CUDA toolkit provides the CUObject Client library, which is required for this engine to function. The library is included in the CUDA Toolkit installation.
 
 ## Configuration
 
-The Dell ObjectScale engine supports configuration through two mechanisms: backend parameter maps passed during backend creation, and environment variables for system-wide settings. Backend parameters take precedence over environment variables.  The backend parameters described below are required to enable the Dell ObjectScale engine.
+The Dell ObjectScale engine supports configuration through two mechanisms: backend parameter maps passed during backend creation, and environment variables for system-wide settings. Backend parameters take precedence over environment variables. The backend parameters described below are required to enable the Dell ObjectScale engine.
 
 ### Backend Parameters
 
-Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creating the backend instance. The Dell ObjectScale Object Storage backend supports AWS S3-compatible storage.  These parameters are described in the OBJ backend documentation.  In addition to the parameters described in the OBJ backend documentation, the following parameters are required to enable the Dell ObjectScale engine:
+Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creating the backend instance. The Dell ObjectScale Object Storage backend supports AWS S3-compatible storage. These parameters are described in the OBJ backend documentation. In addition to the parameters described in the OBJ backend documentation, the following parameters are required to enable the Dell ObjectScale engine:
 
-| Parameter | Description | Default | Required |
-|-----------|-------------|---------|----------|
-| `req_checksum` | Request checksum validation (`required`/`supported`) | - | No |
-| `resp_checksum` | Response checksum validation (`required`/`supported`) | `required` | No |
-| `accelerated` | Enable accelerated engine (`true`/`false`) | `false` | No |
-| `type` | Vendor Type for accelerated engine | - | No |
+| Parameter       | Description                                           | Default    | Required |
+| --------------- | ----------------------------------------------------- | ---------- | -------- |
+| `req_checksum`  | Request checksum validation (`required`/`supported`)  | -          | No       |
+| `resp_checksum` | Response checksum validation (`required`/`supported`) | `required` | No       |
+| `accelerated`   | Enable accelerated engine (`true`/`false`)            | `false`    | No       |
+| `type`          | Vendor Type for accelerated engine                    | -          | No       |
 
-To enable the Dell ObjectScale engine, the `accelerated` parameter must be set to `true` and the `type` parameter must be set to `dell`.  It is recommended that the `req_checksum` parameter be set to `required` to disable the AWS SDK's proactive request body checksum validation.  Setting the value to `supported` will allow the AWS SDK to perform request body checksum validation, but this is not recommended for Dell ObjectScale.
+To enable the Dell ObjectScale engine, the `accelerated` parameter must be set to `true` and the `type` parameter must be set to `dell`. It is recommended that the `req_checksum` parameter be set to `required` to disable the AWS SDK's proactive request body checksum validation. Setting the value to `supported` will allow the AWS SDK to perform request body checksum validation, but this is not recommended for Dell ObjectScale.
 
 > **Note:** The Dell engine defaults `resp_checksum` to `required` (i.e.,
 > `ResponseChecksumValidation::WHEN_REQUIRED`). This disables the AWS SDK's
@@ -97,20 +106,20 @@ agent.createBackend("OBJ", params);
 
 ### CUObject Client Configuration
 
-The CUObject Client library requires the configuration of the RDMA device address list in the JSON configuration file.  Each client IP address associated with an RDMA device is specified in the "rdma_dev_addr_list" property.  The following is an example JSON file:
+The CUObject Client library requires the configuration of the RDMA device address list in the JSON configuration file. Each client IP address associated with an RDMA device is specified in the "rdma_dev_addr_list" property. The following is an example JSON file:
 
 ```json
 {
-    "execution": {
-        "parallel_io" : false
-    },
+  "execution": {
+    "parallel_io": false
+  },
 
-    "properties": {
-        "allow_compat_mode": true,
-        "use_pci_p2pdma": true,
-        "rdma_peer_type": "dmabuf",
-        "rdma_dev_addr_list": ["10.0.1.2", "10.0.2.2"]
-    }
+  "properties": {
+    "allow_compat_mode": true,
+    "use_pci_p2pdma": true,
+    "rdma_peer_type": "dmabuf",
+    "rdma_dev_addr_list": ["10.0.1.2", "10.0.2.2"]
+  }
 }
 ```
 

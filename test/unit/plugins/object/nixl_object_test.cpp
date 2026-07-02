@@ -90,28 +90,33 @@ parse_size(const char *size_str) {
  */
 void
 print_usage(const char *program_name) {
-    std::cerr << "Usage: " << program_name << " [options]\n"
-              << "Options:\n"
-              << "  -n, --num-transfers N   Number of transfers to perform (default: "
-              << DEFAULT_NUM_TRANSFERS << ")\n"
-              << "  -s, --size SIZE         Size of each transfer (default: "
-              << DEFAULT_TRANSFER_SIZE << " bytes)\n"
-              << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
-              << "  -t, --iterations N      Number of iterations for each transfer (default: "
-              << DEFAULT_ITERATIONS << ")\n"
-              << "  -e, --endpoint ENDPOINT S3 Endpoint URL\n"
-              << "  -u, --bucket BUCKET     S3 Bucket name\n"
-              << "  -a, --accelerated       Enable accelerated engine mode\n"
-              << "  -T, --type TYPE         Vendor type for accelerated engine (e.g., dell)\n"
-              << "  -v, --vram              Use VRAM (GPU memory) instead of DRAM\n"
-              << "                          (requires --accelerated and CUDA/GPU support)\n"
-              << "  -h, --help              Show this help message\n"
-              << "\nExamples:\n"
-              << "  " << program_name << " -n 100 -s 16M -t 5\n"
-              << "  " << program_name
-              << " -n 100 -s 16M -t 5 -e http://s3.example.com:9000 -u my-bucket\n"
-              << "  " << program_name << " -a -T dell -e http://10.10.10.10:9000 -u my-bucket\n"
-              << "  " << program_name << " -v -a -T dell -e http://10.10.10.10:9000 -u my-bucket\n";
+    std::cerr
+        << "Usage: " << program_name << " [options]\n"
+        << "Options:\n"
+        << "  -n, --num-transfers N   Number of transfers to perform (default: "
+        << DEFAULT_NUM_TRANSFERS << ")\n"
+        << "  -s, --size SIZE         Size of each transfer (default: " << DEFAULT_TRANSFER_SIZE
+        << " bytes)\n"
+        << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
+        << "  -t, --iterations N      Number of iterations for each transfer (default: "
+        << DEFAULT_ITERATIONS << ")\n"
+        << "  -e, --endpoint ENDPOINT S3 Endpoint URL\n"
+        << "  -u, --bucket BUCKET     S3 Bucket name\n"
+        << "  -a, --accelerated       Enable protocol-compliant S3-over-RDMA (accelerated=true).\n"
+        << "                          Requires an endpoint that implements the protocol.\n"
+        << "  -T, --type TYPE         Vendor type for vendor-specific accel (e.g., dell)\n"
+        << "  -v, --vram              Use VRAM (GPU memory) instead of DRAM\n"
+        << "                          (requires --accelerated, and CUDA/GPU)\n"
+        << "  -h, --help              Show this help message\n"
+        << "\nExamples:\n"
+        << "  " << program_name << " -n 100 -s 16M -t 5\n"
+        << "  " << program_name
+        << " -n 100 -s 16M -t 5 -e http://s3.example.com:9000 -u my-bucket\n"
+        << "  " << program_name << " -a -e http://aistor:9000 -u my-bucket          # RDMA (DRAM)\n"
+        << "  " << program_name
+        << " -v -a -e http://aistor:9000 -u my-bucket       # RDMA (GPU-direct)\n"
+        << "  " << program_name
+        << " -a -T dell -e http://10.10.10.10:9000 -u my-bucket  # vendor (Dell)\n";
 }
 
 /**
@@ -125,12 +130,13 @@ printProgress(float progress) {
     std::cout << "[";
     int pos = barWidth * progress;
     for (int i = 0; i < barWidth; ++i) {
-        if (i < pos)
+        if (i < pos) {
             std::cout << "=";
-        else if (i == pos)
+        } else if (i == pos) {
             std::cout << ">";
-        else
+        } else {
             std::cout << " ";
+        }
     }
     std::cout << "] " << std::fixed << std::setprecision(1) << (progress * 100.0) << "% ";
 
@@ -345,11 +351,11 @@ main(int argc, char *argv[]) {
         }
     }
 
-    // Validate VRAM option: requires --accelerated and CUDA
+    // Validate VRAM option: requires the RDMA (accelerated) path and CUDA.
     if (use_vram) {
         if (!use_accelerated) {
-            std::cerr << "Error: --vram requires --accelerated (VRAM_SEG is not supported by the "
-                         "default OBJ backend)\n";
+            std::cerr << "Error: --vram requires --accelerated: VRAM_SEG is only supported on the "
+                         "RDMA path\n";
             return 1;
         }
 #ifndef HAVE_CUDA
@@ -398,7 +404,7 @@ main(int argc, char *argv[]) {
     std::cout << "Configuration:" << std::endl;
     std::cout << "- Mode: " << (use_vram ? "VRAM" : "DRAM") << std::endl;
     if (use_accelerated) {
-        std::cout << "- Accelerated: true" << std::endl;
+        std::cout << "- Accelerated (S3 over RDMA): true" << std::endl;
         if (!accel_type.empty()) {
             std::cout << "- Type: " << accel_type << std::endl;
         }
@@ -420,8 +426,10 @@ main(int argc, char *argv[]) {
                               {"use_virtual_addressing", "false"},
                               {"req_checksum", "required"}};
 
-    // Enable accelerated engine and vendor type when requested.
-    // For Dell ObjectScale: accelerated=true, type=dell enables S3 over RDMA.
+    // accelerated=true with no type selects the preferred, protocol-compliant
+    // standard-S3 over-RDMA path (vendor-neutral x-amz-rdma-* protocol). Adding a
+    // vendor type (e.g. dell) selects a vendor-specific accel engine for servers
+    // that use vendor-specific RDMA headers.
     if (use_accelerated) {
         params["accelerated"] = "true";
         if (!accel_type.empty()) {
@@ -816,14 +824,18 @@ cleanup:
     if (use_vram) {
 #ifdef HAVE_CUDA
         for (i = 0; i < num_transfers; i++) {
-            if (vram_addr[i]) cudaFree(vram_addr[i]);
+            if (vram_addr[i]) {
+                cudaFree(vram_addr[i]);
+            }
         }
 #endif
         delete[] vram_addr;
         delete[] vram_buf;
     } else {
         for (i = 0; i < num_transfers; i++) {
-            if (dram_addr[i]) free(dram_addr[i]);
+            if (dram_addr[i]) {
+                free(dram_addr[i]);
+            }
         }
         delete[] dram_addr;
         delete[] dram_buf;
