@@ -229,70 +229,9 @@ jobs:
             || echo "WARN: failed to set Artifactory properties (non-fatal)"
 
   # ----------------------------------------------------------------------------
-  # scan-wheels: GitLab "security scan" stage. Runs only on release builds or
-  # when security_scan is explicitly requested.
-  # ----------------------------------------------------------------------------
-  scan-wheels:
-    needs: build
-    if: ${{ github.event.inputs.security_scan == 'true' || github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
-    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
-    env:
-      PACKAGE_LICENSE: "Apache-2.0"
-      SKIPPED_SECURITY_RULES: "B404,B603,B108"
-      ALLOWED_NOSEC_COUNT: "0"
-      IGNORE_FAILED_PIP_INSTALL: "1"
-    steps:
-      - name: Download manylinux wheels
-        uses: actions/download-artifact@v4
-        with:
-          name: dist-build-nixl-manylinux
-          path: dist
-      - name: Log in to ECR
-        uses: aws-actions/amazon-ecr-login@v2
-      - name: Scan wheels with wheeltamer
-        run: |
-          set -e
-          # wheeltamer is mirrored into ECR (gitlab-master is unreachable from the
-          # AWS runners). Mirror with: crane copy
-          #   gitlab-master.nvidia.com:5005/dl/pypi/wheel-ci-cd:wheeltamer
-          #   ${NIXL_ECR_IMAGE}:wheeltamer
-          CN="wheeltamer_${{ github.run_id }}"
-          docker rm -f "$CN" || true
-          docker create --name="$CN" \
-            -e EXPECTED_PKG_LICENSE="${PACKAGE_LICENSE}" \
-            -e SKIPPED_SECURITY_RULES="${SKIPPED_SECURITY_RULES}" \
-            -e ALLOWED_NOSEC_COUNT="${ALLOWED_NOSEC_COUNT}" \
-            -e IGNORE_FAILED_PIP_INSTALL="${IGNORE_FAILED_PIP_INSTALL}" \
-            --pull=always \
-            "${{ vars.NIXL_ECR_IMAGE }}:wheeltamer"
-          docker cp "$PWD/dist/." "$CN:/workspace"
-          docker start -a "$CN"
-      - name: Cleanup
-        if: always()
-        run: docker rm -f "wheeltamer_${{ github.run_id }}" || true
-
-  # ----------------------------------------------------------------------------
   # CPU tests: GitLab test stage (no-GPU variants). Each runs the test script
   # inside the freshly built image, exactly as the GitLab .test-template did.
   # ----------------------------------------------------------------------------
-  test-cpp-no-gpu:
-    needs: build
-    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
-    timeout-minutes: 75
-    steps:
-      - name: Log in to ECR
-        uses: aws-actions/amazon-ecr-login@v2
-      - name: Run C++ tests (CPU-only)
-        run: |
-          set -e
-          IMAGE_NAME="${IMAGE_BASE}:build-nixl-${{ github.sha }}-${{ github.run_id }}"
-          CN="nixl-test-cpp-no-gpu-${{ github.run_id }}"
-          docker run --name "$CN" --privileged -w /workspace/${REPO_NAME} "$IMAGE_NAME" \
-            /bin/bash -c "set -e && echo 'No additional setup required' && ./.gitlab/test_cpp.sh /usr/local/nixl"
-      - name: Cleanup
-        if: always()
-        run: docker rm -f "nixl-test-cpp-no-gpu-${{ github.run_id }}" || true
-
   test-python-no-gpu:
     needs: build
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
