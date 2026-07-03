@@ -437,6 +437,10 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modify("MAX_HCA_PER_GPU", "auto");
     }
 
+    if (ucpVersion_ >= UCP_VERSION(1, 22)) {
+        config.modify("RNDV_PIPELINE_ERROR_HANDLING", "y");
+    }
+
     const auto &hw_info = nixl::hwInfo::instance();
     if (hw_info.numEfaDevices != 0) {
         config.modify("ADDRESS_VERSION", "v2");
