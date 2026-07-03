@@ -87,7 +87,7 @@ pipeline_start:
     def target = params.BUILD_TARGET
     env.ENABLE_VLLM = (target == 'vllm'        || target == 'all') ? 'true' : 'false'
     env.ENABLE_VLLM_CU12 = (target == 'vllm-cu12'   || target == 'all') ? 'true' : 'false'
-    env.ENABLE_SGLANG = (target == 'sglang'      || target == 'all') ? 'true' : 'false'
+    env.ENABLE_SGLANG_CU12 = (target == 'sglang-cu12' || target == 'sglang' || target == 'all') ? 'true' : 'false'
     env.ENABLE_SGLANG_CU13 = (target == 'sglang-cu13' || target == 'all') ? 'true' : 'false'
 
     echo "BUILD_TARGET:       ${target}"
@@ -101,7 +101,7 @@ pipeline_start:
     echo "BASE_IMAGE_SGLANG_CU13: ${params.BASE_IMAGE_SGLANG_CU13}"
     echo "ENABLE_VLLM:        ${env.ENABLE_VLLM}"
     echo "ENABLE_VLLM_CU12:   ${env.ENABLE_VLLM_CU12}"
-    echo "ENABLE_SGLANG:      ${env.ENABLE_SGLANG}"
+    echo "ENABLE_SGLANG_CU12: ${env.ENABLE_SGLANG_CU12}"
     echo "ENABLE_SGLANG_CU13: ${env.ENABLE_SGLANG_CU13}"
 
 steps:
@@ -137,7 +137,7 @@ steps:
         # multi-arch tag is what consumers pull and what we ultimately publish.
         [[ "${ENABLE_VLLM}"        == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/vllm-nixl:${IMAGE_TAG}"
         [[ "${ENABLE_VLLM_CU12}"   == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/vllm-cu12-nixl:${IMAGE_TAG}"
-        [[ "${ENABLE_SGLANG}"      == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}"
+        [[ "${ENABLE_SGLANG_CU12}" == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}"
         [[ "${ENABLE_SGLANG_CU13}" == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/sglang-cu13-nixl:${IMAGE_TAG}"
         true
       fi
@@ -221,8 +221,8 @@ steps:
       podman save --format oci-archive -o "${STAGE_DIR}/vllm-cu12-nixl.tar" "${IMAGE}"
       ls -lh "${STAGE_DIR}/vllm-cu12-nixl.tar"
 
-  - name: Build SGLang
-    enable: ${ENABLE_SGLANG}
+  - name: Build SGLang CU12
+    enable: ${ENABLE_SGLANG_CU12}
     containerSelector: "{name: 'podman'}"
     parallel: true
     run: |
@@ -300,7 +300,7 @@ steps:
 
       [[ "${ENABLE_VLLM}"        == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/vllm-nixl:${IMAGE_TAG}-${arch}"       vllm
       [[ "${ENABLE_VLLM_CU12}"   == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/vllm-cu12-nixl:${IMAGE_TAG}-${arch}"  vllm
-      [[ "${ENABLE_SGLANG}"      == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}-${arch}"     sglang
+      [[ "${ENABLE_SGLANG_CU12}" == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}-${arch}"     sglang
       [[ "${ENABLE_SGLANG_CU13}" == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/sglang-cu13-nixl:${IMAGE_TAG}-${arch}" sglang
       true
 
@@ -319,7 +319,7 @@ pipeline_stop:
     def variants = []
     if (target == 'vllm'        || target == 'all') variants << 'vllm-nixl'
     if (target == 'vllm-cu12'   || target == 'all') variants << 'vllm-cu12-nixl'
-    if (target == 'sglang'      || target == 'all') variants << 'sglang-nixl'
+    if (target == 'sglang-cu12' || target == 'sglang' || target == 'all') variants << 'sglang-nixl'
     if (target == 'sglang-cu13' || target == 'all') variants << 'sglang-cu13-nixl'
 
     // Flipped to true only after every variant publishes AND the properties

@@ -652,14 +652,14 @@
             - "all"
             - "vllm"
             - "vllm-cu12"
-            - "sglang"
+            - "sglang-cu12"
             - "sglang-cu13"
           description: >
             Which image variants to build:<br/>
             • <b>all</b>: build all 4 variants (default)<br/>
             • <b>vllm</b>: only vllm-nixl<br/>
             • <b>vllm-cu12</b>: only vllm-cu12-nixl<br/>
-            • <b>sglang</b>: only sglang-nixl (cu12)<br/>
+            • <b>sglang-cu12</b>: only sglang-nixl (cu12)<br/>
             • <b>sglang-cu13</b>: only sglang-cu13-nixl
       - string:
           name: "NIXL_VERSION"
