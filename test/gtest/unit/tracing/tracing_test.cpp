@@ -48,6 +48,8 @@ struct CallLog {
     std::vector<std::pair<std::string, std::string>> strAttrs;
     std::vector<std::pair<std::string, std::int64_t>> intAttrs;
     std::vector<std::pair<std::string, double>> dblAttrs;
+    std::vector<std::uint64_t> pushedCorrelationIds;
+    int correlationPops = 0;
 };
 
 class MockSpan final : public nixl::trace::SpanBackend {
@@ -108,10 +110,14 @@ public:
     }
 
     void
-    pushCorrelationId(std::uint64_t) override {}
+    pushCorrelationId(std::uint64_t id) override {
+        log_->pushedCorrelationIds.push_back(id);
+    }
 
     void
-    popCorrelationId() override {}
+    popCorrelationId() override {
+        ++log_->correlationPops;
+    }
 
     [[nodiscard]] std::string_view
     name() const noexcept override {
@@ -338,4 +344,46 @@ TEST(Tracing, RequestedBackendWithoutPluginIsInert) {
     span.addAttribute("bytes", std::int64_t{1024});
     span.addAttribute("peer", std::string_view{"peer_agent"});
     EXPECT_EQ(span.id().value, 0u);
+}
+
+// Cross-thread correlation: push/pop must fan out to every backend, so a
+// correlation id set at the request boundary reaches all active backends.
+TEST(Tracing, CorrelationIdFansOutToAllBackends) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+
+    tracer->pushCorrelationId(0xABCDu);
+    tracer->popCorrelationId();
+
+    ASSERT_EQ(a.pushedCorrelationIds.size(), 1u);
+    ASSERT_EQ(b.pushedCorrelationIds.size(), 1u);
+    EXPECT_EQ(a.pushedCorrelationIds[0], 0xABCDu);
+    EXPECT_EQ(b.pushedCorrelationIds[0], 0xABCDu);
+    EXPECT_EQ(a.correlationPops, 1);
+    EXPECT_EQ(b.correlationPops, 1);
+}
+
+// CorrelationScope is the RAII guard used at call sites: it pushes on
+// construction and pops on destruction, across every backend.
+TEST(Tracing, CorrelationScopeBalancesPushPop) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+
+    {
+        const nixl::trace::CorrelationScope scope(tracer.get(), 0x1234u);
+        const auto span = tracer->beginSpan("op");
+    }
+
+    ASSERT_EQ(a.pushedCorrelationIds.size(), 1u);
+    EXPECT_EQ(a.pushedCorrelationIds[0], 0x1234u);
+    EXPECT_EQ(a.correlationPops, 1);
+    EXPECT_EQ(b.pushedCorrelationIds.size(), 1u);
+    EXPECT_EQ(b.correlationPops, 1);
+}
+
+// A null tracer (no active backend) must make CorrelationScope a safe no-op.
+TEST(Tracing, CorrelationScopeNullTracerIsInert) {
+    nixl::trace::Tracer *tracer = nullptr;
+    { const nixl::trace::CorrelationScope scope(tracer, 0x1u); }
+    SUCCEED();
 }
