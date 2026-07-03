@@ -640,7 +640,7 @@
       • Publishes multi-arch manifests after both arches succeed<br/>
       • Wheels pulled from <code>sw-dynamo-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/&lt;arch&gt;/</code><br/>
       • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>llm/{{vllm-nixl,vllm-cu12-nixl,sglang-nixl,sglang-cu13-nixl}}</code><br/>
-      • For <b>rc0</b> leave the <code>BASE_IMAGE_*</code> params empty to use upstream defaults<br/>
+      • Review the per-variant <code>BASE_IMAGE_*</code> defaults; SGLang CUDA 12 is pinned because upstream <code>latest</code> resolves to CUDA 13<br/>
       • For <b>rcN, N&gt;0</b> set each <code>BASE_IMAGE_*</code> to the matching rc0 image to isolate the verification to the NIXL change<br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: true
@@ -652,14 +652,14 @@
             - "all"
             - "vllm"
             - "vllm-cu12"
-            - "sglang"
+            - "sglang-cu12"
             - "sglang-cu13"
           description: >
             Which image variants to build:<br/>
             • <b>all</b>: build all 4 variants (default)<br/>
             • <b>vllm</b>: only vllm-nixl<br/>
             • <b>vllm-cu12</b>: only vllm-cu12-nixl<br/>
-            • <b>sglang</b>: only sglang-nixl (cu12)<br/>
+            • <b>sglang-cu12</b>: only sglang-nixl (cu12)<br/>
             • <b>sglang-cu13</b>: only sglang-cu13-nixl
       - string:
           name: "NIXL_VERSION"
@@ -699,12 +699,13 @@
             Leave empty to use upstream <code>docker.io/vllm/vllm-openai:latest-cu129</code> (rc0 default).<br/>
             For <b>rcN, N&gt;0</b> pin to the rc0 vllm-cu12 image.
       - string:
-          name: "BASE_IMAGE_SGLANG"
-          default: ""
+          name: "BASE_IMAGE_SGLANG_CU12"
+          default: "artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-nixl:1.3.0-rc0-v1"
           description: >
-            Optional override for the sglang (cu12) base image build-arg.<br/>
-            Leave empty for <b>rc0</b> (uses Dockerfile default <code>docker.io/lmsysorg/sglang:latest</code>).<br/>
-            For <b>rcN, N&gt;0</b> pin to the rc0 image.
+            Base image for the sglang CUDA 12 build-arg.<br/>
+            Defaults to the pinned CUDA 12 rc0 image because upstream
+            <code>docker.io/lmsysorg/sglang:latest</code> currently resolves to CUDA 13.<br/>
+            Override this value to test a different CUDA 12 image.
       - string:
           name: "BASE_IMAGE_SGLANG_CU13"
           default: ""

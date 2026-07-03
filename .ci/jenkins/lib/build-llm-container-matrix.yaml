@@ -5,12 +5,13 @@
 #
 #   - vllm-nixl-<ver>         : Dockerfile.vllm   + vllm/vllm-openai:latest
 #   - vllm-cu12-nixl-<ver>    : Dockerfile.vllm   + vllm/vllm-openai:latest-cu129
-#   - sglang-nixl-<ver>       : Dockerfile.sglang + lmsysorg/sglang:latest
+#   - sglang-nixl-<ver>       : Dockerfile.sglang + pinned CUDA 12 image
 #   - sglang-cu13-nixl-<ver>  : Dockerfile.sglang + lmsysorg/sglang:latest-cu130-runtime
 #
-# For RC0 builds the upstream defaults are used. For subsequent RCs (or
-# re-spins) BASE_IMAGE_* parameters pin each variant to the RC0 image so the
-# verification stays isolated to the NIXL change.
+# Each variant uses its configured BASE_IMAGE_* default. SGLang CUDA 12 stays
+# pinned because the upstream latest tag currently resolves to CUDA 13. For
+# subsequent RCs (or re-spins), the parameters can pin each variant to its RC0
+# image so verification stays isolated to the NIXL change.
 #
 # Wheels are pulled from Artifactory at:
 #   sw-dynamo-nixl-pypi-local/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}/<arch>/
@@ -86,7 +87,7 @@ pipeline_start:
     def target = params.BUILD_TARGET
     env.ENABLE_VLLM = (target == 'vllm'        || target == 'all') ? 'true' : 'false'
     env.ENABLE_VLLM_CU12 = (target == 'vllm-cu12'   || target == 'all') ? 'true' : 'false'
-    env.ENABLE_SGLANG = (target == 'sglang'      || target == 'all') ? 'true' : 'false'
+    env.ENABLE_SGLANG_CU12 = (target == 'sglang-cu12' || target == 'sglang' || target == 'all') ? 'true' : 'false'
     env.ENABLE_SGLANG_CU13 = (target == 'sglang-cu13' || target == 'all') ? 'true' : 'false'
 
     echo "BUILD_TARGET:       ${target}"
@@ -96,11 +97,11 @@ pipeline_start:
     echo "WHEEL_BUILD_ID:     ${params.WHEEL_BUILD_ID}"
     echo "BASE_IMAGE_VLLM:        ${params.BASE_IMAGE_VLLM}"
     echo "BASE_IMAGE_VLLM_CU12:   ${params.BASE_IMAGE_VLLM_CU12}"
-    echo "BASE_IMAGE_SGLANG:      ${params.BASE_IMAGE_SGLANG}"
+    echo "BASE_IMAGE_SGLANG_CU12: ${params.BASE_IMAGE_SGLANG_CU12}"
     echo "BASE_IMAGE_SGLANG_CU13: ${params.BASE_IMAGE_SGLANG_CU13}"
     echo "ENABLE_VLLM:        ${env.ENABLE_VLLM}"
     echo "ENABLE_VLLM_CU12:   ${env.ENABLE_VLLM_CU12}"
-    echo "ENABLE_SGLANG:      ${env.ENABLE_SGLANG}"
+    echo "ENABLE_SGLANG_CU12: ${env.ENABLE_SGLANG_CU12}"
     echo "ENABLE_SGLANG_CU13: ${env.ENABLE_SGLANG_CU13}"
 
 steps:
@@ -136,7 +137,7 @@ steps:
         # multi-arch tag is what consumers pull and what we ultimately publish.
         [[ "${ENABLE_VLLM}"        == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/vllm-nixl:${IMAGE_TAG}"
         [[ "${ENABLE_VLLM_CU12}"   == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/vllm-cu12-nixl:${IMAGE_TAG}"
-        [[ "${ENABLE_SGLANG}"      == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}"
+        [[ "${ENABLE_SGLANG_CU12}" == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}"
         [[ "${ENABLE_SGLANG_CU13}" == "true" ]] && check_tag_free "${ARTIFACTORY_REGISTRY_URL}/sglang-cu13-nixl:${IMAGE_TAG}"
         true
       fi
@@ -220,8 +221,8 @@ steps:
       podman save --format oci-archive -o "${STAGE_DIR}/vllm-cu12-nixl.tar" "${IMAGE}"
       ls -lh "${STAGE_DIR}/vllm-cu12-nixl.tar"
 
-  - name: Build SGLang
-    enable: ${ENABLE_SGLANG}
+  - name: Build SGLang CU12
+    enable: ${ENABLE_SGLANG_CU12}
     containerSelector: "{name: 'podman'}"
     parallel: true
     run: |
@@ -234,7 +235,9 @@ steps:
         *)       echo "Unsupported arch: ${arch}"; exit 1 ;;
       esac
       IMAGE="${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}-${arch}"
-      BASE="${BASE_IMAGE_SGLANG:-docker.io/lmsysorg/sglang:latest}"
+      # The upstream latest tag currently resolves to CUDA 13, so keep the
+      # CUDA 12 lane pinned while still allowing an explicit job override.
+      BASE="${BASE_IMAGE_SGLANG_CU12:-artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-nixl:1.3.0-rc0-v1}"
       podman build \
         --platform "${PLATFORM}" \
         --build-arg "BASE_IMAGE=${BASE}" \
@@ -297,7 +300,7 @@ steps:
 
       [[ "${ENABLE_VLLM}"        == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/vllm-nixl:${IMAGE_TAG}-${arch}"       vllm
       [[ "${ENABLE_VLLM_CU12}"   == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/vllm-cu12-nixl:${IMAGE_TAG}-${arch}"  vllm
-      [[ "${ENABLE_SGLANG}"      == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}-${arch}"     sglang
+      [[ "${ENABLE_SGLANG_CU12}" == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}-${arch}"     sglang
       [[ "${ENABLE_SGLANG_CU13}" == "true" ]] && check_image "${ARTIFACTORY_REGISTRY_URL}/sglang-cu13-nixl:${IMAGE_TAG}-${arch}" sglang
       true
 
@@ -316,7 +319,7 @@ pipeline_stop:
     def variants = []
     if (target == 'vllm'        || target == 'all') variants << 'vllm-nixl'
     if (target == 'vllm-cu12'   || target == 'all') variants << 'vllm-cu12-nixl'
-    if (target == 'sglang'      || target == 'all') variants << 'sglang-nixl'
+    if (target == 'sglang-cu12' || target == 'sglang' || target == 'all') variants << 'sglang-nixl'
     if (target == 'sglang-cu13' || target == 'all') variants << 'sglang-cu13-nixl'
 
     // Flipped to true only after every variant publishes AND the properties
