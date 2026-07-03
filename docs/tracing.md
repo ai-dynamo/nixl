@@ -130,12 +130,17 @@ backends/PRs):
 | `nixl::makeConnection` | `Generic` | `remote_agent` |
 | `nixl::genNotif` | `Metadata` | `remote_agent` |
 | `nixl::getNotifs` | `Metadata` | - |
+| `nixl::loadRemoteMD` | `Metadata` | - |
+| `nixl::fetchRemoteMD` | `Metadata` | `remote_agent` |
+| `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
+| `nixl::releaseMemView` | `Generic` | - |
 
 Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
 when `getXferStatus` first observes success. How a backend renders attributes and
 dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
-backend (e.g. NVTX surfaces attributes as `key=value` marks inside the range and
-ignores dependencies; offline backends such as Chakra record them).
+backend (e.g. NVTX attaches attributes as typed payloads on the range via
+`nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
+record them).
 
 ## Profiling with NVTX / Nsight Systems
 
@@ -203,7 +208,7 @@ if profiling is not permitted in the environment).
 
 ## Correlation
 
-"Correlation" can mean two different things here:
+In NIXL tracing, "correlation" can mean two different things:
 
 - **Cross-rank / cross-agent** -- linking the sender's span to the receiver's span across
   processes. NVTX has **no** native cross-process linkage: each process is its own
@@ -213,17 +218,21 @@ if profiling is not permitted in the environment).
   requires a globally unique id propagated on the wire. It is planned, and not part of the
   NVTX backend.
 - **Cross-thread within a process** -- attributing spans emitted on different threads
-  (e.g. `postXferReq` on the caller thread vs. completion on the progress thread) to the
-  same request. The API exposes `pushCorrelationId()` / `popCorrelationId()` for this; they
-  are backend-agnostic and currently no-ops in the NVTX backend. Planned.
+  (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
+  same request. Implemented via the backend-agnostic `pushCorrelationId()` /
+  `popCorrelationId()` API: NIXL wraps `postXferReq` and the `xfer.complete` marker in a
+  correlation scope keyed on the transfer-request handle's address, and the NVTX backend
+  records that id as the event's `uint64` payload -- so a post and its completion carry
+  the same id on the timeline regardless of which thread emitted each. (The id is a
+  process-local diagnostic handle, not a globally unique on-the-wire id.)
 
 ## Planned work
 
-- **NVTX completeness** — structured, typed NVTX payload attributes (vs the current
-  `key=value` marks), hot-path registered-string labels, and broader call-site coverage.
 - **Chakra backend** — serialize MLCommons Chakra execution traces (one ET per rank),
   recording the span attributes and dependencies the NVTX backend ignores.
-- **Cross-rank correlation** — propagate a global request id on the wire so sender and
-  receiver spans can be linked.
-- **Backend-engine sub-spans** — finer spans inside backends (e.g. UCX
-  `prepXfer`/`postXfer`/`checkXfer`).
+- **Cross-rank correlation** — propagate a globally unique request id on the wire so
+  sender and receiver spans can be linked across processes (distributed tracing; a
+  separate NIXL-architecture effort).
+
+Backend-engine sub-spans (finer spans inside backends, e.g. UCX
+`prepXfer`/`postXfer`/`checkXfer`) were considered and are currently not planned.
