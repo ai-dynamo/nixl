@@ -5,12 +5,13 @@
 #
 #   - vllm-nixl-<ver>         : Dockerfile.vllm   + vllm/vllm-openai:latest
 #   - vllm-cu12-nixl-<ver>    : Dockerfile.vllm   + vllm/vllm-openai:latest-cu129
-#   - sglang-nixl-<ver>       : Dockerfile.sglang + lmsysorg/sglang:latest
+#   - sglang-nixl-<ver>       : Dockerfile.sglang + pinned CUDA 12 image
 #   - sglang-cu13-nixl-<ver>  : Dockerfile.sglang + lmsysorg/sglang:latest-cu130-runtime
 #
-# For RC0 builds the upstream defaults are used. For subsequent RCs (or
-# re-spins) BASE_IMAGE_* parameters pin each variant to the RC0 image so the
-# verification stays isolated to the NIXL change.
+# Each variant uses its configured BASE_IMAGE_* default. SGLang CUDA 12 stays
+# pinned because the upstream latest tag currently resolves to CUDA 13. For
+# subsequent RCs (or re-spins), the parameters can pin each variant to its RC0
+# image so verification stays isolated to the NIXL change.
 #
 # Wheels are pulled from Artifactory at:
 #   sw-dynamo-nixl-pypi-local/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}/<arch>/
@@ -96,7 +97,7 @@ pipeline_start:
     echo "WHEEL_BUILD_ID:     ${params.WHEEL_BUILD_ID}"
     echo "BASE_IMAGE_VLLM:        ${params.BASE_IMAGE_VLLM}"
     echo "BASE_IMAGE_VLLM_CU12:   ${params.BASE_IMAGE_VLLM_CU12}"
-    echo "BASE_IMAGE_SGLANG:      ${params.BASE_IMAGE_SGLANG}"
+    echo "BASE_IMAGE_SGLANG_CU12: ${params.BASE_IMAGE_SGLANG_CU12}"
     echo "BASE_IMAGE_SGLANG_CU13: ${params.BASE_IMAGE_SGLANG_CU13}"
     echo "ENABLE_VLLM:        ${env.ENABLE_VLLM}"
     echo "ENABLE_VLLM_CU12:   ${env.ENABLE_VLLM_CU12}"
@@ -234,7 +235,9 @@ steps:
         *)       echo "Unsupported arch: ${arch}"; exit 1 ;;
       esac
       IMAGE="${ARTIFACTORY_REGISTRY_URL}/sglang-nixl:${IMAGE_TAG}-${arch}"
-      BASE="${BASE_IMAGE_SGLANG:-docker.io/lmsysorg/sglang:latest}"
+      # The upstream latest tag currently resolves to CUDA 13, so keep the
+      # CUDA 12 lane pinned while still allowing an explicit job override.
+      BASE="${BASE_IMAGE_SGLANG_CU12:-artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-nixl:1.3.0-rc0-v1}"
       podman build \
         --platform "${PLATFORM}" \
         --build-arg "BASE_IMAGE=${BASE}" \
