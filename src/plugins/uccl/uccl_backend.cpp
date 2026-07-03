@@ -713,7 +713,7 @@ nixlUcclEngine::checkXfer(nixlBackendReqH *handle) const {
         ser_des.addStr("msg", uccl_handle->notif_msg);
 
         // Notifications are variable-length; no backend-side size cap.
-        notify_msg_t notify_msg;
+        notify_msg_t notify_msg{};
         notify_msg.name = local_agent_name_;
         notify_msg.msg = ser_des.exportStr();
 
@@ -781,7 +781,7 @@ nixlUcclEngine::genNotif(const std::string &remote_agent, const std::string &msg
     ser_des.addStr("msg", msg);
 
     // Notifications are variable-length; no backend-side size cap.
-    notify_msg_t notify_msg;
+    notify_msg_t notify_msg{};
     notify_msg.name = local_agent_name_;
     notify_msg.msg = ser_des.exportStr();
 
