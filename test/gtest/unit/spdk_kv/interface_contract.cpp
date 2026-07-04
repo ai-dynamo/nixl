@@ -39,16 +39,14 @@ protected:
 };
 
 using MaxValueLenSignature = size_t (iSpdkKvDevice::*)() const;
-using StoreSignature =
-    SpdkKvStatus (iSpdkKvDevice::*)(const void *, uint8_t, const void *, size_t);
+using StoreSignature = SpdkKvStatus (iSpdkKvDevice::*)(const void *, uint8_t, const void *, size_t);
 using RetrieveSignature =
     SpdkKvStatus (iSpdkKvDevice::*)(const void *, uint8_t, void *, size_t, size_t *);
 
 static_assert(std::is_same_v<decltype(&iSpdkKvDevice::maxValueLen), MaxValueLenSignature>);
 static_assert(std::is_same_v<decltype(&iSpdkKvDevice::store), StoreSignature>);
 static_assert(std::is_same_v<decltype(&iSpdkKvDevice::retrieve), RetrieveSignature>);
-static_assert(
-    std::is_constructible_v<InspectableSpdkKvEngine, const nixlBackendInitParams *>);
+static_assert(std::is_constructible_v<InspectableSpdkKvEngine, const nixlBackendInitParams *>);
 static_assert(std::is_constructible_v<InspectableSpdkKvEngine,
                                       const nixlBackendInitParams *,
                                       std::unique_ptr<iSpdkKvDevice>>);

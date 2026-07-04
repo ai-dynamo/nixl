@@ -111,8 +111,7 @@ public:
     deregisterMem(nixlBackendMD *meta) override;
 
     nixl_status_t
-    queryMem(const nixl_reg_dlist_t &descs,
-             std::vector<nixl_query_resp_t> &resp) const override;
+    queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
 
     nixl_status_t
     connect(const std::string &remote_agent) override;
