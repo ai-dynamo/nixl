@@ -286,13 +286,13 @@ nixlTelemetryDocaExporter::appendCounterSample(const nixlTelemetryEvent &event,
                                                const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
+    const char *event_name = nixlEnumStrings::telemetryEventTypeStr(event.eventType_).data();
     // Counter events carry a per-operation delta; increment so the exported
     // counter is a monotonic cumulative total (add_counter would instead push
     // each delta as an absolute value, yielding a non-monotonic series).
     return doca_telemetry_exporter_metrics_add_counter_increment(ctx_->source,
                                                                  docaTimestamp(),
-                                                                 event_name.c_str(),
+                                                                 event_name,
                                                                  event.value_,
                                                                  ctx_->label_set_id,
                                                                  label_values);
