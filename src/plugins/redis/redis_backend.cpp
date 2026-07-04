@@ -129,8 +129,7 @@ nixlRedisKVEngine::registerMem(const nixlBlobDesc &mem,
                                const nixl_mem_t &nixl_mem,
                                nixlBackendMD *&out) {
     const auto supported_mems = getSupportedMems();
-    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) ==
-        supported_mems.end()) {
+    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end()) {
         out = nullptr;
         return NIXL_ERR_NOT_SUPPORTED;
     }

@@ -225,14 +225,11 @@ hiredisAsyncClient::connectSyncContext() {
     }
 
     if (!config_.password.empty()) {
-        redisReply *reply = config_.username.empty()
-                                ? static_cast<redisReply *>(redisCommand(
-                                      syncContext_, "AUTH %s", config_.password.c_str()))
-                                : static_cast<redisReply *>(
-                                      redisCommand(syncContext_,
-                                                   "AUTH %s %s",
-                                                   config_.username.c_str(),
-                                                   config_.password.c_str()));
+        redisReply *reply = config_.username.empty() ?
+            static_cast<redisReply *>(
+                redisCommand(syncContext_, "AUTH %s", config_.password.c_str())) :
+            static_cast<redisReply *>(redisCommand(
+                syncContext_, "AUTH %s %s", config_.username.c_str(), config_.password.c_str()));
         if (!checkRedisReplyOk(reply, "AUTH")) {
             freeReplyObject(reply);
             redisFree(syncContext_);
@@ -256,11 +253,10 @@ hiredisAsyncClient::connectSyncContext() {
         freeReplyObject(reply);
     }
 
-    NIXL_INFO << absl::StrFormat(
-        "Sync Redis connection ready for EXISTS at %s:%d (db=%d)",
-        config_.host,
-        config_.port,
-        config_.db);
+    NIXL_INFO << absl::StrFormat("Sync Redis connection ready for EXISTS at %s:%d (db=%d)",
+                                 config_.host,
+                                 config_.port,
+                                 config_.db);
 }
 
 hiredisAsyncClient::~hiredisAsyncClient() {
@@ -348,18 +344,15 @@ hiredisAsyncClient::startAsyncSelect() {
 void
 hiredisAsyncClient::startAsyncInitialization() {
     if (!config_.password.empty()) {
-        const int ret = config_.username.empty()
-                            ? redisAsyncCommand(asyncContext_,
-                                                authCallback,
-                                                this,
-                                                "AUTH %s",
-                                                config_.password.c_str())
-                            : redisAsyncCommand(asyncContext_,
-                                                authCallback,
-                                                this,
-                                                "AUTH %s %s",
-                                                config_.username.c_str(),
-                                                config_.password.c_str());
+        const int ret = config_.username.empty() ?
+            redisAsyncCommand(
+                asyncContext_, authCallback, this, "AUTH %s", config_.password.c_str()) :
+            redisAsyncCommand(asyncContext_,
+                              authCallback,
+                              this,
+                              "AUTH %s %s",
+                              config_.username.c_str(),
+                              config_.password.c_str());
         if (ret != REDIS_OK) {
             NIXL_ERROR << "Failed to queue Redis AUTH command";
             completeAsyncInitialization(false);
@@ -483,34 +476,31 @@ hiredisAsyncClient::putKeyAsync(std::string_view key,
     }
 
     std::string key_copy(key);
-    bool scheduled = scheduleOnEventLoop([this,
-                                          key = std::move(key_copy),
-                                          data_ptr,
-                                          data_len,
-                                          promise]() mutable {
-        if (!connected_.load() || !asyncContext_) {
-            setPromiseStatus(promise, false);
-            return;
-        }
+    bool scheduled = scheduleOnEventLoop(
+        [this, key = std::move(key_copy), data_ptr, data_len, promise]() mutable {
+            if (!connected_.load() || !asyncContext_) {
+                setPromiseStatus(promise, false);
+                return;
+            }
 
-        auto *ctx = new CallbackContext;
-        ctx->promise_ptr = promise;
+            auto *ctx = new CallbackContext;
+            ctx->promise_ptr = promise;
 
-        int ret = redisAsyncCommand(asyncContext_,
-                                    setCallback,
-                                    ctx,
-                                    "SET %b %b",
-                                    key.data(),
-                                    key.size(),
-                                    reinterpret_cast<const char *>(data_ptr),
-                                    data_len);
+            int ret = redisAsyncCommand(asyncContext_,
+                                        setCallback,
+                                        ctx,
+                                        "SET %b %b",
+                                        key.data(),
+                                        key.size(),
+                                        reinterpret_cast<const char *>(data_ptr),
+                                        data_len);
 
-        if (ret != REDIS_OK) {
-            auto promise_ptr = ctx->promise_ptr;
-            delete ctx;
-            setPromiseStatus(promise_ptr, false);
-        }
-    });
+            if (ret != REDIS_OK) {
+                auto promise_ptr = ctx->promise_ptr;
+                delete ctx;
+                setPromiseStatus(promise_ptr, false);
+            }
+        });
 
     if (!scheduled) {
         setPromiseStatus(promise, false);
@@ -528,30 +518,27 @@ hiredisAsyncClient::getKeyAsync(std::string_view key,
     }
 
     std::string key_copy(key);
-    bool scheduled = scheduleOnEventLoop([this,
-                                          key = std::move(key_copy),
-                                          data_ptr,
-                                          data_len,
-                                          promise]() mutable {
-        if (!connected_.load() || !asyncContext_) {
-            setPromiseStatus(promise, false);
-            return;
-        }
+    bool scheduled = scheduleOnEventLoop(
+        [this, key = std::move(key_copy), data_ptr, data_len, promise]() mutable {
+            if (!connected_.load() || !asyncContext_) {
+                setPromiseStatus(promise, false);
+                return;
+            }
 
-        auto *ctx = new CallbackContext;
-        ctx->data_ptr = data_ptr;
-        ctx->data_len = data_len;
-        ctx->promise_ptr = promise;
+            auto *ctx = new CallbackContext;
+            ctx->data_ptr = data_ptr;
+            ctx->data_len = data_len;
+            ctx->promise_ptr = promise;
 
-        int ret =
-            redisAsyncCommand(asyncContext_, getCallback, ctx, "GET %b", key.data(), key.size());
+            int ret = redisAsyncCommand(
+                asyncContext_, getCallback, ctx, "GET %b", key.data(), key.size());
 
-        if (ret != REDIS_OK) {
-            auto promise_ptr = ctx->promise_ptr;
-            delete ctx;
-            setPromiseStatus(promise_ptr, false);
-        }
-    });
+            if (ret != REDIS_OK) {
+                auto promise_ptr = ctx->promise_ptr;
+                delete ctx;
+                setPromiseStatus(promise_ptr, false);
+            }
+        });
 
     if (!scheduled) {
         setPromiseStatus(promise, false);
@@ -567,8 +554,8 @@ hiredisAsyncClient::checkKeyExistsSync(std::string_view key) {
         return std::nullopt;
     }
 
-    redisReply *reply = static_cast<redisReply *>(
-        redisCommand(syncContext_, "EXISTS %b", key.data(), key.size()));
+    redisReply *reply =
+        static_cast<redisReply *>(redisCommand(syncContext_, "EXISTS %b", key.data(), key.size()));
 
     if (!reply) {
         NIXL_ERROR << "Redis EXISTS: no reply";

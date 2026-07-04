@@ -225,13 +225,11 @@ protected:
     }
 
     nixlBackendReqH *
-    prepareTransfer(nixl_xfer_op_t operation,
-                    nixl_meta_dlist_t &local,
-                    nixl_meta_dlist_t &remote) {
+    prepareTransfer(nixl_xfer_op_t operation, nixl_meta_dlist_t &local, nixl_meta_dlist_t &remote) {
         nixlBackendReqH *handle = nullptr;
-        EXPECT_EQ(engine_->prepXfer(
-                      operation, local, remote, initParams_.localAgent, handle, nullptr),
-                  NIXL_SUCCESS);
+        EXPECT_EQ(
+            engine_->prepXfer(operation, local, remote, initParams_.localAgent, handle, nullptr),
+            NIXL_SUCCESS);
         EXPECT_NE(handle, nullptr);
         return handle;
     }
@@ -282,8 +280,7 @@ TEST_F(redisEngineTest, RegistersMetadataKeyAndDevIdFallback) {
     EXPECT_EQ(engine_->deregisterMem(fallbackMetadata), NIXL_SUCCESS);
 
     nixlBackendMD *unsupported = reinterpret_cast<nixlBackendMD *>(1);
-    EXPECT_EQ(engine_->registerMem(nixlBlobDesc(), VRAM_SEG, unsupported),
-              NIXL_ERR_NOT_SUPPORTED);
+    EXPECT_EQ(engine_->registerMem(nixlBlobDesc(), VRAM_SEG, unsupported), NIXL_ERR_NOT_SUPPORTED);
     EXPECT_EQ(unsupported, nullptr);
 }
 
@@ -331,9 +328,9 @@ TEST_F(redisEngineTest, PrepXferRejectsInvalidRequests) {
 
     nixl_meta_dlist_t wrongLocal(OBJ_SEG);
     wrongLocal.addDesc(nixlMetaDesc(0, buffer.size(), 1, nullptr));
-    EXPECT_EQ(engine_->prepXfer(
-                  NIXL_READ, wrongLocal, remote, initParams_.localAgent, handle, nullptr),
-              NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(
+        engine_->prepXfer(NIXL_READ, wrongLocal, remote, initParams_.localAgent, handle, nullptr),
+        NIXL_ERR_INVALID_PARAM);
 }
 
 TEST_F(redisEngineTest, PollsReadUntilClientCompletes) {
@@ -347,8 +344,7 @@ TEST_F(redisEngineTest, PollsReadUntilClientCompletes) {
     remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, nullptr));
 
     auto *handle = prepareTransfer(NIXL_READ, local, remote);
-    EXPECT_EQ(engine_->postXfer(
-                  NIXL_READ, local, remote, initParams_.localAgent, handle, nullptr),
+    EXPECT_EQ(engine_->postXfer(NIXL_READ, local, remote, initParams_.localAgent, handle, nullptr),
               NIXL_IN_PROG);
     EXPECT_EQ(mockClient_->getKeys(), (std::vector<std::string>{"read-key"}));
     EXPECT_EQ(engine_->checkXfer(handle), NIXL_IN_PROG);
@@ -370,8 +366,7 @@ TEST_F(redisEngineTest, PropagatesAsyncClientFailure) {
     remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, nullptr));
 
     auto *handle = prepareTransfer(NIXL_WRITE, local, remote);
-    EXPECT_EQ(engine_->postXfer(
-                  NIXL_WRITE, local, remote, initParams_.localAgent, handle, nullptr),
+    EXPECT_EQ(engine_->postXfer(NIXL_WRITE, local, remote, initParams_.localAgent, handle, nullptr),
               NIXL_IN_PROG);
     EXPECT_EQ(engine_->checkXfer(handle), NIXL_ERR_BACKEND);
     EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
@@ -382,8 +377,7 @@ TEST_F(redisEngineTest, RejectsNullTransferHandles) {
     nixl_meta_dlist_t local(DRAM_SEG);
     nixl_meta_dlist_t remote(OBJ_SEG);
     nixlBackendReqH *handle = nullptr;
-    EXPECT_EQ(engine_->postXfer(
-                  NIXL_WRITE, local, remote, initParams_.localAgent, handle, nullptr),
+    EXPECT_EQ(engine_->postXfer(NIXL_WRITE, local, remote, initParams_.localAgent, handle, nullptr),
               NIXL_ERR_INVALID_PARAM);
     EXPECT_EQ(engine_->checkXfer(nullptr), NIXL_ERR_INVALID_PARAM);
 }
