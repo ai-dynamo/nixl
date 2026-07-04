@@ -1,35 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-# REDIS implementation sources live in this directory; the plugin entrypoint
-# stays in the shared KV layer to match the OBJ plugin layout.
 
 if not enabled_plugins.get('REDIS')
     subdir_done()
 endif
 
 redis_sources = [
-    '../kv_backend.cpp',
-    '../kv_plugin.cpp',
-    'redis_engine.cpp',
-    'redis_engine.h',
-    'redis_executor.h',
-    'client.cpp',
-    'client.h',
-    'engine_impl.cpp',
-    'engine_impl.h',
+    'redis_backend.cpp',
+    'redis_backend.h',
+    'redis_client.cpp',
+    'redis_client.h',
+    'redis_plugin.cpp',
 ]
 
 hiredis_async_dep = dependency('hiredis_async', required: false)
@@ -71,11 +52,9 @@ compile_defs_redis = []
 if is_variable('compile_defs')
     compile_defs_redis = compile_defs
 endif
-if hiredis_async_dep.found() and libevent_dep.found()
-    compile_defs_redis += ['-DHAVE_HIREDIS_ASYNC']
-endif
+compile_defs_redis += ['-DHAVE_HIREDIS_ASYNC']
 
-redis_plugin_deps = [nixl_infra, nixl_common_dep, hiredis_async_dep, libevent_dep, dependency('asio', required: true)]
+redis_plugin_deps = [nixl_infra, nixl_common_dep, hiredis_async_dep, libevent_dep]
 if libevent_pthreads_dep.found()
     redis_plugin_deps += [libevent_pthreads_dep]
 else

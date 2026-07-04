@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "client.h"
+#include "redis_client.h"
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
 #include <chrono>
@@ -122,25 +122,16 @@ checkRedisReplyOk(redisReply *reply, const char *command) {
 }
 
 void
-setPromiseStatus(const std::shared_ptr<redisThreadPoolExecutor> &executor,
-                 const std::shared_ptr<std::promise<nixl_status_t>> &promise,
-                 bool success) {
+setPromiseStatus(const std::shared_ptr<std::promise<nixl_status_t>> &promise, bool success) {
     if (!promise) {
         return;
     }
-    if (executor) {
-        executor->post([promise, success]() {
-            promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
-        });
-    } else {
-        promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
-    }
+    promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
 }
 
 } // namespace
 
-hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params,
-                                       std::shared_ptr<redisThreadPoolExecutor> executor)
+hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params)
     : host_(getRedisHost(custom_params)),
       port_(getRedisPort(custom_params)),
       password_(getRedisPassword(custom_params)),
@@ -148,7 +139,6 @@ hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params,
       asyncContext_(nullptr),
       syncContext_(nullptr),
       eventBase_(nullptr),
-      executor_(executor),
       connected_(false),
       initDone_(false),
       initSucceeded_(false) {
@@ -256,11 +246,6 @@ hiredisAsyncClient::~hiredisAsyncClient() {
         redisFree(syncContext_);
         syncContext_ = nullptr;
     }
-}
-
-void
-hiredisAsyncClient::setExecutor(std::shared_ptr<redisThreadPoolExecutor> executor) {
-    executor_ = executor;
 }
 
 void
@@ -419,9 +404,8 @@ hiredisAsyncClient::setCallback(redisAsyncContext *c, void *reply, void *privdat
     }
 
     auto promise_ptr = ctx->promise_ptr;
-    auto executor = ctx->executor;
     delete ctx;
-    setPromiseStatus(executor, promise_ptr, success);
+    setPromiseStatus(promise_ptr, success);
 }
 
 void
@@ -450,9 +434,8 @@ hiredisAsyncClient::getCallback(redisAsyncContext *c, void *reply, void *privdat
     }
 
     auto promise_ptr = ctx->promise_ptr;
-    auto executor = ctx->executor;
     delete ctx;
-    setPromiseStatus(executor, promise_ptr, success);
+    setPromiseStatus(promise_ptr, success);
 }
 
 void
@@ -461,25 +444,22 @@ hiredisAsyncClient::putKeyAsync(std::string_view key,
                                 size_t data_len,
                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
     if (!connected_.load()) {
-        setPromiseStatus(executor_, promise, false);
+        setPromiseStatus(promise, false);
         return;
     }
 
     std::string key_copy(key);
-    auto executor = executor_;
     bool scheduled = scheduleOnEventLoop([this,
                                           key = std::move(key_copy),
                                           data_ptr,
                                           data_len,
-                                          promise,
-                                          executor]() mutable {
+                                          promise]() mutable {
         if (!connected_.load() || !asyncContext_) {
-            setPromiseStatus(executor, promise, false);
+            setPromiseStatus(promise, false);
             return;
         }
 
         auto *ctx = new CallbackContext;
-        ctx->executor = executor;
         ctx->promise_ptr = promise;
 
         int ret = redisAsyncCommand(asyncContext_,
@@ -494,12 +474,12 @@ hiredisAsyncClient::putKeyAsync(std::string_view key,
         if (ret != REDIS_OK) {
             auto promise_ptr = ctx->promise_ptr;
             delete ctx;
-            setPromiseStatus(executor, promise_ptr, false);
+            setPromiseStatus(promise_ptr, false);
         }
     });
 
     if (!scheduled) {
-        setPromiseStatus(executor_, promise, false);
+        setPromiseStatus(promise, false);
     }
 }
 
@@ -509,25 +489,22 @@ hiredisAsyncClient::getKeyAsync(std::string_view key,
                                 size_t data_len,
                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
     if (!connected_.load()) {
-        setPromiseStatus(executor_, promise, false);
+        setPromiseStatus(promise, false);
         return;
     }
 
     std::string key_copy(key);
-    auto executor = executor_;
     bool scheduled = scheduleOnEventLoop([this,
                                           key = std::move(key_copy),
                                           data_ptr,
                                           data_len,
-                                          promise,
-                                          executor]() mutable {
+                                          promise]() mutable {
         if (!connected_.load() || !asyncContext_) {
-            setPromiseStatus(executor, promise, false);
+            setPromiseStatus(promise, false);
             return;
         }
 
         auto *ctx = new CallbackContext;
-        ctx->executor = executor;
         ctx->data_ptr = data_ptr;
         ctx->data_len = data_len;
         ctx->promise_ptr = promise;
@@ -538,12 +515,12 @@ hiredisAsyncClient::getKeyAsync(std::string_view key,
         if (ret != REDIS_OK) {
             auto promise_ptr = ctx->promise_ptr;
             delete ctx;
-            setPromiseStatus(executor, promise_ptr, false);
+            setPromiseStatus(promise_ptr, false);
         }
     });
 
     if (!scheduled) {
-        setPromiseStatus(executor_, promise, false);
+        setPromiseStatus(promise, false);
     }
 }
 
@@ -583,15 +560,11 @@ hiredisAsyncClient::checkKeyExistsSync(std::string_view key) {
 
 #else // HAVE_HIREDIS_ASYNC
 
-hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params,
-                                       std::shared_ptr<redisThreadPoolExecutor> executor) {
+hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params) {
     throw std::runtime_error("hiredis-async not available");
 }
 
 hiredisAsyncClient::~hiredisAsyncClient() {}
-
-void
-hiredisAsyncClient::setExecutor(std::shared_ptr<redisThreadPoolExecutor> executor) {}
 
 void
 hiredisAsyncClient::putKeyAsync(std::string_view key,

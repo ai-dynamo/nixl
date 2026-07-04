@@ -1,28 +1,12 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
-/**
- * @file engine_impl.cpp
- * @brief nixlRedisKVEngineImpl — postXfer/checkXfer over async Redis SET/GET.
- */
+#include "redis_backend.h"
 
-#include "engine_impl.h"
-#include "client.h"
 #include "common/nixl_log.h"
+
 #include <absl/strings/str_format.h>
 #include <algorithm>
 #include <chrono>
@@ -31,36 +15,13 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
 
-std::size_t
-defaultNumThreads() {
-    return std::max(1u, std::thread::hardware_concurrency() / 2);
-}
-
-std::size_t
-getNumThreads(nixl_b_params_t *custom_params) {
-    if (custom_params && custom_params->count("num_threads") > 0) {
-        try {
-            const auto num_threads = std::stoul(custom_params->at("num_threads"));
-            if (num_threads > 0) {
-                return num_threads;
-            }
-            NIXL_WARN << "Invalid num_threads value 0, using default";
-        }
-        catch (const std::exception &) {
-            NIXL_WARN << "Invalid num_threads value, using default";
-        }
-    }
-
-    return defaultNumThreads();
-}
-
 nixl_b_params_t *
-getCustomParams(const nixlBackendInitParams *init_params) {
+getInitCustomParams(const nixlBackendInitParams *init_params) {
     return init_params ? init_params->customParams : nullptr;
 }
 
@@ -118,19 +79,19 @@ public:
     nixl_status_t
     getOverallStatus() {
         while (!statusFutures_.empty()) {
-            if (statusFutures_.back().wait_for(std::chrono::seconds(0)) ==
+            if (statusFutures_.back().wait_for(std::chrono::seconds(0)) !=
                 std::future_status::ready) {
-                auto current_status = statusFutures_.back().get();
-                if (current_status != NIXL_SUCCESS) {
-                    statusFutures_.clear();
-                    statusPromises_.clear();
-                    return current_status;
-                }
-                statusFutures_.pop_back();
-                statusPromises_.pop_back();
-            } else {
                 return NIXL_IN_PROG;
             }
+
+            auto current_status = statusFutures_.back().get();
+            if (current_status != NIXL_SUCCESS) {
+                statusFutures_.clear();
+                statusPromises_.clear();
+                return current_status;
+            }
+            statusFutures_.pop_back();
+            statusPromises_.pop_back();
         }
         return NIXL_SUCCESS;
     }
@@ -151,54 +112,37 @@ public:
 
 } // namespace
 
-nixlRedisKVEngineImpl::nixlRedisKVEngineImpl(const nixlBackendInitParams *init_params)
-    : executor_(std::make_shared<redisThreadPoolExecutor>(
-          getNumThreads(getCustomParams(init_params)))) {
-    redisClient_ = std::make_shared<hiredisAsyncClient>(getCustomParams(init_params), executor_);
-    NIXL_INFO << "Redis KV backend initialized";
+nixlRedisKVEngine::nixlRedisKVEngine(const nixlBackendInitParams *init_params)
+    : nixlBackendEngine(init_params),
+      redisClient_(std::make_shared<hiredisAsyncClient>(getInitCustomParams(init_params))) {
+    NIXL_INFO << "Redis backend initialized";
 }
 
-nixlRedisKVEngineImpl::nixlRedisKVEngineImpl(const nixlBackendInitParams *init_params,
-                                             std::shared_ptr<iRedisClient> redis_client)
-    : executor_(std::make_shared<redisThreadPoolExecutor>(
-          getNumThreads(getCustomParams(init_params)))),
-      redisClient_(std::move(redis_client)) {
-    if (redisClient_) {
-        redisClient_->setExecutor(executor_);
-    }
-}
-
-nixlRedisKVEngineImpl::~nixlRedisKVEngineImpl() {
-    if (executor_) {
-        executor_->waitUntilStopped();
-    }
-}
+nixlRedisKVEngine::nixlRedisKVEngine(const nixlBackendInitParams *init_params,
+                                     std::shared_ptr<iRedisClient> redis_client)
+    : nixlBackendEngine(init_params),
+      redisClient_(std::move(redis_client)) {}
 
 nixl_status_t
-nixlRedisKVEngineImpl::registerMem(const nixlBlobDesc &mem,
-                                   const nixl_mem_t &nixl_mem,
-                                   nixlBackendMD *&out) {
-    auto supported_mems = getSupportedMems();
-    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end()) {
+nixlRedisKVEngine::registerMem(const nixlBlobDesc &mem,
+                               const nixl_mem_t &nixl_mem,
+                               nixlBackendMD *&out) {
+    const auto supported_mems = getSupportedMems();
+    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) ==
+        supported_mems.end()) {
         out = nullptr;
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
     std::string redis_key = mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo;
-
-    if (nixl_mem == OBJ_SEG || nixl_mem == DRAM_SEG) {
-        auto redis_md = std::make_unique<nixlRedisMetadata>(nixl_mem, mem.devId, redis_key);
-        devIdToRedisKey_[mem.devId] = redis_key;
-        out = redis_md.release();
-    } else {
-        out = nullptr;
-    }
-
+    auto redis_md = std::make_unique<nixlRedisMetadata>(nixl_mem, mem.devId, redis_key);
+    devIdToRedisKey_[mem.devId] = redis_key;
+    out = redis_md.release();
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlRedisKVEngineImpl::deregisterMem(nixlBackendMD *meta) {
+nixlRedisKVEngine::deregisterMem(nixlBackendMD *meta) {
     auto *redis_md = static_cast<nixlRedisMetadata *>(meta);
     if (redis_md) {
         std::unique_ptr<nixlRedisMetadata> redis_md_ptr(redis_md);
@@ -208,17 +152,15 @@ nixlRedisKVEngineImpl::deregisterMem(nixlBackendMD *meta) {
 }
 
 nixl_status_t
-nixlRedisKVEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
-                                std::vector<nixl_query_resp_t> &resp) const {
-    iRedisClient *client = getClient();
-    if (!client) {
+nixlRedisKVEngine::queryMem(const nixl_reg_dlist_t &descs,
+                            std::vector<nixl_query_resp_t> &resp) const {
+    if (!redisClient_) {
         NIXL_ERROR << "Failed to query memory: no Redis client available";
         return NIXL_ERR_BACKEND;
     }
 
     resp.clear();
     resp.reserve(descs.descCount());
-
     bool has_error = false;
 
     try {
@@ -226,8 +168,7 @@ nixlRedisKVEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
             const auto &desc = descs[i];
             const std::string key =
                 desc.metaInfo.empty() ? std::to_string(desc.devId) : desc.metaInfo;
-
-            std::optional<bool> exists = client->checkKeyExistsSync(key);
+            const auto exists = redisClient_->checkKeyExistsSync(key);
             if (!exists.has_value()) {
                 resp.emplace_back(std::nullopt);
                 has_error = true;
@@ -241,42 +182,32 @@ nixlRedisKVEngineImpl::queryMem(const nixl_reg_dlist_t &descs,
         return NIXL_ERR_BACKEND;
     }
 
-    if (has_error) {
-        return NIXL_ERR_BACKEND;
+    return has_error ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlRedisKVEngine::prepXfer(const nixl_xfer_op_t &operation,
+                            const nixl_meta_dlist_t &local,
+                            const nixl_meta_dlist_t &remote,
+                            const std::string &remote_agent,
+                            nixlBackendReqH *&handle,
+                            const nixl_opt_b_args_t *) const {
+    if (!isValidPrepXferParams(operation, local, remote, remote_agent, localAgent)) {
+        return NIXL_ERR_INVALID_PARAM;
     }
 
+    handle = new nixlRedisBackendReqH();
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlRedisKVEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
-                                const nixl_meta_dlist_t &local,
-                                const nixl_meta_dlist_t &remote,
-                                const std::string &remote_agent,
-                                const std::string &local_agent,
-                                nixlBackendReqH *&handle,
-                                const nixl_opt_b_args_t *opt_args) const {
-    if (!isValidPrepXferParams(operation, local, remote, remote_agent, local_agent)) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    auto req_h = std::make_unique<nixlRedisBackendReqH>();
-    handle = req_h.release();
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
-nixlRedisKVEngineImpl::postXfer(const nixl_xfer_op_t &operation,
-                                const nixl_meta_dlist_t &local,
-                                const nixl_meta_dlist_t &remote,
-                                const std::string &remote_agent,
-                                nixlBackendReqH *&handle,
-                                const nixl_opt_b_args_t *opt_args) const {
-    if (!handle) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if (operation != NIXL_WRITE && operation != NIXL_READ) {
+nixlRedisKVEngine::postXfer(const nixl_xfer_op_t &operation,
+                            const nixl_meta_dlist_t &local,
+                            const nixl_meta_dlist_t &remote,
+                            const std::string &,
+                            nixlBackendReqH *&handle,
+                            const nixl_opt_b_args_t *) const {
+    if (!handle || (operation != NIXL_WRITE && operation != NIXL_READ)) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -288,34 +219,30 @@ nixlRedisKVEngineImpl::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    auto *req_h = static_cast<nixlRedisBackendReqH *>(handle);
-    iRedisClient *client = getClient();
-    if (!client) {
+    if (!redisClient_) {
         return NIXL_ERR_BACKEND;
     }
 
+    auto *req_h = static_cast<nixlRedisBackendReqH *>(handle);
     req_h->statusFutures_.clear();
     req_h->statusPromises_.clear();
 
+    // Resolve every key before dispatching any command so invalid descriptors cannot
+    // produce a partially submitted Redis transfer.
     std::vector<std::string> redis_keys;
-    redis_keys.reserve(local.descCount());
-
+    redis_keys.reserve(remote.descCount());
     for (int i = 0; i < remote.descCount(); ++i) {
         const auto &remote_desc = remote[i];
-
         std::string redis_key;
+
         if (remote_desc.metadataP) {
             auto *redis_md = dynamic_cast<nixlRedisMetadata *>(remote_desc.metadataP);
             if (redis_md) {
                 redis_key = redis_md->redisKey;
-            } else {
-                auto it = devIdToRedisKey_.find(remote_desc.devId);
-                if (it == devIdToRedisKey_.end()) {
-                    return NIXL_ERR_INVALID_PARAM;
-                }
-                redis_key = it->second;
             }
-        } else {
+        }
+
+        if (redis_key.empty()) {
             auto it = devIdToRedisKey_.find(remote_desc.devId);
             if (it == devIdToRedisKey_.end()) {
                 return NIXL_ERR_INVALID_PARAM;
@@ -327,19 +254,16 @@ nixlRedisKVEngineImpl::postXfer(const nixl_xfer_op_t &operation,
 
     for (int i = 0; i < local.descCount(); ++i) {
         const auto &local_desc = local[i];
-        const auto &redis_key = redis_keys[i];
-
         auto status_promise = std::make_shared<std::promise<nixl_status_t>>();
         req_h->statusPromises_.push_back(status_promise);
         req_h->statusFutures_.push_back(status_promise->get_future());
 
-        uintptr_t data_ptr = local_desc.addr;
-        size_t data_len = local_desc.len;
-
         if (operation == NIXL_WRITE) {
-            client->putKeyAsync(redis_key, data_ptr, data_len, status_promise);
+            redisClient_->putKeyAsync(
+                redis_keys[i], local_desc.addr, local_desc.len, status_promise);
         } else {
-            client->getKeyAsync(redis_key, data_ptr, data_len, status_promise);
+            redisClient_->getKeyAsync(
+                redis_keys[i], local_desc.addr, local_desc.len, status_promise);
         }
     }
 
@@ -347,7 +271,7 @@ nixlRedisKVEngineImpl::postXfer(const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
-nixlRedisKVEngineImpl::checkXfer(nixlBackendReqH *handle) const {
+nixlRedisKVEngine::checkXfer(nixlBackendReqH *handle) const {
     if (!handle) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -355,7 +279,7 @@ nixlRedisKVEngineImpl::checkXfer(nixlBackendReqH *handle) const {
 }
 
 nixl_status_t
-nixlRedisKVEngineImpl::releaseReqH(nixlBackendReqH *handle) const {
+nixlRedisKVEngine::releaseReqH(nixlBackendReqH *handle) const {
     delete static_cast<nixlRedisBackendReqH *>(handle);
     return NIXL_SUCCESS;
 }

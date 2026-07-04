@@ -19,11 +19,9 @@ redis_unit_test_dep = declare_dependency(
     ],
     include_directories: [
         nixl_inc_dirs, utils_inc_dirs,
-        '../../../../src/plugins/kv',
-        '../../../../src/plugins/kv/redis',
+        '../../../../src/plugins/redis',
     ],
     dependencies: [
         redis_backend_interface,
-        dependency('asio', required: true),
     ],
 )

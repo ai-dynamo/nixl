@@ -30,7 +30,7 @@ if enabled_plugins.get('OBJ')
 endif
 
 if enabled_plugins.get('REDIS')
-    subdir('kv')
+    subdir('redis')
 endif
 
 if enabled_plugins.get('AZURE_BLOB')
