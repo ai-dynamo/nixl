@@ -7,6 +7,7 @@
 
 #include "redis_backend.h"
 
+#include <cstdlib>
 #include <deque>
 #include <future>
 #include <memory>
@@ -17,6 +18,99 @@
 #include <vector>
 
 namespace gtest::redis {
+
+class scopedRedisEnvironment {
+public:
+    scopedRedisEnvironment() {
+        save("REDIS_HOST", host_);
+        save("REDIS_PORT", port_);
+        save("REDIS_USERNAME", username_);
+        save("REDIS_PASSWORD", password_);
+    }
+
+    ~scopedRedisEnvironment() {
+        restore("REDIS_HOST", host_);
+        restore("REDIS_PORT", port_);
+        restore("REDIS_USERNAME", username_);
+        restore("REDIS_PASSWORD", password_);
+    }
+
+    void
+    clear() {
+        unsetenv("REDIS_HOST");
+        unsetenv("REDIS_PORT");
+        unsetenv("REDIS_USERNAME");
+        unsetenv("REDIS_PASSWORD");
+    }
+
+private:
+    static void
+    save(const char *name, std::optional<std::string> &value) {
+        if (const char *current = std::getenv(name)) {
+            value = current;
+        }
+    }
+
+    static void
+    restore(const char *name, const std::optional<std::string> &value) {
+        if (value) {
+            setenv(name, value->c_str(), 1);
+        } else {
+            unsetenv(name);
+        }
+    }
+
+    std::optional<std::string> host_;
+    std::optional<std::string> port_;
+    std::optional<std::string> username_;
+    std::optional<std::string> password_;
+};
+
+TEST(redisConfigTest, UsesUnauthenticatedDefaultsWhenCredentialsAreAbsent) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    nixl_b_params_t params;
+
+    const auto config = RedisConfig::fromBackendParams(&params);
+
+    EXPECT_EQ(config.host, "localhost");
+    EXPECT_EQ(config.port, 6379);
+    EXPECT_TRUE(config.username.empty());
+    EXPECT_TRUE(config.password.empty());
+    EXPECT_EQ(config.db, 0);
+}
+
+TEST(redisConfigTest, BackendParametersOverrideEnvironmentFallbacks) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    setenv("REDIS_HOST", "environment-host", 1);
+    setenv("REDIS_PORT", "6380", 1);
+    setenv("REDIS_USERNAME", "environment-user", 1);
+    setenv("REDIS_PASSWORD", "environment-password", 1);
+    nixl_b_params_t params = {
+        {"host", "parameter-host"},
+        {"port", "6381"},
+        {"username", "parameter-user"},
+        {"password", "parameter-password"},
+        {"db", "2"},
+    };
+
+    const auto config = RedisConfig::fromBackendParams(&params);
+
+    EXPECT_EQ(config.host, "parameter-host");
+    EXPECT_EQ(config.port, 6381);
+    EXPECT_EQ(config.username, "parameter-user");
+    EXPECT_EQ(config.password, "parameter-password");
+    EXPECT_EQ(config.db, 2);
+}
+
+TEST(redisConfigTest, RejectsAclUsernameWithoutPassword) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    nixl_b_params_t params = {{"username", "acl-user"}};
+
+    EXPECT_THROW(RedisConfig::fromBackendParams(&params), std::invalid_argument);
+}
 
 class mockRedisClient : public iRedisClient {
 public:
@@ -202,7 +296,7 @@ TEST_F(redisEngineTest, QueryMemPreservesFoundMissingAndErrorResponses) {
 
     std::vector<nixl_query_resp_t> responses;
     EXPECT_EQ(engine_->queryMem(descs, responses), NIXL_ERR_BACKEND);
-    ASSERT_EQ(responses.size(), 3);
+    ASSERT_EQ(responses.size(), 3U);
     EXPECT_TRUE(responses[0].has_value());
     EXPECT_FALSE(responses[1].has_value());
     EXPECT_FALSE(responses[2].has_value());

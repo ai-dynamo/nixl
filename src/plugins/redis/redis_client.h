@@ -31,6 +31,18 @@ struct redisAsyncContext;
 struct redisContext;
 #endif
 
+/** Resolved Redis connection settings. Explicit backend parameters override environment values. */
+struct RedisConfig {
+    std::string host = "localhost";
+    int port = 6379;
+    std::string username;
+    std::string password;
+    int db = 0;
+
+    static RedisConfig
+    fromBackendParams(const nixl_b_params_t *custom_params);
+};
+
 /** Redis operations used by the NIXL REDIS backend. */
 class iRedisClient {
 public:
@@ -55,7 +67,7 @@ public:
 /** Hiredis implementation with async SET/GET and a separate synchronous EXISTS connection. */
 class hiredisAsyncClient : public iRedisClient {
 public:
-    explicit hiredisAsyncClient(nixl_b_params_t *custom_params);
+    explicit hiredisAsyncClient(RedisConfig config);
     ~hiredisAsyncClient() override;
 
     void
@@ -110,10 +122,7 @@ private:
     void
     stopEventLoop();
 
-    std::string host_;
-    int port_;
-    std::string password_;
-    int db_;
+    RedisConfig config_;
     redisAsyncContext *asyncContext_;
     redisContext *syncContext_;
     struct event_base *eventBase_;

@@ -19,31 +19,28 @@
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
 
-#ifdef HAVE_HIREDIS_ASYNC
-
 namespace {
 
-using redis_event_task_t = std::function<void()>;
-
-void
-runEventTask(evutil_socket_t, short, void *arg) {
-    std::unique_ptr<redis_event_task_t> task(static_cast<redis_event_task_t *>(arg));
-    (*task)();
-}
-
 std::string
-getRedisHost(nixl_b_params_t *custom_params) {
-    if (custom_params && custom_params->count("host") > 0) {
-        return custom_params->at("host");
+getStringSetting(const nixl_b_params_t *custom_params,
+                 const char *param_name,
+                 const char *env_name,
+                 const char *default_value = "") {
+    if (custom_params) {
+        const auto it = custom_params->find(param_name);
+        if (it != custom_params->end()) {
+            return it->second;
+        }
     }
-    const char *env_host = getenv("REDIS_HOST");
-    return env_host ? std::string(env_host) : "localhost";
+    const char *env_value = std::getenv(env_name);
+    return env_value ? std::string(env_value) : default_value;
 }
 
 std::optional<int>
@@ -65,14 +62,14 @@ parseRedisPort(const std::string &value, const char *source) {
 }
 
 int
-getRedisPort(nixl_b_params_t *custom_params) {
+getRedisPort(const nixl_b_params_t *custom_params) {
     if (custom_params && custom_params->count("port") > 0) {
         auto port = parseRedisPort(custom_params->at("port"), "Redis port");
         if (port) {
             return *port;
         }
     }
-    const char *env_port = getenv("REDIS_PORT");
+    const char *env_port = std::getenv("REDIS_PORT");
     if (env_port) {
         auto port = parseRedisPort(env_port, "REDIS_PORT");
         if (port) {
@@ -82,17 +79,8 @@ getRedisPort(nixl_b_params_t *custom_params) {
     return 6379;
 }
 
-std::string
-getRedisPassword(nixl_b_params_t *custom_params) {
-    if (custom_params && custom_params->count("password") > 0) {
-        return custom_params->at("password");
-    }
-    const char *env_password = getenv("REDIS_PASSWORD");
-    return env_password ? std::string(env_password) : "";
-}
-
 int
-getRedisDB(nixl_b_params_t *custom_params) {
+getRedisDB(const nixl_b_params_t *custom_params) {
     if (custom_params && custom_params->count("db") > 0) {
         try {
             return std::stoi(custom_params->at("db"));
@@ -102,6 +90,34 @@ getRedisDB(nixl_b_params_t *custom_params) {
         }
     }
     return 0;
+}
+
+} // namespace
+
+RedisConfig
+RedisConfig::fromBackendParams(const nixl_b_params_t *custom_params) {
+    RedisConfig config;
+    config.host = getStringSetting(custom_params, "host", "REDIS_HOST", "localhost");
+    config.port = getRedisPort(custom_params);
+    config.username = getStringSetting(custom_params, "username", "REDIS_USERNAME");
+    config.password = getStringSetting(custom_params, "password", "REDIS_PASSWORD");
+    config.db = getRedisDB(custom_params);
+    if (!config.username.empty() && config.password.empty()) {
+        throw std::invalid_argument("Redis username requires a password");
+    }
+    return config;
+}
+
+#ifdef HAVE_HIREDIS_ASYNC
+
+namespace {
+
+using redis_event_task_t = std::function<void()>;
+
+void
+runEventTask(evutil_socket_t, short, void *arg) {
+    std::unique_ptr<redis_event_task_t> task(static_cast<redis_event_task_t *>(arg));
+    (*task)();
 }
 
 bool
@@ -131,11 +147,8 @@ setPromiseStatus(const std::shared_ptr<std::promise<nixl_status_t>> &promise, bo
 
 } // namespace
 
-hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params)
-    : host_(getRedisHost(custom_params)),
-      port_(getRedisPort(custom_params)),
-      password_(getRedisPassword(custom_params)),
-      db_(getRedisDB(custom_params)),
+hiredisAsyncClient::hiredisAsyncClient(RedisConfig config)
+    : config_(std::move(config)),
       asyncContext_(nullptr),
       syncContext_(nullptr),
       eventBase_(nullptr),
@@ -149,7 +162,7 @@ hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params)
         throw std::runtime_error("Failed to create event base");
     }
 
-    asyncContext_ = redisAsyncConnect(host_.c_str(), port_);
+    asyncContext_ = redisAsyncConnect(config_.host.c_str(), config_.port);
     if (!asyncContext_ || asyncContext_->err) {
         if (asyncContext_) {
             std::string err_msg =
@@ -189,13 +202,14 @@ hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params)
 
     connectSyncContext();
 
-    NIXL_INFO << absl::StrFormat("Connected to Redis at %s:%d (db=%d)", host_, port_, db_);
+    NIXL_INFO << absl::StrFormat(
+        "Connected to Redis at %s:%d (db=%d)", config_.host, config_.port, config_.db);
 }
 
 void
 hiredisAsyncClient::connectSyncContext() {
     struct timeval timeout = {5, 0};
-    syncContext_ = redisConnectWithTimeout(host_.c_str(), port_, timeout);
+    syncContext_ = redisConnectWithTimeout(config_.host.c_str(), config_.port, timeout);
     if (!syncContext_ || syncContext_->err) {
         std::string err_msg = syncContext_ ? syncContext_->errstr : "allocation failed";
         if (syncContext_) {
@@ -204,15 +218,21 @@ hiredisAsyncClient::connectSyncContext() {
         }
         NIXL_WARN << absl::StrFormat(
             "Sync Redis connection for EXISTS failed (%s:%d): %s; queryMem will return errors",
-            host_,
-            port_,
+            config_.host,
+            config_.port,
             err_msg);
         return;
     }
 
-    if (!password_.empty()) {
-        redisReply *reply =
-            static_cast<redisReply *>(redisCommand(syncContext_, "AUTH %s", password_.c_str()));
+    if (!config_.password.empty()) {
+        redisReply *reply = config_.username.empty()
+                                ? static_cast<redisReply *>(redisCommand(
+                                      syncContext_, "AUTH %s", config_.password.c_str()))
+                                : static_cast<redisReply *>(
+                                      redisCommand(syncContext_,
+                                                   "AUTH %s %s",
+                                                   config_.username.c_str(),
+                                                   config_.password.c_str()));
         if (!checkRedisReplyOk(reply, "AUTH")) {
             freeReplyObject(reply);
             redisFree(syncContext_);
@@ -223,9 +243,9 @@ hiredisAsyncClient::connectSyncContext() {
         freeReplyObject(reply);
     }
 
-    if (db_ != 0) {
+    if (config_.db != 0) {
         redisReply *reply =
-            static_cast<redisReply *>(redisCommand(syncContext_, "SELECT %d", db_));
+            static_cast<redisReply *>(redisCommand(syncContext_, "SELECT %d", config_.db));
         if (!checkRedisReplyOk(reply, "SELECT")) {
             freeReplyObject(reply);
             redisFree(syncContext_);
@@ -237,7 +257,10 @@ hiredisAsyncClient::connectSyncContext() {
     }
 
     NIXL_INFO << absl::StrFormat(
-        "Sync Redis connection ready for EXISTS at %s:%d (db=%d)", host_, port_, db_);
+        "Sync Redis connection ready for EXISTS at %s:%d (db=%d)",
+        config_.host,
+        config_.port,
+        config_.db);
 }
 
 hiredisAsyncClient::~hiredisAsyncClient() {
@@ -308,12 +331,12 @@ hiredisAsyncClient::completeAsyncInitialization(bool success) {
 
 void
 hiredisAsyncClient::startAsyncSelect() {
-    if (db_ == 0) {
+    if (config_.db == 0) {
         completeAsyncInitialization(true);
         return;
     }
 
-    int ret = redisAsyncCommand(asyncContext_, selectCallback, this, "SELECT %d", db_);
+    int ret = redisAsyncCommand(asyncContext_, selectCallback, this, "SELECT %d", config_.db);
     if (ret != REDIS_OK) {
         NIXL_ERROR << "Failed to queue Redis SELECT command";
         completeAsyncInitialization(false);
@@ -324,9 +347,19 @@ hiredisAsyncClient::startAsyncSelect() {
 
 void
 hiredisAsyncClient::startAsyncInitialization() {
-    if (!password_.empty()) {
-        int ret =
-            redisAsyncCommand(asyncContext_, authCallback, this, "AUTH %s", password_.c_str());
+    if (!config_.password.empty()) {
+        const int ret = config_.username.empty()
+                            ? redisAsyncCommand(asyncContext_,
+                                                authCallback,
+                                                this,
+                                                "AUTH %s",
+                                                config_.password.c_str())
+                            : redisAsyncCommand(asyncContext_,
+                                                authCallback,
+                                                this,
+                                                "AUTH %s %s",
+                                                config_.username.c_str(),
+                                                config_.password.c_str());
         if (ret != REDIS_OK) {
             NIXL_ERROR << "Failed to queue Redis AUTH command";
             completeAsyncInitialization(false);
@@ -336,6 +369,7 @@ hiredisAsyncClient::startAsyncInitialization() {
         return;
     }
 
+    // An empty password means the Redis deployment permits unauthenticated access.
     startAsyncSelect();
 }
 
@@ -560,7 +594,7 @@ hiredisAsyncClient::checkKeyExistsSync(std::string_view key) {
 
 #else // HAVE_HIREDIS_ASYNC
 
-hiredisAsyncClient::hiredisAsyncClient(nixl_b_params_t *custom_params) {
+hiredisAsyncClient::hiredisAsyncClient(RedisConfig config) {
     throw std::runtime_error("hiredis-async not available");
 }
 
