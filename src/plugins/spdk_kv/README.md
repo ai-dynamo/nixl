@@ -41,8 +41,8 @@ clear to anyone implementing a backend against these interfaces.
 ```
 nixlBackendEngine
 ├── nixlSpdkKvEngine (abstract; shared NVMe-KV data plane)
-│   ├── nixlRadosNkvEngine (openDevice: RADOS target)
-│   └── nixlCsalNkvEngine  (openDevice: CSAL target)
+│   ├── nixlRadosNkvEngine (device: RADOS target)
+│   └── nixlCsalNkvEngine  (device: CSAL target)
 └── nixlRedisKVEngine (standalone; implemented directly)
 
 iSpdkKvDevice (interface; used by nixlSpdkKvEngine)
@@ -76,9 +76,10 @@ validate → derive key → DMA-stage → store / retrieve / exist
 ```
 
 a plain abstract base class is the simplest way to share it: `nixlSpdkKvEngine`
-implements that algorithm once, and `nixlRadosNkvEngine` / `nixlCsalNkvEngine`
-become **a handful of lines each**, only overriding `openDevice()` and
-`deriveKey()`.
+implements that algorithm once. Concrete engines inject an opened device and
+override `deriveKey()`. The original deferred construction path remains
+available for implementations that override `openDevice()` and call
+`initDevice()` after their derived state is initialized.
 
 Why split the **device** out as its own interface as well? So the entire engine
 data plane can be unit-tested with `nixlFakeKvDevice` (an in-memory double) with
@@ -97,15 +98,15 @@ public:
     virtual ~iSpdkKvDevice() = default;
 
     virtual uint32_t maxKeyLen() const = 0;
-    virtual uint32_t maxValueLen() const = 0;
+    virtual size_t maxValueLen() const = 0;
 
     virtual void *dmaAlloc(size_t len) = 0;
     virtual void  dmaFree(void *buf) = 0;
 
     virtual SpdkKvStatus store(const void *key, uint8_t key_len,
-                              const void *value, uint32_t value_len) = 0;
+                              const void *value, size_t value_len) = 0;
     virtual SpdkKvStatus retrieve(const void *key, uint8_t key_len, void *value,
-                                 uint32_t buf_len, uint32_t *value_len_out) = 0;
+                                 size_t buf_len, size_t *value_len_out) = 0;
     virtual SpdkKvStatus exist(const void *key, uint8_t key_len) = 0;
 };
 ```
@@ -142,7 +143,7 @@ public:
     ~nixlKvHostShimDevice() override;               // kv_host_shim_close(shim_)
 
     uint32_t maxKeyLen() const override;            // kv_host_shim_max_key_len
-    uint32_t maxValueLen() const override;          // kv_host_shim_max_value_len
+    size_t maxValueLen() const override;            // kv_host_shim_max_value_len
     void *dmaAlloc(size_t len) override;            // kv_host_shim_dma_alloc
     void  dmaFree(void *buf) override;              // kv_host_shim_dma_free
 
@@ -165,6 +166,10 @@ Key points this example makes concrete:
 - The NVMe status-code → `SpdkKvStatus` mapping (e.g. `0x85` → `BUFFER_TOO_SMALL`,
   `0x87` → `NOT_FOUND`) is done **inside** this class's `.cpp`, so it never
   reaches the shared engine.
+- The abstract interface uses `size_t` for NIXL value lengths. Because the shim
+  accepts `uint32_t`, this adapter rejects values larger than `UINT32_MAX`
+  before narrowing. A zero `maxValueLen()` means no additional advertised
+  device limit; it does not bypass the shim's representable-size check.
 
 ## Worked example 2 — the test double: `nixlFakeKvDevice`
 
@@ -179,24 +184,61 @@ class nixlFakeKvDevice : public iSpdkKvDevice {
 };
 ```
 
-## How a backend uses these interfaces
+## Construction and device ownership
 
-A concrete backend (e.g. `nixlRadosNkvEngine`) is only the two hooks:
+Constructor injection is the preferred path. It makes device ownership explicit
+and initializes the effective key length during base construction:
 
 ```cpp
 class nixlRadosNkvEngine : public nixlSpdkKvEngine {
-    // Choose the device/target for this backend.
-    std::unique_ptr<iSpdkKvDevice> openDevice(std::string &err) const override {
+    static std::unique_ptr<iSpdkKvDevice>
+    makeDevice(const nixlBackendInitParams *init_params) {
         KvHostShimConfig cfg;
-        // ... fill cfg from custom params (vfu_addr/nsid/init_env) ...
+        // ... fill cfg from init_params (vfu_addr/nsid/init_env) ...
+        std::string err;
         return nixlKvHostShimDevice::open(cfg, err);
     }
-    // Map a token sequence (OBJ_SEG metaInfo) to a fixed-length KV key.
+
+public:
+    explicit nixlRadosNkvEngine(const nixlBackendInitParams *init_params)
+        : nixlSpdkKvEngine(init_params, makeDevice(init_params)) {}
+
+protected:
     bool deriveKey(const std::string &token_seq, uint8_t key_len,
                    std::vector<uint8_t> &out) const override;
 };
 ```
 
+For compatibility, a backend may keep deferred initialization. It must call
+`initDevice()` from its derived constructor; `openDevice()` cannot be dispatched
+correctly from the base constructor:
+
+```cpp
+nixlCsalNkvEngine::nixlCsalNkvEngine(const nixlBackendInitParams *init_params)
+    : nixlSpdkKvEngine(init_params) {
+    initDevice();
+}
+
+std::unique_ptr<iSpdkKvDevice>
+nixlCsalNkvEngine::openDevice(std::string &err) const {
+    KvHostShimConfig cfg;
+    // ... fill cfg for the CSAL target ...
+    return nixlKvHostShimDevice::open(cfg, err);
+}
+```
+
 Everything else — registration, query, and the Store/Retrieve transfer path — is
 inherited from `nixlSpdkKvEngine` and runs against whichever `iSpdkKvDevice` the
 backend opened.
+
+## Value sizes and concurrency
+
+The shared interface uses `size_t` end to end, so a NIXL descriptor length is
+never silently narrowed by the common engine. A concrete adapter validates the
+length against its native API and the nonzero `maxValueLen()` advertised by the
+device before submitting an operation.
+
+Each `nixlSpdkKvEngine` owns one device and serializes a complete transaction
+(DMA allocation, staging copy, Store/Retrieve/Exist, and free) with its device
+mutex. This gives single-qpair SPDK implementations a safe default; the device
+interface itself does not promise independent thread safety.

@@ -27,16 +27,17 @@
  * generic NVMe Key-Value protocol exposed by the in-process SPDK "kv_host_shim"
  * C API (Store / Retrieve / Exist over an NVMe-KV controller). It is the seam
  * between the backend-agnostic data plane and the concrete transport: the shared
- * engine talks ONLY to this interface and knows nothing about SPDK, NVMe status
- * codes, DMA, or kv_host_shim itself. All of those specifics live BEHIND the
- * interface, inside the concrete devices that inherit it.
+ * engine talks ONLY to this interface and knows nothing about SPDK allocation
+ * APIs, NVMe status codes, or kv_host_shim itself. It only knows that values
+ * use abstract transfer-capable buffers supplied by the device. All concrete
+ * transport details live BEHIND the interface.
  *
  * DESIGN / CLASS HIERARCHY
  * ------------------------
  *   nixlBackendEngine                       (NIXL core)
  *     ├── nixlSpdkKvEngine (abstract; shared NVMe-KV data plane)
- *     │     ├── nixlRadosNkvEngine (openDevice: RADOS target)
- *     │     └── nixlCsalNkvEngine  (openDevice: CSAL target)
+ *     │     ├── nixlRadosNkvEngine (device: RADOS target)
+ *     │     └── nixlCsalNkvEngine  (device: CSAL target)
  *     └── nixlRedisKVEngine (standalone; implemented directly)
  *
  *   iSpdkKvDevice (interface; used by nixlSpdkKvEngine)
@@ -55,8 +56,9 @@
  * concrete backends need the exact same data-plane algorithm
  * (validate -> derive key -> DMA-stage -> store/retrieve/exist), a plain abstract
  * base class is the simplest way to share it: nixlSpdkKvEngine implements that
- * algorithm once, and nixlRadosNkvEngine / nixlCsalNkvEngine become a handful of
- * lines each, only overriding openDevice() and deriveKey().
+ * algorithm once, and nixlRadosNkvEngine / nixlCsalNkvEngine only provide a
+ * device (preferably by constructor injection) and override deriveKey(). The
+ * legacy deferred path may instead override openDevice() and call initDevice().
  *
  * Splitting the DEVICE out as its own interface additionally lets the whole
  * engine data plane be unit-tested with nixlFakeKvDevice (an in-memory double)
@@ -74,6 +76,13 @@
  * raw device status code, so callers never branch on NVMe/SPDK-specific values.
  * Mapping any device-native error space (e.g. NVMe status codes) onto SpdkKvStatus
  * is the concrete implementation's job (see nixlKvHostShimDevice).
+ *
+ * CONCURRENCY
+ * -----------
+ * iSpdkKvDevice does not require implementations to be thread-safe. The shared
+ * nixlSpdkKvEngine serializes each complete allocation/staging/device-operation/
+ * free transaction with its device mutex, which makes a single-qpair adapter a
+ * valid implementation.
  */
 
 #ifndef NIXL_SRC_PLUGINS_SPDK_KV_ISPDK_KV_DEVICE_H
@@ -121,8 +130,10 @@ public:
     maxKeyLen() const = 0;
 
     /** Maximum value length the device can store (bytes), or 0 when the device
-     *  advertises no limit. */
-    virtual uint32_t
+     *  advertises no additional limit. An adapter whose native API uses a
+     *  narrower length type must reject an unrepresentable value before
+     *  narrowing it. */
+    virtual size_t
     maxValueLen() const = 0;
 
     /** Allocate a transfer-capable buffer of @p len bytes (zeroed). NULL on
@@ -137,10 +148,12 @@ public:
     /**
      * Store @p value (@p value_len bytes) under @p key. @p value must be a
      * buffer from dmaAlloc().
+     * Implementations must range-check @p value_len before converting it to a
+     * narrower native length type.
      * @return SpdkKvStatus::OK on success, SpdkKvStatus::ERROR otherwise.
      */
     virtual SpdkKvStatus
-    store(const void *key, uint8_t key_len, const void *value, uint32_t value_len) = 0;
+    store(const void *key, uint8_t key_len, const void *value, size_t value_len) = 0;
 
     /**
      * Retrieve the value for @p key into @p value (@p buf_len bytes). @p value
@@ -148,6 +161,8 @@ public:
      * @param value_len_out When non-NULL, receives the device's TRUE stored value
      *        length on both OK and BUFFER_TOO_SMALL, so a short buffer can be
      *        resized and retried.
+     * Implementations must range-check @p buf_len before converting it to a
+     * narrower native length type.
      * @return OK (whole value fit; value_len_out <= buf_len), BUFFER_TOO_SMALL
      *         (value_len_out > buf_len; contents unusable), NOT_FOUND, or ERROR.
      */
@@ -155,8 +170,8 @@ public:
     retrieve(const void *key,
              uint8_t key_len,
              void *value,
-             uint32_t buf_len,
-             uint32_t *value_len_out) = 0;
+             size_t buf_len,
+             size_t *value_len_out) = 0;
 
     /**
      * Query whether @p key is present, transferring no value data.

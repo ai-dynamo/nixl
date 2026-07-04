@@ -35,6 +35,9 @@ unit_test_deps += [util_unit_test_dep]
 subdir('tracing')
 unit_test_deps += [tracing_unit_test_dep]
 
+subdir('spdk_kv')
+unit_test_deps += [spdk_kv_interface_unit_test_dep]
+
 cpp = meson.get_compiler('cpp')
 azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)
 if enabled_plugins.get('AZURE_BLOB') and azure_storage_blobs.found()
