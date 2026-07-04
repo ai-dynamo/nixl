@@ -129,8 +129,7 @@ getRedisBench(size_t buffer_size, const std::string &key, void *buffer) {
         return false;
     }
 
-    redisReply *reply =
-        (redisReply *)redisCommand(ctx, "GET %b", key.data(), key.size());
+    redisReply *reply = (redisReply *)redisCommand(ctx, "GET %b", key.data(), key.size());
     bool success = false;
     if (reply && reply->type == REDIS_REPLY_STRING) {
         const size_t reply_len = static_cast<size_t>(reply->len);
@@ -140,8 +139,8 @@ getRedisBench(size_t buffer_size, const std::string &key, void *buffer) {
             }
             success = true;
         } else {
-            std::cerr << "Redis GET size mismatch for key " << key << ": expected "
-                      << buffer_size << " bytes, got " << reply_len << " bytes" << std::endl;
+            std::cerr << "Redis GET size mismatch for key " << key << ": expected " << buffer_size
+                      << " bytes, got " << reply_len << " bytes" << std::endl;
         }
     } else if (reply && reply->type == REDIS_REPLY_NIL) {
         std::cerr << "Redis GET failed, key not found: " << key << std::endl;
@@ -1457,12 +1456,8 @@ xferBenchUtils::putRedis(size_t buffer_size, const std::string &key) {
         return false;
     }
 
-    redisReply *reply = (redisReply *)redisCommand(ctx,
-                                                   "SET %b %b",
-                                                   key.data(),
-                                                   (size_t)key.size(),
-                                                   buf,
-                                                   (size_t)buffer_size);
+    redisReply *reply = (redisReply *)redisCommand(
+        ctx, "SET %b %b", key.data(), (size_t)key.size(), buf, (size_t)buffer_size);
     free(buf);
 
     bool ok = false;

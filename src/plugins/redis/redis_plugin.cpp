@@ -25,20 +25,14 @@ static const nixl_mem_list_t supported_segments = {DRAM_SEG, OBJ_SEG};
 #ifdef STATIC_PLUGIN_REDIS
 nixlBackendPlugin *
 createStaticREDISPlugin() {
-    return redis_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                  REDIS_PLUGIN_NAME,
-                                  REDIS_PLUGIN_VERSION,
-                                  {},
-                                  supported_segments);
+    return redis_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, REDIS_PLUGIN_NAME, REDIS_PLUGIN_VERSION, {}, supported_segments);
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return redis_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                  REDIS_PLUGIN_NAME,
-                                  REDIS_PLUGIN_VERSION,
-                                  {},
-                                  supported_segments);
+    return redis_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, REDIS_PLUGIN_NAME, REDIS_PLUGIN_VERSION, {}, supported_segments);
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
