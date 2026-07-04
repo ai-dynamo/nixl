@@ -290,12 +290,8 @@ nixlTelemetryDocaExporter::appendCounterSample(const nixlTelemetryEvent &event,
     // Counter events carry a per-operation delta; increment so the exported
     // counter is a monotonic cumulative total (add_counter would instead push
     // each delta as an absolute value, yielding a non-monotonic series).
-    return doca_telemetry_exporter_metrics_add_counter_increment(ctx_->source,
-                                                                 docaTimestamp(),
-                                                                 event_name,
-                                                                 event.value_,
-                                                                 ctx_->label_set_id,
-                                                                 label_values);
+    return doca_telemetry_exporter_metrics_add_counter_increment(
+        ctx_->source, docaTimestamp(), event_name, event.value_, ctx_->label_set_id, label_values);
 #pragma GCC diagnostic pop
 }
 
