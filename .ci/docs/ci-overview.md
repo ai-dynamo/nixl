@@ -25,11 +25,12 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | `nixl-ci-build-wheel-nightly` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
 | `nixl-ci-build-llm-container` | Jenkins (standalone) | Manual only | No — never runs as part of PR CI |
 | `nixl-ci-test-llm-container` | Jenkins (standalone) | Manual, or chained from `build-llm-container` via `RUN_TEST` | No — never runs as part of PR CI |
+| `nixl-ci-cleanup-artifacts` | Jenkins (standalone) | Daily cron (6 AM) + manual | No — never runs as part of PR CI |
 
-> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 10 Jenkins jobs, but only the
+> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 11 Jenkins jobs, but only the
 > 6 that `nixl-ci-dispatcher` fans out to are ever part of the PR CI flow. The
-> other 4 (`build-container`, `build-wheel-nightly`, `build-llm-container`,
-> `test-llm-container`) are entirely standalone — they run only on a nightly
+> other 5 (`build-container`, `build-wheel-nightly`, `build-llm-container`,
+> `test-llm-container`, `cleanup-artifacts`) are entirely standalone — they run only on a nightly
 > cron or when someone triggers them manually from the Jenkins UI, and are
 > never invoked by the dispatcher or by a PR event.
 
@@ -179,6 +180,12 @@ their own nightly/manual trigger. They split into two groups:
 - **Trigger:** Manual only (no cron, no webhook).
 - **What it does:** Builds the 4 LLM inference container variants (`vllm-nixl`, `vllm-cu12-nixl`, `sglang-nixl`, `sglang-cu13-nixl`) for x86_64/aarch64 from a published NIXL wheel set, publishes multi-arch manifests, and optionally (`RUN_TEST`) fires `nixl-ci-test-llm-container` per built variant.
 - **Automatic on every PR:** No — standalone/manual only, used for release verification.
+
+### `nixl-ci-cleanup-artifacts` (standalone)
+- **Trigger:** Daily cron at 6 AM, or manual run with optional `DRY_RUN=true` parameter.
+- **What it does:** Deletes stale Artifactory artifacts based on `.ci/cleanup-spec.json` — PR Docker images older than 1 day, CI base images not pulled in 2 weeks, verification Docker images and PyPI wheels older than 3 months.
+- **Matrix:** `.ci/jenkins/lib/cleanup-matrix.yaml`. Runs on an Ubuntu 24.04 container with `jf` and `jq` installed at runtime.
+- **Automatic on every PR:** No — standalone/scheduled + manual only.
 
 ### `nixl-ci-test-llm-container` (standalone)
 - **Trigger:** Manual, or chained asynchronously from `nixl-ci-build-llm-container` when `RUN_TEST` is enabled.

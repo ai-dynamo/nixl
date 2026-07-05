@@ -1,0 +1,72 @@
+{
+  "files": [
+    {
+      "//": "PR Docker images — older than 1 day",
+      "aql": {
+        "items.find": {
+          "$and": [
+            { "repo": "sw-nbu-swx-nixl-docker-local" },
+            { "path": { "$match": "ci/pr/**" } },
+            { "$or": [
+              { "name": "manifest.json" },
+              { "name": "list.manifest.json" }
+            ]},
+            { "created": { "$before": "1d" } }
+          ]
+        }
+      }
+    },
+    {
+      "//": "CI base Docker images — older than 2 weeks (last pull time)",
+      "aql": {
+        "items.find": {
+          "$and": [
+            { "repo": "sw-nbu-swx-nixl-docker-local" },
+            { "path": { "$match": "ci/**" } },
+            { "path": { "$nmatch": "ci/pr/**" } },
+            { "$or": [
+              { "name": "manifest.json" },
+              { "name": "list.manifest.json" }
+            ]},
+            { "$or": [
+              { "stat.downloaded": { "$before": "2w" } },
+              { "$and": [
+                { "stat.downloads": { "$eq": null } },
+                { "created": { "$before": "2w" } }
+              ]}
+            ]}
+          ]
+        }
+      }
+    },
+    {
+      "//": "Verification Docker images — older than 3 months",
+      "aql": {
+        "items.find": {
+          "$and": [
+            { "repo": "sw-nbu-swx-nixl-docker-local" },
+            { "path": { "$match": "verification/**" } },
+            { "$or": [
+              { "name": "manifest.json" },
+              { "name": "list.manifest.json" }
+            ]},
+            { "created": { "$before": "3mo" } }
+          ]
+        }
+      }
+    },
+    {
+      "//": "Verification PyPI wheels — older than 3 months",
+      "aql": {
+        "items.find": {
+          "$and": [
+            { "repo": "sw-nbu-swx-nixl-pypi-local" },
+            { "path": { "$match": "verification/**" } },
+            { "name": { "$match": "*.whl" } },
+            { "created": { "$before": "3mo" } }
+          ]
+        }
+      }
+    }
+  ]
+}
