@@ -17,6 +17,9 @@
 
 #include "nixl_time.h"
 
+#include <fstream>
+#include <mutex>
+#include <string>
 #include <thread>
 
 #if defined(__x86_64__)
@@ -34,8 +37,8 @@ namespace detail {
         }
 
 #if defined(__x86_64__)
-        // Invariant TSC (constant + non-stop): CPUID.80000007H:EDX[8]. Required for the
-        // counter to be a usable wall-time source across cores and P-states.
+        // Invariant TSC (constant + non-stop): CPUID.80000007H:EDX[8]. Necessary but not
+        // sufficient -- it does not prove cross-socket synchronization.
         [[nodiscard]] bool
         hasInvariantTsc() {
             unsigned eax, ebx, ecx, edx;
@@ -47,11 +50,29 @@ namespace detail {
             }
             return (edx & (1u << 8)) != 0;
         }
+
+        // The kernel selects the TSC as the CLOCK_MONOTONIC source only after its
+        // boot-time cross-core synchronization check (tsc_sync.c) passes; if it detects
+        // warping it demotes to hpet/acpi_pm. Deferring to that decision is the reliable
+        // way to know the TSC is safe to use as a wall-time source here.
+        [[nodiscard]] bool
+        kernelClocksourceIsTsc() {
+            std::ifstream f("/sys/devices/system/clocksource/clocksource0/current_clocksource");
+            std::string clocksource;
+            return static_cast<bool>(std::getline(f, clocksource)) && clocksource == "tsc";
+        }
+
+        [[nodiscard]] double
+        tscFreqHzFromSysfs() {
+            std::ifstream f("/sys/devices/system/cpu/cpu0/tsc_freq_khz");
+            long khz = 0;
+            if (f >> khz && khz > 0) {
+                return static_cast<double>(khz) * 1e3;
+            }
+            return 0.0;
+        }
 #endif
 
-        // Estimate the counter frequency (Hz) by bracketing a steady_clock window of the
-        // given length with counter reads. Used on x86 where the TSC rate is not
-        // otherwise exposed cheaply; runs once at load.
         [[nodiscard]] double
         measureCounterHz(milliseconds window) {
             const int64_t steady_start = steadyNowNs();
@@ -74,15 +95,20 @@ namespace detail {
             cal.useHwCounter = false;
 
 #if defined(__x86_64__)
-            if (hasInvariantTsc()) {
-                constexpr auto calibration_window = milliseconds(3);
-                const double hz = measureCounterHz(calibration_window);
+            if (hasInvariantTsc() && kernelClocksourceIsTsc()) {
+                double hz = tscFreqHzFromSysfs();
+                if (hz <= 0.0) {
+                    constexpr auto calibration_window = milliseconds(3);
+                    hz = measureCounterHz(calibration_window);
+                }
                 if (hz > 0.0) {
                     cal.nsPerTick = 1e9 / hz;
                     cal.useHwCounter = true;
                 }
             }
 #elif defined(__aarch64__)
+            // The ARM generic timer (cntvct_el0) is architecturally a single system-wide
+            // counter, so it has no cross-socket-sync caveat; cntfrq_el0 is its exact rate.
             uint64_t freq = 0;
             __asm__ __volatile__("mrs %0, cntfrq_el0" : "=r"(freq));
             if (freq != 0) {
@@ -104,14 +130,26 @@ namespace detail {
             return cal;
         }
 
+        std::once_flag g_calibrateOnce;
+
     } // namespace
 
-    const fastClockCal g_fastClockCal = calibrate();
+    fastClockCal g_fastClockCal{};
+    std::atomic<bool> g_fastClockReady{false};
+
+    void
+    ensureFastClockCalibrated() {
+        std::call_once(g_calibrateOnce, []() {
+            g_fastClockCal = calibrate();
+            g_fastClockReady.store(true, std::memory_order_release);
+        });
+    }
 
 } // namespace detail
 
 [[nodiscard]] bool
 fastClockUsesHwCounter() {
+    detail::ensureFastClockCalibrated();
     return detail::g_fastClockCal.useHwCounter;
 }
 
