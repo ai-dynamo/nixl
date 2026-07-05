@@ -39,6 +39,7 @@ nixl_common_lib = shared_library('nixl_common',
     'nixl_log.cpp',
     'uuid_v4.cpp',
     'configuration.cpp',
+    'nixl_time.cpp',
     dependencies: nixl_common_deps,
     include_directories: [nixl_common_inc, nixl_inc_dirs],
     cpp_args: [

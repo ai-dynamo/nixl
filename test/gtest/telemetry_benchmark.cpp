@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,9 +19,9 @@
  * Telemetry hot-path microbenchmark.
  *
  * Purpose: give a fast, repeatable, in-process proxy for the per-transfer
- * telemetry tax that nixlbench sees on small messages (NVBug 5876558), so a fix
- * can be judged against measured baselines instead of guesses. It measures the
- * pieces the datapath actually pays with telemetry ON:
+ * telemetry tax that nixlbench sees on small messages, so a fix can be judged
+ * against measured baselines instead of guesses. It measures the pieces the
+ * datapath actually pays with telemetry ON:
  *   - a single steady_clock::now() read (the agent takes 3 per transfer),
  *   - nixlTelemetry::addXferStats() in the append regime (buffer has room),
  *   - addXferStats() in the drop regime (buffer saturated -- the regime that
@@ -49,6 +49,7 @@
 
 #include "telemetry.h"
 #include "telemetry_event.h"
+#include "nixl_time.h"
 #include "common.h"
 
 namespace fs = std::filesystem;
@@ -60,7 +61,7 @@ namespace {
 // most stable estimator for a fixed-cost hot path: it discards samples polluted
 // by scheduler preemption, the periodic flush thread, and page faults.
 template <typename Body>
-double
+[[nodiscard]] double
 bestNsPerOp(size_t iters, size_t repeats, Body &&body) {
     double best = std::numeric_limits<double>::max();
     for (size_t r = 0; r < repeats; ++r) {
@@ -120,11 +121,9 @@ TEST_F(telemetryBenchmark, DISABLED_ClockNowRead) {
     report("clock_now_read", ns);
 }
 
-// Building block: cost of a raw invariant-TSC read (rdtsc), the candidate
-// cheap replacement for steady_clock::now() on the datapath: the platform
-// hardware counter -- rdtsc on x86_64, the cntvct_el0 virtual counter on
-// aarch64 (the platform the NVBug 5876558 report was measured on). Reports -1
-// on other architectures.
+// Building block: cost of a raw hardware-counter read, the candidate cheap
+// replacement for steady_clock::now() on the datapath -- rdtsc on x86_64, the
+// cntvct_el0 virtual counter on aarch64. Reports -1 on other architectures.
 TEST_F(telemetryBenchmark, DISABLED_HwCounterRead) {
 #if defined(__x86_64__)
     volatile uint64_t sink = 0;
@@ -147,6 +146,57 @@ TEST_F(telemetryBenchmark, DISABLED_HwCounterRead) {
 #else
     report("hw_counter_read", -1.0);
 #endif
+}
+
+// Cost of nixlTime::fastSteadyNow() -- the proposed replacement for
+// steady_clock::now() on the datapath (CPU counter mapped onto the steady_clock
+// timeline). Compare against clock_now_read.
+TEST_F(telemetryBenchmark, DISABLED_FastClockNowRead) {
+    volatile int64_t sink = 0;
+    const double ns = bestNsPerOp(kIters, kRepeats, [&](size_t) {
+        sink += nixlTime::fastSteadyNow().time_since_epoch().count();
+    });
+    (void)sink;
+    report(nixlTime::fastClockUsesHwCounter() ? "fast_clock_now_read (hw)" :
+                                                "fast_clock_now_read (fallback)",
+           ns);
+}
+
+// Per-transfer tax with fastSteadyNow() instead of steady_clock::now(): the
+// before/after for the fix. Compare against per_transfer_tax_saturated.
+TEST_F(telemetryBenchmark, DISABLED_PerTransferTaxFastClock) {
+    constexpr size_t buf_cap = 64;
+    env_.addVar(TELEMETRY_BUFFER_SIZE_VAR, std::to_string(buf_cap));
+    env_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "3600000");
+
+    double best = std::numeric_limits<double>::max();
+    for (size_t r = 0; r < kRepeats; ++r) {
+        nixlTelemetry telemetry("bench_tax_fast", "NOP");
+        for (size_t i = 0; i < buf_cap; ++i) {
+            telemetry.updateTxBytes(i);
+        }
+        volatile int64_t sink = 0;
+        const auto start = std::chrono::steady_clock::now();
+        for (size_t i = 0; i < kIters; ++i) {
+            const auto t0 = nixlTime::fastSteadyNow();
+            const auto t1 = nixlTime::fastSteadyNow();
+            const auto post = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0);
+            const auto t2 = nixlTime::fastSteadyNow();
+            const auto xfer = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t0);
+            telemetry.addXferStats(xfer, true, 4096, post);
+            sink += t2.time_since_epoch().count();
+        }
+        const auto end = std::chrono::steady_clock::now();
+        (void)sink;
+        const double per =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() /
+            static_cast<double>(kIters);
+        best = std::min(best, per);
+    }
+    report("per_transfer_tax_fastclock", best);
+
+    env_.popVar();
+    env_.popVar();
 }
 
 // addXferStats append regime: buffer sized to hold every batch and the flush

@@ -35,6 +35,7 @@
 #include "common/nixl_log.h"
 #include "common/operators.h"
 #include "common/hw_info.h"
+#include "common/nixl_time.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "tracing/trace.h"
@@ -81,8 +82,8 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
 
     static const std::array<std::string, 3> nixl_post_status_str = {
         " Posted", " Posted and Completed", " Completed"};
-    auto duration = std::chrono::duration_cast<chrono_period_us_t>(
-        std::chrono::steady_clock::now() - telemetry.startTime);
+    auto duration = std::chrono::duration_cast<chrono_period_us_t>(nixlTime::fastSteadyNow() -
+                                                                   telemetry.startTime);
     if (stat_status == NIXL_TELEMETRY_POST) {
         telemetry.postDuration = duration;
     } else if (stat_status == NIXL_TELEMETRY_POST_AND_FINISH) {
@@ -1139,7 +1140,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     NIXL_TRACE_ATTR(trace_span, "bytes", static_cast<std::int64_t>(req_hndl->telemetry.totalBytes));
 
     if (data->telemetry_) {
-        req_hndl->telemetry.startTime = std::chrono::steady_clock::now();
+        req_hndl->telemetry.startTime = nixlTime::fastSteadyNow();
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);
