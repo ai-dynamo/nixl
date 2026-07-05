@@ -114,7 +114,7 @@ protected:
 TEST_F(telemetryBenchmark, DISABLED_ClockNowRead) {
     volatile int64_t sink = 0;
     const double ns = bestNsPerOp(kIters, kRepeats, [&](size_t) {
-        sink += std::chrono::steady_clock::now().time_since_epoch().count();
+        sink = sink + std::chrono::steady_clock::now().time_since_epoch().count();
     });
     (void)sink;
     report("clock_now_read", ns);
@@ -129,7 +129,7 @@ TEST_F(telemetryBenchmark, DISABLED_HwCounterRead) {
     const double ns = bestNsPerOp(kIters, kRepeats, [&](size_t) {
         unsigned lo, hi;
         __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
-        sink += (static_cast<uint64_t>(hi) << 32) | lo;
+        sink = sink + (((static_cast<uint64_t>(hi) << 32) | lo));
     });
     (void)sink;
     report("hw_counter_read", ns);
@@ -138,7 +138,7 @@ TEST_F(telemetryBenchmark, DISABLED_HwCounterRead) {
     const double ns = bestNsPerOp(kIters, kRepeats, [&](size_t) {
         uint64_t cnt;
         __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(cnt));
-        sink += cnt;
+        sink = sink + cnt;
     });
     (void)sink;
     report("hw_counter_read", ns);
@@ -153,7 +153,7 @@ TEST_F(telemetryBenchmark, DISABLED_HwCounterRead) {
 TEST_F(telemetryBenchmark, DISABLED_FastClockNowRead) {
     volatile int64_t sink = 0;
     const double ns = bestNsPerOp(kIters, kRepeats, [&](size_t) {
-        sink += nixlTime::fastSteadyNow().time_since_epoch().count();
+        sink = sink + nixlTime::fastSteadyNow().time_since_epoch().count();
     });
     (void)sink;
     report(nixlTime::fastClockUsesHwCounter() ? "fast_clock_now_read (hw)" :
@@ -183,7 +183,7 @@ TEST_F(telemetryBenchmark, DISABLED_PerTransferTaxFastClock) {
             const auto t2 = nixlTime::fastSteadyNow();
             const auto xfer = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t0);
             telemetry.addXferStats(xfer, true, 4096, post);
-            sink += t2.time_since_epoch().count();
+            sink = sink + t2.time_since_epoch().count();
         }
         const auto end = std::chrono::steady_clock::now();
         (void)sink;
@@ -290,7 +290,7 @@ TEST_F(telemetryBenchmark, DISABLED_PerTransferTaxSaturated) {
             const auto t2 = std::chrono::steady_clock::now(); // updateRequestStats(FINISH)
             const auto xfer = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t0);
             telemetry.addXferStats(xfer, true, 4096, post);
-            sink += t2.time_since_epoch().count();
+            sink = sink + t2.time_since_epoch().count();
         }
         const auto end = std::chrono::steady_clock::now();
         (void)sink;
