@@ -28,7 +28,6 @@ from test.storage_backend import FilesystemBackend, StorageBackend, StorageHandl
 from test.traffic_pattern import TrafficPattern
 from typing import Any, Dict, List, Optional
 
-import yaml
 from runtime.etcd_rt import etcd_dist_utils as dist_rt
 from tabulate import tabulate
 
@@ -1544,54 +1543,3 @@ class SequentialCTPerftest(CTPerftest):
 
             if self._storage_backend:
                 self._storage_backend.close()
-
-    def _write_yaml_results(
-        self,
-        output_path: str,
-        headers: List[str],
-        data: List[List],
-        traffic_patterns: List[TrafficPattern],
-    ) -> None:
-        """Write performance test results to a YAML file.
-
-        Args:
-            output_path: Path to save the YAML file
-            headers: Column headers for the results
-            data: Performance data rows
-            traffic_patterns: List of traffic patterns tested
-        """
-        results: Dict[str, Any] = {
-            "performance_results": {
-                "timestamp": time.time(),
-                "world_size": self.world_size,
-                "traffic_patterns": [],
-            }
-        }
-
-        for i in range(len(traffic_patterns)):
-            tp_data = {}
-            for j, header in enumerate(headers):
-                # Convert header to a valid YAML key
-                key = header.lower().replace(" ", "_").replace("(", "").replace(")", "")
-                # Format floating point values to 2 decimal places for readability
-                if isinstance(data[i][j], float):
-                    tp_data[key] = round(data[i][j], 2)
-                else:
-                    tp_data[key] = data[i][j]
-
-            # Add traffic pattern name or index for reference
-            tp_data["pattern_index"] = i
-
-            # You can add more pattern-specific information here if needed
-            # For example:
-            # tp_data["sender_ranks"] = list(tp.senders_ranks())
-
-            results["performance_results"]["traffic_patterns"].append(tp_data)
-
-        try:
-            with open(output_path, "w") as f:
-                yaml.dump(results, f, default_flow_style=False, sort_keys=False)
-            logger.info("Results saved to YAML file: %s", output_path)
-        except Exception as e:
-            logger.error("Failed to write YAML results to %s: %s", output_path, e)
-            raise

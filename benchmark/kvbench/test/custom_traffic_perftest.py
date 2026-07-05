@@ -17,7 +17,7 @@ import logging
 import os
 import time
 from test.traffic_pattern import TrafficPattern
-from typing import Literal, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -343,16 +343,6 @@ class CTPerftest:
                 "UCX" in self.nixl_agent.get_plugin_list()
             ), "UCX plugin is not loaded"
 
-    def _format_size(self, size_bytes: int) -> str:
-        """Format byte size to human readable string."""
-        if size_bytes >= 1e9:
-            return f"{size_bytes / 1e9:.2f} GB"
-        elif size_bytes >= 1e6:
-            return f"{size_bytes / 1e6:.2f} MB"
-        elif size_bytes >= 1e3:
-            return f"{size_bytes / 1e3:.2f} KB"
-        return f"{size_bytes} B"
-
     def _barrier_tp(self, tp: TrafficPattern, senders_only=True, include_storage=True):
         """Barrier for a traffic pattern (participating ranks only).
 
@@ -530,28 +520,6 @@ class CTPerftest:
 
         return handles, send_bufs, recv_bufs
 
-    def _warmup(
-        self,
-        iters=15,
-        fill_value: int = 100000,
-        mem_type: Literal["cuda", "vram", "cpu", "dram"] = "cpu",
-    ):
-        full_matrix = np.full((self.world_size, self.world_size), fill_value=fill_value)
-        tp = TrafficPattern(matrix=full_matrix, mem_type=mem_type)
-        handles, send_bufs, recv_bufs = self._prepare_tp(tp)
-        for _ in range(iters):
-            self._run_tp(handles)
-            self._wait(handles)
-
-    def _run_handle(self, handle: NixlHandle) -> float:
-        """Run a single transfer handle and return latency in seconds."""
-        t = time.time()
-        status = self.nixl_agent.transfer(handle.handle)
-        assert status != "ERR", "Transfer failed"
-        if status != "DONE":
-            self._wait([handle])
-        return time.time() - t
-
     def _run_tp(self, handles: list[NixlHandle], blocking=False) -> list:
         pending = []
         for h in handles:
@@ -574,41 +542,6 @@ class CTPerftest:
         else:
             self._wait(pending)
             return []
-
-    def _run_isolated_tp(
-        self, handles: list[NixlHandle], n_iters: int = 1
-    ) -> list[float]:
-        """Run each handle in isolation and return per-handle latencies.
-
-        Each handle is run n_iters times separately, measuring time for each.
-        Returns a list of average latencies, one per handle (in same order as input).
-
-        This provides a true "speed of light" measurement where each transfer
-        runs without interference from other transfers in the same TP.
-
-        Args:
-            handles: List of transfer handles to run
-            n_iters: Number of iterations per handle for averaging
-
-        Returns:
-            List of average latencies (seconds), one per handle
-        """
-        if not handles:
-            return []
-
-        latencies = []
-        for h in handles:
-            handle_total = 0.0
-            for _ in range(n_iters):
-                t = time.time()
-                status = self.nixl_agent.transfer(h.handle)
-                assert status != "ERR", "Transfer failed"
-                if status != "DONE":
-                    self._wait([h])
-                handle_total += time.time() - t
-            latencies.append(handle_total / n_iters)
-
-        return latencies
 
     def _wait(self, handles: list[NixlHandle]):
         """Wait for transfers to complete using in-place swap-remove."""

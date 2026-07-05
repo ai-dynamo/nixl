@@ -525,16 +525,24 @@ def kvcache_command(model, model_config, **kwargs):
     help="Use O_DIRECT for file I/O. Auto-enabled for GDS/GDS_MT if not specified.",
 )
 @click.option(
+    "--iters",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Number of workload benchmark iterations per TP "
+    "(default: the config's 'iters' value if present, else 3).",
+)
+@click.option(
     "--warmup-iters",
-    type=int,
+    type=click.IntRange(min=0),
     default=30,
     help="Number of warmup iterations per TP (default: 30)",
 )
 @click.option(
     "--isolation-iters",
-    type=int,
-    default=10,
-    help="Number of isolation benchmark iterations per TP (default: 10, was 30)",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Number of isolation benchmark iterations per TP "
+    "(default: the config's 'isolation_iters' value if present, else 10).",
 )
 @click.option(
     "--storage-block-size",
@@ -553,7 +561,7 @@ def kvcache_command(model, model_config, **kwargs):
 )
 @click.option(
     "--storage-num-handles",
-    type=int,
+    type=click.IntRange(min=1),
     default=1,
     help="Number of concurrent transfer handles per storage op. "
     "Each handle gets its own async I/O queue. "
@@ -567,6 +575,7 @@ def sequential_ct_perftest(
     storage_path,
     storage_backend,
     storage_direct_io,
+    iters,
     warmup_iters,
     isolation_iters,
     storage_block_size,
@@ -589,6 +598,12 @@ def sequential_ct_perftest(
 
     if "traffic_patterns" not in config:
         raise ValueError("Config file must contain 'traffic_patterns' key")
+
+    # Iteration counts: an explicit CLI flag wins; otherwise fall back to the
+    # value baked into the workload config by matgen, then to a default.
+    n_iters = iters if iters is not None else int(config.get("iters", 3))
+    if isolation_iters is None:
+        isolation_iters = int(config.get("isolation_iters", 10))
 
     # Determine storage base path (CLI override > default)
     if storage_path:
@@ -741,6 +756,7 @@ def sequential_ct_perftest(
     # Pass storage config to perftest - it creates the backend with its nixl_agent
     perftest = SequentialCTPerftest(
         patterns,
+        n_iters=n_iters,
         warmup_iters=warmup_iters,
         n_isolation_iters=isolation_iters,
         storage_path=storage_base_path if has_storage else None,

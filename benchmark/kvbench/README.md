@@ -464,8 +464,12 @@ python main.py sequential-ct-perftest ./config.yaml \
     --json-output-path ./results.json
 
 # With storage simulation (use matgen with --prefix-hit-rate)
+# matgen requires --num-prefill-nodes and --num-decode-nodes.
 python test/inference_workload_matgen.py generate \
-    --model llama-405b --prefix-hit-rate 0.75 --results-dir ./workload
+    --model llama-405b --prefix-hit-rate 0.75 \
+    --num-prefill-nodes 1 --num-decode-nodes 1 \
+    --prefill-tp 8 --decode-tp 8 \
+    --results-dir ./workload
 python main.py sequential-ct-perftest ./workload/metadata.yaml \
     --storage-backend POSIX \
     --storage-path /tmp/kvbench_storage
