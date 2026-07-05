@@ -137,8 +137,11 @@ Step by step, matching the jobs in `blossom-ci.yml`:
 ## Jenkins jobs
 
 All 10 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
-(Jenkins Job Builder config) and run through the shared pipeline entry point
-`.ci/jenkins/pipeline/Jenkinsfile`. None of them run directly off GitHub
+(Jenkins Job Builder config). The dispatcher runs its own pipeline,
+`.ci/jenkins/pipeline/Jenkinsfile.dispatcher`, checked out from the PR merge
+ref (`refs/pull/<n>/merge`) on webhook runs, or from any branch/commit passed
+in `sha1` on manual runs; all other jobs run through the shared pipeline
+entry point `.ci/jenkins/pipeline/Jenkinsfile`. None of them run directly off GitHub
 events — they only start via the Jenkins webhook fired by Blossom-CI, or via
 their own nightly/manual trigger. They split into two groups:
 
@@ -159,7 +162,8 @@ their own nightly/manual trigger. They split into two groups:
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (nixl_ep elastic tests on dlcluster.nvidia.com)
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
-- **Automatic on every PR:** No — only runs after a `/build` comment triggers Blossom-CI. Each sub-job also aborts any stale in-flight run for the same PR before starting.
+- **Automatic on every PR:** No — only runs after a `/build` comment triggers Blossom-CI. The dispatcher also aborts any stale in-flight dispatcher run for the same PR (and the leaf builds it started) before starting.
+- **Skipping leaf jobs:** The `LEAF_JOBS` parameter (default: all six) restricts the fan-out. Editing its default in the job config temporarily disables a leaf job for all runs without a code change; the next JJB redeploy restores the full list.
 
 ### `nixl-ci-build-container` (standalone)
 - **Trigger:** Nightly cron (builds `nixlbench` and `nixl` targets, on both the default CUDA base image and the DLFW PyTorch daily image, ~3–4 AM), or manual run with parameters (`BUILD_TARGET`, `NIXL_VERSION`, `UCX_VERSION`, base image overrides, etc.).
