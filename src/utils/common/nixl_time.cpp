@@ -71,7 +71,6 @@ namespace detail {
             }
             return 0.0;
         }
-#endif
 
         [[nodiscard]] double
         measureCounterHz(milliseconds window) {
@@ -88,6 +87,7 @@ namespace detail {
             const uint64_t elapsed_ticks = counter_end - counter_start;
             return static_cast<double>(elapsed_ticks) * 1e9 / static_cast<double>(elapsed_ns);
         }
+#endif
 
         [[nodiscard]] fastClockCal
         calibrate() {
