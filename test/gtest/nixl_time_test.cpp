@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 
 #include "nixl_time.h"

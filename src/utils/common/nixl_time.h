@@ -62,46 +62,48 @@ namespace nixlTime {
 
     namespace detail {
 
-    // Calibration mapping the CPU counter onto the steady_clock timeline.
-    struct fastClockCal {
-        bool useHwCounter; // false -> fastSteadyNow() uses steady_clock::now()
-        uint64_t counterRef; // counter value captured at calibration
-        int64_t steadyRefNs; // steady_clock::now() (ns since epoch) at calibration
-        double nsPerTick; // counter period in nanoseconds
-    };
+        // Calibration mapping the CPU counter onto the steady_clock timeline.
+        struct fastClockCal {
+            bool useHwCounter; // false -> fastSteadyNow() uses steady_clock::now()
+            uint64_t counterRef; // counter value captured at calibration
+            int64_t steadyRefNs; // steady_clock::now() (ns since epoch) at calibration
+            double nsPerTick; // counter period in nanoseconds
+        };
 
-    // Process-wide instance, computed once at load (see nixl_time.cpp).
-    extern const fastClockCal g_fastClockCal;
+        // Process-wide instance, computed once at load (see nixl_time.cpp).
+        extern const fastClockCal g_fastClockCal;
 
-    [[nodiscard]] static inline uint64_t readCpuCounter() {
+        [[nodiscard]] static inline uint64_t
+        readCpuCounter() {
 #if defined(__x86_64__)
-        uint32_t lo, hi;
-        __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
-        return (static_cast<uint64_t>(hi) << 32) | lo;
+            uint32_t lo, hi;
+            __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+            return (static_cast<uint64_t>(hi) << 32) | lo;
 #elif defined(__aarch64__)
-        uint64_t cnt;
-        __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(cnt));
-        return cnt;
+            uint64_t cnt;
+            __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(cnt));
+            return cnt;
 #else
-        return 0;
+            return 0;
 #endif
-    }
+        }
 
-    [[nodiscard]] static inline steady_clock::time_point
-    steadyFromCounter(const fastClockCal &cal, uint64_t counter) {
-        // Signed tick delta tolerates the tiny cross-core counter skew that can
-        // make a read momentarily precede counterRef right after calibration.
-        const int64_t dticks = static_cast<int64_t>(counter - cal.counterRef);
-        const int64_t ns =
-            cal.steadyRefNs + static_cast<int64_t>(static_cast<double>(dticks) * cal.nsPerTick);
-        return steady_clock::time_point{nanoseconds{ns}};
-    }
+        [[nodiscard]] static inline steady_clock::time_point
+        steadyFromCounter(const fastClockCal &cal, uint64_t counter) {
+            // Signed tick delta tolerates the tiny cross-core counter skew that can
+            // make a read momentarily precede counterRef right after calibration.
+            const int64_t dticks = static_cast<int64_t>(counter - cal.counterRef);
+            const int64_t ns =
+                cal.steadyRefNs + static_cast<int64_t>(static_cast<double>(dticks) * cal.nsPerTick);
+            return steady_clock::time_point{nanoseconds{ns}};
+        }
 
     } // namespace detail
 
     // Monotonic timestamp on the steady_clock timeline, backed by the CPU counter
     // when it is invariant and calibrated, else steady_clock::now().
-    [[nodiscard]] static inline steady_clock::time_point fastSteadyNow() {
+    [[nodiscard]] static inline steady_clock::time_point
+    fastSteadyNow() {
         const detail::fastClockCal &cal = detail::g_fastClockCal;
         if (!cal.useHwCounter) {
             return steady_clock::now();
@@ -111,8 +113,8 @@ namespace nixlTime {
 
     // True when fastSteadyNow() uses the CPU counter rather than
     // steady_clock::now(). For tests/introspection, not the datapath.
-    [[nodiscard]] bool fastClockUsesHwCounter();
-
+    [[nodiscard]] bool
+    fastClockUsesHwCounter();
 }
 
 #endif

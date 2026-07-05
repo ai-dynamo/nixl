@@ -60,7 +60,7 @@ namespace {
 // the best (minimum) nanoseconds-per-iteration observed. The minimum is the
 // most stable estimator for a fixed-cost hot path: it discards samples polluted
 // by scheduler preemption, the periodic flush thread, and page faults.
-template <typename Body>
+template<typename Body>
 [[nodiscard]] double
 bestNsPerOp(size_t iters, size_t repeats, Body &&body) {
     double best = std::numeric_limits<double>::max();
@@ -70,8 +70,7 @@ bestNsPerOp(size_t iters, size_t repeats, Body &&body) {
             body(i);
         }
         const auto end = std::chrono::steady_clock::now();
-        const double ns =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+        const double ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
         best = std::min(best, ns / static_cast<double>(iters));
     }
     return best;
@@ -214,10 +213,8 @@ TEST_F(telemetryBenchmark, DISABLED_AddXferStatsAppend) {
         nixlTelemetry telemetry("bench_append", "NOP");
         const auto start = std::chrono::steady_clock::now();
         for (size_t i = 0; i < kIters; ++i) {
-            telemetry.addXferStats(std::chrono::microseconds(100),
-                                   true,
-                                   4096,
-                                   std::chrono::microseconds(10));
+            telemetry.addXferStats(
+                std::chrono::microseconds(100), true, 4096, std::chrono::microseconds(10));
         }
         const auto end = std::chrono::steady_clock::now();
         const double per =
@@ -249,10 +246,8 @@ TEST_F(telemetryBenchmark, DISABLED_AddXferStatsDrop) {
         }
         const auto start = std::chrono::steady_clock::now();
         for (size_t i = 0; i < kIters; ++i) {
-            telemetry.addXferStats(std::chrono::microseconds(100),
-                                   true,
-                                   4096,
-                                   std::chrono::microseconds(10));
+            telemetry.addXferStats(
+                std::chrono::microseconds(100), true, 4096, std::chrono::microseconds(10));
         }
         const auto end = std::chrono::steady_clock::now();
         const double per =
