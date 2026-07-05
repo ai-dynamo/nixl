@@ -20,10 +20,13 @@
 
 #include "nixl.h"
 #include "nixl_types.h"
+#include "plugin_manager.h"
 
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
+#include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -628,18 +631,27 @@ TEST_P(TestTransferTelemetry, GetXferTelemetryFile) {
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPI) {
-    // Enable telemetry without file output
+    // Telemetry explicitly enabled via NIXL_TELEMETRY_ENABLE=y but with no sink
+    // (no NIXL_TELEMETRY_DIR/EXPORTER) collects in-process via the collect-only
+    // NOP fallback, so getXferTelemetry() still works.
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
     runTelemetryTransferTest(1024, NIXL_SUCCESS, false);
 }
 
+TEST_P(TestTransferTelemetry, GetXferTelemetryCaptureNoSink) {
+    // Telemetry requested only via capture_telemetry=true (no
+    // NIXL_TELEMETRY_ENABLE, no sink): the in-process NOP fallback keeps
+    // getXferTelemetry() working.
+    runTelemetryTransferTest(1024, NIXL_SUCCESS, true);
+}
+
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPICfg) {
-    // Disable telemetry from env var but through config, expecting a warning
+    // An explicit disabled environment variable overrides agent config telemetry.
     env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
-    const LogIgnoreGuard lig("ignoring the NIXL_TELEMETRY_ENABLE environment variable");
+    const LogIgnoreGuard lig("ignoring telemetry requested through agent config");
 
-    runTelemetryTransferTest(1024, NIXL_SUCCESS, true);
+    runTelemetryTransferTest(1024, NIXL_ERR_NO_TELEMETRY, true);
 
     EXPECT_EQ(lig.getIgnoredCount(), 2);
 }
@@ -666,5 +678,199 @@ NIXL_INSTANTIATE_TEST(ucx_telemetry_threadpool_no_pt,
                       6,
                       4,
                       "");
+
+// End-to-end test with real agents and the NVTX trace backend active. It passes
+// standalone (NVTX ranges are no-op stubs with no profiler attached) and is also
+// the binary profiled under nsys to capture the NVTX timeline as an artifact.
+class TestTransferTracing : public TestTransfer {
+protected:
+    // False when this build did not produce libtrace_backend_nvtx.so.
+    static bool nvtxPluginAvailable_;
+
+    // The NVTX backend is an on-demand plugin (libtrace_backend_nvtx.so); point
+    // the manager at its build-tree location once for the whole suite. Guarded so
+    // a build without the NVTX plugin doesn't log a missing-directory error, and
+    // added a single time so re-entry across instantiations doesn't warn about a
+    // duplicate directory.
+    static void
+    SetUpTestSuite() {
+        static bool added = false;
+        if (added) {
+            nvtxPluginAvailable_ = true;
+            return;
+        }
+        const std::string nvtx_plugin_dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
+        if (std::filesystem::exists(nvtx_plugin_dir)) {
+            nixlPluginManager::getInstance().addPluginDirectory(nvtx_plugin_dir);
+            added = true;
+            nvtxPluginAvailable_ = true;
+        } else {
+            nvtxPluginAvailable_ = false;
+        }
+    }
+
+    void
+    SetUp() override {
+        // Nothing to validate without the plugin -- skip instead of running blind.
+        if (!nvtxPluginAvailable_) {
+            GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+        }
+        // Activate NVTX tracing before the agents are created (the constructor
+        // reads NIXL_TRACE_BACKENDS). Keep telemetry off.
+        env.addVar("NIXL_TELEMETRY_ENABLE", "n");
+        env.addVar("NIXL_TRACE_BACKENDS", "nvtx");
+        for (size_t i = 0; i < 2; i++) {
+            addAgent(i);
+        }
+    }
+
+    void
+    runTracingTransferTest() {
+        constexpr size_t size = 4096;
+        constexpr size_t count = 4;
+        // A few iterations so the captured NVTX timeline shows repeated ranges.
+        constexpr size_t repeat = 8;
+        constexpr size_t num_threads = 1;
+
+        std::vector<MemBuffer> src_buffers, dst_buffers;
+        createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
+        createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+
+        exchangeMD(0, 1);
+        doTransfer(getAgent(0),
+                   getAgentName(0),
+                   getAgent(1),
+                   getAgentName(1),
+                   size,
+                   count,
+                   repeat,
+                   num_threads,
+                   DRAM_SEG,
+                   src_buffers,
+                   DRAM_SEG,
+                   dst_buffers);
+        invalidateMD(0, 1);
+        deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
+        deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+    }
+};
+
+bool TestTransferTracing::nvtxPluginAvailable_ = false;
+
+TEST_P(TestTransferTracing, NvtxTransferLoop) {
+    runTracingTransferTest();
+}
+
+// Exercises the genNotif/getNotifs trace call sites under active NVTX.
+TEST_P(TestTransferTracing, NvtxNotifications) {
+    doNotificationTest(getAgent(0),
+                       getAgentName(0),
+                       getAgent(1),
+                       getAgentName(1),
+                       /*repeat=*/4,
+                       /*num_threads=*/1);
+}
+
+// Exercises loadRemoteMD via direct metadata blob exchange (exchangeMD path).
+TEST_P(TestTransferTracing, NvtxMetadataExchange) {
+    constexpr size_t size = 4096;
+    constexpr size_t count = 1;
+
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
+    createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+
+    exchangeMD(0, 1);
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
+    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+}
+
+// Single clean pass through every traced agent op in lifecycle order, so the
+// nsys capture is an easy-to-narrate demo timeline (see the demo plan in
+// docs/proposals/shared-tracing-api-plan.md). makeConnection is invoked
+// explicitly: the loop/notif tests connect implicitly via exchangeMD, so the
+// Connection span would otherwise never appear on the timeline.
+TEST_P(TestTransferTracing, NvtxDemoWalkthrough) {
+    constexpr size_t size = 4096;
+    constexpr size_t count = 1;
+
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
+    createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+
+    exchangeMD(0, 1);
+
+    ASSERT_EQ(getAgent(0).makeConnection(getAgentName(1)), NIXL_SUCCESS);
+
+    doTransfer(getAgent(0),
+               getAgentName(0),
+               getAgent(1),
+               getAgentName(1),
+               size,
+               count,
+               /*repeat=*/1,
+               /*num_threads=*/1,
+               DRAM_SEG,
+               src_buffers,
+               DRAM_SEG,
+               dst_buffers);
+
+    ASSERT_EQ(getAgent(0).genNotif(getAgentName(1), "nixl::demo"), NIXL_SUCCESS);
+    // Drain the notification until it is actually delivered, so no UCX active
+    // message is left in flight at teardown (a canceled AM logs a warning).
+    constexpr int max_drain_polls = 1000;
+    constexpr std::chrono::milliseconds drain_poll_interval{10};
+    nixl_notifs_t notif_map;
+    for (int i = 0; i < max_drain_polls; ++i) {
+        ASSERT_EQ(getAgent(0).getNotifs(notif_map), NIXL_SUCCESS);
+        ASSERT_EQ(getAgent(1).getNotifs(notif_map), NIXL_SUCCESS);
+        if (!notif_map[getAgentName(0)].empty()) {
+            break;
+        }
+        std::this_thread::sleep_for(drain_poll_interval);
+    }
+    ASSERT_FALSE(notif_map[getAgentName(0)].empty());
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
+    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+}
+
+NIXL_INSTANTIATE_TEST(ucx_tracing, TestTransferTracing, "UCX", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_tracing_no_pt, TestTransferTracing, "UCX", false, 2, 0, "");
+
+// Auto-enable path (NIX-1576): with NIXL_TRACE_BACKENDS unset, a process running
+// under Nsight Systems (nsys injects NVTX_INJECTION64_PATH) must activate the
+// NVTX backend on its own. Reuses TestTransferTracing's plugin-dir registration
+// and transfer body; only the environment differs.
+class TestTransferTracingNsysAuto : public TestTransferTracing {
+protected:
+    void
+    SetUp() override {
+        if (!nvtxPluginAvailable_) {
+            GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+        }
+        env.addVar("NIXL_TELEMETRY_ENABLE", "n");
+        // Leave NIXL_TRACE_BACKENDS unset so the NVTX backend can only come from
+        // nsys auto-enable. Under a real nsys run NVTX_INJECTION64_PATH is already
+        // set (real injection library) -- don't clobber it. Otherwise simulate an
+        // nsys process; the path need not exist, as the NVTX runtime falls back to
+        // no-op ranges when injection is absent.
+        if (std::getenv("NVTX_INJECTION64_PATH") == nullptr) {
+            env.addVar("NVTX_INJECTION64_PATH", "/nonexistent/libInjectionNvtx64.so");
+        }
+        for (size_t i = 0; i < 2; i++) {
+            addAgent(i);
+        }
+    }
+};
+
+TEST_P(TestTransferTracingNsysAuto, AutoEnabledTransferLoop) {
+    runTracingTransferTest();
+}
+
+NIXL_INSTANTIATE_TEST(ucx_tracing_nsys_auto, TestTransferTracingNsysAuto, "UCX", true, 2, 0, "");
 
 } // namespace gtest

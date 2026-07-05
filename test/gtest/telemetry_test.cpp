@@ -38,6 +38,7 @@
 namespace fs = std::filesystem;
 constexpr char TELEMETRY_ENABLED_VAR[] = "NIXL_TELEMETRY_ENABLE";
 constexpr char TELEMETRY_DIR_VAR[] = "NIXL_TELEMETRY_DIR";
+constexpr char TELEMETRY_EXPORTER_VAR[] = "NIXL_TELEMETRY_EXPORTER";
 
 class telemetryTest : public ::testing::Test {
 protected:
@@ -97,13 +98,13 @@ protected:
 
 TEST_F(telemetryTest, BasicInitialization) {
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(testFile_);
+        nixlTelemetry telemetry(testFile_, "BUFFER");
         validateState();
     });
 }
 
 TEST_F(telemetryTest, InitializationWithEmptyFileName) {
-    EXPECT_THROW({ nixlTelemetry telemetry(""); }, std::invalid_argument);
+    EXPECT_THROW({ nixlTelemetry telemetry("", "BUFFER"); }, std::invalid_argument);
 }
 
 TEST_F(telemetryTest, CustomBufferSize) {
@@ -112,7 +113,7 @@ TEST_F(telemetryTest, CustomBufferSize) {
     envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "32");
 
     EXPECT_NO_THROW({
-        nixlTelemetry telemetry(testFile_);
+        nixlTelemetry telemetry(testFile_, "BUFFER");
         validateState();
     });
     capacity_ = tmp_capacity;
@@ -122,14 +123,65 @@ TEST_F(telemetryTest, CustomBufferSize) {
 TEST_F(telemetryTest, InvalidBufferSize) {
     envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "0");
 
-    EXPECT_THROW({ nixlTelemetry telemetry(testFile_); }, std::invalid_argument);
+    EXPECT_THROW({ nixlTelemetry telemetry(testFile_, "BUFFER"); }, std::invalid_argument);
     envHelper_.popVar();
+}
+
+TEST_F(telemetryTest, NonexistentExporterThrows) {
+    // An explicitly requested exporter that cannot be loaded must surface the
+    // failure rather than silently disabling telemetry.
+
+    // The plugin manager logs an expected warning when the .so is not found.
+    gtest::LogIgnoreGuard ignore_missing_plugin("Plugin file does not exist");
+
+    EXPECT_THROW(
+        { nixlTelemetry telemetry(testFile_, "nixl_nonexistent_exporter"); }, std::runtime_error);
+}
+
+TEST_F(telemetryTest, CreateFallsBackToNopWithoutSink) {
+    envHelper_.popVar(); // drop NIXL_TELEMETRY_DIR set by SetUp -> no sink
+    // Neutralize any inherited NIXL_TELEMETRY_EXPORTER (empty is ignored) so the
+    // sinkless NOP path is exercised deterministically.
+    envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "");
+
+    auto telemetry = nixlTelemetry::create(testFile_);
+
+    envHelper_.popVar(); // drop empty NIXL_TELEMETRY_EXPORTER
+    envHelper_.addVar(TELEMETRY_DIR_VAR, testDir_.string()); // restore for TearDown symmetry
+
+    ASSERT_NE(telemetry, nullptr)
+        << "telemetry requested without a sink must collect in-process via NOP";
+    EXPECT_NO_THROW(telemetry->updateTxBytes(1024));
+
+    // Collect-only NOP fallback writes nothing to disk.
+    EXPECT_FALSE(fs::exists(testDir_.string() + "/" + testFile_));
+}
+
+TEST_F(telemetryTest, NopExporterIsActiveAndWritesNothing) {
+    // NIXL_TELEMETRY_EXPORTER=NOP keeps telemetry active (event collection and
+    // in-band getXferTelemetry) without writing anywhere, so the overhead of the
+    // collection path can be measured in isolation. It takes precedence over
+    // NIXL_TELEMETRY_DIR and produces no output file.
+    envHelper_.addVar(TELEMETRY_EXPORTER_VAR, "NOP");
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+
+    auto telemetry = nixlTelemetry::create(testFile_);
+    ASSERT_NE(telemetry, nullptr) << "NOP exporter must keep telemetry active";
+
+    EXPECT_NO_THROW(telemetry->updateTxBytes(1024));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // The NOP exporter discards events, so no buffer file is created.
+    EXPECT_FALSE(fs::exists(testDir_.string() + "/" + testFile_));
+
+    envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR
+    envHelper_.popVar(); // TELEMETRY_EXPORTER_VAR
 }
 
 // Test transfer bytes tracking
 TEST_F(telemetryTest, TransferBytesTracking) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
-    nixlTelemetry telemetry(testFile_);
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
     EXPECT_NO_THROW(telemetry.updateTxBytes(1024));
     EXPECT_NO_THROW(telemetry.updateRxBytes(1024));
@@ -138,13 +190,14 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_NO_THROW(telemetry.updateErrorCount(nixl_status_t::NIXL_ERR_BACKEND));
     EXPECT_NO_THROW(telemetry.updateMemoryRegistered(1024));
     EXPECT_NO_THROW(telemetry.updateMemoryDeregistered(1024));
-    EXPECT_NO_THROW(telemetry.addXferTime(std::chrono::microseconds(100), true, 2000));
+    EXPECT_NO_THROW(telemetry.addXferStats(
+        std::chrono::microseconds(100), true, 2000, std::chrono::microseconds(10)));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     auto path = testDir_.string() + "/" + testFile_;
     auto buffer =
         std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
-    EXPECT_EQ(buffer->size(), 10);
+    EXPECT_EQ(buffer->size(), 11);
     EXPECT_EQ(buffer->version(), TELEMETRY_VERSION);
     EXPECT_EQ(buffer->capacity(), capacity_);
     EXPECT_EQ(buffer->empty(), false);
@@ -172,6 +225,9 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED);
     EXPECT_EQ(event.value_, 1024);
     buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME);
+    EXPECT_EQ(event.value_, 10);
+    buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_TIME);
     EXPECT_EQ(event.value_, 100);
     buffer->pop(event);
@@ -183,12 +239,41 @@ TEST_F(telemetryTest, TransferBytesTracking) {
     envHelper_.popVar();
 }
 
-TEST_F(telemetryTest, TelemetryEventStructure) {
-    nixlTelemetryEvent event1(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-                              nixl_telemetry_event_type_t::AGENT_TX_BYTES,
-                              42);
+// addXferStats RX branch (is_write == false): covers the AGENT_RX_BYTES /
+// AGENT_RX_REQUESTS_NUM mapping that TransferBytesTracking (write path) does not.
+TEST_F(telemetryTest, AddXferStatsRxBranch) {
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
-    EXPECT_EQ(event1.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
+    EXPECT_NO_THROW(telemetry.addXferStats(
+        std::chrono::microseconds(50), false, 3000, std::chrono::microseconds(7)));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    EXPECT_EQ(buffer->size(), 4);
+    nixlTelemetryEvent event;
+    buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME);
+    EXPECT_EQ(event.value_, 7);
+    buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_XFER_TIME);
+    EXPECT_EQ(event.value_, 50);
+    buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_BYTES);
+    EXPECT_EQ(event.value_, 3000);
+    buffer->pop(event);
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM);
+    EXPECT_EQ(event.value_, 1);
+    envHelper_.popVar();
+}
+
+TEST_F(telemetryTest, TelemetryEventStructure) {
+    nixlTelemetryEvent event1(nixl_telemetry_event_type_t::AGENT_TX_BYTES, 42);
+
+    EXPECT_EQ(TELEMETRY_VERSION, 3);
+    EXPECT_EQ(sizeof(nixlTelemetryEvent), 16);
     EXPECT_EQ(event1.value_, 42);
     EXPECT_EQ(event1.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
 }
@@ -196,21 +281,21 @@ TEST_F(telemetryTest, TelemetryEventStructure) {
 TEST_F(telemetryTest, ShortRunInterval) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
-    EXPECT_NO_THROW({ nixlTelemetry telemetry(testFile_); });
+    EXPECT_NO_THROW({ nixlTelemetry telemetry(testFile_, "BUFFER"); });
     envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, LargeRunInterval) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "10000");
 
-    EXPECT_NO_THROW({ nixlTelemetry telemetry(testFile_); });
+    EXPECT_NO_THROW({ nixlTelemetry telemetry(testFile_, "BUFFER"); });
     envHelper_.popVar();
 }
 
 TEST_F(telemetryTest, BufferOverflowHandling) {
     envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, "4");
 
-    nixlTelemetry telemetry(testFile_);
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
     for (int i = 0; i < 10; ++i) {
         EXPECT_NO_THROW(telemetry.updateTxBytes(i * 100));
@@ -226,7 +311,7 @@ TEST_F(telemetryTest, CustomTelemetryDirectory) {
 
     EXPECT_NO_THROW({
         std::string telemetry_file = "test_telemetry";
-        nixlTelemetry telemetry(telemetry_file);
+        nixlTelemetry telemetry(telemetry_file, "BUFFER");
 
         std::string file_path = custom_dir.string() + "/" + telemetry_file;
 
@@ -235,25 +320,11 @@ TEST_F(telemetryTest, CustomTelemetryDirectory) {
     envHelper_.popVar();
 }
 
-TEST_F(telemetryTest, TelemetryCategoryStringConversion) {
-    for (int i = 0; i < static_cast<int>(nixl_telemetry_category_t::NIXL_TELEMETRY_CUSTOM) + 1;
-         ++i) {
-        auto category = static_cast<nixl_telemetry_category_t>(i);
-        std::string category_str = nixlEnumStrings::telemetryCategoryStr(category);
-        EXPECT_FALSE(category_str.empty());
-        EXPECT_NE(category_str, "BAD_CATEGORY");
-    }
-
-    auto invalid_category = static_cast<nixl_telemetry_category_t>(999);
-    std::string invalid_str = nixlEnumStrings::telemetryCategoryStr(invalid_category);
-    EXPECT_EQ(invalid_str, "BAD_CATEGORY");
-}
-
 // Test concurrent access (basic thread safety)
 TEST_F(telemetryTest, ConcurrentAccess) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
     testFile_ = "test_concurrent_access";
-    nixlTelemetry telemetry(testFile_);
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
     const int num_threads = 4;
     const int operations_per_thread = 100;
@@ -297,7 +368,7 @@ TEST_F(telemetryTest, ConcurrentAccess) {
 TEST_F(telemetryTest, TelemetryAgentEventsOne) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
-    nixlTelemetry telemetry(testFile_);
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
     // Add some agent events
     telemetry.updateTxBytes(1024);
@@ -316,11 +387,9 @@ TEST_F(telemetryTest, TelemetryAgentEventsOne) {
     nixlTelemetryEvent event;
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
-    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_RX_BYTES);
-    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     envHelper_.popVar();
 }
@@ -328,7 +397,7 @@ TEST_F(telemetryTest, TelemetryAgentEventsOne) {
 TEST_F(telemetryTest, TelemetryAgentEventsTwo) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
-    nixlTelemetry telemetry(testFile_);
+    nixlTelemetry telemetry(testFile_, "BUFFER");
 
     // Add agent events
     telemetry.updateTxBytes(1024);
@@ -347,11 +416,9 @@ TEST_F(telemetryTest, TelemetryAgentEventsTwo) {
     nixlTelemetryEvent event;
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
-    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER);
 
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERR_BACKEND);
-    EXPECT_EQ(event.category_, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR);
 
     envHelper_.popVar();
 }

@@ -61,27 +61,29 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 
 ### Metrics & Events
 
-| Event Name | Category | Counter | Gauge | Histogram |
-|------------|----------|---------|-------|-----------|
-| `agent_memory_registered` | `NIXL_TELEMETRY_MEMORY` | No | Yes | No |
-| `agent_memory_deregistered` | `NIXL_TELEMETRY_MEMORY` | No | Yes | No |
-| `agent_tx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
-| `agent_rx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
-| `agent_tx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
-| `agent_rx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
-| `agent_xfer_time` | `NIXL_TELEMETRY_PERFORMANCE` | No | Yes | No |
-| `agent_xfer_post_time` | `NIXL_TELEMETRY_PERFORMANCE` | No | Yes | No |
-| Backend-specific events | `NIXL_TELEMETRY_BACKEND` | Yes | No | No |
-| Error status strings | `NIXL_TELEMETRY_ERROR` | No | No | No |
+| Event Name | Counter | Gauge | Histogram |
+| ---------- | ------- | ----- | --------- |
+| `agent_memory_registered` | No | Yes | No |
+| `agent_memory_deregistered` | No | Yes | No |
+| `agent_tx_bytes` | Yes | Yes | No |
+| `agent_rx_bytes` | Yes | Yes | No |
+| `agent_tx_requests_num` | Yes | No | No |
+| `agent_rx_requests_num` | Yes | No | No |
+| `agent_xfer_time` | No | Yes | No |
+| `agent_xfer_post_time` | No | Yes | No |
+| Error event types (`agent_err_*`) | Yes | No | No |
 
 **Counter, Gauge, Histogram** - as implemented by the DOCA Telemetry Exporter
+
 - **Counter**: Instance lifetime count of the related value. Summed over the separate events' values.
-- **Gauge**: Shows the value per the last event (transaction). E.g agent_memory_registered represents the memory amount registered by the last operation (and not the total memory registered during instance lifetime). The value is updated per each event (request) and can grow or decrease.
+- Error events are exposed as one labeled counter: `agent_errors_total{status="..."}`. The `status` label is bounded by the fixed `AGENT_ERR_*` event set.
+- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte events publish both a cumulative counter and a last-operation gauge: `agent_tx_bytes` / `agent_rx_bytes` carry the running total, while `agent_tx_last_bytes` / `agent_rx_last_bytes` (the `agent_<subject>_last_<unit>` convention) carry the byte size of the latest TX/RX request. The memory gauges follow the same convention -- `agent_memory_registered_last_bytes` / `agent_memory_deregistered_last_bytes` -- and report the byte size of the last (de)registration.
 - **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
 
 ### Metric labels
 
 Each telemetry metric is provided with the following labels:
-- Telemetry Category
+
 - Hostname where the agent runs
 - Agent name (as provided during initialization, may be deprecated in future versions)
+- `status` (only on `agent_errors_total`): the error kind, bounded by the fixed `AGENT_ERR_*` event set

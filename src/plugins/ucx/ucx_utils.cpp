@@ -220,6 +220,12 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
                   const am_deleter_t &deleter) {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
+        // The endpoint is already in a failed state (e.g. the peer disconnected),
+        // so no request will be issued. Invoke the deleter -- as the inline
+        // completion path below does -- so the caller's buffer is not leaked.
+        if (deleter) {
+            deleter(nullptr, buffer);
+        }
         return status;
     }
 
@@ -438,6 +444,10 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modify("MAX_HCA_PER_GPU", "auto");
     }
 
+    if (ucpVersion_ >= UCP_VERSION(1, 22)) {
+        config.modify("RNDV_PIPELINE_ERROR_HANDLING", "y");
+    }
+
     const auto &hw_info = nixl::hwInfo::instance();
     if (hw_info.numEfaDevices != 0) {
         config.modify("ADDRESS_VERSION", "v2");
@@ -580,7 +590,7 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
 
         if (attr.mem_type == UCS_MEMORY_TYPE_HOST) {
             NIXL_ERROR << "VRAM memory is detected as host by UCX. "
-                          "UCX is likely not configured with CUDA support. "
+                          "UCX is likely not configured with CUDA/ROCm support. "
                           "VRAM registration cannot proceed.";
             ucp_mem_unmap(ctx, mem.memh);
             return -1;

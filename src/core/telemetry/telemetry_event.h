@@ -17,8 +17,8 @@
 #ifndef NIXL_SRC_CORE_TELEMETRY_TELEMETRY_EVENT_H
 #define NIXL_SRC_CORE_TELEMETRY_TELEMETRY_EVENT_H
 
+#include <array>
 #include <cstdint>
-#include <string>
 #include <string_view>
 
 #include "nixl_types.h"
@@ -26,22 +26,7 @@
 constexpr char TELEMETRY_BUFFER_SIZE_VAR[] = "NIXL_TELEMETRY_BUFFER_SIZE";
 constexpr char TELEMETRY_RUN_INTERVAL_VAR[] = "NIXL_TELEMETRY_RUN_INTERVAL";
 
-constexpr inline int TELEMETRY_VERSION = 2;
-
-/**
- * @enum nixl_telemetry_category_t
- * @brief An enumeration of main telemetry event categories for easy filtering and aggregation
- */
-enum class nixl_telemetry_category_t {
-    NIXL_TELEMETRY_MEMORY = 0, // Memory operations (register, deregister, allocation)
-    NIXL_TELEMETRY_TRANSFER = 1, // Data transfer operations (read, write)
-    NIXL_TELEMETRY_CONNECTION = 2, // Connection management (connect, disconnect)
-    NIXL_TELEMETRY_BACKEND = 3, // Backend-specific operations
-    NIXL_TELEMETRY_ERROR = 4, // Error events
-    NIXL_TELEMETRY_PERFORMANCE = 5, // Performance metrics
-    NIXL_TELEMETRY_SYSTEM = 6, // System-level events
-    NIXL_TELEMETRY_CUSTOM = 7, // Custom/user-defined events
-};
+constexpr inline int TELEMETRY_VERSION = 3;
 
 /**
  * @enum nixl_telemetry_event_type_t
@@ -73,10 +58,22 @@ enum class nixl_telemetry_event_type_t : uint32_t {
 [[nodiscard]] nixl_telemetry_event_type_t
 nixlTelemetryEventTypeForStatus(nixl_status_t s);
 
-namespace nixlEnumStrings {
-std::string
-telemetryCategoryStr(const nixl_telemetry_category_t &category);
+inline constexpr std::array telemetry_error_event_types = {
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED,
+    nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM,
+    nixl_telemetry_event_type_t::AGENT_ERR_BACKEND,
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND,
+    nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH,
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED,
+    nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE,
+    nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN,
+    nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED,
+    nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT,
+    nixl_telemetry_event_type_t::AGENT_ERR_CANCELED,
+    nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY,
+};
 
+namespace nixlEnumStrings {
 [[nodiscard]] constexpr std::string_view
 telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
     switch (type) {
@@ -123,24 +120,60 @@ telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
     }
     return "unknown_event";
 }
+
+[[nodiscard]] constexpr const char *
+telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
+    switch (type) {
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
+        return "not_posted";
+    case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
+        return "invalid_param";
+    case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
+        return "backend";
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND:
+        return "not_found";
+    case nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH:
+        return "mismatch";
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED:
+        return "not_allowed";
+    case nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE:
+        return "repost_active";
+    case nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN:
+        return "unknown";
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED:
+        return "not_supported";
+    case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
+        return "remote_disconnect";
+    case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
+        return "canceled";
+    case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
+        return "no_telemetry";
+    case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
+    case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
+    case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
+    case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
+    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
+    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
+    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
+    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
+        return nullptr;
+    }
+    return nullptr;
 }
+} // namespace nixlEnumStrings
 
 /**
  * @struct nixlTelemetryEvent
  * @brief A structure to hold individual telemetry event data for cyclic buffer storage
  */
 struct nixlTelemetryEvent {
-    nixl_telemetry_category_t category_; // Main event category for filtering
     nixl_telemetry_event_type_t eventType_; // Detailed event type/identifier
     uint64_t value_; // Numeric value associated with the event
 
     nixlTelemetryEvent() noexcept = default;
 
-    nixlTelemetryEvent(nixl_telemetry_category_t category,
-                       nixl_telemetry_event_type_t event_type,
-                       uint64_t value) noexcept
-        : category_(category),
-          eventType_(event_type),
+    nixlTelemetryEvent(nixl_telemetry_event_type_t event_type, uint64_t value) noexcept
+        : eventType_(event_type),
           value_(value) {}
 };
 

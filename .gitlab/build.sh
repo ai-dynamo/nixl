@@ -42,6 +42,30 @@ UCCL_COMMIT_SHA="0cdb740cf369a4f4dd63b9b773c8937f187b179a"
 AZURITE_VER="3.35.0"
 TMPDIR=$(mktemp -d)
 
+# DEPS_SANITIZE, when set (e.g. "address"), builds the C++ dependency stack that
+# shares Abseil's ABI with NIXL (abseil, protobuf/gRPC, etcd-cpp) using the
+# matching -fsanitize flags. Required for AddressSanitizer: Abseil changes its
+# SwissTable layout under ASan, so a prebuilt non-instrumented Abseil would
+# mismatch NIXL's instrumented one at runtime (new-delete-type-mismatch during
+# gRPC static init). Only ASan changes ABI (UBSan/TSan do not), so callers pass
+# DEPS_SANITIZE=address. The array expands to nothing when unset.
+DEPS_SANITIZE=${DEPS_SANITIZE:-""}
+DEPS_SANITIZE_CMAKE_ARGS=()
+if [ -n "$DEPS_SANITIZE" ]; then
+    _deps_san_cxxflags="-fsanitize=${DEPS_SANITIZE}"
+    case ",${DEPS_SANITIZE}," in
+        # Abseil's headers hit a GCC constexpr bug under UBSan's null checks
+        # (GCC #71962); drop those sub-checks if undefined is requested.
+        *,undefined,*) _deps_san_cxxflags="${_deps_san_cxxflags} -fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute" ;;
+    esac
+    DEPS_SANITIZE_CMAKE_ARGS=(
+        "-DCMAKE_C_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+        "-DCMAKE_CXX_FLAGS=${_deps_san_cxxflags}"
+        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+        "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+    )
+fi
+
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> <ucx_install_dir>"
     exit 1
@@ -151,11 +175,11 @@ else
     # Add DOCA repository and install packages
     ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${TMPDIR}/doca-host.deb
+    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${TMPDIR}/doca-host.deb
     $SUDO dpkg -i ${TMPDIR}/doca-host.deb
     $SUDO apt-get update
     $SUDO apt-get upgrade -y
-    $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev
+    $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 
     # Force reinstall of RDMA packages from DOCA repository
     # Reinstall needed to fix broken libibverbs-dev, which may lead to lack of Infiniband support.
@@ -209,10 +233,12 @@ else
       git checkout "${ABSL_TAG}" && \
       mkdir -p build && cd build && \
       cmake .. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_CXX_STANDARD=20 \
           -DABSL_PROPAGATE_CXX_STD=ON \
           -DABSL_ENABLE_INSTALL=ON && \
       make -j"$NPROC" && \
@@ -229,10 +255,11 @@ else
       mkdir -p cmake/build && \
       cd cmake/build && \
       cmake ../.. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
           -DgRPC_INSTALL=ON \
           -DgRPC_BUILD_TESTS=OFF \
           -DBUILD_SHARED_LIBS=ON \
-          -DCMAKE_CXX_STANDARD=17 \
+          -DCMAKE_CXX_STANDARD=20 \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
           -DCMAKE_INSTALL_LIBDIR=lib \
@@ -256,9 +283,11 @@ else
       sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
       mkdir build && cd build && \
       cmake .. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
           -DBUILD_ETCD_CORE_ONLY=ON \
           -DCMAKE_BUILD_TYPE=Release \
-          -DETCD_CMAKE_CXX_STANDARD=17 \
+          -DETCD_CMAKE_CXX_STANDARD=20 \
+          -DCMAKE_CXX_STANDARD=20 \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" && \
@@ -272,7 +301,7 @@ else
       git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
       mkdir aws_sdk_build && \
       cd aws_sdk_build && \
-      cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local && \
+      cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_CXX_STANDARD=20 -DCMAKE_INSTALL_PREFIX=/usr/local && \
       make -j"$NPROC" && \
       $SUDO make install && \
       cd .. && \
@@ -283,7 +312,7 @@ else
       cd ${TMPDIR} && \
       git clone https://github.com/nvidia/gusli.git && \
       cd gusli && \
-      $SUDO make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+      $SUDO make all CXX="g++ -std=c++20" BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
       $SUDO ldconfig && \
       cd .. && \
       $SUDO rm -rf gusli
@@ -320,7 +349,7 @@ else
       git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
       cd azure-sdk-for-cpp/ && \
       mkdir build && cd build && \
-      AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON && \
+      AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
       cmake --build . --parallel "$NPROC" --target azure-storage-blobs azure-identity && \
       $SUDO cmake --install sdk/core && \
       $SUDO cmake --install sdk/storage/azure-storage-common && \
@@ -377,6 +406,9 @@ export UCX_TLS=^cuda_ipc
 if [ -n "$PRE_INSTALLED_NIXL_ENV" ]; then
     echo "PRE_INSTALLED_NIXL_ENV is set, skipping compilation"
 else
+    if [ "${BUILD_NIXL_EP}" = "true" ]; then
+        EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
+    fi
     # shellcheck disable=SC2086
     meson setup ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
