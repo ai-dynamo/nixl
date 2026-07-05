@@ -50,7 +50,9 @@ RUN apt-get update -y && \
     build-essential
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
-# Skip only the DOCA SDK install when the base image already ships it.
+# Skip the DOCA SDK install when the base image already ships the SDK, and also when it
+# ships only the DOCA runtime at another version: the pinned repo's SDK can't install
+# against it (apt refuses the downgrade), and the GPUNETIO plugin is optional in meson.
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
     wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
@@ -59,6 +61,8 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "am
     apt-get upgrade -y && \
     if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then \
         echo "DOCA SDK already installed in base image, skipping SDK install"; \
+    elif dpkg -s doca-sdk-common >/dev/null 2>&1; then \
+        echo "Base image ships DOCA runtime $(dpkg-query -W -f='${Version}' doca-sdk-common) without the GPUNETIO SDK, skipping SDK install to avoid a version mismatch"; \
     else \
         apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev; \
     fi
