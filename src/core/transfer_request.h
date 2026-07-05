@@ -40,7 +40,8 @@ public:
                  const nixl_xfer_op_t backend_op,
                  const nixl_mem_t local_type,
                  const nixl_mem_t remote_type,
-                 const size_t desc_count = 0);
+                 const uint64_t remote_generation,
+                 const size_t desc_count);
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
@@ -69,6 +70,8 @@ private:
     nixl_meta_dlist_t targetDescs;
 
     const std::string remoteAgent;
+    // Generation of the remote-connection
+    const uint64_t remoteGeneration_;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 

@@ -417,6 +417,60 @@ if get_option('buildtype') == 'release'
     add_project_arguments('-DNDEBUG', language: 'cpp')
 endif
 
+# ---- Tracing (nixl::trace) -------------------------------------------------
+# Two gates: build/packaging (which backend plugins are built, as separate .so
+# modules under src/plugins/tracing) and runtime (which built plugins the caller
+# activates via NIXL_TRACE_BACKENDS / nsys auto-load). The facade itself is
+# always compiled into libnixl.
+nixl_trace_enabled = get_option('with_trace')
+nixl_trace_nvtx_enabled = false
+
+if nixl_trace_enabled
+    # 'cuda' is only an enabled language when cuda_dep.found() (add_languages('CUDA')
+    # above); passing it unconditionally breaks a non-CUDA with_trace configure.
+    nixl_trace_arg_langs = ['cpp']
+    if cuda_dep.found()
+        nixl_trace_arg_langs += ['cuda']
+    endif
+    add_project_arguments('-DNIXL_TRACE_ENABLED', language: nixl_trace_arg_langs)
+
+    requested_trace_backends = []
+    foreach b : get_option('trace_backends').split(',')
+        b_stripped = b.strip()
+        if b_stripped != ''
+            requested_trace_backends += [b_stripped]
+        endif
+    endforeach
+
+    # NVTX: header-only; ships with the CUDA toolkit (nvtx3). Detect-then-disable
+    # gracefully so non-CUDA / werror builds stay green. Built as a separately
+    # loaded plugin (src/plugins/tracing/nvtx), not linked into libnixl; nvtx_inc_dep
+    # is consumed there. PR7 structured payloads require nvToolsExtPayload.h (not
+    # present in all CUDA toolkit images); skip the plugin when either header is absent.
+    if 'nvtx' in requested_trace_backends
+        if cuda_dep.found()
+            nvtx_inc_dep = cuda_dep.partial_dependency(includes: true, compile_args: true)
+            has_nvtx_base = cpp.has_header('nvtx3/nvToolsExt.h', dependencies: nvtx_inc_dep)
+            has_nvtx_payload = cpp.has_header('nvtx3/nvToolsExtPayload.h', dependencies: nvtx_inc_dep)
+            if has_nvtx_base and has_nvtx_payload
+                nixl_trace_nvtx_enabled = true
+                message('nixl::trace: NVTX backend plugin enabled (CUDA-bundled nvtx3 headers)')
+            elif has_nvtx_base and not has_nvtx_payload
+                warning('nixl::trace: nvtx requested but nvtx3/nvToolsExtPayload.h not found; NVTX backend disabled')
+            else
+                warning('nixl::trace: nvtx requested but nvtx3 headers not found; NVTX backend disabled')
+            endif
+        else
+            warning('nixl::trace: nvtx requested but CUDA not found; NVTX backend disabled')
+        endif
+    endif
+
+    summary({
+        'Tracing facade'      : nixl_trace_enabled,
+        'NVTX backend plugin' : nixl_trace_nvtx_enabled,
+    }, section: 'Tracing', bool_yn: true)
+endif
+
 static_plugins = []
 
 # Check for static plugins, then set compiler flags to enable

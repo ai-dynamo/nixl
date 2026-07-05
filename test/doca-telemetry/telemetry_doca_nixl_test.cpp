@@ -111,8 +111,9 @@ TEST_F(docaNixlExporterTest, GaugeReflectsLastPushedValue) {
     const nixlTelemetryExporterInitParams params{agentName, 4096};
     nixlTelemetryDocaExporter exporter(params);
 
-    const std::string metric = std::string(nixlEnumStrings::telemetryEventTypeStr(
-        nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED));
+    // The memory gauge is served under its last-operation series name, which is
+    // distinct from the AGENT_MEMORY_REGISTERED event string.
+    const std::string metric = "agent_memory_registered_last_bytes";
     const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
 
     constexpr std::array<uint64_t, 4> values{4096, 65536, 1024, 8192};
@@ -164,6 +165,84 @@ TEST_F(docaNixlExporterTest, DistinguishesSeriesByAgentLabel) {
     // rejected with a throw (a too-loose query is a test mistake, not a miss).
     EXPECT_THROW((void)metrics.latestValue(metric), std::runtime_error)
         << metric << " is exported by two agents; a name-only lookup must be ambiguous";
+}
+
+// Both byte directions drive a cumulative counter (agent_{tx,rx}_bytes) AND a
+// last-operation gauge (agent_{tx,rx}_last_bytes) from the same per-op value. TX
+// and RX use distinct deltas so the assertions also prove the directions map to
+// independent series (no cross-wiring): each counter reads the sum of its own
+// deltas while each *_last gauge reads only that direction's final op.
+TEST_F(docaNixlExporterTest, ByteEventsEmitCumulativeCountersAndLastGauges) {
+    constexpr char agentName[] = "nixl_doca_last_gauge_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const std::string txCounter = std::string(
+        nixlEnumStrings::telemetryEventTypeStr(nixl_telemetry_event_type_t::AGENT_TX_BYTES));
+    const std::string rxCounter = std::string(
+        nixlEnumStrings::telemetryEventTypeStr(nixl_telemetry_event_type_t::AGENT_RX_BYTES));
+    const std::string txLast = "agent_tx_last_bytes";
+    const std::string rxLast = "agent_rx_last_bytes";
+
+    constexpr std::array<uint64_t, 3> tx_deltas{10, 20, 35}; // sum 65, last 35
+    for (const uint64_t delta : tx_deltas) {
+        const nixlTelemetryEvent event(nixl_telemetry_event_type_t::AGENT_TX_BYTES, delta);
+        ASSERT_EQ(exporter.exportEvent(event), NIXL_SUCCESS);
+    }
+    constexpr std::array<uint64_t, 2> rx_deltas{5, 15}; // sum 20, last 15
+    for (const uint64_t delta : rx_deltas) {
+        const nixlTelemetryEvent event(nixl_telemetry_event_type_t::AGENT_RX_BYTES, delta);
+        ASSERT_EQ(exporter.exportEvent(event), NIXL_SUCCESS);
+    }
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    // RX is pushed last and each event appends its gauge sample before its
+    // counter sample, so the RX counter is the final sample; once agent_rx_bytes
+    // reads its total (20) every earlier sample (all TX, plus the RX gauge) has
+    // been served too -- read them all from that one settled scrape.
+    const auto metrics = scrapeUntilValue(port_, rxCounter, 20.0, std::chrono::seconds(12), labels);
+
+    EXPECT_EQ(metrics.latestValue(txCounter, labels), std::optional<double>(65.0))
+        << "tx counter must sum every pushed delta (10+20+35)";
+    EXPECT_EQ(metrics.latestValue(txLast, labels), std::optional<double>(35.0))
+        << "tx last-op gauge must reflect only the final pushed value (35), not a sum";
+    EXPECT_EQ(metrics.latestValue(rxCounter, labels), std::optional<double>(20.0))
+        << "rx counter must sum every pushed delta (5+15)";
+    EXPECT_EQ(metrics.latestValue(rxLast, labels), std::optional<double>(15.0))
+        << "rx last-op gauge must reflect only the final pushed value (15), not a sum";
+}
+
+TEST_F(docaNixlExporterTest, ErrorCountersUseBoundedStatusLabel) {
+    constexpr char agentName[] = "nixl_doca_error_counter_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM, 1}),
+              NIXL_SUCCESS);
+    ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM, 1}),
+              NIXL_SUCCESS);
+    ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_ERR_BACKEND, 1}),
+              NIXL_SUCCESS);
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const std::string metric = "agent_errors_total";
+    const nixl::doca_test::labelSet invalidParamLabels{{"agent_name", agentName},
+                                                       {"status", "invalid_param"}};
+    const nixl::doca_test::labelSet backendLabels{{"agent_name", agentName}, {"status", "backend"}};
+
+    const auto metrics =
+        scrapeUntilValue(port_, metric, 2.0, std::chrono::seconds(12), invalidParamLabels);
+    EXPECT_EQ(metrics.latestValue(metric, invalidParamLabels), std::optional<double>(2.0))
+        << "invalid_param errors must accumulate under a bounded status label";
+    EXPECT_EQ(metrics.latestValue(metric, backendLabels), std::optional<double>(1.0))
+        << "backend errors must use a distinct status label on the same metric";
+
+    for (const auto &[id, samples] : metrics.series()) {
+        (void)samples;
+        EXPECT_NE(id.name.rfind("agent_err_", 0), 0)
+            << "legacy per-type error counter must not be published: " << id.name;
+    }
 }
 
 int
