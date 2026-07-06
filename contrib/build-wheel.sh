@@ -128,6 +128,20 @@ BUILD_DEPS=(
 # be used unambiguously as a path component.
 slug() { echo "${1//./}"; }
 
+# The base image's torch major.minor, printed only when the EP build can use
+# it (>= 2.7). pytorch bases ship torch built for CUDA versions that have no
+# public wheel index, so it is the fallback when the cu index has nothing.
+system_torch_version() {
+    python3 -c '
+import sys
+import torch
+major, minor = (int(x) for x in torch.__version__.split(".")[:2])
+if (major, minor) < (2, 7):
+    sys.exit(1)
+print(f"{major}.{minor}")
+' 2>/dev/null
+}
+
 # Cache torch channel per version for this script run. Populated by
 # ensure_torch_venv(); cleared when the venv is torn down after a build.
 declare -A TORCH_CHANNEL_CACHE
@@ -190,6 +204,18 @@ ensure_torch_venv() {
     fi
     if [ -n "$CHANNEL" ] && torch_venv_ready "$VENV_PATH"; then
         return 0
+    fi
+
+    # Prefer the base image's torch when its major.minor matches VER; the
+    # venv sees it through system site-packages, no index download needed.
+    if [ "$(system_torch_version)" = "$VER" ]; then
+        rm -rf "$VENV_PATH"
+        if uv venv "$VENV_PATH" --python "$PYTHON_VERSION" --system-site-packages && \
+           torch_venv_ready "$VENV_PATH"; then
+            TORCH_CHANNEL_CACHE[$VER]="system"
+            return 0
+        fi
+        rm -rf "$VENV_PATH"
     fi
 
     rm -rf "$VENV_PATH"
@@ -320,9 +346,21 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
         echo "=== Skipping torch versions (no wheel on index for Python ${PYTHON_VERSION} + ${CU_TAG}): ${SKIPPED[*]} ==="
     fi
     if [ ${#TORCH_ARRAY[@]} -eq 0 ]; then
-        echo "ERROR: none of the requested torch versions (${TORCH_REQUESTED[*]}) are available for Python ${PYTHON_VERSION} + ${CU_TAG}"
-        exit 1
+        # Nothing on the cu index (no public wheels for this CUDA yet). Fall
+        # back to the base image's torch; failing that, build without nixl_ep
+        # rather than failing the whole wheel.
+        SYS_VER=$(system_torch_version || true)
+        if [ -n "$SYS_VER" ] && ensure_torch_venv "$SYS_VER"; then
+            echo "=== No requested torch available on the ${CU_TAG} index, using the base image's torch ${SYS_VER} ==="
+            TORCH_ARRAY=("$SYS_VER")
+        else
+            echo "WARNING: no torch is installable for Python ${PYTHON_VERSION} + ${CU_TAG}; building the wheel WITHOUT nixl_ep"
+            BUILD_NIXL_EP="false"
+        fi
     fi
+fi
+
+if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
     echo "=== Building for torch versions: ${TORCH_ARRAY[*]} ==="
 
     FIRST_TORCH="${TORCH_ARRAY[0]}"
