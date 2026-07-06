@@ -21,6 +21,12 @@
 #include <chrono>
 #include <cstdint>
 
+#if defined(__cpp_constinit)
+#define NIXL_CONSTINIT constinit
+#else
+#define NIXL_CONSTINIT
+#endif
+
 namespace nixlTime {
 
 using namespace std::chrono;
@@ -74,13 +80,13 @@ namespace detail {
         double nsPerTick; // counter period in nanoseconds
     };
 
-    extern fastClockCal g_fastClockCal;
-    extern std::atomic<bool> g_fastClockReady; // set once g_fastClockCal is populated
+    extern NIXL_CONSTINIT fastClockCal g_fastClockCal;
+    extern NIXL_CONSTINIT std::atomic<bool> g_fastClockReady;
 
     void
     ensureFastClockCalibrated();
 
-    [[nodiscard]] static inline uint64_t
+    [[nodiscard]] inline uint64_t
     readCpuCounter() {
 #if defined(__x86_64__)
         uint32_t lo, hi;
@@ -95,7 +101,7 @@ namespace detail {
 #endif
     }
 
-    [[nodiscard]] static inline steady_clock::time_point
+    [[nodiscard]] inline steady_clock::time_point
     steadyFromCounter(const fastClockCal &cal, uint64_t counter) {
         // Signed tick delta tolerates the tiny cross-core counter skew that can
         // make a read momentarily precede counterRef right after calibration.
@@ -109,7 +115,7 @@ namespace detail {
 
 // Monotonic timestamp on the steady_clock timeline, backed by the CPU counter
 // when it is invariant and calibrated, else steady_clock::now().
-[[nodiscard]] static inline steady_clock::time_point
+[[nodiscard]] inline steady_clock::time_point
 fastSteadyNow() {
     if (!detail::g_fastClockReady.load(std::memory_order_acquire)) {
         detail::ensureFastClockCalibrated();

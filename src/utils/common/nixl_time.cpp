@@ -130,12 +130,12 @@ namespace detail {
             return cal;
         }
 
-        std::once_flag g_calibrateOnce;
+        NIXL_CONSTINIT std::once_flag g_calibrateOnce;
 
     } // namespace
 
-    fastClockCal g_fastClockCal{};
-    std::atomic<bool> g_fastClockReady{false};
+    NIXL_CONSTINIT fastClockCal g_fastClockCal{};
+    NIXL_CONSTINIT std::atomic<bool> g_fastClockReady{false};
 
     void
     ensureFastClockCalibrated() {
