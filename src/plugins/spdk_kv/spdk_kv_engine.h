@@ -33,9 +33,10 @@
  *
  * WHY A SHARED ABSTRACT BASE (rationale)
  * --------------------------------------
- * nixlSpdkKvEngine implements getSupportedMems, registerMem, deregisterMem,
- * queryMem, prepXfer, postXfer, checkXfer, and releaseReqH ONCE, against
- * iSpdkKvDevice.
+ * nixlSpdkKvEngine implements supportsRemote, supportsLocal, supportsNotif,
+ * getSupportedMems, registerMem, deregisterMem, queryMem, connect, disconnect,
+ * unloadMD, loadLocalMD, prepXfer, postXfer, checkXfer, and releaseReqH ONCE,
+ * against iSpdkKvDevice.
  *
  * RADOS_NKV and CSAL_NKV share this base class by INHERITANCE, not composition.
  * Both talk to a device through the same generic kv_host_shim NVMe-KV protocol,
