@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Add a compile-time interface contract test
+## Task 1: Add a compile-time interface contract test
 
 **Files:**
 - Create: `test/gtest/unit/spdk_kv/interface_contract.cpp`
@@ -22,15 +22,15 @@
 Create a concrete inspection subclass that publicly inherits the protected constructors, implements the two customization hooks, and defines a `const` method that locks `deviceMutex_`. Add static assertions requiring both constructor signatures and `size_t` value-operation signatures.
 
 ```cpp
-using MaxValueLenSignature = size_t (iSpdkKvDevice::*)() const;
-using StoreSignature =
-    SpdkKvStatus (iSpdkKvDevice::*)(const void *, uint8_t, const void *, size_t);
-using RetrieveSignature = SpdkKvStatus (iSpdkKvDevice::*)(
+using max_value_len_signature_t = size_t (iSpdkKvDevice::*)() const;
+using store_signature_t =
+    spdk_kv_status_t (iSpdkKvDevice::*)(const void *, uint8_t, const void *, size_t);
+using retrieve_signature_t = spdk_kv_status_t (iSpdkKvDevice::*)(
     const void *, uint8_t, void *, size_t, size_t *);
 
-static_assert(std::is_same_v<decltype(&iSpdkKvDevice::maxValueLen), MaxValueLenSignature>);
-static_assert(std::is_same_v<decltype(&iSpdkKvDevice::store), StoreSignature>);
-static_assert(std::is_same_v<decltype(&iSpdkKvDevice::retrieve), RetrieveSignature>);
+static_assert(std::is_same_v<decltype(&iSpdkKvDevice::maxValueLen), max_value_len_signature_t>);
+static_assert(std::is_same_v<decltype(&iSpdkKvDevice::store), store_signature_t>);
+static_assert(std::is_same_v<decltype(&iSpdkKvDevice::retrieve), retrieve_signature_t>);
 static_assert(std::is_constructible_v<InspectableSpdkKvEngine,
                                       const nixlBackendInitParams *>);
 static_assert(std::is_constructible_v<InspectableSpdkKvEngine,
@@ -54,7 +54,7 @@ Expected: compilation fails because value signatures still use `uint32_t`, the i
 
 Create `spdk_kv_interface_unit_test_dep` with `interface_contract.cpp` as its source and add it to `unit_test_deps` unconditionally from `test/gtest/unit/meson.build`.
 
-### Task 2: Harden the core headers
+## Task 2: Harden the core headers
 
 **Files:**
 - Modify: `src/plugins/spdk_kv/ispdk_kv_device.h`
@@ -90,7 +90,7 @@ Document that the shared implementation holds it across a complete allocation/st
 
 Run the command from Task 1 Step 2. Expected: exit 0.
 
-### Task 3: Update user-facing documentation
+## Task 3: Update user-facing documentation
 
 **Files:**
 - Modify: `src/plugins/spdk_kv/README.md`
@@ -109,7 +109,7 @@ State that native adapters validate before narrowing and that one engine seriali
 
 Describe the engine as independent of SPDK allocation details while still aware of an abstract transfer-capable buffer contract.
 
-### Task 4: Verify and commit
+## Task 4: Verify and commit
 
 **Files:**
 - Verify all modified files.

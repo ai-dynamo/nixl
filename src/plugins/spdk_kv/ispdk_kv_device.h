@@ -72,9 +72,9 @@
  *
  * SEMANTIC RETURNS
  * ----------------
- * The interface is deliberately semantic: operations return SpdkKvStatus, not a
+ * The interface is deliberately semantic: operations return spdk_kv_status_t, not a
  * raw device status code, so callers never branch on NVMe/SPDK-specific values.
- * Mapping any device-native error space (e.g. NVMe status codes) onto SpdkKvStatus
+ * Mapping any device-native error space (e.g. NVMe status codes) onto spdk_kv_status_t
  * is the concrete implementation's job (see nixlKvHostShimDevice).
  *
  * CONCURRENCY
@@ -97,7 +97,7 @@
  * Concrete devices map their native error space onto these values, so callers
  * have a single, transport-independent contract to reason about.
  */
-enum class SpdkKvStatus {
+enum class spdk_kv_status_t {
     /** Operation succeeded. For exist(): the key is present. */
     OK,
     /** The key does not exist (exist() miss, or retrieve() of an absent key). */
@@ -150,9 +150,9 @@ public:
      * buffer from dmaAlloc().
      * Implementations must range-check @p value_len before converting it to a
      * narrower native length type.
-     * @return SpdkKvStatus::OK on success, SpdkKvStatus::ERROR otherwise.
+     * @return spdk_kv_status_t::OK on success, spdk_kv_status_t::ERROR otherwise.
      */
-    virtual SpdkKvStatus
+    virtual spdk_kv_status_t
     store(const void *key, uint8_t key_len, const void *value, size_t value_len) = 0;
 
     /**
@@ -166,7 +166,7 @@ public:
      * @return OK (whole value fit; value_len_out <= buf_len), BUFFER_TOO_SMALL
      *         (value_len_out > buf_len; contents unusable), NOT_FOUND, or ERROR.
      */
-    virtual SpdkKvStatus
+    virtual spdk_kv_status_t
     retrieve(const void *key,
              uint8_t key_len,
              void *value,
@@ -178,7 +178,7 @@ public:
      * @return OK if present, NOT_FOUND if absent, ERROR on a device/transport
      *         failure (a real failure is never reported as NOT_FOUND).
      */
-    virtual SpdkKvStatus
+    virtual spdk_kv_status_t
     exist(const void *key, uint8_t key_len) = 0;
 };
 

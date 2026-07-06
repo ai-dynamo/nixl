@@ -28,7 +28,7 @@ public:
 
     void
     lockDeviceFromConstMethod() const {
-        std::lock_guard<std::mutex> lock(deviceMutex_);
+        const std::lock_guard<std::mutex> lock(deviceMutex_);
     }
 
 protected:
@@ -38,14 +38,17 @@ protected:
     }
 };
 
-using MaxValueLenSignature = size_t (iSpdkKvDevice::*)() const;
-using StoreSignature = SpdkKvStatus (iSpdkKvDevice::*)(const void *, uint8_t, const void *, size_t);
-using RetrieveSignature =
-    SpdkKvStatus (iSpdkKvDevice::*)(const void *, uint8_t, void *, size_t, size_t *);
+using max_value_len_signature_t = size_t (iSpdkKvDevice::*)() const;
+using store_signature_t = spdk_kv_status_t (iSpdkKvDevice::*)(const void *,
+                                                              uint8_t,
+                                                              const void *,
+                                                              size_t);
+using retrieve_signature_t =
+    spdk_kv_status_t (iSpdkKvDevice::*)(const void *, uint8_t, void *, size_t, size_t *);
 
-static_assert(std::is_same_v<decltype(&iSpdkKvDevice::maxValueLen), MaxValueLenSignature>);
-static_assert(std::is_same_v<decltype(&iSpdkKvDevice::store), StoreSignature>);
-static_assert(std::is_same_v<decltype(&iSpdkKvDevice::retrieve), RetrieveSignature>);
+static_assert(std::is_same_v<decltype(&iSpdkKvDevice::maxValueLen), max_value_len_signature_t>);
+static_assert(std::is_same_v<decltype(&iSpdkKvDevice::store), store_signature_t>);
+static_assert(std::is_same_v<decltype(&iSpdkKvDevice::retrieve), retrieve_signature_t>);
 static_assert(std::is_constructible_v<InspectableSpdkKvEngine, const nixlBackendInitParams *>);
 static_assert(std::is_constructible_v<InspectableSpdkKvEngine,
                                       const nixlBackendInitParams *,

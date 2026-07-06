@@ -88,7 +88,7 @@ no SPDK or hardware, while production uses `nixlKvHostShimDevice`.
 ## The device interface: `iSpdkKvDevice`
 
 `iSpdkKvDevice` captures the generic NVMe-KV protocol as a small, purely abstract
-C++ interface. It is deliberately **semantic**: operations return `SpdkKvStatus`
+C++ interface. It is deliberately **semantic**: operations return `spdk_kv_status_t`
 (`OK` / `NOT_FOUND` / `BUFFER_TOO_SMALL` / `ERROR`), never a raw device/NVMe status
 code, so the shared engine never branches on SPDK-specific values.
 
@@ -103,11 +103,11 @@ public:
     virtual void *dmaAlloc(size_t len) = 0;
     virtual void  dmaFree(void *buf) = 0;
 
-    virtual SpdkKvStatus store(const void *key, uint8_t key_len,
+    virtual spdk_kv_status_t store(const void *key, uint8_t key_len,
                               const void *value, size_t value_len) = 0;
-    virtual SpdkKvStatus retrieve(const void *key, uint8_t key_len, void *value,
+    virtual spdk_kv_status_t retrieve(const void *key, uint8_t key_len, void *value,
                                  size_t buf_len, size_t *value_len_out) = 0;
-    virtual SpdkKvStatus exist(const void *key, uint8_t key_len) = 0;
+    virtual spdk_kv_status_t exist(const void *key, uint8_t key_len) = 0;
 };
 ```
 
@@ -147,9 +147,9 @@ public:
     void *dmaAlloc(size_t len) override;            // kv_host_shim_dma_alloc
     void  dmaFree(void *buf) override;              // kv_host_shim_dma_free
 
-    SpdkKvStatus store(...) override;               // kv_host_shim_store
-    SpdkKvStatus retrieve(...) override;            // kv_host_shim_retrieve
-    SpdkKvStatus exist(const void *key, uint8_t key_len) override;  // ..._exist
+    spdk_kv_status_t store(...) override;               // kv_host_shim_store
+    spdk_kv_status_t retrieve(...) override;            // kv_host_shim_retrieve
+    spdk_kv_status_t exist(const void *key, uint8_t key_len) override;  // ..._exist
 
 private:
     explicit nixlKvHostShimDevice(kv_host_shim *shim) : shim_(shim) {}
@@ -163,7 +163,7 @@ Key points this example makes concrete:
   attributes are **members of this class**, not the interface.
 - The `.cpp` is the **only** translation unit that `#include`s `kv_host_shim.h`
   (and thus the SPDK headers), keeping the SPDK dependency isolated.
-- The NVMe status-code → `SpdkKvStatus` mapping (e.g. `0x85` → `BUFFER_TOO_SMALL`,
+- The NVMe status-code → `spdk_kv_status_t` mapping (e.g. `0x85` → `BUFFER_TOO_SMALL`,
   `0x87` → `NOT_FOUND`) is done **inside** this class's `.cpp`, so it never
   reaches the shared engine.
 - The abstract interface uses `size_t` for NIXL value lengths. Because the shim
@@ -180,7 +180,7 @@ implementation makes the whole data plane testable with no SPDK or hardware:
 class nixlFakeKvDevice : public iSpdkKvDevice {
     std::map<std::vector<uint8_t>, std::vector<uint8_t>> store_;
     // dmaAlloc/dmaFree → malloc/free; store/retrieve/exist → map operations,
-    // returning SpdkKvStatus (BUFFER_TOO_SMALL/NOT_FOUND) to mirror the real device.
+    // returning spdk_kv_status_t (BUFFER_TOO_SMALL/NOT_FOUND) to mirror the real device.
 };
 ```
 

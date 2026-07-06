@@ -197,7 +197,7 @@ protected:
 
     // Ratified maximum NVMe-KV inline key length (bytes); derived keys are
     // clamped to this.
-    static constexpr uint8_t kMaxKeyLen = 16;
+    static constexpr uint8_t max_key_len = 16;
 
     // The KV device abstraction the shared data plane drives.
     std::unique_ptr<iSpdkKvDevice> device_;
@@ -206,8 +206,8 @@ protected:
     // mutable because queryMem/postXfer are const South-Bound API methods.
     mutable std::mutex deviceMutex_;
 
-    // Effective derived-key length: min(device max key length, kMaxKeyLen).
-    uint8_t maxKeyLen_ = kMaxKeyLen;
+    // Effective derived-key length: min(device max key length, max_key_len).
+    uint8_t maxKeyLen_ = max_key_len;
 
 private:
     // Install a device and cache its effective key length. Used by both the
