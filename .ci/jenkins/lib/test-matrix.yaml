@@ -52,7 +52,9 @@ env:
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260701-4"
+  CI_IMAGE_TAG: "20260706-1"
+  ENROOT_MOUNT_PATH: "/enroot_images"  # NFS mount on mizu nodes; on failure the container is exported here as <containerName>.sqsh
+  ENROOT_DATA_PATH: "/enroot-data/enroot-data-148069/user-148069"  # svc-nixl user on mizu nodes
 
 empty_volumes:
   - {mountPath: /root, memory: false}
@@ -143,6 +145,7 @@ steps:
       dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
       containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run Python tests
     containerSelector: "{name: 'build_helper'}"
@@ -158,6 +161,7 @@ steps:
       dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
       containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run Rust tests
     containerSelector: "{name: 'build_helper'}"
@@ -173,6 +177,7 @@ steps:
       dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
       containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run Nixlbench tests
     containerSelector: "{name: 'build_helper'}"
@@ -188,6 +193,7 @@ steps:
       dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
       containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
 pipeline_stop:
   containerSelector: "{name: 'build_helper'}"
