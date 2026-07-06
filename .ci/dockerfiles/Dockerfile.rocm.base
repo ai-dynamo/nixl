@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: Copyright (c) Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# ROCm base image: Ubuntu + the AMD ROCm runtime/dev stack, nothing else.
+#
+# Usage:
+#   docker build -f .ci/dockerfiles/Dockerfile.rocm.base -t rocm-base-7.14-ubuntu24.04:<build_id> .
+#
+# Key build args (defaults target Ubuntu 24.04 / ROCm 7.14.0):
+#   UBUNTU_CODENAME        apt codename of the base image        (default: noble)
+#   BASE_IMAGE             OS image to build on          (default: ubuntu:noble)
+#   UBUNTU_MAJOR_VERSION   used to pick the ROCm repo (ubuntu2404)  (default: 24)
+#   UBUNTU_MINOR_VERSION   used to pick the ROCm repo (ubuntu2404)  (default: 04)
+#   ROCM_VERSION           ROCm release to install            (default: 7.14.0)
+#
+# Tag the image to match ROCM_VERSION so Dockerfile.rocm can pin the base it uses.
+
+ARG UBUNTU_CODENAME=noble
+ARG BASE_IMAGE=ubuntu:${UBUNTU_CODENAME}
+
+FROM ${BASE_IMAGE}
+ARG UBUNTU_CODENAME
+ARG UBUNTU_MAJOR_VERSION=24
+ARG UBUNTU_MINOR_VERSION=04
+ARG ROCM_VERSION=7.14.0
+
+# Minimal prereqs to reach the ROCm prerelease repo over HTTPS and install from it.
+RUN apt-get update && \
+    apt-get install -y \
+        ca-certificates \
+        curl \
+        gpg \
+        python3 \
+        python3-pip \
+        sudo \
+        wget && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Optionally install a corporate/proxy root CA (for TLS-intercepting proxies) from
+# a BuildKit secret, keeping it out of git and the build context. Supply it with:
+#   --secret id=proxy_ca,src=<any/path.crt>   (omit for public builds; step no-ops).
+# Must run after ca-certificates is installed but before any HTTPS fetch. The cert is
+# baked into the trust store and inherited by images built FROM this one.
+RUN --mount=type=secret,id=proxy_ca,required=false \
+    if [ -s /run/secrets/proxy_ca ]; then \
+        cp /run/secrets/proxy_ca /usr/local/share/ca-certificates/proxy-root-ca.crt && \
+        update-ca-certificates; \
+    else \
+        echo "No proxy_ca secret provided; assuming public build with default CAs."; \
+    fi
+
+# Install ROCm from the prerelease multi-arch repo (follows the "new" layout:
+# install path /opt/rocm/core-<MAJOR>.<MINOR>, amdrocm-runtime-dev meta-package).
+# /etc/rocm-build.env records the resolved layout for build-rocm.sh to read.
+RUN ROCM_MAJOR=$(echo "${ROCM_VERSION}" | cut -d. -f1); \
+    ROCM_MINOR=$(echo "${ROCM_VERSION}" | cut -d. -f2); \
+    ROCM_INSTALL_PATH="/opt/rocm/core-${ROCM_MAJOR}.${ROCM_MINOR}"; \
+    printf 'ROCM_MAJOR=%s\nROCM_MINOR=%s\nROCM_BUILD_TYPE=%s\nROCM_INSTALL_PATH=%s\n' \
+        "${ROCM_MAJOR}" "${ROCM_MINOR}" "new" "${ROCM_INSTALL_PATH}" \
+        > /etc/rocm-build.env
+RUN . /etc/rocm-build.env && \
+    wget https://rocm.prereleases.amd.com/packages/gpg/rocm.gpg -O - | \
+    gpg --dearmor > /etc/apt/keyrings/amdrocm.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.gpg] https://rocm.prereleases.amd.com/packages-multi-arch/ubuntu${UBUNTU_MAJOR_VERSION}${UBUNTU_MINOR_VERSION} stable main" \
+        > /etc/apt/sources.list.d/amdrocm-prerelease.list
+
+RUN . /etc/rocm-build.env && \
+    apt-get update && \
+    apt-get install -y \
+        amdrocm-runtime-dev${ROCM_MAJOR}.${ROCM_MINOR} && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
