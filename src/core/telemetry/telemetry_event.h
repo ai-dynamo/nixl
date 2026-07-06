@@ -179,6 +179,18 @@ telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
     return nullptr;
 }
 
+/**
+ * @brief Exporter-side Prometheus series descriptor for a telemetry event.
+ *
+ * Both the native Prometheus and DOCA/CollectX exporters derive their series
+ * from this single mapping, so they emit identical output. A null @c counterName
+ * or @c gaugeName means the event has no cumulative counter or no last-operation
+ * gauge, respectively. Error events (@c AGENT_ERR_*) and any unmapped value
+ * return an all-null descriptor.
+ *
+ * @param type Telemetry event type.
+ * @return Counter/gauge series names and HELP strings for @p type.
+ */
 [[nodiscard]] constexpr nixlTelemetryMetricDescriptor
 telemetryMetricDescriptor(const nixl_telemetry_event_type_t type) noexcept {
     switch (type) {

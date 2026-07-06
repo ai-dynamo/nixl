@@ -280,22 +280,25 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
         const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event.eventType_);
 
         // Idempotent gauge first, non-idempotent counter increment last.
+        doca_error_t gauge_result = DOCA_SUCCESS;
         if (descriptor.gaugeName != nullptr) {
-            const auto result = appendGaugeSample(event, descriptor.gaugeName, label_values);
-            if (result != DOCA_SUCCESS) {
-                NIXL_ERROR << "Failed to add gauge: " << result;
-                return NIXL_ERR_UNKNOWN;
+            gauge_result = appendGaugeSample(event, descriptor.gaugeName, label_values);
+            if (gauge_result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to add gauge: " << gauge_result;
             }
         }
 
+        doca_error_t counter_result = DOCA_SUCCESS;
         if (descriptor.counterName != nullptr) {
-            const auto result = appendCounterSample(event, descriptor.counterName, label_values);
-            if (result != DOCA_SUCCESS) {
-                NIXL_ERROR << "Failed to add counter: " << result;
-                return NIXL_ERR_UNKNOWN;
+            counter_result = appendCounterSample(event, descriptor.counterName, label_values);
+            if (counter_result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to add counter: " << counter_result;
             }
         }
 
+        if (gauge_result != DOCA_SUCCESS || counter_result != DOCA_SUCCESS) {
+            return NIXL_ERR_UNKNOWN;
+        }
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
