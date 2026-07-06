@@ -63,21 +63,21 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 
 | Event Name | Counter | Gauge | Histogram |
 | ---------- | ------- | ----- | --------- |
-| `agent_memory_registered` | No | Yes | No |
-| `agent_memory_deregistered` | No | Yes | No |
+| `agent_memory_registered` | Yes | Yes | No |
+| `agent_memory_deregistered` | Yes | Yes | No |
 | `agent_tx_bytes` | Yes | Yes | No |
 | `agent_rx_bytes` | Yes | Yes | No |
 | `agent_tx_requests_num` | Yes | No | No |
 | `agent_rx_requests_num` | Yes | No | No |
-| `agent_xfer_time` | No | Yes | No |
-| `agent_xfer_post_time` | No | Yes | No |
+| `agent_xfer_time` | Yes | Yes | No |
+| `agent_xfer_post_time` | Yes | Yes | No |
 | Error event types (`agent_err_*`) | Yes | No | No |
 
 **Counter, Gauge, Histogram** - as implemented by the DOCA Telemetry Exporter
 
-- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values.
+- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values. Counter metrics have the `_total` suffix. The native Prometheus and DOCA exporters emit identical series (same names, types, labels) from one shared metric descriptor.
 - Error events are exposed as one labeled counter: `agent_errors_total{status="..."}`. The `status` label is bounded by the fixed `AGENT_ERR_*` event set.
-- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte events publish both a cumulative counter and a last-operation gauge: `agent_tx_bytes` / `agent_rx_bytes` carry the running total, while `agent_tx_last_bytes` / `agent_rx_last_bytes` (the `agent_<subject>_last_<unit>` convention) carry the byte size of the latest TX/RX request. The memory gauges follow the same convention -- `agent_memory_registered_last_bytes` / `agent_memory_deregistered_last_bytes` -- and report the byte size of the last (de)registration.
+- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte events publish both a cumulative counter and a last-operation gauge: `agent_tx_bytes_total` / `agent_rx_bytes_total` carry the running total, while `agent_tx_last_bytes` / `agent_rx_last_bytes` (the `agent_<subject>_last_<unit>` convention) carry the byte size of the latest TX/RX request. The memory gauges follow the same convention -- `agent_memory_registered_last_bytes` / `agent_memory_deregistered_last_bytes` -- and report the byte size of the last (de)registration.
 - **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
 
 ### Metric labels

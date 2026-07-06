@@ -278,6 +278,57 @@ TEST_F(telemetryTest, TelemetryEventStructure) {
     EXPECT_EQ(event1.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
 }
 
+TEST(telemetryMetricContract, DescriptorIsUnifiedExporterSeriesContract) {
+    using et = nixl_telemetry_event_type_t;
+
+    struct expectedSeries {
+        et type;
+        const char *counter;
+        const char *gauge;
+    };
+
+    const std::vector<expectedSeries> contract = {
+        {et::AGENT_TX_BYTES, "agent_tx_bytes_total", "agent_tx_last_bytes"},
+        {et::AGENT_RX_BYTES, "agent_rx_bytes_total", "agent_rx_last_bytes"},
+        {et::AGENT_TX_REQUESTS_NUM, "agent_tx_requests_num_total", nullptr},
+        {et::AGENT_RX_REQUESTS_NUM, "agent_rx_requests_num_total", nullptr},
+        {et::AGENT_MEMORY_REGISTERED,
+         "agent_memory_registered_total",
+         "agent_memory_registered_last_bytes"},
+        {et::AGENT_MEMORY_DEREGISTERED,
+         "agent_memory_deregistered_total",
+         "agent_memory_deregistered_last_bytes"},
+        {et::AGENT_XFER_TIME, "agent_xfer_time_total", "agent_xfer_time"},
+        {et::AGENT_XFER_POST_TIME, "agent_xfer_post_time_total", "agent_xfer_post_time"},
+    };
+
+    ASSERT_EQ(contract.size(), telemetry_metric_event_types.size());
+    for (const auto &expected : contract) {
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(expected.type);
+        ASSERT_NE(descriptor.counterName, nullptr);
+        EXPECT_EQ(std::string(descriptor.counterName), expected.counter);
+        if (expected.gauge == nullptr) {
+            EXPECT_EQ(descriptor.gaugeName, nullptr);
+        } else {
+            ASSERT_NE(descriptor.gaugeName, nullptr);
+            EXPECT_EQ(std::string(descriptor.gaugeName), expected.gauge);
+        }
+    }
+
+    for (const auto type : telemetry_metric_event_types) {
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(type);
+        ASSERT_NE(descriptor.counterName, nullptr);
+        const std::string counter(descriptor.counterName);
+        EXPECT_EQ(counter.substr(counter.size() - std::string("_total").size()), "_total");
+    }
+
+    for (const auto type : telemetry_error_event_types) {
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(type);
+        EXPECT_EQ(descriptor.counterName, nullptr);
+        EXPECT_EQ(descriptor.gaugeName, nullptr);
+    }
+}
+
 TEST_F(telemetryTest, ShortRunInterval) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 

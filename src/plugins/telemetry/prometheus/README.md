@@ -75,8 +75,8 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 | `agent_rx_bytes` | Yes | Yes | No |
 | `agent_tx_requests_num` | Yes | No | No |
 | `agent_rx_requests_num` | Yes | No | No |
-| `agent_xfer_time` | Yes | No | No |
-| `agent_xfer_post_time` | Yes | No | No |
+| `agent_xfer_time` | Yes | Yes | No |
+| `agent_xfer_post_time` | Yes | Yes | No |
 | Error event types (`agent_err_*`) | Yes | No | No |
 
 **Counter, Gauge, Histogram** - as implemented by the Prometheus exporter

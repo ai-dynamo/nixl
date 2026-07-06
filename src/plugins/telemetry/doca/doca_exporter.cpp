@@ -66,70 +66,6 @@ docaTimestamp() noexcept {
     return ts;
 }
 
-[[nodiscard]] constexpr bool
-isCounterEvent(nixl_telemetry_event_type_t event_type) noexcept {
-    switch (event_type) {
-    case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
-    case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
-    case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
-        return true;
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
-    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
-    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
-    case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE:
-    case nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
-    case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
-        return false;
-    }
-    return false;
-}
-
-// Gauge series name for an event, or nullptr if the event has no gauge.
-[[nodiscard]] constexpr const char *
-gaugeMetricName(nixl_telemetry_event_type_t event_type) noexcept {
-    switch (event_type) {
-    case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
-        return "agent_tx_last_bytes";
-    case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
-        return "agent_rx_last_bytes";
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
-        return "agent_memory_registered_last_bytes";
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
-        return "agent_memory_deregistered_last_bytes";
-    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
-        return "agent_xfer_time";
-    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
-        return "agent_xfer_post_time";
-    case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
-    case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE:
-    case nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
-    case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
-        return nullptr;
-    }
-    return nullptr;
-}
-
 std::mutex g_ctx_mutex;
 std::weak_ptr<DocaSharedContext> g_ctx_weak;
 std::mutex g_metrics_mutex;
@@ -283,16 +219,16 @@ nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
 
 doca_error_t
 nixlTelemetryDocaExporter::appendCounterSample(const nixlTelemetryEvent &event,
+                                               const char *counter_name,
                                                const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
     // Counter events carry a per-operation delta; increment so the exported
     // counter is a monotonic cumulative total (add_counter would instead push
     // each delta as an absolute value, yielding a non-monotonic series).
     return doca_telemetry_exporter_metrics_add_counter_increment(ctx_->source,
                                                                  docaTimestamp(),
-                                                                 event_name.c_str(),
+                                                                 counter_name,
                                                                  event.value_,
                                                                  ctx_->label_set_id,
                                                                  label_values);
@@ -341,17 +277,19 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
             return NIXL_SUCCESS;
         }
 
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event.eventType_);
+
         // Idempotent gauge first, non-idempotent counter increment last.
-        if (const char *const gauge_name = gaugeMetricName(event.eventType_)) {
-            const auto result = appendGaugeSample(event, gauge_name, label_values);
+        if (descriptor.gaugeName != nullptr) {
+            const auto result = appendGaugeSample(event, descriptor.gaugeName, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add gauge: " << result;
                 return NIXL_ERR_UNKNOWN;
             }
         }
 
-        if (isCounterEvent(event.eventType_)) {
-            const auto result = appendCounterSample(event, label_values);
+        if (descriptor.counterName != nullptr) {
+            const auto result = appendCounterSample(event, descriptor.counterName, label_values);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add counter: " << result;
                 return NIXL_ERR_UNKNOWN;
