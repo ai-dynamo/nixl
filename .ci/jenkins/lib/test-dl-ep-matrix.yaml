@@ -8,9 +8,9 @@
 #
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and server resources
-# - Docker Images: Dedicated EP base + build_helper (nixl-ci-dl-gpu-ep-base-... and
+# - Docker Images: Dedicated EP bases + build_helper (nixl-ci-dl-gpu-ep-base-... and
 #                  build_helper_dl_ep)
-# - Matrix Axes: aarch64, UCX master + v1.22.x
+# - Matrix Axes: aarch64, CUDA 12.9/13.3, UCX master + v1.22.x
 # - Run Steps: build PR image with BUILD_NIXL_EP=true, allocate Slurm, run
 #              .gitlab/test_ep.sh (elastic.py NVLink + RDMA on 4 GPUs)
 #
@@ -74,6 +74,14 @@ pvc_volumes:
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
+     name: 'nixl-ci-dl-gpu-ep-base-25.06-cuda12.9-ubuntu24.04',
+     tag: "${CI_IMAGE_TAG}",
+     arch: "aarch64",
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+    }
+
+  - {
+     file: '.ci/dockerfiles/Dockerfile.base',
      name: 'nixl-ci-dl-gpu-ep-base-pytorch26.06-cuda13.3-ubuntu24.04',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
@@ -92,11 +100,14 @@ matrix:
   axes:
     arch:
       - aarch64
+    cuda_image:
+      - 25.06-cuda12.9-ubuntu24.04
+      - pytorch26.06-cuda13.3-ubuntu24.04
     ucx_version:
       - master
       - v1.22.x
 
-taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
+taskName: "${name}/${arch}/${cuda_image}/ucx-${ucx_version}/${axis_index}"
 
 steps:
   - name: Compiling NIXL EP Docker Image for DL
@@ -105,7 +116,7 @@ steps:
     parallel: false
     run: |
       set -x
-      export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-dl-gpu-ep-test-${ucx_version}:${BUILD_NUMBER}
+      export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-dl-gpu-ep-test-${cuda_image}-${ucx_version}:${BUILD_NUMBER}
       rm -rf /etc/containers/storage.conf && rm -f /usr/share/containers/storage.conf
       podman build --network host --creds ${REPO_USER}:${REPO_PASS} \
       --build-arg UCX_VERSION=${ucx_version} \
@@ -114,7 +125,7 @@ steps:
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
       --build-arg BUILD_NIXL_EP=true \
-      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base-pytorch26.06-cuda13.3-ubuntu24.04:${CI_IMAGE_TAG} \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base-${cuda_image}:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE}
@@ -132,8 +143,8 @@ steps:
       nodes: "${SLURM_NODES}"
       jobTimeout: "${SLURM_JOB_TIMEOUT}"
       immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "nixl-ci-ep-${ucx_version}-${BUILD_NUMBER}"
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_ep_${ucx_version}_${BUILD_NUMBER}.txt"
+      jobName: "nixl-ci-ep-${cuda_image}-${ucx_version}-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_ep_${cuda_image}_${ucx_version}_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
         "--account=${SLURM_ACCOUNT}"
@@ -147,13 +158,13 @@ steps:
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_ep_${ucx_version}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_ep_${cuda_image}_${ucx_version}_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_ep.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-ep-test-${ucx_version}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-ep-test-${cuda_image}-${ucx_version}:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
-      containerName: "nixl-ci-ep-${ucx_version}-${BUILD_NUMBER}"
+      containerName: "nixl-ci-ep-${cuda_image}-${ucx_version}-${BUILD_NUMBER}"
 
 pipeline_stop:
   containerSelector: "{name: 'build_helper_dl_ep'}"
