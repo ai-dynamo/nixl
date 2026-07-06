@@ -214,12 +214,12 @@ telemetryMetricDescriptor(const nixl_telemetry_event_type_t type) noexcept {
                 "Memory deregistered by the last operation"};
     case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
         return {"agent_xfer_time_total",
-                "Start to Complete (per request)",
+                "Cumulative sum of transfer time from start to completion",
                 "agent_xfer_time",
                 "Transfer time of the last request"};
     case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
         return {"agent_xfer_post_time_total",
-                "Start to posting to Back-End (per request)",
+                "Cumulative sum of time from start to posting to the back-end",
                 "agent_xfer_post_time",
                 "Post time of the last request"};
     case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:

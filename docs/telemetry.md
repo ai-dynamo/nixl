@@ -65,8 +65,10 @@ stream:
   expose `agent_tx_bytes_total` / `agent_rx_bytes_total` (counters, OpenMetrics
   `_total` suffix) alongside `agent_tx_last_bytes` / `agent_rx_last_bytes`
   (gauges). The memory events likewise expose both a cumulative `_total` counter
-  and a `_last_bytes` gauge on both exporters. This is purely an exporter-side
-  derivation: no new event type is emitted and the buffer format is unchanged.
+  and a `_last_bytes` gauge on both exporters, and the transfer-time events expose
+  a `_total` counter alongside a last-op gauge (`agent_xfer_time` /
+  `agent_xfer_post_time`). This is purely an exporter-side derivation: no new event
+  type is emitted and the buffer format is unchanged.
 - **Error counters**: the Prometheus and DOCA exporters expose error events as
   `agent_errors_total{status="<status>"}`. The `status` label is bounded by the
   fixed `AGENT_ERR_*` event set: `not_posted`, `invalid_param`, `backend`,
