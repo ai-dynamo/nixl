@@ -83,9 +83,13 @@ gpuMemset(void *ptr, int value, size_t size, const char *message) {
 inline void
 gpuGetDeviceCount(int *count, const char *message) {
 #ifdef HAVE_CUDA
-    checkCudaError(cudaGetDeviceCount(count), message);
+    if (cudaGetDeviceCount(count) != cudaSuccess) {
+        *count = 0;
+    }
 #elif defined(HAVE_ROCM)
-    checkHipError(hipGetDeviceCount(count), message);
+    if (hipGetDeviceCount(count) != hipSuccess) {
+        *count = 0;
+    }
 #else
     *count = 0;
 #endif
