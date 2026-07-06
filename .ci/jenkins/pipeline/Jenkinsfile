@@ -73,5 +73,6 @@ try {
             currentBuild.resultIsBetterOrEqualTo('SUCCESS') ? GitHubCommitState.SUCCESS : GitHubCommitState.FAILURE,
             env.JOB_BASE_NAME
         )
+        githubHelper.uploadLogs(this, env.JOB_NAME, env.BUILD_NUMBER, null, null)
     }
 }
