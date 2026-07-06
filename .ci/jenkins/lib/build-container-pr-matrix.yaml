@@ -38,9 +38,8 @@ env:
   BUILD_PATHS_RE: '^(contrib/|benchmark/|\.ci/|pyproject\.toml$|setup\.py$|(.*/)?meson\.build$|(.*/)?meson\.options$|(.*/)?meson_options\.txt$)'
   # Doc-only paths that never affect the build, carved out of BUILD_PATHS_RE.
   BUILD_PATHS_EXCLUDE_RE: '^\.ci/docs/'
-  # Inter-step flag file (workspace-relative): "1" = run the build,
-  # "0" = PR is not build-affecting, skip.
-  BUILD_FLAG_FILE: ".container_build_relevant"
+  # Inter-step flag: "1" = run the build, "0" = PR is not build-affecting, skip.
+  BUILD_FLAG_FILE: "$WORKSPACE/.container_build_relevant"
 
 taskName: "container-build/${target}/${arch}"
 
