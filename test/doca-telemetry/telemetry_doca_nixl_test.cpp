@@ -111,8 +111,9 @@ TEST_F(docaNixlExporterTest, GaugeReflectsLastPushedValue) {
     const nixlTelemetryExporterInitParams params{agentName, 4096};
     nixlTelemetryDocaExporter exporter(params);
 
-    const std::string metric = std::string(nixlEnumStrings::telemetryEventTypeStr(
-        nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED));
+    // The memory gauge is served under its last-operation series name, which is
+    // distinct from the AGENT_MEMORY_REGISTERED event string.
+    const std::string metric = "agent_memory_registered_last_bytes";
     const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
 
     constexpr std::array<uint64_t, 4> values{4096, 65536, 1024, 8192};
@@ -210,6 +211,38 @@ TEST_F(docaNixlExporterTest, ByteEventsEmitCumulativeCountersAndLastGauges) {
         << "rx counter must sum every pushed delta (5+15)";
     EXPECT_EQ(metrics.latestValue(rxLast, labels), std::optional<double>(15.0))
         << "rx last-op gauge must reflect only the final pushed value (15), not a sum";
+}
+
+TEST_F(docaNixlExporterTest, ErrorCountersUseBoundedStatusLabel) {
+    constexpr char agentName[] = "nixl_doca_error_counter_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM, 1}),
+              NIXL_SUCCESS);
+    ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM, 1}),
+              NIXL_SUCCESS);
+    ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_ERR_BACKEND, 1}),
+              NIXL_SUCCESS);
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const std::string metric = "agent_errors_total";
+    const nixl::doca_test::labelSet invalidParamLabels{{"agent_name", agentName},
+                                                       {"status", "invalid_param"}};
+    const nixl::doca_test::labelSet backendLabels{{"agent_name", agentName}, {"status", "backend"}};
+
+    const auto metrics =
+        scrapeUntilValue(port_, metric, 2.0, std::chrono::seconds(12), invalidParamLabels);
+    EXPECT_EQ(metrics.latestValue(metric, invalidParamLabels), std::optional<double>(2.0))
+        << "invalid_param errors must accumulate under a bounded status label";
+    EXPECT_EQ(metrics.latestValue(metric, backendLabels), std::optional<double>(1.0))
+        << "backend errors must use a distinct status label on the same metric";
+
+    for (const auto &[id, samples] : metrics.series()) {
+        (void)samples;
+        EXPECT_NE(id.name.rfind("agent_err_", 0), 0)
+            << "legacy per-type error counter must not be published: " << id.name;
+    }
 }
 
 int

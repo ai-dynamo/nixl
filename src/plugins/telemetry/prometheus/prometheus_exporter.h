@@ -98,21 +98,24 @@ private:
     std::shared_ptr<prometheus::Exposer> exposer_;
     std::shared_ptr<prometheus::Registry> registry_;
 
-    std::unordered_map<std::string, CounterEntry> counters_;
-    std::unordered_map<std::string, GaugeEntry> gauges_;
+    std::unordered_map<nixl_telemetry_event_type_t, CounterEntry> counters_;
+    std::unordered_map<nixl_telemetry_event_type_t, GaugeEntry> gauges_;
 
     void
     initializeMetrics();
 
     void
-    registerCounter(const std::string &name, const std::string &help);
+    registerCounter(nixl_telemetry_event_type_t event_type, const std::string &help);
 
-    // event_name is the lookup key exportEvent() uses (the telemetry event
-    // name); metric_name is the exposed Prometheus series name. They differ for
-    // last-operation gauges, e.g. the AGENT_TX_BYTES event ("agent_tx_bytes")
-    // drives a gauge published as "agent_tx_last_bytes".
     void
-    registerGauge(const std::string &event_name,
+    registerErrorCounters();
+
+    // event_type is the lookup key exportEvent() uses; metric_name is the
+    // exposed Prometheus series name. They differ for last-operation gauges,
+    // e.g. the AGENT_TX_BYTES event drives a gauge published as
+    // "agent_tx_last_bytes".
+    void
+    registerGauge(nixl_telemetry_event_type_t event_type,
                   const std::string &metric_name,
                   const std::string &help);
 };

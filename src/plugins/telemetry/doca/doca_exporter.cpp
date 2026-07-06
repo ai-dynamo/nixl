@@ -104,9 +104,9 @@ gaugeMetricName(nixl_telemetry_event_type_t event_type) noexcept {
     case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
         return "agent_rx_last_bytes";
     case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
-        return "agent_memory_registered";
+        return "agent_memory_registered_last_bytes";
     case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
-        return "agent_memory_deregistered";
+        return "agent_memory_deregistered_last_bytes";
     case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
         return "agent_xfer_time";
     case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
@@ -147,6 +147,7 @@ struct DocaSharedContext {
     doca_telemetry_exporter_schema *schema = nullptr;
     doca_telemetry_exporter_source *source = nullptr;
     doca_telemetry_exporter_label_set_id_t label_set_id = 0;
+    doca_telemetry_exporter_label_set_id_t error_label_set_id = 0;
     bool source_started = false;
     bool metrics_context_created = false;
 
@@ -215,6 +216,13 @@ DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
             doca_telemetry_exporter_metrics_add_label_names(source, label_names, 1, &label_set_id);
         if (result != DOCA_SUCCESS) {
             throw std::runtime_error("Failed to create DOCA label set");
+        }
+
+        const char *error_label_names[] = {"agent_name", "status"};
+        result = doca_telemetry_exporter_metrics_add_label_names(
+            source, error_label_names, 2, &error_label_set_id);
+        if (result != DOCA_SUCCESS) {
+            throw std::runtime_error("Failed to create DOCA error label set");
         }
 
         doca_telemetry_exporter_metrics_set_flush_interval_ms(source, 1000);
@@ -292,6 +300,21 @@ nixlTelemetryDocaExporter::appendCounterSample(const nixlTelemetryEvent &event,
 }
 
 doca_error_t
+nixlTelemetryDocaExporter::appendErrorCounterSample(const nixlTelemetryEvent &event,
+                                                    const char *status) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    const char *label_values[] = {agent_name_.c_str(), status};
+    return doca_telemetry_exporter_metrics_add_counter_increment(ctx_->source,
+                                                                 docaTimestamp(),
+                                                                 "agent_errors_total",
+                                                                 event.value_,
+                                                                 ctx_->error_label_set_id,
+                                                                 label_values);
+#pragma GCC diagnostic pop
+}
+
+doca_error_t
 nixlTelemetryDocaExporter::appendGaugeSample(const nixlTelemetryEvent &event,
                                              const char *metric_name,
                                              const char *label_values[]) {
@@ -307,6 +330,16 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
     try {
         const std::lock_guard lock(g_metrics_mutex);
         const char *label_values[] = {agent_name_.c_str()};
+
+        if (const char *const status =
+                nixlEnumStrings::telemetryErrorStatusLabel(event.eventType_)) {
+            const auto result = appendErrorCounterSample(event, status);
+            if (result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to add error counter: " << result;
+                return NIXL_ERR_UNKNOWN;
+            }
+            return NIXL_SUCCESS;
+        }
 
         // Idempotent gauge first, non-idempotent counter increment last.
         if (const char *const gauge_name = gaugeMetricName(event.eventType_)) {
