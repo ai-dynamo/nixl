@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "nixl_time.h"
+#include "nixl_duration.h"
 
 #include <fstream>
 #include <string>
@@ -30,12 +30,12 @@ namespace detail {
 
     namespace {
 
+#if defined(__x86_64__)
         [[nodiscard]] int64_t
         steadyNowNs() {
             return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
         }
 
-#if defined(__x86_64__)
         // Invariant TSC (constant + non-stop): CPUID.80000007H:EDX[8]. Necessary but not
         // sufficient -- it does not prove cross-socket synchronization.
         [[nodiscard]] bool
@@ -53,7 +53,7 @@ namespace detail {
         // The kernel selects the TSC as the CLOCK_MONOTONIC source only after its
         // boot-time cross-core synchronization check (tsc_sync.c) passes; if it detects
         // warping it demotes to hpet/acpi_pm. Deferring to that decision is the reliable
-        // way to know the TSC is safe to use as a wall-time source here.
+        // way to know the TSC is safe to use as a monotonic source here.
         [[nodiscard]] bool
         kernelClocksourceIsTsc() {
             std::ifstream f("/sys/devices/system/clocksource/clocksource0/current_clocksource");
@@ -115,16 +115,6 @@ namespace detail {
                 cal.useHwCounter = true;
             }
 #endif
-
-            if (cal.useHwCounter) {
-                // Pair the counter with steady_clock so fastSteadyNow() lands on the
-                // steady_clock timeline. Read the counter between two steady reads and
-                // anchor to their midpoint to halve the pairing skew.
-                const int64_t s0 = steadyNowNs();
-                cal.counterRef = readCpuCounter();
-                const int64_t s1 = steadyNowNs();
-                cal.steadyRefNs = s0 + (s1 - s0) / 2;
-            }
 
             return cal;
         }

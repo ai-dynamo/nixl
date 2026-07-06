@@ -42,6 +42,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -49,7 +50,7 @@
 
 #include "telemetry.h"
 #include "telemetry_event.h"
-#include "nixl_time.h"
+#include "nixl_duration.h"
 #include "common.h"
 
 namespace fs = std::filesystem;
@@ -120,6 +121,34 @@ TEST_F(telemetryBenchmark, DISABLED_ClockNowRead) {
     report("clock_now_read", ns);
 }
 
+// Raw C clock_gettime(CLOCK_MONOTONIC): what steady_clock::now() calls under the
+// hood on Linux. Confirms the C++ wrapper adds no meaningful overhead -- the cost
+// is the vDSO clock read, not std::chrono.
+TEST_F(telemetryBenchmark, DISABLED_ClockGettimeMonotonic) {
+    volatile int64_t sink = 0;
+    const double ns = bestNsPerOp(kIters, kRepeats, [&](size_t) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        sink = sink + ts.tv_nsec;
+    });
+    (void)sink;
+    report("clock_gettime_monotonic", ns);
+}
+
+// clock_gettime(CLOCK_MONOTONIC_COARSE): a much cheaper monotonic read at tick
+// (~1-4 ms) resolution. Candidate source for the absolute startTime when sub-ms
+// accuracy there is not required.
+TEST_F(telemetryBenchmark, DISABLED_ClockGettimeMonotonicCoarse) {
+    volatile int64_t sink = 0;
+    const double ns = bestNsPerOp(kIters, kRepeats, [&](size_t) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+        sink = sink + ts.tv_nsec;
+    });
+    (void)sink;
+    report("clock_gettime_monotonic_coarse", ns);
+}
+
 // Building block: cost of a raw hardware-counter read, the candidate cheap
 // replacement for steady_clock::now() on the datapath -- rdtsc on x86_64, the
 // cntvct_el0 virtual counter on aarch64. Reports -1 on other architectures.
@@ -147,23 +176,23 @@ TEST_F(telemetryBenchmark, DISABLED_HwCounterRead) {
 #endif
 }
 
-// Cost of nixlTime::fastSteadyNow() -- the proposed replacement for
-// steady_clock::now() on the datapath (CPU counter mapped onto the steady_clock
-// timeline). Compare against clock_now_read.
-TEST_F(telemetryBenchmark, DISABLED_FastClockNowRead) {
+// Cost of a nixlDuration measurement -- the CPU-counter-backed stopwatch the
+// datapath uses for per-transfer durations. Compare against clock_now_read.
+TEST_F(telemetryBenchmark, DISABLED_NixlDurationElapsed) {
+    nixlTime::nixlDuration timer;
     volatile int64_t sink = 0;
-    const double ns = bestNsPerOp(kIters, kRepeats, [&](size_t) {
-        sink = sink + nixlTime::fastSteadyNow().time_since_epoch().count();
-    });
+    const double ns =
+        bestNsPerOp(kIters, kRepeats, [&](size_t) { sink = sink + timer.elapsed().count(); });
     (void)sink;
-    report(nixlTime::fastClockUsesHwCounter() ? "fast_clock_now_read (hw)" :
-                                                "fast_clock_now_read (fallback)",
+    report(nixlTime::fastClockUsesHwCounter() ? "nixl_duration_elapsed (hw)" :
+                                                "nixl_duration_elapsed (fallback)",
            ns);
 }
 
-// Per-transfer tax with fastSteadyNow() instead of steady_clock::now(): the
+// Per-transfer tax with the new split: a steady_clock::now() for the exposed
+// absolute startTime plus a nixlDuration stopwatch for the durations. The
 // before/after for the fix. Compare against per_transfer_tax_saturated.
-TEST_F(telemetryBenchmark, DISABLED_PerTransferTaxFastClock) {
+TEST_F(telemetryBenchmark, DISABLED_PerTransferTaxNixlDuration) {
     constexpr size_t buf_cap = 64;
     env_.addVar(TELEMETRY_BUFFER_SIZE_VAR, std::to_string(buf_cap));
     env_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "3600000");
@@ -177,13 +206,12 @@ TEST_F(telemetryBenchmark, DISABLED_PerTransferTaxFastClock) {
         volatile int64_t sink = 0;
         const auto start = std::chrono::steady_clock::now();
         for (size_t i = 0; i < kIters; ++i) {
-            const auto t0 = nixlTime::fastSteadyNow();
-            const auto t1 = nixlTime::fastSteadyNow();
-            const auto post = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0);
-            const auto t2 = nixlTime::fastSteadyNow();
-            const auto xfer = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t0);
+            const auto startTime = std::chrono::steady_clock::now();
+            nixlTime::nixlDuration timer;
+            const auto post = timer.elapsed();
+            const auto xfer = timer.elapsed();
             telemetry.addXferStats(xfer, true, 4096, post);
-            sink = sink + t2.time_since_epoch().count();
+            sink = sink + startTime.time_since_epoch().count();
         }
         const auto end = std::chrono::steady_clock::now();
         (void)sink;
@@ -192,7 +220,45 @@ TEST_F(telemetryBenchmark, DISABLED_PerTransferTaxFastClock) {
             static_cast<double>(kIters);
         best = std::min(best, per);
     }
-    report("per_transfer_tax_fastclock", best);
+    report("per_transfer_tax_nixl_duration", best);
+
+    env_.popVar();
+    env_.popVar();
+}
+
+// Per-transfer tax with a coarse-clock absolute startTime (CLOCK_MONOTONIC_COARSE)
+// instead of steady_clock::now(), keeping nixlDuration for the durations.
+// Quantifies the win from a cheaper (but ~ms-resolution) startTime source.
+TEST_F(telemetryBenchmark, DISABLED_PerTransferTaxCoarseStart) {
+    constexpr size_t buf_cap = 64;
+    env_.addVar(TELEMETRY_BUFFER_SIZE_VAR, std::to_string(buf_cap));
+    env_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "3600000");
+
+    double best = std::numeric_limits<double>::max();
+    for (size_t r = 0; r < kRepeats; ++r) {
+        nixlTelemetry telemetry("bench_tax_coarse", "NOP");
+        for (size_t i = 0; i < buf_cap; ++i) {
+            telemetry.updateTxBytes(i);
+        }
+        volatile int64_t sink = 0;
+        const auto start = std::chrono::steady_clock::now();
+        for (size_t i = 0; i < kIters; ++i) {
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+            nixlTime::nixlDuration timer;
+            const auto post = timer.elapsed();
+            const auto xfer = timer.elapsed();
+            telemetry.addXferStats(xfer, true, 4096, post);
+            sink = sink + ts.tv_nsec;
+        }
+        const auto end = std::chrono::steady_clock::now();
+        (void)sink;
+        const double per =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() /
+            static_cast<double>(kIters);
+        best = std::min(best, per);
+    }
+    report("per_transfer_tax_coarse_start", best);
 
     env_.popVar();
     env_.popVar();
