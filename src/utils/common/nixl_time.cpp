@@ -18,7 +18,6 @@
 #include "nixl_time.h"
 
 #include <fstream>
-#include <mutex>
 #include <string>
 #include <thread>
 
@@ -130,26 +129,14 @@ namespace detail {
             return cal;
         }
 
-        NIXL_CONSTINIT std::once_flag g_calibrateOnce;
-
     } // namespace
 
-    NIXL_CONSTINIT fastClockCal g_fastClockCal{};
-    NIXL_CONSTINIT std::atomic<bool> g_fastClockReady{false};
-
-    void
-    ensureFastClockCalibrated() {
-        std::call_once(g_calibrateOnce, []() {
-            g_fastClockCal = calibrate();
-            g_fastClockReady.store(true, std::memory_order_release);
-        });
-    }
+    fastClockCal g_fastClockCal = calibrate();
 
 } // namespace detail
 
 [[nodiscard]] bool
 fastClockUsesHwCounter() {
-    detail::ensureFastClockCalibrated();
     return detail::g_fastClockCal.useHwCounter;
 }
 

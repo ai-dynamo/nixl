@@ -17,15 +17,8 @@
 #ifndef _NIXL_TIME_H
 #define _NIXL_TIME_H
 
-#include <atomic>
 #include <chrono>
 #include <cstdint>
-
-#if defined(__cpp_constinit)
-#define NIXL_CONSTINIT constinit
-#else
-#define NIXL_CONSTINIT
-#endif
 
 namespace nixlTime {
 
@@ -80,11 +73,7 @@ namespace detail {
         double nsPerTick; // counter period in nanoseconds
     };
 
-    extern NIXL_CONSTINIT fastClockCal g_fastClockCal;
-    extern NIXL_CONSTINIT std::atomic<bool> g_fastClockReady;
-
-    void
-    ensureFastClockCalibrated();
+    extern fastClockCal g_fastClockCal;
 
     [[nodiscard]] inline uint64_t
     readCpuCounter() {
@@ -117,9 +106,6 @@ namespace detail {
 // when it is invariant and calibrated, else steady_clock::now().
 [[nodiscard]] inline steady_clock::time_point
 fastSteadyNow() {
-    if (!detail::g_fastClockReady.load(std::memory_order_acquire)) {
-        detail::ensureFastClockCalibrated();
-    }
     const detail::fastClockCal &cal = detail::g_fastClockCal;
     if (!cal.useHwCounter) {
         return steady_clock::now();
