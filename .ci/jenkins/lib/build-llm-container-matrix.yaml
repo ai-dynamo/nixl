@@ -4,8 +4,8 @@
 # pre-built NIXL wheel set.
 #
 #   - vllm-cu12-nixl-<ver>    : Dockerfile.vllm   + vllm/vllm-openai:latest-cu129
-#   - vllm-cu13-nixl-<ver>    : Dockerfile.vllm   + vllm/vllm-openai:latest
-#   - sglang-cu12-nixl-<ver>  : Dockerfile.sglang + lmsysorg/sglang:latest
+#   - vllm-cu13-nixl-<ver>    : Dockerfile.vllm   + vllm/vllm-openai:v0.24.0
+#   - sglang-cu12-nixl-<ver>  : Dockerfile.sglang + lmsysorg/sglang:v0.5.14-cu129-runtime
 #   - sglang-cu13-nixl-<ver>  : Dockerfile.sglang + lmsysorg/sglang:latest-cu130-runtime
 #
 # For RC0 builds the upstream defaults are used. For subsequent RCs (or
@@ -184,7 +184,9 @@ steps:
       IMAGE="${ARTIFACTORY_REGISTRY_URL}/vllm-cu13-nixl:${IMAGE_TAG}-${arch}"
       # Podman enforces short-name resolution, so always pass a fully-qualified
       # BASE_IMAGE. Falls back to the upstream docker.io image when no override.
-      BASE="${BASE_IMAGE_VLLM_CU13:-docker.io/vllm/vllm-openai:latest}"
+      # Pinned tag: vllm-openai:latest makes no CUDA promise, so the cu13 lane
+      # could silently change CUDA version when upstream moves latest.
+      BASE="${BASE_IMAGE_VLLM_CU13:-docker.io/vllm/vllm-openai:v0.24.0}"
       podman build \
         --platform "${PLATFORM}" \
         --build-arg "BASE_IMAGE=${BASE}" \
@@ -238,7 +240,9 @@ steps:
         *)       echo "Unsupported arch: ${arch}"; exit 1 ;;
       esac
       IMAGE="${ARTIFACTORY_REGISTRY_URL}/sglang-cu12-nixl:${IMAGE_TAG}-${arch}"
-      BASE="${BASE_IMAGE_SGLANG_CU12:-docker.io/lmsysorg/sglang:latest}"
+      # Pin the cu12 default to an immutable CUDA 12 tag; sglang:latest tracks
+      # the newest CUDA (currently 13), which would build a cu13 image here.
+      BASE="${BASE_IMAGE_SGLANG_CU12:-docker.io/lmsysorg/sglang:v0.5.14-cu129-runtime}"
       podman build \
         --platform "${PLATFORM}" \
         --build-arg "BASE_IMAGE=${BASE}" \
