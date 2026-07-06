@@ -285,6 +285,21 @@ if cuda_dep.found()
     add_project_arguments('-std=c++20', language: 'cuda')
 
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
+
+    # When a sanitizer is enabled, forward its runtime to the nvcc-driven link so
+    # mixed C++/CUDA executables get libasan/libubsan/libtsan directly on their
+    # link line. The gtest binary is the case that bites: it compiles the
+    # device_api .cu sources, so meson links it with nvcc, but the sanitizer flag
+    # (added for language 'cpp' above) never reaches that link -- while its C++
+    # TUs were compiled with -fsanitize. Result: "undefined reference to
+    # __asan_unregister_globals ... libasan.so: DSO missing from command line".
+    # nvcc's -Xcompiler treats commas as argument separators, so forward each
+    # sanitizer part on its own -Xcompiler instead of -fsanitize=address,undefined.
+    if sanitizer != 'none'
+        foreach _san_part : sanitizer_parts
+            add_project_link_arguments('-Xcompiler=-fsanitize=' + _san_part, language: 'cuda')
+        endforeach
+    endif
     message('nvcc version: ' + nvcc.version())
     message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
     if nvcc.version().version_compare('>=12.8')
