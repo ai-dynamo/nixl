@@ -38,6 +38,7 @@ protected:
     }
 };
 
+using max_key_len_signature_t = uint8_t (iSpdkKvDevice::*)() const;
 using max_value_len_signature_t = size_t (iSpdkKvDevice::*)() const;
 using store_signature_t = spdk_kv_status_t (iSpdkKvDevice::*)(const void *,
                                                               uint8_t,
@@ -46,6 +47,7 @@ using store_signature_t = spdk_kv_status_t (iSpdkKvDevice::*)(const void *,
 using retrieve_signature_t =
     spdk_kv_status_t (iSpdkKvDevice::*)(const void *, uint8_t, void *, size_t, size_t *);
 
+static_assert(std::is_same_v<decltype(&iSpdkKvDevice::maxKeyLen), max_key_len_signature_t>);
 static_assert(std::is_same_v<decltype(&iSpdkKvDevice::maxValueLen), max_value_len_signature_t>);
 static_assert(std::is_same_v<decltype(&iSpdkKvDevice::store), store_signature_t>);
 static_assert(std::is_same_v<decltype(&iSpdkKvDevice::retrieve), retrieve_signature_t>);

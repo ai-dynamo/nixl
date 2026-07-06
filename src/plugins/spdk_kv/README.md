@@ -97,7 +97,7 @@ class iSpdkKvDevice {
 public:
     virtual ~iSpdkKvDevice() = default;
 
-    virtual uint32_t maxKeyLen() const = 0;
+    virtual uint8_t maxKeyLen() const = 0;
     virtual size_t maxValueLen() const = 0;
 
     virtual void *dmaAlloc(size_t len) = 0;
@@ -142,7 +142,7 @@ public:
 
     ~nixlKvHostShimDevice() override;               // kv_host_shim_close(shim_)
 
-    uint32_t maxKeyLen() const override;            // kv_host_shim_max_key_len
+    uint8_t maxKeyLen() const override;             // kv_host_shim_max_key_len
     size_t maxValueLen() const override;            // kv_host_shim_max_value_len
     void *dmaAlloc(size_t len) override;            // kv_host_shim_dma_alloc
     void  dmaFree(void *buf) override;              // kv_host_shim_dma_free

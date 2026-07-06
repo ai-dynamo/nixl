@@ -124,9 +124,9 @@ class iSpdkKvDevice {
 public:
     virtual ~iSpdkKvDevice() = default;
 
-    /** Maximum key length the device key space can hold (bytes), or 0 when the
-     *  device advertises no limit. */
-    virtual uint32_t
+    /** Maximum key length usable through this interface (bytes), or 0 when the
+     *  device advertises no additional limit. */
+    virtual uint8_t
     maxKeyLen() const = 0;
 
     /** Maximum value length the device can store (bytes), or 0 when the device
