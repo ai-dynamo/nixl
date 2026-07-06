@@ -19,6 +19,7 @@
 
 set -e
 set -x
+ulimit -c unlimited
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
