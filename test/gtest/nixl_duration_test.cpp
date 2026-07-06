@@ -36,6 +36,9 @@ TEST(nixlDurationTest, ElapsedIsMonotonic) {
 }
 
 TEST(nixlDurationTest, MeasuresIntervalAccurately) {
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    GTEST_SKIP() << "timing-sensitive; unreliable under sanitizers";
+#endif
     constexpr auto window = milliseconds(20);
 
     nixlTime::nixlDuration d;
@@ -52,6 +55,9 @@ TEST(nixlDurationTest, MeasuresIntervalAccurately) {
 }
 
 TEST(nixlDurationTest, StartRebasesTheStopwatch) {
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    GTEST_SKIP() << "timing-sensitive; unreliable under sanitizers";
+#endif
     nixlTime::nixlDuration d;
     std::this_thread::sleep_for(milliseconds(20));
     d.start();
