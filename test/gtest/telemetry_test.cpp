@@ -272,7 +272,7 @@ TEST_F(telemetryTest, AddXferStatsRxBranch) {
 TEST_F(telemetryTest, TelemetryEventStructure) {
     nixlTelemetryEvent event1(nixl_telemetry_event_type_t::AGENT_TX_BYTES, 42);
 
-    EXPECT_EQ(TELEMETRY_VERSION, 3);
+    EXPECT_EQ(TELEMETRY_VERSION, 4);
     EXPECT_EQ(sizeof(nixlTelemetryEvent), 16);
     EXPECT_EQ(event1.value_, 42);
     EXPECT_EQ(event1.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
@@ -471,5 +471,77 @@ TEST_F(telemetryTest, TelemetryAgentEventsTwo) {
     buffer->pop(event);
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERR_BACKEND);
 
+    envHelper_.popVar();
+}
+
+// The synthetic AGENT_TELEMETRY_EVENTS_DROPPED event must reach the BUFFER raw stream (it
+// is what the NIX-1205 stress reader consumes) carrying the exact number of
+// staging-queue drops.
+//
+// Deterministic and single-threaded. The BUFFER ring's usable capacity is
+// size-1, so a *full* staging queue can never be flushed into it in one shot;
+// the test therefore never fills the queue. It stages exactly size-2 accepted
+// events via updateData, then makes each addXferStats call reject its whole
+// 4-event batch (size+4 > capacity) WITHOUT growing the queue. The staged state
+// is built with a tight CPU loop (microseconds) while the periodic flush
+// interval is hundreds of milliseconds away, so the first (and only meaningful)
+// flush observes exactly size-2 data events + one synthetic drop event = size-1
+// = the ring's exact capacity. Nothing is dropped by the ring and the counts are
+// exact regardless of hardware/scheduling (the timing margin is ~5 orders of
+// magnitude). Later flushes see an empty queue and a zero delta, so they add
+// nothing.
+TEST_F(telemetryTest, DroppedEventsAppearInBufferStream) {
+    constexpr uint64_t kCapacity = 1024;
+    constexpr uint64_t kAccepted = kCapacity - 2; // leaves room for 4>free -> reject
+    constexpr uint64_t kDroppedBatches = 10;
+    constexpr uint64_t kEventsPerBatch = 4;
+    constexpr uint64_t kExpectedDropped = kDroppedBatches * kEventsPerBatch;
+
+    envHelper_.addVar(TELEMETRY_BUFFER_SIZE_VAR, std::to_string(kCapacity));
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "200");
+    testFile_ = "test_dropped_buffer_stream";
+    const auto path = testDir_.string() + "/" + testFile_;
+
+    {
+        nixlTelemetry telemetry(testFile_, "BUFFER");
+        for (uint64_t i = 0; i < kAccepted; ++i) {
+            telemetry.updateTxBytes(i);
+        }
+        // Queue is at capacity-2; every 4-event batch is rejected as a whole and
+        // leaves the queue untouched, so each call drops exactly 4.
+        for (uint64_t i = 0; i < kDroppedBatches; ++i) {
+            telemetry.addXferStats(
+                std::chrono::microseconds(10), true, 2000, std::chrono::microseconds(1));
+        }
+        // Wait out several flush intervals: the first flush drains the staged
+        // events and emits the drop delta; the instance stays alive so the
+        // exporter keeps the ring file open.
+        std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    }
+
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+
+    uint64_t exported = 0;
+    uint64_t dropped = 0;
+    uint64_t dropped_events_seen = 0;
+    nixlTelemetryEvent event;
+    while (buffer->pop(event)) {
+        if (event.eventType_ == nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED) {
+            dropped += event.value_;
+            ++dropped_events_seen;
+        } else {
+            ++exported;
+        }
+    }
+
+    EXPECT_EQ(dropped_events_seen, 1u)
+        << "exactly one synthetic drop event (one flush with a positive delta)";
+    EXPECT_EQ(dropped, kExpectedDropped) << "synthetic must carry the exact staging-drop count";
+    EXPECT_EQ(exported, kAccepted) << "all accepted events must reach the BUFFER stream";
+    EXPECT_EQ(exported + dropped, kAccepted + kExpectedDropped)
+        << "produced must equal exported + dropped (no silent loss)";
+
+    envHelper_.popVar();
     envHelper_.popVar();
 }

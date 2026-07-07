@@ -17,6 +17,7 @@
 
 #include "common.h"
 #include "plugin_manager.h"
+#include "telemetry.h"
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
 
@@ -29,7 +30,9 @@
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstring>
+#include <functional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -224,6 +227,58 @@ hasAnyAgentMetricSample(const std::string &body, const std::string &agent_name) 
         }
     }
     return false;
+}
+
+struct OverflowScrape {
+    bool ok = false; // all produced events were accounted for before the timeout
+    double accepted = 0;
+    double dropped = 0;
+};
+
+// Drives `produce` against a fresh nixlTelemetry backed by the Prometheus
+// exporter with a small (256-slot) staging buffer, then polls /metrics until
+// every produced event is accounted for -- accepted (`accepted_metric`, weighted
+// by `accepted_event_weight` events per sample) plus dropped
+// (`agent_telemetry_events_dropped_total`) equals `expected_total_events`. Polling for that
+// exact end state (rather than a fixed sleep) is what makes the test timing
+// independent: it waits for the staging queue to fully drain and the final drop
+// delta to be published, no matter how flushes interleave. The instance stays
+// alive through the scrape so the exporter keeps serving the port.
+OverflowScrape
+scrapeCoreOverflow(uint16_t port,
+                   const std::string &agent_name,
+                   const std::string &accepted_metric,
+                   uint64_t accepted_event_weight,
+                   uint64_t expected_total_events,
+                   const std::function<void(nixlTelemetry &)> &produce) {
+    gtest::ScopedEnv telemetry_env;
+    telemetry_env.addVar(TELEMETRY_BUFFER_SIZE_VAR, "256");
+    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, "5");
+
+    nixlTelemetry telemetry(agent_name, "prometheus");
+    produce(telemetry);
+
+    OverflowScrape result;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do {
+        const std::string body = httpGet(port, "/metrics");
+        PrometheusSample dropped_sample;
+        PrometheusSample accepted_sample;
+        if (!body.empty() &&
+            findAgentMetricSample(
+                body, "agent_telemetry_events_dropped_total", agent_name, dropped_sample) &&
+            findAgentMetricSample(body, accepted_metric, agent_name, accepted_sample)) {
+            result.dropped = dropped_sample.value;
+            result.accepted = accepted_sample.value;
+            if (result.accepted * static_cast<double>(accepted_event_weight) + result.dropped ==
+                static_cast<double>(expected_total_events)) {
+                result.ok = true;
+                return result;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    } while (std::chrono::steady_clock::now() < deadline);
+    return result; // ok stays false: full accounting was not observed in time
 }
 
 } // namespace
@@ -543,4 +598,95 @@ TEST_F(prometheusTelemetryTest, ErrorCountersUseBoundedStatusLabel) {
         EXPECT_NE(line.rfind("agent_err_", 0), 0u)
             << "legacy per-type error counter must not be published: " << line;
     }
+}
+
+// The synthetic AGENT_TELEMETRY_EVENTS_DROPPED event (emitted by the core on flush with
+// the number of staging-queue drops since the last flush) must surface as the
+// cumulative counter agent_telemetry_events_dropped_total, accumulating every delta.
+TEST_F(prometheusTelemetryTest, DroppedEventsCounterAccumulates) {
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr);
+
+    const std::string agent_name = "prometheus_dropped_events_agent";
+    const nixlTelemetryExporterInitParams params{agent_name, 4096};
+    auto exporter = handle->createExporter(params);
+    ASSERT_NE(exporter, nullptr);
+
+    // Two flush deltas (7 then 5) as the core would emit them; the counter must
+    // read their sum.
+    constexpr std::array<uint64_t, 2> dropped_deltas{7, 5};
+    uint64_t expected_total = 0;
+    for (const uint64_t delta : dropped_deltas) {
+        EXPECT_EQ(exporter->exportEvent(
+                      {nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED, delta}),
+                  NIXL_SUCCESS);
+        expected_total += delta;
+    }
+
+    const std::string body = waitForMetricsBody(port_);
+    ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
+
+    PrometheusSample sample;
+    ASSERT_TRUE(
+        findAgentMetricSample(body, "agent_telemetry_events_dropped_total", agent_name, sample))
+        << "agent_telemetry_events_dropped_total for this agent is not in scrape body";
+    EXPECT_EQ(sample.value, static_cast<double>(expected_total))
+        << "dropped-events counter must sum every emitted delta (7+5)";
+}
+
+// End-to-end through the core: flooding a small staging queue via updateData
+// forces producer-side drops, which the core publishes as AGENT_TELEMETRY_EVENTS_DROPPED
+// on flush. Driving the (lossless, ring-free) Prometheus exporter makes the
+// result exact and hardware-independent: every produced event is either counted
+// (agent_tx_requests_num_total) or dropped (agent_telemetry_events_dropped_total), so
+// their sum must equal the number produced regardless of flush timing.
+TEST_F(prometheusTelemetryTest, CoreUpdateDataOverflowConservation) {
+    const std::string agent_name = "prometheus_core_update_overflow_agent";
+    constexpr uint64_t kProduced = 100000; // far exceeds the 256-slot staging queue
+
+    // Each accepted event adds 1 to agent_tx_requests_num_total (weight 1), so
+    // ok == (accepted + dropped == produced): conservation with no silent loss.
+    const auto scrape = scrapeCoreOverflow(port_,
+                                           agent_name,
+                                           "agent_tx_requests_num_total",
+                                           1,
+                                           kProduced,
+                                           [](nixlTelemetry &telemetry) {
+                                               for (uint64_t i = 0; i < kProduced; ++i) {
+                                                   telemetry.updateTxRequestsNum(1);
+                                               }
+                                           });
+
+    ASSERT_TRUE(scrape.ok) << "accepted + dropped must reach produced (" << kProduced
+                           << ") -- no silent loss";
+    EXPECT_GT(scrape.dropped, 0.0) << "flooding a 256-slot staging queue must drop events";
+}
+
+// Same conservation check for the all-or-none addXferStats batch path: each
+// accepted call stages 4 events (weight 4) and each dropped call loses its whole
+// 4-event batch, so the dropped counter is always a multiple of 4 and
+// accepted*4 + dropped must equal the produced events.
+TEST_F(prometheusTelemetryTest, CoreAddXferStatsOverflowConservation) {
+    const std::string agent_name = "prometheus_core_xfer_overflow_agent";
+    constexpr uint64_t kCalls = 100000;
+    constexpr uint64_t kEventsPerCall = 4;
+
+    const auto scrape = scrapeCoreOverflow(
+        port_,
+        agent_name,
+        "agent_tx_requests_num_total",
+        kEventsPerCall,
+        kCalls * kEventsPerCall,
+        [](nixlTelemetry &telemetry) {
+            for (uint64_t i = 0; i < kCalls; ++i) {
+                telemetry.addXferStats(
+                    std::chrono::microseconds(10), true, 2000, std::chrono::microseconds(1));
+            }
+        });
+
+    ASSERT_TRUE(scrape.ok) << "accepted*4 + dropped must reach produced events ("
+                           << kCalls * kEventsPerCall << ") -- no silent loss";
+    EXPECT_GT(scrape.dropped, 0.0) << "flooding the staging queue must drop xfer batches";
+    EXPECT_EQ(std::fmod(scrape.dropped, static_cast<double>(kEventsPerCall)), 0.0)
+        << "addXferStats drops the whole 4-event batch, so drops are multiples of 4";
 }
