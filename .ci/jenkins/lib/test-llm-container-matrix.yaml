@@ -6,6 +6,7 @@
 #
 # Image selection: a single IMAGE_URL parameter. The framework (vllm vs sglang)
 # is auto-detected from the URL — "vllm" → test_vllm.sh, "sglang" → test_sglang.sh.
+# Supports vllm-cu12, vllm-cu13, sglang-cu12, sglang-cu13 image variants.
 # vllm has no built-in accuracy harness, so the accuracy phase no-ops for vllm.
 #
 # Test scripts live at .ci/scripts/llm-tests/{test_vllm.sh,test_sglang.sh}.
