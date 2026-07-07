@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""nixl_ep meta-dispatcher: selects the correct CUDA backend."""
+"""nixl_ep meta-dispatcher: selects the correct CUDA and torch ABI backend."""
 
 import importlib
 import sys
@@ -70,5 +70,8 @@ for attr in dir(_pkg):
         setattr(sys.modules[__name__], attr, getattr(_pkg, attr))
 
 if TYPE_CHECKING:
+    import torch
     from nixl_ep.buffer import Buffer  # noqa: F401
     from nixl_ep.utils import EventOverlap  # noqa: F401
+
+    topk_idx_t: torch.dtype

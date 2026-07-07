@@ -50,11 +50,18 @@ private:
     // (add_counter_increment), so repeated per-operation deltas produce a
     // monotonic cumulative total, matching the Prometheus exporter.
     [[nodiscard]] doca_error_t
-    appendCounterSample(const nixlTelemetryEvent &event, const char *label_values[]);
+    appendCounterSample(const nixlTelemetryEvent &event,
+                        const char *counter_name,
+                        const char *label_values[]);
+
+    [[nodiscard]] doca_error_t
+    appendErrorCounterSample(const nixlTelemetryEvent &event, const char *status);
 
     // Appends a gauge sample to the time-series (absolute last-operation value).
     [[nodiscard]] doca_error_t
-    appendGaugeSample(const nixlTelemetryEvent &event, const char *label_values[]);
+    appendGaugeSample(const nixlTelemetryEvent &event,
+                      const char *metric_name,
+                      const char *label_values[]);
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_DOCA_EXPORTER_H

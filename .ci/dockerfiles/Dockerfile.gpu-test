@@ -20,14 +20,21 @@ ARG PRE_INSTALLED_NIXL_ENV
 ARG PRE_INSTALLED_UCX_ENV
 ARG UCX_VERSION=v1.21.x
 ARG HAS_GPU=true
+ARG BUILD_NIXL_EP=false
 ARG WORKSPACE=/workspace/nixl
 
 
 WORKDIR ${WORKSPACE}
 COPY --chown="${_UID}":"${_GID}" . .
 
-RUN .gitlab/build.sh ${NIXL_INSTALL_DIR}
-RUN sudo apt-get clean && \
+# Install gdb (for crash debugging), build NIXL, then clean the apt cache — all in one layer.
+# build.sh installs many packages without cleaning up, so the cleanup must run after it and in the
+# same layer to actually shrink the image. gdb is installed before build.sh so its apt-get runs
+# against a clean apt state.
+RUN sudo apt-get update && \
+    sudo apt-get install -y --no-install-recommends gdb gdb-multiarch && \
+    .gitlab/build.sh ${NIXL_INSTALL_DIR} && \
+    sudo apt-get clean && \
     sudo rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["/bin/bash", "-c", "exec \"$@\"", "--"]

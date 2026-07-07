@@ -71,18 +71,19 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 | ---------- | ------- | ----- | --------- |
 | `agent_memory_registered` | Yes | Yes | No |
 | `agent_memory_deregistered` | Yes | Yes | No |
-| `agent_tx_bytes` | Yes | No | No |
-| `agent_rx_bytes` | Yes | No | No |
+| `agent_tx_bytes` | Yes | Yes | No |
+| `agent_rx_bytes` | Yes | Yes | No |
 | `agent_tx_requests_num` | Yes | No | No |
 | `agent_rx_requests_num` | Yes | No | No |
-| `agent_xfer_time` | Yes | No | No |
-| `agent_xfer_post_time` | Yes | No | No |
-| Error event types (`agent_err_*`) | No | No | No |
+| `agent_xfer_time` | Yes | Yes | No |
+| `agent_xfer_post_time` | Yes | Yes | No |
+| Error event types (`agent_err_*`) | Yes | No | No |
 
 **Counter, Gauge, Histogram** - as implemented by the Prometheus exporter
 
 - **Counter**: Instance lifetime count of the related value. Summed over the separate events' values. Counter metrics have suffix '_total'
-- **Gauge**: Shows the value per the last event (transaction). E.g agent_memory_registered represents the memory amount registered by the last operation (and not the total memory registered during instance lifetime). The value is updated per each event (request) and can grow or decrease.
+- Error events are exposed as one labeled counter: `agent_errors_total{status="..."}`. The `status` label is bounded by the fixed `AGENT_ERR_*` event set.
+- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte gauges follow the `agent_<subject>_last_<unit>` convention (the `_last` qualifier precedes the unit, keeping it distinct from the cumulative `_total` counter of the same base name): `agent_tx_last_bytes` / `agent_rx_last_bytes` carry the byte size of the latest TX/RX request, while `agent_tx_bytes_total` / `agent_rx_bytes_total` carry the running total. The memory gauges follow the same convention -- `agent_memory_registered_last_bytes` / `agent_memory_deregistered_last_bytes` -- and report the byte size of the last (de)registration, distinct from the cumulative `agent_memory_registered_total` / `agent_memory_deregistered_total` counters. The transfer-time events likewise publish both a cumulative `_total` counter and a last-operation gauge (`agent_xfer_time` / `agent_xfer_post_time`).
 - **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
 
 ### Metric labels
@@ -91,3 +92,4 @@ Each telemetry metrics is provided with the following labels:
 
 - Hostname where the agent runs
 - Agent name (as custom provided during initialization, can be deprecated in the next versions)
+- `status` (only on `agent_errors_total`): the error kind, bounded by the fixed `AGENT_ERR_*` event set

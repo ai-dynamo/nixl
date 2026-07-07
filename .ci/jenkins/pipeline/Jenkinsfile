@@ -15,7 +15,7 @@
 // It is used to update the commit status and upload logs
 @Library('blossom-github-lib@master')
 @Library('ci-demo')  // External library for matrix build functionality
-@Library('swx-jenkins-lib')  // External library for matrix build functionality
+@Library('swx-jenkins-lib') // External library for matrix build functionality
 
 // Initialize the build matrix
 // The matrix class handles the parallel execution of different build configurations
@@ -48,6 +48,22 @@ try {
 } catch (Exception ex) {
     currentBuild.result = 'FAILURE'
     println ex
+    // On failure, kick off an automated CI triage investigation.
+    if (params.githubData) {
+        try {
+            // ciTriage (swx-jenkins-lib) POSTs to the agent on the flyweight executor.
+            withCredentials([string(credentialsId: 'ci-triage-nixl-url', variable: 'CI_TRIAGE_URL')]) {
+                ciTriage(
+                    url:       env.CI_TRIAGE_URL,
+                    commitSha: githubHelper.getMergedSHA(),
+                    prNumber:  githubHelper.getPRNumber(),
+                    insecure:  true,   // the ingress wildcard CA isn't in the controller trust store
+                )
+            }
+        } catch (Exception triageEx) {
+            echo "CI triage trigger failed (non-fatal): ${triageEx}"
+        }
+    }
     throw ex
 } finally {
     if (params.githubData) {
@@ -57,6 +73,5 @@ try {
             currentBuild.resultIsBetterOrEqualTo('SUCCESS') ? GitHubCommitState.SUCCESS : GitHubCommitState.FAILURE,
             env.JOB_BASE_NAME
         )
-        githubHelper.uploadLogs(this, env.JOB_NAME, env.BUILD_NUMBER, null, null)
     }
 }

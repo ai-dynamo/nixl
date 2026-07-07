@@ -35,15 +35,15 @@ ARCH=$(uname -m)
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
+UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
 UCX_REF=${UCX_REF:-v1.21.x}
+UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-}
+PRIVATE_UCX_SONAME_SUFFIX="nixl"
 BUILD_NIXL_EP="true"
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
-# CUDA toolkit version (e.g. 12.9 / 13.0). Option B (manylinux on public PyPA base)
-# no longer inherits this from the base image's ENV, so it must be passed in.
-CUDA_VERSION=${CUDA_VERSION:-}
 
 get_options() {
     while :; do
@@ -95,14 +95,6 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
-        --cuda-version)
-            if [ "$2" ]; then
-                CUDA_VERSION=$2
-                shift
-            else
-                missing_requirement $1
-            fi
-            ;;
         --tag)
             if [ "$2" ]; then
                 TAG="--tag $2"
@@ -127,6 +119,14 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --ucx-repo)
+            if [ "$2" ]; then
+                UCX_REPO=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --ucx-ref)
             if [ "$2" ]; then
                 UCX_REF=$2
@@ -134,6 +134,17 @@ get_options() {
             else
                 missing_requirement $1
             fi
+            ;;
+        --ucx-soname-suffix)
+            if [ "$2" ]; then
+                UCX_SONAME_SUFFIX=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --private-ucx)
+            UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-$PRIVATE_UCX_SONAME_SUFFIX}
             ;;
         --build-nixl-ep)
             BUILD_NIXL_EP=true
@@ -185,7 +196,15 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
+    echo "UCX Repo: ${UCX_REPO}"
     echo "UCX Ref: ${UCX_REF}"
+    if [ -n "$UCX_SONAME_SUFFIX" ]; then
+        echo "UCX SONAME suffix: ${UCX_SONAME_SUFFIX}"
+        echo "UCX module deepbind: Enabled"
+    else
+        echo "UCX SONAME suffix: Disabled"
+        echo "UCX module deepbind: Disabled"
+    fi
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         echo "NIXL EP: Enabled"
     else
@@ -198,14 +217,16 @@ show_help() {
     echo "usage: build-container.sh"
     echo "  [--base base image]"
     echo "  [--base-image-tag base image tag]"
-    echo "  [--cuda-version CUDA version, e.g. 12.9 (manylinux builds)]"
     echo "  [--wheel-base base platform for wheel builds]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
     echo "  [--build-type [debug|release] to select build type (default: release)]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
+    echo "  [--ucx-repo ucx git repository URL]"
     echo "  [--ucx-ref ucx git reference (branch, tag, or sha)]"
+    echo "  [--ucx-soname-suffix suffix to pass to UCX --with-soname-suffix]"
+    echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
@@ -229,11 +250,12 @@ if [ -d "$NIXL_DIR/build" ]; then
 fi
 
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
-BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
+BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
+BUILD_ARGS+=" --build-arg UCX_SONAME_SUFFIX=$UCX_SONAME_SUFFIX"
 BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
@@ -242,7 +264,4 @@ BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 
 show_build_options
 
-# --provenance/--sbom default to true under buildx and add a slow attestation-manifest
-# export/unpack step at push time (which was tipping the ARM build over the job timeout).
-# CI images don't need attestations, so disable them.
-docker build --provenance=false --sbom=false --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT

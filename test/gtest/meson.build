@@ -110,7 +110,7 @@ endif
 
 test_exe = executable('gtest',
     sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../doca-telemetry')],
     cpp_args : cpp_flags,
     dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
     link_with: [nixl_build_lib],
@@ -127,6 +127,21 @@ if get_option('sanitizer') != 'none'
     gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*'
 endif
 test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
+
+# Best-effort NVTX capture: when nsys is available, profile the tracing tests
+# and write a .nsys-rep that CI can publish as an artifact. Skips (exit 77) when
+# profiling is denied, so it never fails CI on its own.
+if nixl_trace_nvtx_enabled
+    nsys_prog = find_program('nsys', required: false)
+    if nsys_prog.found()
+        nsys_wrapper = find_program(meson.current_source_dir() / 'run_nsys_tracing.sh')
+        test('tracing_nsys',
+             nsys_wrapper,
+             args: [nsys_prog.full_path(), test_exe, meson.current_build_dir(), plugin_dirs_arg],
+             is_parallel: false,
+             timeout: 600)
+    endif
+endif
 
 if get_option('b_sanitize').split(',').contains('thread')
     test_env = environment()
