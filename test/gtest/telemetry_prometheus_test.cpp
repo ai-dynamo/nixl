@@ -20,6 +20,8 @@
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
 
+#include "open_metrics_text_parser.h"
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -28,6 +30,7 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -330,6 +333,45 @@ TEST_F(prometheusTelemetryTest, AgentMetricsAppearInScrape) {
         << "First agent metrics were removed when peer exporter was destroyed";
     EXPECT_FALSE(hasAnyAgentMetricSample(after_peer_teardown_body, peer_agent_name))
         << "Peer agent metrics remained after peer exporter was destroyed";
+}
+
+TEST_F(prometheusTelemetryTest, ScrapeEmitsExactlyTheDescriptorSeries) {
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr) << "Failed to load prometheus telemetry plugin";
+
+    const std::string agent_name = "prometheus_parity_agent";
+    const nixlTelemetryExporterInitParams params{agent_name, 4096};
+    auto exporter = handle->createExporter(params);
+    ASSERT_NE(exporter, nullptr);
+
+    const std::string body = waitForMetricsBody(port_);
+    ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
+
+    std::set<std::string> expected;
+    for (const auto event_type : telemetry_metric_event_types) {
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event_type);
+        if (descriptor.counterName != nullptr) {
+            expected.insert(descriptor.counterName);
+        }
+        if (descriptor.gaugeName != nullptr) {
+            expected.insert(descriptor.gaugeName);
+        }
+    }
+    expected.insert("agent_errors_total");
+
+    const auto series = nixl::doca_test::open_metrics_text::parse(body);
+    std::set<std::string> actual;
+    for (const auto &[id, samples] : series) {
+        (void)samples;
+        const auto agent = id.labels.find("agent_name");
+        if (agent != id.labels.end() && agent->second == agent_name &&
+            id.name.rfind("agent_", 0) == 0) {
+            actual.insert(id.name);
+        }
+    }
+
+    EXPECT_EQ(actual, expected)
+        << "native Prometheus scrape must emit exactly the shared-descriptor series set";
 }
 
 // Drives the hot path to surface the dangling-pointer consequence of the
