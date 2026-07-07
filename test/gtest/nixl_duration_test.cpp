@@ -54,12 +54,12 @@ TEST(nixlDurationTest, MeasuresIntervalAccurately) {
         << "us hw_counter=" << nixlTime::fastClockUsesHwCounter();
 }
 
-TEST(nixlDurationTest, StartRebasesTheStopwatch) {
+TEST(nixlDurationTest, RestartRebasesTheStopwatch) {
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
     GTEST_SKIP() << "timing-sensitive; unreliable under sanitizers";
 #endif
     nixlTime::nixlDuration d;
     std::this_thread::sleep_for(milliseconds(20));
-    d.start();
+    d.restart();
     EXPECT_LT(d.elapsed().count(), 10000);
 }

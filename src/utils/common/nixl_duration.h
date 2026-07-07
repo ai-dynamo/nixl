@@ -14,25 +14,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _NIXL_DURATION_H
-#define _NIXL_DURATION_H
+#ifndef NIXL_SRC_UTILS_COMMON_NIXL_DURATION_H
+#define NIXL_SRC_UTILS_COMMON_NIXL_DURATION_H
 
 #include <chrono>
 #include <cstdint>
-#include <ctime>
 
 namespace nixlTime {
 
 using namespace std::chrono;
 
-namespace detail {
+namespace internal {
 
     struct fastClockCal {
         bool useHwCounter; // false -> nixlDuration measures with steady_clock
         double nsPerTick; // counter period in nanoseconds
     };
 
-    extern fastClockCal g_fastClockCal;
+    extern const fastClockCal g_fastClockCal;
 
     [[nodiscard]] inline uint64_t
     readCpuCounter() {
@@ -76,7 +75,7 @@ namespace detail {
         return duration_cast<microseconds>(nanoseconds{dns});
     }
 
-} // namespace detail
+} // namespace internal
 
 /*
  * nixlDuration: a low-overhead monotonic stopwatch for hot paths that measure
@@ -85,50 +84,29 @@ namespace detail {
  * It reads the CPU cycle counter (rdtsc on x86_64, cntvct_el0 on aarch64), which
  * is several times cheaper than steady_clock::now() (a VDSO
  * clock_gettime(CLOCK_MONOTONIC) call), falling back to steady_clock when no
- * invariant/kernel-trusted counter is available. It captures a base reading at
- * start() and reports only the elapsed() interval; it never exposes an absolute
- * time point, so it is not comparable to steady_clock/wall time and cannot drift
- * against any epoch -- only the measured interval is meaningful.
+ * invariant/kernel-trusted counter is available. It captures a base reading on
+ * construction (and on restart()) and reports only the elapsed() interval; it
+ * never exposes an absolute time point, so it is not comparable to
+ * steady_clock/wall time and cannot drift against any epoch -- only the measured
+ * interval is meaningful.
  */
 class nixlDuration {
 public:
-    nixlDuration() : base_(detail::baseReading()) {}
+    nixlDuration() : base_(internal::baseReading()) {}
 
     void
-    start() {
-        base_ = detail::baseReading();
+    restart() {
+        base_ = internal::baseReading();
     }
 
     [[nodiscard]] microseconds
     elapsed() const {
-        return detail::elapsedSince(base_);
+        return internal::elapsedSince(base_);
     }
 
 private:
     uint64_t base_;
 };
-
-/*
- * coarseSteadyNow(): a very cheap absolute timestamp on the steady_clock
- * timeline, at kernel-tick (~1-4 ms) resolution.
- *
- * CLOCK_MONOTONIC_COARSE shares steady_clock's (CLOCK_MONOTONIC) epoch but is
- * read straight from the last kernel tick with no clocksource scaling, so it is
- * several times cheaper than steady_clock::now() and, unlike a CPU-counter
- * clock, cannot drift. Use it for absolute timestamps that do not need sub-ms
- * resolution; use steady_clock::now() when they do. Falls back to
- * steady_clock::now() where the coarse clock is unavailable.
- */
-[[nodiscard]] inline steady_clock::time_point
-coarseSteadyNow() {
-#if defined(CLOCK_MONOTONIC_COARSE)
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
-    return steady_clock::time_point{seconds{ts.tv_sec} + nanoseconds{ts.tv_nsec}};
-#else
-    return steady_clock::now();
-#endif
-}
 
 // True when nixlDuration measures with the CPU counter rather than
 // steady_clock. For tests/introspection, not the datapath.

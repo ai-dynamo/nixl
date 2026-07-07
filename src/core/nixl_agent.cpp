@@ -1138,8 +1138,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     NIXL_TRACE_ATTR(trace_span, "bytes", static_cast<std::int64_t>(req_hndl->telemetry.totalBytes));
 
     if (data->telemetry_) {
-        req_hndl->telemetry.startTime = nixlTime::coarseSteadyNow();
-        req_hndl->timer.start();
+        req_hndl->telemetry.startTime = std::chrono::steady_clock::now();
+        req_hndl->timer.restart();
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);

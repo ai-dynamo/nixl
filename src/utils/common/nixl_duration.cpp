@@ -26,7 +26,7 @@
 #endif
 
 namespace nixlTime {
-namespace detail {
+namespace internal {
 
     namespace {
 
@@ -121,13 +121,13 @@ namespace detail {
 
     } // namespace
 
-    fastClockCal g_fastClockCal = calibrate();
+    const fastClockCal g_fastClockCal = calibrate();
 
-} // namespace detail
+} // namespace internal
 
 [[nodiscard]] bool
 fastClockUsesHwCounter() {
-    return detail::g_fastClockCal.useHwCounter;
+    return internal::g_fastClockCal.useHwCounter;
 }
 
 } // namespace nixlTime
