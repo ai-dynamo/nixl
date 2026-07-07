@@ -88,6 +88,8 @@ def _torch_cuda_version_from_disk() -> str | None:
         version_spec = importlib.util.spec_from_file_location(
             "_nixl_torch_version", version_py
         )
+        if version_spec is None or version_spec.loader is None:
+            return None
         module = importlib.util.module_from_spec(version_spec)
         version_spec.loader.exec_module(module)
     except Exception:
