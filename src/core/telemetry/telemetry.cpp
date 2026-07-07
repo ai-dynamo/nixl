@@ -23,6 +23,7 @@
 #include <algorithm>
 
 #include "common/configuration.h"
+#include "common/nixl_duration.h"
 #include "common/nixl_log.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
@@ -108,6 +109,11 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &e
     // export task.
     events_.reserve(maxBufferedEvents_);
     startExportTask();
+
+    if (!nixlTime::fastClockUsesHwCounter()) {
+        NIXL_WARN << "telemetry: no invariant CPU counter available; per-transfer timing falls "
+                     "back to steady_clock (higher overhead)";
+    }
 }
 
 nixlTelemetry::~nixlTelemetry() {

@@ -25,6 +25,7 @@
 #include "nixl_types.h"
 #include "backend_engine.h"
 #include "telemetry.h"
+#include "common/nixl_duration.h"
 
 enum nixl_telemetry_stat_status_t {
     NIXL_TELEMETRY_POST = 0,
@@ -79,6 +80,7 @@ private:
     nixl_status_t status = NIXL_ERR_NOT_POSTED;
 
     nixl_xfer_telem_t telemetry;
+    nixlTime::nixlDuration timer;
 };
 
 struct nixlDlistH {
