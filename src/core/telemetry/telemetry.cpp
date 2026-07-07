@@ -219,7 +219,23 @@ nixlTelemetry::flushPendingEvents() {
         exporter_->exportEvent(event);
     }
 
+    exportDroppedEvents();
+
     return true;
+}
+
+void
+nixlTelemetry::exportDroppedEvents() {
+    // Atomically take and reset the drops accumulated since the last flush and
+    // emit them as a synthetic AGENT_TELEMETRY_EVENTS_DROPPED event. Bypassing the
+    // staging queue, it can never itself be staging-dropped; emitting only a
+    // positive count keeps the no-overflow path event-free (preserving
+    // exact-count contracts).
+    const uint64_t dropped = droppedEvents_.exchange(0, std::memory_order_relaxed);
+    if (dropped > 0) {
+        exporter_->exportEvent(
+            {nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED, dropped});
+    }
 }
 
 void
@@ -244,6 +260,7 @@ nixlTelemetry::updateData(nixl_telemetry_event_type_t event_type, uint64_t value
     // agent can be multi-threaded
     std::lock_guard<std::mutex> lock(mutex_);
     if (events_.size() >= maxBufferedEvents_) {
+        droppedEvents_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
     events_.emplace_back(event_type, value);
@@ -293,13 +310,17 @@ nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
                             bool is_write,
                             uint64_t bytes,
                             std::chrono::microseconds post_time) {
+    // All-or-none batch size; must match the number of emplace_back calls below.
+    constexpr size_t xfer_stats_events = 4;
+
     const auto bytes_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_BYTES :
                                        nixl_telemetry_event_type_t::AGENT_RX_BYTES;
     const auto requests_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM :
                                           nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM;
 
     const std::lock_guard lock(mutex_);
-    if (events_.size() + 4 > maxBufferedEvents_) {
+    if (events_.size() + xfer_stats_events > maxBufferedEvents_) {
+        droppedEvents_.fetch_add(xfer_stats_events, std::memory_order_relaxed);
         return;
     }
     events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
