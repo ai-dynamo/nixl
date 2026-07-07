@@ -17,11 +17,14 @@
  */
 
 #include "neuron.h"
+#include "utils.h"
 
+#include <cstdlib>
 #include <dlfcn.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -142,6 +145,27 @@ getTensorFromVA(const void *va) {
 int
 neuronCoreCount() {
     static const int core_count = []() {
+        // Scope this process to the minimum number of NeuronCores it needs,
+        // analogous to cudaSetDevice() scoping a CUDA process to one GPU.
+        // Without this, nrt_init() claims ALL visible cores by default,
+        // preventing sibling processes on the same host from initializing.
+        if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
+            const char *num_cores = getenv("NEURON_RT_NUM_CORES");
+            const char *visible_cores = getenv("NEURON_RT_VISIBLE_CORES");
+            if (!num_cores && !visible_cores) {
+                if (setenv("NEURON_RT_NUM_CORES", "1", 0) != 0) {
+                    std::cerr << "nixlbench: failed to set NEURON_RT_NUM_CORES" << std::endl;
+                    return -1;
+                }
+                std::cerr << "nixlbench: SG mode — set NEURON_RT_NUM_CORES=1" << std::endl;
+            } else {
+                std::cerr << "nixlbench: SG mode uses only the first core (vnc=0)"
+                          << " but NEURON_RT_NUM_CORES=" << (num_cores ? num_cores : "(unset)")
+                          << ", NEURON_RT_VISIBLE_CORES="
+                          << (visible_cores ? visible_cores : "(unset)") << std::endl;
+            }
+        }
+
         uint32_t vnc_count;
         if (nrt_init(1 /* framework_type=NO_FW */, "nixl_bench", "nixl_bench") == 0 &&
             nrt_get_visible_vnc_count(&vnc_count) == 0) {
@@ -158,7 +182,11 @@ neuronMalloc(void **addr, size_t buffer_size, int devid) {
     nrt_tensor *tensor;
     int status;
 
-    status = nrt_tensor_allocate(0 /* placement=device */, devid, buffer_size, nullptr, &tensor);
+    // VNC index is relative to the process's allocated core set.
+    // In SG mode each process owns 1 core, so always use vnc=0.
+    int vnc = (XFERBENCH_MODE_SG == xferBenchConfig::mode) ? 0 : devid;
+
+    status = nrt_tensor_allocate(0 /* placement=device */, vnc, buffer_size, nullptr, &tensor);
     if (status != 0) return status;
 
     NrtTensorPtr ptr{tensor};
