@@ -439,8 +439,8 @@
           description: "NIXL version to use (tag like 1.3.1, branch name, or commit hash)"
       - string:
           name: "UCX_VERSION"
-          default: "v1.21.x"
-          description: "UCX version to use (tag like v1.21.x, branch name, or commit hash)"
+          default: "v1.22.x"
+          description: "UCX version to use (tag like v1.22.x, branch name, or commit hash)"
       - string:
           name: "BASE_IMAGE"
           default: "nvcr.io/nvidia/cuda-dl-base"
@@ -836,8 +836,8 @@
           cron: |
             # Build NIXL wheels nightly ~10 AM for CUDA 13 and CUDA 12 (the cu12
             # run also produces the nixl meta wheel). Both publish to the repo.
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.21.x;BASE_TAG=13.0-devel-manylinux--25.09
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.21.x;BASE_TAG=12.9-devel-manylinux--25.06
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_TAG=13.0-devel-manylinux--25.09
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_TAG=12.9-devel-manylinux--25.06
     # Manual build parameters
     parameters:
       - string:
@@ -846,8 +846,8 @@
           description: "NIXL version to build wheels from (tag like 1.2.0, branch name, PR ref, or commit hash)"
       - string:
           name: "UCX_VERSION"
-          default: "v1.21.x"
-          description: "UCX version to build against (tag like v1.21.x, branch name, or commit hash)"
+          default: "v1.22.x"
+          description: "UCX version to build against (tag like v1.22.x, branch name, or commit hash)"
       - string:
           name: "BASE_IMAGE"
           default: "artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda"
