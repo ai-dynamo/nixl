@@ -35,7 +35,6 @@ ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
-ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
@@ -316,21 +315,10 @@ ENV PYTHONPATH=/workspace/nixl/build/examples/device/ep
 
 RUN cd src/bindings/rust && cargo build --release --locked
 
-# Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
-RUN mkdir -p dist && \
-    if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAGS="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; else EP_BUILD_FLAGS=""; fi && \
-    if [ -n "$UCX_SONAME_SUFFIX" ]; then \
-        UCX_PLUGIN_SONAME_FLAG="--plugin-soname-suffix $UCX_SONAME_SUFFIX"; \
-    else UCX_PLUGIN_SONAME_FLAG=""; fi && \
-    ./contrib/build-wheel.sh \
-    --python-version $DEFAULT_PYTHON_VERSION \
-    --platform manylinux_2_39_$ARCH \
-    --ucx-plugins-dir $UCX_PLUGIN_DIR \
-    --nixl-plugins-dir $NIXL_PLUGIN_DIR \
-    --output-dir /workspace/nixl/dist \
-    $UCX_PLUGIN_SONAME_FLAG \
-    $EP_BUILD_FLAGS
-
-RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
-RUN uv pip install --system \
-    dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl
+# Install the python bindings from source, built against the container's own
+# torch - works on any base, no dependency on public torch wheels.
+# Redistributable wheels are produced by the wheel CI pipelines, not here.
+RUN CUDA_MAJOR=$(echo "${CUDA_VERSION}" | cut -d. -f1) && \
+    ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
+    uv pip install --system --no-build-isolation . && \
+    uv pip install --system build/src/bindings/python/nixl-meta/nixl-*.whl
