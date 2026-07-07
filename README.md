@@ -349,7 +349,7 @@ To see all the options supported by the container use:
 $ ./contrib/build-container.sh -h
 ```
 
-The container also includes a prebuilt python wheel in /workspace/dist if required for installing/distributing. Also, the wheel can be built with a separate script (see below).
+The container has the NIXL python bindings preinstalled (built from source against the container's own PyTorch). For a redistributable python wheel, use the wheel build script below or install the published `nixl` package.
 
 ### Building the python wheel
 The contrib folder also includes a script to build the python wheel with the UCX dependencies. Note, that UCX and other NIXL dependencies are required to be installed.
