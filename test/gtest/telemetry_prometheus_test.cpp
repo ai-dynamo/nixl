@@ -296,6 +296,9 @@ public:
     ScopedFd(const ScopedFd &) = delete;
     ScopedFd &
     operator=(const ScopedFd &) = delete;
+    ScopedFd(ScopedFd &&) = delete;
+    ScopedFd &
+    operator=(ScopedFd &&) = delete;
 
     int
     get() const {
