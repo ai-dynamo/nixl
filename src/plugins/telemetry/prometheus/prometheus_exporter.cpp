@@ -88,8 +88,9 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
                 exposer_ = std::make_shared<prometheus::Exposer>(bind_address);
             }
             catch (const std::exception &e) {
-                // civetweb reports a failed port bind with this exact text; other
-                // startup failures (threads, ACL, OOM, ...) don't, so they stay fatal.
+                // civetweb reports a failed port bind with this exact text (verified
+                // against prometheus-cpp v1.3.0 / civetweb 1.16); other startup
+                // failures (threads, ACL, OOM, ...) don't, so they stay fatal.
                 const std::string reason = e.what();
                 if (reason.find("Failed to setup server ports") == std::string::npos) {
                     throw;

@@ -283,6 +283,29 @@ scrapeCoreOverflow(uint16_t port,
     return result; // ok stays false: full accounting was not observed in time
 }
 
+class ScopedFd {
+public:
+    explicit ScopedFd(int fd) : fd_(fd) {}
+
+    ~ScopedFd() {
+        if (fd_ >= 0) {
+            ::close(fd_);
+        }
+    }
+
+    ScopedFd(const ScopedFd &) = delete;
+    ScopedFd &
+    operator=(const ScopedFd &) = delete;
+
+    int
+    get() const {
+        return fd_;
+    }
+
+private:
+    int fd_ = -1;
+};
+
 int
 occupyLocalPort(uint16_t port) {
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -752,21 +775,19 @@ TEST_F(prometheusTelemetryTest, CoreAddXferStatsOverflowConservation) {
 }
 
 TEST_F(prometheusTelemetryTest, BindCollisionThrowsBindFailed) {
-    const int occupier = occupyLocalPort(port_);
-    ASSERT_GE(occupier, 0) << "could not occupy 127.0.0.1:" << port_;
+    const ScopedFd occupier(occupyLocalPort(port_));
+    ASSERT_GE(occupier.get(), 0) << "could not occupy 127.0.0.1:" << port_;
 
     auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
     ASSERT_NE(handle, nullptr);
 
     const nixlTelemetryExporterInitParams params{"prometheus_bind_collision_agent", 4096};
     EXPECT_THROW(handle->createExporter(params), nixlTelemetryBindFailed);
-
-    ::close(occupier);
 }
 
 TEST_F(prometheusTelemetryTest, BindCollisionCreateIsNonFatalWarn) {
-    const int occupier = occupyLocalPort(port_);
-    ASSERT_GE(occupier, 0) << "could not occupy 127.0.0.1:" << port_;
+    const ScopedFd occupier(occupyLocalPort(port_));
+    ASSERT_GE(occupier.get(), 0) << "could not occupy 127.0.0.1:" << port_;
 
     gtest::ScopedEnv exporter_env;
     exporter_env.addVar(telemetryExporterVar, "prometheus");
@@ -782,6 +803,4 @@ TEST_F(prometheusTelemetryTest, BindCollisionCreateIsNonFatalWarn) {
     EXPECT_EQ(sink.bindWarnings(), 1) << "the collision must log exactly one WARNING";
     EXPECT_EQ(sink.otherProblems(), 0) << "the collision must not log an ERROR or other problem";
     EXPECT_EQ(ignore_bind_warning.getIgnoredCount(), 1u);
-
-    ::close(occupier);
 }
