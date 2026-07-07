@@ -105,7 +105,9 @@ private:
     initializeMetrics();
 
     void
-    registerCounter(nixl_telemetry_event_type_t event_type, const std::string &help);
+    registerCounter(nixl_telemetry_event_type_t event_type,
+                    const std::string &metric_name,
+                    const std::string &help);
 
     void
     registerErrorCounters();

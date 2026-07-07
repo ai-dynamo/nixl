@@ -59,15 +59,16 @@ stream:
 - **Last-operation gauges**: the value of the most recent operation, re-emitted
   unchanged (e.g. `agent_tx_last_bytes`). For example, TX byte sizes `10, 20, 35`
   yield a counter `agent_tx_bytes_total` of `65` and a gauge `agent_tx_last_bytes`
-  of `35`. Both the Prometheus and DOCA exporters publish `agent_tx_last_bytes` /
-  `agent_rx_last_bytes` alongside the cumulative byte counters; the counter series
-  name differs per exporter -- Prometheus exposes `agent_tx_bytes_total` /
-  `agent_rx_bytes_total` (the OpenMetrics `_total` suffix) while DOCA serves the
-  raw event name `agent_tx_bytes` / `agent_rx_bytes`. The memory events likewise
-  expose a last-operation gauge -- `agent_memory_registered_last_bytes` /
-  `agent_memory_deregistered_last_bytes` -- on both exporters. This is purely an
-  exporter-side derivation: no new event type is emitted and the buffer format is
-  unchanged.
+  of `35`. The Prometheus and DOCA exporters emit **identical** series -- the same
+  names, types, and labels -- derived from one shared metric descriptor
+  (`nixlEnumStrings::telemetryMetricDescriptor` in `telemetry_event.h`). Both
+  expose `agent_tx_bytes_total` / `agent_rx_bytes_total` (counters, OpenMetrics
+  `_total` suffix) alongside `agent_tx_last_bytes` / `agent_rx_last_bytes`
+  (gauges). The memory events likewise expose both a cumulative `_total` counter
+  and a `_last_bytes` gauge on both exporters, and the transfer-time events expose
+  a `_total` counter alongside a last-op gauge (`agent_xfer_time` /
+  `agent_xfer_post_time`). This is purely an exporter-side derivation: no new event
+  type is emitted and the buffer format is unchanged.
 - **Error counters**: the Prometheus and DOCA exporters expose error events as
   `agent_errors_total{status="<status>"}`. The `status` label is bounded by the
   fixed `AGENT_ERR_*` event set: `not_posted`, `invalid_param`, `backend`,

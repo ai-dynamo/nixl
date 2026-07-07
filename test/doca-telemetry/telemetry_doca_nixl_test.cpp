@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -75,8 +76,9 @@ TEST_F(docaNixlExporterTest, CounterAccumulatesAllPushedValues) {
     const nixlTelemetryExporterInitParams params{agentName, 4096};
     nixlTelemetryDocaExporter exporter(params);
 
-    const std::string metric = std::string(
-        nixlEnumStrings::telemetryEventTypeStr(nixl_telemetry_event_type_t::AGENT_TX_BYTES));
+    const std::string metric =
+        nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES)
+            .counterName;
     // The exporter tags every sample with the agent_name label, so look the
     // series up by name + that label rather than by name alone.
     const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
@@ -153,7 +155,7 @@ TEST_F(docaNixlExporterTest, DistinguishesSeriesByAgentLabel) {
     // flush on either drains both agents' buffered samples.
     ASSERT_EQ(exporterAlpha.flush(), NIXL_SUCCESS);
 
-    const std::string metric = std::string(nixlEnumStrings::telemetryEventTypeStr(txBytes));
+    const std::string metric = nixlEnumStrings::telemetryMetricDescriptor(txBytes).counterName;
 
     // Wait for alpha's series, then read both from that one parsed scrape.
     const auto metrics = scrapeUntilValue(
@@ -178,10 +180,12 @@ TEST_F(docaNixlExporterTest, ByteEventsEmitCumulativeCountersAndLastGauges) {
     nixlTelemetryDocaExporter exporter(params);
 
     const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
-    const std::string txCounter = std::string(
-        nixlEnumStrings::telemetryEventTypeStr(nixl_telemetry_event_type_t::AGENT_TX_BYTES));
-    const std::string rxCounter = std::string(
-        nixlEnumStrings::telemetryEventTypeStr(nixl_telemetry_event_type_t::AGENT_RX_BYTES));
+    const std::string txCounter =
+        nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES)
+            .counterName;
+    const std::string rxCounter =
+        nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_RX_BYTES)
+            .counterName;
     const std::string txLast = "agent_tx_last_bytes";
     const std::string rxLast = "agent_rx_last_bytes";
 
@@ -243,6 +247,45 @@ TEST_F(docaNixlExporterTest, ErrorCountersUseBoundedStatusLabel) {
         EXPECT_NE(id.name.rfind("agent_err_", 0), 0)
             << "legacy per-type error counter must not be published: " << id.name;
     }
+}
+
+TEST_F(docaNixlExporterTest, ScrapeEmitsExactlyTheDescriptorSeries) {
+    constexpr char agentName[] = "nixl_doca_parity_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    std::set<std::string> expected;
+    for (const auto eventType : telemetry_metric_event_types) {
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(eventType);
+        if (descriptor.counterName != nullptr) {
+            expected.insert(descriptor.counterName);
+        }
+        if (descriptor.gaugeName != nullptr) {
+            expected.insert(descriptor.gaugeName);
+        }
+        ASSERT_EQ(exporter.exportEvent(nixlTelemetryEvent(eventType, 7)), NIXL_SUCCESS);
+    }
+    expected.insert("agent_errors_total");
+    ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM, 1}),
+              NIXL_SUCCESS);
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const nixl::doca_test::labelSet errorLabels{{"agent_name", agentName},
+                                                {"status", "invalid_param"}};
+    const auto metrics =
+        scrapeUntilValue(port_, "agent_errors_total", 1.0, std::chrono::seconds(12), errorLabels);
+
+    std::set<std::string> actual;
+    for (const auto &[id, samples] : metrics.series()) {
+        (void)samples;
+        const auto agent = id.labels.find("agent_name");
+        if (agent != id.labels.end() && agent->second == agentName &&
+            id.name.rfind("agent_", 0) == 0) {
+            actual.insert(id.name);
+        }
+    }
+
+    EXPECT_EQ(actual, expected) << "DOCA scrape must emit exactly the shared-descriptor series set";
 }
 
 int

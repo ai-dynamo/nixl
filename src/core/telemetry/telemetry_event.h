@@ -73,6 +73,24 @@ inline constexpr std::array telemetry_error_event_types = {
     nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY,
 };
 
+inline constexpr std::array telemetry_metric_event_types = {
+    nixl_telemetry_event_type_t::AGENT_TX_BYTES,
+    nixl_telemetry_event_type_t::AGENT_RX_BYTES,
+    nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM,
+    nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM,
+    nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED,
+    nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED,
+    nixl_telemetry_event_type_t::AGENT_XFER_TIME,
+    nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+};
+
+struct nixlTelemetryMetricDescriptor {
+    const char *counterName;
+    const char *counterHelp;
+    const char *gaugeName;
+    const char *gaugeHelp;
+};
+
 namespace nixlEnumStrings {
 [[nodiscard]] constexpr std::string_view
 telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
@@ -159,6 +177,78 @@ telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
         return nullptr;
     }
     return nullptr;
+}
+
+/**
+ * @brief Exporter-side Prometheus series descriptor for a telemetry event.
+ *
+ * Both the native Prometheus and DOCA/CollectX exporters derive their series
+ * from this single mapping, so they emit identical output. A null @c counterName
+ * or @c gaugeName means the event has no cumulative counter or no last-operation
+ * gauge, respectively. Error events (@c AGENT_ERR_*) and any unmapped value
+ * return an all-null descriptor.
+ *
+ * @param type Telemetry event type.
+ * @return Counter/gauge series names and HELP strings for @p type.
+ */
+[[nodiscard]] constexpr nixlTelemetryMetricDescriptor
+telemetryMetricDescriptor(const nixl_telemetry_event_type_t type) noexcept {
+    switch (type) {
+    case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
+        return {"agent_tx_bytes_total",
+                "Number of bytes sent by the agent",
+                "agent_tx_last_bytes",
+                "Bytes sent by the last request"};
+    case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
+        return {"agent_rx_bytes_total",
+                "Number of bytes received by the agent",
+                "agent_rx_last_bytes",
+                "Bytes received by the last request"};
+    case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
+        return {"agent_tx_requests_num_total",
+                "Number of requests sent by the agent",
+                nullptr,
+                nullptr};
+    case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
+        return {"agent_rx_requests_num_total",
+                "Number of requests received by the agent",
+                nullptr,
+                nullptr};
+    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
+        return {"agent_memory_registered_total",
+                "Cumulative memory registered",
+                "agent_memory_registered_last_bytes",
+                "Memory registered by the last operation"};
+    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
+        return {"agent_memory_deregistered_total",
+                "Cumulative memory deregistered",
+                "agent_memory_deregistered_last_bytes",
+                "Memory deregistered by the last operation"};
+    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
+        return {"agent_xfer_time_total",
+                "Cumulative sum of transfer time from start to completion",
+                "agent_xfer_time",
+                "Transfer time of the last request"};
+    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
+        return {"agent_xfer_post_time_total",
+                "Cumulative sum of time from start to posting to the back-end",
+                "agent_xfer_post_time",
+                "Post time of the last request"};
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
+    case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
+    case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND:
+    case nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH:
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED:
+    case nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE:
+    case nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN:
+    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED:
+    case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
+    case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
+    case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
+        return {nullptr, nullptr, nullptr, nullptr};
+    }
+    return {nullptr, nullptr, nullptr, nullptr};
 }
 } // namespace nixlEnumStrings
 
