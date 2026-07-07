@@ -19,7 +19,10 @@
 #include <chrono>
 #include <iostream>
 #include <numeric>
+#include <optional>
+#include <set>
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
 #include "nixl.h"
@@ -78,8 +81,7 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
 
     static const std::array<std::string, 3> nixl_post_status_str = {
         " Posted", " Posted and Completed", " Completed"};
-    auto duration = std::chrono::duration_cast<chrono_period_us_t>(
-        std::chrono::steady_clock::now() - telemetry.startTime);
+    auto duration = timer.elapsed();
     if (stat_status == NIXL_TELEMETRY_POST) {
         telemetry.postDuration = duration;
     } else if (stat_status == NIXL_TELEMETRY_POST_AND_FINISH) {
@@ -106,6 +108,46 @@ nixlDlistH::nixlDlistH(const std::string &remote_agent, descs_t &&descs)
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 
+namespace nixl::trace {
+
+// True when the process runs under Nsight Systems: nsys injects
+// NVTX_INJECTION64_PATH into the profiled process's environment (its presence
+// means "running under nsys", not merely that nsys is installed).
+[[nodiscard]] bool
+runningUnderNsys() {
+    return nixl::config::checkExistence("NVTX_INJECTION64_PATH");
+}
+
+// Backend-selection policy for the agent-wiring layer (kept out of the
+// backend-agnostic facade so nsys/NVTX specifics never reach makeTracer()).
+// Running under nsys auto-enables NVTX *in addition to* any explicitly requested
+// backends; a set-but-empty NIXL_TRACE_BACKENDS is a hard "off" that beats it.
+[[nodiscard]] std::vector<std::string>
+resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under_nsys) {
+    std::set<std::string> backends;
+    bool explicit_off = false;
+    if (explicit_spec) {
+        // Trim entries so a padded value like "chakra, nvtx" matches backend
+        // names; the set dedups them.
+        for (const absl::string_view raw : absl::StrSplit(*explicit_spec, ',')) {
+            const absl::string_view name = absl::StripAsciiWhitespace(raw);
+            if (!name.empty()) {
+                backends.emplace(name);
+            }
+        }
+        // Set-but-empty (or all-blank) is an explicit "off" that must beat the
+        // nsys auto-enable below.
+        explicit_off = backends.empty();
+    }
+
+    if (under_nsys && !explicit_off) {
+        backends.emplace("nvtx");
+    }
+    return {backends.begin(), backends.end()};
+}
+
+} // namespace nixl::trace
+
 namespace {
 
 [[nodiscard]] bool
@@ -130,20 +172,16 @@ effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
     return requested;
 }
 
-// Split a comma-separated backend list (e.g. "nvtx,chakra") into non-empty
-// names. Used for the tracing runtime gate.
-[[nodiscard]] std::vector<std::string>
-splitTraceBackends(const std::string &spec) {
-    return absl::StrSplit(spec, ',', absl::SkipEmpty());
-}
-
-// Build the agent's composite tracer from NIXL_TRACE_BACKENDS. Returns null when
-// nothing is requested or none of the requested backends is compiled in, so the
-// agent can hold the result in a const member.
+// Build the agent's composite tracer. Backend selection follows
+// nixl::trace::resolveTraceBackends (explicit NIXL_TRACE_BACKENDS wins; unset +
+// running under nsys auto-enables NVTX). Returns null when nothing resolves, so
+// the agent can hold the result in a const member and call sites take the no-op
+// branch.
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
 makeAgentTracer(const std::string &name) {
     const auto trace_env = nixl::config::getValueOptional<std::string>("NIXL_TRACE_BACKENDS");
-    auto requested_backends = splitTraceBackends(trace_env.value_or(std::string{}));
+    auto requested_backends =
+        nixl::trace::resolveTraceBackends(trace_env, nixl::trace::runningUnderNsys());
     if (requested_backends.empty()) {
         return nullptr;
     }
@@ -1087,6 +1125,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    // Request-handle address is a stable id shared with the completion below,
+    // so the two link even when posted and polled from different threads.
+    NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), reinterpret_cast<std::uint64_t>(req_hndl));
     NIXL_TRACE_SCOPE(trace_span,
                      data->tracer_.get(),
                      req_hndl->backendOp == NIXL_WRITE ? "nixl::postXferReq.write" :
@@ -1098,6 +1139,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     if (data->telemetry_) {
         req_hndl->telemetry.startTime = std::chrono::steady_clock::now();
+        req_hndl->timer.restart();
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);
@@ -1224,6 +1266,8 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
             }
         }
         if (req_hndl->status == NIXL_SUCCESS) {
+            NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(),
+                                         reinterpret_cast<std::uint64_t>(req_hndl));
             NIXL_TRACE_MARK(
                 data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
         }
@@ -1553,6 +1597,9 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
                          std::string &agent_name) {
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::loadRemoteMD", nixl::trace::Kind::Metadata);
+
     nixlSerDes sd;
     nixl_blob_t conn_info;
     nixl_backend_t nixl_backend;
@@ -1578,6 +1625,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
     }
 
     NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
+    NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{remote_agent});
 
     size_t conn_cnt;
     ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
@@ -1726,6 +1774,10 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlAgent::fetchRemoteMD (const std::string remote_name,
                           const nixl_opt_args_t* extra_params) {
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::fetchRemoteMD", nixl::trace::Kind::Metadata);
+    NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{remote_name});
+
     // If IP is provided, use socket-based communication
     if (extra_params && !extra_params->ipAddr.empty()) {
         data->enqueueCommWork(std::make_tuple(SOCK_FETCH, extra_params->ipAddr, extra_params->port, ""));
@@ -1821,6 +1873,11 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
                        const nixl_opt_args_t *extra_params) const {
     const auto desc_count = static_cast<size_t>(dlist.descCount());
     const auto mem_type = dlist.getType();
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::prepMemView", nixl::trace::Kind::MemoryR);
+    NIXL_TRACE_ATTR(trace_span, "mem_type", static_cast<std::int64_t>(mem_type));
+    NIXL_TRACE_ATTR(trace_span, "desc_count", static_cast<std::int64_t>(desc_count));
+
     nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
 
@@ -1890,6 +1947,11 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
                        nixlMemViewH &mvh,
                        const nixl_opt_args_t *extra_params) const {
     const auto mem_type = dlist.getType();
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::prepMemView", nixl::trace::Kind::MemoryR);
+    NIXL_TRACE_ATTR(trace_span, "mem_type", static_cast<std::int64_t>(mem_type));
+    NIXL_TRACE_ATTR(trace_span, "desc_count", static_cast<std::int64_t>(dlist.descCount()));
+
     nixl_meta_dlist_t meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
 
@@ -1925,6 +1987,9 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
 
 void
 nixlAgent::releaseMemView(nixlMemViewH mvh) const {
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::releaseMemView", nixl::trace::Kind::Generic);
+
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
     const auto it = data->mvhToEngine.find(mvh);

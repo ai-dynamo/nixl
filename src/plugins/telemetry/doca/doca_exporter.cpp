@@ -66,70 +66,6 @@ docaTimestamp() noexcept {
     return ts;
 }
 
-[[nodiscard]] constexpr bool
-isCounterEvent(nixl_telemetry_event_type_t event_type) noexcept {
-    switch (event_type) {
-    case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
-    case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
-    case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
-        return true;
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
-    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
-    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
-    case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE:
-    case nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
-    case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
-        return false;
-    }
-    return false;
-}
-
-// Gauge series name for an event, or nullptr if the event has no gauge.
-[[nodiscard]] constexpr const char *
-gaugeMetricName(nixl_telemetry_event_type_t event_type) noexcept {
-    switch (event_type) {
-    case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
-        return "agent_tx_last_bytes";
-    case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
-        return "agent_rx_last_bytes";
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
-        return "agent_memory_registered";
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
-        return "agent_memory_deregistered";
-    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
-        return "agent_xfer_time";
-    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
-        return "agent_xfer_post_time";
-    case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
-    case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE:
-    case nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
-    case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
-        return nullptr;
-    }
-    return nullptr;
-}
-
 std::mutex g_ctx_mutex;
 std::weak_ptr<DocaSharedContext> g_ctx_weak;
 std::mutex g_metrics_mutex;
@@ -147,6 +83,7 @@ struct DocaSharedContext {
     doca_telemetry_exporter_schema *schema = nullptr;
     doca_telemetry_exporter_source *source = nullptr;
     doca_telemetry_exporter_label_set_id_t label_set_id = 0;
+    doca_telemetry_exporter_label_set_id_t error_label_set_id = 0;
     bool source_started = false;
     bool metrics_context_created = false;
 
@@ -217,6 +154,13 @@ DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
             throw std::runtime_error("Failed to create DOCA label set");
         }
 
+        const char *error_label_names[] = {"agent_name", "status"};
+        result = doca_telemetry_exporter_metrics_add_label_names(
+            source, error_label_names, 2, &error_label_set_id);
+        if (result != DOCA_SUCCESS) {
+            throw std::runtime_error("Failed to create DOCA error label set");
+        }
+
         doca_telemetry_exporter_metrics_set_flush_interval_ms(source, 1000);
     }
     catch (...) {
@@ -275,18 +219,33 @@ nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
 
 doca_error_t
 nixlTelemetryDocaExporter::appendCounterSample(const nixlTelemetryEvent &event,
+                                               const char *counter_name,
                                                const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
     // Counter events carry a per-operation delta; increment so the exported
     // counter is a monotonic cumulative total (add_counter would instead push
     // each delta as an absolute value, yielding a non-monotonic series).
     return doca_telemetry_exporter_metrics_add_counter_increment(ctx_->source,
                                                                  docaTimestamp(),
-                                                                 event_name.c_str(),
+                                                                 counter_name,
                                                                  event.value_,
                                                                  ctx_->label_set_id,
+                                                                 label_values);
+#pragma GCC diagnostic pop
+}
+
+doca_error_t
+nixlTelemetryDocaExporter::appendErrorCounterSample(const nixlTelemetryEvent &event,
+                                                    const char *status) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    const char *label_values[] = {agent_name_.c_str(), status};
+    return doca_telemetry_exporter_metrics_add_counter_increment(ctx_->source,
+                                                                 docaTimestamp(),
+                                                                 "agent_errors_total",
+                                                                 event.value_,
+                                                                 ctx_->error_label_set_id,
                                                                  label_values);
 #pragma GCC diagnostic pop
 }
@@ -308,23 +267,38 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
         const std::lock_guard lock(g_metrics_mutex);
         const char *label_values[] = {agent_name_.c_str()};
 
+        if (const char *const status =
+                nixlEnumStrings::telemetryErrorStatusLabel(event.eventType_)) {
+            const auto result = appendErrorCounterSample(event, status);
+            if (result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to add error counter: " << result;
+                return NIXL_ERR_UNKNOWN;
+            }
+            return NIXL_SUCCESS;
+        }
+
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event.eventType_);
+
         // Idempotent gauge first, non-idempotent counter increment last.
-        if (const char *const gauge_name = gaugeMetricName(event.eventType_)) {
-            const auto result = appendGaugeSample(event, gauge_name, label_values);
-            if (result != DOCA_SUCCESS) {
-                NIXL_ERROR << "Failed to add gauge: " << result;
-                return NIXL_ERR_UNKNOWN;
+        doca_error_t gauge_result = DOCA_SUCCESS;
+        if (descriptor.gaugeName != nullptr) {
+            gauge_result = appendGaugeSample(event, descriptor.gaugeName, label_values);
+            if (gauge_result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to add gauge: " << gauge_result;
             }
         }
 
-        if (isCounterEvent(event.eventType_)) {
-            const auto result = appendCounterSample(event, label_values);
-            if (result != DOCA_SUCCESS) {
-                NIXL_ERROR << "Failed to add counter: " << result;
-                return NIXL_ERR_UNKNOWN;
+        doca_error_t counter_result = DOCA_SUCCESS;
+        if (descriptor.counterName != nullptr) {
+            counter_result = appendCounterSample(event, descriptor.counterName, label_values);
+            if (counter_result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to add counter: " << counter_result;
             }
         }
 
+        if (gauge_result != DOCA_SUCCESS || counter_result != DOCA_SUCCESS) {
+            return NIXL_ERR_UNKNOWN;
+        }
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
