@@ -288,6 +288,39 @@ TEST_F(docaNixlExporterTest, ScrapeEmitsExactlyTheDescriptorSeries) {
     EXPECT_EQ(actual, expected) << "DOCA scrape must emit exactly the shared-descriptor series set";
 }
 
+// The synthetic AGENT_TELEMETRY_EVENTS_DROPPED event flows through the standard counter
+// path (add_counter_increment), so the DOCA endpoint must expose it as the
+// cumulative series agent_telemetry_events_dropped_total whose value equals the sum
+// of the emitted per-flush drop deltas.
+TEST_F(docaNixlExporterTest, DroppedEventsCounterAccumulates) {
+    constexpr char agentName[] = "nixl_doca_dropped_events_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    const std::string metric = nixlEnumStrings::telemetryMetricDescriptor(
+                                   nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)
+                                   .counterName;
+    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+
+    constexpr std::array<uint64_t, 3> deltas{7, 4, 13};
+    uint64_t expected_total = 0;
+    for (const uint64_t delta : deltas) {
+        const nixlTelemetryEvent event(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED,
+                                       delta);
+        ASSERT_EQ(exporter.exportEvent(event), NIXL_SUCCESS);
+        expected_total += delta;
+    }
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const auto metrics = scrapeUntilValue(
+        port_, metric, static_cast<double>(expected_total), std::chrono::seconds(12), labels);
+    const std::optional<double> observed = metrics.latestValue(metric, labels);
+    ASSERT_TRUE(observed.has_value())
+        << metric << "{agent_name=" << agentName << "} not served at the endpoint after flush";
+    EXPECT_EQ(*observed, static_cast<double>(expected_total))
+        << "dropped-events counter must equal the sum of all emitted deltas (7+4+13)";
+}
+
 int
 main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);

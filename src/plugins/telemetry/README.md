@@ -37,6 +37,7 @@ NIXL generates the following telemetry events:
 | `agent_rx_requests_num` | Counter | Number of receive requests |
 | `agent_xfer_time` | Gauge | Transfer time in microseconds |
 | `agent_xfer_post_time` | Gauge | Post time in microseconds |
+| `agent_telemetry_events_dropped` | Counter | Telemetry events dropped at the producer-side staging queue |
 
 ## Quick Start
 

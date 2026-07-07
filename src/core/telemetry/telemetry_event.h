@@ -26,7 +26,7 @@
 constexpr char TELEMETRY_BUFFER_SIZE_VAR[] = "NIXL_TELEMETRY_BUFFER_SIZE";
 constexpr char TELEMETRY_RUN_INTERVAL_VAR[] = "NIXL_TELEMETRY_RUN_INTERVAL";
 
-constexpr inline int TELEMETRY_VERSION = 3;
+constexpr inline int TELEMETRY_VERSION = 4;
 
 /**
  * @enum nixl_telemetry_event_type_t
@@ -53,6 +53,7 @@ enum class nixl_telemetry_event_type_t : uint32_t {
     AGENT_ERR_REMOTE_DISCONNECT = 17,
     AGENT_ERR_CANCELED = 18,
     AGENT_ERR_NO_TELEMETRY = 19,
+    AGENT_TELEMETRY_EVENTS_DROPPED = 20,
 };
 
 [[nodiscard]] nixl_telemetry_event_type_t
@@ -82,6 +83,7 @@ inline constexpr std::array telemetry_metric_event_types = {
     nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED,
     nixl_telemetry_event_type_t::AGENT_XFER_TIME,
     nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+    nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED,
 };
 
 struct nixlTelemetryMetricDescriptor {
@@ -135,6 +137,8 @@ telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
         return "agent_err_canceled";
     case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
         return "agent_err_no_telemetry";
+    case nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED:
+        return "agent_telemetry_events_dropped";
     }
     return "unknown_event";
 }
@@ -174,6 +178,7 @@ telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
     case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
     case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
     case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
+    case nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED:
         return nullptr;
     }
     return nullptr;
@@ -234,6 +239,11 @@ telemetryMetricDescriptor(const nixl_telemetry_event_type_t type) noexcept {
                 "Cumulative sum of time from start to posting to the back-end",
                 "agent_xfer_post_time",
                 "Post time of the last request"};
+    case nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED:
+        return {"agent_telemetry_events_dropped_total",
+                "Cumulative telemetry events dropped at the producer-side staging queue",
+                nullptr,
+                nullptr};
     case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
     case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
     case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
