@@ -91,9 +91,10 @@ RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "am
             DOCA_VER="$(dpkg-query -W -f='${Version}' doca-sdk-common | cut -d. -f1,2).0" && \
             DOCA_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z)" && \
             DOCA_ARCH=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64-sbsa"; else echo "x86_64"; fi) && \
+            DOCA_REPO="https://linux.mellanox.com/public/repo/doca/${DOCA_VER}/${DOCA_OS}/${DOCA_ARCH}" && \
             echo "Base image ships the DOCA ${DOCA_VER} runtime without the SDK, installing the SDK from the matching online repo" && \
-            wget --tries=3 --waitretry=5 --no-verbose https://linux.mellanox.com/public/repo/doca/GPG-KEY-Mellanox.pub -O /etc/apt/keyrings/GPG-KEY-Mellanox.asc && \
-            echo "deb [signed-by=/etc/apt/keyrings/GPG-KEY-Mellanox.asc] https://linux.mellanox.com/public/repo/doca/${DOCA_VER}/${DOCA_OS}/${DOCA_ARCH} ./" > /etc/apt/sources.list.d/doca-online.list && \
+            wget --tries=3 --waitretry=5 --no-verbose ${DOCA_REPO}/doca_keyring.gpg -O /etc/apt/keyrings/doca_online_keyring.gpg && \
+            echo "deb [signed-by=/etc/apt/keyrings/doca_online_keyring.gpg] ${DOCA_REPO} ./" > /etc/apt/sources.list.d/doca-online.list && \
             apt-get update; \
         fi && \
         apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev; \
