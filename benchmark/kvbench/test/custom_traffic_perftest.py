@@ -130,7 +130,7 @@ class StorageXferHandle(NixlHandle):
 class NixlBuffer:
     """Can be sharded. Allocates 4K-aligned buffers for O_DIRECT compatibility.
 
-    When using get_chunk(), offsets should be pre-aligned using align_offset().
+    When using get_chunk(), offsets should be pre-aligned using align_up().
     Use aligned_total_size() to calculate buffer size when chunks need alignment.
     """
 
@@ -270,13 +270,11 @@ class NixlBuffer:
         # Deregister from default backend
         self.nixl_agent.deregister_memory(self.reg_descs)
         # Delete the raw buffer (buf is just a view into it)
-        if hasattr(self._raw_buf, "is_cuda") and self._raw_buf.is_cuda:
-            del self.buf
-            del self._raw_buf
+        was_cuda = self._raw_buf.is_cuda
+        del self.buf
+        del self._raw_buf
+        if was_cuda:
             torch.cuda.empty_cache()
-        else:
-            del self.buf
-            del self._raw_buf
 
 
 class CTPerftest:

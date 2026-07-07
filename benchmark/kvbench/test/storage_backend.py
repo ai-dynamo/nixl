@@ -33,6 +33,8 @@ from nixl.logging import get_logger
 
 logger = get_logger(__name__)
 
+_ALIGN_BYTES = 4096  # O_DIRECT / storage block alignment
+
 
 @dataclass
 class StorageHandle:
@@ -348,7 +350,11 @@ class FilesystemBackend(StorageBackend):
             # Multi-file: N shards, each with ceil(size/N) bytes (then
             # aligned up). Floor division here would yield 0 whenever
             # read_size < n_shards and silently produce no shards.
-            align = max(self._block_size, 4096) if self._block_size > 0 else 4096
+            align = (
+                max(self._block_size, _ALIGN_BYTES)
+                if self._block_size > 0
+                else _ALIGN_BYTES
+            )
 
             def _ceil_align(total: int, n: int) -> int:
                 if total <= 0:
@@ -578,7 +584,11 @@ class FilesystemBackend(StorageBackend):
 
         # Single file: split into regions (same fd, limited by NFS)
         fd = handle.backend_data["fd"]
-        align = max(self._block_size, 4096) if self._block_size > 0 else 4096
+        align = (
+            max(self._block_size, _ALIGN_BYTES)
+            if self._block_size > 0
+            else _ALIGN_BYTES
+        )
         chunk_per_handle = ((total // num_handles + align - 1) // align) * align
 
         handles = []
@@ -630,7 +640,11 @@ class FilesystemBackend(StorageBackend):
 
         fd = handle.backend_data["fd"]
         write_offset = handle.read_size
-        align = max(self._block_size, 4096) if self._block_size > 0 else 4096
+        align = (
+            max(self._block_size, _ALIGN_BYTES)
+            if self._block_size > 0
+            else _ALIGN_BYTES
+        )
         chunk_per_handle = ((total // num_handles + align - 1) // align) * align
 
         handles = []

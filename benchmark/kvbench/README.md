@@ -385,7 +385,7 @@ traffic_patterns:
 - `tp_file`: Unified TP file with `[rdma]`, `[read]`, `[write]` sections — preferred when both RDMA and storage are exercised by the same pattern. Mutually exclusive with `matrix_file`/`matrix` and the inline `storage:` block.
 - `matrix_file`: File containing the RDMA transfer matrix (legacy, optional — omit for storage-only).
 - `matrix`: Inline RDMA matrix as 2D array (alternative to `matrix_file`).
-- `mem_type`: Memory type — `"cuda"`, `"vram"`, `"cpu"`, `"dram"` (required).
+- `mem_type`: Memory type — `"cuda"`, `"vram"`, `"cpu"`, `"dram"` (default: `"cuda"`).
 - `sleep_before_launch_sec`: Seconds to sleep (compute simulation) before RDMA (default: 0).
 - `storage`: Per-rank storage requirements when using the legacy split format.
 - `storage.read`: Array of read sizes per rank (index = rank, use 0 to skip).
@@ -527,9 +527,7 @@ python main.py --debug ct-perftest ./config.yaml \
 - [ ] Support more memory types beyond CUDA
 - [ ] Optimize transfer preparation performance
 
-## Documentation Quick Reference
-
-### Developer Guides
+## Developer Guides
 
 - [Tutorial with GDS](docs/tutorial-gds.md) - Quick tutorial for running NIXLBench with GDS
 - [Creating a Model Configuration](docs/creating-a-model-config.md) - Guide for creating model configuration files

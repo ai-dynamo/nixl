@@ -51,6 +51,16 @@ class SequentialCTPerftest(CTPerftest):
     Allows testing multiple communication patterns sequentially between distributed processes.
     """
 
+    # fio-style latency stat keys (all values in seconds); copy per use.
+    _EMPTY_STATS = {
+        "avg": 0.0,
+        "p50": 0.0,
+        "p90": 0.0,
+        "p99": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+    }
+
     def __init__(
         self,
         traffic_patterns: list[TrafficPattern],
@@ -188,15 +198,7 @@ class SequentialCTPerftest(CTPerftest):
         Returns list of stat dicts per TP for this rank.
         Each dict has: avg, p50, p90, p99, min, max (all in seconds)
         """
-        empty_stats = {
-            "avg": 0.0,
-            "p50": 0.0,
-            "p90": 0.0,
-            "p99": 0.0,
-            "min": 0.0,
-            "max": 0.0,
-        }
-        my_stats = [empty_stats.copy() for _ in self.traffic_patterns]
+        my_stats = [self._EMPTY_STATS.copy() for _ in self.traffic_patterns]
 
         for tp_ix in range(len(self.traffic_patterns)):
             handles = storage_handles[tp_ix]
@@ -230,33 +232,19 @@ class SequentialCTPerftest(CTPerftest):
                 self._run_tp(handles, blocking=True)
                 iter_latencies.append(time.time() - t)
 
-            # Calculate fio-style percentile statistics
-            sorted_lats = sorted(iter_latencies)
-            n = len(sorted_lats)
-            avg_lat = sum(iter_latencies) / n
-            p50 = sorted_lats[n // 2]
-            p90 = sorted_lats[int(n * 0.9)]
-            p99 = sorted_lats[int(n * 0.99)] if n >= 100 else sorted_lats[-1]
-
-            my_stats[tp_ix] = {
-                "avg": avg_lat,
-                "p50": p50,
-                "p90": p90,
-                "p99": p99,
-                "min": sorted_lats[0],
-                "max": sorted_lats[-1],
-            }
+            stats = self._percentile_stats(iter_latencies)
+            my_stats[tp_ix] = stats
             logger.info(
                 "[Rank %d] Isolated %s TP %d: avg=%.3f p50=%.3f p90=%.3f p99=%.3f ms (min=%.3f max=%.3f)",
                 self.my_rank,
                 op_type,
                 tp_ix,
-                avg_lat * 1e3,
-                p50 * 1e3,
-                p90 * 1e3,
-                p99 * 1e3,
-                sorted_lats[0] * 1e3,
-                sorted_lats[-1] * 1e3,
+                stats["avg"] * 1e3,
+                stats["p50"] * 1e3,
+                stats["p90"] * 1e3,
+                stats["p99"] * 1e3,
+                stats["min"] * 1e3,
+                stats["max"] * 1e3,
             )
 
             # No end barrier - only one rank runs isolated storage
@@ -694,15 +682,7 @@ class SequentialCTPerftest(CTPerftest):
         Only senders participate. Returns per-TP stats for this rank.
         Each stat dict has: avg, p50, p90, p99, min, max (all in seconds).
         """
-        empty_stats = {
-            "avg": 0.0,
-            "p50": 0.0,
-            "p90": 0.0,
-            "p99": 0.0,
-            "min": 0.0,
-            "max": 0.0,
-        }
-        my_stats: List[Dict] = [empty_stats.copy() for _ in tp_handles]
+        my_stats: List[Dict] = [self._EMPTY_STATS.copy() for _ in tp_handles]
 
         for tp_ix, handles in enumerate(tp_handles):
             tp = self.traffic_patterns[tp_ix]
@@ -729,34 +709,35 @@ class SequentialCTPerftest(CTPerftest):
                         iter_latency * 1e3,
                     )
 
-            sorted_lats = sorted(iter_latencies)
-            n = len(sorted_lats)
-            avg_lat = sum(iter_latencies) / n
-            p50 = sorted_lats[n // 2]
-            p90 = sorted_lats[int(n * 0.9)]
-            p99 = sorted_lats[int(n * 0.99)] if n >= 100 else sorted_lats[-1]
-
-            my_stats[tp_ix] = {
-                "avg": avg_lat,
-                "p50": p50,
-                "p90": p90,
-                "p99": p99,
-                "min": sorted_lats[0],
-                "max": sorted_lats[-1],
-            }
+            stats = self._percentile_stats(iter_latencies)
+            my_stats[tp_ix] = stats
             logger.info(
                 "[Rank %d] Isolated RDMA TP %d: avg=%.3f p50=%.3f p90=%.3f p99=%.3f ms (min=%.3f max=%.3f)",
                 self.my_rank,
                 tp_ix,
-                avg_lat * 1e3,
-                p50 * 1e3,
-                p90 * 1e3,
-                p99 * 1e3,
-                sorted_lats[0] * 1e3,
-                sorted_lats[-1] * 1e3,
+                stats["avg"] * 1e3,
+                stats["p50"] * 1e3,
+                stats["p90"] * 1e3,
+                stats["p99"] * 1e3,
+                stats["min"] * 1e3,
+                stats["max"] * 1e3,
             )
 
         return my_stats
+
+    @staticmethod
+    def _percentile_stats(iter_latencies) -> Dict[str, float]:
+        """fio-style latency stats in seconds: avg, p50, p90, p99, min, max."""
+        sorted_lats = sorted(iter_latencies)
+        n = len(sorted_lats)
+        return {
+            "avg": sum(iter_latencies) / n,
+            "p50": sorted_lats[n // 2],
+            "p90": sorted_lats[int(n * 0.9)],
+            "p99": sorted_lats[int(n * 0.99)] if n >= 100 else sorted_lats[-1],
+            "min": sorted_lats[0],
+            "max": sorted_lats[-1],
+        }
 
     @staticmethod
     def _aggregate_stats(stats_by_ranks, tp_idx) -> Dict[str, float]:
@@ -823,7 +804,7 @@ class SequentialCTPerftest(CTPerftest):
             logger.debug(
                 "[Rank %d] Sender: RDMA send complete in %.3f ms (TP %d)",
                 self.my_rank,
-                (tp_end_ts - tp_start_ts) * 1000,
+                (tp_end_ts - tp_start_ts) * 1e3,
                 tp_ix,
             )
 
@@ -844,7 +825,7 @@ class SequentialCTPerftest(CTPerftest):
                     "[Rank %d] Receiver: Got all %d notifications in %.3f ms (TP %d)",
                     self.my_rank,
                     len(notif_times),
-                    (recv_end_ts - recv_start_ts) * 1000,
+                    (recv_end_ts - recv_start_ts) * 1e3,
                     tp_ix,
                 )
                 if not is_sender and notif_times:
@@ -1081,7 +1062,7 @@ class SequentialCTPerftest(CTPerftest):
         Args:
             verify_buffers: Whether to verify buffer contents after transfer
             print_recv_buffers: Whether to print receive buffer contents
-            json_output_path: Path to save results in YAML format
+            json_output_path: Path to save results in JSON format
 
         Returns:
             Total execution time in seconds
@@ -1159,19 +1140,11 @@ class SequentialCTPerftest(CTPerftest):
                 "[Rank %d] Running isolated benchmark (to measure perf without noise)",
                 self.my_rank,
             )
-            empty_stats = {
-                "avg": 0.0,
-                "p50": 0.0,
-                "p90": 0.0,
-                "p99": 0.0,
-                "min": 0.0,
-                "max": 0.0,
-            }
             my_isolated_read_stats: List[Dict] = [
-                empty_stats.copy() for _ in tp_handles
+                self._EMPTY_STATS.copy() for _ in tp_handles
             ]
             my_isolated_write_stats: List[Dict] = [
-                empty_stats.copy() for _ in tp_handles
+                self._EMPTY_STATS.copy() for _ in tp_handles
             ]
 
             results["metadata"]["sol_calculation_ts"] = time.time()

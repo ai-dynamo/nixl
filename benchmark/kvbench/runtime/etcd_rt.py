@@ -289,8 +289,6 @@ class _EtcdDistUtils(_RTUtils):
 
         self.barrier(timeout_sec=timeout_sec)
         self.client.put(f"{reduce_prefix}/{self.rank}", pickle.dumps(vals))
-        if self.rank == root:
-            self.client.delete(f"{reduce_prefix}/result")
         self.barrier(timeout_sec=timeout_sec)
 
         if self.rank == root:

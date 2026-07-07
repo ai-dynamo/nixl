@@ -52,7 +52,7 @@ from dataclasses import dataclass
 from itertools import cycle
 from os import PathLike
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 import numpy as np
 import yaml
@@ -598,7 +598,7 @@ def main(
             read_sizes = ["0"] * world_size
             write_sizes = ["0"] * world_size
 
-            if all_nodes_per_pattern:
+            if all_nodes_per_pattern or storage_only:
                 kv_size = model_config.kv_cache_size(matrix.isl)
                 per_rank_size = int(
                     kv_size
@@ -609,22 +609,13 @@ def main(
                 read_size = int(per_rank_size * hit_rate)
                 write_size = 0 if read_only else int(per_rank_size * (1 - hit_rate))
 
+            if all_nodes_per_pattern:
                 for rank in range(num_prefill_gpus):
                     if read_size > 0:
                         read_sizes[rank] = format_size(read_size)
                     if write_size > 0:
                         write_sizes[rank] = format_size(write_size)
             elif storage_only:
-                kv_size = model_config.kv_cache_size(matrix.isl)
-                per_rank_size = int(
-                    kv_size
-                    / prefill_worker_config.tp
-                    / prefill_worker_config.pp
-                    / prefill_worker_config.cp
-                )
-                read_size = int(per_rank_size * hit_rate)
-                write_size = 0 if read_only else int(per_rank_size * (1 - hit_rate))
-
                 num_prefill_workers = num_prefill_gpus // (
                     prefill_worker_config.tp
                     * prefill_worker_config.pp
@@ -677,14 +668,14 @@ def main(
         # and the runner rejects entries that set tp_file alongside the legacy
         # matrix_file/matrix/storage keys, so do not duplicate that data here.
         # (mem_type is not a legacy key and is still read by the runner.)
-        tp_entry: Dict[str, Any] = {
+        tp_entry: dict[str, Any] = {
             "tp_file": f"tps/tp_{idx}.tp",
             "sleep_before_launch_sec": matrix.compute_time * (1 - hit_rate),
             "metadata": {
                 "isl": matrix.isl,
             },
         }
-        if storage_only or storage_enabled:
+        if storage_enabled:
             tp_entry["mem_type"] = mem_type
 
         metadata["traffic_patterns"].append(tp_entry)

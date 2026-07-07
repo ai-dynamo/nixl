@@ -154,10 +154,12 @@ def load_tp_file(tp_file) -> dict:
     return result
 
 
+_ALIGN_BYTES = 4096  # O_DIRECT / storage block alignment
+
+
 def align_to_4k(size: int) -> int:
     """Align size up to 4K boundary for O_DIRECT compatibility."""
-    ALIGNMENT = 4096
-    return ((size + ALIGNMENT - 1) // ALIGNMENT) * ALIGNMENT
+    return ((size + _ALIGN_BYTES - 1) // _ALIGN_BYTES) * _ALIGN_BYTES
 
 
 def parse_storage_config(
@@ -723,15 +725,6 @@ def sequential_ct_perftest(
             sleep_after_launch_sec=tp_config.get("sleep_after_launch_sec", None),
             storage_ops=storage_ops,
         )
-
-        # Storage operations are flexible - any rank can have read/write:
-        #   - Storage READ happens before RDMA (for all ranks with read_h)
-        #   - Storage WRITE happens after RDMA (for all ranks with write_h)
-        #
-        # Example configurations:
-        #   - Senders: read → send → write
-        #   - Receivers: read → receive → write
-        #   - Mixed: any combination
 
         patterns.append(pattern)
 
