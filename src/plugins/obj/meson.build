@@ -24,6 +24,19 @@ obj_sources = [
     's3/client.h',
     's3/engine_impl.cpp',
     's3/engine_impl.h',
+    # Generic, vendor-neutral S3-over-RDMA (x-amz-rdma-*) data path. rdma.cpp is
+    # internally guarded by HAVE_CUOBJ_CLIENT and compiles to nothing when the
+    # cuObjClient library is absent; rdma_protocol.h is dependency-free.
+    's3/rdma_protocol.h',
+    's3/rdma.cpp',
+    's3/rdma.h',
+    # Standard, protocol-compliant S3-over-RDMA engine. Built unconditionally (it
+    # is just a DefaultObjEngineImpl subclass) so that accelerated=true with no
+    # type (or type=s3) is always recognized; the RDMA transport is guarded
+    # by HAVE_CUOBJ_CLIENT in the standard client, which throws at construction
+    # when RDMA is requested but cuObjClient is absent.
+    's3_accel/generic/engine_impl.cpp',
+    's3_accel/generic/engine_impl.h',
     's3_crt/engine_impl.cpp',
     's3_crt/engine_impl.h',
     's3_crt/client.cpp',

@@ -26,24 +26,43 @@
 // -----------------------------------------------------------------------------
 // Obj Engine Implementation
 // -----------------------------------------------------------------------------
+//
+// Engine selection:
+//   * Default (no params)                         -> DefaultObjEngineImpl
+//   * crtMinLimit > 0                             -> S3CrtObjEngineImpl
+//   * accelerated=true (no type / type=s3)        -> GenericObjEngineImpl
+//   * accelerated=true, type=dell                 -> vendor-specific engine
+//
+// The preferred GPU-direct path is the standard, protocol-compliant
+// S3-over-RDMA engine selected by `accelerated=true` with no `type` (or
+// `type=s3`). It is built on the S3-over-RDMA capability of the standard S3
+// client (see s3/rdma.h): it complies with the published `x-amz-rdma-*` protocol
+// and requires NO per-vendor code — any S3 endpoint that implements the protocol
+// (e.g. MinIO AIStor) works, and so would AWS S3 if it adopted it. RDMA is an
+// explicit assertion (not auto-probed, and no silent HTTP fallback — see
+// s3/client.cpp for the rationale and the future auto-fallback path).
+//
+// `accelerated=true, type=dell` selects a vendor-specific engine for servers
+// that use vendor-specific RDMA headers; Dell uses an `x-rdma-info` header. Both
+// the standard and vendor engines resolve through `objAccelEngineRegistry`: the
+// standard engine registers under "s3" (a missing `type` is normalized to "s3"
+// below), the Dell engine under "dell".
 
 namespace {
-
-std::string
-getAccelType(const nixl_b_params_t *custom_params) {
-    if (!custom_params) {
-        return "";
-    }
-    auto it = custom_params->find("type");
-    return (it != custom_params->end()) ? it->second : "";
-}
 
 template<typename... Args>
 std::unique_ptr<nixlObjEngineImpl>
 createAccelEngine(const nixl_b_params_t *custom_params, Args &&...args) {
+    // A missing `type` selects the standard protocol-compliant engine. Normalize
+    // to "s3" rather than looking up "" so resolution is deterministic: the
+    // cuobj-gated s3_accel base also registers under "", and the registry
+    // keeps whichever registrar runs first (unspecified static-init order).
+    std::string type = getAccelType(custom_params);
+    if (type.empty()) {
+        type = "s3";
+    }
     try {
-        return objAccelEngineRegistry::instance().create(getAccelType(custom_params),
-                                                         std::forward<Args>(args)...);
+        return objAccelEngineRegistry::instance().create(type, std::forward<Args>(args)...);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Failed to create accelerated engine: " << e.what();

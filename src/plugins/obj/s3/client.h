@@ -26,6 +26,7 @@
 #include <aws/core/Aws.h>
 #include "obj_backend.h"
 #include "nixl_types.h"
+#include "rdma.h"
 
 /**
  * S3 Vanilla Object Client - Base implementation using AWS SDK S3Client.
@@ -63,9 +64,37 @@ public:
     void
     checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) override;
 
+    bool
+    supportsRdma() const override;
+
 protected:
+    /**
+     * Internal constructor. @p enable_rdma_fast_path attaches the S3-over-RDMA
+     * path. Vendor clients (awsS3AccelClient and its Dell subclass) pass false:
+     * they manage RDMA themselves, so the base must not spin up the shared
+     * cuObjClient.
+     */
+    awsS3Client(nixl_b_params_t *custom_params,
+                std::shared_ptr<Aws::Utils::Threading::Executor> executor,
+                bool enable_rdma_fast_path);
+
+    // True iff the RDMA fast path is fully usable (accelerated=true with no type
+    // / type=s3, plus cuObject fabric, control plane, and executor). The single
+    // predicate gating both VRAM advertisement and the RDMA transfer branch.
+    bool
+    rdmaReady() const;
+
     std::unique_ptr<Aws::S3::S3Client> s3Client_;
     Aws::String bucketName_;
+    std::shared_ptr<Aws::Utils::Threading::Executor> executor_;
+    bool rdma_requested_ = false;
+
+#ifdef HAVE_CUOBJ_CLIENT
+    // RDMA fast path. Null when no RDMA fabric is present; under accelerated=true
+    // an unavailable fast path fails backend construction (see client.cpp).
+    nixl_obj_rdma::SharedCuObjClient *rdma_ = nullptr;
+    std::unique_ptr<nixl_obj_rdma::S3RdmaControlPlane> rdmaCp_;
+#endif
 };
 
 #endif // OBJ_PLUGIN_S3_CLIENT_H
