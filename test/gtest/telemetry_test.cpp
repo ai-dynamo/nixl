@@ -300,6 +300,7 @@ TEST(telemetryMetricContract, DescriptorIsUnifiedExporterSeriesContract) {
          "agent_memory_deregistered_last_bytes"},
         {et::AGENT_XFER_TIME, "agent_xfer_time_total", "agent_xfer_time"},
         {et::AGENT_XFER_POST_TIME, "agent_xfer_post_time_total", "agent_xfer_post_time"},
+        {et::AGENT_TELEMETRY_EVENTS_DROPPED, "agent_telemetry_events_dropped_total", nullptr},
     };
 
     ASSERT_EQ(contract.size(), telemetry_metric_event_types.size());
