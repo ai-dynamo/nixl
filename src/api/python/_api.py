@@ -18,12 +18,15 @@ from __future__ import annotations
 import pickle
 import sys
 from enum import Enum
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 import numpy as np
 
 from . import _bindings as nixlBind  # type: ignore
 from .logging import get_logger
+
+if TYPE_CHECKING:
+    import torch
 
 # Get logger using centralized configuration
 logger = get_logger(__name__)
