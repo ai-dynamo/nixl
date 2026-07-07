@@ -40,6 +40,12 @@ awsS3CrtClient::awsS3CrtClient(nixl_b_params_t *custom_params,
         config.multipartUploadThreshold = crt_min_limit;
     }
 
+    // Optional CRT throughput target in whole Gbps (integer); sizes connection count, default 10.
+    if (const auto opt =
+            nixl::getBackendParamOptional<size_t>(custom_params, "throughput_target_gbps")) {
+        config.throughputTargetGbps = *opt;
+    }
+
     auto credentials_opt = nixl_s3_utils::createAWSCredentials(custom_params);
     bool use_virtual_addressing = nixl_s3_utils::getUseVirtualAddressing(custom_params);
     config.useVirtualAddressing = use_virtual_addressing;
