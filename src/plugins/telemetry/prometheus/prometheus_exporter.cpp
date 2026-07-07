@@ -84,7 +84,20 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
             registry_.reset();
             exposer_.reset();
             registry_ = std::make_shared<prometheus::Registry>();
-            exposer_ = std::make_shared<prometheus::Exposer>(bind_address);
+            try {
+                exposer_ = std::make_shared<prometheus::Exposer>(bind_address);
+            }
+            catch (const std::exception &e) {
+                // civetweb reports a failed port bind with this exact text; other
+                // startup failures (threads, ACL, OOM, ...) don't, so they stay fatal.
+                const std::string reason = e.what();
+                if (reason.find("Failed to setup server ports") == std::string::npos) {
+                    throw;
+                }
+                throw nixlTelemetryBindFailed("Prometheus telemetry endpoint '" + bind_address +
+                                              "' could not be bound (likely already in use by "
+                                              "another process)");
+            }
             exposer_->RegisterCollectable(registry_);
             s_exposer_weak = exposer_;
             s_registry_weak = registry_;

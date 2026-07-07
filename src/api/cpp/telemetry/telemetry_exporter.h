@@ -20,9 +20,15 @@
 #include "nixl_types.h"
 #include "telemetry_event.h"
 
+#include <stdexcept>
 #include <string>
 
 inline constexpr char telemetryExporterVar[] = "NIXL_TELEMETRY_EXPORTER";
+
+class nixlTelemetryBindFailed : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 /**
  * @struct nixlTelemetryExporterInitParams
