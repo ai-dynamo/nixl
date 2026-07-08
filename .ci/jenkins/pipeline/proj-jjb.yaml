@@ -219,6 +219,11 @@
     description: Do NOT edit this job through the Web GUI !
     concurrent: true
     sandbox: true
+    # Nightly run against UCX master (outside the PR path) to catch UCX regressions early
+    triggers:
+      - parameterized-timer:
+          cron: |
+            H 2 * * * %UCX_VER=master
     # Test job parameters
     parameters:
         - string:
@@ -233,6 +238,10 @@
             name: "conf_file"
             default: ".ci/jenkins/lib/test-matrix.yaml"  # Test matrix configuration
             description: "Job config file"
+        - string:
+            name: "UCX_VER"
+            default: "v1.22.x"
+            description: "UCX version to test against: tag like v1.22.x, branch name without slashes, or commit SHA (used in image tags, no '/' allowed). The nightly cron overrides this to master."
         - bool:
             name: "build_dockers"
             default: false
@@ -280,6 +289,11 @@
     description: Do NOT edit this job through the Web GUI !
     concurrent: true
     sandbox: true
+    # Nightly run against UCX master (outside the PR path) to catch UCX regressions early
+    triggers:
+      - parameterized-timer:
+          cron: |
+            H 2 * * * %UCX_VER=master
     # Test job parameters
     parameters:
         - string:
@@ -294,6 +308,10 @@
             name: "conf_file"
             default: ".ci/jenkins/lib/test-dl-ep-matrix.yaml"  # DLCluster EP test matrix configuration
             description: "Job config file"
+        - string:
+            name: "UCX_VER"
+            default: "v1.22.x"
+            description: "UCX version to test against: tag like v1.22.x, branch name without slashes, or commit SHA (used in image tags, no '/' allowed). The nightly cron overrides this to master."
         - bool:
             name: "build_dockers"
             default: false
@@ -341,6 +359,11 @@
     description: Do NOT edit this job through the Web GUI !
     concurrent: true
     sandbox: true
+    # Nightly run against UCX master (outside the PR path) to catch UCX regressions early
+    triggers:
+      - parameterized-timer:
+          cron: |
+            H 2 * * * %UCX_VER=master
     # Test job parameters
     parameters:
         - string:
@@ -355,6 +378,10 @@
             name: "conf_file"
             default: ".ci/jenkins/lib/test-dl-matrix.yaml"  # DLCluster test matrix configuration
             description: "Job config file"
+        - string:
+            name: "UCX_VER"
+            default: "v1.22.x"
+            description: "UCX version to test against: tag like v1.22.x, branch name without slashes, or commit SHA (used in image tags, no '/' allowed). The nightly cron overrides this to master."
         - bool:
             name: "build_dockers"
             default: false
