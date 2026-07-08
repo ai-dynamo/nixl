@@ -36,16 +36,16 @@ def detect_cuda_major() -> int | None:
     # torch already imported: use its official API.
     torch = sys.modules.get("torch")
     if torch is not None:
-        found = major(getattr(getattr(torch, "version", None), "cuda", None))
-        if found is not None:
-            return found
+        version = major(getattr(getattr(torch, "version", None), "cuda", None))
+        if version is not None:
+            return version
 
     # cuda-python already imported: use it.
     cuda_bindings = sys.modules.get("cuda.bindings")
     if cuda_bindings is not None:
-        found = major(getattr(cuda_bindings, "__version__", None))
-        if found is not None:
-            return found
+        version = major(getattr(cuda_bindings, "__version__", None))
+        if version is not None:
+            return version
 
     # cupy already imported: use it.
     cupy = sys.modules.get("cupy")
@@ -56,9 +56,9 @@ def detect_cuda_major() -> int | None:
             pass
 
     # torch installed but not imported: read build version off disk.
-    found = major(_torch_cuda_version_from_disk())
-    if found is not None:
-        return found
+    version = major(_torch_cuda_version_from_disk())
+    if version is not None:
+        return version
 
     # Last resort: import torch and use its official API. Slow.
     try:
