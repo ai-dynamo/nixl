@@ -63,14 +63,14 @@ NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
 
 ### UCX
 
-NIXL was tested with UCX version 1.21.x.
+NIXL was tested with UCX version 1.22.x.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
 $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
-$ git checkout v1.21.x
+$ git checkout v1.22.x
 $ ./autogen.sh
 $ ./contrib/configure-release-mt       \
     --enable-shared                    \
@@ -349,7 +349,7 @@ To see all the options supported by the container use:
 $ ./contrib/build-container.sh -h
 ```
 
-The container also includes a prebuilt python wheel in /workspace/dist if required for installing/distributing. Also, the wheel can be built with a separate script (see below).
+The container has the NIXL python bindings preinstalled (built from source against the container's own PyTorch). For a redistributable python wheel, use the wheel build script below or install the published `nixl` package.
 
 ### Building the python wheel
 The contrib folder also includes a script to build the python wheel with the UCX dependencies. Note, that UCX and other NIXL dependencies are required to be installed.
@@ -411,4 +411,3 @@ For contribution guidelines, see [CONTRIBUTING.md](https://github.com/ai-dynamo/
 ## Third-Party Components
 
 This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use.
-
