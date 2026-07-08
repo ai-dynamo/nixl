@@ -302,7 +302,7 @@ class nixlUcxThread;
 /**
  * Engine with an optional single progress thread that progresses all shared
  * workers. The thread is started only when there are shared workers; with none
- * (shared_count == 0) no progress thread is created and progress is synchronous.
+ * shared workers no progress thread is created and progress is synchronous.
  */
 class nixlUcxThreadEngine : public nixlUcxEngine {
 public:
@@ -312,6 +312,11 @@ public:
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;
 
+    size_t
+    getSharedWorkersSize() const override {
+        return numSharedWorkers_;
+    }
+
 protected:
     void
     appendNotif(std::string &&remote_name, std::string &&msg) override;
@@ -319,6 +324,7 @@ protected:
 private:
     std::unique_ptr<nixlUcxThread> thread_;
     std::mutex notifMutex_;
+    size_t numSharedWorkers_;
 };
 
 namespace asio {
@@ -338,11 +344,6 @@ public:
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
-    size_t
-    getSharedWorkersSize() const override {
-        return numSharedWorkers_;
-    }
-
 protected:
     nixl_status_t
     sendXferRange(const nixl_xfer_op_t &operation,
@@ -356,7 +357,6 @@ protected:
 private:
     std::unique_ptr<asio::io_context> io_;
     std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
-    size_t numSharedWorkers_;
     size_t splitBatchSize_;
 };
 

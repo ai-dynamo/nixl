@@ -363,7 +363,9 @@ nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_param
     : nixlUcxEngine(init_params) {
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
-    const size_t shared_count = init_params.enableProgTh ? getWorkers().size() - num_threads : 0;
+    numSharedWorkers_ = getWorkers().size() - num_threads;
+
+    const size_t shared_count = init_params.enableProgTh ? numSharedWorkers_ : 0;
     if (shared_count == 0) {
         return;
     }
@@ -650,8 +652,7 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
     : nixlUcxThreadEngine(init_params) {
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
-    numSharedWorkers_ = getWorkers().size() - num_threads;
-    NIXL_ASSERT(numSharedWorkers_ > 0);
+    NIXL_ASSERT(getSharedWorkersSize() > 0);
 
     splitBatchSize_ =
         nixl::getBackendParamDefaulted(init_params.customParams, "split_batch_size", 1024u);
@@ -660,7 +661,7 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
         io_.reset(new asio::io_context());
         dedicatedThreads_.reserve(num_threads);
         for (size_t i = 0; i < num_threads; ++i) {
-            size_t worker_id = numSharedWorkers_ + i;
+            size_t worker_id = getSharedWorkersSize() + i;
             dedicatedThreads_.emplace_back(std::make_unique<nixlUcxDedicatedThread>(this, *io_));
             dedicatedThreads_.back()->addWorker(getWorker(worker_id).get(), worker_id);
             dedicatedThreads_.back()->start();
