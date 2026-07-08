@@ -300,7 +300,9 @@ private:
 class nixlUcxThread;
 
 /**
- * Represents an engine with a single progress thread for all shared workers
+ * Engine with an optional single progress thread that progresses all shared
+ * workers. The thread is started only when there are shared workers; with none
+ * (shared_count == 0) no progress thread is created and progress is synchronous.
  */
 class nixlUcxThreadEngine : public nixlUcxEngine {
 public:
