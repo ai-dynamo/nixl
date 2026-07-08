@@ -29,7 +29,7 @@ pyproject_toml = configure_file(
 )
 
 readme_md = fs.copyfile('README.md')
-nixl_utils_copy = fs.copyfile('nixl_utils.py')
+nixl_meta_utils_copy = fs.copyfile('nixl_meta_utils.py')
 
 source_root = meson.project_source_root()
 root_license_path = join_paths(source_root, 'LICENSE')
@@ -51,7 +51,7 @@ if uv.found()
       pyproject_toml,
       readme_md,
       license_path,
-      nixl_utils_copy,
+      nixl_meta_utils_copy,
       nixl_init_copy,
       nixl_api_copy,
       nixl_logging_copy,

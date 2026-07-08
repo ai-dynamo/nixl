@@ -17,7 +17,7 @@ import importlib
 import sys
 from typing import TYPE_CHECKING
 
-from nixl_utils import detect_cuda_major
+from nixl_meta_utils import detect_cuda_major
 
 
 def _load_cuda_backend() -> str:
