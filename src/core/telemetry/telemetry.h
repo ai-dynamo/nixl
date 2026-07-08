@@ -17,7 +17,6 @@
 #ifndef NIXL_SRC_CORE_TELEMETRY_TELEMETRY_H
 #define NIXL_SRC_CORE_TELEMETRY_TELEMETRY_H
 
-#include "common/cyclic_buffer.h"
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
 #include "mem_section.h"
@@ -123,7 +122,6 @@ private:
     const std::string agentName_;
     const size_t maxBufferedEvents_;
     const std::unique_ptr<nixlTelemetryExporter> exporter_;
-    std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
     std::mutex mutex_;
     asio::thread_pool pool_;

@@ -31,6 +31,7 @@
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "nixl_types.h"
+#include "common/cyclic_buffer.h"
 #include "common.h"
 #include "backend/backend_engine.h"
 #include "mocks/gmock_engine.h"
