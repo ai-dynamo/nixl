@@ -827,6 +827,8 @@
       • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> and the
       corresponding UCX version, and publishes them to the verification Artifactory space<br/>
       • Run manually from any NIXL branch / tag / PR / SHA via <code>NIXL_VERSION</code><br/>
+      • Also triggered per missing CUDA variant by <code>nixl-ci-build-wheel-release-poller</code>
+      with <code>PUBLISH_DIR=release/&lt;ver&gt;</code><br/>
       • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: true
     sandbox: true
@@ -843,7 +845,7 @@
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
-          description: "NIXL version to build wheels from (tag like 1.2.0, branch name, PR ref, or commit hash)"
+          description: "NIXL source ref to build wheels from (tag like 1.2.0, branch name, PR ref, or commit hash) - cloned inside the build, not the pipeline checkout ref"
       - string:
           name: "UCX_VERSION"
           default: "v1.22.x"
@@ -857,6 +859,18 @@
           default: "13.0-devel-manylinux--25.09"
           description: "Base image tag = CUDA version (e.g. 13.0-devel-manylinux--25.09 or 12.9-devel-manylinux--25.06). Mirrored into base/cuda from the dl/dgx/cuda registry."
       - string:
+          name: "PUBLISH_DIR"
+          default: ""
+          description: "Artifactory publish subdir; empty = verification (nightly default). The release poller passes release/&lt;ver&gt;."
+      - bool:
+          name: "BUILD_UCX_SPCX_PLUGIN"
+          default: false
+          description: "Build and bundle the UCX spcx external plugin (requires the source ref to carry the spcx support in contrib/)"
+      - string:
+          name: "UCX_SPCX_PLUGIN_REF"
+          default: "main"
+          description: "Git ref of ucx-spcx-plugin (used only when BUILD_UCX_SPCX_PLUGIN is set)"
+      - string:
           name: "DEBUG"
           default: 0
           description: "Enable debug prints and traces, valid values are 0-9"
@@ -864,15 +878,88 @@
           name: "MAIL_TO"
           default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
           description: "Email address to send build results to (optional)"
-    # SCM configuration - resolves branch/tag/PR/SHA from NIXL_VERSION
+      - string:
+          name: "ci_refspec"
+          default: "{jjb_branch}"
+          description: >
+            Git ref to check out the pipeline + matrix config from (separate from
+            NIXL_VERSION, the source being built). Default main; pass e.g.
+            <code>refs/pull/1234/head</code> to test CI changes end to end before merge.
+    # SCM = ci_refspec (default main): supplies the pipeline + matrix config
+    # only; the build clones the source from NIXL_VERSION itself
     pipeline-scm:
       scm:
         - git:
             url: "{jjb_git}"
-            branches: ['$NIXL_VERSION']
+            branches: ['${{ci_refspec}}']
             shallow-clone: false
             do-not-fetch-tags: false
-            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/remotes/origin/tags/* +$NIXL_VERSION:refs/remotes/origin/$NIXL_VERSION"
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +refs/pull/*/head:refs/pull/*/head"
+            browser: githubweb
+            browser-url: "{jjb_git}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"
+
+# Release wheel poller: every 4 hours, compares release/* branch commits against
+# the wheels already published in Artifactory and triggers the nightly wheel
+# builder once per commit per CUDA variant that has no published wheels yet.
+- job-template:
+    name: "{jjb_proj}-build-wheel-release-poller"
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 30
+          num-to-keep: 100    # Frequent poller - keep more builds than the nightly
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj={jjb_proj}-build-wheel-release-poller
+            conf_file=.ci/jenkins/lib/build-wheel-release-poller-matrix.yaml
+    description: >
+      <b>NIXL release wheel poller</b><br/>
+      • Runs every 4 hours and scans all <code>release/*</code> branches (version &gt;= 1.3.1),
+      looking for commits with no
+      published wheel set under <code>sw-nbu-swx-nixl-pypi-local/release/</code> in Artifactory<br/>
+      • Triggers <code>nixl-ci-build-wheel-nightly</code> per commit per missing CUDA variant
+      (wheel-presence check in Artifactory, no markers) &mdash; a failed build is retried on the
+      next cycle; delete the folder in Artifactory to force a full rebuild<br/>
+      • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: false    # Overlapping polls would double-trigger the same commits
+    sandbox: true
+    # Poll schedule. Wheels of an in-flight build appear well within one poll
+    # interval, so a commit is not re-triggered while building.
+    triggers:
+      - timed: "H H/4 * * *"
+    parameters:
+      - string:
+          name: "DEBUG"
+          default: 0
+          description: "Enable debug prints and traces, valid values are 0-9"
+      - string:
+          name: "MAIL_TO"
+          default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
+          description: "Email address to send build results to (optional)"
+      - string:
+          name: "ci_refspec"
+          default: "{jjb_branch}"
+          description: >
+            Git ref to check out the poller pipeline + matrix config from. Default main;
+            pass e.g. <code>refs/pull/1234/head</code> to test CI changes end to end before
+            merge - the poller forwards it to the triggered builds.
+    # SCM = ci_refspec (default main)
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            branches: ['${{ci_refspec}}']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +refs/pull/*/head:refs/pull/*/head"
             browser: githubweb
             browser-url: "{jjb_git}"
             submodule:
@@ -905,3 +992,4 @@
         - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for nixl_ep elastic tests on dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
         - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
+        - "{jjb_proj}-build-wheel-release-poller"  # Create release wheel poller job

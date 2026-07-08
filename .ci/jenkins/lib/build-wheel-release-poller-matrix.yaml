@@ -1,0 +1,203 @@
+# Release wheel poller. Runs every 4 hours on main; compares release-branch
+# commits against the wheels already published in Artifactory
+# (sw-nbu-swx-nixl-pypi-local) and triggers nixl-ci-build-wheel-nightly
+# (BASE_TAG selects the CUDA variant) for every release-branch commit x CUDA
+# variant whose wheels are still missing.
+#
+# How it works:
+# - Which releases build: every release/* branch with version >= MIN_RELEASE,
+#   picked up automatically - new release branches need no change anywhere.
+# - Which UCX: the UCX_REF default in the release's own build-container.sh
+#   (each release carries the UCX it ships with).
+# - Which commits: newest MAX_COMMITS first-parent commits past the fork from main.
+# - Folder: release/<ver>/nixl-<nixl_sha8>-ucx-<ucx_sha8> - the nightly job's
+#   publish layout. A variant counts as published when a nixl_cuNN wheel is
+#   present in the folder; there are no marker files.
+# - Consequences: a failing build retries every cycle until it succeeds or the
+#   commit falls out of the MAX_COMMITS window; a partial upload of a variant
+#   looks complete - delete the folder in Artifactory to force a rebuild.
+
+---
+job: nixl-ci-build-wheel-release-poller
+
+timeout_minutes: 30
+
+registry_host: artifactory.nvidia.com
+
+credentials:
+  - credentialsId: 'svc-nixl-new-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USER'
+    passwordVariable: 'ARTIFACTORY_TOKEN'
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  imagePullSecrets: "['artifactory-pull-secret']"
+  limits: '{memory: 2Gi, cpu: 2000m}'
+  requests: '{memory: 2Gi, cpu: 2000m}'
+
+runs_on_dockers:
+  - { name: "poller", url: "quay.io/podman/stable:v5.7.1", arch: "x86_64" }
+
+env:
+  # Releases older than this are not built. Anything newer is picked up automatically.
+  MIN_RELEASE: "1.3.1"
+  # Newest N commits to check per release branch.
+  MAX_COMMITS: "10"
+  NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
+  # Artifactory storage API root of the SWX NIXL pypi repo (folder listing).
+  STORAGE_API_URL: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
+  # CUDA variants to build: <variant>:<base-image-tag> pairs.
+  # Single source for both the missing-wheel scan and the per-variant build trigger
+  CUDA_VARIANTS: >-
+    cu12:12.9-devel-manylinux--25.06
+    cu13:13.0-devel-manylinux--25.09
+  MAIL_FROM: "jenkins@nvidia.com"
+
+steps:
+  - name: Discover Missing Wheel Sets
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    parallel: false
+    run: |
+      # The Jenkins checkout is owned by a different uid; trust only it.
+      git config --global --add safe.directory "${PWD}"
+
+      # The job checkout is main; merge-base/rev-list need local refs for
+      # main and the release branches.
+      git fetch --no-tags "${NIXL_REPO_URL}" \
+        '+refs/heads/main:refs/remotes/origin/main' \
+        '+refs/heads/release/*:refs/remotes/origin/release/*'
+
+      : > triggers.txt
+
+      branches="$(git for-each-ref --format='%(refname:lstrip=4)' 'refs/remotes/origin/release/*' | sort -V)"
+
+      # Keep the Artifactory token out of the log (also under CI debug -x).
+      set +x
+
+      for ver in ${branches}; do
+        # Only dotted-numeric release branches; else sort -V mis-ranks names.
+        if ! printf '%s' "${ver}" | grep -qE '^[0-9]+(\.[0-9]+)+$'; then
+          echo "release/${ver}: not a numeric version, skipping"
+          continue
+        fi
+        if ! printf '%s\n%s\n' "${MIN_RELEASE}" "${ver}" | sort -CV; then
+          echo "release/${ver}: below ${MIN_RELEASE}, skipping"
+          continue
+        fi
+
+        # Extract this release's UCX version from its build-container.sh
+        ucx_ver="$(git show "origin/release/${ver}:contrib/build-container.sh" 2>/dev/null \
+          | sed -n 's/^UCX_REF=.*:-\(.*\)}.*/\1/p' | head -1)"
+        if [ -z "${ucx_ver}" ]; then
+          echo "release/${ver}: cannot determine its UCX version, skipping"
+          continue
+        fi
+
+        # Resolve the UCX version to a sha once per branch - the wheel folder name
+        # carries it. The ^{} peel (last line) handles annotated tags.
+        if [[ "${ucx_ver}" =~ ^[a-f0-9]{8,40}$ ]]; then
+          ucx_sha8="${ucx_ver:0:8}"
+        else
+          ucx_sha8="$(timeout 30 git ls-remote https://github.com/openucx/ucx.git "${ucx_ver}" "${ucx_ver}^{}" | tail -n1 | cut -c1-8)"
+        fi
+        if [ -z "${ucx_sha8}" ]; then
+          echo "release/${ver}: cannot resolve UCX version '${ucx_ver}', skipping"
+          continue
+        fi
+
+        base="$(git merge-base origin/main "origin/release/${ver}")"
+        candidates="$(git rev-list --first-parent "${base}..origin/release/${ver}" | head -"${MAX_COMMITS}")"
+
+        n_cand=0; n_build=0
+        for sha in ${candidates}; do
+          folder="release/${ver}/nixl-${sha:0:8}-ucx-${ucx_sha8}"
+
+          # Only 200 (folder listing) and 404 (folder absent) are conclusive;
+          # other errors (auth, 5xx, network) skip the commit until the next
+          # cycle so an Artifactory hiccup cannot fan out spurious builds.
+          http_code="$(curl -s --connect-timeout 10 --max-time 30 -o folder.json -w '%{http_code}' \
+            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" "${STORAGE_API_URL}/${folder}/")" || http_code=""
+          if [ "${http_code}" != "200" ] && [ "${http_code}" != "404" ]; then
+            echo "release/${ver}: ${folder}: storage API returned ${http_code:-<none>}, skipping this cycle"
+            continue
+          fi
+
+          n_cand=$((n_cand+1))
+          # Trigger a build for each CUDA variant whose wheel is not yet in the
+          # folder (a variant is present when the folder lists a nixl_cuNN wheel).
+          for entry in ${CUDA_VARIANTS}; do
+            variant="${entry%%:*}"
+            if [ "${http_code}" = "200" ] && grep -q "\"/nixl_${variant}-" folder.json; then
+              continue
+            fi
+            # Forward the resolved UCX sha (not the mutable ref) so the nightly
+            # publishes to exactly the folder checked here.
+            echo "${sha} ${ver} ${ucx_sha8} ${variant}" >> triggers.txt
+            n_build=$((n_build+1))
+          done
+        done
+
+        echo "release/${ver}: ucx=${ucx_ver} (${ucx_sha8}) candidates=${n_cand} to_build=${n_build}"
+      done
+
+      echo "=== Poller summary: $(wc -l < triggers.txt) build(s) to trigger ==="
+      cat triggers.txt
+
+  - name: Trigger Release Builds
+    shell: action
+    module: groovy
+    parallel: false
+    run: |
+      def triggers = fileExists('triggers.txt') ? readFile('triggers.txt').trim() : ''
+      if (triggers) {
+          // Forward our CI ref so a pre-merge test poller run drives builds
+          // with the same pipeline + config revision.
+          def ciRefspec = params.ci_refspec ?: 'main'
+          // variant -> base-image tag, from the CUDA_VARIANTS env map.
+          def baseTag = [:]
+          env.CUDA_VARIANTS.tokenize().each { def p = it.split(':', 2); baseTag[p[0]] = p[1] }
+          for (line in triggers.split('\n')) {
+              // line: <nixl_sha> <ver> <ucx_sha8> <variant>
+              def parts = line.trim().split(/\s+/)
+              build(job: 'nixl-ci-build-wheel-nightly',
+                    parameters: [
+                        string(name: 'NIXL_VERSION', value: parts[0]),
+                        string(name: 'UCX_VERSION', value: parts[2]),
+                        string(name: 'BASE_TAG', value: baseTag[parts[3]]),
+                        string(name: 'PUBLISH_DIR', value: "release/${parts[1]}"),
+                        string(name: 'ci_refspec', value: ciRefspec),
+                    ],
+                    wait: false,
+                    propagate: false)
+              echo "Triggered nixl-ci-build-wheel-nightly: NIXL_VERSION=${parts[0]} UCX_VERSION=${parts[2]} BASE_TAG=${baseTag[parts[3]]} PUBLISH_DIR=release/${parts[1]} ci_refspec=${ciRefspec}"
+          }
+      } else {
+          echo 'No missing wheels - nothing to trigger'
+      }
+
+# Email build result (success/failure) when MAIL_TO is set - notification for
+# the unattended poller, mirroring nixl-ci-build-wheel-nightly.
+pipeline_stop:
+  shell: action
+  module: groovy
+  containerSelector: "{name: 'poller'}"
+  run: |
+    if (params.MAIL_TO) {
+        def jobStatus = currentBuild.result ?: 'SUCCESS'
+        def statusColor = jobStatus == 'SUCCESS' ? 'green' : 'red'
+        def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
+        mail(
+            from: env.MAIL_FROM,
+            to: params.MAIL_TO,
+            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
+            mimeType: 'text/html',
+            body: """
+                <p>Started by: <b>${userName}</b></p>
+                <p>Status: <span style="color: ${statusColor};"><b>${jobStatus}</b></span></p>
+                <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
+                <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+                <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
+            """
+        )
+    }
