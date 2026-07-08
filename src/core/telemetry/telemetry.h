@@ -117,6 +117,10 @@ private:
     updateData(nixl_telemetry_event_type_t event_type, uint64_t value);
     bool
     flushPendingEvents();
+    // Emits the staging-queue drops accumulated since the last flush as a
+    // synthetic AGENT_TELEMETRY_EVENTS_DROPPED event.
+    void
+    exportDroppedEvents();
 
     // Declared in initialization order: agentName_ and maxBufferedEvents_ are
     // consumed by makeExporter() when constructing exporter_.
@@ -126,6 +130,12 @@ private:
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
     std::mutex mutex_;
+    // Producer-side staging-queue drop counter: incremented from any thread when
+    // updateData / addXferStats cannot append because events_ is full, so the
+    // event never reaches any exporter. Does not track BUFFER cyclic-ring loss
+    // (a separate, downstream condition). Each flush takes and resets it
+    // (exchange) and publishes the count as an AGENT_TELEMETRY_EVENTS_DROPPED event.
+    std::atomic<uint64_t> droppedEvents_{0};
     asio::thread_pool pool_;
     periodicTask writeTask_;
 };

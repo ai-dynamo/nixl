@@ -89,6 +89,8 @@ gtest_sources = [
     'query_mem.cpp',
     'telemetry_test.cpp',
     'telemetry_prometheus_test.cpp',
+    'telemetry_benchmark.cpp',
+    'nixl_duration_test.cpp',
     'configuration.cpp'
     ]
 
@@ -110,7 +112,7 @@ endif
 
 test_exe = executable('gtest',
     sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../doca-telemetry')],
     cpp_args : cpp_flags,
     dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
     link_with: [nixl_build_lib],
@@ -127,6 +129,20 @@ if get_option('sanitizer') != 'none'
     gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*'
 endif
 test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
+
+# Telemetry hot-path microbenchmark (NVBug 5876558). The cases are DISABLED_ so
+# they never run in the normal 'gtest' suite; this dedicated entry opts them in.
+# Run on demand: `ctest --test-dir build -R telemetry_benchmark -V`. Excluded
+# from the sanitizer suite (timing under ASan/TSan is meaningless).
+if get_option('sanitizer') == 'none'
+    test('telemetry_benchmark',
+         test_exe,
+         args: [plugin_dirs_arg,
+                '--gtest_also_run_disabled_tests',
+                '--gtest_filter=telemetryBenchmark.*'],
+         is_parallel: false,
+         timeout: 300)
+endif
 
 # Best-effort NVTX capture: when nsys is available, profile the tracing tests
 # and write a .nsys-rep that CI can publish as an artifact. Skips (exit 77) when
