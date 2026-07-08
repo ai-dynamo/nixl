@@ -32,16 +32,15 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def _torch_tensor_types() -> tuple:
-    """torch.Tensor types for isinstance checks, without importing torch.
+def _is_torch_tensor(obj: object) -> bool:
+    """Return True if obj is a torch.Tensor and torch is already imported.
 
     Importing torch costs ~1s and dominates `import nixl`. A value can only be
-    a torch.Tensor if torch has already been imported elsewhere, so when torch
-    is absent from sys.modules we return an empty tuple (isinstance(x, ()) is
-    always False) instead of paying that import cost here.
+    a torch.Tensor if torch has already been imported elsewhere, so we consult
+    sys.modules instead of importing torch here.
     """
     torch = sys.modules.get("torch")
-    return (torch.Tensor,) if torch is not None else ()
+    return torch is not None and isinstance(obj, torch.Tensor)
 
 
 DEFAULT_COMM_PORT = nixlBind.DEFAULT_COMM_PORT
@@ -1001,7 +1000,7 @@ class nixl_agent:
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
                 new_descs = None
-        elif isinstance(descs, _torch_tensor_types()):
+        elif _is_torch_tensor(descs):
             if descs.is_contiguous():
                 mem_type = self._tensor_mem_type(descs)
                 base_addr = descs.data_ptr()
@@ -1015,7 +1014,7 @@ class nixl_agent:
             else:
                 logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
-        elif isinstance(descs[0], _torch_tensor_types()):  # List[torch.Tensor]:
+        elif _is_torch_tensor(descs[0]):  # List[torch.Tensor]:
             tensor_type = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
@@ -1084,7 +1083,7 @@ class nixl_agent:
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
                 new_descs = None
-        elif isinstance(descs, _torch_tensor_types()):
+        elif _is_torch_tensor(descs):
             if descs.is_contiguous():
                 mem_type = self._tensor_mem_type(descs)
                 base_addr = descs.data_ptr()
@@ -1098,7 +1097,7 @@ class nixl_agent:
             else:
                 logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
-        elif isinstance(descs[0], _torch_tensor_types()):  # List[torch.Tensor]:
+        elif _is_torch_tensor(descs[0]):  # List[torch.Tensor]:
             tensor_type = descs[0].device
             dlist = np.zeros((len(descs), 3), dtype=np.uint64)
 
