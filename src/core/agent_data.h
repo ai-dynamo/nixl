@@ -115,9 +115,6 @@ class nixlAgentData : public nixlMetadataContext {
         const nixlAgentConfig config_;
         const bool useEtcd_;
         const bool needsCommThread_;
-        // When set (NIXL_USE_MD_MANAGER), the public metadata methods route to
-        // the agent-owned nixlMDManager instead of the inline path.
-        const bool useMdManager_;
         nixlLock        lock;
         std::atomic<bool> efaWarningChecked = false;
 
@@ -136,7 +133,7 @@ class nixlAgentData : public nixlMetadataContext {
 
         // State/methods for listener thread
         std::unique_ptr<nixlMDStreamListener> listener;
-        // Agent-owned metadata manager; built when metadata exchange is enabled.
+        // Agent-owned metadata manager; always built (single metadata path).
         const std::unique_ptr<nixlMDManager> md_;
         nixl_socket_map_t remoteSockets;
         std::thread commThread;

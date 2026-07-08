@@ -37,7 +37,7 @@ class nixlP2PMetadataBackend;
  * @class nixlMDManager
  * @brief Core-internal: owns the metadata backends and routes each call.
  *
- * Built and owned by nixlAgentData when metadata exchange is enabled. Depends
+ * Built and owned by nixlAgentData (constructed unconditionally). Depends
  * only on the nixlMetadataContext interface (not nixlAgent), so there is no cycle.
  * Holds the address-routed backend (P2P) plus an optional name-addressed backend
  * chosen from the environment; a peer address selects P2P, otherwise the name

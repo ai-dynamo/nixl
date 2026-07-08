@@ -517,14 +517,14 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
     unregistered_descs.addDesc(unregistered_buffer.getBlobDesc());
 
     {
+        // The serialization failure is still surfaced by getLocalPartialMD; the
+        // public method now delegates to the manager, so the redundant wrapper
+        // log ("error getting local partial metadata") no longer applies.
         const LogIgnoreGuard lig1("getLocalPartialMD: serialization failed");
-        const LogIgnoreGuard lig2("sendLocalPartialMD: error getting local partial metadata with "
-                                  "status NIXL_ERR_NOT_FOUND");
 
         ASSERT_NE(src.agent->sendLocalPartialMD(unregistered_descs, &send_args), NIXL_SUCCESS);
 
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
-        EXPECT_EQ(lig2.getIgnoredCount(), 1);
     }
 
     // Case 2: Attempt to load connection info on agent without backend

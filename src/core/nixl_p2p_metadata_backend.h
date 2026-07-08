@@ -34,8 +34,7 @@ class nixlMetadataContext;
  *
  * Serializes via nixlMetadataContext (getLocalMD / getLocalPartialMD) and
  * enqueues socket work on the agent's existing comm thread. Depends only on
- * nixlMetadataContext, not nixlAgent. Duplicates the agent's inline socket path,
- * removed in a later PR.
+ * nixlMetadataContext, not nixlAgent.
  */
 class nixlP2PMetadataBackend : public nixlMetadataBackend {
 public:
