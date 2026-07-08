@@ -84,10 +84,22 @@ public:
     updateMemoryRegistered(uint64_t memory_registered);
     void
     updateMemoryDeregistered(uint64_t memory_deregistered);
+    /**
+     * @brief Records one completed transfer's stats as a single telemetry batch.
+     *
+     * Appends the four per-transfer events (transfer time, bytes, request count,
+     * post time) under one lock. The batch is all-or-none: if the buffer cannot
+     * hold all four, none are recorded.
+     * @param xfer_time Start-to-complete transfer duration.
+     * @param is_write True for TX events (agent_tx_*), false for RX (agent_rx_*).
+     * @param bytes Bytes transferred by the request.
+     * @param post_time Start-to-post (backend submit) duration.
+     */
     void
-    addXferTime(std::chrono::microseconds transaction_time, bool is_write, uint64_t bytes);
-    void
-    addPostTime(std::chrono::microseconds post_time);
+    addXferStats(std::chrono::microseconds xfer_time,
+                 bool is_write,
+                 uint64_t bytes,
+                 std::chrono::microseconds post_time);
 
 private:
     // Load the named telemetry plugin and create its exporter. Throws on a
@@ -104,7 +116,11 @@ private:
     void
     updateData(nixl_telemetry_event_type_t event_type, uint64_t value);
     bool
-    writeEventHelper();
+    flushPendingEvents();
+    // Emits the staging-queue drops accumulated since the last flush as a
+    // synthetic AGENT_TELEMETRY_EVENTS_DROPPED event.
+    void
+    exportDroppedEvents();
 
     // Declared in initialization order: agentName_ and maxBufferedEvents_ are
     // consumed by makeExporter() when constructing exporter_.
@@ -114,6 +130,12 @@ private:
     std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
     std::mutex mutex_;
+    // Producer-side staging-queue drop counter: incremented from any thread when
+    // updateData / addXferStats cannot append because events_ is full, so the
+    // event never reaches any exporter. Does not track BUFFER cyclic-ring loss
+    // (a separate, downstream condition). Each flush takes and resets it
+    // (exchange) and publishes the count as an AGENT_TELEMETRY_EVENTS_DROPPED event.
+    std::atomic<uint64_t> droppedEvents_{0};
     asio::thread_pool pool_;
     periodicTask writeTask_;
 };

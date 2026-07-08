@@ -117,24 +117,25 @@ nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
 // Events are defined in the telemetry.cpp file
 void
 nixlTelemetryPrometheusExporter::initializeMetrics() {
-    registerCounter("agent_tx_bytes", "Number of bytes sent by the agent");
-    registerCounter("agent_rx_bytes", "Number of bytes received by the agent");
-    registerCounter("agent_tx_requests_num", "Number of requests sent by the agent");
-    registerCounter("agent_rx_requests_num", "Number of requests received by the agent");
-    registerCounter("agent_memory_registered", "Cumulative memory registered");
-    registerCounter("agent_memory_deregistered", "Cumulative memory deregistered");
-    registerCounter("agent_xfer_time", "Start to Complete (per request)");
-    registerCounter("agent_xfer_post_time", "Start to posting to Back-End (per request)");
-
-    registerGauge("agent_memory_registered", "Memory registered");
-    registerGauge("agent_memory_deregistered", "Memory deregistered");
+    for (const auto event_type : telemetry_metric_event_types) {
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event_type);
+        if (descriptor.counterName != nullptr) {
+            registerCounter(event_type, descriptor.counterName, descriptor.counterHelp);
+        }
+        if (descriptor.gaugeName != nullptr) {
+            registerGauge(event_type, descriptor.gaugeName, descriptor.gaugeHelp);
+        }
+    }
+    registerErrorCounters();
 }
 
 void
-nixlTelemetryPrometheusExporter::registerCounter(const std::string &name, const std::string &help) {
-    auto &family = prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
+nixlTelemetryPrometheusExporter::registerCounter(const nixl_telemetry_event_type_t event_type,
+                                                 const std::string &metric_name,
+                                                 const std::string &help) {
+    auto &family = prometheus::BuildCounter().Name(metric_name).Help(help).Register(*registry_);
     auto &metric = family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}});
-    const auto inserted = counters_.try_emplace(name, &family, &metric).second;
+    const auto inserted = counters_.try_emplace(event_type, &family, &metric).second;
     if (!inserted) {
         family.Remove(&metric);
     }
@@ -142,10 +143,31 @@ nixlTelemetryPrometheusExporter::registerCounter(const std::string &name, const 
 }
 
 void
-nixlTelemetryPrometheusExporter::registerGauge(const std::string &name, const std::string &help) {
-    auto &family = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
+nixlTelemetryPrometheusExporter::registerErrorCounters() {
+    auto &family = prometheus::BuildCounter()
+                       .Name("agent_errors_total")
+                       .Help("Cumulative error count by status")
+                       .Register(*registry_);
+
+    for (const auto event_type : telemetry_error_event_types) {
+        const char *const status = nixlEnumStrings::telemetryErrorStatusLabel(event_type);
+        auto &metric =
+            family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}, {"status", status}});
+        const auto inserted = counters_.try_emplace(event_type, &family, &metric).second;
+        if (!inserted) {
+            family.Remove(&metric);
+        }
+        NIXL_ASSERT(inserted);
+    }
+}
+
+void
+nixlTelemetryPrometheusExporter::registerGauge(const nixl_telemetry_event_type_t event_type,
+                                               const std::string &metric_name,
+                                               const std::string &help) {
+    auto &family = prometheus::BuildGauge().Name(metric_name).Help(help).Register(*registry_);
     auto &metric = family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}});
-    const auto inserted = gauges_.try_emplace(name, &family, &metric).second;
+    const auto inserted = gauges_.try_emplace(event_type, &family, &metric).second;
     if (!inserted) {
         family.Remove(&metric);
     }
@@ -154,17 +176,13 @@ nixlTelemetryPrometheusExporter::registerGauge(const std::string &name, const st
 
 nixl_status_t
 nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
-    // TODO(C++20): use std::string_view for lookup keys and transparent hash/equal_to
-    // on counters_/gauges_ to avoid allocating a std::string per event when feasible.
     try {
-        const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
-
-        const auto counter = counters_.find(event_name);
+        const auto counter = counters_.find(event.eventType_);
         if (counter != counters_.end()) {
             counter->second.metric->Increment(event.value_);
         }
 
-        const auto gauge = gauges_.find(event_name);
+        const auto gauge = gauges_.find(event.eventType_);
         if (gauge != gauges_.end()) {
             gauge->second.metric->Set(static_cast<double>(event.value_));
         }

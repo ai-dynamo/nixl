@@ -44,6 +44,7 @@
 
 // Forward declarations
 class nixlLibfabricEngine;
+class nixlLibfabricPostThreadPool;
 
 #ifdef HAVE_CUDA
 /** CUDA context management for libfabric backend */
@@ -180,10 +181,15 @@ private:
     std::chrono::microseconds progress_thread_delay_;
 
     // Rail Manager - Stack allocated for better performance (mutable for const methods)
-    mutable nixlLibfabricRailManager rail_manager;
+    mutable nixlLibfabricRailManager rail_manager_;
 
     // Configurable striping threshold
     size_t striping_threshold_;
+
+    // Descriptor-posting thread pool configuration
+    size_t post_thread_count_;
+    size_t post_split_batch_size_;
+    std::unique_ptr<nixlLibfabricPostThreadPool> post_thread_pool_;
 
     mutable size_t total_transfer_size_;
 
@@ -206,7 +212,7 @@ private:
     mutable std::mutex connection_state_mutex_;
 
 
-    // System runtime type (set during initialization from rail_manager)
+    // System runtime type (set during initialization from rail_manager_)
     fi_hmem_iface runtime_;
 
     void
@@ -274,6 +280,7 @@ private:
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;
     bool cuda_addr_wa_; // CUDA address workaround flag
+    mutable std::mutex cuda_ctx_mutex_; // Protects cudaCtx_ and cuda_addr_wa_.
 #endif
 
     void
@@ -291,6 +298,19 @@ private:
                        void *buffer,
                        std::shared_ptr<nixlLibfabricConnection> conn,
                        nixlBackendMD *&output);
+    void
+    initPostThreadPool();
+    nixl_status_t
+    postXferDescriptors(nixlLibfabricReq::OpType op_type,
+                        const nixl_meta_dlist_t &local,
+                        const nixl_meta_dlist_t &remote,
+                        const std::shared_ptr<nixlLibfabricConnection> &conn,
+                        nixlLibfabricBackendH *backend_handle,
+                        int start_idx,
+                        int end_idx,
+                        int desc_count,
+                        size_t xfer_base_offset,
+                        size_t &submitted_count) const;
 
 #ifdef HAVE_CUDA
     // CUDA context management methods

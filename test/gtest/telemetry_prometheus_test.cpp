@@ -17,16 +17,23 @@
 
 #include "common.h"
 #include "plugin_manager.h"
+#include "telemetry.h"
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
+
+#include "open_metrics_text_parser.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstring>
+#include <functional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -147,10 +154,22 @@ parsePrometheusSampleLine(const std::string &line,
 }
 
 bool
-findAgentMetricSample(const std::string &body,
-                      const std::string &metric_name,
-                      const std::string &agent_name,
-                      PrometheusSample &sample) {
+labelsContain(const std::unordered_map<std::string, std::string> &labels,
+              const std::unordered_map<std::string, std::string> &required_labels) {
+    for (const auto &[key, expected_value] : required_labels) {
+        const auto it = labels.find(key);
+        if (it == labels.end() || it->second != expected_value) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool
+findMetricSample(const std::string &body,
+                 const std::string &metric_name,
+                 const std::unordered_map<std::string, std::string> &required_labels,
+                 PrometheusSample &sample) {
     std::istringstream body_lines(body);
     std::string line;
     while (std::getline(body_lines, line)) {
@@ -164,16 +183,25 @@ findAgentMetricSample(const std::string &body,
             continue;
         }
 
-        const auto agent_it = labels.find("agent_name");
-        const auto hostname_it = labels.find("hostname");
-        if (agent_it != labels.end() && agent_it->second == agent_name &&
-            hostname_it != labels.end() && !hostname_it->second.empty()) {
+        if (labelsContain(labels, required_labels)) {
             sample.labels = labels;
             sample.value = value;
             return true;
         }
     }
     return false;
+}
+
+bool
+findAgentMetricSample(const std::string &body,
+                      const std::string &metric_name,
+                      const std::string &agent_name,
+                      PrometheusSample &sample) {
+    if (!findMetricSample(body, metric_name, {{"agent_name", agent_name}}, sample)) {
+        return false;
+    }
+    const auto hostname_it = sample.labels.find("hostname");
+    return hostname_it != sample.labels.end() && !hostname_it->second.empty();
 }
 
 bool
@@ -199,6 +227,58 @@ hasAnyAgentMetricSample(const std::string &body, const std::string &agent_name) 
         }
     }
     return false;
+}
+
+struct OverflowScrape {
+    bool ok = false; // all produced events were accounted for before the timeout
+    double accepted = 0;
+    double dropped = 0;
+};
+
+// Drives `produce` against a fresh nixlTelemetry backed by the Prometheus
+// exporter with a small (256-slot) staging buffer, then polls /metrics until
+// every produced event is accounted for -- accepted (`accepted_metric`, weighted
+// by `accepted_event_weight` events per sample) plus dropped
+// (`agent_telemetry_events_dropped_total`) equals `expected_total_events`. Polling for that
+// exact end state (rather than a fixed sleep) is what makes the test timing
+// independent: it waits for the staging queue to fully drain and the final drop
+// delta to be published, no matter how flushes interleave. The instance stays
+// alive through the scrape so the exporter keeps serving the port.
+OverflowScrape
+scrapeCoreOverflow(uint16_t port,
+                   const std::string &agent_name,
+                   const std::string &accepted_metric,
+                   uint64_t accepted_event_weight,
+                   uint64_t expected_total_events,
+                   const std::function<void(nixlTelemetry &)> &produce) {
+    gtest::ScopedEnv telemetry_env;
+    telemetry_env.addVar(TELEMETRY_BUFFER_SIZE_VAR, "256");
+    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, "5");
+
+    nixlTelemetry telemetry(agent_name, "prometheus");
+    produce(telemetry);
+
+    OverflowScrape result;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do {
+        const std::string body = httpGet(port, "/metrics");
+        PrometheusSample dropped_sample;
+        PrometheusSample accepted_sample;
+        if (!body.empty() &&
+            findAgentMetricSample(
+                body, "agent_telemetry_events_dropped_total", agent_name, dropped_sample) &&
+            findAgentMetricSample(body, accepted_metric, agent_name, accepted_sample)) {
+            result.dropped = dropped_sample.value;
+            result.accepted = accepted_sample.value;
+            if (result.accepted * static_cast<double>(accepted_event_weight) + result.dropped ==
+                static_cast<double>(expected_total_events)) {
+                result.ok = true;
+                return result;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    } while (std::chrono::steady_clock::now() < deadline);
+    return result; // ok stays false: full accounting was not observed in time
 }
 
 } // namespace
@@ -250,7 +330,7 @@ TEST_F(prometheusTelemetryTest, AgentMetricsAppearInScrape) {
     const std::string body = waitForMetricsBody(port_);
     ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
 
-    // The 8 counter families that initializeMetrics() must publish.
+    // The counter families that initializeMetrics() must publish.
     const std::vector<std::string> expected_counters = {
         "agent_tx_bytes_total",
         "agent_rx_bytes_total",
@@ -260,18 +340,26 @@ TEST_F(prometheusTelemetryTest, AgentMetricsAppearInScrape) {
         "agent_memory_deregistered_total",
         "agent_xfer_time_total",
         "agent_xfer_post_time_total",
+        "agent_errors_total",
     };
     for (const auto &c : expected_counters) {
         EXPECT_NE(body.find(c), std::string::npos)
             << "Missing counter family \"" << c << "\" in /metrics body";
     }
 
-    // Gauges share a name with their counter; they are serialized without the
-    // "_total" suffix, so match via the opening label brace.
-    EXPECT_NE(body.find("\nagent_memory_registered{"), std::string::npos)
-        << "Missing agent_memory_registered gauge";
-    EXPECT_NE(body.find("\nagent_memory_deregistered{"), std::string::npos)
-        << "Missing agent_memory_deregistered gauge";
+    // All last-operation gauges use the distinct "_last_bytes" series name, kept
+    // separate from the cumulative "_total" counter of the same subject. Match via
+    // the opening label brace so the "# HELP"/"# TYPE" header lines are skipped.
+    EXPECT_NE(body.find("\nagent_memory_registered_last_bytes{"), std::string::npos)
+        << "Missing agent_memory_registered_last_bytes gauge";
+    EXPECT_NE(body.find("\nagent_memory_deregistered_last_bytes{"), std::string::npos)
+        << "Missing agent_memory_deregistered_last_bytes gauge";
+    EXPECT_NE(body.find("\nagent_tx_last_bytes{"), std::string::npos)
+        << "Missing agent_tx_last_bytes gauge";
+    EXPECT_NE(body.find("\nagent_rx_last_bytes{"), std::string::npos)
+        << "Missing agent_rx_last_bytes gauge";
+    EXPECT_EQ(body.find("\nagent_err_invalid_param_total{"), std::string::npos)
+        << "Error counters must use the labeled agent_errors_total series";
 
     // Each metric must carry the two labels the exporter attaches.
     EXPECT_NE(body.find("agent_name=\"" + agent_name + "\""), std::string::npos)
@@ -300,6 +388,45 @@ TEST_F(prometheusTelemetryTest, AgentMetricsAppearInScrape) {
         << "First agent metrics were removed when peer exporter was destroyed";
     EXPECT_FALSE(hasAnyAgentMetricSample(after_peer_teardown_body, peer_agent_name))
         << "Peer agent metrics remained after peer exporter was destroyed";
+}
+
+TEST_F(prometheusTelemetryTest, ScrapeEmitsExactlyTheDescriptorSeries) {
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr) << "Failed to load prometheus telemetry plugin";
+
+    const std::string agent_name = "prometheus_parity_agent";
+    const nixlTelemetryExporterInitParams params{agent_name, 4096};
+    auto exporter = handle->createExporter(params);
+    ASSERT_NE(exporter, nullptr);
+
+    const std::string body = waitForMetricsBody(port_);
+    ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
+
+    std::set<std::string> expected;
+    for (const auto event_type : telemetry_metric_event_types) {
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event_type);
+        if (descriptor.counterName != nullptr) {
+            expected.insert(descriptor.counterName);
+        }
+        if (descriptor.gaugeName != nullptr) {
+            expected.insert(descriptor.gaugeName);
+        }
+    }
+    expected.insert("agent_errors_total");
+
+    const auto series = nixl::doca_test::open_metrics_text::parse(body);
+    std::set<std::string> actual;
+    for (const auto &[id, samples] : series) {
+        (void)samples;
+        const auto agent = id.labels.find("agent_name");
+        if (agent != id.labels.end() && agent->second == agent_name &&
+            id.name.rfind("agent_", 0) == 0) {
+            actual.insert(id.name);
+        }
+    }
+
+    EXPECT_EQ(actual, expected)
+        << "native Prometheus scrape must emit exactly the shared-descriptor series set";
 }
 
 // Drives the hot path to surface the dangling-pointer consequence of the
@@ -374,4 +501,192 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     EXPECT_EQ(remaining_sample.value, static_cast<double>(kIncrement * kEventCount));
     EXPECT_FALSE(hasAnyAgentMetricSample(after_peer_teardown_body, peer_agent_name))
         << "Peer agent metrics remained after peer exporter was destroyed";
+}
+
+// A byte event drives BOTH a cumulative "_total" counter and a last-operation
+// "_last" gauge from the same per-op value. TX and RX are exercised with
+// distinct values so the assertions also prove the two byte directions map to
+// independent series (no cross-wiring): the counter must read the sum of its
+// deltas while the gauge must read only the final op, not a running total.
+TEST_F(prometheusTelemetryTest, ByteCounterSumsWhileLastGaugeTracksFinalOp) {
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr);
+
+    const std::string agent_name = "prometheus_last_gauge_agent";
+    const nixlTelemetryExporterInitParams params{agent_name, 4096};
+    auto exporter = handle->createExporter(params);
+    ASSERT_NE(exporter, nullptr);
+
+    constexpr std::array<uint64_t, 3> tx_values{1000, 2000, 3500}; // sum 6500, last 3500
+    for (const uint64_t v : tx_values) {
+        const nixlTelemetryEvent event{nixl_telemetry_event_type_t::AGENT_TX_BYTES, v};
+        EXPECT_EQ(exporter->exportEvent(event), NIXL_SUCCESS);
+    }
+    constexpr std::array<uint64_t, 2> rx_values{500, 1500}; // sum 2000, last 1500
+    for (const uint64_t v : rx_values) {
+        const nixlTelemetryEvent event{nixl_telemetry_event_type_t::AGENT_RX_BYTES, v};
+        EXPECT_EQ(exporter->exportEvent(event), NIXL_SUCCESS);
+    }
+
+    const std::string body = waitForMetricsBody(port_);
+    ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
+
+    PrometheusSample tx_total_sample;
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_tx_bytes_total", agent_name, tx_total_sample))
+        << "agent_tx_bytes_total for this agent is not in scrape body";
+    EXPECT_EQ(tx_total_sample.value, 6500.0)
+        << "tx counter must sum every exported delta (1000+2000+3500)";
+
+    PrometheusSample tx_last_sample;
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_tx_last_bytes", agent_name, tx_last_sample))
+        << "agent_tx_last_bytes gauge for this agent is not in scrape body";
+    EXPECT_EQ(tx_last_sample.value, 3500.0)
+        << "tx last-op gauge must equal the final exported value (3500), not the sum";
+
+    PrometheusSample rx_total_sample;
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_rx_bytes_total", agent_name, rx_total_sample))
+        << "agent_rx_bytes_total for this agent is not in scrape body";
+    EXPECT_EQ(rx_total_sample.value, 2000.0)
+        << "rx counter must sum every exported delta (500+1500)";
+
+    PrometheusSample rx_last_sample;
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_rx_last_bytes", agent_name, rx_last_sample))
+        << "agent_rx_last_bytes gauge for this agent is not in scrape body";
+    EXPECT_EQ(rx_last_sample.value, 1500.0)
+        << "rx last-op gauge must equal the final exported value (1500), not the sum";
+}
+
+TEST_F(prometheusTelemetryTest, ErrorCountersUseBoundedStatusLabel) {
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr);
+
+    const std::string agent_name = "prometheus_error_counter_agent";
+    const nixlTelemetryExporterInitParams params{agent_name, 4096};
+    auto exporter = handle->createExporter(params);
+    ASSERT_NE(exporter, nullptr);
+
+    EXPECT_EQ(exporter->exportEvent({nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM, 1}),
+              NIXL_SUCCESS);
+    EXPECT_EQ(exporter->exportEvent({nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM, 1}),
+              NIXL_SUCCESS);
+    EXPECT_EQ(exporter->exportEvent({nixl_telemetry_event_type_t::AGENT_ERR_BACKEND, 1}),
+              NIXL_SUCCESS);
+
+    const std::string body = waitForMetricsBody(port_);
+    ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
+
+    PrometheusSample invalid_param_sample;
+    ASSERT_TRUE(findMetricSample(body,
+                                 "agent_errors_total",
+                                 {{"agent_name", agent_name}, {"status", "invalid_param"}},
+                                 invalid_param_sample))
+        << "agent_errors_total{status=\"invalid_param\"} for this agent is not in scrape body";
+    EXPECT_EQ(invalid_param_sample.value, 2.0);
+    EXPECT_FALSE(invalid_param_sample.labels["hostname"].empty());
+
+    PrometheusSample backend_sample;
+    ASSERT_TRUE(findMetricSample(body,
+                                 "agent_errors_total",
+                                 {{"agent_name", agent_name}, {"status", "backend"}},
+                                 backend_sample))
+        << "agent_errors_total{status=\"backend\"} for this agent is not in scrape body";
+    EXPECT_EQ(backend_sample.value, 1.0);
+    EXPECT_FALSE(backend_sample.labels["hostname"].empty());
+
+    std::istringstream metrics_stream(body);
+    for (std::string line; std::getline(metrics_stream, line);) {
+        EXPECT_NE(line.rfind("agent_err_", 0), 0u)
+            << "legacy per-type error counter must not be published: " << line;
+    }
+}
+
+// The synthetic AGENT_TELEMETRY_EVENTS_DROPPED event (emitted by the core on flush with
+// the number of staging-queue drops since the last flush) must surface as the
+// cumulative counter agent_telemetry_events_dropped_total, accumulating every delta.
+TEST_F(prometheusTelemetryTest, DroppedEventsCounterAccumulates) {
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr);
+
+    const std::string agent_name = "prometheus_dropped_events_agent";
+    const nixlTelemetryExporterInitParams params{agent_name, 4096};
+    auto exporter = handle->createExporter(params);
+    ASSERT_NE(exporter, nullptr);
+
+    // Two flush deltas (7 then 5) as the core would emit them; the counter must
+    // read their sum.
+    constexpr std::array<uint64_t, 2> dropped_deltas{7, 5};
+    uint64_t expected_total = 0;
+    for (const uint64_t delta : dropped_deltas) {
+        EXPECT_EQ(exporter->exportEvent(
+                      {nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED, delta}),
+                  NIXL_SUCCESS);
+        expected_total += delta;
+    }
+
+    const std::string body = waitForMetricsBody(port_);
+    ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
+
+    PrometheusSample sample;
+    ASSERT_TRUE(
+        findAgentMetricSample(body, "agent_telemetry_events_dropped_total", agent_name, sample))
+        << "agent_telemetry_events_dropped_total for this agent is not in scrape body";
+    EXPECT_EQ(sample.value, static_cast<double>(expected_total))
+        << "dropped-events counter must sum every emitted delta (7+5)";
+}
+
+// End-to-end through the core: flooding a small staging queue via updateData
+// forces producer-side drops, which the core publishes as AGENT_TELEMETRY_EVENTS_DROPPED
+// on flush. Driving the (lossless, ring-free) Prometheus exporter makes the
+// result exact and hardware-independent: every produced event is either counted
+// (agent_tx_requests_num_total) or dropped (agent_telemetry_events_dropped_total), so
+// their sum must equal the number produced regardless of flush timing.
+TEST_F(prometheusTelemetryTest, CoreUpdateDataOverflowConservation) {
+    const std::string agent_name = "prometheus_core_update_overflow_agent";
+    constexpr uint64_t kProduced = 100000; // far exceeds the 256-slot staging queue
+
+    // Each accepted event adds 1 to agent_tx_requests_num_total (weight 1), so
+    // ok == (accepted + dropped == produced): conservation with no silent loss.
+    const auto scrape = scrapeCoreOverflow(port_,
+                                           agent_name,
+                                           "agent_tx_requests_num_total",
+                                           1,
+                                           kProduced,
+                                           [](nixlTelemetry &telemetry) {
+                                               for (uint64_t i = 0; i < kProduced; ++i) {
+                                                   telemetry.updateTxRequestsNum(1);
+                                               }
+                                           });
+
+    ASSERT_TRUE(scrape.ok) << "accepted + dropped must reach produced (" << kProduced
+                           << ") -- no silent loss";
+    EXPECT_GT(scrape.dropped, 0.0) << "flooding a 256-slot staging queue must drop events";
+}
+
+// Same conservation check for the all-or-none addXferStats batch path: each
+// accepted call stages 4 events (weight 4) and each dropped call loses its whole
+// 4-event batch, so the dropped counter is always a multiple of 4 and
+// accepted*4 + dropped must equal the produced events.
+TEST_F(prometheusTelemetryTest, CoreAddXferStatsOverflowConservation) {
+    const std::string agent_name = "prometheus_core_xfer_overflow_agent";
+    constexpr uint64_t kCalls = 100000;
+    constexpr uint64_t kEventsPerCall = 4;
+
+    const auto scrape = scrapeCoreOverflow(
+        port_,
+        agent_name,
+        "agent_tx_requests_num_total",
+        kEventsPerCall,
+        kCalls * kEventsPerCall,
+        [](nixlTelemetry &telemetry) {
+            for (uint64_t i = 0; i < kCalls; ++i) {
+                telemetry.addXferStats(
+                    std::chrono::microseconds(10), true, 2000, std::chrono::microseconds(1));
+            }
+        });
+
+    ASSERT_TRUE(scrape.ok) << "accepted*4 + dropped must reach produced events ("
+                           << kCalls * kEventsPerCall << ") -- no silent loss";
+    EXPECT_GT(scrape.dropped, 0.0) << "flooding the staging queue must drop xfer batches";
+    EXPECT_EQ(std::fmod(scrape.dropped, static_cast<double>(kEventsPerCall)), 0.0)
+        << "addXferStats drops the whole 4-event batch, so drops are multiples of 4";
 }
