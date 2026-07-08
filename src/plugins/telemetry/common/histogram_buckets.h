@@ -30,7 +30,7 @@
 
 namespace nixl::telemetry {
 
-constexpr char histogramBucketsUsVar[] = "NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US";
+inline constexpr char histogramBucketsUsVar[] = "NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US";
 
 [[nodiscard]] inline const std::vector<double> &
 defaultHistogramBucketsUs() {
