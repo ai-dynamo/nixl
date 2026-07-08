@@ -1880,8 +1880,12 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
 
     nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
+    nixl_opt_b_args_t opt_args;
+    if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
+    }
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    const std::lock_guard lock_guard(data->lock);
     for (size_t i = 0; i < desc_count; ++i) {
         const auto &desc = dlist[i];
         if (desc.remoteAgent == nixl_null_agent) {
@@ -1929,11 +1933,6 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixl_opt_b_args_t opt_args;
-    if (extra_params) {
-        opt_args.customParam = extra_params->customParam;
-    }
-
     const auto status = engine->prepMemView(remote_meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
         data->mvhToEngine.emplace(mvh, *engine);
@@ -1954,8 +1953,12 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
 
     nixl_meta_dlist_t meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
+    nixl_opt_b_args_t opt_args;
+    if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
+    }
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    const std::lock_guard lock_guard(data->lock);
     const auto backends = data->getBackends(extra_params, data->localSection_, mem_type);
     for (const auto &backend : backends) {
         const auto status = data->localSection_.populate(dlist, backend, meta_dlist);
@@ -1972,11 +1975,6 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixl_opt_b_args_t opt_args;
-    if (extra_params) {
-        opt_args.customParam = extra_params->customParam;
-    }
-
     const auto status = engine->prepMemView(meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
         data->mvhToEngine.emplace(mvh, *engine);
@@ -1990,8 +1988,7 @@ nixlAgent::releaseMemView(nixlMemViewH mvh) const {
     NIXL_TRACE_SCOPE(
         trace_span, data->tracer_.get(), "nixl::releaseMemView", nixl::trace::Kind::Generic);
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-
+    const std::lock_guard lock_guard(data->lock);
     const auto it = data->mvhToEngine.find(mvh);
     if (it == data->mvhToEngine.end()) {
         NIXL_WARN << "Invalid memory view handle: " << mvh;
