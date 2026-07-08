@@ -363,7 +363,11 @@ nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_param
     : nixlUcxEngine(init_params) {
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
-    numSharedWorkers_ = getWorkers().size() - num_threads;
+    const size_t num_workers = getWorkers().size();
+    if (num_threads > num_workers) {
+        throw std::invalid_argument("num_threads exceeds available UCX workers");
+    }
+    numSharedWorkers_ = num_workers - num_threads;
 
     const size_t shared_count = init_params.enableProgTh ? numSharedWorkers_ : 0;
     if (shared_count == 0) {
@@ -650,13 +654,15 @@ private:
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params)
     : nixlUcxThreadEngine(init_params) {
-    const size_t num_threads =
-        nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
-    NIXL_ASSERT(getSharedWorkersSize() > 0);
+    if (getSharedWorkersSize() == 0) {
+        throw std::invalid_argument("thread-pool engine requires at least one shared worker");
+    }
 
     splitBatchSize_ =
         nixl::getBackendParamDefaulted(init_params.customParams, "split_batch_size", 1024u);
 
+    const size_t num_threads =
+        nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
     if (num_threads > 0) {
         io_.reset(new asio::io_context());
         dedicatedThreads_.reserve(num_threads);
