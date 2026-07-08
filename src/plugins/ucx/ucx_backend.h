@@ -312,14 +312,14 @@ public:
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;
 
+protected:
+    void
+    appendNotif(std::string &&remote_name, std::string &&msg) override;
+
     size_t
     getSharedWorkersSize() const override {
         return numSharedWorkers_;
     }
-
-protected:
-    void
-    appendNotif(std::string &&remote_name, std::string &&msg) override;
 
 private:
     std::unique_ptr<nixlUcxThread> thread_;
