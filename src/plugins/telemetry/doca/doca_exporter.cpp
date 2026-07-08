@@ -17,6 +17,7 @@
 #include "doca_exporter.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "histogram_buckets.h"
 
 #include <doca_telemetry_exporter.h>
 #include <doca_error.h>
@@ -27,6 +28,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <unistd.h>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace {
 const uint16_t docaPrometheusExporterDefaultPort = 9091;
@@ -86,6 +90,14 @@ struct DocaSharedContext {
     doca_telemetry_exporter_label_set_id_t error_label_set_id = 0;
     bool source_started = false;
     bool metrics_context_created = false;
+
+    // Base histograms are templates created once on the shared source; observing
+    // against one with concrete label values yields a concrete histogram id. The
+    // general metrics flush does not push histograms, so track those concrete ids
+    // to flush them explicitly.
+    std::unordered_map<nixl_telemetry_event_type_t, doca_telemetry_exporter_base_histogram_id_t>
+        base_histograms;
+    std::unordered_set<doca_telemetry_exporter_histogram_id_t> histogram_ids;
 
     explicit DocaSharedContext(const std::string &bind_address);
     ~DocaSharedContext();
@@ -162,6 +174,26 @@ DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
         }
 
         doca_telemetry_exporter_metrics_set_flush_interval_ms(source, 1000);
+
+        const std::vector<double> histogram_buckets = nixl::telemetry::resolveHistogramBucketsUs();
+        for (const auto event_type : telemetry_metric_event_types) {
+            const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event_type);
+            if (descriptor.histogramName == nullptr) {
+                continue;
+            }
+            doca_telemetry_exporter_base_histogram_id_t base_id = 0;
+            result = doca_telemetry_exporter_metrics_add_base_histogram(source,
+                                                                        descriptor.histogramName,
+                                                                        histogram_buckets.data(),
+                                                                        histogram_buckets.size(),
+                                                                        label_set_id,
+                                                                        1000,
+                                                                        &base_id);
+            if (result != DOCA_SUCCESS) {
+                throw std::runtime_error("Failed to create DOCA base histogram");
+            }
+            base_histograms.emplace(event_type, base_id);
+        }
     }
     catch (...) {
         cleanup();
@@ -261,6 +293,25 @@ nixlTelemetryDocaExporter::appendGaugeSample(const nixlTelemetryEvent &event,
 #pragma GCC diagnostic pop
 }
 
+doca_error_t
+nixlTelemetryDocaExporter::appendHistogramSample(const nixlTelemetryEvent &event,
+                                                 const char *label_values[]) {
+    const auto base = ctx_->base_histograms.find(event.eventType_);
+    if (base == ctx_->base_histograms.end()) {
+        return DOCA_SUCCESS;
+    }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    doca_telemetry_exporter_histogram_id_t histogram_id = 0;
+    const doca_error_t result = doca_telemetry_exporter_metrics_base_histogram_observe(
+        ctx_->source, base->second, label_values, static_cast<double>(event.value_), &histogram_id);
+    if (result == DOCA_SUCCESS) {
+        ctx_->histogram_ids.insert(histogram_id);
+    }
+    return result;
+#pragma GCC diagnostic pop
+}
+
 nixl_status_t
 nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
     try {
@@ -288,6 +339,14 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
             }
         }
 
+        doca_error_t histogram_result = DOCA_SUCCESS;
+        if (descriptor.histogramName != nullptr) {
+            histogram_result = appendHistogramSample(event, label_values);
+            if (histogram_result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to observe histogram: " << histogram_result;
+            }
+        }
+
         doca_error_t counter_result = DOCA_SUCCESS;
         if (descriptor.counterName != nullptr) {
             counter_result = appendCounterSample(event, descriptor.counterName, label_values);
@@ -296,7 +355,8 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
             }
         }
 
-        if (gauge_result != DOCA_SUCCESS || counter_result != DOCA_SUCCESS) {
+        if (gauge_result != DOCA_SUCCESS || counter_result != DOCA_SUCCESS ||
+            histogram_result != DOCA_SUCCESS) {
             return NIXL_ERR_UNKNOWN;
         }
         return NIXL_SUCCESS;
@@ -312,6 +372,20 @@ nixlTelemetryDocaExporter::flush() {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     const std::lock_guard lock(g_metrics_mutex);
+
+    // Observing only accumulates a histogram in the metrics-API cache; it must be
+    // snapshotted into the export buffer via histogram_flush before the general
+    // metrics flush transmits the buffer. Order matters: snapshot histograms
+    // first, then flush everything (counters/gauges + histogram snapshots) out.
+    for (const auto histogram_id : ctx_->histogram_ids) {
+        const auto histogram_result = doca_telemetry_exporter_metrics_histogram_flush(
+            ctx_->source, histogram_id, DOCA_TELEMETRY_EXPORTER_HISTOGRAM_TIMESTAMP_UPDATE, false);
+        if (histogram_result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to flush DOCA histogram: " << histogram_result;
+            return NIXL_ERR_UNKNOWN;
+        }
+    }
+
     const auto result = doca_telemetry_exporter_metrics_flush(ctx_->source);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to flush DOCA metrics: " << result;

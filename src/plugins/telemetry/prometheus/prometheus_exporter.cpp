@@ -17,6 +17,7 @@
 #include "prometheus_exporter.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "histogram_buckets.h"
 
 #include <fstream>
 #include <iostream>
@@ -99,6 +100,7 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     catch (...) {
         counters_.clear();
         gauges_.clear();
+        histograms_.clear();
         s_agent_names.erase(agent_name_);
         throw;
     }
@@ -108,6 +110,7 @@ nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
     const std::lock_guard lock(s_mutex);
     counters_.clear();
     gauges_.clear();
+    histograms_.clear();
     s_agent_names.erase(agent_name_);
     exposer_.reset();
     registry_.reset();
@@ -117,6 +120,7 @@ nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
 // Events are defined in the telemetry.cpp file
 void
 nixlTelemetryPrometheusExporter::initializeMetrics() {
+    const std::vector<double> histogram_buckets = nixl::telemetry::resolveHistogramBucketsUs();
     for (const auto event_type : telemetry_metric_event_types) {
         const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event_type);
         if (descriptor.counterName != nullptr) {
@@ -124,6 +128,10 @@ nixlTelemetryPrometheusExporter::initializeMetrics() {
         }
         if (descriptor.gaugeName != nullptr) {
             registerGauge(event_type, descriptor.gaugeName, descriptor.gaugeHelp);
+        }
+        if (descriptor.histogramName != nullptr) {
+            registerHistogram(
+                event_type, descriptor.histogramName, descriptor.histogramHelp, histogram_buckets);
         }
     }
     registerErrorCounters();
@@ -174,6 +182,21 @@ nixlTelemetryPrometheusExporter::registerGauge(const nixl_telemetry_event_type_t
     NIXL_ASSERT(inserted);
 }
 
+void
+nixlTelemetryPrometheusExporter::registerHistogram(const nixl_telemetry_event_type_t event_type,
+                                                   const std::string &metric_name,
+                                                   const std::string &help,
+                                                   const std::vector<double> &buckets) {
+    auto &family = prometheus::BuildHistogram().Name(metric_name).Help(help).Register(*registry_);
+    auto &metric = family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}},
+                              prometheus::Histogram::BucketBoundaries(buckets));
+    const auto inserted = histograms_.try_emplace(event_type, &family, &metric).second;
+    if (!inserted) {
+        family.Remove(&metric);
+    }
+    NIXL_ASSERT(inserted);
+}
+
 nixl_status_t
 nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
     try {
@@ -185,6 +208,11 @@ nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
         const auto gauge = gauges_.find(event.eventType_);
         if (gauge != gauges_.end()) {
             gauge->second.metric->Set(static_cast<double>(event.value_));
+        }
+
+        const auto histogram = histograms_.find(event.eventType_);
+        if (histogram != histograms_.end()) {
+            histogram->second.metric->Observe(static_cast<double>(event.value_));
         }
 
         return NIXL_SUCCESS;

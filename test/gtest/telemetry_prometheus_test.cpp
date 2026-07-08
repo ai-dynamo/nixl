@@ -21,7 +21,11 @@
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
 
+#include "histogram_buckets.h"
 #include "open_metrics_text_parser.h"
+
+#include <limits>
+#include <optional>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -190,6 +194,78 @@ findMetricSample(const std::string &body,
         }
     }
     return false;
+}
+
+// Cumulative count of a histogram bucket whose `le` label parses to exactly
+// `le`, for this agent. Parses `le` as a double so the assertion does not depend
+// on how prometheus-cpp formats the boundary (e.g. "10" vs "10.0").
+std::optional<double>
+histogramBucketValue(const std::string &body,
+                     const std::string &bucket_metric,
+                     const std::string &agent_name,
+                     double le) {
+    std::istringstream body_lines(body);
+    std::string line;
+    while (std::getline(body_lines, line)) {
+        if (line.rfind(bucket_metric + "{", 0) != 0) {
+            continue;
+        }
+        std::unordered_map<std::string, std::string> labels;
+        double value = 0;
+        if (!parsePrometheusSampleLine(line, bucket_metric, labels, value)) {
+            continue;
+        }
+        const auto agent_it = labels.find("agent_name");
+        const auto le_it = labels.find("le");
+        if (agent_it == labels.end() || agent_it->second != agent_name || le_it == labels.end()) {
+            continue;
+        }
+        try {
+            size_t pos = 0;
+            if (std::stod(le_it->second, &pos) == le && pos == le_it->second.size()) {
+                return value;
+            }
+        }
+        catch (const std::exception &) {
+        }
+    }
+    return std::nullopt;
+}
+
+// The full set of `le` boundaries emitted for a histogram bucket series of this
+// agent (parsed as doubles; "+Inf" becomes +infinity).
+std::set<double>
+histogramBucketBoundaries(const std::string &body,
+                          const std::string &bucket_metric,
+                          const std::string &agent_name) {
+    std::set<double> boundaries;
+    std::istringstream body_lines(body);
+    std::string line;
+    while (std::getline(body_lines, line)) {
+        if (line.rfind(bucket_metric + "{", 0) != 0) {
+            continue;
+        }
+        std::unordered_map<std::string, std::string> labels;
+        double value = 0;
+        if (!parsePrometheusSampleLine(line, bucket_metric, labels, value)) {
+            continue;
+        }
+        const auto agent_it = labels.find("agent_name");
+        const auto le_it = labels.find("le");
+        if (agent_it == labels.end() || agent_it->second != agent_name || le_it == labels.end()) {
+            continue;
+        }
+        try {
+            size_t pos = 0;
+            const double le = std::stod(le_it->second, &pos);
+            if (pos == le_it->second.size()) {
+                boundaries.insert(le);
+            }
+        }
+        catch (const std::exception &) {
+        }
+    }
+    return boundaries;
 }
 
 bool
@@ -411,6 +487,12 @@ TEST_F(prometheusTelemetryTest, ScrapeEmitsExactlyTheDescriptorSeries) {
         if (descriptor.gaugeName != nullptr) {
             expected.insert(descriptor.gaugeName);
         }
+        if (descriptor.histogramName != nullptr) {
+            const std::string base = descriptor.histogramName;
+            expected.insert(base + "_bucket");
+            expected.insert(base + "_sum");
+            expected.insert(base + "_count");
+        }
     }
     expected.insert("agent_errors_total");
 
@@ -427,6 +509,112 @@ TEST_F(prometheusTelemetryTest, ScrapeEmitsExactlyTheDescriptorSeries) {
 
     EXPECT_EQ(actual, expected)
         << "native Prometheus scrape must emit exactly the shared-descriptor series set";
+}
+
+// AGENT_XFER_TIME events drive the agent_xfer_time_us histogram: _count is the
+// number of observations, _sum is their total, and each cumulative _bucket{le}
+// counts the observations at or below that boundary. Values are chosen to land in
+// distinct default buckets so the per-bucket counts are unambiguous.
+TEST_F(prometheusTelemetryTest, XferTimeHistogramRecordsObservations) {
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr);
+
+    const std::string agent_name = "prometheus_histogram_agent";
+    const nixlTelemetryExporterInitParams params{agent_name, 4096};
+    auto exporter = handle->createExporter(params);
+    ASSERT_NE(exporter, nullptr);
+
+    constexpr std::array<uint64_t, 4> values{5, 30, 200, 700}; // sum 935
+    for (const uint64_t v : values) {
+        EXPECT_EQ(exporter->exportEvent({nixl_telemetry_event_type_t::AGENT_XFER_TIME, v}),
+                  NIXL_SUCCESS);
+    }
+
+    const std::string body = waitForMetricsBody(port_);
+    ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
+
+    PrometheusSample count_sample;
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_xfer_time_us_count", agent_name, count_sample))
+        << "agent_xfer_time_us_count for this agent is not in scrape body";
+    EXPECT_EQ(count_sample.value, 4.0) << "histogram _count must equal the number of observations";
+
+    PrometheusSample sum_sample;
+    ASSERT_TRUE(findAgentMetricSample(body, "agent_xfer_time_us_sum", agent_name, sum_sample))
+        << "agent_xfer_time_us_sum for this agent is not in scrape body";
+    EXPECT_EQ(sum_sample.value, 935.0) << "histogram _sum must equal the sum of observations";
+
+    // Cumulative counts at representative default boundaries: 5<=10 (1); +30<=100
+    // (2); +200<=250 (3); +700<=1000 (4).
+    EXPECT_EQ(histogramBucketValue(body, "agent_xfer_time_us_bucket", agent_name, 10.0),
+              std::optional<double>(1.0));
+    EXPECT_EQ(histogramBucketValue(body, "agent_xfer_time_us_bucket", agent_name, 100.0),
+              std::optional<double>(2.0));
+    EXPECT_EQ(histogramBucketValue(body, "agent_xfer_time_us_bucket", agent_name, 250.0),
+              std::optional<double>(3.0));
+    EXPECT_EQ(histogramBucketValue(body, "agent_xfer_time_us_bucket", agent_name, 1000.0),
+              std::optional<double>(4.0));
+}
+
+// NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US replaces the default boundaries for the xfer
+// histograms. prometheus-cpp always appends the implicit +Inf bucket, so the
+// emitted boundary set is the configured list plus +Inf.
+TEST_F(prometheusTelemetryTest, HistogramBucketsEnvOverride) {
+    gtest::ScopedEnv bucket_env;
+    bucket_env.addVar(nixl::telemetry::histogramBucketsUsVar, "100,200,300");
+
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr);
+
+    const std::string agent_name = "prometheus_histogram_env_agent";
+    const nixlTelemetryExporterInitParams params{agent_name, 4096};
+    auto exporter = handle->createExporter(params);
+    ASSERT_NE(exporter, nullptr);
+
+    const std::string body = waitForMetricsBody(port_);
+    ASSERT_FALSE(body.empty()) << "Got empty /metrics response on port " << port_;
+
+    const std::set<double> boundaries =
+        histogramBucketBoundaries(body, "agent_xfer_time_us_bucket", agent_name);
+    const std::set<double> expected{100.0, 200.0, 300.0, std::numeric_limits<double>::infinity()};
+    EXPECT_EQ(boundaries, expected)
+        << "histogram buckets must reflect NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US plus +Inf";
+}
+
+TEST(histogramBucketsTest, ValidListIsParsedInOrder) {
+    gtest::ScopedEnv env;
+    env.addVar(nixl::telemetry::histogramBucketsUsVar, "1, 2.5, 10, 100");
+    EXPECT_EQ(nixl::telemetry::resolveHistogramBucketsUs(),
+              (std::vector<double>{1.0, 2.5, 10.0, 100.0}));
+}
+
+TEST(histogramBucketsTest, NonNumericFallsBackToDefaults) {
+    gtest::LogIgnoreGuard ignore(std::string(nixl::telemetry::histogramBucketsUsVar));
+    gtest::ScopedEnv env;
+    env.addVar(nixl::telemetry::histogramBucketsUsVar, "10,not_a_number,30");
+    EXPECT_EQ(nixl::telemetry::resolveHistogramBucketsUs(),
+              nixl::telemetry::defaultHistogramBucketsUs());
+}
+
+TEST(histogramBucketsTest, UnsortedFallsBackToDefaults) {
+    gtest::LogIgnoreGuard ignore(std::string(nixl::telemetry::histogramBucketsUsVar));
+    gtest::ScopedEnv env;
+    env.addVar(nixl::telemetry::histogramBucketsUsVar, "10,5,20");
+    EXPECT_EQ(nixl::telemetry::resolveHistogramBucketsUs(),
+              nixl::telemetry::defaultHistogramBucketsUs());
+}
+
+TEST(histogramBucketsTest, NonPositiveFallsBackToDefaults) {
+    gtest::LogIgnoreGuard ignore(std::string(nixl::telemetry::histogramBucketsUsVar));
+    gtest::ScopedEnv env;
+    env.addVar(nixl::telemetry::histogramBucketsUsVar, "0,10,20");
+    EXPECT_EQ(nixl::telemetry::resolveHistogramBucketsUs(),
+              nixl::telemetry::defaultHistogramBucketsUs());
+}
+
+TEST(histogramBucketsTest, AbsentUsesDefaults) {
+    ::unsetenv(nixl::telemetry::histogramBucketsUsVar);
+    EXPECT_EQ(nixl::telemetry::resolveHistogramBucketsUs(),
+              nixl::telemetry::defaultHistogramBucketsUs());
 }
 
 // Drives the hot path to surface the dangling-pointer consequence of the

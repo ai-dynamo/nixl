@@ -112,7 +112,7 @@ endif
 
 test_exe = executable('gtest',
     sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../doca-telemetry')],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../doca-telemetry'), include_directories('../../src/plugins/telemetry/common')],
     cpp_args : cpp_flags,
     dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
     link_with: [nixl_build_lib],

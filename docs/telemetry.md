@@ -70,6 +70,16 @@ stream:
   a `_total` counter alongside a last-op gauge (`agent_xfer_time` /
   `agent_xfer_post_time`). This is purely an exporter-side derivation: no new event
   type is emitted and the buffer format is unchanged.
+- **Latency histograms**: the transfer-time events additionally feed distribution
+  histograms `agent_xfer_time_us` / `agent_xfer_post_time_us` (microseconds) on
+  both the Prometheus and DOCA exporters, at parity (same names, buckets, labels).
+  Each is exposed as the standard `_bucket{le="..."}` / `_sum` / `_count` series
+  alongside the existing counter and gauge. Bucket boundaries default to a
+  microsecond range covering ~10us..~10s and are overridable via
+  `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` (a comma-separated list of
+  strictly-increasing positive microsecond upper bounds; absent/empty/invalid
+  falls back to the defaults). Like the other views this is an exporter-side
+  derivation with no new event type.
 - **Error counters**: the Prometheus and DOCA exporters expose error events as
   `agent_errors_total{status="<status>"}`. The `status` label is bounded by the
   fixed `AGENT_ERR_*` event set: `not_posted`, `invalid_param`, `backend`,
@@ -126,6 +136,7 @@ Telemetry is configured by environment variables:
 | `NIXL_TELEMETRY_BUFFER_SIZE` | Number of events in buffer | `4096` |
 | `NIXL_TELEMETRY_RUN_INTERVAL` | Flush interval (ms) | `100` |
 | `NIXL_TELEMETRY_EXPORTER` | Name of the exporter plugin to use | - |
+| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Comma-separated microsecond bucket bounds for the transfer-time histograms (Prometheus/DOCA) | built-in µs defaults |
 
 - `NIXL_TELEMETRY_ENABLE` can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to be enabled, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to be disabled. Matching is case insensitive.
 - Telemetry is requested either via `NIXL_TELEMETRY_ENABLE` or via the agent config flag `captureTelemetry` (`capture_telemetry=True` in Python). It is fully off only when it is not requested.

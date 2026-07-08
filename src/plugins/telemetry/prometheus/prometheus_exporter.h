@@ -24,6 +24,7 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include <prometheus/registry.h>
 #include <prometheus/exposer.h>
@@ -93,6 +94,29 @@ private:
         prometheus::Gauge *metric = nullptr;
     };
 
+    struct HistogramEntry {
+        HistogramEntry(prometheus::Family<prometheus::Histogram> *family,
+                       prometheus::Histogram *metric)
+            : family(family),
+              metric(metric) {}
+
+        HistogramEntry(const HistogramEntry &) = delete;
+        HistogramEntry &
+        operator=(const HistogramEntry &) = delete;
+        HistogramEntry(HistogramEntry &&) = delete;
+        HistogramEntry &
+        operator=(HistogramEntry &&) = delete;
+
+        ~HistogramEntry() {
+            if (family && metric) {
+                family->Remove(metric);
+            }
+        }
+
+        prometheus::Family<prometheus::Histogram> *family = nullptr;
+        prometheus::Histogram *metric = nullptr;
+    };
+
     const std::string agent_name_;
     const std::string hostname_;
     std::shared_ptr<prometheus::Exposer> exposer_;
@@ -100,6 +124,7 @@ private:
 
     std::unordered_map<nixl_telemetry_event_type_t, CounterEntry> counters_;
     std::unordered_map<nixl_telemetry_event_type_t, GaugeEntry> gauges_;
+    std::unordered_map<nixl_telemetry_event_type_t, HistogramEntry> histograms_;
 
     void
     initializeMetrics();
@@ -120,6 +145,12 @@ private:
     registerGauge(nixl_telemetry_event_type_t event_type,
                   const std::string &metric_name,
                   const std::string &help);
+
+    void
+    registerHistogram(nixl_telemetry_event_type_t event_type,
+                      const std::string &metric_name,
+                      const std::string &help,
+                      const std::vector<double> &buckets);
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H
