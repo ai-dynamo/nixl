@@ -17,16 +17,11 @@ import importlib
 import sys
 from typing import TYPE_CHECKING
 
-
-def _get_torch_cuda_major() -> int | None:
-    """Return the CUDA major version that torch was built for, or None."""
-    from torch.version import cuda as _torch_cuda_ver
-
-    return int(_torch_cuda_ver.split(".")[0]) if _torch_cuda_ver else None
+from nixl_meta_utils import detect_cuda_major
 
 
 def _load_cuda_backend() -> str:
-    cuda_major = _get_torch_cuda_major()
+    cuda_major = detect_cuda_major()
     if cuda_major is not None:
         pip_name = f"nixl-cu{cuda_major}"
         mod_name = f"nixl_cu{cuda_major}"
@@ -36,9 +31,9 @@ def _load_cuda_backend() -> str:
             if e.name != mod_name:
                 raise
             raise ImportError(
-                f"torch reports CUDA {cuda_major} but {pip_name} is not installed"
+                f"detected CUDA {cuda_major} but {pip_name} is not installed"
             ) from e
-    # CPU-only torch — use whatever backend is installed
+    # No CUDA stack detected — use whatever backend is installed.
     for mod_name in ("nixl_cu13", "nixl_cu12"):
         try:
             return importlib.import_module(mod_name).__name__
