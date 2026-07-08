@@ -387,7 +387,6 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
         EP_BUILD_FLAGS=""; \
     fi && \
     rm -rf dist && mkdir -p dist && \
-    if [ -n "$UCX_SONAME_SUFFIX" ]; then UCX_PLUGIN_SONAME_FLAG="--plugin-soname-suffix $UCX_SONAME_SUFFIX"; else UCX_PLUGIN_SONAME_FLAG=""; fi && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         export PATH=$VIRTUAL_ENV/bin:$PATH && \
         ./contrib/build-wheel.sh \
@@ -396,7 +395,6 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --ucx-plugins-dir /usr/lib64/ucx \
             --nixl-plugins-dir $NIXL_PLUGIN_DIR \
             --output-dir dist \
-            $UCX_PLUGIN_SONAME_FLAG \
             $EP_BUILD_FLAGS ; \
     done
 
