@@ -323,7 +323,7 @@ namespace asio {
 class io_context;
 }
 
-class nixlUcxThreadPoolEngine : public nixlUcxEngine {
+class nixlUcxThreadPoolEngine : public nixlUcxThreadEngine {
 public:
     nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params);
     ~nixlUcxThreadPoolEngine();
@@ -341,13 +341,7 @@ public:
         return numSharedWorkers_;
     }
 
-    nixl_status_t
-    getNotifs(notif_list_t &notif_list) override;
-
 protected:
-    void
-    appendNotif(std::string &&remote_name, std::string &&msg) override;
-
     nixl_status_t
     sendXferRange(const nixl_xfer_op_t &operation,
                   const nixl_meta_dlist_t &local,
@@ -359,10 +353,8 @@ protected:
 
 private:
     std::unique_ptr<asio::io_context> io_;
-    std::unique_ptr<nixlUcxThread> sharedThread_;
     std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
     size_t numSharedWorkers_;
-    std::mutex notifMutex_;
     size_t splitBatchSize_;
 };
 

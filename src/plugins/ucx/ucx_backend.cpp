@@ -361,20 +361,28 @@ private:
 
 nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_params)
     : nixlUcxEngine(init_params) {
+    const size_t num_threads =
+        nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
+    const size_t shared_count = init_params.enableProgTh ? getWorkers().size() - num_threads : 0;
+    if (shared_count == 0) {
+        return;
+    }
+
     if (!nixlUcxMtLevelIsSupported(nixl::ucx::mt_mode_t::WORKER)) {
         throw std::invalid_argument("UCX library does not support multi-threading");
     }
 
-    size_t num_workers = getWorkers().size();
-    thread_ = std::make_unique<nixlUcxSharedThread>(this, num_workers, init_params.pthrDelay);
-    for (size_t i = 0; i < num_workers; i++) {
+    thread_ = std::make_unique<nixlUcxSharedThread>(this, shared_count, init_params.pthrDelay);
+    for (size_t i = 0; i < shared_count; i++) {
         thread_->addWorker(getWorkers()[i].get(), i);
     }
     thread_->start();
 }
 
 nixlUcxThreadEngine::~nixlUcxThreadEngine() {
-    thread_->join();
+    if (thread_) {
+        thread_->join();
+    }
 }
 
 void
@@ -387,6 +395,10 @@ nixl_status_t
 nixlUcxThreadEngine::getNotifs(notif_list_t &notif_list) {
     if (!notif_list.empty()) {
         return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (!thread_) {
+        progressLoop();
     }
 
     const std::lock_guard lock(notifMutex_);
@@ -635,7 +647,7 @@ private:
 };
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params)
-    : nixlUcxEngine(init_params) {
+    : nixlUcxThreadEngine(init_params) {
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
     numSharedWorkers_ = getWorkers().size() - num_threads;
@@ -643,15 +655,6 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
 
     splitBatchSize_ =
         nixl::getBackendParamDefaulted(init_params.customParams, "split_batch_size", 1024u);
-
-    if (init_params.enableProgTh) {
-        sharedThread_ =
-            std::make_unique<nixlUcxSharedThread>(this, numSharedWorkers_, init_params.pthrDelay);
-        for (size_t i = 0; i < numSharedWorkers_; i++) {
-            sharedThread_->addWorker(getWorkers()[i].get(), i);
-        }
-        sharedThread_->start();
-    }
 
     if (num_threads > 0) {
         io_.reset(new asio::io_context());
@@ -666,10 +669,6 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
 }
 
 nixlUcxThreadPoolEngine::~nixlUcxThreadPoolEngine() {
-    if (sharedThread_) {
-        sharedThread_->join();
-    }
-
     if (io_) {
         io_->stop();
         for (auto &thread : dedicatedThreads_) {
@@ -755,27 +754,6 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     future.wait();
     NIXL_TRACE << "sent " << *comp_handle << " with status: " << status.load();
     return status.load();
-}
-
-void
-nixlUcxThreadPoolEngine::appendNotif(std::string &&remote_name, std::string &&msg) {
-    const std::lock_guard lock(notifMutex_);
-    notifList_.emplace_back(std::move(remote_name), std::move(msg));
-}
-
-nixl_status_t
-nixlUcxThreadPoolEngine::getNotifs(notif_list_t &notif_list) {
-    if (!notif_list.empty()) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if (!sharedThread_) {
-        progressLoop();
-    }
-
-    const std::lock_guard lock(notifMutex_);
-    notifList_.swap(notif_list);
-    return NIXL_SUCCESS;
 }
 
 /****************************************
