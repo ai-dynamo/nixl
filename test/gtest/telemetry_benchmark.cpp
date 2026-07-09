@@ -275,6 +275,38 @@ TEST_F(telemetryBenchmark, DISABLED_AddXferStatsDrop) {
     env_.popVar();
 }
 
+// addXferStats with the four per-transfer metrics deactivated via
+// NIXL_TELEMETRY_METRICS: every call is rejected by the producer gate before the
+// lock (batch_size == 0). Isolates the cost of source-side activation checks --
+// the "metric is off" fast path. Buffer sized to never drop so the only thing
+// measured is the gate.
+TEST_F(telemetryBenchmark, DISABLED_AddXferStatsDeactivated) {
+    env_.addVar(TELEMETRY_BUFFER_SIZE_VAR, std::to_string(kIters * 4 + 16));
+    env_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "3600000");
+    // Activate only an unrelated metric, so the four xfer events are all off.
+    env_.addVar(TELEMETRY_METRICS_VAR, "agent_memory_registered");
+
+    double best = std::numeric_limits<double>::max();
+    for (size_t r = 0; r < kRepeats; ++r) {
+        nixlTelemetry telemetry("bench_deactivated", "NOP");
+        const auto start = std::chrono::steady_clock::now();
+        for (size_t i = 0; i < kIters; ++i) {
+            telemetry.addXferStats(
+                std::chrono::microseconds(100), true, 4096, std::chrono::microseconds(10));
+        }
+        const auto end = std::chrono::steady_clock::now();
+        const double per =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() /
+            static_cast<double>(kIters);
+        best = std::min(best, per);
+    }
+    report("add_xfer_stats_deactivated", best);
+
+    env_.popVar();
+    env_.popVar();
+    env_.popVar();
+}
+
 // Full per-transfer datapath tax proxy: what nixlAgent runs per completed async
 // transfer with telemetry ON -- three steady_clock::now() reads, two
 // duration_casts, and one addXferStats. Measured in the drop regime (the

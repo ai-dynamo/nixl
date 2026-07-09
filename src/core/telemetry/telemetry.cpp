@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <array>
 #include <chrono>
 #include <sstream>
 #include <thread>
@@ -377,22 +376,13 @@ nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
     const auto requests_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM :
                                           nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM;
 
-    const std::array<nixlTelemetryEvent, 4> candidates{{
-        {nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
-         static_cast<uint64_t>(post_time.count())},
-        {nixl_telemetry_event_type_t::AGENT_XFER_TIME, static_cast<uint64_t>(xfer_time.count())},
-        {bytes_type, bytes},
-        {requests_type, 1},
-    }};
-
-    // Keep only the activated events; deactivated ones are skipped at the source.
-    std::array<nixlTelemetryEvent, 4> batch;
-    size_t batch_size = 0;
-    for (const auto &event : candidates) {
-        if (isMetricEnabled(event.eventType_)) {
-            batch[batch_size++] = event;
-        }
-    }
+    // Resolve the activation of each candidate once (lock-free), then reuse it for
+    // both the capacity check and the appends -- no intermediate buffer/copies.
+    const bool post_on = isMetricEnabled(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME);
+    const bool time_on = isMetricEnabled(nixl_telemetry_event_type_t::AGENT_XFER_TIME);
+    const bool bytes_on = isMetricEnabled(bytes_type);
+    const bool requests_on = isMetricEnabled(requests_type);
+    const size_t batch_size = static_cast<size_t>(post_on) + time_on + bytes_on + requests_on;
     if (batch_size == 0) {
         return;
     }
@@ -403,7 +393,18 @@ nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
         droppedEvents_.fetch_add(batch_size, std::memory_order_relaxed);
         return;
     }
-    for (size_t i = 0; i < batch_size; ++i) {
-        events_.push_back(batch[i]);
+    if (post_on) {
+        events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+                             static_cast<uint64_t>(post_time.count()));
+    }
+    if (time_on) {
+        events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_TIME,
+                             static_cast<uint64_t>(xfer_time.count()));
+    }
+    if (bytes_on) {
+        events_.emplace_back(bytes_type, bytes);
+    }
+    if (requests_on) {
+        events_.emplace_back(requests_type, 1);
     }
 }

@@ -698,10 +698,10 @@ TEST_F(prometheusTelemetryTest, DroppedEventsCounterAccumulates) {
         << "dropped-events counter must sum every emitted delta (7+5)";
 }
 
-// End-to-end through the core (NIX-453): a per-event allowlist skips deactivated
-// metrics at the source, so an enabled metric advances while a disabled one
-// stays at its pre-registered 0. Families are always registered, so this asserts
-// values, not series presence (event-type granularity, not per-series).
+// End-to-end through the core: a per-event allowlist skips deactivated metrics at
+// the source, so an enabled metric advances while a disabled one stays at its
+// pre-registered 0. Families are always registered, so this asserts values, not
+// series presence (event-type granularity, not per-series).
 TEST_F(prometheusTelemetryTest, MetricAllowlistDeactivatesMetric) {
     gtest::ScopedEnv telemetry_env;
     telemetry_env.addVar(TELEMETRY_METRICS_VAR, "agent_tx_bytes");
