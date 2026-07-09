@@ -408,18 +408,24 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
-        // WRITE: group 16 consecutive descs to same rail for FI_MORE batching.
-        // READ: per-descriptor round-robin (FI_MORE has no benefit for reads).
+        // EFA defers an FI_MORE batch until a closing post. NIXL locks each descriptor post
+        // separately, so CQ progress or another posting thread can run before that closing post
+        // and prevent it from being submitted. Do not use FI_MORE on EFA until NIXL can submit a
+        // complete batch under one endpoint owner.
         constexpr int FI_MORE_BATCH_SIZE = 16;
-        const bool batch_write = (op_type == nixlLibfabricReq::WRITE);
+        const auto &provider_name = rails_[selected_rails.front()]->provider_name;
+        const bool is_efa_provider = provider_name == "efa" || provider_name == "efa-direct";
+        const bool batch_write =
+            (op_type == nixlLibfabricReq::WRITE) && !is_efa_provider;
+        const int batch_size = batch_write ? FI_MORE_BATCH_SIZE : 1;
         const size_t rr_idx =
-            batch_write ? (base_offset + desc_idx / FI_MORE_BATCH_SIZE) : (base_offset + desc_idx);
+            batch_write ? (base_offset + desc_idx / batch_size) : (base_offset + desc_idx);
         const size_t rail_id = selected_rails[rr_idx % selected_rails.size()];
         const size_t remote_ep_id =
             remote_selected_endpoints[rr_idx % remote_selected_endpoints.size()];
-        const int pos_in_group = desc_idx % FI_MORE_BATCH_SIZE;
+        const int pos_in_group = desc_idx % batch_size;
         const bool is_last_in_group =
-            (pos_in_group == FI_MORE_BATCH_SIZE - 1) || (desc_idx == desc_count - 1);
+            (pos_in_group == batch_size - 1) || (desc_idx == desc_count - 1);
         const uint64_t fi_flags = (batch_write && !is_last_in_group) ? FI_MORE : 0;
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
