@@ -88,9 +88,10 @@ public:
     /**
      * @brief Records one completed transfer's stats as a single telemetry batch.
      *
-     * Appends the four per-transfer events (transfer time, bytes, request count,
-     * post time) under one lock. The batch is all-or-none: if the buffer cannot
-     * hold all four, none are recorded.
+     * Appends the activated subset of the four per-transfer events (transfer
+     * time, bytes, request count, post time) under one lock; deactivated metrics
+     * are skipped before batching. The batch is all-or-none: if the buffer cannot
+     * hold the filtered batch, none of its events are recorded.
      * @param xfer_time Start-to-complete transfer duration.
      * @param is_write True for TX events (agent_tx_*), false for RX (agent_rx_*).
      * @param bytes Bytes transferred by the request.
