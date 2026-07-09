@@ -98,7 +98,7 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     return config.str();
 }
 
-uint64_t
+static uint64_t
 getRandomSeed() {
     if (xferBenchConfig::randomize_location_mode_seed != 0) {
         return xferBenchConfig::randomize_location_mode_seed;
@@ -106,6 +106,8 @@ getRandomSeed() {
 
     std::random_device rd;
     uint64_t seed = rd();
+    seed =
+        (seed << 32) | rd(); // assuming rd() returns 32 bits, combine two calls for a 64-bit seed
     xferBenchConfig::randomize_location_mode_seed =
         seed; // Store the generated seed back to config for reproducibility
     return seed;
@@ -520,18 +522,19 @@ nixlAlloc::adopt(void *addr, size_t size) {
 } // namespace
 
 uint64_t
-xferBenchNixlWorker::getFileOffset(uint64_t currentOffset,
-                                   uint64_t max_offset_in_blocks,
+xferBenchNixlWorker::getFileOffset(size_t current_offset,
+                                   size_t max_offset_in_blocks,
                                    size_t block_size) {
     // For randomize location mode being byte aligned, it generates a random offset below the max
     // offset. For randomize location mode being block aligned, we don't change the offset here, we
     // adjust the order of the iov, that way it works for object iovs as well.
     if (xferBenchConfig::randomize_location_mode ==
         XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
+        assert(max_offset_in_blocks > 0);
         return default_rng_() % (max_offset_in_blocks * block_size);
     } else {
         // For block aligned, we can just increment the offset sequentially
-        return currentOffset + block_size;
+        return current_offset + block_size;
     }
 }
 
@@ -1277,7 +1280,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     remote_iov_list.push_back(iov_remote);
                     fd_idx++;
                     if (fd_idx >= remote_fds.size()) {
-                        int max_offset_in_blocks =
+                        const std::size_t max_offset_in_blocks =
                             (local_iovs.size() * iov_list.size() / remote_fds.size()) - 1;
                         file_offset = getFileOffset(file_offset, max_offset_in_blocks, block_size);
                         fd_idx = 0;

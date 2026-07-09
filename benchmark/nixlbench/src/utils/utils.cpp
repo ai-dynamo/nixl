@@ -518,6 +518,7 @@ xferBenchConfig::loadParams(void) {
     asio_address = NB_ARG(asio_address);
     asio_port = NB_ARG(asio_port);
     randomize_location_mode = NB_ARG(randomize_location_mode);
+    randomize_location_mode_seed = NB_ARG(randomize_location_mode_seed);
     filepath = NB_ARG(filepath);
     filenames = NB_ARG(filenames);
     num_files = NB_ARG(num_files);
@@ -564,6 +565,13 @@ xferBenchConfig::loadParams(void) {
                       << " valid modes are " << XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE << ", "
                       << XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED << ", "
                       << XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED << std::endl;
+            return -1;
+        }
+        if (randomize_location_mode == XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED &&
+            storage_enable_direct == 1) {
+            std::cerr << "Byte-aligned randomization violates direct storage access rules due to "
+                         "non-block-aligned copy offsets."
+                      << std::endl;
             return -1;
         }
     } else {
@@ -790,8 +798,10 @@ xferBenchConfig::printConfig() {
             printOption("Randomize location mode (--randomize_location_mode=[none, blockaligned, "
                         "bytealigned])",
                         randomize_location_mode);
-            printOption("Randomize location mode seed (--randomize_location_mode_seed=N)",
-                        std::to_string(randomize_location_mode_seed));
+            if (randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE) {
+                printOption("Randomize location mode seed (--randomize_location_mode_seed=N)",
+                            std::to_string(randomize_location_mode_seed));
+            }
         }
 
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO

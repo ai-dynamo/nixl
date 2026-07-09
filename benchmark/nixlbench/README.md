@@ -483,8 +483,8 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --randomize_location_mode MODE    # Controls block location randomization [none, blockaligned, bytealigned] (default: none)
                                   # blockaligned: randomizes the order of the otherwise sequentially block aligned iov's in the batch, also works on object plugins
                                   # bytealigned: randomizes the offset per iov scrambling the block order instead of being sequential.
---randomize_location_mode_seed  # random seed used for randomized location mode (default: 0)
-                                # 0 signals using the random_device for the seed
+--randomize_location_mode_seed NUM  # random seed used for randomized location mode (default: 0)
+                                    # 0 signals using the random_device for the seed
 
 ```
 
