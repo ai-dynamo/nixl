@@ -53,12 +53,14 @@ public:
      * @brief Creates a telemetry instance that records transfer events.
      *
      * Only called when telemetry is explicitly requested (NIXL_TELEMETRY_ENABLE
-     * or the agent's captureTelemetry config), so it always returns a non-null
-     * instance. With an output sink configured it exports events there; without
-     * one it falls back to the collect-only NOP sink, which still records events
-     * in process (so getXferTelemetry() returns data) but writes nothing.
+     * or the agent's captureTelemetry config). With an output sink configured it
+     * exports events there; without one it falls back to the collect-only NOP
+     * sink, which still records events in process (so getXferTelemetry() returns
+     * data) but writes nothing.
      * @param agent_name Non-empty agent name.
-     * @return A non-null telemetry instance.
+     * @return A telemetry instance, or nullptr if the exporter's scrape endpoint
+     *         could not bind its port (a benign multi-process collision): that
+     *         rank then runs without a telemetry sink instead of failing.
      * @throws std::invalid_argument / std::runtime_error on genuine
      *         configuration or plugin-load errors.
      */
