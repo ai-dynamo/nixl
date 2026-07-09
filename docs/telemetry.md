@@ -14,6 +14,7 @@ Custom telemetry exporter plug-ins can be created according to [src/plugins/tele
 2. **Shared Memory Buffer**: Statically-linked built in implementation of telemetry exporter. Uses shared memory cyclic buffer for efficient event storage and export.
 3. **Telemetry Readers**: C++ and Python applications to read and display telemetry data from the cyclic buffer.
 4. **Prometheus exporter**: EXPERIMENTAL (beta) Prometheus compatible telemetry exporter, see [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md).
+5. **Multi-process Prometheus exporter (`prometheus_mp`)**: EXPERIMENTAL native aggregation of all processes of a multi-process run behind one scrape endpoint, without an external service. See [src/plugins/telemetry/prometheus_mp/README.md](../src/plugins/telemetry/prometheus_mp/README.md) and "Multi-process aggregation" below.
 
 ### Event Structure
 
@@ -132,7 +133,45 @@ Telemetry is configured by environment variables:
 - When telemetry is requested but no output sink is configured (neither `NIXL_TELEMETRY_EXPORTER` nor `NIXL_TELEMETRY_DIR`), it falls back to the collect-only NOP exporter: events are collected in-process so `getXferTelemetry()` / `get_xfer_telemetry()` works, but nothing is written out.
 - If telemetry is enabled but no exporter is set, or the exporter name is empty, then the sink depends on `NIXL_TELEMETRY_DIR` as explained below (falling back to NOP when it is unset).
 - Set `NIXL_TELEMETRY_EXPORTER=NOP` to explicitly keep telemetry active (events are collected and `getXferTelemetry()` works) while discarding all output. It needs no sink and writes nothing, so it can be used to measure the overhead of the telemetry collection path in isolation.
-- Exporters that expose a scrape endpoint (e.g. Prometheus) bind one port per process. Under multi-process runs (e.g. tensor/data parallelism) every rank tries to bind the same port; only one wins. Losing that race is benign and non-fatal: the affected process logs a single warning and runs without a telemetry sink instead of failing agent construction. See [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md).
+- Exporters that expose a scrape endpoint (e.g. Prometheus) bind one port per process. Under multi-process runs (e.g. tensor/data parallelism) every rank tries to bind the same port; only one wins. With the single-process `prometheus` exporter, losing that race is benign and non-fatal: the affected process logs a single warning and runs without a telemetry sink instead of failing agent construction (see [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md)). To instead export **every** rank behind one endpoint, use the `prometheus_mp` exporter (see "Multi-process aggregation" below).
+
+## Multi-process aggregation (`prometheus_mp`)
+
+The `prometheus_mp` exporter aggregates the telemetry of all processes of a
+multi-process NIXL run behind a **single** Prometheus scrape endpoint, natively
+(no DOCA/DTS). Every process writes its own metric state to a per-process
+memory-mapped file in a shared directory; the processes race to bind the scrape
+port, the winner serves `/metrics` by reading and republishing all live processes'
+files on each scrape (labeled per process), and the losers run as writers only. A
+bind collision is benign, so no rank is dropped. Full details:
+[src/plugins/telemetry/prometheus_mp/README.md](../src/plugins/telemetry/prometheus_mp/README.md).
+
+### Configuration
+
+| Variable | Description | Default |
+| -------- | ----------- | ------- |
+| `NIXL_TELEMETRY_EXPORTER` | Set to `prometheus_mp` to select this exporter | - |
+| `NIXL_TELEMETRY_MULTIPROC_DIR` | Shared directory for per-process store files (all ranks to be aggregated must use the same path). **Required.** | - |
+| `NIXL_TELEMETRY_PROMETHEUS_PORT` | Scrape port (shared with the `prometheus` exporter) | `9090` |
+| `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | Bind `127.0.0.1` instead of `0.0.0.0` | `false` |
+| `NIXL_TELEMETRY_RANK_ENV` | Name of the env var holding the rank for the optional `dp_rank` label; no label if that env var is unset | `LOCAL_RANK` |
+| `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after which a dead process's store is stale and reaped | `30` |
+
+Series are labeled by `hostname`, `agent_name`, `pid` (guarantees uniqueness), and
+optionally `dp_rank`. Metric names, types, and semantics are identical to the
+single-process `prometheus` exporter.
+
+### Scope & limitations
+
+`prometheus_mp` is purpose-built for NIXL's telemetry model, **not** a generic
+Prometheus multiprocess store, and it does not reuse Python `prometheus_client`'s
+multiprocess format. The metric set is fixed at compile time (positional slots;
+names are not stored) and per-process label values are captured once at startup and
+never change -- events carry only a numeric value, with no per-observation labels.
+It therefore **cannot represent a metric with a dynamic / high-cardinality label**
+that varies per observation. No NIXL metric needs that today; if one is ever added,
+a different (keyed) store would be required. For aggregation via an external
+service, use the DOCA/CollectX exporter instead.
 
 ## Cyclic Buffer
 
