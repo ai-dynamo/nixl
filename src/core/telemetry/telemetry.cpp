@@ -92,7 +92,7 @@ getExporterName();
 validateAgentName(const std::string &agent_name);
 [[nodiscard]] size_t
 resolveMaxBufferedEvents();
-[[nodiscard]] nixlTelemetryMetricMask
+[[nodiscard]] nixl_telemetry_metric_mask_t
 resolveEnabledMetrics();
 } // namespace
 
@@ -183,9 +183,9 @@ resolveMaxBufferedEvents() {
     return max_events;
 }
 
-[[nodiscard]] nixlTelemetryMetricMask
+[[nodiscard]] nixl_telemetry_metric_mask_t
 resolveEnabledMetrics() {
-    nixlTelemetryMetricMask enabled{};
+    nixl_telemetry_metric_mask_t enabled{};
 
     const auto spec = nixl::config::getValueOptional<std::string>(TELEMETRY_METRICS_VAR);
     std::vector<std::string> tokens;

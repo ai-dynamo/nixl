@@ -131,7 +131,7 @@ private:
     // Per-event-type export allowlist resolved once from NIXL_TELEMETRY_METRICS.
     // Indexed by nixl_telemetry_event_type_t; an event is exported only when its
     // slot is true. All-true when the variable is unset (backward compatible).
-    const nixlTelemetryMetricMask metricEnabled_;
+    const nixl_telemetry_metric_mask_t metricEnabled_;
     std::vector<nixlTelemetryEvent> events_;
     std::mutex mutex_;
     // Producer-side staging-queue drop counter: incremented from any thread when

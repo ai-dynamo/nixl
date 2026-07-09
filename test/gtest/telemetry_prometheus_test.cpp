@@ -705,7 +705,7 @@ TEST_F(prometheusTelemetryTest, DroppedEventsCounterAccumulates) {
 TEST_F(prometheusTelemetryTest, MetricAllowlistFiltersAtDrain) {
     gtest::ScopedEnv telemetry_env;
     telemetry_env.addVar(TELEMETRY_METRICS_VAR, "agent_tx_bytes");
-    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, "5");
+    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
     const std::string agent_name = "prometheus_allowlist_agent";
     nixlTelemetry telemetry(agent_name, "prometheus");
