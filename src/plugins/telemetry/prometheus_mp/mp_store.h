@@ -58,7 +58,8 @@ struct mpStoreSnapshot {
     // Process start time in clock ticks (/proc/<pid>/stat field 22); pairs with
     // pid to survive PID reuse when checking liveness.
     uint64_t startTime = 0;
-    // Wall-clock nanoseconds of the last writer update; used for TTL staleness.
+    // Monotonic nanoseconds (nixlTime::getNs, CLOCK_MONOTONIC -- host-wide, so
+    // comparable across processes) of the last writer update; used for TTL staleness.
     uint64_t lastUpdateNs = 0;
     std::string agentName;
     std::string hostname;

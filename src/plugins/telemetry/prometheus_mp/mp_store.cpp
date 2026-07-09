@@ -17,6 +17,7 @@
 #include "mp_store.h"
 
 #include "common/nixl_log.h"
+#include "common/nixl_time.h"
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -24,7 +25,6 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -59,13 +59,6 @@ namespace {
         uint64_t counters[MP_STORE_SLOT_COUNT];
         uint64_t gauges[MP_STORE_SLOT_COUNT];
     };
-
-    [[nodiscard]] uint64_t
-    nowNs() noexcept {
-        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                         std::chrono::system_clock::now().time_since_epoch())
-                                         .count());
-    }
 
     void
     copyField(char *dst, std::size_t cap, const std::string &src, const char *what) {
@@ -160,7 +153,7 @@ mpStoreWriter::mpStoreWriter(std::filesystem::path path,
     copyField(layout->agentName, MP_MAX_AGENT_NAME, agent_name, "agent name");
     copyField(layout->hostname, MP_MAX_HOSTNAME, hostname, "hostname");
     copyField(layout->dpRank, MP_MAX_DP_RANK, dp_rank, "dp_rank");
-    __atomic_store_n(&layout->lastUpdateNs, nowNs(), __ATOMIC_RELEASE);
+    __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELEASE);
     // Publish the magic last so a concurrent reader never validates a
     // half-initialized header.
     __atomic_store_n(&layout->magic, MP_STORE_MAGIC, __ATOMIC_RELEASE);
@@ -176,7 +169,7 @@ mpStoreWriter::~mpStoreWriter() {
 void
 mpStoreWriter::touch() noexcept {
     auto *layout = static_cast<mpStoreLayout *>(mapping_);
-    __atomic_store_n(&layout->lastUpdateNs, nowNs(), __ATOMIC_RELEASE);
+    __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELEASE);
 }
 
 void

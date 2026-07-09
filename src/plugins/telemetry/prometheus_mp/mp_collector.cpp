@@ -17,6 +17,7 @@
 #include "mp_collector.h"
 
 #include "common/nixl_log.h"
+#include "common/nixl_time.h"
 #include "telemetry_event.h"
 
 #include <prometheus/client_metric.h>
@@ -39,13 +40,6 @@ namespace {
     using prometheus::ClientMetric;
     using prometheus::MetricFamily;
     using prometheus::MetricType;
-
-    [[nodiscard]] uint64_t
-    nowNs() noexcept {
-        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                         std::chrono::system_clock::now().time_since_epoch())
-                                         .count());
-    }
 
     [[nodiscard]] std::vector<ClientMetric::Label>
     baseLabels(const mpStoreSnapshot &s) {
@@ -78,12 +72,12 @@ namespace {
         return m;
     }
 
-    // Minimum age before an unparseable file is reaped, even when the TTL is 0.
+    // Minimum age before an unparsable file is reaped, even when the TTL is 0.
     // Protects a store a live process is actively creating (a sub-second window)
     // from being deleted out from under it.
     constexpr long kInvalidFileFloorSeconds = 2;
 
-    // Whether an unparseable store file (bad/zero magic, wrong schema, truncated)
+    // Whether an unparsable store file (bad/zero magic, wrong schema, truncated)
     // is old enough to be an orphan worth removing, rather than a live process's
     // store mid-creation.
     [[nodiscard]] bool
@@ -135,7 +129,7 @@ isSnapshotLive(const mpStoreSnapshot &snap, std::chrono::nanoseconds ttl) {
     if (isProcessAlive(snap.pid, snap.startTime)) {
         return true;
     }
-    const uint64_t now = nowNs();
+    const uint64_t now = nixlTime::getNs();
     const auto ttl_ns = static_cast<uint64_t>(ttl.count() < 0 ? 0 : ttl.count());
     return now >= snap.lastUpdateNs && (now - snap.lastUpdateNs) <= ttl_ns;
 }
@@ -221,7 +215,7 @@ nixlMultiprocessCollector::Collect() const {
         }
         auto snap = readStoreSnapshot(entry.path());
         if (!snap) {
-            // Unparseable (mid-init, orphaned, or incompatible): reap only if it is
+            // Unparsable (mid-init, orphaned, or incompatible): reap only if it is
             // old enough to not be a store a live process is currently creating.
             if (reapStale_ && invalidFileReapable(entry.path(), staleTtl_)) {
                 std::error_code rm_ec;

@@ -17,6 +17,8 @@
 #include "mp_collector.h"
 #include "mp_store.h"
 
+#include "common/nixl_time.h"
+
 #include <gtest/gtest.h>
 
 #include <prometheus/client_metric.h>
@@ -51,19 +53,12 @@ idx(nixl_telemetry_event_type_t t) {
     return static_cast<std::size_t>(t);
 }
 
-[[nodiscard]] uint64_t
-nowNs() {
-    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                     std::chrono::system_clock::now().time_since_epoch())
-                                     .count());
-}
-
 [[nodiscard]] mpStoreSnapshot
 makeSnap(const std::string &agent, const std::string &rank) {
     mpStoreSnapshot s;
     s.pid = ::getpid();
     s.startTime = 1;
-    s.lastUpdateNs = nowNs();
+    s.lastUpdateNs = nixlTime::getNs();
     s.agentName = agent;
     s.hostname = "host";
     s.dpRank = rank;
@@ -209,12 +204,13 @@ TEST(MpCollectorTest, SnapshotLivenessByProcessThenTtl) {
 
     auto dead_fresh = makeSnap("b", "");
     dead_fresh.pid = 0x7fffffff;
-    dead_fresh.lastUpdateNs = nowNs();
+    dead_fresh.lastUpdateNs = nixlTime::getNs();
     EXPECT_TRUE(isSnapshotLive(dead_fresh, ttl));
 
     auto dead_stale = makeSnap("c", "");
     dead_stale.pid = 0x7fffffff;
-    dead_stale.lastUpdateNs = nowNs() - std::chrono::nanoseconds(std::chrono::seconds(60)).count();
+    dead_stale.lastUpdateNs =
+        nixlTime::getNs() - std::chrono::nanoseconds(std::chrono::seconds(60)).count();
     EXPECT_FALSE(isSnapshotLive(dead_stale, ttl));
 }
 
