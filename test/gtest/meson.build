@@ -122,6 +122,7 @@ endif
 
 if is_variable('nixl_telemetry_mp_exporter_dep')
     gtest_sources += 'telemetry_mp_exporter_test.cpp'
+    gtest_sources += 'telemetry_mp_e2e_test.cpp'
     telemetry_mp_exporter_dep = [nixl_telemetry_mp_exporter_dep]
 else
     telemetry_mp_exporter_dep = []
