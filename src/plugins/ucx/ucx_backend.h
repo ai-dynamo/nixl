@@ -18,6 +18,7 @@
 #define NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_H
 
 #include <vector>
+#include <span>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -208,22 +209,34 @@ public:
     void releaseMemView(nixlMemViewH) const override;
 
 protected:
-    const std::vector<std::unique_ptr<nixlUcxWorker>> &
-    getWorkers() const {
-        return uws;
+    using worker_span_t = std::span<const std::unique_ptr<nixlUcxWorker>>;
+
+    [[nodiscard]] worker_span_t
+    getSharedWorkers() const {
+        return {workers_.data(), numSharedWorkers_};
     }
 
-    const std::unique_ptr<nixlUcxWorker> &
-    getWorker(size_t worker_id) const {
-        return uws[worker_id];
+    [[nodiscard]] worker_span_t
+    getDedicatedWorkers() const {
+        return {workers_.data() + numSharedWorkers_, workers_.size() - numSharedWorkers_};
+    }
+
+    [[nodiscard]] const std::unique_ptr<nixlUcxWorker> &
+    getSharedWorker(size_t worker_id) const {
+        return workers_[worker_id];
     }
 
     [[nodiscard]] size_t
-    getWorkerId(const nixl_opt_b_args_t *opt_args = nullptr) const noexcept;
+    getSharedWorkerId(const nixl_opt_b_args_t *opt_args = nullptr) const noexcept;
 
-    virtual size_t
+    [[nodiscard]] size_t
     getSharedWorkersSize() const {
-        return uws.size();
+        return numSharedWorkers_;
+    }
+
+    [[nodiscard]] size_t
+    getAllWorkersSize() const {
+        return workers_.size();
     }
 
     virtual void
@@ -238,7 +251,8 @@ protected:
                   size_t start_idx,
                   size_t end_idx) const;
 
-    nixlUcxEngine(const nixlBackendInitParams &init_params);
+    nixlUcxEngine(const nixlBackendInitParams &init_params,
+                  size_t num_dedicated_workers = 0);
 
     notif_list_t notifList_;
 
@@ -289,7 +303,8 @@ private:
 
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
-    std::vector<std::unique_ptr<nixlUcxWorker>> uws;
+    std::vector<std::unique_ptr<nixlUcxWorker>> workers_;
+    size_t numSharedWorkers_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
 
@@ -306,7 +321,8 @@ class nixlUcxThread;
  */
 class nixlUcxThreadEngine : public nixlUcxEngine {
 public:
-    nixlUcxThreadEngine(const nixlBackendInitParams &init_params);
+    nixlUcxThreadEngine(const nixlBackendInitParams &init_params,
+                        size_t num_dedicated_workers = 0);
     ~nixlUcxThreadEngine();
 
     nixl_status_t
@@ -316,15 +332,9 @@ protected:
     void
     appendNotif(std::string &&remote_name, std::string &&msg) override;
 
-    size_t
-    getSharedWorkersSize() const override {
-        return numSharedWorkers_;
-    }
-
 private:
     std::unique_ptr<nixlUcxThread> thread_;
     std::mutex notifMutex_;
-    size_t numSharedWorkers_;
 };
 
 namespace asio {
@@ -333,7 +343,8 @@ class io_context;
 
 class nixlUcxThreadPoolEngine : public nixlUcxThreadEngine {
 public:
-    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params);
+    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
+                            size_t num_threads);
     ~nixlUcxThreadPoolEngine();
 
     nixl_status_t
