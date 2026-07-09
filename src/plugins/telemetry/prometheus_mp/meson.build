@@ -33,3 +33,23 @@ nixl_telemetry_mp_store_dep = declare_dependency(
     include_directories: prometheus_mp_inc_dirs,
     dependencies: [nixl_common_dep],
 )
+
+# Scrape-time collector: converts peer store snapshots into prometheus-cpp metric
+# families. Needs prometheus-cpp (core), so it is gated on it being available
+# (same condition as the prometheus plugin, set in the sibling subdir above).
+if prometheus_found
+    telemetry_mp_collector_lib = static_library(
+        'nixl_telemetry_mp_collector',
+        'mp_collector.cpp',
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, prometheus_mp_inc_dirs],
+        dependencies: [nixl_common_dep, prometheus_core_dep, nixl_telemetry_mp_store_dep],
+        install: false,
+        pic: true,
+    )
+
+    nixl_telemetry_mp_collector_dep = declare_dependency(
+        link_with: telemetry_mp_collector_lib,
+        include_directories: prometheus_mp_inc_dirs,
+        dependencies: [nixl_common_dep, prometheus_core_dep, nixl_telemetry_mp_store_dep],
+    )
+endif

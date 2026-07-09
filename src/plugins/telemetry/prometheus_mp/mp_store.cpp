@@ -86,6 +86,12 @@ namespace {
 
 } // namespace
 
+std::string
+makeStoreFileName(int64_t pid, uint64_t start_time) {
+    return std::string(MP_STORE_FILE_PREFIX) + std::to_string(pid) + "." +
+        std::to_string(start_time) + std::string(MP_STORE_FILE_SUFFIX);
+}
+
 uint64_t
 readProcessStartTime(int64_t pid) {
     std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");

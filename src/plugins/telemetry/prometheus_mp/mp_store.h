@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace nixl::telemetry::mp {
 
@@ -31,6 +32,11 @@ namespace nixl::telemetry::mp {
 // the event-buffer TELEMETRY_VERSION: this is a different file format. Bump on
 // any layout change so a reader rejects incompatible files.
 inline constexpr uint32_t MP_STORE_SCHEMA_VERSION = 1;
+
+// Store file naming shared by the writer (exporter) and the collector so the
+// collector can discover peer files by globbing "<prefix>*<suffix>".
+inline constexpr std::string_view MP_STORE_FILE_PREFIX = "nixl.";
+inline constexpr std::string_view MP_STORE_FILE_SUFFIX = ".mmap";
 
 // Number of value slots in each of the counter and gauge arrays. Indexed
 // directly by nixl_telemetry_event_type_t, so every event type has a reserved
@@ -140,6 +146,15 @@ readStoreSnapshot(const std::filesystem::path &path);
  */
 [[nodiscard]] uint64_t
 readProcessStartTime(int64_t pid);
+
+/**
+ * @brief Builds this process's store file name (MP_STORE_FILE_PREFIX / suffix).
+ * @param pid Process id.
+ * @param start_time Process start time (disambiguates PID reuse across restarts).
+ * @return File name of the form "nixl.<pid>.<start_time>.mmap".
+ */
+[[nodiscard]] std::string
+makeStoreFileName(int64_t pid, uint64_t start_time);
 
 } // namespace nixl::telemetry::mp
 
