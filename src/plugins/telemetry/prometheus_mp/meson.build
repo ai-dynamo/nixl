@@ -52,4 +52,36 @@ if prometheus_found
         include_directories: prometheus_mp_inc_dirs,
         dependencies: [nixl_common_dep, prometheus_core_dep, nixl_telemetry_mp_store_dep],
     )
+
+    # Exporter with bind-race election. Built as a static library too so it can be
+    # unit-tested directly (in addition to being packaged into the plugin .so).
+    telemetry_mp_exporter_lib = static_library(
+        'nixl_telemetry_mp_exporter',
+        'prometheus_mp_exporter.cpp',
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, prometheus_mp_inc_dirs],
+        dependencies: [nixl_common_dep, prometheus_core_dep, prometheus_pull_dep,
+                       nixl_telemetry_mp_store_dep, nixl_telemetry_mp_collector_dep],
+        install: false,
+        pic: true,
+    )
+
+    nixl_telemetry_mp_exporter_dep = declare_dependency(
+        link_with: telemetry_mp_exporter_lib,
+        include_directories: prometheus_mp_inc_dirs,
+        dependencies: [nixl_common_dep, prometheus_core_dep, prometheus_pull_dep,
+                       nixl_telemetry_mp_store_dep, nixl_telemetry_mp_collector_dep],
+    )
+
+    # Installable plugin: selected via NIXL_TELEMETRY_EXPORTER=prometheus_mp.
+    prometheus_mp_exporter_plugin = shared_library(
+        'libtelemetry_exporter_prometheus_mp',
+        'prometheus_mp_plugin.cpp',
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, prometheus_mp_inc_dirs],
+        dependencies: [nixl_infra, nixl_common_dep, absl_log_dep, prometheus_core_dep,
+                       prometheus_pull_dep, nixl_telemetry_mp_exporter_dep],
+        install: true,
+        install_dir: plugin_install_dir,
+        name_prefix: '',
+    )
+    message('Building Prometheus multiprocess telemetry exporter plugin')
 endif

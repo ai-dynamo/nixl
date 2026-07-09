@@ -239,10 +239,10 @@ protected:
 
 TEST_F(MpCollectorFileTest, CollectReadsLiveStoresAndIgnoresOthers) {
     // Two distinct store files; both headers stamp this (live) process.
-    mpStoreWriter w1(dir_ / makeStoreFileName(111, 1), "agent-1", "host", "0");
+    mpStoreWriter w1(dir_ / makeStoreFileName(111, 1, 0), "agent-1", "host", "0");
     w1.addCounter(TX_BYTES, 500);
     w1.setGauge(TX_BYTES, 500);
-    mpStoreWriter w2(dir_ / makeStoreFileName(222, 2), "agent-2", "host", "1");
+    mpStoreWriter w2(dir_ / makeStoreFileName(222, 2, 0), "agent-2", "host", "1");
     w2.addCounter(TX_BYTES, 700);
 
     // A non-store file must be ignored.

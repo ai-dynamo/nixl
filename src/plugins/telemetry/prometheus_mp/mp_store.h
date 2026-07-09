@@ -148,13 +148,15 @@ readStoreSnapshot(const std::filesystem::path &path);
 readProcessStartTime(int64_t pid);
 
 /**
- * @brief Builds this process's store file name (MP_STORE_FILE_PREFIX / suffix).
+ * @brief Builds a store file name (MP_STORE_FILE_PREFIX / suffix).
  * @param pid Process id.
  * @param start_time Process start time (disambiguates PID reuse across restarts).
- * @return File name of the form "nixl.<pid>.<start_time>.mmap".
+ * @param instance Per-process instance counter (disambiguates multiple agents in
+ *        the same process so their store files never collide).
+ * @return File name of the form "nixl.<pid>.<start_time>.<instance>.mmap".
  */
 [[nodiscard]] std::string
-makeStoreFileName(int64_t pid, uint64_t start_time);
+makeStoreFileName(int64_t pid, uint64_t start_time, uint64_t instance);
 
 } // namespace nixl::telemetry::mp
 

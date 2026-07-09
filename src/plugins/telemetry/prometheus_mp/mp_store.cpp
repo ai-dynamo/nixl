@@ -87,9 +87,10 @@ namespace {
 } // namespace
 
 std::string
-makeStoreFileName(int64_t pid, uint64_t start_time) {
+makeStoreFileName(int64_t pid, uint64_t start_time, uint64_t instance) {
     return std::string(MP_STORE_FILE_PREFIX) + std::to_string(pid) + "." +
-        std::to_string(start_time) + std::string(MP_STORE_FILE_SUFFIX);
+        std::to_string(start_time) + "." + std::to_string(instance) +
+        std::string(MP_STORE_FILE_SUFFIX);
 }
 
 uint64_t
