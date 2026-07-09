@@ -1,8 +1,7 @@
 # NIXL PR container-build gate: build-only (no push) verification of the nixl (EP+debug)
 # and nixlbench images, so container/packaging breakage is caught on the PR, not just by
-# the nightly nixl-ci-build-container job. Skips the build when a PR touches no
-# build-affecting files (BUILD_PATHS_RE), still reporting green fast. One matrix cell
-# per target/arch so all images build in parallel with independent status.
+# the nightly nixl-ci-build-container job. One matrix cell per target/arch so all images
+# build in parallel with independent status.
 
 ---
 job: nixl-ci-build-container-pr
@@ -34,12 +33,6 @@ env:
   BASE_IMAGE: "nvcr.io/nvidia/pytorch"
   BASE_IMAGE_TAG: "26.06-py3"
   LOCAL_TAG_BASE: "nixl-ci-pr:build-"
-  # Files that can affect the container/packaging build; a PR touching none of them skips.
-  BUILD_PATHS_RE: '^(contrib/|benchmark/|\.ci/|pyproject\.toml$|setup\.py$|(.*/)?meson\.build$|(.*/)?meson\.options$|(.*/)?meson_options\.txt$)'
-  # Doc-only paths that never affect the build, carved out of BUILD_PATHS_RE.
-  BUILD_PATHS_EXCLUDE_RE: '^\.ci/docs/'
-  # Inter-step flag: "1" = run the build, "0" = PR is not build-affecting, skip.
-  BUILD_FLAG_FILE: "$WORKSPACE/.container_build_relevant"
 
 taskName: "container-build/${target}/${arch}"
 
@@ -53,24 +46,6 @@ credentials:
     variable: 'GITLAB_REGISTRY_TOKEN'
 
 steps:
-  - name: Path filter
-    containerSelector: "{name: 'podman'}"
-    run: |
-      set -e
-      git config --global --add safe.directory '*'
-      # Skip the build when the PR touches no build-affecting files.
-      # On a PR merge commit HEAD^1 is the base, so this diff is the PR's change set.
-      # If we cannot tell (non-merge ref / shallow clone) we build, to be safe.
-      RELEVANT=1
-      if git rev-parse --verify -q HEAD^2 >/dev/null; then
-        CHANGED=$(git diff --name-only HEAD^1 HEAD 2>/dev/null || true)
-        if [ -n "$CHANGED" ] && ! echo "$CHANGED" | grep -vE "$BUILD_PATHS_EXCLUDE_RE" | grep -qE "$BUILD_PATHS_RE"; then
-          echo "No build-affecting files changed - the build steps will be skipped."
-          RELEVANT=0
-        fi
-      fi
-      echo "$RELEVANT" > "$BUILD_FLAG_FILE"
-
   - name: Setup docker
     containerSelector: "{name: 'podman'}"
     credentialsId:
@@ -78,7 +53,6 @@ steps:
       - 'nixl-gitlab-registry-token'
     run: |
       set -e
-      if [ "$(cat "$BUILD_FLAG_FILE")" = "0" ]; then echo "skipped (not build-affecting)"; exit 0; fi
       # Prepare podman and log in so the base images can be pulled.
       rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
       podman system reset -f || true
@@ -92,7 +66,6 @@ steps:
     containerSelector: "{name: 'podman'}"
     run: |
       set -e
-      if [ "$(cat "$BUILD_FLAG_FILE")" = "0" ]; then echo "skipped (not build-affecting)"; exit 0; fi
       # nixlbench builds against a UCX source tree; nixl consumes UCX_VERSION directly.
       if [ "$target" = "nixlbench" ]; then
         rm -rf ucx-src
@@ -104,7 +77,6 @@ steps:
     containerSelector: "{name: 'podman'}"
     run: |
       set -e
-      if [ "$(cat "$BUILD_FLAG_FILE")" = "0" ]; then echo "skipped (not build-affecting)"; exit 0; fi
       case "$target" in
         nixl)
           # nixl container, debug build. build-container.sh enables EP by default.
