@@ -135,6 +135,29 @@ TEST(MpCollectorTest, PerProcessCountersAndGauges) {
     EXPECT_DOUBLE_EQ(g_a->gauge.value, 200.0);
 }
 
+TEST(MpCollectorTest, PidLabelDisambiguatesSameAgentName) {
+    // Two processes that (mis)use the same agent name and no dp_rank must still
+    // produce distinct series, keyed by pid, rather than a duplicate series.
+    auto a = makeSnap("dup", "");
+    a.pid = 1001;
+    a.counters[idx(TX_BYTES)] = 10;
+    auto b = makeSnap("dup", "");
+    b.pid = 1002;
+    b.counters[idx(TX_BYTES)] = 20;
+
+    const auto fams = buildMetricFamilies({a, b});
+    const auto *tx = findFamily(fams, "agent_tx_bytes_total");
+    ASSERT_NE(tx, nullptr);
+    ASSERT_EQ(tx->metric.size(), 2u);
+    const auto *m_a = findByLabel(*tx, "pid", "1001");
+    const auto *m_b = findByLabel(*tx, "pid", "1002");
+    ASSERT_NE(m_a, nullptr);
+    ASSERT_NE(m_b, nullptr);
+    EXPECT_DOUBLE_EQ(m_a->counter.value, 10.0);
+    EXPECT_DOUBLE_EQ(m_b->counter.value, 20.0);
+    EXPECT_TRUE(hasLabel(*m_a, "pid"));
+}
+
 TEST(MpCollectorTest, DpRankLabelOnlyWhenPresent) {
     const auto with_rank = makeSnap("agent-a", "3");
     const auto without_rank = makeSnap("agent-b", "");

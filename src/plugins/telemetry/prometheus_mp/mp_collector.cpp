@@ -49,6 +49,10 @@ namespace {
         std::vector<ClientMetric::Label> labels;
         labels.push_back({"hostname", s.hostname});
         labels.push_back({"agent_name", s.agentName});
+        // pid guarantees per-process series uniqueness even if agent names are
+        // not unique across processes; avoids duplicate-series scrape errors. Not
+        // named "instance" (a reserved Prometheus target label).
+        labels.push_back({"pid", std::to_string(s.pid)});
         if (!s.dpRank.empty()) {
             labels.push_back({"dp_rank", s.dpRank});
         }
