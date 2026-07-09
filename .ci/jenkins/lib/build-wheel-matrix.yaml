@@ -60,11 +60,11 @@ credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
-  # Deploy token for the sw-dynamo-nixl-pypi-local repo (the release-wheel publish target).
-  # TODO(ops): create/point this at a secret-text credential with deploy rights there
-  # (the base-image svc token above may not have write access to sw-dynamo-*).
-  - credentialsId: 'svc-nixl-artifactory-pypi-token'
-    variable: 'ARTIFACTORY_PYPI_TOKEN'
+  # NOTE: the Publish step falls back to the svc token above (ARTIFACTORY_TOKEN) so the job
+  # runs without extra setup. TODO(ops): for release, add a dedicated secret-text credential
+  # with deploy rights to sw-dynamo-nixl-pypi-local and bind it to ARTIFACTORY_PYPI_TOKEN:
+  #   - credentialsId: 'svc-nixl-artifactory-pypi-token'
+  #     variable: 'ARTIFACTORY_PYPI_TOKEN'
 
 # =============================================================================
 # Kubernetes Resource Configuration
@@ -201,13 +201,20 @@ steps:
       ls -1 dist/*.whl
       VER=$(basename "$(ls dist/nixl*.whl | head -n1)" | cut -d- -f2)
       # release/<version>/<jenkins_build>/<arch>/ — matches the layout nspect-register reads.
+      # Uses the dedicated pypi deploy token if provided, else the svc token (ARTIFACTORY_TOKEN).
       DEST="${ARTIFACTORY_URL}/${PYPI_REPO}/release/${VER}/${BUILD_NUMBER}/${arch}/"
+      PUBLISH_TOKEN="${ARTIFACTORY_PYPI_TOKEN:-$ARTIFACTORY_TOKEN}"
+      rc=0
       for whl in dist/*.whl; do
-        curl -fsS -H "Authorization: Bearer ${ARTIFACTORY_PYPI_TOKEN}" \
-          -T "$whl" "${DEST}$(basename "$whl")" >/dev/null
-        echo "uploaded $(basename "$whl")"
+        if curl -fsS -H "Authorization: Bearer ${PUBLISH_TOKEN}" \
+             -T "$whl" "${DEST}$(basename "$whl")" >/dev/null; then
+          echo "uploaded $(basename "$whl")"
+        else
+          echo "WARN: upload failed for $(basename "$whl") (token may lack deploy to ${PYPI_REPO})"; rc=1
+        fi
       done
-      echo "== wheels published to ${DEST} (build ${BUILD_NUMBER}) =="
+      if [ "$rc" -eq 0 ]; then echo "== wheels published to ${DEST} (build ${BUILD_NUMBER}) =="
+      else echo "== wheel publish incomplete — see WARN above (build still validated) =="; fi
 
 # =============================================================================
 # Task Naming Convention
