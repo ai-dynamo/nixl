@@ -31,8 +31,8 @@ matrix:
 env:
   NPROC: 24
   UCX_VERSION: "v1.22.x"
-  BASE_IMAGE: "nvcr.io/nvidia/cuda-dl-base"
-  BASE_IMAGE_TAG: "26.06-cuda13.3-devel-ubuntu24.04"
+  BASE_IMAGE: "nvcr.io/nvidia/pytorch"
+  BASE_IMAGE_TAG: "26.06-py3"
   LOCAL_TAG_BASE: "nixl-ci-pr:build-"
   # Files that can affect the container/packaging build; a PR touching none of them skips.
   BUILD_PATHS_RE: '^(contrib/|benchmark/|\.ci/|pyproject\.toml$|setup\.py$|(.*/)?meson\.build$|(.*/)?meson\.options$|(.*/)?meson_options\.txt$)'
