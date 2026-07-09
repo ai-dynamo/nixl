@@ -23,10 +23,13 @@
 #include <prometheus/metric_type.h>
 
 #include <signal.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <ctime>
 #include <system_error>
 
 namespace nixl::telemetry::mp {
@@ -73,6 +76,27 @@ namespace {
         m.label = std::move(labels);
         m.gauge.value = static_cast<double>(value);
         return m;
+    }
+
+    // Minimum age before an unparseable file is reaped, even when the TTL is 0.
+    // Protects a store a live process is actively creating (a sub-second window)
+    // from being deleted out from under it.
+    constexpr long kInvalidFileFloorSeconds = 2;
+
+    // Whether an unparseable store file (bad/zero magic, wrong schema, truncated)
+    // is old enough to be an orphan worth removing, rather than a live process's
+    // store mid-creation.
+    [[nodiscard]] bool
+    invalidFileReapable(const std::filesystem::path &path, std::chrono::nanoseconds ttl) {
+        struct stat st{};
+        if (::stat(path.c_str(), &st) != 0) {
+            return false;
+        }
+        const long ttl_seconds =
+            static_cast<long>(std::chrono::duration_cast<std::chrono::seconds>(ttl).count());
+        const long grace = std::max<long>(ttl_seconds, kInvalidFileFloorSeconds);
+        const long age = static_cast<long>(::time(nullptr) - st.st_mtime);
+        return age > grace;
     }
 
     [[nodiscard]] bool
@@ -197,6 +221,12 @@ nixlMultiprocessCollector::Collect() const {
         }
         auto snap = readStoreSnapshot(entry.path());
         if (!snap) {
+            // Unparseable (mid-init, orphaned, or incompatible): reap only if it is
+            // old enough to not be a store a live process is currently creating.
+            if (reapStale_ && invalidFileReapable(entry.path(), staleTtl_)) {
+                std::error_code rm_ec;
+                std::filesystem::remove(entry.path(), rm_ec);
+            }
             continue;
         }
         if (isSnapshotLive(*snap, staleTtl_)) {

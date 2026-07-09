@@ -144,11 +144,24 @@ TEST_F(MpStoreTest, TooSmallFileReturnsNullopt) {
     EXPECT_FALSE(readStoreSnapshot(path).has_value());
 }
 
-TEST_F(MpStoreTest, BadMagicReturnsNullopt) {
+TEST_F(MpStoreTest, ZeroMagicReturnsNulloptQuietly) {
+    const auto path = storePath("zero-magic");
+    {
+        // Large enough to pass the size check, but all-zero: a store mid-creation
+        // or an orphan. Must be skipped WITHOUT a warning (no LogIgnoreGuard).
+        std::ofstream f(path, std::ios::binary);
+        const std::string zeros(64 * 1024, '\0');
+        f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
+    }
+    EXPECT_FALSE(readStoreSnapshot(path).has_value());
+}
+
+TEST_F(MpStoreTest, BadMagicWarnsAndReturnsNullopt) {
     const auto path = storePath("bad-magic");
     {
-        // Large enough to pass the size check, but all-zero -> magic mismatch.
         std::ofstream f(path, std::ios::binary);
+        const uint64_t bad_magic = 0xDEADBEEFULL; // non-zero, not our magic
+        f.write(reinterpret_cast<const char *>(&bad_magic), sizeof(bad_magic));
         const std::string zeros(64 * 1024, '\0');
         f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
     }

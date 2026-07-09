@@ -231,7 +231,15 @@ readStoreSnapshot(const std::filesystem::path &path) {
 
     const auto *layout = static_cast<const mpStoreLayout *>(mapping);
 
-    if (__atomic_load_n(&layout->magic, __ATOMIC_ACQUIRE) != MP_STORE_MAGIC) {
+    const uint64_t magic = __atomic_load_n(&layout->magic, __ATOMIC_ACQUIRE);
+    if (magic == 0) {
+        // Zeroed header: either a store still being initialized by a live process,
+        // or an orphan left by a process that died mid-creation. Skip quietly (no
+        // WARN); the collector reaps stale orphans by file age.
+        ::munmap(mapping, sizeof(mpStoreLayout));
+        return std::nullopt;
+    }
+    if (magic != MP_STORE_MAGIC) {
         NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
                   << "' with bad magic";
         ::munmap(mapping, sizeof(mpStoreLayout));

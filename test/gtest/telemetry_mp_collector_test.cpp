@@ -262,6 +262,31 @@ TEST_F(MpCollectorFileTest, CollectReadsLiveStoresAndIgnoresOthers) {
     EXPECT_DOUBLE_EQ(m2->counter.value, 700.0);
 }
 
+TEST_F(MpCollectorFileTest, ReapsOldOrphanFilesButKeepsFreshMidInitFiles) {
+    const auto writeZeroFile = [](const std::filesystem::path &p) {
+        std::ofstream f(p, std::ios::binary);
+        const std::string zeros(64 * 1024, '\0');
+        f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
+    };
+
+    // Orphan: zero-magic store backdated well past the reap grace -> removed.
+    const auto orphan = dir_ / makeStoreFileName(999, 1, 0);
+    writeZeroFile(orphan);
+    std::filesystem::last_write_time(
+        orphan, std::filesystem::file_time_type::clock::now() - std::chrono::hours(1));
+
+    // Fresh mid-init file (a live process just created it) -> must be kept.
+    const auto fresh = dir_ / makeStoreFileName(998, 1, 0);
+    writeZeroFile(fresh);
+
+    nixlMultiprocessCollector collector(dir_, std::chrono::seconds(0), /*reap_stale=*/true);
+    const auto fams = collector.Collect();
+
+    EXPECT_TRUE(fams.empty());
+    EXPECT_FALSE(std::filesystem::exists(orphan));
+    EXPECT_TRUE(std::filesystem::exists(fresh));
+}
+
 TEST_F(MpCollectorFileTest, CollectOnEmptyDirYieldsNoFamilies) {
     nixlMultiprocessCollector collector(dir_, std::chrono::seconds(30), /*reap_stale=*/false);
     EXPECT_TRUE(collector.Collect().empty());
