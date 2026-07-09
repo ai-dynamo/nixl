@@ -62,7 +62,9 @@ struct PrometheusSample {
 std::string
 httpGet(uint16_t port, const std::string &path) {
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return {};
+    if (fd < 0) {
+        return {};
+    }
 
     const struct timeval tv{3, 0};
     ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -85,7 +87,9 @@ httpGet(uint16_t port, const std::string &path) {
     char buf[4096];
     while (true) {
         const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
-        if (n <= 0) break;
+        if (n <= 0) {
+            break;
+        }
         response.append(buf, n);
     }
     ::close(fd);
@@ -200,49 +204,15 @@ findMetricSample(const std::string &body,
     return false;
 }
 
-// Cumulative count of a histogram bucket whose `le` label parses to exactly
-// `le`, for this agent. Parses `le` as a double so the assertion does not depend
-// on how prometheus-cpp formats the boundary (e.g. "10" vs "10.0").
-std::optional<double>
-histogramBucketValue(const std::string &body,
-                     const std::string &bucket_metric,
-                     const std::string &agent_name,
-                     double le) {
-    std::istringstream body_lines(body);
-    std::string line;
-    while (std::getline(body_lines, line)) {
-        if (line.rfind(bucket_metric + "{", 0) != 0) {
-            continue;
-        }
-        std::unordered_map<std::string, std::string> labels;
-        double value = 0;
-        if (!parsePrometheusSampleLine(line, bucket_metric, labels, value)) {
-            continue;
-        }
-        const auto agent_it = labels.find("agent_name");
-        const auto le_it = labels.find("le");
-        if (agent_it == labels.end() || agent_it->second != agent_name || le_it == labels.end()) {
-            continue;
-        }
-        try {
-            size_t pos = 0;
-            if (std::stod(le_it->second, &pos) == le && pos == le_it->second.size()) {
-                return value;
-            }
-        }
-        catch (const std::exception &) {
-        }
-    }
-    return std::nullopt;
-}
-
-// The full set of `le` boundaries emitted for a histogram bucket series of this
-// agent (parsed as doubles; "+Inf" becomes +infinity).
-std::set<double>
-histogramBucketBoundaries(const std::string &body,
-                          const std::string &bucket_metric,
-                          const std::string &agent_name) {
-    std::set<double> boundaries;
+// Invokes `on_sample(le, value)` for every histogram bucket line of `bucket_metric`
+// belonging to `agent_name`, parsing the `le` label as a double so callers do not
+// depend on how prometheus-cpp formats the boundary (e.g. "10" vs "10.0").
+template<typename Fn>
+void
+forEachBucketSample(const std::string &body,
+                    const std::string &bucket_metric,
+                    const std::string &agent_name,
+                    Fn &&on_sample) {
     std::istringstream body_lines(body);
     std::string line;
     while (std::getline(body_lines, line)) {
@@ -263,12 +233,41 @@ histogramBucketBoundaries(const std::string &body,
             size_t pos = 0;
             const double le = std::stod(le_it->second, &pos);
             if (pos == le_it->second.size()) {
-                boundaries.insert(le);
+                on_sample(le, value);
             }
         }
         catch (const std::exception &) {
         }
     }
+}
+
+// Cumulative count of a histogram bucket whose `le` label parses to exactly `le`,
+// for this agent.
+std::optional<double>
+histogramBucketValue(const std::string &body,
+                     const std::string &bucket_metric,
+                     const std::string &agent_name,
+                     double le) {
+    std::optional<double> result;
+    forEachBucketSample(body, bucket_metric, agent_name, [&](double boundary, double value) {
+        if (boundary == le) {
+            result = value;
+        }
+    });
+    return result;
+}
+
+// The full set of `le` boundaries emitted for a histogram bucket series of this
+// agent ("+Inf" becomes +infinity).
+std::set<double>
+histogramBucketBoundaries(const std::string &body,
+                          const std::string &bucket_metric,
+                          const std::string &agent_name) {
+    std::set<double> boundaries;
+    forEachBucketSample(body, bucket_metric, agent_name, [&](double le, double value) {
+        (void)value;
+        boundaries.insert(le);
+    });
     return boundaries;
 }
 
@@ -765,10 +764,8 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     ASSERT_FALSE(after_peer_teardown_body.empty())
         << "Got empty /metrics response on port " << port_;
     PrometheusSample remaining_sample;
-    ASSERT_TRUE(findAgentMetricSample(after_peer_teardown_body,
-                                      "agent_tx_bytes_total",
-                                      agent_name,
-                                      remaining_sample))
+    ASSERT_TRUE(findAgentMetricSample(
+        after_peer_teardown_body, "agent_tx_bytes_total", agent_name, remaining_sample))
         << "First agent metrics were removed when peer exporter was destroyed";
     EXPECT_EQ(remaining_sample.value, static_cast<double>(kIncrement * kEventCount));
     EXPECT_FALSE(hasAnyAgentMetricSample(after_peer_teardown_body, peer_agent_name))

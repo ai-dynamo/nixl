@@ -377,12 +377,15 @@ nixlTelemetryDocaExporter::flush() {
     // snapshotted into the export buffer via histogram_flush before the general
     // metrics flush transmits the buffer. Order matters: snapshot histograms
     // first, then flush everything (counters/gauges + histogram snapshots) out.
+    // A single histogram failure must not skip the remaining snapshots or the
+    // general flush, so aggregate the outcome and report it after both phases.
+    bool histogram_flush_failed = false;
     for (const auto histogram_id : ctx_->histogram_ids) {
         const auto histogram_result = doca_telemetry_exporter_metrics_histogram_flush(
             ctx_->source, histogram_id, DOCA_TELEMETRY_EXPORTER_HISTOGRAM_TIMESTAMP_UPDATE, false);
         if (histogram_result != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to flush DOCA histogram: " << histogram_result;
-            return NIXL_ERR_UNKNOWN;
+            histogram_flush_failed = true;
         }
     }
 
@@ -391,6 +394,6 @@ nixlTelemetryDocaExporter::flush() {
         NIXL_ERROR << "Failed to flush DOCA metrics: " << result;
         return NIXL_ERR_UNKNOWN;
     }
-    return NIXL_SUCCESS;
+    return histogram_flush_failed ? NIXL_ERR_UNKNOWN : NIXL_SUCCESS;
 #pragma GCC diagnostic pop
 }

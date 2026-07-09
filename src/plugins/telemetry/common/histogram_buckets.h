@@ -32,6 +32,10 @@ namespace nixl::telemetry {
 
 inline constexpr char histogramBucketsUsVar[] = "NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US";
 
+/**
+ * @brief Built-in microsecond histogram bucket upper bounds (~10us..~10s).
+ * @return Shared default boundaries, used when the env override is absent or invalid.
+ */
 [[nodiscard]] inline const std::vector<double> &
 defaultHistogramBucketsUs() {
     static const std::vector<double> buckets = {10,
@@ -55,10 +59,12 @@ defaultHistogramBucketsUs() {
     return buckets;
 }
 
-// Parses a comma-separated list of strictly-increasing positive doubles. Returns
-// an empty vector when the spec is malformed so the caller can fall back to the
-// defaults (matching the config layer's "fall back only when absent" intent while
-// keeping the validation local to the telemetry plugins).
+/**
+ * @brief Parse a comma-separated list of strictly-increasing positive doubles.
+ * @param spec Comma-separated bucket specification (whitespace around tokens is trimmed).
+ * @return Parsed boundaries, or an empty vector when @p spec is malformed so the caller
+ *         can fall back to the defaults (validation kept local to the telemetry plugins).
+ */
 [[nodiscard]] inline std::vector<double>
 parseHistogramBucketsUs(const std::string &spec) {
     std::vector<double> buckets;
@@ -76,10 +82,12 @@ parseHistogramBucketsUs(const std::string &spec) {
     return buckets;
 }
 
-// Resolves the histogram bucket boundaries (microsecond upper bounds) shared by
-// both duration histograms in both exporters. Reads the env var; on absent,
-// empty, or invalid input it WARNs (only when something was provided) and returns
-// the built-in microsecond defaults.
+/**
+ * @brief Resolve the histogram bucket boundaries (microsecond upper bounds) shared by
+ *        both duration histograms in both exporters.
+ * @return The parsed env override when valid; otherwise the built-in microsecond defaults.
+ *         Emits a WARN only when a non-empty override was provided but is invalid.
+ */
 [[nodiscard]] inline std::vector<double>
 resolveHistogramBucketsUs() {
     const auto spec = nixl::config::getValueOptional<std::string>(histogramBucketsUsVar);
