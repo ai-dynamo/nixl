@@ -331,8 +331,8 @@ TEST(telemetryMetricContract, DescriptorIsUnifiedExporterSeriesContract) {
     }
 }
 
-// A subset allowlist exports only the listed event; everything else is dropped
-// at the drain before reaching the exporter (BUFFER here).
+// A subset allowlist exports only the listed event; deactivated metrics are
+// skipped at the source and never enter the staging queue (BUFFER here).
 TEST_F(telemetryTest, MetricAllowlistSubset) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
     envHelper_.addVar(TELEMETRY_METRICS_VAR, "agent_tx_bytes");

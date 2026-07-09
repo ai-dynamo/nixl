@@ -41,7 +41,7 @@ You can restrict which metrics are exported with an allowlist (unset exports eve
 ```bash
 # Comma-separated glob allowlist matched against the base metric names.
 # A name selects its whole family (counter + gauge). Unmatched tokens are
-# ignored with a warning; disabled metrics are still collected in-process.
+# ignored with a warning; deactivated metrics are skipped before staging.
 export NIXL_TELEMETRY_METRICS="agent_tx_bytes,agent_rx_bytes,agent_err_*"
 ```
 

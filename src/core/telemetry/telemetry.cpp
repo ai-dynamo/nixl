@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <array>
 #include <chrono>
 #include <sstream>
 #include <thread>
@@ -269,10 +270,8 @@ nixlTelemetry::flushPendingEvents() {
     }
 
     for (auto &event : next_queue) {
-        if (!metricEnabled_[static_cast<size_t>(event.eventType_)]) {
-            continue;
-        }
-        // if full, ignore
+        // Deactivated metrics never enter the queue (filtered at the source), so
+        // everything here is already exportable.
         exporter_->exportEvent(event);
     }
 
@@ -290,8 +289,7 @@ nixlTelemetry::exportDroppedEvents() {
     // exact-count contracts).
     const uint64_t dropped = droppedEvents_.exchange(0, std::memory_order_relaxed);
     if (dropped > 0 &&
-        metricEnabled_[static_cast<size_t>(
-            nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)]) {
+        isMetricEnabled(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)) {
         exporter_->exportEvent(
             {nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED, dropped});
     }
@@ -316,6 +314,11 @@ nixlTelemetry::registerPeriodicTask(periodicTask &task) {
 
 void
 nixlTelemetry::updateData(nixl_telemetry_event_type_t event_type, uint64_t value) {
+    // Skip deactivated metrics before taking the lock: no staging cost, and a
+    // deactivated metric is not a drop.
+    if (!isMetricEnabled(event_type)) {
+        return;
+    }
     // agent can be multi-threaded
     std::lock_guard<std::mutex> lock(mutex_);
     if (events_.size() >= maxBufferedEvents_) {
@@ -369,23 +372,38 @@ nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
                             bool is_write,
                             uint64_t bytes,
                             std::chrono::microseconds post_time) {
-    // All-or-none batch size; must match the number of emplace_back calls below.
-    constexpr size_t xfer_stats_events = 4;
-
     const auto bytes_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_BYTES :
                                        nixl_telemetry_event_type_t::AGENT_RX_BYTES;
     const auto requests_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM :
                                           nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM;
 
-    const std::lock_guard lock(mutex_);
-    if (events_.size() + xfer_stats_events > maxBufferedEvents_) {
-        droppedEvents_.fetch_add(xfer_stats_events, std::memory_order_relaxed);
+    const std::array<nixlTelemetryEvent, 4> candidates{{
+        {nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+         static_cast<uint64_t>(post_time.count())},
+        {nixl_telemetry_event_type_t::AGENT_XFER_TIME, static_cast<uint64_t>(xfer_time.count())},
+        {bytes_type, bytes},
+        {requests_type, 1},
+    }};
+
+    // Keep only the activated events; deactivated ones are skipped at the source.
+    std::array<nixlTelemetryEvent, 4> batch;
+    size_t batch_size = 0;
+    for (const auto &event : candidates) {
+        if (isMetricEnabled(event.eventType_)) {
+            batch[batch_size++] = event;
+        }
+    }
+    if (batch_size == 0) {
         return;
     }
-    events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
-                         static_cast<uint64_t>(post_time.count()));
-    events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_TIME,
-                         static_cast<uint64_t>(xfer_time.count()));
-    events_.emplace_back(bytes_type, bytes);
-    events_.emplace_back(requests_type, 1);
+
+    // Atomic per-transfer batch: all activated events land together or none do.
+    const std::lock_guard lock(mutex_);
+    if (events_.size() + batch_size > maxBufferedEvents_) {
+        droppedEvents_.fetch_add(batch_size, std::memory_order_relaxed);
+        return;
+    }
+    for (size_t i = 0; i < batch_size; ++i) {
+        events_.push_back(batch[i]);
+    }
 }

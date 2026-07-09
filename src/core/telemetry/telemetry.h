@@ -116,6 +116,15 @@ private:
     registerPeriodicTask(periodicTask &task);
     void
     updateData(nixl_telemetry_event_type_t event_type, uint64_t value);
+
+    // Whether the given event type is exported. Deactivated types are dropped at
+    // the source (before the staging queue), so they cost no lock/append. This is
+    // a lock-free read of an immutable, construction-time mask -- safe on the
+    // multi-producer hot path.
+    [[nodiscard]] bool
+    isMetricEnabled(nixl_telemetry_event_type_t event_type) const noexcept {
+        return metricEnabled_[static_cast<size_t>(event_type)];
+    }
     bool
     flushPendingEvents();
     // Emits the staging-queue drops accumulated since the last flush as a
@@ -129,8 +138,9 @@ private:
     const size_t maxBufferedEvents_;
     const std::unique_ptr<nixlTelemetryExporter> exporter_;
     // Per-event-type export allowlist resolved once from NIXL_TELEMETRY_METRICS.
-    // Indexed by nixl_telemetry_event_type_t; an event is exported only when its
-    // slot is true. All-true when the variable is unset (backward compatible).
+    // Indexed by nixl_telemetry_event_type_t; a deactivated event is skipped at
+    // the source before it enters the staging queue. All-true when the variable
+    // is unset (backward compatible).
     const nixl_telemetry_metric_mask_t metricEnabled_;
     std::vector<nixlTelemetryEvent> events_;
     std::mutex mutex_;
