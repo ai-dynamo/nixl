@@ -116,9 +116,9 @@ namespace {
         testing::InitGoogleTest(&argc, argv);
         ParseArguments(argc, argv);
 
-        auto *instance = testing::UnitTest::GetInstance();
-        auto &listeners = instance->listeners();
-        listeners.Append(new PluginReinitializer);
+        // auto *instance = testing::UnitTest::GetInstance();
+        // auto &listeners = instance->listeners();
+        // listeners.Append(new PluginReinitializer);
 
         const int result = RunAllTests();
 
