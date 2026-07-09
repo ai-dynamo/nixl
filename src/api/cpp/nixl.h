@@ -197,6 +197,39 @@ class nixlAgent {
                       nixlDlistH *&dlist_hndl,
                       const nixl_opt_args_t *extra_params = nullptr) const;
         /**
+         * @brief  Prepare a pre-compressed (strided) descriptor list for transfer requests.
+         *
+         *         This is a fast path equivalent of the nixl_xfer_dlist_t overload for callers
+         *         that already know the regular (strided) layout of their memory (e.g. a KV
+         *         cache). Each run is a (addr, len, devId, stride, count) tuple describing
+         *         `count` blocks of `len` bytes spaced `stride` bytes apart, so NIXL skips the
+         *         per-block expand+merge pass. The resulting handle indexes the flattened block
+         *         space, matching what the expanded overload would produce.
+         *
+         * @param  agent_name       Agent name as a string for preparing xfer handle
+         * @param  descs            The strided descriptor list to be prepared for transfer requests
+         * @param  dlist_hndl [out] The prepared descriptor list handle for this transfer request
+         * @param  extra_params     Optional additional parameters used in preparing dlist handle
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        prepXferDlist(const std::string &agent_name,
+                      const nixl_stride_dlist_t &descs,
+                      nixlDlistH *&dlist_hndl,
+                      const nixl_opt_args_t *extra_params = nullptr) const;
+        /**
+         * @brief  Prepare a local pre-compressed (strided) descriptor list for transfer requests.
+         *
+         * @param  descs            The strided descriptor list to be prepared for transfer requests
+         * @param  dlist_hndl [out] The prepared descriptor list handle for this transfer request
+         * @param  extra_params     Optional additional parameters used in preparing dlist handle
+         * @return nixl_status_t    Error code if call was not successful
+         */
+        nixl_status_t
+        prepXferDlist(const nixl_stride_dlist_t &descs,
+                      nixlDlistH *&dlist_hndl,
+                      const nixl_opt_args_t *extra_params = nullptr) const;
+        /**
          * @brief  Make a transfer request `req_handl` by selecting indices from already
          *         prepared descriptor list handles. NIXL automatically determines the backend
          *         that can perform the transfer. If a list of backends hints is provided

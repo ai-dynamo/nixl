@@ -138,6 +138,43 @@ public:
 };
 
 /**
+ * @class nixlStrideDesc
+ * @brief A compressed transfer descriptor describing a run of `count`
+ *        equal-length blocks, with consecutive block starts spaced `stride`
+ *        bytes apart (stride == len means a dense/contiguous run). Lets callers
+ *        express a large, regular access pattern without materializing every
+ *        block as a separate nixlBasicDesc.
+ */
+struct nixlStrideDesc : public nixlBasicDesc {
+    /** @var Byte distance between consecutive block starts (stride == len => dense) */
+    size_t stride = 0;
+    /** @var Number of equal-length blocks in this run */
+    size_t count = 0;
+
+    using nixlBasicDesc::nixlBasicDesc;
+
+    nixlStrideDesc() = default;
+
+    /**
+     * @brief Parametrized constructor for nixlStrideDesc
+     *
+     * @param addr    Start address of the first block
+     * @param len     Length of each block
+     * @param dev_id  deviceID/blockID/fileID
+     * @param stride  Byte distance between consecutive block starts
+     * @param count   Number of blocks in the run
+     */
+    nixlStrideDesc(const uintptr_t &addr,
+                   const size_t &len,
+                   const uint64_t &dev_id,
+                   const size_t &stride,
+                   const size_t &count)
+        : nixlBasicDesc(addr, len, dev_id),
+          stride(stride),
+          count(count) {}
+};
+
+/**
  * @class nixlBlobDesc
  * @brief A descriptor class, with additional metadata in form of a blob
  *        bundled with a nixlBasicDesc.
@@ -464,6 +501,13 @@ public:
  *        used for creating transfer descriptor lists
  */
 using nixl_xfer_dlist_t = nixlDescList<nixlBasicDesc>;
+
+/**
+ * @brief A typedef for a nixlDescList<nixlStrideDesc>
+ *        used for creating compressed (strided) transfer descriptor lists
+ */
+using nixl_stride_dlist_t = nixlDescList<nixlStrideDesc>;
+
 /**
  * @brief A typedef for a nixlDescList<nixlBlobDesc>
  *        used for creating registratoin descriptor lists

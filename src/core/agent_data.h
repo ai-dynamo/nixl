@@ -128,6 +128,13 @@ class nixlAgentData {
         void
         warnAboutEfaHardwareMismatch();
 
+        template<class dlist_t>
+        nixl_status_t
+        prepXferDlist(const std::string &agent_name,
+                      const dlist_t &descs,
+                      nixlDlistH *&dlist_hndl,
+                      const nixl_opt_args_t *extra_params);
+
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &config);
 
