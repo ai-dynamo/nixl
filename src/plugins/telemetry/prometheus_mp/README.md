@@ -59,8 +59,23 @@ export NIXL_TELEMETRY_EXPORTER="prometheus_mp" # selects libtelemetry_exporter_p
 export NIXL_TELEMETRY_MULTIPROC_DIR="/tmp/nixl_metrics" # REQUIRED: shared by all ranks in the pod
 ```
 
-All ranks that should be aggregated together must point `NIXL_TELEMETRY_MULTIPROC_DIR`
-at the **same** directory (e.g. a per-pod `emptyDir` under Kubernetes).
+This mirrors Dynamo's `PROMETHEUS_MULTIPROC_DIR` convention (a shared folder that
+every related process writes into, one leader exports): all ranks that should be
+aggregated together must point `NIXL_TELEMETRY_MULTIPROC_DIR` at the **same**
+directory. Unlike Dynamo -- which auto-creates a temp dir in the parent and lets
+child engine processes inherit it -- NIXL is a library loaded independently in each
+rank, so there is no parent to propagate the path; the launcher/operator must set
+the same directory for every rank (hence it is required, not auto-defaulted, so a
+per-process temp dir can never silently break aggregation).
+
+Recommended, following Dynamo's model: a shared **local** folder, one per pod /
+process-family, treated as ephemeral (e.g. a per-pod Kubernetes `emptyDir`, or a
+temp dir cleaned between runs). It must be a local filesystem -- **not** a network
+filesystem (NFS/CIFS), where mmap `MAP_SHARED` cross-process visibility is not
+guaranteed (the same restriction Dynamo's multiprocess dir has). tmpfs (e.g. a
+Memory-medium `emptyDir` or `/dev/shm`) works and avoids any disk writeback, but is
+optional -- a plain local dir is fine, since updates hit the page cache and the
+per-process store files are ~one page each.
 
 ### Optional configuration
 

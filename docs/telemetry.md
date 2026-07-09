@@ -161,6 +161,13 @@ Series are labeled by `hostname`, `agent_name`, `pid` (guarantees uniqueness), a
 optionally `dp_rank`. Metric names, types, and semantics are identical to the
 single-process `prometheus` exporter.
 
+`NIXL_TELEMETRY_MULTIPROC_DIR` follows Dynamo's `PROMETHEUS_MULTIPROC_DIR`
+convention: a shared **local** folder (not NFS), one per pod / process-family,
+treated as ephemeral (e.g. a per-pod Kubernetes `emptyDir`). Because NIXL is a
+library loaded independently per rank -- with no parent to propagate the path as in
+Dynamo -- the launcher/operator must set the **same** directory for every rank, so
+it is required rather than auto-defaulted.
+
 ### Scope & limitations
 
 `prometheus_mp` is purpose-built for NIXL's telemetry model, **not** a generic
