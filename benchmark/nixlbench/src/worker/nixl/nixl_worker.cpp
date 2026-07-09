@@ -1295,7 +1295,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
 
             res.push_back(remote_iov_list);
             if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
-                const size_t max_offset_in_blocks = (local_iovs.size() - 1);
+                const size_t max_offset_in_blocks = local_iovs.size() - 1;
                 file_offset = getFileOffset(file_offset, max_offset_in_blocks, block_size);
             }
         }

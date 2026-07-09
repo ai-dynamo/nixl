@@ -568,7 +568,7 @@ xferBenchConfig::loadParams(void) {
             return -1;
         }
         if (randomize_location_mode == XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED &&
-            storage_enable_direct == 1) {
+            storage_enable_direct == true) {
             std::cerr << "Byte-aligned randomization violates direct storage access rules due to "
                          "non-block-aligned copy offsets."
                       << std::endl;
