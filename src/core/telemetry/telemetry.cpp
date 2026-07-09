@@ -91,11 +91,13 @@ resolveMaxBufferedEvents();
 
 [[nodiscard]] std::unique_ptr<nixlTelemetry>
 nixlTelemetry::create(const std::string &agent_name) {
-    // create() is only called when telemetry is explicitly requested (see
-    // nixlAgent's constructor), so it always produces an active instance:
-    // getExporterName() falls back to the collect-only NOP sink when no output
-    // sink is configured.
-    return std::make_unique<nixlTelemetry>(agent_name, getExporterName());
+    try {
+        return std::make_unique<nixlTelemetry>(agent_name, getExporterName());
+    }
+    catch (const nixlTelemetryBindFailed &e) {
+        NIXL_WARN << e.what() << "; this process will run without a telemetry sink";
+        return nullptr;
+    }
 }
 
 nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &exporter_name)
@@ -130,11 +132,6 @@ nixlTelemetry::~nixlTelemetry() {
     catch (const asio::system_error &e) {
         NIXL_DEBUG << "Failed to cancel telemetry write timer: " << e.what();
         // continue anyway since it's not critical
-    }
-
-    if (buffer_) {
-        flushPendingEvents();
-        buffer_.reset();
     }
 }
 
