@@ -39,6 +39,8 @@ NIXL generates the following telemetry events:
 | `agent_xfer_post_time` | Counter, Gauge, Histogram | Post time (start->backend-post) in microseconds; also a latency histogram `agent_xfer_post_time_us` |
 | `agent_telemetry_events_dropped` | Counter | Telemetry events dropped at the producer-side staging queue |
 
+The `NIXL_TELEMETRY_METRICS` environment variable is a comma-separated glob allowlist of the event names above (unset exports everything). Events whose name is not allowed are filtered before `exportEvent` is called, so an exporter never sees a disabled metric.
+
 ## Quick Start
 
 Here's a minimal example of a CSV file exporter plugin:

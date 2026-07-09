@@ -698,6 +698,38 @@ TEST_F(prometheusTelemetryTest, DroppedEventsCounterAccumulates) {
         << "dropped-events counter must sum every emitted delta (7+5)";
 }
 
+// End-to-end through the core (NIX-453): a per-event allowlist filters at the
+// drain, so an enabled metric advances while a disabled one stays at its
+// pre-registered 0. Families are always registered, so this asserts values, not
+// series presence (Phase 1 is event-type granularity, not per-series).
+TEST_F(prometheusTelemetryTest, MetricAllowlistFiltersAtDrain) {
+    gtest::ScopedEnv telemetry_env;
+    telemetry_env.addVar(TELEMETRY_METRICS_VAR, "agent_tx_bytes");
+    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, "5");
+
+    const std::string agent_name = "prometheus_allowlist_agent";
+    nixlTelemetry telemetry(agent_name, "prometheus");
+    telemetry.updateTxBytes(1000); // allowed
+    telemetry.updateRxBytes(2000); // filtered
+
+    bool tx_seen = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do {
+        const std::string body = httpGet(port_, "/metrics");
+        PrometheusSample tx;
+        if (!body.empty() && findAgentMetricSample(body, "agent_tx_bytes_total", agent_name, tx) &&
+            tx.value == 1000.0) {
+            tx_seen = true;
+            PrometheusSample rx;
+            ASSERT_TRUE(findAgentMetricSample(body, "agent_rx_bytes_total", agent_name, rx));
+            EXPECT_EQ(rx.value, 0.0) << "filtered metric must not be exported";
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    } while (std::chrono::steady_clock::now() < deadline);
+    EXPECT_TRUE(tx_seen) << "allowed metric agent_tx_bytes_total never reached 1000";
+}
+
 // End-to-end through the core: flooding a small staging queue via updateData
 // forces producer-side drops, which the core publishes as AGENT_TELEMETRY_EVENTS_DROPPED
 // on flush. Driving the (lossless, ring-free) Prometheus exporter makes the

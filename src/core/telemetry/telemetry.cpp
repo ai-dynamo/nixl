@@ -18,9 +18,14 @@
 #include <sstream>
 #include <thread>
 #include <filesystem>
+#include <fnmatch.h>
 #include <unistd.h>
 #include <cstdlib>
 #include <algorithm>
+#include <vector>
+
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_split.h>
 
 #include "common/configuration.h"
 #include "common/nixl_duration.h"
@@ -87,6 +92,8 @@ getExporterName();
 validateAgentName(const std::string &agent_name);
 [[nodiscard]] size_t
 resolveMaxBufferedEvents();
+[[nodiscard]] nixlTelemetryMetricMask
+resolveEnabledMetrics();
 } // namespace
 
 [[nodiscard]] std::unique_ptr<nixlTelemetry>
@@ -104,6 +111,7 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &e
     : agentName_(validateAgentName(agent_name)),
       maxBufferedEvents_(resolveMaxBufferedEvents()),
       exporter_(makeExporter(exporter_name)),
+      metricEnabled_(resolveEnabledMetrics()),
       pool_(1),
       writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false) {
     // A constructed nixlTelemetry always has an exporter (makeExporter throws
@@ -175,6 +183,49 @@ resolveMaxBufferedEvents() {
     return max_events;
 }
 
+[[nodiscard]] nixlTelemetryMetricMask
+resolveEnabledMetrics() {
+    nixlTelemetryMetricMask enabled{};
+
+    const auto spec = nixl::config::getValueOptional<std::string>(TELEMETRY_METRICS_VAR);
+    std::vector<std::string> tokens;
+    if (spec) {
+        for (const absl::string_view raw : absl::StrSplit(*spec, ',')) {
+            const absl::string_view token = absl::StripAsciiWhitespace(raw);
+            if (!token.empty()) {
+                tokens.emplace_back(token.data(), token.size());
+            }
+        }
+    }
+
+    // Unset / empty / all-whitespace: export everything (backward compatible).
+    if (tokens.empty()) {
+        enabled.fill(true);
+        return enabled;
+    }
+
+    std::vector<bool> token_matched(tokens.size(), false);
+    for (size_t i = 0; i < nixl_telemetry_event_type_count; ++i) {
+        const std::string name{
+            nixlEnumStrings::telemetryEventTypeStr(static_cast<nixl_telemetry_event_type_t>(i))};
+        for (size_t t = 0; t < tokens.size(); ++t) {
+            if (fnmatch(tokens[t].c_str(), name.c_str(), 0) == 0) {
+                enabled[i] = true;
+                token_matched[t] = true;
+            }
+        }
+    }
+
+    for (size_t t = 0; t < tokens.size(); ++t) {
+        if (!token_matched[t]) {
+            NIXL_WARN << "Ignoring " << TELEMETRY_METRICS_VAR << " entry '" << tokens[t]
+                      << "': no telemetry metric matches";
+        }
+    }
+
+    return enabled;
+}
+
 } // namespace
 
 [[nodiscard]] std::unique_ptr<nixlTelemetryExporter>
@@ -218,6 +269,9 @@ nixlTelemetry::flushPendingEvents() {
     }
 
     for (auto &event : next_queue) {
+        if (!metricEnabled_[static_cast<size_t>(event.eventType_)]) {
+            continue;
+        }
         // if full, ignore
         exporter_->exportEvent(event);
     }
@@ -235,7 +289,9 @@ nixlTelemetry::exportDroppedEvents() {
     // positive count keeps the no-overflow path event-free (preserving
     // exact-count contracts).
     const uint64_t dropped = droppedEvents_.exchange(0, std::memory_order_relaxed);
-    if (dropped > 0) {
+    if (dropped > 0 &&
+        metricEnabled_[static_cast<size_t>(
+            nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)]) {
         exporter_->exportEvent(
             {nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED, dropped});
     }

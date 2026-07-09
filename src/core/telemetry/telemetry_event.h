@@ -25,6 +25,7 @@
 
 constexpr char TELEMETRY_BUFFER_SIZE_VAR[] = "NIXL_TELEMETRY_BUFFER_SIZE";
 constexpr char TELEMETRY_RUN_INTERVAL_VAR[] = "NIXL_TELEMETRY_RUN_INTERVAL";
+constexpr char TELEMETRY_METRICS_VAR[] = "NIXL_TELEMETRY_METRICS";
 
 constexpr inline int TELEMETRY_VERSION = 4;
 
@@ -55,6 +56,12 @@ enum class nixl_telemetry_event_type_t : uint32_t {
     AGENT_ERR_NO_TELEMETRY = 19,
     AGENT_TELEMETRY_EVENTS_DROPPED = 20,
 };
+
+inline constexpr std::size_t nixl_telemetry_event_type_count =
+    static_cast<std::size_t>(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED) + 1;
+
+// Per-event-type flag mask indexed by nixl_telemetry_event_type_t.
+using nixlTelemetryMetricMask = std::array<bool, nixl_telemetry_event_type_count>;
 
 [[nodiscard]] nixl_telemetry_event_type_t
 nixlTelemetryEventTypeForStatus(nixl_status_t s);

@@ -36,6 +36,15 @@ export NIXL_TELEMETRY_EXPORTER="doca" # Sets which plug-in to select in format l
 
 ### Optional Configuration
 
+You can restrict which metrics are exported with an allowlist (unset exports everything):
+
+```bash
+# Comma-separated glob allowlist matched against the base metric names.
+# A name selects its whole family (counter + gauge). Unmatched tokens are
+# ignored with a warning; disabled metrics are still collected in-process.
+export NIXL_TELEMETRY_METRICS="agent_tx_bytes,agent_rx_bytes,agent_err_*"
+```
+
 You can configure the exposed prometheus port:
 
 ```bash

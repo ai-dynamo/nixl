@@ -128,6 +128,10 @@ private:
     const std::string agentName_;
     const size_t maxBufferedEvents_;
     const std::unique_ptr<nixlTelemetryExporter> exporter_;
+    // Per-event-type export allowlist resolved once from NIXL_TELEMETRY_METRICS.
+    // Indexed by nixl_telemetry_event_type_t; an event is exported only when its
+    // slot is true. All-true when the variable is unset (backward compatible).
+    const nixlTelemetryMetricMask metricEnabled_;
     std::vector<nixlTelemetryEvent> events_;
     std::mutex mutex_;
     // Producer-side staging-queue drop counter: incremented from any thread when
