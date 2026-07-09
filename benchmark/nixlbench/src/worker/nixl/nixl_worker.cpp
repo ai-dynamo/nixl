@@ -105,9 +105,8 @@ getRandomSeed() {
     }
 
     std::random_device rd;
-    uint64_t seed = rd();
-    seed =
-        (seed << 32) | rd(); // assuming rd() returns 32 bits, combine two calls for a 64-bit seed
+    const uint64_t seed = (static_cast<uint64_t>(rd()) << 32) |
+        rd(); // assuming rd() returns 32 bits, combine two calls for a 64-bit
     xferBenchConfig::randomize_location_mode_seed =
         seed; // Store the generated seed back to config for reproducibility
     return seed;
