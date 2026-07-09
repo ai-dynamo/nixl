@@ -11,7 +11,7 @@
               { "name": "manifest.json" },
               { "name": "list.manifest.json" }
             ]},
-            { "created": { "$before": "1d" } }
+            { "modified": { "$before": "1d" } }
           ]
         }
       }
@@ -32,7 +32,7 @@
               { "stat.downloaded": { "$before": "2w" } },
               { "$and": [
                 { "stat.downloads": { "$eq": null } },
-                { "created": { "$before": "2w" } }
+                { "modified": { "$before": "2w" } }
               ]}
             ]}
           ]
@@ -50,7 +50,7 @@
               { "name": "manifest.json" },
               { "name": "list.manifest.json" }
             ]},
-            { "created": { "$before": "3mo" } }
+            { "modified": { "$before": "3mo" } }
           ]
         }
       }
@@ -63,7 +63,7 @@
             { "repo": "sw-nbu-swx-nixl-pypi-local" },
             { "path": { "$match": "verification/**" } },
             { "name": { "$match": "*.whl" } },
-            { "created": { "$before": "3mo" } }
+            { "modified": { "$before": "3mo" } }
           ]
         }
       }

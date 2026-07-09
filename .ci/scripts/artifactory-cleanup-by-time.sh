@@ -14,7 +14,7 @@
 #   ARTIFACTORY_TOKEN     Password or API key (required)
 #   ARTIFACTORY_API_KEY   Alternative to ARTIFACTORY_TOKEN
 
-set -e
+set -eo pipefail
 
 DRY_RUN_FLAG=""
 DRY_RUN=false
@@ -49,14 +49,18 @@ jf rt ping
 
 # For Docker: delete the tag directory (repo/path/) recursively.
 # For PyPI: delete the .whl file directly.
-targets=$(jf rt search --spec "$SPEC" | jq -r '.[] | .path | ltrimstr("/") |
+if ! targets=$(jf rt search --spec "$SPEC" | jq -r '.[] | .path | ltrimstr("/") |
     if endswith("/manifest.json") or endswith("/list.manifest.json")
     then split("/")[:-1] | join("/") | . + "/"
     else .
-    end' | sort -u)
+    end' | sort -u); then
+    echo "ERROR: failed to list artifacts - aborting without cleanup" >&2
+    exit 1
+fi
 
-count=$(echo "$targets" | grep -c . || true)
+count=$(echo "$targets" | grep -c . || echo 0)
 echo "=== Deleting ${count} artifact(s) (dry-run: $DRY_RUN) ==="
+failed=0
 while IFS= read -r target; do
     [[ -z "$target" ]] && continue
     if jf rt del "$target" --recursive --quiet $DRY_RUN_FLAG > /dev/null; then
@@ -67,7 +71,12 @@ while IFS= read -r target; do
         fi
     else
         echo "WARNING: failed to delete $target" >&2
+        failed=$((failed + 1))
     fi
 done <<< "$targets"
 
+if [ "$failed" -gt 0 ]; then
+    echo "=== Done with $failed failure(s) ===" >&2
+    exit 1
+fi
 echo "=== Done ==="
