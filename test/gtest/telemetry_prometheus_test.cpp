@@ -31,8 +31,10 @@
 #include <unistd.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <set>
@@ -339,32 +341,28 @@ public:
 
     void
     Send(const absl::LogEntry &entry) override {
-        const std::lock_guard<std::mutex> lock(mutex_);
         const std::string msg(entry.text_message());
         if (entry.log_severity() == absl::LogSeverity::kWarning &&
             msg.find("could not be bound") != std::string::npos) {
-            ++bindWarnings_;
+            bindWarnings_.fetch_add(1, std::memory_order_relaxed);
         } else if (entry.log_severity() >= absl::LogSeverity::kWarning) {
-            ++otherProblems_;
+            otherProblems_.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
-    int
+    std::size_t
     bindWarnings() const {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        return bindWarnings_;
+        return bindWarnings_.load(std::memory_order_relaxed);
     }
 
-    int
+    std::size_t
     otherProblems() const {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        return otherProblems_;
+        return otherProblems_.load(std::memory_order_relaxed);
     }
 
 private:
-    mutable std::mutex mutex_;
-    int bindWarnings_ = 0;
-    int otherProblems_ = 0;
+    std::atomic<std::size_t> bindWarnings_{0};
+    std::atomic<std::size_t> otherProblems_{0};
 };
 
 } // namespace
@@ -803,7 +801,8 @@ TEST_F(prometheusTelemetryTest, BindCollisionCreateIsNonFatalWarn) {
     EXPECT_EQ(telemetry, nullptr)
         << "a scrape-port collision must disable telemetry, not fail agent construction";
 
-    EXPECT_EQ(sink.bindWarnings(), 1) << "the collision must log exactly one WARNING";
-    EXPECT_EQ(sink.otherProblems(), 0) << "the collision must not log an ERROR or other problem";
+    EXPECT_EQ(sink.bindWarnings(), std::size_t{1}) << "the collision must log exactly one WARNING";
+    EXPECT_EQ(sink.otherProblems(), std::size_t{0})
+        << "the collision must not log an ERROR or other problem";
     EXPECT_EQ(ignore_bind_warning.getIgnoredCount(), 1u);
 }
