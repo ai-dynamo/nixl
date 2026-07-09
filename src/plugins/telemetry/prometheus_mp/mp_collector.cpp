@@ -209,7 +209,15 @@ nixlMultiprocessCollector::Collect() const {
         return {};
     }
 
-    for (const auto &entry : it) {
+    // Iterate with the non-throwing increment: peer writers and this collector's
+    // own reaping mutate the directory concurrently, and the range-for's
+    // operator++ would throw on a mid-iteration filesystem error.
+    for (const std::filesystem::directory_iterator end; it != end; it.increment(ec)) {
+        if (ec) {
+            NIXL_DEBUG << "prometheus_mp: telemetry dir iteration stopped early: " << ec.message();
+            break;
+        }
+        const auto &entry = *it;
         if (!entry.is_regular_file(ec) || !nameMatchesStore(entry.path().filename().string())) {
             continue;
         }

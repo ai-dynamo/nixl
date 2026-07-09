@@ -19,6 +19,7 @@
 
 #include "telemetry_event.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -45,6 +46,30 @@ inline constexpr std::string_view MP_STORE_FILE_SUFFIX = ".mmap";
 // sync if the enum is extended.
 inline constexpr std::size_t MP_STORE_SLOT_COUNT =
     static_cast<std::size_t>(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED) + 1;
+
+namespace detail {
+    // Highest slot index the collector will index into the counter/gauge arrays,
+    // across every event type it publishes.
+    [[nodiscard]] constexpr std::size_t
+    maxTelemetrySlot() {
+        std::size_t max_slot = 0;
+        for (const auto type : telemetry_metric_event_types) {
+            max_slot = std::max(max_slot, static_cast<std::size_t>(type));
+        }
+        for (const auto type : telemetry_error_event_types) {
+            max_slot = std::max(max_slot, static_cast<std::size_t>(type));
+        }
+        return max_slot;
+    }
+} // namespace detail
+
+// Compile-time guard: if the enum is extended past AGENT_TELEMETRY_EVENTS_DROPPED
+// (so it is no longer last), the fixed-slot store would be indexed out of bounds
+// by the collector. Fail the build instead, forcing MP_STORE_SLOT_COUNT to be
+// updated.
+static_assert(detail::maxTelemetrySlot() < MP_STORE_SLOT_COUNT,
+              "MP_STORE_SLOT_COUNT must cover every telemetry event type the collector indexes; "
+              "keep AGENT_TELEMETRY_EVENTS_DROPPED last or update MP_STORE_SLOT_COUNT");
 
 /**
  * @brief A point-in-time copy of one process's metric-state store file.
