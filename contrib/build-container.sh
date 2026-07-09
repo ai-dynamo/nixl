@@ -51,6 +51,11 @@ CUDA_VERSION=${CUDA_VERSION:-13.0}
 # INFINIA build variant passed to Dockerfile.manylinux: "bundled" pulls the private DDN libs
 # image; "none" (via --no-infinia) skips it so external builds without access still work.
 INFINIA_VARIANT=${INFINIA_VARIANT:-bundled}
+# Override the INFINIA libs image (Dockerfile.manylinux default is the AWS ECR mirror, only
+# reachable from the velonix runners). Set via --infinia-libs-image / INFINIA_LIBS_IMAGE to
+# point a bundled build at a different mirror (e.g. an artifactory.nvidia.com copy that the
+# blossom runner can pull). Ignored when --no-infinia (variant=none) is used.
+INFINIA_LIBS_IMAGE=${INFINIA_LIBS_IMAGE:-}
 
 get_options() {
     while :; do
@@ -167,6 +172,14 @@ get_options() {
         --no-infinia)
             INFINIA_VARIANT=none
             ;;
+        --infinia-libs-image)
+            if [ "$2" ]; then
+                INFINIA_LIBS_IMAGE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
@@ -248,6 +261,7 @@ show_help() {
     echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
     echo "  [--no-infinia skip the INFINIA plugin (manylinux: don't pull the private DDN libs image)]"
+    echo "  [--infinia-libs-image REF   bundled INFINIA from a specific libs image (e.g. an artifactory mirror)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     exit 0
@@ -305,6 +319,10 @@ BUILD_ARGS+=" --build-arg INFINIA_VARIANT=$INFINIA_VARIANT"
 # build never depends on the private registry, regardless of stage-pruning behavior.
 if [ "$INFINIA_VARIANT" = "none" ]; then
     BUILD_ARGS+=" --build-arg INFINIA_LIBS_IMAGE=$BASE_IMAGE:$BASE_IMAGE_TAG"
+elif [ -n "$INFINIA_LIBS_IMAGE" ]; then
+    # bundled build with an explicit libs image (e.g. an artifactory.nvidia.com mirror the
+    # blossom runner can pull, instead of the ECR default baked into the Dockerfile).
+    BUILD_ARGS+=" --build-arg INFINIA_LIBS_IMAGE=$INFINIA_LIBS_IMAGE"
 fi
 
 show_build_options

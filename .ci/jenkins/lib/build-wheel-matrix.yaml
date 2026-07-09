@@ -60,6 +60,11 @@ credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
+  # Deploy token for the sw-dynamo-nixl-pypi-local repo (the release-wheel publish target).
+  # TODO(ops): create/point this at a secret-text credential with deploy rights there
+  # (the base-image svc token above may not have write access to sw-dynamo-*).
+  - credentialsId: 'svc-nixl-artifactory-pypi-token'
+    variable: 'ARTIFACTORY_PYPI_TOKEN'
 
 # =============================================================================
 # Kubernetes Resource Configuration
@@ -90,10 +95,13 @@ matrix:
   axes:
     manylinux:
       - "2_28"
-    # Python versions supported by NIXL
-    # Each version gets its own wheel with appropriate ABI tags
-    python_version:
-      - "3.12"
+    # CUDA toolkit versions to build the full release wheel set for. All Python versions
+    # (WHL_PYTHON_VERSIONS below) are built in a single image per (cuda, arch), so Python
+    # is NOT a matrix axis. cu13 uses the existing Artifactory manylinux base; cu12 needs a
+    # matching cu12 base image — enable it once BASE_TAG_CU12 is published to Artifactory.
+    cuda:
+      - "13.0"
+      # - "12.9"   # TODO(ops): enable once a cu12 manylinux base exists (see BASE_TAG_CU12)
     # Target architectures for wheel distribution
     # x86_64: Intel/AMD 64-bit processors
     # aarch64: ARM 64-bit processors (Apple Silicon, ARM servers)
@@ -109,7 +117,20 @@ env:
   NPROC: 16
   GRPC_NPROC: 10
   BASE_IMAGE: "${registry_host}/sw-nbu-swx-nixl-docker-local/base/cuda"
-  BASE_TAG: '13.0-devel-manylinux--25.09'
+  # Per-CUDA manylinux base tags (same repo, different tag). cu13 exists today.
+  BASE_TAG_CU13: '13.0-devel-manylinux--25.09'
+  BASE_TAG_CU12: '12.9-devel-manylinux--25.09'   # TODO(ops): publish this cu12 base to Artifactory
+  # All Python versions built in one image per (cuda, arch); build-container.sh passes the
+  # comma list to Dockerfile.manylinux, which loops over them.
+  WHL_PYTHON_VERSIONS: "3.10,3.11,3.12,3.13,3.14"
+  # Release-wheel publish target (handed off to the release pipeline / nspect-register).
+  ARTIFACTORY_URL: "https://${registry_host}/artifactory"
+  PYPI_REPO: "sw-dynamo-nixl-pypi-local"
+  # INFINIA libs image. Empty => build --no-infinia (blossom can't reach the ECR default).
+  # To bundle INFINIA: mirror harbor.mellanox.com/nixl/infinia-libs into an
+  # artifactory.nvidia.com repo the svc token can pull, set it here, and it is passed to
+  # build-container.sh --infinia-libs-image (which drops --no-infinia). TODO(ops): mirror + set.
+  INFINIA_LIBS_IMAGE: ""
 
 steps:
   # =============================================================================
@@ -139,23 +160,57 @@ steps:
       set -x
       export NPROC=$NPROC
       export GRPC_NPROC=$GRPC_NPROC
-      # --cuda-version matches BASE_TAG (13.0-devel-manylinux); it drives the cu13 torch
-      # index and meta-wheel split in Dockerfile.manylinux.
-      # --no-infinia: this blossom runner authenticates only to artifactory.nvidia.com and
-      # cannot pull the private INFINIA libs image, so build the wheel without the INFINIA
-      # plugin (all other plugins are unaffected).
+      # Select the manylinux base tag for this CUDA version. --cuda-version drives the
+      # cuXXX torch index and the cu12/cu13 meta-wheel split in Dockerfile.manylinux.
+      if [ "${cuda}" = "12.9" ]; then BASE_TAG="${BASE_TAG_CU12}"; else BASE_TAG="${BASE_TAG_CU13}"; fi
+      # INFINIA: bundle from a mirror if INFINIA_LIBS_IMAGE is set, else --no-infinia
+      # (blossom can't reach the private ECR default that Dockerfile.manylinux ships).
+      if [ -n "${INFINIA_LIBS_IMAGE}" ]; then
+        INFINIA_ARGS="--infinia-libs-image ${INFINIA_LIBS_IMAGE}"
+      else
+        INFINIA_ARGS="--no-infinia"
+      fi
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
-        --cuda-version 13.0 \
+        --cuda-version "${cuda}" \
         --wheel-base "manylinux_${manylinux}" \
-        --python-versions "${python_version}" \
+        --python-versions "${WHL_PYTHON_VERSIONS}" \
         --arch ${arch} \
-        --no-infinia \
+        ${INFINIA_ARGS} \
+        --tag "nixl-wheel:cu${cuda}-${arch}" \
         --dockerfile contrib/Dockerfile.manylinux
+
+  # =============================================================================
+  # Step 3: Publish wheels to Artifactory (release staging)
+  # =============================================================================
+  # Extract the wheels the build produced and upload them to the release staging path,
+  # so the separate release pipeline (nSpect register + scan, ship-to-prod) can grab
+  # them from Artifactory. Both cuda variants for an arch land in the same <arch>/ folder.
+  - name: Publish Wheels
+    parallel: false
+    run: |
+      set -euo pipefail
+      IMG="nixl-wheel:cu${cuda}-${arch}"
+      # Dockerfile.manylinux writes wheels to /workspace/nixl/dist inside the image.
+      cid=$(podman create "$IMG")
+      rm -rf dist dist_tmp && mkdir -p dist
+      podman cp "$cid:/workspace/nixl/dist" ./dist_tmp
+      podman rm "$cid" >/dev/null
+      find ./dist_tmp -name '*.whl' -exec mv -t dist {} +
+      ls -1 dist/*.whl
+      VER=$(basename "$(ls dist/nixl*.whl | head -n1)" | cut -d- -f2)
+      # release/<version>/<jenkins_build>/<arch>/ — matches the layout nspect-register reads.
+      DEST="${ARTIFACTORY_URL}/${PYPI_REPO}/release/${VER}/${BUILD_NUMBER}/${arch}/"
+      for whl in dist/*.whl; do
+        curl -fsS -H "Authorization: Bearer ${ARTIFACTORY_PYPI_TOKEN}" \
+          -T "$whl" "${DEST}$(basename "$whl")" >/dev/null
+        echo "uploaded $(basename "$whl")"
+      done
+      echo "== wheels published to ${DEST} (build ${BUILD_NUMBER}) =="
 
 # =============================================================================
 # Task Naming Convention
 # =============================================================================
 # Unique identifier for each matrix combination
-taskName: '${name}_${manylinux}/${arch}/python_${python_version}'
+taskName: '${name}_${manylinux}/cu${cuda}/${arch}'
