@@ -88,8 +88,8 @@ struct mpStoreSnapshot {
     uint64_t lastUpdateNs = 0;
     std::string agentName;
     std::string hostname;
-    // Optional Dynamo-style rank label; empty when no rank env was set.
-    std::string dpRank;
+    // Optional local (per-GPU/TP) rank label; empty when no rank env was set.
+    std::string localRank;
     std::array<uint64_t, MP_STORE_SLOT_COUNT> counters{};
     std::array<uint64_t, MP_STORE_SLOT_COUNT> gauges{};
 };
@@ -110,13 +110,13 @@ public:
      * @param path Full path to this process's store file.
      * @param agent_name Per-process agent name (unique; drives the series label).
      * @param hostname Host name label.
-     * @param dp_rank Optional rank label; pass empty to omit it.
+     * @param local_rank Optional rank label; pass empty to omit it.
      * @throws std::runtime_error on open/ftruncate/mmap failure.
      */
     mpStoreWriter(std::filesystem::path path,
                   const std::string &agent_name,
                   const std::string &hostname,
-                  const std::string &dp_rank);
+                  const std::string &local_rank);
     ~mpStoreWriter();
 
     mpStoreWriter(const mpStoreWriter &) = delete;

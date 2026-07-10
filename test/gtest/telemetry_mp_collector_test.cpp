@@ -61,7 +61,7 @@ makeSnap(const std::string &agent, const std::string &rank) {
     s.lastUpdateNs = nixlTime::getNs();
     s.agentName = agent;
     s.hostname = "host";
-    s.dpRank = rank;
+    s.localRank = rank;
     return s;
 }
 
@@ -131,7 +131,7 @@ TEST(MpCollectorTest, PerProcessCountersAndGauges) {
 }
 
 TEST(MpCollectorTest, PidLabelDisambiguatesSameAgentName) {
-    // Two processes that (mis)use the same agent name and no dp_rank must still
+    // Two processes that (mis)use the same agent name and no local_rank must still
     // produce distinct series, keyed by pid, rather than a duplicate series.
     auto a = makeSnap("dup", "");
     a.pid = 1001;
@@ -153,7 +153,7 @@ TEST(MpCollectorTest, PidLabelDisambiguatesSameAgentName) {
     EXPECT_TRUE(hasLabel(*m_a, "pid"));
 }
 
-TEST(MpCollectorTest, DpRankLabelOnlyWhenPresent) {
+TEST(MpCollectorTest, LocalRankLabelOnlyWhenPresent) {
     const auto with_rank = makeSnap("agent-a", "3");
     const auto without_rank = makeSnap("agent-b", "");
 
@@ -165,8 +165,8 @@ TEST(MpCollectorTest, DpRankLabelOnlyWhenPresent) {
     const auto *m_without = findByLabel(*tx, "agent_name", "agent-b");
     ASSERT_NE(m_with, nullptr);
     ASSERT_NE(m_without, nullptr);
-    EXPECT_TRUE(hasLabel(*m_with, "dp_rank"));
-    EXPECT_FALSE(hasLabel(*m_without, "dp_rank"));
+    EXPECT_TRUE(hasLabel(*m_with, "local_rank"));
+    EXPECT_FALSE(hasLabel(*m_without, "local_rank"));
 }
 
 TEST(MpCollectorTest, ErrorFamilyCarriesStatusLabel) {

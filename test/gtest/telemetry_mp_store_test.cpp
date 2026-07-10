@@ -79,7 +79,7 @@ TEST_F(MpStoreTest, WriteReadRoundTrip) {
     ASSERT_TRUE(snap.has_value());
     EXPECT_EQ(snap->agentName, "agent-a");
     EXPECT_EQ(snap->hostname, "host-1");
-    EXPECT_EQ(snap->dpRank, "3");
+    EXPECT_EQ(snap->localRank, "3");
     EXPECT_EQ(snap->pid, static_cast<int64_t>(::getpid()));
     EXPECT_GT(snap->startTime, 0u);
     EXPECT_GT(snap->lastUpdateNs, 0u);
@@ -114,7 +114,7 @@ TEST_F(MpStoreTest, EmptyRankIsEmpty) {
 
     const auto snap = readStoreSnapshot(path);
     ASSERT_TRUE(snap.has_value());
-    EXPECT_TRUE(snap->dpRank.empty());
+    EXPECT_TRUE(snap->localRank.empty());
 }
 
 TEST_F(MpStoreTest, LongAgentNameTruncated) {

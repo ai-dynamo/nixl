@@ -50,8 +50,8 @@ namespace {
         // not unique across processes; avoids duplicate-series scrape errors. Not
         // named "instance" (a reserved Prometheus target label).
         labels.push_back({"pid", std::to_string(s.pid)});
-        if (!s.dpRank.empty()) {
-            labels.push_back({"dp_rank", s.dpRank});
+        if (!s.localRank.empty()) {
+            labels.push_back({"local_rank", s.localRank});
         }
         return labels;
     }

@@ -63,11 +63,12 @@ getHostname() {
     return "unknown";
 }
 
-// Resolves the optional dp_rank label value: NIXL_TELEMETRY_RANK_ENV names which
-// env var holds the rank (default LOCAL_RANK); the value of that env var is the
-// rank. Empty when the named env var is unset -- rank is a best-effort label only.
+// Resolves the optional local_rank label value: NIXL_TELEMETRY_RANK_ENV names
+// which env var holds the rank (default LOCAL_RANK); the value of that env var is
+// the rank. Empty when the named env var is unset -- rank is a best-effort label
+// only. This is the local/per-GPU (TP) rank, distinct from Dynamo's dp_rank.
 [[nodiscard]] std::string
-resolveDpRank() {
+resolveLocalRank() {
     const std::string rank_source =
         nixl::config::getValueDefaulted<std::string>(rankEnvVar, defaultRankEnvName);
     if (rank_source.empty()) {
@@ -118,7 +119,7 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     const std::filesystem::path store_path = dir / makeStoreFileName(pid, start_time, instance);
 
     store_ = std::make_unique<mpStoreWriter>(
-        store_path, init_params.agentName, getHostname(), resolveDpRank());
+        store_path, init_params.agentName, getHostname(), resolveLocalRank());
 
     const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
     const uint16_t port = nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);

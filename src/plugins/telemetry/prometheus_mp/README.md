@@ -84,8 +84,8 @@ per-process store files are ~one page each.
 export NIXL_TELEMETRY_PROMETHEUS_PORT="<port_num>"
 export NIXL_TELEMETRY_PROMETHEUS_LOCAL="y" # bind 127.0.0.1 instead of 0.0.0.0
 
-# Optional dp_rank label: names the env var that holds the rank (default LOCAL_RANK).
-# If that env var is unset, no dp_rank label is emitted (series stay unique via pid).
+# Optional local_rank label: names the env var that holds the rank (default LOCAL_RANK).
+# If that env var is unset, no local_rank label is emitted (series stay unique via pid).
 export NIXL_TELEMETRY_RANK_ENV="LOCAL_RANK"
 
 # Seconds after which a dead process's store is considered stale and reaped (default 30).
@@ -101,8 +101,9 @@ Every series is labeled by:
 - `pid` -- the producing process id. This guarantees each process is a distinct
   series even if agent names collide; it is deliberately **not** named `instance`
   (a reserved Prometheus target label).
-- `dp_rank` -- **optional**, present only when a rank env var (see
-  `NIXL_TELEMETRY_RANK_ENV`) is set.
+- `local_rank` -- **optional**, present only when a rank env var (see
+  `NIXL_TELEMETRY_RANK_ENV`) is set. This is the local/per-GPU (TP) rank, distinct
+  from Dynamo's data-parallel `dp_rank`.
 - `status` -- only on `agent_errors_total`, bounded by the fixed `AGENT_ERR_*` set.
 
 The metric names, types, counter/gauge semantics, and events are identical to the
@@ -117,7 +118,7 @@ not reuse, Python `prometheus_client`'s multiprocess format):
 
 - The metric set is fixed at compile time; slots are positional, so metric names
   are never stored in the files.
-- Per-process label values (`hostname`, `agent_name`, `pid`, `dp_rank`) are
+- Per-process label values (`hostname`, `agent_name`, `pid`, `local_rank`) are
   captured once at startup and never change. Events carry only a numeric value --
   there are **no per-observation labels**.
 - Consequently the store **cannot represent a metric with a dynamic /

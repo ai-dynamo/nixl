@@ -58,7 +58,7 @@ isSnapshotLive(const mpStoreSnapshot &snap, std::chrono::nanoseconds ttl);
  * Emits one series per (metric, process): cumulative counters and last-operation
  * gauges keyed by nixl_telemetry_event_type_t, plus the agent_errors_total family
  * with a status label. Series are labeled by hostname, agent_name and (when
- * present) dp_rank. No cross-process aggregation -- each process is its own
+ * present) local_rank. No cross-process aggregation -- each process is its own
  * series. Returns empty when @p snapshots is empty.
  * @param snapshots Live per-process snapshots.
  */

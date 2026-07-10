@@ -43,7 +43,7 @@ namespace {
 
     constexpr std::size_t MP_MAX_AGENT_NAME = 256;
     constexpr std::size_t MP_MAX_HOSTNAME = 128;
-    constexpr std::size_t MP_MAX_DP_RANK = 64;
+    constexpr std::size_t MP_MAX_LOCAL_RANK = 64;
 
     // Fixed on-disk layout. Plain trivially-copyable POD operated on with __atomic
     // builtins (not std::atomic) so it is safe to memset/reinterpret over an mmap'd
@@ -57,7 +57,7 @@ namespace {
         uint64_t lastUpdateNs;
         char agentName[MP_MAX_AGENT_NAME];
         char hostname[MP_MAX_HOSTNAME];
-        char dpRank[MP_MAX_DP_RANK];
+        char localRank[MP_MAX_LOCAL_RANK];
         uint64_t counters[MP_STORE_SLOT_COUNT];
         uint64_t gauges[MP_STORE_SLOT_COUNT];
     };
@@ -122,7 +122,7 @@ readProcessStartTime(int64_t pid) {
 mpStoreWriter::mpStoreWriter(std::filesystem::path path,
                              const std::string &agent_name,
                              const std::string &hostname,
-                             const std::string &dp_rank)
+                             const std::string &local_rank)
     : path_(std::move(path)),
       mappingSize_(sizeof(mpStoreLayout)) {
     const int fd = ::open(path_.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
@@ -154,7 +154,7 @@ mpStoreWriter::mpStoreWriter(std::filesystem::path path,
     layout->startTime = readProcessStartTime(layout->pid);
     copyField(layout->agentName, MP_MAX_AGENT_NAME, agent_name, "agent name");
     copyField(layout->hostname, MP_MAX_HOSTNAME, hostname, "hostname");
-    copyField(layout->dpRank, MP_MAX_DP_RANK, dp_rank, "dp_rank");
+    copyField(layout->localRank, MP_MAX_LOCAL_RANK, local_rank, "local_rank");
     __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELEASE);
     // Publish the magic last so a concurrent reader never validates a
     // half-initialized header.
@@ -255,7 +255,7 @@ readStoreSnapshot(const std::filesystem::path &path) {
     snap.lastUpdateNs = __atomic_load_n(&layout->lastUpdateNs, __ATOMIC_ACQUIRE);
     snap.agentName = readField(layout->agentName, MP_MAX_AGENT_NAME);
     snap.hostname = readField(layout->hostname, MP_MAX_HOSTNAME);
-    snap.dpRank = readField(layout->dpRank, MP_MAX_DP_RANK);
+    snap.localRank = readField(layout->localRank, MP_MAX_LOCAL_RANK);
     for (std::size_t i = 0; i < MP_STORE_SLOT_COUNT; ++i) {
         snap.counters[i] = __atomic_load_n(&layout->counters[i], __ATOMIC_RELAXED);
         snap.gauges[i] = __atomic_load_n(&layout->gauges[i], __ATOMIC_RELAXED);
