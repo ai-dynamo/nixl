@@ -160,7 +160,8 @@ bind collision is benign, so no rank is dropped. Full details:
 Series are labeled by `hostname`, `agent_name`, `pid` (guarantees cross-process
 uniqueness), `agent_instance` (distinguishes multiple same-name agents within one
 process), and optionally `local_rank` (the local/per-GPU rank, not Dynamo's
-data-parallel `dp_rank`). Metric names, types, and semantics are identical to the
+data-parallel `dp_rank`). `agent_errors_total` additionally includes the bounded
+`status` label. Metric names, types, and semantics are identical to the
 single-process `prometheus` exporter.
 
 `NIXL_TELEMETRY_MULTIPROC_DIR` follows Dynamo's `PROMETHEUS_MULTIPROC_DIR`
