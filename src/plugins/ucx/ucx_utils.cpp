@@ -30,6 +30,9 @@
 #include "common/nixl_log.h"
 #include "config.h"
 #include "serdes/serdes.h"
+#ifndef UCS_BIT_GET
+#define UCS_BIT_GET(_mask, _bit) (!!((_mask) & UCS_BIT(_bit)))
+#endif
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
