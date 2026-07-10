@@ -214,19 +214,19 @@ nixlTelemetryPrometheusExporter::registerHistogram(const nixl_telemetry_event_ty
 nixl_status_t
 nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
     try {
-        const auto counter = counters_.find(event.eventType_);
-        if (counter != counters_.end()) {
-            counter->second.metric->Increment(event.value_);
+        const auto counter_it = counters_.find(event.eventType_);
+        if (counter_it != counters_.end()) {
+            counter_it->second.metric->Increment(event.value_);
         }
 
-        const auto gauge = gauges_.find(event.eventType_);
-        if (gauge != gauges_.end()) {
-            gauge->second.metric->Set(static_cast<double>(event.value_));
+        const auto gauge_it = gauges_.find(event.eventType_);
+        if (gauge_it != gauges_.end()) {
+            gauge_it->second.metric->Set(static_cast<double>(event.value_));
         }
 
-        const auto histogram = histograms_.find(event.eventType_);
-        if (histogram != histograms_.end()) {
-            histogram->second.metric->Observe(static_cast<double>(event.value_));
+        const auto histogram_it = histograms_.find(event.eventType_);
+        if (histogram_it != histograms_.end()) {
+            histogram_it->second.metric->Observe(static_cast<double>(event.value_));
         }
 
         return NIXL_SUCCESS;

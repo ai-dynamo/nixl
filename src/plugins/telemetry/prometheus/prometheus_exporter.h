@@ -21,6 +21,7 @@
 #include "telemetry_event.h"
 #include "nixl_types.h"
 
+#include <cassert>
 #include <string>
 #include <memory>
 #include <unordered_map>
@@ -66,8 +67,9 @@ private:
         CounterEntry &
         operator=(CounterEntry &&) = delete;
 
-        ~CounterEntry() {
-            if (family && metric) family->Remove(metric);
+        ~CounterEntry() noexcept {
+            assert(family && metric);
+            family->Remove(metric);
         }
 
         prometheus::Family<prometheus::Counter> *family = nullptr;
@@ -86,8 +88,9 @@ private:
         GaugeEntry &
         operator=(GaugeEntry &&) = delete;
 
-        ~GaugeEntry() {
-            if (family && metric) family->Remove(metric);
+        ~GaugeEntry() noexcept {
+            assert(family && metric);
+            family->Remove(metric);
         }
 
         prometheus::Family<prometheus::Gauge> *family = nullptr;
@@ -107,10 +110,9 @@ private:
         HistogramEntry &
         operator=(HistogramEntry &&) = delete;
 
-        ~HistogramEntry() {
-            if (family && metric) {
-                family->Remove(metric);
-            }
+        ~HistogramEntry() noexcept {
+            assert(family && metric);
+            family->Remove(metric);
         }
 
         prometheus::Family<prometheus::Histogram> *family = nullptr;

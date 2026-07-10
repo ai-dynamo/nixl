@@ -18,13 +18,12 @@
 #define NIXL_SRC_PLUGINS_TELEMETRY_COMMON_HISTOGRAM_BUCKETS_H
 
 #include "common/configuration.h"
-#include "common/nixl_log.h"
 
 #include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
-#include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_split.h>
 
@@ -60,17 +59,18 @@ defaultHistogramBucketsUs() {
 }
 
 /**
- * @brief Parse a comma-separated list of strictly-increasing positive doubles.
- * @param spec Comma-separated bucket specification (whitespace around tokens is trimmed).
- * @return Parsed boundaries, or an empty vector when @p spec is malformed so the caller
- *         can fall back to the defaults (validation kept local to the telemetry plugins).
+ * @brief Parse a comma-separated list of strictly-increasing positive numbers.
+ * @param spec Comma-separated bucket specification. Values are real numbers (fractional
+ *             microseconds are allowed), and leading/trailing whitespace around each token
+ *             is tolerated (absl::SimpleAtod ignores it).
+ * @return Parsed boundaries, or an empty vector when @p spec is malformed (non-numeric,
+ *         non-finite, non-positive, or not strictly increasing).
  */
 [[nodiscard]] inline std::vector<double>
 parseHistogramBucketsUs(const std::string &spec) {
     std::vector<double> buckets;
     double previous = 0.0;
-    for (const absl::string_view raw : absl::StrSplit(spec, ',')) {
-        const absl::string_view token = absl::StripAsciiWhitespace(raw);
+    for (const absl::string_view token : absl::StrSplit(spec, ',')) {
         double value = 0.0;
         if (!absl::SimpleAtod(token, &value) || !std::isfinite(value) || value <= 0.0 ||
             value <= previous) {
@@ -85,8 +85,10 @@ parseHistogramBucketsUs(const std::string &spec) {
 /**
  * @brief Resolve the histogram bucket boundaries (microsecond upper bounds) shared by
  *        both duration histograms in both exporters.
- * @return The parsed env override when valid; otherwise the built-in microsecond defaults.
- *         Emits a WARN only when a non-empty override was provided but is invalid.
+ * @return The parsed env override when set and valid; the built-in microsecond defaults
+ *         when the override is absent or empty.
+ * @throws std::invalid_argument when a non-empty override is provided but malformed, so a
+ *         user who specified buckets is not silently given the defaults instead.
  */
 [[nodiscard]] inline std::vector<double>
 resolveHistogramBucketsUs() {
@@ -95,12 +97,11 @@ resolveHistogramBucketsUs() {
         return defaultHistogramBucketsUs();
     }
 
-    std::vector<double> buckets = parseHistogramBucketsUs(*spec);
+    const std::vector<double> buckets = parseHistogramBucketsUs(*spec);
     if (buckets.empty()) {
-        NIXL_WARN << histogramBucketsUsVar
-                  << " must be a comma-separated list of strictly-increasing positive numbers; "
-                     "falling back to default microsecond buckets";
-        return defaultHistogramBucketsUs();
+        throw std::invalid_argument(
+            std::string(histogramBucketsUsVar) +
+            " must be a comma-separated list of strictly-increasing positive numbers");
     }
     return buckets;
 }

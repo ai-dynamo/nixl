@@ -276,7 +276,7 @@ telemetryMetricDescriptor(const nixl_telemetry_event_type_t type) noexcept {
     case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
     case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
     case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
-        return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+        break;
     }
     return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
 }

@@ -670,28 +670,22 @@ TEST(histogramBucketsTest, ValidListIsParsedInOrder) {
               (std::vector<double>{1.0, 2.5, 10.0, 100.0}));
 }
 
-TEST(histogramBucketsTest, NonNumericFallsBackToDefaults) {
-    gtest::LogIgnoreGuard ignore(std::string(nixl::telemetry::histogramBucketsUsVar));
+TEST(histogramBucketsTest, NonNumericThrows) {
     gtest::ScopedEnv env;
     env.addVar(nixl::telemetry::histogramBucketsUsVar, "10,not_a_number,30");
-    EXPECT_EQ(nixl::telemetry::resolveHistogramBucketsUs(),
-              nixl::telemetry::defaultHistogramBucketsUs());
+    EXPECT_THROW(nixl::telemetry::resolveHistogramBucketsUs(), std::invalid_argument);
 }
 
-TEST(histogramBucketsTest, UnsortedFallsBackToDefaults) {
-    gtest::LogIgnoreGuard ignore(std::string(nixl::telemetry::histogramBucketsUsVar));
+TEST(histogramBucketsTest, UnsortedThrows) {
     gtest::ScopedEnv env;
     env.addVar(nixl::telemetry::histogramBucketsUsVar, "10,5,20");
-    EXPECT_EQ(nixl::telemetry::resolveHistogramBucketsUs(),
-              nixl::telemetry::defaultHistogramBucketsUs());
+    EXPECT_THROW(nixl::telemetry::resolveHistogramBucketsUs(), std::invalid_argument);
 }
 
-TEST(histogramBucketsTest, NonPositiveFallsBackToDefaults) {
-    gtest::LogIgnoreGuard ignore(std::string(nixl::telemetry::histogramBucketsUsVar));
+TEST(histogramBucketsTest, NonPositiveThrows) {
     gtest::ScopedEnv env;
     env.addVar(nixl::telemetry::histogramBucketsUsVar, "0,10,20");
-    EXPECT_EQ(nixl::telemetry::resolveHistogramBucketsUs(),
-              nixl::telemetry::defaultHistogramBucketsUs());
+    EXPECT_THROW(nixl::telemetry::resolveHistogramBucketsUs(), std::invalid_argument);
 }
 
 TEST(histogramBucketsTest, AbsentUsesDefaults) {

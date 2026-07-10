@@ -26,14 +26,24 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <unistd.h>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 namespace {
 const uint16_t docaPrometheusExporterDefaultPort = 9091;
+
+// Number of distinct telemetry event types, used to size direct-indexed arrays
+// keyed by nixl_telemetry_event_type_t.
+constexpr size_t numTelemetryEventTypes =
+    static_cast<size_t>(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED) + 1;
+
+// Per-histogram flush interval (ms) passed to add_base_histogram; the exporter
+// also flushes explicitly at scrape time, so this only bounds staleness if an
+// explicit flush is missed.
+constexpr uint64_t histogramFlushIntervalMs = 1000;
 
 const char docaPrometheusPortVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_PORT";
 const char docaPrometheusLocalVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_LOCAL";
@@ -94,9 +104,10 @@ struct DocaSharedContext {
     // Base histograms are templates created once on the shared source; observing
     // against one with concrete label values yields a concrete histogram id. The
     // general metrics flush does not push histograms, so track those concrete ids
-    // to flush them explicitly.
-    std::unordered_map<nixl_telemetry_event_type_t, doca_telemetry_exporter_base_histogram_id_t>
-        base_histograms;
+    // to flush them explicitly. Indexed directly by event type (small dense enum)
+    // to avoid a hash lookup on the observe path.
+    std::array<std::optional<doca_telemetry_exporter_base_histogram_id_t>, numTelemetryEventTypes>
+        base_histograms{};
     std::unordered_set<doca_telemetry_exporter_histogram_id_t> histogram_ids;
 
     explicit DocaSharedContext(const std::string &bind_address);
@@ -187,12 +198,12 @@ DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
                                                                         histogram_buckets.data(),
                                                                         histogram_buckets.size(),
                                                                         label_set_id,
-                                                                        1000,
+                                                                        histogramFlushIntervalMs,
                                                                         &base_id);
             if (result != DOCA_SUCCESS) {
                 throw std::runtime_error("Failed to create DOCA base histogram");
             }
-            base_histograms.emplace(event_type, base_id);
+            base_histograms[static_cast<size_t>(event_type)] = base_id;
         }
     }
     catch (...) {
@@ -296,15 +307,17 @@ nixlTelemetryDocaExporter::appendGaugeSample(const nixlTelemetryEvent &event,
 doca_error_t
 nixlTelemetryDocaExporter::appendHistogramSample(const nixlTelemetryEvent &event,
                                                  const char *label_values[]) {
-    const auto base = ctx_->base_histograms.find(event.eventType_);
-    if (base == ctx_->base_histograms.end()) {
+    const auto &base = ctx_->base_histograms[static_cast<size_t>(event.eventType_)];
+    if (!base.has_value()) {
         return DOCA_SUCCESS;
     }
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     doca_telemetry_exporter_histogram_id_t histogram_id = 0;
     const doca_error_t result = doca_telemetry_exporter_metrics_base_histogram_observe(
-        ctx_->source, base->second, label_values, static_cast<double>(event.value_), &histogram_id);
+        ctx_->source, *base, label_values, static_cast<double>(event.value_), &histogram_id);
+    // The same (base, label_values) pair always yields the same concrete id, so
+    // the set de-dups: flush() then flushes each concrete histogram exactly once.
     if (result == DOCA_SUCCESS) {
         ctx_->histogram_ids.insert(histogram_id);
     }
