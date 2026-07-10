@@ -88,7 +88,8 @@ export NIXL_TELEMETRY_PROMETHEUS_LOCAL="y" # bind 127.0.0.1 instead of 0.0.0.0
 # If that env var is unset, no local_rank label is emitted (series stay unique via pid).
 export NIXL_TELEMETRY_RANK_ENV="LOCAL_RANK"
 
-# Seconds after which a dead process's store is considered stale and reaped (default 30).
+# Seconds after a dead process's last update before its store is considered stale
+# and reaped (default 30). A live process is always published regardless of age.
 export NIXL_TELEMETRY_MP_STALE_TTL="30"
 ```
 

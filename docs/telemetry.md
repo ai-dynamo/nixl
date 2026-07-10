@@ -155,11 +155,12 @@ bind collision is benign, so no rank is dropped. Full details:
 | `NIXL_TELEMETRY_PROMETHEUS_PORT` | Scrape port (shared with the `prometheus` exporter) | `9090` |
 | `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | Bind `127.0.0.1` instead of `0.0.0.0` | `false` |
 | `NIXL_TELEMETRY_RANK_ENV` | Name of the env var holding the rank for the optional `local_rank` label; no label if that env var is unset | `LOCAL_RANK` |
-| `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after which a dead process's store is stale and reaped | `30` |
+| `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after a dead process's last update before its store is stale and reaped | `30` |
 
-Series are labeled by `hostname`, `agent_name`, `pid` (guarantees uniqueness), and
-optionally `local_rank` (the local/per-GPU rank, not Dynamo's data-parallel
-`dp_rank`). Metric names, types, and semantics are identical to the
+Series are labeled by `hostname`, `agent_name`, `pid` (guarantees cross-process
+uniqueness), `agent_instance` (distinguishes multiple same-name agents within one
+process), and optionally `local_rank` (the local/per-GPU rank, not Dynamo's
+data-parallel `dp_rank`). Metric names, types, and semantics are identical to the
 single-process `prometheus` exporter.
 
 `NIXL_TELEMETRY_MULTIPROC_DIR` follows Dynamo's `PROMETHEUS_MULTIPROC_DIR`
