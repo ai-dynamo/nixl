@@ -153,6 +153,30 @@ TEST(MpCollectorTest, PidLabelDisambiguatesSameAgentName) {
     EXPECT_TRUE(hasLabel(*m_a, "pid"));
 }
 
+TEST(MpCollectorTest, AgentInstanceLabelDisambiguatesSameProcessSameName) {
+    // Two agents in the SAME process (same pid) with the same name must still
+    // produce distinct series, keyed by agent_instance, rather than colliding.
+    auto a = makeSnap("dup", "");
+    a.pid = 1001;
+    a.instance = 0;
+    a.counters[idx(TX_BYTES)] = 10;
+    auto b = makeSnap("dup", "");
+    b.pid = 1001;
+    b.instance = 1;
+    b.counters[idx(TX_BYTES)] = 20;
+
+    const auto fams = buildMetricFamilies({a, b});
+    const auto *tx = findFamily(fams, "agent_tx_bytes_total");
+    ASSERT_NE(tx, nullptr);
+    ASSERT_EQ(tx->metric.size(), 2u);
+    const auto *m_a = findByLabel(*tx, "agent_instance", "0");
+    const auto *m_b = findByLabel(*tx, "agent_instance", "1");
+    ASSERT_NE(m_a, nullptr);
+    ASSERT_NE(m_b, nullptr);
+    EXPECT_DOUBLE_EQ(m_a->counter.value, 10.0);
+    EXPECT_DOUBLE_EQ(m_b->counter.value, 20.0);
+}
+
 TEST(MpCollectorTest, LocalRankLabelOnlyWhenPresent) {
     const auto with_rank = makeSnap("agent-a", "3");
     const auto without_rank = makeSnap("agent-b", "");
@@ -235,10 +259,10 @@ protected:
 
 TEST_F(MpCollectorFileTest, CollectReadsLiveStoresAndIgnoresOthers) {
     // Two distinct store files; both headers stamp this (live) process.
-    mpStoreWriter w1(dir_ / makeStoreFileName(111, 1, 0), "agent-1", "host", "0");
+    mpStoreWriter w1(dir_ / makeStoreFileName(111, 1, 0), "agent-1", "host", "0", 0);
     w1.addCounter(TX_BYTES, 500);
     w1.setGauge(TX_BYTES, 500);
-    mpStoreWriter w2(dir_ / makeStoreFileName(222, 2, 0), "agent-2", "host", "1");
+    mpStoreWriter w2(dir_ / makeStoreFileName(222, 2, 0), "agent-2", "host", "1", 0);
     w2.addCounter(TX_BYTES, 700);
 
     // A non-store file must be ignored.

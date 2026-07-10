@@ -119,7 +119,7 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     const std::filesystem::path store_path = dir / makeStoreFileName(pid, start_time, instance);
 
     store_ = std::make_unique<mpStoreWriter>(
-        store_path, init_params.agentName, getHostname(), resolveLocalRank());
+        store_path, init_params.agentName, getHostname(), resolveLocalRank(), instance);
 
     const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
     const uint16_t port = nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);

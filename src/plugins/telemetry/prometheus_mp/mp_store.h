@@ -86,6 +86,9 @@ struct mpStoreSnapshot {
     // Monotonic nanoseconds (nixlTime::getNs, CLOCK_MONOTONIC -- host-wide, so
     // comparable across processes) of the last writer update; used for TTL staleness.
     uint64_t lastUpdateNs = 0;
+    // Per-process instance counter, distinguishing multiple agents that share the
+    // same name (and thus pid/hostname) within one process so their series differ.
+    uint64_t instance = 0;
     std::string agentName;
     std::string hostname;
     // Optional local (per-GPU/TP) rank label; empty when no rank env was set.
@@ -111,12 +114,15 @@ public:
      * @param agent_name Per-process agent name (unique; drives the series label).
      * @param hostname Host name label.
      * @param local_rank Optional rank label; pass empty to omit it.
+     * @param instance Per-process instance counter; disambiguates multiple
+     *        same-named agents in one process so their series stay distinct.
      * @throws std::runtime_error on open/ftruncate/mmap failure.
      */
     mpStoreWriter(std::filesystem::path path,
                   const std::string &agent_name,
                   const std::string &hostname,
-                  const std::string &local_rank);
+                  const std::string &local_rank,
+                  uint64_t instance);
     ~mpStoreWriter();
 
     mpStoreWriter(const mpStoreWriter &) = delete;

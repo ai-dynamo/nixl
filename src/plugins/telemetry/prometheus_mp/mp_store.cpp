@@ -56,6 +56,7 @@ namespace {
         int64_t pid;
         uint64_t startTime;
         uint64_t lastUpdateNs;
+        uint64_t instance;
         char agentName[MP_MAX_AGENT_NAME];
         char hostname[MP_MAX_HOSTNAME];
         char localRank[MP_MAX_LOCAL_RANK];
@@ -123,7 +124,8 @@ readProcessStartTime(int64_t pid) {
 mpStoreWriter::mpStoreWriter(std::filesystem::path path,
                              const std::string &agent_name,
                              const std::string &hostname,
-                             const std::string &local_rank)
+                             const std::string &local_rank,
+                             uint64_t instance)
     : path_(std::move(path)),
       mappingSize_(sizeof(mpStoreLayout)) {
     const int fd = ::open(path_.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
@@ -153,6 +155,7 @@ mpStoreWriter::mpStoreWriter(std::filesystem::path path,
     layout->slotCount = static_cast<uint32_t>(MP_STORE_SLOT_COUNT);
     layout->pid = static_cast<int64_t>(::getpid());
     layout->startTime = readProcessStartTime(layout->pid);
+    layout->instance = instance;
     copyField(layout->agentName, MP_MAX_AGENT_NAME, agent_name, "agent name");
     copyField(layout->hostname, MP_MAX_HOSTNAME, hostname, "hostname");
     copyField(layout->localRank, MP_MAX_LOCAL_RANK, local_rank, "local_rank");
@@ -255,6 +258,7 @@ readStoreSnapshot(const std::filesystem::path &path) {
     mpStoreSnapshot snap;
     snap.pid = layout->pid;
     snap.startTime = layout->startTime;
+    snap.instance = layout->instance;
     snap.lastUpdateNs = __atomic_load_n(&layout->lastUpdateNs, __ATOMIC_ACQUIRE);
     snap.agentName = readField(layout->agentName, MP_MAX_AGENT_NAME);
     snap.hostname = readField(layout->hostname, MP_MAX_HOSTNAME);

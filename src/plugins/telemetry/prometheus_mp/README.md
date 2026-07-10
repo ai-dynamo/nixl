@@ -101,6 +101,9 @@ Every series is labeled by:
 - `pid` -- the producing process id. This guarantees each process is a distinct
   series even if agent names collide; it is deliberately **not** named `instance`
   (a reserved Prometheus target label).
+- `agent_instance` -- a per-process counter distinguishing multiple agents created
+  in the same process (which share `pid`, `hostname`, and `agent_name`), so their
+  series never collide. `0` for the common single-agent-per-process case.
 - `local_rank` -- **optional**, present only when a rank env var (see
   `NIXL_TELEMETRY_RANK_ENV`) is set. This is the local/per-GPU (TP) rank, distinct
   from Dynamo's data-parallel `dp_rank`.

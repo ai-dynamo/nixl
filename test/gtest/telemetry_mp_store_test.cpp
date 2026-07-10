@@ -68,7 +68,7 @@ protected:
 
 TEST_F(MpStoreTest, WriteReadRoundTrip) {
     const auto path = storePath("agent-a");
-    mpStoreWriter writer(path, "agent-a", "host-1", "3");
+    mpStoreWriter writer(path, "agent-a", "host-1", "3", 7);
     writer.addCounter(TX_BYTES, 1000);
     writer.setGauge(TX_BYTES, 1000);
     writer.addCounter(ERR_BACKEND, 1);
@@ -78,6 +78,7 @@ TEST_F(MpStoreTest, WriteReadRoundTrip) {
     EXPECT_EQ(snap->agentName, "agent-a");
     EXPECT_EQ(snap->hostname, "host-1");
     EXPECT_EQ(snap->localRank, "3");
+    EXPECT_EQ(snap->instance, 7u);
     EXPECT_EQ(snap->pid, static_cast<int64_t>(::getpid()));
     EXPECT_GT(snap->startTime, 0u);
     EXPECT_GT(snap->lastUpdateNs, 0u);
@@ -91,7 +92,7 @@ TEST_F(MpStoreTest, WriteReadRoundTrip) {
 
 TEST_F(MpStoreTest, CounterAccumulatesGaugeReplaces) {
     const auto path = storePath("agent-b");
-    mpStoreWriter writer(path, "agent-b", "host-1", "");
+    mpStoreWriter writer(path, "agent-b", "host-1", "", 0);
     writer.addCounter(TX_BYTES, 100);
     writer.addCounter(TX_BYTES, 250);
     writer.addCounter(TX_BYTES, 650);
@@ -106,7 +107,7 @@ TEST_F(MpStoreTest, CounterAccumulatesGaugeReplaces) {
 
 TEST_F(MpStoreTest, EmptyRankIsEmpty) {
     const auto path = storePath("agent-c");
-    mpStoreWriter writer(path, "agent-c", "host-1", "");
+    mpStoreWriter writer(path, "agent-c", "host-1", "", 0);
 
     const auto snap = readStoreSnapshot(path);
     ASSERT_TRUE(snap.has_value());
@@ -116,7 +117,7 @@ TEST_F(MpStoreTest, EmptyRankIsEmpty) {
 TEST_F(MpStoreTest, DestructorRemovesStoreFile) {
     const auto path = storePath("agent-cleanup");
     {
-        mpStoreWriter writer(path, "agent-cleanup", "host-1", "");
+        mpStoreWriter writer(path, "agent-cleanup", "host-1", "", 0);
         EXPECT_TRUE(std::filesystem::exists(path));
     }
     EXPECT_FALSE(std::filesystem::exists(path));
@@ -126,7 +127,7 @@ TEST_F(MpStoreTest, LongAgentNameTruncated) {
     const auto path = storePath("agent-long");
     const std::string long_name(1000, 'x');
     const gtest::LogIgnoreGuard lig("exceeds 255 chars");
-    mpStoreWriter writer(path, long_name, "host-1", "");
+    mpStoreWriter writer(path, long_name, "host-1", "", 0);
 
     const auto snap = readStoreSnapshot(path);
     ASSERT_TRUE(snap.has_value());
