@@ -183,6 +183,23 @@ resolveMaxBufferedEvents() {
     return max_events;
 }
 
+[[nodiscard]] std::string
+joinMetricNames(const nixl_telemetry_metric_mask_t &mask, bool active) {
+    std::string result;
+    for (size_t i = 0; i < nixl_telemetry_event_type_count; ++i) {
+        if (mask[i] != active) {
+            continue;
+        }
+        const auto name =
+            nixlEnumStrings::telemetryEventTypeStr(static_cast<nixl_telemetry_event_type_t>(i));
+        if (!result.empty()) {
+            result += ',';
+        }
+        result.append(name.data(), name.size());
+    }
+    return result;
+}
+
 [[nodiscard]] nixl_telemetry_metric_mask_t
 resolveEnabledMetrics() {
     nixl_telemetry_metric_mask_t enabled{};
@@ -222,6 +239,10 @@ resolveEnabledMetrics() {
                       << "': no telemetry metric matches";
         }
     }
+
+    NIXL_DEBUG << "Telemetry metric activation (" << TELEMETRY_METRICS_VAR << "): active=["
+               << joinMetricNames(enabled, true) << "] inactive=["
+               << joinMetricNames(enabled, false) << "]";
 
     return enabled;
 }
