@@ -31,6 +31,7 @@
 #include <iterator>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace nixl::telemetry::mp {
@@ -166,6 +167,8 @@ mpStoreWriter::~mpStoreWriter() {
         ::munmap(mapping_, mappingSize_);
         mapping_ = nullptr;
     }
+    std::error_code ec;
+    std::filesystem::remove(path_, ec);
 }
 
 void

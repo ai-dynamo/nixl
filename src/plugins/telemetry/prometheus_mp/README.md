@@ -46,10 +46,10 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 - **Per-process series.** Each process is exported as its own series (cumulative
   counters and last-operation gauges), never summed across processes, so
   per-process values stay correct and monotonic.
-- **Stale handling.** When a process exits, the owner drops its series once the
-  process is gone (verified by pid + `/proc` start time) or its data ages past the
-  TTL, and reaps the file. Cleanup is performed by the owner, since a killed
-  process cannot clean up after itself.
+- **Stale handling.** On clean shutdown a process removes its own store file. If
+  it instead crashes or is killed -- and so cannot clean up after itself -- the
+  owner drops its series once the process is gone (verified by pid + `/proc` start
+  time) or its data ages past the TTL, and reaps the file.
 
 ## Configuration
 
