@@ -23,6 +23,7 @@
 #include <algorithm>
 
 #include "common/configuration.h"
+#include "common/nixl_duration.h"
 #include "common/nixl_log.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
@@ -72,11 +73,15 @@ nixlTelemetryEventTypeForStatus(nixl_status_t s) {
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 constexpr const char *defaultTelemetryPlugin = "BUFFER";
+// Collect-only sink (registered as "NOP"): events are still recorded in process
+// (so getXferTelemetry() returns data) but nothing is written out. Used when
+// telemetry is explicitly requested but no output sink is configured.
+constexpr const char *collectOnlyTelemetryPlugin = "NOP";
 
 namespace {
 // Defined below; declared here for use by create() and the constructor's
 // member-initializer list.
-[[nodiscard]] std::optional<std::string>
+[[nodiscard]] std::string
 getExporterName();
 [[nodiscard]] std::string
 validateAgentName(const std::string &agent_name);
@@ -86,16 +91,13 @@ resolveMaxBufferedEvents();
 
 [[nodiscard]] std::unique_ptr<nixlTelemetry>
 nixlTelemetry::create(const std::string &agent_name) {
-    const std::optional<std::string> exporter_name = getExporterName();
-
-    // No exporter/sink configured: telemetry is intentionally disabled, so do
-    // not construct a nixlTelemetry at all (avoids spinning up its thread pool
-    // only to tear it down).
-    if (!exporter_name) {
+    try {
+        return std::make_unique<nixlTelemetry>(agent_name, getExporterName());
+    }
+    catch (const nixlTelemetryBindFailed &e) {
+        NIXL_WARN << e.what() << "; this process will run without a telemetry sink";
         return nullptr;
     }
-
-    return std::make_unique<nixlTelemetry>(agent_name, *exporter_name);
 }
 
 nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &exporter_name)
@@ -109,45 +111,50 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &e
     // export task.
     events_.reserve(maxBufferedEvents_);
     startExportTask();
+
+    if (!nixlTime::fastClockUsesHwCounter()) {
+        NIXL_WARN << "telemetry: no invariant CPU counter available; per-transfer timing falls "
+                     "back to steady_clock (higher overhead)";
+    }
 }
 
 nixlTelemetry::~nixlTelemetry() {
     writeTask_.enabled_ = false;
     try {
-        writeTask_.timer_.cancel();
+        // The pool thread re-arms writeTask_.timer_ from its own callback
+        // (registerPeriodicTask -> async_wait), so cancelling the timer here on
+        // the main thread races that re-arm. Stop and join the pool first; once
+        // join() returns no other thread touches the timer, so cancel() is safe.
         pool_.stop();
         pool_.join();
+        writeTask_.timer_.cancel();
     }
     catch (const asio::system_error &e) {
         NIXL_DEBUG << "Failed to cancel telemetry write timer: " << e.what();
         // continue anyway since it's not critical
     }
-
-    if (buffer_) {
-        writeEventHelper();
-        buffer_.reset();
-    }
 }
 
 namespace {
-[[nodiscard]] std::optional<std::string>
+[[nodiscard]] std::string
 getExporterName() {
     if (const auto name = nixl::config::getValueOptional<std::string>(telemetryExporterVar)) {
         if (!name->empty()) {
-            return name;
+            return *name;
         }
         NIXL_DEBUG << "Ignoring empty " << telemetryExporterVar << " environment variable";
     }
 
-    if (!nixl::config::checkExistence(telemetryDirVar)) {
-        NIXL_DEBUG << telemetryDirVar
-                   << " is not set and no exporter was specified; NIXL telemetry is disabled";
-        return std::nullopt;
+    if (nixl::config::checkExistence(telemetryDirVar)) {
+        NIXL_INFO << "No telemetry exporter was specified, using default: "
+                  << defaultTelemetryPlugin;
+        return defaultTelemetryPlugin;
     }
 
-    NIXL_INFO << "No telemetry exporter was specified, using default: " << defaultTelemetryPlugin;
-
-    return defaultTelemetryPlugin;
+    // No output sink configured; collect in-process via the NOP sink.
+    NIXL_INFO << "No telemetry sink configured; using in-process telemetry collection via "
+              << collectOnlyTelemetryPlugin;
+    return collectOnlyTelemetryPlugin;
 }
 
 [[nodiscard]] std::string
@@ -195,14 +202,14 @@ nixlTelemetry::startExportTask() {
     const auto run_interval =
         nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
 
-    writeTask_.callback_ = [this]() { return writeEventHelper(); };
+    writeTask_.callback_ = [this]() { return flushPendingEvents(); };
     writeTask_.interval_ = run_interval;
     writeTask_.enabled_ = true;
     registerPeriodicTask(writeTask_);
 }
 
 bool
-nixlTelemetry::writeEventHelper() {
+nixlTelemetry::flushPendingEvents() {
     std::vector<nixlTelemetryEvent> next_queue;
     next_queue.reserve(maxBufferedEvents_);
     {
@@ -215,7 +222,23 @@ nixlTelemetry::writeEventHelper() {
         exporter_->exportEvent(event);
     }
 
+    exportDroppedEvents();
+
     return true;
+}
+
+void
+nixlTelemetry::exportDroppedEvents() {
+    // Atomically take and reset the drops accumulated since the last flush and
+    // emit them as a synthetic AGENT_TELEMETRY_EVENTS_DROPPED event. Bypassing the
+    // staging queue, it can never itself be staging-dropped; emitting only a
+    // positive count keeps the no-overflow path event-free (preserving
+    // exact-count contracts).
+    const uint64_t dropped = droppedEvents_.exchange(0, std::memory_order_relaxed);
+    if (dropped > 0) {
+        exporter_->exportEvent(
+            {nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED, dropped});
+    }
 }
 
 void
@@ -240,12 +263,13 @@ nixlTelemetry::updateData(nixl_telemetry_event_type_t event_type, uint64_t value
     // agent can be multi-threaded
     std::lock_guard<std::mutex> lock(mutex_);
     if (events_.size() >= maxBufferedEvents_) {
+        droppedEvents_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
     events_.emplace_back(event_type, value);
 }
 
-// The next 4 methods might be removed, as addXferTime covers them.
+// TODO: the next 4 update* methods may be removable -- addXferStats covers them.
 void
 nixlTelemetry::updateTxBytes(uint64_t tx_bytes) {
     updateData(nixl_telemetry_event_type_t::AGENT_TX_BYTES, tx_bytes);
@@ -285,24 +309,27 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 }
 
 void
-nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
+nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
+                            bool is_write,
+                            uint64_t bytes,
+                            std::chrono::microseconds post_time) {
+    // All-or-none batch size; must match the number of emplace_back calls below.
+    constexpr size_t xfer_stats_events = 4;
+
     const auto bytes_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_BYTES :
                                        nixl_telemetry_event_type_t::AGENT_RX_BYTES;
     const auto requests_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM :
                                           nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM;
 
     const std::lock_guard lock(mutex_);
-    if (events_.size() + 3 > maxBufferedEvents_) {
+    if (events_.size() + xfer_stats_events > maxBufferedEvents_) {
+        droppedEvents_.fetch_add(xfer_stats_events, std::memory_order_relaxed);
         return;
     }
+    events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+                         static_cast<uint64_t>(post_time.count()));
     events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_TIME,
                          static_cast<uint64_t>(xfer_time.count()));
     events_.emplace_back(bytes_type, bytes);
     events_.emplace_back(requests_type, 1);
-}
-
-void
-nixlTelemetry::addPostTime(std::chrono::microseconds post_time) {
-    updateData(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
-               static_cast<uint64_t>(post_time.count()));
 }

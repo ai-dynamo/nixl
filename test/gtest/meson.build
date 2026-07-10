@@ -29,6 +29,25 @@ endif
 
 gtest_inc_dirs = include_directories('.')
 
+# Sanitizer runtime configuration. Built once and shared by every instrumented
+# test (tagged with the 'sanitizer' suite) so `meson test --suite sanitizer`
+# runs them with halt-on-error semantics and the third-party suppression lists.
+# When -Dsanitizer=none the environment stays empty, so tagging tests with the
+# suite is harmless for normal builds.
+sanitizer_opts = get_option('sanitizer').split(',')
+sanitizer_env = environment()
+sanitizer_supp_dir = meson.current_source_dir() / 'sanitizer'
+if sanitizer_opts.contains('address')
+    sanitizer_env.set('ASAN_OPTIONS', 'halt_on_error=1:abort_on_error=1:detect_leaks=1')
+    sanitizer_env.set('LSAN_OPTIONS', 'suppressions=' + sanitizer_supp_dir / 'lsan.supp')
+endif
+if sanitizer_opts.contains('undefined')
+    sanitizer_env.set('UBSAN_OPTIONS', 'halt_on_error=1:print_stacktrace=1:suppressions=' + sanitizer_supp_dir / 'ubsan.supp')
+endif
+if sanitizer_opts.contains('thread')
+    sanitizer_env.set('TSAN_OPTIONS', 'halt_on_error=1:suppressions=' + sanitizer_supp_dir / 'tsan.supp')
+endif
+
 subdir('mocks')
 subdir('unit')
 subdir('plugins')
@@ -70,6 +89,8 @@ gtest_sources = [
     'query_mem.cpp',
     'telemetry_test.cpp',
     'telemetry_prometheus_test.cpp',
+    'telemetry_benchmark.cpp',
+    'nixl_duration_test.cpp',
     'configuration.cpp'
     ]
 
@@ -91,14 +112,52 @@ endif
 
 test_exe = executable('gtest',
     sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../doca-telemetry')],
     cpp_args : cpp_flags,
     dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
     link_with: [nixl_build_lib],
     install : true
 )
 
-test('gtest', test_exe, args: [plugin_dirs_arg])
+# MetadataExchangeTestFixture rapidly creates and tears down comm-thread agents,
+# which trips the GCC 13.3 libsanitizer thread-registry crash (a flaky SIGSEGV in
+# the ASan/TSan runtime on thread create/destroy -- a toolchain bug, not a NIXL
+# issue). Exclude it from the sanitizer run until the CI toolchain is bumped; it
+# still runs in the normal (non-sanitizer) CI.
+gtest_args = [plugin_dirs_arg]
+if get_option('sanitizer') != 'none'
+    gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*'
+endif
+test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
+
+# Telemetry hot-path microbenchmark (NVBug 5876558). The cases are DISABLED_ so
+# they never run in the normal 'gtest' suite; this dedicated entry opts them in.
+# Run on demand: `ctest --test-dir build -R telemetry_benchmark -V`. Excluded
+# from the sanitizer suite (timing under ASan/TSan is meaningless).
+if get_option('sanitizer') == 'none'
+    test('telemetry_benchmark',
+         test_exe,
+         args: [plugin_dirs_arg,
+                '--gtest_also_run_disabled_tests',
+                '--gtest_filter=telemetryBenchmark.*'],
+         is_parallel: false,
+         timeout: 300)
+endif
+
+# Best-effort NVTX capture: when nsys is available, profile the tracing tests
+# and write a .nsys-rep that CI can publish as an artifact. Skips (exit 77) when
+# profiling is denied, so it never fails CI on its own.
+if nixl_trace_nvtx_enabled
+    nsys_prog = find_program('nsys', required: false)
+    if nsys_prog.found()
+        nsys_wrapper = find_program(meson.current_source_dir() / 'run_nsys_tracing.sh')
+        test('tracing_nsys',
+             nsys_wrapper,
+             args: [nsys_prog.full_path(), test_exe, meson.current_build_dir(), plugin_dirs_arg],
+             is_parallel: false,
+             timeout: 600)
+    endif
+endif
 
 if get_option('b_sanitize').split(',').contains('thread')
     test_env = environment()

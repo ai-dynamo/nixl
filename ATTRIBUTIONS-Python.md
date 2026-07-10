@@ -175,7 +175,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source Code`: https://github.com/pallets/click/
 
 
-## cuda-bindings (13.3.0)
+## cuda-bindings (13.3.1)
 
 ### Licenses
 License: `NVIDIA Proprietary Software`
@@ -428,7 +428,7 @@ License: `Apache-2.0`
   - `Repository`: https://github.com/NVIDIA/cuda-python
 
 
-## distlib (0.4.0)
+## distlib (0.4.2)
 
 ### Licenses
 License: `PSF-2.0`
@@ -917,7 +917,7 @@ License: `Apache Software License 2.0`
   - `Homepage`: https://github.com/kragniz/python-etcd3
 
 
-## filelock (3.25.2)
+## filelock (3.29.3)
 
 ### Licenses
 License: `MIT`
@@ -9288,7 +9288,7 @@ NetworkX is distributed with the 3-clause BSD license.
   - `Source Code`: https://github.com/networkx/networkx
 
 
-## nixl (1.2.0)
+## nixl (1.3.1)
 
 ### Licenses
 License: `Apache-2.0`
@@ -9509,7 +9509,7 @@ License: `Apache-2.0`
 
 
 
-## nixl-cu13 (1.2.0)
+## nixl-cu13 (1.3.1)
 
 ### Licenses
 License: `Apache-2.0`
@@ -41290,7 +41290,7 @@ PERFORMANCE OF THIS SOFTWARE.
   - `Repository`: https://github.com/python/typing_extensions
 
 
-## virtualenv (21.4.1)
+## virtualenv (21.4.2)
 
 ### Licenses
 License: `MIT`
