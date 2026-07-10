@@ -32,7 +32,7 @@
 #include "serdes/serdes.h"
 
 #ifndef UCS_BIT_GET
-#define UCS_BIT_GET(_mask, _bit) (!!((_mask) & UCS_BIT(_bit)))
+#define UCS_BIT_GET(_value, _i)  (!!((_value) & UCS_BIT(_i)))
 #endif
 
 [[nodiscard]] nixl_b_params_t
