@@ -16,10 +16,15 @@
  */
 #include "plugin_manager.h"
 #include "common.h"
+
+#include <fnmatch.h>
+
 #include <gtest/gtest.h>
 #include <cstdlib>
 #include <iostream>
 #include <list>
+#include <mutex>
+#include <set>
 #include <sstream>
 #include <vector>
 #include <string>
@@ -68,6 +73,66 @@ void ParseArguments(int argc, char **argv) {
 }
 
 namespace {
+    const std::set<std::string> non_efa_skips = {
+        "HardwareWarningTest.EfaHardwareMismatchWarning",
+        "HardwareWarningTest.EfaHardwareMismatchNoWarning",
+        "LoadedPluginTestFixture.LibfabricPluginAdvertisesPostThreadOptions",
+        "LibfabricLoadPluginInstantiation/LoadSinglePluginTestFixture.SimpleLifeCycleTest/0"
+    };
+
+    const std::set<std::string> non_gpu_skips = {
+        "HardwareWarningTest.WarnWhenGpuPresentButCudaNotSupported",
+        "HardwareWarningTest.WarnWhenIbPresentButRdmaNotSupported",
+        "HardwareWarningTest.NoWarningWhenIbAndCudaSupported",
+        "ucxDeviceApi*"
+    };
+
+    std::mutex mutex;
+    std::vector<std::string> required_but_skipped;
+
+} // namespace
+
+class SkippedTestsChecker
+    : public testing::EmptyTestEventListener {
+public:
+    void
+    allowForSkip(const std::set<std::string> &set) {
+        allowed_for_skip_.insert(set.begin(), set.end());
+    }
+
+private:
+    std::set<std::string> allowed_for_skip_ = {
+#if !defined( LOAD_ALL_PLUGINS )
+        "UcxLoadPluginInstantiation/LoadSinglePluginTestFixture.SimpleLifeCycleTest/0",
+        "GdsLoadPluginInstantiation/LoadSinglePluginTestFixture.SimpleLifeCycleTest/0",
+        "LoadedPluginTestFixture.LibfabricPluginAdvertisesPostThreadOptions",
+        "LibfabricLoadPluginInstantiation/LoadSinglePluginTestFixture.SimpleLifeCycleTest/0"
+#endif
+    };
+    std::vector<std::string> required_skipped_;
+
+    void
+    OnTestEnd(const testing::TestInfo &info) override {
+        if (const auto *result = info.result()) {
+            if (result->Skipped()) {
+                const std::string s = info.test_suite_name();
+                const std::string n = info.name();
+                const std::string name = s + "." + n;
+
+                for (const std::string &allowed : allowed_for_skip_) {
+                    if (::fnmatch(allowed.c_str(), name.c_str(), 0) == 0) {
+                        return;
+                    }
+                }
+                const std::scoped_lock ml(mutex);
+                required_but_skipped.push_back(name);
+            }
+        }
+    }
+};
+
+
+namespace {
     const std::regex
         ib_regex("IB device\\(s\\) were detected, but accelerated IB support was not found");
     const std::regex aws_regex("UCX version is less than 1.19, CUDA support is limited, including"
@@ -81,6 +146,12 @@ int
 RunAllTests() {
     LogProblemCounter lpc;
     std::list<LogIgnoreGuard> ligs;
+    auto *stc = new SkippedTestsChecker;
+    {
+        auto *instance = testing::UnitTest::GetInstance();
+        auto &listeners = instance->listeners();
+        listeners.Append(stc); // Takes ownership and deletes "when the program finishes".
+    }
 
     // TODO: Remove after the CI issues spuriously triggering this message are fixed.
     ligs.emplace_back(ib_regex);
@@ -90,7 +161,15 @@ RunAllTests() {
     }
 
     if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
+        stc->allowForSkip(non_gpu_skips);
+        std::cerr << "ALLOWING GPU tests to be skipped" << std::endl;
         ligs.emplace_back(non_gpu_regex);
+    }
+
+    const char *var = std::getenv("TEST_LIBFABRIC");
+    if (var && (var == std::string("false"))) {
+        stc->allowForSkip(non_efa_skips);
+        std::cerr << "ALLOWING EFA tests to be skipped" << std::endl;
     }
 
     return RUN_ALL_TESTS();
@@ -99,12 +178,21 @@ RunAllTests() {
 int RunTests(int argc, char **argv) {
     testing::InitGoogleTest(&argc, argv);
     ParseArguments(argc, argv);
-    const int result = RunAllTests();
+
+    int result = RunAllTests();
+
+    if (const size_t skipped = required_but_skipped.size(); skipped > 0) {
+        std::cerr << "ATTENTION: Required tests skipped without skip being allowed" << std::endl;
+        for (const std::string &name : required_but_skipped) {
+            std::cerr << "ATTENTION: Skipped " << name << std::endl;
+        }
+        result |= 1;
+    }
 
     if (const size_t problems = LogProblemCounter::getProblemCount(); problems > 0) {
         std::cerr << "ATTENTION: Unexpected NIXL warning(s) and/or error(s) detected!" << std::endl;
         std::cerr << "ATTENTION: Problem count is " << problems << std::endl;
-        return 42;
+        result |= 1;
     }
     return result;
 }

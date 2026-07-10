@@ -106,6 +106,8 @@ kill -s INT $telePID
 
 # shellcheck disable=SC2154
 gtest-parallel --output_dir=/tmp --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+echo NIXL_CI_NON_GPU $NIXL_CI_NON_GPU
+echo TEST_LIBFABRIC $TEST_LIBFABRIC
 grep -r Skipped /tmp/gtest-parallel-logs
 
 ./bin/test_plugin
