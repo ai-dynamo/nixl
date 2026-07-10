@@ -17,7 +17,6 @@
 #ifndef NIXL_SRC_CORE_TELEMETRY_TELEMETRY_H
 #define NIXL_SRC_CORE_TELEMETRY_TELEMETRY_H
 
-#include "common/cyclic_buffer.h"
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
 #include "mem_section.h"
@@ -54,12 +53,14 @@ public:
      * @brief Creates a telemetry instance that records transfer events.
      *
      * Only called when telemetry is explicitly requested (NIXL_TELEMETRY_ENABLE
-     * or the agent's captureTelemetry config), so it always returns a non-null
-     * instance. With an output sink configured it exports events there; without
-     * one it falls back to the collect-only NOP sink, which still records events
-     * in process (so getXferTelemetry() returns data) but writes nothing.
+     * or the agent's captureTelemetry config). With an output sink configured it
+     * exports events there; without one it falls back to the collect-only NOP
+     * sink, which still records events in process (so getXferTelemetry() returns
+     * data) but writes nothing.
      * @param agent_name Non-empty agent name.
-     * @return A non-null telemetry instance.
+     * @return A telemetry instance, or nullptr if the exporter's scrape endpoint
+     *         could not bind its port (a benign multi-process collision): that
+     *         rank then runs without a telemetry sink instead of failing.
      * @throws std::invalid_argument / std::runtime_error on genuine
      *         configuration or plugin-load errors.
      */
@@ -117,15 +118,24 @@ private:
     updateData(nixl_telemetry_event_type_t event_type, uint64_t value);
     bool
     flushPendingEvents();
+    // Emits the staging-queue drops accumulated since the last flush as a
+    // synthetic AGENT_TELEMETRY_EVENTS_DROPPED event.
+    void
+    exportDroppedEvents();
 
     // Declared in initialization order: agentName_ and maxBufferedEvents_ are
     // consumed by makeExporter() when constructing exporter_.
     const std::string agentName_;
     const size_t maxBufferedEvents_;
     const std::unique_ptr<nixlTelemetryExporter> exporter_;
-    std::unique_ptr<sharedRingBuffer<nixlTelemetryEvent>> buffer_;
     std::vector<nixlTelemetryEvent> events_;
     std::mutex mutex_;
+    // Producer-side staging-queue drop counter: incremented from any thread when
+    // updateData / addXferStats cannot append because events_ is full, so the
+    // event never reaches any exporter. Does not track BUFFER cyclic-ring loss
+    // (a separate, downstream condition). Each flush takes and resets it
+    // (exchange) and publishes the count as an AGENT_TELEMETRY_EVENTS_DROPPED event.
+    std::atomic<uint64_t> droppedEvents_{0};
     asio::thread_pool pool_;
     periodicTask writeTask_;
 };

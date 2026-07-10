@@ -50,7 +50,9 @@ private:
     // (add_counter_increment), so repeated per-operation deltas produce a
     // monotonic cumulative total, matching the Prometheus exporter.
     [[nodiscard]] doca_error_t
-    appendCounterSample(const nixlTelemetryEvent &event, const char *label_values[]);
+    appendCounterSample(const nixlTelemetryEvent &event,
+                        const char *counter_name,
+                        const char *label_values[]);
 
     [[nodiscard]] doca_error_t
     appendErrorCounterSample(const nixlTelemetryEvent &event, const char *status);

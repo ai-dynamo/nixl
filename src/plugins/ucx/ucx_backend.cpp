@@ -619,9 +619,9 @@ protected:
         if (!requests_.empty()) {
             NIXL_WARN << "dedicated " << *this << " dropping " << requests_.size()
                       << " requests on exit";
-            for (auto it = requests_.begin(); it != requests_.end();) {
-                NIXL_INFO << "dropping " << *(*it);
-                (*it)->complete(NIXL_ERR_BACKEND);
+            for (auto *req : requests_) {
+                NIXL_INFO << "dropping " << *req;
+                req->complete(NIXL_ERR_BACKEND);
             }
             requests_.clear();
         }
