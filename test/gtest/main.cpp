@@ -77,23 +77,20 @@ namespace {
         "HardwareWarningTest.EfaHardwareMismatchWarning",
         "HardwareWarningTest.EfaHardwareMismatchNoWarning",
         "LoadedPluginTestFixture.LibfabricPluginAdvertisesPostThreadOptions",
-        "LibfabricLoadPluginInstantiation/LoadSinglePluginTestFixture.SimpleLifeCycleTest/0"
-    };
+        "LibfabricLoadPluginInstantiation/LoadSinglePluginTestFixture.SimpleLifeCycleTest/0"};
 
     const std::set<std::string> non_gpu_skips = {
         "HardwareWarningTest.WarnWhenGpuPresentButCudaNotSupported",
         "HardwareWarningTest.WarnWhenIbPresentButRdmaNotSupported",
         "HardwareWarningTest.NoWarningWhenIbAndCudaSupported",
-        "ucxDeviceApi*"
-    };
+        "ucxDeviceApi*"};
 
     std::mutex mutex;
     std::vector<std::string> required_but_skipped;
 
 } // namespace
 
-class SkippedTestsChecker
-    : public testing::EmptyTestEventListener {
+class SkippedTestsChecker : public testing::EmptyTestEventListener {
 public:
     void
     allowForSkip(const std::set<std::string> &set) {
@@ -102,7 +99,7 @@ public:
 
 private:
     std::set<std::string> allowed_for_skip_ = {
-#if !defined( LOAD_ALL_PLUGINS )
+#if !defined(LOAD_ALL_PLUGINS)
         "UcxLoadPluginInstantiation/LoadSinglePluginTestFixture.SimpleLifeCycleTest/0",
         "GdsLoadPluginInstantiation/LoadSinglePluginTestFixture.SimpleLifeCycleTest/0",
         "LoadedPluginTestFixture.LibfabricPluginAdvertisesPostThreadOptions",
