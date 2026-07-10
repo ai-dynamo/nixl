@@ -23,14 +23,18 @@
 
 #include "open_metrics_text_parser.h"
 
+#include <absl/log/log_sink_registry.h>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <set>
@@ -280,6 +284,86 @@ scrapeCoreOverflow(uint16_t port,
     } while (std::chrono::steady_clock::now() < deadline);
     return result; // ok stays false: full accounting was not observed in time
 }
+
+class ScopedFd {
+public:
+    explicit ScopedFd(int fd) : fd_(fd) {}
+
+    ~ScopedFd() {
+        if (fd_ >= 0) {
+            ::close(fd_);
+        }
+    }
+
+    ScopedFd(const ScopedFd &) = delete;
+    ScopedFd &
+    operator=(const ScopedFd &) = delete;
+    ScopedFd(ScopedFd &&) = delete;
+    ScopedFd &
+    operator=(ScopedFd &&) = delete;
+
+    int
+    get() const {
+        return fd_;
+    }
+
+private:
+    int fd_ = -1;
+};
+
+int
+occupyLocalPort(uint16_t port) {
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return -1;
+    }
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = ::inet_addr("127.0.0.1");
+    if (::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0 ||
+        ::listen(fd, 1) != 0) {
+        ::close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+class SeverityCountingLogSink : public absl::LogSink {
+public:
+    SeverityCountingLogSink() {
+        absl::AddLogSink(this);
+    }
+
+    ~SeverityCountingLogSink() override {
+        absl::RemoveLogSink(this);
+    }
+
+    void
+    Send(const absl::LogEntry &entry) override {
+        const std::string msg(entry.text_message());
+        if (entry.log_severity() == absl::LogSeverity::kWarning &&
+            msg.find("could not be bound") != std::string::npos) {
+            bindWarnings_.fetch_add(1, std::memory_order_relaxed);
+        } else if (entry.log_severity() >= absl::LogSeverity::kWarning) {
+            otherProblems_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    std::size_t
+    bindWarnings() const {
+        return bindWarnings_.load(std::memory_order_relaxed);
+    }
+
+    std::size_t
+    otherProblems() const {
+        return otherProblems_.load(std::memory_order_relaxed);
+    }
+
+private:
+    std::atomic<std::size_t> bindWarnings_{0};
+    std::atomic<std::size_t> otherProblems_{0};
+};
 
 } // namespace
 
@@ -689,4 +773,36 @@ TEST_F(prometheusTelemetryTest, CoreAddXferStatsOverflowConservation) {
     EXPECT_GT(scrape.dropped, 0.0) << "flooding the staging queue must drop xfer batches";
     EXPECT_EQ(std::fmod(scrape.dropped, static_cast<double>(kEventsPerCall)), 0.0)
         << "addXferStats drops the whole 4-event batch, so drops are multiples of 4";
+}
+
+TEST_F(prometheusTelemetryTest, BindCollisionThrowsBindFailed) {
+    const ScopedFd occupier(occupyLocalPort(port_));
+    ASSERT_GE(occupier.get(), 0) << "could not occupy 127.0.0.1:" << port_;
+
+    auto handle = nixlPluginManager::getInstance().loadTelemetryPlugin("prometheus");
+    ASSERT_NE(handle, nullptr);
+
+    const nixlTelemetryExporterInitParams params{"prometheus_bind_collision_agent", 4096};
+    EXPECT_THROW(handle->createExporter(params), nixlTelemetryBindFailed);
+}
+
+TEST_F(prometheusTelemetryTest, BindCollisionCreateIsNonFatalWarn) {
+    const ScopedFd occupier(occupyLocalPort(port_));
+    ASSERT_GE(occupier.get(), 0) << "could not occupy 127.0.0.1:" << port_;
+
+    gtest::ScopedEnv exporter_env;
+    exporter_env.addVar(telemetryExporterVar, "prometheus");
+
+    gtest::LogIgnoreGuard ignore_bind_warning("could not be bound");
+    SeverityCountingLogSink sink;
+
+    std::unique_ptr<nixlTelemetry> telemetry;
+    EXPECT_NO_THROW(telemetry = nixlTelemetry::create("prometheus_bind_collision_create_agent"));
+    EXPECT_EQ(telemetry, nullptr)
+        << "a scrape-port collision must disable telemetry, not fail agent construction";
+
+    EXPECT_EQ(sink.bindWarnings(), std::size_t{1}) << "the collision must log exactly one WARNING";
+    EXPECT_EQ(sink.otherProblems(), std::size_t{0})
+        << "the collision must not log an ERROR or other problem";
+    EXPECT_EQ(ignore_bind_warning.getIgnoredCount(), 1u);
 }
