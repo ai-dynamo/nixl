@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <array>
 #include <chrono>
 #include <sstream>
 #include <thread>
@@ -111,12 +112,11 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &e
       maxBufferedEvents_(resolveMaxBufferedEvents()),
       exporter_(makeExporter(exporter_name)),
       metricEnabled_(resolveEnabledMetrics()),
+      stagingQueue_(maxBufferedEvents_),
       pool_(1),
       writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false) {
     // A constructed nixlTelemetry always has an exporter (makeExporter throws
-    // otherwise), so reserve the event buffer up front and start the periodic
-    // export task.
-    events_.reserve(maxBufferedEvents_);
+    // otherwise), so start the periodic export task.
     startExportTask();
 
     if (!nixlTime::fastClockUsesHwCounter()) {
@@ -272,14 +272,9 @@ nixlTelemetry::startExportTask() {
 
 bool
 nixlTelemetry::flushPendingEvents() {
-    std::vector<nixlTelemetryEvent> next_queue;
-    next_queue.reserve(maxBufferedEvents_);
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        events_.swap(next_queue);
-    }
+    auto pending = stagingQueue_.takePending();
 
-    for (auto &event : next_queue) {
+    for (auto &event : pending) {
         // Deactivated metrics never enter the queue (filtered at the source), so
         // everything here is already exportable.
         exporter_->exportEvent(event);
@@ -297,7 +292,7 @@ nixlTelemetry::exportDroppedEvents() {
     // staging queue, it can never itself be staging-dropped; emitting only a
     // positive count keeps the no-overflow path event-free (preserving
     // exact-count contracts).
-    const uint64_t dropped = droppedEvents_.exchange(0, std::memory_order_relaxed);
+    const uint64_t dropped = stagingQueue_.exchangeDropped();
     if (dropped > 0 &&
         isMetricEnabled(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)) {
         exporter_->exportEvent(
@@ -329,13 +324,8 @@ nixlTelemetry::updateData(nixl_telemetry_event_type_t event_type, uint64_t value
     if (!isMetricEnabled(event_type)) {
         return;
     }
-    // agent can be multi-threaded
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (events_.size() >= maxBufferedEvents_) {
-        droppedEvents_.fetch_add(1, std::memory_order_relaxed);
-        return;
-    }
-    events_.emplace_back(event_type, value);
+    // agent can be multi-threaded; the queue performs its own drop accounting.
+    stagingQueue_.tryPush({event_type, value});
 }
 
 // TODO: the next 4 update* methods may be removable -- addXferStats covers them.
@@ -398,24 +388,25 @@ nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
         return;
     }
 
-    // Atomic per-transfer batch: all activated events land together or none do.
-    const std::lock_guard lock(mutex_);
-    if (events_.size() + batch_size > maxBufferedEvents_) {
-        droppedEvents_.fetch_add(batch_size, std::memory_order_relaxed);
-        return;
-    }
+    // Build the activated subset in a fixed-size stack array (post time, transfer
+    // time, bytes, request count) and submit it as one all-or-none batch; the
+    // queue accepts every event or drops the whole batch.
+    std::array<nixlTelemetryEvent, 4> batch;
+    size_t count = 0;
     if (post_on) {
-        events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
-                             static_cast<uint64_t>(post_time.count()));
+        batch[count++] = {nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+                          static_cast<uint64_t>(post_time.count())};
     }
     if (time_on) {
-        events_.emplace_back(nixl_telemetry_event_type_t::AGENT_XFER_TIME,
-                             static_cast<uint64_t>(xfer_time.count()));
+        batch[count++] = {nixl_telemetry_event_type_t::AGENT_XFER_TIME,
+                          static_cast<uint64_t>(xfer_time.count())};
     }
     if (bytes_on) {
-        events_.emplace_back(bytes_type, bytes);
+        batch[count++] = {bytes_type, bytes};
     }
     if (requests_on) {
-        events_.emplace_back(requests_type, 1);
+        batch[count++] = {requests_type, 1};
     }
+
+    stagingQueue_.tryPushBatch(batch.data(), count);
 }

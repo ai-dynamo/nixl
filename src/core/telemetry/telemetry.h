@@ -19,6 +19,7 @@
 
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
+#include "telemetry_staging_queue.h"
 #include "mem_section.h"
 #include "nixl_types.h"
 
@@ -143,14 +144,13 @@ private:
     // the source before it enters the staging queue. All-true when the variable
     // is unset (backward compatible).
     const nixl_telemetry_metric_mask_t metricEnabled_;
-    std::vector<nixlTelemetryEvent> events_;
-    std::mutex mutex_;
-    // Producer-side staging-queue drop counter: incremented from any thread when
-    // updateData / addXferStats cannot append because events_ is full, so the
-    // event never reaches any exporter. Does not track BUFFER cyclic-ring loss
-    // (a separate, downstream condition). Each flush takes and resets it
-    // (exchange) and publishes the count as an AGENT_TELEMETRY_EVENTS_DROPPED event.
-    std::atomic<uint64_t> droppedEvents_{0};
+    // Bounded producer/consumer staging queue: owns event storage, the capacity
+    // reserve, the producer mutex, capacity enforcement, single/batch insertion,
+    // the swap-drain, and the staging-drop counter. Its drops do not track BUFFER
+    // cyclic-ring loss (a separate, downstream condition); each flush takes and
+    // resets the drop count and publishes it as an AGENT_TELEMETRY_EVENTS_DROPPED
+    // event.
+    nixlTelemetryStagingQueue stagingQueue_;
     asio::thread_pool pool_;
     periodicTask writeTask_;
 };
