@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_UTILS_COMMON_STR_UTIL_H
-#define NIXL_UTILS_COMMON_STR_UTIL_H
+#ifndef NIXL_SRC_UTILS_COMMON_STR_UTIL_H
+#define NIXL_SRC_UTILS_COMMON_STR_UTIL_H
 
 #include <string>
 #include <vector>
@@ -26,6 +26,13 @@
 
 namespace nixl::str {
 
+/**
+ * @brief Split @p s on @p delim into non-empty, whitespace-stripped tokens.
+ *
+ * @param s String to split.
+ * @param delim Delimiter character (default ',').
+ * @return Tokens in input order, ASCII-whitespace-trimmed; empty tokens dropped.
+ */
 [[nodiscard]] inline std::vector<std::string>
 splitStripped(absl::string_view s, char delim = ',') {
     std::vector<std::string> tokens;
@@ -40,4 +47,4 @@ splitStripped(absl::string_view s, char delim = ',') {
 
 } // namespace nixl::str
 
-#endif // NIXL_UTILS_COMMON_STR_UTIL_H
+#endif // NIXL_SRC_UTILS_COMMON_STR_UTIL_H
