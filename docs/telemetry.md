@@ -77,9 +77,10 @@ stream:
   alongside the existing counter and gauge. Bucket boundaries default to a
   microsecond range covering ~10us..~10s and are overridable via
   `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` (a comma-separated list of
-  strictly-increasing positive microsecond upper bounds; absent/empty/invalid
-  falls back to the defaults). Like the other views this is an exporter-side
-  derivation with no new event type.
+  strictly-increasing positive microsecond upper bounds; when absent or empty the
+  built-in defaults are used, while a non-empty but invalid value is rejected and
+  the exporter fails to initialize rather than silently using the defaults). Like
+  the other views this is an exporter-side derivation with no new event type.
 - **Error counters**: the Prometheus and DOCA exporters expose error events as
   `agent_errors_total{status="<status>"}`. The `status` label is bounded by the
   fixed `AGENT_ERR_*` event set: `not_posted`, `invalid_param`, `backend`,

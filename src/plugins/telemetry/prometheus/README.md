@@ -100,7 +100,7 @@ The default bucket boundaries for the transfer-time histograms can be overridden
 export NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US="10,100,1000,10000,100000"
 ```
 
-An absent, empty, or invalid value falls back to the built-in defaults.
+An absent or empty value uses the built-in defaults. A non-empty but invalid value (non-numeric, non-positive, or not strictly increasing) is rejected and the exporter fails to initialize, rather than silently falling back to the defaults.
 
 ### Metric labels
 
