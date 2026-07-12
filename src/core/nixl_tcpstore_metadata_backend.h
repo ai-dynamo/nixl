@@ -61,17 +61,25 @@ public:
         return "TCPStore";
     }
 
-    [[nodiscard]] nixl_status_t
-    sendLocal(const nixl_opt_args_t *extra_params) override;
+    // Ops run their store I/O on the manager's worker thread (no background poll).
+    [[nodiscard]] bool
+    needsWorker() const override {
+        return true;
+    }
 
-    [[nodiscard]] nixl_status_t
-    sendLocalPartial(const nixl_reg_dlist_t &descs, const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixlPreparedOp
+    prepareSendLocal(const nixl_opt_args_t *extra_params) override;
 
-    [[nodiscard]] nixl_status_t
-    fetchRemote(const std::string &remote_name, const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixlPreparedOp
+    prepareSendLocalPartial(const nixl_reg_dlist_t &descs,
+                            const nixl_opt_args_t *extra_params) override;
 
-    [[nodiscard]] nixl_status_t
-    invalidateLocal(const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixlPreparedOp
+    prepareFetchRemote(const std::string &remote_name,
+                       const nixl_opt_args_t *extra_params) override;
+
+    [[nodiscard]] nixlPreparedOp
+    prepareInvalidateLocal(const nixl_opt_args_t *extra_params) override;
 
 private:
     // Publish blob under key, tracking it so invalidateLocal can remove it.

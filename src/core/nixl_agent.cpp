@@ -201,7 +201,11 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
     : name_(name),
       config_(config),
       useEtcd_(detectEtcd()),
-      needsCommThread_(useEtcd_ || config.useListenThread),
+      // The manager runs a worker thread when P2P listens or a centralized store
+      // (etcd/tcpstore) is configured; that thread shares agent state, so the
+      // sync mode is upgraded to STRICT in those cases.
+      needsCommThread_(useEtcd_ || config.useListenThread ||
+                       nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINTS")),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
       md_(makeMDManager(*this)),
       tracer_(makeAgentTracer(name)) {
@@ -233,53 +237,18 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 /*** nixlAgent implementation ***/
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
     : data(std::make_unique<nixlAgentData>(name, cfg)) {
-    if(cfg.useListenThread) {
-        data->listener = std::make_unique<nixlMDStreamListener>(cfg.listenPort);
-        data->listener->setupListener(); // throws on bind/listen failure
-    }
-
-    if (data->needsCommThread_) {
-        data->commThreadStop = false;
-        data->agentShutdown = false;
-        data->commThread = std::thread(&nixlAgentData::commWorker, data.get(), std::ref(*this));
-    }
+    // The metadata manager owns the worker thread and the pluggable backends
+    // (which own their transport state, e.g. the P2P listener bound during
+    // nixlAgentData construction). Start the worker now that the agent is fully
+    // constructed, so it never touches partially-built state.
+    data->md_->start();
 }
 
 nixlAgent::~nixlAgent() {
-    if (data->needsCommThread_) {
-        data->agentShutdown = true;
-        // commQueue is guarded by commLock (see enqueueCommWork/getCommWork);
-        // take the lock for the drain check to avoid racing the comm thread.
-        while (true) {
-            {
-                const std::lock_guard<std::mutex> lock(data->commLock);
-                if (data->commQueue.empty()) {
-                    break;
-                }
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-
-        data->commThreadStop = true;
-        if(data->commThread.joinable()) data->commThread.join();
-
-        try {
-            if (data->commThreadException_) {
-                std::rethrow_exception(data->commThreadException_);
-            }
-        }
-        catch (const std::exception &e) {
-            NIXL_WARN << "Communication thread has thrown an exception: " << e.what();
-        }
-
-        // Close remaining connections from comm thread
-        for (auto &[remote, fd] : data->remoteSockets) {
-            shutdown(fd, SHUT_RDWR);
-            close(fd);
-        }
-
-        data->listener.reset();
-    }
+    // Stop and join the manager's worker while the backends are still alive:
+    // they own sockets / etcd watchers that must be torn down only after the
+    // worker (which uses them) has joined.
+    data->md_->stop();
 }
 
 nixl_status_t
@@ -1735,26 +1704,28 @@ nixlAgent::loadRemoteMD(const nixl_blob_t &remote_metadata, std::string &agent_n
     return ret;
 }
 
+// Single cache-eviction implementation, shared by the public method and by
+// backends (P2P inbound INVL, etcd watch) through the metadata context.
 nixl_status_t
-nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
-    NIXL_LOCK_GUARD(data->lock);
+nixlAgentData::invalidateRemoteMD(const std::string &remote_agent) {
+    NIXL_LOCK_GUARD(lock);
 
-    if (remote_agent == data->name_) {
+    if (remote_agent == name_) {
         NIXL_ERROR_FUNC << "remote agent same as local agent, cannot invalidate local metadata";
         return NIXL_ERR_INVALID_PARAM;
     }
 
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
-    if (data->remoteSections_.erase(remote_agent) > 0) {
+    if (remoteSections_.erase(remote_agent) > 0) {
         ret = NIXL_SUCCESS;
     }
 
-    if (data->remoteBackends_.count(remote_agent) != 0) {
-        for (auto &it : data->remoteBackends_[remote_agent]) {
-            data->backendEngines_[it.first]->disconnect(remote_agent);
+    if (remoteBackends_.count(remote_agent) != 0) {
+        for (auto &it : remoteBackends_[remote_agent]) {
+            backendEngines_[it.first]->disconnect(remote_agent);
         }
 
-        data->remoteBackends_.erase(remote_agent);
+        remoteBackends_.erase(remote_agent);
         ret = NIXL_SUCCESS;
     }
 
@@ -1765,6 +1736,91 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
         NIXL_ERROR_FUNC << "error invalidating remote metadata for agent '" << remote_agent
                         << "' with status " << ret;
     return ret;
+}
+
+// Relocated from the former nixl_listener.cpp (shared cache helpers used by the
+// load/invalidate paths).
+nixl_status_t
+nixlAgentData::loadConnInfo(const std::string &remote_name,
+                            const nixl_backend_t &backend,
+                            const nixl_blob_t &conn_info) {
+    if (backendEngines_.count(backend) == 0) {
+        NIXL_DEBUG << "Agent " << name_ << " does not support a remote backend: " << backend;
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    // No need to reload same conn info, error if it changed
+    const auto r_it = remoteBackends_.find(remote_name);
+    if (r_it != remoteBackends_.end()) {
+        const auto rb_it = r_it->second.find(backend);
+        if (rb_it != r_it->second.end()) {
+            if (rb_it->second != conn_info) {
+                return NIXL_ERR_NOT_ALLOWED;
+            }
+            return NIXL_SUCCESS;
+        }
+    }
+
+    nixlBackendEngine *eng = backendEngines_[backend].get();
+    if (!eng->supportsRemote()) {
+        NIXL_DEBUG << backend << " does not support remote operations";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    const nixl_status_t ret = eng->loadRemoteConnInfo(remote_name, conn_info);
+    if (ret != NIXL_SUCCESS) {
+        return ret;
+    }
+
+    remoteBackends_[remote_name].emplace(backend, conn_info);
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
+    const auto [it, inserted] = remoteSections_.try_emplace(remote_name, remote_name);
+    const nixl_status_t ret = it->second.loadRemoteData(&sd, backendEngines_);
+    // TODO: can be more graceful, if just the new MD blob was improper
+    if (ret != NIXL_SUCCESS) {
+        remoteSections_.erase(it);
+        remoteBackends_.erase(remote_name);
+        return ret;
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgentData::invalidateRemoteData(const std::string &remote_name, uint64_t generation) {
+    lock.assertHeld();
+
+    if (remote_name == name_) {
+        NIXL_ERROR << "Agent " << name_ << " cannot invalidate itself";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    const auto sec_it = remoteSections_.find(remote_name);
+    if (sec_it == remoteSections_.end() || sec_it->second.getGeneration() != generation) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    remoteSections_.erase(sec_it);
+
+    auto it_backends = remoteBackends_.find(remote_name);
+    if (it_backends != remoteBackends_.end()) {
+        for (auto &it : it_backends->second) {
+            backendEngines_[it.first]->disconnect(remote_name);
+        }
+
+        remoteBackends_.erase(it_backends);
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
+    return data->invalidateRemoteMD(remote_agent);
 }
 
 nixl_status_t

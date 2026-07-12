@@ -25,42 +25,56 @@
 
 #include "nixl_metadata_backend.h"
 
+#include <memory>
 #include <string>
 #include <string_view>
 
 class nixlMetadataContext;
+class nixlEtcdClient;
 
 /**
  * @class nixlEtcdMetadataBackend
- * @brief Centralized-store metadata backend.
+ * @brief Self-contained centralized-store metadata backend (etcd).
  *
- * Like the P2P backend, it implements the exchange by reusing the metadata
- * port's serialization (getLocalMD / getLocalPartialMD) and enqueuing ETCD work
- * on the agent's existing communication thread via the port. It depends only on
- * nixlMetadataContext (not nixlAgent) and does not call the agent's public
- * send/fetch methods. Selected by nixlMDManager when NIXL_ETCD_ENDPOINTS is set.
+ * Owns its own nixlEtcdClient (connection + watchers). Outbound ops reuse the
+ * context's serialization (getLocalMD / getLocalPartialMD) and submit the etcd
+ * I/O as tasks on the manager's worker thread; watch-driven invalidations are
+ * drained in serviceEvents(). Depends only on nixlMetadataContext, not nixlAgent.
+ * Selected by nixlMDManager when NIXL_ETCD_ENDPOINTS is set.
  */
 class nixlEtcdMetadataBackend : public nixlMetadataBackend {
 public:
-    explicit nixlEtcdMetadataBackend(nixlMetadataContext &ctx) noexcept;
+    explicit nixlEtcdMetadataBackend(nixlMetadataContext &ctx);
+    ~nixlEtcdMetadataBackend() override;
 
     [[nodiscard]] std::string_view
     name() const override;
 
-    [[nodiscard]] nixl_status_t
-    sendLocal(const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixlPreparedOp
+    prepareSendLocal(const nixl_opt_args_t *extra_params) override;
 
-    [[nodiscard]] nixl_status_t
-    sendLocalPartial(const nixl_reg_dlist_t &descs, const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixlPreparedOp
+    prepareSendLocalPartial(const nixl_reg_dlist_t &descs,
+                            const nixl_opt_args_t *extra_params) override;
 
-    [[nodiscard]] nixl_status_t
-    fetchRemote(const std::string &remote_name, const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixlPreparedOp
+    prepareFetchRemote(const std::string &remote_name,
+                       const nixl_opt_args_t *extra_params) override;
 
-    [[nodiscard]] nixl_status_t
-    invalidateLocal(const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixlPreparedOp
+    prepareInvalidateLocal(const nixl_opt_args_t *extra_params) override;
+
+    [[nodiscard]] bool
+    needsWorker() const override {
+        return true;
+    }
+
+    void
+    serviceEvents() override;
 
 private:
     nixlMetadataContext &ctx_;
+    std::unique_ptr<nixlEtcdClient> client_;
 };
 
 #endif // HAVE_ETCD

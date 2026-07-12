@@ -398,8 +398,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     {
         const LogIgnoreGuard lig1("poll timed out for ip_addr: " + ip_str +
                                   " and port: " + port_str);
-        const LogIgnoreGuard lig2("Listener thread could not connect to IP " + ip_str +
-                                  " and port " + port_str);
+        const LogIgnoreGuard lig2("P2P backend could not connect to IP " + ip_str + " and port " +
+                                  port_str);
         const LogIgnoreGuard lig3("getsockopt gave error for ip_addr: " + ip_str +
                                   " and port: " + port_str + ": No route to host");
         const LogIgnoreGuard lig4("poll returned but socket not ready for write for ip_addr: " +
@@ -530,7 +530,7 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
     // Case 2: Attempt to load connection info on agent without backend
     {
         const LogIgnoreGuard lig1("loadRemoteMD: no common backend found");
-        const LogIgnoreGuard lig2(std::regex("loadRemoteMD in listener thread failed for md from "
+        const LogIgnoreGuard lig2(std::regex("loadRemoteMD in P2P backend failed from "
                                              "peer 127.0.0.1:[0-9]+ with error NIXL_ERR_BACKEND"));
 
         ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);

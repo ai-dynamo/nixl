@@ -24,6 +24,7 @@
 #include "sync.h"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 
 #if HAVE_ETCD
@@ -38,27 +39,7 @@ class SyncClient;
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
-//Internal typedef to define metadata communication request types
-//To be extended with ETCD operations
-enum nixl_comm_t {
-    SOCK_SEND,
-    SOCK_FETCH,
-    SOCK_INVAL,
-    SOCK_MAX,
-#if HAVE_ETCD
-    ETCD_SEND,
-    ETCD_FETCH,
-    ETCD_INVAL
-#endif // HAVE_ETCD
-};
-
-//Command to be sent to listener thread from NIXL API
-// 1) Command type
-// 2) IP Address
-// 3) Port
-// 4) Metadata to send (for sendLocalMD calls)
-using nixl_comm_req_t = std::tuple<nixl_comm_t, std::string, int, nixl_blob_t>;
-
+// A peer socket (ip, port) and the map of open connections the P2P backend owns.
 using nixl_socket_peer_t = std::pair<std::string, int>;
 
 using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
@@ -72,7 +53,7 @@ class nixlMDManager;
  *
  * Implemented by nixlAgentData. Backends hold a reference to this interface
  * instead of the concrete agent, so they never reference nixlAgent (no cycle)
- * and need no friendship for the comm queue.
+ * and need no friendship.
  */
 class nixlMetadataContext {
 public:
@@ -92,17 +73,21 @@ public:
     [[nodiscard]] virtual const std::string &
     getName() const = 0;
 
+    /** Agent configuration a backend needs (listen port/thread, watch timeout). */
+    [[nodiscard]] virtual const nixlAgentConfig &
+    getConfig() const = 0;
+
     /**
      * Deserialize a received metadata blob into the remote-section cache,
-     * returning the embedded remote agent name. Used by backends (e.g. TCPStore)
-     * that read the blob directly instead of via the comm thread.
+     * returning the embedded remote agent name. Used by every backend to load a
+     * fetched/received blob.
      */
     [[nodiscard]] virtual nixl_status_t
     loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) = 0;
 
-    /** Post a metadata request to the agent's communication thread. */
-    virtual void
-    enqueueCommWork(nixl_comm_req_t request) = 0;
+    /** Evict a remote agent's cached metadata (used by inbound INVL / watches). */
+    virtual nixl_status_t
+    invalidateRemoteMD(const std::string &remote_name) = 0;
 };
 
 // Implements nixlMetadataContext so metadata backends reach the serialization
@@ -131,17 +116,10 @@ class nixlAgentData : public nixlMetadataContext {
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
             remoteBackends_;
 
-        // State/methods for listener thread
-        std::unique_ptr<nixlMDStreamListener> listener;
         // Agent-owned metadata manager; always built (single metadata path).
+        // It owns the worker thread and the pluggable backends (which now own
+        // their own transport state: sockets/listener for P2P, client for ETCD).
         const std::unique_ptr<nixlMDManager> md_;
-        nixl_socket_map_t remoteSockets;
-        std::thread commThread;
-        std::vector<nixl_comm_req_t> commQueue;
-        std::mutex commLock;
-        std::atomic<bool> commThreadStop;
-        std::atomic<bool> agentShutdown;
-        std::exception_ptr commThreadException_;
 
         // The order of the following data members is crucial for destruction.
         // Bookkeeping for local connection metadata and user handles per backend
@@ -155,10 +133,6 @@ class nixlAgentData : public nixlMetadataContext {
         const std::unique_ptr<nixl::trace::Tracer> tracer_;
         nixlLocalSection localSection_;
 
-        void
-        commWorker(nixlAgent &myAgent) noexcept;
-        void
-        commWorkerInternal(nixlAgent *myAgent);
         // nixlMetadataContext impl; private as before (backends call via the interface).
         [[nodiscard]] nixl_status_t
         getLocalMD(nixl_blob_t &blob) override;
@@ -170,10 +144,14 @@ class nixlAgentData : public nixlMetadataContext {
         getName() const override {
             return name_;
         }
+        [[nodiscard]] const nixlAgentConfig &
+        getConfig() const override {
+            return config_;
+        }
         [[nodiscard]] nixl_status_t
         loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) override;
-        void enqueueCommWork(nixl_comm_req_t request) override;
-        void getCommWork(std::vector<nixl_comm_req_t> &req_list);
+        nixl_status_t
+        invalidateRemoteMD(const std::string &remote_name) override;
         nixl_status_t
         loadConnInfo(const std::string &remote_name,
                      const nixl_backend_t &backend,
