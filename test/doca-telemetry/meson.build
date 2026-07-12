@@ -63,6 +63,26 @@ if build_doca_tests
     )
 
     test('doca_nixl_test', doca_nixl_test_exe, is_parallel: false)
+
+    # Exporter volume/stress case, kept in its own source/binary so the sustained
+    # high-volume run stays isolated from the functional exporter tests.
+    doca_nixl_stress_test_exe = executable('doca_nixl_stress_test',
+        sources: [
+            'telemetry_doca_stress_test.cpp',
+            doca_exporter_dir / 'doca_exporter.cpp',
+        ],
+        include_directories: [
+            nixl_inc_dirs,
+            utils_inc_dirs,
+            include_directories(doca_exporter_dir),
+            include_directories('../../src/plugins/telemetry/common'),
+        ],
+        dependencies: [gtest_dep, doca_telemetry_dep, doca_common_dep, nixl_infra, nixl_common_dep, absl_log_dep, absl_strings_dep],
+        cpp_args: ['-Wno-deprecated-declarations'],
+        install: true,
+    )
+
+    test('doca_nixl_stress_test', doca_nixl_stress_test_exe, is_parallel: false)
     message('Building standalone DOCA telemetry exporter tests')
 
     cmake = import('cmake')
