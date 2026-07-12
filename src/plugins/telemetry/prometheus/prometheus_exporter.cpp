@@ -84,7 +84,21 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
             registry_.reset();
             exposer_.reset();
             registry_ = std::make_shared<prometheus::Registry>();
-            exposer_ = std::make_shared<prometheus::Exposer>(bind_address);
+            try {
+                exposer_ = std::make_shared<prometheus::Exposer>(bind_address);
+            }
+            catch (const std::exception &e) {
+                // civetweb reports a failed port bind with this exact text (verified
+                // against prometheus-cpp v1.3.0 / civetweb 1.16); other startup
+                // failures (threads, ACL, OOM, ...) don't, so they stay fatal.
+                const std::string reason = e.what();
+                if (reason.find("Failed to setup server ports") == std::string::npos) {
+                    throw;
+                }
+                throw nixlTelemetryBindFailed("Prometheus telemetry endpoint '" + bind_address +
+                                              "' could not be bound (likely already in use by "
+                                              "another process)");
+            }
             exposer_->RegisterCollectable(registry_);
             s_exposer_weak = exposer_;
             s_registry_weak = registry_;
@@ -117,37 +131,23 @@ nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
 // Events are defined in the telemetry.cpp file
 void
 nixlTelemetryPrometheusExporter::initializeMetrics() {
-    using event_type_t = nixl_telemetry_event_type_t;
-
-    registerCounter(event_type_t::AGENT_TX_BYTES, "Number of bytes sent by the agent");
-    registerCounter(event_type_t::AGENT_RX_BYTES, "Number of bytes received by the agent");
-    registerCounter(event_type_t::AGENT_TX_REQUESTS_NUM, "Number of requests sent by the agent");
-    registerCounter(event_type_t::AGENT_RX_REQUESTS_NUM,
-                    "Number of requests received by the agent");
-    registerCounter(event_type_t::AGENT_MEMORY_REGISTERED, "Cumulative memory registered");
-    registerCounter(event_type_t::AGENT_MEMORY_DEREGISTERED, "Cumulative memory deregistered");
-    registerCounter(event_type_t::AGENT_XFER_TIME, "Start to Complete (per request)");
-    registerCounter(event_type_t::AGENT_XFER_POST_TIME,
-                    "Start to posting to Back-End (per request)");
+    for (const auto event_type : telemetry_metric_event_types) {
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event_type);
+        if (descriptor.counterName != nullptr) {
+            registerCounter(event_type, descriptor.counterName, descriptor.counterHelp);
+        }
+        if (descriptor.gaugeName != nullptr) {
+            registerGauge(event_type, descriptor.gaugeName, descriptor.gaugeHelp);
+        }
+    }
     registerErrorCounters();
-
-    registerGauge(
-        event_type_t::AGENT_TX_BYTES, "agent_tx_last_bytes", "Bytes sent by the last request");
-    registerGauge(
-        event_type_t::AGENT_RX_BYTES, "agent_rx_last_bytes", "Bytes received by the last request");
-    registerGauge(event_type_t::AGENT_MEMORY_REGISTERED,
-                  "agent_memory_registered_last_bytes",
-                  "Memory registered by the last operation");
-    registerGauge(event_type_t::AGENT_MEMORY_DEREGISTERED,
-                  "agent_memory_deregistered_last_bytes",
-                  "Memory deregistered by the last operation");
 }
 
 void
 nixlTelemetryPrometheusExporter::registerCounter(const nixl_telemetry_event_type_t event_type,
+                                                 const std::string &metric_name,
                                                  const std::string &help) {
-    const std::string name(nixlEnumStrings::telemetryEventTypeStr(event_type));
-    auto &family = prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
+    auto &family = prometheus::BuildCounter().Name(metric_name).Help(help).Register(*registry_);
     auto &metric = family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}});
     const auto inserted = counters_.try_emplace(event_type, &family, &metric).second;
     if (!inserted) {
