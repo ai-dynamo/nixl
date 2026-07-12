@@ -42,19 +42,19 @@ env:
   TEST_TIMEOUT: 40
   UCX_TLS: "^shm"
   STORAGE_DRIVER: 'overlay'
-  CI_IMAGE_TAG: "20260625-1"
+  CI_IMAGE_TAG: "20260707-1"
 
 runs_on_dockers:
   # TSan-instrumented dependency image for the tsan build (DEPS_SANITIZE=thread
   # so abseil's absl::Mutex annotations are visible to ThreadSanitizer).
   - {
-     file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-25.10-cuda13.0-ubuntu24.04-tsan", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=thread'
+     file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-pytorch26.06-cuda13.3-ubuntu24.04-tsan", tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=thread'
     }
   # ASan-instrumented dependency image for the asan_ubsan build.
   - {
-     file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-25.10-cuda13.0-ubuntu24.04-asan", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=address'
+     file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-pytorch26.06-cuda13.3-ubuntu24.04-asan", tag: "${CI_IMAGE_TAG}",
+     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=address'
     }
 
 matrix:
@@ -72,8 +72,8 @@ matrix:
   # an anchored regex against the image name merged into the axis; the -asan and
   # -tsan suffixes keep the two images distinct.
   exclude:
-    - {name: 'nixl-base-25.10-cuda13.0-ubuntu24.04-asan', sanitizer: 'tsan'}
-    - {name: 'nixl-base-25.10-cuda13.0-ubuntu24.04-tsan', sanitizer: 'asan_ubsan'}
+    - {name: 'nixl-base-pytorch26.06-cuda13.3-ubuntu24.04-asan', sanitizer: 'tsan'}
+    - {name: 'nixl-base-pytorch26.06-cuda13.3-ubuntu24.04-tsan', sanitizer: 'asan_ubsan'}
 
 # Surface arch + sanitizer mode in the task name (e.g. x86_64/san-asan_ubsan).
 taskName: "${arch}/${sanitizer}/${name}/${axis_index}"
