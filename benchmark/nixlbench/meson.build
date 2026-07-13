@@ -139,6 +139,10 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 # GFlags
 gflags_dep = dependency('gflags', required: true)
 
+# CLI11 is used only by the explicit `raw` command hierarchy. Legacy invocations
+# continue to use gflags unchanged.
+cli11_dep = dependency('CLI11', required: true, fallback: ['cli11', 'CLI11_dep'])
+
 # ASIO (usually via libasio-dev package)
 asio_dep = dependency('asio', required: true)
 
@@ -208,7 +212,7 @@ configure_file(
     install_dir: get_option('includedir') / 'nixlbench'
 )
 
-deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, tomlplusplus_dep, asio_dep]
+deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, cli11_dep, tomlplusplus_dep, asio_dep]
 args = []
 if etcd_available
     deps += [etcd_dep]
@@ -256,6 +260,7 @@ if nvshmem_available
     nvcc_args += args
     nvcc_cmd_files = [
                  meson.current_build_dir() + '/src/utils/libutils.a.p/utils.cpp.o',
+                 meson.current_build_dir() + '/src/utils/libutils.a.p/raw_cli.cpp.o',
                  meson.current_build_dir() + '/src/runtime/libruntime.a.p/runtime.cpp.o',
                  meson.current_build_dir() + '/src/worker/libworker.a.p/worker.cpp.o',
                  meson.current_build_dir() + '/src/worker/nixl/libnixl_worker.a.p/nixl_worker.cpp.o',
@@ -271,7 +276,7 @@ if nvshmem_available
     nvcc_command = [nvcc, nvcc_args, '-o', '@OUTPUT@', '@INPUT@']
     nvcc_command += nvcc_cmd_files
 
-    custom_target('nixlbench',
+    nixlbench_target = custom_target('nixlbench',
         input: 'src/main.cpp',
         output: 'nixlbench',
         command: nvcc_command,
@@ -280,11 +285,15 @@ if nvshmem_available
         install_dir: get_option('bindir'),
         depends: [nixlbench_runtimes, utils_lib, worker_libs])
 else
-    executable('nixlbench', 'src/main.cpp',
+    nixlbench_target = executable('nixlbench', 'src/main.cpp',
                 include_directories: inc_dir,
                 link_with: [nixlbench_runtimes, utils_lib, worker_libs],
                 dependencies: deps,
                 link_args: args,
                 install: true,
                 install_dir: get_option('bindir'))
+endif
+
+if get_option('build_tests') and get_option('buildtype') != 'release'
+    subdir('tests')
 endif

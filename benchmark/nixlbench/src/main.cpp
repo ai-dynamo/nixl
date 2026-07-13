@@ -20,6 +20,7 @@
 #include <nixl.h>
 #include <sys/time.h>
 #include "utils/utils.h"
+#include "utils/raw_cli.h"
 #include "utils/scope_guard.h"
 #include "worker/nixl/nixl_worker.h"
 #if HAVE_NVSHMEM && HAVE_CUDA
@@ -180,12 +181,9 @@ createWorker() {
 }
 } // namespace
 
-int main(int argc, char *argv[]) {
-    int ret = xferBenchConfig::parseConfig(argc, argv);
-    if (0 != ret) {
-        return EXIT_FAILURE;
-    }
-
+static int
+runBenchmark() {
+    int ret = 0;
     int num_threads = xferBenchConfig::num_threads;
 
     // Create the appropriate worker based on worker configuration
@@ -235,4 +233,21 @@ int main(int argc, char *argv[]) {
     }
 
     return worker_ptr->signaled() ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+int
+main(int argc, char *argv[]) {
+    if (nixlbench::isRawCommand(argc, argv)) {
+        const auto result = nixlbench::prepareRawCommand(argc, argv, std::cout, std::cerr);
+        if (result.status != 0 || !result.execute) {
+            return result.status;
+        }
+        return runBenchmark();
+    }
+
+    // Preserve the flags-only interface by routing every non-raw invocation directly to gflags.
+    if (xferBenchConfig::parseConfig(argc, argv) != 0) {
+        return EXIT_FAILURE;
+    }
+    return runBenchmark();
 }
