@@ -436,7 +436,7 @@
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
-          description: "NIXL version to use (tag like 1.3.1, branch name, or commit hash)"
+          description: "NIXL version to use (tag like 1.4.0, branch name, or commit hash)"
       - string:
           name: "UCX_VERSION"
           default: "v1.22.x"
@@ -627,7 +627,7 @@
           default: ""
           description: >
             Optional override for the vllm-cu13 base image build-arg.<br/>
-            Leave empty for <b>rc0</b> (uses Dockerfile default <code>docker.io/vllm/vllm-openai:latest</code>).<br/>
+            Leave empty for <b>rc0</b> (uses the CUDA 13 default <code>docker.io/vllm/vllm-openai:latest-cu130</code>).<br/>
             For <b>rcN, N&gt;0</b> set to the corresponding rc0 image, e.g.<br/>
             <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>
       - string:
@@ -635,7 +635,7 @@
           default: ""
           description: >
             Optional override for the sglang-cu12 base image build-arg.<br/>
-            Leave empty for <b>rc0</b> (uses Dockerfile default <code>docker.io/lmsysorg/sglang:latest</code>).<br/>
+            Leave empty for <b>rc0</b> (uses the CUDA 12 default <code>docker.io/lmsysorg/sglang:latest-cu129-runtime</code>).<br/>
             For <b>rcN, N&gt;0</b> pin to the rc0 sglang-cu12-nixl image, e.g.<br/>
             <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-cu12-nixl:1.1.0-rc0</code>
       - string:
