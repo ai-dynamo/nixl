@@ -16,7 +16,11 @@
 
 ARG BASE_IMAGE
 ARG BASE_IMAGE_TAG
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+# When overridden to an Artifactory URL, the wheel stage pulls the pre-built deps
+# image instead of building them locally. Default keeps the single-stage local build.
+ARG wheel_base=wheel_base
+
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS wheel_base
 
 ARG DEFAULT_PYTHON_VERSION="3.14"
 ARG ARCH="x86_64"
@@ -347,6 +351,13 @@ RUN cd /usr/local/src && \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
+
+FROM $wheel_base AS wheel
+
+ARG ARCH="x86_64"
+ARG BUILD_TYPE="release"
+ARG BUILD_NIXL_EP="true"
+ARG UCX_SONAME_SUFFIX=""
 
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
