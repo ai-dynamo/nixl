@@ -10,7 +10,7 @@
 # - Which UCX: the UCX_REF default in the release's own build-container.sh
 #   (each release carries the UCX it ships with).
 # - Which commits: newest MAX_COMMITS first-parent commits past the fork from main.
-# - Folder: release/<ver>/nixl-<nixl_sha8>-ucx-<ucx_sha8> - the nightly job's
+# - Folder: release/<ver>/<nixl_sha8> - the nightly job's
 #   publish layout. A variant counts as published when a nixl_cuNN wheel is
 #   present in the folder; there are no marker files.
 # - Consequences: a failing build retries every cycle until it succeeds or the
@@ -41,7 +41,7 @@ runs_on_dockers:
 
 env:
   # Releases older than this are not built. Anything newer is picked up automatically.
-  MIN_RELEASE: "1.3.1"
+  MIN_RELEASE: "1.4.0"
   # Newest N commits to check per release branch.
   MAX_COMMITS: "10"
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
@@ -94,24 +94,12 @@ steps:
           continue
         fi
 
-        # Resolve the UCX version to a sha once per branch - the wheel folder name
-        # carries it. The ^{} peel (last line) handles annotated tags.
-        if [[ "${ucx_ver}" =~ ^[a-f0-9]{8,40}$ ]]; then
-          ucx_sha8="${ucx_ver:0:8}"
-        else
-          ucx_sha8="$(timeout 30 git ls-remote https://github.com/openucx/ucx.git "${ucx_ver}" "${ucx_ver}^{}" | tail -n1 | cut -c1-8)"
-        fi
-        if [ -z "${ucx_sha8}" ]; then
-          echo "release/${ver}: cannot resolve UCX version '${ucx_ver}', skipping"
-          continue
-        fi
-
         base="$(git merge-base origin/main "origin/release/${ver}")"
         candidates="$(git rev-list --first-parent "${base}..origin/release/${ver}" | head -"${MAX_COMMITS}")"
 
         n_cand=0; n_build=0
         for sha in ${candidates}; do
-          folder="release/${ver}/nixl-${sha:0:8}-ucx-${ucx_sha8}"
+          folder="release/${ver}/${sha:0:8}"
 
           # Only 200 (folder listing) and 404 (folder absent) are conclusive;
           # other errors (auth, 5xx, network) skip the commit until the next
@@ -131,14 +119,12 @@ steps:
             if [ "${http_code}" = "200" ] && grep -q "\"/nixl_${variant}-" folder.json; then
               continue
             fi
-            # Forward the resolved UCX sha (not the mutable ref) so the nightly
-            # publishes to exactly the folder checked here.
-            echo "${sha} ${ver} ${ucx_sha8} ${variant}" >> triggers.txt
+            echo "${sha} ${ver} ${ucx_ver} ${variant}" >> triggers.txt
             n_build=$((n_build+1))
           done
         done
 
-        echo "release/${ver}: ucx=${ucx_ver} (${ucx_sha8}) candidates=${n_cand} to_build=${n_build}"
+        echo "release/${ver}: ucx=${ucx_ver} candidates=${n_cand} to_build=${n_build}"
       done
 
       echo "=== Poller summary: $(wc -l < triggers.txt) build(s) to trigger ==="
@@ -158,7 +144,7 @@ steps:
           def baseTag = [:]
           env.CUDA_VARIANTS.tokenize().each { def p = it.split(':', 2); baseTag[p[0]] = p[1] }
           for (line in triggers.split('\n')) {
-              // line: <nixl_sha> <ver> <ucx_sha8> <variant>
+              // line: <nixl_sha> <ver> <ucx_ver> <variant>
               def parts = line.trim().split(/\s+/)
               build(job: 'nixl-ci-build-wheel-nightly',
                     parameters: [

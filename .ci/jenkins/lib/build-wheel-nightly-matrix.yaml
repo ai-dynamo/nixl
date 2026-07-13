@@ -2,7 +2,7 @@
 # poller-triggered release builds (PUBLISH_DIR set). Pipeline and this config
 # run from main; the source ref (NIXL_VERSION) is cloned into nixl-src, so
 # built refs carry no CI config. Wheels publish to
-# WHEEL_REPO_URL/<PUBLISH_DIR or verification>/nixl-<nixl-sha>-ucx-<ucx-sha>.
+# WHEEL_REPO_URL/<PUBLISH_DIR or verification>/<nixl-sha>.
 
 ---
 job: nixl-ci-build-wheel-nightly
@@ -139,10 +139,10 @@ steps:
       PUBLISH_DIR="${PUBLISH_DIR:-verification}"
       [[ "${PUBLISH_DIR}" =~ ^(verification|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
         || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
-      # Per-source path (NIXL+UCX shas): same-source cu12/cu13 builds co-locate, so
+      # Per-commit folder: cu12/cu13 builds of the same commit co-locate, so
       # `pip install --find-links <path> "nixl[cuXX]"` resolves a matched set.
       . ./wheel_build_ids.env
-      DEST="${WHEEL_REPO_URL}/${PUBLISH_DIR}/nixl-${NIXL_SHA}-ucx-${UCX_SHA}"
+      DEST="${WHEEL_REPO_URL}/${PUBLISH_DIR}/${NIXL_SHA}"
 
       # curl-PUT (no python on the runner for twine); Artifactory indexes it as a
       # pip repo. rc fails the step on any upload error; set +x hides the token.
