@@ -24,6 +24,7 @@
 #include "sync.h"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 
 #if HAVE_ETCD
@@ -38,27 +39,7 @@ class SyncClient;
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
-//Internal typedef to define metadata communication request types
-//To be extended with ETCD operations
-enum nixl_comm_t {
-    SOCK_SEND,
-    SOCK_FETCH,
-    SOCK_INVAL,
-    SOCK_MAX,
-#if HAVE_ETCD
-    ETCD_SEND,
-    ETCD_FETCH,
-    ETCD_INVAL
-#endif // HAVE_ETCD
-};
-
-//Command to be sent to listener thread from NIXL API
-// 1) Command type
-// 2) IP Address
-// 3) Port
-// 4) Metadata to send (for sendLocalMD calls)
-using nixl_comm_req_t = std::tuple<nixl_comm_t, std::string, int, nixl_blob_t>;
-
+// A peer socket (ip, port) and the map of open connections the P2P backend owns.
 using nixl_socket_peer_t = std::pair<std::string, int>;
 
 using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
@@ -109,7 +90,11 @@ public:
     invalidateRemoteMD(const std::string &remote_name) = 0;
 };
 
-class nixlAgentData {
+// Implements nixlMetadataContext so metadata backends reach the serialization
+// primitives and the comm thread without referencing nixlAgent.
+// Preserve the grandfathered 8-space class layout below.
+// clang-format off
+class nixlAgentData : public nixlMetadataContext {
     private:
         const std::string name_;
         const nixlAgentConfig config_;
@@ -131,15 +116,10 @@ class nixlAgentData {
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
             remoteBackends_;
 
-        // State/methods for listener thread
-        std::unique_ptr<nixlMDStreamListener> listener;
-        nixl_socket_map_t remoteSockets;
-        std::thread commThread;
-        std::vector<nixl_comm_req_t> commQueue;
-        std::mutex commLock;
-        std::atomic<bool> commThreadStop;
-        std::atomic<bool> agentShutdown;
-        std::exception_ptr commThreadException_;
+        // Agent-owned metadata manager; always built (single metadata path).
+        // It owns the worker thread and the pluggable backends (which now own
+        // their own transport state: sockets/listener for P2P, client for ETCD).
+        const std::unique_ptr<nixlMDManager> md_;
 
         // The order of the following data members is crucial for destruction.
         // Bookkeeping for local connection metadata and user handles per backend
@@ -153,12 +133,25 @@ class nixlAgentData {
         const std::unique_ptr<nixl::trace::Tracer> tracer_;
         nixlLocalSection localSection_;
 
-        void
-        commWorker(nixlAgent &myAgent) noexcept;
-        void
-        commWorkerInternal(nixlAgent *myAgent);
-        void enqueueCommWork(nixl_comm_req_t request);
-        void getCommWork(std::vector<nixl_comm_req_t> &req_list);
+        // nixlMetadataContext impl; private as before (backends call via the interface).
+        [[nodiscard]] nixl_status_t
+        getLocalMD(nixl_blob_t &blob) override;
+        [[nodiscard]] nixl_status_t
+        getLocalPartialMD(const nixl_reg_dlist_t &descs,
+                          nixl_blob_t &blob,
+                          const nixl_opt_args_t *extra_params) override;
+        [[nodiscard]] const std::string &
+        getName() const override {
+            return name_;
+        }
+        [[nodiscard]] const nixlAgentConfig &
+        getConfig() const override {
+            return config_;
+        }
+        [[nodiscard]] nixl_status_t
+        loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) override;
+        nixl_status_t
+        invalidateRemoteMD(const std::string &remote_name) override;
         nixl_status_t
         loadConnInfo(const std::string &remote_name,
                      const nixl_backend_t &backend,
@@ -186,6 +179,8 @@ class nixlAgentData {
 
     friend class nixlAgent;
 };
+
+// clang-format on
 
 class nixlBackendEngine;
 

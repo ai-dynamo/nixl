@@ -64,9 +64,10 @@ endif
 nixl_lib_sources = [
     'nixl_agent.cpp',
     'nixl_enum_strings.cpp',
+    'nixl_md_manager.cpp',
     'nixl_p2p_metadata_backend.cpp',
+    'nixl_etcd_metadata_backend.cpp',
     'nixl_plugin_manager.cpp',
-    'nixl_listener.cpp',
     'telemetry/telemetry.cpp',
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',
