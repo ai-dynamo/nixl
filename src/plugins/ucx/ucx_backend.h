@@ -223,6 +223,9 @@ protected:
 
     [[nodiscard]] const std::unique_ptr<nixlUcxWorker> &
     getSharedWorker(size_t worker_id) const {
+        if (worker_id >= numSharedWorkers_) [[unlikely]] {
+            throw std::out_of_range("Worker ID out of range");
+        }
         return workers_[worker_id];
     }
 
@@ -232,11 +235,6 @@ protected:
     [[nodiscard]] size_t
     getSharedWorkersSize() const {
         return numSharedWorkers_;
-    }
-
-    [[nodiscard]] size_t
-    getAllWorkersSize() const {
-        return workers_.size();
     }
 
     virtual void
