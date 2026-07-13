@@ -146,17 +146,24 @@ steps:
           for (line in triggers.split('\n')) {
               // line: <nixl_sha> <ver> <ucx_ver> <variant>
               def parts = line.trim().split(/\s+/)
-              build(job: 'nixl-ci-build-wheel-nightly',
-                    parameters: [
-                        string(name: 'NIXL_VERSION', value: parts[0]),
-                        string(name: 'UCX_VERSION', value: parts[2]),
-                        string(name: 'BASE_TAG', value: baseTag[parts[3]]),
-                        string(name: 'PUBLISH_DIR', value: "release/${parts[1]}"),
-                        string(name: 'ci_refspec', value: ciRefspec),
-                    ],
-                    wait: false,
-                    propagate: false)
-              echo "Triggered nixl-ci-build-wheel-nightly: NIXL_VERSION=${parts[0]} UCX_VERSION=${parts[2]} BASE_TAG=${baseTag[parts[3]]} PUBLISH_DIR=release/${parts[1]} ci_refspec=${ciRefspec}"
+              // Per-line guard: one bad trigger (e.g. unknown variant) must not
+              // drop the remaining lines; the next poll retries anything missed.
+              try {
+                  build(job: 'nixl-ci-build-wheel-nightly',
+                        parameters: [
+                            string(name: 'NIXL_VERSION', value: parts[0]),
+                            string(name: 'UCX_VERSION', value: parts[2]),
+                            string(name: 'BASE_TAG', value: baseTag[parts[3]]),
+                            string(name: 'PUBLISH_DIR', value: "release/${parts[1]}"),
+                            string(name: 'ci_refspec', value: ciRefspec),
+                        ],
+                        wait: false,
+                        propagate: false)
+                  echo "Triggered nixl-ci-build-wheel-nightly: NIXL_VERSION=${parts[0]} UCX_VERSION=${parts[2]} BASE_TAG=${baseTag[parts[3]]} PUBLISH_DIR=release/${parts[1]} ci_refspec=${ciRefspec}"
+              } catch (err) {
+                  echo "WARN: failed to trigger for '${line}': ${err}"
+                  currentBuild.result = 'UNSTABLE'
+              }
           }
       } else {
           echo 'No missing wheels - nothing to trigger'
