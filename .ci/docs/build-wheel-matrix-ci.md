@@ -19,8 +19,20 @@ The CI pipeline consists of four main components:
 ┌─────────────────┐    ┌──────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │   Jenkins       │    │  build-          │    │   Dockerfile     │    │   build-        │
 │   Matrix Job    │───▶│  container.sh    │───▶│   .manylinux     │───▶│   wheel.sh      │
-│  (podman runner)│    │  (docker build)  │    │  (full build)    │    │  (wheel pkg)    │
+│  (podman runner)│    │  --wheel-base-   │    │   wheel stage    │    │  (wheel pkg)    │
+│                 │    │  image <url>     │    │   only (~16 steps│    │                 │
 └─────────────────┘    └──────────────────┘    └──────────────────┘    └─────────────────┘
+                                                        ▲
+                                               pulls pre-built image
+                                               from Artifactory
+                                          ┌──────────────────┐
+                                          │  wheel_base stage│
+                                          │  (UCX, gRPC,     │
+                                          │  Rust, DOCA, …)  │
+                                          │  built & pushed  │
+                                          │  by CI-demo when │
+                                          │  Dockerfile changes│
+                                          └──────────────────┘
 ```
 
 ## 1. Jenkins Matrix Configuration
@@ -48,27 +60,35 @@ The job builds wheels for multiple combinations:
 ```yaml
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+  - { file: 'contrib/Dockerfile.manylinux', name: "nixl-wheel-base-manylinux_2_28",
+      tag: "${CI_IMAGE_TAG}", build_args: '... --target wheel_base' }
 ```
 
-The CI runner uses podman-in-container. `build-container.sh` is called inside this container and executes `docker build` (symlinked to podman) to build the wheel image using `contrib/Dockerfile.manylinux`.
+The CI runner uses podman-in-container. `build-container.sh` is called inside this container and executes `docker build` (symlinked to podman). The `nixl-wheel-base-manylinux_2_28` entry is never used as a runner — CI-demo builds and pushes it to Artifactory whenever `CI_IMAGE_TAG` changes, so that each PR build can pull the pre-built `wheel_base` layer instead of compiling all dependencies from scratch.
 
 ## 2. Docker Build Environment (`contrib/Dockerfile.manylinux`)
 
 ### Multi-Stage Build Architecture
 
-The Dockerfile uses a multi-stage build approach with two main stages:
+The Dockerfile has two stages:
+
+- **`wheel_base`** — builds all slow dependencies (hwloc, OpenSSL, Abseil, gRPC, etcd, curl, AWS SDK, libxml2, Azure SDK, Rust, DOCA, gdrcopy, libfabric, Python/uv, UCX). Built and pushed to Artifactory by CI-demo when `CI_IMAGE_TAG` changes. This stage is never rebuilt per-PR.
+- **`wheel`** — `FROM $wheel_base AS wheel` — builds NIXL itself and runs `build-wheel.sh`. The `wheel_base` ARG is overridden to the Artifactory URL so this stage pulls the pre-built image as its base; only ~16 steps run per PR.
 
 ```dockerfile
-# Stage 1: Base stage with all dependencies and build environment
 ARG BASE_IMAGE
 ARG BASE_IMAGE_TAG
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} as wheel-base
+ARG wheel_base=wheel_base   # overridden to Artifactory URL in CI
 
-# ... (dependency installation and build setup)
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS wheel_base
+# ... installs UCX, gRPC, Rust, DOCA, gdrcopy, etc.
 
-# Stage 2: Default stage that builds and generates wheels
-FROM wheel-base
-# ... (NIXL build and wheel generation)
+FROM $wheel_base AS wheel
+ARG ARCH="x86_64"
+ARG BUILD_TYPE="release"
+ARG BUILD_NIXL_EP="true"
+ARG UCX_SONAME_SUFFIX=""
+# ... builds NIXL and generates wheels
 ```
 
 **Base Image**: `artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09`
@@ -76,38 +96,35 @@ FROM wheel-base
 ### Stage Usage Patterns
 
 #### CI Pipeline Usage (via build-container.sh)
-In the CI pipeline, `build-container.sh` is called with Artifactory base image and the target arch/Python version:
+In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` pointing to the pre-built `wheel_base` image in Artifactory:
 
 ```bash
 ./contrib/build-container.sh \
   --base-image 'artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda' \
   --base-image-tag '13.0-devel-manylinux--25.09' \
-  --wheel-base "manylinux_${manylinux}" \
+  --wheel-base "manylinux_2_28" \
   --python-versions "${python_version}" \
   --arch ${arch} \
-  --dockerfile contrib/Dockerfile.manylinux
+  --torch-versions "2.13" \
+  --dockerfile contrib/Dockerfile.manylinux \
+  --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}"
 ```
 
-The script invokes `docker build` (symlinked to podman) with `BUILD_ARGS` assembled from those parameters, running a full Dockerfile.manylinux build that produces wheels inside the container.
+`--wheel-base-image` causes the script to pass `--build-arg wheel_base=<url> --target wheel`, so only the `wheel` stage runs and the pre-built deps are pulled from Artifactory rather than recompiled.
 
-#### User Usage (Default Stage)
-Users can build the complete image without specifying a target:
+`--torch-versions "2.13"` limits PR builds to the latest torch version. The nightly job omits this flag, building the full matrix.
+
+#### User Usage (Full Build)
+Users can build the complete image locally without specifying a target:
 
 ```bash
-docker build -f contrib/Dockerfile.manylinux .
+./contrib/build-container.sh --dockerfile contrib/Dockerfile.manylinux
 ```
 
-This will:
-- Use the `wheel-base` stage as foundation
-- Build NIXL from source
-- Generate wheels for all configured Python versions
-- Install the wheel for testing
+This builds both stages from scratch without the `--wheel-base-image` override.
 
-**User Benefits:**
-- Self-contained build environment
-- Pre-built wheels ready for distribution
-- Complete testing environment
-- No need to run separate build steps
+#### Nightly Build
+The nightly job (`nixl-ci-build-wheel-nightly`) omits `--torch-versions` and `--wheel-base-image`, so it builds all torch versions and runs the full two-stage build.
 
 ### Key Dependencies Installed
 
@@ -250,13 +267,14 @@ Sets up the podman container runtime and authenticates with Artifactory:
 
 ### Step 2: Build Wheel
 
-Builds the full NIXL container image (including wheel generation) via `build-container.sh`:
+Builds only the `wheel` stage of `Dockerfile.manylinux` by pulling the pre-built `wheel_base` from Artifactory:
 
-- Calls `contrib/build-container.sh` with the Artifactory base image, target arch, manylinux platform, and Python version
-- The script invokes `docker build` (podman) with `contrib/Dockerfile.manylinux`, which:
-  - Installs all system dependencies (UCX, gRPC, CUDA tools, Rust toolchain, etc.)
+- Calls `contrib/build-container.sh` with `--wheel-base-image <artifactory-url>` and `--torch-versions "2.13"`
+- The script invokes `docker build --target wheel --build-arg wheel_base=<url>` (podman), which:
+  - Pulls the pre-built `nixl-wheel-base-manylinux_2_28:${CI_IMAGE_TAG}` image (all deps already compiled)
   - Builds NIXL from source with meson/ninja
   - Runs `build-wheel.sh` to produce the Python wheel with auditwheel repair
+- Only ~16 Docker steps run per PR build (instead of the full ~53-step build)
 - Wheels are written to the `dist/` directory inside the container image
 
 
@@ -412,6 +430,7 @@ uv pip install --force-reinstall dist/nixl-*.whl
 
 ### Updating Dependencies
 - Modify `contrib/Dockerfile.manylinux` for system package updates
+- **Bump `CI_IMAGE_TAG`** in all six matrix YAMLs (including `.ci/jenkins/lib/build-wheel-matrix.yaml`) — `Dockerfile.manylinux` is in the `CI_FILES` list, so the `cidemo-init.sh` check will fail the PR otherwise
 - Update Python versions in matrix configuration
 - Test new dependencies in isolated environment
 
@@ -424,7 +443,7 @@ uv pip install --force-reinstall dist/nixl-*.whl
 ### Performance Optimization
 - Adjust `NPROC` build argument for parallel compilation
 - Monitor resource usage and adjust Kubernetes limits
-- Consider caching strategies for faster builds
+- Dependencies are cached in the `wheel_base` image; rebuilding it only requires bumping `CI_IMAGE_TAG`
 
 ## 10. Build Configuration Tools
 
