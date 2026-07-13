@@ -63,6 +63,52 @@ using nixl_socket_peer_t = std::pair<std::string, int>;
 
 using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
 
+class nixlMDManager;
+
+/**
+ * @class nixlMetadataContext
+ * @brief Core-internal interface: the agent-side operations a metadata backend
+ *        needs.
+ *
+ * Implemented by nixlAgentData. Backends hold a reference to this interface
+ * instead of the concrete agent, so they never reference nixlAgent (no cycle)
+ * and need no friendship.
+ */
+class nixlMetadataContext {
+public:
+    virtual ~nixlMetadataContext() = default;
+
+    /** Serialize this agent's full local metadata blob. */
+    [[nodiscard]] virtual nixl_status_t
+    getLocalMD(nixl_blob_t &blob) = 0;
+
+    /** Serialize a partial local metadata blob for the given descriptors. */
+    [[nodiscard]] virtual nixl_status_t
+    getLocalPartialMD(const nixl_reg_dlist_t &descs,
+                      nixl_blob_t &blob,
+                      const nixl_opt_args_t *extra_params) = 0;
+
+    /** This agent's name; used by centralized backends to build their KV keys. */
+    [[nodiscard]] virtual const std::string &
+    getName() const = 0;
+
+    /** Agent configuration a backend needs (listen port/thread, watch timeout). */
+    [[nodiscard]] virtual const nixlAgentConfig &
+    getConfig() const = 0;
+
+    /**
+     * Deserialize a received metadata blob into the remote-section cache,
+     * returning the embedded remote agent name. Used by every backend to load a
+     * fetched/received blob.
+     */
+    [[nodiscard]] virtual nixl_status_t
+    loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) = 0;
+
+    /** Evict a remote agent's cached metadata (used by inbound INVL / watches). */
+    virtual nixl_status_t
+    invalidateRemoteMD(const std::string &remote_name) = 0;
+};
+
 class nixlAgentData {
     private:
         const std::string name_;
