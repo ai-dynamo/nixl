@@ -384,10 +384,46 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 - `etcd_lib_path`: Path to ETCD C++ client library
 - `nvshmem_inc_path`: Path to NVSHMEM include directory
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
+- `build_tests`: Build NIXLBench tests for non-release builds (default: true)
 - `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)
 - `prefix`: Installation prefix (default: /usr/local)
 
 ## Usage
+
+### Raw POSIX command
+
+The scoped CLI11 path runs the existing NIXLBench worker with POSIX options
+discovered from the installed plugin. Sizes accept binary human-readable
+suffixes such as `KiB`, `MiB`, and `GiB`. The shorter `KB`, `MB`, `GB`, and
+`TB` spellings are accepted as binary aliases for compatibility.
+
+```bash
+# Create the directory used by the examples below
+mkdir -p /tmp/nixlbench-data
+
+# Inspect the POSIX-specific command and the options exposed by this plugin build
+nixlbench raw posix --help
+
+# Print the resolved configuration without creating a worker or touching files
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --total-buffer-size 64MiB \
+  --start-block-size 4KiB \
+  --max-block-size 1MiB \
+  --dry-run
+
+# Run a checked write using the same existing benchmark execution machinery
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --operation write \
+  --total-buffer-size 64MiB \
+  --start-block-size 4KiB \
+  --max-block-size 1MiB \
+  --check-consistency
+```
+
+Only explicit `raw` commands use CLI11. All existing flags-only commands keep
+their gflags syntax and behavior.
 
 ### ETCD Coordination Setup
 
