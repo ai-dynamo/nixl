@@ -174,7 +174,7 @@ private:
     nixlMetadataContext &ctx_;
     // P2P (address-routed), always present.
     const std::unique_ptr<nixlMetadataBackend> p2pBackend_;
-    // Name-addressed backend (etcd/future), or null when none configured.
+    // Name-addressed backend (etcd/tcpstore/future), or null when none configured.
     const std::unique_ptr<nixlMetadataBackend> backend_;
     // Runs backend I/O and background servicing off the caller thread.
     nixlMetadataWorker worker_;

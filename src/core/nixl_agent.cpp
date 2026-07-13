@@ -201,9 +201,10 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
       config_(config),
       useEtcd_(detectEtcd()),
       // The manager runs a worker thread when P2P listens or a centralized store
-      // (etcd) is configured; that thread shares agent state, so the
+      // (etcd/tcpstore) is configured; that thread shares agent state, so the
       // sync mode is upgraded to STRICT in those cases.
-      needsCommThread_(useEtcd_ || config.useListenThread),
+      needsCommThread_(useEtcd_ || config.useListenThread ||
+                       nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINTS")),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
       md_(makeMDManager(*this)),
       tracer_(makeAgentTracer(name)) {
