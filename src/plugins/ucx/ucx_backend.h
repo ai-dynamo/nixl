@@ -251,8 +251,7 @@ protected:
                   size_t start_idx,
                   size_t end_idx) const;
 
-    nixlUcxEngine(const nixlBackendInitParams &init_params,
-                  size_t num_dedicated_workers = 0);
+    nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
 
     notif_list_t notifList_;
 
@@ -321,8 +320,7 @@ class nixlUcxThread;
  */
 class nixlUcxThreadEngine : public nixlUcxEngine {
 public:
-    nixlUcxThreadEngine(const nixlBackendInitParams &init_params,
-                        size_t num_dedicated_workers = 0);
+    nixlUcxThreadEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
     ~nixlUcxThreadEngine();
 
     nixl_status_t
@@ -343,8 +341,7 @@ class io_context;
 
 class nixlUcxThreadPoolEngine : public nixlUcxThreadEngine {
 public:
-    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
-                            size_t num_threads);
+    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params, size_t num_threads);
     ~nixlUcxThreadPoolEngine();
 
     nixl_status_t

@@ -769,8 +769,7 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
     return std::unique_ptr<nixlUcxEngine>(engine);
 }
 
-nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
-                             size_t num_dedicated_workers)
+nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
     : nixlBackendEngine(&init_params),
       sharedWorkerIndex_(1) {
     std::vector<std::string> devs; /* Empty vector */
