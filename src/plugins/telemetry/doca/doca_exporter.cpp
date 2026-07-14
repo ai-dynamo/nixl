@@ -16,6 +16,7 @@
  */
 #include "doca_exporter.h"
 #include "common/configuration.h"
+#include "common/exception.h"
 #include "common/nixl_log.h"
 #include "common/str_util.h"
 #include "histogram_buckets.h"
@@ -65,36 +66,45 @@ getBindAddress() {
         std::to_string(port);
 }
 
-struct DocaBackends {
+struct DocaExporterConfig {
     bool scrape = false;
     bool ipc = false;
+    std::string bind_address;
+    std::string ipc_sockets_dir;
 };
-
-[[nodiscard]] DocaBackends
-parseBackends() {
-    const std::string spec =
-        nixl::config::getValueDefaulted<std::string>(docaBackendsVar, docaBackendScrape);
-    DocaBackends backends;
-    for (const std::string &token : nixl::str::splitStrippedSet(spec)) {
-        if (token == docaBackendScrape) {
-            backends.scrape = true;
-        } else if (token == docaBackendIpc) {
-            backends.ipc = true;
-        } else {
-            throw std::runtime_error(std::string(docaBackendsVar) + ": unknown backend '" +
-                                     std::string(token) + "'; valid backends are '" +
-                                     docaBackendScrape + "', '" + docaBackendIpc + "'");
-        }
-    }
-    if (!backends.scrape && !backends.ipc) {
-        backends.scrape = true;
-    }
-    return backends;
-}
 
 [[nodiscard]] std::string
 getIpcSocketsDir() {
     return nixl::config::getValueDefaulted<std::string>(docaIpcSocketsDirVar, std::string());
+}
+
+[[nodiscard]] DocaExporterConfig
+parseExporterConfig() {
+    DocaExporterConfig config;
+    const std::string spec =
+        nixl::config::getValueDefaulted<std::string>(docaBackendsVar, docaBackendScrape);
+    for (const std::string &token : nixl::str::splitStrippedSet(spec)) {
+        if (token == docaBackendScrape) {
+            config.scrape = true;
+        } else if (token == docaBackendIpc) {
+            config.ipc = true;
+        } else {
+            nixl::throwRuntimeError(docaBackendsVar,
+                                    ": unknown backend '",
+                                    token,
+                                    "'; valid backends are '",
+                                    docaBackendScrape,
+                                    "', '",
+                                    docaBackendIpc,
+                                    "'");
+        }
+    }
+    if (!config.scrape && !config.ipc) {
+        config.scrape = true;
+    }
+    config.bind_address = getBindAddress();
+    config.ipc_sockets_dir = getIpcSocketsDir();
+    return config;
 }
 
 [[nodiscard]] std::string
@@ -153,10 +163,7 @@ struct DocaSharedContext {
         base_histograms{};
     std::unordered_set<doca_telemetry_exporter_histogram_id_t> histogram_ids;
 
-    DocaSharedContext(bool enable_scrape,
-                      bool enable_ipc,
-                      const std::string &bind_address,
-                      const std::string &ipc_sockets_dir);
+    explicit DocaSharedContext(const DocaExporterConfig &config);
     ~DocaSharedContext();
 
     DocaSharedContext(const DocaSharedContext &) = delete;
@@ -168,13 +175,12 @@ private:
     cleanup();
 };
 
-DocaSharedContext::DocaSharedContext(bool enable_scrape,
-                                     bool enable_ipc,
-                                     const std::string &bind_address,
-                                     const std::string &ipc_sockets_dir)
-    : scrape_enabled(enable_scrape),
-      ipc_enabled(enable_ipc) {
+DocaSharedContext::DocaSharedContext(const DocaExporterConfig &config)
+    : scrape_enabled(config.scrape),
+      ipc_enabled(config.ipc) {
     const std::string hostname = getHostname();
+    const std::string &bind_address = config.bind_address;
+    const std::string &ipc_sockets_dir = config.ipc_sockets_dir;
 
     if (scrape_enabled) {
         backend_desc = "scrape on " + bind_address;
@@ -323,19 +329,16 @@ nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
       agent_name_(init_params.agentName) {
-    const DocaBackends backends = parseBackends();
-    const std::string bind_address = getBindAddress();
-    const std::string ipc_sockets_dir = getIpcSocketsDir();
+    const DocaExporterConfig config = parseExporterConfig();
 
     const std::lock_guard lock(g_ctx_mutex);
     ctx_ = g_ctx_weak.lock();
     if (!ctx_) {
-        ctx_ = std::make_shared<DocaSharedContext>(
-            backends.scrape, backends.ipc, bind_address, ipc_sockets_dir);
+        ctx_ = std::make_shared<DocaSharedContext>(config);
         g_ctx_weak = ctx_;
         NIXL_INFO << "DOCA Telemetry exporter initialized (" << ctx_->backend_desc << ")";
     } else {
-        if (backends.scrape != ctx_->scrape_enabled || backends.ipc != ctx_->ipc_enabled) {
+        if (config.scrape != ctx_->scrape_enabled || config.ipc != ctx_->ipc_enabled) {
             NIXL_WARN << "DOCA Telemetry exporter for agent '" << agent_name_
                       << "' requested different backends than the shared process-wide DOCA "
                          "context (already created as "
