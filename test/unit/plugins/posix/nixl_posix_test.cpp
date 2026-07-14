@@ -34,6 +34,8 @@
 #include <stdexcept>
 #include <cstdio>
 #include <getopt.h>
+#include <csignal>
+#include <sys/resource.h>
 
 namespace {
     const size_t page_size = sysconf(_SC_PAGESIZE);
@@ -714,6 +716,37 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
     for (i = 0; i < num_transfers; ++i) {
         fill_test_pattern ((void *)dram_buf[i].addr, repost_test_phrase_2, transfer_size);
     }
+
+#ifdef HAVE_LIBURING
+    if (use_uring) {
+        for (const auto &file : fd) {
+            if (ftruncate(file.fd, 0) != 0) {
+                return 1;
+            }
+        }
+        struct rlimit saved{};
+        if (getrlimit(RLIMIT_FSIZE, &saved) != 0) {
+            return 1;
+        }
+        struct rlimit limit{page_size, saved.rlim_max};
+        if (setrlimit(RLIMIT_FSIZE, &limit) != 0) {
+            return 1;
+        }
+        auto previous_sigxfsz_handler = signal(SIGXFSZ, SIG_IGN);
+        status = agent.postXferReq(treq_write);
+        while (status == NIXL_IN_PROG) {
+            status = agent.getXferStatus(treq_write);
+        }
+        signal(SIGXFSZ, previous_sigxfsz_handler);
+        if (setrlimit(RLIMIT_FSIZE, &saved) != 0) {
+            return 1;
+        }
+        if (status >= 0) {
+            std::cerr << "io_uring short write was not reported" << std::endl;
+            return 1;
+        }
+    }
+#endif
 
     status = agent.postXferReq(treq_write);
     if (status < 0) {
