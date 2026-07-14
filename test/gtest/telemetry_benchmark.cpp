@@ -276,15 +276,15 @@ TEST_F(telemetryBenchmark, DISABLED_AddXferStatsDrop) {
 }
 
 // addXferStats with the four per-transfer metrics deactivated via
-// NIXL_TELEMETRY_METRICS: every call is rejected by the producer gate before the
-// lock (batch_size == 0). Isolates the cost of source-side activation checks --
-// the "metric is off" fast path. Buffer sized to never drop so the only thing
-// measured is the gate.
+// NIXL_TELEMETRY_ENABLED_METRICS: every call is rejected by the producer gate
+// before the lock (batch_size == 0). Isolates the cost of source-side activation
+// checks -- the "metric is off" fast path. Buffer sized to never drop so the only
+// thing measured is the gate.
 TEST_F(telemetryBenchmark, DISABLED_AddXferStatsDeactivated) {
     env_.addVar(TELEMETRY_BUFFER_SIZE_VAR, std::to_string(kIters * 4 + 16));
     env_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "3600000");
     // Activate only an unrelated metric, so the four xfer events are all off.
-    env_.addVar(TELEMETRY_METRICS_VAR, "agent_memory_registered");
+    env_.addVar(TELEMETRY_ENABLED_METRICS_VAR, "agent_memory_registered");
 
     double best = std::numeric_limits<double>::max();
     for (size_t r = 0; r < kRepeats; ++r) {

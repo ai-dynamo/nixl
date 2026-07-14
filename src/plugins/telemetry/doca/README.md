@@ -42,7 +42,7 @@ You can restrict which metrics are exported with an allowlist (unset exports eve
 # Comma-separated glob allowlist matched against the base metric names.
 # A name selects its whole family (counter + gauge). Unmatched tokens are
 # ignored with a warning; deactivated metrics are skipped before staging.
-export NIXL_TELEMETRY_METRICS="agent_tx_bytes,agent_rx_bytes,agent_err_*"
+export NIXL_TELEMETRY_ENABLED_METRICS="agent_tx_bytes,agent_rx_bytes,agent_err_*"
 ```
 
 You can configure the exposed prometheus port:

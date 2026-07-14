@@ -204,7 +204,7 @@ joinMetricNames(const nixl_telemetry_metric_mask_t &mask, bool active) {
 resolveEnabledMetrics() {
     nixl_telemetry_metric_mask_t enabled{};
 
-    const auto spec = nixl::config::getValueOptional<std::string>(TELEMETRY_METRICS_VAR);
+    const auto spec = nixl::config::getValueOptional<std::string>(TELEMETRY_ENABLED_METRICS_VAR);
     std::vector<std::string> tokens;
     if (spec) {
         for (const absl::string_view raw : absl::StrSplit(*spec, ',')) {
@@ -235,12 +235,12 @@ resolveEnabledMetrics() {
 
     for (size_t t = 0; t < tokens.size(); ++t) {
         if (!token_matched[t]) {
-            NIXL_WARN << "Ignoring " << TELEMETRY_METRICS_VAR << " entry '" << tokens[t]
+            NIXL_WARN << "Ignoring " << TELEMETRY_ENABLED_METRICS_VAR << " entry '" << tokens[t]
                       << "': no telemetry metric matches";
         }
     }
 
-    NIXL_DEBUG << "Telemetry metric activation (" << TELEMETRY_METRICS_VAR << "): active=["
+    NIXL_DEBUG << "Telemetry metric activation (" << TELEMETRY_ENABLED_METRICS_VAR << "): active=["
                << joinMetricNames(enabled, true) << "] inactive=["
                << joinMetricNames(enabled, false) << "]";
 

@@ -138,7 +138,7 @@ private:
     const std::string agentName_;
     const size_t maxBufferedEvents_;
     const std::unique_ptr<nixlTelemetryExporter> exporter_;
-    // Per-event-type export allowlist resolved once from NIXL_TELEMETRY_METRICS.
+    // Per-event-type export allowlist resolved once from NIXL_TELEMETRY_ENABLED_METRICS.
     // Indexed by nixl_telemetry_event_type_t; a deactivated event is skipped at
     // the source before it enters the staging queue. All-true when the variable
     // is unset (backward compatible).

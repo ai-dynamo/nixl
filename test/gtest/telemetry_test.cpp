@@ -335,7 +335,7 @@ TEST(telemetryMetricContract, DescriptorIsUnifiedExporterSeriesContract) {
 // skipped at the source and never enter the staging queue (BUFFER here).
 TEST_F(telemetryTest, MetricAllowlistSubset) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
-    envHelper_.addVar(TELEMETRY_METRICS_VAR, "agent_tx_bytes");
+    envHelper_.addVar(TELEMETRY_ENABLED_METRICS_VAR, "agent_tx_bytes");
     testFile_ = "test_allowlist_subset";
 
     {
@@ -355,14 +355,14 @@ TEST_F(telemetryTest, MetricAllowlistSubset) {
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
     EXPECT_EQ(event.value_, 1024);
 
-    envHelper_.popVar(); // TELEMETRY_METRICS_VAR
+    envHelper_.popVar(); // TELEMETRY_ENABLED_METRICS_VAR
     envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR
 }
 
 // A family glob (agent_err_*) enables every matching event and nothing else.
 TEST_F(telemetryTest, MetricAllowlistFamilyGlob) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
-    envHelper_.addVar(TELEMETRY_METRICS_VAR, "agent_err_*");
+    envHelper_.addVar(TELEMETRY_ENABLED_METRICS_VAR, "agent_err_*");
     testFile_ = "test_allowlist_family";
 
     {
@@ -380,7 +380,7 @@ TEST_F(telemetryTest, MetricAllowlistFamilyGlob) {
     ASSERT_TRUE(buffer->pop(event));
     EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERR_BACKEND);
 
-    envHelper_.popVar(); // TELEMETRY_METRICS_VAR
+    envHelper_.popVar(); // TELEMETRY_ENABLED_METRICS_VAR
     envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR
 }
 
@@ -388,7 +388,7 @@ TEST_F(telemetryTest, MetricAllowlistFamilyGlob) {
 TEST_F(telemetryTest, MetricAllowlistUnknownTokenExportsNothing) {
     gtest::LogIgnoreGuard ignore_unknown("no telemetry metric matches");
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
-    envHelper_.addVar(TELEMETRY_METRICS_VAR, "nope_*, also_missing");
+    envHelper_.addVar(TELEMETRY_ENABLED_METRICS_VAR, "nope_*, also_missing");
     testFile_ = "test_allowlist_unknown";
 
     {
@@ -403,7 +403,7 @@ TEST_F(telemetryTest, MetricAllowlistUnknownTokenExportsNothing) {
         std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
     EXPECT_EQ(buffer->size(), 0);
 
-    envHelper_.popVar(); // TELEMETRY_METRICS_VAR
+    envHelper_.popVar(); // TELEMETRY_ENABLED_METRICS_VAR
     envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR
 }
 
