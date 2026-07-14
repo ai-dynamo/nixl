@@ -882,6 +882,54 @@
               parent-credentials: true
       script-path: "{jjb_jenkinsfile}"
 
+# Template for the Artifactory cleanup job
+# Daily cleanup of NIXL Artifactory artifacts (Docker images + PyPI wheels).
+- job-template:
+    name: "{jjb_proj}-cleanup-artifacts"   # Will be expanded to 'nixl-ci-cleanup-artifacts'
+    folder: "Devops"
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 14
+          num-to-keep: 14
+      - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-cleanup-artifacts
+              conf_file=.ci/jenkins/lib/cleanup-matrix.yaml
+    description: Do NOT edit this job through the Web GUI !
+    sandbox: true
+    triggers:
+      - timed: "H 6 * * *"  # Daily at 6 AM
+    parameters:
+      - bool:
+          name: "DRY_RUN"
+          default: false
+          description: "Only list images that would be deleted, without actually deleting them"
+      - string:
+          name: "sha1"
+          default: "{jjb_branch}"    # Default to 'main' branch
+          description: "Commit to be checked, usually set by PR"
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                # Configure refspec to handle branches, PRs, and tags
+                refspec: "{jjb_gh_refspec}"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                # Handle git submodules
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
+
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
 - project:
@@ -905,3 +953,4 @@
         - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for nixl_ep elastic tests on dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
         - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
+        - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job

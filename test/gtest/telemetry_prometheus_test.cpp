@@ -17,6 +17,7 @@
 
 #include "common.h"
 #include "plugin_manager.h"
+#include "prometheus_telemetry_fixture.h"
 #include "telemetry.h"
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
@@ -58,7 +59,9 @@ struct PrometheusSample {
 std::string
 httpGet(uint16_t port, const std::string &path) {
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return {};
+    if (fd < 0) {
+        return {};
+    }
 
     const struct timeval tv{3, 0};
     ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -81,7 +84,9 @@ httpGet(uint16_t port, const std::string &path) {
     char buf[4096];
     while (true) {
         const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
-        if (n <= 0) break;
+        if (n <= 0) {
+            break;
+        }
         response.append(buf, n);
     }
     ::close(fd);
@@ -367,35 +372,6 @@ private:
 
 } // namespace
 
-class prometheusTelemetryTest : public ::testing::Test {
-protected:
-    // Register the freshly built plugin directory exactly once for the whole
-    // test suite. Doing it in SetUp() instead would re-register on every
-    // test and trip the plugin manager's "already registered" warning, which
-    // the gtest main() treats as a test failure.
-    static void
-    SetUpTestSuite() {
-        nixlPluginManager::getInstance().addPluginDirectory(std::string(BUILD_DIR) +
-                                                            "/src/plugins/telemetry/prometheus");
-    }
-
-    void
-    SetUp() override {
-        port_ = gtest::PortAllocator::next_tcp_port();
-        env_.addVar("NIXL_TELEMETRY_PROMETHEUS_LOCAL", "y");
-        env_.addVar("NIXL_TELEMETRY_PROMETHEUS_PORT", std::to_string(port_));
-    }
-
-    void
-    TearDown() override {
-        env_.popVar();
-        env_.popVar();
-    }
-
-    gtest::ScopedEnv env_;
-    uint16_t port_ = 0;
-};
-
 // Regression test for a bug where the pre-registered per-agent metric
 // families were immediately wiped from the shared prometheus::Registry by
 // the dtor of a temporary CounterEntry/GaugeEntry created during
@@ -495,6 +471,12 @@ TEST_F(prometheusTelemetryTest, ScrapeEmitsExactlyTheDescriptorSeries) {
         if (descriptor.gaugeName != nullptr) {
             expected.insert(descriptor.gaugeName);
         }
+        if (descriptor.histogramName != nullptr) {
+            const std::string base = descriptor.histogramName;
+            expected.insert(base + "_bucket");
+            expected.insert(base + "_sum");
+            expected.insert(base + "_count");
+        }
     }
     expected.insert("agent_errors_total");
 
@@ -577,10 +559,8 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     ASSERT_FALSE(after_peer_teardown_body.empty())
         << "Got empty /metrics response on port " << port_;
     PrometheusSample remaining_sample;
-    ASSERT_TRUE(findAgentMetricSample(after_peer_teardown_body,
-                                      "agent_tx_bytes_total",
-                                      agent_name,
-                                      remaining_sample))
+    ASSERT_TRUE(findAgentMetricSample(
+        after_peer_teardown_body, "agent_tx_bytes_total", agent_name, remaining_sample))
         << "First agent metrics were removed when peer exporter was destroyed";
     EXPECT_EQ(remaining_sample.value, static_cast<double>(kIncrement * kEventCount));
     EXPECT_FALSE(hasAnyAgentMetricSample(after_peer_teardown_body, peer_agent_name))
