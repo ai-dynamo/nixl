@@ -14,6 +14,7 @@ Custom telemetry exporter plug-ins can be created according to [src/plugins/tele
 2. **Shared Memory Buffer**: Statically-linked built in implementation of telemetry exporter. Uses shared memory cyclic buffer for efficient event storage and export.
 3. **Telemetry Readers**: C++ and Python applications to read and display telemetry data from the cyclic buffer.
 4. **Prometheus exporter**: EXPERIMENTAL (beta) Prometheus compatible telemetry exporter, see [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md).
+5. **DOCA exporter**: EXPERIMENTAL DOCA/CollectX telemetry exporter. Drives one or more delivery backends (`NIXL_TELEMETRY_DOCA_BACKENDS`, default `scrape`): a local Prometheus scrape endpoint and/or `ipc` push to the DOCA Telemetry Service (DTS) for single-endpoint multi-process aggregation. See [src/plugins/telemetry/doca/README.md](../src/plugins/telemetry/doca/README.md).
 
 ### Event Structure
 
@@ -70,6 +71,17 @@ stream:
   a `_total` counter alongside a last-op gauge (`agent_xfer_time` /
   `agent_xfer_post_time`). This is purely an exporter-side derivation: no new event
   type is emitted and the buffer format is unchanged.
+- **Latency histograms**: the transfer-time events additionally feed distribution
+  histograms `agent_xfer_time_us` / `agent_xfer_post_time_us` (microseconds) on
+  both the Prometheus and DOCA exporters, at parity (same names, buckets, labels).
+  Each is exposed as the standard `_bucket{le="..."}` / `_sum` / `_count` series
+  alongside the existing counter and gauge. Bucket boundaries default to a
+  microsecond range covering ~10us..~10s and are overridable via
+  `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` (a comma-separated list of
+  strictly-increasing positive microsecond upper bounds; when absent or empty the
+  built-in defaults are used, while a non-empty but invalid value is rejected and
+  the exporter fails to initialize rather than silently using the defaults). Like
+  the other views this is an exporter-side derivation with no new event type.
 - **Error counters**: the Prometheus and DOCA exporters expose error events as
   `agent_errors_total{status="<status>"}`. The `status` label is bounded by the
   fixed `AGENT_ERR_*` event set: `not_posted`, `invalid_param`, `backend`,
@@ -126,8 +138,11 @@ Telemetry is configured by environment variables:
 | `NIXL_TELEMETRY_BUFFER_SIZE` | Number of events in buffer | `4096` |
 | `NIXL_TELEMETRY_RUN_INTERVAL` | Flush interval (ms) | `100` |
 | `NIXL_TELEMETRY_EXPORTER` | Name of the exporter plugin to use | - |
+| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Comma-separated microsecond bucket bounds for the transfer-time histograms (Prometheus/DOCA) | built-in µs defaults |
+| `NIXL_TELEMETRY_ENABLED_METRICS` | Comma-separated allowlist of metric names to export (glob) | all |
 
 - `NIXL_TELEMETRY_ENABLE` can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to be enabled, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to be disabled. Matching is case insensitive.
+- `NIXL_TELEMETRY_ENABLED_METRICS` restricts which metrics are exported. It is a comma-separated allowlist of metric names, each matched as a POSIX glob (`*`, `?`) against the base event names (`agent_tx_bytes`, `agent_rx_bytes`, `agent_tx_requests_num`, `agent_rx_requests_num`, `agent_memory_registered`, `agent_memory_deregistered`, `agent_xfer_time`, `agent_xfer_post_time`, `agent_telemetry_events_dropped`, and the `agent_err_*` errors). Unset (or empty) exports everything; a token that matches nothing is ignored with a warning. A metric name selects every series derived from that event (counter and gauge, plus the transfer-time histograms `agent_xfer_time_us` / `agent_xfer_post_time_us` where applicable). Deactivated metrics are skipped at the source, before entering the staging queue, so they add no cost on the transfer hot path. Per-transfer stats returned by `getXferTelemetry()` come from the request handle and are unaffected.
 - Telemetry is requested either via `NIXL_TELEMETRY_ENABLE` or via the agent config flag `captureTelemetry` (`capture_telemetry=True` in Python). It is fully off only when it is not requested.
 - When telemetry is requested but no output sink is configured (neither `NIXL_TELEMETRY_EXPORTER` nor `NIXL_TELEMETRY_DIR`), it falls back to the collect-only NOP exporter: events are collected in-process so `getXferTelemetry()` / `get_xfer_telemetry()` works, but nothing is written out.
 - If telemetry is enabled but no exporter is set, or the exporter name is empty, then the sink depends on `NIXL_TELEMETRY_DIR` as explained below (falling back to NOP when it is unset).
