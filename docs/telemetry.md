@@ -14,6 +14,7 @@ Custom telemetry exporter plug-ins can be created according to [src/plugins/tele
 2. **Shared Memory Buffer**: Statically-linked built in implementation of telemetry exporter. Uses shared memory cyclic buffer for efficient event storage and export.
 3. **Telemetry Readers**: C++ and Python applications to read and display telemetry data from the cyclic buffer.
 4. **Prometheus exporter**: EXPERIMENTAL (beta) Prometheus compatible telemetry exporter, see [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md).
+5. **DOCA exporter**: EXPERIMENTAL DOCA/CollectX telemetry exporter. Drives one or more delivery backends (`NIXL_TELEMETRY_DOCA_BACKENDS`, default `scrape`): a local Prometheus scrape endpoint and/or `ipc` push to the DOCA Telemetry Service (DTS) for single-endpoint multi-process aggregation. See [src/plugins/telemetry/doca/README.md](../src/plugins/telemetry/doca/README.md).
 
 ### Event Structure
 

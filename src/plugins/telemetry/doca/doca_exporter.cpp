@@ -21,6 +21,8 @@
 
 #include <doca_telemetry_exporter.h>
 #include <doca_error.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_split.h>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -47,6 +49,10 @@ constexpr uint64_t histogramFlushIntervalMs = 1000;
 
 const char docaPrometheusPortVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_PORT";
 const char docaPrometheusLocalVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_LOCAL";
+const char docaBackendsVar[] = "NIXL_TELEMETRY_DOCA_BACKENDS";
+const char docaIpcSocketsDirVar[] = "NIXL_TELEMETRY_DOCA_IPC_SOCKETS_DIR";
+const char docaBackendScrape[] = "scrape";
+const char docaBackendIpc[] = "ipc";
 
 const std::string docaExporterLocalAddress = "http://127.0.0.1";
 const std::string docaExporterPublicAddress = "http://0.0.0.0";
@@ -58,6 +64,42 @@ getBindAddress() {
         nixl::config::getValueDefaulted(docaPrometheusPortVar, docaPrometheusExporterDefaultPort);
     return (local ? docaExporterLocalAddress : docaExporterPublicAddress) + ":" +
         std::to_string(port);
+}
+
+struct DocaBackends {
+    bool scrape = false;
+    bool ipc = false;
+};
+
+[[nodiscard]] DocaBackends
+parseBackends() {
+    const std::string spec =
+        nixl::config::getValueDefaulted<std::string>(docaBackendsVar, docaBackendScrape);
+    DocaBackends backends;
+    for (const absl::string_view raw : absl::StrSplit(spec, ',')) {
+        const absl::string_view token = absl::StripAsciiWhitespace(raw);
+        if (token.empty()) {
+            continue;
+        }
+        if (token == docaBackendScrape) {
+            backends.scrape = true;
+        } else if (token == docaBackendIpc) {
+            backends.ipc = true;
+        } else {
+            throw std::runtime_error(std::string(docaBackendsVar) + ": unknown backend '" +
+                                     std::string(token) + "'; valid backends are '" +
+                                     docaBackendScrape + "', '" + docaBackendIpc + "'");
+        }
+    }
+    if (!backends.scrape && !backends.ipc) {
+        backends.scrape = true;
+    }
+    return backends;
+}
+
+[[nodiscard]] std::string
+getIpcSocketsDir() {
+    return nixl::config::getValueDefaulted<std::string>(docaIpcSocketsDirVar, std::string());
 }
 
 [[nodiscard]] std::string
@@ -88,10 +130,13 @@ std::mutex g_metrics_mutex;
 /**
  * @brief Process-wide shared DOCA context
  *
- * DOCA only supports one metrics context per process, so all agents share
- * this context. The underlying CLX Metrics API is not thread-safe, so all
- * metric recording calls (metrics_add_counter / metrics_add_gauge) are
- * serialised by a dedicated mutex (g_metrics_mutex).
+ * All agents in a process share one context. The exporter drives process-global
+ * CollectX state -- the Prometheus endpoint via the PROMETHEUS_ENDPOINT env var
+ * (one HTTP server) and a fixed schema name -- so independently-configured
+ * per-agent contexts would collide; sharing one avoids that. The underlying CLX
+ * Metrics API is not thread-safe, so all metric recording calls
+ * (metrics_add_counter / metrics_add_gauge) are serialised by a dedicated mutex
+ * (g_metrics_mutex).
  */
 struct DocaSharedContext {
     doca_telemetry_exporter_schema *schema = nullptr;
@@ -100,6 +145,9 @@ struct DocaSharedContext {
     doca_telemetry_exporter_label_set_id_t error_label_set_id = 0;
     bool source_started = false;
     bool metrics_context_created = false;
+    const bool scrape_enabled;
+    const bool ipc_enabled;
+    std::string backend_desc;
 
     // Base histograms are templates created once on the shared source; observing
     // against one with concrete label values yields a concrete histogram id. The
@@ -110,7 +158,10 @@ struct DocaSharedContext {
         base_histograms{};
     std::unordered_set<doca_telemetry_exporter_histogram_id_t> histogram_ids;
 
-    explicit DocaSharedContext(const std::string &bind_address);
+    DocaSharedContext(bool enable_scrape,
+                      bool enable_ipc,
+                      const std::string &bind_address,
+                      const std::string &ipc_sockets_dir);
     ~DocaSharedContext();
 
     DocaSharedContext(const DocaSharedContext &) = delete;
@@ -122,21 +173,42 @@ private:
     cleanup();
 };
 
-DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
+DocaSharedContext::DocaSharedContext(bool enable_scrape,
+                                     bool enable_ipc,
+                                     const std::string &bind_address,
+                                     const std::string &ipc_sockets_dir)
+    : scrape_enabled(enable_scrape),
+      ipc_enabled(enable_ipc) {
     const std::string hostname = getHostname();
+
+    if (scrape_enabled) {
+        backend_desc = "scrape on " + bind_address;
+    }
+    if (ipc_enabled) {
+        backend_desc += (backend_desc.empty() ? "" : ", ") + std::string("ipc->DTS");
+    }
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
     try {
-        // DOCA reads its HTTP bind address from this env var. setenv is not
-        // thread-safe per POSIX, but the caller holds g_ctx_mutex and this runs
-        // only once during first-agent init (before heavy threading).
-        setenv("PROMETHEUS_ENDPOINT", bind_address.c_str(), 1);
+        if (scrape_enabled) {
+            // DOCA reads its HTTP bind address from this env var. setenv is not
+            // thread-safe per POSIX, but the caller holds g_ctx_mutex and this runs
+            // only once during first-agent init (before heavy threading).
+            setenv("PROMETHEUS_ENDPOINT", bind_address.c_str(), 1);
+        }
 
         doca_error_t result = doca_telemetry_exporter_schema_init("nixl_telemetry", &schema);
         if (result != DOCA_SUCCESS) {
             throw std::runtime_error("Failed to initialize DOCA schema");
+        }
+
+        if (ipc_enabled) {
+            doca_telemetry_exporter_schema_set_ipc_enabled(schema);
+            if (!ipc_sockets_dir.empty()) {
+                doca_telemetry_exporter_schema_set_ipc_sockets_dir(schema, ipc_sockets_dir.c_str());
+            }
         }
 
         result = doca_telemetry_exporter_schema_start(schema);
@@ -157,6 +229,21 @@ DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
             throw std::runtime_error("Failed to start DOCA source");
         }
         source_started = true;
+
+        if (ipc_enabled) {
+            doca_telemetry_exporter_ipc_status_t ipc_status =
+                DOCA_TELEMETRY_EXPORTER_IPC_STATUS_FAILED;
+            const doca_error_t ipc_result =
+                doca_telemetry_exporter_check_ipc_status(source, &ipc_status);
+            if (ipc_result != DOCA_SUCCESS ||
+                ipc_status != DOCA_TELEMETRY_EXPORTER_IPC_STATUS_CONNECTED) {
+                NIXL_WARN << "DOCA telemetry IPC not connected to DTS (status " << ipc_status
+                          << "); metrics will not be exported until DTS is reachable via "
+                          << (ipc_sockets_dir.empty() ?
+                                  std::string("the default DOCA sockets dir") :
+                                  ipc_sockets_dir);
+            }
+        }
 
         result = doca_telemetry_exporter_metrics_create_context(source);
         if (result != DOCA_SUCCESS) {
@@ -241,17 +328,28 @@ nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
       agent_name_(init_params.agentName) {
+    const DocaBackends backends = parseBackends();
     const std::string bind_address = getBindAddress();
+    const std::string ipc_sockets_dir = getIpcSocketsDir();
 
     const std::lock_guard lock(g_ctx_mutex);
     ctx_ = g_ctx_weak.lock();
     if (!ctx_) {
-        ctx_ = std::make_shared<DocaSharedContext>(bind_address);
+        ctx_ = std::make_shared<DocaSharedContext>(
+            backends.scrape, backends.ipc, bind_address, ipc_sockets_dir);
         g_ctx_weak = ctx_;
-        NIXL_INFO << "DOCA Telemetry exporter initialized on " << bind_address;
+        NIXL_INFO << "DOCA Telemetry exporter initialized (" << ctx_->backend_desc << ")";
     } else {
+        if (backends.scrape != ctx_->scrape_enabled || backends.ipc != ctx_->ipc_enabled) {
+            NIXL_WARN << "DOCA Telemetry exporter for agent '" << agent_name_
+                      << "' requested different backends than the shared process-wide DOCA "
+                         "context (already created as "
+                      << ctx_->backend_desc
+                      << "); NIXL uses one shared context per process, so the first agent's "
+                         "backend selection is kept and this request is ignored";
+        }
         NIXL_INFO << "DOCA Telemetry exporter for agent '" << agent_name_
-                  << "' sharing existing server on " << bind_address;
+                  << "' sharing existing context (" << ctx_->backend_desc << ")";
     }
 }
 
