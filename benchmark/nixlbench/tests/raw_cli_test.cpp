@@ -96,10 +96,10 @@ namespace {
                   0)
             << err.str();
         EXPECT_FALSE(help);
-        EXPECT_EQ(request.api, "AIO");
-        EXPECT_EQ(request.io_pool_size, 4096);
-        EXPECT_EQ(request.kernel_queue_size, 128);
-        EXPECT_TRUE(request.dry_run);
+        EXPECT_EQ(request.posix.api, "AIO");
+        EXPECT_EQ(request.posix.io_pool_size, 4096);
+        EXPECT_EQ(request.posix.kernel_queue_size, 128);
+        EXPECT_TRUE(request.raw.dry_run);
     }
 
     TEST(RawPosixParserTest, ParsesExplicitTypedValues) {
@@ -125,12 +125,39 @@ namespace {
         ASSERT_EQ(parseRawPosixCommand(args.argc(), args.argv(), metadata, request, help, out, err),
                   0)
             << err.str();
-        EXPECT_EQ(request.operation, "READ");
-        EXPECT_EQ(request.total_buffer_size, 8U * 1024 * 1024);
-        EXPECT_EQ(request.max_block_size, 1U * 1024 * 1024);
-        EXPECT_EQ(request.api, "URING");
-        EXPECT_EQ(request.io_pool_size, 2048);
-        EXPECT_TRUE(request.check_consistency);
+        EXPECT_EQ(request.raw.operation, "READ");
+        EXPECT_EQ(request.raw.total_buffer_size, 8U * 1024 * 1024);
+        EXPECT_EQ(request.raw.max_block_size, 1U * 1024 * 1024);
+        EXPECT_EQ(request.posix.api, "URING");
+        EXPECT_EQ(request.posix.io_pool_size, 2048);
+        EXPECT_TRUE(request.raw.check_consistency);
+    }
+
+    TEST(RawPosixParserTest, AcceptsRawOptionsBeforeTheBackendSubcommand) {
+        Arguments args{"nixlbench",
+                       "raw",
+                       "--operation",
+                       "read",
+                       "--iterations",
+                       "32",
+                       "posix",
+                       "--path",
+                       "/tmp/nixlbench",
+                       "--api",
+                       "aio"};
+        RawPosixRequest request;
+        bool help = false;
+        std::ostringstream out;
+        std::ostringstream err;
+
+        ASSERT_EQ(parseRawPosixCommand(
+                      args.argc(), args.argv(), posixMetadata(), request, help, out, err),
+                  0)
+            << err.str();
+        EXPECT_EQ(request.raw.operation, "READ");
+        EXPECT_EQ(request.raw.iterations, 32);
+        EXPECT_EQ(request.posix.path, "/tmp/nixlbench");
+        EXPECT_EQ(request.posix.api, "AIO");
     }
 
     TEST(RawPosixParserTest, RejectsUnknownAndUnadvertisedOptions) {
@@ -212,7 +239,7 @@ namespace {
         EXPECT_NE(err.str().find("--num-files"), std::string::npos);
     }
 
-    TEST(RawPosixParserTest, ScopedHelpContainsOnlyAdvertisedPosixOptions) {
+    TEST(RawPosixParserTest, PosixHelpContainsOnlyAdvertisedBackendOptions) {
         Arguments args{"nixlbench", "raw", "posix", "--help"};
         RawPosixRequest request;
         bool help = false;
@@ -223,30 +250,50 @@ namespace {
                   0);
         EXPECT_TRUE(help);
         EXPECT_NE(out.str().find("--api"), std::string::npos);
+        EXPECT_NE(out.str().find("nixlbench raw --help"), std::string::npos);
+        EXPECT_EQ(out.str().find("--operation"), std::string::npos);
         EXPECT_EQ(out.str().find("--io-pool-size"), std::string::npos);
         EXPECT_EQ(out.str().find("--backend"), std::string::npos);
     }
 
-    TEST(RawRequestConversionTest, ProducesEquivalentLegacyConfigurationArguments) {
+    TEST(RawPosixParserTest, RawHelpSeparatesCommonOptionsFromPosixOptions) {
+        Arguments args{"nixlbench", "raw", "--help"};
         RawPosixRequest request;
-        request.operation = "READ";
-        request.path = "/tmp/nixlbench";
-        request.filenames = "";
-        request.num_files = 2;
-        request.total_buffer_size = 65536;
-        request.start_block_size = 4096;
-        request.max_block_size = 32768;
-        request.start_batch_size = 2;
-        request.max_batch_size = 8;
-        request.iterations = 16;
-        request.warmup_iterations = 0;
-        request.threads = 4;
-        request.pipeline_depth = 3;
-        request.check_consistency = true;
-        request.direct = true;
-        request.api = "AIO";
-        request.io_pool_size = 4096;
-        request.kernel_queue_size = 128;
+        bool help = false;
+        std::ostringstream out;
+        std::ostringstream err;
+
+        EXPECT_EQ(parseRawPosixCommand(
+                      args.argc(), args.argv(), posixMetadata(), request, help, out, err),
+                  0);
+        EXPECT_TRUE(help);
+        EXPECT_NE(out.str().find("--operation"), std::string::npos);
+        EXPECT_NE(out.str().find("--iterations"), std::string::npos);
+        EXPECT_NE(out.str().find("posix"), std::string::npos);
+        EXPECT_EQ(out.str().find("--path"), std::string::npos);
+        EXPECT_EQ(out.str().find("--api"), std::string::npos);
+    }
+
+    TEST(RawRequestConversionTest, MapsOnlyOwnedOptionsToEquivalentLegacyConfiguration) {
+        RawPosixRequest request;
+        request.raw.operation = "READ";
+        request.raw.total_buffer_size = 65536;
+        request.raw.start_block_size = 4096;
+        request.raw.max_block_size = 32768;
+        request.raw.start_batch_size = 2;
+        request.raw.max_batch_size = 8;
+        request.raw.iterations = 16;
+        request.raw.warmup_iterations = 0;
+        request.raw.threads = 4;
+        request.raw.pipeline_depth = 3;
+        request.raw.check_consistency = true;
+        request.posix.path = "/tmp/nixlbench";
+        request.posix.filenames = "";
+        request.posix.num_files = 2;
+        request.posix.direct = true;
+        request.posix.api = "AIO";
+        request.posix.io_pool_size = 4096;
+        request.posix.kernel_queue_size = 128;
 
         const auto args = legacyArguments(request, "nixlbench");
         const std::vector<std::string> expected = {
