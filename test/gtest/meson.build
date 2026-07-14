@@ -59,6 +59,7 @@ endif
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
 cpp_flags = []
+cuda_flags = []
 
 if cuda_dep.found()
     cpp_flags += '-DHAVE_CUDA'
