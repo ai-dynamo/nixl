@@ -779,8 +779,11 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
         devs = absl::StrSplit(*opt, ", ");
     }
 
-    numSharedWorkers_ = nixl::getBackendParamDefaulted(custom_params, "num_workers", 1u);
-    const size_t num_workers = numSharedWorkers_ + num_dedicated_workers;
+    size_t num_workers = nixl::getBackendParamDefaulted(custom_params, "num_workers", 1u);
+    if (num_workers <= num_dedicated_workers) {
+        num_workers = num_dedicated_workers + 1;
+    }
+    numSharedWorkers_ = num_workers - num_dedicated_workers;
 
     const size_t num_device_channels =
         nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
