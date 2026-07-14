@@ -130,6 +130,8 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
       remote(rem),
       queue_depth_(loc.descCount()),
       num_confirmed_ios_(queue_depth_),
+      transfer_failed_(false),
+      cancellation_requested_(false),
       io_queue_(io_queue) {
     NIXL_ASSERT(local.descCount());
     NIXL_ASSERT(remote.descCount());
@@ -138,6 +140,10 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
 void
 nixlPosixBackendReqH::ioDone(uint32_t data_size, int error) {
     num_confirmed_ios_++;
+    if (error && !transfer_failed_) {
+        NIXL_ERROR << "POSIX transfer failed: an io completed short or with an error";
+        transfer_failed_ = true;
+    }
     logOnPercentStep(num_confirmed_ios_, queue_depth_);
 }
 
@@ -148,22 +154,42 @@ nixlPosixBackendReqH::ioDoneClb(void *ctx, uint32_t data_size, int error) {
 }
 
 nixl_status_t
+nixlPosixBackendReqH::requestCancellationOnce() {
+    if (!transfer_failed_ || cancellation_requested_ || allIOsAccountedFor()) {
+        return NIXL_SUCCESS;
+    }
+
+    cancellation_requested_ = true;
+    return io_queue_->cancel(this);
+}
+
+nixl_status_t
+nixlPosixBackendReqH::queueResult(nixl_status_t queue_result) {
+    if (queue_result < 0) {
+        transfer_failed_ = true;
+    }
+
+    if (requestCancellationOnce() == NIXL_ERR_NOT_SUPPORTED) {
+        return queue_result < 0 ? queue_result : NIXL_ERR_BACKEND;
+    }
+
+    if (needsQueueProgress()) {
+        return NIXL_IN_PROG;
+    }
+    return transfer_failed_ ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
+}
+
+nixl_status_t
 nixlPosixBackendReqH::prepXfer() {
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlPosixBackendReqH::checkXfer() {
-    if (num_confirmed_ios_ == queue_depth_) {
-        return NIXL_SUCCESS;
+    if (!needsQueueProgress()) {
+        return transfer_failed_ ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
     }
-
-    nixl_status_t status = io_queue_->poll();
-    if (status < 0) {
-        return status;
-    }
-
-    return NIXL_IN_PROG;
+    return queueResult(io_queue_->poll());
 }
 
 nixl_status_t
@@ -172,8 +198,14 @@ nixlPosixBackendReqH::postXfer() {
         NIXL_ERROR << "POSIX I/O queue is not initialized";
         return NIXL_ERR_BACKEND;
     }
+    if (io_queue_->hasPendingCleanup()) {
+        transfer_failed_ = true;
+        return NIXL_ERR_BACKEND;
+    }
 
     num_confirmed_ios_ = 0;
+    transfer_failed_ = false;
+    cancellation_requested_ = false;
 
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();
@@ -194,7 +226,7 @@ nixlPosixBackendReqH::postXfer() {
         }
     }
 
-    return io_queue_->post();
+    return queueResult(io_queue_->post());
 }
 
 // -----------------------------------------------------------------------------
