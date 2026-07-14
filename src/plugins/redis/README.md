@@ -27,11 +27,14 @@ src/plugins/redis/
 interface isolates hiredis/libevent and permits Redis-free unit tests; it is not a generic KV
 extension API.
 
-The production client uses:
+The production client uses a `RedisConnectionPool` (default: 8 slots). Each slot holds:
 
 - One hiredis/libevent async connection for `SET` and `GET`.
 - One blocking hiredis connection for `EXISTS`.
 - One libevent thread. Hiredis callbacks complete NIXL request promises directly.
+
+Operations are dispatched round-robin across pool slots to saturate multiple Redis server
+threads and reduce per-slot head-of-line blocking.
 
 ## Dependencies
 
@@ -47,7 +50,7 @@ skipped with a warning.
 
 `RedisConfig` is the Redis client's resolved, internal configuration value. The backend calls
 `RedisConfig::fromBackendParams()` once during construction and passes the result to
-`hiredisAsyncClient`; the client does not repeatedly read backend parameters or environment
+`RedisConnectionPool`; the client does not repeatedly read backend parameters or environment
 variables.
 
 ```cpp
@@ -57,6 +60,7 @@ struct RedisConfig {
     std::string username;
     std::string password;
     int db = 0;
+    int pool_size = 8;
 };
 ```
 
@@ -69,7 +73,7 @@ Each setting is resolved in this precedence order:
 An explicitly provided string value, including an empty username or password, takes precedence
 over its environment fallback. Port values that fail validation fall through to `REDIS_PORT` and
 then to `6379`; database parse failures fall back to `0`. The logical database currently has no
-environment fallback.
+environment fallback. Invalid `pool_size` values fall back to `8`.
 
 | Parameter | Environment fallback | Default | Description |
 |-----------|----------------------|---------|-------------|
@@ -78,6 +82,7 @@ environment fallback.
 | `username` | `REDIS_USERNAME` | empty | Redis ACL username |
 | `password` | `REDIS_PASSWORD` | empty | Redis AUTH password |
 | `db` | none | `0` | Redis logical database |
+| `pool_size` | `REDIS_POOL_SIZE` | `8` | Number of concurrent Redis connections |
 
 Authentication behavior is determined by the resolved credentials:
 
@@ -94,6 +99,7 @@ nixl_b_params_t params = {
     {"username", "nixl"},
     {"password", "example-password"},
     {"db", "2"},
+    {"pool_size", "8"},
 };
 agent.createBackend("REDIS", params);
 ```
