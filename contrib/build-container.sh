@@ -44,6 +44,13 @@ OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
+# CUDA toolkit version (e.g. 12.9 / 13.0). Option B (manylinux on public PyPA base)
+# no longer inherits this from the base image's ENV, so it's passed in. Defaults to
+# 13.0 to match the default BASE_IMAGE_TAG (cuda13.0); override with --cuda-version.
+CUDA_VERSION=${CUDA_VERSION:-13.0}
+# INFINIA build variant passed to Dockerfile.manylinux: "bundled" pulls the private DDN libs
+# image; "none" (via --no-infinia) skips it so external builds without access still work.
+INFINIA_VARIANT=${INFINIA_VARIANT:-bundled}
 
 get_options() {
     while :; do
@@ -90,6 +97,14 @@ get_options() {
         --build-type)
             if [ "$2" ]; then
                 BUILD_TYPE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --cuda-version)
+            if [ "$2" ]; then
+                CUDA_VERSION=$2
                 shift
             else
                 missing_requirement $1
@@ -148,6 +163,9 @@ get_options() {
             ;;
         --build-nixl-ep)
             BUILD_NIXL_EP=true
+            ;;
+        --no-infinia)
+            INFINIA_VARIANT=none
             ;;
         --arch)
             if [ "$2" ]; then
@@ -217,6 +235,7 @@ show_help() {
     echo "usage: build-container.sh"
     echo "  [--base base image]"
     echo "  [--base-image-tag base image tag]"
+    echo "  [--cuda-version CUDA version, e.g. 12.9 (manylinux builds)]"
     echo "  [--wheel-base base platform for wheel builds]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
@@ -228,6 +247,7 @@ show_help() {
     echo "  [--ucx-soname-suffix suffix to pass to UCX --with-soname-suffix]"
     echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
+    echo "  [--no-infinia skip the INFINIA plugin (manylinux: don't pull the private DDN libs image)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     exit 0
@@ -249,7 +269,22 @@ if [ -d "$NIXL_DIR/build" ]; then
     exit 1
 fi
 
+# The manylinux build path requires CUDA_VERSION in MAJOR.MINOR form (e.g. 12.9, 13.0):
+# Dockerfile.manylinux derives the torch index (cu<major><minor>) and the cu12/cu13
+# meta-wheel split from it. Empty yields a broken index (https://download.pytorch.org/
+# whl/cu) and a skipped meta-wheel; a major-only value like "12" yields a nonexistent
+# "cu12" index instead of e.g. "cu129". Validate the shape (not just presence) up front.
+case "$DOCKER_FILE" in
+    *manylinux*)
+        if ! echo "$CUDA_VERSION" | grep -qE '^[0-9]+\.[0-9]+$'; then
+            echo "ERROR: --cuda-version must be MAJOR.MINOR for manylinux builds (e.g. --cuda-version 12.9); got '${CUDA_VERSION}'" >&2
+            exit 1
+        fi
+        ;;
+esac
+
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
@@ -261,7 +296,22 @@ BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
+BUILD_ARGS+=" --build-arg INFINIA_VARIANT=$INFINIA_VARIANT"
+# With --no-infinia the COPY pulls from the empty infinia-none stub, never the private
+# infinia-bundled image. BuildKit prunes the unreferenced bundled FROM, but not every
+# builder does (e.g. podman/buildah in some configs may still resolve it), and the
+# default points at a private registry the builder may not be able to auth to. Repoint
+# the bundled image at the (already-pulled, already-authed) base image so an infinia-free
+# build never depends on the private registry, regardless of stage-pruning behavior.
+if [ "$INFINIA_VARIANT" = "none" ]; then
+    BUILD_ARGS+=" --build-arg INFINIA_LIBS_IMAGE=$BASE_IMAGE:$BASE_IMAGE_TAG"
+fi
 
 show_build_options
 
+# Disable buildx's default provenance/sbom attestations (the attestation-manifest export
+# was tipping the ARM build over the job timeout; CI images don't need them). Use the env
+# var, which buildx honors and the classic docker build frontend ignores -- unlike the
+# --provenance/--sbom flags, which classic docker rejects as unknown.
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
 docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
