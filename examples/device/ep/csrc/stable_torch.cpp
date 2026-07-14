@@ -280,13 +280,16 @@ STABLE_TORCH_LIBRARY(nixl_ep, m) {
 
 STABLE_TORCH_LIBRARY_IMPL(nixl_ep, CUDA, m) {
     m.impl("query_mask_buffer_", TORCH_BOX(&query_mask_buffer));
-    m.impl("get_next_combine_buffer", TORCH_BOX(&get_next_combine_buffer));
-    m.impl("get_local_buffer_tensor", TORCH_BOX(&get_local_buffer_tensor));
     m.impl("get_dispatch_layout", TORCH_BOX(&get_dispatch_layout));
     m.impl("combine", TORCH_BOX(&combine));
-    m.impl("combine_recv_hook", TORCH_BOX(&combine_recv_hook));
     m.impl("dispatch", TORCH_BOX(&dispatch));
-    m.impl("dispatch_recv_hook", TORCH_BOX(&dispatch_recv_hook));
     m.impl("ht_dispatch", TORCH_BOX(&ht_dispatch));
     m.impl("ht_combine", TORCH_BOX(&ht_combine));
+}
+
+STABLE_TORCH_LIBRARY_IMPL(nixl_ep, CompositeExplicitAutograd, m) {
+    m.impl("get_next_combine_buffer", TORCH_BOX(&get_next_combine_buffer));
+    m.impl("get_local_buffer_tensor", TORCH_BOX(&get_local_buffer_tensor));
+    m.impl("combine_recv_hook", TORCH_BOX(&combine_recv_hook));
+    m.impl("dispatch_recv_hook", TORCH_BOX(&dispatch_recv_hook));
 }
