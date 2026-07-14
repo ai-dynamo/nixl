@@ -9288,7 +9288,7 @@ NetworkX is distributed with the 3-clause BSD license.
   - `Source Code`: https://github.com/networkx/networkx
 
 
-## nixl (1.3.1)
+## nixl (1.4.0)
 
 ### Licenses
 License: `Apache-2.0`
@@ -9509,7 +9509,7 @@ License: `Apache-2.0`
 
 
 
-## nixl-cu13 (1.3.1)
+## nixl-cu13 (1.4.0)
 
 ### Licenses
 License: `Apache-2.0`
