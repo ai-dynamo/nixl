@@ -17,12 +17,11 @@
 #include "doca_exporter.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include "common/str_util.h"
 #include "histogram_buckets.h"
 
 #include <doca_telemetry_exporter.h>
 #include <doca_error.h>
-#include <absl/strings/ascii.h>
-#include <absl/strings/str_split.h>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -76,11 +75,7 @@ parseBackends() {
     const std::string spec =
         nixl::config::getValueDefaulted<std::string>(docaBackendsVar, docaBackendScrape);
     DocaBackends backends;
-    for (const absl::string_view raw : absl::StrSplit(spec, ',')) {
-        const absl::string_view token = absl::StripAsciiWhitespace(raw);
-        if (token.empty()) {
-            continue;
-        }
+    for (const std::string &token : nixl::str::splitStrippedSet(spec)) {
         if (token == docaBackendScrape) {
             backends.scrape = true;
         } else if (token == docaBackendIpc) {
