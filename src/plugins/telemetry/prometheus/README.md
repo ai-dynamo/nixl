@@ -79,8 +79,8 @@ The exporter opens one HTTP scrape endpoint per process. Under multi-process run
 | `agent_rx_bytes` | Yes | Yes | No |
 | `agent_tx_requests_num` | Yes | No | No |
 | `agent_rx_requests_num` | Yes | No | No |
-| `agent_xfer_time` | Yes | Yes | No |
-| `agent_xfer_post_time` | Yes | Yes | No |
+| `agent_xfer_time` | Yes | Yes | Yes |
+| `agent_xfer_post_time` | Yes | Yes | Yes |
 | `agent_telemetry_events_dropped` | Yes | No | No |
 | Error event types (`agent_err_*`) | Yes | No | No |
 
@@ -90,7 +90,17 @@ The exporter opens one HTTP scrape endpoint per process. Under multi-process run
 - Error events are exposed as one labeled counter: `agent_errors_total{status="..."}`. The `status` label is bounded by the fixed `AGENT_ERR_*` event set.
 - `agent_telemetry_events_dropped_total` is the cumulative count of telemetry events dropped at the producer-side staging queue (when the queue is full and an event cannot be enqueued for export). It does not count BUFFER cyclic-ring loss.
 - **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte gauges follow the `agent_<subject>_last_<unit>` convention (the `_last` qualifier precedes the unit, keeping it distinct from the cumulative `_total` counter of the same base name): `agent_tx_last_bytes` / `agent_rx_last_bytes` carry the byte size of the latest TX/RX request, while `agent_tx_bytes_total` / `agent_rx_bytes_total` carry the running total. The memory gauges follow the same convention -- `agent_memory_registered_last_bytes` / `agent_memory_deregistered_last_bytes` -- and report the byte size of the last (de)registration, distinct from the cumulative `agent_memory_registered_total` / `agent_memory_deregistered_total` counters. The transfer-time events likewise publish both a cumulative `_total` counter and a last-operation gauge (`agent_xfer_time` / `agent_xfer_post_time`).
-- **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
+- **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details. The transfer-time events additionally publish latency-distribution histograms `agent_xfer_time_us` and `agent_xfer_post_time_us` (microseconds), exposed as the usual `_bucket{le="..."}` / `_sum` / `_count` series alongside the existing counter and gauge. Bucket boundaries default to a microsecond range covering ~10us..~10s and can be overridden (see below).
+
+### Histogram buckets
+
+The default bucket boundaries for the transfer-time histograms can be overridden with a comma-separated list of strictly-increasing positive microsecond upper bounds:
+
+```bash
+export NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US="10,100,1000,10000,100000"
+```
+
+An absent or empty value uses the built-in defaults. A non-empty but invalid value (non-numeric, non-positive, or not strictly increasing) is rejected and the exporter fails to initialize, rather than silently falling back to the defaults.
 
 ### Metric labels
 
