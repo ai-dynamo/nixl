@@ -158,9 +158,6 @@ public:
     std::optional<bool>
     checkKeyExistsSync(std::string_view key) override;
 
-    size_t
-    size() const;
-
 private:
     iRedisClient &
     nextSlot();

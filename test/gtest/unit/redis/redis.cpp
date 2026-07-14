@@ -158,6 +158,22 @@ TEST(redisConfigTest, InvalidPoolSizeFallsBackToDefault) {
     EXPECT_EQ(config.pool_size, 8);
 }
 
+TEST(redisConfigTest, ZeroPoolSizeFallsBackToDefault) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    nixl_b_params_t params = {{"pool_size", "0"}};
+    const auto config = RedisConfig::fromBackendParams(&params);
+    EXPECT_EQ(config.pool_size, 8);
+}
+
+TEST(redisConfigTest, NegativePoolSizeFallsBackToDefault) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    nixl_b_params_t params = {{"pool_size", "-1"}};
+    const auto config = RedisConfig::fromBackendParams(&params);
+    EXPECT_EQ(config.pool_size, 8);
+}
+
 class mockRedisClient : public iRedisClient {
 public:
     void

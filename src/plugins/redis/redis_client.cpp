@@ -682,8 +682,3 @@ std::optional<bool>
 RedisConnectionPool::checkKeyExistsSync(std::string_view key) {
     return nextSlot().checkKeyExistsSync(key);
 }
-
-size_t
-RedisConnectionPool::size() const {
-    return clients_.size();
-}
