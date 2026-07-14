@@ -92,6 +92,41 @@ getRedisDB(const nixl_b_params_t *custom_params) {
     return 0;
 }
 
+std::optional<int>
+parseRedisPoolSize(const std::string &value, const char *source) {
+    try {
+        size_t parsed = 0;
+        int val = std::stoi(value, &parsed);
+        if (parsed != value.size() || val <= 0) {
+            NIXL_WARN << absl::StrFormat("Invalid %s value '%s', using default 8", source, value);
+            return std::nullopt;
+        }
+        return val;
+    }
+    catch (const std::exception &) {
+        NIXL_WARN << absl::StrFormat("Invalid %s value '%s', using default 8", source, value);
+        return std::nullopt;
+    }
+}
+
+int
+getRedisPoolSize(const nixl_b_params_t *custom_params) {
+    if (custom_params && custom_params->count("pool_size") > 0) {
+        auto val = parseRedisPoolSize(custom_params->at("pool_size"), "pool_size");
+        if (val) {
+            return *val;
+        }
+    }
+    const char *env_val = std::getenv("REDIS_POOL_SIZE");
+    if (env_val) {
+        auto val = parseRedisPoolSize(env_val, "REDIS_POOL_SIZE");
+        if (val) {
+            return *val;
+        }
+    }
+    return 8;
+}
+
 } // namespace
 
 RedisConfig
@@ -102,6 +137,7 @@ RedisConfig::fromBackendParams(const nixl_b_params_t *custom_params) {
     config.username = getStringSetting(custom_params, "username", "REDIS_USERNAME");
     config.password = getStringSetting(custom_params, "password", "REDIS_PASSWORD");
     config.db = getRedisDB(custom_params);
+    config.pool_size = getRedisPoolSize(custom_params);
     if (!config.username.empty() && config.password.empty()) {
         throw std::invalid_argument("Redis username requires a password");
     }
@@ -613,3 +649,41 @@ hiredisAsyncClient::checkKeyExistsSync(std::string_view key) {
 }
 
 #endif // HAVE_HIREDIS_ASYNC
+
+RedisConnectionPool::RedisConnectionPool(RedisConfig config) {
+    clients_.reserve(static_cast<size_t>(config.pool_size));
+    for (int i = 0; i < config.pool_size; ++i) {
+        clients_.push_back(std::make_unique<hiredisAsyncClient>(config));
+    }
+}
+
+iRedisClient &
+RedisConnectionPool::nextSlot() {
+    return *clients_[nextSlot_.fetch_add(1, std::memory_order_relaxed) % clients_.size()];
+}
+
+void
+RedisConnectionPool::putKeyAsync(std::string_view key,
+                                 uintptr_t data_ptr,
+                                 size_t data_len,
+                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
+    nextSlot().putKeyAsync(key, data_ptr, data_len, std::move(promise));
+}
+
+void
+RedisConnectionPool::getKeyAsync(std::string_view key,
+                                 uintptr_t data_ptr,
+                                 size_t data_len,
+                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
+    nextSlot().getKeyAsync(key, data_ptr, data_len, std::move(promise));
+}
+
+std::optional<bool>
+RedisConnectionPool::checkKeyExistsSync(std::string_view key) {
+    return nextSlot().checkKeyExistsSync(key);
+}
+
+size_t
+RedisConnectionPool::size() const {
+    return clients_.size();
+}

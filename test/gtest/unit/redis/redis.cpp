@@ -26,6 +26,7 @@ public:
         save("REDIS_PORT", port_);
         save("REDIS_USERNAME", username_);
         save("REDIS_PASSWORD", password_);
+        save("REDIS_POOL_SIZE", pool_size_);
     }
 
     ~scopedRedisEnvironment() {
@@ -33,6 +34,7 @@ public:
         restore("REDIS_PORT", port_);
         restore("REDIS_USERNAME", username_);
         restore("REDIS_PASSWORD", password_);
+        restore("REDIS_POOL_SIZE", pool_size_);
     }
 
     void
@@ -41,6 +43,7 @@ public:
         unsetenv("REDIS_PORT");
         unsetenv("REDIS_USERNAME");
         unsetenv("REDIS_PASSWORD");
+        unsetenv("REDIS_POOL_SIZE");
     }
 
 private:
@@ -64,6 +67,7 @@ private:
     std::optional<std::string> port_;
     std::optional<std::string> username_;
     std::optional<std::string> password_;
+    std::optional<std::string> pool_size_;
 };
 
 TEST(redisConfigTest, UsesUnauthenticatedDefaultsWhenCredentialsAreAbsent) {
@@ -110,6 +114,48 @@ TEST(redisConfigTest, RejectsAclUsernameWithoutPassword) {
     nixl_b_params_t params = {{"username", "acl-user"}};
 
     EXPECT_THROW(RedisConfig::fromBackendParams(&params), std::invalid_argument);
+}
+
+TEST(redisConfigTest, UsesDefaultPoolSizeWhenAbsent) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    nixl_b_params_t params;
+    const auto config = RedisConfig::fromBackendParams(&params);
+    EXPECT_EQ(config.pool_size, 8);
+}
+
+TEST(redisConfigTest, BackendParamOverridesPoolSize) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    nixl_b_params_t params = {{"pool_size", "4"}};
+    const auto config = RedisConfig::fromBackendParams(&params);
+    EXPECT_EQ(config.pool_size, 4);
+}
+
+TEST(redisConfigTest, EnvVarSetsPoolSize) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    setenv("REDIS_POOL_SIZE", "16", 1);
+    nixl_b_params_t params;
+    const auto config = RedisConfig::fromBackendParams(&params);
+    EXPECT_EQ(config.pool_size, 16);
+}
+
+TEST(redisConfigTest, BackendParamOverridesPoolSizeEnvVar) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    setenv("REDIS_POOL_SIZE", "16", 1);
+    nixl_b_params_t params = {{"pool_size", "2"}};
+    const auto config = RedisConfig::fromBackendParams(&params);
+    EXPECT_EQ(config.pool_size, 2);
+}
+
+TEST(redisConfigTest, InvalidPoolSizeFallsBackToDefault) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    nixl_b_params_t params = {{"pool_size", "bad"}};
+    const auto config = RedisConfig::fromBackendParams(&params);
+    EXPECT_EQ(config.pool_size, 8);
 }
 
 class mockRedisClient : public iRedisClient {

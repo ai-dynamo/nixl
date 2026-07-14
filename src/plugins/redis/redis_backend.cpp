@@ -113,9 +113,9 @@ public:
 } // namespace
 
 nixlRedisKVEngine::nixlRedisKVEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
-      redisClient_(std::make_shared<hiredisAsyncClient>(
-          RedisConfig::fromBackendParams(getInitCustomParams(init_params)))) {
+    : nixlBackendEngine(init_params) {
+    auto config = RedisConfig::fromBackendParams(getInitCustomParams(init_params));
+    redisClient_ = std::make_shared<RedisConnectionPool>(std::move(config));
     NIXL_INFO << "Redis backend initialized";
 }
 

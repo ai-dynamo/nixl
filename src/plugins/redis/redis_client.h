@@ -38,6 +38,7 @@ struct RedisConfig {
     std::string username;
     std::string password;
     int db = 0;
+    int pool_size = 8;
 
     static RedisConfig
     fromBackendParams(const nixl_b_params_t *custom_params);
@@ -131,6 +132,41 @@ private:
     std::atomic<bool> initDone_;
     std::atomic<bool> initSucceeded_;
     mutable std::mutex syncMutex_;
+};
+
+/**
+ * Round-robin connection pool over multiple hiredisAsyncClient instances.
+ * Each slot has its own event loop thread and TCP connections.
+ */
+class RedisConnectionPool : public iRedisClient {
+public:
+    explicit RedisConnectionPool(RedisConfig config);
+    ~RedisConnectionPool() override = default;
+
+    void
+    putKeyAsync(std::string_view key,
+                uintptr_t data_ptr,
+                size_t data_len,
+                std::shared_ptr<std::promise<nixl_status_t>> promise) override;
+
+    void
+    getKeyAsync(std::string_view key,
+                uintptr_t data_ptr,
+                size_t data_len,
+                std::shared_ptr<std::promise<nixl_status_t>> promise) override;
+
+    std::optional<bool>
+    checkKeyExistsSync(std::string_view key) override;
+
+    size_t
+    size() const;
+
+private:
+    iRedisClient &
+    nextSlot();
+
+    std::vector<std::unique_ptr<hiredisAsyncClient>> clients_;
+    std::atomic<size_t> nextSlot_{0};
 };
 
 #endif // NIXL_SRC_PLUGINS_REDIS_REDIS_CLIENT_H
