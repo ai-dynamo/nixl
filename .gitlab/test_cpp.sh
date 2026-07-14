@@ -104,6 +104,12 @@ kill -s INT $telePID
 #     ./bin/mooncake_backend_test
 # fi
 
+cuda_nvcc=$(command -v nvcc || echo /usr/local/cuda/bin/nvcc)
+cuda_major=$("$cuda_nvcc" --version 2>/dev/null | grep -oP 'release \K[0-9]+' | head -1 || true)
+if [ -n "$cuda_major" ] && [ "$cuda_major" -lt 13 ]; then
+    export NIXL_CI_ALLOW_NVTX_SKIP=1
+fi
+
 # shellcheck disable=SC2154
 gtest-parallel --output_dir=/tmp --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 echo NIXL_CI_NON_GPU $NIXL_CI_NON_GPU

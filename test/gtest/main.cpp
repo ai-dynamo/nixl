@@ -85,6 +85,8 @@ namespace {
         "HardwareWarningTest.NoWarningWhenIbAndCudaSupported",
         "ucxDeviceApi*"};
 
+    const std::set<std::string> nvtx_skips = {"*TestTransferTracing*"};
+
     std::mutex mutex;
     std::vector<std::string> required_but_skipped;
 
@@ -167,6 +169,11 @@ RunAllTests() {
     if (var && (var == std::string("false"))) {
         stc->allowForSkip(non_efa_skips);
         std::cerr << "ALLOWING EFA tests to be skipped" << std::endl;
+    }
+
+    if (std::getenv("NIXL_CI_ALLOW_NVTX_SKIP") != nullptr) {
+        stc->allowForSkip(nvtx_skips);
+        std::cerr << "ALLOWING NVTX tracing tests to be skipped" << std::endl;
     }
 
     return RUN_ALL_TESTS();
