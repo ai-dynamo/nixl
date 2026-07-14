@@ -26,12 +26,30 @@ if has_posix_plugin
         posix_test_compile_defs += ['-DHAVE_POSIXAIO']
     endif
 
+    posix_test_dependencies = [nixl_dep, nixl_infra, file_utils_interface, absl_log_dep]
+    posix_test_link_args = []
+    posix_test_link_whole = []
+    if has_io_uring
+        posix_uring_test_queue = static_library(
+            'nixl_posix_uring_test_queue',
+            ['../../../../src/plugins/posix/io_queue.cpp',
+             '../../../../src/plugins/posix/io_uring_io_queue.cpp'],
+            dependencies: [nixl_common_dep, file_utils_interface, io_uring_dep],
+            include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../../../src/plugins/posix'],
+            cpp_args: ['-DHAVE_LIBURING'],
+            install: false)
+        posix_test_dependencies += [io_uring_dep]
+        posix_test_link_args += ['-Wl,--wrap=io_uring_submit']
+        posix_test_link_whole += [posix_uring_test_queue]
+    endif
+
     nixl_posix_app = executable('nixl_posix_test', 'nixl_posix_test.cpp',
-                                dependencies: [nixl_dep, nixl_infra,
-                                               file_utils_interface, absl_log_dep],
+                                dependencies: posix_test_dependencies,
                                 include_directories: [nixl_inc_dirs, utils_inc_dirs,
-                                                      include_directories('..')],
+                                                      include_directories('..'), '../../../../src/plugins/posix'],
                                 cpp_args: posix_test_compile_defs,
+                                link_args: posix_test_link_args,
+                                link_whole: posix_test_link_whole,
                                 install: true)
     test('posix_plugin_test', nixl_posix_app)
 endif
