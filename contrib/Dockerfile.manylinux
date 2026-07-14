@@ -362,6 +362,27 @@ ARG UCX_SONAME_SUFFIX=""
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
 
+# Opt-in: place the pre-staged DDN Infinia libs (from infinia-libs/ in the build
+# context, populated by build-container.sh --build-infinia) into /opt/ddn/red so
+# meson auto-detects red_client and builds libplugin_INFINIA.so into the wheel.
+# libred_client/libred_async are excluded from the final wheel by auditwheel
+# (build-wheel.sh AUDITWHEEL_EXCLUDES) — only libplugin_INFINIA.so is bundled;
+# the DDN libs are loaded at runtime from the customer's installation.
+# No external registry pull here: libs arrive via COPY . /workspace/nixl above.
+# libuuid-devel provides uuid/uuid.h, included by the DDN red_client headers;
+# it is the only extra build-time system dep the plugin needs (the DDN libs'
+# own runtime deps are provided by the customer's install and excluded by auditwheel).
+ARG BUILD_INFINIA=false
+RUN if [ "$BUILD_INFINIA" = "true" ]; then \
+        if [ -z "$(ls -A /workspace/nixl/infinia-libs 2>/dev/null)" ]; then \
+            echo "ERROR: BUILD_INFINIA=true but /workspace/nixl/infinia-libs is empty (staging failed?)" >&2; \
+            exit 1; \
+        fi; \
+        dnf install -y libuuid-devel && \
+        mkdir -p /opt/ddn/red && \
+        cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
+    fi
+
 RUN rm -rf build && \
     mkdir build && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \

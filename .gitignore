@@ -20,3 +20,6 @@ subprojects/*
 # Local Python environments
 .venv/
 .venv*/
+
+# Infinia DDN libs staged into the build context by build-container.sh --build-infinia
+/infinia-libs/
