@@ -19,6 +19,11 @@ FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
 # Build context is expected to contain only wheel files for one architecture.
 COPY . /tmp/nixl-wheels
 
+RUN apt update && \
+    apt install -y curl git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN set -eux; \
     ls /tmp/nixl-wheels/*.whl >/dev/null; \
     uv pip install --system --no-deps --force-reinstall /tmp/nixl-wheels/*.whl; \
@@ -28,3 +33,10 @@ RUN set -eux; \
 RUN curl -fL --retry 3 --retry-delay 2 \
     https://raw.githubusercontent.com/vllm-project/vllm/b73b5b06290c0d1439b09db71eef15fe59bc1fbb/tests/v1/kv_connector/nixl_integration/toy_proxy_server.py \
     -o toy_proxy_server.py
+
+# Pre-download model weights so CI tests don't hit HuggingFace at runtime.
+# vllm accuracy phase is a no-op, so only TinyLlama is needed here.
+RUN uv pip install --system --upgrade huggingface_hub && \
+    python3 -c "from huggingface_hub import snapshot_download; snapshot_download('TinyLlama/TinyLlama-1.1B-Chat-v1.0')"
+
+ENV HF_HUB_OFFLINE=1
