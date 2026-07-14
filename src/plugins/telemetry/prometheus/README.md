@@ -47,9 +47,10 @@ export NIXL_TELEMETRY_EXPORTER="prometheus" # Sets which plug-in to select in fo
 You can restrict which metrics are exported with an allowlist (unset exports everything):
 
 ```bash
-# Comma-separated glob allowlist matched against the base metric names.
-# A name selects its whole family (counter + gauge). Unmatched tokens are
-# ignored with a warning; deactivated metrics are skipped before staging.
+# Comma-separated glob allowlist matched against the base event names.
+# A name selects every series for that event (counter, gauge, and the
+# transfer-time histogram where applicable). Unmatched tokens are ignored
+# with a warning; deactivated metrics are skipped before staging.
 export NIXL_TELEMETRY_ENABLED_METRICS="agent_tx_bytes,agent_rx_bytes,agent_err_*"
 ```
 

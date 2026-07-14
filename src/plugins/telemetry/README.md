@@ -39,7 +39,7 @@ NIXL generates the following telemetry events:
 | `agent_xfer_post_time` | Counter, Gauge, Histogram | Post time (start->backend-post) in microseconds; also a latency histogram `agent_xfer_post_time_us` |
 | `agent_telemetry_events_dropped` | Counter | Telemetry events dropped at the producer-side staging queue |
 
-The `NIXL_TELEMETRY_ENABLED_METRICS` environment variable is a comma-separated glob allowlist of the event names above (unset exports everything). Events whose name is not activated are skipped at the source before they enter the staging queue, so they never reach the exporter and cost nothing on the hot path.
+The `NIXL_TELEMETRY_ENABLED_METRICS` environment variable is a comma-separated glob allowlist of the event names above, plus the built-in `agent_err_*` error events (unset exports everything). Events whose name is not activated are skipped at the source before they enter the staging queue, so they never reach the exporter and cost nothing on the hot path.
 
 ## Quick Start
 

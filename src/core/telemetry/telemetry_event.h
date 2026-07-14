@@ -93,6 +93,11 @@ inline constexpr std::array telemetry_metric_event_types = {
     nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED,
 };
 
+static_assert(nixl_telemetry_event_type_count ==
+                  telemetry_metric_event_types.size() + telemetry_error_event_types.size(),
+              "AGENT_TELEMETRY_EVENTS_DROPPED must remain the last enumerator; "
+              "nixl_telemetry_event_type_count is out of sync with the event-type enum");
+
 struct nixlTelemetryMetricDescriptor {
     const char *counterName;
     const char *counterHelp;
