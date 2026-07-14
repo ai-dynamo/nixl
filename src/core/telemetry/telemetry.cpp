@@ -22,14 +22,13 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <algorithm>
+#include <set>
 #include <vector>
-
-#include <absl/strings/ascii.h>
-#include <absl/strings/str_split.h>
 
 #include "common/configuration.h"
 #include "common/nixl_duration.h"
 #include "common/nixl_log.h"
+#include "common/str_util.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "util.h"
@@ -205,15 +204,8 @@ resolveEnabledMetrics() {
     nixl_telemetry_metric_mask_t enabled{};
 
     const auto spec = nixl::config::getValueOptional<std::string>(TELEMETRY_ENABLED_METRICS_VAR);
-    std::vector<std::string> tokens;
-    if (spec) {
-        for (const absl::string_view raw : absl::StrSplit(*spec, ',')) {
-            const absl::string_view token = absl::StripAsciiWhitespace(raw);
-            if (!token.empty()) {
-                tokens.emplace_back(token.data(), token.size());
-            }
-        }
-    }
+    const std::set<std::string> tokens =
+        spec ? nixl::str::splitStrippedSet(*spec) : std::set<std::string>{};
 
     // Unset / empty / all-whitespace: export everything (backward compatible).
     if (tokens.empty()) {
@@ -221,23 +213,21 @@ resolveEnabledMetrics() {
         return enabled;
     }
 
-    std::vector<bool> token_matched(tokens.size(), false);
+    std::set<std::string> unmatched(tokens);
     for (size_t i = 0; i < nixl_telemetry_event_type_count; ++i) {
         const std::string name{
             nixlEnumStrings::telemetryEventTypeStr(static_cast<nixl_telemetry_event_type_t>(i))};
-        for (size_t t = 0; t < tokens.size(); ++t) {
-            if (fnmatch(tokens[t].c_str(), name.c_str(), 0) == 0) {
+        for (const auto &token : tokens) {
+            if (fnmatch(token.c_str(), name.c_str(), 0) == 0) {
                 enabled[i] = true;
-                token_matched[t] = true;
+                unmatched.erase(token);
             }
         }
     }
 
-    for (size_t t = 0; t < tokens.size(); ++t) {
-        if (!token_matched[t]) {
-            NIXL_WARN << "Ignoring " << TELEMETRY_ENABLED_METRICS_VAR << " entry '" << tokens[t]
-                      << "': no telemetry metric matches";
-        }
+    for (const auto &token : unmatched) {
+        NIXL_WARN << "Ignoring " << TELEMETRY_ENABLED_METRICS_VAR << " entry '" << token
+                  << "': no telemetry metric matches";
     }
 
     NIXL_DEBUG << "Telemetry metric activation (" << TELEMETRY_ENABLED_METRICS_VAR << "): active=["
