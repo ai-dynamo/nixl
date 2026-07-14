@@ -392,16 +392,22 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 
 ### Raw POSIX command
 
-The scoped CLI11 path runs the existing NIXLBench worker with POSIX options
-discovered from the installed plugin. Sizes accept binary human-readable
-suffixes such as `KiB`, `MiB`, and `GiB`. The shorter `KB`, `MB`, `GB`, and
-`TB` spellings are accepted as binary aliases for compatibility.
+The scoped CLI11 path runs the existing NIXLBench worker. The `raw` command owns
+backend-neutral benchmark controls such as operation, transfer sizes, and
+iterations; the `posix` subcommand owns file and POSIX I/O configuration
+discovered from the installed plugin. Raw options are accepted before or after
+the backend subcommand. Sizes accept binary human-readable suffixes such as
+`KiB`, `MiB`, and `GiB`. The shorter `KB`, `MB`, `GB`, and `TB` spellings are
+accepted as binary aliases for compatibility.
 
 ```bash
 # Create the directory used by the examples below
 mkdir -p /tmp/nixlbench-data
 
-# Inspect the POSIX-specific command and the options exposed by this plugin build
+# Inspect backend-neutral raw benchmark controls
+nixlbench raw --help
+
+# Inspect POSIX configuration exposed by this plugin build
 nixlbench raw posix --help
 
 # Print the resolved configuration without creating a worker or touching files

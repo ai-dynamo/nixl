@@ -23,11 +23,8 @@ struct PluginMetadata {
     nixl_b_params_t parameters;
 };
 
-struct RawPosixRequest {
+struct RawOptions {
     std::string operation = "WRITE";
-    std::string path;
-    std::string filenames;
-    int num_files = 1;
     size_t total_buffer_size = 8ULL * 1024 * 1024 * 1024;
     size_t start_block_size = 4ULL * 1024;
     size_t max_block_size = 64ULL * 1024 * 1024;
@@ -38,11 +35,22 @@ struct RawPosixRequest {
     int threads = 1;
     int pipeline_depth = 1;
     bool check_consistency = false;
+    bool dry_run = false;
+};
+
+struct PosixOptions {
+    std::string path;
+    std::string filenames;
+    int num_files = 1;
     bool direct = false;
     std::string api;
     int io_pool_size = 65536;
     int kernel_queue_size = 256;
-    bool dry_run = false;
+};
+
+struct RawPosixRequest {
+    RawOptions raw;
+    PosixOptions posix;
 };
 
 struct RawCommandResult {

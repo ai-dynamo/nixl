@@ -112,42 +112,46 @@ namespace {
             return false;
         };
 
-        if (request.operation != "READ" && request.operation != "WRITE") {
+        if (request.raw.operation != "READ" && request.raw.operation != "WRITE") {
             return fail("--operation must be read or write");
         }
-        if (std::find(apis.begin(), apis.end(), request.api) == apis.end()) {
+        if (std::find(apis.begin(), apis.end(), request.posix.api) == apis.end()) {
             return fail("--api is not available in the installed POSIX plugin");
         }
-        if (!request.path.empty() && !request.filenames.empty()) {
+        if (!request.posix.path.empty() && !request.posix.filenames.empty()) {
             return fail("--path and --filenames are mutually exclusive");
         }
-        if (request.num_files < 1) {
+        if (request.posix.num_files < 1) {
             return fail("--num-files must be at least 1");
         }
-        if (!request.filenames.empty() &&
-            countCommaSeparated(request.filenames) != static_cast<size_t>(request.num_files)) {
+        if (!request.posix.filenames.empty() &&
+            countCommaSeparated(request.posix.filenames) !=
+                static_cast<size_t>(request.posix.num_files)) {
             return fail("--filenames must contain exactly --num-files entries");
         }
-        if (request.threads < 1 || request.iterations < 1 || request.warmup_iterations < 0 ||
-            request.pipeline_depth < 1) {
+        if (request.raw.threads < 1 || request.raw.iterations < 1 ||
+            request.raw.warmup_iterations < 0 || request.raw.pipeline_depth < 1) {
             return fail(
                 "threads, iterations, and pipeline depth must be positive; warmup may be zero");
         }
-        if (request.num_files > request.threads || request.threads % request.num_files != 0) {
+        if (request.posix.num_files > request.raw.threads ||
+            request.raw.threads % request.posix.num_files != 0) {
             return fail("--num-files must divide --threads and cannot exceed it");
         }
-        if (request.start_block_size == 0 || request.max_block_size < request.start_block_size) {
+        if (request.raw.start_block_size == 0 ||
+            request.raw.max_block_size < request.raw.start_block_size) {
             return fail("block sizes must be positive and max must be at least start");
         }
-        if (request.start_batch_size == 0 || request.max_batch_size < request.start_batch_size) {
+        if (request.raw.start_batch_size == 0 ||
+            request.raw.max_batch_size < request.raw.start_batch_size) {
             return fail("batch sizes must be positive and max must be at least start");
         }
-        if (request.io_pool_size < POSIX_MIN_IO_POOL_SIZE ||
-            request.io_pool_size > POSIX_MAX_IO_POOL_SIZE) {
+        if (request.posix.io_pool_size < POSIX_MIN_IO_POOL_SIZE ||
+            request.posix.io_pool_size > POSIX_MAX_IO_POOL_SIZE) {
             return fail("--io-pool-size must be between 64 and 65536");
         }
-        if (request.kernel_queue_size < POSIX_MIN_KERNEL_QUEUE_SIZE ||
-            request.kernel_queue_size > POSIX_MAX_KERNEL_QUEUE_SIZE) {
+        if (request.posix.kernel_queue_size < POSIX_MIN_KERNEL_QUEUE_SIZE ||
+            request.posix.kernel_queue_size > POSIX_MAX_KERNEL_QUEUE_SIZE) {
             return fail("--kernel-queue-size must be between 16 and 1024");
         }
         return true;
@@ -200,7 +204,7 @@ namespace {
             << "\n  POSIX API: " << xferBenchConfig::posix_api_type
             << "\n  POSIX I/O pool size: " << xferBenchConfig::posix_ios_pool_size
             << "\n  POSIX kernel queue size: " << xferBenchConfig::posix_kernel_queue_size << '\n';
-        if (request.dry_run) {
+        if (request.raw.dry_run) {
             out << "Dry run: no worker was created and no allocation or transfer was attempted.\n";
         }
     }
@@ -311,62 +315,71 @@ parseRawPosixCommand(int argc,
         err << "Error: the installed POSIX plugin advertises no usable I/O API\n";
         return 2;
     }
-    request.api = defaultApi(metadata, apis);
+    request.posix.api = defaultApi(metadata, apis);
     const auto io_pool_size =
-        metadataIntegerDefault(metadata, "ios_pool_size", request.io_pool_size, err);
+        metadataIntegerDefault(metadata, "ios_pool_size", request.posix.io_pool_size, err);
     const auto kernel_queue_size =
-        metadataIntegerDefault(metadata, "kernel_queue_size", request.kernel_queue_size, err);
+        metadataIntegerDefault(metadata, "kernel_queue_size", request.posix.kernel_queue_size, err);
     if (!io_pool_size || !kernel_queue_size) {
         return 2;
     }
-    request.io_pool_size = *io_pool_size;
-    request.kernel_queue_size = *kernel_queue_size;
+    request.posix.io_pool_size = *io_pool_size;
+    request.posix.kernel_queue_size = *kernel_queue_size;
 
-    std::string total_buffer_size = std::to_string(request.total_buffer_size);
-    std::string start_block_size = std::to_string(request.start_block_size);
-    std::string max_block_size = std::to_string(request.max_block_size);
+    std::string total_buffer_size = std::to_string(request.raw.total_buffer_size);
+    std::string start_block_size = std::to_string(request.raw.start_block_size);
+    std::string max_block_size = std::to_string(request.raw.max_block_size);
 
     CLI::App app("NIXL data-transfer benchmark");
     app.require_subcommand(1);
     auto *raw = app.add_subcommand("raw", "Configure a low-level benchmark explicitly");
     raw->require_subcommand(1);
     auto *posix = raw->add_subcommand("posix", "Run the installed POSIX storage backend");
-    posix->add_option("--operation", request.operation, "Transfer direction: read or write")
+    posix->fallthrough();
+    posix->footer("Raw benchmark options are documented by 'nixlbench raw --help' and may be used "
+                  "before or after the posix subcommand.");
+
+    raw->add_option("--operation", request.raw.operation, "Transfer direction: read or write")
         ->check(CLI::IsMember({"read", "write"}, CLI::ignore_case));
-    posix->add_option("--path", request.path, "Directory for automatically named files");
-    posix->add_option("--filenames", request.filenames, "Comma-separated explicit file names");
-    posix->add_option("--num-files", request.num_files, "Number of backing files");
-    posix->add_option("--total-buffer-size",
-                      total_buffer_size,
-                      "Total buffer size using binary units (for example 4MiB or 4MB)");
-    posix->add_option("--start-block-size", start_block_size, "First block size in the sweep");
-    posix->add_option("--max-block-size", max_block_size, "Last block size in the sweep");
+    raw->add_option("--total-buffer-size",
+                    total_buffer_size,
+                    "Total buffer size using binary units (for example 4MiB or 4MB)");
+    raw->add_option("--start-block-size", start_block_size, "First block size in the sweep");
+    raw->add_option("--max-block-size", max_block_size, "Last block size in the sweep");
+    raw->add_option(
+        "--start-batch-size", request.raw.start_batch_size, "First batch size in the sweep");
+    raw->add_option("--max-batch-size", request.raw.max_batch_size, "Last batch size in the sweep");
+    raw->add_option("--iterations", request.raw.iterations, "Timed iterations");
+    raw->add_option("--warmup-iterations", request.raw.warmup_iterations, "Warmup iterations");
+    raw->add_option("--threads", request.raw.threads, "Benchmark worker threads");
+    raw->add_option("--pipeline-depth", request.raw.pipeline_depth, "Transfer requests in flight");
+    raw->add_flag(
+        "--check-consistency", request.raw.check_consistency, "Validate transferred bytes");
+    raw->add_flag("--dry-run", request.raw.dry_run, "Print the resolved plan without executing");
+
+    posix->add_option("--path", request.posix.path, "Directory for automatically named files");
     posix->add_option(
-        "--start-batch-size", request.start_batch_size, "First batch size in the sweep");
-    posix->add_option("--max-batch-size", request.max_batch_size, "Last batch size in the sweep");
-    posix->add_option("--iterations", request.iterations, "Timed iterations");
-    posix->add_option("--warmup-iterations", request.warmup_iterations, "Warmup iterations");
-    posix->add_option("--threads", request.threads, "Benchmark worker threads");
-    posix->add_option("--pipeline-depth", request.pipeline_depth, "Transfer requests in flight");
-    posix->add_flag("--check-consistency", request.check_consistency, "Validate transferred bytes");
-    posix->add_flag("--direct", request.direct, "Use direct I/O");
+        "--filenames", request.posix.filenames, "Comma-separated explicit file names");
+    posix->add_option("--num-files", request.posix.num_files, "Number of backing files");
+    posix->add_flag("--direct", request.posix.direct, "Use direct I/O");
     auto *api_option =
-        posix->add_option("--api", request.api, "POSIX I/O API exposed by plugin metadata");
+        posix->add_option("--api", request.posix.api, "POSIX I/O API exposed by plugin metadata");
     api_option->check(CLI::IsMember(apis, CLI::ignore_case));
-    api_option->default_str(request.api);
+    api_option->default_str(request.posix.api);
     if (metadata.parameters.contains("ios_pool_size")) {
-        posix->add_option("--io-pool-size", request.io_pool_size, "POSIX reusable I/O entry count")
+        posix
+            ->add_option(
+                "--io-pool-size", request.posix.io_pool_size, "POSIX reusable I/O entry count")
             ->check(CLI::Range(POSIX_MIN_IO_POOL_SIZE, POSIX_MAX_IO_POOL_SIZE))
-            ->default_str(std::to_string(request.io_pool_size));
+            ->default_str(std::to_string(request.posix.io_pool_size));
     }
     if (metadata.parameters.contains("kernel_queue_size")) {
         posix
             ->add_option(
-                "--kernel-queue-size", request.kernel_queue_size, "POSIX kernel queue depth")
+                "--kernel-queue-size", request.posix.kernel_queue_size, "POSIX kernel queue depth")
             ->check(CLI::Range(POSIX_MIN_KERNEL_QUEUE_SIZE, POSIX_MAX_KERNEL_QUEUE_SIZE))
-            ->default_str(std::to_string(request.kernel_queue_size));
+            ->default_str(std::to_string(request.posix.kernel_queue_size));
     }
-    posix->add_flag("--dry-run", request.dry_run, "Print the resolved plan without executing");
 
     try {
         app.parse(argc, argv);
@@ -379,15 +392,15 @@ parseRawPosixCommand(int argc,
         return app.exit(exception, out, err);
     }
 
-    request.operation = upper(request.operation);
-    request.api = upper(request.api);
-    if (request.api == "POSIX-AIO") {
-        request.api = "POSIXAIO";
+    request.raw.operation = upper(request.raw.operation);
+    request.posix.api = upper(request.posix.api);
+    if (request.posix.api == "POSIX-AIO") {
+        request.posix.api = "POSIXAIO";
     }
     std::vector<std::pair<const std::string *, size_t *>> sizes = {
-        {&total_buffer_size, &request.total_buffer_size},
-        {&start_block_size, &request.start_block_size},
-        {&max_block_size, &request.max_block_size},
+        {&total_buffer_size, &request.raw.total_buffer_size},
+        {&start_block_size, &request.raw.start_block_size},
+        {&max_block_size, &request.raw.max_block_size},
     };
     for (const auto &[text, destination] : sizes) {
         std::string size_error;
@@ -412,28 +425,31 @@ std::vector<std::string>
 legacyArguments(const RawPosixRequest &request, const std::string &program_name) {
     const auto boolean = [](bool value) { return value ? "true" : "false"; };
     return {program_name,
+            // Fixed values select the existing NIXL/POSIX runner.
             "--worker_type=nixl",
             "--backend=POSIX",
             "--initiator_seg_type=DRAM",
             "--target_seg_type=DRAM",
-            "--op_type=" + request.operation,
-            "--check_consistency=" + std::string(boolean(request.check_consistency)),
-            "--total_buffer_size=" + std::to_string(request.total_buffer_size),
-            "--start_block_size=" + std::to_string(request.start_block_size),
-            "--max_block_size=" + std::to_string(request.max_block_size),
-            "--start_batch_size=" + std::to_string(request.start_batch_size),
-            "--max_batch_size=" + std::to_string(request.max_batch_size),
-            "--num_iter=" + std::to_string(request.iterations),
-            "--warmup_iter=" + std::to_string(request.warmup_iterations),
-            "--num_threads=" + std::to_string(request.threads),
-            "--filepath=" + request.path,
-            "--filenames=" + request.filenames,
-            "--num_files=" + std::to_string(request.num_files),
-            "--storage_enable_direct=" + std::string(boolean(request.direct)),
-            "--pipeline_depth=" + std::to_string(request.pipeline_depth),
-            "--posix_api_type=" + request.api,
-            "--posix_ios_pool_size=" + std::to_string(request.io_pool_size),
-            "--posix_kernel_queue_size=" + std::to_string(request.kernel_queue_size)};
+            // Backend-neutral raw benchmark configuration.
+            "--op_type=" + request.raw.operation,
+            "--check_consistency=" + std::string(boolean(request.raw.check_consistency)),
+            "--total_buffer_size=" + std::to_string(request.raw.total_buffer_size),
+            "--start_block_size=" + std::to_string(request.raw.start_block_size),
+            "--max_block_size=" + std::to_string(request.raw.max_block_size),
+            "--start_batch_size=" + std::to_string(request.raw.start_batch_size),
+            "--max_batch_size=" + std::to_string(request.raw.max_batch_size),
+            "--num_iter=" + std::to_string(request.raw.iterations),
+            "--warmup_iter=" + std::to_string(request.raw.warmup_iterations),
+            "--num_threads=" + std::to_string(request.raw.threads),
+            "--pipeline_depth=" + std::to_string(request.raw.pipeline_depth),
+            // POSIX backend configuration.
+            "--filepath=" + request.posix.path,
+            "--filenames=" + request.posix.filenames,
+            "--num_files=" + std::to_string(request.posix.num_files),
+            "--storage_enable_direct=" + std::string(boolean(request.posix.direct)),
+            "--posix_api_type=" + request.posix.api,
+            "--posix_ios_pool_size=" + std::to_string(request.posix.io_pool_size),
+            "--posix_kernel_queue_size=" + std::to_string(request.posix.kernel_queue_size)};
 }
 
 RawCommandResult
@@ -466,7 +482,7 @@ prepareRawCommand(int argc, char *argv[], std::ostream &out, std::ostream &err) 
     }
 
     printPlan(request, *metadata, out);
-    return {0, !request.dry_run};
+    return {0, !request.raw.dry_run};
 }
 
 } // namespace nixlbench
