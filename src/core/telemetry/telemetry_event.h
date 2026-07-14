@@ -25,6 +25,7 @@
 
 constexpr char TELEMETRY_BUFFER_SIZE_VAR[] = "NIXL_TELEMETRY_BUFFER_SIZE";
 constexpr char TELEMETRY_RUN_INTERVAL_VAR[] = "NIXL_TELEMETRY_RUN_INTERVAL";
+constexpr char TELEMETRY_ENABLED_METRICS_VAR[] = "NIXL_TELEMETRY_ENABLED_METRICS";
 
 constexpr inline int TELEMETRY_VERSION = 4;
 
@@ -56,6 +57,12 @@ enum class nixl_telemetry_event_type_t : uint32_t {
     AGENT_TELEMETRY_EVENTS_DROPPED = 20,
 };
 
+inline constexpr std::size_t nixl_telemetry_event_type_count =
+    static_cast<std::size_t>(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED) + 1;
+
+// Per-event-type flag mask indexed by nixl_telemetry_event_type_t.
+using nixl_telemetry_metric_mask_t = std::array<bool, nixl_telemetry_event_type_count>;
+
 [[nodiscard]] nixl_telemetry_event_type_t
 nixlTelemetryEventTypeForStatus(nixl_status_t s);
 
@@ -85,6 +92,11 @@ inline constexpr std::array telemetry_metric_event_types = {
     nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
     nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED,
 };
+
+static_assert(nixl_telemetry_event_type_count ==
+                  telemetry_metric_event_types.size() + telemetry_error_event_types.size(),
+              "AGENT_TELEMETRY_EVENTS_DROPPED must remain the last enumerator; "
+              "nixl_telemetry_event_type_count is out of sync with the event-type enum");
 
 struct nixlTelemetryMetricDescriptor {
     const char *counterName;
