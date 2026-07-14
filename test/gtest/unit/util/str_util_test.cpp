@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,7 @@
 namespace {
 
 using nixl::str::splitStripped;
+using nixl::str::splitStrippedSet;
 
 TEST(StrSplitStripped, SplitsAndTrimsTokens) {
     EXPECT_EQ(splitStripped("nvtx,chakra"), (std::vector<std::string>{"nvtx", "chakra"}));
@@ -48,6 +50,23 @@ TEST(StrSplitStripped, DropsEmptyAndWhitespaceOnlyTokens) {
 TEST(StrSplitStripped, HonorsCustomDelimiter) {
     EXPECT_EQ(splitStripped("a:b: c ", ':'), (std::vector<std::string>{"a", "b", "c"}));
     EXPECT_EQ(splitStripped("a,b", ':'), (std::vector<std::string>{"a,b"}));
+}
+
+TEST(StrSplitStrippedSet, DeduplicatesAndSorts) {
+    EXPECT_EQ(splitStrippedSet("nvtx,chakra"), (std::set<std::string>{"chakra", "nvtx"}));
+    EXPECT_EQ(splitStrippedSet(" nvtx , nvtx , chakra "),
+              (std::set<std::string>{"chakra", "nvtx"}));
+    EXPECT_EQ(splitStrippedSet("chakra,chakra,chakra"), (std::set<std::string>{"chakra"}));
+}
+
+TEST(StrSplitStrippedSet, DropsEmptyAndWhitespaceOnlyTokens) {
+    EXPECT_TRUE(splitStrippedSet("").empty());
+    EXPECT_TRUE(splitStrippedSet(" , ").empty());
+    EXPECT_EQ(splitStrippedSet(",nvtx,,nvtx,"), (std::set<std::string>{"nvtx"}));
+}
+
+TEST(StrSplitStrippedSet, HonorsCustomDelimiter) {
+    EXPECT_EQ(splitStrippedSet("a:b: a ", ':'), (std::set<std::string>{"a", "b"}));
 }
 
 } // namespace

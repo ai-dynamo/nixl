@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_UTILS_COMMON_STR_UTIL_H
 #define NIXL_SRC_UTILS_COMMON_STR_UTIL_H
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,25 @@ splitStripped(absl::string_view s, char delim = ',') {
         const absl::string_view token = absl::StripAsciiWhitespace(raw);
         if (!token.empty()) {
             tokens.emplace_back(token);
+        }
+    }
+    return tokens;
+}
+
+/**
+ * @brief Like splitStripped(), but returns the tokens deduplicated and sorted.
+ *
+ * @param s String to split.
+ * @param delim Delimiter character (default ',').
+ * @return Unique ASCII-whitespace-trimmed tokens; empty tokens dropped.
+ */
+[[nodiscard]] inline std::set<std::string>
+splitStrippedSet(absl::string_view s, char delim = ',') {
+    std::set<std::string> tokens;
+    for (const absl::string_view raw : absl::StrSplit(s, delim)) {
+        const absl::string_view token = absl::StripAsciiWhitespace(raw);
+        if (!token.empty()) {
+            tokens.emplace(token);
         }
     }
     return tokens;

@@ -127,8 +127,7 @@ resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under
     if (explicit_spec) {
         // Trim entries so a padded value like "chakra, nvtx" matches backend
         // names; the set dedups them.
-        const auto names = nixl::str::splitStripped(*explicit_spec);
-        backends.insert(names.begin(), names.end());
+        backends = nixl::str::splitStrippedSet(*explicit_spec);
         // Set-but-empty (or all-blank) is an explicit "off" that must beat the
         // nsys auto-enable below.
         explicit_off = backends.empty();
