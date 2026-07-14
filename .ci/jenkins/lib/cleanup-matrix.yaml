@@ -1,0 +1,39 @@
+---
+job: nixl-ci-cleanup-artifacts
+
+failFast: true
+timeout_minutes: 60
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 2Gi, cpu: 500m}"
+  requests: "{memory: 1Gi, cpu: 250m}"
+
+runs_on_dockers:
+  - { name: "ubuntu", url: "docker.io/library/ubuntu:24.04", arch: "x86_64" }
+
+env:
+  ARTIFACTORY_URL: "https://artifactory.nvidia.com/artifactory"
+
+credentials:
+  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN'}
+
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    env.DRY_RUN_FLAG=""
+    if ("${DRY_RUN}" == "true") {
+      env.DRY_RUN_FLAG="--dry-run"
+    }
+
+steps:
+  - name: Cleanup Artifactory artifacts
+    parallel: false
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    run: |
+      apt-get update -qq && apt-get install -y -qq jq curl > /dev/null
+      curl -fsSL "https://releases.jfrog.io/artifactory/jfrog-cli/v2-jf/2.72.2/jfrog-cli-linux-amd64/jf" -o /usr/local/bin/jf && chmod +x /usr/local/bin/jf
+      .ci/scripts/artifactory-cleanup-by-time.sh ${DRY_RUN_FLAG} \
+        --spec .ci/cleanup-spec.json
