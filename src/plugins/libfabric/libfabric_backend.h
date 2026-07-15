@@ -342,6 +342,10 @@ private:
     vramApplyCtx();
     void
     vramFiniCtx();
+
+    nixl_status_t
+    vramApplyCtxEx(bool &use_cuda_addr_wa) const;
+    friend class nixlLibfaricCudaCtxEngineMediator;
 #endif
 
 public:
