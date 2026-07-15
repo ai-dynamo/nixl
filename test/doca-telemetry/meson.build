@@ -57,7 +57,7 @@ if build_doca_tests
             include_directories(doca_exporter_dir),
             include_directories('../../src/plugins/telemetry/common'),
         ],
-        dependencies: [gtest_dep, doca_telemetry_dep, doca_common_dep, nixl_infra, nixl_common_dep, absl_log_dep],
+        dependencies: [gtest_dep, doca_telemetry_dep, doca_common_dep, nixl_infra, nixl_common_dep, absl_log_dep, absl_strings_dep],
         cpp_args: ['-Wno-deprecated-declarations'],
         install: true,
     )

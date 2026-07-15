@@ -331,6 +331,82 @@ TEST(telemetryMetricContract, DescriptorIsUnifiedExporterSeriesContract) {
     }
 }
 
+// A subset allowlist exports only the listed event; deactivated metrics are
+// skipped at the source and never enter the staging queue (BUFFER here).
+TEST_F(telemetryTest, MetricAllowlistSubset) {
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    envHelper_.addVar(TELEMETRY_ENABLED_METRICS_VAR, "agent_tx_bytes");
+    testFile_ = "test_allowlist_subset";
+
+    {
+        nixlTelemetry telemetry(testFile_, "BUFFER");
+        telemetry.updateTxBytes(1024); // allowed
+        telemetry.updateRxBytes(2048); // filtered
+        telemetry.updateMemoryRegistered(4096); // filtered
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    EXPECT_EQ(buffer->size(), 1);
+    nixlTelemetryEvent event;
+    ASSERT_TRUE(buffer->pop(event));
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
+    EXPECT_EQ(event.value_, 1024);
+
+    envHelper_.popVar(); // TELEMETRY_ENABLED_METRICS_VAR
+    envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR
+}
+
+// A family glob (agent_err_*) enables every matching event and nothing else.
+TEST_F(telemetryTest, MetricAllowlistFamilyGlob) {
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    envHelper_.addVar(TELEMETRY_ENABLED_METRICS_VAR, "agent_err_*");
+    testFile_ = "test_allowlist_family";
+
+    {
+        nixlTelemetry telemetry(testFile_, "BUFFER");
+        telemetry.updateErrorCount(nixl_status_t::NIXL_ERR_BACKEND); // allowed
+        telemetry.updateTxBytes(1024); // filtered
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    EXPECT_EQ(buffer->size(), 1);
+    nixlTelemetryEvent event;
+    ASSERT_TRUE(buffer->pop(event));
+    EXPECT_EQ(event.eventType_, nixl_telemetry_event_type_t::AGENT_ERR_BACKEND);
+
+    envHelper_.popVar(); // TELEMETRY_ENABLED_METRICS_VAR
+    envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR
+}
+
+// An allowlist whose tokens match nothing warns and exports nothing.
+TEST_F(telemetryTest, MetricAllowlistUnknownTokenExportsNothing) {
+    gtest::LogIgnoreGuard ignore_unknown("no telemetry metric matches");
+    envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+    envHelper_.addVar(TELEMETRY_ENABLED_METRICS_VAR, "nope_*, also_missing");
+    testFile_ = "test_allowlist_unknown";
+
+    {
+        nixlTelemetry telemetry(testFile_, "BUFFER");
+        telemetry.updateTxBytes(1024);
+        telemetry.updateRxBytes(2048);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    auto path = testDir_.string() + "/" + testFile_;
+    auto buffer =
+        std::make_unique<sharedRingBuffer<nixlTelemetryEvent>>(path, false, TELEMETRY_VERSION);
+    EXPECT_EQ(buffer->size(), 0);
+
+    envHelper_.popVar(); // TELEMETRY_ENABLED_METRICS_VAR
+    envHelper_.popVar(); // TELEMETRY_RUN_INTERVAL_VAR
+}
+
 TEST_F(telemetryTest, ShortRunInterval) {
     envHelper_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
 
