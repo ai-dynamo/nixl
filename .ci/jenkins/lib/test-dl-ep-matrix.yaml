@@ -10,7 +10,7 @@
 # - Job Configuration: Defines timeout, failure behavior, and server resources
 # - Docker Images: Dedicated EP base + build_helper (nixl-ci-dl-gpu-ep-base-... and
 #                  build_helper_dl_ep)
-# - Matrix Axes: aarch64, UCX master + v1.21.x
+# - Matrix Axes: aarch64, UCX master + v1.22.x
 # - Run Steps: build PR image with BUILD_NIXL_EP=true, allocate Slurm, run
 #              .gitlab/test_ep.sh (elastic.py NVLink + RDMA on 4 GPUs)
 #
@@ -60,7 +60,9 @@ env:
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   TEST_TIMEOUT: 50
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260629-1"
+  # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
+  # the "CI_MANAGED" placeholder must not be hand-edited.
+  CI_IMAGE_TAG: "CI_MANAGED"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
@@ -74,10 +76,10 @@ pvc_volumes:
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
-     name: 'nixl-ci-dl-gpu-ep-base-25.10-cuda13.0-ubuntu24.04',
+     name: 'nixl-ci-dl-gpu-ep-base-pytorch26.06-cuda13.3-ubuntu24.04',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
     }
 
   - {
@@ -94,7 +96,7 @@ matrix:
       - aarch64
     ucx_version:
       - master
-      - v1.21.x
+      - v1.22.x
 
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
@@ -114,7 +116,7 @@ steps:
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
       --build-arg BUILD_NIXL_EP=true \
-      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base-pytorch26.06-cuda13.3-ubuntu24.04:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE}
