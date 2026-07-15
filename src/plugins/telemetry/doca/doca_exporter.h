@@ -50,7 +50,9 @@ private:
     // (add_counter_increment), so repeated per-operation deltas produce a
     // monotonic cumulative total, matching the Prometheus exporter.
     [[nodiscard]] doca_error_t
-    appendCounterSample(const nixlTelemetryEvent &event, const char *label_values[]);
+    appendCounterSample(const nixlTelemetryEvent &event,
+                        const char *counter_name,
+                        const char *label_values[]);
 
     [[nodiscard]] doca_error_t
     appendErrorCounterSample(const nixlTelemetryEvent &event, const char *status);
@@ -60,6 +62,14 @@ private:
     appendGaugeSample(const nixlTelemetryEvent &event,
                       const char *metric_name,
                       const char *label_values[]);
+
+    // Records the per-operation value into the base histogram registered for this
+    // event's type (created once on the shared context). Tracks the concrete
+    // histogram id so flush() can push it, since the general metrics flush does
+    // not cover histograms. A no-op returning DOCA_SUCCESS when the event has no
+    // histogram.
+    [[nodiscard]] doca_error_t
+    appendHistogramSample(const nixlTelemetryEvent &event, const char *label_values[]);
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_DOCA_EXPORTER_H

@@ -23,7 +23,9 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
-ARG UCX_REF="v1.21.x"
+ARG UCX_REPO="https://github.com/openucx/ucx.git"
+ARG UCX_REF="v1.22.x"
+ARG UCX_SONAME_SUFFIX=""
 ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
 ARG UCX_PREFIX="/usr"
@@ -33,7 +35,6 @@ ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
-ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
@@ -183,12 +184,29 @@ RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /usr/local/src && \
-     git clone https://github.com/openucx/ucx.git && \
+     git clone "$UCX_REPO" ucx && \
      cd ucx && \
      echo "=== Using UCX_REF=$UCX_REF ===" && \
      git checkout $UCX_REF && \
      if [ "$BUILD_NIXL_EP" = "true" ]; then EXPERIMENTAL_API_PARAM="--enable-experimental-api"; else EXPERIMENTAL_API_PARAM=""; fi && \
      ./autogen.sh && \
+     if [ -n "$UCX_SONAME_SUFFIX" ]; then \
+         if ./configure --help | grep -q -- "--with-soname-suffix"; then \
+             UCX_SONAME_PARAM="--with-soname-suffix=$UCX_SONAME_SUFFIX"; \
+         else \
+             echo "UCX_REF=$UCX_REF does not support --with-soname-suffix" >&2; \
+             exit 1; \
+         fi; \
+         if ./configure --help | grep -q -- "--enable-module-deepbind"; then \
+             UCX_MODULE_DEEPBIND_PARAM="--enable-module-deepbind"; \
+         else \
+             echo "UCX_REF=$UCX_REF does not support --enable-module-deepbind" >&2; \
+             exit 1; \
+         fi; \
+     else \
+         UCX_SONAME_PARAM=""; \
+         UCX_MODULE_DEEPBIND_PARAM=""; \
+     fi && \
      ./contrib/configure-release-mt  \
          --prefix=$UCX_PREFIX        \
          --enable-shared             \
@@ -202,7 +220,9 @@ RUN cd /usr/local/src && \
          --with-verbs                \
          --with-dm                   \
          --without-gdrcopy           \
-         --with-efa  &&              \
+         --with-efa                  \
+         $UCX_SONAME_PARAM           \
+         $UCX_MODULE_DEEPBIND_PARAM && \
      make -j${NPROC:-$(nproc)} &&                \
      make -j${NPROC:-$(nproc)} install-strip &&  \
      ldconfig
@@ -295,17 +315,10 @@ ENV PYTHONPATH=/workspace/nixl/build/examples/device/ep
 
 RUN cd src/bindings/rust && cargo build --release --locked
 
-# Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
-RUN mkdir -p dist && \
-    if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAGS="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; else EP_BUILD_FLAGS=""; fi && \
-    ./contrib/build-wheel.sh \
-    --python-version $DEFAULT_PYTHON_VERSION \
-    --platform manylinux_2_39_$ARCH \
-    --ucx-plugins-dir $UCX_PLUGIN_DIR \
-    --nixl-plugins-dir $NIXL_PLUGIN_DIR \
-    --output-dir /workspace/nixl/dist \
-    $EP_BUILD_FLAGS
-
-RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
-RUN uv pip install --system \
-    dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl
+# Install the python bindings from source, built against the container's own
+# torch - works on any base, no dependency on public torch wheels.
+# Redistributable wheels are produced by the wheel CI pipelines, not here.
+RUN CUDA_MAJOR=$(echo "${CUDA_VERSION}" | cut -d. -f1) && \
+    ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
+    uv pip install --system --no-build-isolation . && \
+    uv pip install --system build/src/bindings/python/nixl-meta/nixl-*.whl

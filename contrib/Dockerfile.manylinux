@@ -16,7 +16,11 @@
 
 ARG BASE_IMAGE
 ARG BASE_IMAGE_TAG
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+# When overridden to an Artifactory URL, the wheel stage pulls the pre-built deps
+# image instead of building them locally. Default keeps the single-stage local build.
+ARG wheel_base=wheel_base
+
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS wheel_base
 
 ARG DEFAULT_PYTHON_VERSION="3.14"
 ARG ARCH="x86_64"
@@ -300,13 +304,32 @@ RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | c
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
-ARG UCX_REF="v1.21.x"
+ARG UCX_REPO="https://github.com/openucx/ucx.git"
+ARG UCX_REF="v1.22.x"
+ARG UCX_SONAME_SUFFIX=""
 RUN cd /usr/local/src && \
-     git clone https://github.com/openucx/ucx.git && \
+     git clone "$UCX_REPO" ucx && \
      cd ucx &&                       \
      git checkout "${UCX_REF}" &&    \
      git log -1 &&                   \
      ./autogen.sh &&                 \
+     if [ -n "$UCX_SONAME_SUFFIX" ]; then \
+         if ./configure --help | grep -q -- "--with-soname-suffix"; then \
+             UCX_SONAME_PARAM="--with-soname-suffix=$UCX_SONAME_SUFFIX"; \
+         else \
+             echo "UCX_REF=$UCX_REF does not support --with-soname-suffix" >&2; \
+             exit 1; \
+         fi; \
+         if ./configure --help | grep -q -- "--enable-module-deepbind"; then \
+             UCX_MODULE_DEEPBIND_PARAM="--enable-module-deepbind"; \
+         else \
+             echo "UCX_REF=$UCX_REF does not support --enable-module-deepbind" >&2; \
+             exit 1; \
+         fi; \
+     else \
+         UCX_SONAME_PARAM=""; \
+         UCX_MODULE_DEEPBIND_PARAM=""; \
+     fi && \
      ./contrib/configure-release-mt  \
          --enable-shared             \
          --disable-static            \
@@ -322,10 +345,19 @@ RUN cd /usr/local/src && \
          --with-efa                  \
          --without-dc                \
          --without-rdmacm            \
-         --without-gga &&            \
+         --without-gga               \
+         $UCX_SONAME_PARAM           \
+         $UCX_MODULE_DEEPBIND_PARAM && \
      make -j &&                      \
      make -j install-strip &&        \
      ldconfig
+
+FROM $wheel_base AS wheel
+
+ARG ARCH="x86_64"
+ARG BUILD_TYPE="release"
+ARG BUILD_NIXL_EP="true"
+ARG UCX_SONAME_SUFFIX=""
 
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
