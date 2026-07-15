@@ -870,6 +870,14 @@
           name: "UCX_SPCX_PLUGIN_REF"
           default: "main"
           description: "Git ref of ucx-spcx-plugin (used only when BUILD_UCX_SPCX_PLUGIN is set)"
+      - bool:
+          name: "BUILD_INFINIA"
+          default: false
+          description: "Build and bundle the Infinia DDN plugin (requires the source ref to carry the infinia support in contrib/, and harbor.mellanox.com reachable)"
+      - string:
+          name: "INFINIA_IMAGE"
+          default: ""
+          description: "Override the infinia-libs image ref (used only when BUILD_INFINIA is set; empty = build-container.sh default)"
       - string:
           name: "DEBUG"
           default: 0

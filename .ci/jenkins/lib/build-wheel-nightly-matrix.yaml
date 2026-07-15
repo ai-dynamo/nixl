@@ -108,6 +108,12 @@ steps:
       if [ "${BUILD_UCX_SPCX_PLUGIN}" = "true" ]; then
         SPCX_FLAGS="--build-ucx-spcx-plugin --ucx-spcx-plugin-ref ${UCX_SPCX_PLUGIN_REF}"
       fi
+      # Infinia DDN plugin is opt-in; --infinia-image only added when overridden
+      INFINIA_FLAGS=""
+      if [ "${BUILD_INFINIA}" = "true" ]; then
+        INFINIA_FLAGS="--build-infinia"
+        [ -n "${INFINIA_IMAGE}" ] && INFINIA_FLAGS="${INFINIA_FLAGS} --infinia-image ${INFINIA_IMAGE}"
+      fi
       cd nixl-src
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
@@ -118,7 +124,8 @@ steps:
         --ucx-ref "${UCX_SHA}" \
         --tag "${WHEEL_IMAGE_TAG}" \
         --dockerfile contrib/Dockerfile.manylinux \
-        ${SPCX_FLAGS}
+        ${SPCX_FLAGS} \
+        ${INFINIA_FLAGS}
 
   - name: Publish
     credentialsId: 'svc-nixl-new-artifactory-token'
