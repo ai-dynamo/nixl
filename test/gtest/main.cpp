@@ -88,6 +88,8 @@ namespace {
     const std::set<std::string> nvtx_skips = {"*TestTransferTracing.Nvtx*",
                                               "*TestTransferTracingNsys*"};
 
+    const std::set<std::string> san_skips = {"nixlDurationTest.*"};
+
     std::mutex mutex;
     std::vector<std::string> required_but_skipped;
 
@@ -174,6 +176,11 @@ RunAllTests() {
     if (std::getenv("NIXL_CI_ALLOW_NVTX_SKIP") != nullptr) {
         stc->allowForSkip(nvtx_skips);
         std::cerr << "ALLOWING NVTX tracing tests to be skipped" << std::endl;
+    }
+
+    if (std::getenv("SAN_LABEL") != nullptr) {
+        stc->allowForSkip(san_skips);
+        std::cerr << "ALLOWING SANITIZER tests to be skipped" << std::endl;
     }
 
     return RUN_ALL_TESTS();
