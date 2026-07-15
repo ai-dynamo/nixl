@@ -104,6 +104,8 @@ navigation:
   # ==================== API Reference ====================
   - section: API Reference
     contents:
+      - page: Northbound API Semantics
+        path: api-reference/northbound-api.md
       - page: C++ API
         path: api-reference/cpp-api.md
       - page: Python API

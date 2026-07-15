@@ -5,6 +5,8 @@ description: Complete C++ API reference for NIXL data transfers.
 
 This is the C++ API reference for the NVIDIA Inference Xfer Library (NIXL). C++ is the native API -- all other language bindings are built on top of it. For Python bindings, see the [Python API Reference](./python-api). For Rust bindings, see the [Rust API Reference](./rust-api).
 
+Behavior shared by all bindings is documented in [Northbound API Semantics](./northbound-api).
+
 To use the NIXL C++ API, include a single header:
 
 ```cpp
