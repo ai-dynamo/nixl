@@ -76,10 +76,10 @@ TEST_F(docaNixlExporterStressTest, HighVolumeSequenceCounterGaugeAndDropAccumula
     nixlTelemetryDocaExporter exporter(params);
 
     const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
-    const std::string txCounter =
-        nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES)
-            .counterName;
-    const std::string txLast = "agent_tx_last_bytes";
+    const auto txDescriptor =
+        nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES);
+    const std::string txCounter = txDescriptor.counterName;
+    const std::string txLast = txDescriptor.gaugeName;
     const std::string dropCounter = nixlEnumStrings::telemetryMetricDescriptor(
                                         nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)
                                         .counterName;

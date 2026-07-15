@@ -82,7 +82,9 @@ if build_doca_tests
         install: true,
     )
 
-    test('doca_nixl_stress_test', doca_nixl_stress_test_exe, is_parallel: false)
+    # scrapeUntilValue polls up to 15s; give generous headroom over Meson's 30s
+    # default for the high-volume run plus setup/flush on loaded or sanitizer CI.
+    test('doca_nixl_stress_test', doca_nixl_stress_test_exe, is_parallel: false, timeout: 120)
     message('Building standalone DOCA telemetry exporter tests')
 
     cmake = import('cmake')

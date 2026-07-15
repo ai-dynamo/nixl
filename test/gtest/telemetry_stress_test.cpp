@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -66,16 +67,16 @@ eventIndex(nixl_telemetry_event_type_t type) noexcept {
     return static_cast<std::size_t>(type);
 }
 
-using EventCounts = std::array<uint64_t, nixl_telemetry_event_type_count>;
+using event_counts_t = std::array<uint64_t, nixl_telemetry_event_type_count>;
 // Per event type, a histogram of received event values -> occurrence count. Used
 // to prove value parity: the multiset of values drained from the ring must equal
 // the multiset produced, so no value is corrupted, duplicated, or lost.
-using ValueHistograms =
+using value_histograms_t =
     std::array<std::unordered_map<uint64_t, uint64_t>, nixl_telemetry_event_type_count>;
 
 struct RingTally {
-    EventCounts counts{}; // occurrences per event type in the drained ring
-    ValueHistograms valueHistogram{}; // received value -> count, per non-drop event type
+    event_counts_t counts{}; // occurrences per event type in the drained ring
+    value_histograms_t valueHistogram{}; // received value -> count, per non-drop event type
     uint64_t nonDropEvents = 0; // total events excluding the synthetic drop event
     uint64_t droppedTotal = 0; // summed value of synthetic drop events
     uint64_t dropEventsSeen = 0; // number of synthetic drop events observed
@@ -217,41 +218,41 @@ TEST_F(telemetryStressTest, MixedConcurrentValueParityUnderCapacity) {
     constexpr uint64_t kRXferBase = 11'000'000;
     constexpr uint64_t kRBytesBase = 12'000'000;
 
-    using et = nixl_telemetry_event_type_t;
+    using event_type_t = nixl_telemetry_event_type_t;
 
     // Expected value multiset per event type, mirroring the producer workloads.
-    ValueHistograms expected_values{};
-    const auto add_range = [&](et type, uint64_t base) {
+    value_histograms_t expected_values{};
+    const auto add_range = [&](event_type_t type, uint64_t base) {
         for (uint64_t i = 0; i < iters; ++i) {
             ++expected_values[eventIndex(type)][base + i];
         }
     };
-    const auto add_const = [&](et type, uint64_t value, uint64_t n) {
+    const auto add_const = [&](event_type_t type, uint64_t value, uint64_t n) {
         expected_values[eventIndex(type)][value] += n;
     };
 
-    add_range(et::AGENT_TX_BYTES, kTxBytesBase);
-    add_range(et::AGENT_RX_BYTES, kRxBytesBase);
-    add_range(et::AGENT_TX_REQUESTS_NUM, kTxReqBase);
-    add_range(et::AGENT_RX_REQUESTS_NUM, kRxReqBase);
-    add_range(et::AGENT_MEMORY_REGISTERED, kMemRegBase);
-    add_range(et::AGENT_MEMORY_DEREGISTERED, kMemDeregBase);
+    add_range(event_type_t::AGENT_TX_BYTES, kTxBytesBase);
+    add_range(event_type_t::AGENT_RX_BYTES, kRxBytesBase);
+    add_range(event_type_t::AGENT_TX_REQUESTS_NUM, kTxReqBase);
+    add_range(event_type_t::AGENT_RX_REQUESTS_NUM, kRxReqBase);
+    add_range(event_type_t::AGENT_MEMORY_REGISTERED, kMemRegBase);
+    add_range(event_type_t::AGENT_MEMORY_DEREGISTERED, kMemDeregBase);
     for (const auto status : error_statuses) {
         add_const(nixlTelemetryEventTypeForStatus(status), 1, iters / error_statuses.size());
     }
     // addXferStats submits one all-or-none batch; requests carry the fixed value 1.
-    add_range(et::AGENT_XFER_POST_TIME, kWPostBase);
-    add_range(et::AGENT_XFER_TIME, kWXferBase);
-    add_range(et::AGENT_TX_BYTES, kWBytesBase);
-    add_const(et::AGENT_TX_REQUESTS_NUM, 1, iters);
-    add_range(et::AGENT_XFER_POST_TIME, kRPostBase);
-    add_range(et::AGENT_XFER_TIME, kRXferBase);
-    add_range(et::AGENT_RX_BYTES, kRBytesBase);
-    add_const(et::AGENT_RX_REQUESTS_NUM, 1, iters);
+    add_range(event_type_t::AGENT_XFER_POST_TIME, kWPostBase);
+    add_range(event_type_t::AGENT_XFER_TIME, kWXferBase);
+    add_range(event_type_t::AGENT_TX_BYTES, kWBytesBase);
+    add_const(event_type_t::AGENT_TX_REQUESTS_NUM, 1, iters);
+    add_range(event_type_t::AGENT_XFER_POST_TIME, kRPostBase);
+    add_range(event_type_t::AGENT_XFER_TIME, kRXferBase);
+    add_range(event_type_t::AGENT_RX_BYTES, kRBytesBase);
+    add_const(event_type_t::AGENT_RX_REQUESTS_NUM, 1, iters);
 
     // Derive per-type counts and the grand total from the value multiset -- one
     // source of truth for both the count and the value-parity assertions.
-    EventCounts expected{};
+    event_counts_t expected{};
     uint64_t expected_total = 0;
     for (std::size_t t = 0; t < nixl_telemetry_event_type_count; ++t) {
         for (const auto &[value, n] : expected_values[t]) {
@@ -359,30 +360,41 @@ TEST_F(telemetryStressTest, MixedConcurrentValueParityUnderCapacity) {
 // Pipeline-level addXferStats() batch atomicity.
 //
 // Concurrent write and read addXferStats calls interleave with single-event
-// producers (kept to non-transfer event types so the transfer counts are
-// attributable only to the batch path). With the default allowlist every call
-// stages all four events all-or-none; sized above capacity there are no drops,
-// so each direction's four series must equal that direction's call count exactly
-// -- no batch may be torn.
+// producers. Each call carries a unique per-call id in its post-time, transfer-
+// time, and bytes values, so the drained ring can be scanned to prove every
+// call's four events are published as one indivisible, correctly ordered group
+// ([post, transfer, bytes, requests]) with a consistent id -- no other event
+// (another batch or a single-event producer) ever falls between them. Equal
+// aggregate counts alone would not prove this (an implementation appending the
+// four events independently would still hit the same totals under capacity);
+// contiguity + identity is what actually rejects a torn or interleaved batch.
 TEST_F(telemetryStressTest, PipelineBatchAtomicity) {
     const uint64_t iters = kSanitizerBuild ? 128 : 512;
     const std::string file = "batch_atomicity";
 
-    const uint64_t write_calls = 2 * iters;
-    const uint64_t read_calls = 2 * iters;
+    constexpr int kWriteThreads = 2;
+    constexpr int kReadThreads = 2;
+    const uint64_t write_calls = kWriteThreads * iters;
+    const uint64_t read_calls = kReadThreads * iters;
     const uint64_t mem_events = iters;
     const uint64_t err_events = iters;
 
-    using et = nixl_telemetry_event_type_t;
-    EventCounts expected{};
-    expected[eventIndex(et::AGENT_XFER_POST_TIME)] = write_calls + read_calls;
-    expected[eventIndex(et::AGENT_XFER_TIME)] = write_calls + read_calls;
-    expected[eventIndex(et::AGENT_TX_BYTES)] = write_calls;
-    expected[eventIndex(et::AGENT_TX_REQUESTS_NUM)] = write_calls;
-    expected[eventIndex(et::AGENT_RX_BYTES)] = read_calls;
-    expected[eventIndex(et::AGENT_RX_REQUESTS_NUM)] = read_calls;
-    expected[eventIndex(et::AGENT_MEMORY_REGISTERED)] = mem_events;
-    expected[eventIndex(et::AGENT_ERR_BACKEND)] = err_events;
+    using event_type_t = nixl_telemetry_event_type_t;
+
+    // Disjoint per-call id ranges so a batch's id also pins its direction, and
+    // never collides with the single-event memory values (4096 + i).
+    constexpr uint64_t kWriteIdBase = 1'000'000'000;
+    constexpr uint64_t kReadIdBase = 2'000'000'000;
+
+    event_counts_t expected{};
+    expected[eventIndex(event_type_t::AGENT_XFER_POST_TIME)] = write_calls + read_calls;
+    expected[eventIndex(event_type_t::AGENT_XFER_TIME)] = write_calls + read_calls;
+    expected[eventIndex(event_type_t::AGENT_TX_BYTES)] = write_calls;
+    expected[eventIndex(event_type_t::AGENT_TX_REQUESTS_NUM)] = write_calls;
+    expected[eventIndex(event_type_t::AGENT_RX_BYTES)] = read_calls;
+    expected[eventIndex(event_type_t::AGENT_RX_REQUESTS_NUM)] = read_calls;
+    expected[eventIndex(event_type_t::AGENT_MEMORY_REGISTERED)] = mem_events;
+    expected[eventIndex(event_type_t::AGENT_ERR_BACKEND)] = err_events;
 
     uint64_t expected_total = 0;
     for (const auto c : expected) {
@@ -397,21 +409,23 @@ TEST_F(telemetryStressTest, PipelineBatchAtomicity) {
     nixlTelemetry telemetry(file, "BUFFER");
 
     std::vector<std::thread> producers;
-    for (int w = 0; w < 2; ++w) {
-        producers.emplace_back([&] {
+    for (int w = 0; w < kWriteThreads; ++w) {
+        producers.emplace_back([&, w] {
             gate.wait();
             for (uint64_t i = 0; i < iters; ++i) {
+                const uint64_t id = kWriteIdBase + static_cast<uint64_t>(w) * iters + i;
                 telemetry.addXferStats(
-                    std::chrono::microseconds(100), true, 3000, std::chrono::microseconds(10));
+                    std::chrono::microseconds(id), true, id, std::chrono::microseconds(id));
             }
         });
     }
-    for (int r = 0; r < 2; ++r) {
-        producers.emplace_back([&] {
+    for (int r = 0; r < kReadThreads; ++r) {
+        producers.emplace_back([&, r] {
             gate.wait();
             for (uint64_t i = 0; i < iters; ++i) {
+                const uint64_t id = kReadIdBase + static_cast<uint64_t>(r) * iters + i;
                 telemetry.addXferStats(
-                    std::chrono::microseconds(70), false, 1500, std::chrono::microseconds(7));
+                    std::chrono::microseconds(id), false, id, std::chrono::microseconds(id));
             }
         });
     }
@@ -439,26 +453,71 @@ TEST_F(telemetryStressTest, PipelineBatchAtomicity) {
     const uint64_t observed = waitForRingSize(*reader, expected_total, timeout);
     ASSERT_EQ(observed, expected_total) << "all batched and single events must reach the ring";
 
-    const RingTally tally = drainRing(*reader);
-    EXPECT_TRUE(tally.allInRange);
-    EXPECT_EQ(tally.dropEventsSeen, 0u) << "no staging drop under configured capacity";
-    EXPECT_EQ(tally.droppedTotal, 0u);
+    // Drain in insertion order (the BUFFER ring preserves it) and walk it: single
+    // events stand alone; every transfer batch must be an intact ordered quad.
+    std::vector<nixlTelemetryEvent> events;
+    events.reserve(expected_total);
+    for (nixlTelemetryEvent e; reader->pop(e);) {
+        events.push_back(e);
+    }
+    ASSERT_EQ(events.size(), expected_total);
 
-    EXPECT_EQ(tally.counts[eventIndex(et::AGENT_XFER_POST_TIME)], write_calls + read_calls)
-        << "post-time count must equal successful addXferStats call count";
-    EXPECT_EQ(tally.counts[eventIndex(et::AGENT_XFER_TIME)], write_calls + read_calls)
-        << "transfer-time count must equal successful addXferStats call count";
-    EXPECT_EQ(tally.counts[eventIndex(et::AGENT_TX_BYTES)], write_calls);
-    EXPECT_EQ(tally.counts[eventIndex(et::AGENT_TX_REQUESTS_NUM)], write_calls);
-    EXPECT_EQ(tally.counts[eventIndex(et::AGENT_RX_BYTES)], read_calls);
-    EXPECT_EQ(tally.counts[eventIndex(et::AGENT_RX_REQUESTS_NUM)], read_calls);
-    // Atomicity: with no drops the four members of each direction move in exact
-    // lockstep, so no accepted batch was published only partially.
-    EXPECT_EQ(tally.counts[eventIndex(et::AGENT_TX_BYTES)],
-              tally.counts[eventIndex(et::AGENT_TX_REQUESTS_NUM)]);
-    EXPECT_EQ(tally.counts[eventIndex(et::AGENT_RX_BYTES)],
-              tally.counts[eventIndex(et::AGENT_RX_REQUESTS_NUM)]);
-    EXPECT_EQ(tally.nonDropEvents, expected_total);
+    event_counts_t counts{};
+    uint64_t observed_batches = 0;
+    std::size_t i = 0;
+    while (i < events.size()) {
+        const auto type = events[i].eventType_;
+        ++counts[eventIndex(type)];
+        if (type == event_type_t::AGENT_MEMORY_REGISTERED ||
+            type == event_type_t::AGENT_ERR_BACKEND) {
+            ++i; // a single-event producer's record stands on its own
+            continue;
+        }
+
+        // Anything else must be the first member of an intact addXferStats quad.
+        ASSERT_EQ(type, event_type_t::AGENT_XFER_POST_TIME)
+            << "torn batch: a transfer event appeared outside an ordered batch at index " << i;
+        ASSERT_LE(i + 4, events.size()) << "torn batch: truncated quad at end of ring";
+
+        const nixlTelemetryEvent post = events[i];
+        const nixlTelemetryEvent xfer = events[i + 1];
+        const nixlTelemetryEvent bytes = events[i + 2];
+        const nixlTelemetryEvent reqs = events[i + 3];
+
+        EXPECT_EQ(xfer.eventType_, event_type_t::AGENT_XFER_TIME)
+            << "batch member 2 must be xfer time";
+        const bool is_tx = bytes.eventType_ == event_type_t::AGENT_TX_BYTES;
+        const bool is_rx = bytes.eventType_ == event_type_t::AGENT_RX_BYTES;
+        EXPECT_TRUE(is_tx || is_rx) << "batch member 3 must be a bytes event";
+        EXPECT_EQ(reqs.eventType_,
+                  is_tx ? event_type_t::AGENT_TX_REQUESTS_NUM : event_type_t::AGENT_RX_REQUESTS_NUM)
+            << "batch member 4 must be the matching requests event";
+
+        // Identity: the three id-carrying members share one call's id, that id is
+        // in the direction's range, and the request count is the fixed 1.
+        EXPECT_EQ(post.value_, xfer.value_);
+        EXPECT_EQ(post.value_, bytes.value_);
+        EXPECT_EQ(reqs.value_, 1u);
+        if (is_tx) {
+            EXPECT_GE(post.value_, kWriteIdBase);
+            EXPECT_LT(post.value_, kReadIdBase);
+        } else {
+            EXPECT_GE(post.value_, kReadIdBase);
+        }
+
+        ++counts[eventIndex(xfer.eventType_)];
+        ++counts[eventIndex(bytes.eventType_)];
+        ++counts[eventIndex(reqs.eventType_)];
+        ++observed_batches;
+        i += 4;
+    }
+
+    EXPECT_EQ(observed_batches, write_calls + read_calls) << "every accepted call must appear once";
+    for (std::size_t t = 0; t < nixl_telemetry_event_type_count; ++t) {
+        EXPECT_EQ(counts[t], expected[t]) << "event type " << t << " count mismatch";
+    }
+    EXPECT_EQ(counts[eventIndex(event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)], 0u)
+        << "no staging drop under configured capacity";
 }
 
 // Repeated queue/periodic-task lifecycle shake-out.
@@ -529,6 +588,14 @@ TEST_F(telemetryStressTest, RepeatedLifecycleShakeOut) {
 // mid-flush when the destructor runs; teardown must stop and join the pool
 // cleanly and return within a bounded time, with no crash, deadlock, or
 // sanitizer report. No export-completeness is asserted after destruction.
+//
+// The destructor runs on a separate thread guarded by an external timeout, so a
+// hang (e.g. a teardown deadlock on the flush timer) is reported as a hard
+// failure rather than blocking the whole test binary until the CI/meson timeout.
+// (Deterministically forcing overlap with an in-flight flush would need a
+// flush-entry hook in production code, which this test-only change avoids; the
+// short interval plus a large pending backlog makes overlap highly likely, and
+// sanitizer builds catch any teardown race.)
 TEST_F(telemetryStressTest, SafeShutdownWithInFlightConsumer) {
     const int iterations = kSanitizerBuild ? 4 : 12;
     const uint64_t iters = kSanitizerBuild ? 256 : 2000;
@@ -560,11 +627,24 @@ TEST_F(telemetryStressTest, SafeShutdownWithInFlightConsumer) {
             producer.join();
         }
 
-        const auto start = std::chrono::steady_clock::now();
-        telemetry.reset(); // destructor races an active periodic flush
-        const auto elapsed = std::chrono::steady_clock::now() - start;
-        EXPECT_LT(elapsed, shutdown_budget)
-            << "telemetry destruction must complete promptly, not deadlock on the flush timer";
+        // Destroy on a worker thread and bound it externally: reset() sets the
+        // unique_ptr null before invoking the destructor, so on a hang the local
+        // pointer is already empty and this scope's cleanup stays safe while the
+        // stuck deleter thread is abandoned.
+        std::packaged_task<void()> shutdown_task([&telemetry] { telemetry.reset(); });
+        std::future<void> shutdown_done = shutdown_task.get_future();
+        std::thread runner(std::move(shutdown_task));
+
+        if (shutdown_done.wait_for(shutdown_budget) == std::future_status::ready) {
+            runner.join();
+            shutdown_done.get(); // surface any exception thrown during teardown
+        } else {
+            runner.detach();
+            ADD_FAILURE() << "telemetry destruction did not complete within "
+                          << shutdown_budget.count()
+                          << "s -- likely a teardown deadlock on the flush timer";
+            return;
+        }
     }
     SUCCEED() << "shutdown with a possibly in-flight periodic flush stayed bounded and crash-free";
 }

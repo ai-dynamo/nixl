@@ -32,6 +32,7 @@
 #include "open_metrics_text_parser.h"
 #include "timeseries.h"
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -63,6 +64,27 @@ constexpr bool kSanitizerBuild = false;
 #else
 constexpr bool kSanitizerBuild = false;
 #endif
+
+// A start latch so every producer thread is released together, after all threads
+// exist -- otherwise early threads can finish before later ones are created and
+// the workload runs largely serially, hiding concurrency defects.
+class StartGate {
+public:
+    void
+    wait() const {
+        while (!go_.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    }
+
+    void
+    release() {
+        go_.store(true, std::memory_order_release);
+    }
+
+private:
+    std::atomic<bool> go_{false};
+};
 
 timeSeries
 scrapeMetrics(uint16_t port) {
@@ -146,10 +168,12 @@ TEST_F(prometheusTelemetryTest, ConcurrentAddXferStatsOverflowConservation) {
                            kEventsPerCall,
                            kProducedEvents,
                            [](nixlTelemetry &telemetry) {
+                               StartGate gate;
                                std::vector<std::thread> producers;
                                producers.reserve(kThreads);
                                for (uint64_t t = 0; t < kThreads; ++t) {
-                                   producers.emplace_back([&telemetry] {
+                                   producers.emplace_back([&telemetry, &gate] {
+                                       gate.wait();
                                        for (uint64_t i = 0; i < kCallsPerThread; ++i) {
                                            telemetry.addXferStats(std::chrono::microseconds(10),
                                                                   true,
@@ -158,6 +182,7 @@ TEST_F(prometheusTelemetryTest, ConcurrentAddXferStatsOverflowConservation) {
                                        }
                                    });
                                }
+                               gate.release();
                                for (auto &producer : producers) {
                                    producer.join();
                                }
@@ -195,47 +220,57 @@ TEST_F(prometheusTelemetryTest, ConcurrentMixedWorkloadAggregation) {
     constexpr uint64_t kRxB = 1500;
     constexpr uint64_t kMem = 4096;
 
+    StartGate gate;
     std::vector<std::thread> producers;
     producers.emplace_back([&] {
+        gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateTxBytes(kTxA);
         }
     });
     producers.emplace_back([&] {
+        gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateTxBytes(kTxB);
         }
     });
     producers.emplace_back([&] {
+        gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateRxBytes(kRxA);
         }
     });
     producers.emplace_back([&] {
+        gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateRxBytes(kRxB);
         }
     });
     producers.emplace_back([&] {
+        gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateTxRequestsNum(1);
         }
     });
     producers.emplace_back([&] {
+        gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateMemoryRegistered(kMem);
         }
     });
     producers.emplace_back([&] {
+        gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateErrorCount(NIXL_ERR_BACKEND);
         }
     });
     producers.emplace_back([&] {
+        gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateErrorCount(NIXL_ERR_INVALID_PARAM);
         }
     });
+    gate.release();
     for (auto &producer : producers) {
         producer.join();
     }
@@ -255,14 +290,23 @@ TEST_F(prometheusTelemetryTest, ConcurrentMixedWorkloadAggregation) {
     bool converged = false;
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(kSanitizerBuild ? 30 : 10);
+    const labelSet backend_labels{{"agent_name", agent_name}, {"status", "backend"}};
+    const labelSet invalid_param_labels{{"agent_name", agent_name}, {"status", "invalid_param"}};
     do {
         metrics = scrapeMetrics(port_);
         const auto tx = metrics.latestValue("agent_tx_bytes_total", labels);
         const auto rx = metrics.latestValue("agent_rx_bytes_total", labels);
         const auto tx_req = metrics.latestValue("agent_tx_requests_num_total", labels);
         const auto mem = metrics.latestValue("agent_memory_registered_total", labels);
+        // Error families are checked below; include them here too so convergence
+        // is not declared on a flush that has not yet published them (which would
+        // then fail the exact error assertions with stale totals).
+        const auto backend_err = metrics.latestValue("agent_errors_total", backend_labels);
+        const auto invalid_param_err =
+            metrics.latestValue("agent_errors_total", invalid_param_labels);
         if (tx == tx_expected && rx == rx_expected && tx_req == tx_requests_expected &&
-            mem == mem_expected) {
+            mem == mem_expected && backend_err == err_expected &&
+            invalid_param_err == err_expected) {
             converged = true;
             break;
         }
@@ -286,11 +330,9 @@ TEST_F(prometheusTelemetryTest, ConcurrentMixedWorkloadAggregation) {
               std::optional<double>(static_cast<double>(kMem)));
 
     // Error counters stay on the bounded status-labeled series, correctly mapped.
-    EXPECT_EQ(metrics.latestValue("agent_errors_total",
-                                  {{"agent_name", agent_name}, {"status", "backend"}}),
+    EXPECT_EQ(metrics.latestValue("agent_errors_total", backend_labels),
               std::optional<double>(err_expected));
-    EXPECT_EQ(metrics.latestValue("agent_errors_total",
-                                  {{"agent_name", agent_name}, {"status", "invalid_param"}}),
+    EXPECT_EQ(metrics.latestValue("agent_errors_total", invalid_param_labels),
               std::optional<double>(err_expected));
     for (const auto &[id, series_samples] : metrics.series()) {
         (void)series_samples;
