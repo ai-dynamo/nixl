@@ -168,7 +168,7 @@ their own nightly/manual trigger. They split into two groups:
 ### `nixl-ci-build-wheel` (dispatcher-triggered)
 - **Config:** `.ci/jenkins/lib/build-wheel-matrix.yaml`
 - **What it does:** Builds NIXL Python wheels for each Python version × architecture combination. Uses a two-stage `contrib/Dockerfile.manylinux` build: the `wheel_base` stage (all slow deps: UCX, gRPC, Rust, etc.) is pre-built and cached in Artifactory under `CI_IMAGE_TAG`; PR builds pull this pre-built image and run only the `wheel` stage (~16 steps). PR builds also pass `--torch-versions` (set via the `TORCH_VERSIONS` env in the matrix file) to limit the torch extension builds to the latest version.
-- **`CI_IMAGE_TAG`:** Same convention as the other five matrix files. `contrib/Dockerfile.manylinux` is part of the `CI_FILES` list in `cidemo-init.sh`, so changing it (or any other CI file) without bumping `CI_IMAGE_TAG` in all six matrix YAMLs will fail the pre-commit check.
+- **`CI_IMAGE_TAG`:** Same convention as the other five matrix files. `contrib/Dockerfile.manylinux` is part of the `CI_FILES` list in `cidemo-init.sh`, so changing it (or any other CI file) automatically derives a new `CI_IMAGE_TAG` and rebuilds the cached `wheel_base` image (see [CI_IMAGE_TAG management](#ci_image_tag-management)).
 
 ### `nixl-ci-build-container` (standalone)
 - **Trigger:** Nightly cron (builds `nixlbench` and `nixl` targets, on both the default CUDA base image and the DLFW PyTorch daily image, ~3–4 AM), or manual run with parameters (`BUILD_TARGET`, `NIXL_VERSION`, `UCX_VERSION`, base image overrides, etc.).
@@ -195,6 +195,35 @@ their own nightly/manual trigger. They split into two groups:
 - **Full Jenkins pipeline for a PR:** comment `/build` on the PR (requires authorization — see `Authorization` step in `blossom-ci.yml`).
 - **Re-run a single Jenkins job with different parameters:** use `workflow_dispatch` on `blossom-ci.yml`, or trigger the Jenkins job directly if you have Jenkins access.
 - **Container/wheel builds outside the nightly schedule:** run `nixl-ci-build-container` or `nixl-ci-build-wheel-nightly` manually from the Jenkins UI with custom parameters.
+
+## CI_IMAGE_TAG management
+
+`CI_IMAGE_TAG` is the Docker image tag used by all matrix jobs to identify the
+base images they build and pull. It appears as `CI_IMAGE_TAG: "CI_MANAGED"` in
+the six matrix YAML files — this placeholder is intentional and must not be
+replaced with a static value.
+
+At the start of every Jenkins run, `cidemo-init.sh` derives the real tag
+automatically:
+
+```bash
+NEW_TAG=$(git log -1 --format=%h -- "${CI_FILES[@]}")
+```
+
+This returns the short git commit hash of the most recent commit that touched
+any of the CI source files (`Dockerfile.base`, `Dockerfile.gpu-test`,
+`Dockerfile.build_helper`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
+then patches all six YAML files in the Jenkins workspace with `sed` before the
+matrix library reads them. No commit or push is made — the patch exists only in
+the workspace.
+
+**Caching behaviour:** the derived tag is stable as long as the CI source files
+are unchanged. Two PRs that both leave the CI files untouched get the same tag
+and share the cached Artifactory images. A PR that changes a Dockerfile gets a
+new tag and triggers a rebuild automatically.
+
+**You never need to manually update `CI_IMAGE_TAG`.** The `CI_MANAGED`
+placeholder signals this clearly.
 
 ## Related docs
 
