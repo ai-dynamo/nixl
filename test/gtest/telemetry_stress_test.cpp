@@ -463,11 +463,21 @@ TEST_F(telemetryStressTest, PipelineBatchAtomicity) {
     ASSERT_EQ(events.size(), expected_total);
 
     event_counts_t counts{};
+    // Range-guarded tally so corrupted ring content fails cleanly instead of
+    // indexing counts[] out of bounds (mirrors drainRing()'s guard).
+    const auto bump = [&counts](nixl_telemetry_event_type_t t) {
+        const std::size_t idx = eventIndex(t);
+        if (idx >= nixl_telemetry_event_type_count) {
+            ADD_FAILURE() << "drained event enum out of range: " << idx;
+            return;
+        }
+        ++counts[idx];
+    };
     uint64_t observed_batches = 0;
     std::size_t i = 0;
     while (i < events.size()) {
         const auto type = events[i].eventType_;
-        ++counts[eventIndex(type)];
+        bump(type);
         if (type == event_type_t::AGENT_MEMORY_REGISTERED ||
             type == event_type_t::AGENT_ERR_BACKEND) {
             ++i; // a single-event producer's record stands on its own
@@ -505,9 +515,9 @@ TEST_F(telemetryStressTest, PipelineBatchAtomicity) {
             EXPECT_GE(post.value_, kReadIdBase);
         }
 
-        ++counts[eventIndex(xfer.eventType_)];
-        ++counts[eventIndex(bytes.eventType_)];
-        ++counts[eventIndex(reqs.eventType_)];
+        bump(xfer.eventType_);
+        bump(bytes.eventType_);
+        bump(reqs.eventType_);
         ++observed_batches;
         i += 4;
     }
@@ -627,11 +637,13 @@ TEST_F(telemetryStressTest, SafeShutdownWithInFlightConsumer) {
             producer.join();
         }
 
-        // Destroy on a worker thread and bound it externally: reset() sets the
-        // unique_ptr null before invoking the destructor, so on a hang the local
-        // pointer is already empty and this scope's cleanup stays safe while the
-        // stuck deleter thread is abandoned.
-        std::packaged_task<void()> shutdown_task([&telemetry] { telemetry.reset(); });
+        // Destroy on a worker thread bounded by an external timeout. Ownership is
+        // moved into the task, so the object lives inside the worker's closure --
+        // not on this stack. On a hang we detach and return without touching the
+        // moved-from local, so the abandoned deleter thread references only its
+        // own closure (no dangling stack reference or cross-thread race).
+        std::packaged_task<void()> shutdown_task(
+            [tel = std::move(telemetry)]() mutable { tel.reset(); });
         std::future<void> shutdown_done = shutdown_task.get_future();
         std::thread runner(std::move(shutdown_task));
 
