@@ -85,10 +85,8 @@ namespace {
         "HardwareWarningTest.NoWarningWhenIbAndCudaSupported",
         "ucxDeviceApi*"};
 
-    const std::set<std::string> nvtx_skips = {
-        "*TestTransferTracing.Nvtx*",
-        "*TestTransferTracingNsys*"
-    };
+    const std::set<std::string> nvtx_skips = {"*TestTransferTracing.Nvtx*",
+                                              "*TestTransferTracingNsys*"};
 
     std::mutex mutex;
     std::vector<std::string> required_but_skipped;
