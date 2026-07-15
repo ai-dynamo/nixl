@@ -216,6 +216,19 @@ env:
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
 
+# Bind the internal HuggingFace mirror URL (kept out of this public repo — it lives in
+# the 'hf-artifactory-repository' Jenkins secret) into env.HF_ENDPOINT, so the two sanity
+# steps below can pass it into the SLURM container via ${HF_ENDPOINT}. Routing the model
+# prefetch through the mirror sidesteps huggingface.co's shared-CI-IP rate limit; the
+# mirror allows anonymous reads, so no token is needed.
+pipeline_start:
+  shell: action
+  module: groovy
+  run: |
+    withCredentials([string(credentialsId: 'hf-artifactory-repository', variable: 'HF_ENDPOINT_SECRET')]) {
+      env.HF_ENDPOINT = HF_ENDPOINT_SECRET
+    }
+
 steps:
   # =============================================================================
   # Step 1a: Environment Preparation — wheel builder (x86_64 manylinux runner)
@@ -356,7 +369,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      testScript: "HF_ENDPOINT=${HF_ENDPOINT} .gitlab/test_vllm_sglang_sanity.sh ${fw}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
@@ -372,7 +385,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      testScript: "HF_ENDPOINT=${HF_ENDPOINT} .gitlab/test_vllm_sglang_sanity.sh ${fw}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
