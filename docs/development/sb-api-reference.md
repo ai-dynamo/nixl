@@ -54,7 +54,7 @@ The constructor initializes `backendType`, `customParams`, `localAgent`, and `en
 virtual ~nixlBackendEngine() = default;
 ```
 
-Override the destructor to clean up any backend-specific resources (connections, registered memory, I/O queues).
+The agent destroys a backend engine only after its registrations have been deregistered and its transfer request handles have been released. The backend destructor must still clean up any backend-owned resources that remain, such as connections, registered-memory state, and I/O queues; it should not depend on every earlier cleanup callback having completed successfully.
 
 ### nixlBackendMD
 
@@ -300,12 +300,16 @@ Based on these flags, the required methods change. A network backend should have
 ## Memory Management
 
 <Tip>
-For the user-facing memory registration workflow, see [C++ API Reference -- Memory Registration](../api-reference/cpp-api#registermem).
+For descriptor identity and user-facing registration behavior, see [Northbound API Semantics](../api-reference/northbound-api#registration-behavior). For the C++ methods, see [C++ API Reference -- Memory Registration](../api-reference/cpp-api#registermem).
 </Tip>
+
+The agent calls `registerMem()` and `deregisterMem()` while holding its exclusive lock. A backend may rely on this lock for state accessed only by these two callbacks. If transfer callbacks or backend-owned threads access the same state, the backend must provide its own synchronization.
+
+A descriptor list may be offered to more than one compatible backend. Each backend receives an independent series of calls and must manage only its own registrations; it must not depend on the order in which other backends register or deregister the same descriptor.
 
 ### registerMem
 
-Registers a single contiguous memory region with the backend. The backend creates a metadata object for this region and returns it through the output parameter. The agent stores this metadata and passes it back during transfers.
+Registers one contiguous memory region with the backend. If the backend needs per-registration state, it creates a metadata object and returns it through `out`. The agent stores the pointer and passes it back during transfers and deregistration.
 
 ```cpp
 virtual nixl_status_t registerMem(const nixlBlobDesc &mem,
@@ -317,7 +321,7 @@ virtual nixl_status_t registerMem(const nixlBlobDesc &mem,
 |-----------|------|-------------|
 | `mem` | `const nixlBlobDesc&` | Memory descriptor (address, length, device ID, optional metadata string) |
 | `nixl_mem` | `const nixl_mem_t&` | Memory type (e.g., `DRAM_SEG`, `VRAM_SEG`, `FILE_SEG`) |
-| `out` | `nixlBackendMD*&` | [out] Pointer to backend-created metadata object |
+| `out` | `nixlBackendMD*&` | [out] Pointer to backend-created metadata, when the backend needs it |
 | **Returns** | `nixl_status_t` | `NIXL_SUCCESS` or error code |
 
 ```cpp
@@ -330,9 +334,13 @@ nixl_status_t MyBackend::registerMem(const nixlBlobDesc &mem,
 }
 ```
 
+Registration is transactional within one backend. If a later descriptor or its associated metadata setup fails, the agent calls `deregisterMem()` for descriptors that the backend already accepted from that list. A failing `registerMem()` must return a non-success status without publishing a usable `out` pointer or leaving resources that require a later cleanup call.
+
+If a backend treats `devId` as a unique lookup key, it must detect an active duplicate itself. It must reject the duplicate with `NIXL_ERR_INVALID_PARAM` without changing the existing registration or partially registering the new descriptor.
+
 ### deregisterMem
 
-Deregisters a previously registered memory region and frees the associated metadata object.
+Deregisters a previously registered memory region and frees the resources associated with its metadata pointer.
 
 ```cpp
 virtual nixl_status_t deregisterMem(nixlBackendMD* meta) = 0;
@@ -340,7 +348,7 @@ virtual nixl_status_t deregisterMem(nixlBackendMD* meta) = 0;
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `meta` | `nixlBackendMD*` | Metadata object returned by `registerMem()` |
+| `meta` | `nixlBackendMD*` | Metadata pointer returned by `registerMem()` |
 | **Returns** | `nixl_status_t` | `NIXL_SUCCESS` or error code |
 
 ```cpp
@@ -351,7 +359,7 @@ nixl_status_t MyBackend::deregisterMem(nixlBackendMD* meta) {
 ```
 
 <Note>
-The agent passes one contiguous memory descriptor at a time. The output pointer is stored by the agent and passed back during transfers. Your backend does not need to do bookkeeping for these pointers.
+The agent passes only the metadata pointer to `deregisterMem()`; it does not pass the original descriptor or its `metaInfo`. After successful deregistration, the pointer is invalid and the agent will not pass it to the backend again.
 </Note>
 
 ## Connection Management
@@ -568,9 +576,13 @@ If `loadLocalMD()` returns the same pointer as input (identity return), `unloadM
 For the user-facing transfer workflow, see [C++ API Reference -- Transfer Operations](../api-reference/cpp-api#postxferreq).
 </Tip>
 
+The agent calls `prepXfer()`, `postXfer()`, and `checkXfer()` while holding its shared/read lock. Backends must not treat that lock as exclusive serialization. A backend must synchronize state that these callbacks or its own worker threads can modify concurrently.
+
 ### prepXfer
 
-Prepares a transfer request. Creates a backend-specific request handle (`nixlBackendReqH` subclass) that stores the state needed for the transfer. This method does not start the transfer.
+Prepares a transfer request. The descriptor lists contain the backend metadata pointers associated with the requested regions, but their order is the request order and is unrelated to registration order.
+
+The backend must return `NIXL_SUCCESS` only if it accepts the complete local and remote descriptor lists; partial preparation is not valid. On success, it returns a backend-specific request handle (`nixlBackendReqH` subclass) that stores the transfer state. This method does not start the transfer. Resources held by the request handle remain the backend's responsibility until `releaseReqH()`.
 
 ```cpp
 virtual nixl_status_t prepXfer(const nixl_xfer_op_t &operation,
