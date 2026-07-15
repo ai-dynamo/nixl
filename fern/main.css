@@ -967,6 +967,12 @@ svg.card-icon {
 .dark .nixl-stack-agent-layer-sub {
     color: var(--nv-light-grey-5);
 }
+.nixl-stack-agent-layer-sub a {
+    color: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
 
 /* NIXL Core layer — slightly distinct background */
 .nixl-stack-agent-core {

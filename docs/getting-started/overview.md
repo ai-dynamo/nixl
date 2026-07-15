@@ -29,9 +29,9 @@ specify which transport to use. See [Backend Selection](/docs/user-guide/backend
 <div className="nixl-stack-diagram">
 <div className="nixl-stack-layer"><div className="nixl-stack-layer-title">Framework and Application Layer</div></div>
 <div className="nixl-stack-agent-box">
-<div className="nixl-stack-agent-layer nixl-stack-agent-nb"><div className="nixl-stack-agent-layer-title">Northbound API</div><span className="nixl-stack-agent-layer-sub">C++ / Python / Rust</span></div>
+<div className="nixl-stack-agent-layer nixl-stack-agent-nb"><div className="nixl-stack-agent-layer-title">Northbound API</div><span className="nixl-stack-agent-layer-sub"><a href="/nixl/api-reference/c-api">C++</a> / <a href="/nixl/api-reference/python-api">Python</a> / <a href="/nixl/api-reference/rust-api">Rust</a></span></div>
 <div className="nixl-stack-agent-layer nixl-stack-agent-core"><div className="nixl-stack-agent-layer-title">NIXL Core</div><div className="nixl-stack-agent-chips"><span className="nixl-stack-chip">Metadata</span><span className="nixl-stack-chip">Cost Model</span><span className="nixl-stack-chip">Resiliency</span><span className="nixl-stack-chip">Telemetry</span><span className="nixl-stack-chip">Batching</span><span className="nixl-stack-chip">Multi-threading</span><span className="nixl-stack-chip">Path Optimization</span></div></div>
-<div className="nixl-stack-agent-layer nixl-stack-agent-sb"><div className="nixl-stack-agent-layer-title">Southbound API</div><span className="nixl-stack-agent-layer-sub">C++</span></div>
+<div className="nixl-stack-agent-layer nixl-stack-agent-sb"><div className="nixl-stack-agent-layer-title">Southbound API</div><span className="nixl-stack-agent-layer-sub"><a href="/nixl/api-reference/plugin-southbound-api">C++</a></span></div>
 </div>
 <div className="nixl-stack-grid">
 <div className="nixl-stack-category">
