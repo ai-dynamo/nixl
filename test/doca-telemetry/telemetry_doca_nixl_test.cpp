@@ -23,6 +23,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <map>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -37,6 +38,9 @@ namespace {
 
 constexpr char docaPrometheusPortVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_PORT";
 constexpr char docaPrometheusLocalVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_LOCAL";
+constexpr char docaBackendsVar[] = "NIXL_TELEMETRY_DOCA_BACKENDS";
+constexpr char docaIpcSocketsDirVar[] = "NIXL_TELEMETRY_DOCA_IPC_SOCKETS_DIR";
+constexpr char absentDtsSocketsDir[] = "/tmp/nixl_dts_absent_sockets";
 
 } // namespace
 
@@ -58,6 +62,8 @@ protected:
         // Pair with SetUp so the fixture does not leak process-wide env state.
         ::unsetenv(docaPrometheusLocalVar);
         ::unsetenv(docaPrometheusPortVar);
+        ::unsetenv(docaBackendsVar);
+        ::unsetenv(docaIpcSocketsDirVar);
     }
 
     uint16_t port_ = 0;
@@ -263,6 +269,12 @@ TEST_F(docaNixlExporterTest, ScrapeEmitsExactlyTheDescriptorSeries) {
         if (descriptor.gaugeName != nullptr) {
             expected.insert(descriptor.gaugeName);
         }
+        if (descriptor.histogramName != nullptr) {
+            const std::string base = descriptor.histogramName;
+            expected.insert(base + "_bucket");
+            expected.insert(base + "_sum");
+            expected.insert(base + "_count");
+        }
         ASSERT_EQ(exporter.exportEvent(nixlTelemetryEvent(eventType, 7)), NIXL_SUCCESS);
     }
     expected.insert("agent_errors_total");
@@ -270,10 +282,11 @@ TEST_F(docaNixlExporterTest, ScrapeEmitsExactlyTheDescriptorSeries) {
               NIXL_SUCCESS);
     ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
 
-    const nixl::doca_test::labelSet errorLabels{{"agent_name", agentName},
-                                                {"status", "invalid_param"}};
-    const auto metrics =
-        scrapeUntilValue(port_, "agent_errors_total", 1.0, std::chrono::seconds(12), errorLabels);
+    // Anchor on a histogram series (flushed with everything else in one metrics
+    // flush): once it is served, every other descriptor series is present too.
+    const nixl::doca_test::labelSet histogramLabels{{"agent_name", agentName}};
+    const auto metrics = scrapeUntilValue(
+        port_, "agent_xfer_time_us_count", 1.0, std::chrono::seconds(12), histogramLabels);
 
     std::set<std::string> actual;
     for (const auto &[id, samples] : metrics.series()) {
@@ -319,6 +332,166 @@ TEST_F(docaNixlExporterTest, DroppedEventsCounterAccumulates) {
         << metric << "{agent_name=" << agentName << "} not served at the endpoint after flush";
     EXPECT_EQ(*observed, static_cast<double>(expected_total))
         << "dropped-events counter must equal the sum of all emitted deltas (7+4+13)";
+}
+
+// AGENT_XFER_TIME events drive the agent_xfer_time_us DOCA histogram. After
+// flush (which snapshots the cached histogram into the export buffer before the
+// general metrics flush transmits it), the endpoint must serve _count = number
+// of observations, _sum = their total, and cumulative _bucket{le} counts. Values
+// land in distinct default buckets so the per-bucket counts are unambiguous.
+TEST_F(docaNixlExporterTest, XferTimeHistogramRecordsObservations) {
+    constexpr char agentName[] = "nixl_doca_histogram_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+
+    constexpr std::array<uint64_t, 4> values{5, 30, 200, 700}; // sum 935
+    for (const uint64_t v : values) {
+        ASSERT_EQ(exporter.exportEvent(
+                      nixlTelemetryEvent(nixl_telemetry_event_type_t::AGENT_XFER_TIME, v)),
+                  NIXL_SUCCESS);
+    }
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const auto metrics =
+        scrapeUntilValue(port_, "agent_xfer_time_us_count", 4.0, std::chrono::seconds(12), labels);
+
+    EXPECT_EQ(metrics.latestValue("agent_xfer_time_us_count", labels), std::optional<double>(4.0))
+        << "histogram _count must equal the number of observations";
+    EXPECT_EQ(metrics.latestValue("agent_xfer_time_us_sum", labels), std::optional<double>(935.0))
+        << "histogram _sum must equal the sum of observations";
+
+    // Build le(double) -> cumulative count from the bucket series for this agent
+    // so the assertions do not depend on the exact `le` string formatting.
+    std::map<double, double> buckets;
+    for (const auto &[id, samples] : metrics.series()) {
+        if (id.name != "agent_xfer_time_us_bucket") {
+            continue;
+        }
+        const auto agent = id.labels.find("agent_name");
+        const auto le = id.labels.find("le");
+        if (agent == id.labels.end() || agent->second != agentName || le == id.labels.end() ||
+            samples.empty()) {
+            continue;
+        }
+        try {
+            size_t pos = 0;
+            const double boundary = std::stod(le->second, &pos);
+            if (pos == le->second.size()) {
+                buckets[boundary] = samples.back().value;
+            }
+        }
+        catch (const std::exception &) {
+        }
+    }
+
+    // 5<=10 (1); +30<=100 (2); +200<=250 (3); +700<=1000 (4).
+    EXPECT_EQ(buckets[10.0], 1.0);
+    EXPECT_EQ(buckets[100.0], 2.0);
+    EXPECT_EQ(buckets[250.0], 3.0);
+    EXPECT_EQ(buckets[1000.0], 4.0);
+}
+
+// IPC->DTS backend (NIX-1599 part 1): with NIXL_TELEMETRY_DOCA_BACKENDS=ipc and no
+// DTS reachable at the sockets dir, the exporter must construct, accept events, and
+// flush without throwing -- IPC failure degrades to a WARN, never a crash (the same
+// graceful stance as the scrape-endpoint bind failure). End-to-end aggregation
+// through a live DTS is deferred to NIX-1600.
+TEST_F(docaNixlExporterTest, IpcBackendDegradesGracefullyWithoutDts) {
+    ASSERT_EQ(::setenv(docaBackendsVar, "ipc", 1), 0);
+    ASSERT_EQ(::setenv(docaIpcSocketsDirVar, absentDtsSocketsDir, 1), 0);
+
+    constexpr char agentName[] = "nixl_doca_ipc_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+
+    ASSERT_NO_THROW({
+        nixlTelemetryDocaExporter exporter(params);
+        EXPECT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 1024}),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+        EXPECT_TRUE(loopbackConnection::httpGet(port_, "/metrics").empty())
+            << "ipc-only backend must not serve a Prometheus scrape endpoint on port " << port_;
+    });
+}
+
+// An unrecognized backend token is a hard error (a likely config typo) rather
+// than silently degrading to a value the user did not intend.
+TEST_F(docaNixlExporterTest, UnknownBackendIsRejected) {
+    ASSERT_EQ(::setenv(docaBackendsVar, "scrape,bogus", 1), 0);
+
+    const nixlTelemetryExporterInitParams params{"nixl_doca_bad_backend_test", 4096};
+    EXPECT_THROW(nixlTelemetryDocaExporter exporter(params), std::runtime_error);
+}
+
+// Multiple backends can be enabled at once. With "scrape,ipc" and no DTS, the scrape
+// endpoint must still serve metrics (the enabled scrape backend is independent of the
+// failed ipc one, which only WARNs) -- proving backends compose rather than being a
+// single mutually-exclusive choice.
+TEST_F(docaNixlExporterTest, MultipleBackendsScrapeServesWhenIpcHasNoDts) {
+    ASSERT_EQ(::setenv(docaBackendsVar, "scrape,ipc", 1), 0);
+    ASSERT_EQ(::setenv(docaIpcSocketsDirVar, absentDtsSocketsDir, 1), 0);
+
+    constexpr char agentName[] = "nixl_doca_multi_backend_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    const std::string metric =
+        nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES)
+            .counterName;
+    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+
+    ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 909}),
+              NIXL_SUCCESS);
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const auto metrics = scrapeUntilValue(port_, metric, 909.0, std::chrono::seconds(12), labels);
+    EXPECT_EQ(metrics.latestValue(metric, labels), std::optional<double>(909.0))
+        << "scrape must still serve metrics when ipc is also enabled but has no DTS";
+}
+
+// Opt-in end-to-end against a LIVE DTS (NIX-1599/NIX-1600). DISABLED_ so it never
+// runs in normal CI; it needs a running DOCA Telemetry Service with IPC enabled and
+// a Prometheus endpoint. Point it at the DTS ipc-sockets-dir and prometheus port,
+// then run:
+//   NIXL_DTS_IPC_SOCKETS_DIR=/dev/shm/nixl_dts/ipc_sockets NIXL_DTS_PROM_PORT=9100
+//   doca_nixl_test --gtest_also_run_disabled_tests --gtest_filter='*IpcDeliversToLiveDts'
+// Pushes over IPC, then scrapes the DTS endpoint and asserts our unified series
+// surfaces there with the exact pushed total.
+TEST_F(docaNixlExporterTest, DISABLED_IpcDeliversToLiveDts) {
+    const char *const socketsDir = ::getenv("NIXL_DTS_IPC_SOCKETS_DIR");
+    ASSERT_NE(socketsDir, nullptr)
+        << "set NIXL_DTS_IPC_SOCKETS_DIR to the running DTS ipc-sockets-dir";
+    const char *const portEnv = ::getenv("NIXL_DTS_PROM_PORT");
+    const uint16_t promPort = portEnv ? static_cast<uint16_t>(std::stoi(portEnv)) : 9100;
+
+    ASSERT_EQ(::setenv(docaBackendsVar, "ipc", 1), 0);
+    ASSERT_EQ(::setenv(docaIpcSocketsDirVar, socketsDir, 1), 0);
+
+    constexpr char agentName[] = "nixl_doca_ipc_e2e";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    const std::string metric =
+        nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES)
+            .counterName;
+    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+
+    constexpr std::array<uint64_t, 3> deltas{1000, 2000, 4000};
+    uint64_t expected_total = 0;
+    for (const uint64_t delta : deltas) {
+        ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_TX_BYTES, delta}),
+                  NIXL_SUCCESS);
+        expected_total += delta;
+    }
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const auto metrics = scrapeUntilValue(
+        promPort, metric, static_cast<double>(expected_total), std::chrono::seconds(30), labels);
+    EXPECT_EQ(metrics.latestValue(metric, labels), std::optional<double>(expected_total))
+        << metric << "{agent_name=" << agentName << "} not served by DTS at :" << promPort
+        << " -- IPC delivery or DTS Prometheus re-export failed";
 }
 
 int

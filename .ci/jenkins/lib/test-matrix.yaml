@@ -20,7 +20,9 @@ job: nixl-ci-gpu
 # Fail job if one of the steps fails or continue
 failFast: false
 
-timeout_minutes: 240
+# Job cap. Axes run in parallel, so this bounds the longest single axis:
+# docker build (~11) + allocation wait (up to immediateTimeout 60) + run steps (110) + stop (~5).
+timeout_minutes: 200
 
 registry_host: artifactory.nvidia.com
 registry_auth: svc-nixl-new-artifactory-token
@@ -52,7 +54,7 @@ env:
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260709-1"
+  CI_IMAGE_TAG: "20260715-1"
   ENROOT_MOUNT_PATH: "/enroot_images"  # NFS mount on mizu nodes; on failure the container is exported here as <containerName>.sqsh
   ENROOT_DATA_PATH: "/enroot-data/enroot-data-148069/user-148069"  # svc-nixl user on mizu nodes
 
@@ -133,7 +135,7 @@ steps:
 
   - name: Run CPP tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: 120
+    timeout: 60
     parallel: false
     shell: action
     module: slurmCI
@@ -149,7 +151,7 @@ steps:
 
   - name: Run Python tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: 10
+    timeout: 20
     parallel: false
     shell: action
     module: slurmCI
@@ -165,7 +167,7 @@ steps:
 
   - name: Run Rust tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: 10
+    timeout: 15
     parallel: false
     shell: action
     module: slurmCI
@@ -181,7 +183,7 @@ steps:
 
   - name: Run Nixlbench tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: 50
+    timeout: 25
     parallel: false
     shell: action
     module: slurmCI

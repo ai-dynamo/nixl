@@ -40,7 +40,7 @@ LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
 # UCCL_COMMIT_SHA is the commit SHA of UCCL.
 UCCL_COMMIT_SHA="0cdb740cf369a4f4dd63b9b773c8937f187b179a"
 AZURITE_VER="3.35.0"
-TMPDIR=$(mktemp -d)
+BUILD_TMP=$(mktemp -d)
 
 # DEPS_SANITIZE, when set (e.g. "address"), builds the C++ dependency stack that
 # shares Abseil's ABI with NIXL (abseil, protobuf/gRPC, etcd-cpp) using the
@@ -191,8 +191,8 @@ else
     else
         ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
         MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-        wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${TMPDIR}/doca-host.deb
-        $SUDO dpkg -i ${TMPDIR}/doca-host.deb
+        wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${BUILD_TMP}/doca-host.deb
+        $SUDO dpkg -i ${BUILD_TMP}/doca-host.deb
         $SUDO apt-get update
         $SUDO apt-get upgrade -y
         $SUDO apt-get install -y --no-install-recommends doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-verbs-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
@@ -205,28 +205,28 @@ else
             libnuma-dev librdmacm-dev ibverbs-providers
     fi
 
-    wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${TMPDIR}/rustup-init
-    chmod +x ${TMPDIR}/rustup-init
-    ${TMPDIR}/rustup-init -y --default-toolchain 1.86.0
+    wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${BUILD_TMP}/rustup-init
+    chmod +x ${BUILD_TMP}/rustup-init
+    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.86.0
 
-    wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${TMPDIR}/install_uv.sh
-    chmod +x ${TMPDIR}/install_uv.sh
-    ${TMPDIR}/install_uv.sh
+    wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${BUILD_TMP}/install_uv.sh
+    chmod +x ${BUILD_TMP}/install_uv.sh
+    ${BUILD_TMP}/install_uv.sh
 
     # Install Node Version Manager then Nodejs to install Azurite
-    wget --tries=3 --waitretry=5 "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh" -O ${TMPDIR}/install_nvm.sh
-    chmod +x ${TMPDIR}/install_nvm.sh
-    ${TMPDIR}/install_nvm.sh
+    wget --tries=3 --waitretry=5 "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh" -O ${BUILD_TMP}/install_nvm.sh
+    chmod +x ${BUILD_TMP}/install_nvm.sh
+    ${BUILD_TMP}/install_nvm.sh
     export NVM_DIR=${HOME}/.nvm
     [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
     nvm install --lts  # install nodejs
     npm install -g azurite@${AZURITE_VER}
 
-    wget --tries=3 --waitretry=5 -O "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
-    tar xjf "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -C ${TMPDIR}
-    rm "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+    wget --tries=3 --waitretry=5 -O "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+    tar xjf "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -C ${BUILD_TMP}
+    rm "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
     ( \
-      cd ${TMPDIR}/libfabric-* && \
+      cd ${BUILD_TMP}/libfabric-* && \
       ./autogen.sh && \
       ./configure --prefix="${LIBFABRIC_INSTALL_DIR}" \
                   --disable-verbs \
@@ -243,7 +243,7 @@ else
     )
 
     ( \
-      cd ${TMPDIR} && \
+      cd ${BUILD_TMP} && \
       git clone https://github.com/abseil/abseil-cpp.git && \
       cd abseil-cpp && \
       git fetch --depth 1 origin "${ABSL_TAG}" && \
@@ -261,12 +261,12 @@ else
       make -j"$NPROC" && \
       $SUDO make install && \
       $SUDO ldconfig && \
-      cd ${TMPDIR} && \
+      cd ${BUILD_TMP} && \
       rm -rf abseil-cpp \
     )
 
     ( \
-      cd ${TMPDIR} && \
+      cd ${BUILD_TMP} && \
       git clone --recurse-submodules -b "${GRPC_TAG}" --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
       cd grpc && \
       mkdir -p cmake/build && \
@@ -289,12 +289,12 @@ else
       make -j"$NPROC" && \
       $SUDO make install && \
       $SUDO ldconfig && \
-      cd ${TMPDIR} && \
+      cd ${BUILD_TMP} && \
       rm -rf grpc \
     )
 
     ( \
-      cd ${TMPDIR} && \
+      cd ${BUILD_TMP} && \
       git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
       cd etcd-cpp-apiv3 && \
       sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
@@ -314,7 +314,7 @@ else
     )
 
     ( \
-      cd ${TMPDIR} && \
+      cd ${BUILD_TMP} && \
       git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
       mkdir aws_sdk_build && \
       cd aws_sdk_build && \
@@ -326,7 +326,7 @@ else
     )
 
     ( \
-      cd ${TMPDIR} && \
+      cd ${BUILD_TMP} && \
       git clone https://github.com/nvidia/gusli.git && \
       cd gusli && \
       $SUDO make all CXX="g++ -std=c++20" BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
@@ -336,7 +336,7 @@ else
     )
 
     ( \
-      cd ${TMPDIR} && \
+      cd ${BUILD_TMP} && \
       MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}" && \
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
       git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
@@ -358,14 +358,14 @@ else
     )
 
     ( \
-      cd ${TMPDIR} &&
+      cd ${BUILD_TMP} &&
       git clone --depth 1 https://github.com/google/gtest-parallel.git &&
       mkdir -p ${INSTALL_DIR}/bin &&
-      cp ${TMPDIR}/gtest-parallel/* ${INSTALL_DIR}/bin/
+      cp ${BUILD_TMP}/gtest-parallel/* ${INSTALL_DIR}/bin/
     )
 
     ( \
-      cd ${TMPDIR} && \
+      cd ${BUILD_TMP} && \
       df -h && \
       curl -sL https://aka.ms/InstallAzureCLIDeb | $SUDO bash && \
       git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
@@ -385,7 +385,7 @@ if [ -n "$PRE_INSTALLED_UCX_ENV" ]; then
 else
     if $HAS_GPU && test -d "$CUDA_HOME"; then
        ( \
-        cd ${TMPDIR} && \
+        cd ${BUILD_TMP} && \
         git clone https://github.com/uccl-project/uccl.git && \
         cd uccl && git checkout -q "${UCCL_COMMIT_SHA}" && \
         cd p2p && \
@@ -396,9 +396,9 @@ else
     else
         echo "No NVIDIA GPU(s) detected. Skipping UCCL installation."
     fi
-    git clone https://github.com/openucx/ucx.git ${TMPDIR}/ucx
+    git clone https://github.com/openucx/ucx.git ${BUILD_TMP}/ucx
     ( \
-    cd ${TMPDIR}/ucx && \
+    cd ${BUILD_TMP}/ucx && \
     git checkout "${UCX_VERSION}" && \
     ./autogen.sh && \
     ./contrib/configure-release-mt \
@@ -419,7 +419,7 @@ else
     )
 fi # PRE_INSTALLED_UCX_ENV end
 
-$SUDO rm -rf ${TMPDIR}
+$SUDO rm -rf ${BUILD_TMP}
 
 # Disabling CUDA IPC not to use NVLINK, as it slows down local
 # UCX transfers and can cause contention with local collectives.
