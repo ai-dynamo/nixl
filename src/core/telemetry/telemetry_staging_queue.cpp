@@ -24,7 +24,7 @@ bool
 nixlTelemetryStagingQueue::tryPush(const nixlTelemetryEvent &event) {
     const std::lock_guard<std::mutex> lock(mutex_);
     if (events_.size() >= capacity_) {
-        droppedEvents_.fetch_add(1, std::memory_order_relaxed);
+        numDroppedEvents_.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     events_.push_back(event);
@@ -32,16 +32,16 @@ nixlTelemetryStagingQueue::tryPush(const nixlTelemetryEvent &event) {
 }
 
 bool
-nixlTelemetryStagingQueue::tryPushBatch(const nixlTelemetryEvent *events, size_t count) {
-    if (count == 0) {
+nixlTelemetryStagingQueue::tryPushBatch(std::span<const nixlTelemetryEvent> events) {
+    if (events.empty()) {
         return true;
     }
     const std::lock_guard<std::mutex> lock(mutex_);
-    if (count > capacity_ - events_.size()) {
-        droppedEvents_.fetch_add(count, std::memory_order_relaxed);
+    if (events.size() > capacity_ - events_.size()) {
+        numDroppedEvents_.fetch_add(events.size(), std::memory_order_relaxed);
         return false;
     }
-    events_.insert(events_.end(), events, events + count);
+    events_.insert(events_.end(), events.begin(), events.end());
     return true;
 }
 
@@ -57,8 +57,8 @@ nixlTelemetryStagingQueue::takePending() {
 }
 
 uint64_t
-nixlTelemetryStagingQueue::exchangeDropped() noexcept {
-    return droppedEvents_.exchange(0, std::memory_order_relaxed);
+nixlTelemetryStagingQueue::takeNumDropped() noexcept {
+    return numDroppedEvents_.exchange(0, std::memory_order_relaxed);
 }
 
 size_t

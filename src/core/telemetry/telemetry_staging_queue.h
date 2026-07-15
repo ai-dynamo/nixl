@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <span>
 #include <vector>
 
 #include "telemetry_event.h"
@@ -60,7 +61,7 @@ public:
      * by one.
      * @return true if the event was queued, false if rejected (dropped).
      */
-    bool
+    [[nodiscard]] bool
     tryPush(const nixlTelemetryEvent &event);
 
     /**
@@ -68,14 +69,13 @@ public:
      *
      * The capacity check and insertion happen under one mutex acquisition. The
      * batch is accepted completely or rejected completely; on rejection the
-     * staging-drop count is incremented by @p count. A zero-length batch succeeds
-     * without locking or changing drop accounting.
-     * @param events Pointer to @p count contiguous events.
-     * @param count Number of events in the batch.
+     * staging-drop count is incremented by the batch size. An empty batch
+     * succeeds without locking or changing drop accounting.
+     * @param events Contiguous events to append.
      * @return true if the batch was queued (or empty), false if rejected.
      */
-    bool
-    tryPushBatch(const nixlTelemetryEvent *events, size_t count);
+    [[nodiscard]] bool
+    tryPushBatch(std::span<const nixlTelemetryEvent> events);
 
     /**
      * @brief Swap the live queue with an empty capacity-reserved vector and
@@ -84,15 +84,15 @@ public:
      * The swap happens under the mutex; producers can write to the fresh live
      * vector while the consumer processes the returned one.
      */
-    std::vector<nixlTelemetryEvent>
+    [[nodiscard]] std::vector<nixlTelemetryEvent>
     takePending();
 
     /**
-     * @brief Atomically take and reset the staging drops accumulated since the
-     *        previous call.
+     * @brief Atomically take and reset the number of staging drops accumulated
+     *        since the previous call.
      */
-    uint64_t
-    exchangeDropped() noexcept;
+    [[nodiscard]] uint64_t
+    takeNumDropped() noexcept;
 
     [[nodiscard]] size_t
     capacity() const noexcept;
@@ -101,7 +101,7 @@ private:
     const size_t capacity_;
     std::vector<nixlTelemetryEvent> events_;
     std::mutex mutex_;
-    std::atomic<uint64_t> droppedEvents_{0};
+    std::atomic<uint64_t> numDroppedEvents_{0};
 };
 
 #endif

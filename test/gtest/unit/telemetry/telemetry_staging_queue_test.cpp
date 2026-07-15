@@ -20,6 +20,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <span>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -39,7 +40,7 @@ TEST(telemetryStagingQueueTest, ConstructorRetainsCapacityEmptyNoDrops) {
     nixlTelemetryStagingQueue queue(8);
     EXPECT_EQ(queue.capacity(), 8u);
     EXPECT_TRUE(queue.takePending().empty());
-    EXPECT_EQ(queue.exchangeDropped(), 0u);
+    EXPECT_EQ(queue.takeNumDropped(), 0u);
 }
 
 TEST(telemetryStagingQueueTest, SinglePushPreservesTypeAndValue) {
@@ -56,7 +57,7 @@ TEST(telemetryStagingQueueTest, ExactlyCapacitySinglePushesSucceed) {
     for (uint64_t i = 0; i < 3; ++i) {
         EXPECT_TRUE(queue.tryPush(makeEvent(i)));
     }
-    EXPECT_EQ(queue.exchangeDropped(), 0u);
+    EXPECT_EQ(queue.takeNumDropped(), 0u);
 }
 
 TEST(telemetryStagingQueueTest, PushBeyondCapacityFailsAndDropsByOne) {
@@ -64,19 +65,19 @@ TEST(telemetryStagingQueueTest, PushBeyondCapacityFailsAndDropsByOne) {
     ASSERT_TRUE(queue.tryPush(makeEvent(0)));
     ASSERT_TRUE(queue.tryPush(makeEvent(1)));
     EXPECT_FALSE(queue.tryPush(makeEvent(2)));
-    EXPECT_EQ(queue.exchangeDropped(), 1u);
+    EXPECT_EQ(queue.takeNumDropped(), 1u);
 }
 
 TEST(telemetryStagingQueueTest, FittingBatchAppendedCompletelyInOrder) {
     nixlTelemetryStagingQueue queue(8);
     const std::vector<nixlTelemetryEvent> batch = {makeEvent(10), makeEvent(20), makeEvent(30)};
-    ASSERT_TRUE(queue.tryPushBatch(batch.data(), batch.size()));
+    ASSERT_TRUE(queue.tryPushBatch(batch));
     auto pending = queue.takePending();
     ASSERT_EQ(pending.size(), 3u);
     EXPECT_EQ(pending[0].value_, 10u);
     EXPECT_EQ(pending[1].value_, 20u);
     EXPECT_EQ(pending[2].value_, 30u);
-    EXPECT_EQ(queue.exchangeDropped(), 0u);
+    EXPECT_EQ(queue.takeNumDropped(), 0u);
 }
 
 TEST(telemetryStagingQueueTest, NonFittingBatchRejectedWithoutPartialInsertion) {
@@ -84,7 +85,7 @@ TEST(telemetryStagingQueueTest, NonFittingBatchRejectedWithoutPartialInsertion) 
     ASSERT_TRUE(queue.tryPush(makeEvent(1)));
     ASSERT_TRUE(queue.tryPush(makeEvent(2)));
     const std::vector<nixlTelemetryEvent> batch = {makeEvent(3), makeEvent(4), makeEvent(5)};
-    EXPECT_FALSE(queue.tryPushBatch(batch.data(), batch.size()));
+    EXPECT_FALSE(queue.tryPushBatch(batch));
     auto pending = queue.takePending();
     ASSERT_EQ(pending.size(), 2u);
     EXPECT_EQ(pending[0].value_, 1u);
@@ -96,15 +97,15 @@ TEST(telemetryStagingQueueTest, RejectedBatchDropCountEqualsBatchLength) {
     ASSERT_TRUE(queue.tryPush(makeEvent(1)));
     ASSERT_TRUE(queue.tryPush(makeEvent(2)));
     const std::vector<nixlTelemetryEvent> batch = {makeEvent(3), makeEvent(4), makeEvent(5)};
-    EXPECT_FALSE(queue.tryPushBatch(batch.data(), batch.size()));
-    EXPECT_EQ(queue.exchangeDropped(), batch.size());
+    EXPECT_FALSE(queue.tryPushBatch(batch));
+    EXPECT_EQ(queue.takeNumDropped(), batch.size());
 }
 
 TEST(telemetryStagingQueueTest, EmptyBatchSucceedsWithoutChangingState) {
     nixlTelemetryStagingQueue queue(4);
     ASSERT_TRUE(queue.tryPush(makeEvent(7)));
-    EXPECT_TRUE(queue.tryPushBatch(nullptr, 0));
-    EXPECT_EQ(queue.exchangeDropped(), 0u);
+    EXPECT_TRUE(queue.tryPushBatch({}));
+    EXPECT_EQ(queue.takeNumDropped(), 0u);
     auto pending = queue.takePending();
     ASSERT_EQ(pending.size(), 1u);
     EXPECT_EQ(pending[0].value_, 7u);
@@ -143,13 +144,13 @@ TEST(telemetryStagingQueueTest, AcceptsEventsAfterDrain) {
     EXPECT_EQ(pending[1].value_, 4u);
 }
 
-TEST(telemetryStagingQueueTest, ExchangeDroppedReturnsDeltaOnceThenZero) {
+TEST(telemetryStagingQueueTest, TakeNumDroppedReturnsDeltaOnceThenZero) {
     nixlTelemetryStagingQueue queue(1);
     ASSERT_TRUE(queue.tryPush(makeEvent(1)));
     EXPECT_FALSE(queue.tryPush(makeEvent(2)));
     EXPECT_FALSE(queue.tryPush(makeEvent(3)));
-    EXPECT_EQ(queue.exchangeDropped(), 2u);
-    EXPECT_EQ(queue.exchangeDropped(), 0u);
+    EXPECT_EQ(queue.takeNumDropped(), 2u);
+    EXPECT_EQ(queue.takeNumDropped(), 0u);
 }
 
 TEST(telemetryStagingQueueTest, ConcurrentProducersConserveEventSlots) {
@@ -183,7 +184,7 @@ TEST(telemetryStagingQueueTest, ConcurrentProducersConserveEventSlots) {
                 for (size_t b = 0; b < kBatchSize; ++b) {
                     batch[b] = makeEvent(base + b);
                 }
-                queue.tryPushBatch(batch.data(), batch.size());
+                (void)queue.tryPushBatch(batch);
             }
         });
     }
@@ -193,7 +194,7 @@ TEST(telemetryStagingQueueTest, ConcurrentProducersConserveEventSlots) {
     done.store(true, std::memory_order_release);
     consumer.join();
 
-    const uint64_t dropped = queue.exchangeDropped();
+    const uint64_t dropped = queue.takeNumDropped();
     EXPECT_EQ(drained.size() + dropped, kProduced);
 
     // Every accepted identifier appears exactly once, and acceptance is

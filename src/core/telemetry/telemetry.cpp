@@ -16,6 +16,7 @@
  */
 #include <array>
 #include <chrono>
+#include <span>
 #include <sstream>
 #include <thread>
 #include <filesystem>
@@ -292,7 +293,7 @@ nixlTelemetry::exportDroppedEvents() {
     // staging queue, it can never itself be staging-dropped; emitting only a
     // positive count keeps the no-overflow path event-free (preserving
     // exact-count contracts).
-    const uint64_t dropped = stagingQueue_.exchangeDropped();
+    const uint64_t dropped = stagingQueue_.takeNumDropped();
     if (dropped > 0 &&
         isMetricEnabled(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)) {
         exporter_->exportEvent(
@@ -324,8 +325,9 @@ nixlTelemetry::updateData(nixl_telemetry_event_type_t event_type, uint64_t value
     if (!isMetricEnabled(event_type)) {
         return;
     }
-    // agent can be multi-threaded; the queue performs its own drop accounting.
-    stagingQueue_.tryPush({event_type, value});
+    // agent can be multi-threaded; the queue performs its own drop accounting,
+    // so the accepted/dropped result is intentionally not consumed here.
+    (void)stagingQueue_.tryPush({event_type, value});
 }
 
 // TODO: the next 4 update* methods may be removable -- addXferStats covers them.
@@ -408,5 +410,7 @@ nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
         batch[count++] = {requests_type, 1};
     }
 
-    stagingQueue_.tryPushBatch(batch.data(), count);
+    // The queue performs its own drop accounting, so the accepted/dropped
+    // result is intentionally not consumed here.
+    (void)stagingQueue_.tryPushBatch(std::span{batch}.first(count));
 }
