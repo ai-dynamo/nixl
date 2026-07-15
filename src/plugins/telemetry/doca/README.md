@@ -36,6 +36,16 @@ export NIXL_TELEMETRY_EXPORTER="doca" # Sets which plug-in to select in format l
 
 ### Optional Configuration
 
+You can restrict which metrics are exported with an allowlist (unset exports everything):
+
+```bash
+# Comma-separated glob allowlist matched against the base event names.
+# A name selects every series for that event (counter, gauge, and the
+# transfer-time histogram where applicable). Unmatched tokens are ignored
+# with a warning; deactivated metrics are skipped before staging.
+export NIXL_TELEMETRY_ENABLED_METRICS="agent_tx_bytes,agent_rx_bytes,agent_err_*"
+```
+
 You can configure the exposed prometheus port:
 
 ```bash
@@ -51,6 +61,23 @@ export NIXL_TELEMETRY_DOCA_PROMETHEUS_LOCAL="y"
 ```
 
 When multiple agents run in the same process, the first agent to initialize creates the DOCA server and its port/address settings take effect. Subsequent agents share that endpoint and are distinguished by the `agent_name` label.
+
+### Delivery backends (scrape and/or IPC to DTS)
+
+The exporter can drive **one or more** delivery backends at once, selected by a comma-separated list. By default it serves its own Prometheus scrape endpoint (`scrape`); under multi-process runs this collides on the shared port, so it can instead (or additionally) push metrics over IPC to the DOCA Telemetry Service (DTS), which aggregates all NIXL processes behind a single endpoint (no per-process listening socket):
+
+```bash
+# Comma-separated set; default "scrape". Examples: "scrape", "ipc", "scrape,ipc".
+export NIXL_TELEMETRY_DOCA_BACKENDS="ipc"
+# Optional: directory of DTS IPC sockets (default: /opt/mellanox/doca/services/telemetry/ipc_sockets)
+export NIXL_TELEMETRY_DOCA_IPC_SOCKETS_DIR="/path/to/ipc_sockets"
+```
+
+- `scrape` — opens the local Prometheus HTTP endpoint (uses the port/local vars above).
+- `ipc` — pushes over IPC to DTS; no HTTP endpoint of its own. If DTS is not reachable the exporter logs a warning and continues (metrics are not exported until DTS is available) rather than failing.
+- An unrecognized token is a hard error (surfaces a likely config typo rather than silently degrading); an unset or empty value defaults to `scrape`.
+
+Other CollectX outputs (Remote Write, OTLP, Fluent Bit) are **DTS-side onward backends**, not exporter flags — reach them by enabling `ipc` and configuring DTS. Deploying DTS alongside NIXL is a separate operational step.
 
 You can alter where to look for plug-in .so files
 NOTE: the same var is used for backend plug-ins search
