@@ -64,7 +64,7 @@ run_elastic_test() {
         unset UCX_NET_DEVICES  # let UCX auto-select GPU-capable transport
         # Force NVLink-only transports.
         if [[ "$extra_flags" != *--disable-ll-nvlink* ]]; then
-            export UCX_TLS=cuda_copy,cuda_ipc,sm,self
+            export UCX_TLS=^rc_gda
         fi
         PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
         timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
