@@ -5,6 +5,8 @@ description: Complete Rust API reference for NIXL data transfers.
 
 This is the Rust API reference for the NVIDIA Inference Xfer Library (NIXL). The Rust bindings provide a safe, idiomatic interface through the `Agent` struct. For the C++ native API, see the [C++ API Reference](./cpp-api). For Python bindings, see the [Python API Reference](./python-api).
 
+Behavior shared by all bindings is documented in [Northbound API Semantics](./northbound-api).
+
 Key Rust-specific features of the NIXL bindings:
 
 - **Result-based error handling**: All fallible operations return `Result<T, NixlError>`

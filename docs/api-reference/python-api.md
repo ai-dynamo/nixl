@@ -5,6 +5,8 @@ description: Complete Python API reference for NIXL data transfers.
 
 This is the Python API reference for the NVIDIA Inference Xfer Library (NIXL). Python provides a high-level, Pythonic interface to NIXL via the `nixl_agent` class. For the C++ API, see the [C++ API Reference](./cpp-api). For Rust bindings, see the [Rust API Reference](./rust-api).
 
+Behavior shared by all bindings is documented in [Northbound API Semantics](./northbound-api).
+
 Key Python-specific features:
 
 - **Auto-backend initialization**: Backends specified in the config are created automatically during agent construction
