@@ -1,5 +1,7 @@
 instances:
-  - url: nixl.docs.buildwithfern.com
+  - url: nvidia-nixl.docs.buildwithfern.com/nixl
+    custom-domain: docs.nvidia.com/nixl
+    multi-source: true
     # edit-this-page: removed — ai-dynamo/nixl GitHub repo does not contain fern/ directory.
     # Re-add when fern/ is pushed to the public GitHub repo. See .planning/debug/edit-this-page-not-visible.md
 
@@ -27,6 +29,9 @@ experimental:
 
 css:
   - ./main.css
+js:
+  - url: https://assets.adobedtm.com/5d4962a43b79/c1061d2c5e7b/launch-191c2462b890.min.js
+    strategy: beforeInteractive
 
 colors:
   accentPrimary:
