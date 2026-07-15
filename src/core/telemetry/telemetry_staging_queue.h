@@ -41,6 +41,15 @@
  */
 class nixlTelemetryStagingQueue {
 public:
+    /**
+     * @brief Construct a queue that retains at most @p capacity events.
+     *
+     * Reserves storage for @p capacity events up front so the producer path
+     * never reallocates. Any @p capacity is accepted (a zero capacity yields a
+     * queue that drops every push); rejecting a zero telemetry buffer size is
+     * the caller's responsibility (see nixlTelemetry construction).
+     * @param capacity Maximum number of events retained before pushes are dropped.
+     */
     explicit nixlTelemetryStagingQueue(size_t capacity);
 
     /**

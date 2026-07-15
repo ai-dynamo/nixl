@@ -22,7 +22,7 @@ nixlTelemetryStagingQueue::nixlTelemetryStagingQueue(size_t capacity) : capacity
 
 bool
 nixlTelemetryStagingQueue::tryPush(const nixlTelemetryEvent &event) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::lock_guard<std::mutex> lock(mutex_);
     if (events_.size() >= capacity_) {
         droppedEvents_.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -36,7 +36,7 @@ nixlTelemetryStagingQueue::tryPushBatch(const nixlTelemetryEvent *events, size_t
     if (count == 0) {
         return true;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::lock_guard<std::mutex> lock(mutex_);
     if (events_.size() + count > capacity_) {
         droppedEvents_.fetch_add(count, std::memory_order_relaxed);
         return false;
@@ -50,7 +50,7 @@ nixlTelemetryStagingQueue::takePending() {
     std::vector<nixlTelemetryEvent> pending;
     pending.reserve(capacity_);
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        const std::lock_guard<std::mutex> lock(mutex_);
         events_.swap(pending);
     }
     return pending;
