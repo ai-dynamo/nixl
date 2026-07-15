@@ -40,6 +40,8 @@ SAN_LABEL="${2:-${sanitizer:-sanitizer}}"
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 WORKSPACE_DIR="$(pwd)"
 
+export SAN_LABEL
+
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir> [sanitizer_label]"
     exit 1
