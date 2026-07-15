@@ -196,6 +196,10 @@ env:
   # Qwen3-8B clears gsm8k >0.9 with margin (1.7B hovers near the old 0.55 gate); on GB200 the
   # extra ~12GB download/load costs only a few minutes and buys a much cleaner accuracy signal.
   SANITY_MODEL_ID: "Qwen/Qwen3-8B"
+  # Internal HuggingFace mirror the sanity script prefetches the model through. Pulling from
+  # huggingface.co directly gets the shared CI egress IP rate-limited (429); the mirror has no
+  # such limit and allows anonymous reads, so no token is needed.
+  SANITY_HF_ENDPOINT: "https://urm.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
   # Pinned upstream bases (concrete versions) so the per-PR sanity gate is reproducible.
   VLLM_BASE_UPSTREAM: "docker.io/vllm/vllm-openai:v0.23.0"
   SGLANG_BASE_UPSTREAM: "docker.io/lmsysorg/sglang:v0.5.13.post1"
@@ -356,7 +360,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} .gitlab/test_vllm_sglang_sanity.sh ${fw}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
@@ -372,7 +376,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} .gitlab/test_vllm_sglang_sanity.sh ${fw}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
