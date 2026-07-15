@@ -84,7 +84,7 @@ run_nixlbench_two_workers_asio() {
     parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
 }
 
-GDB_WRAP="gdb -batch -ex 'set pagination off' -ex run -ex 'thread apply all bt' --args "
+GDB_WRAP="gdb -batch --return-child-result -ex 'set pagination off' -ex run -ex 'thread apply all bt' --args "
 
 for op_type in READ WRITE; do
     for initiator in $seg_types; do
