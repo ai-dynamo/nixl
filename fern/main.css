@@ -703,7 +703,7 @@ svg.card-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: opacity 150ms ease, border-color 150ms ease, background-color 150ms ease;
+    transition: opacity 150ms ease, border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 .dark .nixl-stack-plugin {
     border-color: var(--nv-dark-grey-4);
@@ -733,7 +733,7 @@ svg.card-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: opacity 150ms ease, border-color 150ms ease, background-color 150ms ease;
+    transition: opacity 150ms ease, border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 .dark .nixl-stack-memtype {
     border-color: var(--nv-dark-grey-4);
@@ -788,12 +788,26 @@ svg.card-icon {
     opacity: 1;
 }
 
+/* Keep highlight growth visual-only so flex rows never reflow on hover. */
+.nixl-stack-plugin,
+.nixl-stack-memtype,
+.nixl-stack-compute-type {
+    box-sizing: border-box;
+    box-shadow: 0 0 0 0 transparent;
+}
+
+/* A focused plugin is already selected; use the arrow to signal completion. */
+.nixl-stack-plugin:focus {
+    cursor: default;
+}
+
 /* Direct hover/focus highlight on plugin and memory type */
 .nixl-stack-plugin:hover,
 .nixl-stack-plugin:focus,
 .nixl-stack-memtype:hover,
 .nixl-stack-memtype:focus {
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
     opacity: 1;
 }
@@ -824,7 +838,8 @@ svg.card-icon {
 .nixl-stack-diagram:has([data-mem-blk]:hover) [data-type="BLK"],
 .nixl-stack-diagram:has([data-mem-blk]:focus) [data-type="BLK"] {
     opacity: 1;
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
 }
 
@@ -840,7 +855,8 @@ svg.card-icon {
 .nixl-stack-diagram:has([data-type="BLK"]:hover) [data-mem-blk],
 .nixl-stack-diagram:has([data-type="BLK"]:focus) [data-mem-blk] {
     opacity: 1;
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
 }
 
@@ -996,7 +1012,8 @@ svg.card-icon {
 .nixl-stack-diagram:has([data-backend-compute-nvidia]:hover) [data-compute-nvidia],
 .nixl-stack-diagram:has([data-backend-compute-nvidia]:focus) [data-compute-nvidia] {
     opacity: 1 !important;
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
 }
 
@@ -1005,7 +1022,8 @@ svg.card-icon {
 .nixl-stack-diagram:has([data-backend-compute-aws]:hover) [data-compute-aws],
 .nixl-stack-diagram:has([data-backend-compute-aws]:focus) [data-compute-aws] {
     opacity: 1 !important;
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
 }
 
@@ -1047,7 +1065,7 @@ svg.card-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: opacity 150ms ease, border-color 150ms ease, background-color 150ms ease;
+    transition: opacity 150ms ease, border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 .dark .nixl-stack-compute-type {
     border-color: var(--nv-dark-grey-4);
@@ -1093,7 +1111,8 @@ svg.card-icon {
 /* Direct hover/focus highlight on compute type */
 .nixl-stack-compute-type:hover,
 .nixl-stack-compute-type:focus {
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
     opacity: 1;
 }
@@ -1115,7 +1134,8 @@ svg.card-icon {
 .nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-mem-vram],
 .nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-mem-vram] {
     opacity: 1;
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
 }
 
@@ -1127,7 +1147,8 @@ svg.card-icon {
 .nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-type="FILE"],
 .nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-type="FILE"] {
     opacity: 1;
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
 }
 
@@ -1135,7 +1156,8 @@ svg.card-icon {
 .nixl-stack-diagram:has([data-compute-nvidia]:hover) [data-compute-nvidia],
 .nixl-stack-diagram:has([data-compute-nvidia]:focus) [data-compute-nvidia] {
     opacity: 1;
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
 }
 
@@ -1143,7 +1165,8 @@ svg.card-icon {
 .nixl-stack-diagram:has([data-compute-aws]:hover) .nixl-stack-plugin[data-backend-compute-aws],
 .nixl-stack-diagram:has([data-compute-aws]:focus) .nixl-stack-plugin[data-backend-compute-aws] {
     opacity: 1;
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
 }
 
@@ -1153,7 +1176,8 @@ svg.card-icon {
 .nixl-stack-diagram:has([data-compute-aws]:hover) [data-type="DRAM"],
 .nixl-stack-diagram:has([data-compute-aws]:focus) [data-type="DRAM"] {
     opacity: 1;
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
 }
 
@@ -1161,7 +1185,8 @@ svg.card-icon {
 .nixl-stack-diagram:has([data-compute-aws]:hover) [data-compute-aws],
 .nixl-stack-diagram:has([data-compute-aws]:focus) [data-compute-aws] {
     opacity: 1;
-    border: 2px solid #74B900;
+    border-color: #74B900;
+    box-shadow: 0 0 0 1px #74B900;
     background-color: rgba(116, 185, 0, 0.1);
 }
 
