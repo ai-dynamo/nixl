@@ -37,7 +37,7 @@ nixlTelemetryStagingQueue::tryPushBatch(const nixlTelemetryEvent *events, size_t
         return true;
     }
     const std::lock_guard<std::mutex> lock(mutex_);
-    if (events_.size() + count > capacity_) {
+    if (count > capacity_ - events_.size()) {
         droppedEvents_.fetch_add(count, std::memory_order_relaxed);
         return false;
     }

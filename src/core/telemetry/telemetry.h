@@ -24,8 +24,6 @@
 #include "nixl_types.h"
 
 #include <string>
-#include <vector>
-#include <mutex>
 #include <memory>
 #include <chrono>
 #include <functional>
