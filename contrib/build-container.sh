@@ -283,9 +283,11 @@ BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 
 if [ -n "$WHEEL_BASE_IMAGE" ]; then
     BUILD_ARGS+=" --build-arg wheel_base=$WHEEL_BASE_IMAGE"
-    BUILD_TARGET="--target wheel"
+    # Not named BUILD_TARGET: Jenkins exports a BUILD_TARGET job parameter
+    # (nixl/nixlbench) that would leak into the docker command line.
+    DOCKER_BUILD_TARGET="--target wheel"
 fi
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${BUILD_TARGET:-} $BUILD_CONTEXT
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT
