@@ -76,6 +76,15 @@ public:
     virtual nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) = 0;
 
+    /**
+     * @brief Runs @p body with a batch open around it.
+     *
+     * Exporters may use the batch boundary to share per-batch work across the
+     * exportEvent() calls made inside @p body (e.g. a single timestamp). The
+     * batch begins before @p body runs and ends when it returns (including on
+     * exception). Scopes may nest; the lifecycle hooks fire only for the
+     * outermost scope, so a nested call reuses the surrounding batch.
+     */
     template<typename Body>
     void
     withBatch(Body &&body) {

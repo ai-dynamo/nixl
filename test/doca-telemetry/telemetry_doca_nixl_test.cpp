@@ -637,33 +637,43 @@ TEST_F(docaNixlExporterTest, NestedBatchScopesShareOuterTimestamp) {
     const auto metrics = scrapeUntilValue(
         port_, "agent_memory_registered_last_bytes", 100.0, std::chrono::seconds(12), labels);
 
-    const auto endsWith = [](const std::string &s, const std::string &suffix) {
-        return s.size() >= suffix.size() &&
-            s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+    const auto seriesTimestamp = [&](const std::string &name) -> std::optional<uint64_t> {
+        for (const auto &[id, seriesSamples] : metrics.series()) {
+            if (id.name != name || seriesSamples.empty()) {
+                continue;
+            }
+            const auto agent = id.labels.find("agent_name");
+            if (agent != id.labels.end() && agent->second == agentName) {
+                return seriesSamples.back().timestamp;
+            }
+        }
+        return std::nullopt;
     };
 
-    std::optional<uint64_t> shared;
-    size_t counted = 0;
-    for (const auto &[id, seriesSamples] : metrics.series()) {
-        const auto agent = id.labels.find("agent_name");
-        if (agent == id.labels.end() || agent->second != agentName || seriesSamples.empty()) {
-            continue;
-        }
-        if (endsWith(id.name, "_bucket") || endsWith(id.name, "_sum") ||
-            endsWith(id.name, "_count")) {
-            continue;
-        }
-        const std::optional<uint64_t> ts = seriesSamples.back().timestamp;
-        ASSERT_TRUE(ts.has_value()) << id.name << " must carry a timestamp in the exposition";
-        if (!shared.has_value()) {
-            shared = ts;
-        }
-        EXPECT_EQ(*ts, *shared) << id.name
-                                << " must share the outer batch timestamp across nested scopes";
-        ++counted;
-    }
-    EXPECT_GE(counted, 2u)
-        << "expected non-histogram series from before, inside, and after nesting";
+    // One series produced from each nesting position: before (outer), inside
+    // (nested), and after the nested scope closes. Their exports are spaced past
+    // DOCA's ms resolution, so a per-event or per-scope clock read would give the
+    // "after" series a later timestamp; the shared outer batch timestamp keeps
+    // all three identical.
+    const std::string txCounter =
+        nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES)
+            .counterName;
+    const std::string rxCounter =
+        nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_RX_BYTES)
+            .counterName;
+    const std::string memoryGauge = "agent_memory_registered_last_bytes";
+
+    const std::optional<uint64_t> beforeTs = seriesTimestamp(txCounter);
+    const std::optional<uint64_t> insideTs = seriesTimestamp(rxCounter);
+    const std::optional<uint64_t> afterTs = seriesTimestamp(memoryGauge);
+
+    ASSERT_TRUE(beforeTs.has_value()) << txCounter << " (before nesting) missing or untimestamped";
+    ASSERT_TRUE(insideTs.has_value()) << rxCounter << " (inside nesting) missing or untimestamped";
+    ASSERT_TRUE(afterTs.has_value()) << memoryGauge << " (after nesting) missing or untimestamped";
+
+    EXPECT_EQ(*insideTs, *beforeTs) << "nested-scope event must share the outer batch timestamp";
+    EXPECT_EQ(*afterTs, *beforeTs)
+        << "event after the nested scope closes must still share the outer batch timestamp";
 }
 
 int
