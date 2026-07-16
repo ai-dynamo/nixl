@@ -25,13 +25,14 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | `nixl-ci-build-wheel-nightly` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
 | `nixl-ci-build-llm-container` | Jenkins (standalone) | Manual only | No — never runs as part of PR CI |
 | `nixl-ci-test-llm-container` | Jenkins (standalone) | Manual, or chained from `build-llm-container` via `RUN_TEST` | No — never runs as part of PR CI |
+| `nixl-ci-cleanup-artifacts` | Jenkins (standalone) | Daily cron (6 AM) + manual | No — never runs as part of PR CI |
 
-> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 12 Jenkins jobs: the
-> dispatcher, the 7 jobs it fans out to (the PR CI flow), and 4 standalone jobs
+> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 13 Jenkins jobs: the
+> dispatcher, the 7 jobs it fans out to (the PR CI flow), and 5 standalone jobs
 > (`build-container`, `build-wheel-nightly`, `build-llm-container`,
-> `test-llm-container`). The standalone ones run only on a nightly cron or when
-> someone triggers them manually from the Jenkins UI, and are never invoked by
-> the dispatcher or by a PR event.
+> `test-llm-container`, `cleanup-artifacts`). The standalone ones run only on a
+> nightly/daily cron or when someone triggers them manually from the Jenkins UI,
+> and are never invoked by the dispatcher or by a PR event.
 
 ## GitHub Actions workflows
 
@@ -171,6 +172,12 @@ their own nightly/manual trigger. They split into two groups:
 - **What it does:** Build-only verification (no push) of the `nixl` (EP + debug) and `nixlbench` container images — one matrix cell per target/arch (x86_64 and aarch64), all in parallel. It runs the same `contrib/build-container.sh` / `benchmark/nixlbench/contrib/build.sh` the standalone `nixl-ci-build-container` job runs, so container/packaging breakage (e.g. a missing `--torch-versions`, or an EP nvlink register-count failure) is caught on the PR instead of only by the nightly job. Like the other leaf jobs it runs whenever the dispatcher fans out; drop it for a specific run via the dispatcher's `LEAF_JOBS` parameter.
 - **Automatic on every PR:** No — only after a `/build` comment (like the other dispatcher jobs).
 
+### `nixl-ci-build-wheel` (dispatcher-triggered)
+- **Config:** `.ci/jenkins/lib/build-wheel-matrix.yaml`
+- **What it does:** Builds NIXL Python wheels for each Python version × architecture combination. Uses a two-stage `contrib/Dockerfile.manylinux` build: the `wheel_base` stage (all slow deps: UCX, gRPC, Rust, etc.) is pre-built and cached in Artifactory under `CI_IMAGE_TAG`; PR builds pull this pre-built image and run only the `wheel` stage (~16 steps). PR builds also pass `--torch-versions` (set via the `TORCH_VERSIONS` env in the matrix file) to limit the torch extension builds to the latest version. x86_64 wheels build in the `manylinux` (podman-in-container) runner.
+- **vLLM/SGLang NIXL sanity (aarch64):** the same job also gates a 1-prefill/1-decode NIXL KV-transfer sanity for vLLM and SGLang. Each framework runs as its own aarch64 branch (`build_helper_vllm` / `build_helper_sglang`): build the aarch64 wheels (reusing the cached `wheel_base`), layer them onto the pinned framework base image (`.ci/dockerfiles/Dockerfile.{vllm,sglang}-base`, built as `category: tool` by ci-demo), then run the sanity on the `gb200nvl72_ci` dlcluster SLURM partition over SSH (`.gitlab/test_vllm_sglang_sanity.sh`). SGLang additionally asserts a gsm8k accuracy floor on `Qwen/Qwen3-8B`. The aarch64 wheels are built once per framework branch (duplicated) so the two flows stay separate, labeled branches in the Jenkins UI.
+- **`CI_IMAGE_TAG`:** Same convention as the other five matrix files (also tags `build_helper_*` and the sanity `*-nixl-base` images). `contrib/Dockerfile.manylinux` is part of the `CI_FILES` list in `cidemo-init.sh`, so changing it (or any other CI file) automatically derives a new `CI_IMAGE_TAG` and rebuilds the cached `wheel_base` image (see [CI_IMAGE_TAG management](#ci_image_tag-management)).
+
 ### `nixl-ci-build-container` (standalone)
 - **Trigger:** Nightly cron (builds `nixlbench` and `nixl` targets, on both the default CUDA base image and the DLFW PyTorch daily image, ~3–4 AM), or manual run with parameters (`BUILD_TARGET`, `NIXL_VERSION`, `UCX_VERSION`, base image overrides, etc.).
 - **What it does:** Builds and pushes x86_64/aarch64 NIXL/NIXLBench container images to Artifactory.
@@ -186,6 +193,12 @@ their own nightly/manual trigger. They split into two groups:
 - **What it does:** Builds the 4 LLM inference container variants (`vllm-nixl`, `vllm-cu12-nixl`, `sglang-nixl`, `sglang-cu13-nixl`) for x86_64/aarch64 from a published NIXL wheel set, publishes multi-arch manifests, and optionally (`RUN_TEST`) fires `nixl-ci-test-llm-container` per built variant.
 - **Automatic on every PR:** No — standalone/manual only, used for release verification.
 
+### `nixl-ci-cleanup-artifacts` (standalone)
+- **Trigger:** Daily cron at 6 AM, or manual run with optional `DRY_RUN=true` parameter.
+- **What it does:** Deletes stale Artifactory artifacts based on `.ci/cleanup-spec.json` — PR Docker images older than 1 day, CI base images not pulled in 2 weeks, verification Docker images and PyPI wheels older than 3 months.
+- **Matrix:** `.ci/jenkins/lib/cleanup-matrix.yaml`. Runs on an Ubuntu 24.04 container with `jf` and `jq` installed at runtime.
+- **Automatic on every PR:** No — standalone/scheduled + manual only.
+
 ### `nixl-ci-test-llm-container` (standalone)
 - **Trigger:** Manual, or chained asynchronously from `nixl-ci-build-llm-container` when `RUN_TEST` is enabled.
 - **What it does:** Runs smoke/perf/accuracy tests for one published LLM inference container image on the `mizu` SLURM partition (2-GPU node); framework (vllm/sglang) is auto-detected from the image URL.
@@ -196,6 +209,35 @@ their own nightly/manual trigger. They split into two groups:
 - **Full Jenkins pipeline for a PR:** comment `/build` on the PR (requires authorization — see `Authorization` step in `blossom-ci.yml`).
 - **Re-run a single Jenkins job with different parameters:** use `workflow_dispatch` on `blossom-ci.yml`, or trigger the Jenkins job directly if you have Jenkins access.
 - **Container/wheel builds outside the nightly schedule:** run `nixl-ci-build-container` or `nixl-ci-build-wheel-nightly` manually from the Jenkins UI with custom parameters.
+
+## CI_IMAGE_TAG management
+
+`CI_IMAGE_TAG` is the Docker image tag used by all matrix jobs to identify the
+base images they build and pull. It appears as `CI_IMAGE_TAG: "CI_MANAGED"` in
+the six matrix YAML files — this placeholder is intentional and must not be
+replaced with a static value.
+
+At the start of every Jenkins run, `cidemo-init.sh` derives the real tag
+automatically:
+
+```bash
+NEW_TAG=$(git log -1 --format=%h -- "${CI_FILES[@]}")
+```
+
+This returns the short git commit hash of the most recent commit that touched
+any of the CI source files (`Dockerfile.base`, `Dockerfile.gpu-test`,
+`Dockerfile.build_helper`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
+then patches all six YAML files in the Jenkins workspace with `sed` before the
+matrix library reads them. No commit or push is made — the patch exists only in
+the workspace.
+
+**Caching behaviour:** the derived tag is stable as long as the CI source files
+are unchanged. Two PRs that both leave the CI files untouched get the same tag
+and share the cached Artifactory images. A PR that changes a Dockerfile gets a
+new tag and triggers a rebuild automatically.
+
+**You never need to manually update `CI_IMAGE_TAG`.** The `CI_MANAGED`
+placeholder signals this clearly.
 
 ## Related docs
 

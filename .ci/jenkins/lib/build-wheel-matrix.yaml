@@ -9,10 +9,26 @@
 # This CI pipeline uses contrib/build-container.sh with contrib/Dockerfile.manylinux
 # to build wheels for specific Python versions and architectures in each matrix
 # combination. The script handles the multi-stage Docker build internally, using
-# the CUDA manylinux base image from Artifactory as the build environment.
+# the CUDA manylinux base image from Artifactory as the build environment. The heavy
+# dependency layer is pre-built once into the cached wheel_base image (below) and reused
+# via --wheel-base-image, so per-PR wheel builds only compile the wheel stage.
 #
 # CI Usage: build-container.sh --base-image ... --wheel-base ... (builds and packages wheels)
 # User Usage: Full image build via build-container.sh (same script, different invocation)
+#
+# =============================================================================
+# vLLM/SGLang NIXL disaggregation sanity (aarch64 only)
+# =============================================================================
+# Each framework sanity runs as its own top-level branch (build_helper_vllm /
+# build_helper_sglang, aarch64): build the wheels (reusing the cached wheel_base), layer
+# them onto the pinned framework base image (built by the ci-demo runs_on_dockers mechanic
+# from .ci/dockerfiles/Dockerfile.{vllm,sglang}-base), then run a 1-prefill/1-decode NIXL
+# KV-transfer sanity on the gb200nvl72_ci partition of the dlcluster SLURM cluster
+# (Grace-Blackwell GB200 = aarch64). The x86_64 wheels build in the upstream `manylinux`
+# runner (wheel-only, no sanity). The aarch64 wheels are deliberately built twice (once
+# per framework branch) — independent branches keep the Jenkins UI readable, whereas nested
+# step-level parallelism renders as an unlabeled blob (JENKINS-54010). The test model
+# weights are pulled at runtime (not baked into the base image) to keep image pulls fast.
 #
 # =============================================================================
 # Key Components:
@@ -72,24 +88,82 @@ kubernetes:
   # 24GB memory and 16 CPU cores for parallel compilation and large builds
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
+  privileged: true
+
+empty_volumes:
+  - {mountPath: /root, memory: false}
+  - {mountPath: /var/lib/containers/storage, memory: false}
+
+# Job-id files for the SLURM sanity allocations live on the shared PVC.
+pvc_volumes:
+  - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
 # =============================================================================
 # Docker Build Configuration
 # =============================================================================
-# Uses podman-in-container (quay.io/podman/stable) as the build runner
-# build-container.sh runs podman/docker inside this container to build the wheel image
+# x86_64 wheels build in the upstream `manylinux` runner (podman-in-container). The two
+# aarch64 framework helpers (Dockerfile.build_helper: podman + openssh-client for the SSH
+# SLURM allocation) build the aarch64 wheels AND run the sanity — each as its own branch
+# so the two flows show up as separate, readable top-level branches in the Jenkins UI
+# (nested step-level parallelism renders as an unlabeled blob in Blue Ocean, JENKINS-54010).
+# wheel_base is a cached deps image (no step selects it — built per-arch by ci-demo when
+# Dockerfile.manylinux changes and reused via --wheel-base-image). The vLLM/SGLang base
+# images (category 'tool') are built + pushed by ci-demo, no steps run in them, and only
+# rebuilt when their Dockerfile changes or CI_IMAGE_TAG is bumped.
 runs_on_dockers:
-  - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+  - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true, arch: 'x86_64' }
+  # wheel_base: built and pushed by CI-demo when Dockerfile.manylinux changes.
+  # No step selects this container, so it is never used as a runner — only as a cached deps image.
+  # name/tag cannot use matrix axes (${arch}); arch is handled by ci-demo per node.
+  - {
+      file: 'contrib/Dockerfile.manylinux',
+      name: "${WHEEL_BASE_IMAGE_NAME}",
+      tag: "${CI_IMAGE_TAG}",
+      build_args: '--build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${BASE_TAG} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
+    }
+  # The custom 'fw' key is injected as an env var into every step of the branch
+  # (ci-demo merges the docker entry into the branch axis), so the shared sanity
+  # steps below parameterize on ${fw} instead of being duplicated per framework.
+  - {
+     file: '.ci/dockerfiles/Dockerfile.build_helper',
+     name: 'build_helper_vllm',
+     fw: 'vllm',
+     tag: "${CI_IMAGE_TAG}",
+     arch: 'aarch64',
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+    }
+  - {
+     file: '.ci/dockerfiles/Dockerfile.build_helper',
+     name: 'build_helper_sglang',
+     fw: 'sglang',
+     tag: "${CI_IMAGE_TAG}",
+     arch: 'aarch64',
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+    }
+  - {
+     file: '.ci/dockerfiles/Dockerfile.vllm-base',
+     name: 'vllm-nixl-base',
+     tag: "${CI_IMAGE_TAG}",
+     arch: 'aarch64',
+     category: 'tool',
+     build_args: '--build-arg BASE_IMAGE=${VLLM_BASE_UPSTREAM} --build-arg MODEL_ID=${SANITY_MODEL_ID}'
+    }
+  - {
+     file: '.ci/dockerfiles/Dockerfile.sglang-base',
+     name: 'sglang-nixl-base',
+     tag: "${CI_IMAGE_TAG}",
+     arch: 'aarch64',
+     category: 'tool',
+     build_args: '--build-arg BASE_IMAGE=${SGLANG_BASE_UPSTREAM} --build-arg MODEL_ID=${SANITY_MODEL_ID}'
+    }
 
 # =============================================================================
 # Build Matrix Configuration
 # =============================================================================
-# Defines the combinations of manylinux version and Python versions and architectures to build
+# Defines the combinations of Python versions and architectures to build
 # Each combination runs in parallel
 matrix:
   axes:
-    manylinux:
-      - "2_28"
     # Python versions supported by NIXL
     # Each version gets its own wheel with appropriate ABI tags
     python_version:
@@ -106,18 +180,50 @@ matrix:
 # =============================================================================
 # Global environment variables for the build process
 env:
-  NPROC: 16
+  NPROC: 32
   GRPC_NPROC: 10
   BASE_IMAGE: "${registry_host}/sw-nbu-swx-nixl-docker-local/base/cuda"
   BASE_TAG: '13.0-devel-manylinux--25.09'
+  # CI image tag for wheel_base + build_helper + the sanity base images
+  # (auto-derived by cidemo-init.sh — the "CI_MANAGED" placeholder must not be hand-edited)
+  CI_IMAGE_TAG: "CI_MANAGED"
+  WHL_BASE: "manylinux_2_28"
+  TORCH_VERSIONS: "2.13"
+  WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-manylinux_2_28"
+  # Per-PR sanity images: <registry_host><registry_path>/pr/<arch>/<fw>-nixl:<BUILD_NUMBER>
+  PR_REGISTRY: "${registry_host}${registry_path}"
+  # Test model: pulled at runtime by the sanity script (not baked) and the gsm8k accuracy floor model.
+  # Qwen3-8B clears gsm8k >0.9 with margin (1.7B hovers near the old 0.55 gate); on GB200 the
+  # extra ~12GB download/load costs only a few minutes and buys a much cleaner accuracy signal.
+  SANITY_MODEL_ID: "Qwen/Qwen3-8B"
+  # Pinned upstream bases (concrete versions) so the per-PR sanity gate is reproducible.
+  VLLM_BASE_UPSTREAM: "docker.io/vllm/vllm-openai:v0.23.0"
+  SGLANG_BASE_UPSTREAM: "docker.io/lmsysorg/sglang:v0.5.13.post1"
+  # SLURM (dlcluster gb200nvl72_ci) — sanity test only, aarch64. Accessed over SSH to the
+  # dlcluster head node (svc-nixl-ssh_key), same partition/account/mechanism as the
+  # nixl-ci-dl-gpu job. (gb300nvl72_ci works too but its queue is much busier.)
+  SLURM_NODES: 1
+  SLURM_PARTITION: gb200nvl72_ci
+  SLURM_HEAD_NODE: dlcluster.nvidia.com
+  SLURM_HEAD_USER: svc-nixl
+  SLURM_ACCOUNT: oberon-gb-ci
+  SLURM_GRES: gpu:2
+  SLURM_MEM: 128G
+  SLURM_MINCPUS: 24
+  SLURM_JOB_TIMEOUT: '01:30:00'
+  SLURM_IMMEDIATE_TIMEOUT: "3600"
+  SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
+  JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
+  STORAGE_DRIVER: overlay
 
 steps:
   # =============================================================================
-  # Step 1: Environment Preparation
+  # Step 1a: Environment Preparation — wheel builder (x86_64 manylinux runner)
   # =============================================================================
-  # Set up podman environment
-  # This step runs sequentially (not in parallel) to avoid conflicts
+  # podman/stable runs as root; deps are pre-cached in wheel_base so no host-network
+  # egress workaround is needed here.
   - name: Prepare
+    containerSelector: "{name: 'manylinux'}"
     credentialsId: 'svc-nixl-new-artifactory-token'
     parallel: false
     run: |
@@ -129,11 +235,39 @@ steps:
       echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
 
   # =============================================================================
+  # Step 1b: Environment Preparation — sanity helpers (aarch64 build_helper)
+  # =============================================================================
+  # build_helper runs as the svc-nixl user (with NOPASSWD sudo); the per-PR sanity image
+  # build (contrib/Dockerfile.{vllm,sglang}: apt/curl/pip) needs egress, so default podman
+  # to the pod's host network.
+  - name: Prepare
+    containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    parallel: false
+    run: |
+      # Setup podman and dependencies
+      sudo rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
+      podman system reset -f || true
+      # The wheel/image builds clone/download deps from github/openssl.org; build_helper's
+      # default podman netns can't reach them here, and build-container.sh has no --network
+      # flag. Default podman containers (incl. the build RUN steps) to the pod's host network.
+      sudo mkdir -p /etc/containers
+      printf '[containers]\nnetns="host"\n' | sudo tee /etc/containers/containers.conf >/dev/null
+      # build-container.sh invokes `docker`; point it at podman
+      sudo ln -sfT "$(command -v podman)" /usr/bin/docker
+      # Login to Artifactory
+      echo "$ARTIFACTORY_TOKEN" | podman login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
+
+  # =============================================================================
   # Step 2: Python Wheel Generation
   # =============================================================================
-  # Create distributable Python wheels that bundle native libraries
-  # This step uses the build-wheel.sh script to package everything into wheels
+  # Create distributable Python wheels that bundle native libraries. Runs in every branch:
+  # the x86_64 manylinux runner produces the x86_64 wheels, and each aarch64 framework
+  # helper builds the aarch64 wheels for itself (duplicated on purpose — the two sanity
+  # flows are independent branches so the UI stays readable). --wheel-base-image reuses the
+  # cached deps image so only the wheel stage compiles.
   - name: Build Wheel
+    containerSelector: "{name: 'manylinux|build_helper_(vllm|sglang)'}"
     parallel: false
     run: |
       set -x
@@ -142,13 +276,126 @@ steps:
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
-        --wheel-base "manylinux_${manylinux}" \
+        --wheel-base "${WHL_BASE}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
-        --dockerfile contrib/Dockerfile.manylinux
+        --torch-versions "${TORCH_VERSIONS}" \
+        --dockerfile contrib/Dockerfile.manylinux \
+        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}"
+
+  # =============================================================================
+  # Shared sanity steps (both framework helpers, parameterized by ${fw})
+  # =============================================================================
+  # Extract the wheels this branch just built from its manylinux image, layer them
+  # onto the ci-demo-built base (Dockerfile.${fw} force-reinstalls them), then copy
+  # the whole workspace in (so the sanity script and its helpers are present).
+  # Tagged by BUILD_NUMBER.
+  - name: Build sanity image
+    containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    parallel: false
+    run: |
+      set -eux
+      # build-container.sh (no --tag) tags the wheel image nixl:<VERSION>; match only that
+      # local reference (the manylinux base repo path also contains "nixl").
+      WHEEL_IMAGE="$(docker images --filter 'reference=nixl:*' --format '{{.Repository}}:{{.Tag}}' | head -n1)"
+      test -n "$WHEEL_IMAGE"
+      echo "Extracting wheels from ${WHEEL_IMAGE}"
+
+      WHEELS_DIR="$(pwd)/pr-wheels-${arch}"
+      rm -rf "$WHEELS_DIR" && mkdir -p "$WHEELS_DIR"
+      docker create --name "wheel-extract-${arch}" "$WHEEL_IMAGE"
+      docker cp "wheel-extract-${arch}:/workspace/nixl/dist/." "$WHEELS_DIR/"
+      docker rm -f "wheel-extract-${arch}"
+      ls "$WHEELS_DIR"/*.whl
+
+      BASE="${PR_REGISTRY}/${arch}/${fw}-nixl-base:${CI_IMAGE_TAG}"
+      IMG="${PR_REGISTRY}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
+      # 1. Layer the freshly built wheels onto the base (wheels-only context).
+      docker build --platform linux/${arch} \
+        --build-arg BASE_IMAGE="${BASE}" \
+        -f contrib/Dockerfile.${fw} \
+        -t "${IMG}" \
+        "$WHEELS_DIR/"
+      # 2. Copy the whole workspace in (test script + helpers), like the other pipelines.
+      printf 'FROM %s\nCOPY . /workspace/nixl\nWORKDIR /workspace/nixl\n' "${IMG}" \
+        | docker build --platform linux/${arch} -t "${IMG}" -f - .
+      docker push "${IMG}"
+
+  - name: Allocate Environment
+    containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: allocation
+    args:
+      partition: "${SLURM_PARTITION}"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      nodes: "${SLURM_NODES}"
+      jobTimeout: "${SLURM_JOB_TIMEOUT}"
+      immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
+      jobName: "nixl-vs-${fw}-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      extraArgs: [
+        "--account=${SLURM_ACCOUNT}",
+        "--gres=${SLURM_GRES}",
+        "--mincpus=${SLURM_MINCPUS}",
+        "--mem=${SLURM_MEM}"
+      ]
+
+  # The two run steps are identical modulo ${fw} as well, but are kept as separate,
+  # explicitly-named steps so the test that failed is obvious at a glance in the UI.
+  - name: Run vLLM sanity
+    containerSelector: "{name: 'build_helper_vllm'}"
+    timeout: 40
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-vs-${fw}-${BUILD_NUMBER}"
+
+  - name: Run SGLang sanity
+    containerSelector: "{name: 'build_helper_sglang'}"
+    timeout: 40
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-vs-${fw}-${BUILD_NUMBER}"
+
+# Release the SLURM allocations. Runs once, from the build_helper_vllm branch (it has the
+# SSH client + key; the manylinux runner does not); stopAllForBuild scans the shared PVC
+# job-id dir, so it cleans up both framework allocations.
+pipeline_stop:
+  containerSelector: "{name: 'build_helper_vllm'}"
+  parallel: false
+  shell: action
+  module: slurmCI
+  run: stopAllForBuild
+  args:
+    credentialsId: "${SSH_CREDENTIALS_ID}"
+    headNode: "${SLURM_HEAD_NODE}"
+    headUser: "${SLURM_HEAD_USER}"
+    jobIdDir: "${JOB_ID_FILE_ROOT}"
 
 # =============================================================================
 # Task Naming Convention
 # =============================================================================
 # Unique identifier for each matrix combination
-taskName: '${name}_${manylinux}/${arch}/python_${python_version}'
+taskName: '${name}/${arch}/python_${python_version}'

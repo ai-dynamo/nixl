@@ -16,7 +16,10 @@
  */
 #include "doca_exporter.h"
 #include "common/configuration.h"
+#include "common/exception.h"
 #include "common/nixl_log.h"
+#include "common/str_util.h"
+#include "histogram_buckets.h"
 
 #include <doca_telemetry_exporter.h>
 #include <doca_error.h>
@@ -25,14 +28,31 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <unistd.h>
+#include <unordered_set>
+#include <vector>
 
 namespace {
 const uint16_t docaPrometheusExporterDefaultPort = 9091;
 
+// Number of distinct telemetry event types, used to size direct-indexed arrays
+// keyed by nixl_telemetry_event_type_t.
+constexpr size_t numTelemetryEventTypes =
+    static_cast<size_t>(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED) + 1;
+
+// Per-histogram flush interval (ms) passed to add_base_histogram; the exporter
+// also flushes explicitly at scrape time, so this only bounds staleness if an
+// explicit flush is missed.
+constexpr uint64_t histogramFlushIntervalMs = 1000;
+
 const char docaPrometheusPortVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_PORT";
 const char docaPrometheusLocalVar[] = "NIXL_TELEMETRY_DOCA_PROMETHEUS_LOCAL";
+const char docaBackendsVar[] = "NIXL_TELEMETRY_DOCA_BACKENDS";
+const char docaIpcSocketsDirVar[] = "NIXL_TELEMETRY_DOCA_IPC_SOCKETS_DIR";
+const char docaBackendScrape[] = "scrape";
+const char docaBackendIpc[] = "ipc";
 
 const std::string docaExporterLocalAddress = "http://127.0.0.1";
 const std::string docaExporterPublicAddress = "http://0.0.0.0";
@@ -44,6 +64,47 @@ getBindAddress() {
         nixl::config::getValueDefaulted(docaPrometheusPortVar, docaPrometheusExporterDefaultPort);
     return (local ? docaExporterLocalAddress : docaExporterPublicAddress) + ":" +
         std::to_string(port);
+}
+
+struct DocaExporterConfig {
+    bool scrape = false;
+    bool ipc = false;
+    std::string bind_address;
+    std::string ipc_sockets_dir;
+};
+
+[[nodiscard]] std::string
+getIpcSocketsDir() {
+    return nixl::config::getValueDefaulted<std::string>(docaIpcSocketsDirVar, std::string());
+}
+
+[[nodiscard]] DocaExporterConfig
+parseExporterConfig() {
+    DocaExporterConfig config;
+    const std::string spec =
+        nixl::config::getValueDefaulted<std::string>(docaBackendsVar, docaBackendScrape);
+    for (const std::string &token : nixl::str::splitStrippedSet(spec)) {
+        if (token == docaBackendScrape) {
+            config.scrape = true;
+        } else if (token == docaBackendIpc) {
+            config.ipc = true;
+        } else {
+            nixl::throwRuntimeError(docaBackendsVar,
+                                    ": unknown backend '",
+                                    token,
+                                    "'; valid backends are '",
+                                    docaBackendScrape,
+                                    "', '",
+                                    docaBackendIpc,
+                                    "'");
+        }
+    }
+    if (!config.scrape && !config.ipc) {
+        config.scrape = true;
+    }
+    config.bind_address = getBindAddress();
+    config.ipc_sockets_dir = getIpcSocketsDir();
+    return config;
 }
 
 [[nodiscard]] std::string
@@ -66,70 +127,6 @@ docaTimestamp() noexcept {
     return ts;
 }
 
-[[nodiscard]] constexpr bool
-isCounterEvent(nixl_telemetry_event_type_t event_type) noexcept {
-    switch (event_type) {
-    case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
-    case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
-    case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
-        return true;
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
-    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
-    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
-    case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE:
-    case nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
-    case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
-        return false;
-    }
-    return false;
-}
-
-// Gauge series name for an event, or nullptr if the event has no gauge.
-[[nodiscard]] constexpr const char *
-gaugeMetricName(nixl_telemetry_event_type_t event_type) noexcept {
-    switch (event_type) {
-    case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
-        return "agent_tx_last_bytes";
-    case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
-        return "agent_rx_last_bytes";
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED:
-        return "agent_memory_registered_last_bytes";
-    case nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED:
-        return "agent_memory_deregistered_last_bytes";
-    case nixl_telemetry_event_type_t::AGENT_XFER_TIME:
-        return "agent_xfer_time";
-    case nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME:
-        return "agent_xfer_post_time";
-    case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_POSTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_INVALID_PARAM:
-    case nixl_telemetry_event_type_t::AGENT_ERR_BACKEND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_FOUND:
-    case nixl_telemetry_event_type_t::AGENT_ERR_MISMATCH:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_ALLOWED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REPOST_ACTIVE:
-    case nixl_telemetry_event_type_t::AGENT_ERR_UNKNOWN:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NOT_SUPPORTED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
-    case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
-    case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
-        return nullptr;
-    }
-    return nullptr;
-}
-
 std::mutex g_ctx_mutex;
 std::weak_ptr<DocaSharedContext> g_ctx_weak;
 std::mutex g_metrics_mutex;
@@ -138,10 +135,13 @@ std::mutex g_metrics_mutex;
 /**
  * @brief Process-wide shared DOCA context
  *
- * DOCA only supports one metrics context per process, so all agents share
- * this context. The underlying CLX Metrics API is not thread-safe, so all
- * metric recording calls (metrics_add_counter / metrics_add_gauge) are
- * serialised by a dedicated mutex (g_metrics_mutex).
+ * All agents in a process share one context. The exporter drives process-global
+ * CollectX state -- the Prometheus endpoint via the PROMETHEUS_ENDPOINT env var
+ * (one HTTP server) and a fixed schema name -- so independently-configured
+ * per-agent contexts would collide; sharing one avoids that. The underlying CLX
+ * Metrics API is not thread-safe, so all metric recording calls
+ * (metrics_add_counter / metrics_add_gauge) are serialised by a dedicated mutex
+ * (g_metrics_mutex).
  */
 struct DocaSharedContext {
     doca_telemetry_exporter_schema *schema = nullptr;
@@ -150,8 +150,20 @@ struct DocaSharedContext {
     doca_telemetry_exporter_label_set_id_t error_label_set_id = 0;
     bool source_started = false;
     bool metrics_context_created = false;
+    const bool scrape_enabled;
+    const bool ipc_enabled;
+    std::string backend_desc;
 
-    explicit DocaSharedContext(const std::string &bind_address);
+    // Base histograms are templates created once on the shared source; observing
+    // against one with concrete label values yields a concrete histogram id. The
+    // general metrics flush does not push histograms, so track those concrete ids
+    // to flush them explicitly. Indexed directly by event type (small dense enum)
+    // to avoid a hash lookup on the observe path.
+    std::array<std::optional<doca_telemetry_exporter_base_histogram_id_t>, numTelemetryEventTypes>
+        base_histograms{};
+    std::unordered_set<doca_telemetry_exporter_histogram_id_t> histogram_ids;
+
+    explicit DocaSharedContext(const DocaExporterConfig &config);
     ~DocaSharedContext();
 
     DocaSharedContext(const DocaSharedContext &) = delete;
@@ -163,21 +175,41 @@ private:
     cleanup();
 };
 
-DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
+DocaSharedContext::DocaSharedContext(const DocaExporterConfig &config)
+    : scrape_enabled(config.scrape),
+      ipc_enabled(config.ipc) {
     const std::string hostname = getHostname();
+    const std::string &bind_address = config.bind_address;
+    const std::string &ipc_sockets_dir = config.ipc_sockets_dir;
+
+    if (scrape_enabled) {
+        backend_desc = "scrape on " + bind_address;
+    }
+    if (ipc_enabled) {
+        backend_desc += (backend_desc.empty() ? "" : ", ") + std::string("ipc->DTS");
+    }
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
     try {
-        // DOCA reads its HTTP bind address from this env var. setenv is not
-        // thread-safe per POSIX, but the caller holds g_ctx_mutex and this runs
-        // only once during first-agent init (before heavy threading).
-        setenv("PROMETHEUS_ENDPOINT", bind_address.c_str(), 1);
+        if (scrape_enabled) {
+            // DOCA reads its HTTP bind address from this env var. setenv is not
+            // thread-safe per POSIX, but the caller holds g_ctx_mutex and this runs
+            // only once during first-agent init (before heavy threading).
+            setenv("PROMETHEUS_ENDPOINT", bind_address.c_str(), 1);
+        }
 
         doca_error_t result = doca_telemetry_exporter_schema_init("nixl_telemetry", &schema);
         if (result != DOCA_SUCCESS) {
             throw std::runtime_error("Failed to initialize DOCA schema");
+        }
+
+        if (ipc_enabled) {
+            doca_telemetry_exporter_schema_set_ipc_enabled(schema);
+            if (!ipc_sockets_dir.empty()) {
+                doca_telemetry_exporter_schema_set_ipc_sockets_dir(schema, ipc_sockets_dir.c_str());
+            }
         }
 
         result = doca_telemetry_exporter_schema_start(schema);
@@ -198,6 +230,21 @@ DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
             throw std::runtime_error("Failed to start DOCA source");
         }
         source_started = true;
+
+        if (ipc_enabled) {
+            doca_telemetry_exporter_ipc_status_t ipc_status =
+                DOCA_TELEMETRY_EXPORTER_IPC_STATUS_FAILED;
+            const doca_error_t ipc_result =
+                doca_telemetry_exporter_check_ipc_status(source, &ipc_status);
+            if (ipc_result != DOCA_SUCCESS ||
+                ipc_status != DOCA_TELEMETRY_EXPORTER_IPC_STATUS_CONNECTED) {
+                NIXL_WARN << "DOCA telemetry IPC not connected to DTS (status " << ipc_status
+                          << "); metrics will not be exported until DTS is reachable via "
+                          << (ipc_sockets_dir.empty() ?
+                                  std::string("the default DOCA sockets dir") :
+                                  ipc_sockets_dir);
+            }
+        }
 
         result = doca_telemetry_exporter_metrics_create_context(source);
         if (result != DOCA_SUCCESS) {
@@ -226,6 +273,26 @@ DocaSharedContext::DocaSharedContext(const std::string &bind_address) {
         }
 
         doca_telemetry_exporter_metrics_set_flush_interval_ms(source, 1000);
+
+        const std::vector<double> histogram_buckets = nixl::telemetry::resolveHistogramBucketsUs();
+        for (const auto event_type : telemetry_metric_event_types) {
+            const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event_type);
+            if (descriptor.histogramName == nullptr) {
+                continue;
+            }
+            doca_telemetry_exporter_base_histogram_id_t base_id = 0;
+            result = doca_telemetry_exporter_metrics_add_base_histogram(source,
+                                                                        descriptor.histogramName,
+                                                                        histogram_buckets.data(),
+                                                                        histogram_buckets.size(),
+                                                                        label_set_id,
+                                                                        histogramFlushIntervalMs,
+                                                                        &base_id);
+            if (result != DOCA_SUCCESS) {
+                throw std::runtime_error("Failed to create DOCA base histogram");
+            }
+            base_histograms[static_cast<size_t>(event_type)] = base_id;
+        }
     }
     catch (...) {
         cleanup();
@@ -262,17 +329,25 @@ nixlTelemetryDocaExporter::nixlTelemetryDocaExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
       agent_name_(init_params.agentName) {
-    const std::string bind_address = getBindAddress();
+    const DocaExporterConfig config = parseExporterConfig();
 
     const std::lock_guard lock(g_ctx_mutex);
     ctx_ = g_ctx_weak.lock();
     if (!ctx_) {
-        ctx_ = std::make_shared<DocaSharedContext>(bind_address);
+        ctx_ = std::make_shared<DocaSharedContext>(config);
         g_ctx_weak = ctx_;
-        NIXL_INFO << "DOCA Telemetry exporter initialized on " << bind_address;
+        NIXL_INFO << "DOCA Telemetry exporter initialized (" << ctx_->backend_desc << ")";
     } else {
+        if (config.scrape != ctx_->scrape_enabled || config.ipc != ctx_->ipc_enabled) {
+            NIXL_WARN << "DOCA Telemetry exporter for agent '" << agent_name_
+                      << "' requested different backends than the shared process-wide DOCA "
+                         "context (already created as "
+                      << ctx_->backend_desc
+                      << "); NIXL uses one shared context per process, so the first agent's "
+                         "backend selection is kept and this request is ignored";
+        }
         NIXL_INFO << "DOCA Telemetry exporter for agent '" << agent_name_
-                  << "' sharing existing server on " << bind_address;
+                  << "' sharing existing context (" << ctx_->backend_desc << ")";
     }
 }
 
@@ -283,16 +358,16 @@ nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
 
 doca_error_t
 nixlTelemetryDocaExporter::appendCounterSample(const nixlTelemetryEvent &event,
+                                               const char *counter_name,
                                                const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
     // Counter events carry a per-operation delta; increment so the exported
     // counter is a monotonic cumulative total (add_counter would instead push
     // each delta as an absolute value, yielding a non-monotonic series).
     return doca_telemetry_exporter_metrics_add_counter_increment(ctx_->source,
                                                                  docaTimestamp(),
-                                                                 event_name.c_str(),
+                                                                 counter_name,
                                                                  event.value_,
                                                                  ctx_->label_set_id,
                                                                  label_values);
@@ -325,6 +400,27 @@ nixlTelemetryDocaExporter::appendGaugeSample(const nixlTelemetryEvent &event,
 #pragma GCC diagnostic pop
 }
 
+doca_error_t
+nixlTelemetryDocaExporter::appendHistogramSample(const nixlTelemetryEvent &event,
+                                                 const char *label_values[]) {
+    const auto &base = ctx_->base_histograms[static_cast<size_t>(event.eventType_)];
+    if (!base.has_value()) {
+        return DOCA_SUCCESS;
+    }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    doca_telemetry_exporter_histogram_id_t histogram_id = 0;
+    const doca_error_t result = doca_telemetry_exporter_metrics_base_histogram_observe(
+        ctx_->source, *base, label_values, static_cast<double>(event.value_), &histogram_id);
+    // The same (base, label_values) pair always yields the same concrete id, so
+    // the set de-dups: flush() then flushes each concrete histogram exactly once.
+    if (result == DOCA_SUCCESS) {
+        ctx_->histogram_ids.insert(histogram_id);
+    }
+    return result;
+#pragma GCC diagnostic pop
+}
+
 nixl_status_t
 nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
     try {
@@ -341,23 +437,37 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
             return NIXL_SUCCESS;
         }
 
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event.eventType_);
+
         // Idempotent gauge first, non-idempotent counter increment last.
-        if (const char *const gauge_name = gaugeMetricName(event.eventType_)) {
-            const auto result = appendGaugeSample(event, gauge_name, label_values);
-            if (result != DOCA_SUCCESS) {
-                NIXL_ERROR << "Failed to add gauge: " << result;
-                return NIXL_ERR_UNKNOWN;
+        doca_error_t gauge_result = DOCA_SUCCESS;
+        if (descriptor.gaugeName != nullptr) {
+            gauge_result = appendGaugeSample(event, descriptor.gaugeName, label_values);
+            if (gauge_result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to add gauge: " << gauge_result;
             }
         }
 
-        if (isCounterEvent(event.eventType_)) {
-            const auto result = appendCounterSample(event, label_values);
-            if (result != DOCA_SUCCESS) {
-                NIXL_ERROR << "Failed to add counter: " << result;
-                return NIXL_ERR_UNKNOWN;
+        doca_error_t histogram_result = DOCA_SUCCESS;
+        if (descriptor.histogramName != nullptr) {
+            histogram_result = appendHistogramSample(event, label_values);
+            if (histogram_result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to observe histogram: " << histogram_result;
             }
         }
 
+        doca_error_t counter_result = DOCA_SUCCESS;
+        if (descriptor.counterName != nullptr) {
+            counter_result = appendCounterSample(event, descriptor.counterName, label_values);
+            if (counter_result != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to add counter: " << counter_result;
+            }
+        }
+
+        if (gauge_result != DOCA_SUCCESS || counter_result != DOCA_SUCCESS ||
+            histogram_result != DOCA_SUCCESS) {
+            return NIXL_ERR_UNKNOWN;
+        }
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -371,11 +481,28 @@ nixlTelemetryDocaExporter::flush() {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     const std::lock_guard lock(g_metrics_mutex);
+
+    // Observing only accumulates a histogram in the metrics-API cache; it must be
+    // snapshotted into the export buffer via histogram_flush before the general
+    // metrics flush transmits the buffer. Order matters: snapshot histograms
+    // first, then flush everything (counters/gauges + histogram snapshots) out.
+    // A single histogram failure must not skip the remaining snapshots or the
+    // general flush, so aggregate the outcome and report it after both phases.
+    bool histogram_flush_failed = false;
+    for (const auto histogram_id : ctx_->histogram_ids) {
+        const auto histogram_result = doca_telemetry_exporter_metrics_histogram_flush(
+            ctx_->source, histogram_id, DOCA_TELEMETRY_EXPORTER_HISTOGRAM_TIMESTAMP_UPDATE, false);
+        if (histogram_result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to flush DOCA histogram: " << histogram_result;
+            histogram_flush_failed = true;
+        }
+    }
+
     const auto result = doca_telemetry_exporter_metrics_flush(ctx_->source);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to flush DOCA metrics: " << result;
         return NIXL_ERR_UNKNOWN;
     }
-    return NIXL_SUCCESS;
+    return histogram_flush_failed ? NIXL_ERR_UNKNOWN : NIXL_SUCCESS;
 #pragma GCC diagnostic pop
 }
