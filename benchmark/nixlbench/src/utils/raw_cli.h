@@ -38,24 +38,23 @@ struct RawOptions {
     bool dry_run = false;
 };
 
-struct PosixOptions {
+struct FileOptions {
     std::string path;
     std::string filenames;
     int num_files = 1;
     bool direct = false;
-    std::string api;
-    int io_pool_size = 65536;
-    int kernel_queue_size = 256;
 };
 
 struct RawPosixRequest {
     RawOptions raw;
-    PosixOptions posix;
+    FileOptions file;
+    nixl_b_params_t plugin_parameters;
 };
 
 struct RawCommandResult {
     int status = 0;
     bool execute = false;
+    std::optional<nixl_b_params_t> plugin_parameters;
 };
 
 bool
@@ -77,7 +76,12 @@ parseRawPosixCommand(int argc,
                      std::ostream &err);
 
 std::vector<std::string>
-legacyArguments(const RawPosixRequest &request, const std::string &program_name);
+benchmarkFileArguments(const RawPosixRequest &request, const std::string &program_name);
+
+void
+printRawPosixPlan(const RawPosixRequest &request,
+                  const PluginMetadata &metadata,
+                  std::ostream &out);
 
 RawCommandResult
 prepareRawCommand(int argc, char *argv[], std::ostream &out, std::ostream &err);

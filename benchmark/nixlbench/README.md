@@ -392,13 +392,34 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 
 ### Raw POSIX command
 
-The scoped CLI11 path runs the existing NIXLBench worker. The `raw` command owns
-backend-neutral benchmark controls such as operation, transfer sizes, and
-iterations; the `posix` subcommand owns file and POSIX I/O configuration
-discovered from the installed plugin. Raw options are accepted before or after
-the backend subcommand. Sizes accept binary human-readable suffixes such as
-`KiB`, `MiB`, and `GiB`. The shorter `KB`, `MB`, `GB`, and `TB` spellings are
-accepted as binary aliases for compatibility.
+The scoped CLI11 path runs the existing NIXLBench worker with three explicit
+ownership layers:
+
+- `raw` owns benchmark controls such as operation, transfer sizes, iterations,
+  threads, and consistency checking.
+- NIXLBench owns shared `FILE_SEG` resource controls such as path, filenames,
+  file count, and direct file opening.
+- The installed plugin owns its initialization parameters. NIXLBench exposes
+  every key returned by plugin metadata as an exact string option and forwards
+  the resolved map without interpreting names, values, ranges, or relationships.
+
+Raw options are accepted before or after the backend subcommand. Sizes accept
+binary human-readable suffixes such as `KiB`, `MiB`, and `GiB`. The shorter
+`KB`, `MB`, `GB`, and `TB` spellings are accepted as binary aliases for
+compatibility.
+
+```text
+CLI11 raw posix
+├── raw + FILE_SEG options ──> narrow compatibility bridge ──> xferBenchConfig ─┐
+└── exact plugin strings ───────────────────────────────────────────────────────┤
+                                                                                v
+                                            worker gets plugin defaults, applies map
+                                                                                |
+                                                                                v
+                                                                          POSIX plugin
+
+Legacy gflags ──> existing xferBenchConfig ──> existing plugin-specific assembly
+```
 
 ```bash
 # Create the directory used by the examples below
@@ -426,7 +447,23 @@ nixlbench raw posix \
   --start-block-size 4KiB \
   --max-block-size 1MiB \
   --check-consistency
+
+# Override exact initialization keys advertised by this plugin build
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --total-buffer-size 64MiB \
+  --start-block-size 4KiB \
+  --max-block-size 1MiB \
+  --ios_pool_size=4096 \
+  --use_uring=true
 ```
+
+Plugin option names retain their published spelling, including underscores.
+Values remain exact strings; invalid plugin values are rejected by the plugin
+during backend creation rather than by copied NIXLBench validation. An option is
+available only when it appears in `nixlbench raw posix --help`, so the
+`--use_uring` example depends on that implementation being compiled into the
+installed POSIX plugin.
 
 Only explicit `raw` commands use CLI11. All existing flags-only commands keep
 their gflags syntax and behavior.

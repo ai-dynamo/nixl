@@ -28,6 +28,7 @@
 #endif
 #include <unistd.h>
 #include <memory>
+#include <optional>
 #include <csignal>
 
 static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int num_threads) {
@@ -159,14 +160,14 @@ static int processBatchSizes(xferBenchWorker &worker,
 
 namespace {
 std::unique_ptr<xferBenchWorker>
-createWorker() {
+createWorker(const std::optional<nixl_b_params_t> &plugin_parameters) {
     if (xferBenchConfig::worker_type == "nixl") {
         std::vector<std::string> devices = xferBenchConfig::parseDeviceList();
         if (devices.empty()) {
             std::cerr << "Failed to parse device list" << std::endl;
             return nullptr;
         }
-        return std::make_unique<xferBenchNixlWorker>(devices);
+        return std::make_unique<xferBenchNixlWorker>(devices, plugin_parameters);
     } else if (xferBenchConfig::worker_type == "nvshmem") {
 #if HAVE_NVSHMEM && HAVE_CUDA
         return std::make_unique<xferBenchNvshmemWorker>();
@@ -182,12 +183,12 @@ createWorker() {
 } // namespace
 
 static int
-runBenchmark() {
+runBenchmark(const std::optional<nixl_b_params_t> &plugin_parameters = std::nullopt) {
     int ret = 0;
     int num_threads = xferBenchConfig::num_threads;
 
     // Create the appropriate worker based on worker configuration
-    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker();
+    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker(plugin_parameters);
     if (!worker_ptr) {
         return EXIT_FAILURE;
     }
@@ -213,7 +214,9 @@ runBenchmark() {
     }
 
     if (worker_ptr->isInitiator() && worker_ptr->isMasterRank()) {
-        xferBenchConfig::printConfig();
+        if (!plugin_parameters) {
+            xferBenchConfig::printConfig();
+        }
         xferBenchUtils::printStatsHeader();
     }
 
@@ -242,7 +245,7 @@ main(int argc, char *argv[]) {
         if (result.status != 0 || !result.execute) {
             return result.status;
         }
-        return runBenchmark();
+        return runBenchmark(result.plugin_parameters);
     }
 
     // Preserve the flags-only interface by routing every non-raw invocation directly to gflags.
