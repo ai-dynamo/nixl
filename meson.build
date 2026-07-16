@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.3.1',
+project('nixl', 'CPP', version: '1.4.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -285,6 +285,21 @@ if cuda_dep.found()
     add_project_arguments('-std=c++20', language: 'cuda')
 
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
+
+    # When a sanitizer is enabled, forward its runtime to the nvcc-driven link so
+    # mixed C++/CUDA executables get libasan/libubsan/libtsan directly on their
+    # link line. The gtest binary is the case that bites: it compiles the
+    # device_api .cu sources, so meson links it with nvcc, but the sanitizer flag
+    # (added for language 'cpp' above) never reaches that link -- while its C++
+    # TUs were compiled with -fsanitize. Result: "undefined reference to
+    # __asan_unregister_globals ... libasan.so: DSO missing from command line".
+    # nvcc's -Xcompiler treats commas as argument separators, so forward each
+    # sanitizer part on its own -Xcompiler instead of -fsanitize=address,undefined.
+    if sanitizer != 'none'
+        foreach _san_part : sanitizer_parts
+            add_project_link_arguments('-Xcompiler=-fsanitize=' + _san_part, language: 'cuda')
+        endforeach
+    endif
     message('nvcc version: ' + nvcc.version())
     message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
     if nvcc.version().version_compare('>=12.8')
@@ -458,13 +473,18 @@ if nixl_trace_enabled
     # NVTX: header-only; ships with the CUDA toolkit (nvtx3). Detect-then-disable
     # gracefully so non-CUDA / werror builds stay green. Built as a separately
     # loaded plugin (src/plugins/tracing/nvtx), not linked into libnixl; nvtx_inc_dep
-    # is consumed there.
+    # is consumed there. PR7 structured payloads require nvToolsExtPayload.h (not
+    # present in all CUDA toolkit images); skip the plugin when either header is absent.
     if 'nvtx' in requested_trace_backends
         if cuda_dep.found()
             nvtx_inc_dep = cuda_dep.partial_dependency(includes: true, compile_args: true)
-            if cpp.has_header('nvtx3/nvToolsExt.h', dependencies: nvtx_inc_dep)
+            has_nvtx_base = cpp.has_header('nvtx3/nvToolsExt.h', dependencies: nvtx_inc_dep)
+            has_nvtx_payload = cpp.has_header('nvtx3/nvToolsExtPayload.h', dependencies: nvtx_inc_dep)
+            if has_nvtx_base and has_nvtx_payload
                 nixl_trace_nvtx_enabled = true
                 message('nixl::trace: NVTX backend plugin enabled (CUDA-bundled nvtx3 headers)')
+            elif has_nvtx_base and not has_nvtx_payload
+                warning('nixl::trace: nvtx requested but nvtx3/nvToolsExtPayload.h not found; NVTX backend disabled')
             else
                 warning('nixl::trace: nvtx requested but nvtx3 headers not found; NVTX backend disabled')
             endif

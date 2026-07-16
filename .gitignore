@@ -1,17 +1,10 @@
 # Rust
 **/target/
 
-# Abseil-CPP
-subprojects/abseil-cpp-*
-subprojects/packagecache/
-
 .vscode
 
 # AWS EFA test files
 contrib/aws-efa/aws_vars.json
-
-# TaskFlow
-subprojects/taskflow-*
 
 # CuFile Logs
 cufile.log
@@ -19,8 +12,14 @@ cufile.log
 # clangd
 .cache/
 
-# Asio
-subprojects/asio-*
+# Ignore subproject non-tracked files and sub-directories
+subprojects/*
+!subprojects/packagefiles/
+!subprojects/*.wrap
 
-# liburing
-subprojects/liburing-*
+# Local Python environments
+.venv/
+.venv*/
+
+# Infinia DDN libs staged into the build context by build-container.sh --build-infinia
+/infinia-libs/

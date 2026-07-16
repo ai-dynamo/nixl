@@ -35,12 +35,17 @@ ARCH=$(uname -m)
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
-UCX_REF=${UCX_REF:-v1.21.x}
+UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
+UCX_REF=${UCX_REF:-v1.22.x}
+UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-}
+PRIVATE_UCX_SONAME_SUFFIX="nixl"
 BUILD_NIXL_EP="true"
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
+BUILD_INFINIA="false"
+INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
 
 get_options() {
     while :; do
@@ -116,6 +121,22 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --torch-versions)
+            if [ "$2" ]; then
+                WHL_TORCH_VERSIONS=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --ucx-repo)
+            if [ "$2" ]; then
+                UCX_REPO=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --ucx-ref)
             if [ "$2" ]; then
                 UCX_REF=$2
@@ -124,12 +145,42 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --ucx-soname-suffix)
+            if [ "$2" ]; then
+                UCX_SONAME_SUFFIX=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --private-ucx)
+            UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-$PRIVATE_UCX_SONAME_SUFFIX}
+            ;;
         --build-nixl-ep)
             BUILD_NIXL_EP=true
             ;;
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --wheel-base-image)
+            if [ "$2" ]; then
+                WHEEL_BASE_IMAGE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --build-infinia)
+            BUILD_INFINIA="true"
+            ;;
+        --infinia-image)
+            if [ "$2" ]; then
+                INFINIA_LIBS_IMAGE=$2
                 shift
             else
                 missing_requirement $1
@@ -174,11 +225,24 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
+    echo "UCX Repo: ${UCX_REPO}"
     echo "UCX Ref: ${UCX_REF}"
+    if [ -n "$UCX_SONAME_SUFFIX" ]; then
+        echo "UCX SONAME suffix: ${UCX_SONAME_SUFFIX}"
+        echo "UCX module deepbind: Enabled"
+    else
+        echo "UCX SONAME suffix: Disabled"
+        echo "UCX module deepbind: Disabled"
+    fi
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         echo "NIXL EP: Enabled"
     else
         echo "NIXL EP: Disabled"
+    fi
+    if [ "$BUILD_INFINIA" = "true" ]; then
+        echo "Infinia DDN plugin: Enabled (image: ${INFINIA_LIBS_IMAGE})"
+    else
+        echo "Infinia DDN plugin: Disabled"
     fi
     echo "Build Type: ${BUILD_TYPE}"
 }
@@ -193,10 +257,17 @@ show_help() {
     echo "  [--build-type [debug|release] to select build type (default: release)]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
+    echo "  [--ucx-repo ucx git repository URL]"
     echo "  [--ucx-ref ucx git reference (branch, tag, or sha)]"
+    echo "  [--ucx-soname-suffix suffix to pass to UCX --with-soname-suffix]"
+    echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
+    echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
+    echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
+    echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; harbor.mellanox.com must be reachable)]"
+    echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
     exit 0
 }
 
@@ -218,15 +289,53 @@ fi
 
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
+BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
+BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
+BUILD_ARGS+=" --build-arg UCX_SONAME_SUFFIX=$UCX_SONAME_SUFFIX"
 BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
+BUILD_ARGS+=" --build-arg BUILD_INFINIA=$BUILD_INFINIA"
+
+if [ -n "$WHEEL_BASE_IMAGE" ]; then
+    BUILD_ARGS+=" --build-arg wheel_base=$WHEEL_BASE_IMAGE"
+    BUILD_TARGET="--target wheel"
+fi
+
+# Infinia DDN libs: pre-pulled from harbor on the host and placed flat into
+# infinia-libs/ in the build context. The Dockerfile's BUILD_INFINIA RUN block
+# copies them to /opt/ddn/red/ — no harbor reference in the Dockerfile. The whole
+# block is guarded so external docker build runs are unaffected when
+# BUILD_INFINIA=false (default): no filesystem writes and no EXIT trap installed.
+if [ "$BUILD_INFINIA" = "true" ]; then
+    case "$DOCKER_FILE" in
+        *Dockerfile.manylinux) ;;
+        *) error "ERROR:" "--build-infinia requires --dockerfile contrib/Dockerfile.manylinux" ;;
+    esac
+    INFINIA_LIBS_DIR="$BUILD_CONTEXT/infinia-libs"
+    rm -rf "$INFINIA_LIBS_DIR"
+    mkdir -p "$INFINIA_LIBS_DIR"
+    trap 'rm -rf "$INFINIA_LIBS_DIR"' EXIT
+    (
+        set -e
+        echo "Pulling Infinia libs image: ${INFINIA_LIBS_IMAGE}"
+        docker pull "$INFINIA_LIBS_IMAGE"
+        cid=$(docker create "$INFINIA_LIBS_IMAGE")
+        trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+        docker cp "$cid:/infinia/$ARCH/." "$INFINIA_LIBS_DIR/"
+        echo "Infinia libs staged from ${INFINIA_LIBS_IMAGE} (arch: ${ARCH})"
+    ) || error "ERROR:" "failed to stage Infinia libs from ${INFINIA_LIBS_IMAGE}"
+    # Fail fast on an empty extraction (wrong $ARCH, misconfigured image): otherwise
+    # the wheel would silently build without libplugin_INFINIA.so.
+    [ -n "$(ls -A "$INFINIA_LIBS_DIR")" ] || \
+        error "ERROR:" "no Infinia libs found for arch $ARCH in ${INFINIA_LIBS_IMAGE}"
+fi
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${BUILD_TARGET:-} $BUILD_CONTEXT

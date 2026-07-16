@@ -38,6 +38,13 @@
             - type: JSONPath
               key: VARIABLE_FROM_POST
               value: $
+            # Full PR merge ref (refs/pull/<n>/merge) built from the PR number in the
+            # /build comment payload via the Jayway JSONPath concat function, so the
+            # dispatcher runs the PR merged into its base branch (release branches stay
+            # frozen) while manual runs can pass any branch/commit in sha1.
+            - type: JSONPath
+              key: sha1
+              value: '$.concat("refs/pull/", $.issue.number, "/merge")'
     description: Do NOT edit this job through the Web GUI !  # Manual edits will be overwritten
     concurrent: true    # Allow multiple builds to run simultaneously
     sandbox: false
@@ -46,111 +53,35 @@
             name: "VARIABLE_FROM_POST"
             default: ""
             description: ""
-    # Pipeline script that handles the build process
-    dsl: |
-        @Library('blossom-github-lib@master')  // Use custom GitHub library
-        import ipp.blossom.*
-
-        // Authenticate with GitHub using stored credentials
-        withCredentials([usernamePassword(credentialsId: 'svc-nixl-github-token', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {{
-          githubHelper = GithubHelper.getInstance("${{GIT_PASSWORD}}", VARIABLE_FROM_POST)
-        }}
-
-        // Abort previous dispatcher runs for the same PR and their leaf jobs
-        def currentPrNumber = githubHelper.getPRNumber()?.toString()
-        if (currentPrNumber) {{
-          def slurper = new groovy.json.JsonSlurper()
-          try {{
-            def staleBuilds = Jenkins.instance.getItemByFullName(env.JOB_NAME).builds.findAll {{
-              it.isBuilding() && it.number < currentBuild.number
-            }}.findAll {{ b ->
-              def gd = b.getAction(hudson.model.ParametersAction)?.getParameters()?.find {{ it.name == 'VARIABLE_FROM_POST' }}?.value
-              def otherPr = gd ? slurper.parseText(gd)?.issue?.number?.toString() : null
-              otherPr == currentPrNumber
-            }}
-
-            if (staleBuilds) {{
-              echo "PR #${{currentPrNumber}}: found ${{staleBuilds.size()}} stale dispatcher(s) to abort"
-            }}
-
-            // Collect leaf builds from each stale dispatcher's console log
-            def leafBuilds = []
-            staleBuilds.each {{ b ->
-              b.getLog(1000).each {{ line ->
-                def m = (line =~ /Starting building: (\S+) #(\d+)/)
-                if (m) {{
-                  def child = Jenkins.instance.getItemByFullName(m[0][1])?.getBuildByNumber(m[0][2] as int)
-                  if (child) leafBuilds.add(child)
-                }}
-              }}
-            }}
-
-            // Kill leaf jobs first (unblocks dispatcher), then dispatchers
-            def allTargets = leafBuilds + staleBuilds
-            for (int attempt = 1; attempt <= 3; attempt++) {{
-              def alive = allTargets.findAll {{ it.isBuilding() }}
-              if (!alive) break
-              alive.each {{ target ->
-                echo "${{attempt > 1 ? 'Retry ' + attempt + ': ' : ''}}Killing ${{target.fullDisplayName}}"
-                target.doKill()
-              }}
-              if (attempt < 3) sleep 5
-            }}
-          }} catch(Exception e) {{
-            echo "Could not abort previous builds: ${{e.message}}"
-          }}
-        }}
-
-        def blueOceanUrl = "${{JENKINS_URL}}blue/organizations/jenkins/${{env.JOB_BASE_NAME}}/detail/${{env.JOB_BASE_NAME}}/${{env.BUILD_NUMBER}}/pipeline/"
-        // Update GitHub commit status
-        githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI started", GitHubCommitState.PENDING)
-        currentBuild.description = githubHelper.getBuildDescription()
-
-        try {{
-            parallel 'non-gpu': {{
-                def jobName = 'nixl-ci-non-gpu'
-                build job: jobName, parameters: [
-                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
-                    string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], propagate: false, wait: true
-            }}, 'gpu': {{
-                def jobName = 'nixl-ci-gpu'
-                build job: jobName, parameters: [
-                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
-                    string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], propagate: false, wait: true
-            }}, 'dl-gpu': {{
-                def jobName = 'nixl-ci-dl-gpu'
-                build job: jobName, parameters: [
-                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
-                    string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], propagate: false, wait: true
-            }}, 'dl-gpu-ep': {{
-                def jobName = 'nixl-ci-dl-gpu-ep'
-                build job: jobName, parameters: [
-                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
-                    string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], propagate: false, wait: true
-            }}, wheel: {{
-                def buildJob = 'nixl-ci-build-wheel'
-                build job: buildJob, parameters: [
-                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
-                    string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], propagate: false, wait: true
-            }}, sanitizers: {{
-                def jobName = 'nixl-ci-test-sanitizers'
-                build job: jobName, parameters: [
-                    string(name: 'sha1', value: githubHelper.getMergedSHA()),
-                    string(name: 'githubData', value: VARIABLE_FROM_POST)
-                ], propagate: false, wait: true
-            }}
-
-            githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI ended", GitHubCommitState.SUCCESS)
-        }} catch(Exception ex) {{
-            println ex
-            githubHelper.updateCommitStatus(blueOceanUrl, "NIXL CI ended", GitHubCommitState.FAILURE)
-            throw ex
-        }}
+        - string:
+            name: "sha1"
+            default: "{jjb_branch}"    # Default to 'main' branch for manual runs
+            description: "Ref to check out the dispatcher pipeline from. Set to refs/pull/<n>/merge by the webhook; manual runs may pass a branch name, commit SHA, or any ref"
+        - string:
+            name: "LEAF_JOBS"
+            default: "non-gpu,gpu,dl-gpu,dl-gpu-ep,wheel,sanitizers"
+            description: "Comma-separated list of leaf jobs to dispatch. Edit the default here (via job config) to temporarily disable a leaf job for all runs without a code change; JJB redeploy restores the full list"
+    # SCM configuration - checks out whatever ref sha1 holds: the PR merge ref
+    # (set by the webhook) so a PR into a release branch runs that branch's
+    # dispatcher, or a branch/commit for manual runs.
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                # Configure refspec to handle branches, PRs, and tags
+                refspec: "{jjb_gh_refspec}"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                # Handle git submodules
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_dispatcher_jenkinsfile}"  # Dispatcher pipeline definition
 
 # Template for the main build job that performs the actual build process
 - job-template:
@@ -505,11 +436,11 @@
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
-          description: "NIXL version to use (tag like 1.3.1, branch name, or commit hash)"
+          description: "NIXL version to use (tag like 1.4.0, branch name, or commit hash)"
       - string:
           name: "UCX_VERSION"
-          default: "v1.21.x"
-          description: "UCX version to use (tag like v1.21.x, branch name, or commit hash)"
+          default: "v1.22.x"
+          description: "UCX version to use (tag like v1.22.x, branch name, or commit hash)"
       - string:
           name: "BASE_IMAGE"
           default: "nvcr.io/nvidia/cuda-dl-base"
@@ -616,7 +547,7 @@
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
 # Job template for the LLM (vLLM / SGLang) container build pipeline.
-# Builds 4 image variants (vllm-nixl, vllm-cu12-nixl, sglang-nixl, sglang-cu13-nixl) from a
+# Builds 4 image variants (vllm-cu12-nixl, vllm-cu13-nixl, sglang-cu12-nixl, sglang-cu13-nixl) from a
 # published NIXL wheel set, for x86_64 and aarch64, and publishes multi-arch
 # manifests. Mirrors the manual procedure documented at
 # README.md
@@ -635,11 +566,11 @@
             conf_file=.ci/jenkins/lib/build-llm-container-matrix.yaml
     description: >
       <b>NIXL LLM container build</b><br/>
-      • Builds 4 inference container variants per release: <b>vllm-nixl</b>, <b>vllm-cu12-nixl</b>, <b>sglang-nixl</b>, <b>sglang-cu13-nixl</b><br/>
+      • Builds 4 inference container variants per release: <b>vllm-cu12-nixl</b>, <b>vllm-cu13-nixl</b>, <b>sglang-cu12-nixl</b>, <b>sglang-cu13-nixl</b><br/>
       • Builds for x86_64 and aarch64 (aarch64 via podman with QEMU)<br/>
       • Publishes multi-arch manifests after both arches succeed<br/>
       • Wheels pulled from <code>sw-dynamo-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/&lt;arch&gt;/</code><br/>
-      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>llm/{{vllm-nixl,vllm-cu12-nixl,sglang-nixl,sglang-cu13-nixl}}</code><br/>
+      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>verification/llm/{{vllm-cu12-nixl,vllm-cu13-nixl,sglang-cu12-nixl,sglang-cu13-nixl}}</code><br/>
       • For <b>rc0</b> leave the <code>BASE_IMAGE_*</code> params empty to use upstream defaults<br/>
       • For <b>rcN, N&gt;0</b> set each <code>BASE_IMAGE_*</code> to the matching rc0 image to isolate the verification to the NIXL change<br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -650,16 +581,16 @@
           name: "BUILD_TARGET"
           choices:
             - "all"
-            - "vllm"
             - "vllm-cu12"
-            - "sglang"
+            - "vllm-cu13"
+            - "sglang-cu12"
             - "sglang-cu13"
           description: >
             Which image variants to build:<br/>
             • <b>all</b>: build all 4 variants (default)<br/>
-            • <b>vllm</b>: only vllm-nixl<br/>
             • <b>vllm-cu12</b>: only vllm-cu12-nixl<br/>
-            • <b>sglang</b>: only sglang-nixl (cu12)<br/>
+            • <b>vllm-cu13</b>: only vllm-cu13-nixl<br/>
+            • <b>sglang-cu12</b>: only sglang-cu12-nixl<br/>
             • <b>sglang-cu13</b>: only sglang-cu13-nixl
       - string:
           name: "NIXL_VERSION"
@@ -684,34 +615,37 @@
           default: "2_28"
           description: "manylinux platform tag used in wheel filename (e.g. 2_28)."
       - string:
-          name: "BASE_IMAGE_VLLM"
-          default: ""
-          description: >
-            Optional override for the vllm base image build-arg.<br/>
-            Leave empty for <b>rc0</b> (uses Dockerfile default <code>docker.io/vllm/vllm-openai:latest</code>).<br/>
-            For <b>rcN, N&gt;0</b> set to the corresponding rc0 image, e.g.<br/>
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/llm/vllm-nixl:1.1.0-rc0</code>
-      - string:
           name: "BASE_IMAGE_VLLM_CU12"
           default: ""
           description: >
             Optional override for the vllm-cu12 base image build-arg.<br/>
             Leave empty to use upstream <code>docker.io/vllm/vllm-openai:latest-cu129</code> (rc0 default).<br/>
-            For <b>rcN, N&gt;0</b> pin to the rc0 vllm-cu12 image.
+            For <b>rcN, N&gt;0</b> pin to the rc0 vllm-cu12-nixl image, e.g.<br/>
+            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu12-nixl:1.1.0-rc0</code>
       - string:
-          name: "BASE_IMAGE_SGLANG"
+          name: "BASE_IMAGE_VLLM_CU13"
           default: ""
           description: >
-            Optional override for the sglang (cu12) base image build-arg.<br/>
-            Leave empty for <b>rc0</b> (uses Dockerfile default <code>docker.io/lmsysorg/sglang:latest</code>).<br/>
-            For <b>rcN, N&gt;0</b> pin to the rc0 image.
+            Optional override for the vllm-cu13 base image build-arg.<br/>
+            Leave empty for <b>rc0</b> (uses the CUDA 13 default <code>docker.io/vllm/vllm-openai:latest-cu130</code>).<br/>
+            For <b>rcN, N&gt;0</b> set to the corresponding rc0 image, e.g.<br/>
+            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>
+      - string:
+          name: "BASE_IMAGE_SGLANG_CU12"
+          default: ""
+          description: >
+            Optional override for the sglang-cu12 base image build-arg.<br/>
+            Leave empty for <b>rc0</b> (uses the CUDA 12 default <code>docker.io/lmsysorg/sglang:latest-cu129-runtime</code>).<br/>
+            For <b>rcN, N&gt;0</b> pin to the rc0 sglang-cu12-nixl image, e.g.<br/>
+            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-cu12-nixl:1.1.0-rc0</code>
       - string:
           name: "BASE_IMAGE_SGLANG_CU13"
           default: ""
           description: >
             Optional override for the sglang-cu13 base image build-arg.<br/>
             Leave empty to use upstream <code>docker.io/lmsysorg/sglang:latest-cu130-runtime</code> (rc0 default).<br/>
-            For <b>rcN, N&gt;0</b> pin to the rc0 sglang-cu13 image.
+            For <b>rcN, N&gt;0</b> pin to the rc0 sglang-cu13-nixl image, e.g.<br/>
+            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-cu13-nixl:1.1.0-rc0</code>
       - string:
           name: "TAG_SUFFIX"
           default: ""
@@ -817,8 +751,8 @@
       • Tests one inference container image on the <b>mizu</b> SLURM partition (single 2-GPU node)<br/>
       • Brings up prefill + decode + proxy/router and runs smoke / perf / accuracy phases<br/>
       • Framework (vllm vs sglang) is auto-detected from the image URL<br/>
-      • The URL must point to the per-arch image (mizu nodes are x86_64), e.g.<br/>
-      &nbsp;&nbsp;<code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/llm/vllm-nixl:1.1.0-rc0-x86_64</code><br/>
+      • The URL must point to the multi-arch manifest tag (resolves to x86_64 on mizu nodes), e.g.<br/>
+      &nbsp;&nbsp;<code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code><br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: true
     sandbox: true
@@ -827,8 +761,8 @@
           name: "IMAGE_URL"
           default: ""
           description: >
-            Full URL of the LLM image to test (per-arch, e.g.
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/llm/vllm-nixl:1.1.0-rc0-x86_64</code>).<br/>
+            Full URL of the LLM image to test (multi-arch manifest tag, e.g.
+            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>).<br/>
             Framework is auto-detected: URL containing <code>vllm</code> runs
             <code>test_vllm.sh</code>; URL containing <code>sglang</code> runs <code>test_sglang.sh</code>.
       - bool:
@@ -902,8 +836,8 @@
           cron: |
             # Build NIXL wheels nightly ~10 AM for CUDA 13 and CUDA 12 (the cu12
             # run also produces the nixl meta wheel). Both publish to the repo.
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.21.x;BASE_TAG=13.0-devel-manylinux--25.09
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.21.x;BASE_TAG=12.9-devel-manylinux--25.06
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_TAG=13.0-devel-manylinux--25.09
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_TAG=12.9-devel-manylinux--25.06
     # Manual build parameters
     parameters:
       - string:
@@ -912,8 +846,8 @@
           description: "NIXL version to build wheels from (tag like 1.2.0, branch name, PR ref, or commit hash)"
       - string:
           name: "UCX_VERSION"
-          default: "v1.21.x"
-          description: "UCX version to build against (tag like v1.21.x, branch name, or commit hash)"
+          default: "v1.22.x"
+          description: "UCX version to build against (tag like v1.22.x, branch name, or commit hash)"
       - string:
           name: "BASE_IMAGE"
           default: "artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda"
@@ -948,6 +882,54 @@
               parent-credentials: true
       script-path: "{jjb_jenkinsfile}"
 
+# Template for the Artifactory cleanup job
+# Daily cleanup of NIXL Artifactory artifacts (Docker images + PyPI wheels).
+- job-template:
+    name: "{jjb_proj}-cleanup-artifacts"   # Will be expanded to 'nixl-ci-cleanup-artifacts'
+    folder: "Devops"
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 14
+          num-to-keep: 14
+      - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-cleanup-artifacts
+              conf_file=.ci/jenkins/lib/cleanup-matrix.yaml
+    description: Do NOT edit this job through the Web GUI !
+    sandbox: true
+    triggers:
+      - timed: "H 6 * * *"  # Daily at 6 AM
+    parameters:
+      - bool:
+          name: "DRY_RUN"
+          default: false
+          description: "Only list images that would be deleted, without actually deleting them"
+      - string:
+          name: "sha1"
+          default: "{jjb_branch}"    # Default to 'main' branch
+          description: "Commit to be checked, usually set by PR"
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                # Configure refspec to handle branches, PRs, and tags
+                refspec: "{jjb_gh_refspec}"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                # Handle git submodules
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
+
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
 - project:
@@ -955,6 +937,7 @@
     jjb_proj: 'nixl-ci'           # Project prefix for job names
     jjb_git: 'https://github.com/ai-dynamo/nixl.git'  # Repository URL
     jjb_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile'  # Main pipeline definition
+    jjb_dispatcher_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile.dispatcher'  # Dispatcher pipeline definition
     jjb_branch: 'main'            # Default branch
     jjb_gh_url: 'https://github.com/ai-dynamo/nixl'  # GitHub web URL
     jjb_gh_refspec: '+refs/heads/*:refs/remotes/origin/* +$sha1:refs/remotes/origin/$sha1'
@@ -970,3 +953,4 @@
         - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for nixl_ep elastic tests on dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
         - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
+        - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job

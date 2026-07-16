@@ -36,6 +36,16 @@ export NIXL_TELEMETRY_EXPORTER="doca" # Sets which plug-in to select in format l
 
 ### Optional Configuration
 
+You can restrict which metrics are exported with an allowlist (unset exports everything):
+
+```bash
+# Comma-separated glob allowlist matched against the base event names.
+# A name selects every series for that event (counter, gauge, and the
+# transfer-time histogram where applicable). Unmatched tokens are ignored
+# with a warning; deactivated metrics are skipped before staging.
+export NIXL_TELEMETRY_ENABLED_METRICS="agent_tx_bytes,agent_rx_bytes,agent_err_*"
+```
+
 You can configure the exposed prometheus port:
 
 ```bash
@@ -52,6 +62,23 @@ export NIXL_TELEMETRY_DOCA_PROMETHEUS_LOCAL="y"
 
 When multiple agents run in the same process, the first agent to initialize creates the DOCA server and its port/address settings take effect. Subsequent agents share that endpoint and are distinguished by the `agent_name` label.
 
+### Delivery backends (scrape and/or IPC to DTS)
+
+The exporter can drive **one or more** delivery backends at once, selected by a comma-separated list. By default it serves its own Prometheus scrape endpoint (`scrape`); under multi-process runs this collides on the shared port, so it can instead (or additionally) push metrics over IPC to the DOCA Telemetry Service (DTS), which aggregates all NIXL processes behind a single endpoint (no per-process listening socket):
+
+```bash
+# Comma-separated set; default "scrape". Examples: "scrape", "ipc", "scrape,ipc".
+export NIXL_TELEMETRY_DOCA_BACKENDS="ipc"
+# Optional: directory of DTS IPC sockets (default: /opt/mellanox/doca/services/telemetry/ipc_sockets)
+export NIXL_TELEMETRY_DOCA_IPC_SOCKETS_DIR="/path/to/ipc_sockets"
+```
+
+- `scrape` — opens the local Prometheus HTTP endpoint (uses the port/local vars above).
+- `ipc` — pushes over IPC to DTS; no HTTP endpoint of its own. If DTS is not reachable the exporter logs a warning and continues (metrics are not exported until DTS is available) rather than failing.
+- An unrecognized token is a hard error (surfaces a likely config typo rather than silently degrading); an unset or empty value defaults to `scrape`.
+
+Other CollectX outputs (Remote Write, OTLP, Fluent Bit) are **DTS-side onward backends**, not exporter flags — reach them by enabling `ipc` and configuring DTS. Deploying DTS alongside NIXL is a separate operational step.
+
 You can alter where to look for plug-in .so files
 NOTE: the same var is used for backend plug-ins search
 
@@ -63,21 +90,34 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 
 | Event Name | Counter | Gauge | Histogram |
 | ---------- | ------- | ----- | --------- |
-| `agent_memory_registered` | No | Yes | No |
-| `agent_memory_deregistered` | No | Yes | No |
+| `agent_memory_registered` | Yes | Yes | No |
+| `agent_memory_deregistered` | Yes | Yes | No |
 | `agent_tx_bytes` | Yes | Yes | No |
 | `agent_rx_bytes` | Yes | Yes | No |
 | `agent_tx_requests_num` | Yes | No | No |
 | `agent_rx_requests_num` | Yes | No | No |
-| `agent_xfer_time` | No | Yes | No |
-| `agent_xfer_post_time` | No | Yes | No |
-| Error event types (`agent_err_*`) | No | No | No |
+| `agent_xfer_time` | Yes | Yes | Yes |
+| `agent_xfer_post_time` | Yes | Yes | Yes |
+| `agent_telemetry_events_dropped` | Yes | No | No |
+| Error event types (`agent_err_*`) | Yes | No | No |
 
 **Counter, Gauge, Histogram** - as implemented by the DOCA Telemetry Exporter
 
-- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values.
-- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte events publish both a cumulative counter and a last-operation gauge: `agent_tx_bytes` / `agent_rx_bytes` carry the running total, while `agent_tx_last_bytes` / `agent_rx_last_bytes` (the `agent_<subject>_last_<unit>` convention) carry the byte size of the latest TX/RX request. The memory gauges (`agent_memory_registered` / `agent_memory_deregistered`) report the size of the last (de)registration.
-- **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
+- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values. Counter metrics have the `_total` suffix. The native Prometheus and DOCA exporters emit identical series (same names, types, labels) from one shared metric descriptor.
+- Error events are exposed as one labeled counter: `agent_errors_total{status="..."}`. The `status` label is bounded by the fixed `AGENT_ERR_*` event set.
+- `agent_telemetry_events_dropped_total` is the cumulative count of telemetry events dropped at the producer-side staging queue (when the queue is full and an event cannot be enqueued for export). It does not count BUFFER cyclic-ring loss. Emitted through the standard counter path (identical to `agent_tx_bytes`), not any DOCA-native "dropped metrics" feature.
+- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte events publish both a cumulative counter and a last-operation gauge: `agent_tx_bytes_total` / `agent_rx_bytes_total` carry the running total, while `agent_tx_last_bytes` / `agent_rx_last_bytes` (the `agent_<subject>_last_<unit>` convention) carry the byte size of the latest TX/RX request. The memory gauges follow the same convention -- `agent_memory_registered_last_bytes` / `agent_memory_deregistered_last_bytes` -- and report the byte size of the last (de)registration. The transfer-time events likewise publish both a cumulative `_total` counter and a last-operation gauge (`agent_xfer_time` / `agent_xfer_post_time`).
+- **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details. The transfer-time events additionally publish latency-distribution histograms `agent_xfer_time_us` and `agent_xfer_post_time_us` (microseconds), exposed as the usual `_bucket{le="..."}` / `_sum` / `_count` series alongside the existing counter and gauge, at parity with the native Prometheus exporter. Bucket boundaries default to a microsecond range covering ~10us..~10s and can be overridden (see below).
+
+### Histogram buckets
+
+The default bucket boundaries for the transfer-time histograms can be overridden with a comma-separated list of strictly-increasing positive microsecond upper bounds (shared with the native Prometheus exporter):
+
+```bash
+export NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US="10,100,1000,10000,100000"
+```
+
+An absent or empty value uses the built-in defaults. A non-empty but invalid value (non-numeric, non-positive, or not strictly increasing) is rejected and the exporter fails to initialize, rather than silently falling back to the defaults.
 
 ### Metric labels
 
@@ -85,3 +125,4 @@ Each telemetry metric is provided with the following labels:
 
 - Hostname where the agent runs
 - Agent name (as provided during initialization, may be deprecated in future versions)
+- `status` (only on `agent_errors_total`): the error kind, bounded by the fixed `AGENT_ERR_*` event set

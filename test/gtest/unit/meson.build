@@ -33,6 +33,9 @@ endif
 subdir('descriptors')
 unit_test_deps += [descriptors_unit_test_dep]
 
+subdir('util')
+unit_test_deps += [util_unit_test_dep]
+
 subdir('tracing')
 unit_test_deps += [tracing_unit_test_dep]
 

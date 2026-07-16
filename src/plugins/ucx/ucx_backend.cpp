@@ -32,6 +32,15 @@
 #include "absl/strings/str_split.h"
 #include <asio.hpp>
 
+namespace {
+[[nodiscard]] uint32_t
+epCloseFlags(const nixl_b_params_t *custom_params) {
+    return nixl::getBackendParamDefaulted(custom_params, "ucx_ep_close_force", false) ?
+        UCP_EP_CLOSE_FLAG_FORCE :
+        0;
+}
+} // namespace
+
 /****************************************
  * Backend request management
 *****************************************/
@@ -619,9 +628,9 @@ protected:
         if (!requests_.empty()) {
             NIXL_WARN << "dedicated " << *this << " dropping " << requests_.size()
                       << " requests on exit";
-            for (auto it = requests_.begin(); it != requests_.end();) {
-                NIXL_INFO << "dropping " << *(*it);
-                (*it)->complete(NIXL_ERR_BACKEND);
+            for (auto *req : requests_) {
+                NIXL_INFO << "dropping " << *req;
+                req->complete(NIXL_ERR_BACKEND);
             }
             requests_.clear();
         }
@@ -823,6 +832,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
         err_handling_mode = ucx_err_mode_from_string(*opt);
     }
 
+    const uint32_t ep_close_flags = epCloseFlags(custom_params);
+
     const auto engine_config =
         nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
@@ -836,7 +847,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     uc->warnAboutHardwareSupportMismatch();
 
     for (size_t i = 0; i < num_workers; i++) {
-        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
+        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, ep_close_flags));
     }
 
     auto &uw = uws.front();
