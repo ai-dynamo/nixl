@@ -21,8 +21,7 @@ credentials:
   - credentialsId: 'svc-nixl-gitlab-token'
     usernameVariable: 'NIXL_GITLAB_USER'
     passwordVariable: 'NIXL_GITLAB_TOKEN'
-  # Plugin repo URL for the spcx build (secret text); consumed only when
-  # BUILD_UCX_SPCX_PLUGIN is set, alongside NIXL_GITLAB_TOKEN.
+  # Paired with NIXL_GITLAB_TOKEN; only read on the spcx path.
   - credentialsId: 'ucx-plugin-gitlab-url'
     type: 'string'
     variable: 'NIXL_SPCX_PLUGIN_REPO_URL'
@@ -113,9 +112,8 @@ steps:
       if [ "${BUILD_UCX_SPCX_PLUGIN}" = "true" ]; then
         SPCX_FLAGS="--build-ucx-spcx-plugin --ucx-spcx-plugin-ref ${UCX_SPCX_PLUGIN_REF}"
       fi
-      # Infinia: no flag passed - the build inherits build-container.sh's own
-      # default for the source commit being built (the infinia interface is
-      # still converging upstream). Add an explicit knob once it lands on main.
+      # No infinia flag: inherit the source's default while its interface
+      # is still converging upstream.
       cd nixl-src
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
