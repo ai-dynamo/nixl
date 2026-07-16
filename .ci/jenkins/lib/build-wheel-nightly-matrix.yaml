@@ -21,6 +21,11 @@ credentials:
   - credentialsId: 'svc-nixl-gitlab-token'
     usernameVariable: 'NIXL_GITLAB_USER'
     passwordVariable: 'NIXL_GITLAB_TOKEN'
+  # Plugin repo URL for the spcx build (secret text); consumed only when
+  # BUILD_UCX_SPCX_PLUGIN is set, alongside NIXL_GITLAB_TOKEN.
+  - credentialsId: 'ucx-plugin-gitlab-url'
+    type: 'string'
+    variable: 'NIXL_SPCX_PLUGIN_REPO_URL'
 
 kubernetes:
   cloud: il-ipp-blossom-prod
