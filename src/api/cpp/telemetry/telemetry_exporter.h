@@ -84,6 +84,9 @@ public:
      * batch begins before @p body runs and ends when it returns (including on
      * exception). Scopes may nest; the lifecycle hooks fire only for the
      * outermost scope, so a nested call reuses the surrounding batch.
+     *
+     * @tparam Body Callable invocable with no arguments.
+     * @param body Callable run once while the batch is open.
      */
     template<typename Body>
     void
