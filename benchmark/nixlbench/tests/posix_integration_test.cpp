@@ -89,6 +89,25 @@ namespace {
                           [](const auto &entry) { return entry.is_regular_file(); }));
     }
 
+    std::string
+    readFile(const std::filesystem::path &path) {
+        std::ifstream stream(path);
+        return {(std::istreambuf_iterator<char>(stream)), {}};
+    }
+
+    TEST(PosixIntegrationTest, RawPosixHelpShowsFileAndDynamicPluginOptions) {
+        TemporaryDirectory directory;
+        ASSERT_FALSE(directory.path().empty());
+        const auto log = directory.path() / "help.log";
+        EXPECT_EQ(runCommand("raw posix --help", log), 0);
+
+        const auto contents = readFile(log);
+        EXPECT_NE(contents.find("FILE_SEG resource options"), std::string::npos);
+        EXPECT_NE(contents.find("Plugin initialization parameters"), std::string::npos);
+        EXPECT_NE(contents.find("--ios_pool_size"), std::string::npos);
+        EXPECT_EQ(contents.find("--io-pool-size"), std::string::npos);
+    }
+
     TEST(PosixIntegrationTest, DryRunDoesNotCreateFiles) {
         TemporaryDirectory directory;
         ASSERT_FALSE(directory.path().empty());
@@ -96,36 +115,56 @@ namespace {
         EXPECT_EQ(runCommand(smallRawCommand(directory.path(), "write") + " --dry-run", log), 0);
         EXPECT_EQ(regularFileCount(directory.path()), 1U); // log only
 
-        std::ifstream stream(log);
-        const std::string contents((std::istreambuf_iterator<char>(stream)), {});
+        const auto contents = readFile(log);
         EXPECT_NE(contents.find("Dry run: no worker was created"), std::string::npos);
+        EXPECT_NE(contents.find("benchmark options:"), std::string::npos);
+        EXPECT_NE(contents.find("file-resource options:"), std::string::npos);
+        EXPECT_NE(contents.find("plugin parameters:"), std::string::npos);
     }
 
-    TEST(PosixIntegrationTest, RawWriteAndFreshReadPassConsistencyChecks) {
+    TEST(PosixIntegrationTest, RawWriteReadAndPluginOverridePassConsistencyChecks) {
         TemporaryDirectory write_directory;
         TemporaryDirectory read_directory;
-        ASSERT_EQ(runCommand(smallRawCommand(write_directory.path(), "write"),
-                             write_directory.path() / "write.log"),
-                  0);
+        const auto write_log = write_directory.path() / "write.log";
+        ASSERT_EQ(
+            runCommand(smallRawCommand(write_directory.path(), "write") + " --ios_pool_size=4096",
+                       write_log),
+            0);
         ASSERT_EQ(runCommand(smallRawCommand(read_directory.path(), "read"),
                              read_directory.path() / "read.log"),
                   0);
         EXPECT_GE(regularFileCount(write_directory.path()), 2U);
         EXPECT_GE(regularFileCount(read_directory.path()), 2U);
+
+        const auto contents = readFile(write_log);
+        EXPECT_NE(contents.find("ios_pool_size: 4096"), std::string::npos);
+        EXPECT_NE(contents.find("POSIX backend with plugin parameters from raw CLI"),
+                  std::string::npos);
     }
 
     TEST(PosixIntegrationTest, LegacyAndRawEquivalentWriteConfigurationsBothPass) {
         TemporaryDirectory legacy_directory;
         TemporaryDirectory raw_directory;
-        EXPECT_EQ(runCommand(smallLegacyCommand(legacy_directory.path()),
-                             legacy_directory.path() / "legacy.log"),
-                  0);
-        EXPECT_EQ(runCommand(smallRawCommand(raw_directory.path(), "write"),
-                             raw_directory.path() / "raw.log"),
-                  0);
+        const auto legacy_log = legacy_directory.path() / "legacy.log";
+        const auto raw_log = raw_directory.path() / "raw.log";
+        EXPECT_EQ(runCommand(smallLegacyCommand(legacy_directory.path()), legacy_log), 0);
+        EXPECT_EQ(runCommand(smallRawCommand(raw_directory.path(), "write"), raw_log), 0);
+        const auto legacy_contents = readFile(legacy_log);
+        const auto raw_contents = readFile(raw_log);
+        EXPECT_NE(legacy_contents.find("NIXLBench Configuration"), std::string::npos);
+        EXPECT_NE(legacy_contents.find("POSIX backend with API type:"), std::string::npos);
+        EXPECT_NE(raw_contents.find("Resolved NIXLBench plan"), std::string::npos);
+        EXPECT_NE(raw_contents.find("POSIX backend with plugin parameters from raw CLI"),
+                  std::string::npos);
+        EXPECT_EQ(raw_contents.find("NIXLBench Configuration"), std::string::npos);
+        EXPECT_EQ(raw_contents.find("POSIX API type (--posix_api_type"), std::string::npos);
+        EXPECT_EQ(raw_contents.find("POSIX IO pool size (--posix_ios_pool_size"),
+                  std::string::npos);
+        EXPECT_EQ(raw_contents.find("POSIX kernel queue size (--posix_kernel_queue_size"),
+                  std::string::npos);
     }
 
-    TEST(PosixIntegrationTest, InvalidOptionAndOpenFailureLeaveNoBenchmarkFiles) {
+    TEST(PosixIntegrationTest, FailuresRespectOwnershipAndLeaveNoBenchmarkFiles) {
         TemporaryDirectory invalid_directory;
         const auto invalid_log = invalid_directory.path() / "invalid.log";
         EXPECT_NE(
@@ -133,6 +172,17 @@ namespace {
                        invalid_log),
             0);
         EXPECT_EQ(regularFileCount(invalid_directory.path()), 1U);
+
+        TemporaryDirectory plugin_directory;
+        const auto plugin_log = plugin_directory.path() / "plugin.log";
+        EXPECT_NE(runCommand(smallRawCommand(plugin_directory.path(), "write") +
+                                 " --ios_pool_size=not-a-number",
+                             plugin_log),
+                  0);
+        EXPECT_EQ(regularFileCount(plugin_directory.path()), 1U);
+        const auto plugin_contents = readFile(plugin_log);
+        EXPECT_NE(plugin_contents.find("ios_pool_size: not-a-number"), std::string::npos);
+        EXPECT_EQ(plugin_contents.find("invalid value for --ios_pool_size"), std::string::npos);
 
         TemporaryDirectory failure_directory;
         const auto failure_log = failure_directory.path() / "failure.log";
