@@ -356,8 +356,32 @@ nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
     ctx_.reset();
 }
 
+uint64_t
+nixlTelemetryDocaExporter::currentTimestamp() noexcept {
+    if (!inBatch_) {
+        return docaTimestamp();
+    }
+    if (!batchTimestamp_.has_value()) {
+        batchTimestamp_ = docaTimestamp();
+    }
+    return *batchTimestamp_;
+}
+
+void
+nixlTelemetryDocaExporter::onBatchBegin() noexcept {
+    inBatch_ = true;
+    batchTimestamp_.reset();
+}
+
+void
+nixlTelemetryDocaExporter::onBatchEnd() noexcept {
+    inBatch_ = false;
+    batchTimestamp_.reset();
+}
+
 doca_error_t
 nixlTelemetryDocaExporter::appendCounterSample(const nixlTelemetryEvent &event,
+                                               uint64_t timestamp,
                                                const char *counter_name,
                                                const char *label_values[]) {
 #pragma GCC diagnostic push
@@ -365,23 +389,20 @@ nixlTelemetryDocaExporter::appendCounterSample(const nixlTelemetryEvent &event,
     // Counter events carry a per-operation delta; increment so the exported
     // counter is a monotonic cumulative total (add_counter would instead push
     // each delta as an absolute value, yielding a non-monotonic series).
-    return doca_telemetry_exporter_metrics_add_counter_increment(ctx_->source,
-                                                                 docaTimestamp(),
-                                                                 counter_name,
-                                                                 event.value_,
-                                                                 ctx_->label_set_id,
-                                                                 label_values);
+    return doca_telemetry_exporter_metrics_add_counter_increment(
+        ctx_->source, timestamp, counter_name, event.value_, ctx_->label_set_id, label_values);
 #pragma GCC diagnostic pop
 }
 
 doca_error_t
 nixlTelemetryDocaExporter::appendErrorCounterSample(const nixlTelemetryEvent &event,
+                                                    uint64_t timestamp,
                                                     const char *status) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     const char *label_values[] = {agent_name_.c_str(), status};
     return doca_telemetry_exporter_metrics_add_counter_increment(ctx_->source,
-                                                                 docaTimestamp(),
+                                                                 timestamp,
                                                                  "agent_errors_total",
                                                                  event.value_,
                                                                  ctx_->error_label_set_id,
@@ -391,12 +412,13 @@ nixlTelemetryDocaExporter::appendErrorCounterSample(const nixlTelemetryEvent &ev
 
 doca_error_t
 nixlTelemetryDocaExporter::appendGaugeSample(const nixlTelemetryEvent &event,
+                                             uint64_t timestamp,
                                              const char *metric_name,
                                              const char *label_values[]) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     return doca_telemetry_exporter_metrics_add_gauge(
-        ctx_->source, docaTimestamp(), metric_name, event.value_, ctx_->label_set_id, label_values);
+        ctx_->source, timestamp, metric_name, event.value_, ctx_->label_set_id, label_values);
 #pragma GCC diagnostic pop
 }
 
@@ -426,10 +448,11 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
     try {
         const std::lock_guard lock(g_metrics_mutex);
         const char *label_values[] = {agent_name_.c_str()};
+        const uint64_t ts = currentTimestamp();
 
         if (const char *const status =
                 nixlEnumStrings::telemetryErrorStatusLabel(event.eventType_)) {
-            const auto result = appendErrorCounterSample(event, status);
+            const auto result = appendErrorCounterSample(event, ts, status);
             if (result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add error counter: " << result;
                 return NIXL_ERR_UNKNOWN;
@@ -442,7 +465,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
         // Idempotent gauge first, non-idempotent counter increment last.
         doca_error_t gauge_result = DOCA_SUCCESS;
         if (descriptor.gaugeName != nullptr) {
-            gauge_result = appendGaugeSample(event, descriptor.gaugeName, label_values);
+            gauge_result = appendGaugeSample(event, ts, descriptor.gaugeName, label_values);
             if (gauge_result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add gauge: " << gauge_result;
             }
@@ -458,7 +481,7 @@ nixlTelemetryDocaExporter::exportEvent(const nixlTelemetryEvent &event) {
 
         doca_error_t counter_result = DOCA_SUCCESS;
         if (descriptor.counterName != nullptr) {
-            counter_result = appendCounterSample(event, descriptor.counterName, label_values);
+            counter_result = appendCounterSample(event, ts, descriptor.counterName, label_values);
             if (counter_result != DOCA_SUCCESS) {
                 NIXL_ERROR << "Failed to add counter: " << counter_result;
             }

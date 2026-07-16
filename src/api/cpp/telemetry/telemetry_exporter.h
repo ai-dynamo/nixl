@@ -22,6 +22,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 inline constexpr char telemetryExporterVar[] = "NIXL_TELEMETRY_EXPORTER";
 
@@ -75,7 +76,41 @@ public:
     virtual nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) = 0;
 
+    template<typename Body>
+    void
+    withBatch(Body &&body) {
+        const BatchScope scope{*this};
+        std::forward<Body>(body)();
+    }
+
 private:
+    class BatchScope {
+    public:
+        explicit BatchScope(nixlTelemetryExporter &exporter) noexcept : exporter_(exporter) {
+            exporter_.onBatchBegin();
+        }
+
+        ~BatchScope() {
+            exporter_.onBatchEnd();
+        }
+
+        BatchScope(const BatchScope &) = delete;
+        BatchScope(BatchScope &&) = delete;
+        BatchScope &
+        operator=(const BatchScope &) = delete;
+        BatchScope &
+        operator=(BatchScope &&) = delete;
+
+    private:
+        nixlTelemetryExporter &exporter_;
+    };
+
+    virtual void
+    onBatchBegin() noexcept {}
+
+    virtual void
+    onBatchEnd() noexcept {}
+
     const size_t maxEventsBuffered_;
 };
 
