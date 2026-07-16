@@ -454,7 +454,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         }
     }
 
-    if (ucpVersion_ < UCP_VERSION(1, 32)) {
+    if (ucpVersion_ < UCP_VERSION(1, 19)) {
         unsigned major, minor, patch;
         ucp_get_version(&major, &minor, &patch);
         NIXL_WARN << "UCX version is " << major << '.' << minor << '.' << patch
