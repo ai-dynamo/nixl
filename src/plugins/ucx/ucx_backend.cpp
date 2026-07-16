@@ -1070,14 +1070,25 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
+// Device-proxy submit path. Unlike the UCX-direct GPU path (GDA), where a single
+// worker/EP exposes multiple device QPs selected by a kernel-side channel index
+// (RC_GDA_NUM_CHANNELS, one rkey per EP covering all QPs), the proxy posts from the
+// host via ucp_put_nbx and has no device-channel index. The caller therefore selects
+// a UCX worker explicitly (worker_id), giving one EP/QP/rkey per worker per peer; the
+// proxy adapter maps each proxy channel onto a worker so channels fan out across QPs.
 nixl_status_t
 nixlUcxEngine::submitProxyRmaWrite(const nixlMetaDesc &local,
                                    const nixlMetaDesc &remote,
                                    size_t size,
+                                   size_t worker_id,
                                    nixlBackendReqH *&handle) const {
     handle = nullptr;
 
     if (local.len != size || remote.len != size) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (worker_id >= getSharedWorkersSize()) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -1087,8 +1098,7 @@ nixlUcxEngine::submitProxyRmaWrite(const nixlMetaDesc &local,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const auto worker_id = getWorkerId();
-    auto *ucx_handle = new nixlUcxBackendReqH(getWorker(worker_id).get(), worker_id);
+    auto *ucx_handle = new nixlUcxBackendReqH(getSharedWorker(worker_id).get(), worker_id);
     handle = ucx_handle;
     ucx_handle->reserve(1);
 
@@ -1113,10 +1123,15 @@ nixlUcxEngine::submitProxyRmaWrite(const nixlMetaDesc &local,
 nixl_status_t
 nixlUcxEngine::submitProxyAtomicAdd(const nixlMetaDesc &remote,
                                     uint64_t value,
+                                    size_t worker_id,
                                     nixlBackendReqH *&handle) const {
     handle = nullptr;
 
     if (remote.len != sizeof(uint64_t)) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (worker_id >= getSharedWorkersSize()) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -1125,8 +1140,7 @@ nixlUcxEngine::submitProxyAtomicAdd(const nixlMetaDesc &remote,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const auto worker_id = getWorkerId();
-    auto *ucx_handle = new nixlUcxBackendReqH(getWorker(worker_id).get(), worker_id);
+    auto *ucx_handle = new nixlUcxBackendReqH(getSharedWorker(worker_id).get(), worker_id);
     handle = ucx_handle;
     ucx_handle->reserve(1);
 
@@ -1506,7 +1520,7 @@ nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
     return ret;
 }
 
-nixl_status_t 
+nixl_status_t
 nixlUcxEngine::createDeviceProxyBackendAdapter(
     const nixlBackendInitParams &init_params,
     std::unique_ptr<nixlDeviceProxyBackendAdapter> &adapter) {

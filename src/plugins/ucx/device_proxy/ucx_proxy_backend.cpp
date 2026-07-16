@@ -24,6 +24,20 @@ constexpr uint64_t kInvalidToken = 0;
 }
 
 nixl_status_t
+nixlUcxProxyBackendAdapter::init(uint32_t, uint32_t channel_count) {
+    if (engine_ == nullptr || channel_count == 0) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    const size_t worker_count = engine_->getSharedWorkersSize();
+    if (worker_count != channel_count) {
+        NIXL_ERROR << "UCX proxy requires one UCX worker per logical channel: workers="
+                   << worker_count << " channels=" << channel_count;
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
 nixlUcxProxyBackendAdapter::submit(const nixlBackendProxySubmission &submission,
                                    uint64_t &request_token) {
     request_token = kInvalidToken;
@@ -41,12 +55,19 @@ nixlUcxProxyBackendAdapter::submit(const nixlBackendProxySubmission &submission,
     }
 }
 
+size_t
+nixlUcxProxyBackendAdapter::workerIdForChannel(uint32_t channel_id) const {
+    return channel_id;
+}
+
 nixl_status_t
 nixlUcxProxyBackendAdapter::submitPut(const nixlBackendProxySubmission &submission,
                                       uint64_t &request_token) {
+    const size_t worker_id = workerIdForChannel(submission.channel_id);
+
     nixlBackendReqH *handle = nullptr;
     nixl_status_t status = engine_->submitProxyRmaWrite(
-        submission.local.desc, submission.remote.desc, submission.size, handle);
+        submission.local.desc, submission.remote.desc, submission.size, worker_id, handle);
     if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
         NIXL_DEBUG << "nixlUcxProxyBackendAdapter::submitPut: submitProxyRmaWrite failed "
                       "status="
@@ -66,9 +87,13 @@ nixlUcxProxyBackendAdapter::submitPut(const nixlBackendProxySubmission &submissi
 nixl_status_t
 nixlUcxProxyBackendAdapter::submitAtomicAdd(const nixlBackendProxySubmission &submission,
                                             uint64_t &request_token) {
+    // Same channel -> worker mapping as submitPut so a channel's put and its follow-up
+    // atomic flag travel the same worker/EP/QP, preserving IB write-before-atomic order.
+    const size_t worker_id = workerIdForChannel(submission.channel_id);
+
     nixlBackendReqH *handle = nullptr;
     nixl_status_t status =
-        engine_->submitProxyAtomicAdd(submission.remote.desc, submission.value, handle);
+        engine_->submitProxyAtomicAdd(submission.remote.desc, submission.value, worker_id, handle);
     if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
         NIXL_DEBUG << "nixlUcxProxyBackendAdapter::submitAtomicAdd: submitProxyAtomicAdd "
                       "failed status="

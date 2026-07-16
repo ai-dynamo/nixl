@@ -37,6 +37,9 @@ public:
     ~nixlUcxProxyBackendAdapter() override = default;
 
     nixl_status_t
+    init(uint32_t proxy_worker_count, uint32_t channel_count) override;
+
+    nixl_status_t
     submit(const nixlBackendProxySubmission &submission, uint64_t &request_token) override;
 
     nixl_status_t
@@ -49,6 +52,10 @@ public:
     shutdown() override;
 
 private:
+    // submission.channel_id is the logical lane and maps directly to a UCX worker.
+    size_t
+    workerIdForChannel(uint32_t channel_id) const;
+
     nixl_status_t
     submitPut(const nixlBackendProxySubmission &submission, uint64_t &request_token);
 

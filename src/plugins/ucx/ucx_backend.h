@@ -267,11 +267,13 @@ private:
     submitProxyRmaWrite(const nixlMetaDesc &local,
                         const nixlMetaDesc &remote,
                         size_t size,
+                        size_t worker_id,
                         nixlBackendReqH *&handle) const;
 
     nixl_status_t
     submitProxyAtomicAdd(const nixlMetaDesc &remote,
                          uint64_t value,
+                         size_t worker_id,
                          nixlBackendReqH *&handle) const;
 
     // Memory management helpers
