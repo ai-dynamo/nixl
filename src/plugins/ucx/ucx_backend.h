@@ -192,10 +192,6 @@ public:
     nixl_status_t
     genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
-    // public function for UCX worker to mark connections as connected
-    nixl_status_t
-    checkConn(const std::string &remote_agent);
-
     nixl_status_t
     prepMemView(const nixl_remote_meta_dlist_t &,
                 nixlMemViewH &,

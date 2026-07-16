@@ -261,12 +261,6 @@ public:
         return tls;
     }
 
-    static bool
-    isProgressThread(const nixlUcxEngine *engine) noexcept {
-        nixlUcxThread *thread = tlsThread();
-        return thread && thread->engine_ == engine;
-    }
-
     friend std::ostream &
     operator<<(std::ostream &os, const nixlUcxThread &thread) {
         return os << "thread " << &thread << "{engine: " << thread.engine_ << ", worker_ids: ["
@@ -850,10 +844,6 @@ nixlUcxEngine::~nixlUcxEngine() {
 /****************************************
  * Connection management
 *****************************************/
-
-nixl_status_t nixlUcxEngine::checkConn(const std::string &remote_agent) {
-    return remoteConnMap.count(remote_agent) ? NIXL_SUCCESS : NIXL_ERR_NOT_FOUND;
-}
 
 nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
     str = workerAddr;
