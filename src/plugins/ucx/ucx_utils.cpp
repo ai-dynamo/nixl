@@ -454,9 +454,12 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         }
     }
 
-    if (ucpVersion_ < UCP_VERSION(1, 19)) {
-        NIXL_WARN << "UCX version is less than 1.19, CUDA support is limited, "
-                  << "including the lack of support for multi-GPU within a single process.";
+    if (ucpVersion_ < UCP_VERSION(1, 32)) {
+        unsigned major, minor, patch;
+        ucp_get_version(&major, &minor, &patch);
+        NIXL_WARN << "UCX version is " << major << '.' << minor << '.' << patch
+                  << " which is less than 1.19, CUDA support is limited, including"
+                  << " the lack of support for multi-GPU within a single process.";
     }
 
     std::string elem;
