@@ -79,27 +79,31 @@ public:
     template<typename Body>
     void
     withBatch(Body &&body) {
-        const BatchScope scope{*this};
+        const batchScope scope{*this};
         std::forward<Body>(body)();
     }
 
 private:
-    class BatchScope {
+    class batchScope {
     public:
-        explicit BatchScope(nixlTelemetryExporter &exporter) noexcept : exporter_(exporter) {
-            exporter_.onBatchBegin();
+        explicit batchScope(nixlTelemetryExporter &exporter) noexcept : exporter_(exporter) {
+            if (exporter_.batchDepth_++ == 0) {
+                exporter_.onBatchBegin();
+            }
         }
 
-        ~BatchScope() {
-            exporter_.onBatchEnd();
+        ~batchScope() {
+            if (--exporter_.batchDepth_ == 0) {
+                exporter_.onBatchEnd();
+            }
         }
 
-        BatchScope(const BatchScope &) = delete;
-        BatchScope(BatchScope &&) = delete;
-        BatchScope &
-        operator=(const BatchScope &) = delete;
-        BatchScope &
-        operator=(BatchScope &&) = delete;
+        batchScope(const batchScope &) = delete;
+        batchScope(batchScope &&) = delete;
+        batchScope &
+        operator=(const batchScope &) = delete;
+        batchScope &
+        operator=(batchScope &&) = delete;
 
     private:
         nixlTelemetryExporter &exporter_;
@@ -111,6 +115,7 @@ private:
     virtual void
     onBatchEnd() noexcept {}
 
+    unsigned batchDepth_ = 0;
     const size_t maxEventsBuffered_;
 };
 

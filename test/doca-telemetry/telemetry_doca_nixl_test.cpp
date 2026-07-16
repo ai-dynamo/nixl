@@ -496,8 +496,8 @@ TEST_F(docaNixlExporterTest, DISABLED_IpcDeliversToLiveDts) {
         << " -- IPC delivery or DTS Prometheus re-export failed";
 }
 
-// All samples exported inside one nixlTelemetryExporter::BatchScope must carry a
-// single shared timestamp, even when wall-clock time advances between events.
+// All samples exported inside one withBatch scope must carry a single shared
+// timestamp, even when wall-clock time advances between events.
 // The events are spaced apart by more than DOCA's millisecond exposition
 // resolution, so per-event clock reads (the pre-batch behavior) would stamp them
 // with different timestamps; a shared batch timestamp keeps them identical.
@@ -554,7 +554,7 @@ TEST_F(docaNixlExporterTest, BatchSharesOneTimestampAcrossEvents) {
     EXPECT_GE(counted, 2u) << "expected several non-histogram series produced within the batch";
 }
 
-// Without a surrounding BatchScope each exportEvent stamps its samples with a
+// Without a surrounding withBatch each exportEvent stamps its samples with a
 // fresh clock read: two events spaced past DOCA's millisecond exposition
 // resolution must land on distinct timestamps (the counterpart to the shared
 // batch timestamp above), and their exposed values must be correct.
@@ -603,6 +603,67 @@ TEST_F(docaNixlExporterTest, StandaloneExportStampsEachEventFreshly) {
     const std::optional<uint64_t> rxTs = seriesTimestamp(rxCounter, labels);
     ASSERT_TRUE(txTs.has_value() && rxTs.has_value());
     EXPECT_NE(*txTs, *rxTs) << "standalone events spaced apart must get independent timestamps";
+}
+
+// Nested withBatch scopes must behave as one batch: the exporter's batch hooks
+// fire only for the outermost scope, so an inner scope's exit must not reset the
+// shared timestamp. Events emitted before, inside, and after the nested scope --
+// spaced past DOCA's millisecond exposition resolution -- must all carry the one
+// outer-batch timestamp.
+TEST_F(docaNixlExporterTest, NestedBatchScopesShareOuterTimestamp) {
+    constexpr char agentName[] = "nixl_doca_nested_batch_ts_test";
+    const nixlTelemetryExporterInitParams params{agentName, 4096};
+    nixlTelemetryDocaExporter exporter(params);
+
+    exporter.withBatch([&] {
+        EXPECT_EQ(exporter.exportEvent(
+                      nixlTelemetryEvent(nixl_telemetry_event_type_t::AGENT_TX_BYTES, 100)),
+                  NIXL_SUCCESS);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        exporter.withBatch([&] {
+            EXPECT_EQ(exporter.exportEvent(
+                          nixlTelemetryEvent(nixl_telemetry_event_type_t::AGENT_RX_BYTES, 100)),
+                      NIXL_SUCCESS);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        EXPECT_EQ(exporter.exportEvent(nixlTelemetryEvent(
+                      nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED, 100)),
+                  NIXL_SUCCESS);
+    });
+    ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
+
+    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const auto metrics = scrapeUntilValue(
+        port_, "agent_memory_registered_last_bytes", 100.0, std::chrono::seconds(12), labels);
+
+    const auto endsWith = [](const std::string &s, const std::string &suffix) {
+        return s.size() >= suffix.size() &&
+            s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+
+    std::optional<uint64_t> shared;
+    size_t counted = 0;
+    for (const auto &[id, seriesSamples] : metrics.series()) {
+        const auto agent = id.labels.find("agent_name");
+        if (agent == id.labels.end() || agent->second != agentName || seriesSamples.empty()) {
+            continue;
+        }
+        if (endsWith(id.name, "_bucket") || endsWith(id.name, "_sum") ||
+            endsWith(id.name, "_count")) {
+            continue;
+        }
+        const std::optional<uint64_t> ts = seriesSamples.back().timestamp;
+        ASSERT_TRUE(ts.has_value()) << id.name << " must carry a timestamp in the exposition";
+        if (!shared.has_value()) {
+            shared = ts;
+        }
+        EXPECT_EQ(*ts, *shared) << id.name
+                                << " must share the outer batch timestamp across nested scopes";
+        ++counted;
+    }
+    EXPECT_GE(counted, 2u)
+        << "expected non-histogram series from before, inside, and after nesting";
 }
 
 int
