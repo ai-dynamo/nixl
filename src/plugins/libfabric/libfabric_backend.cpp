@@ -1287,7 +1287,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         }
         NIXL_DEBUG << "Established new connection with remote_agent: " << remote_agent;
     }
-    auto conn = conn_it->second;
 
     NIXL_DEBUG << "Posting transfer for remote_agent: " << remote_agent
                << ", handle address: " << handle;

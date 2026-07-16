@@ -72,7 +72,7 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     }
 
     constexpr size_t kRailId = 0;
-    nixlLibfabricReq *req = rail_manager.getRail(kRailId).allocateControlRequest(
+    nixlLibfabricReq *req = rail_manager_.getRail(kRailId).allocateControlRequest(
         payload.size(), LibfabricUtils::getNextXferId());
     if (!req) {
         NIXL_ERROR << "Failed to allocate control request for handshake to '" << conn.remoteAgent_
@@ -86,7 +86,7 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     NIXL_DEBUG << "Sending handshake to '" << conn.remoteAgent_ << "' assigned_idx=" << assigned_idx
                << " (my agent_name='" << my_name
                << "', piggybacked_conn_info_len=" << piggybacked_conn_info.size() << ")";
-    return rail_manager.postControlMessage(nixlLibfabricRailManager::ControlMessageType::HANDSHAKE,
+    return rail_manager_.postControlMessage(nixlLibfabricRailManager::ControlMessageType::HANDSHAKE,
                                            req,
                                            conn.rail_remote_addr_list_.at(kRailId)[0],
                                            /*agent_idx=*/0 /* not used for handshake decode */);
