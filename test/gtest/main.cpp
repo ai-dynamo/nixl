@@ -90,6 +90,11 @@ namespace {
 
     const std::set<std::string> san_skips = {"nixlDurationTest.*"};
 
+    const std::set<std::string> aws_skips = {
+        "HardwareWarningTest.WarnWhenGpuPresentButCudaNotSupported",
+        "HardwareWarningTest.WarnWhenIbPresentButRdmaNotSupported",
+        "HardwareWarningTest.NoWarningWhenIbAndCudaSupported"};
+
     std::mutex mutex;
     std::vector<std::string> required_but_skipped;
 
@@ -158,6 +163,8 @@ RunAllTests() {
     ligs.emplace_back(ib_regex);
 
     if (std::getenv("AWS_BATCH_JOB_ID") != nullptr) {
+        stc->allowForSkip(aws_skips);
+        std::cerr << "ALLOWING AWS incompatible tests to be skipped" << std::endl;
         ligs.emplace_back(aws_regex);
     }
 
