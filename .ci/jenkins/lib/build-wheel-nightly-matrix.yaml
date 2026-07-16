@@ -74,7 +74,9 @@ steps:
       echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
 
   - name: Build Wheel
-    credentialsId: 'svc-nixl-gitlab-token'
+    credentialsId:
+      - 'svc-nixl-gitlab-token'
+      - 'ucx-plugin-gitlab-url'
     parallel: false
     run: |
       # Clone the source: contrib scripts and Dockerfile come from the built
