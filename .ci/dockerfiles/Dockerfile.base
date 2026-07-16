@@ -36,6 +36,16 @@ LABEL maintainer="NVIDIA NIXL Team"
 LABEL description="Test environment for NIXL development"
 LABEL version="1.0"
 
+# Use the internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
+RUN . /etc/os-release && \
+    printf '%s\n' \
+        'Types: deb' \
+        'URIs: https://urm.nvidia.com/artifactory/ubuntu-public' \
+        "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+        'Components: main restricted universe multiverse' \
+        'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
+    grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f
+
 # Update package list and install required packages in one layer
 RUN apt-get update && \
     apt-get install -y sudo python3 python3-pip kmod && \
