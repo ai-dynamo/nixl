@@ -433,6 +433,49 @@ namespace agent {
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
     }
 
+    TEST_F(dualAgentBridgeFixture, ReleaseXferReqKeepsAsyncReleasePollable) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+
+        nixlBackendReqH backend_req;
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), prepXfer)
+            .WillOnce([&backend_req](const nixl_xfer_op_t &,
+                                     const nixl_meta_dlist_t &,
+                                     const nixl_meta_dlist_t &,
+                                     const std::string &,
+                                     nixlBackendReqH *&handle,
+                                     const nixl_opt_b_args_t *) {
+                handle = &backend_req;
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), postXfer)
+            .WillOnce(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), checkXfer)
+            .WillOnce(testing::Return(NIXL_IN_PROG))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), releaseReqH)
+            .WillOnce(testing::Return(NIXL_IN_PROG))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+
+        nixl_xfer_dlist_t local_xfer_dlist(DRAM_SEG), remote_xfer_dlist(DRAM_SEG);
+        local_xfer_dlist.addDesc(s.local_blob.getDesc());
+        remote_xfer_dlist.addDesc(s.remote_blob.getDesc());
+
+        nixlXferReqH *xfer_req;
+        ASSERT_EQ(local_agent_->createXferReq(NIXL_WRITE,
+                                              local_xfer_dlist,
+                                              remote_xfer_dlist,
+                                              s.remote_agent_name,
+                                              xfer_req,
+                                              &s.local_extra_params),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->postXferReq(xfer_req), NIXL_IN_PROG);
+
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_ERR_REPOST_ACTIVE);
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
     TEST_F(dualAgentBridgeFixture, PrepMemViewRemoteDRAM) {
         DualAgentSetup s(DRAM_SEG);
         setupDualAgent(s, /*register_local=*/false);
