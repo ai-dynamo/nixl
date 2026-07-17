@@ -797,36 +797,6 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const nixl_meta_dlist_t &local_descs = *local_side->descs.at(backend);
-    const nixl_meta_dlist_t &remote_descs = *remote_side->descs.at(backend);
-    size_t total_bytes = 0;
-
-    if ((desc_count == 0) || (remote_indices.size() == 0) ||
-        (desc_count != (int)remote_indices.size())) {
-        NIXL_ERROR_FUNC << "different number of indices for local (" << desc_count << "), remote ("
-                        << remote_indices.size() << ")";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    for (int i = 0; i < desc_count; ++i) {
-        if ((local_indices[i] >= local_descs.descCount()) || (local_indices[i] < 0)) {
-            NIXL_ERROR_FUNC << "local index out of range at index " << i << " with value "
-                            << local_indices[i];
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        if ((remote_indices[i] >= remote_descs.descCount()) || (remote_indices[i] < 0)) {
-            NIXL_ERROR_FUNC << "remote index out of range at index " << i << " with value "
-                            << remote_indices[i];
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        if (local_descs[local_indices[i]].len != remote_descs[remote_indices[i]].len) {
-            NIXL_ERROR_FUNC << "length mismatch at index pair " << i << " with local index "
-                            << local_indices[i] << " and remote index " << remote_indices[i];
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        total_bytes += local_descs[local_indices[i]].len;
-    }
-
     if (extra_params) {
         if (extra_params->notif) {
             opt_args.notifMsg = *extra_params->notif;
@@ -865,40 +835,36 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                                                  rem_sec_it->second.getGeneration(),
                                                  desc_count);
 
-    if (extra_params && extra_params->skipDescMerge) {
-        for (int i = 0; i < desc_count; ++i) {
-            handle->initiatorDescs[i] = local_descs[local_indices[i]];
-            handle->targetDescs[i] = remote_descs[remote_indices[i]];
+    size_t total_bytes = 0;
+    const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
+    const size_t local_size = local_descs.flatSize();
+    const size_t remote_size = remote_descs.flatSize();
+    // Ceiling division so that find()'s first probe (flat_idx / run_size) can never exceed
+    // the last run index, letting find() skip a bounds clamp on its hot path.
+    const size_t local_run_size =
+        (local_size + local_descs.descCount() - 1) / local_descs.descCount();
+    const size_t remote_run_size =
+        (remote_size + remote_descs.descCount() - 1) / remote_descs.descCount();
+    size_t seq_count = 1;
+
+    for (size_t i = 0; i < static_cast<size_t>(desc_count); i += seq_count) {
+        const size_t local_idx = static_cast<size_t>(local_indices[i]);
+        const size_t remote_idx = static_cast<size_t>(remote_indices[i]);
+
+        if (local_idx >= local_size) [[unlikely]] {
+            NIXL_ERROR_FUNC << "local index out of range at index " << i << " with value "
+                            << local_indices[i];
+            return NIXL_ERR_INVALID_PARAM;
         }
-    } else {
-        int i = 0, j = 0; // final list size
-        while (i < (desc_count)) {
-            nixlMetaDesc local_desc1 = local_descs[local_indices[i]];
-            nixlMetaDesc remote_desc1 = remote_descs[remote_indices[i]];
+        if (remote_idx >= remote_size) [[unlikely]] {
+            NIXL_ERROR_FUNC << "remote index out of range at index " << i << " with value "
+                            << remote_indices[i];
+            return NIXL_ERR_INVALID_PARAM;
+        }
 
-            if (i != (desc_count - 1)) {
-                const nixlMetaDesc *local_desc2 = &(local_descs[local_indices[i + 1]]);
-                const nixlMetaDesc *remote_desc2 = &(remote_descs[remote_indices[i + 1]]);
-
-                while (((local_desc1.addr + local_desc1.len) == local_desc2->addr) &&
-                       ((remote_desc1.addr + remote_desc1.len) == remote_desc2->addr) &&
-                       (local_desc1.metadataP == local_desc2->metadataP) &&
-                       (remote_desc1.metadataP == remote_desc2->metadataP) &&
-                       (local_desc1.devId == local_desc2->devId) &&
-                       (remote_desc1.devId == remote_desc2->devId)) {
-
-                    local_desc1.len += local_desc2->len;
-                    remote_desc1.len += remote_desc2->len;
-
-                    i++;
-                    if (i == (desc_count - 1)) {
-                        break;
-                    }
-
-                    local_desc2 = &(local_descs[local_indices[i + 1]]);
-                    remote_desc2 = &(remote_descs[remote_indices[i + 1]]);
-                }
-            }
+        // Keep by value to avoid reloads and keep in registers
+        const nixlStrideDesc local_stride = local_descs.find(local_idx, local_run_size);
+        const nixlStrideDesc remote_stride = remote_descs.find(remote_idx, remote_run_size);
 
         if (local_stride.len != remote_stride.len) [[unlikely]] {
             NIXL_ERROR_FUNC << "length mismatch at index " << i << " with local index "
@@ -1696,8 +1662,7 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
 }
 
 nixl_status_t
-nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
-                         std::string &agent_name) {
+nixlAgent::loadRemoteMD(const nixl_blob_t &remote_metadata, std::string &agent_name) {
     NIXL_TRACE_SCOPE(
         trace_span, data->tracer_.get(), "nixl::loadRemoteMD", nixl::trace::Kind::Metadata);
 
@@ -1877,8 +1842,7 @@ nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
 }
 
 nixl_status_t
-nixlAgent::fetchRemoteMD (const std::string remote_name,
-                          const nixl_opt_args_t* extra_params) {
+nixlAgent::fetchRemoteMD(const std::string remote_name, const nixl_opt_args_t *extra_params) {
     NIXL_TRACE_SCOPE(
         trace_span, data->tracer_.get(), "nixl::fetchRemoteMD", nixl::trace::Kind::Metadata);
     NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{remote_name});
