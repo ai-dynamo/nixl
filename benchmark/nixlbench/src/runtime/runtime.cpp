@@ -50,6 +50,6 @@ int xferBenchRT::reduceSumDouble(double *local_buffer, double *global_buffer, in
     return 0;
 }
 
-int xferBenchRT::barrier(const std::string& barrier_id) {
+int xferBenchRT::barrier(const std::string& barrier_id, bool finishing) {
     return 0;
 }

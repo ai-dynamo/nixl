@@ -40,7 +40,7 @@ class xferBenchWorker {
         bool isMasterRank();
         bool isInitiator();
         bool isTarget();
-        int synchronize();
+        int synchronize(bool finishing = false);
         bool signaled() const { return terminate != 0; }
         static void signalHandler(int signal);
 
