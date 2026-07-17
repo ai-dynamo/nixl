@@ -99,7 +99,8 @@ public:
     int reduceSumDouble(double *local_value, double *global_value, int dest_rank) override;
 
     // Barrier synchronization
-    int barrier(const std::string& barrier_id, bool finishing = false) override;
+    int
+    barrier(const std::string &barrier_id, bool finishing = false) override;
 
     // Check if all peer rank keys are still present in etcd
     bool

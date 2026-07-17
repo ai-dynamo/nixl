@@ -468,7 +468,8 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
     }
 }
 
-int xferBenchEtcdRT::barrier(const std::string& barrier_id, const bool finishing) {
+int
+xferBenchEtcdRT::barrier(const std::string &barrier_id, const bool finishing) {
     int count = 0;
     std::string barrier_suffix = "barrier/" + barrier_id + "/" + std::to_string(barrier_gen);
     std::string barrier_key = namespace_prefix + barrier_suffix + "/";
