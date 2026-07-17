@@ -18,6 +18,7 @@
 #define NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_H
 
 #include <vector>
+#include <span>
 #include <cstring>
 #include <iostream>
 #include <thread>
@@ -191,10 +192,6 @@ public:
     nixl_status_t
     genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
-    // public function for UCX worker to mark connections as connected
-    nixl_status_t
-    checkConn(const std::string &remote_agent);
-
     nixl_status_t
     prepMemView(const nixl_remote_meta_dlist_t &,
                 nixlMemViewH &,
@@ -208,22 +205,32 @@ public:
     void releaseMemView(nixlMemViewH) const override;
 
 protected:
-    const std::vector<std::unique_ptr<nixlUcxWorker>> &
-    getWorkers() const {
-        return uws;
+    using worker_span_t = std::span<const std::unique_ptr<nixlUcxWorker>>;
+
+    [[nodiscard]] worker_span_t
+    getSharedWorkers() const {
+        return {workers_.data(), numSharedWorkers_};
     }
 
-    const std::unique_ptr<nixlUcxWorker> &
-    getWorker(size_t worker_id) const {
-        return uws[worker_id];
+    [[nodiscard]] worker_span_t
+    getDedicatedWorkers() const {
+        return {workers_.data() + numSharedWorkers_, workers_.size() - numSharedWorkers_};
+    }
+
+    [[nodiscard]] const std::unique_ptr<nixlUcxWorker> &
+    getSharedWorker(size_t worker_id) const {
+        if (worker_id >= numSharedWorkers_) [[unlikely]] {
+            throw std::out_of_range("Worker ID out of range");
+        }
+        return workers_[worker_id];
     }
 
     [[nodiscard]] size_t
-    getWorkerId(const nixl_opt_b_args_t *opt_args = nullptr) const noexcept;
+    getSharedWorkerId(const nixl_opt_b_args_t *opt_args = nullptr) const noexcept;
 
-    virtual size_t
+    [[nodiscard]] size_t
     getSharedWorkersSize() const {
-        return uws.size();
+        return numSharedWorkers_;
     }
 
     virtual void
@@ -238,7 +245,7 @@ protected:
                   size_t start_idx,
                   size_t end_idx) const;
 
-    nixlUcxEngine(const nixlBackendInitParams &init_params);
+    nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
 
     notif_list_t notifList_;
 
@@ -289,7 +296,8 @@ private:
 
     /* UCX data */
     std::unique_ptr<nixlUcxContext> uc;
-    std::vector<std::unique_ptr<nixlUcxWorker>> uws;
+    std::vector<std::unique_ptr<nixlUcxWorker>> workers_;
+    size_t numSharedWorkers_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
 
@@ -300,11 +308,13 @@ private:
 class nixlUcxThread;
 
 /**
- * Represents an engine with a single progress thread for all shared workers
+ * Engine with an optional single progress thread that progresses all shared
+ * workers. The thread is started only when there are shared workers; with none
+ * shared workers no progress thread is created and progress is synchronous.
  */
 class nixlUcxThreadEngine : public nixlUcxEngine {
 public:
-    nixlUcxThreadEngine(const nixlBackendInitParams &init_params);
+    nixlUcxThreadEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
     ~nixlUcxThreadEngine();
 
     nixl_status_t
@@ -323,9 +333,9 @@ namespace asio {
 class io_context;
 }
 
-class nixlUcxThreadPoolEngine : public nixlUcxEngine {
+class nixlUcxThreadPoolEngine : public nixlUcxThreadEngine {
 public:
-    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params);
+    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params, size_t num_threads);
     ~nixlUcxThreadPoolEngine();
 
     nixl_status_t
@@ -336,18 +346,7 @@ public:
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
-    size_t
-    getSharedWorkersSize() const override {
-        return numSharedWorkers_;
-    }
-
-    nixl_status_t
-    getNotifs(notif_list_t &notif_list) override;
-
 protected:
-    void
-    appendNotif(std::string &&remote_name, std::string &&msg) override;
-
     nixl_status_t
     sendXferRange(const nixl_xfer_op_t &operation,
                   const nixl_meta_dlist_t &local,
@@ -359,10 +358,7 @@ protected:
 
 private:
     std::unique_ptr<asio::io_context> io_;
-    std::unique_ptr<nixlUcxThread> sharedThread_;
     std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
-    size_t numSharedWorkers_;
-    std::mutex notifMutex_;
     size_t splitBatchSize_;
 };
 
