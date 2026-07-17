@@ -203,6 +203,79 @@ telemetryLoader(void *handle, const std::string &plugin_path) {
 }
 } // namespace
 
+nixlTracePluginHandle::nixlTracePluginHandle(void *handle, nixlTracePlugin *plugin)
+    : nixlPluginHandle(handle),
+      plugin_(plugin) {}
+
+nixlTracePluginHandle::~nixlTracePluginHandle() {
+    if (handle_) {
+        typedef void (*fini_func_t)();
+        fini_func_t fini = (fini_func_t)dlsym(handle_, "nixl_trace_plugin_fini");
+        if (fini) {
+            fini();
+        }
+        dlclose(handle_);
+        handle_ = nullptr;
+        plugin_ = nullptr;
+    }
+}
+
+std::unique_ptr<nixl::trace::TraceBackend>
+nixlTracePluginHandle::createBackend(const nixlTraceBackendInitParams &init_params) const {
+    if (plugin_ && plugin_->create_backend) {
+        return plugin_->create_backend(init_params);
+    }
+    return nullptr;
+}
+
+const char *
+nixlTracePluginHandle::getName() const {
+    if (plugin_) {
+        return plugin_->getName().c_str();
+    }
+    return "unknown";
+}
+
+const char *
+nixlTracePluginHandle::getVersion() const {
+    if (plugin_) {
+        return plugin_->getVersion().c_str();
+    }
+    return "unknown";
+}
+
+namespace {
+// Trace plugin loader
+std::shared_ptr<const nixlPluginHandle>
+traceLoader(void *handle, const std::string &plugin_path) {
+    typedef nixlTracePlugin *(*init_func_t)();
+    init_func_t init = (init_func_t)dlsym(handle, "nixl_trace_plugin_init");
+    if (!init) {
+        NIXL_ERROR << "Failed to find nixl_trace_plugin_init in " << plugin_path << ": "
+                   << dlerror();
+        dlclose(handle);
+        return nullptr;
+    }
+
+    nixlTracePlugin *plugin = init();
+    if (!plugin) {
+        NIXL_ERROR << "Plugin initialization failed for " << plugin_path;
+        dlclose(handle);
+        return nullptr;
+    }
+
+    if (plugin->api_version != nixl_trace_plugin_api_version::V1) {
+        NIXL_ERROR << "Plugin API version mismatch for " << plugin_path << ": expected "
+                   << static_cast<unsigned int>(nixl_trace_plugin_api_version::V1) << ", got "
+                   << static_cast<unsigned int>(plugin->api_version);
+        dlclose(handle);
+        return nullptr;
+    }
+
+    return std::make_shared<const nixlTracePluginHandle>(handle, plugin);
+}
+} // namespace
+
 namespace {
 std::map<nixl_backend_t, std::string>
 loadPluginList(const std::string &filename) {

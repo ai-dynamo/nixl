@@ -315,18 +315,18 @@ nixlLocalSection::remDescList(const nixl_reg_dlist_t &mem_elms, nixlBackendEngin
 
     // First check if the mem_elms are present in the list,
     // don't deregister anything in case any is missing.
+    std::vector<size_t> indices;
+    indices.reserve(mem_elms.descCount());
     for (auto &elm : mem_elms) {
         int index = target.getIndex(elm);
         if (index < 0) {
             return NIXL_ERR_NOT_FOUND;
         }
+        indices.push_back(static_cast<size_t>(index));
     }
 
-    for (auto &elm : mem_elms) {
-        int index = target.getIndex(elm);
-        // Already checked, elm should always be found. Can add a check in debug mode.
-        backend->deregisterMem(target[index].metadataP);
-        target.remDesc(index);
+    for (size_t idx : indices) {
+        backend->deregisterMem(target[idx].metadataP);
     }
 
     target.remDescs(std::move(indices));

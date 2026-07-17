@@ -859,7 +859,6 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_LIBBLKIO == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend);
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 }
