@@ -385,7 +385,16 @@ namespace {
 makeUcpVersion() noexcept {
     unsigned major_version, minor_version, release_number;
     ucp_get_version(&major_version, &minor_version, &release_number);
-    return UCP_VERSION(major_version, minor_version);
+    const unsigned version = UCP_VERSION(major_version, minor_version);
+
+    if (version < UCP_VERSION(1, 19)) {
+        NIXL_WARN << "UCX version is " << major_version << '.' << minor_version << '.'
+                  << release_number
+                  << " which is less than 1.19, CUDA support is limited, including"
+                  << " the lack of support for multi-GPU within a single process.";
+    }
+
+    return version;
 }
 
 [[nodiscard]] nixl::ucx::mt_mode_t
@@ -452,14 +461,6 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         if (ucpVersion_ >= UCP_VERSION(1, 19)) {
             config.modify("MAX_COMPONENT_MDS", "32");
         }
-    }
-
-    if (ucpVersion_ < UCP_VERSION(1, 19)) {
-        unsigned major, minor, patch;
-        ucp_get_version(&major, &minor, &patch);
-        NIXL_WARN << "UCX version is " << major << '.' << minor << '.' << patch
-                  << " which is less than 1.19, CUDA support is limited, including"
-                  << " the lack of support for multi-GPU within a single process.";
     }
 
     std::string elem;
