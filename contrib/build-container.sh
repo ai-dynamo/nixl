@@ -44,6 +44,8 @@ OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
+BUILD_INFINIA="false"
+INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
 
 get_options() {
     while :; do
@@ -173,6 +175,17 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --build-infinia)
+            BUILD_INFINIA="true"
+            ;;
+        --infinia-image)
+            if [ "$2" ]; then
+                INFINIA_LIBS_IMAGE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --)
             shift
             break
@@ -226,6 +239,11 @@ show_build_options() {
     else
         echo "NIXL EP: Disabled"
     fi
+    if [ "$BUILD_INFINIA" = "true" ]; then
+        echo "Infinia DDN plugin: Enabled (image: ${INFINIA_LIBS_IMAGE})"
+    else
+        echo "Infinia DDN plugin: Disabled"
+    fi
     echo "Build Type: ${BUILD_TYPE}"
 }
 
@@ -248,6 +266,8 @@ show_help() {
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
+    echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; harbor.mellanox.com must be reachable)]"
+    echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
     exit 0
 }
 
@@ -280,10 +300,40 @@ BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
+BUILD_ARGS+=" --build-arg BUILD_INFINIA=$BUILD_INFINIA"
 
 if [ -n "$WHEEL_BASE_IMAGE" ]; then
     BUILD_ARGS+=" --build-arg wheel_base=$WHEEL_BASE_IMAGE"
     BUILD_TARGET="--target wheel"
+fi
+
+# Infinia DDN libs: pre-pulled from harbor on the host and placed flat into
+# infinia-libs/ in the build context. The Dockerfile's BUILD_INFINIA RUN block
+# copies them to /opt/ddn/red/ — no harbor reference in the Dockerfile. The whole
+# block is guarded so external docker build runs are unaffected when
+# BUILD_INFINIA=false (default): no filesystem writes and no EXIT trap installed.
+if [ "$BUILD_INFINIA" = "true" ]; then
+    case "$DOCKER_FILE" in
+        *Dockerfile.manylinux) ;;
+        *) error "ERROR:" "--build-infinia requires --dockerfile contrib/Dockerfile.manylinux" ;;
+    esac
+    INFINIA_LIBS_DIR="$BUILD_CONTEXT/infinia-libs"
+    rm -rf "$INFINIA_LIBS_DIR"
+    mkdir -p "$INFINIA_LIBS_DIR"
+    trap 'rm -rf "$INFINIA_LIBS_DIR"' EXIT
+    (
+        set -e
+        echo "Pulling Infinia libs image: ${INFINIA_LIBS_IMAGE}"
+        docker pull "$INFINIA_LIBS_IMAGE"
+        cid=$(docker create "$INFINIA_LIBS_IMAGE")
+        trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+        docker cp "$cid:/infinia/$ARCH/." "$INFINIA_LIBS_DIR/"
+        echo "Infinia libs staged from ${INFINIA_LIBS_IMAGE} (arch: ${ARCH})"
+    ) || error "ERROR:" "failed to stage Infinia libs from ${INFINIA_LIBS_IMAGE}"
+    # Fail fast on an empty extraction (wrong $ARCH, misconfigured image): otherwise
+    # the wheel would silently build without libplugin_INFINIA.so.
+    [ -n "$(ls -A "$INFINIA_LIBS_DIR")" ] || \
+        error "ERROR:" "no Infinia libs found for arch $ARCH in ${INFINIA_LIBS_IMAGE}"
 fi
 
 show_build_options
