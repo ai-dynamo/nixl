@@ -865,11 +865,11 @@
       - bool:
           name: "BUILD_UCX_SPCX_PLUGIN"
           default: false
-          description: "Build and bundle the UCX spcx external plugin (requires the source ref to carry the spcx support in contrib/)"
-      - string:
-          name: "UCX_SPCX_PLUGIN_REF"
-          default: "main"
-          description: "Git ref of ucx-spcx-plugin (used only when BUILD_UCX_SPCX_PLUGIN is set)"
+          description: "Build and bundle the UCX spcx external plugin (the built source ref pins the plugin version in contrib/build-container.sh)"
+      - bool:
+          name: "BUILD_INFINIA"
+          default: false
+          description: "Build and bundle the Infinia DDN plugin (the built source ref pins the plugin version in contrib/build-container.sh; harbor.mellanox.com must be reachable)"
       - string:
           name: "DEBUG"
           default: 0

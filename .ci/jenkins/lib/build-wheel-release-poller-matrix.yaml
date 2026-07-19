@@ -52,6 +52,10 @@ env:
   CUDA_VARIANTS: >-
     cu12:12.9-devel-manylinux--25.06
     cu13:13.0-devel-manylinux--25.09
+  # Plugins to bundle into release wheels, forwarded to each triggered build.
+  # Flip to "true" to enable (the release source must carry the plugin flag).
+  BUILD_UCX_SPCX_PLUGIN: "false"
+  BUILD_INFINIA: "false"
   MAIL_FROM: "jenkins@nvidia.com"
 
 steps:
@@ -156,10 +160,14 @@ steps:
                             string(name: 'BASE_TAG', value: baseTag[parts[3]]),
                             string(name: 'PUBLISH_DIR', value: "release/${parts[1]}"),
                             string(name: 'ci_refspec', value: ciRefspec),
+                            // Plugin bundling for release wheels; off unless the
+                            // poller env is flipped to "true".
+                            booleanParam(name: 'BUILD_UCX_SPCX_PLUGIN', value: env.BUILD_UCX_SPCX_PLUGIN == 'true'),
+                            booleanParam(name: 'BUILD_INFINIA', value: env.BUILD_INFINIA == 'true'),
                         ],
                         wait: false,
                         propagate: false)
-                  echo "Triggered nixl-ci-build-wheel-nightly: NIXL_VERSION=${parts[0]} UCX_VERSION=${parts[2]} BASE_TAG=${baseTag[parts[3]]} PUBLISH_DIR=release/${parts[1]} ci_refspec=${ciRefspec}"
+                  echo "Triggered nixl-ci-build-wheel-nightly: NIXL_VERSION=${parts[0]} UCX_VERSION=${parts[2]} BASE_TAG=${baseTag[parts[3]]} PUBLISH_DIR=release/${parts[1]} ci_refspec=${ciRefspec} spcx=${env.BUILD_UCX_SPCX_PLUGIN} infinia=${env.BUILD_INFINIA}"
               } catch (err) {
                   echo "WARN: failed to trigger for '${line}': ${err}"
                   currentBuild.result = 'UNSTABLE'

@@ -112,13 +112,13 @@ steps:
       fi
       [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot resolve UCX_VERSION=${UCX_VERSION}"; exit 1; }
       printf 'NIXL_SHA=%s\nUCX_SHA=%s\n' "${NIXL_SHA}" "${UCX_SHA}" > wheel_build_ids.env
-      # spcx plugin is opt-in; flags only passed when enabled
+      # Each plugin is opt-in; the enable flag is passed only when its param is
+      # set. The plugin version ships with the built source ref - its
+      # build-container.sh must carry the flag and pins the plugin ref/image.
       SPCX_FLAGS=""
-      if [ "${BUILD_UCX_SPCX_PLUGIN}" = "true" ]; then
-        SPCX_FLAGS="--build-ucx-spcx-plugin --ucx-spcx-plugin-ref ${UCX_SPCX_PLUGIN_REF}"
-      fi
-      # No infinia flag: inherit the source's default while its interface
-      # is still converging upstream.
+      [ "${BUILD_UCX_SPCX_PLUGIN}" = "true" ] && SPCX_FLAGS="--build-ucx-spcx-plugin"
+      INFINIA_FLAGS=""
+      [ "${BUILD_INFINIA}" = "true" ] && INFINIA_FLAGS="--build-infinia"
       cd nixl-src
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
@@ -129,7 +129,8 @@ steps:
         --ucx-ref "${UCX_SHA}" \
         --tag "${WHEEL_IMAGE_TAG}" \
         --dockerfile contrib/Dockerfile.manylinux \
-        ${SPCX_FLAGS}
+        ${SPCX_FLAGS} \
+        ${INFINIA_FLAGS}
 
   - name: Publish
     credentialsId: 'svc-nixl-new-artifactory-token'
