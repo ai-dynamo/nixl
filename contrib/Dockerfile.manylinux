@@ -358,6 +358,7 @@ ARG ARCH="x86_64"
 ARG BUILD_TYPE="release"
 ARG BUILD_NIXL_EP="true"
 ARG UCX_SONAME_SUFFIX=""
+ARG NPROC=1
 
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
@@ -381,6 +382,36 @@ RUN if [ "$BUILD_INFINIA" = "true" ]; then \
         dnf install -y libuuid-devel && \
         mkdir -p /opt/ddn/red && \
         cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
+    fi
+
+# Opt-in: build the internal ucx-spcx-plugin against the just-built UCX and
+# install it into the UCX plugins dir, where the wheel bundling
+# (wheel_add_ucx_plugins.py) picks it up like any other UCX module. The
+# plugin source is cloned into the build context (ucx-spcx-plugin-src/) by
+# build-container.sh --build-ucx-spcx-plugin.
+# FlexIO SDK + dpacc (build-time dependencies of the plugin's DPA transport) come from
+# the doca-host repo installed above; libflexio is compile-against only —
+# it is not bundled into the wheel, at runtime it comes from the target
+# machine's DOCA/FlexIO installation (like libmlx5 from rdma-core).
+ARG BUILD_UCX_SPCX_PLUGIN=false
+RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
+        rpm -ivh --nodeps /usr/share/doca-host-3.3.0/repo/Packages/flexio-sdk-*rpm && \
+        rpm -ivh --nodeps /usr/share/doca-host-3.3.0/repo/Packages/dpacc-[0-9]*rpm && \
+        ldconfig && \
+        cd ucx-spcx-plugin-src && \
+        export ACLOCAL_PATH="/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}" && \
+        ./autogen.sh /usr/local/src/ucx && \
+        ./configure --prefix=/usr --libdir=/usr/lib64 \
+            --enable-shared --disable-static \
+            --with-ucx-src=/usr/local/src/ucx \
+            --with-ucx-build=/usr/local/src/ucx \
+            --with-cuda=/usr/local/cuda \
+            --with-flexio=/opt/mellanox/flexio \
+            --with-dpacc=/opt/mellanox/doca/tools/dpacc \
+            LDFLAGS="-L/usr/lib64/ucx -L/usr/lib64" && \
+        make -j"${NPROC}" && \
+        make install && \
+        cd /workspace/nixl && rm -rf ucx-spcx-plugin-src; \
     fi
 
 RUN rm -rf build && \
