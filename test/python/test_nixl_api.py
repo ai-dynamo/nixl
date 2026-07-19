@@ -170,7 +170,7 @@ def test_metadata_pass(two_agents):
     utils.free_passthru(addr)
 
 
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(5, func_only=True)
 def test_empty_notif_tag(two_connected_agents):
     agent1, agent2 = two_connected_agents
 
