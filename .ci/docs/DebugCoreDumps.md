@@ -18,7 +18,7 @@ Files follow this naming convention (the sqsh is named after the container):
 /enroot_images/nixl-ci-<BUILD_NUMBER>.sqsh
 ```
 
-Example: `/enroot_images/nixl-ci-v1.21.x-2209.sqsh`
+Example: `/enroot_images/nixl-ci-2209.sqsh`
 
 ## What the sqsh contains
 
@@ -44,8 +44,8 @@ Example:
 ```bash
 scctl client connect -- srun -p mizu --ntasks=1 \
   env ENROOT_DATA_PATH=/enroot-data/enroot-data-148069/user-148069 \
-  enroot create --name nixl-ci-v1.21.x-2209 \
-  /enroot_images/nixl-ci-v1.21.x-2209.sqsh
+  enroot create --name nixl-ci-2209 \
+  /enroot_images/nixl-ci-2209.sqsh
 ```
 
 ## Step 3: Start the container
@@ -53,7 +53,7 @@ scctl client connect -- srun -p mizu --ntasks=1 \
 ```bash
 scctl client connect -- srun -p mizu --ntasks=1 --pty \
   env ENROOT_DATA_PATH=/enroot-data/enroot-data-148069/user-148069 \
-  enroot start --rw nixl-ci-v1.21.x-2209
+  enroot start --rw nixl-ci-2209
 ```
 
 You now have an interactive shell inside the exact environment that failed.

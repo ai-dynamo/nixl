@@ -45,7 +45,7 @@ ${ENROOT_MOUNT_PATH}/<containerName>.sqsh
 /enroot_images/nixl-ci-<BUILD_NUMBER>.sqsh
 ```
 
-Example: `/enroot_images/nixl-ci-v1.21.x-2209.sqsh`
+Example: `/enroot_images/nixl-ci-2209.sqsh`
 
 One file per build per matrix axis. If multiple run steps fail (cpp, python, rust,
 nixlbench), they all target the same sqsh path — the last export wins, which is the
