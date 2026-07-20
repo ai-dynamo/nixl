@@ -21,7 +21,7 @@ ARG _GID=30
 ARG _LOGIN=svc-nixl
 ARG _GROUP=hardware
 ARG _HOME=/home/$_LOGIN
-ARG _NO_NVTX=0
+ARG NO_NVTX=0
 ARG ARCH=x86_64
 ARG NIXL_INSTALL_DIR
 ARG PRE_INSTALLED_ENV
@@ -70,7 +70,7 @@ USER ${_LOGIN}
 # Set environment variables
 ENV HOME=${_HOME}
 ENV USER=${_LOGIN}
-ENV NIXL_CI_NO_NVTX=${_NO_NVTX}
+ENV NIXL_CI_NO_NVTX=${NO_NVTX}
 
 RUN /.gitlab/build.sh ${NIXL_INSTALL_DIR}
 RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
