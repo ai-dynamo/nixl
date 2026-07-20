@@ -1,0 +1,71 @@
+#!/usr/bin/groovy
+
+/*
+ * Nightly UCX-master validation orchestrator for NIXL.
+ *
+ * Fans out to the three GPU test jobs (nixl-ci-gpu, nixl-ci-dl-gpu,
+ * nixl-ci-dl-gpu-ep) with UCX_VER=master, waits for all of them, and emails one
+ * consolidated pass/fail report. This is the single place nightly UCX-master
+ * results are collected and sent from - the leaf jobs no longer carry their own
+ * nightly cron.
+ *
+ * Runs on the flyweight executor (no build agent) so the multi-hour wait on the
+ * GPU jobs does not hold a node - same model as Jenkinsfile.dispatcher.
+ * Triggered by the nixl-ci-nightly job (proj-jjb.yaml) on a nightly cron.
+ * NOTE: This file should not be changed by none devops team members
+ */
+
+// GPU test jobs to run against UCX master, keyed by the label used in the report.
+def leafJobs = [
+    'gpu':       'nixl-ci-gpu',
+    'dl-gpu':    'nixl-ci-dl-gpu',
+    'dl-gpu-ep': 'nixl-ci-dl-gpu-ep',
+]
+
+// Nightly validates UCX master by default; UCX_REF allows a manual override.
+def ucxRef = params.UCX_REF ?: 'master'
+def results = [:]
+
+currentBuild.description = "UCX ${ucxRef}"
+
+// Fan out in parallel. propagate:false plus try/catch so a failing - or
+// never-started - leg does not abort the others; the report always covers all
+// three. wait:true so every result is collected before the report is sent.
+parallel(leafJobs.collectEntries { label, jobName ->
+    [(label): {
+        try {
+            def r = build(job: jobName,
+                          parameters: [string(name: 'UCX_VER', value: ucxRef)],
+                          wait: true, propagate: false)
+            results[label] = [result: r.result, url: r.absoluteUrl, number: r.number]
+        } catch (err) {
+            echo "Leg ${label} (${jobName}) did not run: ${err}"
+            results[label] = [result: 'ERROR', url: env.BUILD_URL, number: 0]
+        }
+    }]
+})
+
+def failed = leafJobs.keySet().findAll { results[it]?.result != 'SUCCESS' }
+currentBuild.result = failed ? 'FAILURE' : 'SUCCESS'
+echo "Nightly UCX-${ucxRef}: " + leafJobs.keySet().collectEntries { [it, results[it]?.result] }
+
+// One consolidated report to the configured recipients, in a stable leg order.
+if (params.MAIL_TO) {
+    def rows = leafJobs.keySet().collect { label ->
+        def v = results[label] ?: [result: 'MISSING', url: env.BUILD_URL, number: 0]
+        def color = v.result == 'SUCCESS' ? 'green' : 'red'
+        "<tr><td>${label}</td>" +
+        "<td style='color:${color}'><b>${v.result}</b></td>" +
+        "<td><a href='${v.url}'>#${v.number}</a></td></tr>"
+    }.join("\n")
+    mail(from: 'jenkins@nvidia.com', to: params.MAIL_TO, mimeType: 'text/html',
+         subject: "NIXL nightly UCX-${ucxRef} [${env.BUILD_NUMBER}] - ${currentBuild.result}",
+         body: """
+             <p>NIXL nightly validation against UCX <b>${ucxRef}</b>.</p>
+             <table border='1' cellpadding='6' cellspacing='0'>
+               <tr><th>Job</th><th>Result</th><th>Build</th></tr>
+               ${rows}
+             </table>
+             <p>Orchestrator: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+         """)
+}
