@@ -4,12 +4,12 @@
 nixlbench_kernels_dep = []
 nixlbench_kernels_lib = []
 
-if build_nixlbench_kernels
+if ucx_gpu_device_api_available
   nixlbench_kernels_lib = static_library(
     'nixlbench_kernels',
     'nixlbench_device_launch.cu',
     include_directories: [inc_dir, include_directories('.')],
-    dependencies: [cuda_dep],
+    dependencies: [cuda_dep, ucx_dep, doca_gpunetio_dep],
     cuda_args: ucx_device_cuda_args,
     override_options: ucx_device_override_options,
   )

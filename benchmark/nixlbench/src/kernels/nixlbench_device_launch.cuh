@@ -46,8 +46,8 @@ struct nixlbenchDeviceXferParams {
  * the warp participate in each device API call). Typical
  * @a block_threads matches nixlbench @c --num_threads.
  *
- * Requires UCX with GPU device API (gpu/ucx/nixl_device.cuh). @a block_threads must be in
- * [1, 1024] (CUDA block limit).
+ * Requires NIXL UCX GPU Device API support. @a block_threads must be in [1, 1024];
+ * values greater than 32 must be a multiple of 32.
  *
  * On failure, logs to stderr. Synchronizes @a stream (or the device if null) so device printf
  * output from the kernel is flushed before returning.
