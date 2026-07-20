@@ -2,7 +2,7 @@
 job: nixl-ci-cleanup-artifacts
 
 failFast: true
-timeout_minutes: 60
+timeout_minutes: 180
 
 kubernetes:
   cloud: il-ipp-blossom-prod
