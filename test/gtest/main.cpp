@@ -165,6 +165,8 @@ RunAllTests() {
     if (std::getenv("AWS_BATCH_JOB_ID") != nullptr) {
         stc->allowForSkip(aws_skips);
         std::cerr << "ALLOWING AWS incompatible tests to be skipped" << std::endl;
+        stc->allowForSkip(nvtx_skips);
+        std::cerr << "ALLOWING NVTX tracing tests to be skipped" << std::endl;
         ligs.emplace_back(aws_regex);
     }
 
@@ -192,7 +194,7 @@ RunAllTests() {
 
     if (std::getenv("SAN_LABEL") != nullptr) {
         stc->allowForSkip(san_skips);
-        std::cerr << "ALLOWING SANITIZER tests to be skipped" << std::endl;
+        std::cerr << "ALLOWING SANITIZER incompatible tests to be skipped" << std::endl;
     }
 
     return RUN_ALL_TESTS();
