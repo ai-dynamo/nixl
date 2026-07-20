@@ -21,12 +21,6 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
-#if HAVE_CUDA
-#include <cuda.h>
-#include <cuda_runtime.h>
-#elif HAVE_ROCM
-#include <hip/hip_runtime.h>
-#endif
 #include <fcntl.h>
 #include <filesystem>
 #include <iomanip>

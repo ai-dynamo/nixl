@@ -27,11 +27,6 @@
 #include <omp.h>
 #include <set>
 
-#if HAVE_CUDA
-#include <cuda_runtime.h>
-#elif HAVE_ROCM
-#include <hip/hip_runtime.h>
-#endif
 #include <fcntl.h>
 #include <filesystem>
 #include <gflags/gflags.h>
