@@ -73,15 +73,13 @@ steps:
       ln -sfT $(type -p podman) /usr/bin/docker
       echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
 
-  - name: Build Wheel
-    credentialsId:
-      - 'svc-nixl-gitlab-token'
-      - 'ucx-plugin-gitlab-url'
+  - name: Checkout Source
     parallel: false
     run: |
-      # Clone the source: contrib scripts and Dockerfile come from the built
-      # ref, CI config stays on main. wheel_build_ids.env (workspace root) is
-      # reused by Publish. --tag pins the image so Publish extracts dist/.
+      # Clone the built source (contrib scripts + Dockerfile come from this ref;
+      # CI config stays on main). Public github clone - no plugin creds here;
+      # the gitlab/spcx creds bind only on Build Wheel. Split from the build so
+      # a checkout failure is triaged separately from a build failure.
       set -x
       # The Jenkins checkout is owned by a different uid; trust only it
       # (nixl-src is cloned by this step's own user and needs no exemption).
@@ -111,7 +109,19 @@ steps:
         UCX_SHA="$(timeout 30 git ls-remote https://github.com/openucx/ucx.git "${UCX_VERSION}" "${UCX_VERSION}^{}" | tail -n1 | cut -c1-8)"
       fi
       [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot resolve UCX_VERSION=${UCX_VERSION}"; exit 1; }
+      # Shas carried to Build Wheel (--ucx-ref) and Publish (folder key).
       printf 'NIXL_SHA=%s\nUCX_SHA=%s\n' "${NIXL_SHA}" "${UCX_SHA}" > wheel_build_ids.env
+
+  - name: Build Wheel
+    credentialsId:
+      - 'svc-nixl-gitlab-token'
+      - 'ucx-plugin-gitlab-url'
+    parallel: false
+    run: |
+      # Build the wheel image from the checked-out nixl-src. --tag pins the
+      # image so Publish extracts dist/. Plugin creds bind only here.
+      set -x
+      . ./wheel_build_ids.env   # UCX_SHA (+ NIXL_SHA) from Checkout Source
       # Each plugin is opt-in; the enable flag is passed only when its param is
       # set. The plugin version ships with the built source ref - its
       # build-container.sh must carry the flag and pins the plugin ref/image.

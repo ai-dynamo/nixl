@@ -147,6 +147,8 @@ steps:
           // variant -> base-image tag, from the CUDA_VARIANTS env map.
           def baseTag = [:]
           env.CUDA_VARIANTS.tokenize().each { def p = it.split(':', 2); baseTag[p[0]] = p[1] }
+          def spawned = []
+          def failed = []
           for (line in triggers.split('\n')) {
               // line: <nixl_sha> <ver> <ucx_ver> <variant>
               def parts = line.trim().split(/\s+/)
@@ -167,14 +169,25 @@ steps:
                         ],
                         wait: false,
                         propagate: false)
-                  echo "Triggered nixl-ci-build-wheel-nightly: NIXL_VERSION=${parts[0]} UCX_VERSION=${parts[2]} BASE_TAG=${baseTag[parts[3]]} PUBLISH_DIR=release/${parts[1]} ci_refspec=${ciRefspec} spcx=${env.BUILD_UCX_SPCX_PLUGIN} infinia=${env.BUILD_INFINIA}"
+                  spawned << "release/${parts[1]}/${parts[0].take(8)} ${parts[3]}  (NIXL_VERSION=${parts[0]} BASE_TAG=${baseTag[parts[3]]} spcx=${env.BUILD_UCX_SPCX_PLUGIN} infinia=${env.BUILD_INFINIA})"
               } catch (err) {
-                  echo "WARN: failed to trigger for '${line}': ${err}"
+                  failed << "${line}: ${err}"
                   currentBuild.result = 'UNSTABLE'
               }
           }
+          // Outcome report. build(wait:false) yields no per-run URL, so link the
+          // nightly job; each spawned build back-links here as "upstream
+          // #${BUILD_NUMBER}", and its per-build downstream link is on this
+          // build's page in the classic UI (Blue Ocean hides the widget).
+          def report = ["", "===== poller spawned ${spawned.size()} build(s) -> ${env.JENKINS_URL}job/nixl-ci-build-wheel-nightly/ ====="]
+          report += spawned.collect { "  + ${it}" }
+          if (failed) {
+              report << "----- ${failed.size()} failed to trigger (retried next cycle) -----"
+              report += failed.collect { "  ! ${it}" }
+          }
+          echo report.join('\n')
       } else {
-          echo 'No missing wheels - nothing to trigger'
+          echo 'No missing wheels - nothing to trigger.'
       }
 
 # Email build result (success/failure) when MAIL_TO is set - notification for
