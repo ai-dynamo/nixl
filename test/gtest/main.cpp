@@ -182,7 +182,7 @@ RunAllTests() {
     }
 
     // TODO: Remove after all CI jobs use at least CUDA 13.
-    // TOOD: Remove also from Dockerfile.base and build-matrix.yaml.
+    // TODO: Remove also from Dockerfile.base and build-matrix.yaml.
     if (const char *var = std::getenv("NIXL_CI_NO_NVTX"); var != nullptr) {
         if (var == std::string("1")) {
             stc->allowForSkip(nvtx_skips);
