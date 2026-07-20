@@ -20,8 +20,14 @@
 
 namespace {
 
-/** Lane-0 xfer status slots per warp when blockDim.x <= 1024 (32 warps). */
-constexpr unsigned nixlbench_max_warps = 32u;
+template<nixl_gpu_level_t Level>
+__device__ nixl_status_t
+nixlbenchPollXferStatus(nixl_status_t status, nixlGpuXferStatusH &xfer_status) {
+    while (status == NIXL_IN_PROG) {
+        status = nixlGpuGetXferStatus<Level>(xfer_status);
+    }
+    return status;
+}
 
 template<nixl_gpu_level_t Level>
 __device__ bool
@@ -31,12 +37,7 @@ nixlbenchPutLevel(const nixlbenchDeviceXferParams &params,
     const nixlMemViewElem src{params.localMvh, region_idx, 0};
     const nixlMemViewElem dst{params.remoteMvh, region_idx, 0};
     nixl_status_t status = nixlPut<Level>(src, dst, params.regionSize, 0, 0, &xfer_status);
-    do {
-        if (status != NIXL_IN_PROG) {
-            break;
-        }
-        status = nixlGpuGetXferStatus<Level>(xfer_status);
-    } while (status == NIXL_IN_PROG);
+    status = nixlbenchPollXferStatus<Level>(status, xfer_status);
 
     if (status != NIXL_SUCCESS) {
         printf("[nixlbenchPutLevel] transfer did not complete: region=%zu "
@@ -63,12 +64,7 @@ nixlbenchSignalCounter(const nixlbenchDeviceXferParams &params,
     const nixlMemViewElem counter{params.remoteMvh, params.numRegions, counter_offset};
     nixlGpuXferStatusH xfer_status;
     nixl_status_t status = nixlAtomicAdd<Level>(value, counter, 0, 0, &xfer_status);
-    do {
-        if (status != NIXL_IN_PROG) {
-            break;
-        }
-        status = nixlGpuGetXferStatus<Level>(xfer_status);
-    } while (status == NIXL_IN_PROG);
+    status = nixlbenchPollXferStatus<Level>(status, xfer_status);
 
     if (status != NIXL_SUCCESS) {
         printf("[nixlbenchSignalCounter] nixlAtomicAdd(%s) did not complete: final_status=%d\n",
@@ -92,67 +88,34 @@ nixlbenchSignalError(nixlbenchDeviceXferParams params) {
 }
 
 /**
- * If blockDim.x <= warpSize: THREAD-level nixlPut; each thread uses regions
- * region_idx = threadIdx.x, threadIdx.x + blockDim.x, ...
- * Else: WARP-level nixlPut; each warp strides by num_warps and all lanes in a warp participate.
- * After all puts complete, thread 0 increments done counter by 1. If any put fails, thread 0
- * increments error counter by 1.
+ * Performs device-initiated NIXL PUT transfers and optionally reports completion or errors
+ * through remote counters.
  */
 __global__ void
 nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
-    __shared__ unsigned put_fail_count;
-    if (threadIdx.x == 0) {
-        put_fail_count = 0;
-    }
-    __syncthreads();
-
     const bool use_thread_level = blockDim.x <= static_cast<unsigned>(warpSize);
-    const unsigned lane = use_thread_level ? 0 : (threadIdx.x % warpSize);
     const unsigned group_id = use_thread_level ? threadIdx.x : (threadIdx.x / warpSize);
     const unsigned num_groups =
         use_thread_level ? blockDim.x : ((blockDim.x + warpSize - 1) / warpSize);
-    if (group_id >= num_groups || group_id >= nixlbench_max_warps) {
-        printf("[nixlbenchPutKernel] group_id out of range: "
-               "group_id=%u num_groups=%u max_warps=%u "
-               "threadIdx.x=%u blockDim.x=%u\n",
-               group_id,
-               num_groups,
-               nixlbench_max_warps,
-               threadIdx.x,
-               blockDim.x);
-        if (lane == 0) {
-            atomicAdd(&put_fail_count, 1u);
-        }
-    } else {
-        nixlGpuXferStatusH xfer_status;
-        bool put_failed = false;
-        for (size_t region_idx = group_id; region_idx < params.numRegions;
-             region_idx += num_groups) {
-            if (use_thread_level) {
-                put_failed =
-                    !nixlbenchPutLevel<nixl_gpu_level_t::THREAD>(params, region_idx, xfer_status);
-            } else {
-                put_failed =
-                    !nixlbenchPutLevel<nixl_gpu_level_t::WARP>(params, region_idx, xfer_status);
-            }
-            if (put_failed) {
-                break;
-            }
-        }
 
+    nixlGpuXferStatusH xfer_status;
+    bool put_failed = false;
+    for (size_t region_idx = group_id; region_idx < params.numRegions; region_idx += num_groups) {
         if (use_thread_level) {
-            if (put_failed && lane == 0) {
-                atomicAdd(&put_fail_count, 1u);
-            }
-        } else if (__any_sync(__activemask(), put_failed) && lane == 0) {
-            atomicAdd(&put_fail_count, 1u);
+            put_failed =
+                !nixlbenchPutLevel<nixl_gpu_level_t::THREAD>(params, region_idx, xfer_status);
+        } else {
+            put_failed =
+                !nixlbenchPutLevel<nixl_gpu_level_t::WARP>(params, region_idx, xfer_status);
+        }
+        if (put_failed) {
+            break;
         }
     }
 
-    __syncthreads();
-
+    const bool any_put_failed = __syncthreads_or(put_failed);
     if (threadIdx.x == 0) {
-        if (put_fail_count > 0) {
+        if (any_put_failed) {
             if (!nixlbenchSignalError(params)) {
                 printf("[nixlbenchPutKernel] error nixlAtomicAdd failed\n");
             }
@@ -172,8 +135,7 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
 
 nixl_status_t
 nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params,
-                         unsigned block_threads,
-                         cudaStream_t stream) {
+                         unsigned block_threads) {
     constexpr unsigned kWarpSize = 32;
 
     if (block_threads == 0 || block_threads > 1024u) {
@@ -189,7 +151,7 @@ nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlbenchPutKernel<<<1, block_threads, 0, stream>>>(params);
+    nixlbenchPutKernel<<<1, block_threads, 0, nullptr>>>(params);
 
     cudaError_t cuda_err = cudaGetLastError();
     if (cuda_err != cudaSuccess) {
@@ -198,11 +160,7 @@ nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params,
         return NIXL_ERR_BACKEND;
     }
 
-    if (stream == nullptr) {
-        cuda_err = cudaDeviceSynchronize();
-    } else {
-        cuda_err = cudaStreamSynchronize(stream);
-    }
+    cuda_err = cudaDeviceSynchronize();
     if (cuda_err != cudaSuccess) {
         std::cerr << "nixlbench: nixlbenchLaunchDevicePut: synchronize failed: "
                   << cudaGetErrorString(cuda_err) << '\n';

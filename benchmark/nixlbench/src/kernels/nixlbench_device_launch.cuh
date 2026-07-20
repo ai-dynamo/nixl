@@ -49,18 +49,18 @@ struct nixlbenchDeviceXferParams {
  * Requires NIXL UCX GPU Device API support. @a block_threads must be in [1, 1024];
  * values greater than 32 must be a multiple of 32.
  *
- * On failure, logs to stderr. Synchronizes @a stream (or the device if null) so device printf
- * output from the kernel is flushed before returning.
+ * On failure, logs to stderr. Synchronizes the device so device printf output from the kernel is
+ * flushed before returning.
  *
  * @param params        Transfer parameters (handles, counts, size).
  * @param block_threads CUDA block dimension in the x direction.
- * @param stream        CUDA stream, or nullptr for the default stream.
- * @return NIXL_SUCCESS on success; NIXL_ERR_INVALID_PARAM for invalid @a block_threads;
- *         NIXL_ERR_BACKEND for CUDA launch or synchronize failures.
+ * @return NIXL_SUCCESS if the kernel launches and synchronizes without CUDA runtime errors;
+ *         NIXL_ERR_INVALID_PARAM for invalid @a block_threads;
+ *         NIXL_ERR_BACKEND for CUDA launch or synchronization failures.
+ *         Device transfer failures are reported separately through the remote error counter.
  */
 nixl_status_t
 nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params,
-                         unsigned block_threads,
-                         cudaStream_t stream = nullptr);
+                         unsigned block_threads);
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_KERNELS_NIXLBENCH_DEVICE_LAUNCH_CUH
