@@ -46,6 +46,8 @@ GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
 BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
+BUILD_UCX_SPCX_PLUGIN="false"
+UCX_SPCX_PLUGIN_REF="main"
 
 get_options() {
     while :; do
@@ -159,6 +161,17 @@ get_options() {
         --build-nixl-ep)
             BUILD_NIXL_EP=true
             ;;
+        --build-ucx-spcx-plugin)
+            BUILD_UCX_SPCX_PLUGIN="true"
+            ;;
+        --ucx-spcx-plugin-ref)
+            if [ "$2" ]; then
+                UCX_SPCX_PLUGIN_REF=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
@@ -244,6 +257,11 @@ show_build_options() {
     else
         echo "Infinia DDN plugin: Disabled"
     fi
+    if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
+        echo "UCX spcx plugin: Enabled (ref: ${UCX_SPCX_PLUGIN_REF})"
+    else
+        echo "UCX spcx plugin: Disabled"
+    fi
     echo "Build Type: ${BUILD_TYPE}"
 }
 
@@ -262,6 +280,8 @@ show_help() {
     echo "  [--ucx-soname-suffix suffix to pass to UCX --with-soname-suffix]"
     echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
+    echo "  [--build-ucx-spcx-plugin build and bundle the UCX spcx external plugin (requires NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL in the environment) (requires --dockerfile contrib/Dockerfile.manylinux)]"
+    echo "  [--ucx-spcx-plugin-ref git ref of ucx-spcx-plugin to build (default: ${UCX_SPCX_PLUGIN_REF})]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
@@ -301,10 +321,49 @@ BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 BUILD_ARGS+=" --build-arg BUILD_INFINIA=$BUILD_INFINIA"
+BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
+
+# The plugin source is fetched on the host and placed inside the build
+# context (ucx-spcx-plugin-src/), where the Dockerfile's plugin RUN builds
+# it from the copied context. This keeps credentials and BuildKit-specific
+# syntax out of the Dockerfile entirely, so the default build works with
+# any docker builder. The token stays out of URLs and argv (git credential
+# helper reading the environment) so git errors cannot leak it.
+SPCX_SRC_DIR="$BUILD_CONTEXT/ucx-spcx-plugin-src"
+rm -rf "$SPCX_SRC_DIR"
+if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
+    case "$DOCKER_FILE" in
+        *Dockerfile.manylinux) ;;
+        *) error "ERROR:" "--build-ucx-spcx-plugin requires --dockerfile contrib/Dockerfile.manylinux (the default Dockerfile does not consume it)" ;;
+    esac
+    if [ -z "${NIXL_GITLAB_TOKEN:-}" ]; then
+        error "ERROR:" "--build-ucx-spcx-plugin requires the NIXL_GITLAB_TOKEN environment variable"
+    fi
+    if [ -z "${NIXL_SPCX_PLUGIN_REPO_URL:-}" ]; then
+        error "ERROR:" "--build-ucx-spcx-plugin requires the NIXL_SPCX_PLUGIN_REPO_URL environment variable"
+    fi
+    trap 'rm -rf "$SPCX_SRC_DIR"' EXIT
+    mkdir -p "$SPCX_SRC_DIR"
+    (
+        set -e
+        cd "$SPCX_SRC_DIR"
+        git init -q
+        git remote add origin "$NIXL_SPCX_PLUGIN_REPO_URL"
+        # shellcheck disable=SC2016
+        GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+            -c credential.helper='!f() { echo "username=oauth2"; echo "password=${NIXL_GITLAB_TOKEN}"; }; f' \
+            fetch -q --depth 1 origin "$UCX_SPCX_PLUGIN_REF"
+        git checkout -q FETCH_HEAD
+        echo "ucx-spcx-plugin ref ${UCX_SPCX_PLUGIN_REF} -> commit $(git rev-parse HEAD)"
+        rm -rf .git
+    ) || error "ERROR:" "failed to fetch ucx-spcx-plugin at ref ${UCX_SPCX_PLUGIN_REF}"
+fi
 
 if [ -n "$WHEEL_BASE_IMAGE" ]; then
     BUILD_ARGS+=" --build-arg wheel_base=$WHEEL_BASE_IMAGE"
-    BUILD_TARGET="--target wheel"
+    # Not named BUILD_TARGET: Jenkins exports a BUILD_TARGET job parameter
+    # (nixl/nixlbench) that would leak into the docker command line.
+    DOCKER_BUILD_TARGET="--target wheel"
 fi
 
 # Infinia DDN libs: pre-pulled from harbor on the host and placed flat into
@@ -338,4 +397,4 @@ fi
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${BUILD_TARGET:-} $BUILD_CONTEXT
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT
