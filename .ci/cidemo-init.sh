@@ -1,6 +1,9 @@
 #!/bin/bash -eE
+set -o pipefail
 
-# Files to check for changes
+# CI source files whose last-touching commit determines CI_IMAGE_TAG.
+# When any of these files change in a commit, the derived tag changes
+# and the matrix jobs rebuild their base Docker images automatically.
 CI_FILES=(
     ".ci/dockerfiles/Dockerfile.base"
     ".ci/dockerfiles/Dockerfile.gpu-test"
@@ -10,136 +13,32 @@ CI_FILES=(
     "contrib/Dockerfile.manylinux"
 )
 
-# YAML files containing CI_IMAGE_TAG
-BUILD_MATRIX_YAML=".ci/jenkins/lib/build-matrix.yaml"
-TEST_MATRIX_YAML=".ci/jenkins/lib/test-matrix.yaml"
-TEST_DL_MATRIX_YAML=".ci/jenkins/lib/test-dl-matrix.yaml"
-TEST_DL_EP_MATRIX_YAML=".ci/jenkins/lib/test-dl-ep-matrix.yaml"
-SANITIZER_MATRIX_YAML=".ci/jenkins/lib/test-sanitizer-matrix.yaml"
-WHEEL_BUILD_MATRIX_YAML=".ci/jenkins/lib/build-wheel-matrix.yaml"
+# Matrix YAML files that contain the CI_MANAGED placeholder.
+# These are patched in the Jenkins workspace before the matrix library
+# reads them — no commit or push is made.
+YAML_FILES=(
+    ".ci/jenkins/lib/build-matrix.yaml"
+    ".ci/jenkins/lib/test-matrix.yaml"
+    ".ci/jenkins/lib/test-dl-matrix.yaml"
+    ".ci/jenkins/lib/test-dl-ep-matrix.yaml"
+    ".ci/jenkins/lib/test-sanitizer-matrix.yaml"
+    ".ci/jenkins/lib/build-wheel-matrix.yaml"
+)
 
-# Function to extract CI_IMAGE_TAG from a YAML file
-get_ci_image_tag() {
-    local file=$1
-    local ref=$2  # git ref (HEAD, HEAD~1, etc.)
+# Derive the tag from the most recent commit that touched any CI file.
+NEW_TAG=$(git log -1 --format=%h -- "${CI_FILES[@]}")
 
-    if [ -z "$ref" ]; then
-        # Current working tree
-        grep -E '^\s*CI_IMAGE_TAG:' "$file" | sed 's/.*CI_IMAGE_TAG:\s*"\(.*\)".*/\1/' | tr -d ' '
-    else
-        # Previous commit
-        git show "${ref}:${file}" 2>/dev/null | grep -E '^\s*CI_IMAGE_TAG:' | sed 's/.*CI_IMAGE_TAG:\s*"\(.*\)".*/\1/' | tr -d ' '
-    fi
-}
-
-# Check if we're in a git repository
-if ! git rev-parse --git-dir > /dev/null 2>&1; then
-    echo "Not a git repository. Skipping CI_IMAGE_TAG check."
-    echo "Ok"
-    exit 0
+# Fallback: if no commit has ever touched those files (should not happen
+# in practice), use a sha256sum of their content truncated to 12 chars.
+if [ -z "$NEW_TAG" ]; then
+    echo "Warning: git log returned empty for CI files. Falling back to content hash."
+    NEW_TAG=$(cat "${CI_FILES[@]}" | sha256sum | cut -c1-12)
 fi
 
-# Check if any CI files were changed in the last commit or working tree
-files_changed=false
-for file in "${CI_FILES[@]}"; do
-    # Check if file was changed in HEAD commit or has uncommitted changes
-    if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q "^${file}$" || \
-       git diff --name-only 2>/dev/null | grep -q "^${file}$" || \
-       git diff --cached --name-only 2>/dev/null | grep -q "^${file}$"; then
-        echo "Detected changes in: $file"
-        files_changed=true
-    fi
+echo "CI_IMAGE_TAG derived as: ${NEW_TAG}"
+
+for yaml in "${YAML_FILES[@]}"; do
+    grep -q 'CI_IMAGE_TAG: "CI_MANAGED"' "$yaml" || { echo "ERROR: CI_MANAGED placeholder missing in $yaml" >&2; exit 1; }
+    sed -i "s/CI_IMAGE_TAG: \"CI_MANAGED\"/CI_IMAGE_TAG: \"${NEW_TAG}\"/" "$yaml"
+    echo "Patched: $yaml"
 done
-
-if [ "$files_changed" = false ]; then
-    echo "No changes detected in CI files. Skipping CI_IMAGE_TAG check."
-    echo "Ok"
-    exit 0
-fi
-
-# Files were changed, now check if CI_IMAGE_TAG was increased
-echo "CI files were modified. Checking if CI_IMAGE_TAG was increased..."
-
-# Get current and previous CI_IMAGE_TAG values
-current_build_image_tag=$(get_ci_image_tag "$BUILD_MATRIX_YAML" "")
-current_test_image_tag=$(get_ci_image_tag "$TEST_MATRIX_YAML" "")
-current_test_dl_image_tag=$(get_ci_image_tag "$TEST_DL_MATRIX_YAML" "")
-current_test_dl_ep_image_tag=$(get_ci_image_tag "$TEST_DL_EP_MATRIX_YAML" "")
-current_sanitizer_image_tag=$(get_ci_image_tag "$SANITIZER_MATRIX_YAML" "")
-current_wheel_build_image_tag=$(get_ci_image_tag "$WHEEL_BUILD_MATRIX_YAML" "")
-
-previous_build_image_tag=$(get_ci_image_tag "$BUILD_MATRIX_YAML" "HEAD~1")
-previous_test_image_tag=$(get_ci_image_tag "$TEST_MATRIX_YAML" "HEAD~1")
-previous_test_dl_image_tag=$(get_ci_image_tag "$TEST_DL_MATRIX_YAML" "HEAD~1")
-previous_test_dl_ep_image_tag=$(get_ci_image_tag "$TEST_DL_EP_MATRIX_YAML" "HEAD~1")
-previous_sanitizer_image_tag=$(get_ci_image_tag "$SANITIZER_MATRIX_YAML" "HEAD~1")
-previous_wheel_build_image_tag=$(get_ci_image_tag "$WHEEL_BUILD_MATRIX_YAML" "HEAD~1")
-
-echo "Build Matrix CI_IMAGE_TAG:     $previous_build_image_tag -> $current_build_image_tag"
-echo "Test Matrix CI_IMAGE_TAG:      $previous_test_image_tag -> $current_test_image_tag"
-echo "Test DL Matrix CI_IMAGE_TAG:   $previous_test_dl_image_tag -> $current_test_dl_image_tag"
-echo "Test DL EP Matrix CI_IMAGE_TAG: $previous_test_dl_ep_image_tag -> $current_test_dl_ep_image_tag"
-echo "Sanitizer Matrix CI_IMAGE_TAG: $previous_sanitizer_image_tag -> $current_sanitizer_image_tag"
-echo "Wheel Build Matrix CI_IMAGE_TAG: $previous_wheel_build_image_tag -> $current_wheel_build_image_tag"
-
-# Check if CI_IMAGE_TAG was changed in all files
-build_tag_changed=false
-test_tag_changed=false
-test_dl_tag_changed=false
-test_dl_ep_tag_changed=false
-sanitizer_tag_changed=false
-wheel_build_tag_changed=false
-
-if [ "$current_build_image_tag" != "$previous_build_image_tag" ]; then
-    echo "✓ CI_IMAGE_TAG in build-matrix.yaml was updated"
-    build_tag_changed=true
-fi
-
-if [ "$current_test_image_tag" != "$previous_test_image_tag" ]; then
-    echo "✓ CI_IMAGE_TAG in test-matrix.yaml was updated"
-    test_tag_changed=true
-fi
-
-if [ "$current_test_dl_image_tag" != "$previous_test_dl_image_tag" ]; then
-    echo "✓ CI_IMAGE_TAG in test-dl-matrix.yaml was updated"
-    test_dl_tag_changed=true
-fi
-
-if [ "$current_test_dl_ep_image_tag" != "$previous_test_dl_ep_image_tag" ]; then
-    echo "✓ CI_IMAGE_TAG in test-dl-ep-matrix.yaml was updated"
-    test_dl_ep_tag_changed=true
-fi
-
-if [ "$current_sanitizer_image_tag" != "$previous_sanitizer_image_tag" ]; then
-    echo "✓ CI_IMAGE_TAG in test-sanitizer-matrix.yaml was updated"
-    sanitizer_tag_changed=true
-fi
-
-if [ "$current_wheel_build_image_tag" != "$previous_wheel_build_image_tag" ]; then
-    echo "✓ CI_IMAGE_TAG in build-wheel-matrix.yaml was updated"
-    wheel_build_tag_changed=true
-fi
-
-if [ "$build_tag_changed" = false ] || [ "$test_tag_changed" = false ] || [ "$test_dl_tag_changed" = false ] || [ "$test_dl_ep_tag_changed" = false ] || [ "$sanitizer_tag_changed" = false ] || [ "$wheel_build_tag_changed" = false ]; then
-    echo ""
-    echo "❌ ERROR: You have changed CI files but forgot to increase CI_IMAGE_TAG!"
-    echo ""
-    echo "Changed files:"
-    for file in "${CI_FILES[@]}"; do
-        if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q "^${file}$" || \
-           git diff --name-only 2>/dev/null | grep -q "^${file}$" || \
-           git diff --cached --name-only 2>/dev/null | grep -q "^${file}$"; then
-            echo "  - $file"
-        fi
-    done
-    echo ""
-    echo "Please update CI_IMAGE_TAG in:"
-    echo "  - $BUILD_MATRIX_YAML (line 46)"
-    echo "  - $TEST_MATRIX_YAML (line 53)"
-    echo "  - $TEST_DL_MATRIX_YAML (line 52)"
-    echo "  - $TEST_DL_EP_MATRIX_YAML"
-    echo "  - $SANITIZER_MATRIX_YAML"
-    echo "  - $WHEEL_BUILD_MATRIX_YAML"
-    echo ""
-    exit 1
-fi

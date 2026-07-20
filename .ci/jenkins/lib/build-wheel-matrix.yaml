@@ -184,8 +184,9 @@ env:
   GRPC_NPROC: 10
   BASE_IMAGE: "${registry_host}/sw-nbu-swx-nixl-docker-local/base/cuda"
   BASE_TAG: '13.0-devel-manylinux--25.09'
-  # CI image tag for wheel_base + build_helper + the sanity base images (bump to rebuild them)
-  CI_IMAGE_TAG: "20260709-1"
+  # CI image tag for wheel_base + build_helper + the sanity base images
+  # (auto-derived by cidemo-init.sh — the "CI_MANAGED" placeholder must not be hand-edited)
+  CI_IMAGE_TAG: "CI_MANAGED"
   WHL_BASE: "manylinux_2_28"
   TORCH_VERSIONS: "2.13"
   WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-manylinux_2_28"
