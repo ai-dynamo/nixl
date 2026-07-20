@@ -142,8 +142,9 @@ All 14 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
 (Jenkins Job Builder config). The dispatcher runs its own pipeline,
 `.ci/jenkins/pipeline/Jenkinsfile.dispatcher`, checked out from the PR merge
 ref (`refs/pull/<n>/merge`) on webhook runs, or from any branch/commit passed
-in `sha1` on manual runs; all other jobs run through the shared pipeline
-entry point `.ci/jenkins/pipeline/Jenkinsfile`. None of them run directly off GitHub
+in `sha1` on manual runs. `nixl-ci-nightly` runs its own orchestrator pipeline,
+`.ci/jenkins/pipeline/Jenkinsfile.nightly`; all other jobs run through the shared
+pipeline entry point `.ci/jenkins/pipeline/Jenkinsfile`. None of them run directly off GitHub
 events — they only start via the Jenkins webhook fired by Blossom-CI, or via
 their own nightly/manual trigger. They split into two groups:
 
@@ -157,6 +158,7 @@ their own nightly/manual trigger. They split into two groups:
   independently of PRs and of the dispatcher.
 
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
+
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
 - **What it does:** Fans out in parallel to seven downstream Jenkins jobs, waiting on all of them:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
@@ -171,6 +173,7 @@ their own nightly/manual trigger. They split into two groups:
 - **Skipping leaf jobs:** The `LEAF_JOBS` parameter (default: all seven) restricts the fan-out. Editing its default in the job config temporarily disables a leaf job for all runs without a code change; the next JJB redeploy restores the full list.
 
 ### `nixl-ci-build-container-pr` (dispatcher-triggered)
+
 - **Trigger:** Fan-out from `nixl-ci-dispatcher` (same as the other PR CI jobs).
 - **What it does:** Build-only verification (no push) of the `nixl` (EP + debug) and `nixlbench` container images — one matrix cell per target/arch (x86_64 and aarch64), all in parallel. It runs the same `contrib/build-container.sh` / `benchmark/nixlbench/contrib/build.sh` the standalone `nixl-ci-build-container` job runs, so container/packaging breakage (e.g. a missing `--torch-versions`, or an EP nvlink register-count failure) is caught on the PR instead of only by the nightly job. Like the other leaf jobs it runs whenever the dispatcher fans out; drop it for a specific run via the dispatcher's `LEAF_JOBS` parameter.
 - **Automatic on every PR:** No — only after a `/build` comment (like the other dispatcher jobs).
@@ -208,6 +211,7 @@ their own nightly/manual trigger. They split into two groups:
 - **Automatic on every PR:** No — standalone/manual only.
 
 ### `nixl-ci-nightly` (standalone)
+
 - **Trigger:** Nightly cron (`H 2 * * *`), or manual run (`UCX_REF`, `MAIL_TO` parameters).
 - **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep` with `UCX_VER=master` (from `UCX_REF`), waits for all three, and emails one consolidated pass/fail report to `MAIL_TO`. This is the single place nightly UCX-`master` results are collected and sent from — the leaf jobs no longer carry their own nightly cron.
 - **Pipeline:** `.ci/jenkins/pipeline/Jenkinsfile.nightly` — a flyweight fan-out orchestrator (no build agent, like the dispatcher), so the multi-hour wait on the GPU jobs holds no node.
