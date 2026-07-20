@@ -291,6 +291,19 @@ private:
                        void *buffer,
                        std::shared_ptr<nixlLibfabricConnection> conn,
                        nixlBackendMD *&output);
+    /** Rail a WRITE descriptor posts on, or -1 if it does not participate in FI_MORE batching
+     *  (no metadata, no selected rails, or striped across multiple rails). */
+    int
+    batchingRail(const nixl_meta_dlist_t &local, int desc_idx, size_t xfer_base_offset) const;
+
+    /** Whether descriptor desc_idx should carry FI_MORE: false (flush) for a rail's last post
+     *  in [start,end) and when the rail's batch reaches NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE.
+     *  Updates posts_since_flush. */
+    bool
+    useFiMore(int desc_idx,
+              int rail_id,
+              const std::vector<int> &last_desc_idx_per_rail,
+              std::vector<int> &posts_since_flush) const;
 
 #ifdef HAVE_CUDA
     // CUDA context management methods
