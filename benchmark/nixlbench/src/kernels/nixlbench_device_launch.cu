@@ -134,8 +134,7 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
 } // namespace
 
 nixl_status_t
-nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params,
-                         unsigned block_threads) {
+nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block_threads) {
     constexpr unsigned kWarpSize = 32;
 
     if (block_threads == 0 || block_threads > 1024u) {

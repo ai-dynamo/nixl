@@ -60,7 +60,6 @@ struct nixlbenchDeviceXferParams {
  *         Device transfer failures are reported separately through the remote error counter.
  */
 nixl_status_t
-nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params,
-                         unsigned block_threads);
+nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block_threads);
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_KERNELS_NIXLBENCH_DEVICE_LAUNCH_CUH
