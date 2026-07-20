@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,9 +20,21 @@
 #include "nixl_types.h"
 #include "telemetry_event.h"
 
+#include <stdexcept>
 #include <string>
 
 inline constexpr char telemetryExporterVar[] = "NIXL_TELEMETRY_EXPORTER";
+
+/**
+ * @brief Thrown by a telemetry exporter when its scrape endpoint could not bind
+ *        its port -- typically a benign multi-process collision. Callers may
+ *        catch it to continue without a telemetry sink instead of treating the
+ *        failure as fatal.
+ */
+class nixlTelemetryBindFailed : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 /**
  * @struct nixlTelemetryExporterInitParams
