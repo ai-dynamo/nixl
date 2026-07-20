@@ -87,7 +87,7 @@ matrix:
     arch:
       - x86_64
 
-taskName: "${name}/${arch}/ucx-${UCX_VER}/${axis_index}"
+taskName: "${name}/${arch}/${axis_index}"
 
 
 steps:
@@ -97,11 +97,16 @@ steps:
     parallel: false
     run: |
       set -x
-      export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-gpu-test-${UCX_VER}:${BUILD_NUMBER}
+      # Pass UCX_VERSION only when UCX_VER is set (e.g. nightly master);
+      # empty falls back to the Dockerfile ARG UCX_VERSION default so the
+      # per-branch default lives in one place.
+      UCX_ARG=""
+      if [ -n "${UCX_VER}" ]; then UCX_ARG="--build-arg UCX_VERSION=${UCX_VER}"; fi
+      export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}
       rm -rf /etc/containers/storage.conf && rm -f /usr/share/containers/storage.conf
       echo "$REPO_PASS" | podman login "https://${registry_host}" -u "$REPO_USER" --password-stdin
       podman build --network host \
-      --build-arg UCX_VERSION=${UCX_VER} \
+      ${UCX_ARG} \
       --build-arg PRE_INSTALLED_ENV="true" \
       --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
@@ -123,8 +128,8 @@ steps:
       nodes: "${SLURM_NODES}"
       jobTimeout: "${SLURM_JOB_TIMEOUT}"
       immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "nixl-ci-${UCX_VER}-${BUILD_NUMBER}"
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${UCX_VER}_${BUILD_NUMBER}.txt"
+      jobName: "nixl-ci-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
       extraArgs: [
         "--gres=${SLURM_GRES}",
@@ -140,12 +145,12 @@ steps:
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${UCX_VER}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${UCX_VER}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${UCX_VER}-${BUILD_NUMBER}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
       exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run Python tests
@@ -156,12 +161,12 @@ steps:
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${UCX_VER}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_python.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${UCX_VER}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${UCX_VER}-${BUILD_NUMBER}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
       exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run Rust tests
@@ -172,12 +177,12 @@ steps:
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${UCX_VER}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_rust.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${UCX_VER}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${UCX_VER}-${BUILD_NUMBER}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
       exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run Nixlbench tests
@@ -188,12 +193,12 @@ steps:
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${UCX_VER}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${UCX_VER}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${UCX_VER}-${BUILD_NUMBER}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
       exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
 pipeline_stop:

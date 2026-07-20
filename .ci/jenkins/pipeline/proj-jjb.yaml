@@ -294,8 +294,8 @@
             description: "Job config file"
         - string:
             name: "UCX_VER"
-            default: "v1.22.x"
-            description: "UCX version to test against: tag like v1.22.x, branch name without slashes, or commit SHA (used in image tags, no '/' allowed). The nightly cron overrides this to master."
+            default: ""
+            description: "UCX ref (branch/tag/commit) to build against. Empty uses the Dockerfile ARG UCX_VERSION default (kept per branch in one place); the nixl-ci-nightly job sets it to master."
         - bool:
             name: "build_dockers"
             default: false
@@ -359,8 +359,8 @@
             description: "Job config file"
         - string:
             name: "UCX_VER"
-            default: "v1.22.x"
-            description: "UCX version to test against: tag like v1.22.x, branch name without slashes, or commit SHA (used in image tags, no '/' allowed). The nightly cron overrides this to master."
+            default: ""
+            description: "UCX ref (branch/tag/commit) to build against. Empty uses the Dockerfile ARG UCX_VERSION default (kept per branch in one place); the nixl-ci-nightly job sets it to master."
         - bool:
             name: "build_dockers"
             default: false
@@ -424,8 +424,8 @@
             description: "Job config file"
         - string:
             name: "UCX_VER"
-            default: "v1.22.x"
-            description: "UCX version to test against: tag like v1.22.x, branch name without slashes, or commit SHA (used in image tags, no '/' allowed). The nightly cron overrides this to master."
+            default: ""
+            description: "UCX ref (branch/tag/commit) to build against. Empty uses the Dockerfile ARG UCX_VERSION default (kept per branch in one place); the nixl-ci-nightly job sets it to master."
         - bool:
             name: "build_dockers"
             default: false
