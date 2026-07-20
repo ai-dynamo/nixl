@@ -6,8 +6,8 @@
  * Fans out to the three GPU test jobs (nixl-ci-gpu, nixl-ci-dl-gpu,
  * nixl-ci-dl-gpu-ep) with UCX_VER=master, waits for all of them, and emails one
  * consolidated pass/fail report. This is the single place nightly UCX-master
- * results are collected and sent from - the leaf jobs no longer carry their own
- * nightly cron.
+ * results are collected and sent from; per-PR runs of the GPU jobs cover only
+ * the release UCX version.
  *
  * Runs on the flyweight executor (no build agent) so the multi-hour wait on the
  * GPU jobs does not hold a node - same model as Jenkinsfile.dispatcher.
@@ -31,10 +31,14 @@ currentBuild.description = "UCX ${ucxRef}"
 // Fan out in parallel. propagate:false plus try/catch so a failing - or
 // never-started - leg does not abort the others; the report always covers all
 // three. wait:true so every result is collected before the report is sent.
-// The whole fan-out is bounded by a timeout (leaf jobs also have their own) so
-// the consolidated report is delivered even if a leg hangs.
+// The whole fan-out is bounded by a timeout (leaf jobs also have their own;
+// the extra headroom covers queue/pod-scheduling time) so the consolidated
+// report is delivered even if a leg hangs. A manual abort is rethrown so the
+// build ends ABORTED without sending a misleading report.
+def fanOutTimeoutMin = 360
+def fanOutStart = System.currentTimeMillis()
 try {
-    timeout(time: 300, unit: 'MINUTES') {
+    timeout(time: fanOutTimeoutMin, unit: 'MINUTES') {
         parallel(leafJobs.collectEntries { label, jobName ->
             [(label): {
                 try {
@@ -43,6 +47,11 @@ try {
                                   wait: true, propagate: false)
                     results[label] = [result: r.result, url: r.absoluteUrl, number: r.number]
                 } catch (err) {
+                    // Let interrupts (manual abort / the fan-out timeout) propagate;
+                    // record only legs that genuinely failed to start.
+                    if (err instanceof org.jenkinsci.plugins.workflow.steps.FlowInterruptedException) {
+                        throw err
+                    }
                     echo "Leg ${label} (${jobName}) did not run: ${err}"
                     results[label] = [result: 'ERROR', url: env.BUILD_URL, number: 0]
                 }
@@ -50,7 +59,15 @@ try {
         })
     }
 } catch (err) {
-    echo "Nightly fan-out did not finish within the timeout: ${err}"
+    // Tell the fan-out timeout (report goes out with MISSING legs) apart from a
+    // manual abort (rethrow, no report) by elapsed time - the exception cause
+    // list is not accessible from the sandbox.
+    def elapsedMin = (System.currentTimeMillis() - fanOutStart) / 60000
+    if (err instanceof org.jenkinsci.plugins.workflow.steps.FlowInterruptedException &&
+        elapsedMin < fanOutTimeoutMin - 1) {
+        throw err
+    }
+    echo "Nightly fan-out did not finish within ${fanOutTimeoutMin} min: ${err}"
 }
 
 def failed = leafJobs.keySet().findAll { results[it]?.result != 'SUCCESS' }

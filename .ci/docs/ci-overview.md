@@ -213,7 +213,7 @@ their own nightly/manual trigger. They split into two groups:
 ### `nixl-ci-nightly` (standalone)
 
 - **Trigger:** Nightly cron (`H 2 * * *`), or manual run (`UCX_REF`, `MAIL_TO` parameters).
-- **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep` with `UCX_VER=master` (from `UCX_REF`), waits for all three, and emails one consolidated pass/fail report to `MAIL_TO`. This is the single place nightly UCX-`master` results are collected and sent from — the leaf jobs no longer carry their own nightly cron.
+- **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep` with `UCX_VER=master` (from `UCX_REF`), waits for all three, and emails one consolidated pass/fail report to `MAIL_TO`. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
 - **Pipeline:** `.ci/jenkins/pipeline/Jenkinsfile.nightly` — a flyweight fan-out orchestrator (no build agent, like the dispatcher), so the multi-hour wait on the GPU jobs holds no node.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.
 

@@ -1025,7 +1025,7 @@
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: false
     sandbox: true
-    # Single nightly schedule; the leaf GPU jobs no longer carry their own cron.
+    # Single nightly schedule for the UCX-master validation of the GPU test jobs.
     triggers:
       - timed: "H 2 * * *"
     parameters:
