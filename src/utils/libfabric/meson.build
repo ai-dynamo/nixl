@@ -14,21 +14,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Hipify sources that include cuda_runtime.h for ROCm/HIP builds
-hipify_cmd = find_program('hipify-perl')
-hipify_src = generator(hipify_cmd,
-                       output : ['@BASENAME@_hip.cpp'],
-                       arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
+# ROCm/HIP builds (selected with -Dwheel_variant=rocm) hipify the sources that
+# include cuda_runtime.h. hipify-perl ships only with the ROCm/HIP toolchain, so
+# it is required for that variant and unused (absent) on CUDA-only builds.
+wheel_variant = get_option('wheel_variant').strip()
+if wheel_variant == 'rocm'
+    hipify_cmd = find_program('hipify-perl')
+    hipify_src = generator(hipify_cmd,
+                           output : ['@BASENAME@_hip.cpp'],
+                           arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
 
-libfabric_topology_hip_src = hipify_src.process('libfabric_topology.cpp', extra_args: ['-o'])
-libfabric_rail_manager_hip_src = hipify_src.process('libfabric_rail_manager.cpp', extra_args: ['-o'])
+    libfabric_topology_src = hipify_src.process('libfabric_topology.cpp', extra_args: ['-o'])
+    libfabric_rail_manager_src = hipify_src.process('libfabric_rail_manager.cpp', extra_args: ['-o'])
+else
+    libfabric_topology_src = files('libfabric_topology.cpp')
+    libfabric_rail_manager_src = files('libfabric_rail_manager.cpp')
+endif
 
 # Source files
 libfabric_utils_sources = [
     'libfabric_rail.cpp',
     'libfabric_common.cpp',
-    libfabric_topology_hip_src,
-    libfabric_rail_manager_hip_src,
+    libfabric_topology_src,
+    libfabric_rail_manager_src,
 ]
 
 # Header files

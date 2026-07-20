@@ -16,13 +16,20 @@
 
 # LibFabric plugin configuration
 
-# Hipify sources that include cuda_runtime.h for ROCm/HIP builds
-hipify_cmd = find_program('hipify-perl')
-hipify_src = generator(hipify_cmd,
-                       output : ['@BASENAME@_hip.cpp'],
-                       arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
+# ROCm/HIP builds (selected with -Dwheel_variant=rocm) hipify the sources that
+# include cuda_runtime.h. hipify-perl ships only with the ROCm/HIP toolchain, so
+# it is required for that variant and unused (absent) on CUDA-only builds.
+wheel_variant = get_option('wheel_variant').strip()
+if wheel_variant == 'rocm'
+    hipify_cmd = find_program('hipify-perl')
+    hipify_src = generator(hipify_cmd,
+                           output : ['@BASENAME@_hip.cpp'],
+                           arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
 
-libfabric_backend_hip_src = hipify_src.process('libfabric_backend.cpp', extra_args: ['-o'])
+    libfabric_backend_src = hipify_src.process('libfabric_backend.cpp', extra_args: ['-o'])
+else
+    libfabric_backend_src = files('libfabric_backend.cpp')
+endif
 
 # Enable libfabric utils layer
 libfabric_plugin_deps = [
@@ -46,7 +53,7 @@ endif
 if 'LIBFABRIC' in static_plugins
     libfabric_backend_lib = static_library(
         'LIBFABRIC',
-        libfabric_backend_hip_src,
+        libfabric_backend_src,
         'libfabric_backend.h',
         'libfabric_plugin.cpp',
         dependencies: libfabric_plugin_deps,
@@ -58,7 +65,7 @@ if 'LIBFABRIC' in static_plugins
 else
     libfabric_backend_lib = shared_library(
         'LIBFABRIC',
-        libfabric_backend_hip_src,
+        libfabric_backend_src,
         'libfabric_backend.h',
         'libfabric_plugin.cpp',
         dependencies: libfabric_plugin_deps,
