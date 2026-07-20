@@ -54,7 +54,9 @@ env:
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   TEST_TIMEOUT: 50
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260712-2"
+  # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
+  # the "CI_MANAGED" placeholder must not be hand-edited.
+  CI_IMAGE_TAG: "CI_MANAGED"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}

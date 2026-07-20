@@ -15,8 +15,8 @@
 #    prebuilt, non-instrumented abseil, TSan misses the lock and every
 #    nixlLock-protected access shows up as a false race.
 #
-# Note: changes to .ci/dockerfiles/Dockerfile.base, .gitlab/build.sh or
-# .ci/scripts/common.sh require bumping CI_IMAGE_TAG here too (see cidemo-init.sh).
+# Note: CI_IMAGE_TAG is auto-derived by cidemo-init.sh from the CI source files
+# and patched in at CI time — the "CI_MANAGED" placeholder must not be hand-edited.
 
 ---
 job: nixl-ci-test-sanitizers
@@ -42,7 +42,7 @@ env:
   TEST_TIMEOUT: 40
   UCX_TLS: "^shm"
   STORAGE_DRIVER: 'overlay'
-  CI_IMAGE_TAG: "20260712-2"
+  CI_IMAGE_TAG: "CI_MANAGED"
 
 runs_on_dockers:
   # TSan-instrumented dependency image for the tsan build (DEPS_SANITIZE=thread
