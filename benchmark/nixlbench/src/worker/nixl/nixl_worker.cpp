@@ -1559,7 +1559,12 @@ execTransferLoop(nixlAgent *agent,
         depth = std::min(depth, static_cast<int>(local_iov.size()));
     }
     depth = std::max(depth, 1);
-    if (depth < xferBenchConfig::pipeline_depth) {
+    // Report the cap once, from the master thread only: this runs inside an
+    // omp parallel region, so an unguarded print is emitted per thread and the
+    // N copies interleave into garbled output. Skip single-iteration passes
+    // (setup/warmup), where capping to 1 is trivially expected and not useful.
+    if (depth < xferBenchConfig::pipeline_depth && num_iter > 1 &&
+        omp_get_thread_num() == 0) {
         std::cout << "Warning: capping pipeline_depth from " << xferBenchConfig::pipeline_depth
                   << " to " << depth << " (num_iter=" << num_iter
                   << ", descriptors=" << local_iov.size() << ")" << std::endl;
