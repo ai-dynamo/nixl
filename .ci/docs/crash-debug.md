@@ -39,10 +39,10 @@ the export `srun` only when set.
 ${ENROOT_MOUNT_PATH}/<containerName>.sqsh
 ```
 
-`containerName` is `nixl-ci-${ucx_version}-${BUILD_NUMBER}`, so:
+`containerName` is `nixl-ci-${BUILD_NUMBER}`, so:
 
 ```
-/enroot_images/nixl-ci-<ucx_version>-<BUILD_NUMBER>.sqsh
+/enroot_images/nixl-ci-<BUILD_NUMBER>.sqsh
 ```
 
 Example: `/enroot_images/nixl-ci-v1.21.x-2209.sqsh`
@@ -62,8 +62,8 @@ The export command that runs on the mizu node:
 ```bash
 srun --jobid=<JOB_ID> --ntasks=1 --oversubscribe \
   env ENROOT_DATA_PATH=/enroot-data/enroot-data-148069/user-148069 \
-  enroot export --output /enroot_images/nixl-ci-<ucx_version>-<BUILD_NUMBER>.sqsh \
-  pyxis_nixl-ci-<ucx_version>-<BUILD_NUMBER>
+  enroot export --output /enroot_images/nixl-ci-<BUILD_NUMBER>.sqsh \
+  pyxis_nixl-ci-<BUILD_NUMBER>
 ```
 
 ## gdb in the container

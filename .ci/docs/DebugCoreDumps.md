@@ -9,13 +9,13 @@ load it and run `gdb` against the crash.
 The export path is printed in the Jenkins build log under the step:
 
 ```
-exportEnroot: export 'nixl-ci-<ucx_version>-<BUILD_NUMBER>' -> <path>
+exportEnroot: export 'nixl-ci-<BUILD_NUMBER>' -> <path>
 ```
 
 Files follow this naming convention (the sqsh is named after the container):
 
 ```
-/enroot_images/nixl-ci-<ucx_version>-<BUILD_NUMBER>.sqsh
+/enroot_images/nixl-ci-<BUILD_NUMBER>.sqsh
 ```
 
 Example: `/enroot_images/nixl-ci-v1.21.x-2209.sqsh`
@@ -35,8 +35,8 @@ needed). `enroot create` is non-interactive:
 ```bash
 scctl client connect -- srun -p mizu --ntasks=1 \
   env ENROOT_DATA_PATH=/enroot-data/enroot-data-148069/user-148069 \
-  enroot create --name nixl-ci-<ucx_version>-<BUILD_NUMBER> \
-  /enroot_images/nixl-ci-<ucx_version>-<BUILD_NUMBER>.sqsh
+  enroot create --name nixl-ci-<BUILD_NUMBER> \
+  /enroot_images/nixl-ci-<BUILD_NUMBER>.sqsh
 ```
 
 Example:
