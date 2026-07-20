@@ -16,10 +16,9 @@
 
 # LibFabric plugin configuration
 
-# ROCm/HIP builds (selected with -Dwheel_variant=rocm) hipify the sources that
-# include cuda_runtime.h. hipify-perl ships only with the ROCm/HIP toolchain, so
-# it is required for that variant and unused (absent) on CUDA-only builds.
-wheel_variant = get_option('wheel_variant').strip()
+# On ROCm builds (-Dwheel_variant=rocm) the CUDA sources are translated to HIP
+# with hipify-perl, which ships only with the ROCm/HIP toolchain, so it is
+# required for that variant and unused (absent) on CUDA-only builds.
 if wheel_variant == 'rocm'
     hipify_cmd = find_program('hipify-perl')
     hipify_src = generator(hipify_cmd,
@@ -43,8 +42,13 @@ libfabric_plugin_deps = [
 
 compile_flags = ['-DHAVE_LIBFABRIC']
 
-# Add CUDA support if available
-if cuda_dep.found()
+# Add GPU support: CUDA normally, or HIP/ROCm when wheel_variant=rocm. The GPU
+# code paths are guarded by HAVE_CUDA; on ROCm the hipified sources compile those
+# paths against HIP via rocm_dep.
+if wheel_variant == 'rocm'
+    libfabric_plugin_deps += [rocm_dep]
+    compile_flags += ['-DHAVE_CUDA']
+elif cuda_dep.found()
     libfabric_plugin_deps += [cuda_dep]
     compile_flags += ['-DHAVE_CUDA']
 endif
