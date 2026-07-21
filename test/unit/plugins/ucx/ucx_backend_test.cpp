@@ -117,6 +117,7 @@ createEngine(std::string name, bool p_thread) {
     init.localAgent   = name;
     init.customParams = &custom_params;
     init.type         = "UCX";
+    custom_params["max_inflight_requests"] = "8";
 
     auto ucx = nixlUcxEngine::create(init).release();
     nixl_exit_on_failure(!ucx->getInitErr(), "Failed to initialize worker1");

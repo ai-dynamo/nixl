@@ -24,6 +24,7 @@
 #include <optional>
 #include <limits>
 #include <future>
+#include <functional>
 #include <set>
 #include <string.h>
 #include <unistd.h>
@@ -51,6 +52,7 @@ private:
     std::vector<nixlUcxReq> requests_;
     nixlUcxWorker *worker_;
     size_t workerId_;
+    std::function<nixl_status_t()> continueXfer_;
 
     [[nodiscard]] nixl_status_t
     checkConnection(const nixl_status_t status = NIXL_SUCCESS) const {
@@ -95,6 +97,11 @@ public:
         NIXL_ASSERT(connections_.empty());
     }
 
+    void
+    setContinuation(std::function<nixl_status_t()> continuation) {
+        continueXfer_ = std::move(continuation);
+    }
+
     [[nodiscard]] nixl_status_t
     append(nixl_status_t status, nixlUcxReq req, const ucx_connection_ptr_t &conn) {
         switch (status) {
@@ -125,6 +132,7 @@ public:
 
     virtual void
     release() {
+        continueXfer_ = nullptr;
         // TODO: Error log: uncompleted requests found! Cancelling ...
         for (nixlUcxReq req : requests_) {
             const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
@@ -141,48 +149,59 @@ public:
 
     [[nodiscard]] virtual nixl_status_t
     status() {
-        if (requests_.empty()) {
-            /* No pending transmissions */
-            connections_.clear();
-            return NIXL_SUCCESS;
-        }
+        while (true) {
+            if (!requests_.empty()) {
+                worker_->progressLoop();
 
-        worker_->progressLoop();
-
-        /* If last request is incomplete, return NIXL_IN_PROG early without
-         * checking other requests */
-        nixlUcxReq req = requests_.back();
-        const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-        if (ret == NIXL_IN_PROG) {
-            return NIXL_IN_PROG;
-        } else if (ret != NIXL_SUCCESS) {
-            return checkConnection(ret);
-        }
-
-        /* Last request completed successfully, all the others must be in the
-         * same state. TODO: remove extra checks? */
-        size_t incomplete_reqs = 0;
-        nixl_status_t out_ret = NIXL_SUCCESS;
-        for (nixlUcxReq req : requests_) {
-            const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-            if (ret == NIXL_SUCCESS) [[likely]] {
-                worker_->reqRelease(req);
-            } else if (ret == NIXL_IN_PROG) {
-                if (out_ret == NIXL_SUCCESS) {
-                    out_ret = NIXL_IN_PROG;
+                /* If last request is incomplete, return NIXL_IN_PROG early
+                 * without checking other requests. */
+                nixlUcxReq req = requests_.back();
+                const nixl_status_t ret =
+                    nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
+                if (ret == NIXL_IN_PROG) {
+                    return NIXL_IN_PROG;
+                } else if (ret != NIXL_SUCCESS) {
+                    return checkConnection(ret);
                 }
-                requests_[incomplete_reqs++] = req;
-            } else {
-                // Any other ret value is ERR and will be returned
-                out_ret = checkConnection(ret);
+
+                /* Last request completed successfully, all the others must be
+                 * in the same state. TODO: remove extra checks? */
+                size_t incomplete_reqs = 0;
+                nixl_status_t out_ret = NIXL_SUCCESS;
+                for (nixlUcxReq req : requests_) {
+                    const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(
+                        ucp_request_check_status(req));
+                    if (ret == NIXL_SUCCESS) [[likely]] {
+                        worker_->reqRelease(req);
+                    } else if (ret == NIXL_IN_PROG) {
+                        if (out_ret == NIXL_SUCCESS) {
+                            out_ret = NIXL_IN_PROG;
+                        }
+                        requests_[incomplete_reqs++] = req;
+                    } else {
+                        // Any other ret value is ERR and will be returned
+                        out_ret = checkConnection(ret);
+                    }
+                }
+
+                requests_.resize(incomplete_reqs);
+                if (!requests_.empty() || (out_ret != NIXL_SUCCESS)) {
+                    return out_ret;
+                }
+            }
+
+            connections_.clear();
+            if (!continueXfer_) {
+                return NIXL_SUCCESS;
+            }
+
+            auto continuation = std::move(continueXfer_);
+            continueXfer_     = nullptr;
+            const nixl_status_t ret = continuation();
+            if (ret != NIXL_SUCCESS) {
+                return ret;
             }
         }
-
-        requests_.resize(incomplete_reqs);
-        if (requests_.empty()) {
-            connections_.clear();
-        }
-        return out_ret;
     }
 
     [[nodiscard]] nixlUcxWorker *
@@ -787,6 +806,9 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
         num_workers = num_dedicated_workers + 1;
     }
     numSharedWorkers_ = num_workers - num_dedicated_workers;
+    maxInflightRequests_ = std::max(
+        1u,
+        nixl::getBackendParamDefaulted(custom_params, "max_inflight_requests", 64u));
 
     const size_t num_device_channels =
         nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
@@ -1184,6 +1206,29 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *handle,
                              size_t start_idx,
                              size_t end_idx) const {
+    const size_t window_end = std::min(start_idx + maxInflightRequests_, end_idx);
+    const nixl_status_t ret =
+        sendXferRangeWindow(operation, local, remote, handle, start_idx, window_end);
+    if ((ret != NIXL_SUCCESS) || (window_end == end_idx)) {
+        return ret;
+    }
+
+    auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    int_handle->setContinuation(
+        [this, operation, &local, &remote, remote_agent, handle, window_end, end_idx]() {
+            return sendXferRange(
+                operation, local, remote, remote_agent, handle, window_end, end_idx);
+        });
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::sendXferRangeWindow(const nixl_xfer_op_t &operation,
+                                   const nixl_meta_dlist_t &local,
+                                   const nixl_meta_dlist_t &remote,
+                                   nixlBackendReqH *handle,
+                                   size_t start_idx,
+                                   size_t end_idx) const {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     const size_t worker_id = int_handle->getWorkerId();
 

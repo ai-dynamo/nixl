@@ -287,6 +287,14 @@ private:
                        size_t start_idx,
                        size_t end_idx);
 
+    nixl_status_t
+    sendXferRangeWindow(const nixl_xfer_op_t &operation,
+                        const nixl_meta_dlist_t &local,
+                        const nixl_meta_dlist_t &remote,
+                        nixlBackendReqH *handle,
+                        size_t start_idx,
+                        size_t end_idx) const;
+
     /**
      * Get the worker ID from the optional arguments.
      * Returns std::nullopt if the 'worker_id' option extraction fails.
@@ -298,6 +306,7 @@ private:
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> workers_;
     size_t numSharedWorkers_;
+    size_t maxInflightRequests_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
 

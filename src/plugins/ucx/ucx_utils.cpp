@@ -33,7 +33,9 @@
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
-    nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
+    nixl_b_params_t params = {{"ucx_devices", ""},
+                              {"num_workers", "1"},
+                              {"max_inflight_requests", "64"}};
 
     params.emplace(nixl_ucx_err_handling_param_name,
                    ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
@@ -447,6 +449,14 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     }
 
     const auto &hw_info = nixl::hwInfo::instance();
+    if (hw_info.numAmdGpus != 0) {
+        /* Keep enough rendezvous fragments active to overlap staging and
+         * transfer without allowing one request to consume the ROCm copy
+         * transport's signal pool. UCX_RNDV_PIPELINE_MAX_INFLIGHT, when set,
+         * still takes precedence through config::modify(). */
+        config.modify("RNDV_PIPELINE_MAX_INFLIGHT", "4");
+    }
+
     if (hw_info.numEfaDevices != 0) {
         config.modify("ADDRESS_VERSION", "v2");
         if (ucpVersion_ >= UCP_VERSION(1, 19)) {

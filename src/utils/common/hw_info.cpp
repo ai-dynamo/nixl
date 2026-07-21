@@ -41,6 +41,7 @@ namespace {
     constexpr unsigned long kPciClassIb = 0x0207;
     constexpr unsigned long kPciClassGpuDisplay = 0x0300;
     constexpr unsigned long kPciClassGpu3d = 0x0302;
+    constexpr unsigned long kPciClassProcessingAccelerator = 0x1200;
 
     constexpr unsigned long kPciDeviceEfa[] = {0xefa0, 0xefa1, 0xefa2, 0xefa3};
 
@@ -125,7 +126,8 @@ hwInfo::hwInfo() {
                        << std::dec;
         }
         if ((*vendor_id == kPciVendorAmd) &&
-            ((*class_id == kPciClassGpuDisplay) || (*class_id == kPciClassGpu3d))) {
+            ((*class_id == kPciClassGpuDisplay) || (*class_id == kPciClassGpu3d) ||
+             (*class_id == kPciClassProcessingAccelerator))) {
             numAmdGpus++;
             NIXL_DEBUG << "Found AMD GPU #" << numAmdGpus << ": " << device_name << " vendor=0x"
                        << std::hex << *vendor_id << " class=0x" << *class_id << std::dec;
