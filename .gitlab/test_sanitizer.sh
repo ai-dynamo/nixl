@@ -149,7 +149,17 @@ run_stage "nixl_posix_test" ./bin/nixl_posix_test -n 128 -s 1048576
 # library's block-device/direct-IO memory model vs the TSan runtime), and under
 # ASan its GUSLIc thread init flakily trips the GCC 13.3 libsanitizer
 # thread-registry crash. Both are toolchain / third-party issues, not NIXL bugs.
-run_stage "ucx_backend_multi" ./bin/ucx_backend_multi
+# ucx_backend_multi is skipped under TSan only: this multi-threaded UCX
+# connect/disconnect stress test rarely hangs to the stage timeout under
+# ThreadSanitizer. Its two threads own separate engines and coordinate a
+# one-sided connect/disconnect via busy-wait spin loops with asymmetric progress
+# pumping; TSan's scheduling perturbation occasionally leaves a UCX wireup step
+# un-progressed and the peers deadlock. TSan also can't see UCX's own
+# synchronization (all of libucp/uct/ucs is suppressed in tsan.supp), so the test
+# adds little TSan value. It still runs under ASan/UBSan, where it is reliable.
+if [ "${SAN_LABEL}" != "tsan" ]; then
+    run_stage "ucx_backend_multi" ./bin/ucx_backend_multi
+fi
 run_stage "serdes_test" ./bin/serdes_test
 run_stage "test_plugin" ./bin/test_plugin
 

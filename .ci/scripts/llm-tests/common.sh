@@ -139,7 +139,9 @@ ACCURACY_MODEL="${ACCURACY_MODEL:-Qwen/Qwen3-8B}"
 prefetch_model() {
     local model="$1"
     echo "=== pre-fetching model weights: ${model} ==="
-    if command -v huggingface-cli >/dev/null 2>&1; then
+    if command -v hf >/dev/null 2>&1; then
+        hf download "${model}"
+    elif command -v huggingface-cli >/dev/null 2>&1; then
         huggingface-cli download "${model}"
     else
         python3 -c "from huggingface_hub import snapshot_download; snapshot_download('${model}')"

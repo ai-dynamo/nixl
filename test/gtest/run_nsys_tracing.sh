@@ -51,5 +51,16 @@ if [ ! -f "${OUT}.nsys-rep" ]; then
     exit 1
 fi
 
+# Sanity-check expected NVTX ranges and the new metadata-exchange span.
+NVTX_RANGES="$(nsys stats --force-export=true --report nvtx_sum --format csv "${OUT}.nsys-rep" 2>/dev/null \
+    | grep 'nixl::' | sed 's/.*,//' | sort -u)"
+for expected in nixl::loadRemoteMD nixl::registerMem nixl::postXferReq.write; do
+    if ! echo "${NVTX_RANGES}" | grep -Fq -- "${expected}"; then
+        echo "tracing_nsys: expected NVTX range '${expected}' missing from capture" >&2
+        echo "${NVTX_RANGES}" | sed 's/^/  seen: /' >&2
+        exit 1
+    fi
+done
+
 echo "tracing_nsys: wrote ${OUT}.nsys-rep"
 exit 0
