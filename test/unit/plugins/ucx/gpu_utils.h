@@ -8,11 +8,11 @@
 #include <cstdlib>
 #include "test_utils.h"
 
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA)
 #include <cuda_runtime.h>
 #include <cuda.h>
 
-static void
+inline void
 checkCudaError(cudaError_t result, const char *message) {
     if (result != cudaSuccess) {
         std::cerr << message << " (Error code: " << result << " - " << cudaGetErrorString(result)
@@ -22,10 +22,10 @@ checkCudaError(cudaError_t result, const char *message) {
 }
 #endif
 
-#ifdef HAVE_ROCM
+#if defined(HAVE_ROCM)
 #include <hip/hip_runtime.h>
 
-static void
+inline void
 checkHipError(hipError_t result, const char *message) {
     if (result != hipSuccess) {
         std::cerr << message << " (Error code: " << result << " - " << hipGetErrorString(result)
@@ -37,7 +37,7 @@ checkHipError(hipError_t result, const char *message) {
 
 inline void
 gpuSetDevice(int device, const char *message) {
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA)
     checkCudaError(cudaSetDevice(device), message);
 #elif defined(HAVE_ROCM)
     checkHipError(hipSetDevice(device), message);
@@ -48,7 +48,7 @@ gpuSetDevice(int device, const char *message) {
 
 inline void
 gpuMalloc(void **ptr, size_t size, const char *message) {
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA)
     checkCudaError(cudaMalloc(ptr, size), message);
 #elif defined(HAVE_ROCM)
     checkHipError(hipMalloc(ptr, size), message);
@@ -59,7 +59,7 @@ gpuMalloc(void **ptr, size_t size, const char *message) {
 
 inline void
 gpuFree(void *ptr, const char *message) {
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA)
     checkCudaError(cudaFree(ptr), message);
 #elif defined(HAVE_ROCM)
     checkHipError(hipFree(ptr), message);
@@ -70,7 +70,7 @@ gpuFree(void *ptr, const char *message) {
 
 inline void
 gpuMemset(void *ptr, int value, size_t size, const char *message) {
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA)
     checkCudaError(cudaMemset(ptr, value, size), message);
 #elif defined(HAVE_ROCM)
     checkHipError(hipMemset(ptr, value, size), message);
@@ -82,22 +82,29 @@ gpuMemset(void *ptr, int value, size_t size, const char *message) {
 
 inline void
 gpuGetDeviceCount(int *count, const char *message) {
-#ifdef HAVE_CUDA
-    if (cudaGetDeviceCount(count) != cudaSuccess) {
+#if defined(HAVE_CUDA)
+    cudaError_t result = cudaGetDeviceCount(count);
+    if (result != cudaSuccess) {
+        std::cout << message << " (" << cudaGetErrorString(result) << "), setting count to 0"
+                  << std::endl;
         *count = 0;
     }
 #elif defined(HAVE_ROCM)
-    if (hipGetDeviceCount(count) != hipSuccess) {
+    hipError_t result = hipGetDeviceCount(count);
+    if (result != hipSuccess) {
+        std::cout << message << " (" << hipGetErrorString(result) << "), setting count to 0"
+                  << std::endl;
         *count = 0;
     }
 #else
+    std::cout << message << " (GPU support not compiled in), setting count to 0" << std::endl;
     *count = 0;
 #endif
 }
 
 inline void
 gpuMemcpyD2H(void *dst, const void *src, size_t size, const char *message) {
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA)
     checkCudaError(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost), message);
 #elif defined(HAVE_ROCM)
     checkHipError(hipMemcpy(dst, src, size, hipMemcpyDeviceToHost), message);
@@ -108,14 +115,14 @@ gpuMemcpyD2H(void *dst, const void *src, size_t size, const char *message) {
 
 inline int
 gpuQueryAddr(void *address, bool &is_dev, int &dev) {
-#ifdef HAVE_CUDA
+#if defined(HAVE_CUDA)
     CUdevice cu_dev;
     CUcontext cu_ctx;
     CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
     uint32_t is_managed = 0;
-#define NUM_ATTRS 4
-    CUpointer_attribute attr_type[NUM_ATTRS];
-    void *attr_data[NUM_ATTRS];
+    constexpr int num_attrs = 4;
+    CUpointer_attribute attr_type[num_attrs];
+    void *attr_data[num_attrs];
     CUresult result;
 
     attr_type[0] = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
@@ -129,13 +136,15 @@ gpuQueryAddr(void *address, bool &is_dev, int &dev) {
 
     result = cuPointerGetAttributes(4, attr_type, attr_data, (CUdeviceptr)address);
 
-    is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
-    dev = cu_dev;
+    if (result == CUDA_SUCCESS) {
+        is_dev = (mem_type == CU_MEMORYTYPE_DEVICE);
+        dev = cu_dev;
 
-    std::cout << "CUDA addr: " << std::hex << address << " dev=" << std::dec << dev
-              << " ctx=" << std::hex << cu_ctx << std::dec << std::endl;
-
-    return (CUDA_SUCCESS != result);
+        std::cout << "CUDA addr: " << std::hex << address << " dev=" << std::dec << dev
+                  << " ctx=" << std::hex << cu_ctx << std::dec << std::endl;
+        return 0;
+    }
+    return 1;
 #elif defined(HAVE_ROCM)
     hipPointerAttribute_t attrs;
     const hipError_t result = hipPointerGetAttributes(&attrs, address);

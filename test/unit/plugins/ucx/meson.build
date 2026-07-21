@@ -16,9 +16,6 @@
 # ROCm detection (mutually exclusive with CUDA; default off)
 rocm_path = get_option('rocm_path')
 if rocm_path != ''
-    if rocm_path == 'default'
-        rocm_path = '/opt/rocm'
-    endif
     if not fs.exists(rocm_path)
         error('rocm_path set but ROCm install root not found at ' + rocm_path +
               '. Set -Drocm_path=<prefix> to the correct ROCm install root.')

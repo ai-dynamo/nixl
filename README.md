@@ -171,11 +171,11 @@ NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAm
 
 **Building with ROCm support:**
 ```bash
-# For UCX unit tests with ROCm (uses /opt/rocm by default)
-$ meson setup build -Drocm_path=default
+# For UCX unit tests with ROCm
+$ meson setup build -Drocm_path=/opt/rocm
 
 # Or specify a custom ROCm path
-$ meson setup build -Drocm_path=/path/to/rocm
+$ meson setup build -Drocm_path=/custom/path/to/rocm
 ```
 
 **Plugins on ROCm hosts (CUDA toolchain absent):**
