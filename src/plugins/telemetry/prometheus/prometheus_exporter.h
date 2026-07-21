@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,16 +14,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _TELEMETRY_PROMETHEUS_EXPORTER_H
-#define _TELEMETRY_PROMETHEUS_EXPORTER_H
+#ifndef NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H
+#define NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H
 
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
 #include "nixl_types.h"
 
+#include <cassert>
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include <prometheus/registry.h>
 #include <prometheus/exposer.h>
@@ -38,52 +40,119 @@
  * This class implements the telemetry exporter interface to export
  * telemetry events to a Prometheus-compatible format using prometheus-cpp.
  * It exposes metrics via an HTTP endpoint that can be scraped by Prometheus.
+ *
+ * All agents in the same process share a single Exposer (HTTP server) and
+ * Registry. Each agent adds its own metric instances distinguished by the
+ * agent_name label. The shared resources are created by the first agent
+ * and destroyed when the last agent's exporter is released.
  */
 class nixlTelemetryPrometheusExporter : public nixlTelemetryExporter {
 public:
-    /**
-     * @brief Constructor using init params (plugin-compatible)
-     * @param init_params Initialization parameters
-     */
     explicit nixlTelemetryPrometheusExporter(const nixlTelemetryExporterInitParams &init_params);
+    ~nixlTelemetryPrometheusExporter() override;
 
     nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) override;
 
 private:
-    // Prometheus components
-    const bool local_ = false;
-    const uint16_t port_;
+    struct CounterEntry {
+        CounterEntry(prometheus::Family<prometheus::Counter> *family, prometheus::Counter *metric)
+            : family(family),
+              metric(metric) {}
+
+        CounterEntry(const CounterEntry &) = delete;
+        CounterEntry &
+        operator=(const CounterEntry &) = delete;
+        CounterEntry(CounterEntry &&) = delete;
+        CounterEntry &
+        operator=(CounterEntry &&) = delete;
+
+        ~CounterEntry() noexcept {
+            assert(family && metric);
+            family->Remove(metric);
+        }
+
+        prometheus::Family<prometheus::Counter> *family = nullptr;
+        prometheus::Counter *metric = nullptr;
+    };
+
+    struct GaugeEntry {
+        GaugeEntry(prometheus::Family<prometheus::Gauge> *family, prometheus::Gauge *metric)
+            : family(family),
+              metric(metric) {}
+
+        GaugeEntry(const GaugeEntry &) = delete;
+        GaugeEntry &
+        operator=(const GaugeEntry &) = delete;
+        GaugeEntry(GaugeEntry &&) = delete;
+        GaugeEntry &
+        operator=(GaugeEntry &&) = delete;
+
+        ~GaugeEntry() noexcept {
+            assert(family && metric);
+            family->Remove(metric);
+        }
+
+        prometheus::Family<prometheus::Gauge> *family = nullptr;
+        prometheus::Gauge *metric = nullptr;
+    };
+
+    struct HistogramEntry {
+        HistogramEntry(prometheus::Family<prometheus::Histogram> *family,
+                       prometheus::Histogram *metric)
+            : family(family),
+              metric(metric) {}
+
+        HistogramEntry(const HistogramEntry &) = delete;
+        HistogramEntry &
+        operator=(const HistogramEntry &) = delete;
+        HistogramEntry(HistogramEntry &&) = delete;
+        HistogramEntry &
+        operator=(HistogramEntry &&) = delete;
+
+        ~HistogramEntry() noexcept {
+            assert(family && metric);
+            family->Remove(metric);
+        }
+
+        prometheus::Family<prometheus::Histogram> *family = nullptr;
+        prometheus::Histogram *metric = nullptr;
+    };
+
     const std::string agent_name_;
     const std::string hostname_;
+    std::shared_ptr<prometheus::Exposer> exposer_;
     std::shared_ptr<prometheus::Registry> registry_;
-    std::unique_ptr<prometheus::Exposer> exposer_;
-    std::string bind_address_;
 
+    std::unordered_map<nixl_telemetry_event_type_t, CounterEntry> counters_;
+    std::unordered_map<nixl_telemetry_event_type_t, GaugeEntry> gauges_;
+    std::unordered_map<nixl_telemetry_event_type_t, HistogramEntry> histograms_;
 
-    // Maps to track created metrics by event name
-    std::unordered_map<std::string, prometheus::Counter *> counters_;
-    std::unordered_map<std::string, prometheus::Gauge *> gauges_;
-
-    // Helper methods
     void
     initializeMetrics();
-    void
-    createOrUpdateBackendEvent(const std::string &event_name, uint64_t value);
-
-    template<typename Family>
-    void
-    registerGauge(const std::string &name,
-                  Family &family,
-                  const std::map<std::string, std::string> &labels = {}) {
-        gauges_[name] = &family.Add(labels);
-    }
 
     void
-    registerCounter(const std::string &name, const std::string &help, const std::string &category);
+    registerCounter(nixl_telemetry_event_type_t event_type,
+                    const std::string &metric_name,
+                    const std::string &help);
 
     void
-    registerGauge(const std::string &name, const std::string &help, const std::string &category);
+    registerErrorCounters();
+
+    // event_type is the lookup key exportEvent() uses; metric_name is the
+    // exposed Prometheus series name. They differ for last-operation gauges,
+    // e.g. the AGENT_TX_BYTES event drives a gauge published as
+    // "agent_tx_last_bytes".
+    void
+    registerGauge(nixl_telemetry_event_type_t event_type,
+                  const std::string &metric_name,
+                  const std::string &help);
+
+    void
+    registerHistogram(nixl_telemetry_event_type_t event_type,
+                      const std::string &metric_name,
+                      const std::string &help,
+                      const std::vector<double> &buckets);
 };
 
-#endif // _TELEMETRY_PROMETHEUS_EXPORTER_H
+#endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_EXPORTER_H

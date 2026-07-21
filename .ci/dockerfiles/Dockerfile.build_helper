@@ -11,6 +11,7 @@ ARG BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04
 FROM ${BASE_IMAGE}
 
 # Build arguments
+ARG ARCH=x86_64
 ARG _UID=148069
 ARG _GID=30
 ARG _LOGIN=svc-nixl
@@ -24,12 +25,16 @@ LABEL description="NIXL development environment"
 LABEL version="1.0.0"
 
 RUN apt update && \
-    apt install -y sudo podman curl jq && \
+    apt install -y sudo podman curl jq openssh-client git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install scctl for slurm client management
-RUN curl -s https://urm.nvidia.com/artifactory/sw-swx-lab-infra-generic/scctl/get-app.sh | bash -s -- --output-dir /usr/local/bin
+# Install scctl for slurm client management (x86_64 only, not available for ARM64)
+RUN if [ "$(uname -m)" = "x86_64" ]; then \
+        curl -s https://urm.nvidia.com/artifactory/sw-swx-lab-infra-generic/scctl/get-app.sh | bash -s -- --output-dir /usr/local/bin || echo "INFO: scctl installation failed, continuing..."; \
+    else \
+        echo "INFO: Skipping scctl installation on $(uname -m) architecture (not available)"; \
+    fi
 
 # Create group and user in one RUN command to reduce layers
 RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \

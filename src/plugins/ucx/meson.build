@@ -14,6 +14,7 @@
 # limitations under the License.
 
 asio_dep = [dependency('asio', required: true)]
+dl_dep = dependency('dl', required: true)
 
 ucx_backend_includes = include_directories('.')
 
@@ -21,14 +22,15 @@ ucx_backend_sources = ['config.cpp',
                        'mem_list.cpp',
                        'rkey.cpp',
                        'ucx_backend.cpp',
+                       'ucx_enums.cpp',
                        'ucx_plugin.cpp',
                        'ucx_utils.cpp']
 
 ucx_backend_dependencies = [asio_dep,
-                            cuda_dep,
                             nixl_common_dep,
                             nixl_infra,
                             serdes_interface,
+                            dl_dep,
                             thread_dep,
                             ucx_dep]
 

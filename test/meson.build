@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,9 @@
 subdir('nixl')
 subdir('unit')
 
-if ucx_dep.found()
-    subdir('gtest')
-endif
+subdir('gtest')
+
+# Standalone DOCA telemetry exporter test (self-contained; only built when the
+# DOCA telemetry headers are present). Kept out of the main gtest target so the
+# DOCA/CollectX gRPC stack is not linked into every test.
+subdir('doca-telemetry')

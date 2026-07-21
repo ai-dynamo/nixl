@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,7 @@
 cpp_sources = ['gusli_plugin.cpp', 'gusli_backend.cpp', 'gusli_backend.h']
 gusli_deps = [ nixl_infra,
                declare_dependency(link_args : ['-l' + gusli_lib_file]),
-               dependency('absl_log', required: true)]
+               absl_log_dep]
 
 if 'GUSLI' in static_plugins
   gusli_backend_lib = static_library('GUSLI', cpp_sources,

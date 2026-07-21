@@ -18,16 +18,17 @@
 
 #include <stdexcept>
 
-#include <absl/strings/str_format.h>
-
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 
 namespace nixl::ucx {
 void
 config::modify(std::string_view key, std::string_view value) const {
-    const char *env_val = std::getenv(absl::StrFormat("UCX_%s", key.data()).c_str());
+    const auto ucx_key = "UCX_" + std::string(key);
+    const auto env_val = nixl::config::internal::getenvOptional(ucx_key);
+
     if (env_val) {
-        NIXL_DEBUG << "UCX env var has already been set: " << key << "=" << env_val;
+        NIXL_DEBUG << "UCX env var already set: " << ucx_key << "=" << *env_val;
     } else {
         modifyAlways(key, value);
     }

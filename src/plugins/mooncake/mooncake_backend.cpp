@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@
  */
 #include "mooncake_backend.h"
 #include "serdes/serdes.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 
 #include <arpa/inet.h>
@@ -26,6 +27,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+namespace {
 std::vector<std::string>
 findLocalIpAddresses() {
     std::vector<std::string> ips;
@@ -68,14 +70,20 @@ findLocalIpAddresses() {
     return ips;
 }
 
+[[nodiscard]] std::string
+chooseIpAddress() {
+    static const std::string local = "127.0.0.1";
+    static const std::vector<std::string> ips = findLocalIpAddresses();
+    static const std::string &fallback = ips.empty() ? local : ips[0];
+    return nixl::config::getValueDefaulted("NIXL_MOONCAKE_IP_ADDR", fallback);
+}
+
+} // namespace
+
 nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
-    local_agent_name_ = init_params->localAgent;
-    auto ips = findLocalIpAddresses();
-    std::string segment_name = "127.0.0.1";
-    if (!ips.empty()) segment_name = ips[0];
-    if (getenv("NIXL_MOONCAKE_IP_ADDR"))
-        segment_name = std::string(getenv("NIXL_MOONCAKE_IP_ADDR"));
+    : nixlBackendEngine(init_params),
+      local_agent_name_(init_params->localAgent) {
+    const std::string segment_name = chooseIpAddress();
     engine_ = createTransferEngine("P2PHANDSHAKE", segment_name.c_str(), "", 0, true);
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -115,8 +115,11 @@ if __name__ == "__main__":
     ip_addr = "127.0.0.1"
     target_port = args.target_port
     init_port = args.init_port
+    # Listen thread is only needed for socket-based metadata exchange;
+    # when using etcd, metadata is exchanged through etcd instead.
+    enable_listen = not bool(etcd_endpoints)
     # Example using nixl_agent_config
-    agent_config1 = nixl_agent_config(True, True, target_port)
+    agent_config1 = nixl_agent_config(True, enable_listen, target_port)
 
     target_agent = nixl_agent("target", agent_config1)
 
@@ -143,7 +146,7 @@ if __name__ == "__main__":
     assert target_agent.register_memory(target_reg_descs2) is not None
 
     # Default port for initiator
-    agent_config2 = nixl_agent_config(True, True, init_port)
+    agent_config2 = nixl_agent_config(True, enable_listen, init_port)
     init_agent = nixl_agent("initiator", agent_config2)
 
     init_strs = []

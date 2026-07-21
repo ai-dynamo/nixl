@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# ThreadSanitizer suppressions for NIXL sanitizer CI (-Dsanitizer=thread).
+#
+# The tsan build links NON-instrumented prebuilt third-party libraries (gRPC,
+# Abseil, protobuf, UCX, ...). ThreadSanitizer cannot see their internal
+# synchronization and reports false races on their own state (gRPC event engine
+# / global init churned by the etcd client, Abseil SwissTable/strings/random,
+# UCX workers).
+#
+# Use `race:` rather than `called_from_lib`: `race:` matches a racy access frame
+# by function name, source file, OR module (.so) name, as a substring, with no
+# requirement to resolve to a single library. `called_from_lib` aborts at startup
+# (exit 66) if a pattern matches more than one loaded library -- e.g. 'libgrpc'
+# matches both libgrpc.so and libgrpc++.so, and 'libabsl' matches ~15 libs.
+# NIXL's own code is in libnixl*.so / libplugin_*.so and is not matched, so
+# genuine NIXL races -- including misuse of a NIXL-owned object -- still fail.
+#
+# See https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
+
+# Third-party libraries, matched by .so/module name.
+race:libgrpc
+race:libgpr
+race:libupb
+race:libaddress_sorting
+race:libprotobuf
+race:libcares
+race:libre2
+race:libabsl
+race:libucs
+race:libucp
+race:libuct
+race:libucm
+
+# Function/namespace backstops for the families we have actually seen racing, in
+# case module-name matching misses a frame.
+race:absl::
+race:grpc_core::
+race:grpc_event_engine::
+race:google::protobuf::
+race:ucp_
+race:uct_
+race:ucs_

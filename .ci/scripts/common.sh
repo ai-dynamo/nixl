@@ -22,20 +22,12 @@
 # Set initial port number for client/server applications to be updated with
 # function below
 #
-tcp_port_range=1000
+tcp_port_range=300
 min_port_number=10500
-max_port_number=65535
+max_port_number=32500
 
-# GITLAB CI
-if [ -n "$CI_CONCURRENT_ID" ]; then
-    nixl_concurrent_id=$CI_CONCURRENT_ID
-# Jenkins CI
-elif [ -n "$EXECUTOR_NUMBER" ]; then
-    nixl_concurrent_id=$EXECUTOR_NUMBER
-else
-    # Fallback to random number if both CI_CONCURRENT_ID and EXECUTOR_NUMBER are not set
-    nixl_concurrent_id=$((RANDOM % $(((max_port_number - min_port_number) / tcp_port_range))))
-fi
+tcp_port_slots=$(((max_port_number - min_port_number) / tcp_port_range))
+nixl_concurrent_id=$(( ${CI_CONCURRENT_ID:-${EXECUTOR_NUMBER:-$RANDOM}} % tcp_port_slots ))
 
 echo nixl_concurrent_id="$nixl_concurrent_id"
 
@@ -131,4 +123,26 @@ wait_for_etcd() {
         sleep 1
     done
     echo "Etcd is ready"
+}
+
+start_etcd_server() {
+    local namespace_prefix=$1
+    if [ -z "${namespace_prefix}" ]; then
+        echo "Usage: start_etcd_server <namespace_prefix>"
+        exit 1
+    fi
+
+    echo "==== Running ETCD server ===="
+    etcd_port=$(get_next_tcp_port)
+    etcd_peer_port=$(get_next_tcp_port)
+    export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
+    export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
+    export NIXL_ETCD_NAMESPACE="${namespace_prefix}/${etcd_port}"
+
+    etcd --listen-client-urls "${NIXL_ETCD_ENDPOINTS}" --advertise-client-urls "${NIXL_ETCD_ENDPOINTS}" \
+         --listen-peer-urls "${NIXL_ETCD_PEER_URLS}" --initial-advertise-peer-urls "${NIXL_ETCD_PEER_URLS}" \
+         --initial-cluster "default=${NIXL_ETCD_PEER_URLS}" &
+    ETCD_PID=$!
+
+    wait_for_etcd
 }

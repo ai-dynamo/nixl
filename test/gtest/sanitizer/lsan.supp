@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# LeakSanitizer suppressions for NIXL sanitizer CI (-Dsanitizer=address,undefined).
+#
+# ONLY suppress leaks originating in third-party libraries that NIXL does not
+# own. Most allocate process-lifetime global state on first use and never free
+# it. NIXL's own code lives in libnixl*.so / libplugin_*.so and is NOT matched,
+# so genuine NIXL leaks still fail the build.
+#
+# This is the up-front list of NIXL's third-party dependencies (see
+# .gitlab/build.sh), so we don't have to rediscover them one failing run at a
+# time. Format: one `leak:<substring>` per line, matched against the symbols and
+# the originating shared-object path in the leak's allocation stack.
+# See https://github.com/google/sanitizers/wiki/AddressSanitizerLeakSanitizer
+
+# CUDA runtime / driver / cuFile
+leak:libcuda
+leak:libcudart
+leak:libcufile
+
+# UCX
+leak:libucs
+leak:libucp
+leak:libuct
+leak:libucm
+
+# Abseil
+leak:libabsl
+
+# gRPC stack + protobuf (etcd client / metadata exchange)
+leak:libgrpc
+leak:libgpr
+leak:libupb
+leak:libaddress_sorting
+leak:libprotobuf
+leak:libcares
+leak:libre2
+
+# etcd client, libfabric, TLS
+leak:libetcd
+leak:libfabric
+leak:libssl
+leak:libcrypto

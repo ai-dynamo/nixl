@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +60,7 @@ try:
                 logger.info("  Rank %d: %s", i, data)
         except Exception as e:
             logger.error("Rank %d: Allgather failed: %s", rank, e)
+            raise
 
         # Test barrier again
         runtime.barrier()

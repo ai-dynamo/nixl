@@ -44,6 +44,16 @@ export NIXL_TELEMETRY_EXPORTER="prometheus" # Sets which plug-in to select in fo
 
 ### Optional Configuration
 
+You can restrict which metrics are exported with an allowlist (unset exports everything):
+
+```bash
+# Comma-separated glob allowlist matched against the base event names.
+# A name selects every series for that event (counter, gauge, and the
+# transfer-time histogram where applicable). Unmatched tokens are ignored
+# with a warning; deactivated metrics are skipped before staging.
+export NIXL_TELEMETRY_ENABLED_METRICS="agent_tx_bytes,agent_rx_bytes,agent_err_*"
+```
+
 You can configure the exposed prometheus port:
 
 ```bash
@@ -55,7 +65,7 @@ Default addres is public, but you configure to expose prometheus endpoint only o
 
 ```bash
 export NIXL_TELEMETRY_PROMETHEUS_LOCAL="y"
-# May also use "yes" or "1"
+# Can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to enable local only, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to disable. Matching is case insensitive.
 ```
 
 You can alter where to look for plug-in .so files
@@ -65,29 +75,47 @@ NOTE: the same var is used for backend plug-ins search
 export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 ```
 
+### Multi-process runs
+
+The exporter opens one HTTP scrape endpoint per process. Under multi-process runs (e.g. tensor or data parallelism) every rank process tries to bind the same `NIXL_TELEMETRY_PROMETHEUS_PORT`; only one wins. Losing that race is benign and non-fatal: the affected process logs a single warning and runs **without** a telemetry sink (agent construction still succeeds, the model still runs). Only the process that bound the port exports metrics. Aggregating every rank behind one endpoint is a separate, larger effort.
+
 ### Metrics & Events
 
-| Event Name | Category | Counter | Gauge | Histogram |
-|------------|----------|---------|-------|-----------|
-| `agent_memory_registered` | `NIXL_TELEMETRY_MEMORY` | Next version | Yes | No |
-| `agent_memory_deregistered` | `NIXL_TELEMETRY_MEMORY` | Next version | Yes | No |
-| `agent_tx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
-| `agent_rx_bytes` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
-| `agent_tx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
-| `agent_rx_requests_num` | `NIXL_TELEMETRY_TRANSFER` | Yes | No | No |
-| `agent_xfer_time` | `NIXL_TELEMETRY_PERFORMANCE` | Next Version | Yes, will be removed | No |
-| `agent_xfer_post_time` | `NIXL_TELEMETRY_PERFORMANCE` | Next Version | Yes, will be removed | No |
-| Backend-specific events | `NIXL_TELEMETRY_BACKEND` | - | Yes | Future | No |
-| Error status strings | `NIXL_TELEMETRY_ERROR` | No | No | No |
+| Event Name | Counter | Gauge | Histogram |
+| ---------- | ------- | ----- | --------- |
+| `agent_memory_registered` | Yes | Yes | No |
+| `agent_memory_deregistered` | Yes | Yes | No |
+| `agent_tx_bytes` | Yes | Yes | No |
+| `agent_rx_bytes` | Yes | Yes | No |
+| `agent_tx_requests_num` | Yes | No | No |
+| `agent_rx_requests_num` | Yes | No | No |
+| `agent_xfer_time` | Yes | Yes | Yes |
+| `agent_xfer_post_time` | Yes | Yes | Yes |
+| `agent_telemetry_events_dropped` | Yes | No | No |
+| Error event types (`agent_err_*`) | Yes | No | No |
 
 **Counter, Gauge, Histogram** - as implemented by the Prometheus exporter
-- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values.
-- **Gauge**: Shows the value per the last event (transaction). E.g agent_memory_registered represents the memory amount registered by the last operation (and not the total memory registered during instance lifetime). The value is updated per each event (request) and can grow or decrease.
-- **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details.
+
+- **Counter**: Instance lifetime count of the related value. Summed over the separate events' values. Counter metrics have suffix '_total'
+- Error events are exposed as one labeled counter: `agent_errors_total{status="..."}`. The `status` label is bounded by the fixed `AGENT_ERR_*` event set.
+- `agent_telemetry_events_dropped_total` is the cumulative count of telemetry events dropped at the producer-side staging queue (when the queue is full and an event cannot be enqueued for export). It does not count BUFFER cyclic-ring loss.
+- **Gauge**: Shows the value per the last event (transaction) and can grow or decrease as each event updates it. The byte gauges follow the `agent_<subject>_last_<unit>` convention (the `_last` qualifier precedes the unit, keeping it distinct from the cumulative `_total` counter of the same base name): `agent_tx_last_bytes` / `agent_rx_last_bytes` carry the byte size of the latest TX/RX request, while `agent_tx_bytes_total` / `agent_rx_bytes_total` carry the running total. The memory gauges follow the same convention -- `agent_memory_registered_last_bytes` / `agent_memory_deregistered_last_bytes` -- and report the byte size of the last (de)registration, distinct from the cumulative `agent_memory_registered_total` / `agent_memory_deregistered_total` counters. The transfer-time events likewise publish both a cumulative `_total` counter and a last-operation gauge (`agent_xfer_time` / `agent_xfer_post_time`).
+- **Histogram**: Counts the number of observations per pre-defined bins. Please see [Prometheus histograms documentation](https://prometheus.io/docs/practices/histograms/) for more details. The transfer-time events additionally publish latency-distribution histograms `agent_xfer_time_us` and `agent_xfer_post_time_us` (microseconds), exposed as the usual `_bucket{le="..."}` / `_sum` / `_count` series alongside the existing counter and gauge. Bucket boundaries default to a microsecond range covering ~10us..~10s and can be overridden (see below).
+
+### Histogram buckets
+
+The default bucket boundaries for the transfer-time histograms can be overridden with a comma-separated list of strictly-increasing positive microsecond upper bounds:
+
+```bash
+export NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US="10,100,1000,10000,100000"
+```
+
+An absent or empty value uses the built-in defaults. A non-empty but invalid value (non-numeric, non-positive, or not strictly increasing) is rejected and the exporter fails to initialize, rather than silently falling back to the defaults.
 
 ### Metric labels
 
 Each telemetry metrics is provided with the following labels:
-- Telemetry Category
+
 - Hostname where the agent runs
 - Agent name (as custom provided during initialization, can be deprecated in the next versions)
+- `status` (only on `agent_errors_total`): the error kind, bounded by the fixed `AGENT_ERR_*` event set

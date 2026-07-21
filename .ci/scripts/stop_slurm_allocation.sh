@@ -1,5 +1,18 @@
-#!/bin/bash
-set -xe
+#!/bin/bash -xe
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
@@ -11,6 +24,7 @@ Options:
 --slurm_job_id_file           File path to read SLURM job ID from
 --slurm_job_id                SLURM job ID (direct)
 --slurm_head_node             SLURM head node
+--slurm_head_user             SSH user for SLURM head node (optional, used with dlcluster)
 --workspace                   Workspace directory
 EOF
 exit 1
@@ -28,6 +42,9 @@ while getopts ":h-:" optchar; do
                     ;;
                 slurm_head_node=*)
                     slurm_head_node=${OPTARG#*=}
+                    ;;
+                slurm_head_user=*)
+                    slurm_head_user=${OPTARG#*=}
                     ;;
                 workspace=*)
                     workspace=${OPTARG#*=}
@@ -47,6 +64,7 @@ done
 slurm_job_id=${slurm_job_id:-${SLURM_JOB_ID}}
 slurm_job_id_file=${slurm_job_id_file:-${SLURM_JOB_ID_FILE}}
 slurm_head_node=${slurm_head_node:-${SLURM_HEAD_NODE}}
+slurm_head_user=${slurm_head_user:-${SLURM_HEAD_USER}}
 workspace=${workspace:-${WORKSPACE}}
 
 # Set default job ID file path if not specified
@@ -88,8 +106,17 @@ case "${slurm_head_node}" in
         echo "INFO: Executing scancel for job ${slurm_job_id}"
         scctl --raw-errors client connect -- "${SLURM_STOP_ALLOCATION_CMD}"
         ;;
+    dlcluster*)
+        echo "INFO: Using SSH to connect to ${slurm_head_node} to stop Slurm resources"
+        echo "INFO: Executing scancel for job ${slurm_job_id}"
+        # Construct SSH target with optional user
+        ssh_target="${slurm_head_node}"
+        [ -n "${slurm_head_user}" ] && ssh_target="${slurm_head_user}@${slurm_head_node}"
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${ssh_target}" "${SLURM_STOP_ALLOCATION_CMD}"
+        ;;
     *)
         echo "ERROR: Invalid SLURM_HEAD_NODE value: ${slurm_head_node}"
+        echo "Supported values: scctl, dlcluster, dlcluster.nvidia.com"
         exit 1
         ;;
 esac

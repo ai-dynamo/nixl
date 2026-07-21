@@ -72,6 +72,10 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
 
             void init(nixlBackendH* backend) {
                 m_params = { .backends = {backend} };
+                // Each testXfer call reuses the fixture's Agent and may call
+                // init() multiple times. Reset m_dlist so a second init() does
+                // not register the same memory range twice.
+                m_dlist.clear();
                 nixl::fillRegList(m_dlist, m_desc, m_data);
             }
 
@@ -103,6 +107,8 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
                                     nixl_xfer_dlist_t& rReq_descs,
                                     nixlXferReqH*& req_handle) const;
         nixl_status_t postXferReq(nixlXferReqH* req_handle) const;
+        nixl_status_t
+        releaseXferReq(nixlXferReqH *req_handle) const;
         nixl_status_t waitForCompletion(nixlXferReqH* req_handle);
         nixl_status_t waitForNotif(const std::string& expectedNotif);
         void fillData();
@@ -158,11 +164,17 @@ TestErrorHandling::Agent::init(const std::string &name,
                                const std::string &backend_name,
                                size_t num_workers,
                                size_t num_threads) {
-    m_priv    = std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    m_priv = std::make_unique<nixlAgent>(name, cfg);
     // At the moment, only UCX backend is tested for error handling support.
     m_backend = nixl::createUcxBackend(*m_priv, backend_name, num_workers, num_threads);
     m_mem.init(m_backend);
     m_mem.fillData();
+
+    // Ignore EFA hardware mismatch warning
+    const gtest::LogIgnoreGuard lig_efa_warn(
+        "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
 
     EXPECT_EQ(NIXL_SUCCESS, m_priv->registerMem(m_mem.m_dlist, &m_mem.m_params));
 }
@@ -197,8 +209,7 @@ TestErrorHandling::Agent::createXferReq(const nixl_xfer_op_t& op,
                                      nixl_xfer_dlist_t& rReq_descs,
                                      nixlXferReqH*& req_handle) const {
     nixl_opt_args_t extra_params = { .backends = {m_backend} };
-    extra_params.notifMsg        = "notification";
-    extra_params.hasNotif        = true;
+    extra_params.notif = "notification";
     return m_priv->createXferReq(op, sReq_descs, rReq_descs, m_MetaRemote,
                                  req_handle, &extra_params);
 }
@@ -206,6 +217,11 @@ TestErrorHandling::Agent::createXferReq(const nixl_xfer_op_t& op,
 nixl_status_t
 TestErrorHandling::Agent::postXferReq(nixlXferReqH *req_handle) const {
     return m_priv->postXferReq(req_handle);
+}
+
+nixl_status_t
+TestErrorHandling::Agent::releaseXferReq(nixlXferReqH *req_handle) const {
+    return m_priv->releaseXferReq(req_handle);
 }
 
 nixl_status_t
@@ -388,7 +404,11 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, size_t iter) {
     }
 
     if (isFailure<test_type>(iter) && (status == NIXL_ERR_REMOTE_DISCONNECT)) {
-        // failed handle destroyed on post
+        // postXferReq does not take ownership of the request on failure (it only
+        // invalidates the remote data), so release the handle here to avoid
+        // leaking it and its backend request handle. The caller only gets the
+        // status, so it cannot release it itself.
+        m_Initiator.releaseXferReq(req_handle);
         return status;
     }
 

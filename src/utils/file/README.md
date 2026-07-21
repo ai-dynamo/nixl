@@ -1,11 +1,15 @@
-# File Utils and QueryMem API Implementation
+# File Utils, QueryMem API, and Path-Mode Registration
 
-This directory contains the implementation of file utilities for NIXL file backends, such as using stat to check for file existence used for the QueryMem API.
+This directory contains shared C++ utilities for NIXL file-aware backends:
 
-## Overview
+- `file_utils.{h,cpp}`: `nixl::queryFileInfo()` / `queryFileInfoList()` helpers
+  for the QueryMem API (file existence + stat).
+- `file_path_mode.{h,cpp}`: `nixl::parsePathMeta()` parser and `nixlFilePathMD`
+  owned-fd RAII base for path-mode FILE_SEG registration; see
+  [Path-Mode File Registration](#path-mode-file-registration).
 
-The implementation provides utility functions for generic file operations, such as file query, implementented in `file_utils.h` and `file_utils.cpp`.
-The goal is to eliminate the need for intermediate layers, such as `file_query_helper`, and hence provide better separation of concerns.
+All file-aware plugins (POSIX, HF3FS, CUDA_GDS, GDS_MT) link
+`file_utils_interface` and consume both sets of helpers.
 
 ## QueryMem API Implementation through queryFileInfoList
 
@@ -76,3 +80,37 @@ Test files are provided:
 - Standard C++ libraries
 - POSIX system calls (`stat`, `open`, `close`)
 - NIXL common library for logging
+
+## Path-Mode File Registration
+
+Path-mode lets a caller declare a `FILE_SEG` descriptor by path in
+`nixlBlobDesc::metaInfo` instead of pre-opening an fd; the backend
+opens in `registerMem` and closes in `deregisterMem`. Motivation:
+collapse N Python `os.open()` GIL crossings into one.
+
+A `metaInfo` string is parsed as path-mode iff it matches:
+
+```text
+metaInfo := <modes>:<path>     # path-mode
+          | <anything else>    # fd-in-devId mode
+modes    := <access>[,<flag>]*
+access   := "ro"               # O_RDONLY
+          | "rw"               # O_RDWR
+flag     := "direct"           # | O_DIRECT
+          | "sync"             # | O_SYNC
+          | "noatime"          # | O_NOATIME
+          | "create"           # | O_CREAT (mode 0644)
+```
+
+Examples: `ro:/var/cache/x.bin`, `rw,direct:/var/cache/x.bin`,
+`rw,create:/var/cache/x.bin`. Unknown/missing tokens yield `nullopt`
+(fail-loud); the design is strictly additive: any non-matching
+`metaInfo` falls through to caller-owned fd in `devId`.
+
+Backends consume the shared helpers `nixl::parsePathMeta()` +
+`nixlFilePathMD` from `file_path_mode.{h,cpp}`. POSIX uses
+`nixlFilePathMD` directly; HF3FS / CUDA_GDS / GDS_MT extend their
+existing per-descriptor MD struct with `owned` (and close the fd in
+`deregisterMem` after the backend-specific teardown). The GDS per-fd
+caches key on the *opened* fd, so two path-mode registrations of the
+same path yield two cuFile handles (no path-level dedup).

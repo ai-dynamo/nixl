@@ -164,7 +164,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     // Generate bindings with minimal configuration
     let mut builder = bindgen::Builder::default()
         .header("wrapper.h")
-        .clang_arg("-std=c++17")
+        .clang_arg("-std=c++20")
         .clang_arg(format!("-I{}", nixl_include_path))
         .clang_arg("-I../../api/cpp")
         .clang_arg("-I../../infra")
@@ -226,7 +226,7 @@ fn build_stubs(cc_builder: &mut cc::Build) {
     // Generate bindings with minimal configuration
     bindgen::Builder::default()
         .header("wrapper.h")
-        .clang_arg("-std=c++17")
+        .clang_arg("-std=c++20")
         .clang_arg("-x")
         .clang_arg("c++")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
@@ -241,7 +241,7 @@ fn create_builder() -> cc::Build {
     builder
         .cpp(true)
         .compiler("g++")
-        .flag("-std=c++17")
+        .flag("-std=c++20")
         .flag("-fPIC")
         .flag("-Wno-unused-parameter")
         .flag("-Wno-unused-variable");

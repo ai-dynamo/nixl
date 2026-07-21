@@ -112,8 +112,8 @@ main() {
         const std::string addr = w[i].epAddr();
         assert(!addr.empty());
         auto result = w[!i].connect((void *)addr.data(), addr.size());
-        assert(result.ok());
-        ep[!i] = std::move(*result);
+        assert(result);
+        ep[!i] = std::move(result);
         assert(0 == c[i].memReg(buffer[i], buf_size, mem[i], nixl_mem_type));
         std::string rkey_tmp = c[i].packRkey(mem[i]);
         assert(!rkey_tmp.empty());

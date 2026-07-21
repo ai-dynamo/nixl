@@ -44,6 +44,7 @@
 
 // Forward declarations
 class nixlLibfabricEngine;
+class nixlLibfabricPostThreadPool;
 
 #ifdef HAVE_CUDA
 /** CUDA context management for libfabric backend */
@@ -113,11 +114,8 @@ private:
     size_t agent_index_; // Unique agent identifier in agent_names vector
     std::string remoteAgent_; // Remote agent name
     std::unordered_map<size_t, std::vector<fi_addr_t>>
-        rail_remote_addr_list_; // Data rail libfabric addresses. key=data rail id.
-    std::unordered_map<size_t, std::vector<fi_addr_t>>
-        control_rail_remote_addr_list_; // Control rail libfabric addresses. key=control rail id.
-    std::vector<char *> src_ep_names_; // Data rail endpoint names
-    std::vector<char *> control_ep_names_; // Control rail endpoint names
+        rail_remote_addr_list_; // Rail libfabric addresses. key=rail id.
+    std::vector<char *> src_ep_names_; // Rail endpoint names
     ConnectionState overall_state_; // Current connection state
     std::mutex conn_state_mutex_; // Protects connection state
     std::condition_variable cv_; // For blocking connection establishment
@@ -183,10 +181,15 @@ private:
     std::chrono::microseconds progress_thread_delay_;
 
     // Rail Manager - Stack allocated for better performance (mutable for const methods)
-    mutable nixlLibfabricRailManager rail_manager;
+    mutable nixlLibfabricRailManager rail_manager_;
 
     // Configurable striping threshold
     size_t striping_threshold_;
+
+    // Descriptor-posting thread pool configuration
+    size_t post_thread_count_;
+    size_t post_split_batch_size_;
+    std::unique_ptr<nixlLibfabricPostThreadPool> post_thread_pool_;
 
     mutable size_t total_transfer_size_;
 
@@ -201,7 +204,7 @@ private:
     std::thread cm_thread_;
     std::condition_variable cm_cv_;
 
-    // Progress thread for data rail CQs only
+    // Progress thread for rail CQs
     std::thread progress_thread_;
     std::atomic<bool> progress_thread_stop_;
 
@@ -209,7 +212,7 @@ private:
     mutable std::mutex connection_state_mutex_;
 
 
-    // System runtime type (set during initialization from rail_manager)
+    // System runtime type (set during initialization from rail_manager_)
     fi_hmem_iface runtime_;
 
     void
@@ -256,8 +259,7 @@ private:
     // Common connection creation helper
     nixl_status_t
     createAgentConnection(const std::string &agent_name,
-                          const std::vector<std::array<char, 56>> &data_rail_endpoints,
-                          const std::vector<std::array<char, 56>> &control_rail_endpoints);
+                          const std::vector<std::array<char, 56>> &data_rail_endpoints);
 
     // Private notification implementation with unified binary notification system
     nixl_status_t
@@ -278,11 +280,12 @@ private:
     // CUDA context management
     std::unique_ptr<nixlLibfabricCudaCtx> cudaCtx_;
     bool cuda_addr_wa_; // CUDA address workaround flag
+    mutable std::mutex cuda_ctx_mutex_; // Protects cudaCtx_ and cuda_addr_wa_.
 #endif
 
     void
     postShutdownCompletion();
-    // Progress thread for data rail CQs only
+    // Progress thread for rail CQs
     nixl_status_t
     progressThread();
 
@@ -295,6 +298,19 @@ private:
                        void *buffer,
                        std::shared_ptr<nixlLibfabricConnection> conn,
                        nixlBackendMD *&output);
+    void
+    initPostThreadPool();
+    nixl_status_t
+    postXferDescriptors(nixlLibfabricReq::OpType op_type,
+                        const nixl_meta_dlist_t &local,
+                        const nixl_meta_dlist_t &remote,
+                        const std::shared_ptr<nixlLibfabricConnection> &conn,
+                        nixlLibfabricBackendH *backend_handle,
+                        int start_idx,
+                        int end_idx,
+                        int desc_count,
+                        size_t xfer_base_offset,
+                        size_t &submitted_count) const;
 
 #ifdef HAVE_CUDA
     // CUDA context management methods

@@ -1,0 +1,146 @@
+# Nightly NIXL wheel verification build.
+# Reuses the per-PR wheel build path (build-container.sh + Dockerfile.manylinux)
+# and adds UCX wiring + a publish step. Driven by the nixl-ci-build-wheel-nightly
+# JJB job, which supplies NIXL_VERSION / UCX_VERSION and the nightly trigger.
+
+---
+job: nixl-ci-build-wheel-nightly
+
+failFast: false
+timeout_minutes: 240
+
+registry_host: artifactory.nvidia.com
+
+credentials:
+  - credentialsId: 'svc-nixl-new-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USER'
+    passwordVariable: 'ARTIFACTORY_TOKEN'
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  imagePullSecrets: "['artifactory-pull-secret']"
+  limits: '{memory: 24Gi, cpu: 16000m}'
+  requests: '{memory: 24Gi, cpu: 16000m}'
+
+# podman-in-container runner; build-container.sh runs docker/podman inside it
+runs_on_dockers:
+  - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+
+matrix:
+  axes:
+    manylinux:
+      - "2_28"
+    # All Python versions NIXL supports (pyproject requires-python >=3.10).
+    python_version:
+      - "3.10"
+      - "3.11"
+      - "3.12"
+      - "3.13"
+      - "3.14"
+    arch:
+      - x86_64
+      - aarch64
+
+env:
+  NPROC: 16
+  GRPC_NPROC: 10
+  WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
+  # SWX team's NIXL pypi repo (publish target).
+  WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
+  MAIL_FROM: "jenkins@nvidia.com"
+
+steps:
+  - name: Prepare
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    parallel: false
+    run: |
+      # Set up podman and log in to Artifactory (base image pull)
+      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
+      podman system reset -f || true
+      ln -sfT $(type -p podman) /usr/bin/docker
+      echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
+
+  - name: Build Wheel
+    parallel: false
+    run: |
+      # Resolve NIXL+UCX to shas (build against the exact UCX commit; reused by
+      # Publish for the per-source path). --tag pins the image so Publish extracts dist/.
+      set -x
+      git config --global --add safe.directory '*'
+      NIXL_SHA="$(git rev-parse --short=8 HEAD)"
+      if [[ "${UCX_VERSION}" =~ ^[a-f0-9]{8,40}$ ]]; then
+        UCX_SHA="${UCX_VERSION:0:8}"
+      else
+        # Resolve the ref to a commit; the ^{} peel (last line) handles annotated tags.
+        UCX_SHA="$(git ls-remote https://github.com/openucx/ucx.git "${UCX_VERSION}" "${UCX_VERSION}^{}" | tail -n1 | cut -c1-8)"
+      fi
+      [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot resolve UCX_VERSION=${UCX_VERSION}"; exit 1; }
+      printf 'NIXL_SHA=%s\nUCX_SHA=%s\n' "${NIXL_SHA}" "${UCX_SHA}" > wheel_build_ids.env
+      ./contrib/build-container.sh \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_TAG}" \
+        --wheel-base "manylinux_${manylinux}" \
+        --python-versions "${python_version}" \
+        --arch ${arch} \
+        --ucx-ref "${UCX_SHA}" \
+        --tag "${WHEEL_IMAGE_TAG}" \
+        --dockerfile contrib/Dockerfile.manylinux
+
+  - name: Publish
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    parallel: false
+    run: |
+      set -x
+      # Extract the wheels from the built image, then upload.
+      rm -rf dist && mkdir -p dist
+      cid=$(docker create "${WHEEL_IMAGE_TAG}")
+      docker cp "${cid}:/workspace/nixl/dist/." ./dist/
+      docker rm -f "${cid}" || true
+      ls -l dist/
+
+      # Per-source path (NIXL+UCX shas): same-source cu12/cu13 builds co-locate, so
+      # `pip install --find-links <path> "nixl[cuXX]"` resolves a matched set.
+      . ./wheel_build_ids.env
+      DEST="${WHEEL_REPO_URL}/verification/g${NIXL_SHA}.ucx${UCX_SHA}"
+
+      # curl-PUT (no python on the runner for twine); Artifactory indexes it as a
+      # pip repo. rc fails the step on any upload error; set +x hides the token.
+      set +x
+      rc=0
+      for whl in dist/nixl*.whl; do
+        curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+          -T "${whl}" "${DEST}/$(basename "${whl}")" || rc=1
+      done
+      exit $rc
+
+taskName: '${name}_${manylinux}/${arch}/python_${python_version}'
+
+# Email build result (success/failure) when MAIL_TO is set - notification for the
+# unattended nightly, mirroring nixl-ci-build-container.
+pipeline_stop:
+  shell: action
+  module: groovy
+  containerSelector: "{name: 'manylinux'}"
+  run: |
+    if (params.MAIL_TO) {
+        def jobStatus = currentBuild.result ?: 'SUCCESS'
+        def statusColor = jobStatus == 'SUCCESS' ? 'green' : 'red'
+        def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
+        mail(
+            from: env.MAIL_FROM,
+            to: params.MAIL_TO,
+            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
+            mimeType: 'text/html',
+            body: """
+                <p>Started by: <b>${userName}</b></p>
+                <p>Status: <span style="color: ${statusColor};"><b>${jobStatus}</b></span></p>
+                <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
+                <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+                <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
+                <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
+                <p>UCX Version: <b>${params.UCX_VERSION}</b></p>
+                <p>Base Image: <b>${params.BASE_IMAGE}:${params.BASE_TAG}</b></p>
+            """
+        )
+    }
