@@ -41,6 +41,20 @@ epCloseFlags(const nixl_b_params_t *custom_params) {
         UCP_EP_CLOSE_FLAG_FORCE :
         0;
 }
+
+[[nodiscard]] bool
+sglEnabledFromConfig() {
+    const bool enabled = nixl::config::getValueDefaulted("NIXL_UCX_SGL_ENABLE", false);
+#ifdef HAVE_UCX_SGL_API
+    NIXL_DEBUG << "UCX SGL offload " << (enabled ? "enabled" : "disabled");
+    return enabled;
+#else
+    if (enabled) {
+        NIXL_WARN << "NIXL_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL support";
+    }
+    return false;
+#endif
+}
 } // namespace
 
 // A transfer to a single endpoint posts at most three requests:
@@ -818,7 +832,8 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
     : nixlBackendEngine(&init_params),
-      sharedWorkerIndex_(1) {
+      sharedWorkerIndex_(1),
+      sglEnabled_(sglEnabledFromConfig()) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -846,17 +861,6 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
 
     const auto engine_config =
         nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
-
-    sglEnabled_ = nixl::config::getValueDefaulted("NIXL_UCX_SGL_ENABLE", false);
-#ifdef HAVE_UCX_SGL_API
-    NIXL_DEBUG << "UCX SGL offload " << (sglEnabled_ ? "enabled" : "disabled");
-#else
-    if (sglEnabled_) {
-        NIXL_WARN << "NIXL_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL "
-                     "support";
-        sglEnabled_ = false;
-    }
-#endif
 
     uc = std::make_unique<nixlUcxContext>(devs,
                                           init_params.enableProgTh,
