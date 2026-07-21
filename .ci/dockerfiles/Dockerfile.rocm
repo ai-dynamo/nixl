@@ -16,10 +16,7 @@
 #   DOCKER_BUILDKIT=1 docker build -f .ci/dockerfiles/Dockerfile.rocm \
 #       --build-arg ROCM_BASE_IMAGE=<rocm_base_tag> -t nixl-rocm .
 #
-# ROCM_BASE_IMAGE should point towards an image that has ROCm already installed.
-# Dockerfile.rocm.base may be used if a base image does not exist. Currently, this
-# base image must also have a source-able /etc/rocm-build.env file that contains the
-# installed ROCm version and install location.
+# Built on top of a public ROCm image (e.g. rocm/dev-ubuntu-24.04:7.14.0-full).
 #
 # ============================================================================
 # Dependency version refs (kept identical to build-rocm.sh; see mutability notes)
@@ -34,7 +31,7 @@
 # ============================================================================
 
 # ---- Global build args (must be re-declared inside each stage that uses them) ----
-ARG ROCM_BASE_IMAGE
+ARG ROCM_BASE_IMAGE=rocm/dev-ubuntu-24.04:7.14.0-full
 
 # Per-dep image indirection. Default = the in-graph stage name (self-contained mode).
 # Override to a published registry tag (e.g. reg/nixl-rocm-dep-grpc:v1.73.0) to consume
@@ -147,6 +144,7 @@ RUN apt-get -qq update && \
         pybind11-dev \
         python3-dev \
         python3-pip \
+        sudo \
         unzip \
         uuid-dev \
         wget \
@@ -183,16 +181,19 @@ RUN pip3 --no-cache-dir install --break-system-packages \
         typing-extensions \
         zmq
 
-# torch from the ROCm package repo (matches build-rocm.sh:165-174).
-# Currently targeting ROCm pre-releases newer than ROCm 7.2.
-RUN . /etc/rocm-build.env && \
-    ROCM_TORCH_VERSION="2.11.0" && \
-    ROCM_TORCH_INDEX_URL="${ROCM_WHL_INDEX_URL:-https://rocm.prereleases.amd.com/whl-multi-arch/}" && \
-    ROCM_TORCH_SUFFIX="${ROCM_TORCH_SUFFIX:-.0rc0}" && \
+# torch from the public ROCm wheel repo.
+# The wheel's local-version tag (+rocmX.Y.Z) is version-embedded, so we derive X.Y.Z from
+# the base image's ROCm install (/opt/rocm/core/.info/version, format "X.Y.Z-<build>").
+ARG TORCH_VERSION=2.11.0
+ARG TORCH_INDEX_URL=https://repo.amd.com/rocm/whl-multi-arch/
+RUN set -eux; \
+    ver_file=/opt/rocm/core/.info/version; \
+    [ -f "$ver_file" ] || { echo "ERROR: $ver_file not found; cannot derive ROCm version for torch" >&2; exit 1; }; \
+    rocm_ver="$(cut -d- -f1 "$ver_file")"; \
     pip3 --no-cache-dir install --break-system-packages \
         --cert /etc/ssl/certs/ca-certificates.crt \
-        --index-url "${ROCM_TORCH_INDEX_URL}" \
-        "torch==${ROCM_TORCH_VERSION}+rocm${ROCM_MAJOR}.${ROCM_MINOR}${ROCM_TORCH_SUFFIX}"
+        --index-url "${TORCH_INDEX_URL}" \
+        "torch==${TORCH_VERSION}+rocm${rocm_ver}"
 
 # RDMA packages (ROCm has no DOCA; install the default verbs/rdma stack).
 RUN apt-get -qq update && \
@@ -468,8 +469,7 @@ RUN set -eux; \
 FROM ${BUILDER_BASE_IMAGE} AS ucx-build
 ARG NIXL_INSTALL_DIR=/opt/nixl
 ARG UCX_VERSION=v1.21.x
-RUN . /etc/rocm-build.env; \
-    set -eux; \
+RUN set -eux; \
     NPROC=$(nproc); \
     UCX_INSTALL_DIR="${NIXL_INSTALL_DIR}"; \
     cd /tmp; \
@@ -484,7 +484,7 @@ RUN . /etc/rocm-build.env; \
         --enable-optimizations \
         --enable-cma \
         --enable-devel-headers \
-        --with-rocm="${ROCM_INSTALL_PATH}" \
+        --with-rocm="${ROCM_PATH}/core" \
         --with-verbs \
         --with-dm \
         --without-gdrcopy; \
@@ -534,11 +534,10 @@ FROM ${TOOLCHAIN_IMAGE} AS toolchain-src
 # environment base against which NIXL/nixlbench are built later (build-rocm.sh run with
 # PRE_INSTALLED_ENV=1 PRE_INSTALLED_UCX_ENV=1 from a mounted source tree).
 #
-# Base is `builder-base`, NOT bare rocm.base: build-rocm.sh's env expects the full
-# apt/pip/torch toolchain present, so reusing builder-base here (a) keeps build==runtime
-# parity, (b) gives Mooncake's runtime apt libs for free (no fragile hand-picked -lib
-# package names), and (c) means a later MOONCAKE/AZURE/GUSLI-enabled NIXL build finds
-# the -dev headers.
+# Reusing `builder-base` (a) keeps build==runtime parity for build-rocm.sh, which
+# expects the full apt/pip/torch toolchain present, (b) gives Mooncake's runtime apt
+# libs for free (no fragile hand-picked -lib package names), and (c) means a later
+# MOONCAKE/AZURE/GUSLI-enabled NIXL build finds the -dev headers.
 #
 # COPY every dep's /out (merge-copy: each /out holds only that dep's files, so
 # overlapping /opt/nixl/lib & /usr/local/lib merge, not clobber), relocate the
