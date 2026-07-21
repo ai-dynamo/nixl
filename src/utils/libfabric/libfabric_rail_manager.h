@@ -236,6 +236,7 @@ public:
     /** Control message types for rail communication */
     enum class ControlMessageType : int {
         NOTIFICATION, ///< User notification message
+        HANDSHAKE, ///< Peer-idx assignment (NIXL_LIBFABRIC_MSG_HANDSHAKE)
     };
     /** Send control message via control rail
      * @param msg_type Type of control message
