@@ -33,8 +33,9 @@ import torch
 from nixl_ep.buffer import DEFAULT_TIMEOUT_MS
 from plan import Plan
 
-# Add tests directory to path to import shared utils package
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Prepend the tests directory to path to import shared utils package
+# (so the local `utils` package shadows any system-wide package with the same name)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils import rank_server, store_group  # noqa: E402
 from utils.utils import (  # noqa: E402

@@ -18,13 +18,13 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional
 
 import nixl_ep
 import torch
 
-# Add tests directory to path to import shared utils package
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Prepend the tests directory to path to import shared utils package
+# (so the local `utils` package shadows any system-wide package with the same name)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils import rank_server, store_group  # noqa: E402
 from utils.utils import (  # noqa: E402
@@ -40,8 +40,6 @@ RANK_SERVER_PORT = 10000
 
 # Delay between disconnect and reconnect of same ranks (MD invalidation race)
 MD_INVALIDATION_DELAY = 5
-
-CYCLE_OPS = ("init", "connect", "disconnect", "reconnect", "destroy")
 
 
 @dataclass
@@ -81,27 +79,6 @@ def bench_init(cfg: BufferConfig, buf_out: list):
     with CudaTimer() as t:
         buf_out[0] = create_buffer(cfg)
     return t.elapsed_s
-
-
-def measure_single_op_iters(
-    warmup: int,
-    iters: int,
-    barrier_fn: Callable,
-    bench_fn: Callable,
-    setup_fn: Optional[Callable] = None,
-    teardown_fn: Optional[Callable] = None,
-):
-    latencies = []
-    for i in range(warmup + iters):
-        if setup_fn:
-            setup_fn()
-        barrier_fn()
-        elapsed = bench_fn()
-        if i >= warmup:
-            latencies.append(elapsed)
-        if teardown_fn:
-            teardown_fn()
-    return latencies
 
 
 def run_cycle(cfg: BufferConfig, other_ranks: list, warmup: int, iters: int):
@@ -150,100 +127,8 @@ def run_cycle(cfg: BufferConfig, other_ranks: list, warmup: int, iters: int):
     return {op_name: stats(times) for op_name, times in results.items()}
 
 
-def run_single_op(
-    mode: str, cfg: BufferConfig, other_ranks: list, warmup: int, iters: int
-):
-    def barrier():
-        tcp_store_barrier(cfg.tcp_store, cfg.rank, cfg.num_ranks)
-
-    latencies = []
-
-    if mode == "init":
-        buf: list = [None]
-
-        latencies = measure_single_op_iters(
-            warmup,
-            iters,
-            barrier,
-            bench_fn=lambda: bench_init(cfg, buf),
-            teardown_fn=lambda: buf[0].destroy(),
-        )
-
-    elif mode == "connect":
-        buf = [None]
-
-        def setup():
-            buf[0] = create_buffer(cfg)
-
-        latencies = measure_single_op_iters(
-            warmup,
-            iters,
-            barrier,
-            bench_fn=lambda: timed_op(
-                lambda: buf[0].connect_ranks(other_ranks), guard=other_ranks
-            ),
-            setup_fn=setup,
-            teardown_fn=lambda: buf[0].destroy(),
-        )
-
-    elif mode == "disconnect":
-        buffer = create_buffer(cfg)
-        latencies = measure_single_op_iters(
-            warmup,
-            iters,
-            barrier,
-            bench_fn=lambda: timed_op(
-                lambda: buffer.disconnect_ranks(other_ranks), guard=other_ranks
-            ),
-            setup_fn=lambda: buffer.connect_ranks(other_ranks) if other_ranks else None,
-            teardown_fn=lambda: time.sleep(MD_INVALIDATION_DELAY),
-        )
-        buffer.destroy()
-
-    elif mode == "reconnect":
-        buffer = create_buffer(cfg)
-        if other_ranks:
-            buffer.connect_ranks(other_ranks)
-
-        def reconnect_setup():
-            if other_ranks:
-                buffer.disconnect_ranks(other_ranks)
-            time.sleep(MD_INVALIDATION_DELAY)
-
-        latencies = measure_single_op_iters(
-            warmup,
-            iters,
-            barrier,
-            bench_fn=lambda: timed_op(
-                lambda: buffer.connect_ranks(other_ranks), guard=other_ranks
-            ),
-            setup_fn=reconnect_setup,
-        )
-        buffer.destroy()
-
-    elif mode == "destroy":
-        buf = [None]
-
-        def destroy_setup():
-            buf[0] = create_buffer(cfg)
-            if other_ranks:
-                buf[0].connect_ranks(other_ranks)
-
-        latencies = measure_single_op_iters(
-            warmup,
-            iters,
-            barrier,
-            bench_fn=lambda: timed_op(buf[0].destroy),
-            setup_fn=destroy_setup,
-        )
-
-    return {mode: stats(latencies)}
-
-
 def report_results(
     results: dict,
-    mode: str,
-    is_cycle: bool,
     global_rank: int,
     local_rank: int,
     tcp_store,
@@ -251,7 +136,7 @@ def report_results(
 ):
     ops = list(results.keys())
 
-    print(f"[rank {global_rank}] mode={mode}:", flush=True)
+    print(f"[rank {global_rank}] control-plane cycle:", flush=True)
     for op in ops:
         avg_t, min_t, max_t = results[op]
         print(
@@ -261,12 +146,11 @@ def report_results(
             f"max_t={max_t * 1e3:.2f} ms",
             flush=True,
         )
-    if is_cycle:
-        total_avg = sum(v[0] for v in results.values())
-        print(
-            f"[rank {global_rank}]   {'total':12s}: " f"avg_t={total_avg * 1e3:.2f} ms",
-            flush=True,
-        )
+    total_avg = sum(v[0] for v in results.values())
+    print(
+        f"[rank {global_rank}]   {'total':12s}: avg_t={total_avg * 1e3:.2f} ms",
+        flush=True,
+    )
 
     for op in ops:
         tcp_store.set(f"result/{global_rank}/{op}", str(results[op][0]))
@@ -283,11 +167,10 @@ def report_results(
             cross_avg = sum(vals) / len(vals)
             cross_total += cross_avg
             print(f"  {op:12s}: avg_t={cross_avg * 1e3:.2f} ms", flush=True)
-        if is_cycle:
-            print(
-                f"  {'total':12s}: avg_t={cross_total * 1e3:.2f} ms",
-                flush=True,
-            )
+        print(
+            f"  {'total':12s}: avg_t={cross_total * 1e3:.2f} ms",
+            flush=True,
+        )
 
 
 def worker(torch_rank: int, args: argparse.Namespace):
@@ -337,16 +220,9 @@ def worker(torch_rank: int, args: argparse.Namespace):
         "iters": args.iters,
     }
 
-    is_cycle = args.mode == "cycle"
+    results = run_cycle(**common_kwargs)
 
-    if is_cycle:
-        results = run_cycle(**common_kwargs)
-    else:
-        results = run_single_op(mode=args.mode, **common_kwargs)
-
-    report_results(
-        results, args.mode, is_cycle, global_rank, local_rank, tcp_store, num_ranks
-    )
+    report_results(results, global_rank, local_rank, tcp_store, num_ranks)
 
 
 def run_server():
@@ -356,13 +232,6 @@ def run_server():
 
 def main():
     parser = argparse.ArgumentParser(description="Control Plane Latency Test")
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default="cycle",
-        choices=["cycle", *CYCLE_OPS],
-        help="Operation to benchmark (default: cycle)",
-    )
     parser.add_argument(
         "--num-processes",
         type=int,
