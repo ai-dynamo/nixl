@@ -39,7 +39,7 @@ public:
             size_t end_idx);
 
     [[nodiscard]] size_t
-    count() const noexcept {
+    size() const noexcept {
         return localAddrs_.size();
     }
 

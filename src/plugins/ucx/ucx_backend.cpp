@@ -1266,7 +1266,7 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
     int_handle->reserve(single_ep_request_count);
 
     nixlUcxReq req;
-    const nixl_status_t post_ret = ep->postSgl(local_sgl, remote_sgl, sgl.count(), req);
+    const nixl_status_t post_ret = ep->postSgl(local_sgl, remote_sgl, sgl.size(), req);
     if (int_handle->append(post_ret, req, conn) != NIXL_SUCCESS) {
         return post_ret;
     }
