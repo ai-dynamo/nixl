@@ -41,7 +41,7 @@ ${ENROOT_MOUNT_PATH}/<containerName>.sqsh
 
 `containerName` is `nixl-ci-${BUILD_NUMBER}`, so:
 
-```
+```text
 /enroot_images/nixl-ci-<BUILD_NUMBER>.sqsh
 ```
 

@@ -14,7 +14,7 @@ exportEnroot: export 'nixl-ci-<BUILD_NUMBER>' -> <path>
 
 Files follow this naming convention (the sqsh is named after the container):
 
-```
+```text
 /enroot_images/nixl-ci-<BUILD_NUMBER>.sqsh
 ```
 
