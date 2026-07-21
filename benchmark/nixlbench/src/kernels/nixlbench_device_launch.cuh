@@ -55,7 +55,7 @@ struct nixlbenchDeviceXferParams {
  * @param params        Transfer parameters (handles, counts, size).
  * @param block_threads CUDA block dimension in the x direction.
  * @return NIXL_SUCCESS if the kernel launches and synchronizes without CUDA runtime errors;
- *         NIXL_ERR_INVALID_PARAM for invalid @a block_threads;
+ *         NIXL_ERR_INVALID_PARAM for invalid parameters;
  *         NIXL_ERR_BACKEND for CUDA launch or synchronization failures.
  *         Device transfer failures are reported separately through the remote error counter.
  */

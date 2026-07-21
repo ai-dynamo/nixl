@@ -227,6 +227,7 @@ elif nvshmem_available
     message('UCX GPU Device API is unavailable because the NVSHMEM build path is enabled.')
 else
     add_languages('cuda', native: false)
+    add_project_arguments('-std=c++20', language: 'cuda')
     cuda = meson.get_compiler('cuda')
     if not cuda.version().version_compare('>=12.8')
         message(
