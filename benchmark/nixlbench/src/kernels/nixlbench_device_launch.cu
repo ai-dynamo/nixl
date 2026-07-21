@@ -20,7 +20,7 @@
 
 namespace {
 
-constexpr unsigned kWarpSize = 32;  // Assumed equal to device warpSize (CUDA guarantee);
+constexpr unsigned kWarpSize = 32; // Assumed equal to device warpSize (CUDA guarantee);
 
 template<nixl_gpu_level_t Level>
 __device__ nixl_status_t
@@ -93,10 +93,10 @@ __global__ void
 nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
     unsigned group_id, num_groups;
     if constexpr (Level == nixl_gpu_level_t::THREAD) {
-        group_id   = threadIdx.x;
+        group_id = threadIdx.x;
         num_groups = blockDim.x;
-    } else {    // CUDA warpSize == kWarpSize == 32
-        group_id   = threadIdx.x / warpSize;
+    } else { // CUDA warpSize == kWarpSize == 32
+        group_id = threadIdx.x / warpSize;
         num_groups = (blockDim.x + warpSize - 1) / warpSize;
     }
 
