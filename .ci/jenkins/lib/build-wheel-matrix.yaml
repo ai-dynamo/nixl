@@ -88,7 +88,7 @@ runs_on_dockers:
       file: 'contrib/Dockerfile.manylinux',
       name: "${WHEEL_BASE_IMAGE_NAME}",
       tag: "${CI_IMAGE_TAG}",
-      build_args: '--build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${BASE_TAG} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
+      build_args: '--build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${BASE_TAG} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --build-arg CUDA_VERSION=${CUDA_VERSION} --build-arg MANYLINUX_VERSION=${MANYLINUX_VERSION} --target wheel_base'
     }
 
 # =============================================================================
@@ -116,10 +116,19 @@ matrix:
 env:
   NPROC: 32
   GRPC_NPROC: 10
-  BASE_IMAGE: "${registry_host}/sw-nbu-swx-nixl-docker-local/base/cuda"
-  BASE_TAG: '13.0-devel-manylinux--25.09'
-  # CI image tag for wheel_base + build_helper + the sanity base images
-  # (auto-derived by cidemo-init.sh — the "CI_MANAGED" placeholder must not be hand-edited)
+  # Option B base: wheel_base builds on the public PyPA manylinux_2_28 image and
+  # COPYs CUDA from an el8/ubi8 NGC CUDA *devel* image (BASE_IMAGE:BASE_TAG).
+  # REACHABILITY: the blossom runner must be able to pull nvcr.io (and quay.io for
+  # the manylinux base). If it cannot, repoint BASE_IMAGE at the Artifactory ubi8
+  # mirror that svc-nixl-new-artifactory-token can pull, keeping the same ubi8 tag.
+  BASE_IMAGE: "nvcr.io/nvidia/cuda"
+  BASE_TAG: '13.0.1-devel-ubi8'
+  # CUDA MAJOR.MINOR — drives the torch cuXXX index + cu12/cu13 meta-wheel split.
+  CUDA_VERSION: "13.0"
+  # Pin the PyPA manylinux release so the toolchain is reproducible.
+  MANYLINUX_VERSION: "2026.06.06-1"
+  # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
+  # the "CI_MANAGED" placeholder must not be hand-edited.
   CI_IMAGE_TAG: "CI_MANAGED"
   WHL_BASE: "manylinux_2_28"
   TORCH_VERSIONS: "2.13"
@@ -158,6 +167,7 @@ steps:
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
+        --cuda-version "${CUDA_VERSION}" \
         --wheel-base "${WHL_BASE}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
