@@ -22,7 +22,9 @@
 
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDADataType.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -65,6 +67,21 @@ uint64_t milliseconds_to_cycles(uint64_t milliseconds, int device_clock_rate_khz
     return milliseconds * static_cast<uint64_t>(device_clock_rate_khz);
 }
 
+uint32_t parse_positive_env(const char *name, uint32_t default_value) {
+    const char *raw = std::getenv(name);
+    if (raw == nullptr) {
+        return default_value;
+    }
+
+    uint32_t value = 0;
+    const char *end = raw + std::char_traits<char>::length(raw);
+    const auto result = std::from_chars(raw, end, value);
+    if (result.ec != std::errc{} || result.ptr != end || value == 0) {
+        throw std::runtime_error(std::string("Invalid positive integer for ") + name + ": " + raw);
+    }
+    return value;
+}
+
 } // namespace
 
 void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes)
@@ -86,6 +103,40 @@ Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int tim
         rank(rank),
         explicitly_destroy(explicitly_destroy),
         comm_stream(at::cuda::getStreamFromPool(true)) {}
+
+void Buffer::_publish_proxy_context() {
+#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
+    void *proxy_context = nixl_agent_info->agent->getProxyDeviceContext();
+    if (proxy_context == nullptr) {
+        return;
+    }
+
+    c10::cuda::CUDAGuard device_guard(device_id);
+    proxy_context_owner_id = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this));
+    const cudaError_t status = publish_proxy_context(proxy_context, proxy_context_owner_id);
+    if (status != cudaSuccess) {
+        throw std::runtime_error(std::string("Failed to publish NIXL EP proxy context: ") +
+                                 cudaGetErrorString(status));
+    }
+    proxy_context_published = true;
+#endif
+}
+
+void Buffer::_clear_proxy_context() {
+#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
+    if (!proxy_context_published) {
+        return;
+    }
+
+    c10::cuda::CUDAGuard device_guard(device_id);
+    const cudaError_t status = clear_proxy_context(proxy_context_owner_id);
+    if (status != cudaSuccess) {
+        throw std::runtime_error(std::string("Failed to clear NIXL EP proxy context: ") +
+                                 cudaGetErrorString(status));
+    }
+    proxy_context_published = false;
+#endif
+}
 
 bool Buffer::_is_rank_connected(int rank_id) const {
     return rank_id == rank or std::find(remote_ranks.begin(), remote_ranks.end(), rank_id) != remote_ranks.end();
@@ -226,6 +277,7 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     _nixl_agent_init();
 
     _nixl_ep_init();
+    _publish_proxy_context();
 }
 
 Buffer::~Buffer() noexcept {
@@ -295,9 +347,19 @@ void Buffer::destroy() {
     if (destroyed) {
         return;
     }
+    if (device_id < 0) {
+        destroyed = true;
+        available = false;
+        return;
+    }
+
+    c10::cuda::CUDAGuard device_guard(device_id);
 
     // Synchronize
     warn_cuda(cudaDeviceSynchronize(), "synchronize device");
+
+    // The module-local symbol must be cleared while its runtime is still alive.
+    _clear_proxy_context();
 
     _nixl_ep_destroy();
 
@@ -1390,9 +1452,25 @@ void Buffer::_nixl_ep_destroy(void) {
 void Buffer::_nixl_agent_init() {
     std::string agent_name = std::to_string(rank);
     nixlAgentConfig cfg;
+
+#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
+    const uint32_t proxy_channels = parse_positive_env("NIXL_EP_PROXY_CHANNELS", 4);
+    const uint32_t proxy_workers =
+        parse_positive_env("NIXL_EP_PROXY_WORKER_COUNT", proxy_channels);
+#else
+    constexpr uint32_t proxy_channels = 1;
+    constexpr uint32_t proxy_workers = 1;
+#endif
+
     cfg.useProgThread = true;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     cfg.etcdWatchTimeout = NIXL_ETCD_WATCH_TIMEOUT;
+#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
+    cfg.enableDeviceProxy = true;
+    cfg.proxyPeerCapacity = static_cast<uint32_t>(max_num_ranks);
+    cfg.proxyChannelCount = proxy_channels;
+    cfg.proxyWorkerCount = proxy_workers;
+#endif
     auto agent = std::make_shared<nixlAgent>(agent_name, cfg);
 
     // Create UCX backend
@@ -1405,11 +1483,18 @@ void Buffer::_nixl_agent_init() {
                                 ", status: " + std::to_string(status));
     }
 
+#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
+    init_params["ucx_num_device_channels"] = "1";
+    init_params["num_workers"] = std::to_string(proxy_channels);
+    // Peer error handling is incompatible with the host proxy path, otherwise host AMO fail.
+    init_params["ucx_error_handling_mode"] = "none";
+#else
     const char* num_channels_env = std::getenv("NIXL_EP_NUM_CHANNELS");
     init_params["ucx_num_device_channels"] = num_channels_env ? num_channels_env : "4";
+    init_params["num_workers"] = std::to_string(1);
     init_params["ucx_error_handling_mode"] = "peer";
     init_params["ucx_ep_close_force"] = "yes";
-    init_params["num_workers"] = std::to_string(1);
+#endif
 
     nixlBackendH* ucx_backend = nullptr;
     status = agent->createBackend("UCX", init_params, ucx_backend);

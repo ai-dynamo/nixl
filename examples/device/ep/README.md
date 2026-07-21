@@ -43,6 +43,22 @@ buffer.disconnect_ranks(ranks)
 - `connect_ranks(remote_ranks, activate=True)`: Establish NIXL connections to new peers (can be called multiple times); in low-latency mode, use `activate=False` to keep new peers masked until explicitly unmasked.
 - `disconnect_ranks(remote_ranks)`: Clean up connections to departing peers
 
+## CPU Proxy Configuration
+
+When built with `-Dgpu_device_api_backend=proxy`:
+
+- `NIXL_EP_PROXY_CHANNELS` is the exact logical channel count per peer (default `4`).
+- `NIXL_EP_PROXY_WORKER_COUNT` is the requested CPU proxy-worker count (default:
+  the configured channel count). The runtime clamps it to the channel count.
+- Logical channel `i` maps to UCX worker `i`; UCX `num_workers` therefore equals
+  `NIXL_EP_PROXY_CHANNELS`.
+- UCX device channels are set to `1` for the host-posting proxy path.
+
+Both variables must be positive integers. There is no inferred channel ceiling,
+and `update_memory_buffers()` has no proxy-channel parameter. Remote proxy views
+always contain exactly `num_ranks` global-rank slots; each slot is either null or
+the agent named by that numeric global rank.
+
 ## Testing
 
 The elastic test suite in `tests/elastic/` validates dynamic scaling capabilities:

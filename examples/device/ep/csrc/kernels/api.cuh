@@ -30,6 +30,11 @@
 
 namespace nixl_ep {
 
+cudaError_t
+publish_proxy_context(void *context, uint64_t owner_id);
+cudaError_t
+clear_proxy_context(uint64_t owner_id);
+
 namespace intranode {
 
 void barrier(int** barrier_signal_ptrs, int rank, int num_nvl_ranks, uint64_t timeout_cycles, cudaStream_t stream);
