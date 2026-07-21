@@ -16,6 +16,7 @@
  */
 
 #include "ucx_backend.h"
+#include "ucx_sgl.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/backend.h"
@@ -91,83 +92,7 @@ public:
     std::optional<Notif> notif;
 
 #ifdef HAVE_UCX_SGL_API
-    class sglXfer {
-    public:
-        sglXfer(const nixl_meta_dlist_t &local,
-                const nixl_meta_dlist_t &remote,
-                size_t worker_id,
-                size_t start_idx,
-                size_t end_idx) {
-            const size_t count = end_idx - start_idx;
-            resize(count);
-            conn_ = static_cast<nixlUcxPublicMetadata *>(remote[start_idx].metadataP)->conn;
-
-            for (size_t i = start_idx; i < end_idx; ++i) {
-                const size_t out = i - start_idx;
-                const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
-                const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
-                NIXL_ASSERT(local[i].len == remote[i].len);
-                NIXL_ASSERT(rmd->conn == conn_);
-
-                localAddrs_[out] = reinterpret_cast<void *>(local[i].addr);
-                remoteAddrs_[out] = static_cast<uint64_t>(remote[i].addr);
-                lengths_[out] = local[i].len;
-                memhs_[out] = lmd->getMem().getMemh();
-                rkeys_[out] = rmd->getRkey(worker_id).get();
-            }
-        }
-
-        [[nodiscard]] size_t
-        count() const noexcept {
-            return localAddrs_.size();
-        }
-
-        [[nodiscard]] const ucx_connection_ptr_t &
-        conn() const noexcept {
-            return conn_;
-        }
-
-        [[nodiscard]] ucp_dt_local_sgl_t
-        localView() const noexcept {
-            return {
-                .field_mask = UCP_DT_LOCAL_SGL_FIELD_BUFFERS | UCP_DT_LOCAL_SGL_FIELD_LENGTHS |
-                    UCP_DT_LOCAL_SGL_FIELD_MEMHS,
-                .buffers = localAddrs_.data(),
-                .lengths = lengths_.data(),
-                .memhs = memhs_.data(),
-            };
-        }
-
-        [[nodiscard]] ucp_dt_remote_sgl_t
-        remoteView() const noexcept {
-            return {
-                .field_mask = UCP_DT_REMOTE_SGL_FIELD_REMOTE_ADDRS |
-                    UCP_DT_REMOTE_SGL_FIELD_LENGTHS | UCP_DT_REMOTE_SGL_FIELD_RKEYS,
-                .remote_addrs = remoteAddrs_.data(),
-                .lengths = lengths_.data(),
-                .rkeys = rkeys_.data(),
-            };
-        }
-
-    private:
-        void
-        resize(size_t count) {
-            localAddrs_.resize(count);
-            remoteAddrs_.resize(count);
-            lengths_.resize(count);
-            memhs_.resize(count);
-            rkeys_.resize(count);
-        }
-
-        std::vector<void *> localAddrs_;
-        std::vector<uint64_t> remoteAddrs_;
-        std::vector<size_t> lengths_;
-        std::vector<ucp_mem_h> memhs_;
-        std::vector<ucp_rkey_h> rkeys_;
-        ucx_connection_ptr_t conn_;
-    };
-
-    std::optional<sglXfer> sgl;
+    std::optional<nixl::ucx::sglXfer> sgl;
 #endif
 
     nixlUcxBackendReqH(nixlUcxWorker *worker, size_t worker_id)
