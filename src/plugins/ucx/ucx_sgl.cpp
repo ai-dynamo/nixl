@@ -28,6 +28,7 @@ sglXfer::sglXfer(const nixl_meta_dlist_t &local,
                  size_t worker_id,
                  size_t start_idx,
                  size_t end_idx) {
+    NIXL_ASSERT(end_idx > start_idx);
     const size_t count = end_idx - start_idx;
     resize(count);
     conn_ = static_cast<nixlUcxPublicMetadata *>(remote[start_idx].metadataP)->conn;
