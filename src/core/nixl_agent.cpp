@@ -379,6 +379,7 @@ nixlAgentData::createProxyRuntime(nixlBackendEngine *engine,
     proxyRuntime = std::make_unique<nixlProxyRuntime>();
 
     status = proxyRuntime->init(std::move(proxy_adapter),
+                                config_.proxyPeerCapacity,
                                 config_.proxyChannelCount,
                                 config_.proxyWorkerCount,
                                 config_.pthrDelay);
@@ -396,8 +397,8 @@ nixlAgentData::createProxyRuntime(nixlBackendEngine *engine,
 
     proxyTransportEngine = engine;
     NIXL_INFO << "Enabled device proxy runtime for backend '" << backend << "' with "
-              << config_.proxyWorkerCount << " worker(s) and " << config_.proxyChannelCount
-              << " channel(s)";
+              << proxyRuntime->workerCount() << " worker(s), " << config_.proxyPeerCapacity
+              << " peer slots, and " << config_.proxyChannelCount << " channel(s) per peer";
     return NIXL_SUCCESS;
 }
 

@@ -36,6 +36,7 @@ struct nixlAgentConfig {
     static constexpr bool kDefaultEnableDeviceProxy = false;
     static constexpr uint32_t kDefaultProxyWorkerCount = 1;
     static constexpr uint32_t kDefaultProxyChannelCount = 1;
+    static constexpr uint32_t kDefaultProxyPeerCapacity = 256;
     static constexpr uint64_t kDefaultPthrDelayUs = 0;
     static constexpr uint64_t kDefaultLthrDelayUs = 100000;
     static constexpr std::chrono::microseconds kDefaultEtcdWatchTimeout =
@@ -55,17 +56,22 @@ struct nixlAgentConfig {
     bool enableDeviceProxy = kDefaultEnableDeviceProxy;
     /**
      * @var Desired number of proxy workers per proxy runtime.
-     *      The UCX proxy backend currently shares a nixlUcxEngine across proxy
-     *      workers; keep this at 1 unless the backend has been validated for
-     *      concurrent postXfer calls.
+     *      The runtime clamps this to proxyChannelCount.
+     *      Worker i owns logical channels where channel_id % effective_worker_count == i
+     *      across every peer.
      */
     uint32_t proxyWorkerCount = kDefaultProxyWorkerCount;
     /**
-     * @var Desired number of proxy channels per proxy runtime.
-     *      Channels may exceed workers; this is the supported way to expose
-     *      multiple GPU submission queues while using one proxy worker.
+     * @var Number of logical proxy channels (lanes) available to each destination peer.
+     *      This must match the number of workers exposed by a backend whose channels map
+     *      directly to backend workers, such as UCX.
      */
     uint32_t proxyChannelCount = kDefaultProxyChannelCount;
+    /**
+     * @var Maximum number of destination peer slots addressable by the proxy runtime.
+     *      Ring resources for a slot are allocated lazily when its rank is first connected.
+     */
+    uint32_t proxyPeerCapacity = kDefaultProxyPeerCapacity;
 
     /**
      * @var Progress thread event waiting timeout.
@@ -115,7 +121,8 @@ struct nixlAgentConfig {
         bool enable_device_proxy = kDefaultEnableDeviceProxy,
         uint32_t proxy_worker_count = kDefaultProxyWorkerCount,
         uint32_t proxy_channel_count = kDefaultProxyChannelCount,
-        std::chrono::microseconds etcd_watch_timeout = kDefaultEtcdWatchTimeout) noexcept
+        std::chrono::microseconds etcd_watch_timeout = kDefaultEtcdWatchTimeout,
+        uint32_t proxy_peer_capacity = kDefaultProxyPeerCapacity) noexcept
         : useProgThread(use_prog_thread),
           useListenThread(use_listen_thread),
           listenPort(port),
@@ -124,6 +131,7 @@ struct nixlAgentConfig {
           enableDeviceProxy(enable_device_proxy),
           proxyWorkerCount(proxy_worker_count),
           proxyChannelCount(proxy_channel_count),
+          proxyPeerCapacity(proxy_peer_capacity),
           pthrDelay(pthr_delay_us),
           lthrDelay(lthr_delay_us),
           etcdWatchTimeout(etcd_watch_timeout) {}

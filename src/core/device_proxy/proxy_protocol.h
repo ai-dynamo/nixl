@@ -75,12 +75,18 @@ struct nixlProxyChannelView {
     nixlProxyWorkRing *work_ring = nullptr;
     /** Mapped pinned host memory (device alias); host writes via host pointer with atomics. */
     nixlProxyCompletionSlot *completion_slot = nullptr;
+    uint32_t peer_index = 0;
+    /** Logical channel (lane) within peer_index. */
     uint32_t channel_id = 0;
 };
 
 struct nixlProxyDeviceContextData {
+    /** Row-major [peer_capacity][num_channels] matrix of channel views. */
     nixlProxyChannelView *channels = nullptr;
+    uint32_t peer_capacity = 0;
+    /** Number of logical channels (lanes) per destination peer. */
     uint32_t num_channels = 0;
+    /** Runtime-wide shutdown signal shared by every peer and channel. */
     uint32_t *shutdown_word = nullptr;
 };
 

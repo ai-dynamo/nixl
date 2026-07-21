@@ -48,8 +48,16 @@ class nixlDeviceProxyBackendAdapter {
 public:
     virtual ~nixlDeviceProxyBackendAdapter() = default;
 
+    /**
+     * Initialize backend-specific proxy resources.
+     *
+     * proxy_worker_count is the number of CPU drain threads. channel_count is the
+     * number of logical channels per peer; the two dimensions are independent.
+     */
     virtual nixl_status_t
-    init(uint32_t, uint32_t) {
+    init(uint32_t proxy_worker_count, uint32_t channel_count) {
+        (void)proxy_worker_count;
+        (void)channel_count;
         return NIXL_ERR_NOT_SUPPORTED;
     }
 

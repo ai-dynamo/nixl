@@ -17,9 +17,10 @@
 #ifndef NIXL_SRC_CORE_DEVICE_PROXY_PROXY_RUNTIME_H
 #define NIXL_SRC_CORE_DEVICE_PROXY_PROXY_RUNTIME_H
 
+#include <atomic>
 #include <cstdint>
-#include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,13 @@ class ProxyWorker;
 
 static constexpr uint32_t kDefaultProxyRingDepth = 256;
 
+enum class nixl_proxy_channel_lifecycle_t : uint8_t {
+    UNALLOCATED = 0,
+    INACTIVE = 1,
+    ACTIVE = 2,
+    RESET_PENDING = 3,
+};
+
 struct nixlProxyRequestState {
     uint64_t op_idx = 0;
     uint64_t backend_req_token = 0;
@@ -39,7 +47,13 @@ struct nixlProxyRequestState {
 
 struct alignas(64) nixlProxyChannelState {
     nixlProxyChannelView device_view{};
-    std::deque<nixlProxyRequestState> inflight_requests;
+    /**
+     * Fixed request state indexed by ring slot. A slot remains occupied until
+     * its backend request reaches a terminal state.
+     */
+    std::vector<nixlProxyRequestState> inflight_slots_;
+    /** Host-only frontier advanced after a record is posted to the backend. */
+    uint64_t submit_idx_ = 0;
     bool error_latched = false;
 
     nixlProxyWorkRing *work_ring_dev_ = nullptr;
@@ -67,10 +81,23 @@ struct alignas(64) nixlProxyChannelState {
     operator=(const nixlProxyChannelState &) = delete;
 
     nixl_status_t
-    allocate(uint32_t channel_id, uint32_t depth);
+    allocate(uint32_t peer_index, uint32_t channel_id, uint32_t depth);
+
+    bool
+    allocated() const {
+        return work_ring_dev_ != nullptr;
+    }
 
     void
     deallocate() noexcept;
+
+    /**
+     * Local control-path reset owned by the channel's CPU worker (or the
+     * runtime when workers are not running). Discards unsubmitted records and
+     * local inflight bookkeeping; does not drain or cancel network work.
+     */
+    void
+    resetLocalState() noexcept;
 };
 
 class nixlProxyMemViewRegistry {
@@ -122,6 +149,8 @@ private:
         size_t len = 0;
         uint64_t dev_id = 0;
         nixlBackendMD *metadata = nullptr;
+        // Remote agent for this element. Local entries leave this empty.
+        std::string remote_agent;
     };
 
     struct LocalMetadata {
@@ -211,6 +240,7 @@ public:
 
     nixl_status_t
     init(std::unique_ptr<nixlDeviceProxyBackendAdapter> backend,
+         uint32_t peer_capacity,
          uint32_t channel_count,
          uint32_t worker_count,
          uint64_t pthr_delay_us = 0);
@@ -265,7 +295,22 @@ public:
 
     uint32_t
     channelCount() const {
-        return static_cast<uint32_t>(channels_.size());
+        return channel_count_;
+    }
+
+    uint32_t
+    workerCount() const {
+        return worker_count_;
+    }
+
+    uint32_t
+    peerCapacity() const {
+        return peer_capacity_;
+    }
+
+    size_t
+    channelSlotCount() const {
+        return channels_.size();
     }
 
     const nixlProxyChannelView *
@@ -278,21 +323,57 @@ public:
         return device_context_;
     }
 
+    /** Test/diagnostic accessor for per-channel lifecycle state. */
+    nixl_proxy_channel_lifecycle_t
+    channelLifecycle(uint32_t peer_index, uint32_t channel_id) const;
+
 private:
     void
     joinWorkerThreads() noexcept;
+
+    nixl_status_t
+    allocatePeerRow(uint32_t peer_index);
+
+    nixl_status_t
+    publishPeerRow(uint32_t peer_index, bool active);
+
+    nixl_status_t
+    deactivatePeer(uint32_t peer_index);
+
+    nixl_status_t
+    activatePeer(uint32_t peer_index, const std::string &remote_agent);
+
+    nixl_status_t
+    waitPeerChannelsInactive(uint32_t peer_index);
+
+    nixl_status_t
+    reconcilePeer(uint32_t peer_index, const std::string &remote_agent);
+
+    nixl_status_t
+    reconcileRemotePeers(const nixl_remote_meta_dlist_t &dlist);
+
+    size_t
+    channelSlot(uint32_t peer_index, uint32_t channel_id) const {
+        return static_cast<size_t>(peer_index) * channel_count_ + channel_id;
+    }
 
     std::vector<nixlProxyChannelState> channels_;
     std::vector<nixlProxyChannelView> device_channel_views_;
     nixlProxyChannelView *device_channel_views_dev_ = nullptr;
     nixlProxyDeviceContextData *device_context_ = nullptr;
+    std::unique_ptr<std::atomic<nixl_proxy_channel_lifecycle_t>[]> channel_lifecycle_;
+    std::vector<std::string> active_agents_;
     std::vector<std::unique_ptr<ProxyWorker>> workers_;
     nixlProxyMemViewRegistry memview_registry_;
     std::unique_ptr<nixlDeviceProxyBackendAdapter> backend_;
     uint32_t *shutdown_word_host_ = nullptr;
     uint32_t *shutdown_word_dev_ = nullptr;
+    uint32_t peer_capacity_ = 0;
+    uint32_t channel_count_ = 0;
+    uint32_t worker_count_ = 0;
     uint32_t ring_depth_ = kDefaultProxyRingDepth;
     bool workers_started_ = false;
+    std::mutex peer_reconcile_mutex_;
 };
 
 #endif // NIXL_SRC_CORE_DEVICE_PROXY_PROXY_RUNTIME_H
