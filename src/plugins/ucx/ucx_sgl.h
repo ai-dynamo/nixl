@@ -19,8 +19,9 @@
 
 #ifdef HAVE_UCX_SGL_API
 
+#include <cstddef>
 #include <cstdint>
-#include <vector>
+#include <memory>
 
 extern "C" {
 #include <ucp/api/ucp.h>
@@ -40,7 +41,7 @@ public:
 
     [[nodiscard]] size_t
     size() const noexcept {
-        return localAddrs_.size();
+        return size_;
     }
 
     [[nodiscard]] const ucx_connection_ptr_t &
@@ -53,9 +54,9 @@ public:
         return {
             .field_mask = UCP_DT_LOCAL_SGL_FIELD_BUFFERS | UCP_DT_LOCAL_SGL_FIELD_LENGTHS |
                 UCP_DT_LOCAL_SGL_FIELD_MEMHS,
-            .buffers = localAddrs_.data(),
-            .lengths = lengths_.data(),
-            .memhs = memhs_.data(),
+            .buffers = localAddrs_,
+            .lengths = lengths_,
+            .memhs = memhs_,
         };
     }
 
@@ -64,21 +65,22 @@ public:
         return {
             .field_mask = UCP_DT_REMOTE_SGL_FIELD_REMOTE_ADDRS | UCP_DT_REMOTE_SGL_FIELD_LENGTHS |
                 UCP_DT_REMOTE_SGL_FIELD_RKEYS,
-            .remote_addrs = remoteAddrs_.data(),
-            .lengths = lengths_.data(),
-            .rkeys = rkeys_.data(),
+            .remote_addrs = remoteAddrs_,
+            .lengths = lengths_,
+            .rkeys = rkeys_,
         };
     }
 
 private:
-    void
-    resize(size_t count);
+    static constexpr size_t num_fields = 5;
 
-    std::vector<void *> localAddrs_;
-    std::vector<uint64_t> remoteAddrs_;
-    std::vector<size_t> lengths_;
-    std::vector<ucp_mem_h> memhs_;
-    std::vector<ucp_rkey_h> rkeys_;
+    std::unique_ptr<std::byte[]> storage_;
+    void **localAddrs_ = nullptr;
+    uint64_t *remoteAddrs_ = nullptr;
+    size_t *lengths_ = nullptr;
+    ucp_mem_h *memhs_ = nullptr;
+    ucp_rkey_h *rkeys_ = nullptr;
+    size_t size_ = 0;
     ucx_connection_ptr_t conn_;
 };
 
