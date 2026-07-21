@@ -103,15 +103,15 @@ nixlGusliEngine::parseInitParams(const nixlBackendInitParams *nixl_init,
         stdout; // Redirect gusli logs to stdout, important errors will be printed by the plugin
     if (nixl_init && nixl_init->customParams) {
         const nixl_b_params_t *params = nixl_init->customParams;
-        
+
         gusli_params.client_name =
             nixl::getBackendParamDefaulted(params, "client_name", std::string());
-        
+
         if (const auto num =
                 nixl::getBackendParamOptional<unsigned>(params, "max_num_simultaneous_requests")) {
             gusli_params.max_num_simultaneous_requests = *num;
         }
-        
+
         gusli_params.config_file =
             nixl::getBackendParamDefaulted(params, "config_file", std::string());
         try_use_uring_ = nixl::getBackendParamDefaulted(params, "try_use_uring", false);
