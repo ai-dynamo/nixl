@@ -36,14 +36,12 @@ torch_lib_dir = join_paths(torch_dir, 'lib')
 torch_inc_dirs = [
     include_directories(torch_include_base),
     include_directories(join_paths(torch_include_base, 'torch')),
-    include_directories(join_paths(torch_include_base, 'torch', 'csrc', 'api', 'include')),
-    include_directories(join_paths(torch_include_base, 'ATen')),
 ]
 
 # Create Torch dependency with includes and libraries
 torch_dep = declare_dependency(
     include_directories: torch_inc_dirs,
-    link_args: ['-L' + torch_lib_dir, '-ltorch', '-ltorch_python', '-ltorch_cuda']
+    link_args: ['-L' + torch_lib_dir, '-ltorch', '-ltorch_cuda']
 )
 
 pybind_dep = dependency('pybind11', required: false)
@@ -62,7 +60,9 @@ endif
 
 
 nixl_ep_sources = [
+    'csrc/cuda_stream.cpp',
     'csrc/nixl_ep.cpp',
+    'csrc/stable_torch.cpp',
     'csrc/vmm.cpp',
     'csrc/kernels/nixl_ep_ll.cu',
     'csrc/kernels/nixl_ep_ht.cu',
@@ -96,6 +96,7 @@ nixl_ep_cpp_args = [
     '-Wno-sign-compare',
     '-Wno-reorder',
     '-Wno-attributes',
+    '-DUSE_CUDA',
 ]
 
 nixl_ep_cuda_args = [

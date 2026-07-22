@@ -1088,7 +1088,7 @@ LAUNCH_KERNEL(&cfg, combine_func, \
 }
 
 template <int kNumThreads> __launch_bounds__(kNumThreads, 1)
-__global__ void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask_tensor) {
+__global__ void query_mask_buffer(const int* mask_buffer_ptr, int num_ranks, int* mask_tensor) {
     const auto num_sms = static_cast<int>(gridDim.x);
     const auto sm_id = static_cast<int>(blockIdx.x);
     const auto num_threads = num_sms * kNumThreads;
@@ -1098,7 +1098,7 @@ __global__ void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask
     }
 }
 
-void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask_tensor, cudaStream_t stream) {
+void query_mask_buffer(const int* mask_buffer_ptr, int num_ranks, int* mask_tensor, cudaStream_t stream) {
     constexpr int num_sms = 1;
     constexpr int kNumThreads = 1024;
     SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);

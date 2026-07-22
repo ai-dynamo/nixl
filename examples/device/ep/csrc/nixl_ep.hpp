@@ -27,22 +27,24 @@
 #undef NDEBUG
 #endif
 
-#include <pybind11/pybind11.h>
-#include <pybind11/pytypes.h>
-#include <torch/types.h>
-#include <optional>
-#include <tuple>
-#include <vector>
-#include <string>
-
-#include <memory>
 #include "config.hpp"
 #include "event.hpp"
 #include "kernels/configs.cuh"
 #include "kernels/exception.cuh"
 #include "vmm.hpp"
 
-#include "nixl.h"
+#include <nixl.h>
+
+#include <pybind11/pytypes.h>
+
+#include <torch/csrc/stable/tensor.h>
+
+#include <functional>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <optional>
+#include <vector>
 
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
@@ -124,7 +126,7 @@ private:
     cudaIpcMemHandle_t ipc_handles[NUM_MAX_NVL_PEERS];
 
     // Stream for communication
-    at::cuda::CUDAStream comm_stream;
+    cudaStream_t comm_stream;
 
     // After synchronization, this flag will be true
     bool available = false;
@@ -160,6 +162,9 @@ private:
     nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
     uint64_t* last_ht_barrier_counter = nullptr;
     uint64_t* local_ht_barrier_counter = nullptr;
+
+    std::function<void()> pending_combine_recv_hook;
+    std::function<void()> pending_dispatch_recv_hook;
 
     /* Common private funcs */
     void _nixl_agent_init();
@@ -206,59 +211,122 @@ public:
 
     pybind11::bytearray get_local_ipc_handle() const;
 
-    torch::Tensor get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset, bool use_rdma_buffer = false) const;
-
-    torch::Stream get_comm_stream() const;
-
+    torch::stable::Tensor
+    get_local_buffer_tensor(torch::headeronly::ScalarType dtype,
+                            int64_t offset,
+                            bool use_rdma_buffer) const;
 
     void destroy();
 
-    std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, std::optional<EventHandle>>
-    get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts, std::optional<EventHandle>& previous_event,
-                        bool async, bool allocate_on_comm_stream);
+    std::tuple<torch::stable::Tensor,
+               std::optional<torch::stable::Tensor>,
+               torch::stable::Tensor,
+               torch::stable::Tensor,
+               int64_t>
+    get_dispatch_layout(const torch::stable::Tensor &topk_idx,
+                        int num_experts,
+                        const EventHandle *previous_event,
+                        bool async,
+                        bool allocate_on_comm_stream);
 
-    std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::vector<int>, torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<EventHandle>>
-    ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& x_scales,
-                        const std::optional<torch::Tensor>& topk_idx, const std::optional<torch::Tensor>& topk_weights,
-                        const std::optional<torch::Tensor>& num_tokens_per_rank, const std::optional<torch::Tensor>& num_tokens_per_rdma_rank,
-                        const torch::Tensor& is_token_in_rank, const std::optional<torch::Tensor>& num_tokens_per_expert,
-                        int cached_num_recv_tokens, int cached_num_rdma_recv_tokens,
-                        const std::optional<torch::Tensor>& cached_rdma_channel_prefix_matrix, const std::optional<torch::Tensor>& cached_recv_rdma_rank_prefix_sum,
-                        const std::optional<torch::Tensor>& cached_gbl_channel_prefix_matrix, const std::optional<torch::Tensor>& cached_recv_gbl_rank_prefix_sum,
-                        int expert_alignment, const Config& config, std::optional<EventHandle>& previous_event, bool async, bool allocate_on_comm_stream);
+    std::tuple<torch::stable::Tensor,
+               std::optional<torch::stable::Tensor>,
+               std::optional<torch::stable::Tensor>,
+               std::optional<torch::stable::Tensor>,
+               std::vector<int>,
+               torch::stable::Tensor,
+               torch::stable::Tensor,
+               std::optional<torch::stable::Tensor>,
+               torch::stable::Tensor,
+               std::optional<torch::stable::Tensor>,
+               torch::stable::Tensor,
+               std::optional<torch::stable::Tensor>,
+               std::optional<torch::stable::Tensor>,
+               std::optional<torch::stable::Tensor>,
+               int64_t>
+    ht_dispatch(const torch::stable::Tensor &x,
+                const std::optional<torch::stable::Tensor> &x_scales,
+                const std::optional<torch::stable::Tensor> &topk_idx,
+                const std::optional<torch::stable::Tensor> &topk_weights,
+                const std::optional<torch::stable::Tensor> &num_tokens_per_rank,
+                const std::optional<torch::stable::Tensor> &num_tokens_per_rdma_rank,
+                const torch::stable::Tensor &is_token_in_rank,
+                const std::optional<torch::stable::Tensor> &num_tokens_per_expert,
+                int cached_num_recv_tokens,
+                int cached_num_rdma_recv_tokens,
+                const std::optional<torch::stable::Tensor> &cached_rdma_channel_prefix_matrix,
+                const std::optional<torch::stable::Tensor> &cached_recv_rdma_rank_prefix_sum,
+                const std::optional<torch::stable::Tensor> &cached_gbl_channel_prefix_matrix,
+                const std::optional<torch::stable::Tensor> &cached_recv_gbl_rank_prefix_sum,
+                int expert_alignment,
+                const Config &config,
+                const EventHandle *previous_event,
+                bool async,
+                bool allocate_on_comm_stream);
 
-    std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandle>>
-    ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& topk_weights,
-                        const std::optional<torch::Tensor>& bias_0, const std::optional<torch::Tensor>& bias_1,
-                        const torch::Tensor& src_meta, const torch::Tensor& is_combined_token_in_rank,
-                        const torch::Tensor& rdma_channel_prefix_matrix, const torch::Tensor& rdma_rank_prefix_sum, const torch::Tensor& gbl_channel_prefix_matrix,
-                        const torch::Tensor& combined_rdma_head, const torch::Tensor& combined_nvl_head,
-                        const Config& config, std::optional<EventHandle>& previous_event, bool async, bool allocate_on_comm_stream);
+    std::tuple<torch::stable::Tensor, std::optional<torch::stable::Tensor>, int64_t>
+    ht_combine(const torch::stable::Tensor &x,
+               const std::optional<torch::stable::Tensor> &topk_weights,
+               const std::optional<torch::stable::Tensor> &bias_0,
+               const std::optional<torch::stable::Tensor> &bias_1,
+               const torch::stable::Tensor &src_meta,
+               const torch::stable::Tensor &is_combined_token_in_rank,
+               const torch::stable::Tensor &rdma_channel_prefix_matrix,
+               const torch::stable::Tensor &rdma_rank_prefix_sum,
+               const torch::stable::Tensor &gbl_channel_prefix_matrix,
+               const torch::stable::Tensor &combined_rdma_head,
+               const torch::stable::Tensor &combined_nvl_head,
+               const Config &config,
+               const EventHandle *previous_event,
+               bool async,
+               bool allocate_on_comm_stream);
 
-    std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
-    dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
-                         const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
-                         const std::optional<torch::Tensor>& dispatch_wait_recv_cost_stats,
-                         int num_max_dispatch_tokens_per_rank,
-                         bool use_fp8, bool round_scale, bool use_ue8m0,
-                         bool async, bool return_recv_hook);
+    std::tuple<torch::stable::Tensor,
+               std::optional<torch::stable::Tensor>,
+               torch::stable::Tensor,
+               torch::stable::Tensor,
+               torch::stable::Tensor,
+               int64_t>
+    dispatch(const torch::stable::Tensor &x,
+             const torch::stable::Tensor &topk_idx,
+             const std::optional<torch::stable::Tensor> &cumulative_local_expert_recv_stats,
+             const std::optional<torch::stable::Tensor> &dispatch_wait_recv_cost_stats,
+             int num_max_dispatch_tokens_per_rank,
+             bool use_fp8,
+             bool round_scale,
+             bool use_ue8m0,
+             bool async,
+             bool return_recv_hook);
 
-    std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
-    combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const torch::Tensor& topk_weights,
-                        const torch::Tensor& src_info, const torch::Tensor& layout_range,
-                        const std::optional<torch::Tensor>& combine_wait_recv_cost_stats,
-                        int num_max_dispatch_tokens_per_rank,
-                        bool use_logfmt, bool zero_copy, bool async, bool return_recv_hook,
-                        const std::optional<torch::Tensor>& out = std::nullopt);
+    std::tuple<torch::stable::Tensor, int64_t>
+    combine(const torch::stable::Tensor &x,
+            const torch::stable::Tensor &topk_idx,
+            const torch::stable::Tensor &topk_weights,
+            const torch::stable::Tensor &src_info,
+            const torch::stable::Tensor &layout_range,
+            const std::optional<torch::stable::Tensor> &combine_wait_recv_cost_stats,
+            int num_max_dispatch_tokens_per_rank,
+            bool use_logfmt,
+            bool zero_copy,
+            bool async,
+            bool return_recv_hook,
+            const std::optional<torch::stable::Tensor> &out);
+
+    void
+    run_dispatch_recv_hook();
+
+    void
+    run_combine_recv_hook();
 
     void barrier();
 
-    torch::Tensor
+    torch::stable::Tensor
     get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden) const;
 
     void update_mask_buffer(int rank_to_mask, bool mask);
 
-    void query_mask_buffer(const torch::Tensor& mask_status);
+    void
+    query_mask_buffer(const torch::stable::Tensor &mask_status) const;
 
     void clean_mask_buffer();
 
