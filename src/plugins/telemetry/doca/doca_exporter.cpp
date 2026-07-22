@@ -17,6 +17,7 @@
 #include "doca_exporter.h"
 #include "common/configuration.h"
 #include "common/exception.h"
+#include "common/hostname.h"
 #include "common/nixl_log.h"
 #include "common/str_util.h"
 #include "histogram_buckets.h"
@@ -107,16 +108,6 @@ parseExporterConfig() {
     return config;
 }
 
-[[nodiscard]] std::string
-getHostname() {
-    std::array<char, HOST_NAME_MAX + 1> hostname{};
-    if (gethostname(hostname.data(), hostname.size()) == 0) {
-        hostname.back() = '\0';
-        return std::string(hostname.data());
-    }
-    return "unknown";
-}
-
 [[nodiscard]] uint64_t
 docaTimestamp() noexcept {
     uint64_t ts = 0;
@@ -178,7 +169,7 @@ private:
 DocaSharedContext::DocaSharedContext(const DocaExporterConfig &config)
     : scrape_enabled(config.scrape),
       ipc_enabled(config.ipc) {
-    const std::string hostname = getHostname();
+    const std::string hostname = nixl::getHostname().value_or("unknown");
     const std::string &bind_address = config.bind_address;
     const std::string &ipc_sockets_dir = config.ipc_sockets_dir;
 

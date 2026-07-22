@@ -16,6 +16,7 @@
  */
 #include "prometheus_exporter.h"
 #include "common/configuration.h"
+#include "common/hostname.h"
 #include "common/nixl_log.h"
 #include "histogram_buckets.h"
 
@@ -38,16 +39,6 @@ const char prometheusLocalVar[] = "NIXL_TELEMETRY_PROMETHEUS_LOCAL";
 const std::string prometheusExporterLocalAddress = "127.0.0.1";
 const std::string prometheusExporterPublicAddress = "0.0.0.0";
 
-std::string
-getHostname() {
-    char hostname[HOST_NAME_MAX + 1];
-    if (gethostname(hostname, sizeof(hostname)) == 0) {
-        hostname[HOST_NAME_MAX] = '\0'; // Ensure null-termination
-        return std::string(hostname);
-    }
-    return "unknown";
-}
-
 std::mutex s_mutex;
 std::weak_ptr<prometheus::Exposer> s_exposer_weak;
 std::weak_ptr<prometheus::Registry> s_registry_weak;
@@ -58,7 +49,7 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
       agent_name_(init_params.agentName),
-      hostname_(getHostname()) {
+      hostname_(nixl::getHostname().value_or("unknown")) {
     const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
     const uint16_t port =
         nixl::config::getValueDefaulted(prometheusPortVar, prometheusExporterDefaultPort);

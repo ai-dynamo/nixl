@@ -17,6 +17,7 @@
 #include "prometheus_mp_exporter.h"
 
 #include "common/configuration.h"
+#include "common/hostname.h"
 #include "common/nixl_log.h"
 
 #include <unistd.h>
@@ -52,16 +53,6 @@ const std::string publicAddress = "0.0.0.0";
 // single-process prometheus exporter). Only this case is treated as a benign
 // bind collision; any other Exposer failure is a genuine error.
 constexpr char bindFailureMarker[] = "Failed to setup server ports";
-
-[[nodiscard]] std::string
-getHostname() {
-    char hostname[HOST_NAME_MAX + 1];
-    if (gethostname(hostname, sizeof(hostname)) == 0) {
-        hostname[HOST_NAME_MAX] = '\0';
-        return std::string(hostname);
-    }
-    return "unknown";
-}
 
 // Resolves the optional local_rank label value: NIXL_TELEMETRY_RANK_ENV names
 // which env var holds the rank (default LOCAL_RANK); the value of that env var is
@@ -117,8 +108,11 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     const uint64_t instance = s_instanceSeq.fetch_add(1, std::memory_order_relaxed);
     const std::filesystem::path store_path = dir / makeStoreFileName(pid, start_time, instance);
 
-    store_ = std::make_unique<mpStoreWriter>(
-        store_path, init_params.agentName, getHostname(), resolveLocalRank(), instance);
+    store_ = std::make_unique<mpStoreWriter>(store_path,
+                                             init_params.agentName,
+                                             nixl::getHostname().value_or("unknown"),
+                                             resolveLocalRank(),
+                                             instance);
 
     const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
     const uint16_t port = nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);
