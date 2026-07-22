@@ -32,7 +32,7 @@
 namespace {
 
 using nixl::telemetry::mp::makeStoreFileName;
-using nixl::telemetry::mp::mpStoreWriter;
+using nixl::telemetry::mp::storeWriter;
 using nixl::telemetry::mp::nixlMultiprocessCollector;
 using nixl::telemetry::mp::readProcessStartTime;
 
@@ -108,11 +108,11 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     const uint64_t instance = s_instanceSeq.fetch_add(1, std::memory_order_relaxed);
     const std::filesystem::path store_path = dir / makeStoreFileName(pid, start_time, instance);
 
-    store_ = std::make_unique<mpStoreWriter>(store_path,
-                                             init_params.agentName,
-                                             nixl::getHostname().value_or("unknown"),
-                                             resolveLocalRank(),
-                                             instance);
+    store_ = std::make_unique<storeWriter>(store_path,
+                                           init_params.agentName,
+                                           nixl::getHostname().value_or("unknown"),
+                                           resolveLocalRank(),
+                                           instance);
 
     const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
     const uint16_t port = nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);

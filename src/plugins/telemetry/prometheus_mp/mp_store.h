@@ -78,7 +78,7 @@ static_assert(detail::maxTelemetrySlot() < MP_STORE_SLOT_COUNT,
  * shared file); @c counters are cumulative running totals and @c gauges hold the
  * last-operation value, both indexed by nixl_telemetry_event_type_t.
  */
-struct mpStoreSnapshot {
+struct storeSnapshot {
     int64_t pid = 0;
     // Process start time in clock ticks (/proc/<pid>/stat field 22); pairs with
     // pid to survive PID reuse when checking liveness.
@@ -98,7 +98,7 @@ struct mpStoreSnapshot {
 };
 
 /**
- * @class mpStoreWriter
+ * @class storeWriter
  * @brief Owns one process's metric-state mmap file and updates it in place.
  *
  * Each NIXL process (writer or exporter mode) owns exactly one store. Updates
@@ -106,7 +106,7 @@ struct mpStoreSnapshot {
  * process can read peers' files concurrently without coordination. The file has
  * a fixed size (fixed slot layout), so it never needs to grow.
  */
-class mpStoreWriter {
+class storeWriter {
 public:
     /**
      * @brief Creates (or truncates) and maps the store file at @p path.
@@ -118,19 +118,19 @@ public:
      *        same-named agents in one process so their series stay distinct.
      * @throws std::runtime_error on open/ftruncate/mmap failure.
      */
-    mpStoreWriter(std::filesystem::path path,
-                  const std::string &agent_name,
-                  const std::string &hostname,
-                  const std::string &local_rank,
-                  uint64_t instance);
-    ~mpStoreWriter();
+    storeWriter(std::filesystem::path path,
+                const std::string &agent_name,
+                const std::string &hostname,
+                const std::string &local_rank,
+                uint64_t instance);
+    ~storeWriter();
 
-    mpStoreWriter(const mpStoreWriter &) = delete;
-    mpStoreWriter &
-    operator=(const mpStoreWriter &) = delete;
-    mpStoreWriter(mpStoreWriter &&) = delete;
-    mpStoreWriter &
-    operator=(mpStoreWriter &&) = delete;
+    storeWriter(const storeWriter &) = delete;
+    storeWriter &
+    operator=(const storeWriter &) = delete;
+    storeWriter(storeWriter &&) = delete;
+    storeWriter &
+    operator=(storeWriter &&) = delete;
 
     // Adds @p delta to the cumulative counter slot for @p type and refreshes the
     // heartbeat. Out-of-range types are ignored.
@@ -168,7 +168,7 @@ private:
  *         has a bad magic / incompatible schema version (a WARN is logged for a
  *         present-but-invalid file).
  */
-[[nodiscard]] std::optional<mpStoreSnapshot>
+[[nodiscard]] std::optional<storeSnapshot>
 readStoreSnapshot(const std::filesystem::path &path);
 
 /**

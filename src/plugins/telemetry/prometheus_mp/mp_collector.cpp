@@ -42,7 +42,7 @@ namespace {
     using prometheus::MetricType;
 
     [[nodiscard]] std::vector<ClientMetric::Label>
-    baseLabels(const mpStoreSnapshot &s) {
+    baseLabels(const storeSnapshot &s) {
         std::vector<ClientMetric::Label> labels;
         labels.push_back({"hostname", s.hostname});
         labels.push_back({"agent_name", s.agentName});
@@ -126,7 +126,7 @@ isProcessAlive(int64_t pid, uint64_t start_time) {
 }
 
 bool
-isSnapshotLive(const mpStoreSnapshot &snap, std::chrono::nanoseconds ttl) {
+isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl) {
     if (isProcessAlive(snap.pid, snap.startTime)) {
         return true;
     }
@@ -136,7 +136,7 @@ isSnapshotLive(const mpStoreSnapshot &snap, std::chrono::nanoseconds ttl) {
 }
 
 std::vector<MetricFamily>
-buildMetricFamilies(const std::vector<mpStoreSnapshot> &snapshots) {
+buildMetricFamilies(const std::vector<storeSnapshot> &snapshots) {
     std::vector<MetricFamily> families;
     if (snapshots.empty()) {
         return families;
@@ -200,7 +200,7 @@ nixlMultiprocessCollector::nixlMultiprocessCollector(std::filesystem::path dir,
 
 std::vector<MetricFamily>
 nixlMultiprocessCollector::Collect() const {
-    std::vector<mpStoreSnapshot> live;
+    std::vector<storeSnapshot> live;
 
     std::error_code ec;
     std::filesystem::directory_iterator it(dir_, ec);

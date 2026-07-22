@@ -50,7 +50,7 @@ namespace {
     // Fixed on-disk layout. Plain trivially-copyable POD operated on with __atomic
     // builtins (not std::atomic) so it is safe to memset/reinterpret over an mmap'd
     // region shared between processes. Field order keeps every uint64 8-byte aligned.
-    struct mpStoreLayout {
+    struct storeLayout {
         uint64_t magic;
         uint32_t schemaVersion;
         uint32_t slotCount;
@@ -122,13 +122,13 @@ readProcessStartTime(int64_t pid) {
     }
 }
 
-mpStoreWriter::mpStoreWriter(std::filesystem::path path,
-                             const std::string &agent_name,
-                             const std::string &hostname,
-                             const std::string &local_rank,
-                             uint64_t instance)
+storeWriter::storeWriter(std::filesystem::path path,
+                         const std::string &agent_name,
+                         const std::string &hostname,
+                         const std::string &local_rank,
+                         uint64_t instance)
     : path_(std::move(path)),
-      mappingSize_(sizeof(mpStoreLayout)) {
+      mappingSize_(sizeof(storeLayout)) {
     const int fd = ::open(path_.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
     if (fd < 0) {
         throw std::runtime_error("prometheus_mp: cannot open telemetry store '" + path_.string() +
@@ -150,7 +150,7 @@ mpStoreWriter::mpStoreWriter(std::filesystem::path path,
                                  "': " + std::strerror(errno));
     }
 
-    auto *layout = static_cast<mpStoreLayout *>(mapping_);
+    auto *layout = static_cast<storeLayout *>(mapping_);
     std::memset(layout, 0, mappingSize_);
     layout->schemaVersion = MP_STORE_SCHEMA_VERSION;
     layout->slotCount = static_cast<uint32_t>(MP_STORE_SLOT_COUNT);
@@ -166,7 +166,7 @@ mpStoreWriter::mpStoreWriter(std::filesystem::path path,
     __atomic_store_n(&layout->magic, MP_STORE_MAGIC, __ATOMIC_RELEASE);
 }
 
-mpStoreWriter::~mpStoreWriter() {
+storeWriter::~storeWriter() {
     if (mapping_ != nullptr) {
         ::munmap(mapping_, mappingSize_);
         mapping_ = nullptr;
@@ -176,39 +176,39 @@ mpStoreWriter::~mpStoreWriter() {
 }
 
 void
-mpStoreWriter::touch() noexcept {
-    auto *layout = static_cast<mpStoreLayout *>(mapping_);
+storeWriter::touch() noexcept {
+    auto *layout = static_cast<storeLayout *>(mapping_);
     __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELAXED);
 }
 
 void
-mpStoreWriter::addCounter(nixl_telemetry_event_type_t type, uint64_t delta) noexcept {
+storeWriter::addCounter(nixl_telemetry_event_type_t type, uint64_t delta) noexcept {
     const auto idx = static_cast<std::size_t>(type);
     if (idx >= MP_STORE_SLOT_COUNT) {
         return;
     }
-    auto *layout = static_cast<mpStoreLayout *>(mapping_);
+    auto *layout = static_cast<storeLayout *>(mapping_);
     __atomic_fetch_add(&layout->counters[idx], delta, __ATOMIC_RELAXED);
     touch();
 }
 
 void
-mpStoreWriter::setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept {
+storeWriter::setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept {
     const auto idx = static_cast<std::size_t>(type);
     if (idx >= MP_STORE_SLOT_COUNT) {
         return;
     }
-    auto *layout = static_cast<mpStoreLayout *>(mapping_);
+    auto *layout = static_cast<storeLayout *>(mapping_);
     __atomic_store_n(&layout->gauges[idx], value, __ATOMIC_RELAXED);
     touch();
 }
 
 void
-mpStoreWriter::refreshHeartbeat() noexcept {
+storeWriter::refreshHeartbeat() noexcept {
     touch();
 }
 
-std::optional<mpStoreSnapshot>
+std::optional<storeSnapshot>
 readStoreSnapshot(const std::filesystem::path &path) {
     const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
@@ -217,13 +217,13 @@ readStoreSnapshot(const std::filesystem::path &path) {
     }
 
     struct stat st{};
-    if (::fstat(fd, &st) != 0 || static_cast<std::size_t>(st.st_size) < sizeof(mpStoreLayout)) {
+    if (::fstat(fd, &st) != 0 || static_cast<std::size_t>(st.st_size) < sizeof(storeLayout)) {
         // Too small: likely a file mid-creation by a peer. Skip quietly.
         ::close(fd);
         return std::nullopt;
     }
 
-    void *mapping = ::mmap(nullptr, sizeof(mpStoreLayout), PROT_READ, MAP_SHARED, fd, 0);
+    void *mapping = ::mmap(nullptr, sizeof(storeLayout), PROT_READ, MAP_SHARED, fd, 0);
     ::close(fd);
     if (mapping == MAP_FAILED) {
         NIXL_WARN << "prometheus_mp: cannot map telemetry store '" << path.string()
@@ -232,9 +232,9 @@ readStoreSnapshot(const std::filesystem::path &path) {
     }
 
     const std::unique_ptr<void, void (*)(void *)> guard(
-        mapping, [](void *p) noexcept { ::munmap(p, sizeof(mpStoreLayout)); });
+        mapping, [](void *p) noexcept { ::munmap(p, sizeof(storeLayout)); });
 
-    const auto *layout = static_cast<const mpStoreLayout *>(mapping);
+    const auto *layout = static_cast<const storeLayout *>(mapping);
 
     const uint64_t magic = __atomic_load_n(&layout->magic, __ATOMIC_ACQUIRE);
     if (magic == 0) {
@@ -256,7 +256,7 @@ readStoreSnapshot(const std::filesystem::path &path) {
         return std::nullopt;
     }
 
-    mpStoreSnapshot snap;
+    storeSnapshot snap;
     snap.pid = layout->pid;
     snap.startTime = layout->startTime;
     snap.instance = layout->instance;

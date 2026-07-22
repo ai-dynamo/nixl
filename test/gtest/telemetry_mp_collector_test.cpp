@@ -40,8 +40,8 @@ using nixl::telemetry::mp::buildMetricFamilies;
 using nixl::telemetry::mp::isProcessAlive;
 using nixl::telemetry::mp::isSnapshotLive;
 using nixl::telemetry::mp::makeStoreFileName;
-using nixl::telemetry::mp::mpStoreSnapshot;
-using nixl::telemetry::mp::mpStoreWriter;
+using nixl::telemetry::mp::storeSnapshot;
+using nixl::telemetry::mp::storeWriter;
 using nixl::telemetry::mp::nixlMultiprocessCollector;
 using nixl::telemetry::mp::readProcessStartTime;
 
@@ -53,9 +53,9 @@ idx(nixl_telemetry_event_type_t t) {
     return static_cast<std::size_t>(t);
 }
 
-[[nodiscard]] mpStoreSnapshot
+[[nodiscard]] storeSnapshot
 makeSnap(const std::string &agent, const std::string &rank) {
-    mpStoreSnapshot s;
+    storeSnapshot s;
     s.pid = ::getpid();
     s.startTime = 1;
     s.lastUpdateNs = nixlTime::getNs();
@@ -259,10 +259,10 @@ protected:
 
 TEST_F(MpCollectorFileTest, CollectReadsLiveStoresAndIgnoresOthers) {
     // Two distinct store files; both headers stamp this (live) process.
-    mpStoreWriter w1(dir_ / makeStoreFileName(111, 1, 0), "agent-1", "host", "0", 0);
+    storeWriter w1(dir_ / makeStoreFileName(111, 1, 0), "agent-1", "host", "0", 0);
     w1.addCounter(TX_BYTES, 500);
     w1.setGauge(TX_BYTES, 500);
-    mpStoreWriter w2(dir_ / makeStoreFileName(222, 2, 0), "agent-2", "host", "1", 0);
+    storeWriter w2(dir_ / makeStoreFileName(222, 2, 0), "agent-2", "host", "1", 0);
     w2.addCounter(TX_BYTES, 700);
 
     // A non-store file must be ignored.

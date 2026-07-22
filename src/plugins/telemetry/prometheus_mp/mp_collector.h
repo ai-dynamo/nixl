@@ -50,7 +50,7 @@ isProcessAlive(int64_t pid, uint64_t start_time);
  * @param ttl Freshness window for a process that is no longer alive.
  */
 [[nodiscard]] bool
-isSnapshotLive(const mpStoreSnapshot &snap, std::chrono::nanoseconds ttl);
+isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl);
 
 /**
  * @brief Converts per-process snapshots into Prometheus metric families.
@@ -63,7 +63,7 @@ isSnapshotLive(const mpStoreSnapshot &snap, std::chrono::nanoseconds ttl);
  * @param snapshots Live per-process snapshots.
  */
 [[nodiscard]] std::vector<prometheus::MetricFamily>
-buildMetricFamilies(const std::vector<mpStoreSnapshot> &snapshots);
+buildMetricFamilies(const std::vector<storeSnapshot> &snapshots);
 
 /**
  * @class nixlMultiprocessCollector

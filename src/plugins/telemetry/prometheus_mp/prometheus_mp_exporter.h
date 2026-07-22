@@ -55,7 +55,7 @@ public:
 private:
     // Declared so destruction is exposer_ -> collector_ -> store_: stop serving
     // before dropping the collector it weak-references, then unmap the store.
-    std::unique_ptr<nixl::telemetry::mp::mpStoreWriter> store_;
+    std::unique_ptr<nixl::telemetry::mp::storeWriter> store_;
     std::shared_ptr<nixl::telemetry::mp::nixlMultiprocessCollector> collector_;
     std::shared_ptr<prometheus::Exposer> exposer_;
 };
