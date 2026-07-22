@@ -44,6 +44,24 @@ export NIXL_DEBUG_LOGGING=yes
 # CUDA-versioned backend (nixl_ep_cu*) from the source install under ${INSTALL_DIR}.
 export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta:${INSTALL_DIR}/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
 
+echo "==== Verify nixl_ep backend selection ===="
+python3 - <<'PY'
+import sys
+
+import torch
+
+import nixl_ep  # noqa: F401
+
+cuda = torch.version.cuda
+assert cuda, "torch.version.cuda is empty"
+
+expected = "nixl_ep_cu" + cuda.split(".")[0]
+loaded = [name for name in sys.modules if name.startswith("nixl_ep")]
+assert expected in sys.modules, f"expected {expected}, loaded nixl_ep modules: {loaded}"
+
+print(f"OK: import nixl_ep selected {expected}")
+PY
+
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
