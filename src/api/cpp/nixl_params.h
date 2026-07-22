@@ -33,6 +33,9 @@ struct nixlAgentConfig {
     static constexpr nixl_thread_sync_t kDefaultSyncMode =
         nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
     static constexpr bool kDefaultCaptureTelemetry = false;
+    static constexpr bool kDefaultEnableDeviceProxy = false;
+    static constexpr uint32_t kDefaultProxyWorkerCount = 1;
+    static constexpr uint32_t kDefaultProxyChannelCount = 1;
     static constexpr uint64_t kDefaultPthrDelayUs = 0;
     static constexpr uint64_t kDefaultLthrDelayUs = 100000;
     static constexpr std::chrono::microseconds kDefaultEtcdWatchTimeout =
@@ -48,6 +51,21 @@ struct nixlAgentConfig {
     nixl_thread_sync_t syncMode = kDefaultSyncMode;
     /** @var Capture telemetry info regardless of environment variables*/
     bool captureTelemetry = kDefaultCaptureTelemetry;
+    /** @var Enable the device proxy orchestration skeleton. */
+    bool enableDeviceProxy = kDefaultEnableDeviceProxy;
+    /**
+     * @var Desired number of proxy workers per proxy runtime.
+     *      The UCX proxy backend currently shares a nixlUcxEngine across proxy
+     *      workers; keep this at 1 unless the backend has been validated for
+     *      concurrent postXfer calls.
+     */
+    uint32_t proxyWorkerCount = kDefaultProxyWorkerCount;
+    /**
+     * @var Desired number of proxy channels per proxy runtime.
+     *      Channels may exceed workers; this is the supported way to expose
+     *      multiple GPU submission queues while using one proxy worker.
+     */
+    uint32_t proxyChannelCount = kDefaultProxyChannelCount;
 
     /**
      * @var Progress thread event waiting timeout.
@@ -94,12 +112,18 @@ struct nixlAgentConfig {
         uint64_t pthr_delay_us = kDefaultPthrDelayUs,
         uint64_t lthr_delay_us = kDefaultLthrDelayUs,
         bool capture_telemetry = kDefaultCaptureTelemetry,
+        bool enable_device_proxy = kDefaultEnableDeviceProxy,
+        uint32_t proxy_worker_count = kDefaultProxyWorkerCount,
+        uint32_t proxy_channel_count = kDefaultProxyChannelCount,
         std::chrono::microseconds etcd_watch_timeout = kDefaultEtcdWatchTimeout) noexcept
         : useProgThread(use_prog_thread),
           useListenThread(use_listen_thread),
           listenPort(port),
           syncMode(sync_mode),
           captureTelemetry(capture_telemetry),
+          enableDeviceProxy(enable_device_proxy),
+          proxyWorkerCount(proxy_worker_count),
+          proxyChannelCount(proxy_channel_count),
           pthrDelay(pthr_delay_us),
           lthrDelay(lthr_delay_us),
           etcdWatchTimeout(etcd_watch_timeout) {}

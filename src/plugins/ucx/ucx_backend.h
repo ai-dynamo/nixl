@@ -53,6 +53,7 @@ class nixlUcxConnection : public nixlBackendConnMD {
 };
 
 using ucx_connection_ptr_t = std::shared_ptr<nixlUcxConnection>;
+class nixlUcxProxyBackendAdapter;
 
 // A private metadata has to implement get, and has all the metadata
 class nixlUcxPrivateMetadata : public nixlBackendMD {
@@ -112,6 +113,11 @@ public:
 
     bool
     supportsNotif() const override {
+        return true;
+    }
+
+    bool
+    supportsProxy() const override {
         return true;
     }
 
@@ -193,6 +199,11 @@ public:
     genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
     nixl_status_t
+    createDeviceProxyBackendAdapter(
+        const nixlBackendInitParams &init_params,
+        std::unique_ptr<nixlDeviceProxyBackendAdapter> &adapter) override;
+
+    nixl_status_t
     prepMemView(const nixl_remote_meta_dlist_t &,
                 nixlMemViewH &,
                 const nixl_opt_b_args_t * = nullptr) const override;
@@ -250,6 +261,19 @@ protected:
     notif_list_t notifList_;
 
 private:
+    friend class nixlUcxProxyBackendAdapter;
+
+    nixl_status_t
+    submitProxyRmaWrite(const nixlMetaDesc &local,
+                        const nixlMetaDesc &remote,
+                        size_t size,
+                        nixlBackendReqH *&handle) const;
+
+    nixl_status_t
+    submitProxyAtomicAdd(const nixlMetaDesc &remote,
+                         uint64_t value,
+                         nixlBackendReqH *&handle) const;
+
     // Memory management helpers
     nixl_status_t
     internalMDHelper(const nixl_blob_t &blob, const std::string &agent, nixlBackendMD *&output);

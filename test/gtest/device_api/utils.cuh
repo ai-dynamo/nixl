@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,9 @@
 #include <functional>
 #include <absl/strings/str_format.h>
 
-#define MAX_THREADS 1024
+// 512 * sizeof(nixlGpuXferStatusH) (64B) = 32 KiB, under the 48 KiB static
+// __shared__ limit (same on all supported arches). 1024 would overflow.
+#define MAX_THREADS 512
 #define UCS_NSEC_PER_SEC 1000000000ul
 #define NS_TO_SEC(ns) ((ns) * 1.0 / (UCS_NSEC_PER_SEC))
 

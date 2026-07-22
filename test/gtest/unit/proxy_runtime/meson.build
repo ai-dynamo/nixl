@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,20 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Device API test utilities and sources
-device_api_inc_dirs = include_directories('.')
+proxy_runtime_test_deps = []
+if cuda_dep.found()
+    proxy_runtime_test_deps += [cuda_dep]
+endif
 
-device_api_sources = [
-    'single_write_test.cu',
-    'utils.cu'
-]
-
-proxy_device_api_sources = [
-    'proxy_write_test.cu',
-    'single_write_test.cu',
-    'utils.cu',
-]
-
-# Export for parent meson.build
-device_api_test_sources = files(device_api_sources)
-proxy_device_api_test_sources = files(proxy_device_api_sources)
+proxy_runtime_unit_test_dep = declare_dependency(
+    sources: [
+        'proxy_runtime.cpp',
+    ],
+    include_directories: [nixl_inc_dirs, gtest_inc_dirs],
+    dependencies: proxy_runtime_test_deps,
+)

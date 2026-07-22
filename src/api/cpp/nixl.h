@@ -561,6 +561,15 @@ class nixlAgent {
         checkRemoteMD (const std::string remote_name,
                        const nixl_xfer_dlist_t &descs) const;
 
+        /**
+         * @brief  Return the proxy runtime's device context data pointer,
+         *         or nullptr when proxy mode is not active.
+         *
+         * The caller can pass this to nixlProxyPublishContext() from a CUDA TU
+         * to make the context visible to GPU kernels.
+         */
+        void *
+        getProxyDeviceContext() const;
 };
 
 #endif

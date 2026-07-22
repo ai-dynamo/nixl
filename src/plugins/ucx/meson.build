@@ -24,7 +24,8 @@ ucx_backend_sources = ['config.cpp',
                        'ucx_backend.cpp',
                        'ucx_enums.cpp',
                        'ucx_plugin.cpp',
-                       'ucx_utils.cpp']
+                       'ucx_utils.cpp',
+                       'device_proxy/ucx_proxy_backend.cpp']
 
 ucx_backend_dependencies = [asio_dep,
                             nixl_common_dep,
@@ -64,4 +65,7 @@ else
     endif
 endif
 
-ucx_backend_interface = declare_dependency(link_with: ucx_backend_lib, include_directories: ucx_backend_includes)
+ucx_backend_interface = declare_dependency(
+    link_with: ucx_backend_lib,
+    include_directories: ucx_backend_includes,
+    dependencies: [ucx_dep])
