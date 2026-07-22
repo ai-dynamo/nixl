@@ -156,8 +156,7 @@ public:
                 /* If last request is incomplete, return NIXL_IN_PROG early
                  * without checking other requests. */
                 nixlUcxReq req = requests_.back();
-                const nixl_status_t ret =
-                    nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
+                const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
                 if (ret == NIXL_IN_PROG) {
                     return NIXL_IN_PROG;
                 } else if (ret != NIXL_SUCCESS) {
@@ -169,8 +168,8 @@ public:
                 size_t incomplete_reqs = 0;
                 nixl_status_t out_ret = NIXL_SUCCESS;
                 for (nixlUcxReq req : requests_) {
-                    const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(
-                        ucp_request_check_status(req));
+                    const nixl_status_t ret =
+                        nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
                     if (ret == NIXL_SUCCESS) [[likely]] {
                         worker_->reqRelease(req);
                     } else if (ret == NIXL_IN_PROG) {
@@ -196,7 +195,7 @@ public:
             }
 
             auto continuation = std::move(continueXfer_);
-            continueXfer_     = nullptr;
+            continueXfer_ = nullptr;
             const nixl_status_t ret = continuation();
             if (ret != NIXL_SUCCESS) {
                 return ret;
@@ -806,9 +805,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
         num_workers = num_dedicated_workers + 1;
     }
     numSharedWorkers_ = num_workers - num_dedicated_workers;
-    maxInflightRequests_ = std::max(
-        1u,
-        nixl::getBackendParamDefaulted(custom_params, "max_inflight_requests", 64u));
+    maxInflightRequests_ =
+        std::max(1u, nixl::getBackendParamDefaulted(custom_params, "max_inflight_requests", 64u));
 
     const size_t num_device_channels =
         nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
