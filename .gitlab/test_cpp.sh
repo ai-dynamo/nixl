@@ -43,6 +43,8 @@ export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 
+unset UCX_NET_DEVICES  # let UCX auto-select GPU-capable transport
+
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
