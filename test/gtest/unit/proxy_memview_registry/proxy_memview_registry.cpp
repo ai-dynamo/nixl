@@ -102,7 +102,7 @@ namespace proxy_memview_registry {
         nixlMemViewH proxy_handle = nullptr;
         ASSERT_EQ(registry_.registerProxyMemView(backend, &proxy_handle), NIXL_SUCCESS);
 
-        auto proxy_id = reinterpret_cast<uint64_t>(proxy_handle);
+        auto proxy_id = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(proxy_handle));
         nixlMemViewH resolved = nullptr;
         EXPECT_TRUE(registry_.resolveProxyMemViewId(proxy_id, resolved));
         EXPECT_EQ(resolved, backend);
@@ -141,8 +141,10 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission submission{};
         submission.opcode = nixl_proxy_opcode_t::PUT;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.size = 16;
 
         nixlBackendProxySubmission prepared_submission;
@@ -164,9 +166,11 @@ namespace proxy_memview_registry {
         submission.opcode = nixl_proxy_opcode_t::PUT;
         submission.op_idx = 7;
         submission.channel_id = 3;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
         submission.src_offset = 5;
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.dst_offset = 9;
         submission.size = 16;
 
@@ -197,9 +201,11 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission submission{};
         submission.opcode = nixl_proxy_opcode_t::PUT;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
         submission.src_offset = 4;
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.dst_offset = 8;
         submission.size = 16;
 
@@ -225,9 +231,11 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission submission{};
         submission.opcode = nixl_proxy_opcode_t::PUT;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
         submission.src_offset = 48;
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.dst_offset = 48;
         submission.size = 16;
 
@@ -251,9 +259,11 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission submission{};
         submission.opcode = nixl_proxy_opcode_t::PUT;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
         submission.src_offset = 60;
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.size = 8;
 
         nixlBackendProxySubmission prepared_submission;
@@ -275,8 +285,10 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission submission{};
         submission.opcode = nixl_proxy_opcode_t::PUT;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.dst_offset = 60;
         submission.size = 8;
 
@@ -297,14 +309,93 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission submission{};
         submission.opcode = nixl_proxy_opcode_t::PUT;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.dst_offset = std::numeric_limits<uint32_t>::max();
         submission.size = 1;
 
         nixlBackendProxySubmission prepared_submission;
         EXPECT_EQ(registry_.prepareSubmission(submission, prepared_submission),
                   NIXL_ERR_INVALID_PARAM);
+    }
+
+    TEST_F(ProxyMemViewRegistryTest, PrepareSubmissionAccepts64BitOffsets) {
+        nixlMemViewH src_proxy = nullptr;
+        nixlMemViewH dst_proxy = nullptr;
+        ASSERT_EQ(registry_.registerProxyMemView(makeFakeBackendHandle(10), &src_proxy),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(registry_.registerProxyMemView(makeFakeBackendHandle(20), &dst_proxy),
+                  NIXL_SUCCESS);
+
+        constexpr uint64_t kLargeOffset = (uint64_t{1} << 32) + 16;
+        nixl_meta_dlist_t local_dlist(DRAM_SEG);
+        local_dlist.addDesc(nixlMetaDesc(0x1000, kLargeOffset + 64, 0, &local_md_));
+        nixl_remote_meta_dlist_t remote_dlist(DRAM_SEG);
+        nixlRemoteMetaDesc remote_desc("peer");
+        remote_desc.addr = 0x2000;
+        remote_desc.len = kLargeOffset + 64;
+        remote_desc.devId = 0;
+        remote_desc.metadataP = &remote_md_;
+        remote_dlist.addDesc(remote_desc);
+
+        ASSERT_EQ(registry_.storeMetadata(src_proxy, local_dlist), NIXL_SUCCESS);
+        ASSERT_EQ(registry_.storeMetadata(dst_proxy, remote_dlist), NIXL_SUCCESS);
+
+        nixlProxySubmission submission{};
+        submission.opcode = nixl_proxy_opcode_t::PUT;
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
+        submission.src_offset = kLargeOffset;
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
+        submission.dst_offset = kLargeOffset;
+        submission.size = 32;
+
+        nixlBackendProxySubmission prepared_submission;
+        ASSERT_EQ(registry_.prepareSubmission(submission, prepared_submission), NIXL_SUCCESS);
+        EXPECT_EQ(prepared_submission.local.desc.addr, 0x1000u + kLargeOffset);
+        EXPECT_EQ(prepared_submission.remote.desc.addr, 0x2000u + kLargeOffset);
+        EXPECT_EQ(prepared_submission.local.desc.len, 32u);
+        EXPECT_EQ(prepared_submission.remote.desc.len, 32u);
+    }
+
+    TEST_F(ProxyMemViewRegistryTest, PrepareSubmissionAccepts64BitSize) {
+        nixlMemViewH src_proxy = nullptr;
+        nixlMemViewH dst_proxy = nullptr;
+        ASSERT_EQ(registry_.registerProxyMemView(makeFakeBackendHandle(10), &src_proxy),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(registry_.registerProxyMemView(makeFakeBackendHandle(20), &dst_proxy),
+                  NIXL_SUCCESS);
+
+        constexpr uint64_t kLargeSize = (uint64_t{1} << 32) + 64;
+        nixl_meta_dlist_t local_dlist(DRAM_SEG);
+        local_dlist.addDesc(nixlMetaDesc(0x1000, kLargeSize, 0, &local_md_));
+        nixl_remote_meta_dlist_t remote_dlist(DRAM_SEG);
+        nixlRemoteMetaDesc remote_desc("peer");
+        remote_desc.addr = 0x2000;
+        remote_desc.len = kLargeSize;
+        remote_desc.devId = 0;
+        remote_desc.metadataP = &remote_md_;
+        remote_dlist.addDesc(remote_desc);
+
+        ASSERT_EQ(registry_.storeMetadata(src_proxy, local_dlist), NIXL_SUCCESS);
+        ASSERT_EQ(registry_.storeMetadata(dst_proxy, remote_dlist), NIXL_SUCCESS);
+
+        nixlProxySubmission submission{};
+        submission.opcode = nixl_proxy_opcode_t::PUT;
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
+        submission.size = kLargeSize;
+
+        nixlBackendProxySubmission prepared_submission;
+        ASSERT_EQ(registry_.prepareSubmission(submission, prepared_submission), NIXL_SUCCESS);
+        EXPECT_EQ(prepared_submission.size, kLargeSize);
+        EXPECT_EQ(prepared_submission.local.desc.len, kLargeSize);
+        EXPECT_EQ(prepared_submission.remote.desc.len, kLargeSize);
     }
 
     TEST_F(ProxyMemViewRegistryTest, PrepareSubmissionRejectsUnsupportedOpcode) {
@@ -315,7 +406,8 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission submission{};
         submission.opcode = static_cast<nixl_proxy_opcode_t>(99);
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
 
         nixlBackendProxySubmission prepared_submission;
         prepared_submission.op_idx = 123;
@@ -337,8 +429,10 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission submission{};
         submission.opcode = nixl_proxy_opcode_t::PUT;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.size = 8;
 
         nixlBackendProxySubmission prepared_submission;
@@ -355,7 +449,8 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission submission{};
         submission.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.dst_offset = 56;
 
         nixlBackendProxySubmission prepared_submission;
@@ -380,7 +475,8 @@ namespace proxy_memview_registry {
         submission.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
         submission.op_idx = 7;
         submission.channel_id = 3;
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.dst_offset = 9;
         submission.size = sizeof(uint64_t);
         submission.value = 42;
@@ -410,8 +506,10 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission submission{};
         submission.opcode = nixl_proxy_opcode_t::PUT;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.size = 16;
 
         nixlBackendProxySubmission prepared_submission;
@@ -438,8 +536,10 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission retired_submission{};
         retired_submission.opcode = nixl_proxy_opcode_t::PUT;
-        retired_submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
-        retired_submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        retired_submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
+        retired_submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         retired_submission.size = 8;
 
         nixlBackendProxySubmission prepared_submission;
@@ -448,8 +548,10 @@ namespace proxy_memview_registry {
 
         nixlProxySubmission live_submission{};
         live_submission.opcode = nixl_proxy_opcode_t::PUT;
-        live_submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
-        live_submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(other_proxy);
+        live_submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
+        live_submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(other_proxy));
         live_submission.size = 8;
 
         EXPECT_EQ(registry_.prepareSubmission(live_submission, prepared_submission), NIXL_SUCCESS);

@@ -22,7 +22,7 @@
 
 #include <nixl_types.h>
 
-enum class nixl_proxy_opcode_t : uint32_t {
+enum class nixl_proxy_opcode_t : uint8_t {
     PUT = 0,
     ATOMIC_ADD = 1,
 };
@@ -32,26 +32,31 @@ enum class nixl_proxy_control_state_t : uint32_t {
     SHUTDOWN = 1,
 };
 
+/**
+ * Fixed 64-byte GPU→CPU ring record. Layout packs small control fields so
+ * offsets and transfer size can be full 64-bit values without growing the record.
+ */
 struct alignas(64) nixlProxySubmission {
     uint64_t op_idx = 0;
-    nixl_proxy_opcode_t opcode = nixl_proxy_opcode_t::PUT;
-    uint32_t channel_id = 0;
-    uint32_t flags = 0;
-
-    uint32_t src_index = 0;
-    uint32_t src_offset = 0;
-    uint32_t dst_index = 0;
-    uint32_t dst_offset = 0;
-    uint32_t size = 0;
-
-    uint64_t src_proxy_memview_id = 0;
-    uint64_t dst_proxy_memview_id = 0;
     uint64_t value = 0;
+    uint64_t src_offset = 0;
+    uint64_t dst_offset = 0;
+    uint64_t size = 0;
+
+    nixl_proxy_opcode_t opcode = nixl_proxy_opcode_t::PUT;
+    uint8_t flags = 0;
+    uint16_t channel_id = 0;
+    uint32_t src_index = 0;
+    uint32_t dst_index = 0;
+    uint32_t src_proxy_memview_id = 0;
+    uint32_t dst_proxy_memview_id = 0;
 };
 
 static_assert(sizeof(nixlProxySubmission) == 64, "nixlProxySubmission must be 64 bytes");
 static_assert(offsetof(nixlProxySubmission, op_idx) == 0,
               "op_idx must be the first word because it publishes record readiness");
+static_assert(offsetof(nixlProxySubmission, size) == 32, "size must stay naturally aligned");
+static_assert(offsetof(nixlProxySubmission, opcode) == 40, "packed control fields follow size");
 
 struct nixlProxyWorkRing {
     /** Mapped host records: GPU writes via device alias; CPU worker reads host alias. */

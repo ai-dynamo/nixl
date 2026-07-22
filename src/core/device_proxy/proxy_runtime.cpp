@@ -33,13 +33,17 @@ nixlProxyMemViewRegistry::registerProxyMemView(nixlMemViewH backend_memview,
     if (proxy_memview == nullptr) {
         return NIXL_ERR_INVALID_PARAM;
     }
+    if (next_proxy_memview_id_ > std::numeric_limits<uint32_t>::max()) {
+        NIXL_ERROR << "nixlProxyMemViewRegistry::register: proxy memview ID space exhausted";
+        return NIXL_ERR_NOT_ALLOWED;
+    }
 
     RegistryEntry entry;
-    entry.proxy_memview_id = next_proxy_memview_id_;
+    entry.proxy_memview_id = static_cast<uint32_t>(next_proxy_memview_id_);
     entry.backend_memview = backend_memview;
     entries_.push_back(entry);
 
-    *proxy_memview = reinterpret_cast<nixlMemViewH>(entry.proxy_memview_id);
+    *proxy_memview = reinterpret_cast<nixlMemViewH>(static_cast<uintptr_t>(entry.proxy_memview_id));
     ++next_proxy_memview_id_;
     NIXL_DEBUG << "nixlProxyMemViewRegistry::register: backend_mvh=" << backend_memview
                << " -> proxy_id=" << (next_proxy_memview_id_ - 1);

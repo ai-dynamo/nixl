@@ -393,9 +393,11 @@ namespace proxy_runtime {
 
         nixlProxySubmission submission{};
         submission.opcode = nixl_proxy_opcode_t::PUT;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
         submission.src_offset = 4;
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.dst_offset = 8;
         submission.size = 32;
 
@@ -449,9 +451,11 @@ namespace proxy_runtime {
         submission.op_idx = 11;
         submission.opcode = nixl_proxy_opcode_t::PUT;
         submission.channel_id = 0;
-        submission.src_proxy_memview_id = reinterpret_cast<uint64_t>(src_proxy);
+        submission.src_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
         submission.src_offset = 4;
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.dst_offset = 8;
         submission.size = 32;
 
@@ -516,7 +520,8 @@ namespace proxy_runtime {
         submission.op_idx = 11;
         submission.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
         submission.channel_id = 0;
-        submission.dst_proxy_memview_id = reinterpret_cast<uint64_t>(dst_proxy);
+        submission.dst_proxy_memview_id =
+            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
         submission.dst_offset = 8;
         submission.size = sizeof(uint64_t);
         submission.value = 42;

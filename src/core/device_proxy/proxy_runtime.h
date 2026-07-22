@@ -177,7 +177,7 @@ private:
     };
 
     struct RegistryEntry {
-        uint64_t proxy_memview_id = 0;
+        uint32_t proxy_memview_id = 0;
         nixlMemViewH backend_memview = nullptr;
         ProxyMemViewRegEntryState state = ProxyMemViewRegEntryState::ENTRY_ALLOCATED;
         ProxyMemViewRegMetadataKind metadata_kind = ProxyMemViewRegMetadataKind::METADATA_KIND_NONE;

@@ -68,9 +68,9 @@ nixlProxyClearContext() {
     return err;
 }
 
-__device__ __forceinline__ uint64_t
+__device__ __forceinline__ uint32_t
 proxyMemViewIdFromHandle(nixlMemViewH mvh) {
-    return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(mvh));
+    return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(mvh));
 }
 
 __device__ __forceinline__ ProxyDeviceContext *
@@ -137,7 +137,7 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
         if (submission.dst_index >= peer_capacity || num_channels == 0) {
             return NIXL_ERR_INVALID_PARAM;
         }
-        submission.channel_id %= num_channels;
+        submission.channel_id = static_cast<uint16_t>(submission.channel_id % num_channels);
 
         nixlProxyChannelView &channel_view =
             channels[channelIndex(submission.dst_index, submission.channel_id)];
