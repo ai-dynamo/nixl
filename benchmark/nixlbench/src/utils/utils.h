@@ -27,6 +27,7 @@
 #include <variant>
 #include <vector>
 #include <optional>
+#include <nixl_types.h>
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
@@ -220,6 +221,12 @@ public:
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
 
+    // Cached set of memory segment types reported by the selected backend.
+    // Populated pre-instantiation in loadParams via getPluginParams, then refreshed
+    // post-instantiation by the worker via getBackendParams (so LIBFABRIC's runtime-added
+    // VRAM_SEG is picked up). The storage/object/block predicates derive from this list.
+    static nixl_mem_list_t backend_mems;
+
     static int
     parseConfig(int argc, char *argv[]);
     static void
@@ -230,10 +237,16 @@ public:
     printSeparator(const char sep = '-');
     static std::vector<std::string>
     parseDeviceList();
+    // Storage taxonomy predicates. All three derive from backend_mems and are safe to
+    // call before the backend is instantiated (using plugin-reported mems) and after
+    // (using engine-reported mems). They return false when backend_mems is empty,
+    // which covers the nvshmem worker case.
     static bool
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static bool
+    isBlkStorageBackend();
 
 protected:
     static int
