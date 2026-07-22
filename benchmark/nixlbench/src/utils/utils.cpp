@@ -135,6 +135,14 @@ NB_ARG_UINT32(asio_port,
               12345,
               "Port for direct socket communication for 2 instances with ASIO runtime");
 
+NB_ARG_STRING(randomize_location_mode,
+              "none",
+              "Mode to randomize read/write location [none, blockaligned, bytealigned]");
+
+NB_ARG_UINT64(randomize_location_mode_seed,
+              0,
+              "Seed used for randomization, set this for reproducible randomization");
+
 namespace {
 bool
 validateAsioPort(const char *flagname, std::uint32_t value) {
@@ -266,6 +274,8 @@ std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
 std::string xferBenchConfig::asio_address = "127.0.0.1";
 std::uint16_t xferBenchConfig::asio_port = 12345;
+std::string xferBenchConfig::randomize_location_mode = "none";
+uint64_t xferBenchConfig::randomize_location_mode_seed = 0;
 std::string xferBenchConfig::benchmark_group = "default";
 int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
@@ -502,6 +512,8 @@ xferBenchConfig::loadParams(void) {
     etcd_endpoints = NB_ARG(etcd_endpoints);
     asio_address = NB_ARG(asio_address);
     asio_port = NB_ARG(asio_port);
+    randomize_location_mode = NB_ARG(randomize_location_mode);
+    randomize_location_mode_seed = NB_ARG(randomize_location_mode_seed);
     filepath = NB_ARG(filepath);
     filenames = NB_ARG(filenames);
     num_files = NB_ARG(num_files);
@@ -537,6 +549,32 @@ xferBenchConfig::loadParams(void) {
                      "descriptor list handles pin the registration."
                   << std::endl;
         return -1;
+    }
+
+    // Validate randomization mode
+    if (isStorageBackend()) {
+        if (randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE &&
+            randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED &&
+            randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED) {
+            std::cerr << "Invalid randomize_location_mode: " << randomize_location_mode
+                      << " valid modes are " << XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE << ", "
+                      << XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED << ", "
+                      << XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED << std::endl;
+            return -1;
+        }
+        if (randomize_location_mode == XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED &&
+            storage_enable_direct) {
+            std::cerr << "Byte-aligned randomization violates direct storage access rules due to "
+                         "non-block-aligned copy offsets."
+                      << std::endl;
+            return -1;
+        }
+    } else {
+        if (randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE) {
+            std::cerr << "Randomization of read/write location is only supported for storage "
+                         "backends. Ignoring randomize_location_mode."
+                      << std::endl;
+        }
     }
 
     // Validate runtime configuration
@@ -752,6 +790,13 @@ xferBenchConfig::printConfig() {
             printOption("Number of files (--num_files=N)", std::to_string(num_files));
             printOption("Storage enable direct (--storage_enable_direct=[0,1])",
                         std::to_string(storage_enable_direct));
+            printOption("Randomize location mode (--randomize_location_mode=[none, blockaligned, "
+                        "bytealigned])",
+                        randomize_location_mode);
+            if (randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE) {
+                printOption("Randomize location mode seed (--randomize_location_mode_seed=N)",
+                            std::to_string(randomize_location_mode_seed));
+            }
         }
 
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO
@@ -1058,7 +1103,9 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                             exit(EXIT_FAILURE);
                         }
                         int oflags = O_RDONLY;
-                        if (xferBenchConfig::storage_enable_direct) oflags |= O_DIRECT;
+                        if (xferBenchConfig::storage_enable_direct) {
+                            oflags |= O_DIRECT;
+                        }
                         int fd = open(it->device_path.c_str(), oflags);
                         if (fd < 0) {
                             std::cerr << "Failed to open GUSLI device path: " << it->device_path
@@ -1562,25 +1609,33 @@ xferBenchUtils::buildCommonAzCliBlobParams(const std::string &blob_name) {
 
 double
 xferMetricStats::min() const {
-    if (samples.empty()) return 0;
+    if (samples.empty()) {
+        return 0;
+    }
     return *std::min_element(samples.begin(), samples.end());
 }
 
 double
 xferMetricStats::max() const {
-    if (samples.empty()) return 0;
+    if (samples.empty()) {
+        return 0;
+    }
     return *std::max_element(samples.begin(), samples.end());
 }
 
 double
 xferMetricStats::avg() const {
-    if (samples.empty()) return 0;
+    if (samples.empty()) {
+        return 0;
+    }
     return std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size();
 }
 
 double
 xferMetricStats::p90() {
-    if (samples.empty()) return 0;
+    if (samples.empty()) {
+        return 0;
+    }
     std::sort(samples.begin(), samples.end());
     size_t index = samples.size() * 0.9;
     return samples[std::min(index, samples.size() - 1)];
@@ -1588,7 +1643,9 @@ xferMetricStats::p90() {
 
 double
 xferMetricStats::p95() {
-    if (samples.empty()) return 0;
+    if (samples.empty()) {
+        return 0;
+    }
     std::sort(samples.begin(), samples.end());
     size_t index = samples.size() * 0.95;
     return samples[std::min(index, samples.size() - 1)];
@@ -1596,7 +1653,9 @@ xferMetricStats::p95() {
 
 double
 xferMetricStats::p99() {
-    if (samples.empty()) return 0;
+    if (samples.empty()) {
+        return 0;
+    }
     std::sort(samples.begin(), samples.end());
     size_t index = samples.size() * 0.99;
     return samples[std::min(index, samples.size() - 1)];
