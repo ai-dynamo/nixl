@@ -108,6 +108,7 @@ NB_ARG_STRING(filepath, "", "File path for storage operations");
 NB_ARG_STRING(filenames, "", "Comma-separated filenames for storage operations");
 NB_ARG_INT32(num_files, 1, "Number of files used by benchmark");
 NB_ARG_BOOL(storage_enable_direct, false, "Enable direct I/O for storage operations");
+NB_ARG_BOOL(storage_enable_path_mode, false, "Use NIXL path-mode FILE registration");
 
 // GDS options - only used when backend is GDS
 NB_ARG_INT32(gds_batch_pool_size,
@@ -280,6 +281,7 @@ int xferBenchConfig::posix_kernel_queue_size = 0;
 std::string xferBenchConfig::filepath = "";
 std::string xferBenchConfig::filenames = "";
 bool xferBenchConfig::storage_enable_direct = false;
+bool xferBenchConfig::storage_enable_path_mode = false;
 bool xferBenchConfig::reregister_mem = false;
 bool xferBenchConfig::prepared_xfer = false;
 int xferBenchConfig::pipeline_depth = 1;
@@ -507,6 +509,7 @@ xferBenchConfig::loadParams(void) {
     num_files = NB_ARG(num_files);
     posix_api_type = NB_ARG(posix_api_type);
     storage_enable_direct = NB_ARG(storage_enable_direct);
+    storage_enable_path_mode = isFileSegBackend() && NB_ARG(storage_enable_path_mode);
     recreate_xfer = NB_ARG(recreate_xfer);
     reregister_mem = NB_ARG(reregister_mem);
     prepared_xfer = NB_ARG(prepared_xfer);
@@ -752,6 +755,8 @@ xferBenchConfig::printConfig() {
             printOption("Number of files (--num_files=N)", std::to_string(num_files));
             printOption("Storage enable direct (--storage_enable_direct=[0,1])",
                         std::to_string(storage_enable_direct));
+            printOption("Storage enable path mode (--storage_enable_path_mode=[0,1])",
+                        std::to_string(storage_enable_path_mode));
         }
 
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO
@@ -828,6 +833,12 @@ xferBenchConfig::isObjStorageBackend() {
     return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
+};
+
+bool
+xferBenchConfig::isFileSegBackend() {
+    return isStorageBackend() && !isObjStorageBackend() &&
+        XFERBENCH_BACKEND_GUSLI != xferBenchConfig::backend;
 };
 
 
@@ -1068,6 +1079,26 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                         ssize_t rc = pread(fd, addr, len, iov.addr);
                         if (rc < 0) {
                             std::cerr << "Failed to read from GUSLI device: " << it->device_path
+                                      << " with error: " << strerror(errno) << std::endl;
+                            close(fd);
+                            exit(EXIT_FAILURE);
+                        }
+                        close(fd);
+                    } else if (xferBenchConfig::storage_enable_path_mode) {
+                        // Path mode: devId is synthetic, not an fd -- open by the metaInfo path.
+                        auto colon = iov.metaInfo.find(':');
+                        std::string path = (colon == std::string::npos) ?
+                            iov.metaInfo :
+                            iov.metaInfo.substr(colon + 1);
+                        int fd = open(path.c_str(), O_RDONLY);
+                        if (fd < 0) {
+                            std::cerr << "Failed to open path-mode file: " << path
+                                      << " with error: " << strerror(errno) << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                        ssize_t rc = pread(fd, addr, len, iov.addr);
+                        if (rc < 0) {
+                            std::cerr << "Failed to read from path-mode file: " << path
                                       << " with error: " << strerror(errno) << std::endl;
                             close(fd);
                             exit(EXIT_FAILURE);
