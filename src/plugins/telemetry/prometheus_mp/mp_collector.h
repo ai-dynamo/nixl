@@ -89,9 +89,9 @@ public:
     Collect() const override;
 
 private:
-    std::filesystem::path dir_;
-    std::chrono::nanoseconds staleTtl_;
-    bool reapStale_;
+    const std::filesystem::path dir_;
+    const std::chrono::nanoseconds staleTtl_;
+    const bool reapStale_;
 };
 
 } // namespace nixl::telemetry::mp

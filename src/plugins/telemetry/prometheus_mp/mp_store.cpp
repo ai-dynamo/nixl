@@ -29,6 +29,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -159,7 +160,7 @@ mpStoreWriter::mpStoreWriter(std::filesystem::path path,
     copyField(layout->agentName, MP_MAX_AGENT_NAME, agent_name, "agent name");
     copyField(layout->hostname, MP_MAX_HOSTNAME, hostname, "hostname");
     copyField(layout->localRank, MP_MAX_LOCAL_RANK, local_rank, "local_rank");
-    __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELEASE);
+    __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELAXED);
     // Publish the magic last so a concurrent reader never validates a
     // half-initialized header.
     __atomic_store_n(&layout->magic, MP_STORE_MAGIC, __ATOMIC_RELEASE);
@@ -177,7 +178,7 @@ mpStoreWriter::~mpStoreWriter() {
 void
 mpStoreWriter::touch() noexcept {
     auto *layout = static_cast<mpStoreLayout *>(mapping_);
-    __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELEASE);
+    __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELAXED);
 }
 
 void
@@ -230,6 +231,9 @@ readStoreSnapshot(const std::filesystem::path &path) {
         return std::nullopt;
     }
 
+    const std::unique_ptr<void, void (*)(void *)> guard(
+        mapping, [](void *p) noexcept { ::munmap(p, sizeof(mpStoreLayout)); });
+
     const auto *layout = static_cast<const mpStoreLayout *>(mapping);
 
     const uint64_t magic = __atomic_load_n(&layout->magic, __ATOMIC_ACQUIRE);
@@ -237,13 +241,11 @@ readStoreSnapshot(const std::filesystem::path &path) {
         // Zeroed header: either a store still being initialized by a live process,
         // or an orphan left by a process that died mid-creation. Skip quietly (no
         // WARN); the collector reaps stale orphans by file age.
-        ::munmap(mapping, sizeof(mpStoreLayout));
         return std::nullopt;
     }
     if (magic != MP_STORE_MAGIC) {
         NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
                   << "' with bad magic";
-        ::munmap(mapping, sizeof(mpStoreLayout));
         return std::nullopt;
     }
     if (layout->schemaVersion != MP_STORE_SCHEMA_VERSION ||
@@ -251,7 +253,6 @@ readStoreSnapshot(const std::filesystem::path &path) {
         NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
                   << "' with incompatible schema (version " << layout->schemaVersion << ", slots "
                   << layout->slotCount << ")";
-        ::munmap(mapping, sizeof(mpStoreLayout));
         return std::nullopt;
     }
 
@@ -268,7 +269,6 @@ readStoreSnapshot(const std::filesystem::path &path) {
         snap.gauges[i] = __atomic_load_n(&layout->gauges[i], __ATOMIC_RELAXED);
     }
 
-    ::munmap(mapping, sizeof(mpStoreLayout));
     return snap;
 }
 

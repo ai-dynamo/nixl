@@ -74,8 +74,7 @@ resolveLocalRank() {
     if (rank_source.empty()) {
         return {};
     }
-    const char *value = std::getenv(rank_source.c_str());
-    return value != nullptr ? std::string(value) : std::string();
+    return nixl::config::getValueOptional<std::string>(rank_source).value_or(std::string());
 }
 
 [[nodiscard]] std::chrono::nanoseconds
@@ -131,7 +130,6 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
         collector_ = std::make_shared<nixlMultiprocessCollector>(dir, resolveStaleTtl());
         exposer->RegisterCollectable(collector_);
         exposer_ = std::move(exposer);
-        owner_ = true;
         NIXL_INFO << "prometheus_mp exporter (owner) serving " << bind_address
                   << ", aggregating telemetry dir " << dir.string();
     }
@@ -139,7 +137,6 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
         if (std::string(e.what()).find(bindFailureMarker) == std::string::npos) {
             throw;
         }
-        owner_ = false;
         NIXL_INFO << "prometheus_mp exporter (writer): endpoint " << bind_address
                   << " owned by another process; agent '" << init_params.agentName
                   << "' writing to " << store_path.string();

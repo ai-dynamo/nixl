@@ -49,7 +49,7 @@ public:
     // True if this process won the bind race and serves the scrape endpoint.
     [[nodiscard]] bool
     isExporter() const noexcept {
-        return owner_;
+        return static_cast<bool>(exposer_);
     }
 
 private:
@@ -58,7 +58,6 @@ private:
     std::unique_ptr<nixl::telemetry::mp::mpStoreWriter> store_;
     std::shared_ptr<nixl::telemetry::mp::nixlMultiprocessCollector> collector_;
     std::shared_ptr<prometheus::Exposer> exposer_;
-    bool owner_ = false;
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_PROMETHEUS_MP_EXPORTER_H
