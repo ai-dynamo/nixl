@@ -22,11 +22,14 @@
 #include <cstdlib>
 #include <dlfcn.h>
 
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <system_error>
 #include <unordered_map>
 #include <vector>
 
@@ -129,6 +132,18 @@ using NrtTensorPtr = std::unique_ptr<nrt_tensor, NrtTensorDeleter>;
 std::unordered_map<const void *, NrtTensorPtr> allocation_tracker;
 std::mutex allocation_tracker_mutex;
 
+// Parse NEURON_RT_NUM_CORES; return -1 if the value is not a plain integer.
+int
+parseCoreCount(const char *value) {
+    int count = 0;
+    const char *end = value + std::strlen(value);
+    auto [ptr, ec] = std::from_chars(value, end, count);
+    if (ec != std::errc{} || ptr != end) {
+        return -1;
+    }
+    return count;
+}
+
 nrt_tensor *
 getTensorFromVA(const void *va) {
     std::lock_guard lock{allocation_tracker_mutex};
@@ -158,11 +173,14 @@ neuronCoreCount() {
                     return -1;
                 }
                 std::cerr << "nixlbench: SG mode — set NEURON_RT_NUM_CORES=1" << std::endl;
-            } else {
-                std::cerr << "nixlbench: SG mode uses only the first core (vnc=0)"
-                          << " but NEURON_RT_NUM_CORES=" << (num_cores ? num_cores : "(unset)")
-                          << ", NEURON_RT_VISIBLE_CORES="
-                          << (visible_cores ? visible_cores : "(unset)") << std::endl;
+            } else if ((visible_cores &&
+                        (std::strchr(visible_cores, ',') || std::strchr(visible_cores, '-'))) ||
+                       (!visible_cores && num_cores && parseCoreCount(num_cores) > 1)) {
+                // NEURON_RT_VISIBLE_CORES takes precedence over NEURON_RT_NUM_CORES.
+                std::cerr << "nixlbench: SG mode uses only the first core (vnc=0), but "
+                          << (visible_cores ? "NEURON_RT_VISIBLE_CORES=" : "NEURON_RT_NUM_CORES=")
+                          << (visible_cores ? visible_cores : num_cores)
+                          << " scopes more cores; extras will be unused" << std::endl;
             }
         }
 
