@@ -75,11 +75,11 @@ private:
     static constexpr size_t num_fields = 5;
 
     std::unique_ptr<std::byte[]> storage_;
-    void **localAddrs_ = nullptr;
-    uint64_t *remoteAddrs_ = nullptr;
-    size_t *lengths_ = nullptr;
-    ucp_mem_h *memhs_ = nullptr;
-    ucp_rkey_h *rkeys_ = nullptr;
+    void **localAddrs_;
+    uint64_t *remoteAddrs_;
+    size_t *lengths_;
+    ucp_mem_h *memhs_;
+    ucp_rkey_h *rkeys_;
     size_t size_ = 0;
     ucx_connection_ptr_t conn_;
 };
