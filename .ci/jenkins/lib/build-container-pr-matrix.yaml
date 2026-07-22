@@ -1,0 +1,98 @@
+# NIXL PR container-build gate: build-only (no push) verification of the nixl (EP+debug)
+# and nixlbench images, so container/packaging breakage is caught on the PR, not just by
+# the nightly nixl-ci-build-container job. One matrix cell per target/arch so all images
+# build in parallel with independent status.
+
+---
+job: nixl-ci-build-container-pr
+
+failFast: false
+timeout_minutes: 180
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 24Gi, cpu: 12000m}"
+  requests: "{memory: 24Gi, cpu: 12000m}"
+
+runs_on_dockers:
+  - { name: "podman", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+      - aarch64
+    target:
+      - nixl
+      - nixlbench
+
+env:
+  NPROC: 24
+  UCX_VERSION: "v1.22.x"
+  BASE_IMAGE: "nvcr.io/nvidia/pytorch"
+  BASE_IMAGE_TAG: "26.06-py3"
+  LOCAL_TAG_BASE: "nixl-ci-pr:build-"
+
+taskName: "container-build/${target}/${arch}"
+
+# Read-only creds to pull the base images. Nothing is pushed.
+credentials:
+  - credentialsId: 'svc-nixl-new-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USERNAME'
+    passwordVariable: 'ARTIFACTORY_PASSWORD'
+  - credentialsId: 'nixl-gitlab-registry-token'
+    type: 'string'
+    variable: 'GITLAB_REGISTRY_TOKEN'
+
+steps:
+  - name: Setup docker
+    containerSelector: "{name: 'podman'}"
+    credentialsId:
+      - 'svc-nixl-new-artifactory-token'
+      - 'nixl-gitlab-registry-token'
+    run: |
+      set -e
+      # Prepare podman and log in so the base images can be pulled.
+      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
+      podman system reset -f || true
+      ln -sfT "$(type -p podman)" /usr/bin/docker
+      echo "$ARTIFACTORY_PASSWORD" | docker login artifactory.nvidia.com -u "$ARTIFACTORY_USERNAME" --password-stdin
+      if [ -n "${GITLAB_REGISTRY_TOKEN:-}" ]; then
+        echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 -u nixl-ci --password-stdin
+      fi
+
+  - name: Prepare environment
+    containerSelector: "{name: 'podman'}"
+    run: |
+      set -e
+      # nixlbench builds against a UCX source tree; nixl consumes UCX_VERSION directly.
+      if [ "$target" = "nixlbench" ]; then
+        rm -rf ucx-src
+        git clone https://github.com/openucx/ucx.git ucx-src
+        git -C ucx-src checkout "$UCX_VERSION"
+      fi
+
+  - name: Build image
+    containerSelector: "{name: 'podman'}"
+    run: |
+      set -e
+      case "$target" in
+        nixl)
+          # nixl container, debug build. build-container.sh enables EP by default.
+          # debug + EP exercises the EP device link and the torch-version wheel
+          # packaging - the parts most sensitive to build/packaging changes.
+          export UCX_REF="$UCX_VERSION"
+          contrib/build-container.sh \
+            --base-image "$BASE_IMAGE" --base-image-tag "$BASE_IMAGE_TAG" \
+            --tag "${LOCAL_TAG_BASE}${target}-${arch}" --arch "$arch" \
+            --build-type debug --no-cache
+          ;;
+        nixlbench)
+          benchmark/nixlbench/contrib/build.sh \
+            --base-image "$BASE_IMAGE" --base-image-tag "$BASE_IMAGE_TAG" \
+            --tag "${LOCAL_TAG_BASE}${target}-${arch}" --arch "$arch" \
+            --no-cache --nixl "$WORKSPACE" --ucx "$WORKSPACE/ucx-src"
+          ;;
+      esac
+      echo "Container build verification passed ($target) on ${arch}. No images pushed."
