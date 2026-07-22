@@ -27,6 +27,7 @@
 #include "backend/backend_engine.h"
 #include "transfer_request.h"
 #include "agent_data.h"
+#include "nixl_md_manager.h"
 #include "plugin_manager.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
@@ -145,11 +146,8 @@ namespace {
 
 [[nodiscard]] bool
 detectEtcd() {
-#if HAVE_ETCD
-    return nixl::config::checkExistence("NIXL_ETCD_ENDPOINTS");
-#else
-    return false;
-#endif
+    // Single source of truth (shared with the manager's backend selection).
+    return nixlMDManager::etcdConfigured();
 }
 
 // The comm thread (used for etcd or listen-based metadata exchange) shares
@@ -181,6 +179,14 @@ makeAgentTracer(const std::string &name) {
     return nixl::trace::makeTracer(nixl::trace::TracerConfig{name, std::move(requested_backends)});
 }
 
+// The metadata manager is the single path for metadata exchange; it selects its
+// backends from the environment (P2P plus an optional name-addressed backend).
+// Built unconditionally so the public methods can delegate without a fallback.
+[[nodiscard]] std::unique_ptr<nixlMDManager>
+makeMDManager(nixlMetadataContext &ctx) {
+    return std::make_unique<nixlMDManager>(ctx);
+}
+
 } // namespace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
@@ -189,6 +195,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
       useEtcd_(detectEtcd()),
       needsCommThread_(useEtcd_ || config.useListenThread),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
+      md_(makeMDManager(*this)),
       tracer_(makeAgentTracer(name)) {
 #if HAVE_ETCD
     NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");
@@ -216,9 +223,8 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 }
 
 /*** nixlAgent implementation ***/
-nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg) :
-    data(std::make_unique<nixlAgentData>(name, cfg))
-{
+nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
+    : data(std::make_unique<nixlAgentData>(name, cfg)) {
     if(cfg.useListenThread) {
         data->listener = std::make_unique<nixlMDStreamListener>(cfg.listenPort);
         data->listener->setupListener(); // throws on bind/listen failure
@@ -1463,14 +1469,13 @@ nixlAgent::genNotif(const std::string &remote_agent,
 }
 
 nixl_status_t
-nixlAgent::getLocalMD (nixl_blob_t &str) const {
-    size_t conn_cnt;
+nixlAgentData::getLocalMD(nixl_blob_t &str) {
     nixl_backend_t nixl_backend;
     nixl_status_t ret;
 
-    NIXL_LOCK_GUARD(data->lock);
-    // data->connMd_ was populated when the backend was created
-    conn_cnt = data->connMd_.size();
+    NIXL_LOCK_GUARD(lock);
+    // connMd_ was populated when the backend was created
+    const size_t conn_cnt = connMd_.size();
 
     if (conn_cnt == 0) { // Error, no backend supports remote
         NIXL_ERROR_FUNC << "no backends support remote operations";
@@ -1478,27 +1483,39 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
     }
 
     nixlSerDes sd;
-    ret = sd.addStr("Agent", data->name_);
+    ret = sd.addStr("Agent", name_);
     // Always returns SUCCESS, serdes class logs errors if necessary
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret != NIXL_SUCCESS) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     ret = sd.addBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret != NIXL_SUCCESS) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
-    for (auto &c : data->connMd_) {
+    for (auto &c : connMd_) {
         nixl_backend = c.first;
         ret = sd.addStr("t", nixl_backend);
-        if (ret) break;
+        if (ret != NIXL_SUCCESS) {
+            break;
+        }
         ret = sd.addStr("c", c.second);
-        if (ret) break;
+        if (ret != NIXL_SUCCESS) {
+            break;
+        }
     }
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret != NIXL_SUCCESS) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     ret = sd.addStr("", "MemSection");
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret != NIXL_SUCCESS) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
-    ret = data->localSection_.serialize(&sd);
-    if (ret) {
+    ret = localSection_.serialize(&sd);
+    if (ret != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "serialization failed";
         return ret;
     }
@@ -1508,19 +1525,26 @@ nixlAgent::getLocalMD (nixl_blob_t &str) const {
 }
 
 nixl_status_t
-nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
-                             nixl_blob_t &str,
-                             const nixl_opt_args_t* extra_params) const {
+nixlAgent::getLocalMD(nixl_blob_t &str) const {
+    // Single serialization implementation lives in nixlAgentData (the metadata
+    // context the manager also uses); this public entry point delegates to it.
+    return data->getLocalMD(str);
+}
+
+nixl_status_t
+nixlAgentData::getLocalPartialMD(const nixl_reg_dlist_t &descs,
+                                 nixl_blob_t &str,
+                                 const nixl_opt_args_t *extra_params) {
     backend_list_t tmp_list;
     backend_list_t *backend_list;
     nixl_status_t ret;
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_LOCK_GUARD(lock);
 
     if (!extra_params || extra_params->backends.size() == 0) {
-        if (descs.descCount() != 0) {
+        if (!descs.isEmpty()) {
             // Non-empty dlist, return backends that support the memory type
-            backend_list = &data->memToBackend[descs.getType()];
+            backend_list = &memToBackend[descs.getType()];
             if (backend_list->empty()) {
                 NIXL_ERROR_FUNC << "no available backends for mem type '" << descs.getType() << "'";
                 return NIXL_ERR_NOT_FOUND;
@@ -1528,7 +1552,7 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
         } else {
             // Empty dlist, return all backends
             backend_list = &tmp_list;
-            for (const auto &elm : data->backendEngines_) {
+            for (const auto &elm : backendEngines_) {
                 backend_list->push_back(elm.second.get());
             }
         }
@@ -1542,10 +1566,12 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     // First find all relevant engines and their conn info.
     // Best effort, ignore if no conn info (meaning backend doesn't support remote).
     backend_set_t selected_engines;
-    std::vector<typename decltype(data->connMd_)::iterator> found_iters;
+    std::vector<typename decltype(connMd_)::iterator> found_iters;
     for (const auto &backend : *backend_list) {
-        auto it = data->connMd_.find(backend->getType());
-        if (it == data->connMd_.end()) continue;
+        auto it = connMd_.find(backend->getType());
+        if (it == connMd_.end()) {
+            continue;
+        }
         found_iters.push_back(it);
         selected_engines.insert(backend);
     }
@@ -1556,29 +1582,42 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     }
 
     nixlSerDes sd;
-    ret = sd.addStr("Agent", data->name_);
+    ret = sd.addStr("Agent", name_);
     // Always returns SUCCESS, serdes class logs errors if necessary
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret != NIXL_SUCCESS) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     // Only add connection info if requested via extra_params or empty dlist
     size_t conn_cnt = ((extra_params && extra_params->includeConnInfo) || descs.descCount() == 0) ?
-                      found_iters.size() : 0;
+        found_iters.size() :
+        0;
     ret = sd.addBuf("Conns", &conn_cnt, sizeof(conn_cnt));
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret != NIXL_SUCCESS) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     for (size_t i = 0; i < conn_cnt; i++) {
         ret = sd.addStr("t", found_iters[i]->first);
-        if (ret) break;
+        if (ret != NIXL_SUCCESS) {
+            break;
+        }
         ret = sd.addStr("c", found_iters[i]->second);
-        if (ret) break;
+        if (ret != NIXL_SUCCESS) {
+            break;
+        }
     }
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret != NIXL_SUCCESS) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
     ret = sd.addStr("", "MemSection");
-    if (ret) return NIXL_ERR_UNKNOWN;
+    if (ret != NIXL_SUCCESS) {
+        return NIXL_ERR_UNKNOWN;
+    }
 
-    ret = data->localSection_.serializePartial(&sd, selected_engines, descs);
-    if (ret) {
+    ret = localSection_.serializePartial(&sd, selected_engines, descs);
+    if (ret != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "serialization failed";
         return ret;
     }
@@ -1587,38 +1626,36 @@ nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     return NIXL_SUCCESS;
 }
 
+// Single deserialization implementation, exposed via nixlMetadataContext so the
+// manager/backends can load a fetched blob into the cache. nixlAgent::loadRemoteMD
+// delegates here.
 nixl_status_t
-nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
-                         std::string &agent_name) {
-    NIXL_TRACE_SCOPE(
-        trace_span, data->tracer_.get(), "nixl::loadRemoteMD", nixl::trace::Kind::Metadata);
-
+nixlAgentData::loadRemoteMD(const nixl_blob_t &remote_metadata, std::string &out_name) {
     nixlSerDes sd;
     nixl_blob_t conn_info;
     nixl_backend_t nixl_backend;
     nixl_status_t ret;
 
-    NIXL_LOCK_GUARD(data->lock);
+    NIXL_LOCK_GUARD(lock);
     ret = sd.importStr(remote_metadata);
     if (ret != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "failed to deserialize remote metadata";
         return NIXL_ERR_MISMATCH;
     }
 
-    std::string remote_agent = sd.getStr("Agent");
+    const std::string remote_agent = sd.getStr("Agent");
     if (remote_agent.empty()) {
         NIXL_ERROR_FUNC << "error in deserializing remote agent name";
         return NIXL_ERR_MISMATCH;
     }
 
-    if (remote_agent == data->name_) {
+    if (remote_agent == name_) {
         NIXL_ERROR_FUNC << "remote agent name same as local agent, "
                            "no need to load metadata";
         return NIXL_ERR_INVALID_PARAM;
     }
 
     NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
-    NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{remote_agent});
 
     size_t conn_cnt;
     ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
@@ -1637,7 +1674,7 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
             return NIXL_ERR_MISMATCH;
         }
 
-        ret = data->loadConnInfo(remote_agent, nixl_backend, conn_info);
+        ret = loadConnInfo(remote_agent, nixl_backend, conn_info);
         if (ret == NIXL_SUCCESS) {
             count++;
         } else if (ret != NIXL_ERR_NOT_SUPPORTED) {
@@ -1657,15 +1694,38 @@ nixlAgent::loadRemoteMD (const nixl_blob_t &remote_metadata,
         return NIXL_ERR_MISMATCH;
     }
 
-    ret = data->loadRemoteSections(remote_agent, sd);
+    ret = loadRemoteSections(remote_agent, sd);
     if (ret != NIXL_SUCCESS) {
         NIXL_ERROR_FUNC << "error loading remote metadata for agent '" << remote_agent
                         << "' with status " << ret;
         return ret;
     }
 
-    agent_name = remote_agent;
+    out_name = remote_agent;
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::getLocalPartialMD(const nixl_reg_dlist_t &descs,
+                             nixl_blob_t &str,
+                             const nixl_opt_args_t *extra_params) const {
+    // Single serialization implementation lives in nixlAgentData (the metadata
+    // context the manager also uses); this public entry point delegates to it.
+    return data->getLocalPartialMD(descs, str, extra_params);
+}
+
+nixl_status_t
+nixlAgent::loadRemoteMD(const nixl_blob_t &remote_metadata, std::string &agent_name) {
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::loadRemoteMD", nixl::trace::Kind::Metadata);
+
+    // Single deserialization implementation lives in nixlAgentData (the metadata
+    // context the manager also uses); this public entry point delegates to it.
+    const nixl_status_t ret = data->loadRemoteMD(remote_metadata, agent_name);
+    if (ret == NIXL_SUCCESS) {
+        NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{agent_name});
+    }
+    return ret;
 }
 
 nixl_status_t
@@ -1702,66 +1762,15 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
 
 nixl_status_t
 nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
-    nixl_blob_t myMD;
-    nixl_status_t ret = getLocalMD(myMD);
-    if (ret < 0) {
-        NIXL_ERROR_FUNC << "error getting local metadata with status " << ret;
-        return ret;
-    }
-
-    // If IP is provided, use socket-based communication
-    if (extra_params && !extra_params->ipAddr.empty()) {
-        data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, std::move(myMD)));
-        return NIXL_SUCCESS;
-    }
-
-#if HAVE_ETCD
-    // If no IP is provided, use etcd (now via thread)
-    if (data->useEtcd_) {
-        data->enqueueCommWork(std::make_tuple(ETCD_SEND, default_metadata_label, 0, std::move(myMD)));
-        return NIXL_SUCCESS;
-    }
-    NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
-    return NIXL_ERR_INVALID_PARAM;
-#else
-    NIXL_ERROR_FUNC
-        << "sendLocalMD: ETCD is not supported and socket information was not provided either";
-    return NIXL_ERR_NOT_SUPPORTED;
-#endif // HAVE_ETCD
+    // Metadata exchange is owned by the manager, which routes to P2P when a peer
+    // address is given, otherwise to the configured name-addressed backend.
+    return data->md_->sendLocalMD(extra_params);
 }
 
 nixl_status_t
 nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
                               const nixl_opt_args_t* extra_params) const {
-    nixl_blob_t myMD;
-    nixl_status_t ret = getLocalPartialMD(descs, myMD, extra_params);
-    if (ret < 0) {
-        NIXL_ERROR_FUNC << "error getting local partial metadata with status " << ret;
-        return ret;
-    }
-
-    // If IP is provided, use socket-based communication
-    if (extra_params && !extra_params->ipAddr.empty()) {
-        data->enqueueCommWork(std::make_tuple(SOCK_SEND, extra_params->ipAddr, extra_params->port, std::move(myMD)));
-        return NIXL_SUCCESS;
-    }
-
-#if HAVE_ETCD
-    // If no IP is provided, use etcd (now via thread)
-    if (data->useEtcd_) {
-        if (!extra_params || extra_params->metadataLabel.empty()) {
-            NIXL_ERROR_FUNC << "metadata label is required for etcd send of local partial metadata";
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        data->enqueueCommWork(std::make_tuple(ETCD_SEND, extra_params->metadataLabel, 0, std::move(myMD)));
-        return NIXL_SUCCESS;
-    }
-    NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
-    return NIXL_ERR_INVALID_PARAM;
-#else
-    NIXL_ERROR_FUNC << "ETCD is not supported and socket information was not provided either";
-    return NIXL_ERR_NOT_SUPPORTED;
-#endif // HAVE_ETCD
+    return data->md_->sendLocalPartialMD(descs, extra_params);
 }
 
 nixl_status_t
@@ -1771,49 +1780,12 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
         trace_span, data->tracer_.get(), "nixl::fetchRemoteMD", nixl::trace::Kind::Metadata);
     NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{remote_name});
 
-    // If IP is provided, use socket-based communication
-    if (extra_params && !extra_params->ipAddr.empty()) {
-        data->enqueueCommWork(std::make_tuple(SOCK_FETCH, extra_params->ipAddr, extra_params->port, ""));
-        return NIXL_SUCCESS;
-    }
-
-#if HAVE_ETCD
-    // If no IP is provided, use etcd via thread with watch capability
-    if (data->useEtcd_) {
-        std::string metadata_label = extra_params && !extra_params->metadataLabel.empty() ?
-                                     extra_params->metadataLabel :
-                                     default_metadata_label;
-        data->enqueueCommWork(std::make_tuple(ETCD_FETCH, std::move(metadata_label), 0, remote_name));
-        return NIXL_SUCCESS;
-    }
-    NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
-    return NIXL_ERR_INVALID_PARAM;
-#else
-    NIXL_ERROR_FUNC << "ETCD is not supported and socket information was not provided either";
-    return NIXL_ERR_NOT_SUPPORTED;
-#endif // HAVE_ETCD
+    return data->md_->fetchRemoteMD(remote_name, extra_params);
 }
 
 nixl_status_t
 nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
-    // If IP is provided, use socket-based communication
-    if (extra_params && !extra_params->ipAddr.empty()) {
-        data->enqueueCommWork(std::make_tuple(SOCK_INVAL, extra_params->ipAddr, extra_params->port, ""));
-        return NIXL_SUCCESS;
-    }
-
-#if HAVE_ETCD
-    // If no IP is provided, use etcd via thread
-    if (data->useEtcd_) {
-        data->enqueueCommWork(std::make_tuple(ETCD_INVAL, "", 0, ""));
-        return NIXL_SUCCESS;
-    }
-    NIXL_ERROR_FUNC << "invalid parameters to be used for either socket or ETCD";
-    return NIXL_ERR_INVALID_PARAM;
-#else
-    NIXL_ERROR_FUNC << "ETCD is not supported and socket information was not provided either";
-    return NIXL_ERR_NOT_SUPPORTED;
-#endif // HAVE_ETCD
+    return data->md_->invalidateLocalMD(extra_params);
 }
 
 nixl_status_t
