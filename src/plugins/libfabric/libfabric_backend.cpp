@@ -260,16 +260,28 @@ nixlLibfabricCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &wa
 
     was_updated = false;
 
-    if (expected_dev == -1) return -1;
-    if (myDevId_ != -1 && expected_dev != myDevId_) return -1;
+    if (expected_dev == -1) {
+        return -1;
+    }
+    if (myDevId_ != -1 && expected_dev != myDevId_) {
+        return -1;
+    }
 
     ret = cudaQueryAddr(address, is_dev, dev, ctx, pci_bus_id);
-    if (ret) return ret;
-    if (!is_dev) return 0;
-    if (dev != expected_dev) return -1;
+    if (ret) {
+        return ret;
+    }
+    if (!is_dev) {
+        return 0;
+    }
+    if (dev != expected_dev) {
+        return -1;
+    }
 
     if (pthrCudaCtx_) {
-        if (pthrCudaCtx_ != ctx) return -1;
+        if (pthrCudaCtx_ != ctx) {
+            return -1;
+        }
         return 0;
     }
 
@@ -283,15 +295,40 @@ nixlLibfabricCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &wa
 int
 nixlLibfabricCudaCtx::cudaSetCtx() {
     CUresult result;
-    if (NULL == pthrCudaCtx_) return 0;
+    if (NULL == pthrCudaCtx_) {
+        return 0;
+    }
 
     result = cuCtxSetCurrent(pthrCudaCtx_);
     return (CUDA_SUCCESS == result);
 }
 
+class nixlLibfaricCudaCtxEngineMediator : public LibfabricUtils::nixlLibfaricCudaCtxMediator {
+public:
+    nixlLibfaricCudaCtxEngineMediator(nixlLibfabricEngine *engine) : engine_(engine) {}
+
+    ~nixlLibfaricCudaCtxEngineMediator() override {}
+
+    nixl_status_t
+    cudaSetCtx(bool &use_cuda_addr_wa) override {
+        if (engine_ == nullptr) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        return engine_->vramApplyCtxEx(use_cuda_addr_wa);
+    }
+
+private:
+    nixlLibfabricEngine *engine_;
+};
+
 void
 nixlLibfabricEngine::vramInitCtx() {
     cudaCtx_ = std::make_unique<nixlLibfabricCudaCtx>();
+
+    // install a mediator so that the progress thread can also use this
+    std::unique_ptr<LibfabricUtils::nixlLibfaricCudaCtxMediator> mediator;
+    mediator.reset(new (std::nothrow) nixlLibfaricCudaCtxEngineMediator(this));
+    setCudaCtxMediator(std::move(mediator));
 }
 
 int
@@ -328,6 +365,18 @@ void
 nixlLibfabricEngine::vramFiniCtx() {
     const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
     cudaCtx_.reset();
+    LibfabricUtils::clearCudaCtxMediator();
+}
+
+nixl_status_t
+nixlLibfabricEngine::vramApplyCtxEx(bool &use_cuda_addr_wa) const {
+    const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
+    use_cuda_addr_wa = cuda_addr_wa_;
+    if (use_cuda_addr_wa && cudaCtx_ && !cudaCtx_->cudaSetCtx()) {
+        NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
+        return NIXL_ERR_BACKEND;
+    }
+    return NIXL_SUCCESS;
 }
 #endif
 
@@ -500,8 +549,18 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
         // Start Progress thread for rail completion processing
         if (progress_thread_enabled_) {
+            // in case of PT=1 we need to allocate post ring buffer per rail
+            size_t post_queue_size = NIXL_LIBFABRC_DEFAULT_POST_QUEUE_SIZE;
+            LibfabricUtils::getCustomIntParam(
+                getCustomParams(), "post_queue_size", post_queue_size);
+
             for (size_t i = 0; i < rail_manager_.getNumRails(); ++i) {
                 rail_manager_.getRail(i).setProgressThreadEnabled(true);
+                if (!rail_manager_.getRail(i).initPostQueue(post_queue_size)) {
+                    NIXL_ERROR << "Failed to initialize post-queue for rail " << i;
+                    throw std::runtime_error("Failed to initialize the rail manager: unable to "
+                                             "initialize rail post queue");
+                }
             }
 
             NIXL_INFO << "Starting Progress thread for rails with delay: "
@@ -1177,31 +1236,19 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
     submitted_count = 0;
 
 #ifdef HAVE_CUDA
+    // NOTE: when progress thread is enabled and the call is deferred via ring-buffer, this should
+    // take place in the context of the progress thread
     const bool is_cuda_vram = local.getType() == VRAM_SEG && runtime_ == FI_HMEM_CUDA;
     bool use_cuda_addr_wa = false;
     int current_cuda_device = -1;
-    if (is_cuda_vram) {
-        const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
-        use_cuda_addr_wa = cuda_addr_wa_;
-        if (use_cuda_addr_wa && cudaCtx_ && !cudaCtx_->cudaSetCtx()) {
-            NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
-            return NIXL_ERR_BACKEND;
+    if (!progress_thread_enabled_ && is_cuda_vram) {
+        nixl_status_t status = vramApplyCtxEx(use_cuda_addr_wa);
+        if (status != NIXL_SUCCESS) {
+            return status;
         }
     }
-
-    auto prepare_cuda_descriptor_post = [&](int device_id, int desc_idx) -> nixl_status_t {
-        if (!is_cuda_vram || use_cuda_addr_wa || device_id == current_cuda_device) {
-            return NIXL_SUCCESS;
-        }
-        cudaError_t cuda_ret = cudaSetDevice(device_id);
-        if (cuda_ret != cudaSuccess) {
-            NIXL_ERROR << "Failed to set CUDA device " << device_id << " while posting descriptor "
-                       << desc_idx << ": " << cudaGetErrorString(cuda_ret);
-            return NIXL_ERR_BACKEND;
-        }
-        current_cuda_device = device_id;
-        return NIXL_SUCCESS;
-    };
+#else
+    const bool is_cuda_vram = false;
 #endif
 
     for (int desc_idx = start_idx; desc_idx < end_idx; ++desc_idx) {
@@ -1213,9 +1260,18 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         int device_id = local[desc_idx].devId;
 
 #ifdef HAVE_CUDA
-        if (nixl_status_t status = prepare_cuda_descriptor_post(device_id, desc_idx);
-            status != NIXL_SUCCESS) {
-            return status;
+        // NOTE: when progress thread is enabled and the call is deferred via ring-buffer, this
+        // should take place in the context of the progress thread
+        if (!progress_thread_enabled_ && is_cuda_vram && !use_cuda_addr_wa &&
+            device_id != current_cuda_device) {
+            cudaError_t cuda_ret = cudaSetDevice(device_id);
+            if (cuda_ret != cudaSuccess) {
+                NIXL_ERROR << "Failed to set CUDA device " << device_id
+                           << " while posting descriptor " << desc_idx << ": "
+                           << cudaGetErrorString(cuda_ret);
+                return NIXL_ERR_BACKEND;
+            }
+            current_cuda_device = device_id;
         }
 #endif
 
@@ -1243,7 +1299,9 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             desc_submitted_count,
             desc_idx,
             desc_count,
-            xfer_base_offset);
+            xfer_base_offset,
+            local[desc_idx].devId,
+            is_cuda_vram);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx

@@ -395,7 +395,9 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     size_t &submitted_count_out,
     int desc_idx,
     int desc_count,
-    size_t base_offset) {
+    size_t base_offset,
+    int device_id,
+    bool is_cuda_vram) {
     // Initialize output parameter
     submitted_count_out = 0;
 
@@ -448,9 +450,22 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         req->local_mr = local_mrs[rail_id];
         req->remote_key = remote_keys[remote_ep_id];
         req->rail_id = rail_id;
-        // Submit immediately
+        // Submit: either enqueue for PT, or post directly
         nixl_status_t status;
-        if (op_type == nixlLibfabricReq::WRITE) {
+        if (rails_[rail_id]->isProgressThreadEnabled()) {
+            // PT-owns-endpoint: enqueue for progress thread to post
+            deferTransferRequest(op_type,
+                                 agent_idx,
+                                 xfer_id,
+                                 fi_flags,
+                                 dest_addrs.at(rail_id)[remote_ep_id],
+                                 device_id,
+                                 is_cuda_vram,
+                                 rail_id,
+                                 req);
+            status = NIXL_SUCCESS;
+        } else if (op_type == nixlLibfabricReq::WRITE) {
+            // Direct post (PT OFF path)
             // Generate next SEQ_ID for this specific write operation
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
             uint64_t imm_data =
@@ -500,7 +515,9 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                 remote_selected_endpoints[i % remote_selected_endpoints.size()];
             NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id=" << remote_ep_id;
             size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
-            if (current_chunk_size == 0) break;
+            if (current_chunk_size == 0) {
+                break;
+            }
             // Allocate request
             nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
             if (!req) {
@@ -532,7 +549,19 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             req->remote_key = remote_keys[remote_ep_id];
             req->rail_id = rail_id;
             nixl_status_t status;
-            if (op_type == nixlLibfabricReq::WRITE) {
+            if (rails_[rail_id]->isProgressThreadEnabled()) {
+                // PT-owns-endpoint: enqueue for progress thread to post
+                deferTransferRequest(op_type,
+                                     agent_idx,
+                                     xfer_id,
+                                     fi_flags,
+                                     dest_addrs.at(rail_id)[remote_ep_id],
+                                     device_id,
+                                     is_cuda_vram,
+                                     rail_id,
+                                     req);
+                status = NIXL_SUCCESS;
+            } else if (op_type == nixlLibfabricReq::WRITE) {
                 // Generate next SEQ_ID for this specific transfer operation
                 uint8_t seq_id = LibfabricUtils::getNextSeqId();
                 uint64_t imm_data =
@@ -574,6 +603,37 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
 
     return NIXL_SUCCESS;
+}
+
+void
+nixlLibfabricRailManager::deferTransferRequest(nixlLibfabricReq::OpType op_type,
+                                               uint16_t agent_idx,
+                                               uint16_t xfer_id,
+                                               uint64_t fi_flags,
+                                               fi_addr_t dest_addr,
+                                               int device_id,
+                                               bool is_cuda_vram,
+                                               size_t rail_id,
+                                               nixlLibfabricReq *req) {
+    uint8_t seq_id = (op_type == nixlLibfabricReq::WRITE) ? LibfabricUtils::getNextSeqId() : 0;
+    uint64_t imm_data = (op_type == nixlLibfabricReq::WRITE) ?
+        NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id) :
+        0;
+    nixlLibfabricPostRequest pr{};
+    pr.type = (op_type == nixlLibfabricReq::WRITE) ? nixlLibfabricPostRequest::WRITE :
+                                                     nixlLibfabricPostRequest::READ;
+    pr.local_addr = req->local_addr;
+    pr.length = req->chunk_size;
+    pr.local_desc = fi_mr_desc(req->local_mr);
+    pr.immediate_data = imm_data;
+    pr.dest_addr = dest_addr;
+    pr.remote_addr = req->remote_addr;
+    pr.remote_key = req->remote_key;
+    pr.req = req;
+    pr.fi_flags = fi_flags;
+    pr.device_id = device_id;
+    pr.is_cuda_vram = is_cuda_vram;
+    rails_[rail_id]->enqueuePost(pr);
 }
 
 bool

@@ -41,6 +41,7 @@
 #define NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_MS 10
 #define NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD (128 * 1024) // 128KB
 #define LF_EP_NAME_MAX_LEN 56
+#define NIXL_LIBFABRC_DEFAULT_POST_QUEUE_SIZE 2048
 
 // Request pool configuration constants
 #define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // SEND/RECV operations (for notifications)
@@ -335,6 +336,34 @@ getCustomStringParam(const nixl_b_params_t &custom_params,
  */
 extern nixl_status_t
 getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, size_t &value);
+} // namespace LibfabricUtils
+
+// CUDA context workaround temporary API for exposing to progress thread
+namespace LibfabricUtils {
+
+/**
+ * @brief Mediator class for abstracting engine internals, while allowing consumers (e.g. progress
+ * thread) to have access to the API without having an engine pointer.
+ */
+class nixlLibfaricCudaCtxMediator {
+public:
+    virtual ~nixlLibfaricCudaCtxMediator() {}
+
+    virtual nixl_status_t
+    cudaSetCtx(bool &use_cuda_addr_wa) = 0;
+
+protected:
+    nixlLibfaricCudaCtxMediator() {}
+};
+
+extern void
+setCudaCtxMediator(std::unique_ptr<nixlLibfaricCudaCtxMediator> &&mediator);
+
+extern void
+clearCudaCtxMediator();
+
+extern nixl_status_t
+cudaSetCtx(bool &use_cuda_addr_wa);
 } // namespace LibfabricUtils
 
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_COMMON_H
