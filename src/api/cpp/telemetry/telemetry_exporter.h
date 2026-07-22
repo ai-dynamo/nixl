@@ -82,8 +82,7 @@ public:
      * Exporters may use the batch boundary to share per-batch work across the
      * exportEvent() calls made inside @p body (e.g. a single timestamp). The
      * batch begins before @p body runs and ends when it returns (including on
-     * exception). Scopes may nest; the lifecycle hooks fire only for the
-     * outermost scope, so a nested call reuses the surrounding batch.
+     * exception). Batches are not nested.
      *
      * @tparam Body Callable invocable with no arguments.
      * @param body Callable run once while the batch is open.
@@ -99,15 +98,11 @@ private:
     class batchScope {
     public:
         explicit batchScope(nixlTelemetryExporter &exporter) noexcept : exporter_(exporter) {
-            if (exporter_.batchDepth_++ == 0) {
-                exporter_.onBatchBegin();
-            }
+            exporter_.onBatchBegin();
         }
 
         ~batchScope() {
-            if (--exporter_.batchDepth_ == 0) {
-                exporter_.onBatchEnd();
-            }
+            exporter_.onBatchEnd();
         }
 
         batchScope(const batchScope &) = delete;
@@ -127,7 +122,6 @@ private:
     virtual void
     onBatchEnd() noexcept {}
 
-    unsigned batchDepth_ = 0;
     const size_t maxEventsBuffered_;
 };
 
