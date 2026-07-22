@@ -189,7 +189,7 @@ neuronMalloc(void **addr, size_t buffer_size, int devid) {
         return -1;
     }
 
-    std::lock_guard<std::mutex> lock{allocation_tracker_mutex};
+    const std::lock_guard<std::mutex> lock{allocation_tracker_mutex};
     uintptr_t base = reinterpret_cast<uintptr_t>(*addr);
     auto [it, inserted] = allocation_tracker.emplace(base, NrtAllocation{tensor, buffer_size});
     if (!inserted) {
@@ -206,14 +206,14 @@ neuronFree(void *addr) {
         return 0;
     }
 
-    std::lock_guard<std::mutex> lock{allocation_tracker_mutex};
+    const std::lock_guard<std::mutex> lock{allocation_tracker_mutex};
     const auto erased = allocation_tracker.erase(reinterpret_cast<uintptr_t>(addr));
     return erased == 1 ? 0 : -1;
 }
 
 int
 neuronMemcpy(void *dest, const void *src, size_t count, neuronMemcpyKind kind) {
-    std::lock_guard<std::mutex> lock{allocation_tracker_mutex};
+    const std::lock_guard<std::mutex> lock{allocation_tracker_mutex};
     const void *device_addr = (kind == neuronMemcpyHostToDevice) ? dest : src;
     auto [tensor, offset, alloc_size] = findTensorForVA(device_addr);
     if (tensor == nullptr) {
@@ -245,9 +245,11 @@ neuronMemcpy(void *dest, const void *src, size_t count, neuronMemcpyKind kind) {
 
 int
 neuronMemset(void *addr, int val, size_t count) {
-    std::lock_guard<std::mutex> lock{allocation_tracker_mutex};
+    const std::lock_guard<std::mutex> lock{allocation_tracker_mutex};
     auto [tensor, offset, alloc_size] = findTensorForVA(addr);
     if (tensor == nullptr) {
+        std::cerr << "neuronMemset: no allocation found for VA " << addr << " (count=" << count
+                  << ")" << std::endl;
         return -1;
     }
     if (count > alloc_size - offset) {
