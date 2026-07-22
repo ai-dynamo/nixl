@@ -40,8 +40,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
         nixlBackendH* backend_engine;
         nixl_mem_t seg_type;
         std::vector<xferFileState> remote_fds;
-        std::vector<NixlMemRegion> remote_regs_;
-        std::vector<NixlMemRegion> local_regs_;
+        std::vector<NixlMemRegion> remoteRegs_;
+        std::vector<NixlMemRegion> localRegs_;
         std::vector<GusliDeviceConfig> gusli_devices;
 
     public:
@@ -67,6 +67,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
         transfer(size_t block_size,
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+
+        bool
+        verifyWriteByReadback(std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                              std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
     private:
         std::optional<xferBenchIOV>
