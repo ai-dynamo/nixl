@@ -94,6 +94,11 @@ namespace {
             return fail("--num-files must be at least 1");
         }
         if (!file.filenames.empty() &&
+            (file.filenames.front() == ',' || file.filenames.back() == ',' ||
+             file.filenames.find(",,") != std::string::npos)) {
+            return fail("--filenames must not contain empty entries");
+        }
+        if (!file.filenames.empty() &&
             countCommaSeparated(file.filenames) != static_cast<size_t>(file.num_files)) {
             return fail("--filenames must contain exactly --num-files entries");
         }
@@ -128,11 +133,13 @@ printRawPosixPlan(const RawPosixRequest &request,
         << "  command: raw posix\n"
         << "  backend: " << metadata.name << "\n"
         << "  memory types: ";
-    for (size_t i = 0; i < metadata.memory_types.size(); ++i) {
+    auto memory_types = metadata.memory_types;
+    std::sort(memory_types.begin(), memory_types.end());
+    for (size_t i = 0; i < memory_types.size(); ++i) {
         if (i != 0) {
             out << ", ";
         }
-        out << nixlEnumStrings::memTypeStr(metadata.memory_types[i]);
+        out << nixlEnumStrings::memTypeStr(memory_types[i]);
     }
     out << "\n  benchmark options:\n"
         << "    operation: " << request.raw.operation
@@ -281,10 +288,13 @@ parseRawPosixCommand(int argc,
     raw->add_option("--total-buffer-size",
                     total_buffer_size,
                     "Total buffer size using binary units (for example 4MiB or 4MB)")
+        ->default_str(formatSize(request.raw.total_buffer_size))
         ->group("Raw benchmark options");
     raw->add_option("--start-block-size", start_block_size, "First block size in the sweep")
+        ->default_str(formatSize(request.raw.start_block_size))
         ->group("Raw benchmark options");
     raw->add_option("--max-block-size", max_block_size, "Last block size in the sweep")
+        ->default_str(formatSize(request.raw.max_block_size))
         ->group("Raw benchmark options");
     raw->add_option(
            "--start-batch-size", request.raw.start_batch_size, "First batch size in the sweep")

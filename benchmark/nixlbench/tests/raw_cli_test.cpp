@@ -215,6 +215,33 @@ namespace {
         err.str("");
         EXPECT_NE(parse(names, posixMetadata(), request, out, err, help), 0);
         EXPECT_NE(err.str().find("exactly --num-files"), std::string::npos);
+
+        const auto expect_empty_name_rejected = [](const char *filenames, const char *num_files) {
+            Arguments empty_name{"nixlbench",
+                                 "raw",
+                                 "posix",
+                                 "--threads",
+                                 num_files,
+                                 "--num-files",
+                                 num_files,
+                                 "--filenames",
+                                 filenames};
+            RawPosixRequest invalid_request;
+            bool invalid_help = false;
+            std::ostringstream invalid_out;
+            std::ostringstream invalid_err;
+            EXPECT_NE(parse(empty_name,
+                            posixMetadata(),
+                            invalid_request,
+                            invalid_out,
+                            invalid_err,
+                            invalid_help),
+                      0);
+            EXPECT_NE(invalid_err.str().find("empty entries"), std::string::npos);
+        };
+        expect_empty_name_rejected(",one", "2");
+        expect_empty_name_rejected("one,", "2");
+        expect_empty_name_rejected("one,,three", "3");
     }
 
     TEST(RawPosixParserTest, HelpSeparatesOwnershipAndSortsPluginOptions) {
@@ -256,6 +283,9 @@ namespace {
         EXPECT_TRUE(help);
         EXPECT_NE(out.str().find("Raw benchmark options"), std::string::npos);
         EXPECT_NE(out.str().find("--operation"), std::string::npos);
+        EXPECT_NE(out.str().find("8 GiB (8589934592 bytes)"), std::string::npos);
+        EXPECT_NE(out.str().find("4 KiB (4096 bytes)"), std::string::npos);
+        EXPECT_NE(out.str().find("64 MiB (67108864 bytes)"), std::string::npos);
         EXPECT_EQ(out.str().find("--path"), std::string::npos);
         EXPECT_EQ(out.str().find("--future_parameter"), std::string::npos);
     }
@@ -265,7 +295,7 @@ namespace {
         request.raw.operation = "READ";
         request.file.path = "/tmp/nixlbench";
         request.plugin_parameters = {{"zeta_parameter", "Value-Z"}, {"alpha_parameter", "Value-A"}};
-        const PluginMetadata metadata{"POSIX", {DRAM_SEG, FILE_SEG}, request.plugin_parameters};
+        const PluginMetadata metadata{"POSIX", {FILE_SEG, DRAM_SEG}, request.plugin_parameters};
         std::ostringstream out;
 
         printRawPosixPlan(request, metadata, out);
@@ -280,6 +310,7 @@ namespace {
         ASSERT_NE(plugin, std::string::npos);
         ASSERT_NE(alpha, std::string::npos);
         ASSERT_NE(zeta, std::string::npos);
+        EXPECT_NE(out.str().find("memory types: DRAM_SEG, FILE_SEG"), std::string::npos);
         EXPECT_LT(benchmark, file);
         EXPECT_LT(file, plugin);
         EXPECT_LT(alpha, zeta);

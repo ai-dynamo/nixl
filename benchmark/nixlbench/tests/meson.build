@@ -12,6 +12,7 @@ nixlbench_tests = executable(
   include_directories: inc_dir,
   link_with: [utils_lib, nixlbench_runtimes],
   dependencies: deps + [gtest_dep],
+  install: true,
 )
 
 nixlbench_test_env = environment()
