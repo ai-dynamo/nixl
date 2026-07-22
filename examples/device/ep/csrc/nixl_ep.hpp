@@ -258,7 +258,8 @@ public:
 
     void update_mask_buffer(int rank_to_mask, bool mask);
 
-    void query_mask_buffer(const torch::Tensor& mask_status);
+    void
+    query_mask_buffer(const torch::Tensor &mask_status) const;
 
     void clean_mask_buffer();
 
