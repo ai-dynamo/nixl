@@ -93,9 +93,8 @@ telePID=$!
 sleep 15
 kill -s INT $telePID
 
-# POSIX test disabled until we solve io_uring and Docker compatibility
-
-./bin/nixl_posix_test -n 128 -s 1048576
+# Forward optional test arguments selected by the CI runner.
+./bin/nixl_posix_test -n 128 -s 1048576 "${@:2}"
 ./bin/nixl_gusli_test -n 4 -s 16
 ./bin/ucx_backend_multi
 ./bin/serdes_test

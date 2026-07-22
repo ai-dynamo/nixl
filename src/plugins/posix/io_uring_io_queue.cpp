@@ -19,6 +19,7 @@
 #include "common/nixl_log.h"
 #include <liburing.h>
 #include <absl/strings/str_format.h>
+#include <cerrno>
 
 #define MAX_IO_SUBMIT_BATCH_SIZE 64
 #define MAX_IO_CHECK_COMPLETED_BATCH_SIZE 64
@@ -33,6 +34,9 @@ public:
     nixlPosixIOQueueDoneCb clb_;
     void *ctx_;
     struct io_uring_sqe *sqe_;
+    bool in_flight_ = false; // owned by the ring, not yet reaped
+    bool force_error_ = false; // fail the owning request after a queue-wide submit failure
+    bool cancel_queued_ = false; // a cancellation SQE has been prepared for this io
 };
 
 class nixlPosixIOQueueUring : public nixlPosixIOQueueImpl<nixlPosixIoUringIO> {
@@ -51,20 +55,42 @@ public:
             void *ctx) override;
     virtual nixl_status_t
     poll(void) override;
+    virtual nixl_status_t
+    cancel(void *ctx) override;
+
+    virtual bool
+    hasPendingCleanup(void) const override {
+        return submission_failure_draining_ || cancel_sqes_outstanding_ != 0;
+    }
     virtual ~nixlPosixIOQueueUring() override;
 
 protected:
     nixlPosixIoUringIO *
     getBufInfo(struct iocb *io);
     nixl_status_t
-    doCheckCompleted(void);
+    reapCompletions(void);
 
 private:
+    nixl_status_t
+    driveSubmissions(void);
+    void
+    beginSubmissionFailureDrain(void);
+    void
+    failQueuedIOs(void *ctx);
+    void
+    prepareIOSQEs(void);
+    bool
+    prepareCancelSQEs(void *ctx);
+
     struct io_uring uring; // The io_uring instance for async I/O operations
+    bool submission_failure_draining_;
+    unsigned cancel_sqes_outstanding_;
 };
 
 nixlPosixIOQueueUring::nixlPosixIOQueueUring(uint32_t ios_pool_size, uint32_t kernel_queue_size)
-    : nixlPosixIOQueueImpl<nixlPosixIoUringIO>(ios_pool_size, kernel_queue_size) {
+    : nixlPosixIOQueueImpl<nixlPosixIoUringIO>(ios_pool_size, kernel_queue_size),
+      submission_failure_draining_(false),
+      cancel_sqes_outstanding_(0) {
     io_uring_params params = {};
     int ret = io_uring_queue_init_params(kernel_queue_size_, &uring, &params);
     if (ret < 0) {
@@ -73,23 +99,20 @@ nixlPosixIOQueueUring::nixlPosixIOQueueUring(uint32_t ios_pool_size, uint32_t ke
     }
 }
 
-// Note: post() must return NIXL_IN_PROG in case of success
-nixl_status_t
-nixlPosixIOQueueUring::post(void) {
-    if (ios_to_submit_.empty()) {
-        return NIXL_IN_PROG;
-    }
-
+// Prepare normal I/O SQEs without submitting them.
+void
+nixlPosixIOQueueUring::prepareIOSQEs(void) {
     int num_ios = std::min(MAX_IO_SUBMIT_BATCH_SIZE, (int)ios_to_submit_.size());
     for (int i = 0; i < num_ios; i++) {
-        nixlPosixIoUringIO *io = ios_to_submit_.front();
-        ios_to_submit_.pop_front();
-
+        // Keep the io queued until an SQE is available. A previous short
+        // submit can leave the ring full of SQEs that still need a retry.
         struct io_uring_sqe *sqe = io_uring_get_sqe(&uring);
         if (!sqe) {
-            NIXL_ERROR << "Failed to get io_uring submission queue entry";
-            return NIXL_ERR_BACKEND;
+            break;
         }
+
+        nixlPosixIoUringIO *io = ios_to_submit_.front();
+        ios_to_submit_.pop_front();
 
         if (io->read_) {
             io_uring_prep_read(sqe, io->fd, io->buf_, io->len_, io->offset_);
@@ -98,33 +121,130 @@ nixlPosixIOQueueUring::post(void) {
         }
 
         io_uring_sqe_set_data(sqe, io);
+        io->in_flight_ = true;
+    }
+}
+
+// Prepare cancellation SQEs without submitting them. A null context selects every
+// in-flight io for the private queue-wide cancellation path.
+bool
+nixlPosixIOQueueUring::prepareCancelSQEs(void *ctx) {
+    bool prepared = false;
+    for (auto &io : ios_) {
+        if (!io.in_flight_ || io.cancel_queued_ || (ctx && io.ctx_ != ctx)) {
+            continue;
+        }
+
+        struct io_uring_sqe *sqe = io_uring_get_sqe(&uring);
+        if (!sqe) {
+            break;
+        }
+
+        io_uring_prep_cancel(sqe, &io, 0);
+        io_uring_sqe_set_data(sqe, nullptr);
+        io.cancel_queued_ = true;
+        cancel_sqes_outstanding_++;
+        prepared = true;
+    }
+    return prepared;
+}
+
+void
+nixlPosixIOQueueUring::failQueuedIOs(void *ctx) {
+    for (auto it = ios_to_submit_.begin(); it != ios_to_submit_.end();) {
+        nixlPosixIoUringIO *io = *it;
+        if (ctx && io->ctx_ != ctx) {
+            ++it;
+            continue;
+        }
+        if (io->clb_) {
+            io->clb_(io->ctx_, 0, 1);
+        }
+        it = ios_to_submit_.erase(it);
+        free_ios_.push_back(io);
+    }
+}
+
+void
+nixlPosixIOQueueUring::beginSubmissionFailureDrain(void) {
+    if (submission_failure_draining_) {
+        return;
     }
 
+    submission_failure_draining_ = true;
+    failQueuedIOs(nullptr);
+
+    // Ring-owned ios must stay alive until their CQEs are reaped. Force their
+    // callbacks to report failure even if an operation wins the cancel race.
+    for (auto &io : ios_) {
+        if (io.in_flight_) {
+            io.force_error_ = true;
+        }
+    }
+
+    prepareCancelSQEs(nullptr);
+}
+
+nixl_status_t
+nixlPosixIOQueueUring::post(void) {
+    return driveSubmissions();
+}
+
+// Prepare eligible I/O or cancellation SQEs, then submit every ring-ready SQE.
+// This is the only method that calls io_uring_submit() and returns NIXL_IN_PROG on success.
+nixl_status_t
+nixlPosixIOQueueUring::driveSubmissions(void) {
+    if (!submission_failure_draining_) {
+        prepareIOSQEs();
+    } else {
+        prepareCancelSQEs(nullptr);
+    }
+
+    // io_uring_submit() can consume only part of the SQ. Liburing keeps the
+    // remainder ready in the ring, so retry it even when ios_to_submit_ is empty.
+    // An empty submit normally stays in userspace, but may enter the kernel to
+    // flush completion-side state such as CQ overflow.
     int ret = io_uring_submit(&uring);
-    if (ret < 0) {
-        NIXL_ERROR << "io_uring_submit failed: " << nixl_strerror(-ret);
-        return NIXL_ERR_BACKEND;
+    if (ret >= 0 || ret == -EAGAIN || ret == -EBUSY || ret == -EINTR) {
+        return NIXL_IN_PROG;
     }
 
-    return NIXL_IN_PROG;
+    NIXL_ERROR << "io_uring_submit failed: " << nixl_strerror(-ret);
+    beginSubmissionFailureDrain();
+    return NIXL_ERR_BACKEND;
 }
 
 inline nixl_status_t
-nixlPosixIOQueueUring::doCheckCompleted(void) {
+nixlPosixIOQueueUring::reapCompletions(void) {
     struct io_uring_cqe *cqe;
     unsigned head;
     int count = 0;
     io_uring_for_each_cqe(&uring, head, cqe) {
         int res = cqe->res;
         nixlPosixIoUringIO *io = reinterpret_cast<nixlPosixIoUringIO *>(io_uring_cqe_get_data(cqe));
+        // cancel SQEs carry a null sentinel user_data; reap the completion but
+        // do not treat it as an io.
+        if (!io) {
+            NIXL_ASSERT(cancel_sqes_outstanding_ > 0);
+            cancel_sqes_outstanding_--;
+            count++;
+            if (count == MAX_IO_CHECK_COMPLETED_BATCH_SIZE) {
+                break;
+            }
+            continue;
+        }
+        int error = io->force_error_ || res < 0 || static_cast<size_t>(res) != io->len_;
+        if (error) {
+            NIXL_DEBUG << absl::StrFormat(
+                "IO operation incomplete: result %d, expected %zu", res, io->len_);
+        }
         if (io->clb_) {
-            io->clb_(io->ctx_, res, 0);
+            io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(res), error);
         }
+        io->in_flight_ = false;
+        io->force_error_ = false;
+        io->cancel_queued_ = false;
         free_ios_.push_back(io);
-        if (res < 0) {
-            NIXL_ERROR << absl::StrFormat("IO operation failed: %s", nixl_strerror(-res));
-            return NIXL_ERR_BACKEND;
-        }
         count++;
         if (count == MAX_IO_CHECK_COMPLETED_BATCH_SIZE) {
             break;
@@ -134,11 +254,20 @@ nixlPosixIOQueueUring::doCheckCompleted(void) {
     // Mark all seen
     io_uring_cq_advance(&uring, count);
 
-    if (free_ios_.size() == ios_pool_size_) {
-        return NIXL_SUCCESS; // All ios are free now
+    // Submitted cancel SQEs are ordered before any future work, and their null
+    // CQEs are harmless. Reuse is safe once no user io, cancellation CQE, or
+    // ready SQE remains.
+    if (submission_failure_draining_ && free_ios_.size() == ios_pool_size_ &&
+        cancel_sqes_outstanding_ == 0 && io_uring_sq_ready(&uring) == 0) {
+        submission_failure_draining_ = false;
     }
 
-    return NIXL_IN_PROG; // Some ios are in flight, need to check again
+    if (free_ios_.size() == ios_pool_size_ && cancel_sqes_outstanding_ == 0 &&
+        !submission_failure_draining_) {
+        return NIXL_SUCCESS; // All ios and cancellation cleanup are done
+    }
+
+    return NIXL_IN_PROG; // Some ios or cancellation SQEs still need to drain
 }
 
 nixl_status_t
@@ -149,6 +278,9 @@ nixlPosixIOQueueUring::enqueue(int fd,
                                bool read,
                                nixlPosixIOQueueDoneCb clb,
                                void *ctx) {
+    if (submission_failure_draining_) {
+        return NIXL_ERR_BACKEND;
+    }
     if (free_ios_.empty()) {
         NIXL_ERROR << "No more free blocks available";
         return NIXL_ERR_NOT_ALLOWED;
@@ -163,6 +295,9 @@ nixlPosixIOQueueUring::enqueue(int fd,
     io->read_ = read;
     io->clb_ = clb;
     io->ctx_ = ctx;
+    io->in_flight_ = false;
+    io->force_error_ = false;
+    io->cancel_queued_ = false;
 
     ios_to_submit_.push_back(io);
 
@@ -171,12 +306,27 @@ nixlPosixIOQueueUring::enqueue(int fd,
 
 nixl_status_t
 nixlPosixIOQueueUring::poll(void) {
-    nixl_status_t status = post();
-    if (status < 0) {
-        return status;
+    nixl_status_t submit_status = driveSubmissions();
+    nixl_status_t completion_status = reapCompletions();
+
+    return submit_status < 0 ? submit_status : completion_status;
+}
+
+nixl_status_t
+nixlPosixIOQueueUring::cancel(void *ctx) {
+    // Null is reserved internally for queue-wide submission-failure cleanup.
+    if (!ctx) {
+        return NIXL_ERR_INVALID_PARAM;
     }
 
-    return doCheckCompleted();
+    failQueuedIOs(ctx);
+
+    // Best-effort: cancel this transfer's ring-owned ios. Cancel SQEs carry a
+    // null sentinel and are tracked until their CQEs are reaped.
+    if (prepareCancelSQEs(ctx)) {
+        return driveSubmissions();
+    }
+    return NIXL_SUCCESS;
 }
 
 nixlPosixIOQueueUring::~nixlPosixIOQueueUring() {

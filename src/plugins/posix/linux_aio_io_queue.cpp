@@ -19,6 +19,7 @@
 #include <libaio.h>
 #include "common/nixl_log.h"
 #include <algorithm>
+#include <cerrno>
 #include <absl/strings/str_format.h>
 
 #define MAX_IO_SUBMIT_BATCH_SIZE 64
@@ -29,6 +30,8 @@ public:
     nixlPosixIOQueueDoneCb clb_;
     void *ctx_;
     struct iocb io_;
+    bool in_flight_ = false;
+    bool force_error_ = false;
 };
 
 class nixlPosixIOQueueLinuxAIO : public nixlPosixIOQueueImpl<nixlPosixLinuxAioIO> {
@@ -47,6 +50,13 @@ public:
             void *ctx) override;
     virtual nixl_status_t
     poll(void) override;
+    virtual nixl_status_t
+    cancel(void *ctx) override;
+    virtual bool
+    hasPendingCleanup(void) const override {
+        return cancellations_pending_ != 0;
+    }
+
     virtual ~nixlPosixIOQueueLinuxAIO() override;
 
 protected:
@@ -57,6 +67,7 @@ protected:
 
 private:
     io_context_t io_ctx_; // I/O context
+    unsigned cancellations_pending_ = 0;
 };
 
 nixlPosixIOQueueLinuxAIO::nixlPosixIOQueueLinuxAIO(uint32_t ios_pool_size,
@@ -65,7 +76,7 @@ nixlPosixIOQueueLinuxAIO::nixlPosixIOQueueLinuxAIO(uint32_t ios_pool_size,
     int res = io_queue_init(kernel_queue_size_, &io_ctx_);
     if (res) {
         throw std::runtime_error(
-            absl::StrFormat("Failed to initialize io_queue: %s", nixl_strerror(errno)));
+            absl::StrFormat("Failed to initialize io_queue: %s", nixl_strerror(-res)));
     }
 }
 
@@ -92,6 +103,8 @@ nixlPosixIOQueueLinuxAIO::enqueue(int fd,
     io->clb_ = clb;
     io->ctx_ = ctx;
     io->io_.data = io;
+    io->in_flight_ = false;
+    io->force_error_ = false;
     ios_to_submit_.push_back(io);
 
     return NIXL_SUCCESS;
@@ -121,22 +134,27 @@ nixlPosixIOQueueLinuxAIO::post(void) {
     }
 
     int ret = io_submit(io_ctx_, num_ios, ios);
+    bool submission_failed = false;
     if (ret < 0) {
-        if (ret == -EAGAIN) {
+        if (ret == -EAGAIN || ret == -EINTR) {
             ret = 0; // 0 were submitted, we will try again later
         } else {
             NIXL_ERROR << "io_submit failed: " << nixl_strerror(-ret);
-            return NIXL_ERR_BACKEND;
+            ret = 0;
+            submission_failed = true;
         }
     }
 
+    for (int i = 0; i < ret; i++) {
+        to_submit[i]->in_flight_ = true;
+    }
     for (int i = num_ios - 1; i >= ret; i--) {
         // If not submitted, push back to the front of the list
         nixlPosixLinuxAioIO *io = to_submit[i];
         ios_to_submit_.push_front(io);
     }
 
-    return NIXL_IN_PROG;
+    return submission_failed ? NIXL_ERR_BACKEND : NIXL_IN_PROG;
 }
 
 inline nixl_status_t
@@ -160,15 +178,25 @@ nixlPosixIOQueueLinuxAIO::doCheckCompleted(void) {
         struct iocb *iocb = events[i].obj;
         nixlPosixLinuxAioIO *io = (nixlPosixLinuxAioIO *)iocb->data;
 
-        if (events[i].res < 0) {
-            NIXL_ERROR << "AIO operation failed: " << events[i].res;
-            return NIXL_ERR_BACKEND;
+        // io_event.res is unsigned long. Interpret it as signed before checking
+        // for a negative errno, and reject short completions as well.
+        long res = static_cast<long>(events[i].res);
+        bool was_cancellation_pending = io->force_error_;
+        int error = was_cancellation_pending || res < 0 ||
+                    static_cast<unsigned long>(res) != iocb->u.c.nbytes;
+        if (error) {
+            NIXL_DEBUG << absl::StrFormat(
+                "AIO operation incomplete: result %ld, expected %lu", res, iocb->u.c.nbytes);
         }
-
         if (io->clb_) {
-            io->clb_(io->ctx_, events[i].res, 0);
+            io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(res), error);
         }
-
+        io->in_flight_ = false;
+        io->force_error_ = false;
+        if (was_cancellation_pending) {
+            NIXL_ASSERT(cancellations_pending_ > 0);
+            cancellations_pending_--;
+        }
         completed_ios.push_back(io);
     }
 
@@ -181,6 +209,63 @@ nixlPosixIOQueueLinuxAIO::doCheckCompleted(void) {
     }
 
     return NIXL_IN_PROG; // Some blocks are in flight, need to check again
+}
+
+nixl_status_t
+nixlPosixIOQueueLinuxAIO::cancel(void *ctx) {
+    if (!ctx) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    // I/Os that have not reached the kernel can be failed and reclaimed now.
+    for (auto it = ios_to_submit_.begin(); it != ios_to_submit_.end();) {
+        nixlPosixLinuxAioIO *io = *it;
+        if (io->ctx_ != ctx) {
+            ++it;
+            continue;
+        }
+        if (io->clb_) {
+            io->clb_(io->ctx_, 0, 1);
+        }
+        io->force_error_ = false;
+        it = ios_to_submit_.erase(it);
+        free_ios_.push_back(io);
+    }
+
+    for (auto &io : ios_) {
+        if (!io.in_flight_ || io.ctx_ != ctx) {
+            continue;
+        }
+
+        if (io.force_error_) {
+            continue;
+        }
+
+        // A sibling I/O failed, so report this I/O as failed even if it wins
+        // the race with io_cancel() and completes successfully.
+        io.force_error_ = true;
+        cancellations_pending_++;
+        struct io_event event = {};
+        int ret = io_cancel(io_ctx_, &io.io_, &event);
+        if (ret == 0) {
+            if (io.clb_) {
+                io.clb_(io.ctx_, 0, 1);
+            }
+            io.in_flight_ = false;
+            io.force_error_ = false;
+            NIXL_ASSERT(cancellations_pending_ > 0);
+            cancellations_pending_--;
+            free_ios_.push_back(&io);
+        } else {
+            // The request may already be completing or may not be cancelable.
+            // Keep it alive until io_getevents() reaps and accounts for it.
+            if (ret != -EAGAIN && ret != -EINVAL) {
+                NIXL_DEBUG << "io_cancel failed: " << nixl_strerror(-ret);
+            }
+        }
+    }
+
+    return hasPendingCleanup() ? NIXL_IN_PROG : NIXL_SUCCESS;
 }
 
 nixl_status_t

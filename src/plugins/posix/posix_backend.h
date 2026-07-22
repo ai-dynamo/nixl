@@ -33,19 +33,6 @@
 using nixlPosixFileMD = nixlFilePathMD;
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
-private:
-    const nixl_xfer_op_t &operation; // The transfer operation (read/write)
-    const nixl_meta_dlist_t &local; // Local memory descriptor list
-    const nixl_meta_dlist_t &remote; // Remote memory descriptor list
-    const int queue_depth_; // Queue depth for async I/O
-    int num_confirmed_ios_; // Number of confirmed IOs
-    std::unique_ptr<nixlPosixIOQueue> &io_queue_; // Async I/O queue instance
-
-    void
-    ioDone(uint32_t data_size, int error);
-    static void
-    ioDoneClb(void *ctx, uint32_t data_size, int error);
-
 public:
     nixlPosixBackendReqH(const nixl_xfer_op_t &operation,
                          const nixl_meta_dlist_t &local,
@@ -73,6 +60,35 @@ public:
             return code_;
         }
     };
+
+private:
+    bool
+    allIOsAccountedFor() const {
+        return num_confirmed_ios_ == queue_depth_;
+    }
+
+    bool
+    needsQueueProgress() const {
+        return !allIOsAccountedFor() || (transfer_failed_ && io_queue_->hasPendingCleanup());
+    }
+
+    nixl_status_t
+    requestCancellationOnce();
+    void
+    ioDone(uint32_t data_size, int error);
+    static void
+    ioDoneClb(void *ctx, uint32_t data_size, int error);
+    nixl_status_t
+    queueResult(nixl_status_t queue_result);
+
+    const nixl_xfer_op_t &operation; // The transfer operation (read/write)
+    const nixl_meta_dlist_t &local; // Local memory descriptor list
+    const nixl_meta_dlist_t &remote; // Remote memory descriptor list
+    const int queue_depth_; // Queue depth for async I/O
+    int num_confirmed_ios_; // Number of confirmed IOs
+    bool transfer_failed_; // Set if any io of the current transfer failed
+    bool cancellation_requested_; // Set once cancel() has been issued for this transfer
+    std::unique_ptr<nixlPosixIOQueue> &io_queue_; // Async I/O queue instance
 };
 
 class nixlPosixEngine : public nixlBackendEngine {
