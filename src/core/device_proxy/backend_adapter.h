@@ -52,7 +52,8 @@ public:
      * Initialize backend-specific proxy resources.
      *
      * proxy_worker_count is the number of CPU drain threads. channel_count is the
-     * number of logical channels per peer; the two dimensions are independent.
+     * number of logical channels (each with one ring per dest peer); the two
+     * dimensions are independent.
      */
     virtual nixl_status_t
     init(uint32_t proxy_worker_count, uint32_t channel_count) {

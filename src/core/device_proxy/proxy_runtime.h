@@ -327,6 +327,12 @@ public:
     nixl_proxy_channel_lifecycle_t
     channelLifecycle(uint32_t peer_index, uint32_t channel_id) const;
 
+    /** Flat index into the channel-major [num_channels][peer_capacity] ring matrix. */
+    size_t
+    channelSlot(uint32_t peer_index, uint32_t channel_id) const {
+        return static_cast<size_t>(channel_id) * peer_capacity_ + peer_index;
+    }
+
 private:
     void
     joinWorkerThreads() noexcept;
@@ -351,11 +357,6 @@ private:
 
     nixl_status_t
     reconcileRemotePeers(const nixl_remote_meta_dlist_t &dlist);
-
-    size_t
-    channelSlot(uint32_t peer_index, uint32_t channel_id) const {
-        return static_cast<size_t>(peer_index) * channel_count_ + channel_id;
-    }
 
     std::vector<nixlProxyChannelState> channels_;
     std::vector<nixlProxyChannelView> device_channel_views_;

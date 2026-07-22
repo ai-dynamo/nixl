@@ -1004,6 +1004,8 @@ TEST_F(ProxyDeviceApiTest, MultipleSubmissionsCompletionFrontier) {
         EXPECT_EQ(deviceGet(d_put_status[i]), NIXL_IN_PROG);
     }
 
+    ASSERT_TRUE(waitForCondition([adapter]() { return adapter->pendingCount() == kOps; }));
+
     // All three should still be in-progress.
     nixl_status_t *d_poll = deviceAlloc<nixl_status_t>();
     for (int i = 0; i < kOps; i++) {

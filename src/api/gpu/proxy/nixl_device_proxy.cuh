@@ -117,16 +117,17 @@ nixlProxySync() {
 
 struct ProxyDeviceContext : nixlProxyDeviceContextData {
 
-    // Channel views are row-major. Validate both dimensions before indexing so an
-    // invalid channel can never alias the next peer's row.
+    // Flat index into the channel x peer ring matrix: channel owns one ring per
+    // dest peer. Validate both dimensions before indexing so an invalid peer
+    // can never alias the next channel's row.
     __device__ __forceinline__ size_t
     channelIndex(uint32_t peer_index, uint32_t channel_id) const {
-        return static_cast<size_t>(peer_index) * num_channels + channel_id;
+        return static_cast<size_t>(channel_id) * peer_capacity + peer_index;
     }
 
-    // Enqueue a transfer submission into the MPSC work ring for the selected
-    // channel, spinning if the ring is full.  Optionally records a completion
-    // token in *xfer_status for later polling via pollXferStatus().
+    // Enqueue a transfer into the MPSC work ring for (dst peer, channel_id),
+    // spinning if that dest ring is full. Optionally records a completion token
+    // in *xfer_status for later polling via pollXferStatus().
     //
     // producer_idx lives in device memory and only needs device-scope atomicity.
     // consumer_idx lives in pinned host memory (accessible from device via

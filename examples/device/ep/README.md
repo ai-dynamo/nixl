@@ -47,11 +47,15 @@ buffer.disconnect_ranks(ranks)
 
 When built with `-Dgpu_device_api_backend=proxy`:
 
-- `NIXL_EP_PROXY_CHANNELS` is the exact logical channel count per peer (default `4`).
+- A **channel** is the software ordering entity the NIXL device API uses with a
+  destination rank. Each channel contains one ring per dest peer/rank slot.
+- `NIXL_EP_PROXY_CHANNELS` is the logical channel count (default `4`).
 - `NIXL_EP_PROXY_WORKER_COUNT` is the requested CPU proxy-worker count (default:
   the configured channel count). The runtime clamps it to the channel count.
-- Logical channel `i` maps to UCX worker `i`; UCX `num_workers` therefore equals
-  `NIXL_EP_PROXY_CHANNELS`.
+  Worker `W` owns channel ids where `channel_id % worker_count == W` and handles
+  **all dest-rank rings** of those channels.
+- Logical channel `i` maps 1:1 to UCX worker `i`; UCX `num_workers` therefore
+  equals `NIXL_EP_PROXY_CHANNELS`.
 - UCX device channels are set to `1` for the host-posting proxy path.
 
 Both variables must be positive integers. There is no inferred channel ceiling,

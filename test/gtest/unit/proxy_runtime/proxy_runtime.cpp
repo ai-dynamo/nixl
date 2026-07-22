@@ -216,7 +216,7 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.channelSlotCount(), 12u);
         for (uint32_t peer = 0; peer < 4; ++peer) {
             for (uint32_t channel = 0; channel < 3; ++channel) {
-                const auto &view = views[peer * 3 + channel];
+                const auto &view = views[runtime_.channelSlot(peer, channel)];
                 EXPECT_EQ(view.peer_index, peer);
                 EXPECT_EQ(view.channel_id, channel);
                 EXPECT_EQ(view.work_ring, nullptr);
@@ -232,8 +232,9 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"peer"}, &remote_md), &remote_mvh),
                   NIXL_SUCCESS);
         const nixlProxyChannelView *views = runtime_.deviceChannelViews();
-        for (uint32_t i = 0; i < 2; ++i) {
-            const nixlProxyWorkRing ring = copyDeviceWorkRing(views[i]);
+        for (uint32_t channel = 0; channel < 2; ++channel) {
+            const nixlProxyWorkRing ring =
+                copyDeviceWorkRing(views[runtime_.channelSlot(0, channel)]);
             uint64_t producer = 0;
             uint64_t consumer = 0;
             ASSERT_EQ(
@@ -254,10 +255,10 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"peer"}, &remote_md), &remote_mvh),
                   NIXL_SUCCESS);
         const nixlProxyChannelView *views = runtime_.deviceChannelViews();
-        for (uint32_t i = 0; i < 2; ++i) {
+        for (uint32_t channel = 0; channel < 2; ++channel) {
             nixlProxyCompletionSlot slot{};
             ASSERT_EQ(cudaMemcpy(&slot,
-                                 views[i].completion_slot,
+                                 views[runtime_.channelSlot(0, channel)].completion_slot,
                                  sizeof(nixlProxyCompletionSlot),
                                  cudaMemcpyDeviceToHost),
                       cudaSuccess);
@@ -606,27 +607,29 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.startWorkers(), NIXL_SUCCESS);
 
         const nixlProxyChannelView *views = runtime_.deviceChannelViews();
-        ASSERT_EQ(views[2].work_ring, nullptr);
-        ASSERT_EQ(views[3].work_ring, nullptr);
+        const size_t peer1_ch0 = runtime_.channelSlot(1, 0);
+        const size_t peer1_ch1 = runtime_.channelSlot(1, 1);
+        ASSERT_EQ(views[peer1_ch0].work_ring, nullptr);
+        ASSERT_EQ(views[peer1_ch1].work_ring, nullptr);
         EXPECT_EQ(runtime_.channelLifecycle(1, 0), nixl_proxy_channel_lifecycle_t::UNALLOCATED);
 
         nixlMemViewH connected_mvh = nullptr;
         ASSERT_EQ(
             runtime_.prepMemView(makeRemotePeerDlist({"", "peer1"}, &remote_md), &connected_mvh),
             NIXL_SUCCESS);
-        ASSERT_NE(views[2].work_ring, nullptr);
-        ASSERT_NE(views[3].work_ring, nullptr);
+        ASSERT_NE(views[peer1_ch0].work_ring, nullptr);
+        ASSERT_NE(views[peer1_ch1].work_ring, nullptr);
         EXPECT_EQ(runtime_.channelLifecycle(1, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
         EXPECT_EQ(runtime_.channelLifecycle(1, 1), nixl_proxy_channel_lifecycle_t::ACTIVE);
-        auto *const retained_ring0 = views[2].work_ring;
-        auto *const retained_ring1 = views[3].work_ring;
+        auto *const retained_ring0 = views[peer1_ch0].work_ring;
+        auto *const retained_ring1 = views[peer1_ch1].work_ring;
 
         nixlMemViewH disconnected_mvh = nullptr;
         ASSERT_EQ(
             runtime_.prepMemView(makeRemotePeerDlist({"", ""}, &remote_md), &disconnected_mvh),
             NIXL_SUCCESS);
-        EXPECT_EQ(copyPublishedChannelView(runtime_, 2).work_ring, nullptr);
-        EXPECT_EQ(copyPublishedChannelView(runtime_, 3).work_ring, nullptr);
+        EXPECT_EQ(copyPublishedChannelView(runtime_, peer1_ch0).work_ring, nullptr);
+        EXPECT_EQ(copyPublishedChannelView(runtime_, peer1_ch1).work_ring, nullptr);
         EXPECT_EQ(runtime_.channelLifecycle(1, 0), nixl_proxy_channel_lifecycle_t::INACTIVE);
         EXPECT_EQ(runtime_.channelLifecycle(1, 1), nixl_proxy_channel_lifecycle_t::INACTIVE);
 
@@ -634,10 +637,10 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"", "peer1-new"}, &remote_md),
                                        &reconnected_mvh),
                   NIXL_SUCCESS);
-        EXPECT_EQ(views[2].work_ring, retained_ring0);
-        EXPECT_EQ(views[3].work_ring, retained_ring1);
-        EXPECT_EQ(copyPublishedChannelView(runtime_, 2).work_ring, retained_ring0);
-        EXPECT_EQ(copyPublishedChannelView(runtime_, 3).work_ring, retained_ring1);
+        EXPECT_EQ(views[peer1_ch0].work_ring, retained_ring0);
+        EXPECT_EQ(views[peer1_ch1].work_ring, retained_ring1);
+        EXPECT_EQ(copyPublishedChannelView(runtime_, peer1_ch0).work_ring, retained_ring0);
+        EXPECT_EQ(copyPublishedChannelView(runtime_, peer1_ch1).work_ring, retained_ring1);
         EXPECT_EQ(runtime_.channelLifecycle(1, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
     }
 
@@ -749,7 +752,9 @@ namespace proxy_runtime {
         for (uint32_t channel = 0; channel < 4; ++channel) {
             EXPECT_EQ(runtime_.channelLifecycle(0, channel),
                       nixl_proxy_channel_lifecycle_t::INACTIVE);
-            EXPECT_EQ(copyPublishedChannelView(runtime_, channel).work_ring, nullptr);
+            EXPECT_EQ(
+                copyPublishedChannelView(runtime_, runtime_.channelSlot(0, channel)).work_ring,
+                nullptr);
         }
     }
 
@@ -771,8 +776,10 @@ namespace proxy_runtime {
             NIXL_SUCCESS);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::INACTIVE);
         EXPECT_EQ(runtime_.channelLifecycle(1, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
-        EXPECT_EQ(copyPublishedChannelView(runtime_, 0).work_ring, nullptr);
-        EXPECT_NE(copyPublishedChannelView(runtime_, 1).work_ring, nullptr);
+        EXPECT_EQ(copyPublishedChannelView(runtime_, runtime_.channelSlot(0, 0)).work_ring,
+                  nullptr);
+        EXPECT_NE(copyPublishedChannelView(runtime_, runtime_.channelSlot(1, 0)).work_ring,
+                  nullptr);
     }
 
     TEST_F(ProxyRuntimeTest, ReplacementRemoteViewDeactivatesBeforeOldHandleRetires) {
@@ -792,7 +799,8 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({""}, &remote_md), &replacement_mvh),
                   NIXL_SUCCESS);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::INACTIVE);
-        EXPECT_EQ(copyPublishedChannelView(runtime_, 0).work_ring, nullptr);
+        EXPECT_EQ(copyPublishedChannelView(runtime_, runtime_.channelSlot(0, 0)).work_ring,
+                  nullptr);
         EXPECT_EQ(runtime_.unregisterProxyMemView(first_mvh), NIXL_SUCCESS);
 
         nixlMemViewH reactivated_mvh = nullptr;
@@ -800,7 +808,8 @@ namespace proxy_runtime {
             runtime_.prepMemView(makeRemotePeerDlist({"peer-again"}, &remote_md), &reactivated_mvh),
             NIXL_SUCCESS);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
-        EXPECT_NE(copyPublishedChannelView(runtime_, 0).work_ring, nullptr);
+        EXPECT_NE(copyPublishedChannelView(runtime_, runtime_.channelSlot(0, 0)).work_ring,
+                  nullptr);
     }
 
 } // namespace proxy_runtime

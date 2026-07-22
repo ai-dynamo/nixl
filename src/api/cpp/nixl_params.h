@@ -55,16 +55,19 @@ struct nixlAgentConfig {
     /** @var Enable the device proxy orchestration skeleton. */
     bool enableDeviceProxy = kDefaultEnableDeviceProxy;
     /**
-     * @var Desired number of proxy workers per proxy runtime.
+     * @var Desired number of proxy CPU workers per proxy runtime.
      *      The runtime clamps this to proxyChannelCount.
-     *      Worker i owns logical channels where channel_id % effective_worker_count == i
-     *      across every peer.
+     *      Worker W owns channel ids where channel_id % effective_worker_count == W,
+     *      and handles all destination-rank rings of those channels.
      */
     uint32_t proxyWorkerCount = kDefaultProxyWorkerCount;
     /**
-     * @var Number of logical proxy channels (lanes) available to each destination peer.
-     *      This must match the number of workers exposed by a backend whose channels map
-     *      directly to backend workers, such as UCX.
+     * @var Number of logical proxy channels exposed by the NIXL device API.
+     *      Each channel is a software ordering entity used with a destination rank;
+     *      for every connected dest peer the runtime allocates one ring under that
+     *      channel (storage is a peer x channel matrix). For backends that map a
+     *      channel 1:1 onto a host worker (UCX), this must match the backend
+     *      worker count.
      */
     uint32_t proxyChannelCount = kDefaultProxyChannelCount;
     /**

@@ -76,20 +76,28 @@ struct alignas(16) nixlProxyCompletionSlot {
     nixl_status_t next_status = NIXL_IN_PROG;
 };
 
+/**
+ * Device-visible view of one ring: channel_id's ring for destination peer_index.
+ * Storage is a row-major [num_channels][peer_capacity] matrix; the SW ordering
+ * entity is the channel, which owns one ring per dest peer.
+ */
 struct nixlProxyChannelView {
     nixlProxyWorkRing *work_ring = nullptr;
     /** Mapped pinned host memory (device alias); host writes via host pointer with atomics. */
     nixlProxyCompletionSlot *completion_slot = nullptr;
     uint32_t peer_index = 0;
-    /** Logical channel (lane) within peer_index. */
+    /** Logical channel id (ordering entity); ring is the (channel_id, peer_index) cell. */
     uint32_t channel_id = 0;
 };
 
 struct nixlProxyDeviceContextData {
-    /** Row-major [peer_capacity][num_channels] matrix of channel views. */
+    /**
+     * Row-major [num_channels][peer_capacity] matrix of ring views.
+     * Index as channel_id * peer_capacity + peer_index: channel owns one ring per dest.
+     */
     nixlProxyChannelView *channels = nullptr;
     uint32_t peer_capacity = 0;
-    /** Number of logical channels (lanes) per destination peer. */
+    /** Number of logical channels; each has one ring per destination peer slot. */
     uint32_t num_channels = 0;
     /** Runtime-wide shutdown signal shared by every peer and channel. */
     uint32_t *shutdown_word = nullptr;

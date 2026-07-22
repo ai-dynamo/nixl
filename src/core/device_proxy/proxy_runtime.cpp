@@ -659,11 +659,11 @@ nixlProxyRuntime::init(std::unique_ptr<nixlDeviceProxyBackendAdapter> backend,
     const size_t channel_slots = static_cast<size_t>(peer_capacity_) * channel_count_;
     channels_.resize(channel_slots);
     device_channel_views_.resize(channel_slots);
-    for (uint32_t peer = 0; peer < peer_capacity_; ++peer) {
-        const size_t first = static_cast<size_t>(peer) * channel_count_;
-        for (uint32_t channel = 0; channel < channel_count_; ++channel) {
-            device_channel_views_[first + channel].peer_index = peer;
-            device_channel_views_[first + channel].channel_id = channel;
+    for (uint32_t channel = 0; channel < channel_count_; ++channel) {
+        for (uint32_t peer = 0; peer < peer_capacity_; ++peer) {
+            const size_t slot = channelSlot(peer, channel);
+            device_channel_views_[slot].peer_index = peer;
+            device_channel_views_[slot].channel_id = channel;
         }
     }
 
@@ -703,8 +703,9 @@ nixlProxyRuntime::init(std::unique_ptr<nixlDeviceProxyBackendAdapter> backend,
     workers_started_ = false;
 
     for (uint32_t worker = 0; worker < worker_count_; ++worker) {
-        NIXL_INFO << "ProxyRuntime::init: worker " << worker << " owns channels where channel % "
-                  << worker_count_ << " == " << worker << " across every peer";
+        NIXL_INFO << "ProxyRuntime::init: worker " << worker
+                  << " owns channel(s) where channel_id % " << worker_count_ << " == " << worker
+                  << "; handles all dest rings of those channels";
         workers_.push_back(std::make_unique<ProxyWorker>(backend_.get(),
                                                          &memview_registry_,
                                                          shutdown_word_host_,
@@ -718,7 +719,7 @@ nixlProxyRuntime::init(std::unique_ptr<nixlDeviceProxyBackendAdapter> backend,
     }
 
     NIXL_INFO << "ProxyRuntime::init: complete — " << peer_capacity_ << " peers, " << channel_count_
-              << " channels per peer, " << worker_count_
+              << " channels (rings per dest), " << worker_count_
               << " workers, device_context(dev)=" << device_context_;
     return NIXL_SUCCESS;
 }
@@ -729,29 +730,29 @@ nixlProxyRuntime::allocatePeerRow(uint32_t peer_index) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const size_t first = static_cast<size_t>(peer_index) * channel_count_;
-    if (channels_[first].allocated()) {
+    if (channels_[channelSlot(peer_index, 0)].allocated()) {
         return NIXL_SUCCESS;
     }
 
     uint32_t allocated_channels = 0;
     for (; allocated_channels < channel_count_; ++allocated_channels) {
-        nixl_status_t status = channels_[first + allocated_channels].allocate(
-            peer_index, allocated_channels, ring_depth_);
+        const size_t slot = channelSlot(peer_index, allocated_channels);
+        nixl_status_t status =
+            channels_[slot].allocate(peer_index, allocated_channels, ring_depth_);
         if (status != NIXL_SUCCESS) {
             for (uint32_t channel = 0; channel < allocated_channels; ++channel) {
-                channels_[first + channel].deallocate();
-                device_channel_views_[first + channel] =
+                const size_t rollback_slot = channelSlot(peer_index, channel);
+                channels_[rollback_slot].deallocate();
+                device_channel_views_[rollback_slot] =
                     nixlProxyChannelView{nullptr, nullptr, peer_index, channel};
-                channel_lifecycle_[first + channel].store(
-                    nixl_proxy_channel_lifecycle_t::UNALLOCATED, std::memory_order_release);
+                channel_lifecycle_[rollback_slot].store(nixl_proxy_channel_lifecycle_t::UNALLOCATED,
+                                                        std::memory_order_release);
             }
             return status;
         }
-        device_channel_views_[first + allocated_channels] =
-            channels_[first + allocated_channels].device_view;
-        channel_lifecycle_[first + allocated_channels].store(
-            nixl_proxy_channel_lifecycle_t::INACTIVE, std::memory_order_release);
+        device_channel_views_[slot] = channels_[slot].device_view;
+        channel_lifecycle_[slot].store(nixl_proxy_channel_lifecycle_t::INACTIVE,
+                                       std::memory_order_release);
     }
 
     return NIXL_SUCCESS;
@@ -763,31 +764,33 @@ nixlProxyRuntime::publishPeerRow(uint32_t peer_index, bool active) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const size_t first = static_cast<size_t>(peer_index) * channel_count_;
-    const size_t row_size = sizeof(nixlProxyChannelView) * channel_count_;
-    cudaError_t status;
-    if (active) {
-        status = cudaMemcpy(device_channel_views_dev_ + first,
-                            device_channel_views_.data() + first,
-                            row_size,
-                            cudaMemcpyHostToDevice);
-    } else {
-        status = cudaMemset(device_channel_views_dev_ + first, 0, row_size);
-    }
-    if (status != cudaSuccess) {
-        NIXL_ERROR << "ProxyRuntime: failed to publish peer " << peer_index << " active=" << active
-                   << ": " << cudaGetErrorString(status);
-        return NIXL_ERR_BACKEND;
+    // Channel-major layout: a peer's rings are one column, not a contiguous row.
+    for (uint32_t channel_id = 0; channel_id < channel_count_; ++channel_id) {
+        const size_t slot = channelSlot(peer_index, channel_id);
+        cudaError_t status;
+        if (active) {
+            status = cudaMemcpy(device_channel_views_dev_ + slot,
+                                device_channel_views_.data() + slot,
+                                sizeof(nixlProxyChannelView),
+                                cudaMemcpyHostToDevice);
+        } else {
+            status = cudaMemset(device_channel_views_dev_ + slot, 0, sizeof(nixlProxyChannelView));
+        }
+        if (status != cudaSuccess) {
+            NIXL_ERROR << "ProxyRuntime: failed to publish peer " << peer_index
+                       << " channel=" << channel_id << " active=" << active << ": "
+                       << cudaGetErrorString(status);
+            return NIXL_ERR_BACKEND;
+        }
     }
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlProxyRuntime::waitPeerChannelsInactive(uint32_t peer_index) {
-    const size_t first = static_cast<size_t>(peer_index) * channel_count_;
     if (!workers_started_) {
         for (uint32_t channel_id = 0; channel_id < channel_count_; ++channel_id) {
-            const size_t slot = first + channel_id;
+            const size_t slot = channelSlot(peer_index, channel_id);
             if (channel_lifecycle_[slot].load(std::memory_order_acquire) !=
                 nixl_proxy_channel_lifecycle_t::RESET_PENDING) {
                 continue;
@@ -804,7 +807,8 @@ nixlProxyRuntime::waitPeerChannelsInactive(uint32_t peer_index) {
         bool all_inactive = true;
         for (uint32_t channel_id = 0; channel_id < channel_count_; ++channel_id) {
             const nixl_proxy_channel_lifecycle_t lifecycle =
-                channel_lifecycle_[first + channel_id].load(std::memory_order_acquire);
+                channel_lifecycle_[channelSlot(peer_index, channel_id)].load(
+                    std::memory_order_acquire);
             if (lifecycle == nixl_proxy_channel_lifecycle_t::RESET_PENDING ||
                 lifecycle == nixl_proxy_channel_lifecycle_t::ACTIVE) {
                 all_inactive = false;
@@ -834,15 +838,14 @@ nixlProxyRuntime::deactivatePeer(uint32_t peer_index) {
         return unpublish_status;
     }
 
-    const size_t first = static_cast<size_t>(peer_index) * channel_count_;
-    if (!channels_[first].allocated()) {
+    if (!channels_[channelSlot(peer_index, 0)].allocated()) {
         active_agents_[peer_index] = nixl_null_agent;
         return NIXL_SUCCESS;
     }
 
     for (uint32_t channel_id = 0; channel_id < channel_count_; ++channel_id) {
-        channel_lifecycle_[first + channel_id].store(nixl_proxy_channel_lifecycle_t::RESET_PENDING,
-                                                     std::memory_order_release);
+        channel_lifecycle_[channelSlot(peer_index, channel_id)].store(
+            nixl_proxy_channel_lifecycle_t::RESET_PENDING, std::memory_order_release);
     }
 
     const nixl_status_t wait_status = waitPeerChannelsInactive(peer_index);
@@ -870,17 +873,16 @@ nixlProxyRuntime::activatePeer(uint32_t peer_index, const std::string &remote_ag
         return status;
     }
 
-    const size_t first = static_cast<size_t>(peer_index) * channel_count_;
     for (uint32_t channel_id = 0; channel_id < channel_count_; ++channel_id) {
-        channel_lifecycle_[first + channel_id].store(nixl_proxy_channel_lifecycle_t::ACTIVE,
-                                                     std::memory_order_release);
+        channel_lifecycle_[channelSlot(peer_index, channel_id)].store(
+            nixl_proxy_channel_lifecycle_t::ACTIVE, std::memory_order_release);
     }
 
     status = publishPeerRow(peer_index, true);
     if (status != NIXL_SUCCESS) {
         for (uint32_t channel_id = 0; channel_id < channel_count_; ++channel_id) {
-            channel_lifecycle_[first + channel_id].store(nixl_proxy_channel_lifecycle_t::INACTIVE,
-                                                         std::memory_order_release);
+            channel_lifecycle_[channelSlot(peer_index, channel_id)].store(
+                nixl_proxy_channel_lifecycle_t::INACTIVE, std::memory_order_release);
         }
         return status;
     }
