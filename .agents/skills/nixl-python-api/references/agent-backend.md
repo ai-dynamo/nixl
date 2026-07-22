@@ -18,7 +18,8 @@ Confirm these from the user's installed runtime/source when possible:
   for file/object paths.
 
 If any item is missing, return `Environment not ready` or
-`Backend evidence missing` rather than writing transfer code.
+`Backend evidence missing` rather than implementing readiness-dependent Python
+API code.
 
 ## Minimal Backend Probe
 
@@ -35,7 +36,7 @@ if backend not in plugins:
     raise RuntimeError(f"{backend} plugin unavailable; plugins={plugins}")
 
 params = agent.get_plugin_params(backend)
-agent.create_backend(backend, {})
+agent.create_backend(backend, params)
 mem_types = agent.get_backend_mem_types(backend)
 if not mem_types:
     raise RuntimeError(f"{backend} created but reported no memory types")
@@ -59,7 +60,7 @@ cfg = nixl_agent_config(
 agent = nixl_agent("target", cfg)
 ```
 
-Use explicit listener ports for copy-paste multi-process examples unless the
+Use explicit listener ports for ready-to-run multi-process examples unless the
 user's installed source proves that an ephemeral listener port is advertised and
 usable by peers for the intended metadata/notification path.
 
