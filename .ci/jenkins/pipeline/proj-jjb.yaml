@@ -57,10 +57,6 @@
             name: "sha1"
             default: "{jjb_branch}"    # Default to 'main' branch for manual runs
             description: "Ref to check out the dispatcher pipeline from. Set to refs/pull/<n>/merge by the webhook; manual runs may pass a branch name, commit SHA, or any ref"
-        - string:
-            name: "LEAF_JOBS"
-            default: "non-gpu,gpu,dl-gpu,dl-gpu-ep,wheel,sanitizers,build-container"
-            description: "Comma-separated list of leaf jobs to dispatch. Edit the default here (via job config) to temporarily disable a leaf job for all runs without a code change; JJB redeploy restores the full list"
     # SCM configuration - checks out whatever ref sha1 holds: the PR merge ref
     # (set by the webhook) so a PR into a release branch runs that branch's
     # dispatcher, or a branch/commit for manual runs.
