@@ -234,32 +234,32 @@ def main():
     parser = argparse.ArgumentParser(description="Control Plane Latency Test")
     parser.add_argument(
         "--num-processes",
-        type=int,
+        type=positive_int,
         default=8,
         help="Number of worker processes to launch",
     )
     parser.add_argument(
         "--num-ranks",
-        type=int,
+        type=positive_int,
         default=None,
         help="Total number of ranks across all nodes "
         "(default: same as --num-processes)",
     )
     parser.add_argument(
         "--num-tokens",
-        type=int,
+        type=positive_int,
         default=128,
         help="Number of tokens (for buffer sizing)",
     )
     parser.add_argument(
         "--num-experts-per-rank",
-        type=int,
+        type=positive_int,
         default=2,
         help="Number of experts per rank (for buffer sizing)",
     )
     parser.add_argument(
         "--hidden-dim",
-        type=int,
+        type=positive_int,
         default=7168,
         help="Hidden dimension (for buffer sizing)",
     )

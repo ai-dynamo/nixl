@@ -25,7 +25,7 @@ python3 tests/control/control.py --num-processes 8 --num-ranks 16
 **node 1**:
 ```bash
 cd nixl/examples/device/ep
-python3 tests/control/control.py --num-processes 8 --num-ranks 16 --tcp-server $MASTER_IP
+python3 tests/control/control.py --num-processes 8 --num-ranks 16 --tcp-server $SERVER_IP
 ```
 
 ## Measured steps
