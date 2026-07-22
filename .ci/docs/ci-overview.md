@@ -20,18 +20,18 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | [Claude Code Review](#claude-code-review-claude-reviewyml) | GitHub Actions | `pull_request` (opened/synchronize/reopened) | Yes |
 | [External Contributor](#external-contributor-external_contributoryaml) | GitHub Actions | `pull_request_target` (opened, fork only) | Yes (fork PRs only) |
 | [Blossom-CI](#blossom-ci-blossom-ciyml) | GitHub Actions | `/build` PR comment, or `workflow_dispatch` | No — manual |
-| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`, `test-sanitizers` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | No — only after `/build`, but these 6 are the *only* Jenkins jobs in the PR CI path |
+| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | No — only after `/build`, but these 7 are the *only* Jenkins jobs in the PR CI path |
 | `nixl-ci-build-container` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
 | `nixl-ci-build-wheel-nightly` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
 | `nixl-ci-build-llm-container` | Jenkins (standalone) | Manual only | No — never runs as part of PR CI |
 | `nixl-ci-test-llm-container` | Jenkins (standalone) | Manual, or chained from `build-llm-container` via `RUN_TEST` | No — never runs as part of PR CI |
 
-> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 10 Jenkins jobs, but only the
-> 6 that `nixl-ci-dispatcher` fans out to are ever part of the PR CI flow. The
-> other 4 (`build-container`, `build-wheel-nightly`, `build-llm-container`,
-> `test-llm-container`) are entirely standalone — they run only on a nightly
-> cron or when someone triggers them manually from the Jenkins UI, and are
-> never invoked by the dispatcher or by a PR event.
+> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 12 Jenkins jobs: the
+> dispatcher, the 7 jobs it fans out to (the PR CI flow), and 4 standalone jobs
+> (`build-container`, `build-wheel-nightly`, `build-llm-container`,
+> `test-llm-container`). The standalone ones run only on a nightly cron or when
+> someone triggers them manually from the Jenkins UI, and are never invoked by
+> the dispatcher or by a PR event.
 
 ## GitHub Actions workflows
 
@@ -98,7 +98,7 @@ sequenceDiagram
     participant Scan as Vulnerability-scan (Black Duck)
     participant Trigger as Job-trigger
     participant Jenkins as nixl-ci-dispatcher
-    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, build-wheel,<br/>test-sanitizers)
+    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, build-wheel,<br/>test-sanitizers, build-container-pr)
 
     User->>GH: comment "/build"
     GH->>Blossom: issue_comment event
@@ -128,15 +128,15 @@ Step by step, matching the jobs in `blossom-ci.yml`:
    Duck-based vulnerability scan via the `NVIDIA/blossom-action`.
 5. **Job-trigger** calls `blossom-ci` with `OPERATION: START-CI-JOB`, which
    triggers the Jenkins `nixl-ci-dispatcher` job.
-6. `nixl-ci-dispatcher` fans out in parallel to its six child jobs
+6. `nixl-ci-dispatcher` fans out in parallel to its seven child jobs
    (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`,
-   `test-sanitizers` — see [Jenkins jobs](#jenkins-jobs) below).
+   `test-sanitizers`, `build-container-pr` — see [Jenkins jobs](#jenkins-jobs) below).
 7. Each child job reports its own status back as an individual GitHub PR
    check, so the PR shows per-job pass/fail rather than one aggregate check.
 
 ## Jenkins jobs
 
-All 10 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
+All 12 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
 (Jenkins Job Builder config). The dispatcher runs its own pipeline,
 `.ci/jenkins/pipeline/Jenkinsfile.dispatcher`, checked out from the PR merge
 ref (`refs/pull/<n>/merge`) on webhook runs, or from any branch/commit passed
@@ -146,7 +146,7 @@ events — they only start via the Jenkins webhook fired by Blossom-CI, or via
 their own nightly/manual trigger. They split into two groups:
 
 - **Dispatcher-triggered (part of the PR CI path):** `nixl-ci-dispatcher` and
-  the 6 jobs it fans out to. This is the *only* way any Jenkins job runs
+  the 7 jobs it fans out to. This is the *only* way any Jenkins job runs
   against a PR, and only after a `/build` comment.
 - **Standalone (never run against a PR):** `nixl-ci-build-container`,
   `nixl-ci-build-wheel-nightly`, `nixl-ci-build-llm-container`,
@@ -155,15 +155,26 @@ their own nightly/manual trigger. They split into two groups:
 
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
-- **What it does:** Fans out in parallel to six downstream Jenkins jobs, waiting on all of them:
+- **What it does:** Fans out in parallel to seven downstream Jenkins jobs, waiting on all of them:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com)
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (nixl_ep elastic tests on dlcluster.nvidia.com)
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
+  - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
 - **Automatic on every PR:** No — only runs after a `/build` comment triggers Blossom-CI. The dispatcher also aborts any stale in-flight dispatcher run for the same PR (and the leaf builds it started) before starting.
-- **Skipping leaf jobs:** The `LEAF_JOBS` parameter (default: all six) restricts the fan-out. Editing its default in the job config temporarily disables a leaf job for all runs without a code change; the next JJB redeploy restores the full list.
+- **Skipping leaf jobs:** The `LEAF_JOBS` parameter (default: all seven) restricts the fan-out. Editing its default in the job config temporarily disables a leaf job for all runs without a code change; the next JJB redeploy restores the full list.
+
+### `nixl-ci-build-container-pr` (dispatcher-triggered)
+- **Trigger:** Fan-out from `nixl-ci-dispatcher` (same as the other PR CI jobs).
+- **What it does:** Build-only verification (no push) of the `nixl` (EP + debug) and `nixlbench` container images — one matrix cell per target/arch (x86_64 and aarch64), all in parallel. It runs the same `contrib/build-container.sh` / `benchmark/nixlbench/contrib/build.sh` the standalone `nixl-ci-build-container` job runs, so container/packaging breakage (e.g. a missing `--torch-versions`, or an EP nvlink register-count failure) is caught on the PR instead of only by the nightly job. Like the other leaf jobs it runs whenever the dispatcher fans out; drop it for a specific run via the dispatcher's `LEAF_JOBS` parameter.
+- **Automatic on every PR:** No — only after a `/build` comment (like the other dispatcher jobs).
+
+### `nixl-ci-build-wheel` (dispatcher-triggered)
+- **Config:** `.ci/jenkins/lib/build-wheel-matrix.yaml`
+- **What it does:** Builds NIXL Python wheels for each Python version × architecture combination. Uses a two-stage `contrib/Dockerfile.manylinux` build: the `wheel_base` stage (all slow deps: UCX, gRPC, Rust, etc.) is pre-built and cached in Artifactory under `CI_IMAGE_TAG`; PR builds pull this pre-built image and run only the `wheel` stage (~16 steps). PR builds also pass `--torch-versions` (set via the `TORCH_VERSIONS` env in the matrix file) to limit the torch extension builds to the latest version.
+- **`CI_IMAGE_TAG`:** Same convention as the other five matrix files. `contrib/Dockerfile.manylinux` is part of the `CI_FILES` list in `cidemo-init.sh`, so changing it (or any other CI file) automatically derives a new `CI_IMAGE_TAG` and rebuilds the cached `wheel_base` image (see [CI_IMAGE_TAG management](#ci_image_tag-management)).
 
 ### `nixl-ci-build-container` (standalone)
 - **Trigger:** Nightly cron (builds `nixlbench` and `nixl` targets, on both the default CUDA base image and the DLFW PyTorch daily image, ~3–4 AM), or manual run with parameters (`BUILD_TARGET`, `NIXL_VERSION`, `UCX_VERSION`, base image overrides, etc.).
@@ -190,6 +201,35 @@ their own nightly/manual trigger. They split into two groups:
 - **Full Jenkins pipeline for a PR:** comment `/build` on the PR (requires authorization — see `Authorization` step in `blossom-ci.yml`).
 - **Re-run a single Jenkins job with different parameters:** use `workflow_dispatch` on `blossom-ci.yml`, or trigger the Jenkins job directly if you have Jenkins access.
 - **Container/wheel builds outside the nightly schedule:** run `nixl-ci-build-container` or `nixl-ci-build-wheel-nightly` manually from the Jenkins UI with custom parameters.
+
+## CI_IMAGE_TAG management
+
+`CI_IMAGE_TAG` is the Docker image tag used by all matrix jobs to identify the
+base images they build and pull. It appears as `CI_IMAGE_TAG: "CI_MANAGED"` in
+the six matrix YAML files — this placeholder is intentional and must not be
+replaced with a static value.
+
+At the start of every Jenkins run, `cidemo-init.sh` derives the real tag
+automatically:
+
+```bash
+NEW_TAG=$(git log -1 --format=%h -- "${CI_FILES[@]}")
+```
+
+This returns the short git commit hash of the most recent commit that touched
+any of the CI source files (`Dockerfile.base`, `Dockerfile.gpu-test`,
+`Dockerfile.build_helper`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
+then patches all six YAML files in the Jenkins workspace with `sed` before the
+matrix library reads them. No commit or push is made — the patch exists only in
+the workspace.
+
+**Caching behaviour:** the derived tag is stable as long as the CI source files
+are unchanged. Two PRs that both leave the CI files untouched get the same tag
+and share the cached Artifactory images. A PR that changes a Dockerfile gets a
+new tag and triggers a rebuild automatically.
+
+**You never need to manually update `CI_IMAGE_TAG`.** The `CI_MANAGED`
+placeholder signals this clearly.
 
 ## Related docs
 
