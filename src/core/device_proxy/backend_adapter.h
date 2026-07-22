@@ -77,6 +77,12 @@ public:
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
+    /** Progress backend work for a single logical channel (and its UCX worker). */
+    virtual nixl_status_t
+    progress(uint32_t /*channel_id*/) {
+        return progress();
+    }
+
     virtual nixl_status_t
     shutdown() {
         return NIXL_ERR_NOT_SUPPORTED;

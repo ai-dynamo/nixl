@@ -49,10 +49,12 @@ public:
     progress() override;
 
     nixl_status_t
+    progress(uint32_t channel_id) override;
+
+    nixl_status_t
     shutdown() override;
 
 private:
-    // submission.channel_id is the logical lane and maps directly to a UCX worker.
     size_t
     workerIdForChannel(uint32_t channel_id) const;
 

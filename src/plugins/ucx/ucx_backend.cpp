@@ -1417,6 +1417,11 @@ nixlUcxEngine::progress() {
     return ret;
 }
 
+unsigned
+nixlUcxEngine::progress(size_t worker_id) {
+    return getSharedWorker(worker_id)->progress();
+}
+
 void
 nixlUcxEngine::progressLoop() {
     while (progress() != 0)

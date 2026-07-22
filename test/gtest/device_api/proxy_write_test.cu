@@ -73,6 +73,11 @@ public:
     }
 
     nixl_status_t
+    progress(uint32_t /*channel_id*/) override {
+        return progress();
+    }
+
+    nixl_status_t
     shutdown() override {
         return NIXL_SUCCESS;
     }
@@ -120,6 +125,11 @@ public:
     nixl_status_t
     progress() override {
         return NIXL_SUCCESS;
+    }
+
+    nixl_status_t
+    progress(uint32_t /*channel_id*/) override {
+        return progress();
     }
 
     nixl_status_t
@@ -228,6 +238,11 @@ public:
     }
 
     nixl_status_t
+    progress(uint32_t /*channel_id*/) override {
+        return progress();
+    }
+
+    nixl_status_t
     shutdown() override {
         return NIXL_SUCCESS;
     }
@@ -264,6 +279,11 @@ public:
     nixl_status_t
     progress() override {
         return NIXL_SUCCESS;
+    }
+
+    nixl_status_t
+    progress(uint32_t /*channel_id*/) override {
+        return progress();
     }
 
     nixl_status_t

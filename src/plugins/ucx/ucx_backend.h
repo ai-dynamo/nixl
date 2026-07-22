@@ -190,6 +190,9 @@ public:
     unsigned
     progress();
 
+    unsigned
+    progress(size_t worker_id);
+
     void
     progressLoop();
 

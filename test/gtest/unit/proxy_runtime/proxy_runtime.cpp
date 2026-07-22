@@ -74,6 +74,11 @@ namespace proxy_runtime {
         }
 
         nixl_status_t
+        progress(uint32_t /*channel_id*/) override {
+            return progress();
+        }
+
+        nixl_status_t
         shutdown() override {
             return NIXL_SUCCESS;
         }

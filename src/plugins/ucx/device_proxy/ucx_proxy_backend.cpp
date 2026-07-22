@@ -145,6 +145,15 @@ nixlUcxProxyBackendAdapter::progress() {
 }
 
 nixl_status_t
+nixlUcxProxyBackendAdapter::progress(uint32_t channel_id) {
+    if (engine_ != nullptr && !progress_thread_enabled_) {
+        engine_->progress(workerIdForChannel(channel_id));
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
 nixlUcxProxyBackendAdapter::shutdown() {
     NIXL_INFO << "nixlUcxProxyBackendAdapter::shutdown: releasing " << tracked_requests_.size()
               << " tracked request(s)";
