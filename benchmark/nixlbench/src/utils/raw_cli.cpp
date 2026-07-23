@@ -151,15 +151,17 @@ printRawPosixPlan(const RawPosixRequest &request,
         << " (warmup " << request.raw.warmup_iterations << ")"
         << "\n    threads: " << request.raw.threads
         << "\n    pipeline depth: " << request.raw.pipeline_depth
-        << "\n    consistency check: " << (request.raw.check_consistency ? "enabled" : "disabled")
-        << "\n  file-resource options:\n"
-        << "    path: "
-        << (request.file.path.empty() ? "<current working directory>" : request.file.path)
-        << "\n    filenames: "
-        << (request.file.filenames.empty() ? "<automatic>" : request.file.filenames)
-        << "\n    files: " << request.file.num_files
-        << "\n    direct I/O: " << (request.file.direct ? "enabled" : "disabled")
-        << "\n  plugin parameters:\n";
+        << "\n    consistency check: " << (request.raw.check_consistency ? "enabled" : "disabled");
+    if (request.has_file_options) {
+        out << "\n  file-resource options:\n"
+            << "    path: "
+            << (request.file.path.empty() ? "<current working directory>" : request.file.path)
+            << "\n    filenames: "
+            << (request.file.filenames.empty() ? "<automatic>" : request.file.filenames)
+            << "\n    files: " << request.file.num_files
+            << "\n    direct I/O: " << (request.file.direct ? "enabled" : "disabled");
+    }
+    out << "\n  plugin parameters:\n";
     for (const auto &key : sortedParameterKeys(request.plugin_parameters)) {
         out << "    " << key << ": " << request.plugin_parameters.at(key) << '\n';
     }
@@ -262,16 +264,13 @@ parseRawPosixCommand(int argc,
                      std::ostream &out,
                      std::ostream &err) {
     help_requested = false;
-    if (metadata.name != "POSIX" || !hasMemoryType(metadata, DRAM_SEG) ||
-        !hasMemoryType(metadata, FILE_SEG)) {
-        err << "Error: POSIX metadata must advertise DRAM and FILE memory types\n";
-        return 2;
-    }
     request.plugin_parameters = metadata.parameters;
+    request.has_file_options = hasMemoryType(metadata, FILE_SEG);
 
     std::string total_buffer_size = std::to_string(request.raw.total_buffer_size);
     std::string start_block_size = std::to_string(request.raw.start_block_size);
     std::string max_block_size = std::to_string(request.raw.max_block_size);
+    std::vector<std::pair<std::string, std::string>> plugin_parameter_overrides;
 
     CLI::App app("NIXL data-transfer benchmark");
     app.require_subcommand(1);
@@ -315,19 +314,25 @@ parseRawPosixCommand(int argc,
     raw->add_flag("--dry-run", request.raw.dry_run, "Print the resolved plan without executing")
         ->group("Raw benchmark options");
 
-    posix->add_option("--path", request.file.path, "Directory for automatically named files")
-        ->group("FILE_SEG resource options");
-    posix->add_option("--filenames", request.file.filenames, "Comma-separated explicit file names")
-        ->group("FILE_SEG resource options");
-    posix->add_option("--num-files", request.file.num_files, "Number of backing files")
-        ->group("FILE_SEG resource options");
-    posix->add_flag("--direct", request.file.direct, "Use direct file opening")
-        ->group("FILE_SEG resource options");
-    for (const auto &key : sortedParameterKeys(metadata.parameters)) {
+    if (request.has_file_options) {
+        posix->add_option("--path", request.file.path, "Directory for automatically named files")
+            ->group("FILE_SEG resource options");
         posix
             ->add_option(
-                "--" + key, request.plugin_parameters.at(key), "Plugin initialization parameter")
-            ->default_str(metadata.parameters.at(key))
+                "--filenames", request.file.filenames, "Comma-separated explicit file names")
+            ->group("FILE_SEG resource options");
+        posix->add_option("--num-files", request.file.num_files, "Number of backing files")
+            ->group("FILE_SEG resource options");
+        posix->add_flag("--direct", request.file.direct, "Use direct file opening")
+            ->group("FILE_SEG resource options");
+    }
+    if (!metadata.parameters.empty()) {
+        posix
+            ->add_option("--plugin-param",
+                         plugin_parameter_overrides,
+                         "Override an advertised plugin parameter")
+            ->check(CLI::IsMember(sortedParameterKeys(metadata.parameters)).application_index(0))
+            ->type_name("KEY VALUE")
             ->group("Plugin initialization parameters");
     }
 
@@ -340,6 +345,10 @@ parseRawPosixCommand(int argc,
     }
     catch (const CLI::ParseError &exception) {
         return app.exit(exception, out, err);
+    }
+
+    for (const auto &[key, value] : plugin_parameter_overrides) {
+        request.plugin_parameters[key] = value;
     }
 
     request.raw.operation = upper(request.raw.operation);
@@ -361,35 +370,41 @@ parseRawPosixCommand(int argc,
     if (!validateRawOptions(request.raw, err)) {
         return 2;
     }
-    return validateFileOptions(request.file, request.raw, err) ? 0 : 2;
+    if (request.has_file_options && !validateFileOptions(request.file, request.raw, err)) {
+        return 2;
+    }
+    return 0;
 }
 
 std::vector<std::string>
 benchmarkFileArguments(const RawPosixRequest &request, const std::string &program_name) {
     const auto boolean = [](bool value) { return value ? "true" : "false"; };
-    return {program_name,
-            // Fixed values select the existing NIXL/POSIX runner.
-            "--worker_type=nixl",
-            "--backend=POSIX",
-            "--initiator_seg_type=DRAM",
-            "--target_seg_type=DRAM",
-            // Backend-neutral raw benchmark configuration.
-            "--op_type=" + request.raw.operation,
-            "--check_consistency=" + std::string(boolean(request.raw.check_consistency)),
-            "--total_buffer_size=" + std::to_string(request.raw.total_buffer_size),
-            "--start_block_size=" + std::to_string(request.raw.start_block_size),
-            "--max_block_size=" + std::to_string(request.raw.max_block_size),
-            "--start_batch_size=" + std::to_string(request.raw.start_batch_size),
-            "--max_batch_size=" + std::to_string(request.raw.max_batch_size),
-            "--num_iter=" + std::to_string(request.raw.iterations),
-            "--warmup_iter=" + std::to_string(request.raw.warmup_iterations),
-            "--num_threads=" + std::to_string(request.raw.threads),
-            "--pipeline_depth=" + std::to_string(request.raw.pipeline_depth),
-            // FILE_SEG resource configuration.
-            "--filepath=" + request.file.path,
-            "--filenames=" + request.file.filenames,
-            "--num_files=" + std::to_string(request.file.num_files),
-            "--storage_enable_direct=" + std::string(boolean(request.file.direct))};
+    std::vector<std::string> arguments = {
+        program_name,
+        // Fixed values select the existing NIXL/POSIX runner.
+        "--worker_type=nixl",
+        "--backend=POSIX",
+        "--initiator_seg_type=DRAM",
+        "--target_seg_type=DRAM",
+        // Backend-neutral raw benchmark configuration.
+        "--op_type=" + request.raw.operation,
+        "--check_consistency=" + std::string(boolean(request.raw.check_consistency)),
+        "--total_buffer_size=" + std::to_string(request.raw.total_buffer_size),
+        "--start_block_size=" + std::to_string(request.raw.start_block_size),
+        "--max_block_size=" + std::to_string(request.raw.max_block_size),
+        "--start_batch_size=" + std::to_string(request.raw.start_batch_size),
+        "--max_batch_size=" + std::to_string(request.raw.max_batch_size),
+        "--num_iter=" + std::to_string(request.raw.iterations),
+        "--warmup_iter=" + std::to_string(request.raw.warmup_iterations),
+        "--num_threads=" + std::to_string(request.raw.threads),
+        "--pipeline_depth=" + std::to_string(request.raw.pipeline_depth)};
+    if (request.has_file_options) {
+        arguments.push_back("--filepath=" + request.file.path);
+        arguments.push_back("--filenames=" + request.file.filenames);
+        arguments.push_back("--num_files=" + std::to_string(request.file.num_files));
+        arguments.push_back("--storage_enable_direct=" + std::string(boolean(request.file.direct)));
+    }
+    return arguments;
 }
 
 RawCommandResult

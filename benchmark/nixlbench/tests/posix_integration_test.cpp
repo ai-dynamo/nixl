@@ -95,7 +95,7 @@ namespace {
         return {(std::istreambuf_iterator<char>(stream)), {}};
     }
 
-    TEST(PosixIntegrationTest, RawPosixHelpShowsFileAndDynamicPluginOptions) {
+    TEST(PosixIntegrationTest, RawPosixHelpShowsFileAndAdvertisedPluginParameters) {
         TemporaryDirectory directory;
         ASSERT_FALSE(directory.path().empty());
         const auto log = directory.path() / "help.log";
@@ -104,7 +104,8 @@ namespace {
         const auto contents = readFile(log);
         EXPECT_NE(contents.find("FILE_SEG resource options"), std::string::npos);
         EXPECT_NE(contents.find("Plugin initialization parameters"), std::string::npos);
-        EXPECT_NE(contents.find("--ios_pool_size"), std::string::npos);
+        EXPECT_NE(contents.find("--plugin-param"), std::string::npos);
+        EXPECT_NE(contents.find("ios_pool_size"), std::string::npos);
         EXPECT_EQ(contents.find("--io-pool-size"), std::string::npos);
     }
 
@@ -126,10 +127,10 @@ namespace {
         TemporaryDirectory write_directory;
         TemporaryDirectory read_directory;
         const auto write_log = write_directory.path() / "write.log";
-        ASSERT_EQ(
-            runCommand(smallRawCommand(write_directory.path(), "write") + " --ios_pool_size=4096",
-                       write_log),
-            0);
+        ASSERT_EQ(runCommand(smallRawCommand(write_directory.path(), "write") +
+                                 " --plugin-param ios_pool_size 4096",
+                             write_log),
+                  0);
         ASSERT_EQ(runCommand(smallRawCommand(read_directory.path(), "read"),
                              read_directory.path() / "read.log"),
                   0);
@@ -176,7 +177,7 @@ namespace {
         TemporaryDirectory plugin_directory;
         const auto plugin_log = plugin_directory.path() / "plugin.log";
         EXPECT_NE(runCommand(smallRawCommand(plugin_directory.path(), "write") +
-                                 " --ios_pool_size=not-a-number",
+                                 " --plugin-param ios_pool_size not-a-number",
                              plugin_log),
                   0);
         EXPECT_EQ(regularFileCount(plugin_directory.path()), 1U);
