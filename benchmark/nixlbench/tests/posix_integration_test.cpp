@@ -95,7 +95,7 @@ namespace {
         return {(std::istreambuf_iterator<char>(stream)), {}};
     }
 
-    TEST(PosixIntegrationTest, RawPosixHelpShowsFileAndAdvertisedPluginParameters) {
+    TEST(PosixIntegrationTest, RawPosixHelpShowsAdvertisedPluginParameterDefaults) {
         TemporaryDirectory directory;
         ASSERT_FALSE(directory.path().empty());
         const auto log = directory.path() / "help.log";
@@ -105,7 +105,10 @@ namespace {
         EXPECT_NE(contents.find("FILE_SEG resource options"), std::string::npos);
         EXPECT_NE(contents.find("Plugin initialization parameters"), std::string::npos);
         EXPECT_NE(contents.find("--plugin-param"), std::string::npos);
-        EXPECT_NE(contents.find("ios_pool_size"), std::string::npos);
+        EXPECT_NE(contents.find("Advertised parameters and defaults:"), std::string::npos);
+        EXPECT_NE(contents.find("ios_pool_size:"), std::string::npos);
+        EXPECT_NE(contents.find("kernel_queue_size:"), std::string::npos);
+        EXPECT_EQ(contents.find("KEY VALUE:{"), std::string::npos);
         EXPECT_EQ(contents.find("--io-pool-size"), std::string::npos);
     }
 

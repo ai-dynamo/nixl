@@ -56,6 +56,17 @@ namespace {
         return keys;
     }
 
+    std::string
+    pluginParameterDescription(const nixl_b_params_t &parameters) {
+        std::ostringstream description;
+        description << "Override an advertised plugin parameter"
+                    << "\nAdvertised parameters and defaults:";
+        for (const auto &key : sortedParameterKeys(parameters)) {
+            description << "\n  " << key << ": " << parameters.at(key);
+        }
+        return description.str();
+    }
+
     bool
     validateRawOptions(const RawOptions &raw, std::ostream &err) {
         const auto fail = [&](const std::string &message) {
@@ -330,8 +341,10 @@ parseRawPosixCommand(int argc,
         posix
             ->add_option("--plugin-param",
                          plugin_parameter_overrides,
-                         "Override an advertised plugin parameter")
-            ->check(CLI::IsMember(sortedParameterKeys(metadata.parameters)).application_index(0))
+                         pluginParameterDescription(metadata.parameters))
+            ->check(CLI::IsMember(sortedParameterKeys(metadata.parameters))
+                        .description("")
+                        .application_index(0))
             ->type_name("KEY VALUE")
             ->group("Plugin initialization parameters");
     }
