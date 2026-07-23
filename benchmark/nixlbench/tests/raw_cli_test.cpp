@@ -101,7 +101,8 @@ namespace {
 
     TEST(RawPosixParserTest, PreservesAdvertisedPluginDefaultsOverridesAndValues) {
         Arguments defaults{"nixlbench", "raw", "posix", "--dry-run"};
-        const auto metadata = posixMetadata();
+        auto metadata = posixMetadata();
+        metadata.parameters.emplace("path,alias", "default-value");
         RawPosixRequest request;
         bool help = false;
         std::ostringstream out;
@@ -115,14 +116,22 @@ namespace {
         Arguments overrides{"nixlbench",
                             "raw",
                             "posix",
-                            "--future_parameter=override",
-                            "--ios_pool_size=not-a-number"};
+                            "--plugin-param",
+                            "future_parameter",
+                            "override",
+                            "--plugin-param",
+                            "ios_pool_size",
+                            "not-a-number",
+                            "--plugin-param",
+                            "path,alias",
+                            "Exact Value"};
         request = {};
         out.str("");
         err.str("");
         ASSERT_EQ(parse(overrides, metadata, request, out, err, help), 0) << err.str();
         EXPECT_EQ(request.plugin_parameters.at("future_parameter"), "override");
         EXPECT_EQ(request.plugin_parameters.at("ios_pool_size"), "not-a-number");
+        EXPECT_EQ(request.plugin_parameters.at("path,alias"), "Exact Value");
     }
 
     TEST(RawPosixParserTest, ParsesRawAndFileOptionsWithoutMixingPluginParameters) {
@@ -142,7 +151,9 @@ namespace {
                             "--num-files",
                             "2",
                             "--direct",
-                            "--future_parameter=Exact-Value"};
+                            "--plugin-param",
+                            "future_parameter",
+                            "Exact-Value"};
         RawPosixRequest request;
         bool help = false;
         std::ostringstream out;
@@ -152,6 +163,7 @@ namespace {
         EXPECT_EQ(request.raw.operation, "READ");
         EXPECT_EQ(request.raw.total_buffer_size, 8U * 1024 * 1024);
         EXPECT_EQ(request.raw.iterations, 32);
+        EXPECT_TRUE(request.has_file_options);
         EXPECT_EQ(request.file.path, "/tmp/nixlbench");
         EXPECT_EQ(request.file.num_files, 2);
         EXPECT_TRUE(request.file.direct);
@@ -161,7 +173,8 @@ namespace {
     TEST(RawPosixParserTest, RejectsUnknownAndUnadvertisedOptions) {
         PluginMetadata metadata = posixMetadata();
         metadata.parameters.erase("future_parameter");
-        Arguments unadvertised{"nixlbench", "raw", "posix", "--future_parameter=override"};
+        Arguments unadvertised{
+            "nixlbench", "raw", "posix", "--plugin-param", "future_parameter", "override"};
         RawPosixRequest request;
         bool help = false;
         std::ostringstream out;
@@ -244,7 +257,7 @@ namespace {
         expect_empty_name_rejected("one,,three", "3");
     }
 
-    TEST(RawPosixParserTest, HelpSeparatesOwnershipAndSortsPluginOptions) {
+    TEST(RawPosixParserTest, HelpSeparatesOwnershipAndSortsAdvertisedPluginParameters) {
         auto metadata = posixMetadata();
         metadata.parameters.emplace("zeta_parameter", "z");
         metadata.parameters.emplace("alpha_parameter", "a");
@@ -258,16 +271,18 @@ namespace {
         EXPECT_TRUE(help);
         EXPECT_NE(out.str().find("FILE_SEG resource options"), std::string::npos);
         EXPECT_NE(out.str().find("Plugin initialization parameters"), std::string::npos);
-        EXPECT_NE(out.str().find("--future_parameter"), std::string::npos);
+        EXPECT_NE(out.str().find("--plugin-param"), std::string::npos);
         EXPECT_NE(out.str().find("--path"), std::string::npos);
+        EXPECT_NE(out.str().find("future_parameter"), std::string::npos);
+        EXPECT_EQ(out.str().find("--future_parameter"), std::string::npos);
         EXPECT_EQ(out.str().find("--operation"), std::string::npos);
         EXPECT_EQ(out.str().find("--api"), std::string::npos);
         EXPECT_EQ(out.str().find("--io-pool-size"), std::string::npos);
         EXPECT_EQ(out.str().find("--backend"), std::string::npos);
 
-        const auto alpha = out.str().find("--alpha_parameter");
-        const auto middle = out.str().find("--middle_parameter");
-        const auto zeta = out.str().find("--zeta_parameter");
+        const auto alpha = out.str().find("alpha_parameter");
+        const auto middle = out.str().find("middle_parameter");
+        const auto zeta = out.str().find("zeta_parameter");
         ASSERT_NE(alpha, std::string::npos);
         ASSERT_NE(middle, std::string::npos);
         ASSERT_NE(zeta, std::string::npos);
@@ -287,12 +302,45 @@ namespace {
         EXPECT_NE(out.str().find("4 KiB (4096 bytes)"), std::string::npos);
         EXPECT_NE(out.str().find("64 MiB (67108864 bytes)"), std::string::npos);
         EXPECT_EQ(out.str().find("--path"), std::string::npos);
-        EXPECT_EQ(out.str().find("--future_parameter"), std::string::npos);
+        EXPECT_EQ(out.str().find("--plugin-param"), std::string::npos);
+    }
+
+    TEST(RawPosixParserTest, GatesAllFileSurfacesOnAdvertisedFileSeg) {
+        auto metadata = posixMetadata();
+        metadata.name = "OTHER";
+        metadata.memory_types = {DRAM_SEG};
+        Arguments help_arguments{"nixlbench", "raw", "posix", "--help"};
+        RawPosixRequest request;
+        bool help = false;
+        std::ostringstream out;
+        std::ostringstream err;
+
+        ASSERT_EQ(parse(help_arguments, metadata, request, out, err, help), 0) << err.str();
+        ASSERT_TRUE(help);
+        EXPECT_FALSE(request.has_file_options);
+        EXPECT_EQ(out.str().find("FILE_SEG resource options"), std::string::npos);
+        for (const char *option : {"--path", "--filenames", "--num-files", "--direct"}) {
+            EXPECT_EQ(out.str().find(option), std::string::npos) << option;
+        }
+
+        std::ostringstream plan;
+        printRawPosixPlan(request, metadata, plan);
+        EXPECT_EQ(plan.str().find("file-resource options:"), std::string::npos);
+        const auto arguments = benchmarkFileArguments(request, "nixlbench");
+        for (const char *prefix :
+             {"--filepath=", "--filenames=", "--num_files=", "--storage_enable_direct="}) {
+            EXPECT_TRUE(std::none_of(
+                arguments.begin(),
+                arguments.end(),
+                [prefix](const auto &argument) { return argument.rfind(prefix, 0) == 0; }))
+                << prefix;
+        }
     }
 
     TEST(RawPlanTest, PrintsSeparatedSectionsAndSortedExactPluginParameters) {
         RawPosixRequest request;
         request.raw.operation = "READ";
+        request.has_file_options = true;
         request.file.path = "/tmp/nixlbench";
         request.plugin_parameters = {{"zeta_parameter", "Value-Z"}, {"alpha_parameter", "Value-A"}};
         const PluginMetadata metadata{"POSIX", {FILE_SEG, DRAM_SEG}, request.plugin_parameters};
@@ -329,6 +377,7 @@ namespace {
         request.raw.threads = 4;
         request.raw.pipeline_depth = 3;
         request.raw.check_consistency = true;
+        request.has_file_options = true;
         request.file.path = "/tmp/nixlbench";
         request.file.num_files = 2;
         request.file.direct = true;

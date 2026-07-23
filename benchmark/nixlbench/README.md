@@ -398,10 +398,11 @@ ownership layers:
 - `raw` owns benchmark controls such as operation, transfer sizes, iterations,
   threads, and consistency checking.
 - NIXLBench owns shared `FILE_SEG` resource controls such as path, filenames,
-  file count, and direct file opening.
-- The installed plugin owns its initialization parameters. NIXLBench exposes
-  every key returned by plugin metadata as an exact string option and forwards
-  the resolved map without interpreting names, values, ranges, or relationships.
+  file count, and direct file opening, and exposes them only when advertised by
+  the selected plugin.
+- The installed plugin owns its initialization parameters. NIXLBench forwards
+  `--plugin-param KEY VALUE` overrides without interpreting names, values,
+  ranges, or relationships.
 
 Raw options are accepted before or after the backend subcommand. Sizes accept
 binary human-readable suffixes such as `KiB`, `MiB`, and `GiB`. The shorter
@@ -454,16 +455,15 @@ nixlbench raw posix \
   --total-buffer-size 64MiB \
   --start-block-size 4KiB \
   --max-block-size 1MiB \
-  --ios_pool_size=4096 \
-  --use_uring=true
+  --plugin-param ios_pool_size 4096 \
+  --plugin-param use_uring true
 ```
 
-Plugin option names retain their published spelling, including underscores.
-Values remain exact strings; invalid plugin values are rejected by the plugin
-during backend creation rather than by copied NIXLBench validation. An option is
-available only when it appears in `nixlbench raw posix --help`, so the
-`--use_uring` example depends on that implementation being compiled into the
-installed POSIX plugin.
+Plugin keys and values retain their published spelling and exact string values.
+Only keys advertised by the selected plugin may be overridden. The plugin
+interprets and validates the resolved values during backend creation rather than
+through copied NIXLBench rules, so the `use_uring` example depends on that
+parameter being advertised by the installed POSIX plugin.
 
 Only explicit `raw` commands use CLI11. All existing flags-only commands keep
 their gflags syntax and behavior.

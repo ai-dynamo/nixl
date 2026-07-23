@@ -48,6 +48,7 @@ struct FileOptions {
 struct RawPosixRequest {
     RawOptions raw;
     FileOptions file;
+    bool has_file_options = false;
     nixl_b_params_t plugin_parameters;
 };
 
