@@ -14,7 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# nixl_ep elastic CI: run only EP tests (invoked from nixl-ci-dl-gpu-ep flow).
+# nixl_ep CI: run EP tests (elastic + control), invoked from
+# the nixl-ci-dl-gpu-ep flow.
 
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../.ci/scripts/common.sh"
@@ -51,7 +52,7 @@ ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
 
-echo "==== Running elastic EP tests ===="
+echo "==== Running EP tests ===="
 EP_SRC_DIR="examples/device/ep"
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 
@@ -67,7 +68,7 @@ run_elastic_test() {
             export UCX_TLS=^rc_gda
         fi
         PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
-        timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
+            timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
             --plan "$plan_file" \
             --num-processes 4 \
             --num-experts-per-rank 32 \
@@ -78,11 +79,29 @@ run_elastic_test() {
     )
 }
 
+run_control_test() {
+    local extra_flags=${1:-}
+    echo "---- control: flags=[$extra_flags] ----"
+    (
+        unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE
+        unset UCX_NET_DEVICES  # let UCX auto-select GPU-capable transport
+        # Force NVLink-only transports.
+        if [[ "$extra_flags" != *--disable-ll-nvlink* ]]; then
+            export UCX_TLS=^rc_gda
+        fi
+        # `tests/` on PYTHONPATH lets control.py resolve `from utils import ...`.
+        PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests${PYTHONPATH:+:$PYTHONPATH}" \
+            timeout 300 python3 ${EP_SRC_DIR}/tests/control/control.py \
+            --num-processes 4 $extra_flags
+    )
+}
+
 # NVLink (default)
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
+run_control_test
 
-# Only run the --disable-ll-nvlink (RDMA) elastic tests when all four CX-7
+# Only run the --disable-ll-nvlink (RDMA) EP tests when all four CX-7
 # NICs (mlx5_0..mlx5_3) report PORT_ACTIVE.
 all_rdma_nics_active() {
     local hca
@@ -98,8 +117,9 @@ all_rdma_nics_active() {
 if all_rdma_nics_active; then
     run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
     run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
+    run_control_test "--disable-ll-nvlink"
 else
-    echo "Skipping RDMA elastic tests: not all of mlx5_0..mlx5_3 are PORT_ACTIVE on $(hostname)"
+    echo "Skipping RDMA EP tests: not all of mlx5_0..mlx5_3 are PORT_ACTIVE on $(hostname)"
 fi
 
-echo "==== nixl_ep elastic tests done ===="
+echo "==== nixl_ep tests done ===="

@@ -2,9 +2,10 @@
 #
 # DLCluster GPU EP Test Matrix Configuration for dlcluster.nvidia.com
 #
-# Runs the nixl_ep elastic tests on the DL cluster. This job is split out from
-# nixl-ci-dl-gpu so the EP-specific image build (BUILD_NIXL_EP=true) and EP
-# Slurm reservation do not affect the existing DL test flow.
+# Runs the nixl_ep tests (elastic + control) on the DL cluster.
+# This job is split out from nixl-ci-dl-gpu so the EP-specific image build
+# (BUILD_NIXL_EP=true) and EP Slurm reservation do not affect the existing DL
+# test flow.
 #
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and server resources
@@ -12,7 +13,7 @@
 #                  build_helper_dl_ep)
 # - Matrix Axes: aarch64, UCX master + v1.22.x
 # - Run Steps: build PR image with BUILD_NIXL_EP=true, allocate Slurm, run
-#              .gitlab/test_ep.sh (elastic.py NVLink + RDMA on 4 GPUs)
+#              .gitlab/test_ep.sh (elastic + control, NVLink + RDMA on 4 GPUs)
 #
 # When Modified:
 # - Adding/removing Docker images: Affects available test environments
@@ -141,7 +142,7 @@ steps:
         "--account=${SLURM_ACCOUNT}"
       ]
 
-  - name: Run DL EP elastic tests
+  - name: Run DL EP tests
     containerSelector: "{name: 'build_helper_dl_ep'}"
     timeout: "${TEST_TIMEOUT}"
     parallel: false
