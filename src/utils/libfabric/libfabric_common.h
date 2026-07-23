@@ -42,6 +42,9 @@
 #define NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD (128 * 1024) // 128KB
 #define LF_EP_NAME_MAX_LEN 56
 
+// Number of consecutive WRITE descriptors batched onto one rail with FI_MORE before flushing.
+#define NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE 16
+
 // Request pool configuration constants
 #define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // SEND/RECV operations (for notifications)
 #define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/READ operations
@@ -50,6 +53,15 @@
 
 // Retry configuration constants
 #define NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS 100 // Log every N attempts to avoid spam
+
+// Handshake timeout (seconds) for waiting on peer's inbound handshake
+#define NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S 60
+
+// Handshake SerDes tag names
+constexpr const char *NIXL_HANDSHAKE_TAG_IDX = "idx";
+constexpr const char *NIXL_HANDSHAKE_TAG_NAME = "name";
+constexpr const char *NIXL_HANDSHAKE_TAG_HAS_CONN = "has_conn";
+constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 
 // The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
 // | 4-bit MSG TYPE flag | 8-bit agent index | 16-bit XFER_ID | 4-bit SEQ_ID |
@@ -75,6 +87,10 @@
 // Message type constants
 #define NIXL_LIBFABRIC_MSG_NOTIFICTION 2
 #define NIXL_LIBFABRIC_MSG_TRANSFER 4
+// Peer-id handshake message. Sent once per (peer A, peer B) pair after
+// connection setup. Carries assigned agent index, sender name, and optionally
+// connection info. See libfabric_handshake.cpp for wire-format details.
+#define NIXL_LIBFABRIC_MSG_HANDSHAKE 8
 
 // Single-operation immediate data extraction (no intermediate shifts)
 #define NIXL_GET_MSG_TYPE_FROM_IMM(data) ((data) & NIXL_MSG_TYPE_MASK)

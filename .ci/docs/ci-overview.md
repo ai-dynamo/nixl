@@ -217,6 +217,20 @@ their own nightly/manual trigger. They split into two groups:
 - **Pipeline:** `.ci/jenkins/pipeline/Jenkinsfile.nightly` — a flyweight fan-out orchestrator (no build agent, like the dispatcher), so the multi-hour wait on the GPU jobs holds no node.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.
 
+## Slurm job naming
+
+Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-${BUILD_NUMBER}`; jobs that run multiple parallel allocations within a build insert a `<variant>` before the build number to disambiguate:
+
+| Pipeline | Slurm job name pattern |
+|---|---|
+| `nixl-ci-gpu` | `nixl-ci-gpu-<build>` |
+| `nixl-ci-dl-gpu` | `nixl-ci-dl-gpu-<build>` |
+| `nixl-ci-dl-gpu-ep` | `nixl-ci-dl-gpu-ep-<build>` |
+| `nixl-ci-build-wheel` | `nixl-ci-build-wheel-<fw>-<build>` (`fw`: `vllm` or `sglang`) |
+| `nixl-ci-test-llm-container` | `nixl-ci-test-llm-container-<build>` |
+
+Use `squeue --name <pattern>` or `squeue -u <user>` to identify which pipeline owns a running job.
+
 ## How to trigger CI manually
 
 - **Full Jenkins pipeline for a PR:** comment `/build` on the PR (requires authorization — see `Authorization` step in `blossom-ci.yml`).

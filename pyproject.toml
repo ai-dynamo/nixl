@@ -23,7 +23,10 @@ version = "1.4.0"
 description = "NIXL Python API"
 readme = "README.md"
 license = "MIT AND Apache-2.0"
-license-files = ["LICENSE"]
+license-files = [
+  "LICENSE",
+  "licenses/NVIDIA-proprietary-LICENSE.txt",
+]
 requires-python = ">=3.10"
 authors = [
   {name = "NIXL Developers", email = "nixl-developers@nvidia.com"}
