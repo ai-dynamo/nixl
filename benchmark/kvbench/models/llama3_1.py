@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,7 +71,7 @@ class Llama3_1(BaseModelArch):
             * (self.num_query_heads_with_mha / self.gqa_num_queries_in_group)
             * self.query_head_dimension
             * 2
-            * get_precision_size(self.model_config.model.model_quant_mode)
+            * get_precision_size(self.model_config.model.kvcache_quant_mode)
             * token_count
         )
 
