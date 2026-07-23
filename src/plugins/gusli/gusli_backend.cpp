@@ -104,16 +104,18 @@ nixlGusliEngine::parseInitParams(const nixlBackendInitParams *nixl_init,
     if (nixl_init && nixl_init->customParams) {
         const nixl_b_params_t *params = nixl_init->customParams;
 
-        gusli_params.client_name =
-            nixl::getBackendParamDefaulted(params, "client_name", std::string());
-
+        client_name_ = nixl::getBackendParamDefaulted(params, "client_name", std::string());
+        if (!client_name_.empty()) {
+            gusli_params.client_name = client_name_.c_str();
+        }
         if (const auto num =
                 nixl::getBackendParamOptional<unsigned>(params, "max_num_simultaneous_requests")) {
             gusli_params.max_num_simultaneous_requests = *num;
         }
-
-        gusli_params.config_file =
-            nixl::getBackendParamDefaulted(params, "config_file", std::string());
+        config_file_ = nixl::getBackendParamDefaulted(params, "config_file", std::string());
+        if (!config_file_.empty()) {
+            gusli_params.config_file = config_file_.c_str();
+        }
         try_use_uring_ = nixl::getBackendParamDefaulted(params, "try_use_uring", false);
     }
 }

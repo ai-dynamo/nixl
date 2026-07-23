@@ -95,6 +95,10 @@ public:
 
 private:
     std::unique_ptr<gusli::global_clnt_context> lib_;
+    // Backing storage for gusli::init_params const char* fields, which must
+    // outlive lib_ construction.
+    std::string client_name_;
+    std::string config_file_;
     bool try_use_uring_ = false;
 
     void
