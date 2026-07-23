@@ -124,6 +124,24 @@ namespace {
         EXPECT_NE(contents.find("benchmark options:"), std::string::npos);
         EXPECT_NE(contents.find("file-resource options:"), std::string::npos);
         EXPECT_NE(contents.find("plugin parameters:"), std::string::npos);
+        EXPECT_EQ(contents.find("requested iterations:"), std::string::npos);
+    }
+
+    TEST(PosixIntegrationTest, DryRunShowsRequestedAndNormalizedIterations) {
+        TemporaryDirectory directory;
+        ASSERT_FALSE(directory.path().empty());
+        const auto log = directory.path() / "normalized-dry-run.log";
+        const std::string command = "raw posix --path " + shellQuote(directory.path().string()) +
+            " --total-buffer-size 4MiB --start-block-size 2MiB --max-block-size 2MiB "
+            "--iterations 17 --warmup-iterations 1 --dry-run";
+        EXPECT_EQ(runCommand(command, log), 0);
+        EXPECT_EQ(regularFileCount(directory.path()), 1U); // log only
+
+        const auto contents = readFile(log);
+        EXPECT_NE(contents.find("requested iterations: 17 (warmup 1)"), std::string::npos);
+        EXPECT_NE(contents.find("normalized iterations: 32 (warmup 16)"), std::string::npos);
+        EXPECT_NE(contents.find("aligned for thread and large-block iteration distribution"),
+                  std::string::npos);
     }
 
     TEST(PosixIntegrationTest, RawWriteReadAndPluginOverridePassConsistencyChecks) {

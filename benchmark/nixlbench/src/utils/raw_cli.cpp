@@ -139,6 +139,8 @@ namespace {
 void
 printRawPosixPlan(const RawPosixRequest &request,
                   const PluginMetadata &metadata,
+                  int normalized_iterations,
+                  int normalized_warmup_iterations,
                   std::ostream &out) {
     out << "Resolved NIXLBench plan\n"
         << "  command: raw posix\n"
@@ -158,9 +160,19 @@ printRawPosixPlan(const RawPosixRequest &request,
         << "\n    block sizes: " << formatSize(request.raw.start_block_size) << " .. "
         << formatSize(request.raw.max_block_size)
         << "\n    batch sizes: " << request.raw.start_batch_size << " .. "
-        << request.raw.max_batch_size << "\n    iterations: " << request.raw.iterations
-        << " (warmup " << request.raw.warmup_iterations << ")"
-        << "\n    threads: " << request.raw.threads
+        << request.raw.max_batch_size;
+    if (request.raw.iterations == normalized_iterations &&
+        request.raw.warmup_iterations == normalized_warmup_iterations) {
+        out << "\n    iterations: " << request.raw.iterations << " (warmup "
+            << request.raw.warmup_iterations << ")";
+    } else {
+        out << "\n    requested iterations: " << request.raw.iterations << " (warmup "
+            << request.raw.warmup_iterations << ")"
+            << "\n    normalized iterations: " << normalized_iterations << " (warmup "
+            << normalized_warmup_iterations << ")"
+            << "\n    normalization: aligned for thread and large-block iteration distribution";
+    }
+    out << "\n    threads: " << request.raw.threads
         << "\n    pipeline depth: " << request.raw.pipeline_depth
         << "\n    consistency check: " << (request.raw.check_consistency ? "enabled" : "disabled");
     if (request.has_file_options) {
@@ -449,7 +461,8 @@ prepareRawCommand(int argc, char *argv[], std::ostream &out, std::ostream &err) 
         return {1, false};
     }
 
-    printRawPosixPlan(request, *metadata, out);
+    printRawPosixPlan(
+        request, *metadata, xferBenchConfig::num_iter, xferBenchConfig::warmup_iter, out);
     return {0, !request.raw.dry_run, std::move(request.plugin_parameters)};
 }
 
