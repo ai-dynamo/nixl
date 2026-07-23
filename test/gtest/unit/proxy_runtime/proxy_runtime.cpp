@@ -54,17 +54,29 @@ namespace proxy_runtime {
         }
 
         nixl_status_t
-        submit(const nixlBackendProxySubmission &submission, uint64_t &request_token) override {
+        submit(const nixlBackendProxySubmission &submission,
+               nixlBackendProxyRequest &request) override {
             {
                 std::lock_guard<std::mutex> lock(submit_mutex_);
                 submissions_.push_back(submission);
             }
-            request_token = ++next_request_token_;
-            return NIXL_SUCCESS;
+            request = request_to_return_;
+            return submit_rc_;
         }
 
         nixl_status_t
-        checkCompletion(uint64_t) override {
+        checkCompletion(const nixlBackendProxyRequest &request) override {
+            {
+                std::lock_guard<std::mutex> lock(request_mutex_);
+                last_checked_request_ = request;
+            }
+            return completion_rc_;
+        }
+
+        nixl_status_t
+        releaseRequest(const nixlBackendProxyRequest &request) override {
+            std::lock_guard<std::mutex> lock(request_mutex_);
+            last_released_request_ = request;
             return NIXL_SUCCESS;
         }
 
@@ -89,10 +101,15 @@ namespace proxy_runtime {
         uint32_t init_channel_count_ = 0;
         uint32_t init_peer_capacity_ = 0;
         nixl_status_t init_rc_ = NIXL_SUCCESS;
+        nixl_status_t submit_rc_ = NIXL_SUCCESS;
+        nixl_status_t completion_rc_ = NIXL_SUCCESS;
+        nixlBackendProxyRequest request_to_return_{};
+        nixlBackendProxyRequest last_checked_request_{};
+        nixlBackendProxyRequest last_released_request_{};
         std::atomic<uint64_t> progress_calls_{0};
         mutable std::mutex submit_mutex_;
+        mutable std::mutex request_mutex_;
         std::vector<nixlBackendProxySubmission> submissions_;
-        uint64_t next_request_token_ = 0;
     };
 
     class ProxyRuntimeTest : public testing::Test {
@@ -418,7 +435,6 @@ namespace proxy_runtime {
         EXPECT_EQ(prepared_submission.remote.desc.addr, 0x2008u);
         EXPECT_EQ(prepared_submission.remote.desc.len, 32u);
         EXPECT_EQ(prepared_submission.remote.desc.metadataP, &remote_md);
-        EXPECT_EQ(prepared_submission.remote_agent, "peer");
     }
 
     TEST_F(ProxyRuntimeTest, PrepMemViewRejectsNullOutput) {
@@ -432,8 +448,13 @@ namespace proxy_runtime {
     TEST_F(ProxyRuntimeTest, WorkerSubmitsPreparedTransportDescriptors) {
         DummyBackendMD local_md;
         DummyBackendMD remote_md;
+        constexpr uint64_t expected_token = 0xf123456789abcdef;
+        constexpr size_t expected_context = 1024;
 
         ASSERT_EQ(initRuntime(1, 1), NIXL_SUCCESS);
+        backend_->submit_rc_ = NIXL_IN_PROG;
+        backend_->completion_rc_ = NIXL_SUCCESS;
+        backend_->request_to_return_ = {expected_token, expected_context};
 
         nixlMemViewH src_proxy = nullptr;
         nixlMemViewH dst_proxy = nullptr;
@@ -469,7 +490,9 @@ namespace proxy_runtime {
 
         const nixlProxyWorkRing ring = copyDeviceWorkRing(runtime_.deviceChannelViews()[0]);
         auto *records = hostAliasOf(ring.records);
+        auto *completion_slot = hostAliasOf(runtime_.deviceChannelViews()[0].completion_slot);
         ASSERT_NE(records, nullptr);
+        ASSERT_NE(completion_slot, nullptr);
         submission.op_idx = 0;
         records[0] = submission;
         __atomic_store_n(&records[0].op_idx, uint64_t{11}, __ATOMIC_RELEASE);
@@ -484,16 +507,24 @@ namespace proxy_runtime {
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
+        ASSERT_TRUE(waitForCompletedIdx(completion_slot, 11));
 
         std::vector<nixlBackendProxySubmission> submissions;
+        nixlBackendProxyRequest checked_request;
         {
             std::lock_guard<std::mutex> lock(backend_->submit_mutex_);
             submissions = backend_->submissions_;
+        }
+        {
+            std::lock_guard<std::mutex> lock(backend_->request_mutex_);
+            checked_request = backend_->last_checked_request_;
         }
 
         ASSERT_EQ(runtime_.shutdown(), NIXL_SUCCESS);
 
         ASSERT_EQ(submissions.size(), 1u);
+        EXPECT_EQ(checked_request.token, expected_token);
+        EXPECT_EQ(checked_request.context, expected_context);
         const auto &prepared = submissions.front();
         EXPECT_EQ(prepared.op_idx, 11u);
         EXPECT_EQ(prepared.channel_id, 0u);
@@ -505,13 +536,17 @@ namespace proxy_runtime {
         EXPECT_EQ(prepared.remote.desc.addr, 0x2008u);
         EXPECT_EQ(prepared.remote.desc.len, 32u);
         EXPECT_EQ(prepared.remote.desc.metadataP, &remote_md);
-        EXPECT_EQ(prepared.remote_agent, "peer");
     }
 
     TEST_F(ProxyRuntimeTest, WorkerSubmitsPreparedAtomicAddDescriptor) {
         DummyBackendMD remote_md;
+        constexpr uint64_t expected_token = 0xe23456789abcdef1;
+        constexpr size_t expected_context = 2048;
 
         ASSERT_EQ(initRuntime(1, 1), NIXL_SUCCESS);
+        backend_->submit_rc_ = NIXL_IN_PROG;
+        backend_->completion_rc_ = NIXL_IN_PROG;
+        backend_->request_to_return_ = {expected_token, expected_context};
 
         nixlMemViewH dst_proxy = nullptr;
         nixl_remote_meta_dlist_t remote_dlist(DRAM_SEG);
@@ -558,9 +593,33 @@ namespace proxy_runtime {
             submissions = backend_->submissions_;
         }
 
+        const auto check_deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        while (std::chrono::steady_clock::now() < check_deadline) {
+            {
+                std::lock_guard<std::mutex> lock(backend_->request_mutex_);
+                if (backend_->last_checked_request_) {
+                    break;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+
         ASSERT_EQ(runtime_.shutdown(), NIXL_SUCCESS);
 
+        nixlBackendProxyRequest checked_request;
+        nixlBackendProxyRequest released_request;
+        {
+            std::lock_guard<std::mutex> lock(backend_->request_mutex_);
+            checked_request = backend_->last_checked_request_;
+            released_request = backend_->last_released_request_;
+        }
+
         ASSERT_EQ(submissions.size(), 1u);
+        EXPECT_EQ(checked_request.token, expected_token);
+        EXPECT_EQ(checked_request.context, expected_context);
+        EXPECT_EQ(released_request.token, expected_token);
+        EXPECT_EQ(released_request.context, expected_context);
         const auto &prepared = submissions.front();
         EXPECT_EQ(prepared.op_idx, 11u);
         EXPECT_EQ(prepared.opcode, nixl_proxy_opcode_t::ATOMIC_ADD);
@@ -569,7 +628,6 @@ namespace proxy_runtime {
         EXPECT_EQ(prepared.remote.desc.addr, 0x2008u);
         EXPECT_EQ(prepared.remote.desc.len, sizeof(uint64_t));
         EXPECT_EQ(prepared.remote.desc.metadataP, &remote_md);
-        EXPECT_EQ(prepared.remote_agent, "peer");
         EXPECT_EQ(prepared.value, 42u);
     }
 

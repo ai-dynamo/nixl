@@ -266,18 +266,29 @@ protected:
 private:
     friend class nixlUcxProxyBackendAdapter;
 
+    // One proxy operation maps to at most one UCX request. These methods
+    // bypass nixlUcxBackendReqH and return NIXL_SUCCESS with req == nullptr
+    // for immediate completion, NIXL_IN_PROG with req set, or an error.
     nixl_status_t
     submitProxyRmaWrite(const nixlMetaDesc &local,
                         const nixlMetaDesc &remote,
                         size_t size,
                         size_t worker_id,
-                        nixlBackendReqH *&handle) const;
+                        nixlUcxReq &req) const;
 
     nixl_status_t
     submitProxyAtomicAdd(const nixlMetaDesc &remote,
                          uint64_t value,
                          size_t worker_id,
-                         nixlBackendReqH *&handle) const;
+                         nixlUcxReq &req) const;
+
+    /** Check request state without driving progress. */
+    nixl_status_t
+    checkProxyRequest(nixlUcxReq req) const;
+
+    /** Free a raw proxy request; safe while the UCX operation is in progress. */
+    void
+    releaseProxyRequest(size_t worker_id, nixlUcxReq req) const;
 
     // Memory management helpers
     nixl_status_t

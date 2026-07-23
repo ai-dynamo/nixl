@@ -40,10 +40,22 @@ struct nixlBackendProxySubmission {
 
     nixlBackendProxyXferDesc local{};
     nixlBackendProxyXferDesc remote{};
-    std::string remote_agent;
 
     size_t size = 0;
     uint64_t value = 0;
+};
+
+// Opaque backend-owned state for one in-progress proxy request. Core proxy
+// code only tests whether the request is valid and passes it back to the
+// adapter; each backend defines the meaning of token and context.
+struct nixlBackendProxyRequest {
+    uint64_t token = 0;
+    size_t context = 0;
+
+    explicit
+    operator bool() const noexcept {
+        return token != 0;
+    }
 };
 
 class nixlDeviceProxyBackendAdapter {
@@ -72,11 +84,25 @@ public:
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
+    /**
+     * Submit one proxy operation.
+     *
+     * Returns NIXL_SUCCESS when the operation completed at submit time
+     * (request is empty and must not be polled), NIXL_IN_PROG with a valid
+     * request to poll via checkCompletion(), or a terminal error.
+     * checkCompletion() releases the request on a terminal status; a request
+     * abandoned while in progress must be passed to releaseRequest().
+     */
     virtual nixl_status_t
-    submit(const nixlBackendProxySubmission &submission, uint64_t &request_token) = 0;
+    submit(const nixlBackendProxySubmission &submission, nixlBackendProxyRequest &request) = 0;
 
     virtual nixl_status_t
-    checkCompletion(uint64_t request_token) = 0;
+    checkCompletion(const nixlBackendProxyRequest &request) = 0;
+
+    virtual nixl_status_t
+    releaseRequest(const nixlBackendProxyRequest &) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
 
     virtual nixl_status_t
     progress() {

@@ -186,7 +186,6 @@ namespace proxy_memview_registry {
         EXPECT_EQ(prepared_submission.remote.desc.addr, 0x2009u);
         EXPECT_EQ(prepared_submission.remote.desc.len, 16u);
         EXPECT_EQ(prepared_submission.remote.desc.metadataP, &remote_md_);
-        EXPECT_EQ(prepared_submission.remote_agent, "remote-agent");
     }
 
     TEST_F(ProxyMemViewRegistryTest, PrepMemViewProducesReadyEntries) {
@@ -490,7 +489,6 @@ namespace proxy_memview_registry {
         EXPECT_EQ(prepared_submission.remote.desc.addr, 0x2009u);
         EXPECT_EQ(prepared_submission.remote.desc.len, sizeof(uint64_t));
         EXPECT_EQ(prepared_submission.remote.desc.metadataP, &remote_md_);
-        EXPECT_EQ(prepared_submission.remote_agent, "remote-agent");
         EXPECT_EQ(prepared_submission.value, 42u);
     }
 

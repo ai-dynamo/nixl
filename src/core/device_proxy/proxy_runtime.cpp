@@ -216,10 +216,6 @@ nixlProxyMemViewRegistry::prepareSubmission(const nixlProxySubmission &submissio
     prepared.flags = submission.flags;
     prepared.size = transfer_size;
     prepared.value = submission.value;
-    // Use the element's own agent (the aggregate memview spans many peers; the
-    // view-level remote_agent is only the first one).
-    prepared.remote_agent = dst_metadata->remote_agent.empty() ? remote_metadata->remote_agent :
-                                                                 dst_metadata->remote_agent;
     prepared.remote.mem_type = remote_metadata->mem_type;
     prepared.remote.desc = nixlMetaDesc(dst_metadata->base_addr + submission.dst_offset,
                                         transfer_size,
@@ -795,6 +791,11 @@ nixlProxyRuntime::waitPeerChannelsInactive(uint32_t peer_index) {
                 nixl_proxy_channel_lifecycle_t::RESET_PENDING) {
                 continue;
             }
+            for (auto &inflight : channels_[slot].inflight_slots_) {
+                if (inflight.status == NIXL_IN_PROG && inflight.backend_request) {
+                    backend_->releaseRequest(inflight.backend_request);
+                }
+            }
             channels_[slot].resetLocalState();
             channel_lifecycle_[slot].store(nixl_proxy_channel_lifecycle_t::INACTIVE,
                                            std::memory_order_release);
@@ -1084,6 +1085,28 @@ nixlProxyRuntime::shutdown() {
     joinWorkerThreads();
     workers_started_ = false;
     NIXL_INFO << "ProxyRuntime::shutdown: all worker threads joined";
+
+    // Workers are stopped, so the fixed inflight slots are stable. Release any
+    // backend requests that never reached a terminal status before shutting
+    // down the adapter.
+    if (backend_ != nullptr) {
+        size_t released = 0;
+        for (auto &channel : channels_) {
+            for (auto &inflight : channel.inflight_slots_) {
+                if (inflight.status == NIXL_IN_PROG && inflight.backend_request) {
+                    backend_->releaseRequest(inflight.backend_request);
+                    ++released;
+                }
+            }
+            std::fill(channel.inflight_slots_.begin(),
+                      channel.inflight_slots_.end(),
+                      nixlProxyRequestState{});
+        }
+        if (released != 0) {
+            NIXL_INFO << "ProxyRuntime::shutdown: released " << released
+                      << " pending backend request(s)";
+        }
+    }
 
     nixl_status_t backend_status = NIXL_SUCCESS;
     if (backend_ != nullptr) {

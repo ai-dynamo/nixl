@@ -74,6 +74,11 @@ ProxyWorker::activeOwnedSlot(size_t slot) {
         channel_lifecycle_[slot].load(std::memory_order_acquire);
 
     if (lifecycle == nixl_proxy_channel_lifecycle_t::RESET_PENDING) {
+        for (auto &inflight : channel.inflight_slots_) {
+            if (inflight.status == NIXL_IN_PROG && inflight.backend_request) {
+                backend_->releaseRequest(inflight.backend_request);
+            }
+        }
         channel.resetLocalState();
         channel_lifecycle_[slot].store(nixl_proxy_channel_lifecycle_t::INACTIVE,
                                        std::memory_order_release);
@@ -177,17 +182,17 @@ ProxyWorker::submitToBackend(nixlProxyChannelState &channel,
                    << " channel=" << submission.channel_id << " local_addr=0x" << std::hex
                    << prepared_submission.local.desc.addr << " remote_addr=0x"
                    << prepared_submission.remote.desc.addr << std::dec
-                   << " size=" << submission.size << " remote_agent='"
-                   << prepared_submission.remote_agent << "'";
+                   << " size=" << submission.size;
 
-        uint64_t request_token = 0;
-        status = backend_->submit(prepared_submission, request_token);
-        inflight.backend_req_token = request_token;
-        if (status != NIXL_SUCCESS) {
-            NIXL_ERROR << "ProxyWorker::submitToBackend: backend submit failed"
-                       << " status=" << status << " op_idx=" << submission.op_idx
-                       << " request_token=" << request_token;
+        status = backend_->submit(prepared_submission, inflight.backend_request);
+        if (status != NIXL_IN_PROG) {
+            // NIXL_SUCCESS is complete-at-submit; all other values are
+            // terminal failures. Neither case should be polled.
             inflight.status = status;
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR << "ProxyWorker::submitToBackend: backend submit failed"
+                           << " status=" << status << " op_idx=" << submission.op_idx;
+            }
         }
     }
     channel.inflight_slots_[slot] = inflight;
@@ -222,14 +227,13 @@ ProxyWorker::publishCompletions(nixlProxyChannelState &channel) {
         if (front.status != NIXL_IN_PROG) {
             st = front.status;
         } else {
-            st = backend_->checkCompletion(front.backend_req_token);
+            st = backend_->checkCompletion(front.backend_request);
             if (st == NIXL_IN_PROG) {
                 break;
             }
         }
         NIXL_TRACE << "ProxyWorker::publishCompletions: channel=" << channel.device_view.channel_id
-                   << " op_idx=" << front.op_idx << " status=" << st
-                   << " token=" << front.backend_req_token;
+                   << " op_idx=" << front.op_idx << " status=" << st;
 
         // Keep the first error visible, while continuing to retire work that
         // was accepted before the error became visible to the GPU.

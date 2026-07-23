@@ -41,7 +41,7 @@ enum class nixl_proxy_channel_lifecycle_t : uint8_t {
 
 struct nixlProxyRequestState {
     uint64_t op_idx = 0;
-    uint64_t backend_req_token = 0;
+    nixlBackendProxyRequest backend_request{};
     nixl_status_t status = NIXL_IN_PROG;
 };
 

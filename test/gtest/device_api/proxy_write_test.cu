@@ -57,13 +57,13 @@ public:
     }
 
     nixl_status_t
-    submit(const nixlBackendProxySubmission &, uint64_t &token) override {
-        token = 0;
+    submit(const nixlBackendProxySubmission &, nixlBackendProxyRequest &request) override {
+        request = {};
         return NIXL_SUCCESS;
     }
 
     nixl_status_t
-    checkCompletion(uint64_t) override {
+    checkCompletion(const nixlBackendProxyRequest &) override {
         return NIXL_SUCCESS;
     }
 
@@ -85,8 +85,9 @@ public:
 
 // ---------------------------------------------------------------------------
 // Controllable stub — lets the test thread decide when each submission
-// completes.  submit() assigns unique monotonic tokens; checkCompletion()
-// returns NIXL_IN_PROG until markComplete() is called for a token.
+// completes. submit() assigns unique monotonic tokens and returns
+// NIXL_IN_PROG; checkCompletion() returns NIXL_IN_PROG until markComplete()
+// is called for a token.
 // ---------------------------------------------------------------------------
 class ControllableStubAdapter : public nixlDeviceProxyBackendAdapter {
 public:
@@ -101,25 +102,37 @@ public:
     }
 
     nixl_status_t
-    submit(const nixlBackendProxySubmission &submission, uint64_t &token) override {
+    submit(const nixlBackendProxySubmission &submission,
+           nixlBackendProxyRequest &request) override {
         std::lock_guard<std::mutex> lk(mu_);
-        token = next_token_++;
-        pending_.insert(token);
-        token_channel_[token] = submission.channel_id;
+        request = {next_token_++, submission.peer_index};
+        pending_.insert(request.token);
+        token_channel_[request.token] = submission.channel_id;
         submitted_opcodes_.push_back(submission.opcode);
-        return NIXL_SUCCESS;
+        return NIXL_IN_PROG;
     }
 
     nixl_status_t
-    checkCompletion(uint64_t token) override {
+    checkCompletion(const nixlBackendProxyRequest &request) override {
         std::lock_guard<std::mutex> lk(mu_);
-        auto it = completed_.find(token);
+        auto it = completed_.find(request.token);
         if (it != completed_.end()) {
             nixl_status_t status = it->second;
             completed_.erase(it);
+            token_channel_.erase(request.token);
             return status;
         }
         return NIXL_IN_PROG;
+    }
+
+    nixl_status_t
+    releaseRequest(const nixlBackendProxyRequest &request) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        pending_.erase(request.token);
+        completed_.erase(request.token);
+        token_channel_.erase(request.token);
+        released_.insert(request.token);
+        return NIXL_SUCCESS;
     }
 
     nixl_status_t
@@ -153,6 +166,12 @@ public:
     hasPending() const {
         std::lock_guard<std::mutex> lk(mu_);
         return !pending_.empty();
+    }
+
+    bool
+    wasReleased(uint64_t token) const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return released_.count(token) != 0;
     }
 
     size_t
@@ -200,6 +219,7 @@ private:
     mutable std::mutex mu_;
     uint64_t next_token_ = 1;
     std::set<uint64_t> pending_;
+    std::set<uint64_t> released_;
     std::map<uint64_t, nixl_status_t> completed_;
     std::map<uint64_t, uint32_t> token_channel_;
     std::vector<nixl_proxy_opcode_t> submitted_opcodes_;
@@ -222,13 +242,13 @@ public:
     }
 
     nixl_status_t
-    submit(const nixlBackendProxySubmission &, uint64_t &token) override {
-        token = 0;
-        return NIXL_SUCCESS;
+    submit(const nixlBackendProxySubmission &, nixlBackendProxyRequest &request) override {
+        request = {1, 0};
+        return NIXL_IN_PROG;
     }
 
     nixl_status_t
-    checkCompletion(uint64_t) override {
+    checkCompletion(const nixlBackendProxyRequest &) override {
         return NIXL_ERR_BACKEND;
     }
 
@@ -265,13 +285,14 @@ public:
     }
 
     nixl_status_t
-    submit(const nixlBackendProxySubmission &, uint64_t &) override {
+    submit(const nixlBackendProxySubmission &, nixlBackendProxyRequest &request) override {
+        request = {};
         ++submit_calls_;
         return NIXL_ERR_BACKEND;
     }
 
     nixl_status_t
-    checkCompletion(uint64_t) override {
+    checkCompletion(const nixlBackendProxyRequest &) override {
         ++check_completion_calls_;
         return NIXL_SUCCESS;
     }
@@ -916,6 +937,8 @@ TEST_F(ProxyDeviceApiTest, DeactivateDropsInflightWithoutBackendDrain) {
     null_peers.addDesc(nixlRemoteMetaDesc(nixl_null_agent));
     ASSERT_EQ(runtime.prepMemView(null_peers, &disconnected_mvh), NIXL_SUCCESS);
     EXPECT_EQ(runtime.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::INACTIVE);
+    EXPECT_EQ(adapter->pendingCount(), 0u);
+    EXPECT_TRUE(adapter->wasReleased(1));
 
     nixlProxyWorkRing ring{};
     ASSERT_EQ(
@@ -942,8 +965,6 @@ TEST_F(ProxyDeviceApiTest, DeactivateDropsInflightWithoutBackendDrain) {
     remote_dlist.addDesc(remote_desc);
     ASSERT_EQ(runtime.prepMemView(remote_dlist, &reconnected_mvh), NIXL_SUCCESS);
     EXPECT_EQ(runtime.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
-
-    adapter->markComplete(1);
 
     nixl_status_t *d_put_status2 = deviceAlloc<nixl_status_t>();
     nixlGpuXferStatusH *d_xfer_status2 = deviceAlloc<nixlGpuXferStatusH>();
