@@ -643,7 +643,7 @@ nixlProxyRuntime::init(std::unique_ptr<nixlDeviceProxyBackendAdapter> backend,
     NIXL_INFO << "ProxyRuntime::init: effective worker_count=" << worker_count_
               << " (clamped to channel_count)";
 
-    nixl_status_t rc = backend_->init(worker_count_, channel_count_);
+    nixl_status_t rc = backend_->init(worker_count_, channel_count_, peer_capacity_);
     if ((rc != NIXL_SUCCESS) && (rc != NIXL_ERR_NOT_SUPPORTED)) {
         NIXL_ERROR << "ProxyRuntime::init: backend init failed: " << rc;
         cudaFreeHost(shutdown_word_host_);

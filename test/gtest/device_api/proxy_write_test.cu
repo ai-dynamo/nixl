@@ -47,7 +47,7 @@
 class StubProxyBackendAdapter : public nixlDeviceProxyBackendAdapter {
 public:
     nixl_status_t
-    init(uint32_t, uint32_t) override {
+    init(uint32_t, uint32_t, uint32_t) override {
         return NIXL_SUCCESS;
     }
 
@@ -73,7 +73,7 @@ public:
     }
 
     nixl_status_t
-    progress(uint32_t /*channel_id*/) override {
+    progress(uint32_t /*channel_id*/, uint32_t /*peer_index*/) override {
         return progress();
     }
 
@@ -91,7 +91,7 @@ public:
 class ControllableStubAdapter : public nixlDeviceProxyBackendAdapter {
 public:
     nixl_status_t
-    init(uint32_t, uint32_t) override {
+    init(uint32_t, uint32_t, uint32_t) override {
         return NIXL_SUCCESS;
     }
 
@@ -128,7 +128,7 @@ public:
     }
 
     nixl_status_t
-    progress(uint32_t /*channel_id*/) override {
+    progress(uint32_t /*channel_id*/, uint32_t /*peer_index*/) override {
         return progress();
     }
 
@@ -212,7 +212,7 @@ private:
 class ErrorStubAdapter : public nixlDeviceProxyBackendAdapter {
 public:
     nixl_status_t
-    init(uint32_t, uint32_t) override {
+    init(uint32_t, uint32_t, uint32_t) override {
         return NIXL_SUCCESS;
     }
 
@@ -238,7 +238,7 @@ public:
     }
 
     nixl_status_t
-    progress(uint32_t /*channel_id*/) override {
+    progress(uint32_t /*channel_id*/, uint32_t /*peer_index*/) override {
         return progress();
     }
 
@@ -255,7 +255,7 @@ public:
 class SubmitErrorStubAdapter : public nixlDeviceProxyBackendAdapter {
 public:
     nixl_status_t
-    init(uint32_t, uint32_t) override {
+    init(uint32_t, uint32_t, uint32_t) override {
         return NIXL_SUCCESS;
     }
 
@@ -282,7 +282,7 @@ public:
     }
 
     nixl_status_t
-    progress(uint32_t /*channel_id*/) override {
+    progress(uint32_t /*channel_id*/, uint32_t /*peer_index*/) override {
         return progress();
     }
 

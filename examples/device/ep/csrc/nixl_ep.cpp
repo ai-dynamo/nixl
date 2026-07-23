@@ -1485,7 +1485,12 @@ void Buffer::_nixl_agent_init() {
 
 #ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
     init_params["ucx_num_device_channels"] = "1";
-    init_params["num_workers"] = std::to_string(proxy_channels);
+    // One UCX worker (EP/QP) per (channel, peer): the proxy adapter routes a submission to
+    // worker (channel_id * peer_capacity + peer_index), giving each peer of a channel an
+    // isolated QP and progress context. peer_capacity == max_num_ranks, so the local-rank
+    // lane is a dead worker for now (removed alongside the num_peers shrink).
+    init_params["num_workers"] =
+        std::to_string(proxy_channels * static_cast<uint32_t>(max_num_ranks));
     // Peer error handling is incompatible with the host proxy path, otherwise host AMO fail.
     init_params["ucx_error_handling_mode"] = "none";
 #else

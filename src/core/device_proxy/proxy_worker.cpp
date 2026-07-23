@@ -164,6 +164,9 @@ ProxyWorker::submitToBackend(nixlProxyChannelState &channel,
     nixlBackendProxySubmission prepared_submission;
     nixl_status_t status =
         proxy_memview_registry_->prepareSubmission(submission, prepared_submission);
+    // Route to the (channel, peer) UCX worker for this ring. The peer is the row this
+    // worker is draining, independent of the memview element index used for addressing.
+    prepared_submission.peer_index = channel.device_view.peer_index;
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "ProxyWorker::submitToBackend: submission preparation failed"
                    << " op_idx=" << submission.op_idx << " status=" << status;
@@ -192,9 +195,13 @@ ProxyWorker::submitToBackend(nixlProxyChannelState &channel,
 
 void
 ProxyWorker::driveBackendProgress() {
+    // Progress every (channel, peer) worker this thread owns. Each (channel, peer) maps to a
+    // dedicated UCX worker, so polling them independently isolates per-peer completions.
     for (uint32_t channel_id = worker_index_; channel_id < channel_count_;
          channel_id += worker_count_) {
-        backend_->progress(channel_id);
+        for (uint32_t peer = 0; peer < peer_capacity_; ++peer) {
+            backend_->progress(channel_id, peer);
+        }
     }
 }
 

@@ -40,10 +40,11 @@ namespace proxy_runtime {
     class StubBackend : public nixlDeviceProxyBackendAdapter {
     public:
         nixl_status_t
-        init(uint32_t worker_count, uint32_t channel_count) override {
+        init(uint32_t worker_count, uint32_t channel_count, uint32_t peer_capacity) override {
             init_called_ = true;
             init_worker_count_ = worker_count;
             init_channel_count_ = channel_count;
+            init_peer_capacity_ = peer_capacity;
             return init_rc_;
         }
 
@@ -74,7 +75,7 @@ namespace proxy_runtime {
         }
 
         nixl_status_t
-        progress(uint32_t /*channel_id*/) override {
+        progress(uint32_t /*channel_id*/, uint32_t /*peer_index*/) override {
             return progress();
         }
 
@@ -86,6 +87,7 @@ namespace proxy_runtime {
         bool init_called_ = false;
         uint32_t init_worker_count_ = 0;
         uint32_t init_channel_count_ = 0;
+        uint32_t init_peer_capacity_ = 0;
         nixl_status_t init_rc_ = NIXL_SUCCESS;
         std::atomic<uint64_t> progress_calls_{0};
         mutable std::mutex submit_mutex_;

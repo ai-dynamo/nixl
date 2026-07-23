@@ -34,6 +34,8 @@ struct nixlBackendProxySubmission {
     uint64_t op_idx = 0;
     nixl_proxy_opcode_t opcode = nixl_proxy_opcode_t::PUT;
     uint32_t channel_id = 0;
+    /** Destination peer row this submission drains; selects the (channel, peer) UCX worker. */
+    uint32_t peer_index = 0;
     uint64_t flags = 0;
 
     nixlBackendProxyXferDesc local{};
@@ -52,13 +54,16 @@ public:
      * Initialize backend-specific proxy resources.
      *
      * proxy_worker_count is the number of CPU drain threads. channel_count is the
-     * number of logical channels (each with one ring per dest peer); the two
-     * dimensions are independent.
+     * number of logical channels; peer_capacity is the number of destination peer
+     * rows per channel. The backend provisions one worker/QP per (channel, peer),
+     * so it needs channel_count * peer_capacity transport workers. The three
+     * dimensions are otherwise independent.
      */
     virtual nixl_status_t
-    init(uint32_t proxy_worker_count, uint32_t channel_count) {
+    init(uint32_t proxy_worker_count, uint32_t channel_count, uint32_t peer_capacity) {
         (void)proxy_worker_count;
         (void)channel_count;
+        (void)peer_capacity;
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -78,9 +83,9 @@ public:
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
-    /** Progress backend work for a single logical channel (and its UCX worker). */
+    /** Progress backend work for a single (channel, peer) ring and its UCX worker. */
     virtual nixl_status_t
-    progress(uint32_t /*channel_id*/) {
+    progress(uint32_t /*channel_id*/, uint32_t /*peer_index*/) {
         return progress();
     }
 
