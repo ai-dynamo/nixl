@@ -971,6 +971,10 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
             it->second, makePublicMetadataRkeys(it->second, workers_.size(), blob.data()));
         return NIXL_SUCCESS;
     }
+    catch (const nixl::ucx::rkey_error &e) {
+        NIXL_ERROR << e.what();
+        return e.status();
+    }
     catch (const std::runtime_error &e) {
         NIXL_ERROR << e.what();
         return NIXL_ERR_BACKEND;

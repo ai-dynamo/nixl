@@ -19,19 +19,37 @@
 #define NIXL_SRC_UTILS_UCX_RKEY_H
 
 #include <memory>
+#include <stdexcept>
 
 extern "C" {
 #include <ucp/api/ucp.h>
 }
 
+#include <nixl_types.h>
+
 class nixlUcxEp;
 
 namespace nixl::ucx {
 
+class rkey_error : public std::runtime_error {
+public:
+    rkey_error(nixl_status_t status, const std::string &message)
+        : std::runtime_error(message),
+          status_(status) {}
+
+    [[nodiscard]] nixl_status_t
+    status() const noexcept {
+        return status_;
+    }
+
+private:
+    nixl_status_t status_;
+};
+
 class rkey {
 public:
     rkey() = delete;
-    rkey(const nixlUcxEp &, const void *rkey_buffer);
+    rkey(nixlUcxEp &, const void *rkey_buffer);
 
     [[nodiscard]] ucp_rkey_h
     get() const noexcept {
@@ -40,7 +58,7 @@ public:
 
 private:
     [[nodiscard]] static ucp_rkey_h
-    unpackUcpRkey(const nixlUcxEp &, const void *rkey_buffer);
+    unpackUcpRkey(nixlUcxEp &, const void *rkey_buffer);
 
     std::unique_ptr<ucp_rkey, void (*)(ucp_rkey_h)> rkey_;
 };
