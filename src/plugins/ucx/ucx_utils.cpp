@@ -442,6 +442,9 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     config.modify("RC_FENCE", "none");
 
     if (ucpVersion_ >= UCP_VERSION(1, 21)) {
+        config.modify("IB_TX_INLINE_RESP", "0");
+        config.modify("PROTO_EMULATION_ENABLE", "n");
+
         config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
         config.modify("MAX_HCA_PER_GPU", "auto");
     }
