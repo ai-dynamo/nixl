@@ -229,7 +229,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    ret = worker_ptr->synchronize(); // Make sure environment is not used anymore
+    ret = worker_ptr->synchronize(true); // Make sure environment is not used anymore
     if (0 != ret) {
         return EXIT_FAILURE;
     }
