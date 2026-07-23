@@ -125,7 +125,7 @@ steps:
       nodes: "${SLURM_NODES}"
       jobTimeout: "${SLURM_JOB_TIMEOUT}"
       immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      jobName: "${JOB_BASE_NAME}-${ucx_version}-${BUILD_NUMBER}"
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
