@@ -30,6 +30,9 @@ fs = import('fs')
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
 cuda_stub_path = get_option('cudapath_stub')
+# device api
+ucx_path = get_option('ucx_path')
+ucx_device_cuda_arch_list = get_option('ucx_device_cuda_arch_list').strip()
 # ETCD
 etcd_inc_path = get_option('etcd_inc_path')
 etcd_lib_path = get_option('etcd_lib_path')
@@ -189,10 +192,128 @@ if not cuda_available and not rocm_available
     warning('Neither CUDA nor ROCm found. VRAM support will be disabled.')
 endif
 
+ucx_device_cuda_args = []
+ucx_device_override_options = []
+ucx_gpu_device_api_available = false
+nvcc_prog = find_program('nvcc', required: false)
+doca_gpunetio_dep = disabler()
+
+if ucx_path != ''
+    ucx_lib_path = ucx_path + '/lib'
+    ucx_inc_path = ucx_path + '/include'
+    if ucx_inc_path.startswith('/')
+        ucx_dep = declare_dependency(
+            link_args: ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+            compile_args: ['-I' + ucx_inc_path])
+    else
+        ucx_dep = declare_dependency(
+            link_args: ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+            include_directories: include_directories(ucx_inc_path))
+    endif
+else
+    ucx_dep = dependency(
+        'ucx',
+        modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'],
+        required: false)
+endif
+
+if not ucx_dep.found()
+    message('UCX GPU Device API is unavailable because UCX was not found.')
+elif not cuda_available
+    message('UCX GPU Device API is unavailable because CUDA is unavailable.')
+elif not nvcc_prog.found()
+    message('UCX GPU Device API is unavailable because nvcc was not found.')
+elif nvshmem_available
+    message('UCX GPU Device API is unavailable because the NVSHMEM build path is enabled.')
+else
+    add_languages('cuda', native: false)
+    add_project_arguments('-std=c++20', language: 'cuda')
+    cuda = meson.get_compiler('cuda')
+    if not cuda.version().version_compare('>=12.8')
+        message(
+            'UCX GPU Device API is unavailable because CUDA ' +
+            cuda.version() + ' is older than 12.8.')
+    else
+        doca_gpunetio_dep = dependency('doca-gpunetio', required: false)
+        if ucx_device_cuda_arch_list == 'auto'
+            ucx_device_cuda_arch_list = '80,86,89,90,100,103,120'
+        endif
+        selected_cuda_archs = []
+        nvcc_ptx_arch_num = 0
+        foreach cuda_arch : ucx_device_cuda_arch_list.split(',')
+            cuda_arch = cuda_arch.strip()
+            if cuda_arch == ''
+                continue
+            endif
+            if cuda_arch.startswith('sm_')
+                cuda_arch = cuda_arch.replace('sm_', '')
+            endif
+            # Validate format early so invalid option values fail fast.
+            cuda_arch_num = cuda_arch.to_int()
+            if cuda_arch_num > nvcc_ptx_arch_num
+                nvcc_ptx_arch_num = cuda_arch_num
+            endif
+            ucx_device_cuda_args += [
+                '-gencode=arch=compute_' + cuda_arch + ',code=sm_' + cuda_arch,
+            ]
+            selected_cuda_archs += ['sm_' + cuda_arch]
+        endforeach
+        if selected_cuda_archs.length() == 0
+            error('No CUDA targets selected for UCX device kernels')
+        endif
+        nvcc_ptx_arch = 'compute_' + nvcc_ptx_arch_num.to_string()
+        ucx_device_cuda_args += [
+            '-gencode=arch=' + nvcc_ptx_arch + ',code=' + nvcc_ptx_arch,
+        ]
+        message(
+            'UCX device kernel CUDA targets: ' +
+            ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
+
+        have_gpu_side = cuda.compiles(
+            '''
+            #include <ucp/api/device/ucp_device_impl.h>
+            int main() { return 0; }
+            ''',
+            dependencies: [ucx_dep, doca_gpunetio_dep],
+            args: ucx_device_cuda_args,
+            name: 'UCX GPU-side Device API')
+
+        have_nixl_device_api = false
+        if have_gpu_side
+            have_nixl_device_api = cuda.compiles(
+                '''
+                #include <gpu/ucx/nixl_device.cuh>
+                int main() { return 0; }
+                ''',
+                dependencies: [ucx_dep, doca_gpunetio_dep],
+                args: ['-I' + nixl_inc] + ucx_device_cuda_args,
+                name: 'NIXL Device API')
+        endif
+
+        if have_gpu_side and have_nixl_device_api
+            message('UCX Device API is ready for nixlbench.')
+            ucx_gpu_device_api_available = true
+            add_project_arguments(
+                '-DHAVE_UCX_GPU_DEVICE_API',
+                language: ['cpp', 'cuda'])
+        endif
+    endif
+endif
+
+summary(
+    {
+        'UCX GPU Device API': ucx_gpu_device_api_available,
+        'nvcc available': nvcc_prog.found(),
+        'DOCA GPUNETIO found': doca_gpunetio_dep.found(),
+    },
+    section: 'Optional features',
+    bool_yn: true)
+
 # Subprojects
 subdir('src/utils')
 subdir('src/runtime')
 subdir('src/worker')
+subdir('src/kernels')
 
 # Configure header file
 configure_file(
@@ -217,6 +338,9 @@ if cuda_available
     deps += [cuda_dep]
 elif rocm_available
     deps += [rocm_dep]
+endif
+if ucx_gpu_device_api_available
+    deps += [nixlbench_kernels_dep]
 endif
 if nvshmem_available
     deps += [nvshmem_lib]
