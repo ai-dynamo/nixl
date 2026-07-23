@@ -35,7 +35,8 @@ namespace nixl::config {
 
 TEST(Config, EnvWrapper) {
     const std::string value = "foo";
-    ASSERT_EQ(::setenv(variable.c_str(), value.c_str(), 1), 0);
+    gtest::ScopedEnv vars;
+    vars.addVar(variable, value);
     ASSERT_EQ(internal::getenvOptional(variable), value);
     const std::string fallback = "bar";
     ASSERT_EQ(internal::getenvDefaulted(variable, fallback), value);
@@ -67,7 +68,8 @@ namespace {
     template<typename T>
     void
     testSimpleSuccess(const std::string &input, const T value) {
-        ASSERT_EQ(::setenv(variable.c_str(), input.c_str(), 1), 0);
+        gtest::ScopedEnv vars;
+        vars.addVar(variable, input);
         EXPECT_EQ(getValue<T>(variable), value);
         EXPECT_EQ(getValueOptional<T>(variable), value);
         EXPECT_EQ(getValueDefaulted<T>(variable, !value), value);
@@ -85,7 +87,8 @@ namespace {
     template<typename T>
     void
     testSimpleFailure(const std::string &input) {
-        ASSERT_EQ(::setenv(variable.c_str(), input.c_str(), 1), 0);
+        gtest::ScopedEnv vars;
+        vars.addVar(variable, input);
         EXPECT_ANY_THROW((void)getValue<T>(variable));
         EXPECT_ANY_THROW((void)getValueOptional<T>(variable));
         EXPECT_ANY_THROW((void)getValueDefaulted<T>(variable, T()));
