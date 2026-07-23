@@ -398,8 +398,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     {
         const LogIgnoreGuard lig1("poll timed out for ip_addr: " + ip_str +
                                   " and port: " + port_str);
-        const LogIgnoreGuard lig2("Listener thread could not connect to IP " + ip_str +
-                                  " and port " + port_str);
+        const LogIgnoreGuard lig2("P2P backend could not connect to IP " + ip_str + " and port " +
+                                  port_str);
         const LogIgnoreGuard lig3("getsockopt gave error for ip_addr: " + ip_str +
                                   " and port: " + port_str + ": No route to host");
         const LogIgnoreGuard lig4("poll returned but socket not ready for write for ip_addr: " +
@@ -517,20 +517,20 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
     unregistered_descs.addDesc(unregistered_buffer.getBlobDesc());
 
     {
+        // The serialization failure is still surfaced by getLocalPartialMD; the
+        // public method now delegates to the manager, so the redundant wrapper
+        // log ("error getting local partial metadata") no longer applies.
         const LogIgnoreGuard lig1("getLocalPartialMD: serialization failed");
-        const LogIgnoreGuard lig2("sendLocalPartialMD: error getting local partial metadata with "
-                                  "status NIXL_ERR_NOT_FOUND");
 
         ASSERT_NE(src.agent->sendLocalPartialMD(unregistered_descs, &send_args), NIXL_SUCCESS);
 
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
-        EXPECT_EQ(lig2.getIgnoredCount(), 1);
     }
 
     // Case 2: Attempt to load connection info on agent without backend
     {
         const LogIgnoreGuard lig1("loadRemoteMD: no common backend found");
-        const LogIgnoreGuard lig2(std::regex("loadRemoteMD in listener thread failed for md from "
+        const LogIgnoreGuard lig2(std::regex("loadRemoteMD in P2P backend failed from "
                                              "peer 127.0.0.1:[0-9]+ with error NIXL_ERR_BACKEND"));
 
         ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
