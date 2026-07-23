@@ -328,7 +328,8 @@ namespace {
         }
 
         std::ostringstream plan;
-        printRawPosixPlan(request, metadata, plan);
+        printRawPosixPlan(
+            request, metadata, request.raw.iterations, request.raw.warmup_iterations, plan);
         EXPECT_EQ(plan.str().find("file-resource options:"), std::string::npos);
         const auto arguments = benchmarkFileArguments(request, "nixlbench");
         for (const char *prefix :
@@ -350,7 +351,8 @@ namespace {
         const PluginMetadata metadata{"POSIX", {FILE_SEG, DRAM_SEG}, request.plugin_parameters};
         std::ostringstream out;
 
-        printRawPosixPlan(request, metadata, out);
+        printRawPosixPlan(
+            request, metadata, request.raw.iterations, request.raw.warmup_iterations, out);
 
         const auto benchmark = out.str().find("benchmark options:");
         const auto file = out.str().find("file-resource options:");

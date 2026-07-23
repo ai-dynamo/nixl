@@ -82,6 +82,8 @@ benchmarkFileArguments(const RawPosixRequest &request, const std::string &progra
 void
 printRawPosixPlan(const RawPosixRequest &request,
                   const PluginMetadata &metadata,
+                  int normalized_iterations,
+                  int normalized_warmup_iterations,
                   std::ostream &out);
 
 RawCommandResult
