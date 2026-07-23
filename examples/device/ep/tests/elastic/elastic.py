@@ -577,16 +577,27 @@ def worker(torch_rank: int, args: argparse.Namespace):
             kineto=args.kineto,
             fault_tolerance_test=kill_rank,
         )
-        # Query mask buffer to detect any unexpected rank failures and clean them up
+        # Query mask buffer to detect rank failures and clean them up
         buffer.query_mask_buffer(mask_status)
         newly_failed_ranks = set()
         for r in range(current_num_ranks):
             if mask_status[r].item() != 0 and r in remote_ranks:
                 newly_failed_ranks.add(r)
 
+        if args.validate_phase_failures:
+            expected_failed_ranks = set(ranks_to_kill) & remote_ranks
+            unexpected_failures = newly_failed_ranks - expected_failed_ranks
+            assert (
+                not unexpected_failures
+            ), f"rank {global_rank}, local_rank={local_rank} phase {plan.get_phase()}: unexpected failures {unexpected_failures}"
+            missing_failures = expected_failed_ranks - newly_failed_ranks
+            assert (
+                not missing_failures
+            ), f"rank {global_rank}, local_rank={local_rank} phase {plan.get_phase()}: missing expected failures {missing_failures}"
+
         if len(newly_failed_ranks) > 0:
             print(
-                f"global_rank={global_rank}, local_rank={local_rank} -> detected unexpected rank failures: {newly_failed_ranks}, cleaning up...",
+                f"global_rank={global_rank}, local_rank={local_rank} -> detected rank failures: {newly_failed_ranks}, cleaning up...",
                 flush=True,
             )
             remote_ranks.difference_update(newly_failed_ranks)
@@ -644,6 +655,11 @@ def main():
         type=non_negative_int,
         default=DEFAULT_TIMEOUT_MS,
         help="GPU timeout in milliseconds (non-negative integer)",
+    )
+    parser.add_argument(
+        "--validate-phase-failures",
+        action="store_true",
+        help="Enable strict phase-local validation of observed rank failures against the plan",
     )
 
     args = parser.parse_args()

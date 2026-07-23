@@ -20,6 +20,7 @@
 
 set -e
 set -x
+ulimit -c unlimited
 TEXT_YELLOW="\033[1;33m"
 TEXT_CLEAR="\033[0m"
 
