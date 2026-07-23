@@ -119,7 +119,7 @@ nixl_status_t
 nixlUcxEp::unpackRkey(const void *rkey_buffer, ucp_rkey_h *rkey) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    const nixl_status_t state_status = checkTxStateLocked();
+    const nixl_status_t state_status = checkTxState();
     if (state_status != NIXL_SUCCESS) {
         return state_status;
     }

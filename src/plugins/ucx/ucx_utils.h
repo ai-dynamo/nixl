@@ -68,10 +68,6 @@ private:
 
     void
     setState(nixl::ucx::ep_state_t new_state);
-    [[nodiscard]] nixl_status_t
-    checkTxStateLocked() const noexcept {
-        return nixl::ucx::toNixlStatus(state.load(std::memory_order_acquire));
-    }
     nixl_status_t
     closeImpl();
 
@@ -88,7 +84,7 @@ public:
 
     [[nodiscard]] nixl_status_t
     checkTxState() const noexcept {
-        return checkTxStateLocked();
+        return nixl::ucx::toNixlStatus(state.load(std::memory_order_acquire));
     }
 
     [[nodiscard]] nixl_status_t
