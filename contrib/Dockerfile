@@ -40,6 +40,20 @@ ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG APT_MIRROR=""
+
+# Optional apt mirror override, e.g. for CI environments with an internal
+# Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
+RUN if [ -n "$APT_MIRROR" ]; then \
+        . /etc/os-release && \
+        printf '%s\n' \
+            'Types: deb' \
+            "URIs: $APT_MIRROR" \
+            "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+            'Components: main restricted universe multiverse' \
+            'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
+        grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
+    fi
 
 # Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
