@@ -27,7 +27,7 @@ on:
     # 'labeled' so adding the ci-release-test label triggers a run with the label in context
     types: [opened, synchronize, reopened, labeled]
   push:
-    branches: [main]
+    branches: [main, 'nmailhot/release-*']
     tags: ['v*']
   workflow_dispatch:
     inputs:
@@ -50,9 +50,11 @@ env:
   IMAGE_BASE: ${{ vars.NIXL_ECR_IMAGE }}
   # Release flag, normalized to a plain "true"/"false" string usable in shells.
   # True on: workflow_dispatch release_build input, an RC/release tag push
-  # (refs/tags/v*), or — TEMPORARY (remove before merge) — a PR carrying the
-  # 'ci-release-test' label (forces the wheel/crate PUBLISH path on a labeled PR).
-  RELEASE_BUILD: ${{ github.event.inputs.release_build == true || github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+  # (refs/tags/v*), a push to an RC release branch (refs/heads/nmailhot/release-*)
+  # — which lets an RC build off a branch without cutting a tag — or — TEMPORARY
+  # (remove before merge) — a PR carrying the 'ci-release-test' label (forces the
+  # wheel/crate PUBLISH path on a labeled PR).
+  RELEASE_BUILD: ${{ github.event.inputs.release_build == true || github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/heads/nmailhot/release-') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
 
 jobs:
   # ----------------------------------------------------------------------------
@@ -71,7 +73,20 @@ jobs:
         run: |
           set -e
           git fetch --tags --force || true
-          RELEASE_TAG=$(git tag --sort=-v:refname | head -n 1 | sed 's/^v//' | tr -d '\n')
+          # On an RC release-branch push, derive the version straight from the
+          # branch name (nmailhot/release-1.3.2-rc0 -> 1.3.2-rc0) so an RC can be
+          # built off a branch without cutting a tag — and so we don't pick up an
+          # unrelated higher tag (e.g. a newer minor's v*-rc). Otherwise fall back
+          # to the newest v* tag.
+          REF_NAME="${{ github.ref_name }}"
+          case "$REF_NAME" in
+            nmailhot/release-*)
+              RELEASE_TAG="${REF_NAME#nmailhot/release-}"
+              ;;
+            *)
+              RELEASE_TAG=$(git tag --sort=-v:refname | head -n 1 | sed 's/^v//' | tr -d '\n')
+              ;;
+          esac
           if [ -z "$RELEASE_TAG" ]; then RELEASE_TAG="0.0.1"; fi
           if [ "${RELEASE_BUILD}" != "true" ]; then
             BASE_VERSION=$(echo "$RELEASE_TAG" | awk -F. '{$NF = $NF + 1;} 1' OFS=.)
@@ -354,7 +369,7 @@ jobs:
   # ----------------------------------------------------------------------------
   upload-x86-wheels:
     needs: build
-    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/heads/nmailhot/release-') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     timeout-minutes: 30
     env:
@@ -392,7 +407,7 @@ jobs:
 
   upload-arm-wheels:
     needs: build
-    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/heads/nmailhot/release-') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     # amd runner: the jfrog-cli-v2-jf image is amd64-only. This job only uploads the
     # already-built arm wheel files (downloaded as artifacts), so the host arch is irrelevant.
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
@@ -434,7 +449,7 @@ jobs:
     needs: build
     # Crates auto-publish to Artifactory on a release/RC build (no manual-approval
     # gate) — same as the wheel uploads. Reuses the repo-level ARTIFACTORY_* secrets.
-    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
+    if: ${{ github.event.inputs.release_build == 'true' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/heads/nmailhot/release-') || contains(github.event.pull_request.labels.*.name, 'ci-release-test') }}
     runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
     env:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
