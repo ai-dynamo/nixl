@@ -1467,6 +1467,10 @@ void Buffer::_nixl_agent_init() {
     cfg.etcdWatchTimeout = NIXL_ETCD_WATCH_TIMEOUT;
 #ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
     cfg.enableDeviceProxy = true;
+    // Proxy drain threads own UCX progress for their assigned (channel, peer)
+    // workers. Disable the backend's shared progress thread so the adapter's
+    // targeted progress calls actively pump those workers.
+    cfg.useProgThread = false;
     cfg.proxyPeerCapacity = static_cast<uint32_t>(max_num_ranks);
     cfg.proxyChannelCount = proxy_channels;
     cfg.proxyWorkerCount = proxy_workers;
