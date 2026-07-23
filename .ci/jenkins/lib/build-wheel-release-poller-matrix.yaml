@@ -53,9 +53,9 @@ env:
     cu12:12.9-devel-manylinux--25.06
     cu13:13.0-devel-manylinux--25.09
   # Plugins to bundle into release wheels, forwarded to each triggered build.
-  # Flip to "true" to enable (the release source must carry the plugin flag).
-  BUILD_UCX_SPCX_PLUGIN: "false"
-  BUILD_INFINIA: "false"
+  # The release source must carry the plugin flags in build-container.sh.
+  BUILD_UCX_SPCX_PLUGIN: "true"
+  BUILD_INFINIA: "true"
   MAIL_FROM: "jenkins@nvidia.com"
 
 steps:

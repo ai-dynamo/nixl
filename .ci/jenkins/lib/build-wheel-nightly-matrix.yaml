@@ -178,6 +178,18 @@ steps:
 
 taskName: '${name}_${manylinux}/${arch}/python_${python_version}'
 
+# Display name distinguishes builds in lists (poller "Triggered Builds",
+# history): #N-<source>-cuXX[+spcx][+infinia], mirroring nixl-ci-build-container.
+pipeline_start:
+  shell: action
+  module: groovy
+  containerSelector: "{name: 'manylinux'}"
+  run: |
+    def src = params.NIXL_VERSION ==~ /[0-9a-f]{40}/ ? params.NIXL_VERSION.take(8) : params.NIXL_VERSION
+    def cu = "cu${params.BASE_TAG.tokenize('.')[0]}"
+    def plugins = (params.BUILD_UCX_SPCX_PLUGIN ? '+spcx' : '') + (params.BUILD_INFINIA ? '+infinia' : '')
+    currentBuild.displayName += "-${src}-${cu}${plugins}"
+
 # Email build result (success/failure) when MAIL_TO is set - notification for the
 # unattended nightly, mirroring nixl-ci-build-container.
 pipeline_stop:
