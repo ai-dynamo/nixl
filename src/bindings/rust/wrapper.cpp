@@ -1429,6 +1429,7 @@ nixl_capi_release_xfer_dlist_handle(nixl_capi_agent_t agent,
 
     try {
         nixl_status_t ret = agent->inner->releasedDlistH(dlist_handle->handle);
+        delete dlist_handle;
         return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
     }
     catch (...) {
