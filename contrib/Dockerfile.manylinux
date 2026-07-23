@@ -32,7 +32,7 @@ ARG BASE_IMAGE_TAG
 # image instead of building wheel_base locally (CI caching). Default builds wheel_base here.
 ARG wheel_base=wheel_base
 
-# CUDA donor stage — the toolkit is COPYed onto the manylinux base below.
+# CUDA donor stage — the toolkit is copied onto the manylinux base below.
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS cuda
 
 # Manylinux build base — official PyPA image (public on quay.io; ECR pull-through
@@ -45,7 +45,9 @@ ARG DEFAULT_PYTHON_VERSION="3.14"
 
 # CUDA version (e.g. 12.9 / 13.0) — passed explicitly (was an ENV from the old
 # combined base). Drives the torch cuXXX index and the cu12/cu13 wheel split.
-ARG CUDA_VERSION
+# Default matches build-container.sh's CUDA_VERSION fallback so a direct
+# `docker build` (bypassing build-container.sh / the CI yaml) still works.
+ARG CUDA_VERSION="13.0"
 ENV CUDA_VERSION=${CUDA_VERSION}
 
 # Bring the CUDA toolkit onto the manylinux base (dynamo wheel_builder pattern).
@@ -395,6 +397,13 @@ RUN cd /usr/local/src && \
      ldconfig
 
 FROM $wheel_base AS wheel
+
+# Re-declare CUDA_VERSION here so an explicit --cuda-version reaches this stage.
+# With the --wheel-base-image caching path, wheel_base is a pre-built external
+# image; without this ARG the wheel stage would silently use the CUDA_VERSION
+# baked into that cache instead of the value passed to this build (line 509).
+ARG CUDA_VERSION="13.0"
+ENV CUDA_VERSION=${CUDA_VERSION}
 
 ARG ARCH="x86_64"
 ARG BUILD_TYPE="release"
