@@ -183,7 +183,7 @@ env:
   NPROC: 32
   GRPC_NPROC: 10
   # Option B base: wheel_base builds on the public PyPA manylinux_2_28 image and
-  # COPYs CUDA from an el8/ubi8 NGC CUDA *devel* image (BASE_IMAGE:BASE_TAG).
+  # copies CUDA from an el8/ubi8 NGC CUDA *devel* image (BASE_IMAGE:BASE_TAG).
   # REACHABILITY: the blossom runner must be able to pull nvcr.io (and quay.io for
   # the manylinux base). If it cannot, repoint BASE_IMAGE at the Artifactory ubi8
   # mirror that svc-nixl-new-artifactory-token can pull, keeping the same ubi8 tag.
