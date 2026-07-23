@@ -353,11 +353,6 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
     return NIXL_SUCCESS;
 }
 
-bool
-nixlLibfabricRailManager::shouldUseStriping(size_t transfer_size) const {
-    return transfer_size >= striping_threshold_;
-}
-
 size_t
 nixlLibfabricRailManager::reserveBaseOffset() {
     return round_robin_counter.fetch_add(1);
@@ -380,8 +375,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     std::function<void()> completion_callback,
     size_t &submitted_count_out,
     int desc_idx,
-    int desc_count,
-    size_t base_offset) {
+    size_t base_offset,
+    bool apply_fi_more) {
     // Initialize output parameter
     submitted_count_out = 0;
 
@@ -391,22 +386,22 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     }
 
     // Determine striping strategy
-    bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
+    bool use_striping = usesStriping(transfer_size, selected_rails.size());
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
-        // WRITE: group 16 consecutive descs to same rail for FI_MORE batching.
-        // READ: per-descriptor round-robin (FI_MORE has no benefit for reads).
-        constexpr int FI_MORE_BATCH_SIZE = 16;
+        // WRITE: group NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE consecutive descriptors on one rail
+        // for FI_MORE batching. READ: per-descriptor round-robin (FI_MORE has no benefit).
+        // apply_fi_more is precomputed by the caller, which leaves it false for the last post
+        // on each rail so that every rail's FI_MORE batch is flushed.
         const bool batch_write = (op_type == nixlLibfabricReq::WRITE);
-        const size_t rr_idx =
-            batch_write ? (base_offset + desc_idx / FI_MORE_BATCH_SIZE) : (base_offset + desc_idx);
-        const size_t rail_id = selected_rails[rr_idx % selected_rails.size()];
-        const size_t remote_ep_id =
-            remote_selected_endpoints[rr_idx % remote_selected_endpoints.size()];
-        const int pos_in_group = desc_idx % FI_MORE_BATCH_SIZE;
-        const bool is_last_in_group =
-            (pos_in_group == FI_MORE_BATCH_SIZE - 1) || (desc_idx == desc_count - 1);
-        const uint64_t fi_flags = (batch_write && !is_last_in_group) ? FI_MORE : 0;
+        const size_t rail_sel_idx =
+            railSelectionIndex(base_offset, desc_idx, batch_write, selected_rails.size());
+        const size_t rail_id = selected_rails[rail_sel_idx];
+        // The remote endpoint round-robins over its own count, which can differ from the
+        // local rail count.
+        const size_t remote_ep_id = remote_selected_endpoints[railSelectionIndex(
+            base_offset, desc_idx, batch_write, remote_selected_endpoints.size())];
+        const uint64_t fi_flags = (batch_write && apply_fi_more) ? FI_MORE : 0;
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
         nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
