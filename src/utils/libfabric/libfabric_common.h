@@ -42,6 +42,9 @@
 #define NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD (128 * 1024) // 128KB
 #define LF_EP_NAME_MAX_LEN 56
 
+// Number of consecutive WRITE descriptors batched onto one rail with FI_MORE before flushing.
+#define NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE 16
+
 // Request pool configuration constants
 #define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // SEND/RECV operations (for notifications)
 #define NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL 1024 // WRITE/READ operations
