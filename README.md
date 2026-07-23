@@ -45,6 +45,69 @@ pip install nixl
 
 This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
+### Building the wheels
+
+The release wheels are built inside a manylinux container by
+[`contrib/build-container.sh`](contrib/build-container.sh), with the same parameters used by
+the release pipeline (`.github/workflows/ci.yml`, the `build` job). Keep the commands below in
+sync with that workflow.
+
+> **Note:** by default the `contrib/Dockerfile.manylinux` build below pulls an
+> **NVIDIA-internal** INFINIA (DDN) libs image. To build the same wheels **without** the INFINIA
+> plugin — works anywhere, no internal image required — add `--no-infinia`; see
+> [Building without INFINIA](#building-without-infinia).
+
+```bash
+# CUDA 12, x86_64 — produces the cu12 manylinux_2_28 release wheels
+# (NVIDIA-internal: pulls the INFINIA libs image)
+./contrib/build-container.sh \
+  --base-image nvcr.io/nvidia/cuda \
+  --base-image-tag 12.9.1-devel-ubi8 \
+  --cuda-version 12.9 \
+  --wheel-base manylinux_2_28 \
+  --python-versions "3.10,3.11,3.12,3.13,3.14" \
+  --os ubuntu24 \
+  --arch x86_64 \
+  --dockerfile contrib/Dockerfile.manylinux \
+  --tag nixl-wheel-build:cu12-x86_64
+
+# CUDA 13:  --base-image-tag 13.0.1-devel-ubi8  --cuda-version 13.0
+# aarch64:  --arch aarch64   (build on an arm64 host)
+```
+
+The wheels are written to `/workspace/nixl/dist` inside the image; extract them with:
+
+```bash
+cid=$(docker create nixl-wheel-build:cu12-x86_64)
+docker cp "$cid:/workspace/nixl/dist" ./dist
+docker rm "$cid"
+ls dist/*.whl
+```
+
+#### Building without INFINIA
+
+The INFINIA (DDN) plugin links against DDN's proprietary `libred` libraries, which are not
+publicly redistributable, so by default the manylinux build pulls an NVIDIA-internal image. To
+build the same wheels **without** INFINIA — no internal image required — add `--no-infinia`,
+which substitutes an empty INFINIA stage (meson then finds no `red_client` and drops the plugin):
+
+```bash
+./contrib/build-container.sh \
+  --base-image nvcr.io/nvidia/cuda \
+  --base-image-tag 12.9.1-devel-ubi8 \
+  --cuda-version 12.9 \
+  --wheel-base manylinux_2_28 \
+  --python-versions "3.10,3.11,3.12,3.13,3.14" \
+  --os ubuntu24 \
+  --arch x86_64 \
+  --dockerfile contrib/Dockerfile.manylinux \
+  --no-infinia \
+  --tag nixl-wheel-build:cu12-x86_64
+```
+
+Extract the wheels the same way (`docker create` / `docker cp .../dist`). This produces the
+full nixl wheel minus the INFINIA backend; all other plugins are unaffected.
+
 ## Prerequisites for source build (Linux)
 
 NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
