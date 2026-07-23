@@ -52,6 +52,18 @@ public:
     virtual nixl_status_t
     poll(void) = 0;
 
+    /** Cancel I/Os owned by @p ctx when supported. */
+    virtual nixl_status_t
+    cancel(void *ctx) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    /** Return whether cleanup requires further polling. */
+    virtual bool
+    hasPendingCleanup(void) const {
+        return false;
+    }
+
     static std::unique_ptr<nixlPosixIOQueue>
     instantiate(std::string_view io_queue_type, uint32_t ios_pool_size, uint32_t kernel_queue_size);
     static std::string_view
