@@ -257,11 +257,12 @@ namespace {
         expect_empty_name_rejected("one,,three", "3");
     }
 
-    TEST(RawPosixParserTest, HelpSeparatesOwnershipAndSortsAdvertisedPluginParameters) {
+    TEST(RawPosixParserTest, HelpShowsSortedAdvertisedPluginParametersAndDefaults) {
         auto metadata = posixMetadata();
         metadata.parameters.emplace("zeta_parameter", "z");
         metadata.parameters.emplace("alpha_parameter", "a");
         metadata.parameters.emplace("middle_parameter", "m");
+        metadata.parameters.emplace("path,alias", "default-value");
         Arguments posix_help{"nixlbench", "raw", "posix", "--help"};
         RawPosixRequest request;
         bool help = false;
@@ -272,17 +273,20 @@ namespace {
         EXPECT_NE(out.str().find("FILE_SEG resource options"), std::string::npos);
         EXPECT_NE(out.str().find("Plugin initialization parameters"), std::string::npos);
         EXPECT_NE(out.str().find("--plugin-param"), std::string::npos);
+        EXPECT_NE(out.str().find("Advertised parameters and defaults:"), std::string::npos);
         EXPECT_NE(out.str().find("--path"), std::string::npos);
-        EXPECT_NE(out.str().find("future_parameter"), std::string::npos);
+        EXPECT_NE(out.str().find("future_parameter: default"), std::string::npos);
+        EXPECT_NE(out.str().find("path,alias: default-value"), std::string::npos);
+        EXPECT_EQ(out.str().find("KEY VALUE:{"), std::string::npos);
         EXPECT_EQ(out.str().find("--future_parameter"), std::string::npos);
         EXPECT_EQ(out.str().find("--operation"), std::string::npos);
         EXPECT_EQ(out.str().find("--api"), std::string::npos);
         EXPECT_EQ(out.str().find("--io-pool-size"), std::string::npos);
         EXPECT_EQ(out.str().find("--backend"), std::string::npos);
 
-        const auto alpha = out.str().find("alpha_parameter");
-        const auto middle = out.str().find("middle_parameter");
-        const auto zeta = out.str().find("zeta_parameter");
+        const auto alpha = out.str().find("alpha_parameter: a");
+        const auto middle = out.str().find("middle_parameter: m");
+        const auto zeta = out.str().find("zeta_parameter: z");
         ASSERT_NE(alpha, std::string::npos);
         ASSERT_NE(middle, std::string::npos);
         ASSERT_NE(zeta, std::string::npos);
