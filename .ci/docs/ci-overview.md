@@ -26,11 +26,12 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | `nixl-ci-build-llm-container` | Jenkins (standalone) | Manual only | No — never runs as part of PR CI |
 | `nixl-ci-test-llm-container` | Jenkins (standalone) | Manual, or chained from `build-llm-container` via `RUN_TEST` | No — never runs as part of PR CI |
 | `nixl-ci-cleanup-artifacts` | Jenkins (standalone) | Daily cron (6 AM) + manual | No — never runs as part of PR CI |
+| `nixl-ci-nightly` | Jenkins (standalone) | Nightly cron (`H 2`) + manual | No — orchestrates the nightly UCX-`master` run of the 3 GPU jobs |
 
-> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 13 Jenkins jobs: the
-> dispatcher, the 7 jobs it fans out to (the PR CI flow), and 5 standalone jobs
+> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 14 Jenkins jobs: the
+> dispatcher, the 7 jobs it fans out to (the PR CI flow), and 6 standalone jobs
 > (`build-container`, `build-wheel-nightly`, `build-llm-container`,
-> `test-llm-container`, `cleanup-artifacts`). The standalone ones run only on a
+> `test-llm-container`, `cleanup-artifacts`, `nightly`). The standalone ones run only on a
 > nightly/daily cron or when someone triggers them manually from the Jenkins UI,
 > and are never invoked by the dispatcher or by a PR event.
 
@@ -137,12 +138,13 @@ Step by step, matching the jobs in `blossom-ci.yml`:
 
 ## Jenkins jobs
 
-All 12 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
+All 14 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
 (Jenkins Job Builder config). The dispatcher runs its own pipeline,
 `.ci/jenkins/pipeline/Jenkinsfile.dispatcher`, checked out from the PR merge
 ref (`refs/pull/<n>/merge`) on webhook runs, or from any branch/commit passed
-in `sha1` on manual runs; all other jobs run through the shared pipeline
-entry point `.ci/jenkins/pipeline/Jenkinsfile`. None of them run directly off GitHub
+in `sha1` on manual runs. `nixl-ci-nightly` runs its own orchestrator pipeline,
+`.ci/jenkins/pipeline/Jenkinsfile.nightly`; all other jobs run through the shared
+pipeline entry point `.ci/jenkins/pipeline/Jenkinsfile`. None of them run directly off GitHub
 events — they only start via the Jenkins webhook fired by Blossom-CI, or via
 their own nightly/manual trigger. They split into two groups:
 
@@ -151,10 +153,12 @@ their own nightly/manual trigger. They split into two groups:
   against a PR, and only after a `/build` comment.
 - **Standalone (never run against a PR):** `nixl-ci-build-container`,
   `nixl-ci-build-wheel-nightly`, `nixl-ci-build-llm-container`,
-  `nixl-ci-test-llm-container` — each has its own nightly cron and/or manual
-  trigger and is invoked independently of PRs and of the dispatcher.
+  `nixl-ci-test-llm-container`, `nixl-ci-cleanup-artifacts`, `nixl-ci-nightly` —
+  each has its own nightly cron and/or manual trigger and is invoked
+  independently of PRs and of the dispatcher.
 
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
+
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
 - **What it does:** Fans out in parallel to seven downstream Jenkins jobs, waiting on all of them:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
@@ -164,10 +168,12 @@ their own nightly/manual trigger. They split into two groups:
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
   - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
+- **UCX version:** The three GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.22.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all three with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
 - **Automatic on every PR:** No — only runs after a `/build` comment triggers Blossom-CI. The dispatcher also aborts any stale in-flight dispatcher run for the same PR (and the leaf builds it started) before starting.
 - **Skipping leaf jobs:** The `LEAF_JOBS` parameter (default: all seven) restricts the fan-out. Editing its default in the job config temporarily disables a leaf job for all runs without a code change; the next JJB redeploy restores the full list.
 
 ### `nixl-ci-build-container-pr` (dispatcher-triggered)
+
 - **Trigger:** Fan-out from `nixl-ci-dispatcher` (same as the other PR CI jobs).
 - **What it does:** Build-only verification (no push) of the `nixl` (EP + debug) and `nixlbench` container images — one matrix cell per target/arch (x86_64 and aarch64), all in parallel. It runs the same `contrib/build-container.sh` / `benchmark/nixlbench/contrib/build.sh` the standalone `nixl-ci-build-container` job runs, so container/packaging breakage (e.g. a missing `--torch-versions`, or an EP nvlink register-count failure) is caught on the PR instead of only by the nightly job. Like the other leaf jobs it runs whenever the dispatcher fans out; drop it for a specific run via the dispatcher's `LEAF_JOBS` parameter.
 - **Automatic on every PR:** No — only after a `/build` comment (like the other dispatcher jobs).
@@ -204,15 +210,22 @@ their own nightly/manual trigger. They split into two groups:
 - **What it does:** Runs smoke/perf/accuracy tests for one published LLM inference container image on the `mizu` SLURM partition (2-GPU node); framework (vllm/sglang) is auto-detected from the image URL.
 - **Automatic on every PR:** No — standalone/manual only.
 
+### `nixl-ci-nightly` (standalone)
+
+- **Trigger:** Nightly cron (`H 2 * * *`), or manual run (`UCX_REF`, `MAIL_TO` parameters).
+- **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep` with `UCX_VER=master` (from `UCX_REF`), waits for all three, and emails one consolidated pass/fail report to `MAIL_TO`. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
+- **Pipeline:** `.ci/jenkins/pipeline/Jenkinsfile.nightly` — a flyweight fan-out orchestrator (no build agent, like the dispatcher), so the multi-hour wait on the GPU jobs holds no node.
+- **Automatic on every PR:** No — standalone/scheduled + manual only.
+
 ## Slurm job naming
 
-Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-<variant>-${BUILD_NUMBER}`, where `JOB_BASE_NAME` is the Jenkins job name and `variant` disambiguates parallel allocations within a build:
+Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-${BUILD_NUMBER}`; jobs that run multiple parallel allocations within a build insert a `<variant>` before the build number to disambiguate:
 
 | Pipeline | Slurm job name pattern |
 |---|---|
-| `nixl-ci-gpu` | `nixl-ci-gpu-<ucx_version>-<build>` |
-| `nixl-ci-dl-gpu` | `nixl-ci-dl-gpu-<ucx_version>-<build>` |
-| `nixl-ci-dl-gpu-ep` | `nixl-ci-dl-gpu-ep-<ucx_version>-<build>` |
+| `nixl-ci-gpu` | `nixl-ci-gpu-<build>` |
+| `nixl-ci-dl-gpu` | `nixl-ci-dl-gpu-<build>` |
+| `nixl-ci-dl-gpu-ep` | `nixl-ci-dl-gpu-ep-<build>` |
 | `nixl-ci-build-wheel` | `nixl-ci-build-wheel-<fw>-<build>` (`fw`: `vllm` or `sglang`) |
 | `nixl-ci-test-llm-container` | `nixl-ci-test-llm-container-<build>` |
 
