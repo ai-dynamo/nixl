@@ -43,6 +43,8 @@ export PATH=${INSTALL_DIR}/bin:$PATH
 export PKG_CONFIG_PATH=${INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH
 export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 
+unset UCX_NET_DEVICES  # let UCX auto-select GPU-capable transport
+
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
@@ -105,7 +107,12 @@ kill -s INT $telePID
 # fi
 
 # shellcheck disable=SC2154
-gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+gtest-parallel --output_dir=/tmp --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+echo $NIXL_CI_NON_GPU
+echo $TEST_LIBFABRIC
+echo $NIXL_CI_ALLOW_NVTX_SKIP
+grep -r Skipped /tmp/gtest-parallel-logs || true
+
 ./bin/test_plugin
 
 # DOCA telemetry exporter tests: present only when built with the DOCA SDK
