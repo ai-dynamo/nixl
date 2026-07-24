@@ -40,8 +40,10 @@ plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asi
 compile_defs = []
 compile_flags = []
 
+obj_link_whole = []
+
 if cuobj_dep.found()
-    message('Found CUObjClient Library. Enabling S3 Accelerated engines')
+    message('Found CUObjClient Library. Enabling object accelerated engines')
     obj_sources += [
         's3_accel/client.cpp',
         's3_accel/client.h',
@@ -53,8 +55,35 @@ if cuobj_dep.found()
         's3_accel/dell/engine_impl.h',
     ]
     plugin_deps += [ cuobj_dep ]
+
+    curl_dep = dependency('libcurl', required: false)
+    if curl_dep.found()
+        message('Enabling Scality AI Connector engine')
+        # link_whole pulls in the static lib's objects but not its dependencies,
+        # so add libcurl to plugin_deps to propagate it to the final OBJ target.
+        plugin_deps += [ curl_dep ]
+        scality_connector_lib = static_library(
+            'scality_ai_connector',
+            [
+                'rest_accel/scality_ai_connector/rest_client.cpp',
+                'rest_accel/scality_ai_connector/rest_client.h',
+                'rest_accel/scality_ai_connector/engine_impl.cpp',
+                'rest_accel/scality_ai_connector/engine_impl.h',
+                'rest_accel/scality_ai_connector/rdma_token_client.h',
+                'rest_accel/scality_ai_connector/cuobj_rdma_token_client.cpp',
+                'rest_accel/scality_ai_connector/cuobj_rdma_token_client.h',
+            ],
+            dependencies: plugin_deps + [ cuda_dep ],
+            cpp_args: compile_defs + compile_flags,
+            include_directories: [nixl_inc_dirs, utils_inc_dirs],
+            pic: true,
+            install: false)
+        obj_link_whole += [ scality_connector_lib ]
+    else
+        message('libcurl not found. Skipping Scality AI Connector engine')
+    endif
 else
-    message('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
+    message('Could not find CUObjClient Library. Skipping object accelerated engines')
 endif
 
 if 'OBJ' in static_plugins
@@ -64,6 +93,7 @@ if 'OBJ' in static_plugins
         dependencies: plugin_deps,
         cpp_args: compile_defs + compile_flags,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        link_whole: obj_link_whole,
         install: false,
         name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
@@ -73,6 +103,7 @@ else
         dependencies: plugin_deps,
         cpp_args: compile_defs + compile_flags + ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        link_whole: obj_link_whole,
         install: true,
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
         install_dir: plugin_install_dir,
