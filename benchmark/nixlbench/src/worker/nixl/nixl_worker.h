@@ -42,6 +42,9 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<xferFileState> remote_fds;
         std::vector<NixlMemRegion> remote_regs_;
         std::vector<NixlMemRegion> local_regs_;
+        // DOCA_MEMOS uses raw IOV lists (not NixlMemRegion) because the OBJ_SEG
+        // cleanup path would call rmObj, which DOCA_MEMOS does not support.
+        std::vector<std::vector<xferBenchIOV>> remote_iovs;
         std::vector<GusliDeviceConfig> gusli_devices;
 
     public:
