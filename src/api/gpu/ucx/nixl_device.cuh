@@ -117,7 +117,7 @@ nixlGpuGetXferStatus(nixlGpuXferStatusH &xfer_status) {
  * @return NIXL_ERR_BACKEND An error occurred in UCX backend.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
-__device__ nixl_status_t
+__device__ nixl_status_t __forceinline__
 nixlPut(const nixlMemViewElem &src,
         const nixlMemViewElem &dst,
         size_t size,
@@ -157,7 +157,7 @@ nixlPut(const nixlMemViewElem &src,
  * @return NIXL_ERR_BACKEND An error occurred in UCX backend.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
-__device__ nixl_status_t
+__device__ nixl_status_t __forceinline__
 nixlAtomicAdd(uint64_t value,
               const nixlMemViewElem &counter,
               unsigned channel_id = 0,
@@ -188,7 +188,7 @@ nixlAtomicAdd(uint64_t value,
 
  * @return Pointer to the mapped memory, or nullptr if not available.
  */
-__device__ inline void *
+__device__ __forceinline__ void *
 nixlGetPtr(nixlMemViewH mvh, size_t index) {
     auto mem_list = static_cast<ucp_device_remote_mem_list_h>(mvh);
     void *ptr = nullptr;

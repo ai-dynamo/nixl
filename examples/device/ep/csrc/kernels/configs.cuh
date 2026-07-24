@@ -37,6 +37,13 @@
 #define NUM_CPU_TIMEOUT_SECS 10
 #endif
 
+// Workaround for cg::this_grid().sync() hang under nvcc -G (see nixl_ep_ll dispatch path)
+#ifdef NIXL_EP_NVCC_DEVICE_DEBUG
+#define NIXL_EP_GRID_SYNC_PRESYNC() __syncthreads()
+#else
+#define NIXL_EP_GRID_SYNC_PRESYNC()
+#endif
+
 #define EP_SEND_PHASE 1
 #define EP_RECV_PHASE 2
 
