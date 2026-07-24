@@ -649,27 +649,28 @@ nixlAgent::makeConnection(const std::string &remote_agent,
     return NIXL_SUCCESS;
 }
 
+template<class dlist_t>
 nixl_status_t
-nixlAgent::prepXferDlist (const std::string &agent_name,
-                          const nixl_xfer_dlist_t &descs,
-                          nixlDlistH* &dlist_hndl,
-                          const nixl_opt_args_t* extra_params) const {
+nixlAgentData::prepXferDlist(const std::string &agent_name,
+                             const dlist_t &descs,
+                             nixlDlistH *&dlist_hndl,
+                             const nixl_opt_args_t *extra_params) {
 
     // Using a set as order is not important to revert the operation
     backend_set_t *backend_set;
     const bool init_side = (agent_name == NIXL_INIT_AGENT);
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    NIXL_SHARED_LOCK_GUARD(lock);
     // When central KV is supported, still it should return error,
     // just we can add a call to fetchRemoteMD for next time
-    const auto rem_sec_it = data->remoteSections_.find(agent_name);
-    if (!init_side && (data->remoteSections_.end() == rem_sec_it)) {
+    const auto rem_sec_it = remoteSections_.find(agent_name);
+    if (!init_side && (remoteSections_.end() == rem_sec_it)) {
         NIXL_ERROR_FUNC << "metadata for remote agent '" << agent_name << "' not found";
-        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
+        addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixlMemSection &section = init_side ? static_cast<nixlMemSection &>(data->localSection_) :
+    nixlMemSection &section = init_side ? static_cast<nixlMemSection &>(localSection_) :
                                           static_cast<nixlMemSection &>(rem_sec_it->second);
 
     if (!extra_params || (extra_params->backends.size() == 0)) {
@@ -677,7 +678,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 
         if (!backend_set || backend_set->empty()) {
             NIXL_ERROR_FUNC << "no available backends for mem type '" << descs.getType() << "'";
-            data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
+            addErrorTelemetry(NIXL_ERR_NOT_FOUND);
             return NIXL_ERR_NOT_FOUND;
         }
     } else {
@@ -692,12 +693,13 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
     nixlDlistH::descs_t dlists;
 
     for (const auto &backend : *backend_set) {
-        nixl_stride_dlist_t dlist(descs.getType());
+        nixl_meta_stride_dlist_t dlist(descs.getType());
         if (section.populate(descs, backend, dlist) == NIXL_SUCCESS) {
             NIXL_DEBUG << "backend " << backend->getType() << ": prepared " << descs.descCount()
                        << " descriptors into " << dlist.descCount() << " strides";
 
-            dlists.try_emplace(backend, std::make_unique<nixl_stride_dlist_t>(std::move(dlist)));
+            dlists.try_emplace(backend,
+                               std::make_unique<nixl_meta_stride_dlist_t>(std::move(dlist)));
         }
     }
 
@@ -710,7 +712,7 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
         NIXL_ERROR_FUNC << "failed to prepare the descriptors for any of "
                            "the specified or potential backends for agent '"
                         << agent_name << "'";
-        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
+        addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
 
@@ -719,7 +721,30 @@ nixlAgent::prepXferDlist (const std::string &agent_name,
 }
 
 nixl_status_t
+nixlAgent::prepXferDlist(const std::string &agent_name,
+                         const nixl_xfer_dlist_t &descs,
+                         nixlDlistH *&dlist_hndl,
+                         const nixl_opt_args_t *extra_params) const {
+    return data->prepXferDlist(agent_name, descs, dlist_hndl, extra_params);
+}
+
+nixl_status_t
 nixlAgent::prepXferDlist(const nixl_xfer_dlist_t &descs,
+                         nixlDlistH *&dlist_hndl,
+                         const nixl_opt_args_t *extra_params) const {
+    return prepXferDlist(NIXL_INIT_AGENT, descs, dlist_hndl, extra_params);
+}
+
+nixl_status_t
+nixlAgent::prepXferDlist(const std::string &agent_name,
+                         const nixl_stride_dlist_t &descs,
+                         nixlDlistH *&dlist_hndl,
+                         const nixl_opt_args_t *extra_params) const {
+    return data->prepXferDlist(agent_name, descs, dlist_hndl, extra_params);
+}
+
+nixl_status_t
+nixlAgent::prepXferDlist(const nixl_stride_dlist_t &descs,
                          nixlDlistH *&dlist_hndl,
                          const nixl_opt_args_t *extra_params) const {
     return prepXferDlist(NIXL_INIT_AGENT, descs, dlist_hndl, extra_params);
@@ -816,8 +841,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    const nixl_stride_dlist_t &local_descs = *local_side->descs.at(backend);
-    const nixl_stride_dlist_t &remote_descs = *remote_side->descs.at(backend);
+    const nixl_meta_stride_dlist_t &local_descs = *local_side->descs.at(backend);
+    const nixl_meta_stride_dlist_t &remote_descs = *remote_side->descs.at(backend);
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
@@ -856,8 +881,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
         }
 
         // Keep by value to avoid reloads and keep in registers
-        const nixlStrideDesc local_stride = local_descs.find(local_idx, local_run_size);
-        const nixlStrideDesc remote_stride = remote_descs.find(remote_idx, remote_run_size);
+        const nixlMetaStrideDesc local_stride = local_descs.find(local_idx, local_run_size);
+        const nixlMetaStrideDesc remote_stride = remote_descs.find(remote_idx, remote_run_size);
 
         if (local_stride.len != remote_stride.len) [[unlikely]] {
             NIXL_ERROR_FUNC << "length mismatch at index " << i << " with local index "

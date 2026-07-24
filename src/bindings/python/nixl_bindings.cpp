@@ -309,6 +309,117 @@ PYBIND11_MODULE(_bindings, m) {
                 return newObj;
             }));
 
+    // Compressed (strided) transfer descriptor list. Each entry is a run of `count`
+    // equal-length blocks spaced `stride` bytes apart: (addr, len, dev_id, stride, count).
+    // descCount() returns the number of runs; flatSize() returns the flattened block
+    // count (Sum of count) that makeXferReq indices address.
+    py::class_<nixl_stride_dlist_t>(m, "nixlStrideDList")
+        .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
+        .def(py::init([](nixl_mem_t mem, py::array descs) {
+                 static_assert(sizeof(nixlStrideDesc) == 5 * sizeof(uint64_t),
+                               "nixlStrideDesc size mismatch");
+                 // Check array shape and dtype
+                 if (descs.ndim() != 2 || descs.shape(1) != 5) {
+                     throw std::invalid_argument("descs must be a Nx5 numpy array");
+                 }
+                 if (!py::dtype::of<uint64_t>().equal(descs.dtype()) &&
+                     !py::dtype::of<int64_t>().equal(descs.dtype())) {
+                     throw std::invalid_argument(
+                         "descs must be a Nx5 numpy array of uint64 or int64");
+                 }
+                 if (!(descs.flags() & py::array::c_style)) {
+                     throw std::invalid_argument("descs must be a C-contiguous numpy array");
+                 }
+                 size_t n = descs.shape(0);
+                 nixl_stride_dlist_t new_list(mem, n);
+                 // The Nx5 array matches the nixlStrideDesc layout so we can simply memcpy
+                 std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+
+                 return new_list;
+             }),
+             py::arg("type"),
+             py::arg("descs").noconvert())
+        .def(py::init([](nixl_mem_t mem, py::list descs) {
+                 nixl_stride_dlist_t new_list(mem, descs.size());
+                 for (size_t i = 0; i < descs.size(); i++) {
+                     if (!py::isinstance<py::tuple>(descs[i])) {
+                         throw py::type_error(
+                             "Each descriptor must be a tuple when provided as a list");
+                     }
+                     auto desc = py::reinterpret_borrow<py::tuple>(descs[i]);
+                     if (desc.size() != 5) {
+                         throw py::value_error(
+                             "Each strided descriptor tuple must have exactly 5 elements");
+                     }
+                     new_list[i] = nixlStrideDesc(desc[0].cast<uintptr_t>(),
+                                                  desc[1].cast<size_t>(),
+                                                  desc[2].cast<uint64_t>(),
+                                                  desc[3].cast<size_t>(),
+                                                  desc[4].cast<size_t>());
+                 }
+
+                 return new_list;
+             }),
+             py::arg("type"),
+             py::arg("descs").noconvert())
+        .def("getType", &nixl_stride_dlist_t::getType)
+        .def("descCount", &nixl_stride_dlist_t::descCount)
+        .def("isEmpty", &nixl_stride_dlist_t::isEmpty)
+        .def("flatSize",
+             [](const nixl_stride_dlist_t &list) -> size_t {
+                 // Flattened block count (Sum of count over all runs): the index space that
+                 // makeXferReq addresses, distinct from descCount() which counts runs.
+                 size_t total = 0;
+                 for (int i = 0; i < list.descCount(); i++) {
+                     total += list[i].count;
+                 }
+                 return total;
+             })
+        .def("__getitem__",
+             [](nixl_stride_dlist_t &list, unsigned int i) -> py::tuple {
+                 nixlStrideDesc &desc = list[i];
+                 return py::make_tuple(desc.addr, desc.len, desc.devId, desc.stride, desc.count);
+             })
+        .def("__setitem__",
+             [](nixl_stride_dlist_t &list, unsigned int i, const py::tuple &desc) {
+                 list[i] = nixlStrideDesc(desc[0].cast<uintptr_t>(),
+                                          desc[1].cast<size_t>(),
+                                          desc[2].cast<uint64_t>(),
+                                          desc[3].cast<size_t>(),
+                                          desc[4].cast<size_t>());
+             })
+        .def("addDesc",
+             [](nixl_stride_dlist_t &list, const py::tuple &desc) {
+                 list.addDesc(nixlStrideDesc(desc[0].cast<uintptr_t>(),
+                                             desc[1].cast<size_t>(),
+                                             desc[2].cast<uint64_t>(),
+                                             desc[3].cast<size_t>(),
+                                             desc[4].cast<size_t>()));
+             })
+        .def("append",
+             [](nixl_stride_dlist_t &list, const py::tuple &desc) {
+                 list.addDesc(nixlStrideDesc(desc[0].cast<uintptr_t>(),
+                                             desc[1].cast<size_t>(),
+                                             desc[2].cast<uint64_t>(),
+                                             desc[3].cast<size_t>(),
+                                             desc[4].cast<size_t>()));
+             })
+        .def("remDesc", &nixl_stride_dlist_t::remDesc)
+        .def("clear", &nixl_stride_dlist_t::clear)
+        .def("print", &nixl_stride_dlist_t::print)
+        .def(py::pickle(
+            [](const nixl_stride_dlist_t &self) { // __getstate__
+                nixlSerDes serdes;
+                self.serialize(&serdes);
+                return py::bytes(serdes.exportStr());
+            },
+            [](py::bytes serdes_str) { // __setstate__
+                nixlSerDes serdes;
+                serdes.importStr(std::string(serdes_str));
+                nixl_stride_dlist_t newObj = nixl_stride_dlist_t(&serdes);
+                return newObj;
+            }));
+
     py::class_<nixl_reg_dlist_t>(m, "nixlRegDList")
         .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
         .def(py::init([](nixl_mem_t mem, py::array descs) {
@@ -574,6 +685,46 @@ PYBIND11_MODULE(_bindings, m) {
 
                 for (uintptr_t backend : backends)
                     extra_params.backends.push_back((nixlBackendH *)backend);
+
+                throw_nixl_exception(agent.prepXferDlist(descs, handle, &extra_params));
+
+                return (uintptr_t)handle;
+            },
+            py::arg("descs"),
+            py::arg("backend") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "prepXferDlist",
+            [](nixlAgent &agent,
+               std::string &agent_name,
+               const nixl_stride_dlist_t &descs,
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
+                nixlDlistH *handle = nullptr;
+                nixl_opt_args_t extra_params;
+
+                for (uintptr_t backend : backends) {
+                    extra_params.backends.push_back((nixlBackendH *)backend);
+                }
+
+                throw_nixl_exception(agent.prepXferDlist(agent_name, descs, handle, &extra_params));
+
+                return (uintptr_t)handle;
+            },
+            py::arg("agent_name"),
+            py::arg("descs"),
+            py::arg("backend") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "prepXferDlist",
+            [](nixlAgent &agent,
+               const nixl_stride_dlist_t &descs,
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
+                nixlDlistH *handle = nullptr;
+                nixl_opt_args_t extra_params;
+
+                for (uintptr_t backend : backends) {
+                    extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
                 throw_nixl_exception(agent.prepXferDlist(descs, handle, &extra_params));
 
