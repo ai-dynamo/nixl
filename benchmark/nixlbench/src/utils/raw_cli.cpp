@@ -372,6 +372,11 @@ parseRawPosixCommand(int argc,
         return app.exit(exception, out, err);
     }
 
+    if (!hasMemoryType(metadata, DRAM_SEG)) {
+        err << "Error: POSIX plugin must advertise DRAM_SEG for local memory\n";
+        return 2;
+    }
+
     for (const auto &[key, value] : plugin_parameter_overrides) {
         request.plugin_parameters[key] = value;
     }
@@ -410,7 +415,6 @@ benchmarkFileArguments(const RawPosixRequest &request, const std::string &progra
         "--worker_type=nixl",
         "--backend=POSIX",
         "--initiator_seg_type=DRAM",
-        "--target_seg_type=DRAM",
         // Backend-neutral raw benchmark configuration.
         "--op_type=" + request.raw.operation,
         "--check_consistency=" + std::string(boolean(request.raw.check_consistency)),
