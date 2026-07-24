@@ -178,19 +178,9 @@ uint16_t
 getNextXferId() {
     uint16_t xfer_id = g_xfer_id_counter.fetch_add(1);
 
-    // Handle wraparound: 16-bit field can hold 0 to 65,535
-    if (xfer_id > NIXL_XFER_ID_MASK) {
-        // Reset counter atomically and get a fresh ID
-        uint16_t expected = xfer_id;
-        while (expected > NIXL_XFER_ID_MASK &&
-               !g_xfer_id_counter.compare_exchange_weak(expected, 1)) {
-            expected = g_xfer_id_counter.load();
-        }
+    // uint16_t wraps naturally from 65535 back to 0; skip 0 since it is used as a sentinel value
+    if (xfer_id == 0) {
         xfer_id = g_xfer_id_counter.fetch_add(1);
-        // Ensure we don't exceed the mask after reset
-        if (xfer_id > NIXL_XFER_ID_MASK) {
-            xfer_id = 1;
-        }
     }
 
     return xfer_id;
