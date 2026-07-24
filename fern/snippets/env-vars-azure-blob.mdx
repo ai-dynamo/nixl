@@ -1,0 +1,8 @@
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AZURE_STORAGE_ACCOUNT_URL` | String (URL) | None | Azure Storage account URL (e.g., `https://<account>.blob.core.windows.net`). |
+| `AZURE_STORAGE_CONTAINER_NAME` | String | None (required) | Azure Storage container name for blob operations. |
+| `AZURE_STORAGE_CONNECTION_STRING` | String | None | Azure Storage connection string. Used for local development with Azurite or when connection string auth is preferred. |
+| `AZURE_CA_BUNDLE` | String (path) | None | Custom CA certificate bundle path for Azure HTTPS connections. |
+
+Backend parameters passed to `createBackend()` take precedence over these environment variables.

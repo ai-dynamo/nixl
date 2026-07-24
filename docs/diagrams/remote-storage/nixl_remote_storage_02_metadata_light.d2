@@ -1,0 +1,34 @@
+# NIXL Remote Storage — Phase 2: Metadata Exchange (Light)
+
+shape: sequence_diagram
+
+client: "Client\n(NIXL Agent)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+server: "Storage Server\n(NIXL Agent)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+
+client -> server: "2.1 send_local_metadata(server_ip, port)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+client -> server: "2.2 fetch_remote_metadata(\"server\", ip, port)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+server -> client: "2.3 return server metadata" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-dash: 3
+}
+client -> client: "2.4 check_remote_metadata(\"server\") [poll]" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}

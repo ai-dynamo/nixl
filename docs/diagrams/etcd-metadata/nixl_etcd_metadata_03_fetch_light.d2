@@ -1,0 +1,58 @@
+# NIXL ETCD Metadata Exchange — Phase 3: Fetch & Discover (Light)
+
+shape: sequence_diagram
+
+agent_a: "NIXL Agent\n(\"EtcdAgent1\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+etcd: "etcd Server\n(localhost:2379)" {
+  style.font-size: 20
+  style.stroke: "#666666"
+  style.fill: "#F5F5F5"
+}
+agent_b: "NIXL Agent\n(\"EtcdAgent2\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+
+agent_a -> etcd: "3.1 fetchRemoteMD(\"EtcdAgent2\") — GET key" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+etcd -> agent_a: "3.2 return EtcdAgent2 metadata blob" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-dash: 3
+}
+agent_a -> agent_a: "3.3 load metadata into remote sections" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+agent_a -> etcd: "3.4 create Watcher on /nixl/agents/EtcdAgent2/" {
+  style.font-size: 20
+  style.stroke: "#999999"
+  style.stroke-dash: 5
+}
+agent_b -> etcd: "3.5 fetchRemoteMD(\"EtcdAgent1\") — GET key" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+etcd -> agent_b: "3.6 return EtcdAgent1 metadata blob" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-dash: 3
+}
+agent_b -> agent_b: "3.7 load metadata into remote sections" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+agent_b -> etcd: "3.8 create Watcher on /nixl/agents/EtcdAgent1/" {
+  style.font-size: 20
+  style.stroke: "#999999"
+  style.stroke-dash: 5
+}

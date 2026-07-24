@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stack-data.schema.json",
+  "title": "NIXL Plugin Stack Data",
+  "description": "Auto-generated metadata for NIXL backend plugins",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["name", "version", "memoryTypes", "sourceFile", "category"],
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Plugin display name as defined in C++ source"
+      },
+      "version": {
+        "type": "string",
+        "pattern": "^\\d+\\.\\d+\\.\\d+$",
+        "description": "Plugin version string (semver)"
+      },
+      "memoryTypes": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["DRAM", "VRAM", "FILE", "OBJ", "BLK"]
+        },
+        "minItems": 1,
+        "description": "Supported memory segment types"
+      },
+      "sourceFile": {
+        "type": "string",
+        "description": "Relative path to plugin source file from repo root"
+      },
+      "category": {
+        "type": "string",
+        "enum": ["network", "storage", "gpu-direct", "object-storage", "block-storage"],
+        "description": "Functional category for diagram grouping"
+      }
+    }
+  }
+}

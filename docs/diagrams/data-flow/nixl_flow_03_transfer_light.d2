@@ -1,0 +1,53 @@
+# NIXL Data Flow — Phase 3: Transfer (Light)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#333333"
+  style.fill: "#F5F5F5"
+}
+agent_a: "NIXL Agent\n(Node 1)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+agent_b: "NIXL Agent\n(Node 2)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+metadata_server: "Metadata Server\n(etcd / Redis)" {
+  style.font-size: 20
+  style.stroke: "#666666"
+  style.fill: "#F5F5F5"
+}
+
+conductor -> agent_a: "3.1 create_xfer_req(WR, local, remote, \"Node2\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_a -> agent_a: "3.2 resolve backend (auto-select)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+conductor -> agent_a: "3.3 post_xfer_req(handle)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_a -> agent_b: "3.4 data transfer (RDMA write)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 3
+}
+conductor -> agent_a: "3.5 get_xfer_status(handle)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+agent_a -> conductor: "3.6 status: complete" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-dash: 3
+}

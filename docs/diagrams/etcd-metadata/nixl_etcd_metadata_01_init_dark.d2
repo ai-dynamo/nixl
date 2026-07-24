@@ -1,0 +1,59 @@
+# NIXL ETCD Metadata Exchange — Phase 1: Initialization (Dark)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+agent_a: "NIXL Agent\n(\"EtcdAgent1\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+agent_b: "NIXL Agent\n(\"EtcdAgent2\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#1A2A0D"
+  style.font-color: "#EEEEEE"
+}
+etcd: "etcd Server\n(localhost:2379)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+  style.fill: "#222222"
+  style.font-color: "#EEEEEE"
+}
+
+conductor -> conductor: "1.1 set NIXL_ETCD_ENDPOINTS=\"http://localhost:2379\"" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+conductor -> agent_a: "1.2 create_agent(\"EtcdAgent1\", config)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+conductor -> agent_b: "1.3 create_agent(\"EtcdAgent2\", config)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_a -> agent_a: "1.4 create_backend(\"UCX\")" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent_b -> agent_b: "1.5 create_backend(\"UCX\")" {
+  style.font-size: 20
+  style.stroke: "#AAAAAA"
+}
+agent_a -> agent_a: "1.6 register_memory(DRAM, buf1 = 0xaa)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent_b -> agent_b: "1.7 register_memory(DRAM, buf2 = 0xbb)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}

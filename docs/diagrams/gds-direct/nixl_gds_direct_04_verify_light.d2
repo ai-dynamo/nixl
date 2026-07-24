@@ -1,0 +1,49 @@
+# NIXL GDS Direct Storage — Phase 4: Verify & Teardown (Light)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#333333"
+  style.fill: "#F5F5F5"
+}
+agent: "NIXL Agent\n(\"GDSTester\")" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+storage: "Local Storage\n(NVMe / File)" {
+  style.font-size: 20
+  style.stroke: "#666666"
+  style.fill: "#F5F5F5"
+}
+
+conductor -> conductor: "4.1 verify_transfer(buf1, buf2) — compare 0xba" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+}
+agent -> agent: "4.2 release_xfer_handle(write_handle)" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+agent -> agent: "4.3 release_xfer_handle(read_handle)" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+agent -> agent: "4.4 deregister_memory(DRAM descs)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+agent -> agent: "4.5 deregister_memory(FILE descs)" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+conductor -> conductor: "4.6 free_passthru(buf1, buf2)" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+conductor -> storage: "4.7 close(fd)" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}

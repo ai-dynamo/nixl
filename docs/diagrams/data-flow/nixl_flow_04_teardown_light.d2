@@ -1,0 +1,51 @@
+# NIXL Data Flow — Phase 4: Teardown (Light)
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  style.font-size: 20
+  style.stroke: "#333333"
+  style.fill: "#F5F5F5"
+}
+agent_a: "NIXL Agent\n(Node 1)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+agent_b: "NIXL Agent\n(Node 2)" {
+  style.font-size: 20
+  style.stroke: "#74B900"
+  style.stroke-width: 2
+  style.fill: "#F0F7E6"
+}
+metadata_server: "Metadata Server\n(etcd / Redis)" {
+  style.font-size: 20
+  style.stroke: "#666666"
+  style.fill: "#F5F5F5"
+}
+
+agent_a -> metadata_server: "4.1 invalidate_local_metadata()" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+agent_a -> agent_a: "4.2 deregister_memory()" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+conductor -> agent_a: "4.3 delete agent(\"Node1\")" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+agent_b -> metadata_server: "4.4 invalidate_local_metadata()" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}
+agent_b -> agent_b: "4.5 deregister_memory()" {
+  style.font-size: 20
+  style.stroke: "#888888"
+}
+conductor -> agent_b: "4.6 delete agent(\"Node2\")" {
+  style.font-size: 20
+  style.stroke: "#CC0000"
+}

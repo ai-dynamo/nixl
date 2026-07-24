@@ -1,0 +1,5 @@
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG` | Integer (Gbps) | Auto-computed from PCIe topology | Bandwidth limit in Gbps for NUMA-aware rail selection on DRAM segments. Override this when the auto-detected PCIe topology does not accurately reflect your network configuration. |
+
+Additional `NIXL_LIBFABRIC_*` variables may exist for provider-specific configuration. The Libfabric backend constructs environment variable names dynamically using the `NIXL_LIBFABRIC_` prefix followed by an uppercase key name. Consult the Libfabric backend README for provider-specific options.
