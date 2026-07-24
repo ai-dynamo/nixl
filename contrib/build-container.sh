@@ -21,7 +21,7 @@ DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
 commit_id=$(git rev-parse --short HEAD)
 
 # Get latest TAG and add COMMIT_ID for dev
-latest_tag=$(git describe --tags --abbrev=0 $(git rev-list --tags --max-count=1 main) | sed 's/^v//') || true
+latest_tag=$(git describe --tags --abbrev=0 "$(git rev-list --tags --max-count=1 main)" | sed 's/^v//') || true
 if [[ -z ${latest_tag} ]]; then
     latest_tag="0.0.1"
     echo "No git release tag found, setting to unknown version: ${latest_tag}"
@@ -57,102 +57,102 @@ get_options() {
             exit
             ;;
         --base-image)
-            if [ "$2" ]; then
+            if [ -n "$2" ]; then
                 BASE_IMAGE="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
         ;;
         --base-image-tag)
-            if [ "$2" ]; then
-                BASE_IMAGE_TAG=$2
+            if [ -n "$2" ]; then
+                BASE_IMAGE_TAG="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --wheel-base)
-            if [ "$2" ]; then
-                WHL_BASE=$2
+            if [ -n "$2" ]; then
+                WHL_BASE="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --os)
-            if [ "$2" ]; then
-                OS=$2
+            if [ -n "$2" ]; then
+                OS="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --no-cache)
-            NO_CACHE=" --no-cache"
+            USE_NO_CACHE=true
             ;;
         --build-type)
-            if [ "$2" ]; then
-                BUILD_TYPE=$2
+            if [ -n "$2" ]; then
+                BUILD_TYPE="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --tag)
-            if [ "$2" ]; then
-                TAG="--tag $2"
+            if [ -n "$2" ]; then
+                TAG="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --dockerfile)
-            if [ "$2" ]; then
+            if [ -n "$2" ]; then
                 DOCKER_FILE="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --python-versions)
-            if [ "$2" ]; then
-                WHL_PYTHON_VERSIONS=$2
+            if [ -n "$2" ]; then
+                WHL_PYTHON_VERSIONS="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --torch-versions)
-            if [ "$2" ]; then
-                WHL_TORCH_VERSIONS=$2
+            if [ -n "$2" ]; then
+                WHL_TORCH_VERSIONS="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --ucx-repo)
-            if [ "$2" ]; then
-                UCX_REPO=$2
+            if [ -n "$2" ]; then
+                UCX_REPO="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --ucx-ref)
-            if [ "$2" ]; then
-                UCX_REF=$2
+            if [ -n "$2" ]; then
+                UCX_REF="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --ucx-soname-suffix)
-            if [ "$2" ]; then
-                UCX_SONAME_SUFFIX=$2
+            if [ -n "$2" ]; then
+                UCX_SONAME_SUFFIX="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --private-ucx)
@@ -165,38 +165,38 @@ get_options() {
             BUILD_UCX_SPCX_PLUGIN="true"
             ;;
         --ucx-spcx-plugin-ref)
-            if [ "$2" ]; then
-                UCX_SPCX_PLUGIN_REF=$2
+            if [ -n "$2" ]; then
+                UCX_SPCX_PLUGIN_REF="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --arch)
-            if [ "$2" ]; then
-                ARCH=$2
+            if [ -n "$2" ]; then
+                ARCH="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --wheel-base-image)
-            if [ "$2" ]; then
-                WHEEL_BASE_IMAGE=$2
+            if [ -n "$2" ]; then
+                WHEEL_BASE_IMAGE="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --build-infinia)
             BUILD_INFINIA="true"
             ;;
         --infinia-image)
-            if [ "$2" ]; then
-                INFINIA_LIBS_IMAGE=$2
+            if [ -n "$2" ]; then
+                INFINIA_LIBS_IMAGE="$2"
                 shift
             else
-                missing_requirement $1
+                missing_requirement "$1"
             fi
             ;;
         --)
@@ -204,10 +204,10 @@ get_options() {
             break
             ;;
          -?*)
-            error 'ERROR: Unknown option: ' $1
+            error 'ERROR: Unknown option: ' "$1"
             ;;
          ?*)
-            error 'ERROR: Unknown option: ' $1
+            error 'ERROR: Unknown option: ' "$1"
             ;;
         *)
             break
@@ -225,7 +225,7 @@ get_options() {
     WHL_PLATFORM=${WHL_BASE}_${ARCH}
 
     if [ -z "$TAG" ]; then
-        TAG="--tag nixl:${VERSION}"
+        TAG="nixl:${VERSION}"
     fi
 }
 
@@ -307,22 +307,6 @@ if [ -d "$NIXL_DIR/build" ]; then
     exit 1
 fi
 
-BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
-BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
-BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
-BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
-BUILD_ARGS+=" --build-arg ARCH=$ARCH"
-BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"
-BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
-BUILD_ARGS+=" --build-arg UCX_SONAME_SUFFIX=$UCX_SONAME_SUFFIX"
-BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
-BUILD_ARGS+=" --build-arg NPROC=$NPROC"
-BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
-BUILD_ARGS+=" --build-arg OS=$OS"
-BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
-BUILD_ARGS+=" --build-arg BUILD_INFINIA=$BUILD_INFINIA"
-BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
-
 # The plugin source is fetched on the host and placed inside the build
 # context (ucx-spcx-plugin-src/), where the Dockerfile's plugin RUN builds
 # it from the copied context. This keeps credentials and BuildKit-specific
@@ -359,13 +343,6 @@ if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
     ) || error "ERROR:" "failed to fetch ucx-spcx-plugin at ref ${UCX_SPCX_PLUGIN_REF}"
 fi
 
-if [ -n "$WHEEL_BASE_IMAGE" ]; then
-    BUILD_ARGS+=" --build-arg wheel_base=$WHEEL_BASE_IMAGE"
-    # Not named BUILD_TARGET: Jenkins exports a BUILD_TARGET job parameter
-    # (nixl/nixlbench) that would leak into the docker command line.
-    DOCKER_BUILD_TARGET="--target wheel"
-fi
-
 # Infinia DDN libs: pre-pulled from harbor on the host and placed flat into
 # infinia-libs/ in the build context. The Dockerfile's BUILD_INFINIA RUN block
 # copies them to /opt/ddn/red/ — no harbor reference in the Dockerfile. The whole
@@ -395,6 +372,44 @@ if [ "$BUILD_INFINIA" = "true" ]; then
         error "ERROR:" "no Infinia libs found for arch $ARCH in ${INFINIA_LIBS_IMAGE}"
 fi
 
+docker_args=(
+    --platform "linux/$ARCH"
+    -f "$DOCKER_FILE"
+    --tag "$TAG"
+    --build-arg "BASE_IMAGE=$BASE_IMAGE"
+    --build-arg "BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+    --build-arg "WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
+    --build-arg "WHL_PLATFORM=$WHL_PLATFORM"
+    --build-arg "ARCH=$ARCH"
+    --build-arg "UCX_REPO=$UCX_REPO"
+    --build-arg "UCX_REF=$UCX_REF"
+    --build-arg "UCX_SONAME_SUFFIX=$UCX_SONAME_SUFFIX"
+    --build-arg "BUILD_NIXL_EP=$BUILD_NIXL_EP"
+    --build-arg "NPROC=$NPROC"
+    --build-arg "GRPC_NPROC=$GRPC_NPROC"
+    --build-arg "OS=$OS"
+    --build-arg "BUILD_TYPE=$BUILD_TYPE"
+    --build-arg "BUILD_INFINIA=$BUILD_INFINIA"
+    --build-arg "BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
+)
+
+if [ -n "$WHL_TORCH_VERSIONS" ]; then
+    docker_args+=(--build-arg "WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS")
+fi
+
+if [ -n "$WHEEL_BASE_IMAGE" ]; then
+    docker_args+=(--build-arg "wheel_base=$WHEEL_BASE_IMAGE")
+    # Not named BUILD_TARGET: Jenkins exports a BUILD_TARGET job parameter
+    # (nixl/nixlbench) that would leak into the docker command line.
+    docker_args+=(--target wheel)
+fi
+
+if [ "$USE_NO_CACHE" = true ]; then
+    docker_args+=(--no-cache)
+fi
+
+docker_args+=("$BUILD_CONTEXT")
+
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT
+docker build "${docker_args[@]}"
