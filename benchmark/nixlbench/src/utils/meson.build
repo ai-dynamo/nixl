@@ -25,7 +25,8 @@ utils_deps = [
   openmp_dep,
   gflags_dep,
   tomlplusplus_dep,
-  dependency('dl', required: true)
+  dependency('dl', required: true),
+  dependency('hiredis', required: true),
 ]
 
 if cuda_available
