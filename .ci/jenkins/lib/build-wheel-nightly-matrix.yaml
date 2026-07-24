@@ -10,6 +10,7 @@ failFast: false
 timeout_minutes: 240
 
 registry_host: artifactory.nvidia.com
+registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
@@ -26,6 +27,12 @@ kubernetes:
 # podman-in-container runner; build-container.sh runs docker/podman inside it
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+  - {
+      file: 'contrib/Dockerfile.manylinux',
+      name: "${WHEEL_BASE_IMAGE_NAME}",
+      tag: "${CI_IMAGE_TAG}",
+      build_args: '--build-arg CUDA_IMAGE=${CUDA_IMAGE} --build-arg CUDA_IMAGE_TAG=${CUDA_IMAGE_TAG} --build-arg CUDA_VERSION=${CUDA_VERSION} --build-arg MANYLINUX_IMAGE=${MANYLINUX_IMAGE} --build-arg MANYLINUX_IMAGE_TAG=${MANYLINUX_IMAGE_TAG} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
+    }
 
 matrix:
   axes:
@@ -45,6 +52,11 @@ matrix:
 env:
   NPROC: 16
   GRPC_NPROC: 10
+  CI_IMAGE_TAG: "CI_MANAGED"
+  MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
+  MANYLINUX_IMAGE_TAG: "2026.06.06-1"
+  WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-${CUDA_VARIANT}-manylinux_2_28"
+  TORCH_VERSIONS: "2.12,2.13"
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
@@ -68,6 +80,10 @@ steps:
       # Publish for the per-source path). --tag pins the image so Publish extracts dist/.
       set -x
       git config --global --add safe.directory '*'
+      case "${CUDA_VARIANT}:${CUDA_VERSION}" in
+        cu13:13.*|cu12:12.*) ;;
+        *) echo "ERROR: CUDA_VARIANT=${CUDA_VARIANT} does not match CUDA_VERSION=${CUDA_VERSION}"; exit 1 ;;
+      esac
       NIXL_SHA="$(git rev-parse --short=8 HEAD)"
       if [[ "${UCX_VERSION}" =~ ^[a-f0-9]{8,40}$ ]]; then
         UCX_SHA="${UCX_VERSION:0:8}"
@@ -78,14 +94,19 @@ steps:
       [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot resolve UCX_VERSION=${UCX_VERSION}"; exit 1; }
       printf 'NIXL_SHA=%s\nUCX_SHA=%s\n' "${NIXL_SHA}" "${UCX_SHA}" > wheel_build_ids.env
       ./contrib/build-container.sh \
-        --base-image "${BASE_IMAGE}" \
-        --base-image-tag "${BASE_TAG}" \
+        --cuda-image "${CUDA_IMAGE}" \
+        --cuda-image-tag "${CUDA_IMAGE_TAG}" \
+        --cuda-version "${CUDA_VERSION}" \
+        --manylinux-image "${MANYLINUX_IMAGE}" \
+        --manylinux-image-tag "${MANYLINUX_IMAGE_TAG}" \
         --wheel-base "manylinux_${manylinux}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
         --ucx-ref "${UCX_SHA}" \
+        --torch-versions "${TORCH_VERSIONS}" \
         --tag "${WHEEL_IMAGE_TAG}" \
-        --dockerfile contrib/Dockerfile.manylinux
+        --dockerfile contrib/Dockerfile.manylinux \
+        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}"
 
   - name: Publish
     credentialsId: 'svc-nixl-new-artifactory-token'
@@ -140,7 +161,7 @@ pipeline_stop:
                 <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
                 <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
                 <p>UCX Version: <b>${params.UCX_VERSION}</b></p>
-                <p>Base Image: <b>${params.BASE_IMAGE}:${params.BASE_TAG}</b></p>
+                <p>CUDA Source Image: <b>${params.CUDA_IMAGE}:${params.CUDA_IMAGE_TAG}</b></p>
             """
         )
     }

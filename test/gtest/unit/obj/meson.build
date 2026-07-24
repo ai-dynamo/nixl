@@ -15,7 +15,7 @@
 
 obj_test_sources = ['obj.cpp']
 
-if cuobj_dep.found()
+if has_cuobj_client
     obj_test_sources += ['mock_dell_s3_client.cpp', 'obj_cuobj.cpp']
 endif
 

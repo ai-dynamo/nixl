@@ -30,9 +30,15 @@ VERSION=v$latest_tag.dev.$commit_id
 
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
 BASE_IMAGE_TAG=25.10-cuda13.0-devel-ubuntu24.04
+CUDA_IMAGE=nvcr.io/nvidia/cuda
+CUDA_IMAGE_TAG=13.2.1-devel-ubi8
+CUDA_VERSION=13.2
+MANYLINUX_IMAGE=quay.io/pypa/manylinux_2_28
+MANYLINUX_IMAGE_TAG=2026.06.06-1
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
+WHL_BASE_EXPLICIT=false
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
@@ -72,9 +78,50 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --cuda-image)
+            if [ "$2" ]; then
+                CUDA_IMAGE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --cuda-image-tag)
+            if [ "$2" ]; then
+                CUDA_IMAGE_TAG=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --cuda-version)
+            if [ "$2" ]; then
+                CUDA_VERSION=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --manylinux-image)
+            if [ "$2" ]; then
+                MANYLINUX_IMAGE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --manylinux-image-tag)
+            if [ "$2" ]; then
+                MANYLINUX_IMAGE_TAG=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --wheel-base)
             if [ "$2" ]; then
                 WHL_BASE=$2
+                WHL_BASE_EXPLICIT=true
                 shift
             else
                 missing_requirement $1
@@ -222,7 +269,17 @@ get_options() {
         WHL_BASE=${WHL_BASE:-manylinux_2_34}
     fi
 
+    if [[ "$DOCKER_FILE" == *Dockerfile.manylinux ]] && [ "$WHL_BASE_EXPLICIT" = "false" ]; then
+        WHL_BASE=manylinux_2_28
+    fi
+
     WHL_PLATFORM=${WHL_BASE}_${ARCH}
+
+    case "$ARCH" in
+        x86_64) TARGET_PLATFORM="linux/amd64" ;;
+        aarch64) TARGET_PLATFORM="linux/arm64" ;;
+        *) error "ERROR:" "unsupported architecture: $ARCH" ;;
+    esac
 
     if [ -z "$TAG" ]; then
         TAG="--tag nixl:${VERSION}"
@@ -234,8 +291,15 @@ show_build_options() {
     echo "Building NIXL Image"
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
-    echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+    if [[ "$DOCKER_FILE" == *Dockerfile.manylinux ]]; then
+        echo "CUDA Source Image: ${CUDA_IMAGE}:${CUDA_IMAGE_TAG}"
+        echo "Manylinux Image: ${MANYLINUX_IMAGE}_${ARCH}:${MANYLINUX_IMAGE_TAG}"
+        echo "CUDA Version: ${CUDA_VERSION}"
+    else
+        echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+    fi
     echo "Container arch: ${ARCH}"
+    echo "Docker platform: ${TARGET_PLATFORM}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
     echo "UCX Repo: ${UCX_REPO}"
@@ -267,8 +331,13 @@ show_build_options() {
 
 show_help() {
     echo "usage: build-container.sh"
-    echo "  [--base base image]"
-    echo "  [--base-image-tag base image tag]"
+    echo "  [--base-image base image for non-manylinux builds]"
+    echo "  [--base-image-tag base image tag for non-manylinux builds]"
+    echo "  [--cuda-image CUDA source image for manylinux builds (default: ${CUDA_IMAGE})]"
+    echo "  [--cuda-image-tag CUDA source image tag for manylinux builds (default: ${CUDA_IMAGE_TAG})]"
+    echo "  [--cuda-version CUDA toolkit major.minor copied into the manylinux image]"
+    echo "  [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]"
+    echo "  [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
     echo "  [--wheel-base base platform for wheel builds]"
     echo "  [--no-cache disable docker build cache]"
     echo "  [--os [ubuntu24|ubuntu22] to select Ubuntu version]"
@@ -308,6 +377,9 @@ if [ -d "$NIXL_DIR/build" ]; then
 fi
 
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+BUILD_ARGS+=" --build-arg CUDA_IMAGE=$CUDA_IMAGE --build-arg CUDA_IMAGE_TAG=$CUDA_IMAGE_TAG"
+BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
+BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX_IMAGE_TAG=$MANYLINUX_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
@@ -397,4 +469,4 @@ fi
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT
+docker build --platform "$TARGET_PLATFORM" -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT

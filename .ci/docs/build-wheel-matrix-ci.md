@@ -60,27 +60,31 @@ The job builds wheels for multiple combinations:
 ```yaml
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
-  - { file: 'contrib/Dockerfile.manylinux', name: "nixl-wheel-base-manylinux_2_28",
+  - { file: 'contrib/Dockerfile.manylinux', name: "nixl-wheel-base-cu13-manylinux_2_28",
       tag: "${CI_IMAGE_TAG}", build_args: '... --target wheel_base' }
 ```
 
-The CI runner uses podman-in-container. `build-container.sh` is called inside this container and executes `docker build` (symlinked to podman). The `nixl-wheel-base-manylinux_2_28` entry is never used as a runner — CI-demo builds and pushes it to Artifactory whenever `CI_IMAGE_TAG` changes, so that each PR build can pull the pre-built `wheel_base` layer instead of compiling all dependencies from scratch.
+The CI runner uses podman-in-container. `build-container.sh` is called inside this container and executes `docker build` (symlinked to podman). The CUDA-specific `nixl-wheel-base-cuXX-manylinux_2_28` entry is never used as a runner — CI-demo builds and pushes it to Artifactory whenever `CI_IMAGE_TAG` changes, so PR, nightly, and release builds can pull the pre-built `wheel_base` layer instead of compiling all dependencies from scratch.
 
 ## 2. Docker Build Environment (`contrib/Dockerfile.manylinux`)
 
 ### Multi-Stage Build Architecture
 
-The Dockerfile has two stages:
+The Dockerfile has three logical stages:
 
-- **`wheel_base`** — builds all slow dependencies (hwloc, OpenSSL, Abseil, gRPC, etcd, curl, AWS SDK, libxml2, Azure SDK, Rust, DOCA, gdrcopy, libfabric, Python/uv, UCX). Built and pushed to Artifactory by CI-demo when `CI_IMAGE_TAG` changes. This stage is never rebuilt per-PR.
+- **`cuda`** — sources the versioned CUDA toolkit and cuObject pkg-config metadata from the pinned NGC UBI8 devel image.
+- **`wheel_base`** — starts from the pinned public PyPA manylinux image, copies CUDA from `cuda`, and builds all slow dependencies (hwloc, OpenSSL, Abseil, gRPC, etcd, curl, AWS SDK, libxml2, Azure SDK, Rust, DOCA, gdrcopy, libfabric, Python/uv, UCX). Built and pushed to Artifactory by CI-demo when `CI_IMAGE_TAG` changes.
 - **`wheel`** — `FROM $wheel_base AS wheel` — builds NIXL itself and runs `build-wheel.sh`. The `wheel_base` ARG is overridden to the Artifactory URL so this stage pulls the pre-built image as its base; only ~16 steps run per PR.
 
 ```dockerfile
-ARG BASE_IMAGE
-ARG BASE_IMAGE_TAG
+ARG ARCH="x86_64"
+ARG CUDA_IMAGE="nvcr.io/nvidia/cuda"
+ARG CUDA_IMAGE_TAG="13.2.1-devel-ubi8"
+ARG CUDA_VERSION="13.2"
 ARG wheel_base=wheel_base   # overridden to Artifactory URL in CI
 
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS wheel_base
+FROM ${CUDA_IMAGE}:${CUDA_IMAGE_TAG} AS cuda
+FROM quay.io/pypa/manylinux_2_28_${ARCH}:2026.06.06-1 AS wheel_base
 # ... installs UCX, gRPC, Rust, DOCA, gdrcopy, etc.
 
 FROM $wheel_base AS wheel
@@ -91,7 +95,7 @@ ARG UCX_SONAME_SUFFIX=""
 # ... builds NIXL and generates wheels
 ```
 
-**Base Image**: `artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09`
+**Build images**: `quay.io/pypa/manylinux_2_28_<arch>:2026.06.06-1` plus `nvcr.io/nvidia/cuda:13.2.1-devel-ubi8` for CUDA 13. CUDA 12 uses `nvcr.io/nvidia/cuda:12.9.1-devel-ubi8`.
 
 ### Stage Usage Patterns
 
@@ -100,8 +104,9 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
 
 ```bash
 ./contrib/build-container.sh \
-  --base-image 'artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda' \
-  --base-image-tag '13.0-devel-manylinux--25.09' \
+  --cuda-image 'nvcr.io/nvidia/cuda' \
+  --cuda-image-tag '13.2.1-devel-ubi8' \
+  --cuda-version '13.2' \
   --wheel-base "manylinux_2_28" \
   --python-versions "${python_version}" \
   --arch ${arch} \
@@ -112,7 +117,7 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
 
 `--wheel-base-image` causes the script to pass `--build-arg wheel_base=<url> --target wheel`, so only the `wheel` stage runs and the pre-built deps are pulled from Artifactory rather than recompiled.
 
-`--torch-versions "2.13"` limits PR builds to the latest torch version. The nightly job omits this flag, building the full matrix.
+`--torch-versions "2.13"` limits PR builds to the latest torch version. Nightly and release builds request PyTorch 2.12 and 2.13.
 
 #### User Usage (Full Build)
 Users can build the complete image locally without specifying a target:
@@ -124,7 +129,7 @@ Users can build the complete image locally without specifying a target:
 This builds both stages from scratch without the `--wheel-base-image` override.
 
 #### Nightly Build
-The nightly job (`nixl-ci-build-wheel-nightly`) omits `--torch-versions` and `--wheel-base-image`, so it builds all torch versions and runs the full two-stage build.
+The nightly/release job (`nixl-ci-build-wheel-nightly`) requests PyTorch 2.12 and 2.13 and reuses the CUDA-specific cached `wheel_base`, matching the PR compiler environment.
 
 #### Optional: UCX spcx external plugin
 `build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir where `wheel_add_ucx_plugins.py` bundles it like any other UCX module. It requires `--dockerfile contrib/Dockerfile.manylinux` and two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:
@@ -281,7 +286,7 @@ Builds only the `wheel` stage of `Dockerfile.manylinux` by pulling the pre-built
 
 - Calls `contrib/build-container.sh` with `--wheel-base-image <artifactory-url>` and `--torch-versions "2.13"`
 - The script invokes `docker build --target wheel --build-arg wheel_base=<url>` (podman), which:
-  - Pulls the pre-built `nixl-wheel-base-manylinux_2_28:${CI_IMAGE_TAG}` image (all deps already compiled)
+  - Pulls the pre-built `nixl-wheel-base-cu13-manylinux_2_28:${CI_IMAGE_TAG}` image (all deps already compiled)
   - Builds NIXL from source with meson/ninja
   - Runs `build-wheel.sh` to produce the Python wheel with auditwheel repair
 - Only ~16 Docker steps run per PR build (instead of the full ~53-step build)
@@ -321,7 +326,7 @@ This is handled by `contrib/tomlutil.py` which modifies `pyproject.toml` during 
 - Native libraries (compiled with meson)
 - UCX plugins for high-performance networking
 - NIXL plugins for extended functionality
-- All dependencies bundled for manylinux compatibility
+- Most non-system dependencies are bundled for manylinux compatibility. CUDA, cuFile, cuObject Client, and the other libraries named in `AUDITWHEEL_EXCLUDES` remain external runtime dependencies.
 
 ## 6. Matrix Job Execution
 
@@ -440,7 +445,7 @@ uv pip install --force-reinstall dist/nixl-*.whl
 
 ### Updating Dependencies
 - Modify `contrib/Dockerfile.manylinux` for system package updates
-- **Bump `CI_IMAGE_TAG`** in all six matrix YAMLs (including `.ci/jenkins/lib/build-wheel-matrix.yaml`) — `Dockerfile.manylinux` is in the `CI_FILES` list, so the `cidemo-init.sh` check will fail the PR otherwise
+- Keep the `CI_MANAGED` placeholder in all seven matrix YAMLs. `cidemo-init.sh` derives and injects the tag automatically when `Dockerfile.manylinux` or another CI source changes.
 - Update Python versions in matrix configuration
 - Test new dependencies in isolated environment
 

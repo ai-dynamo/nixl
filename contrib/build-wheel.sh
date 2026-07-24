@@ -23,6 +23,7 @@ NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
 BUILD_NIXL_EP="false"
 TORCH_VERSIONS=""
+CUOBJCLIENT_MODE="auto"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -60,6 +61,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
             echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
             echo "  --torch-versions: Comma-separated list of torch versions to build the wheel for (default: $TORCH_VERSIONS)"
+            echo "  --cuobjclient: Meson cuObject feature mode: auto, enabled, or disabled (default: $CUOBJCLIENT_MODE)"
             echo "  --help: Show this help message"
             echo ""
             echo "Must be executed from the root of the NIXL repository."
@@ -74,12 +76,25 @@ while [[ $# -gt 0 ]]; do
             shift
             shift
             ;;
+        --cuobjclient)
+            CUOBJCLIENT_MODE=$2
+            shift
+            shift
+            ;;
         *)
             echo "Unknown argument: $1"
             exit 1
             ;;
     esac
 done
+
+case "$CUOBJCLIENT_MODE" in
+    auto|enabled|disabled) ;;
+    *)
+        echo "ERROR: --cuobjclient must be auto, enabled, or disabled (got '$CUOBJCLIENT_MODE')" >&2
+        exit 1
+        ;;
+esac
 
 if [ "$BUILD_NIXL_EP" = "true" ] && [ -z "$TORCH_VERSIONS" ]; then
     echo "ERROR: --build-nixl-ep requires --torch-versions (e.g. --torch-versions 2.11,2.12)" >&2
@@ -97,7 +112,7 @@ if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
     echo "Invalid CUDA_MAJOR: '$CUDA_MAJOR'"
     exit 1
 fi
-AUDITWHEEL_EXCLUDES="--exclude libcuda* --exclude libcufile* --exclude libssl* --exclude libcrypto* --exclude libefa* --exclude libhwloc* --exclude libfabric* --exclude libtorch* --exclude libc10* --exclude libdoca* --exclude libred_client* --exclude libred_async* --exclude liblz4*"
+AUDITWHEEL_EXCLUDES="--exclude libcuda* --exclude libcufile* --exclude libcuobjclient* --exclude libssl* --exclude libcrypto* --exclude libefa* --exclude libhwloc* --exclude libfabric* --exclude libtorch* --exclude libc10* --exclude libdoca* --exclude libred_client* --exclude libred_async* --exclude liblz4*"
 
 PKG_NAME="nixl-cu${CUDA_MAJOR}"
 CU_TAG="cu$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | tr -d .)"
@@ -253,6 +268,7 @@ build_wheel() {
         --no-build-isolation
         --out-dir "$OUT_DIR"
         --python "$VENV_PATH/bin/python"
+        -Csetup-args=-Dcuobjclient="$CUOBJCLIENT_MODE"
     )
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         BUILD_ARGS+=(

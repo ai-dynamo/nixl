@@ -895,8 +895,8 @@
           cron: |
             # Build NIXL wheels nightly ~10 AM for CUDA 13 and CUDA 12 (the cu12
             # run also produces the nixl meta wheel). Both publish to the repo.
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_TAG=13.0-devel-manylinux--25.09
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_TAG=12.9-devel-manylinux--25.06
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;CUDA_VARIANT=cu13;CUDA_IMAGE_TAG=13.2.1-devel-ubi8;CUDA_VERSION=13.2
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;CUDA_VARIANT=cu12;CUDA_IMAGE_TAG=12.9.1-devel-ubi8;CUDA_VERSION=12.9
     # Manual build parameters
     parameters:
       - string:
@@ -908,13 +908,21 @@
           default: "v1.22.x"
           description: "UCX version to build against (tag like v1.22.x, branch name, or commit hash)"
       - string:
-          name: "BASE_IMAGE"
-          default: "artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda"
-          description: "Manylinux base image for the wheel build"
+          name: "CUDA_VARIANT"
+          default: "cu13"
+          description: "CUDA wheel variant and cached base namespace (cu12 or cu13)"
       - string:
-          name: "BASE_TAG"
-          default: "13.0-devel-manylinux--25.09"
-          description: "Base image tag = CUDA version (e.g. 13.0-devel-manylinux--25.09 or 12.9-devel-manylinux--25.06). Mirrored into base/cuda from the dl/dgx/cuda registry."
+          name: "CUDA_IMAGE"
+          default: "nvcr.io/nvidia/cuda"
+          description: "Public NGC CUDA source image used by the manylinux build"
+      - string:
+          name: "CUDA_IMAGE_TAG"
+          default: "13.2.1-devel-ubi8"
+          description: "Pinned UBI8 CUDA devel tag; CUDA 13 releases use 13.2.1 for cuObject support"
+      - string:
+          name: "CUDA_VERSION"
+          default: "13.2"
+          description: "CUDA toolkit major.minor directory copied from the source image"
       - string:
           name: "DEBUG"
           default: 0

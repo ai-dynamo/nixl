@@ -14,16 +14,31 @@
 # limitations under the License.
 
 
-ARG BASE_IMAGE
-ARG BASE_IMAGE_TAG
+# Build on the public PyPA manylinux root and import the CUDA toolkit from the
+# matching public NGC UBI8 devel image. Keeping these as separate stages avoids
+# relying on an internal CUDA+manylinux image and makes the CUDA/cuObject source
+# explicit and reproducible.
+ARG ARCH="x86_64"
+ARG MANYLINUX_IMAGE="quay.io/pypa/manylinux_2_28"
+ARG MANYLINUX_IMAGE_TAG="2026.06.06-1"
+ARG CUDA_IMAGE="nvcr.io/nvidia/cuda"
+ARG CUDA_IMAGE_TAG="13.2.1-devel-ubi8"
+ARG CUDA_VERSION="13.2"
 # When overridden to an Artifactory URL, the wheel stage pulls the pre-built deps
 # image instead of building them locally. Default keeps the single-stage local build.
 ARG wheel_base=wheel_base
 
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS wheel_base
+FROM ${CUDA_IMAGE}:${CUDA_IMAGE_TAG} AS cuda
+ARG CUDA_VERSION
+RUN test -d "/usr/local/cuda-${CUDA_VERSION}" && \
+    mkdir -p /opt/nixl-cuda-pkgconfig && \
+    (cp -a /usr/lib64/pkgconfig/cuobjclient*.pc /opt/nixl-cuda-pkgconfig/ 2>/dev/null || true)
+
+FROM ${MANYLINUX_IMAGE}_${ARCH}:${MANYLINUX_IMAGE_TAG} AS wheel_base
 
 ARG DEFAULT_PYTHON_VERSION="3.14"
 ARG ARCH="x86_64"
+ARG CUDA_VERSION
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
@@ -32,8 +47,20 @@ ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
 ARG NPROC
 
+COPY --from=cuda /usr/local/cuda-${CUDA_VERSION}/ /usr/local/cuda-${CUDA_VERSION}/
+COPY --from=cuda /opt/nixl-cuda-pkgconfig/ /usr/lib64/pkgconfig/
+RUN ln -sfn "/usr/local/cuda-${CUDA_VERSION}" /usr/local/cuda
+
+ENV CUDA_VERSION=${CUDA_VERSION} \
+    CUDA_HOME=/usr/local/cuda \
+    CUDA_PATH=/usr/local/cuda \
+    PATH=/opt/rh/gcc-toolset-14/root/usr/bin:/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/rh/gcc-toolset-14/root/usr/lib64:/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} \
+    PKG_CONFIG_PATH=/usr/lib64/pkgconfig:${PKG_CONFIG_PATH} \
+    CMAKE_POLICY_VERSION_MINIMUM=3.5
+
 RUN yum groupinstall -y 'Development Tools' &&  \
-    dnf install -y almalinux-release-synergy && \
+    dnf install -y almalinux-release-synergy epel-release && \
     dnf config-manager --set-enabled powertools && \
     dnf install -y \
     boost \
@@ -46,6 +73,7 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     gflags \
     glibc-headers \
     gcc-c++ \
+    gcc-toolset-14 \
     libaio \
     libaio-devel \
     libtool-ltdl \
@@ -298,9 +326,11 @@ RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
 RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click setuptools tabulate auditwheel tomlkit
-# Install PyTorch
+# Install the default PyTorch used by the outer NIXL build. Per-version NIXL EP
+# extensions are built later in isolated environments by build-wheel.sh.
+ARG DEFAULT_TORCH_VERSION="2.13"
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
-    uv pip install 'torch==2.11.*'
+    uv pip install "torch==${DEFAULT_TORCH_VERSION}.*"
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
@@ -416,6 +446,18 @@ RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
 
 RUN rm -rf build && \
     mkdir build && \
+    CUDA_MAJOR="${CUDA_VERSION%%.*}" && \
+    if [ "$CUDA_MAJOR" = "13" ]; then \
+        CUOBJCLIENT_PKG="cuobjclient-${CUDA_VERSION}"; \
+        pkg-config --exists "$CUOBJCLIENT_PKG" || { \
+            echo "ERROR: CUDA 13 wheel build requires $CUOBJCLIENT_PKG" >&2; \
+            pkg-config --list-all | grep -i cuobj || true; \
+            exit 1; \
+        }; \
+        CUOBJCLIENT_MODE="enabled"; \
+    else \
+        CUOBJCLIENT_MODE="disabled"; \
+    fi && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \
         echo "=== BUILD_NIXL_EP=true: Building NIXL with NIXL EP support ===" && \
         NIXL_EP_FLAG="-Dbuild_nixl_ep=true -Dbuild_examples=true"; \
@@ -425,9 +467,13 @@ RUN rm -rf build && \
     meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $NIXL_EP_FLAG -Ducx_path=/usr/local \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" \
+    -Dcuobjclient=$CUOBJCLIENT_MODE \
     -Drelease_wheel=true && \
     cd build && \
     ninja && \
+    if [ "$CUOBJCLIENT_MODE" = "enabled" ]; then \
+        ./test/gtest/unit/unit --gtest_filter='objDellTestFixture.*'; \
+    fi && \
     ninja install
 
 ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/:$LD_LIBRARY_PATH
@@ -436,14 +482,25 @@ ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib64/plugins
 
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
-    ldconfig
+    ldconfig && \
+    if [ "${CUDA_VERSION%%.*}" = "13" ]; then \
+        OBJ_PLUGIN="$(find /usr/local/nixl -name libplugin_OBJ.so -print -quit)"; \
+        test -n "$OBJ_PLUGIN"; \
+        readelf -d "$OBJ_PLUGIN" | grep -F 'Shared library: [libcuobjclient.so.1]'; \
+        ! ldd "$OBJ_PLUGIN" | grep -F 'not found'; \
+    fi
 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
-ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
+ARG WHL_TORCH_VERSIONS="2.12,2.13"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
+    if [ "${CUDA_VERSION%%.*}" = "13" ]; then \
+        CUOBJCLIENT_MODE="enabled"; \
+    else \
+        CUOBJCLIENT_MODE="disabled"; \
+    fi && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \
         EP_BUILD_FLAGS="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; \
     else \
@@ -458,6 +515,7 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --ucx-plugins-dir /usr/lib64/ucx \
             --nixl-plugins-dir $NIXL_PLUGIN_DIR \
             --output-dir dist \
+            --cuobjclient $CUOBJCLIENT_MODE \
             $EP_BUILD_FLAGS ; \
     done
 

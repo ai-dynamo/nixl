@@ -23,6 +23,7 @@ option('disable_infinia_backend', type : 'boolean', value : false, description :
 option('infinia_path', type: 'string', value: '/opt/ddn/red/', description: 'Path to Infinia client install')
 option('install_headers', type : 'boolean', value : true, description : 'install headers')
 option('gds_path', type: 'string', value: '/usr/local/cuda/', description: 'Path to GDS CuFile install')
+option('cuobjclient', type: 'feature', value: 'auto', description: 'Build cuObject-backed accelerated S3 engines')
 option('cudapath_inc', type: 'string', value: '', description: 'Include path for CUDA')
 option('cudapath_lib', type: 'string', value: '', description: 'Library path for CUDA')
 option('cudapath_stub', type: 'string', value: '', description: 'Extra Stub path for CUDA')

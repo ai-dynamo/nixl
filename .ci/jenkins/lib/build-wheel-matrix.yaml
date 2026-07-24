@@ -9,11 +9,11 @@
 # This CI pipeline uses contrib/build-container.sh with contrib/Dockerfile.manylinux
 # to build wheels for specific Python versions and architectures in each matrix
 # combination. The script handles the multi-stage Docker build internally, using
-# the CUDA manylinux base image from Artifactory as the build environment. The heavy
-# dependency layer is pre-built once into the cached wheel_base image (below) and reused
+# a public PyPA manylinux root plus a public NGC CUDA source image. The heavy dependency
+# layer is pre-built once into the cached wheel_base image (below) and reused
 # via --wheel-base-image, so per-PR wheel builds only compile the wheel stage.
 #
-# CI Usage: build-container.sh --base-image ... --wheel-base ... (builds and packages wheels)
+# CI Usage: build-container.sh --cuda-image ... --wheel-base ... (builds and packages wheels)
 # User Usage: Full image build via build-container.sh (same script, different invocation)
 #
 # =============================================================================
@@ -36,7 +36,8 @@
 # - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
 # - Docker Images: Specifies the container images used for different build stages
 #   - Uses contrib/Dockerfile.manylinux via contrib/build-container.sh
-#   - Base image: artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09
+#   - Build root: quay.io/pypa/manylinux_2_28_<arch>:2026.06.06-1
+#   - CUDA source: nvcr.io/nvidia/cuda:13.2.1-devel-ubi8
 # - Matrix Axes: Defines build variations (Python versions and architectures)
 # - Build Steps: Sequential steps for building, testing, and wheel generation
 #
@@ -119,7 +120,7 @@ runs_on_dockers:
       file: 'contrib/Dockerfile.manylinux',
       name: "${WHEEL_BASE_IMAGE_NAME}",
       tag: "${CI_IMAGE_TAG}",
-      build_args: '--build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${BASE_TAG} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
+      build_args: '--build-arg CUDA_IMAGE=${CUDA_IMAGE} --build-arg CUDA_IMAGE_TAG=${CUDA_IMAGE_TAG} --build-arg CUDA_VERSION=${CUDA_VERSION} --build-arg MANYLINUX_IMAGE=${MANYLINUX_IMAGE} --build-arg MANYLINUX_IMAGE_TAG=${MANYLINUX_IMAGE_TAG} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
     }
   # The custom 'fw' key is injected as an env var into every step of the branch
   # (ci-demo merges the docker entry into the branch axis), so the shared sanity
@@ -182,14 +183,17 @@ matrix:
 env:
   NPROC: 32
   GRPC_NPROC: 10
-  BASE_IMAGE: "${registry_host}/sw-nbu-swx-nixl-docker-local/base/cuda"
-  BASE_TAG: '13.0-devel-manylinux--25.09'
+  CUDA_IMAGE: "nvcr.io/nvidia/cuda"
+  CUDA_IMAGE_TAG: "13.2.1-devel-ubi8"
+  CUDA_VERSION: "13.2"
+  MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
+  MANYLINUX_IMAGE_TAG: "2026.06.06-1"
   # CI image tag for wheel_base + build_helper + the sanity base images
   # (auto-derived by cidemo-init.sh — the "CI_MANAGED" placeholder must not be hand-edited)
   CI_IMAGE_TAG: "CI_MANAGED"
   WHL_BASE: "manylinux_2_28"
   TORCH_VERSIONS: "2.13"
-  WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-manylinux_2_28"
+  WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-cu13-manylinux_2_28"
   # Per-PR sanity images: <registry_host><registry_path>/pr/<arch>/<fw>-nixl:<BUILD_NUMBER>
   PR_REGISTRY: "${registry_host}${registry_path}"
   # Test model: pulled at runtime by the sanity script (not baked) and the gsm8k accuracy floor model.
@@ -274,8 +278,11 @@ steps:
       export NPROC=$NPROC
       export GRPC_NPROC=$GRPC_NPROC
       ./contrib/build-container.sh \
-        --base-image "${BASE_IMAGE}" \
-        --base-image-tag "${BASE_TAG}" \
+        --cuda-image "${CUDA_IMAGE}" \
+        --cuda-image-tag "${CUDA_IMAGE_TAG}" \
+        --cuda-version "${CUDA_VERSION}" \
+        --manylinux-image "${MANYLINUX_IMAGE}" \
+        --manylinux-image-tag "${MANYLINUX_IMAGE_TAG}" \
         --wheel-base "${WHL_BASE}" \
         --python-versions "${python_version}" \
         --arch ${arch} \

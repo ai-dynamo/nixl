@@ -42,11 +42,11 @@ git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1
 
 ### Optional Dependencies
 
-**S3 Accelerated Engines** (`cuobjclient-13.1`): Required for GPU-direct and accelerated object storage operations. When available, enables:
+**S3 Accelerated Engines** (`cuobjclient-13.x`): Required for GPU-direct and accelerated object storage operations. When available, enables:
 - `S3AccelObjEngineImpl` - Base accelerated S3 engine
 - Vendor-specific accelerated implementations under `s3_accel/`
 
-If `cuobjclient-13.1` is not found during build, the S3 Accelerated engines will be automatically disabled, and the plugin will fall back to standard S3 and S3 CRT engines.
+With the default `auto` build option, a missing cuObject Client disables the accelerated engines and leaves the standard S3 and S3 CRT engines available. CUDA 13 release-wheel builds enable cuObject explicitly and fail instead of producing a wheel without acceleration.
 
 ## Configuration
 
@@ -329,18 +329,35 @@ Each engine implementation defines its own supported memory segment types via `g
 
 **Important:** Vendor engines that support GPU-direct transfers should override `getSupportedMems()` to include `VRAM_SEG`. The base `S3AccelObjEngineImpl` does not include `VRAM_SEG` by default - each vendor must explicitly expose this capability.
 
+#### CUDA 13 Wheel Runtime Requirements
+
+The published CUDA 13 wheel is built with the accelerated S3 engines enabled
+against CUDA 13.2 cuObject Client. The wheel intentionally does not redistribute
+`libcuobjclient.so.1`; install the CUDA 13.2 `libcuobjclient-13-2` runtime package
+and its cuFile/RDMA dependencies on the target system.
+
+`libplugin_OBJ.so` contains both the regular and accelerated S3 engines and links
+directly to cuObject Client. Consequently, the OBJ plugin cannot be loaded from a
+CUDA 13 wheel when the external cuObject runtime is absent, even when only the
+regular S3 engine is requested.
+
+Release builds use `-Dcuobjclient=enabled`, which fails configuration if a
+supported `cuobjclient-13.x` pkg-config module is unavailable. Other builds retain
+the default `auto` behavior; use `-Dcuobjclient=disabled` to explicitly omit the
+accelerated engines.
+
 ### Adding a Vendor Implementation
 
 > **⚠️ Important: Conditional Compilation for S3 Accelerated Engines**
 >
-> The S3 Accelerated path (`s3_accel`) and any vendor implementations under it require the `cuobjclient-13.1` library. When adding new extensions to `s3_accel`:
+> The S3 Accelerated path (`s3_accel`) and any vendor implementations under it require a supported CUDA 13.x `cuobjclient` library. When adding new extensions to `s3_accel`:
 >
 >
 > Vendor engines self-register via `objAccelEngineRegistrar`
 >
 > 1. **Add sources conditionally** in `meson.build`:
 >    ```python
->    if cuobj_dep.found()
+>    if has_cuobj_client
 >        obj_sources += [
 >            's3_accel/vendor_name/client.cpp',
 >            's3_accel/vendor_name/engine_impl.cpp',
@@ -488,10 +505,10 @@ if (isAcceleratedRequested(init_params->customParams))
 
 #### 4. Update Build Configuration
 
-Add your sources to `meson.build` within the conditional `cuobj_dep` block:
+Add your sources to `meson.build` within the conditional cuObject block:
 
 ```python
-if cuobj_dep.found()
+if has_cuobj_client
     message('Found CUObjClient Library. Enabling S3 Accelerated engines')
     obj_sources += [
         's3_accel/client.cpp',

@@ -40,7 +40,7 @@ plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asi
 compile_defs = []
 compile_flags = []
 
-if cuobj_dep.found()
+if has_cuobj_client
     message('Found CUObjClient Library. Enabling S3 Accelerated engines')
     obj_sources += [
         's3_accel/client.cpp',

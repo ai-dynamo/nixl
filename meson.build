@@ -147,9 +147,28 @@ has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', depen
 # Check whether the POSIX plugin is enabled
 has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
-# Check for CUObject Client library
-cuobj_dep = dependency('cuobjclient-13.1', required: false)
-if cuobj_dep.found()
+# Check for the versioned CUDA cuObject Client pkg-config module. CUDA wheel
+# builds use -Dcuobjclient=enabled so a missing client fails configuration
+# instead of silently dropping the accelerated S3 implementation.
+cuobjclient_opt = get_option('cuobjclient')
+has_cuobj_client = false
+if not cuobjclient_opt.disabled()
+    foreach cuobjclient_pkg : ['cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1']
+        cuobjclient_candidate = dependency(cuobjclient_pkg, required: false)
+        if cuobjclient_candidate.found()
+            cuobj_dep = cuobjclient_candidate
+            has_cuobj_client = true
+            message('Found CUObjClient pkg-config module: ' + cuobjclient_pkg)
+            break
+        endif
+    endforeach
+endif
+
+if cuobjclient_opt.enabled() and not has_cuobj_client
+  error('cuObject Client was explicitly enabled, but no supported cuobjclient-13.x pkg-config module was found')
+endif
+
+if has_cuobj_client
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
 endif
 

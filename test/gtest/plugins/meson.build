@@ -45,7 +45,7 @@ if cuda_dep.found()
 endif
 
 plugins_gtest_sources = ['../main.cpp', '../common.cpp', 'obj_plugin.cpp']
-if cuobj_dep.found()
+if has_cuobj_client
     plugins_gtest_sources += 'obj_cuobj_plugin.cpp'
 endif
 
