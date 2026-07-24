@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#pragma once
+#ifndef NIXL_TEST_GTEST_GPU_UTILS_H
+#define NIXL_TEST_GTEST_GPU_UTILS_H
 
 #include <iostream>
 #include <cstdlib>
@@ -92,3 +93,5 @@ gpuGetDeviceCount(int *count, const char *message) {
     *count = 0;
 #endif
 }
+
+#endif // NIXL_TEST_GTEST_GPU_UTILS_H
