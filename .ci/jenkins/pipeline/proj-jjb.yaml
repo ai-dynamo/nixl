@@ -320,7 +320,7 @@
                     parent-credentials: true
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
-# Template for the DLCluster GPU EP test job that runs nixl_ep elastic tests on dlcluster.nvidia.com
+# Template for the DLCluster GPU EP test job that runs nixl_ep elastic + control tests on dlcluster.nvidia.com
 - job-template:
     name: "{jjb_proj}-dl-gpu-ep"      # Will be expanded to 'nixl-ci-dl-gpu-ep'
     project-type: pipeline
@@ -1010,7 +1010,7 @@
         - "{jjb_proj}-test-llm-container"   # Create LLM container test job (SLURM)
         - "{jjb_proj}-gpu"        # Create gpu job
         - "{jjb_proj}-dl-gpu"   # Create dl-gpu job for dlcluster.nvidia.com
-        - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for nixl_ep elastic tests on dlcluster.nvidia.com
+        - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for nixl_ep elastic + control tests on dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
         - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
         - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job
