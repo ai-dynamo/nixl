@@ -119,6 +119,7 @@ steps:
     module: slurmCI
     run: allocation
     args:
+      ref: 'slurm-hold-allocation'
       partition: "${SLURM_PARTITION}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
@@ -140,6 +141,7 @@ steps:
     module: slurmCI
     run: run
     args:
+      ref: 'slurm-hold-allocation'
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_python.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
@@ -156,6 +158,7 @@ steps:
     module: slurmCI
     run: run
     args:
+      ref: 'slurm-hold-allocation'
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_rust.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
@@ -172,6 +175,7 @@ steps:
     module: slurmCI
     run: run
     args:
+      ref: 'slurm-hold-allocation'
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
@@ -191,6 +195,7 @@ steps:
     module: slurmCI
     run: run
     args:
+      ref: 'slurm-hold-allocation'
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
@@ -209,6 +214,7 @@ pipeline_stop:
   module: slurmCI
   run: stopAllForBuild
   args:
+    ref: 'slurm-hold-allocation'
     credentialsId: "${SSH_CREDENTIALS_ID}"
     headNode: "${SLURM_HEAD_NODE}"
     headUser: "${SLURM_HEAD_USER}"
