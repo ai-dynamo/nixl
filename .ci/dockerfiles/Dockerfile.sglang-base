@@ -27,6 +27,16 @@ ARG MODEL_ID=Qwen/Qwen3-8B
 
 ENV NIXL_SANITY_MODEL_ID=${MODEL_ID}
 
+# Use the internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
+RUN . /etc/os-release && \
+    printf '%s\n' \
+        'Types: deb' \
+        'URIs: https://urm.nvidia.com/artifactory/ubuntu-public' \
+        "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+        'Components: main restricted universe multiverse' \
+        'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
+    grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f
+
 # iproute2 provides `ss`, used by the sanity's get_next_tcp_port helper to skip occupied
 # host ports (concurrent jobs share a SLURM node under host networking).
 RUN apt-get update \
