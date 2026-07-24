@@ -33,6 +33,26 @@ if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif
 
+if enabled_plugins.get('WQSKV')
+    wqskv_lib_path = get_option('wqskv_lib_path')
+    wqskv_inc_path = get_option('wqskv_inc_path')
+    wqskv_find_dirs = wqskv_lib_path != '' ? [wqskv_lib_path] : []
+    wqskv_lib_found = cpp.find_library('wclient_kvcache',
+                                       dirs: wqskv_find_dirs,
+                                       required: false)
+    jsoncpp_dep = dependency('jsoncpp', required: false)
+    if (not wqskv_lib_found.found() or not jsoncpp_dep.found()) and is_explicit_enable
+        if not wqskv_lib_found.found()
+            error('WQSKV plugin requested but libwclient_kvcache not found' +
+                  (wqskv_lib_path != '' ? ' in ' + wqskv_lib_path : ' (set wqskv_lib_path)'))
+        else
+            error('WQSKV plugin requested but jsoncpp dependency not found')
+        endif
+    elif wqskv_lib_found.found() and jsoncpp_dep.found()
+        subdir('wqskv')
+    endif
+endif
+
 if enabled_plugins.get('LIBFABRIC')
     if not libfabric_dep.found() and is_explicit_enable
         error('LIBFABRIC plugin requested but libfabric dependency not found')
