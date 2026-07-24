@@ -205,6 +205,19 @@ namespace {
         EXPECT_NE(err.str().find("block sizes"), std::string::npos);
     }
 
+    TEST(RawPosixParserTest, RejectsUnadvertisedPosixLocalMemoryType) {
+        auto metadata = posixMetadata();
+        metadata.memory_types = {FILE_SEG};
+        Arguments arguments{"nixlbench", "raw", "posix", "--dry-run"};
+        RawPosixRequest request;
+        bool help = false;
+        std::ostringstream out;
+        std::ostringstream err;
+
+        EXPECT_NE(parse(arguments, metadata, request, out, err, help), 0);
+        EXPECT_NE(err.str().find("DRAM_SEG"), std::string::npos) << err.str();
+    }
+
     TEST(RawPosixParserTest, ValidatesFileResourceOptions) {
         Arguments files{"nixlbench", "raw", "posix", "--threads", "1", "--num-files", "2"};
         RawPosixRequest request;
@@ -395,7 +408,6 @@ namespace {
             "--worker_type=nixl",
             "--backend=POSIX",
             "--initiator_seg_type=DRAM",
-            "--target_seg_type=DRAM",
             "--op_type=READ",
             "--check_consistency=true",
             "--total_buffer_size=65536",
