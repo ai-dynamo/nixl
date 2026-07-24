@@ -132,9 +132,6 @@ nixlUcxEp::closeImpl() {
         NIXL_ASSERT(eph == nullptr);
         return NIXL_SUCCESS;
     case nixl::ucx::ep_state_t::FAILED: {
-        if (eph == nullptr) {
-            return NIXL_ERR_REMOTE_DISCONNECT;
-        }
         const ucp_request_param_t force_req_param = {
             .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
             .flags = UCP_EP_CLOSE_FLAG_FORCE,
