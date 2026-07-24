@@ -95,6 +95,14 @@ python3 -c "import nixl; from importlib.metadata import version; print('nixl', v
 # the image, and vllm/sglang otherwise discover the cache miss deep in their own startup
 # path (burning the health-check timeout); an explicit download fails fast and clearly.
 # huggingface_hub ships in both framework images, so no extra install is needed.
+#
+# HF_ENDPOINT (injected by the CI step from the 'hf-artifactory-repository' secret) points at
+# an internal Artifactory HuggingFace mirror, so the pull goes through Artifactory instead of
+# huggingface.co and isn't subject to its shared-CI-IP rate limit; huggingface_hub reads it
+# from the environment. The long HF_HUB_*_TIMEOUT values keep the mirror's cold-cache first
+# fetch from tripping the default (10s) metadata/download timeouts.
+export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-86400}"
+export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-86400}"
 log "prefetching ${MODEL}"
 python3 -c "from huggingface_hub import snapshot_download; snapshot_download('${MODEL}')"
 
