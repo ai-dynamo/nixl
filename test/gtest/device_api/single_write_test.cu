@@ -199,6 +199,9 @@ protected:
             EXPECT_NE(backend_handle, nullptr);
             backend_handles.push_back(backend_handle);
         }
+        if (lig_->getIgnoredCount() > 0) {
+            GTEST_SKIP() << "UCX accelerated IB support not found; GPUDirect RDMA unavailable";
+        }
     }
 
     void
