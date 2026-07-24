@@ -19,7 +19,6 @@
 
 #include <atomic>
 #include <memory>
-#include <mutex>
 #include <type_traits>
 
 extern "C" {
@@ -43,28 +42,11 @@ using nixlUcxReq = void *;
 
 class nixlUcxMem;
 
-struct nixlUcxEpOps {
-    using rkey_unpack_fn_t =
-        ucs_status_t (*)(void *, ucp_ep_h, const void *, ucp_rkey_h *);
-    using close_nb_fn_t = ucs_status_ptr_t (*)(void *, ucp_ep_h, unsigned);
-
-    void *context = nullptr;
-    rkey_unpack_fn_t rkeyUnpack =
-        [](void *, ucp_ep_h ep, const void *buffer, ucp_rkey_h *rkey) {
-            return ucp_ep_rkey_unpack(ep, buffer, rkey);
-        };
-    close_nb_fn_t closeNb = [](void *, ucp_ep_h ep, unsigned mode) {
-        return ucp_ep_close_nb(ep, mode);
-    };
-};
-
 class nixlUcxEp {
 private:
     ucp_ep_h eph{nullptr};
     std::atomic<nixl::ucx::ep_state_t> state{nixl::ucx::ep_state_t::UNINITIALIZED};
     const uint32_t closeFlags_;
-    const nixlUcxEpOps ops_;
-    mutable std::mutex mutex_;
 
     void
     setState(nixl::ucx::ep_state_t new_state);
@@ -87,14 +69,10 @@ public:
         return nixl::ucx::toNixlStatus(state.load(std::memory_order_acquire));
     }
 
-    [[nodiscard]] nixl_status_t
-    unpackRkey(const void *rkey_buffer, ucp_rkey_h *rkey);
-
     nixlUcxEp(ucp_worker_h worker,
               void *addr,
               ucp_err_handling_mode_t err_handling_mode,
-              uint32_t close_flags,
-              nixlUcxEpOps ops = {});
+              uint32_t close_flags);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp &) = delete;
     nixlUcxEp &
@@ -215,8 +193,7 @@ public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
-        uint32_t ep_close_flags = 0,
-        nixlUcxEpOps ep_ops = {});
+        uint32_t ep_close_flags = 0);
 
     nixlUcxWorker(nixlUcxWorker &&) = delete;
     nixlUcxWorker(const nixlUcxWorker &) = delete;
@@ -272,7 +249,6 @@ private:
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     const ucp_err_handling_mode_t err_handling_mode_;
     const uint32_t epCloseFlags_;
-    const nixlUcxEpOps epOps_;
 };
 
 [[nodiscard]] nixl_b_params_t

@@ -86,8 +86,6 @@ err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status) {
 
 void
 nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
-    ucs_status_ptr_t request;
-    std::lock_guard<std::mutex> lock(mutex_);
     const auto current_state = state.load(std::memory_order_relaxed);
 
     NIXL_DEBUG << "ep " << eph << ": state " << current_state
@@ -105,26 +103,10 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
         return;
     case nixl::ucx::ep_state_t::CONNECTED:
         setState(nixl::ucx::ep_state_t::FAILED);
-        request = ops_.closeNb(ops_.context, ucp_ep, UCP_EP_CLOSE_MODE_FORCE);
-        if (UCS_PTR_IS_PTR(request)) {
-            ucp_request_free(request);
-        }
         return;
     }
     NIXL_FATAL << "Invalid endpoint state: " << current_state;
     std::terminate();
-}
-
-nixl_status_t
-nixlUcxEp::unpackRkey(const void *rkey_buffer, ucp_rkey_h *rkey) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    const nixl_status_t state_status = checkTxState();
-    if (state_status != NIXL_SUCCESS) {
-        return state_status;
-    }
-
-    return nixl::ucx::ucsToNixlStatus(ops_.rkeyUnpack(ops_.context, eph, rkey_buffer, rkey));
 }
 
 void
@@ -137,7 +119,6 @@ nixlUcxEp::setState(nixl::ucx::ep_state_t new_state) {
 
 nixl_status_t
 nixlUcxEp::closeImpl() {
-    std::lock_guard<std::mutex> lock(mutex_);
     ucs_status_ptr_t request = nullptr;
     const auto current_state = state.load(std::memory_order_acquire);
     const ucp_request_param_t req_param = {.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
@@ -151,22 +132,28 @@ nixlUcxEp::closeImpl() {
         NIXL_ASSERT(eph == nullptr);
         return NIXL_SUCCESS;
     case nixl::ucx::ep_state_t::FAILED:
-        // The EP was closed in error callback, just return error.
+        request = ucp_ep_close_nb(eph, UCP_EP_CLOSE_MODE_FORCE);
+        if (UCS_PTR_IS_PTR(request)) {
+            ucp_request_free(request);
+        }
         eph = nullptr;
         return NIXL_ERR_REMOTE_DISCONNECT;
     case nixl::ucx::ep_state_t::CONNECTED:
         request = ucp_ep_close_nbx(eph, &req_param);
         if (request == nullptr) {
+            setState(nixl::ucx::ep_state_t::DISCONNECTED);
             eph = nullptr;
             return NIXL_SUCCESS;
         }
 
         if (UCS_PTR_IS_ERR(request)) {
+            setState(nixl::ucx::ep_state_t::FAILED);
             eph = nullptr;
             return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
         }
 
         ucp_request_free(request);
+        setState(nixl::ucx::ep_state_t::DISCONNECTED);
         eph = nullptr;
         return NIXL_SUCCESS;
     }
@@ -177,10 +164,8 @@ nixlUcxEp::closeImpl() {
 nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
                      void *addr,
                      ucp_err_handling_mode_t err_handling_mode,
-                     uint32_t close_flags,
-                     nixlUcxEpOps ops)
-    : closeFlags_{close_flags},
-      ops_{ops} {
+                     uint32_t close_flags)
+    : closeFlags_{close_flags} {
     ucp_ep_params_t ep_params;
     nixl_status_t status;
 
@@ -547,12 +532,10 @@ nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
 
 nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
                              ucp_err_handling_mode_t err_handling_mode,
-                             uint32_t ep_close_flags,
-                             nixlUcxEpOps ep_ops)
+                             uint32_t ep_close_flags)
     : worker(createUcpWorker(ctx), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode),
-      epCloseFlags_(ep_close_flags),
-      epOps_(ep_ops) {}
+      epCloseFlags_(ep_close_flags) {}
 
 std::string
 nixlUcxWorker::epAddr() {
@@ -573,8 +556,7 @@ nixlUcxWorker::epAddr() {
 std::unique_ptr<nixlUcxEp>
 nixlUcxWorker::connect(void *addr, std::size_t size) {
     try {
-        return std::make_unique<nixlUcxEp>(
-            worker.get(), addr, err_handling_mode_, epCloseFlags_, epOps_);
+        return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, epCloseFlags_);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "UCX endpoint create failed: " << e.what();

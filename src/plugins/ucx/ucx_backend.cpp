@@ -966,14 +966,16 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
             // TODO: err: remote connection not found
             return NIXL_ERR_NOT_FOUND;
         }
+        for (size_t i = 0; i < workers_.size(); ++i) {
+            const nixl_status_t status = it->second->getEp(i)->checkTxState();
+            if (status != NIXL_SUCCESS) {
+                return status;
+            }
+        }
         // nixlSerDes::_stringToBytes() was used to "unpack" blob here.
         output = new nixlUcxPublicMetadata(
             it->second, makePublicMetadataRkeys(it->second, workers_.size(), blob.data()));
         return NIXL_SUCCESS;
-    }
-    catch (const nixl::ucx::rkey_error &e) {
-        NIXL_ERROR << e.what();
-        return e.status();
     }
     catch (const std::runtime_error &e) {
         NIXL_ERROR << e.what();
