@@ -22,26 +22,7 @@
 
 #include "ucx_utils.h"
 #include "rkey.h"
-// TODO: meson conditional build for CUDA
-// #define USE_VRAM
-
-#ifdef USE_VRAM
-
-#include <cuda.h>
-#include <cuda_runtime.h>
-
-int gpu_id = 0;
-
-static void
-checkCudaError(cudaError_t result, const char *message) {
-    if (result != cudaSuccess) {
-        std::cerr << message << " (Error code: " << result << " - " << cudaGetErrorString(result)
-                  << ")" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-}
-#endif
-
+#include "gpu_utils.h"
 
 using namespace std;
 
@@ -94,9 +75,10 @@ main() {
     nixl_mem_t nixl_mem_type;
 
 #ifdef USE_VRAM
-    checkCudaError(cudaSetDevice(gpu_id), "Failed to set device");
-    checkCudaError(cudaMalloc(&buffer[0], buf_size), "Failed to allocate CUDA buffer 0");
-    checkCudaError(cudaMalloc(&buffer[1], buf_size), "Failed to allocate CUDA buffer 1");
+    int gpu_id = 0;
+    gpuSetDevice(gpu_id, "Failed to set device");
+    gpuMalloc((void **)&buffer[0], buf_size, "Failed to allocate GPU buffer 0");
+    gpuMalloc((void **)&buffer[1], buf_size, "Failed to allocate GPU buffer 1");
     nixl_mem_type = VRAM_SEG;
 #else
     buffer[0] = (uint8_t *)calloc(1, buf_size);
@@ -125,8 +107,8 @@ main() {
      * ========================================= */
 
 #ifdef USE_VRAM
-    checkCudaError(cudaMemset(buffer[1], 0xbb, buf_size), "Failed to memset");
-    checkCudaError(cudaMemset(buffer[0], 0xda, buf_size), "Failed to memset");
+    gpuMemset(buffer[1], 0xbb, buf_size, "Failed to memset");
+    gpuMemset(buffer[0], 0xda, buf_size, "Failed to memset");
 #else
     memset(buffer[1], 0xbb, buf_size);
     memset(buffer[0], 0xda, buf_size);
@@ -141,8 +123,7 @@ main() {
     completeRequest(w, std::string("WRITE"), true, ret, req);
 
 #ifdef USE_VRAM
-    checkCudaError(cudaMemcpy(chk_buffer, buffer[1], buf_size, cudaMemcpyDeviceToHost),
-                   "Failed to memcpy");
+    gpuMemcpyD2H(chk_buffer, buffer[1], buf_size, "Failed to memcpy");
 #else
     memcpy(chk_buffer, buffer[1], buf_size);
 #endif
@@ -159,10 +140,9 @@ main() {
      * ========================================= */
 
 #ifdef USE_VRAM
-    checkCudaError(cudaMemset(buffer[0], 0xbb, buf_size), "Failed to memset");
-    checkCudaError(cudaMemset(buffer[1], 0xbb, buf_size / 3), "Failed to memset");
-    checkCudaError(cudaMemset(buffer[1] + buf_size / 3, 0xda, buf_size - buf_size / 3),
-                   "Failed to memset");
+    gpuMemset(buffer[0], 0xbb, buf_size, "Failed to memset");
+    gpuMemset(buffer[1], 0xbb, buf_size / 3, "Failed to memset");
+    gpuMemset(buffer[1] + buf_size / 3, 0xda, buf_size - buf_size / 3, "Failed to memset");
 #else
     memset(buffer[0], 0xbb, buf_size);
     memset(buffer[1], 0xbb, buf_size / 3);
@@ -178,8 +158,7 @@ main() {
     completeRequest(w, std::string("READ"), true, ret, req);
 
 #ifdef USE_VRAM
-    checkCudaError(cudaMemcpy(chk_buffer, buffer[0], buf_size, cudaMemcpyDeviceToHost),
-                   "Failed to memcpy");
+    gpuMemcpyD2H(chk_buffer, buffer[0], buf_size, "Failed to memcpy");
 #else
     memcpy(chk_buffer, buffer[0], buf_size);
 #endif
@@ -199,8 +178,8 @@ main() {
 
 
 #ifdef USE_VRAM
-    checkCudaError(cudaFree(buffer[0]), "Failed to allocate CUDA buffer 0");
-    checkCudaError(cudaFree(buffer[1]), "Failed to allocate CUDA buffer 0");
+    gpuFree(buffer[0], "Failed to free GPU buffer 0");
+    gpuFree(buffer[1], "Failed to free GPU buffer 1");
 #else
     free(buffer[0]);
     free(buffer[1]);
