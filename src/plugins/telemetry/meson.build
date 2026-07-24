@@ -14,6 +14,7 @@
 # limitations under the License.
 
 subdir('prometheus')
+subdir('prometheus_mp')
 
 # DOCA telemetry exporter: an optional DOCA pkg-config dependency, gated exactly
 # like the GPUNETIO backend (src/plugins/meson.build). Built by default when the

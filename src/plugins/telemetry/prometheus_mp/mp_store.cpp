@@ -1,0 +1,275 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#include "mp_store.h"
+
+#include "common/nixl_log.h"
+#include "common/nixl_time.h"
+
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <system_error>
+#include <vector>
+
+namespace nixl::telemetry::mp {
+
+namespace {
+
+    // "NIXLMPS1" as a little-endian tag; changing the layout must change either this
+    // or MP_STORE_SCHEMA_VERSION so stale-format files are rejected.
+    constexpr uint64_t MP_STORE_MAGIC = 0x3153504d4c58494eULL;
+
+    constexpr std::size_t MP_MAX_AGENT_NAME = 256;
+    constexpr std::size_t MP_MAX_HOSTNAME = 128;
+    constexpr std::size_t MP_MAX_LOCAL_RANK = 64;
+
+    // Fixed on-disk layout. Plain trivially-copyable POD operated on with __atomic
+    // builtins (not std::atomic) so it is safe to memset/reinterpret over an mmap'd
+    // region shared between processes. Field order keeps every uint64 8-byte aligned.
+    struct storeLayout {
+        uint64_t magic;
+        uint32_t schemaVersion;
+        uint32_t slotCount;
+        int64_t pid;
+        uint64_t startTime;
+        uint64_t lastUpdateNs;
+        uint64_t instance;
+        char agentName[MP_MAX_AGENT_NAME];
+        char hostname[MP_MAX_HOSTNAME];
+        char localRank[MP_MAX_LOCAL_RANK];
+        uint64_t counters[MP_STORE_SLOT_COUNT];
+        uint64_t gauges[MP_STORE_SLOT_COUNT];
+    };
+
+    void
+    copyField(char *dst, std::size_t cap, const std::string &src, const char *what) {
+        if (src.size() >= cap) {
+            NIXL_WARN << "prometheus_mp: " << what << " '" << src << "' exceeds " << (cap - 1)
+                      << " chars; truncating in telemetry store";
+        }
+        const std::size_t n = std::min(src.size(), cap - 1);
+        std::memcpy(dst, src.data(), n);
+        dst[n] = '\0';
+    }
+
+    [[nodiscard]] std::string
+    readField(const char *src, std::size_t cap) {
+        const std::size_t n = ::strnlen(src, cap);
+        return std::string(src, n);
+    }
+
+} // namespace
+
+std::string
+makeStoreFileName(int64_t pid, uint64_t start_time, uint64_t instance) {
+    return std::string(MP_STORE_FILE_PREFIX) + std::to_string(pid) + "." +
+        std::to_string(start_time) + "." + std::to_string(instance) +
+        std::string(MP_STORE_FILE_SUFFIX);
+}
+
+uint64_t
+readProcessStartTime(int64_t pid) {
+    std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+    if (!stat.is_open()) {
+        return 0;
+    }
+    std::string content((std::istreambuf_iterator<char>(stat)), std::istreambuf_iterator<char>());
+
+    // comm (field 2) is wrapped in parentheses and may itself contain spaces or
+    // ')', so split on the LAST ')': everything after it starts at field 3.
+    const auto close = content.rfind(')');
+    if (close == std::string::npos) {
+        return 0;
+    }
+
+    std::istringstream rest(content.substr(close + 1));
+    std::vector<std::string> tokens{std::istream_iterator<std::string>(rest),
+                                    std::istream_iterator<std::string>()};
+    // starttime is field 22; tokens[0] is field 3, so index 22 - 3 = 19.
+    constexpr std::size_t kStartTimeIndex = 19;
+    if (tokens.size() <= kStartTimeIndex) {
+        return 0;
+    }
+    try {
+        return static_cast<uint64_t>(std::stoull(tokens[kStartTimeIndex]));
+    }
+    catch (const std::exception &) {
+        return 0;
+    }
+}
+
+storeWriter::storeWriter(std::filesystem::path path,
+                         const std::string &agent_name,
+                         const std::string &hostname,
+                         const std::string &local_rank,
+                         uint64_t instance)
+    : path_(std::move(path)),
+      mappingSize_(sizeof(storeLayout)) {
+    const int fd = ::open(path_.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
+    if (fd < 0) {
+        throw std::runtime_error("prometheus_mp: cannot open telemetry store '" + path_.string() +
+                                 "': " + std::strerror(errno));
+    }
+
+    if (::ftruncate(fd, static_cast<off_t>(mappingSize_)) != 0) {
+        const std::string reason = std::strerror(errno);
+        ::close(fd);
+        throw std::runtime_error("prometheus_mp: cannot size telemetry store '" + path_.string() +
+                                 "': " + reason);
+    }
+
+    mapping_ = ::mmap(nullptr, mappingSize_, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ::close(fd);
+    if (mapping_ == MAP_FAILED) {
+        mapping_ = nullptr;
+        throw std::runtime_error("prometheus_mp: cannot map telemetry store '" + path_.string() +
+                                 "': " + std::strerror(errno));
+    }
+
+    auto *layout = static_cast<storeLayout *>(mapping_);
+    std::memset(layout, 0, mappingSize_);
+    layout->schemaVersion = MP_STORE_SCHEMA_VERSION;
+    layout->slotCount = static_cast<uint32_t>(MP_STORE_SLOT_COUNT);
+    layout->pid = static_cast<int64_t>(::getpid());
+    layout->startTime = readProcessStartTime(layout->pid);
+    layout->instance = instance;
+    copyField(layout->agentName, MP_MAX_AGENT_NAME, agent_name, "agent name");
+    copyField(layout->hostname, MP_MAX_HOSTNAME, hostname, "hostname");
+    copyField(layout->localRank, MP_MAX_LOCAL_RANK, local_rank, "local_rank");
+    __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELAXED);
+    // Publish the magic last so a concurrent reader never validates a
+    // half-initialized header.
+    __atomic_store_n(&layout->magic, MP_STORE_MAGIC, __ATOMIC_RELEASE);
+}
+
+storeWriter::~storeWriter() {
+    if (mapping_ != nullptr) {
+        ::munmap(mapping_, mappingSize_);
+        mapping_ = nullptr;
+    }
+    std::error_code ec;
+    std::filesystem::remove(path_, ec);
+}
+
+void
+storeWriter::touch() noexcept {
+    auto *layout = static_cast<storeLayout *>(mapping_);
+    __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELAXED);
+}
+
+void
+storeWriter::addCounter(nixl_telemetry_event_type_t type, uint64_t delta) noexcept {
+    const auto idx = static_cast<std::size_t>(type);
+    if (idx >= MP_STORE_SLOT_COUNT) {
+        return;
+    }
+    auto *layout = static_cast<storeLayout *>(mapping_);
+    __atomic_fetch_add(&layout->counters[idx], delta, __ATOMIC_RELAXED);
+    touch();
+}
+
+void
+storeWriter::setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept {
+    const auto idx = static_cast<std::size_t>(type);
+    if (idx >= MP_STORE_SLOT_COUNT) {
+        return;
+    }
+    auto *layout = static_cast<storeLayout *>(mapping_);
+    __atomic_store_n(&layout->gauges[idx], value, __ATOMIC_RELAXED);
+    touch();
+}
+
+void
+storeWriter::refreshHeartbeat() noexcept {
+    touch();
+}
+
+std::optional<storeSnapshot>
+readStoreSnapshot(const std::filesystem::path &path) {
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        // Missing/unreadable file is not an error here (peer may have exited).
+        return std::nullopt;
+    }
+
+    struct stat st{};
+    if (::fstat(fd, &st) != 0 || static_cast<std::size_t>(st.st_size) < sizeof(storeLayout)) {
+        // Too small: likely a file mid-creation by a peer. Skip quietly.
+        ::close(fd);
+        return std::nullopt;
+    }
+
+    void *mapping = ::mmap(nullptr, sizeof(storeLayout), PROT_READ, MAP_SHARED, fd, 0);
+    ::close(fd);
+    if (mapping == MAP_FAILED) {
+        NIXL_WARN << "prometheus_mp: cannot map telemetry store '" << path.string()
+                  << "': " << std::strerror(errno);
+        return std::nullopt;
+    }
+
+    const std::unique_ptr<void, void (*)(void *)> guard(
+        mapping, [](void *p) noexcept { ::munmap(p, sizeof(storeLayout)); });
+
+    const auto *layout = static_cast<const storeLayout *>(mapping);
+
+    const uint64_t magic = __atomic_load_n(&layout->magic, __ATOMIC_ACQUIRE);
+    if (magic == 0) {
+        // Zeroed header: either a store still being initialized by a live process,
+        // or an orphan left by a process that died mid-creation. Skip quietly (no
+        // WARN); the collector reaps stale orphans by file age.
+        return std::nullopt;
+    }
+    if (magic != MP_STORE_MAGIC) {
+        NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
+                  << "' with bad magic";
+        return std::nullopt;
+    }
+    if (layout->schemaVersion != MP_STORE_SCHEMA_VERSION ||
+        layout->slotCount != MP_STORE_SLOT_COUNT) {
+        NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
+                  << "' with incompatible schema (version " << layout->schemaVersion << ", slots "
+                  << layout->slotCount << ")";
+        return std::nullopt;
+    }
+
+    storeSnapshot snap;
+    snap.pid = layout->pid;
+    snap.startTime = layout->startTime;
+    snap.instance = layout->instance;
+    snap.lastUpdateNs = __atomic_load_n(&layout->lastUpdateNs, __ATOMIC_ACQUIRE);
+    snap.agentName = readField(layout->agentName, MP_MAX_AGENT_NAME);
+    snap.hostname = readField(layout->hostname, MP_MAX_HOSTNAME);
+    snap.localRank = readField(layout->localRank, MP_MAX_LOCAL_RANK);
+    for (std::size_t i = 0; i < MP_STORE_SLOT_COUNT; ++i) {
+        snap.counters[i] = __atomic_load_n(&layout->counters[i], __ATOMIC_RELAXED);
+        snap.gauges[i] = __atomic_load_n(&layout->gauges[i], __ATOMIC_RELAXED);
+    }
+
+    return snap;
+}
+
+} // namespace nixl::telemetry::mp
