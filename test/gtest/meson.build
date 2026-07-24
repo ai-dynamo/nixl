@@ -90,6 +90,8 @@ gtest_sources = [
     'telemetry_test.cpp',
     'telemetry_prometheus_test.cpp',
     'telemetry_histogram_test.cpp',
+    'telemetry_prometheus_stress_test.cpp',
+    'telemetry_stress_test.cpp',
     'telemetry_benchmark.cpp',
     'nixl_duration_test.cpp',
     'configuration.cpp'
