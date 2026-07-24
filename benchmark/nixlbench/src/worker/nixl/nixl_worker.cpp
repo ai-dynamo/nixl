@@ -1551,26 +1551,40 @@ execTransferLoop(nixlAgent *agent,
                  const std::vector<xferBenchIOV> &local_iov,
                  const std::vector<xferBenchIOV> &remote_iov,
                  const std::atomic<int> *terminate_ptr = nullptr) {
-    const int depth = std::min(xferBenchConfig::pipeline_depth, num_iter);
-    if (depth < xferBenchConfig::pipeline_depth) {
-        std::cout << "Warning: pipeline_depth (" << xferBenchConfig::pipeline_depth
-                  << ") exceeds num_iter (" << num_iter << "), capping to " << depth << std::endl;
+    // Cap the in-flight window to what this run can actually support: never
+    // more requests in flight than there are iterations, and never more slots
+    // than there are descriptors to fill them (empty slots have nothing to
+    // transfer). The descriptor count need not be a multiple of the depth --
+    // any remainder is spread one entry per slot across the leading slots, so
+    // the pipeline works for every (batch_size, pipeline_depth, num_iter)
+    // combination instead of failing on the non-divisible ones.
+    int depth = std::min(xferBenchConfig::pipeline_depth, num_iter);
+    if (!local_iov.empty()) {
+        depth = std::min(depth, static_cast<int>(local_iov.size()));
+    }
+    depth = std::max(depth, 1);
+    // Report the cap once, from the master thread only: this runs inside an
+    // omp parallel region, so an unguarded print is emitted per thread and the
+    // N copies interleave into garbled output. Skip single-iteration passes
+    // (setup/warmup), where capping to 1 is trivially expected and not useful.
+    if (depth < xferBenchConfig::pipeline_depth && num_iter > 1 &&
+        omp_get_thread_num() == 0) {
+        std::cout << "Warning: capping pipeline_depth from " << xferBenchConfig::pipeline_depth
+                  << " to " << depth << " (num_iter=" << num_iter
+                  << ", descriptors=" << local_iov.size() << ")" << std::endl;
     }
     const bool recreate = xferBenchConfig::recreate_xfer;
 
-    if (local_iov.size() % depth != 0) {
-        std::cerr << "Error: descriptor count (" << local_iov.size()
-                  << ") is not evenly divisible by pipeline depth (" << depth << ")" << std::endl;
-        return -1;
-    }
-    const size_t entries_per_slot = local_iov.size() / depth;
+    const size_t base_entries = local_iov.size() / depth;
+    const size_t extra_entries = local_iov.size() % depth;
 
     std::vector<slotState> slots(depth);
+    size_t off = 0;
     for (int s = 0; s < depth; s++) {
-        auto lb = local_iov.begin() + s * entries_per_slot;
-        auto rb = remote_iov.begin() + s * entries_per_slot;
-        slots[s].local_iov.assign(lb, lb + entries_per_slot);
-        slots[s].remote_iov.assign(rb, rb + entries_per_slot);
+        const size_t cnt = base_entries + (static_cast<size_t>(s) < extra_entries ? 1 : 0);
+        slots[s].local_iov.assign(local_iov.begin() + off, local_iov.begin() + off + cnt);
+        slots[s].remote_iov.assign(remote_iov.begin() + off, remote_iov.begin() + off + cnt);
+        off += cnt;
     }
 
     int issued = 0;
