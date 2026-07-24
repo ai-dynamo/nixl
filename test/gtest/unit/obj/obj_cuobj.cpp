@@ -49,7 +49,7 @@ INSTANTIATE_TEST_SUITE_P(ObjAccelClientTests,
  *
  * Exercises the Dell S3-over-RDMA code path by configuring the OBJ engine
  * with accelerated=true and type=dell. Uses mockDellS3Client to simulate
- * RDMA put/get operations via the iDellS3RdmaClient interface without
+ * RDMA put/get operations via the iS3RdmaClient interface without
  * requiring real cuobjclient or ObjectScale infrastructure.
  */
 class objDellTestFixture : public objTestBase, public testing::Test {

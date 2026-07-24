@@ -5,7 +5,7 @@
 
 #include "engine_impl.h"
 #include "client.h"
-#include "rdma_interface.h"
+#include "s3_accel/rdma_interface.h"
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
 #include <memory>
@@ -556,33 +556,33 @@ S3DellObsObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
         // S3 client interface signals completion via a callback, but NIXL API polls request handle
         // for the status code. Use future/promise pair to bridge the gap.
         // Cast to RDMA-capable client to access RDMA methods
-        auto rdmaClient = dynamic_cast<iDellS3RdmaClient *>(s3Client_.get());
-        if (!rdmaClient) {
-            NIXL_ERROR << "Dell RDMA operations require iDellS3RdmaClient";
+        auto rdma_client = dynamic_cast<iS3RdmaClient *>(s3Client_.get());
+        if (!rdma_client) {
+            NIXL_ERROR << "Dell RDMA operations require iS3RdmaClient";
             status_promise->set_value(NIXL_ERR_BACKEND);
             return NIXL_IN_PROG;
         }
 
         if (operation == NIXL_WRITE) {
-            rdmaClient->putObjectRdmaAsync(req.obj_key,
-                                           req.addr,
-                                           req.size,
-                                           req.offset,
-                                           req.rdma_desc,
-                                           [status_promise](bool success) {
-                                               status_promise->set_value(
-                                                   success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
-                                           });
+            rdma_client->putObjectRdmaAsync(req.obj_key,
+                                            req.addr,
+                                            req.size,
+                                            req.offset,
+                                            req.rdma_desc,
+                                            [status_promise](bool success) {
+                                                status_promise->set_value(
+                                                    success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
+                                            });
         } else {
-            rdmaClient->getObjectRdmaAsync(req.obj_key,
-                                           req.addr,
-                                           req.size,
-                                           req.offset,
-                                           req.rdma_desc,
-                                           [status_promise](bool success) {
-                                               status_promise->set_value(
-                                                   success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
-                                           });
+            rdma_client->getObjectRdmaAsync(req.obj_key,
+                                            req.addr,
+                                            req.size,
+                                            req.offset,
+                                            req.rdma_desc,
+                                            [status_promise](bool success) {
+                                                status_promise->set_value(
+                                                    success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
+                                            });
         }
     }
 

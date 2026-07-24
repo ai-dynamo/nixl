@@ -12,7 +12,7 @@
 #include <aws/s3/S3Client.h>
 #include <aws/core/utils/memory/stl/AWSString.h>
 #include "s3_accel/client.h"
-#include "rdma_interface.h"
+#include "s3_accel/rdma_interface.h"
 #include "nixl_types.h"
 
 /**
@@ -20,7 +20,7 @@
  * This client presents Put and GetObject interfaces to enable RDMA for S3-compatible storage using
  * the cuObject API
  */
-class awsS3DellObsClient : public awsS3AccelClient, public iDellS3RdmaClient {
+class awsS3DellObsClient : public awsS3AccelClient, public iS3RdmaClient {
 public:
     /**
      * Constructor that creates an AWS S3 client for use with Dell ObjectScale from custom
@@ -49,7 +49,7 @@ public:
                        size_t data_len,
                        size_t offset,
                        std::string_view rdma_desc,
-                       put_object_callback_t callback);
+                       put_object_callback_t callback) override;
 
     /**
      * Asynchronously gets an object from S3 using RDMA acceleration.
@@ -67,7 +67,7 @@ public:
                        size_t data_len,
                        size_t offset,
                        std::string_view rdma_desc,
-                       get_object_callback_t callback);
+                       get_object_callback_t callback) override;
 };
 
 #endif // NIXL_OBJ_PLUGIN_S3_DELL_CLIENT_H
