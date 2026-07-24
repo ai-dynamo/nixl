@@ -45,7 +45,7 @@ class nixlUcxMem;
 class nixlUcxEp {
 private:
     ucp_ep_h eph{nullptr};
-    std::atomic<nixl::ucx::ep_state_t> state{nixl::ucx::ep_state_t::UNINITIALIZED};
+    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::UNINITIALIZED};
     const uint32_t closeFlags_;
 
     void
@@ -66,7 +66,7 @@ public:
 
     [[nodiscard]] nixl_status_t
     checkTxState() const noexcept {
-        return nixl::ucx::toNixlStatus(state.load(std::memory_order_acquire));
+        return nixl::ucx::toNixlStatus(state_.load(std::memory_order_acquire));
     }
 
     nixlUcxEp(ucp_worker_h worker,

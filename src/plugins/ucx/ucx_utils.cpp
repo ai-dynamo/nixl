@@ -86,7 +86,7 @@ err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status) {
 
 void
 nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
-    const auto current_state = state.load(std::memory_order_relaxed);
+    const auto current_state = state_.load(std::memory_order_relaxed);
 
     NIXL_DEBUG << "ep " << eph << ": state " << current_state
                << ", UCX error handling callback was invoked with status " << status << " ("
@@ -111,16 +111,16 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
 
 void
 nixlUcxEp::setState(nixl::ucx::ep_state_t new_state) {
-    const auto old_state = state.load(std::memory_order_relaxed);
+    const auto old_state = state_.load(std::memory_order_relaxed);
     NIXL_ASSERT(new_state != old_state);
     NIXL_DEBUG << "ep " << eph << ": state " << old_state << " -> " << new_state;
-    state.store(new_state, std::memory_order_release);
+    state_.store(new_state, std::memory_order_release);
 }
 
 nixl_status_t
 nixlUcxEp::closeImpl() {
     ucs_status_ptr_t request = nullptr;
-    const auto current_state = state.load(std::memory_order_acquire);
+    const auto current_state = state_.load(std::memory_order_acquire);
     const ucp_request_param_t req_param = {.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
                                            .flags = closeFlags_};
 
