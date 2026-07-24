@@ -14,11 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef _NIXL_PARAMS_H
-#define _NIXL_PARAMS_H
+#ifndef NIXL_SRC_API_CPP_NIXL_PARAMS_H
+#define NIXL_SRC_API_CPP_NIXL_PARAMS_H
 
+#include <map>
 #include <string>
+#include <chrono>
 #include <cstdint>
+
 #include "nixl_types.h"
 
 /**
@@ -67,6 +70,19 @@ struct nixlAgentConfig {
      *      Timeout for waiting for metadata changes when watching etcd keys.
      */
     std::chrono::microseconds etcdWatchTimeout = kDefaultEtcdWatchTimeout;
+
+    /**
+     * @var Callback functions to be called on received notifs.
+     *      The map keys are prefixes, when a received notification
+     *      begins with a prefix the corresponding function will be
+     *      called. Not all backends support notification callbacks.
+     *      The empty prefix can be used to set a default handler.
+     *      If no default handler is set the notifications that do
+     *      not match any prefix will be available via getNotifs().
+     *      It is an error to create an Agent with any callbacks
+     *      and instantiate a backend that does not support them.
+     */
+    std::map<std::string, nixl_notif_callback_t> notifCallbacks;
 
     /**
      * @brief  Default constructor.
