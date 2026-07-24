@@ -131,13 +131,22 @@ nixlUcxEp::closeImpl() {
         // Nothing to do.
         NIXL_ASSERT(eph == nullptr);
         return NIXL_SUCCESS;
-    case nixl::ucx::ep_state_t::FAILED:
-        request = ucp_ep_close_nb(eph, UCP_EP_CLOSE_MODE_FORCE);
+    case nixl::ucx::ep_state_t::FAILED: {
+        if (eph == nullptr) {
+            return NIXL_ERR_REMOTE_DISCONNECT;
+        }
+        const ucp_request_param_t force_req_param = {
+            .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+            .flags = UCP_EP_CLOSE_FLAG_FORCE,
+        };
+        request = ucp_ep_close_nbx(eph, &force_req_param);
         if (UCS_PTR_IS_PTR(request)) {
             ucp_request_free(request);
         }
         eph = nullptr;
+        setState(nixl::ucx::ep_state_t::DISCONNECTED);
         return NIXL_ERR_REMOTE_DISCONNECT;
+    }
     case nixl::ucx::ep_state_t::CONNECTED:
         request = ucp_ep_close_nbx(eph, &req_param);
         if (request == nullptr) {
@@ -147,8 +156,8 @@ nixlUcxEp::closeImpl() {
         }
 
         if (UCS_PTR_IS_ERR(request)) {
-            setState(nixl::ucx::ep_state_t::FAILED);
             eph = nullptr;
+            setState(nixl::ucx::ep_state_t::DISCONNECTED);
             return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
         }
 
