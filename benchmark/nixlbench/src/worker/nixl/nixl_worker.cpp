@@ -92,7 +92,8 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     return config.str();
 }
 
-xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
+xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices,
+                                         const std::optional<nixl_b_params_t> &plugin_parameters)
     : xferBenchWorker() {
     seg_type = GET_SEG_TYPE(isInitiator());
 
@@ -130,6 +131,11 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     }
 
     agent->getPluginParams(backend_name, mems, backend_params);
+    if (plugin_parameters) {
+        for (const auto &[name, value] : *plugin_parameters) {
+            backend_params[name] = value;
+        }
+    }
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
@@ -183,25 +189,29 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
         std::cout << "GDS MT Num threads: " << xferBenchConfig::gds_mt_num_threads << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
-        // Set API type parameter for POSIX backend
-        if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
-            backend_params["use_aio"] = "true";
-            backend_params["use_uring"] = "false";
-            backend_params["use_posix_aio"] = "false";
-        } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
-            backend_params["use_aio"] = "false";
-            backend_params["use_uring"] = "true";
-            backend_params["use_posix_aio"] = "false";
-        } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_POSIXAIO) {
-            backend_params["use_aio"] = "false";
-            backend_params["use_uring"] = "false";
-            backend_params["use_posix_aio"] = "true";
+        if (!plugin_parameters) {
+            // Preserve the existing flags-only POSIX parameter assembly.
+            if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
+                backend_params["use_aio"] = "true";
+                backend_params["use_uring"] = "false";
+                backend_params["use_posix_aio"] = "false";
+            } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
+                backend_params["use_aio"] = "false";
+                backend_params["use_uring"] = "true";
+                backend_params["use_posix_aio"] = "false";
+            } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_POSIXAIO) {
+                backend_params["use_aio"] = "false";
+                backend_params["use_uring"] = "false";
+                backend_params["use_posix_aio"] = "true";
+            }
+            std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
+                      << std::endl;
+            backend_params["ios_pool_size"] = std::to_string(xferBenchConfig::posix_ios_pool_size);
+            backend_params["kernel_queue_size"] =
+                std::to_string(xferBenchConfig::posix_kernel_queue_size);
+        } else {
+            std::cout << "POSIX backend with plugin parameters from raw CLI" << std::endl;
         }
-        std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
-                  << std::endl;
-        backend_params["ios_pool_size"] = std::to_string(xferBenchConfig::posix_ios_pool_size);
-        backend_params["kernel_queue_size"] =
-            std::to_string(xferBenchConfig::posix_kernel_queue_size);
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
         std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
                   << xferBenchConfig::gpunetio_device_list << " OOB interface "
