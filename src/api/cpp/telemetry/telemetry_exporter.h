@@ -22,6 +22,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 inline constexpr char telemetryExporterVar[] = "NIXL_TELEMETRY_EXPORTER";
 
@@ -75,7 +76,52 @@ public:
     virtual nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) = 0;
 
+    /**
+     * @brief Runs @p body with a batch open around it.
+     *
+     * Exporters may use the batch boundary to share per-batch work across the
+     * exportEvent() calls made inside @p body (e.g. a single timestamp). The
+     * batch begins before @p body runs and ends when it returns (including on
+     * exception). Batches are not nested.
+     *
+     * @tparam Body Callable invocable with no arguments.
+     * @param body Callable run once while the batch is open.
+     */
+    template<typename Body>
+    void
+    withBatch(Body &&body) {
+        const batchScope scope{*this};
+        std::forward<Body>(body)();
+    }
+
 private:
+    class batchScope {
+    public:
+        explicit batchScope(nixlTelemetryExporter &exporter) noexcept : exporter_(exporter) {
+            exporter_.onBatchBegin();
+        }
+
+        ~batchScope() {
+            exporter_.onBatchEnd();
+        }
+
+        batchScope(const batchScope &) = delete;
+        batchScope(batchScope &&) = delete;
+        batchScope &
+        operator=(const batchScope &) = delete;
+        batchScope &
+        operator=(batchScope &&) = delete;
+
+    private:
+        nixlTelemetryExporter &exporter_;
+    };
+
+    virtual void
+    onBatchBegin() noexcept {}
+
+    virtual void
+    onBatchEnd() noexcept {}
+
     const size_t maxEventsBuffered_;
 };
 
