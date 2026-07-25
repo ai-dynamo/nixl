@@ -65,6 +65,7 @@ public:
         // tries to bind and the port decides.
         if (!fd_.valid()) {
             won_ = true;
+            warnUnusable(strerror(errno));
             return;
         }
         if (::flock(fd_.get(), LOCK_EX | LOCK_NB) == 0) {
@@ -73,9 +74,7 @@ public:
         }
         won_ = errno != EWOULDBLOCK;
         if (won_) {
-            NIXL_WARN << "prometheus_mp: cannot lock " << ownerLockFileName << " ("
-                      << strerror(errno)
-                      << "); falling back to letting the port bind decide which process serves";
+            warnUnusable(strerror(errno));
         }
     }
 
@@ -121,6 +120,16 @@ public:
     }
 
 private:
+    // Every rank then believes it was elected, so those that go on to lose the
+    // bind report the port as held from outside the run while a sibling is in
+    // fact serving. This is the context that makes those reports readable.
+    static void
+    warnUnusable(const char *reason) {
+        NIXL_WARN << "prometheus_mp: cannot use " << ownerLockFileName << " (" << reason
+                  << "); falling back to letting the port bind decide which process serves, so "
+                  << "a later report of the port being held from outside the run may be a sibling";
+    }
+
     scopedFd fd_;
     bool won_ = false;
 };
