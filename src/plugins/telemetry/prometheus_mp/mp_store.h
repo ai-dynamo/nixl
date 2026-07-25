@@ -159,12 +159,15 @@ private:
 /**
  * @brief Reads a consistent snapshot of a store file written by another process.
  * @param path Path to a peer's store file.
- * @return The snapshot, or std::nullopt if the file is missing, too small, or
- *         has a bad magic / incompatible schema version (a WARN is logged for a
- *         present-but-invalid file).
+ * @param[out] content_invalid Set to true only when the file was read and its
+ *        content is unusable (too small, bad/zero magic, incompatible schema) --
+ *        i.e. a genuine orphan safe to reap. Left false when the file could not
+ *        be opened or mapped (missing, or a transient error such as EMFILE/
+ *        ENOMEM), so a live peer is never mistaken for an orphan. Optional.
+ * @return The snapshot, or std::nullopt on any of the above.
  */
 [[nodiscard]] std::optional<storeSnapshot>
-readStoreSnapshot(const std::filesystem::path &path);
+readStoreSnapshot(const std::filesystem::path &path, bool *content_invalid = nullptr);
 
 /**
  * @brief Reads a process's start time (/proc/<pid>/stat field 22, clock ticks).

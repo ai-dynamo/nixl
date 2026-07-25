@@ -222,11 +222,14 @@ nixlMultiprocessCollector::Collect() const {
         if (!entry.is_regular_file(ec) || !nameMatchesStore(entry.path().filename().string())) {
             continue;
         }
-        auto snap = readStoreSnapshot(entry.path());
+        bool content_invalid = false;
+        auto snap = readStoreSnapshot(entry.path(), &content_invalid);
         if (!snap) {
-            // Unparsable (mid-init, orphaned, or incompatible): reap only if it is
-            // old enough to not be a store a live process is currently creating.
-            if (reapStale_ && invalidFileReapable(entry.path(), staleTtl_)) {
+            // Reap only genuinely bad content (bad/zero magic, wrong schema,
+            // truncated) that is old enough to not be mid-creation. A transient
+            // open/mmap failure leaves content_invalid false, so a healthy peer we
+            // simply failed to read is never unlinked.
+            if (reapStale_ && content_invalid && invalidFileReapable(entry.path(), staleTtl_)) {
                 std::error_code rm_ec;
                 std::filesystem::remove(entry.path(), rm_ec);
             }

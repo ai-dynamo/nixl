@@ -73,8 +73,10 @@ TEST_F(MpStoreTest, WriteReadRoundTrip) {
     writer.setGauge(TX_BYTES, 1000);
     writer.addCounter(ERR_BACKEND, 1);
 
-    const auto snap = readStoreSnapshot(path);
+    bool content_invalid = true;
+    const auto snap = readStoreSnapshot(path, &content_invalid);
     ASSERT_TRUE(snap.has_value());
+    EXPECT_FALSE(content_invalid);
     EXPECT_EQ(snap->agentName, "agent-a");
     EXPECT_EQ(snap->hostname, "host-1");
     EXPECT_EQ(snap->localRank, "3");
@@ -136,8 +138,13 @@ TEST_F(MpStoreTest, LongAgentNameTruncated) {
     EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 
-TEST_F(MpStoreTest, MissingFileReturnsNullopt) {
-    EXPECT_FALSE(readStoreSnapshot(storePath("does-not-exist")).has_value());
+TEST_F(MpStoreTest, MissingFileReturnsNulloptNotContentInvalid) {
+    // A file we cannot open (missing here, or a transient error) must NOT be
+    // reported as invalid content -- otherwise the collector could reap a live
+    // peer it merely failed to read. content_invalid must be reset to false.
+    bool content_invalid = true;
+    EXPECT_FALSE(readStoreSnapshot(storePath("does-not-exist"), &content_invalid).has_value());
+    EXPECT_FALSE(content_invalid);
 }
 
 TEST_F(MpStoreTest, TooSmallFileReturnsNullopt) {
@@ -147,7 +154,9 @@ TEST_F(MpStoreTest, TooSmallFileReturnsNullopt) {
         const char junk[16] = {0};
         f.write(junk, sizeof(junk));
     }
-    EXPECT_FALSE(readStoreSnapshot(path).has_value());
+    bool content_invalid = false;
+    EXPECT_FALSE(readStoreSnapshot(path, &content_invalid).has_value());
+    EXPECT_TRUE(content_invalid);
 }
 
 TEST_F(MpStoreTest, ZeroMagicReturnsNulloptQuietly) {
@@ -159,7 +168,9 @@ TEST_F(MpStoreTest, ZeroMagicReturnsNulloptQuietly) {
         const std::string zeros(64 * 1024, '\0');
         f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
     }
-    EXPECT_FALSE(readStoreSnapshot(path).has_value());
+    bool content_invalid = false;
+    EXPECT_FALSE(readStoreSnapshot(path, &content_invalid).has_value());
+    EXPECT_TRUE(content_invalid);
 }
 
 TEST_F(MpStoreTest, BadMagicWarnsAndReturnsNullopt) {
@@ -172,7 +183,9 @@ TEST_F(MpStoreTest, BadMagicWarnsAndReturnsNullopt) {
         f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
     }
     const gtest::LogIgnoreGuard lig("bad magic");
-    EXPECT_FALSE(readStoreSnapshot(path).has_value());
+    bool content_invalid = false;
+    EXPECT_FALSE(readStoreSnapshot(path, &content_invalid).has_value());
+    EXPECT_TRUE(content_invalid);
     EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 

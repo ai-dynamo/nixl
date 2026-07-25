@@ -204,23 +204,37 @@ storeWriter::setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept
 }
 
 std::optional<storeSnapshot>
-readStoreSnapshot(const std::filesystem::path &path) {
+readStoreSnapshot(const std::filesystem::path &path, bool *content_invalid) {
+    const auto mark_invalid = [content_invalid] {
+        if (content_invalid != nullptr) {
+            *content_invalid = true;
+        }
+    };
+    if (content_invalid != nullptr) {
+        *content_invalid = false;
+    }
+
     const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
-        // Missing/unreadable file is not an error here (peer may have exited).
+        // Missing or transiently unreadable (e.g. EMFILE): not necessarily an
+        // orphan, so leave content_invalid false so the collector never reaps a
+        // live peer we simply failed to open.
         return std::nullopt;
     }
 
     struct stat st{};
     if (::fstat(fd, &st) != 0 || static_cast<std::size_t>(st.st_size) < sizeof(storeLayout)) {
-        // Too small: likely a file mid-creation by a peer. Skip quietly.
+        // Too small: a truncated/mid-creation store -- unusable content.
         ::close(fd);
+        mark_invalid();
         return std::nullopt;
     }
 
     void *mapping = ::mmap(nullptr, sizeof(storeLayout), PROT_READ, MAP_SHARED, fd, 0);
     ::close(fd);
     if (mapping == MAP_FAILED) {
+        // Transient (e.g. ENOMEM): the file may be a healthy peer's, so do not
+        // mark it reapable.
         NIXL_WARN << "prometheus_mp: cannot map telemetry store '" << path.string()
                   << "': " << std::strerror(errno);
         return std::nullopt;
@@ -236,11 +250,13 @@ readStoreSnapshot(const std::filesystem::path &path) {
         // Zeroed header: either a store still being initialized by a live process,
         // or an orphan left by a process that died mid-creation. Skip quietly (no
         // WARN); the collector reaps stale orphans by file age.
+        mark_invalid();
         return std::nullopt;
     }
     if (magic != MP_STORE_MAGIC) {
         NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
                   << "' with bad magic";
+        mark_invalid();
         return std::nullopt;
     }
     if (layout->schemaVersion != MP_STORE_SCHEMA_VERSION ||
@@ -248,6 +264,7 @@ readStoreSnapshot(const std::filesystem::path &path) {
         NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
                   << "' with incompatible schema (version " << layout->schemaVersion << ", slots "
                   << layout->slotCount << ")";
+        mark_invalid();
         return std::nullopt;
     }
 
