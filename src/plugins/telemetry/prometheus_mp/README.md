@@ -56,7 +56,7 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 ```bash
 export NIXL_TELEMETRY_ENABLE="y"
 export NIXL_TELEMETRY_EXPORTER="prometheus_mp" # selects libtelemetry_exporter_prometheus_mp.so
-export NIXL_TELEMETRY_MULTIPROC_DIR="/tmp/nixl_metrics" # REQUIRED: shared by all ranks in the pod
+export NIXL_TELEMETRY_MULTIPROC_DIR="/run/nixl_metrics" # REQUIRED: shared by all ranks in the pod
 ```
 
 This mirrors Dynamo's `PROMETHEUS_MULTIPROC_DIR` convention (a shared folder that
@@ -76,6 +76,19 @@ guaranteed (the same restriction Dynamo's multiprocess dir has). tmpfs (e.g. a
 Memory-medium `emptyDir` or `/dev/shm`) works and avoids any disk writeback, but is
 optional -- a plain local dir is fine, since updates hit the page cache and the
 per-process store files are ~one page each.
+
+Use a **private** directory (mode `0700`, owned by the run's user) rather than a
+world-writable location like `/tmp`. On a shared host a world-writable directory
+lets another user pre-plant paths the owner would truncate or unlink. The plugin
+already hardens the files themselves (opened with `O_NOFOLLOW`, created `0600`),
+but the directory's permissions are the deployment's responsibility.
+
+All aggregated ranks must also share a **PID namespace** (and time namespace):
+staleness/liveness uses `kill(pid, 0)` + `/proc/<pid>/stat` and a host-wide
+`CLOCK_MONOTONIC`, so ranks must run in one process family / container (or a pod
+with `shareProcessNamespace: true`). Ranks in separate PID namespaces sharing only
+the directory would misidentify each other's liveness -- keeping dead series or
+reaping live ones.
 
 ### Optional configuration
 
