@@ -139,7 +139,9 @@ runWriterChild(int go_fd, int ready_fd, int quit_fd, const std::string &agent, u
         nixlTelemetryPrometheusMpExporter exporter(initParams(agent));
         exporter.exportEvent({TX_BYTES, tx_value});
         const char ok = 1;
-        ::write(ready_fd, &ok, 1);
+        if (::write(ready_fd, &ok, 1) != 1) {
+            ::_exit(4);
+        }
         // Block until the parent closes the quit pipe.
         while (::read(quit_fd, &c, 1) > 0) {}
     }
