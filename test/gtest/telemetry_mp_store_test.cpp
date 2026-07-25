@@ -218,6 +218,23 @@ TEST_F(MpStoreTest, LongAgentNameTruncated) {
     EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 
+TEST_F(MpStoreTest, ForeignOwnedStoreIsIgnoredAndNotReapable) {
+    if (::geteuid() != 0) {
+        GTEST_SKIP() << "needs privileges to give a store file another owner";
+    }
+    const auto path = storePath("agent-foreign");
+    storeWriter writer(path, "agent-foreign", "host-1", "", 0, kBuckets);
+    writer.addCounter(TX_BYTES, 7);
+    constexpr uid_t nobody = 65534;
+    ASSERT_EQ(::chown(path.c_str(), nobody, static_cast<gid_t>(-1)), 0);
+
+    const gtest::LogIgnoreGuard lig("owned by uid");
+    const auto res = readStoreSnapshot(path);
+    EXPECT_FALSE(res.snapshot.has_value());
+    EXPECT_FALSE(res.contentInvalid);
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
+}
+
 TEST_F(MpStoreTest, MissingFileReturnsNulloptNotContentInvalid) {
     // A file we cannot open (missing here, or a transient error) must NOT be
     // reported as invalid content -- otherwise the collector could reap a live

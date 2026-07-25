@@ -277,6 +277,14 @@ readStoreSnapshot(const std::filesystem::path &path) {
         return {std::nullopt, true};
     }
 
+    if (st.st_uid != ::geteuid()) {
+        // Someone else's file in a shared directory: its contents are attacker-
+        // controlled, and it is not ours to reap either.
+        NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
+                  << "' owned by uid " << st.st_uid;
+        return {std::nullopt, false};
+    }
+
     void *mapping = ::mmap(nullptr, sizeof(storeLayout), PROT_READ, MAP_SHARED, fd.get(), 0);
     if (mapping == MAP_FAILED) {
         // Transient (e.g. ENOMEM): the file may be a healthy peer's, so do not
