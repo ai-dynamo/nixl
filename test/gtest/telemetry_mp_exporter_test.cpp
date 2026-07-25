@@ -16,6 +16,7 @@
  */
 #include "prometheus_mp_exporter.h"
 #include "mp_store.h"
+#include "telemetry.h"
 
 #include "common.h"
 
@@ -62,9 +63,6 @@ protected:
 
     void
     TearDown() override {
-        env_.popVar();
-        env_.popVar();
-        env_.popVar();
         std::error_code ec;
         std::filesystem::remove_all(dir_, ec);
     }
@@ -121,8 +119,14 @@ TEST_F(MpExporterTest, WriterModeWhenPortTaken) {
     EXPECT_EQ(snap->counters[idx(RX_BYTES)], 77u);
 }
 
+TEST_F(MpExporterTest, LoadsThroughPluginManager) {
+    nixlTelemetry telemetry("agent-loader", "prometheus_mp");
+    EXPECT_FALSE(singleStoreFile().empty());
+}
+
 TEST(MpExporterStandaloneTest, MissingMultiprocDirThrows) {
-    ::unsetenv("NIXL_TELEMETRY_MULTIPROC_DIR");
+    gtest::ScopedEnv env;
+    env.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
     EXPECT_THROW(
         { nixlTelemetryPrometheusMpExporter exporter(nixlTelemetryExporterInitParams{"a", 4096}); },
         std::runtime_error);

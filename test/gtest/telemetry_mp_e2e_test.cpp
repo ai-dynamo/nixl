@@ -169,9 +169,6 @@ protected:
 
     void
     TearDown() override {
-        for (int i = 0; i < 4; ++i) {
-            env_.popVar();
-        }
         std::error_code ec;
         std::filesystem::remove_all(dir_, ec);
     }
