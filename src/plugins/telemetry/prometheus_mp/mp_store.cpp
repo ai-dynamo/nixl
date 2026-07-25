@@ -215,7 +215,7 @@ storeWriter::~storeWriter() {
 }
 
 void
-storeWriter::touch() noexcept {
+storeWriter::refreshHeartbeat() noexcept {
     auto *layout = static_cast<storeLayout *>(mapping_);
     __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELAXED);
 }
@@ -228,7 +228,6 @@ storeWriter::addCounter(nixl_telemetry_event_type_t type, uint64_t delta) noexce
     }
     auto *layout = static_cast<storeLayout *>(mapping_);
     __atomic_fetch_add(&layout->counters[idx], delta, __ATOMIC_RELAXED);
-    touch();
 }
 
 void
@@ -239,7 +238,6 @@ storeWriter::setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept
     }
     auto *layout = static_cast<storeLayout *>(mapping_);
     __atomic_store_n(&layout->gauges[idx], value, __ATOMIC_RELAXED);
-    touch();
 }
 
 void
@@ -258,7 +256,6 @@ storeWriter::observeHistogram(nixl_telemetry_event_type_t type, uint64_t value) 
     __atomic_fetch_add(
         &layout->histBuckets[idx][static_cast<std::size_t>(bound - first)], 1, __ATOMIC_RELAXED);
     __atomic_fetch_add(&layout->histSums[idx], value, __ATOMIC_RELAXED);
-    touch();
 }
 
 storeReadResult
@@ -324,6 +321,8 @@ readStoreSnapshot(const std::filesystem::path &path) {
     for (std::size_t i = 0; i < MP_STORE_SLOT_COUNT; ++i) {
         snap.counters[i] = __atomic_load_n(&layout->counters[i], __ATOMIC_RELAXED);
         snap.gauges[i] = __atomic_load_n(&layout->gauges[i], __ATOMIC_RELAXED);
+    }
+    for (const auto i : MP_STORE_HISTOGRAM_SLOTS) {
         snap.histSums[i] = __atomic_load_n(&layout->histSums[i], __ATOMIC_RELAXED);
         for (std::size_t b = 0; b <= snap.bucketCount; ++b) {
             snap.histBuckets[i][b] = __atomic_load_n(&layout->histBuckets[i][b], __ATOMIC_RELAXED);

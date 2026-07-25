@@ -28,9 +28,11 @@
 
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -155,6 +157,22 @@ TEST_F(MpExporterTest, DurationEventFeedsCounterGaugeAndHistogram) {
     ASSERT_EQ(snap->bucketCount, nixl::telemetry::defaultHistogramBucketsUs().size());
     EXPECT_DOUBLE_EQ(snap->bucketBounds[2], 50.0);
     EXPECT_EQ(snap->histBuckets[idx(XFER_TIME)][2], 1u);
+}
+
+TEST_F(MpExporterTest, ExportEventRefreshesHeartbeat) {
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-beat"));
+
+    const auto file = singleStoreFile();
+    ASSERT_FALSE(file.empty());
+    const auto before = readStoreSnapshot(file).snapshot;
+    ASSERT_TRUE(before.has_value());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    exporter.exportEvent({TX_BYTES, 1});
+
+    const auto after = readStoreSnapshot(file).snapshot;
+    ASSERT_TRUE(after.has_value());
+    EXPECT_GT(after->lastUpdateNs, before->lastUpdateNs);
 }
 
 TEST_F(MpExporterTest, LoadsThroughPluginManager) {

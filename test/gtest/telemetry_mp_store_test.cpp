@@ -22,11 +22,13 @@
 
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -95,6 +97,30 @@ TEST_F(MpStoreTest, WriteReadRoundTrip) {
     // Untouched slots stay zero.
     EXPECT_EQ(snap->counters[idx(RX_BYTES)], 0u);
     EXPECT_EQ(snap->gauges[idx(RX_BYTES)], 0u);
+}
+
+TEST_F(MpStoreTest, HeartbeatAdvancesOnlyWhenRefreshed) {
+    const auto path = storePath("agent-heartbeat");
+    storeWriter writer(path, "agent-heartbeat", "host-1", "", 0, kBuckets);
+
+    const auto created = readStoreSnapshot(path).snapshot;
+    ASSERT_TRUE(created.has_value());
+    ASSERT_GT(created->lastUpdateNs, 0u);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    writer.addCounter(TX_BYTES, 1);
+    writer.setGauge(TX_BYTES, 1);
+    writer.observeHistogram(XFER_TIME, 1);
+
+    const auto after_updates = readStoreSnapshot(path).snapshot;
+    ASSERT_TRUE(after_updates.has_value());
+    EXPECT_EQ(after_updates->lastUpdateNs, created->lastUpdateNs);
+
+    writer.refreshHeartbeat();
+
+    const auto after_refresh = readStoreSnapshot(path).snapshot;
+    ASSERT_TRUE(after_refresh.has_value());
+    EXPECT_GT(after_refresh->lastUpdateNs, created->lastUpdateNs);
 }
 
 TEST_F(MpStoreTest, CounterAccumulatesGaugeReplaces) {

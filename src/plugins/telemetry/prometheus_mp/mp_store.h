@@ -68,7 +68,35 @@ namespace detail {
         }
         return max_slot;
     }
+
+    [[nodiscard]] constexpr std::size_t
+    histogramSlotCount() {
+        std::size_t count = 0;
+        for (const auto type : telemetry_metric_event_types) {
+            if (nixlEnumStrings::telemetryMetricDescriptor(type).histogramName != nullptr) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] constexpr std::array<std::size_t, histogramSlotCount()>
+    histogramSlots() {
+        std::array<std::size_t, histogramSlotCount()> slots{};
+        std::size_t next = 0;
+        for (const auto type : telemetry_metric_event_types) {
+            if (nixlEnumStrings::telemetryMetricDescriptor(type).histogramName != nullptr) {
+                slots[next++] = static_cast<std::size_t>(type);
+            }
+        }
+        return slots;
+    }
 } // namespace detail
+
+// The slots that can ever hold histogram data, derived at compile time from the
+// shared descriptor. Every other slot is provably zero, so the reader skips it
+// instead of loading MP_STORE_MAX_BUCKETS + 2 words per slot.
+inline constexpr auto MP_STORE_HISTOGRAM_SLOTS = detail::histogramSlots();
 
 // Compile-time guard: if the enum is extended past AGENT_TELEMETRY_EVENTS_DROPPED
 // (so it is no longer last), the fixed-slot store would be indexed out of bounds
@@ -155,21 +183,34 @@ public:
     storeWriter &
     operator=(storeWriter &&) = delete;
 
-    // Adds @p delta to the cumulative counter slot for @p type and refreshes the
-    // heartbeat. Out-of-range types are ignored.
+    // Adds @p delta to the cumulative counter slot for @p type. Out-of-range
+    // types are ignored.
     void
     addCounter(nixl_telemetry_event_type_t type, uint64_t delta) noexcept;
 
-    // Stores @p value as the last-operation gauge for @p type and refreshes the
-    // heartbeat. Out-of-range types are ignored.
+    // Stores @p value as the last-operation gauge for @p type. Out-of-range
+    // types are ignored.
     void
     setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept;
 
     // Records @p value in the histogram bucket it falls into (upper bounds are
-    // inclusive, matching Prometheus) and adds it to the sum for @p type, then
-    // refreshes the heartbeat. Out-of-range types are ignored.
+    // inclusive, matching Prometheus) and adds it to the sum for @p type.
+    // Out-of-range types are ignored.
     void
     observeHistogram(nixl_telemetry_event_type_t type, uint64_t value) noexcept;
+
+    /**
+     * @brief Republishes this process's liveness timestamp.
+     *
+     * Deliberately separate from the mutators: it costs a CLOCK_MONOTONIC read
+     * (~24ns, several times a metric update's atomic), and the only consumer is
+     * the collector's staleness check, which has a 30s default TTL and applies
+     * to dead processes only. Call it once per batch of updates rather than per
+     * update; missing a refresh never hides a live process, it only shortens how
+     * long a dead one's last values linger.
+     */
+    void
+    refreshHeartbeat() noexcept;
 
     [[nodiscard]] const std::filesystem::path &
     path() const noexcept {
@@ -177,9 +218,6 @@ public:
     }
 
 private:
-    void
-    touch() noexcept;
-
     std::filesystem::path path_;
     void *mapping_ = nullptr;
     std::size_t mappingSize_ = 0;

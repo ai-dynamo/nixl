@@ -156,5 +156,8 @@ nixlTelemetryPrometheusMpExporter::exportEvent(const nixlTelemetryEvent &event) 
     if (descriptor.histogramName != nullptr) {
         store_->observeHistogram(type, event.value_);
     }
+    // Once per event, not once per slot updated: a duration event touches three
+    // slots, and the clock read costs several times the atomics it would follow.
+    store_->refreshHeartbeat();
     return NIXL_SUCCESS;
 }
