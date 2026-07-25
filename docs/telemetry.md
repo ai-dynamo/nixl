@@ -199,8 +199,15 @@ names are not stored) and per-process label values are captured once at startup 
 never change -- events carry only a numeric value, with no per-observation labels.
 It therefore **cannot represent a metric with a dynamic / high-cardinality label**
 that varies per observation. No NIXL metric needs that today; if one is ever added,
-a different (keyed) store would be required. For aggregation via an external
-service, use the DOCA/CollectX exporter instead.
+a different (keyed) store would be required.
+
+The scrape owner is also elected once, at startup, with **no failover**: if that
+process exits, the endpoint stays down for the rest of the run even though the
+surviving ranks keep recording, and stale store files stop being reaped. Scraping
+resumes only when a process starts and wins the bind, or the run is relaunched.
+Alert on the scrape target's `up` metric rather than on missing series.
+
+For aggregation via an external service, use the DOCA/CollectX exporter instead.
 
 ## Cyclic Buffer
 

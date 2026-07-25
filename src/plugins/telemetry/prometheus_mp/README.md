@@ -50,6 +50,15 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   it instead crashes or is killed -- and so cannot clean up after itself -- the
   owner drops its series once the process is gone (verified by pid + `/proc` start
   time) or its data ages past the TTL, and reaps the file.
+- **The owner is elected once, and there is no failover.** If the owner process
+  exits, no surviving writer promotes itself: the endpoint stays down for the rest
+  of the run while every remaining process keeps updating its store file. Reaping
+  stops with it, since the owner was the reaper -- a killed owner leaves its own
+  file behind. Scraping resumes only when some process starts and wins the bind
+  (a restarted rank), or the process family is relaunched. Because this looks to
+  Prometheus like the target going down rather than the ranks going idle, alert on
+  the target's `up` metric, not on absent series. Automatic failover is deliberately
+  out of scope for now.
 
 ## Configuration
 

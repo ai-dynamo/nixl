@@ -17,6 +17,7 @@
 #include "prometheus_mp_exporter.h"
 #include "histogram_buckets.h"
 #include "mp_store.h"
+#include "plugin_manager.h"
 #include "telemetry.h"
 
 #include "common.h"
@@ -51,6 +52,21 @@ initParams(const std::string &agent) {
 
 class MpExporterTest : public ::testing::Test {
 protected:
+    // A build tree has no <libnixl.so dir>/plugins, so LoadsThroughPluginManager
+    // finds the plugin only if the build path is registered. Registered once per
+    // suite, and only when it exists: re-registering, or registering a missing
+    // directory, logs a warning/error that the gtest main counts as a failure.
+    // When it is absent (a binary run from an install tree) NIXL_PLUGIN_DIR is
+    // what supplies the plugin.
+    static void
+    SetUpTestSuite() {
+        const std::string build_plugin_dir =
+            std::string(BUILD_DIR) + "/src/plugins/telemetry/prometheus_mp";
+        if (std::filesystem::is_directory(build_plugin_dir)) {
+            nixlPluginManager::getInstance().addPluginDirectory(build_plugin_dir);
+        }
+    }
+
     void
     SetUp() override {
         const auto *info = ::testing::UnitTest::GetInstance()->current_test_info();
