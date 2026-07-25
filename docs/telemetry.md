@@ -63,9 +63,11 @@ stream:
   unchanged (e.g. `agent_tx_last_bytes`). For example, TX byte sizes `10, 20, 35`
   yield a counter `agent_tx_bytes_total` of `65` and a gauge `agent_tx_last_bytes`
   of `35`. The Prometheus, multi-process Prometheus and DOCA exporters emit
-  **identical** series -- the same names, types, and labels -- derived from one
+  **identical** series -- the same names, types, and semantics -- derived from one
   shared metric descriptor (`nixlEnumStrings::telemetryMetricDescriptor` in
-  `telemetry_event.h`). All three
+  `telemetry_event.h`). Labels match too, except that `prometheus_mp` adds the
+  process-identity labels it needs for cross-process uniqueness (see
+  "Multi-process aggregation" below). All three
   expose `agent_tx_bytes_total` / `agent_rx_bytes_total` (counters, OpenMetrics
   `_total` suffix) alongside `agent_tx_last_bytes` / `agent_rx_last_bytes`
   (gauges). The memory events likewise expose both a cumulative `_total` counter
@@ -76,7 +78,8 @@ stream:
 - **Latency histograms**: the transfer-time events additionally feed distribution
   histograms `agent_xfer_time_us` / `agent_xfer_post_time_us` (microseconds) on
   the Prometheus, multi-process Prometheus and DOCA exporters, at parity (same
-  names, buckets, labels).
+  names, buckets, and semantics; `prometheus_mp` carries its extra
+  process-identity labels here too).
   Each is exposed as the standard `_bucket{le="..."}` / `_sum` / `_count` series
   alongside the existing counter and gauge. Bucket boundaries default to a
   microsecond range covering ~10us..~10s and are overridable via

@@ -27,6 +27,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstring>
@@ -70,7 +71,17 @@ httpGet(uint16_t port, const std::string &path) {
 
     const std::string req =
         "GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
-    ::send(fd, req.data(), req.size(), 0);
+    for (std::size_t sent = 0; sent < req.size();) {
+        const ssize_t n = ::send(fd, req.data() + sent, req.size() - sent, 0);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            ::close(fd);
+            return {};
+        }
+        sent += static_cast<std::size_t>(n);
+    }
 
     std::string response;
     char buf[4096];
