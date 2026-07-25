@@ -169,7 +169,8 @@ memory-mapped file in a shared directory; the processes race for an exclusive
 scrape port and serves `/metrics` by reading and republishing all live processes'
 files on each scrape (labeled per process). The losers run as writers only, so
 losing is benign and no rank is dropped; if the winner cannot bind, nothing
-aggregates the directory and it says so. Full details:
+aggregates the directory and it says so. Should the lock itself be unusable,
+every process warns and falls back to the port bind deciding. Full details:
 [src/plugins/telemetry/prometheus_mp/README.md](../src/plugins/telemetry/prometheus_mp/README.md).
 
 ### Configuration
@@ -218,12 +219,19 @@ Alert on the scrape target's `up` metric rather than on missing series.
 The owner is elected by an `flock` on `nixl-owner.lock` in the shared directory
 rather than by the bind itself, so exactly one process ever binds and losing the
 election is routine (logged at INFO). The owner records its endpoint in that lock
-file, which turns the
-two otherwise silent misconfigurations into warnings: the **owner failing to bind**
-means the port belongs to something outside the run, so nothing aggregates the
-directory; and a **loser configured for a different endpoint** than the recorded
-one means the ranks disagree on `NIXL_TELEMETRY_PROMETHEUS_PORT` (or
-`NIXL_TELEMETRY_PROMETHEUS_LOCAL`), and only the owner's endpoint is scrapeable.
+file, which turns the two otherwise silent misconfigurations into warnings: the
+**owner failing to bind** means the port belongs to something outside the run, so
+nothing aggregates the directory; and a **loser configured for a different
+endpoint** than the recorded one means the ranks disagree on
+`NIXL_TELEMETRY_PROMETHEUS_PORT` (or `NIXL_TELEMETRY_PROMETHEUS_LOCAL`), and only
+the owner's endpoint is scrapeable.
+
+The single-binder guarantee holds while the lock is usable. A lock file that
+cannot be opened, is not a regular file owned by the run's user, or lives on a
+filesystem without `flock` leaves every process considering itself elected, and
+the port bind decides as it did before the election existed -- still one owner
+unless the ranks also disagree on the port, in which case each binds its own.
+Every process takes that path with a warning, so it is never silent.
 
 Ranks split across directories are only detected from the abandoned side: the
 directory that did elect an owner cannot tell that ranks it never saw went

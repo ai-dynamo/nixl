@@ -47,6 +47,12 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   binding concurrently cannot tell which of them got there first, so gating the
   bind on an exclusive lock is what makes exactly one process serve. The kernel
   releases it when the holder dies, so it needs no cleanup.
+  That guarantee lasts as long as the lock is usable. If the lock file cannot be
+  opened, is not a regular file owned by the run's user, or sits on a filesystem
+  without `flock`, every process considers itself elected and falls back to the
+  port bind deciding -- one owner still, unless the ranks also disagree on the
+  port, in which case each binds its own. Every such process warns first, so the
+  fallback is never silent.
 - **Two misconfigurations are reported.** The owner records its endpoint in the
   lock file it holds, which lets both silent failure modes be named:
   - The **owner cannot bind** -- since no sibling can be serving, the port belongs
