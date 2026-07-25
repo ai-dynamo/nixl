@@ -74,8 +74,11 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   processes, so per-process values stay correct and monotonic.
 - **Stale handling.** On clean shutdown a process removes its own store file. If
   it instead crashes or is killed -- and so cannot clean up after itself -- the
-  owner drops its series once the process is gone (verified by pid + `/proc` start
-  time) or its data ages past the TTL, and reaps the file.
+  owner keeps publishing its last values until *both* the process is gone
+  (verified by pid + `/proc` start time) and its last update has aged past the
+  TTL; only then are the series dropped and the file reaped. A live process is
+  therefore never dropped for being idle, and a dead one lingers for at most the
+  TTL.
 - **The owner is elected once, and there is no failover.** If the owner process
   exits, no surviving writer promotes itself: the endpoint stays down for the rest
   of the run while every remaining process keeps updating its store file. Reaping
