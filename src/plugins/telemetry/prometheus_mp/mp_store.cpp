@@ -243,7 +243,10 @@ storeWriter::setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept
 void
 storeWriter::observeHistogram(nixl_telemetry_event_type_t type, uint64_t value) noexcept {
     const auto idx = static_cast<std::size_t>(type);
-    if (idx >= MP_STORE_SLOT_COUNT) {
+    // Same predicate the reader uses to build MP_STORE_HISTOGRAM_SLOTS, so a slot
+    // can never be written without being read back.
+    if (idx >= MP_STORE_SLOT_COUNT ||
+        nixlEnumStrings::telemetryMetricDescriptor(type).histogramName == nullptr) {
         return;
     }
     auto *layout = static_cast<storeLayout *>(mapping_);
