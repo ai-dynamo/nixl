@@ -33,8 +33,8 @@
  *
  * Every process writes its own metric state to a per-process store in the shared
  * NIXL_TELEMETRY_MULTIPROC_DIR. On construction each process races for an flock on
- * that directory: the winner ("owner") binds the scrape port and runs a
- * prometheus-cpp Exposer plus a nixlMultiprocessCollector that aggregates all
+ * a lock file in that directory: the winner ("owner") binds the scrape port and
+ * runs a prometheus-cpp Exposer plus a nixlMultiprocessCollector that aggregates all
  * peers' stores on each scrape; the losers run in writer-only mode (no HTTP
  * server) and never bind. Losing the election is therefore benign -- it never
  * throws nixlTelemetryBindFailed -- so every process gets a valid telemetry sink

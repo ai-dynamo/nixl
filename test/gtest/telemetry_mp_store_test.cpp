@@ -22,8 +22,10 @@
 
 #include <unistd.h>
 
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -226,7 +228,9 @@ TEST_F(MpStoreTest, ForeignOwnedStoreIsIgnoredAndNotReapable) {
     storeWriter writer(path, "agent-foreign", "host-1", "", 0, kBuckets);
     writer.addCounter(TX_BYTES, 7);
     constexpr uid_t nobody = 65534;
-    ASSERT_EQ(::chown(path.c_str(), nobody, static_cast<gid_t>(-1)), 0);
+    if (::chown(path.c_str(), nobody, static_cast<gid_t>(-1)) != 0) {
+        GTEST_SKIP() << "cannot give a store file another owner: " << strerror(errno);
+    }
 
     const gtest::LogIgnoreGuard lig("owned by uid");
     const auto res = readStoreSnapshot(path);

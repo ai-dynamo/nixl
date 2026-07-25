@@ -28,8 +28,10 @@
 
 #include <unistd.h>
 
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -178,7 +180,9 @@ TEST_F(MpExporterTest, ForeignOwnedLockFileCannotSilenceTheRun) {
     const auto lock = dir_ / "nixl-owner.lock";
     { std::ofstream(lock).put('\0'); }
     constexpr uid_t nobody = 65534;
-    ASSERT_EQ(::chown(lock.c_str(), nobody, static_cast<gid_t>(-1)), 0);
+    if (::chown(lock.c_str(), nobody, static_cast<gid_t>(-1)) != 0) {
+        GTEST_SKIP() << "cannot give the lock file another owner: " << strerror(errno);
+    }
 
     // A planted lock must not read as a sibling win, or every rank of a shared
     // directory ends up writer-only and nothing serves.

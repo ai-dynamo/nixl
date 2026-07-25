@@ -165,11 +165,11 @@ The `prometheus_mp` exporter aggregates the telemetry of all processes of a
 multi-process NIXL run behind a **single** Prometheus scrape endpoint, natively
 (no DOCA/DTS). Every process writes its own metric state to a per-process
 memory-mapped file in a shared directory; the processes race for an exclusive
-`flock` on that directory, and only the winner binds the scrape port and serves
-`/metrics` by reading and republishing all live processes' files on each scrape
-(labeled per process). The losers run as writers only, so losing is benign and no
-rank is dropped; if the winner cannot bind, nothing aggregates the directory and
-it says so. Full details:
+`flock` on `nixl-owner.lock` in that directory, and only the winner binds the
+scrape port and serves `/metrics` by reading and republishing all live processes'
+files on each scrape (labeled per process). The losers run as writers only, so
+losing is benign and no rank is dropped; if the winner cannot bind, nothing
+aggregates the directory and it says so. Full details:
 [src/plugins/telemetry/prometheus_mp/README.md](../src/plugins/telemetry/prometheus_mp/README.md).
 
 ### Configuration
@@ -215,9 +215,10 @@ surviving ranks keep recording, and stale store files stop being reaped. Scrapin
 resumes only when a process starts and wins the election, or the run is relaunched.
 Alert on the scrape target's `up` metric rather than on missing series.
 
-The owner is elected by an `flock` on the shared directory rather than by the bind
-itself, so exactly one process ever binds and losing the election is routine
-(logged at INFO). The owner records its endpoint in the lock file, which turns the
+The owner is elected by an `flock` on `nixl-owner.lock` in the shared directory
+rather than by the bind itself, so exactly one process ever binds and losing the
+election is routine (logged at INFO). The owner records its endpoint in that lock
+file, which turns the
 two otherwise silent misconfigurations into warnings: the **owner failing to bind**
 means the port belongs to something outside the run, so nothing aggregates the
 directory; and a **loser configured for a different endpoint** than the recorded
