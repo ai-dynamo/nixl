@@ -53,7 +53,7 @@ if prometheus_found
         dependencies: [nixl_common_dep, prometheus_core_dep, nixl_telemetry_mp_store_dep],
     )
 
-    # Exporter with bind-race election. Built as a static library too so it can be
+    # Exporter with locked owner election. Built as a static library too so it can be
     # unit-tested directly (in addition to being packaged into the plugin .so).
     telemetry_mp_exporter_lib = static_library(
         'nixl_telemetry_mp_exporter',

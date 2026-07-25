@@ -37,19 +37,30 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 - **Every process writes its own metric state** to a per-process memory-mapped
   file in a shared directory (`NIXL_TELEMETRY_MULTIPROC_DIR`). Updates are
   lock-free; there is no serialization.
-- **Bind-race owner election.** On startup each process tries to bind the scrape
-  port. The one that wins ("owner") runs the HTTP endpoint plus a collector that,
-  on each scrape, reads every live process's file and republishes them as one
-  exposition. The processes that lose the race run in **writer-only** mode (no
-  HTTP server). A bind collision is therefore benign -- every process gets a valid
-  telemetry sink; no rank is dropped and no scary error is logged.
-  Before binding, the candidate takes an `flock` on `nixl-owner.lock` in the shared
-  directory, so a process that loses the bind can tell whether a **sibling** holds
-  the endpoint (routine, logged at INFO) or whether **nothing here does** -- a
-  foreign service on the port, or a rank pointed at a different
-  `NIXL_TELEMETRY_MULTIPROC_DIR`. The latter means the directory is aggregated by
-  nobody, so it is logged as a warning. The kernel drops the lock when the holder
-  dies, so it needs no cleanup.
+- **Locked owner election.** On startup each process races for an `flock` on
+  `nixl-owner.lock` in the shared directory. The one that wins ("owner") binds the
+  scrape port and runs the HTTP endpoint plus a collector that, on each scrape,
+  reads every live process's file and republishes them as one exposition. The
+  processes that lose run in **writer-only** mode and never bind. Losing is
+  therefore benign -- every process gets a valid telemetry sink; no rank is dropped
+  and no scary error is logged. The lock, not the bind, is what elects: two ranks
+  binding concurrently cannot tell which of them got there first, so gating the
+  bind on an exclusive lock is what makes exactly one process serve. The kernel
+  releases it when the holder dies, so it needs no cleanup.
+- **Two misconfigurations are reported.** The owner records its endpoint in the
+  lock file it holds, which lets both silent failure modes be named:
+  - The **owner cannot bind** -- since no sibling can be serving, the port belongs
+    to something outside the run (a foreign service, or a rank pointed at a
+    different `NIXL_TELEMETRY_MULTIPROC_DIR`). Nothing aggregates the directory, so
+    it is a warning. The lock stays held, so this is reported once, not per rank.
+  - A **loser was configured for a different endpoint** than the one recorded, so
+    the ranks disagree on `NIXL_TELEMETRY_PROMETHEUS_PORT` (or
+    `NIXL_TELEMETRY_PROMETHEUS_LOCAL`). Only the owner's endpoint is scrapeable;
+    the rank is still exported behind it, so this is a warning, not a failure.
+
+  Ranks split across *directories* are only detected from the abandoned side. The
+  directory that did elect an owner cannot tell that ranks it never saw went
+  elsewhere: it aggregates a subset and looks healthy.
 - **Per-process series.** Each process is exported as its own series (cumulative
   counters, last-operation gauges and duration histograms), never summed across
   processes, so per-process values stay correct and monotonic.
@@ -61,7 +72,7 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   exits, no surviving writer promotes itself: the endpoint stays down for the rest
   of the run while every remaining process keeps updating its store file. Reaping
   stops with it, since the owner was the reaper -- a killed owner leaves its own
-  file behind. Scraping resumes only when some process starts and wins the bind
+  file behind. Scraping resumes only when some process starts and wins the election
   (a restarted rank), or the process family is relaunched. Because this looks to
   Prometheus like the target going down rather than the ranks going idle, alert on
   the target's `up` metric, not on absent series. Automatic failover is deliberately

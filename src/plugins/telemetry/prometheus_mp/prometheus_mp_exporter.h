@@ -21,6 +21,7 @@
 #include "telemetry_event.h"
 #include "mp_collector.h"
 #include "mp_store.h"
+#include "owner_election.h"
 
 #include <prometheus/exposer.h>
 
@@ -28,15 +29,16 @@
 
 /**
  * @class nixlTelemetryPrometheusMpExporter
- * @brief Multi-process Prometheus exporter with bind-race owner election.
+ * @brief Multi-process Prometheus exporter with locked owner election.
  *
  * Every process writes its own metric state to a per-process store in the shared
- * NIXL_TELEMETRY_MULTIPROC_DIR. On construction each process races to bind the
- * scrape port: the winner ("owner") runs a prometheus-cpp Exposer plus a
- * nixlMultiprocessCollector that aggregates all peers' stores on each scrape; the
- * losers run in writer-only mode (no HTTP server). A bind collision is therefore
- * benign -- it never throws nixlTelemetryBindFailed -- so every process gets a
- * valid telemetry sink and all ranks are exported behind the single owner port.
+ * NIXL_TELEMETRY_MULTIPROC_DIR. On construction each process races for an flock on
+ * that directory: the winner ("owner") binds the scrape port and runs a
+ * prometheus-cpp Exposer plus a nixlMultiprocessCollector that aggregates all
+ * peers' stores on each scrape; the losers run in writer-only mode (no HTTP
+ * server) and never bind. Losing the election is therefore benign -- it never
+ * throws nixlTelemetryBindFailed -- so every process gets a valid telemetry sink
+ * and all ranks are exported behind the single owner port.
  */
 class nixlTelemetryPrometheusMpExporter final : public nixlTelemetryExporter {
 public:
@@ -46,20 +48,21 @@ public:
     nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) override;
 
-    // True if this process won the bind race and serves the scrape endpoint.
+    // True if this process won the election and serves the scrape endpoint.
     [[nodiscard]] bool
     isExporter() const noexcept {
         return static_cast<bool>(exposer_);
     }
 
 private:
-    // Declared so destruction is exposer_ -> collector_ -> store_: stop serving
-    // before dropping the collector it weak-references, then unmap the store.
+    // Declared so destruction is exposer_ -> collector_ -> store_ -> election_:
+    // stop serving before dropping the collector it weak-references, then unmap
+    // the store, and only then release the election -- a rank starting in between
+    // would otherwise win it and fail to bind the port still held here.
+    nixl::telemetry::mp::ownerElection election_;
     std::unique_ptr<nixl::telemetry::mp::storeWriter> store_;
     std::shared_ptr<nixl::telemetry::mp::nixlMultiprocessCollector> collector_;
     std::shared_ptr<prometheus::Exposer> exposer_;
-    // Held for the owner's lifetime; released by the kernel if it dies.
-    int ownerLockFd_ = -1;
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_PROMETHEUS_MP_EXPORTER_H

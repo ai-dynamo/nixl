@@ -256,7 +256,7 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     ::close(ready_pipe[1]);
     ::close(quit_pipe[0]);
 
-    // Parent becomes the bind-race owner and serves the endpoint.
+    // Parent wins the election and serves the endpoint.
     nixlTelemetryPrometheusMpExporter owner(initParams("agent-parent"));
     ASSERT_TRUE(owner.isExporter());
     owner.exportEvent({TX_BYTES, 999});

@@ -18,6 +18,7 @@
 
 #include "common/nixl_log.h"
 #include "common/nixl_time.h"
+#include "scoped_fd.h"
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -87,32 +88,6 @@ namespace {
         const std::size_t n = ::strnlen(src, cap);
         return std::string(src, n);
     }
-
-    class scopedFd {
-    public:
-        explicit scopedFd(int fd) noexcept : fd_(fd) {}
-
-        ~scopedFd() {
-            if (fd_ >= 0) {
-                ::close(fd_);
-            }
-        }
-
-        scopedFd(const scopedFd &) = delete;
-        scopedFd &
-        operator=(const scopedFd &) = delete;
-        scopedFd(scopedFd &&) = delete;
-        scopedFd &
-        operator=(scopedFd &&) = delete;
-
-        [[nodiscard]] int
-        get() const noexcept {
-            return fd_;
-        }
-
-    private:
-        int fd_;
-    };
 
 } // namespace
 

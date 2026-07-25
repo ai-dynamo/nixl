@@ -210,16 +210,21 @@ a different (keyed) store would be required.
 The scrape owner is also elected once, at startup, with **no failover**: if that
 process exits, the endpoint stays down for the rest of the run even though the
 surviving ranks keep recording, and stale store files stop being reaped. Scraping
-resumes only when a process starts and wins the bind, or the run is relaunched.
+resumes only when a process starts and wins the election, or the run is relaunched.
 Alert on the scrape target's `up` metric rather than on missing series.
 
-Losing the bind is normally routine, so it is logged at INFO. It is warned about
-only when no rank of the same directory holds the endpoint (an `flock` taken
-before the bind distinguishes the two): a foreign service on the port, or ranks
-split across different `NIXL_TELEMETRY_MULTIPROC_DIR` values. Ranks that disagree
-on `NIXL_TELEMETRY_PROMETHEUS_PORT` while sharing a directory are **not** detected
--- each binds its own port and exports every process's series, so Prometheus sees
-several targets carrying duplicate data.
+The owner is elected by an `flock` on the shared directory rather than by the bind
+itself, so exactly one process ever binds and losing the election is routine
+(logged at INFO). The owner records its endpoint in the lock file, which turns the
+two otherwise silent misconfigurations into warnings: the **owner failing to bind**
+means the port belongs to something outside the run, so nothing aggregates the
+directory; and a **loser configured for a different endpoint** than the recorded
+one means the ranks disagree on `NIXL_TELEMETRY_PROMETHEUS_PORT` (or
+`NIXL_TELEMETRY_PROMETHEUS_LOCAL`), and only the owner's endpoint is scrapeable.
+
+Ranks split across directories are only detected from the abandoned side: the
+directory that did elect an owner cannot tell that ranks it never saw went
+elsewhere, so it aggregates a subset and looks healthy.
 
 For aggregation via an external service, use the DOCA/CollectX exporter instead.
 
