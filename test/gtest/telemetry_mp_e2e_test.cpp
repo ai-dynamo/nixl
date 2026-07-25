@@ -39,6 +39,7 @@
 namespace {
 
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
+constexpr auto XFER_TIME = nixl_telemetry_event_type_t::AGENT_XFER_TIME;
 
 [[nodiscard]] nixlTelemetryExporterInitParams
 initParams(const std::string &agent) {
@@ -215,6 +216,7 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     nixlTelemetryPrometheusMpExporter owner(initParams("agent-parent"));
     ASSERT_TRUE(owner.isExporter());
     owner.exportEvent({TX_BYTES, 999});
+    owner.exportEvent({XFER_TIME, 1234});
 
     // Release the children (they now become writers) and wait for readiness.
     ::close(go_pipe[1]);
@@ -224,12 +226,22 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     }
 
     // Phase 1: every process must appear behind the single owner endpoint.
-    const auto phase1 = parseSeriesByAgent(scrapeMetrics(port_), "agent_tx_bytes_total");
+    const auto body = scrapeMetrics(port_);
+    const auto phase1 = parseSeriesByAgent(body, "agent_tx_bytes_total");
     EXPECT_EQ(phase1.size(), static_cast<std::size_t>(kChildren + 1));
     EXPECT_DOUBLE_EQ(phase1.at("agent-parent"), 999.0);
     EXPECT_DOUBLE_EQ(phase1.at("agent-0"), 100.0);
     EXPECT_DOUBLE_EQ(phase1.at("agent-1"), 200.0);
     EXPECT_DOUBLE_EQ(phase1.at("agent-2"), 300.0);
+
+    EXPECT_NE(body.find("# TYPE agent_xfer_time_us histogram"), std::string::npos);
+    EXPECT_NE(body.find("agent_xfer_time_us_bucket"), std::string::npos);
+    const auto hist_count = parseSeriesByAgent(body, "agent_xfer_time_us_count");
+    const auto hist_sum = parseSeriesByAgent(body, "agent_xfer_time_us_sum");
+    EXPECT_DOUBLE_EQ(hist_count.at("agent-parent"), 1.0);
+    EXPECT_DOUBLE_EQ(hist_sum.at("agent-parent"), 1234.0);
+    // Writers that observed nothing still expose the family, at zero.
+    EXPECT_DOUBLE_EQ(hist_count.at("agent-0"), 0.0);
 
     // Kill one child and reap it so its pid is truly gone before the next scrape.
     ASSERT_EQ(::kill(children[0], SIGKILL), 0);

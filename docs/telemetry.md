@@ -74,15 +74,18 @@ stream:
   type is emitted and the buffer format is unchanged.
 - **Latency histograms**: the transfer-time events additionally feed distribution
   histograms `agent_xfer_time_us` / `agent_xfer_post_time_us` (microseconds) on
-  both the Prometheus and DOCA exporters, at parity (same names, buckets, labels).
+  the Prometheus, multi-process Prometheus and DOCA exporters, at parity (same
+  names, buckets, labels).
   Each is exposed as the standard `_bucket{le="..."}` / `_sum` / `_count` series
   alongside the existing counter and gauge. Bucket boundaries default to a
   microsecond range covering ~10us..~10s and are overridable via
   `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` (a comma-separated list of
   strictly-increasing positive microsecond upper bounds; when absent or empty the
   built-in defaults are used, while a non-empty but invalid value is rejected and
-  the exporter fails to initialize rather than silently using the defaults). Like
-  the other views this is an exporter-side derivation with no new event type.
+  the exporter fails to initialize rather than silently using the defaults).
+  `prometheus_mp` additionally caps the override at 32 bounds, since its buckets
+  live in a fixed-layout shared-memory store. Like the other views this is an
+  exporter-side derivation with no new event type.
 - **Error counters**: the Prometheus and DOCA exporters expose error events as
   `agent_errors_total{status="<status>"}`. The `status` label is bounded by the
   fixed `AGENT_ERR_*` event set: `not_posted`, `invalid_param`, `backend`,
@@ -171,6 +174,7 @@ bind collision is benign, so no rank is dropped. Full details:
 | `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | Bind `127.0.0.1` instead of `0.0.0.0` | `false` |
 | `NIXL_TELEMETRY_RANK_ENV` | Name of the env var holding the rank for the optional `local_rank` label; no label if that env var is unset | `LOCAL_RANK` |
 | `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after a dead process's last update before its store is stale and reaped | `30` |
+| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Shared with the other exporters, but capped at 32 bounds by the fixed-layout store | built-in µs defaults |
 
 Series are labeled by `hostname`, `agent_name`, `pid` (guarantees cross-process
 uniqueness), `agent_instance` (distinguishes multiple same-name agents within one

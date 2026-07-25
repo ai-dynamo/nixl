@@ -58,7 +58,8 @@ if prometheus_found
     telemetry_mp_exporter_lib = static_library(
         'nixl_telemetry_mp_exporter',
         'prometheus_mp_exporter.cpp',
-        include_directories: [nixl_inc_dirs, utils_inc_dirs, prometheus_mp_inc_dirs],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, prometheus_mp_inc_dirs,
+                              include_directories('../common')],
         dependencies: [nixl_common_dep, prometheus_core_dep, prometheus_pull_dep,
                        nixl_telemetry_mp_store_dep, nixl_telemetry_mp_collector_dep],
         install: false,

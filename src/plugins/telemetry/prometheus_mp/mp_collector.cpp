@@ -32,6 +32,7 @@
 #include <chrono>
 #include <ctime>
 #include <exception>
+#include <limits>
 #include <system_error>
 
 namespace nixl::telemetry::mp {
@@ -71,6 +72,30 @@ namespace {
         ClientMetric m;
         m.label = std::move(labels);
         m.gauge.value = static_cast<double>(value);
+        return m;
+    }
+
+    // Turns the store's per-bucket counts into the cumulative form Prometheus
+    // expects, ending with the explicit +Inf bucket that prometheus-cpp's own
+    // Histogram::Collect() emits.
+    [[nodiscard]] ClientMetric
+    histogramMetric(std::vector<ClientMetric::Label> labels,
+                    const storeSnapshot &s,
+                    std::size_t slot) {
+        ClientMetric m;
+        m.label = std::move(labels);
+        m.histogram.bucket.reserve(s.bucketCount + 1);
+        uint64_t cumulative = 0;
+        for (std::size_t i = 0; i <= s.bucketCount; ++i) {
+            cumulative += s.histBuckets[slot][i];
+            ClientMetric::Bucket bucket;
+            bucket.cumulative_count = cumulative;
+            bucket.upper_bound =
+                (i == s.bucketCount) ? std::numeric_limits<double>::infinity() : s.bucketBounds[i];
+            m.histogram.bucket.push_back(bucket);
+        }
+        m.histogram.sample_count = cumulative;
+        m.histogram.sample_sum = static_cast<double>(s.histSums[slot]);
         return m;
     }
 
@@ -171,6 +196,22 @@ buildMetricFamilies(const std::vector<storeSnapshot> &snapshots) {
         const auto slot = static_cast<std::size_t>(type);
         for (const auto &snap : snapshots) {
             family.metric.push_back(gaugeMetric(baseLabels(snap), snap.gauges[slot]));
+        }
+        families.push_back(std::move(family));
+    }
+
+    for (const auto type : telemetry_metric_event_types) {
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(type);
+        if (descriptor.histogramName == nullptr) {
+            continue;
+        }
+        MetricFamily family;
+        family.name = descriptor.histogramName;
+        family.help = descriptor.histogramHelp;
+        family.type = MetricType::Histogram;
+        const auto slot = static_cast<std::size_t>(type);
+        for (const auto &snap : snapshots) {
+            family.metric.push_back(histogramMetric(baseLabels(snap), snap, slot));
         }
         families.push_back(std::move(family));
     }

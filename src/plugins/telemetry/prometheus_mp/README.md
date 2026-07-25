@@ -44,8 +44,8 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   HTTP server). A bind collision is therefore benign -- every process gets a valid
   telemetry sink; no rank is dropped and no scary error is logged.
 - **Per-process series.** Each process is exported as its own series (cumulative
-  counters and last-operation gauges), never summed across processes, so
-  per-process values stay correct and monotonic.
+  counters, last-operation gauges and duration histograms), never summed across
+  processes, so per-process values stay correct and monotonic.
 - **Stale handling.** On clean shutdown a process removes its own store file. If
   it instead crashes or is killed -- and so cannot clean up after itself -- the
   owner drops its series once the process is gone (verified by pid + `/proc` start
@@ -104,6 +104,12 @@ export NIXL_TELEMETRY_RANK_ENV="LOCAL_RANK"
 # Seconds after a dead process's last update before its store is considered stale
 # and reaped (default 30). A live process is always published regardless of age.
 export NIXL_TELEMETRY_MP_STALE_TTL="30"
+
+# Histogram bucket upper bounds in microseconds -- shared with the prometheus and
+# DOCA exporters. This exporter keeps its buckets in the fixed-layout store, so at
+# most 32 bounds are accepted; a longer list fails agent construction rather than
+# being silently truncated.
+export NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US="10,100,1000"
 ```
 
 ## Metric labels
@@ -123,9 +129,11 @@ Every series is labeled by:
   from Dynamo's data-parallel `dp_rank`.
 - `status` -- only on `agent_errors_total`, bounded by the fixed `AGENT_ERR_*` set.
 
-The metric names, types, counter/gauge semantics, and events are identical to the
-single-process [`prometheus`](../prometheus/README.md) exporter (same shared
-descriptor).
+The metric names, types, semantics, and events are identical to the single-process
+[`prometheus`](../prometheus/README.md) exporter (same shared descriptor). That
+includes the transfer-duration histograms `agent_xfer_time_us` and
+`agent_xfer_post_time_us`, exposed as the usual `_bucket{le="..."}` / `_sum` /
+`_count` series per process.
 
 ## Design scope & limitations
 
@@ -134,7 +142,11 @@ Prometheus multiprocess store** (in particular it is not compatible with, and do
 not reuse, Python `prometheus_client`'s multiprocess format):
 
 - The metric set is fixed at compile time; slots are positional, so metric names
-  are never stored in the files.
+  are never stored in the files. Histogram bucket bounds are the one exception --
+  they are stored per file, because each process resolves them from its own
+  environment. Ranks configured with different bounds therefore contribute series
+  with different `le` sets to the same family; give every rank the same
+  `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US`.
 - Per-process label values (`hostname`, `agent_name`, `pid`, `local_rank`) are
   captured once at startup and never change. Events carry only a numeric value --
   there are **no per-observation labels**.

@@ -19,6 +19,7 @@
 #include "common/configuration.h"
 #include "common/hostname.h"
 #include "common/nixl_log.h"
+#include "histogram_buckets.h"
 
 #include <unistd.h>
 
@@ -112,7 +113,8 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
                                            init_params.agentName,
                                            nixl::getHostname().value_or("unknown"),
                                            resolveLocalRank(),
-                                           instance);
+                                           instance,
+                                           nixl::telemetry::resolveHistogramBucketsUs());
 
     const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
     const uint16_t port = nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);
@@ -150,6 +152,9 @@ nixlTelemetryPrometheusMpExporter::exportEvent(const nixlTelemetryEvent &event) 
     }
     if (descriptor.gaugeName != nullptr) {
         store_->setGauge(type, event.value_);
+    }
+    if (descriptor.histogramName != nullptr) {
+        store_->observeHistogram(type, event.value_);
     }
     return NIXL_SUCCESS;
 }

@@ -27,7 +27,9 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -47,6 +49,9 @@ using nixl::telemetry::mp::readProcessStartTime;
 
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
 constexpr auto ERR_BACKEND = nixl_telemetry_event_type_t::AGENT_ERR_BACKEND;
+constexpr auto XFER_TIME = nixl_telemetry_event_type_t::AGENT_XFER_TIME;
+
+const std::vector<double> kBuckets = {10, 100, 1000};
 
 [[nodiscard]] std::size_t
 idx(nixl_telemetry_event_type_t t) {
@@ -62,6 +67,8 @@ makeSnap(const std::string &agent, const std::string &rank) {
     s.agentName = agent;
     s.hostname = "host";
     s.localRank = rank;
+    s.bucketCount = static_cast<uint32_t>(kBuckets.size());
+    std::copy(kBuckets.begin(), kBuckets.end(), s.bucketBounds.begin());
     return s;
 }
 
@@ -210,6 +217,54 @@ TEST(MpCollectorTest, ErrorFamilyCarriesStatusLabel) {
     EXPECT_DOUBLE_EQ(canceled->counter.value, 0.0);
 }
 
+TEST(MpCollectorTest, HistogramFamilyIsCumulativeAndEndsAtInfinity) {
+    auto a = makeSnap("agent-a", "0");
+    // Per-bucket (non-cumulative) counts for bounds {10, 100, 1000} plus overflow.
+    a.histBuckets[idx(XFER_TIME)] = {1, 2, 3, 4};
+    a.histSums[idx(XFER_TIME)] = 9999;
+
+    const auto fams = buildMetricFamilies({a});
+    const auto *hist = findFamily(fams, "agent_xfer_time_us");
+    ASSERT_NE(hist, nullptr);
+    EXPECT_EQ(hist->type, prometheus::MetricType::Histogram);
+    ASSERT_EQ(hist->metric.size(), 1u);
+
+    const auto &buckets = hist->metric[0].histogram.bucket;
+    ASSERT_EQ(buckets.size(), kBuckets.size() + 1);
+    EXPECT_DOUBLE_EQ(buckets[0].upper_bound, 10.0);
+    EXPECT_EQ(buckets[0].cumulative_count, 1u);
+    EXPECT_DOUBLE_EQ(buckets[1].upper_bound, 100.0);
+    EXPECT_EQ(buckets[1].cumulative_count, 3u);
+    EXPECT_DOUBLE_EQ(buckets[2].upper_bound, 1000.0);
+    EXPECT_EQ(buckets[2].cumulative_count, 6u);
+    EXPECT_TRUE(std::isinf(buckets[3].upper_bound));
+    EXPECT_EQ(buckets[3].cumulative_count, 10u);
+
+    EXPECT_EQ(hist->metric[0].histogram.sample_count, 10u);
+    EXPECT_DOUBLE_EQ(hist->metric[0].histogram.sample_sum, 9999.0);
+}
+
+TEST(MpCollectorTest, HistogramsAreNotAggregatedAcrossProcesses) {
+    auto a = makeSnap("agent-a", "0");
+    a.pid = 1001;
+    a.histBuckets[idx(XFER_TIME)] = {1, 0, 0, 0};
+    auto b = makeSnap("agent-b", "1");
+    b.pid = 1002;
+    b.histBuckets[idx(XFER_TIME)] = {0, 0, 0, 5};
+
+    const auto fams = buildMetricFamilies({a, b});
+    const auto *hist = findFamily(fams, "agent_xfer_time_us");
+    ASSERT_NE(hist, nullptr);
+    ASSERT_EQ(hist->metric.size(), 2u);
+
+    const auto *m_a = findByLabel(*hist, "pid", "1001");
+    const auto *m_b = findByLabel(*hist, "pid", "1002");
+    ASSERT_NE(m_a, nullptr);
+    ASSERT_NE(m_b, nullptr);
+    EXPECT_EQ(m_a->histogram.sample_count, 1u);
+    EXPECT_EQ(m_b->histogram.sample_count, 5u);
+}
+
 TEST(MpCollectorTest, IsProcessAliveGuardsPidReuse) {
     EXPECT_TRUE(isProcessAlive(::getpid(), readProcessStartTime(::getpid())));
     EXPECT_TRUE(isProcessAlive(::getpid(), 0)); // unknown start time -> existence only
@@ -259,10 +314,10 @@ protected:
 
 TEST_F(MpCollectorFileTest, CollectReadsLiveStoresAndIgnoresOthers) {
     // Two distinct store files; both headers stamp this (live) process.
-    storeWriter w1(dir_ / makeStoreFileName(111, 1, 0), "agent-1", "host", "0", 0);
+    storeWriter w1(dir_ / makeStoreFileName(111, 1, 0), "agent-1", "host", "0", 0, kBuckets);
     w1.addCounter(TX_BYTES, 500);
     w1.setGauge(TX_BYTES, 500);
-    storeWriter w2(dir_ / makeStoreFileName(222, 2, 0), "agent-2", "host", "1", 0);
+    storeWriter w2(dir_ / makeStoreFileName(222, 2, 0), "agent-2", "host", "1", 0, kBuckets);
     w2.addCounter(TX_BYTES, 700);
 
     // A non-store file must be ignored.

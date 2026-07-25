@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "prometheus_mp_exporter.h"
+#include "histogram_buckets.h"
 #include "mp_store.h"
 #include "telemetry.h"
 
@@ -36,6 +37,7 @@ using nixl::telemetry::mp::readStoreSnapshot;
 
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
 constexpr auto RX_BYTES = nixl_telemetry_event_type_t::AGENT_RX_BYTES;
+constexpr auto XFER_TIME = nixl_telemetry_event_type_t::AGENT_XFER_TIME;
 
 [[nodiscard]] std::size_t
 idx(nixl_telemetry_event_type_t t) {
@@ -117,6 +119,26 @@ TEST_F(MpExporterTest, WriterModeWhenPortTaken) {
     ASSERT_TRUE(snap.has_value());
     EXPECT_EQ(snap->agentName, "agent-writer");
     EXPECT_EQ(snap->counters[idx(RX_BYTES)], 77u);
+}
+
+TEST_F(MpExporterTest, DurationEventFeedsCounterGaugeAndHistogram) {
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-hist"));
+
+    const auto file = singleStoreFile();
+    ASSERT_FALSE(file.empty());
+
+    exporter.exportEvent({XFER_TIME, 42});
+
+    const auto snap = readStoreSnapshot(file).snapshot;
+    ASSERT_TRUE(snap.has_value());
+    EXPECT_EQ(snap->counters[idx(XFER_TIME)], 42u);
+    EXPECT_EQ(snap->gauges[idx(XFER_TIME)], 42u);
+    EXPECT_EQ(snap->histSums[idx(XFER_TIME)], 42u);
+
+    // Default bounds start at 10us, so 42us lands in the 50us bucket (index 2).
+    ASSERT_EQ(snap->bucketCount, nixl::telemetry::defaultHistogramBucketsUs().size());
+    EXPECT_DOUBLE_EQ(snap->bucketBounds[2], 50.0);
+    EXPECT_EQ(snap->histBuckets[idx(XFER_TIME)][2], 1u);
 }
 
 TEST_F(MpExporterTest, LoadsThroughPluginManager) {

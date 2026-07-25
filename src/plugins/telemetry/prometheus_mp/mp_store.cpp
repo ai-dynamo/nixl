@@ -58,11 +58,17 @@ namespace {
         uint64_t startTime;
         uint64_t lastUpdateNs;
         uint64_t instance;
+        // 64-bit purely so the double array that follows stays 8-byte aligned
+        // without implicit padding.
+        uint64_t bucketCount;
         char agentName[MP_MAX_AGENT_NAME];
         char hostname[MP_MAX_HOSTNAME];
         char localRank[MP_MAX_LOCAL_RANK];
+        double bucketBounds[MP_STORE_MAX_BUCKETS];
         uint64_t counters[MP_STORE_SLOT_COUNT];
         uint64_t gauges[MP_STORE_SLOT_COUNT];
+        uint64_t histBuckets[MP_STORE_SLOT_COUNT][MP_STORE_MAX_BUCKETS + 1];
+        uint64_t histSums[MP_STORE_SLOT_COUNT];
     };
 
     void
@@ -152,9 +158,17 @@ storeWriter::storeWriter(std::filesystem::path path,
                          const std::string &agent_name,
                          const std::string &hostname,
                          const std::string &local_rank,
-                         uint64_t instance)
+                         uint64_t instance,
+                         const std::vector<double> &histogram_buckets)
     : path_(std::move(path)),
       mappingSize_(sizeof(storeLayout)) {
+    if (histogram_buckets.size() > MP_STORE_MAX_BUCKETS) {
+        throw std::runtime_error("prometheus_mp: NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US has " +
+                                 std::to_string(histogram_buckets.size()) +
+                                 " bounds, more than the " + std::to_string(MP_STORE_MAX_BUCKETS) +
+                                 " a multi-process store can hold");
+    }
+
     const scopedFd fd(::open(path_.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600));
     if (fd.get() < 0) {
         throw std::runtime_error("prometheus_mp: cannot open telemetry store '" + path_.string() +
@@ -180,6 +194,8 @@ storeWriter::storeWriter(std::filesystem::path path,
     layout->pid = static_cast<int64_t>(::getpid());
     layout->startTime = readProcessStartTime(layout->pid);
     layout->instance = instance;
+    layout->bucketCount = histogram_buckets.size();
+    std::copy(histogram_buckets.begin(), histogram_buckets.end(), layout->bucketBounds);
     copyField(layout->agentName, MP_MAX_AGENT_NAME, agent_name, "agent name");
     copyField(layout->hostname, MP_MAX_HOSTNAME, hostname, "hostname");
     copyField(layout->localRank, MP_MAX_LOCAL_RANK, local_rank, "local_rank");
@@ -226,6 +242,25 @@ storeWriter::setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept
     touch();
 }
 
+void
+storeWriter::observeHistogram(nixl_telemetry_event_type_t type, uint64_t value) noexcept {
+    const auto idx = static_cast<std::size_t>(type);
+    if (idx >= MP_STORE_SLOT_COUNT) {
+        return;
+    }
+    auto *layout = static_cast<storeLayout *>(mapping_);
+    const double *const first = layout->bucketBounds;
+    const double *const last = first + layout->bucketCount;
+    // lower_bound, not upper_bound: Prometheus buckets are `value <= le`, so the
+    // observation belongs in the first bucket whose bound is not below it. Values
+    // above every bound land in the trailing overflow slot.
+    const double *const bound = std::lower_bound(first, last, static_cast<double>(value));
+    __atomic_fetch_add(
+        &layout->histBuckets[idx][static_cast<std::size_t>(bound - first)], 1, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&layout->histSums[idx], value, __ATOMIC_RELAXED);
+    touch();
+}
+
 storeReadResult
 readStoreSnapshot(const std::filesystem::path &path) {
     const scopedFd fd(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
@@ -269,10 +304,10 @@ readStoreSnapshot(const std::filesystem::path &path) {
         return {std::nullopt, true};
     }
     if (layout->schemaVersion != MP_STORE_SCHEMA_VERSION ||
-        layout->slotCount != MP_STORE_SLOT_COUNT) {
+        layout->slotCount != MP_STORE_SLOT_COUNT || layout->bucketCount > MP_STORE_MAX_BUCKETS) {
         NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
                   << "' with incompatible schema (version " << layout->schemaVersion << ", slots "
-                  << layout->slotCount << ")";
+                  << layout->slotCount << ", buckets " << layout->bucketCount << ")";
         return {std::nullopt, true};
     }
 
@@ -284,9 +319,15 @@ readStoreSnapshot(const std::filesystem::path &path) {
     snap.agentName = readField(layout->agentName, MP_MAX_AGENT_NAME);
     snap.hostname = readField(layout->hostname, MP_MAX_HOSTNAME);
     snap.localRank = readField(layout->localRank, MP_MAX_LOCAL_RANK);
+    snap.bucketCount = static_cast<uint32_t>(layout->bucketCount);
+    std::copy_n(layout->bucketBounds, snap.bucketCount, snap.bucketBounds.begin());
     for (std::size_t i = 0; i < MP_STORE_SLOT_COUNT; ++i) {
         snap.counters[i] = __atomic_load_n(&layout->counters[i], __ATOMIC_RELAXED);
         snap.gauges[i] = __atomic_load_n(&layout->gauges[i], __ATOMIC_RELAXED);
+        snap.histSums[i] = __atomic_load_n(&layout->histSums[i], __ATOMIC_RELAXED);
+        for (std::size_t b = 0; b <= snap.bucketCount; ++b) {
+            snap.histBuckets[i][b] = __atomic_load_n(&layout->histBuckets[i][b], __ATOMIC_RELAXED);
+        }
     }
 
     return {std::move(snap), false};

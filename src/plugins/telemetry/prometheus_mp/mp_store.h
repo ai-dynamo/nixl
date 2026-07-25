@@ -26,6 +26,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace nixl::telemetry::mp {
 
@@ -46,6 +47,12 @@ inline constexpr std::string_view MP_STORE_FILE_SUFFIX = ".mmap";
 // sync if the enum is extended.
 inline constexpr std::size_t MP_STORE_SLOT_COUNT =
     static_cast<std::size_t>(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED) + 1;
+
+// Most histogram bucket boundaries the fixed layout can hold (the built-in set
+// uses 18). A NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US override with more bounds than
+// this is rejected rather than silently truncated -- the single-process exporter,
+// which keeps its buckets on the heap, has no such limit.
+inline constexpr std::size_t MP_STORE_MAX_BUCKETS = 32;
 
 namespace detail {
     // Highest slot index the collector will index into the counter/gauge arrays,
@@ -95,6 +102,18 @@ struct storeSnapshot {
     std::string localRank;
     std::array<uint64_t, MP_STORE_SLOT_COUNT> counters{};
     std::array<uint64_t, MP_STORE_SLOT_COUNT> gauges{};
+    // Histogram bucket upper bounds this process was configured with; only the
+    // first bucketCount entries are meaningful. Carried per store because each
+    // process resolves them from its own environment.
+    uint32_t bucketCount = 0;
+    std::array<double, MP_STORE_MAX_BUCKETS> bucketBounds{};
+    // Per-bucket observation counts, indexed by nixl_telemetry_event_type_t then
+    // by bucket, where index bucketCount collects values above the last bound.
+    // Deliberately NOT cumulative: the reader accumulates, so a scrape racing a
+    // writer can never expose non-monotonic buckets.
+    std::array<std::array<uint64_t, MP_STORE_MAX_BUCKETS + 1>, MP_STORE_SLOT_COUNT> histBuckets{};
+    // Sum of all observed values per event type, in the event's own units.
+    std::array<uint64_t, MP_STORE_SLOT_COUNT> histSums{};
 };
 
 /**
@@ -116,13 +135,17 @@ public:
      * @param local_rank Optional rank label; pass empty to omit it.
      * @param instance Per-process instance counter; disambiguates multiple
      *        same-named agents in one process so their series stay distinct.
-     * @throws std::runtime_error on open/ftruncate/mmap failure.
+     * @param histogram_buckets Histogram bucket upper bounds, at most
+     *        MP_STORE_MAX_BUCKETS of them.
+     * @throws std::runtime_error on open/ftruncate/mmap failure, or when
+     *         @p histogram_buckets does not fit the store.
      */
     storeWriter(std::filesystem::path path,
                 const std::string &agent_name,
                 const std::string &hostname,
                 const std::string &local_rank,
-                uint64_t instance);
+                uint64_t instance,
+                const std::vector<double> &histogram_buckets);
     ~storeWriter();
 
     storeWriter(const storeWriter &) = delete;
@@ -141,6 +164,12 @@ public:
     // heartbeat. Out-of-range types are ignored.
     void
     setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept;
+
+    // Records @p value in the histogram bucket it falls into (upper bounds are
+    // inclusive, matching Prometheus) and adds it to the sum for @p type, then
+    // refreshes the heartbeat. Out-of-range types are ignored.
+    void
+    observeHistogram(nixl_telemetry_event_type_t type, uint64_t value) noexcept;
 
     [[nodiscard]] const std::filesystem::path &
     path() const noexcept {

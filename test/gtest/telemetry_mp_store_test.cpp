@@ -25,7 +25,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -36,6 +38,9 @@ using nixl::telemetry::mp::readStoreSnapshot;
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
 constexpr auto RX_BYTES = nixl_telemetry_event_type_t::AGENT_RX_BYTES;
 constexpr auto ERR_BACKEND = nixl_telemetry_event_type_t::AGENT_ERR_BACKEND;
+constexpr auto XFER_TIME = nixl_telemetry_event_type_t::AGENT_XFER_TIME;
+
+const std::vector<double> kBuckets = {10, 100, 1000};
 
 [[nodiscard]] std::size_t
 idx(nixl_telemetry_event_type_t t) {
@@ -68,7 +73,7 @@ protected:
 
 TEST_F(MpStoreTest, WriteReadRoundTrip) {
     const auto path = storePath("agent-a");
-    storeWriter writer(path, "agent-a", "host-1", "3", 7);
+    storeWriter writer(path, "agent-a", "host-1", "3", 7, kBuckets);
     writer.addCounter(TX_BYTES, 1000);
     writer.setGauge(TX_BYTES, 1000);
     writer.addCounter(ERR_BACKEND, 1);
@@ -94,7 +99,7 @@ TEST_F(MpStoreTest, WriteReadRoundTrip) {
 
 TEST_F(MpStoreTest, CounterAccumulatesGaugeReplaces) {
     const auto path = storePath("agent-b");
-    storeWriter writer(path, "agent-b", "host-1", "", 0);
+    storeWriter writer(path, "agent-b", "host-1", "", 0, kBuckets);
     writer.addCounter(TX_BYTES, 100);
     writer.addCounter(TX_BYTES, 250);
     writer.addCounter(TX_BYTES, 650);
@@ -109,17 +114,66 @@ TEST_F(MpStoreTest, CounterAccumulatesGaugeReplaces) {
 
 TEST_F(MpStoreTest, EmptyRankIsEmpty) {
     const auto path = storePath("agent-c");
-    storeWriter writer(path, "agent-c", "host-1", "", 0);
+    storeWriter writer(path, "agent-c", "host-1", "", 0, kBuckets);
 
     const auto snap = readStoreSnapshot(path).snapshot;
     ASSERT_TRUE(snap.has_value());
     EXPECT_TRUE(snap->localRank.empty());
 }
 
+TEST_F(MpStoreTest, HistogramBucketBoundsAreInclusive) {
+    const auto path = storePath("agent-hist");
+    storeWriter writer(path, "agent-hist", "host-1", "", 0, kBuckets);
+    // Bounds {10, 100, 1000}: a value equal to a bound belongs to that bucket,
+    // and anything above the last bound lands in the trailing overflow slot.
+    writer.observeHistogram(XFER_TIME, 1);
+    writer.observeHistogram(XFER_TIME, 10);
+    writer.observeHistogram(XFER_TIME, 11);
+    writer.observeHistogram(XFER_TIME, 1000);
+    writer.observeHistogram(XFER_TIME, 1001);
+
+    const auto snap = readStoreSnapshot(path).snapshot;
+    ASSERT_TRUE(snap.has_value());
+    EXPECT_EQ(snap->bucketCount, kBuckets.size());
+    EXPECT_DOUBLE_EQ(snap->bucketBounds[0], 10.0);
+    EXPECT_DOUBLE_EQ(snap->bucketBounds[2], 1000.0);
+
+    const auto &counts = snap->histBuckets[idx(XFER_TIME)];
+    EXPECT_EQ(counts[0], 2u); // 1, 10
+    EXPECT_EQ(counts[1], 1u); // 11
+    EXPECT_EQ(counts[2], 1u); // 1000
+    EXPECT_EQ(counts[3], 1u); // 1001 -> overflow
+    EXPECT_EQ(snap->histSums[idx(XFER_TIME)], 1u + 10u + 11u + 1000u + 1001u);
+}
+
+TEST_F(MpStoreTest, HistogramUntouchedTypesStayEmpty) {
+    const auto path = storePath("agent-hist-empty");
+    storeWriter writer(path, "agent-hist-empty", "host-1", "", 0, kBuckets);
+    writer.observeHistogram(XFER_TIME, 5);
+
+    const auto snap = readStoreSnapshot(path).snapshot;
+    ASSERT_TRUE(snap.has_value());
+    EXPECT_EQ(snap->histSums[idx(TX_BYTES)], 0u);
+    for (const auto count : snap->histBuckets[idx(TX_BYTES)]) {
+        EXPECT_EQ(count, 0u);
+    }
+}
+
+TEST_F(MpStoreTest, TooManyBucketsRejected) {
+    using nixl::telemetry::mp::MP_STORE_MAX_BUCKETS;
+    std::vector<double> too_many(MP_STORE_MAX_BUCKETS + 1);
+    for (std::size_t i = 0; i < too_many.size(); ++i) {
+        too_many[i] = static_cast<double>(i + 1);
+    }
+    const auto path = storePath("agent-too-many");
+    EXPECT_THROW({ storeWriter writer(path, "a", "host-1", "", 0, too_many); }, std::runtime_error);
+    EXPECT_FALSE(std::filesystem::exists(path));
+}
+
 TEST_F(MpStoreTest, DestructorRemovesStoreFile) {
     const auto path = storePath("agent-cleanup");
     {
-        storeWriter writer(path, "agent-cleanup", "host-1", "", 0);
+        storeWriter writer(path, "agent-cleanup", "host-1", "", 0, kBuckets);
         EXPECT_TRUE(std::filesystem::exists(path));
     }
     EXPECT_FALSE(std::filesystem::exists(path));
@@ -129,7 +183,7 @@ TEST_F(MpStoreTest, LongAgentNameTruncated) {
     const auto path = storePath("agent-long");
     const std::string long_name(1000, 'x');
     const gtest::LogIgnoreGuard lig("exceeds 255 chars");
-    storeWriter writer(path, long_name, "host-1", "", 0);
+    storeWriter writer(path, long_name, "host-1", "", 0, kBuckets);
 
     const auto snap = readStoreSnapshot(path).snapshot;
     ASSERT_TRUE(snap.has_value());
