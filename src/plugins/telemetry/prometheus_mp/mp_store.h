@@ -142,11 +142,6 @@ public:
     void
     setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept;
 
-    // Refreshes the last-update timestamp without changing any metric (keeps the
-    // process from looking stale during idle periods).
-    void
-    refreshHeartbeat() noexcept;
-
     [[nodiscard]] const std::filesystem::path &
     path() const noexcept {
         return path_;

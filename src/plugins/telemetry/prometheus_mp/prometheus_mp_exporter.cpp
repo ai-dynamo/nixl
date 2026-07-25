@@ -32,12 +32,12 @@
 namespace {
 
 using nixl::telemetry::mp::makeStoreFileName;
+using nixl::telemetry::mp::MP_DEFAULT_STALE_TTL;
 using nixl::telemetry::mp::storeWriter;
 using nixl::telemetry::mp::nixlMultiprocessCollector;
 using nixl::telemetry::mp::readProcessStartTime;
 
 constexpr uint16_t defaultPort = 9090;
-constexpr uint64_t defaultStaleTtlSeconds = 30;
 constexpr char defaultRankEnvName[] = "LOCAL_RANK";
 
 constexpr char prometheusPortVar[] = "NIXL_TELEMETRY_PROMETHEUS_PORT";
@@ -70,8 +70,8 @@ resolveLocalRank() {
 
 [[nodiscard]] std::chrono::nanoseconds
 resolveStaleTtl() {
-    const uint64_t seconds =
-        nixl::config::getValueDefaulted<uint64_t>(staleTtlVar, defaultStaleTtlSeconds);
+    const uint64_t seconds = nixl::config::getValueDefaulted<uint64_t>(
+        staleTtlVar, static_cast<uint64_t>(MP_DEFAULT_STALE_TTL.count()));
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(seconds));
 }
 

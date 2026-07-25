@@ -129,7 +129,7 @@ storeWriter::storeWriter(std::filesystem::path path,
                          uint64_t instance)
     : path_(std::move(path)),
       mappingSize_(sizeof(storeLayout)) {
-    const int fd = ::open(path_.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
+    const int fd = ::open(path_.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) {
         throw std::runtime_error("prometheus_mp: cannot open telemetry store '" + path_.string() +
                                  "': " + std::strerror(errno));
@@ -203,14 +203,9 @@ storeWriter::setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept
     touch();
 }
 
-void
-storeWriter::refreshHeartbeat() noexcept {
-    touch();
-}
-
 std::optional<storeSnapshot>
 readStoreSnapshot(const std::filesystem::path &path) {
-    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
         // Missing/unreadable file is not an error here (peer may have exited).
         return std::nullopt;
