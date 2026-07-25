@@ -142,7 +142,7 @@ Telemetry is configured by environment variables:
 | `NIXL_TELEMETRY_BUFFER_SIZE` | Number of events in buffer | `4096` |
 | `NIXL_TELEMETRY_RUN_INTERVAL` | Flush interval (ms) | `100` |
 | `NIXL_TELEMETRY_EXPORTER` | Name of the exporter plugin to use | - |
-| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Comma-separated microsecond bucket bounds for the transfer-time histograms (Prometheus/DOCA) | built-in µs defaults |
+| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Comma-separated microsecond bucket bounds for the transfer-time histograms (`prometheus`, `prometheus_mp`, DOCA) | built-in µs defaults |
 | `NIXL_TELEMETRY_ENABLED_METRICS` | Comma-separated allowlist of metric names to export (glob) | all |
 
 - `NIXL_TELEMETRY_ENABLE` can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to be enabled, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to be disabled. Matching is case insensitive.

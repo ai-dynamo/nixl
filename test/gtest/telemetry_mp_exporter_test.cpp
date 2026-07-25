@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,17 +56,20 @@ class MpExporterTest : public ::testing::Test {
 protected:
     // A build tree has no <libnixl.so dir>/plugins, so LoadsThroughPluginManager
     // finds the plugin only if the build path is registered. Registered once per
-    // suite, and only when it exists: re-registering, or registering a missing
-    // directory, logs a warning/error that the gtest main counts as a failure.
-    // When it is absent (a binary run from an install tree) NIXL_PLUGIN_DIR is
-    // what supplies the plugin.
+    // process (--gtest_repeat re-enters this hook), and only when it exists:
+    // re-registering, or registering a missing directory, logs a warning/error
+    // that the gtest main counts as a failure. When it is absent (a binary run
+    // from an install tree) NIXL_PLUGIN_DIR is what supplies the plugin.
     static void
     SetUpTestSuite() {
-        const std::string build_plugin_dir =
-            std::string(BUILD_DIR) + "/src/plugins/telemetry/prometheus_mp";
-        if (std::filesystem::is_directory(build_plugin_dir)) {
-            nixlPluginManager::getInstance().addPluginDirectory(build_plugin_dir);
-        }
+        [[maybe_unused]] static const bool registered = [] {
+            const std::string build_plugin_dir =
+                std::string(BUILD_DIR) + "/src/plugins/telemetry/prometheus_mp";
+            if (std::filesystem::is_directory(build_plugin_dir)) {
+                nixlPluginManager::getInstance().addPluginDirectory(build_plugin_dir);
+            }
+            return true;
+        }();
     }
 
     void

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -168,15 +169,35 @@ protected:
         env_.addVar("NIXL_TELEMETRY_MP_STALE_TTL", "0");
     }
 
+    // Runs even when a fatal assertion aborts the test body mid-fork.
     void
     TearDown() override {
+        for (int *fd : {&go_w_, &ready_r_, &quit_w_}) {
+            closeFd(*fd);
+        }
+        for (const pid_t pid : children_) {
+            ::kill(pid, SIGKILL);
+            ::waitpid(pid, nullptr, 0);
+        }
         std::error_code ec;
         std::filesystem::remove_all(dir_, ec);
+    }
+
+    static void
+    closeFd(int &fd) {
+        if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+        }
     }
 
     gtest::ScopedEnv env_;
     uint16_t port_ = 0;
     std::filesystem::path dir_;
+    std::vector<pid_t> children_;
+    int go_w_ = -1;
+    int ready_r_ = -1;
+    int quit_w_ = -1;
 };
 
 TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) {
@@ -189,9 +210,12 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     ASSERT_EQ(::pipe(ready_pipe), 0);
     ASSERT_EQ(::pipe(quit_pipe), 0);
 
+    go_w_ = go_pipe[1];
+    ready_r_ = ready_pipe[0];
+    quit_w_ = quit_pipe[1];
+
     // Fork children while the parent is still single-threaded (before it builds
     // the owner exporter, which starts civetweb threads).
-    std::vector<pid_t> children;
     for (int i = 0; i < kChildren; ++i) {
         const pid_t pid = ::fork();
         ASSERT_GE(pid, 0);
@@ -205,7 +229,7 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
                            "agent-" + std::to_string(i),
                            static_cast<uint64_t>((i + 1) * 100));
         }
-        children.push_back(pid);
+        children_.push_back(pid);
     }
 
     ::close(go_pipe[0]);
@@ -219,10 +243,12 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     owner.exportEvent({XFER_TIME, 1234});
 
     // Release the children (they now become writers) and wait for readiness.
-    ::close(go_pipe[1]);
+    closeFd(go_w_);
     for (int i = 0; i < kChildren; ++i) {
+        pollfd pfd{ready_r_, POLLIN, 0};
+        ASSERT_GT(::poll(&pfd, 1, 30000), 0) << "writer " << i << " never signalled readiness";
         char c = 0;
-        ASSERT_EQ(::read(ready_pipe[0], &c, 1), 1);
+        ASSERT_EQ(::read(ready_r_, &c, 1), 1);
     }
 
     // Phase 1: every process must appear behind the single owner endpoint.
@@ -244,9 +270,10 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     EXPECT_DOUBLE_EQ(hist_count.at("agent-0"), 0.0);
 
     // Kill one child and reap it so its pid is truly gone before the next scrape.
-    ASSERT_EQ(::kill(children[0], SIGKILL), 0);
-    int status = 0;
-    ASSERT_EQ(::waitpid(children[0], &status, 0), children[0]);
+    const pid_t dead = children_.front();
+    children_.erase(children_.begin());
+    ASSERT_EQ(::kill(dead, SIGKILL), 0);
+    ASSERT_EQ(::waitpid(dead, nullptr, 0), dead);
 
     // Phase 2: the dead child's series is dropped (and its store reaped).
     const auto phase2 = parseSeriesByAgent(scrapeMetrics(port_), "agent_tx_bytes_total");
@@ -255,12 +282,7 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     EXPECT_EQ(phase2.count("agent-2"), 1u);
     EXPECT_EQ(phase2.count("agent-parent"), 1u);
 
-    // Release the remaining children and reap them.
-    ::close(quit_pipe[1]);
-    for (int i = 1; i < kChildren; ++i) {
-        ::waitpid(children[i], &status, 0);
-    }
-    ::close(ready_pipe[0]);
+    // The remaining children are released and reaped by TearDown().
 }
 
 } // namespace
