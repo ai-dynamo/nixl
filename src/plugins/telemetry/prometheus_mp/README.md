@@ -76,9 +76,9 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   it instead crashes or is killed -- and so cannot clean up after itself -- the
   owner keeps publishing its last values until *both* the process is gone
   (verified by pid + `/proc` start time) and its last update has aged past the
-  TTL; only then are the series dropped and the file reaped. A live process is
-  therefore never dropped for being idle, and a dead one lingers for at most the
-  TTL.
+  TTL; only then are the series dropped and the file reaped. Both are evaluated
+  during a scrape, so a live process is never dropped for being idle, and a dead
+  one keeps being published until the first scrape after its TTL expires.
 - **The owner is elected once, and there is no failover.** If the owner process
   exits, no surviving writer promotes itself: the endpoint stays down for the rest
   of the run while every remaining process keeps updating its store file. Reaping
