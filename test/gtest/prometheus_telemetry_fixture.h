@@ -28,16 +28,19 @@
 // Shared fixture for the native Prometheus telemetry exporter tests, which live
 // in both telemetry_prometheus_test.cpp and telemetry_histogram_test.cpp. Because
 // both files drive this single fixture class, gtest groups them into one test
-// suite and runs SetUpTestSuite exactly once, so the plugin directory is
-// registered a single time for the whole process (registering it per-test, or
-// twice from two suites, trips the plugin manager's "already registered" warning
-// which the gtest main treats as a failure).
+// suite and runs SetUpTestSuite once per iteration. The registration is kept to
+// once per process because registering the same directory twice (a second suite,
+// or --gtest_repeat re-entering this hook) trips the plugin manager's "already
+// registered" warning, which the gtest main treats as a failure.
 class prometheusTelemetryTest : public ::testing::Test {
 protected:
     static void
     SetUpTestSuite() {
-        nixlPluginManager::getInstance().addPluginDirectory(std::string(BUILD_DIR) +
-                                                            "/src/plugins/telemetry/prometheus");
+        [[maybe_unused]] static const bool registered = [] {
+            nixlPluginManager::getInstance().addPluginDirectory(
+                std::string(BUILD_DIR) + "/src/plugins/telemetry/prometheus");
+            return true;
+        }();
     }
 
     void
