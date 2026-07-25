@@ -98,6 +98,10 @@ static_assert(nixl_telemetry_event_type_count ==
               "AGENT_TELEMETRY_EVENTS_DROPPED must remain the last enumerator; "
               "nixl_telemetry_event_type_count is out of sync with the event-type enum");
 
+// The error events share one family, so they have no per-type descriptor row.
+inline constexpr const char *telemetry_error_family_name = "agent_errors_total";
+inline constexpr const char *telemetry_error_family_help = "Cumulative error count by status";
+
 struct nixlTelemetryMetricDescriptor {
     const char *counterName;
     const char *counterHelp;

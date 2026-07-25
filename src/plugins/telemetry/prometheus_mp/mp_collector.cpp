@@ -217,8 +217,8 @@ buildMetricFamilies(const std::vector<storeSnapshot> &snapshots) {
     }
 
     MetricFamily errors;
-    errors.name = "agent_errors_total";
-    errors.help = "Cumulative error count by status";
+    errors.name = telemetry_error_family_name;
+    errors.help = telemetry_error_family_help;
     errors.type = MetricType::Counter;
     for (const auto &snap : snapshots) {
         for (const auto type : telemetry_error_event_types) {

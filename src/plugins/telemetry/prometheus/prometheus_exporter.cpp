@@ -158,8 +158,8 @@ nixlTelemetryPrometheusExporter::registerCounter(const nixl_telemetry_event_type
 void
 nixlTelemetryPrometheusExporter::registerErrorCounters() {
     auto &family = prometheus::BuildCounter()
-                       .Name("agent_errors_total")
-                       .Help("Cumulative error count by status")
+                       .Name(telemetry_error_family_name)
+                       .Help(telemetry_error_family_help)
                        .Register(*registry_);
 
     for (const auto event_type : telemetry_error_event_types) {

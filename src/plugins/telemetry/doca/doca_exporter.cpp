@@ -373,7 +373,7 @@ nixlTelemetryDocaExporter::appendErrorCounterSample(const nixlTelemetryEvent &ev
     const char *label_values[] = {agent_name_.c_str(), status};
     return doca_telemetry_exporter_metrics_add_counter_increment(ctx_->source,
                                                                  docaTimestamp(),
-                                                                 "agent_errors_total",
+                                                                 telemetry_error_family_name,
                                                                  event.value_,
                                                                  ctx_->error_label_set_id,
                                                                  label_values);
