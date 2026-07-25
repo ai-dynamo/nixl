@@ -89,6 +89,11 @@ public:
     Collect() const override;
 
 private:
+    // Scans the shared directory once, dropping (and optionally reaping) stores
+    // that are stale or unusable.
+    [[nodiscard]] std::vector<storeSnapshot>
+    scanLiveStores() const;
+
     const std::filesystem::path dir_;
     const std::chrono::nanoseconds staleTtl_;
     const bool reapStale_;

@@ -142,6 +142,15 @@ not reuse, Python `prometheus_client`'s multiprocess format):
   high-cardinality label** whose value varies per observation. No NIXL metric has
   such a label today; if one is ever added, this exporter would need a different
   (keyed) store.
+- **Process churn creates new series.** `pid` and `agent_instance` are what keep
+  each process's counters monotonic, but they also mean a restarted rank is a
+  fresh series rather than a continuation: it gets a new `pid`, and the instance
+  counter restarts at `0`. The exposition only ever contains live processes, so
+  scrape size is bounded by the current process count -- but the TSDB accumulates
+  one series set per process seen within the retention window, so a crash-looping
+  deployment grows cardinality at the restart rate. Aggregate the churning labels
+  away (`sum without (pid, agent_instance) (...)`) for stable per-rank or
+  per-host views.
 
 This is the native, dependency-free path. For aggregation through an external
 telemetry service, use the DOCA/CollectX exporter (IPC to DTS) instead.

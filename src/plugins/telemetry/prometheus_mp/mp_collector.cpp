@@ -31,6 +31,7 @@
 #include <cerrno>
 #include <chrono>
 #include <ctime>
+#include <exception>
 #include <system_error>
 
 namespace nixl::telemetry::mp {
@@ -200,6 +201,24 @@ nixlMultiprocessCollector::nixlMultiprocessCollector(std::filesystem::path dir,
 
 std::vector<MetricFamily>
 nixlMultiprocessCollector::Collect() const {
+    // prometheus-cpp calls this on its HTTP handler thread; an exception escaping
+    // into that handler (std::bad_alloc from the allocations below, say) would
+    // fail the scrape at best and terminate the process at worst. Telemetry must
+    // never take down the data plane, so degrade to an empty scrape instead.
+    try {
+        return buildMetricFamilies(scanLiveStores());
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "prometheus_mp: telemetry collection failed: " << e.what();
+    }
+    catch (...) {
+        NIXL_WARN << "prometheus_mp: telemetry collection failed";
+    }
+    return {};
+}
+
+std::vector<storeSnapshot>
+nixlMultiprocessCollector::scanLiveStores() const {
     std::vector<storeSnapshot> live;
 
     std::error_code ec;
@@ -222,12 +241,11 @@ nixlMultiprocessCollector::Collect() const {
         if (!entry.is_regular_file(ec) || !nameMatchesStore(entry.path().filename().string())) {
             continue;
         }
-        bool content_invalid = false;
-        auto snap = readStoreSnapshot(entry.path(), &content_invalid);
+        auto [snap, content_invalid] = readStoreSnapshot(entry.path());
         if (!snap) {
             // Reap only genuinely bad content (bad/zero magic, wrong schema,
             // truncated) that is old enough to not be mid-creation. A transient
-            // open/mmap failure leaves content_invalid false, so a healthy peer we
+            // open/mmap failure leaves contentInvalid false, so a healthy peer we
             // simply failed to read is never unlinked.
             if (reapStale_ && content_invalid && invalidFileReapable(entry.path(), staleTtl_)) {
                 std::error_code rm_ec;
@@ -243,7 +261,7 @@ nixlMultiprocessCollector::Collect() const {
         }
     }
 
-    return buildMetricFamilies(live);
+    return live;
 }
 
 } // namespace nixl::telemetry::mp

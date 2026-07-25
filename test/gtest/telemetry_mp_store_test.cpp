@@ -73,10 +73,10 @@ TEST_F(MpStoreTest, WriteReadRoundTrip) {
     writer.setGauge(TX_BYTES, 1000);
     writer.addCounter(ERR_BACKEND, 1);
 
-    bool content_invalid = true;
-    const auto snap = readStoreSnapshot(path, &content_invalid);
+    const auto res = readStoreSnapshot(path);
+    const auto &snap = res.snapshot;
     ASSERT_TRUE(snap.has_value());
-    EXPECT_FALSE(content_invalid);
+    EXPECT_FALSE(res.contentInvalid);
     EXPECT_EQ(snap->agentName, "agent-a");
     EXPECT_EQ(snap->hostname, "host-1");
     EXPECT_EQ(snap->localRank, "3");
@@ -101,7 +101,7 @@ TEST_F(MpStoreTest, CounterAccumulatesGaugeReplaces) {
     writer.setGauge(TX_BYTES, 100);
     writer.setGauge(TX_BYTES, 650); // last write wins
 
-    const auto snap = readStoreSnapshot(path);
+    const auto snap = readStoreSnapshot(path).snapshot;
     ASSERT_TRUE(snap.has_value());
     EXPECT_EQ(snap->counters[idx(TX_BYTES)], 1000u);
     EXPECT_EQ(snap->gauges[idx(TX_BYTES)], 650u);
@@ -111,7 +111,7 @@ TEST_F(MpStoreTest, EmptyRankIsEmpty) {
     const auto path = storePath("agent-c");
     storeWriter writer(path, "agent-c", "host-1", "", 0);
 
-    const auto snap = readStoreSnapshot(path);
+    const auto snap = readStoreSnapshot(path).snapshot;
     ASSERT_TRUE(snap.has_value());
     EXPECT_TRUE(snap->localRank.empty());
 }
@@ -131,7 +131,7 @@ TEST_F(MpStoreTest, LongAgentNameTruncated) {
     const gtest::LogIgnoreGuard lig("exceeds 255 chars");
     storeWriter writer(path, long_name, "host-1", "", 0);
 
-    const auto snap = readStoreSnapshot(path);
+    const auto snap = readStoreSnapshot(path).snapshot;
     ASSERT_TRUE(snap.has_value());
     EXPECT_EQ(snap->agentName.size(), 255u);
     EXPECT_EQ(snap->agentName, long_name.substr(0, 255));
@@ -141,10 +141,10 @@ TEST_F(MpStoreTest, LongAgentNameTruncated) {
 TEST_F(MpStoreTest, MissingFileReturnsNulloptNotContentInvalid) {
     // A file we cannot open (missing here, or a transient error) must NOT be
     // reported as invalid content -- otherwise the collector could reap a live
-    // peer it merely failed to read. content_invalid must be reset to false.
-    bool content_invalid = true;
-    EXPECT_FALSE(readStoreSnapshot(storePath("does-not-exist"), &content_invalid).has_value());
-    EXPECT_FALSE(content_invalid);
+    // peer it merely failed to read.
+    const auto res = readStoreSnapshot(storePath("does-not-exist"));
+    EXPECT_FALSE(res.snapshot.has_value());
+    EXPECT_FALSE(res.contentInvalid);
 }
 
 TEST_F(MpStoreTest, TooSmallFileReturnsNullopt) {
@@ -154,9 +154,9 @@ TEST_F(MpStoreTest, TooSmallFileReturnsNullopt) {
         const char junk[16] = {0};
         f.write(junk, sizeof(junk));
     }
-    bool content_invalid = false;
-    EXPECT_FALSE(readStoreSnapshot(path, &content_invalid).has_value());
-    EXPECT_TRUE(content_invalid);
+    const auto res = readStoreSnapshot(path);
+    EXPECT_FALSE(res.snapshot.has_value());
+    EXPECT_TRUE(res.contentInvalid);
 }
 
 TEST_F(MpStoreTest, ZeroMagicReturnsNulloptQuietly) {
@@ -168,9 +168,9 @@ TEST_F(MpStoreTest, ZeroMagicReturnsNulloptQuietly) {
         const std::string zeros(64 * 1024, '\0');
         f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
     }
-    bool content_invalid = false;
-    EXPECT_FALSE(readStoreSnapshot(path, &content_invalid).has_value());
-    EXPECT_TRUE(content_invalid);
+    const auto res = readStoreSnapshot(path);
+    EXPECT_FALSE(res.snapshot.has_value());
+    EXPECT_TRUE(res.contentInvalid);
 }
 
 TEST_F(MpStoreTest, BadMagicWarnsAndReturnsNullopt) {
@@ -183,9 +183,9 @@ TEST_F(MpStoreTest, BadMagicWarnsAndReturnsNullopt) {
         f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
     }
     const gtest::LogIgnoreGuard lig("bad magic");
-    bool content_invalid = false;
-    EXPECT_FALSE(readStoreSnapshot(path, &content_invalid).has_value());
-    EXPECT_TRUE(content_invalid);
+    const auto res = readStoreSnapshot(path);
+    EXPECT_FALSE(res.snapshot.has_value());
+    EXPECT_TRUE(res.contentInvalid);
     EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 

@@ -94,7 +94,7 @@ TEST_F(MpExporterTest, OwnerBindsAndRecordsToStore) {
 
     exporter.exportEvent({TX_BYTES, 1234});
 
-    const auto snap = readStoreSnapshot(file);
+    const auto snap = readStoreSnapshot(file).snapshot;
     ASSERT_TRUE(snap.has_value());
     EXPECT_EQ(snap->agentName, "agent-owner");
     EXPECT_EQ(snap->counters[idx(TX_BYTES)], 1234u);
@@ -113,13 +113,16 @@ TEST_F(MpExporterTest, WriterModeWhenPortTaken) {
 
     exporter.exportEvent({RX_BYTES, 77});
 
-    const auto snap = readStoreSnapshot(file);
+    const auto snap = readStoreSnapshot(file).snapshot;
     ASSERT_TRUE(snap.has_value());
     EXPECT_EQ(snap->agentName, "agent-writer");
     EXPECT_EQ(snap->counters[idx(RX_BYTES)], 77u);
 }
 
 TEST_F(MpExporterTest, LoadsThroughPluginManager) {
+    // The plugin manager probes every registered plugin directory, so it warns
+    // about the ones that do not hold this plugin before finding the one that does.
+    const gtest::LogIgnoreGuard lig("Plugin file does not exist");
     nixlTelemetry telemetry("agent-loader", "prometheus_mp");
     EXPECT_FALSE(singleStoreFile().empty());
 }

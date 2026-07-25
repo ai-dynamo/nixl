@@ -82,6 +82,32 @@ namespace {
         return std::string(src, n);
     }
 
+    class scopedFd {
+    public:
+        explicit scopedFd(int fd) noexcept : fd_(fd) {}
+
+        ~scopedFd() {
+            if (fd_ >= 0) {
+                ::close(fd_);
+            }
+        }
+
+        scopedFd(const scopedFd &) = delete;
+        scopedFd &
+        operator=(const scopedFd &) = delete;
+        scopedFd(scopedFd &&) = delete;
+        scopedFd &
+        operator=(scopedFd &&) = delete;
+
+        [[nodiscard]] int
+        get() const noexcept {
+            return fd_;
+        }
+
+    private:
+        int fd_;
+    };
+
 } // namespace
 
 std::string
@@ -129,21 +155,18 @@ storeWriter::storeWriter(std::filesystem::path path,
                          uint64_t instance)
     : path_(std::move(path)),
       mappingSize_(sizeof(storeLayout)) {
-    const int fd = ::open(path_.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
-    if (fd < 0) {
+    const scopedFd fd(::open(path_.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600));
+    if (fd.get() < 0) {
         throw std::runtime_error("prometheus_mp: cannot open telemetry store '" + path_.string() +
                                  "': " + std::strerror(errno));
     }
 
-    if (::ftruncate(fd, static_cast<off_t>(mappingSize_)) != 0) {
-        const std::string reason = std::strerror(errno);
-        ::close(fd);
+    if (::ftruncate(fd.get(), static_cast<off_t>(mappingSize_)) != 0) {
         throw std::runtime_error("prometheus_mp: cannot size telemetry store '" + path_.string() +
-                                 "': " + reason);
+                                 "': " + std::strerror(errno));
     }
 
-    mapping_ = ::mmap(nullptr, mappingSize_, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    ::close(fd);
+    mapping_ = ::mmap(nullptr, mappingSize_, PROT_READ | PROT_WRITE, MAP_SHARED, fd.get(), 0);
     if (mapping_ == MAP_FAILED) {
         mapping_ = nullptr;
         throw std::runtime_error("prometheus_mp: cannot map telemetry store '" + path_.string() +
@@ -203,41 +226,29 @@ storeWriter::setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept
     touch();
 }
 
-std::optional<storeSnapshot>
-readStoreSnapshot(const std::filesystem::path &path, bool *content_invalid) {
-    const auto mark_invalid = [content_invalid] {
-        if (content_invalid != nullptr) {
-            *content_invalid = true;
-        }
-    };
-    if (content_invalid != nullptr) {
-        *content_invalid = false;
-    }
-
-    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (fd < 0) {
+storeReadResult
+readStoreSnapshot(const std::filesystem::path &path) {
+    const scopedFd fd(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+    if (fd.get() < 0) {
         // Missing or transiently unreadable (e.g. EMFILE): not necessarily an
-        // orphan, so leave content_invalid false so the collector never reaps a
+        // orphan, so leave contentInvalid false and the collector never reaps a
         // live peer we simply failed to open.
-        return std::nullopt;
+        return {std::nullopt, false};
     }
 
     struct stat st{};
-    if (::fstat(fd, &st) != 0 || static_cast<std::size_t>(st.st_size) < sizeof(storeLayout)) {
+    if (::fstat(fd.get(), &st) != 0 || static_cast<std::size_t>(st.st_size) < sizeof(storeLayout)) {
         // Too small: a truncated/mid-creation store -- unusable content.
-        ::close(fd);
-        mark_invalid();
-        return std::nullopt;
+        return {std::nullopt, true};
     }
 
-    void *mapping = ::mmap(nullptr, sizeof(storeLayout), PROT_READ, MAP_SHARED, fd, 0);
-    ::close(fd);
+    void *mapping = ::mmap(nullptr, sizeof(storeLayout), PROT_READ, MAP_SHARED, fd.get(), 0);
     if (mapping == MAP_FAILED) {
         // Transient (e.g. ENOMEM): the file may be a healthy peer's, so do not
         // mark it reapable.
         NIXL_WARN << "prometheus_mp: cannot map telemetry store '" << path.string()
                   << "': " << std::strerror(errno);
-        return std::nullopt;
+        return {std::nullopt, false};
     }
 
     const std::unique_ptr<void, void (*)(void *)> guard(
@@ -250,22 +261,19 @@ readStoreSnapshot(const std::filesystem::path &path, bool *content_invalid) {
         // Zeroed header: either a store still being initialized by a live process,
         // or an orphan left by a process that died mid-creation. Skip quietly (no
         // WARN); the collector reaps stale orphans by file age.
-        mark_invalid();
-        return std::nullopt;
+        return {std::nullopt, true};
     }
     if (magic != MP_STORE_MAGIC) {
         NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
                   << "' with bad magic";
-        mark_invalid();
-        return std::nullopt;
+        return {std::nullopt, true};
     }
     if (layout->schemaVersion != MP_STORE_SCHEMA_VERSION ||
         layout->slotCount != MP_STORE_SLOT_COUNT) {
         NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
                   << "' with incompatible schema (version " << layout->schemaVersion << ", slots "
                   << layout->slotCount << ")";
-        mark_invalid();
-        return std::nullopt;
+        return {std::nullopt, true};
     }
 
     storeSnapshot snap;
@@ -281,7 +289,7 @@ readStoreSnapshot(const std::filesystem::path &path, bool *content_invalid) {
         snap.gauges[i] = __atomic_load_n(&layout->gauges[i], __ATOMIC_RELAXED);
     }
 
-    return snap;
+    return {std::move(snap), false};
 }
 
 } // namespace nixl::telemetry::mp

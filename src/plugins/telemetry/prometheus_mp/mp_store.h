@@ -157,17 +157,27 @@ private:
 };
 
 /**
+ * @brief Outcome of readStoreSnapshot().
+ *
+ * @c contentInvalid is true only when the file was read and its content is
+ * unusable (too small, bad/zero magic, incompatible schema) -- i.e. a genuine
+ * orphan safe to reap. It stays false when the file could not be opened or
+ * mapped (missing, or a transient error such as EMFILE/ENOMEM), so a live peer
+ * is never mistaken for an orphan.
+ */
+struct storeReadResult {
+    std::optional<storeSnapshot> snapshot;
+    bool contentInvalid = false;
+};
+
+/**
  * @brief Reads a consistent snapshot of a store file written by another process.
  * @param path Path to a peer's store file.
- * @param[out] content_invalid Set to true only when the file was read and its
- *        content is unusable (too small, bad/zero magic, incompatible schema) --
- *        i.e. a genuine orphan safe to reap. Left false when the file could not
- *        be opened or mapped (missing, or a transient error such as EMFILE/
- *        ENOMEM), so a live peer is never mistaken for an orphan. Optional.
- * @return The snapshot, or std::nullopt on any of the above.
+ * @return The snapshot when the store was read and is compatible, otherwise an
+ *         empty snapshot and the reason category (see storeReadResult).
  */
-[[nodiscard]] std::optional<storeSnapshot>
-readStoreSnapshot(const std::filesystem::path &path, bool *content_invalid = nullptr);
+[[nodiscard]] storeReadResult
+readStoreSnapshot(const std::filesystem::path &path);
 
 /**
  * @brief Reads a process's start time (/proc/<pid>/stat field 22, clock ticks).
