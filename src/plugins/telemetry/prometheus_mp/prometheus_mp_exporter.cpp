@@ -21,6 +21,8 @@
 #include "common/nixl_log.h"
 #include "histogram_buckets.h"
 
+#include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -54,6 +56,12 @@ const std::string publicAddress = "0.0.0.0";
 // single-process prometheus exporter). Only this case is treated as a benign
 // bind collision; any other Exposer failure is a genuine error.
 constexpr char bindFailureMarker[] = "Failed to setup server ports";
+
+// Held by whichever rank of this directory is trying to own the port, taken
+// before the bind so that a rank losing the bind can tell a sibling owner from
+// a stranger. Deliberately outside the collector's <prefix>*<suffix> store
+// pattern so the scan never sees it.
+constexpr char ownerLockName[] = "nixl-owner.lock";
 
 // Resolves the optional local_rank label value: NIXL_TELEMETRY_RANK_ENV names
 // which env var holds the rank (default LOCAL_RANK); the value of that env var is
@@ -121,25 +129,47 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     const std::string bind_address =
         (local ? localAddress : publicAddress) + ":" + std::to_string(port);
 
+    const int lock_fd = ::open((dir / ownerLockName).c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    const bool holds_owner_lock = lock_fd >= 0 && ::flock(lock_fd, LOCK_EX | LOCK_NB) == 0;
+
     try {
         auto exposer = std::make_shared<prometheus::Exposer>(bind_address);
         collector_ = std::make_shared<nixlMultiprocessCollector>(dir, resolveStaleTtl());
         exposer->RegisterCollectable(collector_);
         exposer_ = std::move(exposer);
+        ownerLockFd_ = lock_fd;
         NIXL_INFO << "prometheus_mp exporter (owner) serving " << bind_address
                   << ", aggregating telemetry dir " << dir.string();
+        return;
     }
     catch (const std::exception &e) {
         if (std::string(e.what()).find(bindFailureMarker) == std::string::npos) {
+            if (lock_fd >= 0) {
+                ::close(lock_fd);
+            }
             throw;
+        }
+        if (holds_owner_lock) {
+            NIXL_WARN << "prometheus_mp: " << bind_address
+                      << " is held by a process that is not a rank of telemetry dir "
+                      << dir.string() << " (a foreign service, or a rank pointed at a different "
+                      << multiprocDirVar << "); nothing aggregates this directory";
         }
         NIXL_INFO << "prometheus_mp exporter (writer): endpoint " << bind_address
                   << " owned by another process; agent '" << init_params.agentName
                   << "' writing to " << store_path.string();
     }
+
+    if (lock_fd >= 0) {
+        ::close(lock_fd);
+    }
 }
 
-nixlTelemetryPrometheusMpExporter::~nixlTelemetryPrometheusMpExporter() = default;
+nixlTelemetryPrometheusMpExporter::~nixlTelemetryPrometheusMpExporter() {
+    if (ownerLockFd_ >= 0) {
+        ::close(ownerLockFd_);
+    }
+}
 
 nixl_status_t
 nixlTelemetryPrometheusMpExporter::exportEvent(const nixlTelemetryEvent &event) {

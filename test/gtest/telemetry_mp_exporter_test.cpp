@@ -125,11 +125,14 @@ TEST_F(MpExporterTest, OwnerBindsAndRecordsToStore) {
 }
 
 TEST_F(MpExporterTest, WriterModeWhenPortTaken) {
-    // Occupy the port first so the exporter loses the bind race.
+    // A stranger on the port: no rank of this directory owns the endpoint, so
+    // the demotion is warned about rather than logged as the routine case.
     prometheus::Exposer blocker("127.0.0.1:" + std::to_string(port_));
 
+    const gtest::LogIgnoreGuard lig("is held by a process that is not a rank");
     nixlTelemetryPrometheusMpExporter exporter(initParams("agent-writer"));
     EXPECT_FALSE(exporter.isExporter());
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
 
     const auto file = singleStoreFile();
     ASSERT_FALSE(file.empty());
@@ -140,6 +143,16 @@ TEST_F(MpExporterTest, WriterModeWhenPortTaken) {
     ASSERT_TRUE(snap.has_value());
     EXPECT_EQ(snap->agentName, "agent-writer");
     EXPECT_EQ(snap->counters[idx(RX_BYTES)], 77u);
+}
+
+TEST_F(MpExporterTest, WriterBehindSiblingOwnerIsQuiet) {
+    // A sibling owning the port is the routine case: no warning, otherwise the
+    // gtest problem counter fails this test.
+    nixlTelemetryPrometheusMpExporter owner(initParams("agent-owner"));
+    ASSERT_TRUE(owner.isExporter());
+
+    nixlTelemetryPrometheusMpExporter writer(initParams("agent-writer"));
+    EXPECT_FALSE(writer.isExporter());
 }
 
 TEST_F(MpExporterTest, DurationEventFeedsCounterGaugeAndHistogram) {

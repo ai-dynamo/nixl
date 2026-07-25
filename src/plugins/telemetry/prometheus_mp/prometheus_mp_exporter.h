@@ -58,6 +58,8 @@ private:
     std::unique_ptr<nixl::telemetry::mp::storeWriter> store_;
     std::shared_ptr<nixl::telemetry::mp::nixlMultiprocessCollector> collector_;
     std::shared_ptr<prometheus::Exposer> exposer_;
+    // Held for the owner's lifetime; released by the kernel if it dies.
+    int ownerLockFd_ = -1;
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_PROMETHEUS_MP_EXPORTER_H

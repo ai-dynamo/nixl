@@ -43,6 +43,13 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   exposition. The processes that lose the race run in **writer-only** mode (no
   HTTP server). A bind collision is therefore benign -- every process gets a valid
   telemetry sink; no rank is dropped and no scary error is logged.
+  Before binding, the candidate takes an `flock` on `nixl-owner.lock` in the shared
+  directory, so a process that loses the bind can tell whether a **sibling** holds
+  the endpoint (routine, logged at INFO) or whether **nothing here does** -- a
+  foreign service on the port, or a rank pointed at a different
+  `NIXL_TELEMETRY_MULTIPROC_DIR`. The latter means the directory is aggregated by
+  nobody, so it is logged as a warning. The kernel drops the lock when the holder
+  dies, so it needs no cleanup.
 - **Per-process series.** Each process is exported as its own series (cumulative
   counters, last-operation gauges and duration histograms), never summed across
   processes, so per-process values stay correct and monotonic.

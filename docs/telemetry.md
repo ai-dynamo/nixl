@@ -213,6 +213,14 @@ surviving ranks keep recording, and stale store files stop being reaped. Scrapin
 resumes only when a process starts and wins the bind, or the run is relaunched.
 Alert on the scrape target's `up` metric rather than on missing series.
 
+Losing the bind is normally routine, so it is logged at INFO. It is warned about
+only when no rank of the same directory holds the endpoint (an `flock` taken
+before the bind distinguishes the two): a foreign service on the port, or ranks
+split across different `NIXL_TELEMETRY_MULTIPROC_DIR` values. Ranks that disagree
+on `NIXL_TELEMETRY_PROMETHEUS_PORT` while sharing a directory are **not** detected
+-- each binds its own port and exports every process's series, so Prometheus sees
+several targets carrying duplicate data.
+
 For aggregation via an external service, use the DOCA/CollectX exporter instead.
 
 ## Cyclic Buffer
