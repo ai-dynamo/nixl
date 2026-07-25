@@ -62,11 +62,12 @@ stream:
 - **Last-operation gauges**: the value of the most recent operation, re-emitted
   unchanged (e.g. `agent_tx_last_bytes`). For example, TX byte sizes `10, 20, 35`
   yield a counter `agent_tx_bytes_total` of `65` and a gauge `agent_tx_last_bytes`
-  of `35`. The Prometheus, multi-process Prometheus and DOCA exporters emit
-  **identical** series -- the same names, types, and semantics -- derived from one
-  shared metric descriptor (`nixlEnumStrings::telemetryMetricDescriptor` in
-  `telemetry_event.h`). Labels match too, except that `prometheus_mp` adds the
-  process-identity labels it needs for cross-process uniqueness (see
+  of `35`. The Prometheus, multi-process Prometheus and DOCA exporters share
+  **identical** metric definitions -- the same names, types, and semantics --
+  derived from one shared metric descriptor
+  (`nixlEnumStrings::telemetryMetricDescriptor` in `telemetry_event.h`). The
+  emitted series are not identical, because `prometheus_mp` adds `pid`,
+  `agent_instance` and optionally `local_rank` to keep processes distinct (see
   "Multi-process aggregation" below). All three
   expose `agent_tx_bytes_total` / `agent_rx_bytes_total` (counters, OpenMetrics
   `_total` suffix) alongside `agent_tx_last_bytes` / `agent_rx_last_bytes`
