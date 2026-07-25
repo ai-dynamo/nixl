@@ -62,13 +62,14 @@ stream:
 - **Last-operation gauges**: the value of the most recent operation, re-emitted
   unchanged (e.g. `agent_tx_last_bytes`). For example, TX byte sizes `10, 20, 35`
   yield a counter `agent_tx_bytes_total` of `65` and a gauge `agent_tx_last_bytes`
-  of `35`. The Prometheus and DOCA exporters emit **identical** series -- the same
-  names, types, and labels -- derived from one shared metric descriptor
-  (`nixlEnumStrings::telemetryMetricDescriptor` in `telemetry_event.h`). Both
+  of `35`. The Prometheus, multi-process Prometheus and DOCA exporters emit
+  **identical** series -- the same names, types, and labels -- derived from one
+  shared metric descriptor (`nixlEnumStrings::telemetryMetricDescriptor` in
+  `telemetry_event.h`). All three
   expose `agent_tx_bytes_total` / `agent_rx_bytes_total` (counters, OpenMetrics
   `_total` suffix) alongside `agent_tx_last_bytes` / `agent_rx_last_bytes`
   (gauges). The memory events likewise expose both a cumulative `_total` counter
-  and a `_last_bytes` gauge on both exporters, and the transfer-time events expose
+  and a `_last_bytes` gauge on every one of them, and the transfer-time events expose
   a `_total` counter alongside a last-op gauge (`agent_xfer_time` /
   `agent_xfer_post_time`). This is purely an exporter-side derivation: no new event
   type is emitted and the buffer format is unchanged.
@@ -86,7 +87,8 @@ stream:
   `prometheus_mp` additionally caps the override at 32 bounds, since its buckets
   live in a fixed-layout shared-memory store. Like the other views this is an
   exporter-side derivation with no new event type.
-- **Error counters**: the Prometheus and DOCA exporters expose error events as
+- **Error counters**: the Prometheus, multi-process Prometheus and DOCA exporters
+  expose error events as
   `agent_errors_total{status="<status>"}`. The `status` label is bounded by the
   fixed `AGENT_ERR_*` event set: `not_posted`, `invalid_param`, `backend`,
   `not_found`, `mismatch`, `not_allowed`, `repost_active`, `unknown`,
@@ -142,7 +144,7 @@ Telemetry is configured by environment variables:
 | `NIXL_TELEMETRY_BUFFER_SIZE` | Number of events in buffer | `4096` |
 | `NIXL_TELEMETRY_RUN_INTERVAL` | Flush interval (ms) | `100` |
 | `NIXL_TELEMETRY_EXPORTER` | Name of the exporter plugin to use | - |
-| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Comma-separated microsecond bucket bounds for the transfer-time histograms (`prometheus`, `prometheus_mp`, DOCA) | built-in µs defaults |
+| `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Comma-separated microsecond bucket bounds for the transfer-time histograms (`prometheus`, `prometheus_mp`, DOCA); `prometheus_mp` accepts at most 32 bounds | built-in µs defaults |
 | `NIXL_TELEMETRY_ENABLED_METRICS` | Comma-separated allowlist of metric names to export (glob) | all |
 
 - `NIXL_TELEMETRY_ENABLE` can be set to `y`/`yes`/`on`/`true`/`enable`/`1` to be enabled, and `n`/`no`/`off`/`false`/`disable`/`0` (or not set) to be disabled. Matching is case insensitive.

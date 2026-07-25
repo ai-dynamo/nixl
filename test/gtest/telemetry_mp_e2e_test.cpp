@@ -172,7 +172,7 @@ protected:
     // Runs even when a fatal assertion aborts the test body mid-fork.
     void
     TearDown() override {
-        for (int *fd : {&go_w_, &ready_r_, &quit_w_}) {
+        for (int *fd : {&goWrite_, &readyRead_, &quitWrite_}) {
             closeFd(*fd);
         }
         for (const pid_t pid : children_) {
@@ -181,6 +181,15 @@ protected:
         }
         std::error_code ec;
         std::filesystem::remove_all(dir_, ec);
+    }
+
+    [[nodiscard]] std::size_t
+    countStores(const std::string &prefix) const {
+        std::size_t n = 0;
+        for (const auto &entry : std::filesystem::directory_iterator(dir_)) {
+            n += entry.path().filename().string().rfind(prefix, 0) == 0 ? 1 : 0;
+        }
+        return n;
     }
 
     static void
@@ -195,9 +204,9 @@ protected:
     uint16_t port_ = 0;
     std::filesystem::path dir_;
     std::vector<pid_t> children_;
-    int go_w_ = -1;
-    int ready_r_ = -1;
-    int quit_w_ = -1;
+    int goWrite_ = -1;
+    int readyRead_ = -1;
+    int quitWrite_ = -1;
 };
 
 TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) {
@@ -210,9 +219,9 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     ASSERT_EQ(::pipe(ready_pipe), 0);
     ASSERT_EQ(::pipe(quit_pipe), 0);
 
-    go_w_ = go_pipe[1];
-    ready_r_ = ready_pipe[0];
-    quit_w_ = quit_pipe[1];
+    goWrite_ = go_pipe[1];
+    readyRead_ = ready_pipe[0];
+    quitWrite_ = quit_pipe[1];
 
     // Fork children while the parent is still single-threaded (before it builds
     // the owner exporter, which starts civetweb threads).
@@ -243,12 +252,12 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     owner.exportEvent({XFER_TIME, 1234});
 
     // Release the children (they now become writers) and wait for readiness.
-    closeFd(go_w_);
+    closeFd(goWrite_);
     for (int i = 0; i < kChildren; ++i) {
-        pollfd pfd{ready_r_, POLLIN, 0};
+        pollfd pfd{readyRead_, POLLIN, 0};
         ASSERT_GT(::poll(&pfd, 1, 30000), 0) << "writer " << i << " never signalled readiness";
         char c = 0;
-        ASSERT_EQ(::read(ready_r_, &c, 1), 1);
+        ASSERT_EQ(::read(readyRead_, &c, 1), 1);
     }
 
     // Phase 1: every process must appear behind the single owner endpoint.
@@ -272,6 +281,9 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     // Kill one child and reap it so its pid is truly gone before the next scrape.
     const pid_t dead = children_.front();
     children_.erase(children_.begin());
+    const std::string dead_prefix =
+        std::string(nixl::telemetry::mp::MP_STORE_FILE_PREFIX) + std::to_string(dead) + ".";
+    ASSERT_EQ(countStores(dead_prefix), 1u);
     ASSERT_EQ(::kill(dead, SIGKILL), 0);
     ASSERT_EQ(::waitpid(dead, nullptr, 0), dead);
 
@@ -281,6 +293,9 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     EXPECT_EQ(phase2.count("agent-1"), 1u);
     EXPECT_EQ(phase2.count("agent-2"), 1u);
     EXPECT_EQ(phase2.count("agent-parent"), 1u);
+
+    // Dropping the series is not enough: the store itself must be unlinked.
+    EXPECT_EQ(countStores(dead_prefix), 0u);
 
     // The remaining children are released and reaped by TearDown().
 }

@@ -26,8 +26,11 @@
 
 namespace nixl {
 
-// Returns the host name, or std::nullopt if it could not be read; callers pick
-// their own fallback (e.g. .value_or("unknown")).
+/**
+ * @brief Reads the host name.
+ * @return The host name, or std::nullopt if it could not be read; callers pick
+ *         their own fallback (e.g. .value_or("unknown")).
+ */
 [[nodiscard]] inline std::optional<std::string>
 getHostname() {
     std::array<char, HOST_NAME_MAX + 1> buf{};
