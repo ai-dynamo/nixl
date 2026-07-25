@@ -52,7 +52,9 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   - The **owner cannot bind** -- since no sibling can be serving, the port belongs
     to something outside the run (a foreign service, or a rank pointed at a
     different `NIXL_TELEMETRY_MULTIPROC_DIR`). Nothing aggregates the directory, so
-    it is a warning. The lock stays held, so this is reported once, not per rank.
+    it is a warning. Every rank reports it, because the election is conceded on a
+    failed bind: a process starting once the port frees -- a conflict as short as a
+    previous run still shutting down -- then takes the endpoint over.
   - A **loser was configured for a different endpoint** than the one recorded, so
     the ranks disagree on `NIXL_TELEMETRY_PROMETHEUS_PORT` (or
     `NIXL_TELEMETRY_PROMETHEUS_LOCAL`). Only the owner's endpoint is scrapeable;

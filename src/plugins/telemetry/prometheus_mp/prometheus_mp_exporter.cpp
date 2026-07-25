@@ -152,8 +152,10 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
             throw;
         }
         // Elected, so no sibling can be serving: the port belongs to something
-        // outside this run and nothing will aggregate this directory. The lock
-        // stays held so the surviving ranks report it once rather than in turn.
+        // outside this run and nothing will aggregate this directory. Concede so
+        // that a process starting once the port frees -- a conflict as short as a
+        // previous run still shutting down -- can take the endpoint over.
+        election_.release();
         NIXL_WARN << "prometheus_mp: elected to serve telemetry dir " << dir.string() << " but "
                   << bind_address << " is held by a process outside this run (a foreign service, "
                   << "or a rank pointed at a different " << multiprocDirVar

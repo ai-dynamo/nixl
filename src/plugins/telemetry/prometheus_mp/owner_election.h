@@ -55,11 +55,28 @@ public:
      * @param dir The shared telemetry directory the ranks contend for.
      */
     explicit ownerElection(const std::filesystem::path &dir)
-        : fd_(::open((dir / ownerLockFileName).c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600)) {
-        // A directory that cannot hold the lock file at all leaves every process
-        // thinking it won, which is the unelected behaviour: they all try to bind
-        // and the port decides.
-        won_ = !fd_.valid() || ::flock(fd_.get(), LOCK_EX | LOCK_NB) == 0;
+        : fd_(::open((dir / ownerLockFileName).c_str(),
+                     O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
+                     0600)) {
+        // Anything that leaves the lock unusable -- no lock file, a filesystem
+        // without flock, ENOLCK -- must not read as a loss: every rank would
+        // concede and none would serve. Only EWOULDBLOCK means a sibling holds
+        // it. The rest degrade to the unelected behaviour, where every process
+        // tries to bind and the port decides.
+        if (!fd_.valid()) {
+            won_ = true;
+            return;
+        }
+        if (::flock(fd_.get(), LOCK_EX | LOCK_NB) == 0) {
+            won_ = true;
+            return;
+        }
+        won_ = errno != EWOULDBLOCK;
+        if (won_) {
+            NIXL_WARN << "prometheus_mp: cannot lock " << ownerLockFileName << " ("
+                      << strerror(errno)
+                      << "); falling back to letting the port bind decide which process serves";
+        }
     }
 
     [[nodiscard]] bool

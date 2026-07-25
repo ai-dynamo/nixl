@@ -155,6 +155,21 @@ TEST_F(MpExporterTest, WriterBehindSiblingOwnerIsQuiet) {
     EXPECT_FALSE(writer.isExporter());
 }
 
+TEST_F(MpExporterTest, WriterConfiguredForAnotherEndpointWarns) {
+    nixlTelemetryPrometheusMpExporter owner(initParams("agent-owner"));
+    ASSERT_TRUE(owner.isExporter());
+
+    env_.addVar("NIXL_TELEMETRY_PROMETHEUS_PORT",
+                std::to_string(gtest::PortAllocator::next_tcp_port()));
+    {
+        const gtest::LogIgnoreGuard lig("ranks disagree on");
+        nixlTelemetryPrometheusMpExporter writer(initParams("agent-writer"));
+        EXPECT_FALSE(writer.isExporter());
+        EXPECT_EQ(lig.getIgnoredCount(), 1);
+    }
+    env_.popVar();
+}
+
 TEST_F(MpExporterTest, DurationEventFeedsCounterGaugeAndHistogram) {
     nixlTelemetryPrometheusMpExporter exporter(initParams("agent-hist"));
 
