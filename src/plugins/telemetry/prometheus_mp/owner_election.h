@@ -81,6 +81,13 @@ public:
         }
         if (::flock(fd_.get(), LOCK_EX | LOCK_NB) == 0) {
             won_ = true;
+            // A previous owner's endpoint outlives it in the file. Drop it now,
+            // or a loser reading between this election and publishEndpoint()
+            // takes the dead endpoint for ours and reports a disagreement.
+            if (::ftruncate(fd_.get(), 0) != 0) {
+                NIXL_DEBUG << "prometheus_mp: cannot clear " << ownerLockFileName << ": "
+                           << strerror(errno);
+            }
             return;
         }
         won_ = errno != EWOULDBLOCK;
