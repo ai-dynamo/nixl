@@ -22,6 +22,8 @@
 
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <cerrno>
 #include <cstring>
@@ -66,6 +68,15 @@ public:
         if (!fd_.valid()) {
             won_ = true;
             warnUnusable(strerror(errno));
+            return;
+        }
+        // A co-tenant of a shared directory can hold a lock on a file it planted,
+        // which would read as a sibling win and leave every rank writer-only.
+        struct stat st{};
+        if (::fstat(fd_.get(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != ::geteuid()) {
+            fd_.reset();
+            won_ = true;
+            warnUnusable("not a regular file owned by this user");
             return;
         }
         if (::flock(fd_.get(), LOCK_EX | LOCK_NB) == 0) {

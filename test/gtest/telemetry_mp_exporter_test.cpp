@@ -31,6 +31,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 
@@ -168,6 +169,23 @@ TEST_F(MpExporterTest, WriterConfiguredForAnotherEndpointWarns) {
         EXPECT_EQ(lig.getIgnoredCount(), 1);
     }
     env_.popVar();
+}
+
+TEST_F(MpExporterTest, ForeignOwnedLockFileCannotSilenceTheRun) {
+    if (::geteuid() != 0) {
+        GTEST_SKIP() << "needs privileges to give the lock file another owner";
+    }
+    const auto lock = dir_ / "nixl-owner.lock";
+    { std::ofstream(lock).put('\0'); }
+    constexpr uid_t nobody = 65534;
+    ASSERT_EQ(::chown(lock.c_str(), nobody, static_cast<gid_t>(-1)), 0);
+
+    // A planted lock must not read as a sibling win, or every rank of a shared
+    // directory ends up writer-only and nothing serves.
+    const gtest::LogIgnoreGuard lig("not a regular file owned by this user");
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-owner"));
+    EXPECT_TRUE(exporter.isExporter());
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 
 TEST_F(MpExporterTest, DurationEventFeedsCounterGaugeAndHistogram) {

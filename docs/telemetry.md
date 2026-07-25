@@ -164,10 +164,12 @@ Telemetry is configured by environment variables:
 The `prometheus_mp` exporter aggregates the telemetry of all processes of a
 multi-process NIXL run behind a **single** Prometheus scrape endpoint, natively
 (no DOCA/DTS). Every process writes its own metric state to a per-process
-memory-mapped file in a shared directory; the processes race to bind the scrape
-port, the winner serves `/metrics` by reading and republishing all live processes'
-files on each scrape (labeled per process), and the losers run as writers only. A
-bind collision is benign, so no rank is dropped. Full details:
+memory-mapped file in a shared directory; the processes race for an exclusive
+`flock` on that directory, and only the winner binds the scrape port and serves
+`/metrics` by reading and republishing all live processes' files on each scrape
+(labeled per process). The losers run as writers only, so losing is benign and no
+rank is dropped; if the winner cannot bind, nothing aggregates the directory and
+it says so. Full details:
 [src/plugins/telemetry/prometheus_mp/README.md](../src/plugins/telemetry/prometheus_mp/README.md).
 
 ### Configuration

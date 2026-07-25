@@ -111,8 +111,11 @@ world-writable location like `/tmp`. On a shared host a world-writable directory
 lets another user pre-plant paths the owner would truncate or unlink. The plugin
 already hardens the files themselves (opened with `O_NOFOLLOW`, created `0600`,
 and skipped at scrape time -- with a warning -- when the file's owner is not the
-reader's effective uid, so a co-tenant cannot inject series), but the
-directory's permissions are the deployment's responsibility.
+reader's effective uid, so a co-tenant cannot inject series). The same check
+guards the election: a `nixl-owner.lock` that is not a regular file owned by the
+run's user is ignored rather than contended for, so a co-tenant holding a planted
+lock cannot demote every rank to writer-only and leave the run unscrapeable.
+The directory's permissions remain the deployment's responsibility.
 
 All aggregated ranks must also share a **PID namespace** (and time namespace):
 staleness/liveness uses `kill(pid, 0)` + `/proc/<pid>/stat` and a host-wide
