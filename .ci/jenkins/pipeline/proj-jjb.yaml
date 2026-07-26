@@ -886,7 +886,7 @@
       • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> and the
       corresponding UCX version, and publishes them to the verification Artifactory space<br/>
       • Run manually from any NIXL branch / tag / PR / SHA via <code>NIXL_VERSION</code><br/>
-      • Also triggered per missing CUDA variant by <code>nixl-ci-build-wheel-release-poller</code>
+      • Also triggered per missing CUDA variant by <code>nixl-build-wheel-release-poller</code>
       with <code>PUBLISH_DIR=release/&lt;ver&gt;</code><br/>
       • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: true
@@ -966,8 +966,9 @@
 # Release wheel poller: every 4 hours, compares release/* branch commits against
 # the wheels already published in Artifactory and triggers the nightly wheel
 # builder once per commit per CUDA variant that has no published wheels yet.
+# Named without the nixl-ci- prefix: a scheduled standalone job, not part of CI.
 - job-template:
-    name: "{jjb_proj}-build-wheel-release-poller"
+    name: "nixl-build-wheel-release-poller"
     project-type: pipeline
     disabled: false
     properties:
@@ -977,11 +978,11 @@
       - inject:
           keep-system-variables: true
           properties-content: |
-            jjb_proj={jjb_proj}-build-wheel-release-poller
+            jjb_proj=nixl-build-wheel-release-poller
             conf_file=.ci/jenkins/lib/build-wheel-release-poller-matrix.yaml
     description: >
       <b>NIXL release wheel poller</b><br/>
-      • Runs every 4 hours and scans all <code>release/*</code> branches (version &gt;= 1.3.1),
+      • Runs every 4 hours and scans all <code>release/*</code> branches (version &gt;= 1.4.0),
       looking for commits with no
       published wheel set under <code>sw-nbu-swx-nixl-pypi-local/release/</code> in Artifactory<br/>
       • Triggers <code>nixl-ci-build-wheel-nightly</code> per commit per missing CUDA variant
@@ -1100,5 +1101,5 @@
         - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for nixl_ep elastic tests on dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
         - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
-        - "{jjb_proj}-build-wheel-release-poller"  # Create release wheel poller job
+        - "nixl-build-wheel-release-poller"  # Create release wheel poller job
         - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job
