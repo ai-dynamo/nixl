@@ -87,7 +87,13 @@ scrapeEndpoint::reclaim(uint64_t now_ns) noexcept {
                   << " any more; this one now serves " << bindAddress_;
     }
     catch (const std::exception &e) {
-        // Telemetry must not break the export path this runs on.
+        // Telemetry must not break the export path this runs on. Winning the
+        // election and then failing to serve for any other reason must still give
+        // the election back, or this process holds it while serving nothing and
+        // no other rank can take over.
+        if (!serving()) {
+            election_.release();
+        }
         NIXL_DEBUG << "prometheus_mp: cannot take over " << bindAddress_ << ": " << e.what();
     }
 }
@@ -107,8 +113,8 @@ scrapeEndpoint::serve() {
         if (std::string(e.what()).find(bindFailureMarker) == std::string::npos) {
             throw;
         }
-        // Hold the election and the port stays unreachable for the whole run,
-        // since no other rank can then be elected to try it.
+        // Concede: holding an election this process cannot act on would keep
+        // every other rank from trying the port for the rest of the run.
         election_.release();
         return false;
     }

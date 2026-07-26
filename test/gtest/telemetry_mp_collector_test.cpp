@@ -285,11 +285,14 @@ TEST(MpCollectorTest, SnapshotLivenessByProcessThenTtl) {
     dead_fresh.lastUpdateNs = monotonicNs();
     EXPECT_TRUE(isSnapshotLive(dead_fresh, ttl));
 
+    // A zero heartbeat is as old as this boot, and a zero TTL makes that stale on
+    // any host. Subtracting a fixed age from monotonicNs() instead would wrap on
+    // a host that booted seconds ago, and then pass as a future timestamp rather
+    // than as an expired one.
     auto dead_stale = makeSnap("c", "");
     dead_stale.pid = 0x7fffffff;
-    dead_stale.lastUpdateNs =
-        monotonicNs() - std::chrono::nanoseconds(std::chrono::seconds(60)).count();
-    EXPECT_FALSE(isSnapshotLive(dead_stale, ttl));
+    dead_stale.lastUpdateNs = 0;
+    EXPECT_FALSE(isSnapshotLive(dead_stale, std::chrono::seconds(0)));
 }
 
 class MpCollectorFileTest : public ::testing::Test {

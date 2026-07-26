@@ -109,7 +109,18 @@ resolveMultiprocDir() {
         }
     }
     struct stat st{};
-    if (::stat(path.c_str(), &st) == 0 && (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+    if (::stat(path.c_str(), &st) != 0) {
+        return path;
+    }
+    // Follows symlinks, deliberately: a configured path that is a symlink into
+    // another user's directory is exactly the case worth reporting, and rejecting
+    // symlinks outright would break the legitimate ones.
+    if (st.st_uid != ::geteuid()) {
+        NIXL_WARN << "prometheus_mp: telemetry dir '" << path.string() << "' is owned by uid "
+                  << st.st_uid << "; this process writes its stores into a directory another "
+                  << "user controls. Use a private directory owned by this user (mode 0700)";
+    }
+    if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
         NIXL_WARN << "prometheus_mp: telemetry dir '" << path.string()
                   << "' is writable by group or other; another user can plant store and lock "
                   << "files there. Use a private directory owned by this user (mode 0700)";
