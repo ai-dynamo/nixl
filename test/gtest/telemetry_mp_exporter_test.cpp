@@ -176,9 +176,13 @@ TEST_F(MpExporterTest, WriterTakesOverWhenTheOwnerExits) {
     ASSERT_FALSE(writer.isExporter()) << "took the endpoint from a live owner";
 
     owner.reset();
-    // Past the re-election throttle, which the export above just armed.
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    writer.exportEvent({TX_BYTES, 1});
+    // Export until the re-election throttle the export above armed has passed,
+    // rather than assuming how long that is.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!writer.isExporter() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        writer.exportEvent({TX_BYTES, 1});
+    }
     EXPECT_TRUE(writer.isExporter());
 }
 

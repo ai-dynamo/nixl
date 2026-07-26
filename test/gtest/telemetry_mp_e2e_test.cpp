@@ -278,7 +278,7 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     // Phase 1: every process must appear behind the single owner endpoint.
     const auto body = scrapeMetrics(port_);
     const auto phase1 = parseSeriesByAgent(body, "agent_tx_bytes_total");
-    EXPECT_EQ(phase1.size(), static_cast<std::size_t>(kChildren + 1));
+    ASSERT_EQ(phase1.size(), static_cast<std::size_t>(kChildren + 1)) << body;
     EXPECT_DOUBLE_EQ(phase1.at("agent-parent"), 999.0);
     EXPECT_DOUBLE_EQ(phase1.at("agent-0"), 100.0);
     EXPECT_DOUBLE_EQ(phase1.at("agent-1"), 200.0);
@@ -288,6 +288,8 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     EXPECT_NE(body.find("agent_xfer_time_us_bucket"), std::string::npos);
     const auto hist_count = parseSeriesByAgent(body, "agent_xfer_time_us_count");
     const auto hist_sum = parseSeriesByAgent(body, "agent_xfer_time_us_sum");
+    ASSERT_EQ(hist_count.size(), static_cast<std::size_t>(kChildren + 1)) << body;
+    ASSERT_EQ(hist_sum.size(), static_cast<std::size_t>(kChildren + 1)) << body;
     EXPECT_DOUBLE_EQ(hist_count.at("agent-parent"), 1.0);
     EXPECT_DOUBLE_EQ(hist_sum.at("agent-parent"), 1234.0);
     // Writers that observed nothing still expose the family, at zero.
