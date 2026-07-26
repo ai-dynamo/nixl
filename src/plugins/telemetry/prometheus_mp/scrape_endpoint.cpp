@@ -27,10 +27,12 @@ namespace {
 
     // How often a non-owner re-runs the election to notice that the owner died.
     // The election is one non-blocking flock, but it sits on the export path, so
-    // it is throttled; the endpoint is down for at most this plus the scrape
-    // interval. A non-owner starts at 0, so its first exported event re-checks
-    // immediately -- an owner that died between this process's election and its
-    // first event is caught at once.
+    // it is throttled; the endpoint is down for this plus the scrape interval,
+    // unless the rank that takes over cannot bind -- an owner that crashed can
+    // leave the port in TIME_WAIT -- which puts that rank on backoffNs instead.
+    // A non-owner starts at 0, so its first exported event re-checks immediately
+    // -- an owner that died between this process's election and its first event
+    // is caught at once.
     constexpr uint64_t retryIntervalNs = 200000000ULL;
 
     // Once a re-election has won and still failed to bind, the port is held from
@@ -66,6 +68,12 @@ scrapeEndpoint::claim() {
 
 void
 scrapeEndpoint::reclaim(uint64_t now_ns) noexcept {
+    // Re-electing while serving would lose the election it is re-taking: flock
+    // contends between two open file descriptions of the same process, so the
+    // new descriptor loses, and assigning it closes the one that held the lock.
+    if (serving()) {
+        return;
+    }
     if (now_ns - lastAttemptNs_ < retryIntervalNs_) {
         return;
     }
@@ -95,6 +103,12 @@ scrapeEndpoint::reclaim(uint64_t now_ns) noexcept {
             election_.release();
         }
         NIXL_DEBUG << "prometheus_mp: cannot take over " << bindAddress_ << ": " << e.what();
+    }
+    catch (...) {
+        if (!serving()) {
+            election_.release();
+        }
+        NIXL_DEBUG << "prometheus_mp: cannot take over " << bindAddress_;
     }
 }
 

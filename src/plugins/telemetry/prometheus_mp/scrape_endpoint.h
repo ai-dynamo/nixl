@@ -67,7 +67,8 @@ public:
 
     /**
      * @brief Re-runs the election of a non-owner, at most once per retry
-     *        interval, and serves if it now wins.
+     *        interval, and serves if it now wins. Does nothing while this
+     *        process is the owner.
      * @param now_ns A recent monotonicNs() reading, so the throttle costs the
      *        caller no clock of its own.
      *

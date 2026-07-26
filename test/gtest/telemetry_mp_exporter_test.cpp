@@ -18,6 +18,7 @@
 #include "histogram_buckets.h"
 #include "mp_store.h"
 #include "plugin_manager.h"
+#include "scrape_endpoint.h"
 #include "telemetry.h"
 
 #include "common.h"
@@ -174,6 +175,22 @@ TEST_F(MpExporterTest, WriterTakesOverWhenTheOwnerExits) {
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
     writer.exportEvent({TX_BYTES, 1});
     EXPECT_TRUE(writer.isExporter());
+}
+
+TEST_F(MpExporterTest, ReclaimWhileServingKeepsTheElection) {
+    using nixl::telemetry::mp::monotonicNs;
+    using nixl::telemetry::mp::scrapeEndpoint;
+
+    const std::string bind = "127.0.0.1:" + std::to_string(port_);
+    scrapeEndpoint endpoint(dir_, bind, std::chrono::seconds(2));
+    ASSERT_EQ(endpoint.claim(), scrapeEndpoint::status::SERVING);
+
+    endpoint.reclaim(monotonicNs() + std::chrono::nanoseconds(std::chrono::seconds(10)).count());
+    ASSERT_TRUE(endpoint.serving());
+
+    scrapeEndpoint intruder(dir_, bind, std::chrono::seconds(2));
+    EXPECT_EQ(intruder.claim(), scrapeEndpoint::status::SIBLING_OWNS)
+        << "the serving process gave its election away";
 }
 
 TEST_F(MpExporterTest, WriterConfiguredForAnotherEndpointWarns) {
