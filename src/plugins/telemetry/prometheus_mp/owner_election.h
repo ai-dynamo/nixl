@@ -46,7 +46,8 @@ inline constexpr char ownerLockFileName[] = "nixl-owner.lock";
  * lock admits exactly one, so only the winner ever binds. The winner then
  * publishes the endpoint it bound, which is how a loser can tell that it was
  * configured for a different one. The kernel releases the lock when the holder
- * dies, so it needs no cleanup.
+ * dies, so it needs no cleanup -- and a writer that re-runs the election then
+ * wins it, which is how the endpoint survives the owner's death.
  */
 class ownerElection {
 public:
@@ -55,8 +56,12 @@ public:
     /**
      * @brief Runs the election for @p dir, without blocking.
      * @param dir The shared telemetry directory the ranks contend for.
+     * @param warn_if_unusable Whether an unusable lock is worth a warning. False
+     *        for the periodic re-elections a writer runs to detect the owner's
+     *        death: the condition is unchanged since startup said it once, and
+     *        repeating it every retry would bury the log.
      */
-    explicit ownerElection(const std::filesystem::path &dir)
+    explicit ownerElection(const std::filesystem::path &dir, bool warn_if_unusable = true)
         : fd_(::open((dir / ownerLockFileName).c_str(),
                      O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
                      0600)) {
@@ -67,7 +72,7 @@ public:
         // tries to bind and the port decides.
         if (!fd_.valid()) {
             won_ = true;
-            warnUnusable(strerror(errno));
+            warnUnusable(strerror(errno), warn_if_unusable);
             return;
         }
         // A co-tenant of a shared directory can hold a lock on a file it planted,
@@ -76,7 +81,7 @@ public:
         if (::fstat(fd_.get(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != ::geteuid()) {
             fd_.reset();
             won_ = true;
-            warnUnusable("not a regular file owned by this user");
+            warnUnusable("not a regular file owned by this user", warn_if_unusable);
             return;
         }
         if (::flock(fd_.get(), LOCK_EX | LOCK_NB) == 0) {
@@ -92,7 +97,7 @@ public:
         }
         won_ = errno != EWOULDBLOCK;
         if (won_) {
-            warnUnusable(strerror(errno));
+            warnUnusable(strerror(errno), warn_if_unusable);
         }
     }
 
@@ -142,7 +147,10 @@ private:
     // bind report the port as held from outside the run while a sibling is in
     // fact serving. This is the context that makes those reports readable.
     static void
-    warnUnusable(const char *reason) {
+    warnUnusable(const char *reason, bool enabled) {
+        if (!enabled) {
+            return;
+        }
         NIXL_WARN << "prometheus_mp: cannot use " << ownerLockFileName << " (" << reason
                   << "); falling back to letting the port bind decide which process serves, so "
                   << "a later report of the port being held from outside the run may be a sibling";

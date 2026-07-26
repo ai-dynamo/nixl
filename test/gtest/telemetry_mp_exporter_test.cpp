@@ -34,6 +34,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -156,6 +157,23 @@ TEST_F(MpExporterTest, WriterBehindSiblingOwnerIsQuiet) {
 
     nixlTelemetryPrometheusMpExporter writer(initParams("agent-writer"));
     EXPECT_FALSE(writer.isExporter());
+}
+
+TEST_F(MpExporterTest, WriterTakesOverWhenTheOwnerExits) {
+    auto owner = std::make_unique<nixlTelemetryPrometheusMpExporter>(initParams("agent-owner"));
+    ASSERT_TRUE(owner->isExporter());
+
+    nixlTelemetryPrometheusMpExporter writer(initParams("agent-writer"));
+    ASSERT_FALSE(writer.isExporter());
+
+    writer.exportEvent({TX_BYTES, 1});
+    ASSERT_FALSE(writer.isExporter()) << "took the endpoint from a live owner";
+
+    owner.reset();
+    // Past the re-election throttle, which the export above just armed.
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    writer.exportEvent({TX_BYTES, 1});
+    EXPECT_TRUE(writer.isExporter());
 }
 
 TEST_F(MpExporterTest, WriterConfiguredForAnotherEndpointWarns) {

@@ -224,7 +224,10 @@ TEST_F(MpStoreTest, ForeignOwnedStoreIsIgnoredAndNotReapable) {
     if (::geteuid() != 0) {
         GTEST_SKIP() << "needs privileges to give a store file another owner";
     }
-    const auto path = storePath("agent-foreign");
+    // A name no run of this process has used: the warning is emitted once per
+    // path, so a repeated run would otherwise see none.
+    static int run = 0;
+    const auto path = storePath("agent-foreign-" + std::to_string(++run));
     storeWriter writer(path, "agent-foreign", "host-1", "", 0, kBuckets);
     writer.addCounter(TX_BYTES, 7);
     constexpr uid_t nobody = 65534;

@@ -210,10 +210,12 @@ storeWriter::~storeWriter() {
     std::filesystem::remove(path_, ec);
 }
 
-void
+uint64_t
 storeWriter::refreshHeartbeat() noexcept {
     auto *layout = static_cast<storeLayout *>(mapping_);
-    __atomic_store_n(&layout->lastUpdateNs, monotonicNs(), __ATOMIC_RELAXED);
+    const uint64_t now = monotonicNs();
+    __atomic_store_n(&layout->lastUpdateNs, now, __ATOMIC_RELAXED);
+    return now;
 }
 
 void

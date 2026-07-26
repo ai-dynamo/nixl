@@ -168,9 +168,11 @@ memory-mapped file in a shared directory; the processes race for an exclusive
 `flock` on `nixl-owner.lock` in that directory, and only the winner binds the
 scrape port and serves `/metrics` by reading and republishing all live processes'
 files on each scrape (labeled per process). The losers run as writers only, so
-losing is benign and no rank is dropped; if the winner cannot bind, nothing
-aggregates the directory and it says so. Should the lock itself be unusable,
-every process warns and falls back to the port bind deciding. Full details:
+losing is benign and no rank is dropped, and a writer re-runs the election as it
+exports so the owner's death costs a gap rather than the rest of the run. If the
+winner cannot bind, nothing aggregates the directory and it says so. Should the
+lock itself be unusable, every process warns and falls back to the port bind
+deciding. Full details:
 [src/plugins/telemetry/prometheus_mp/README.md](../src/plugins/telemetry/prometheus_mp/README.md).
 
 ### Configuration
@@ -216,11 +218,13 @@ It therefore **cannot represent a metric with a dynamic / high-cardinality label
 that varies per observation. No NIXL metric needs that today; if one is ever added,
 a different (keyed) store would be required.
 
-The scrape owner is also elected once, at startup, with **no failover**: if that
-process exits, the endpoint stays down for the rest of the run even though the
-surviving ranks keep recording, and stale store files stop being reaped. Scraping
-resumes only when a process starts and wins the election, or the run is relaunched.
-Alert on the scrape target's `up` metric rather than on missing series.
+The owner's death is survived rather than fatal, but not instantly: the kernel
+releases its lock, and a writer re-running the election -- which it does from its
+export path, a few times a second at most -- takes the endpoint and the reaping
+over. The endpoint is therefore unreachable for that gap plus up to one scrape
+interval. A process that exports nothing never re-elects, so a run that goes
+fully idle stays down until any rank produces telemetry again. Alert on the
+scrape target's `up` metric rather than on missing series.
 
 The owner is elected by an `flock` on `nixl-owner.lock` in the shared directory
 rather than by the bind itself, so exactly one process ever binds and losing the

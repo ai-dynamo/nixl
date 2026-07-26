@@ -218,6 +218,8 @@ public:
 
     /**
      * @brief Republishes this process's liveness timestamp.
+     * @return The timestamp written, so a caller needing the current time (the
+     *         exporter throttles its re-elections on it) reads the clock once.
      *
      * Deliberately separate from the mutators: it costs a CLOCK_MONOTONIC read
      * (~24ns, several times a metric update's atomic), and the only consumer is
@@ -227,7 +229,7 @@ public:
      * touches three slots. Skipping refreshes never hides a live process, it
      * only shortens how long a dead one's last values linger.
      */
-    void
+    uint64_t
     refreshHeartbeat() noexcept;
 
     [[nodiscard]] const std::filesystem::path &

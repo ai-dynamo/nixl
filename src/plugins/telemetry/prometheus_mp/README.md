@@ -37,7 +37,8 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 - **Every process writes its own metric state** to a per-process memory-mapped
   file in a shared directory (`NIXL_TELEMETRY_MULTIPROC_DIR`). Updates are
   lock-free; there is no serialization.
-- **Locked owner election.** On startup each process races for an `flock` on
+- **Locked owner election.** On startup -- and, for a process that is not serving,
+  again as it exports -- each process races for an `flock` on
   `nixl-owner.lock` in the shared directory. The one that wins ("owner") binds the
   scrape port and runs the HTTP endpoint plus a collector that, on each scrape,
   reads every live process's file and republishes them as one exposition. The
@@ -60,8 +61,8 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
     to something outside the run (a foreign service, or a rank pointed at a
     different `NIXL_TELEMETRY_MULTIPROC_DIR`). Nothing aggregates the directory, so
     it is a warning. Every rank reports it, because the election is conceded on a
-    failed bind: a process starting once the port frees -- a conflict as short as a
-    previous run still shutting down -- then takes the endpoint over.
+    failed bind: once the port frees -- a conflict as short as a previous run still
+    shutting down -- the next rank to win the election takes the endpoint over.
   - A **loser was configured for a different endpoint** than the one recorded, so
     the ranks disagree on `NIXL_TELEMETRY_PROMETHEUS_PORT` (or
     `NIXL_TELEMETRY_PROMETHEUS_LOCAL`). Only the owner's endpoint is scrapeable;
@@ -80,15 +81,18 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   TTL; only then are the series dropped and the file reaped. Both are evaluated
   during a scrape, so a live process is never dropped for being idle, and a dead
   one keeps being published until the first scrape after its TTL expires.
-- **The owner is elected once, and there is no failover.** If the owner process
-  exits, no surviving writer promotes itself: the endpoint stays down for the rest
-  of the run while every remaining process keeps updating its store file. Reaping
-  stops with it, since the owner was the reaper -- a killed owner leaves its own
-  file behind. Scraping resumes only when some process starts and wins the election
-  (a restarted rank), or the process family is relaunched. Because this looks to
-  Prometheus like the target going down rather than the ranks going idle, alert on
-  the target's `up` metric, not on absent series. Automatic failover is deliberately
-  out of scope for now.
+- **The owner's death is survived, not fatal.** The kernel releases the lock when
+  the owner dies, so a writer re-running the election wins it, binds the port and
+  starts aggregating -- reaping the dead owner's own store included. Writers
+  re-elect from their export path, a few times a second at most, which makes the
+  endpoint unreachable for that gap plus up to one scrape interval rather than for
+  the rest of the run. Two consequences worth knowing: a process that exports
+  nothing never re-elects, so a run that goes fully idle at the wrong moment stays
+  down until any rank produces telemetry again; and when the port is held from
+  outside the run, the re-election backs off to every few seconds instead of
+  hammering a bind that cannot succeed. Alert on the scrape target's `up` metric
+  rather than on absent series -- a gap looks to Prometheus like the target going
+  down, not like the ranks going idle.
 
 ## Configuration
 

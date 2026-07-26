@@ -25,7 +25,11 @@
 
 #include <prometheus/exposer.h>
 
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <string>
 
 /**
  * @class nixlTelemetryPrometheusMpExporter
@@ -39,6 +43,12 @@
  * server) and never bind. Losing the election is therefore benign -- it never
  * throws nixlTelemetryBindFailed -- so every process gets a valid telemetry sink
  * and all ranks are exported behind the single owner port.
+ *
+ * A writer re-runs the election as it exports, a few times a second at most, so
+ * the owner's death costs a gap in the scrape rather than the rest of the run:
+ * the kernel drops the dead owner's lock and the next writer to export takes the
+ * endpoint over, reaping included. A process that exports nothing does not
+ * re-elect, so an idle run stays down until any rank produces telemetry again.
  */
 class nixlTelemetryPrometheusMpExporter final : public nixlTelemetryExporter {
 public:
@@ -55,6 +65,21 @@ public:
     }
 
 private:
+    // Binds the endpoint and starts aggregating. Returns false when the port is
+    // held by something else; any other Exposer failure propagates.
+    bool
+    startServing();
+
+    // Runs the election again, throttled, so a writer notices the owner's death.
+    void
+    retryElection(uint64_t now_ns) noexcept;
+
+    std::filesystem::path dir_;
+    std::string bindAddress_;
+    std::chrono::nanoseconds staleTtl_{};
+    uint64_t lastElectionNs_ = 0;
+    uint64_t retryIntervalNs_ = 0;
+
     // Declared so destruction is exposer_ -> collector_ -> store_ -> election_:
     // stop serving before dropping the collector it weak-references, then unmap
     // the store, and only then release the election -- a rank starting in between
