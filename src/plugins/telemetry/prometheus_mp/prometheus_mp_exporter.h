@@ -19,36 +19,27 @@
 
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
-#include "mp_collector.h"
 #include "mp_store.h"
-#include "owner_election.h"
+#include "scrape_endpoint.h"
 
-#include <prometheus/exposer.h>
-
-#include <chrono>
-#include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <string>
 
 /**
  * @class nixlTelemetryPrometheusMpExporter
  * @brief Multi-process Prometheus exporter with locked owner election.
  *
  * Every process writes its own metric state to a per-process store in the shared
- * NIXL_TELEMETRY_MULTIPROC_DIR. On construction each process races for an flock on
- * a lock file in that directory: the winner ("owner") binds the scrape port and
- * runs a prometheus-cpp Exposer plus a nixlMultiprocessCollector that aggregates all
- * peers' stores on each scrape; the losers run in writer-only mode (no HTTP
- * server) and never bind. Losing the election is therefore benign -- it never
- * throws nixlTelemetryBindFailed -- so every process gets a valid telemetry sink
- * and all ranks are exported behind the single owner port.
+ * NIXL_TELEMETRY_MULTIPROC_DIR, and one of them additionally serves the scrape
+ * endpoint that publishes all of those stores (see scrapeEndpoint for how that
+ * one is picked, and re-picked when it dies). Not being the one that serves is
+ * benign -- it never throws nixlTelemetryBindFailed -- so every process gets a
+ * valid telemetry sink and all ranks are exported behind the single owner port.
  *
- * A writer re-runs the election as it exports, a few times a second at most, so
- * the owner's death costs a gap in the scrape rather than the rest of the run:
- * the kernel drops the dead owner's lock and the next writer to export takes the
- * endpoint over, reaping included. A process that exports nothing does not
- * re-elect, so an idle run stays down until any rank produces telemetry again.
+ * This class is therefore the mapping from telemetry events to store slots, plus
+ * the reporting of what the election meant for this particular rank; a rank that
+ * is not serving keeps trying to take the endpoint over as it exports, so a rank
+ * that exports nothing stays a writer.
  */
 class nixlTelemetryPrometheusMpExporter final : public nixlTelemetryExporter {
 public:
@@ -61,33 +52,15 @@ public:
     // True if this process won the election and serves the scrape endpoint.
     [[nodiscard]] bool
     isExporter() const noexcept {
-        return static_cast<bool>(exposer_);
+        return endpoint_.serving();
     }
 
 private:
-    // Binds the endpoint and starts aggregating. Returns false when the port is
-    // held by something else; any other Exposer failure propagates.
-    bool
-    startServing();
-
-    // Runs the election again, throttled, so a writer notices the owner's death.
-    void
-    retryElection(uint64_t now_ns) noexcept;
-
     std::filesystem::path dir_;
-    std::string bindAddress_;
-    std::chrono::nanoseconds staleTtl_{};
-    uint64_t lastElectionNs_ = 0;
-    uint64_t retryIntervalNs_ = 0;
-
-    // Declared so destruction is exposer_ -> collector_ -> store_ -> election_:
-    // stop serving before dropping the collector it weak-references, then unmap
-    // the store, and only then release the election -- a rank starting in between
-    // would otherwise win it and fail to bind the port still held here.
-    nixl::telemetry::mp::ownerElection election_;
     std::unique_ptr<nixl::telemetry::mp::storeWriter> store_;
-    std::shared_ptr<nixl::telemetry::mp::nixlMultiprocessCollector> collector_;
-    std::shared_ptr<prometheus::Exposer> exposer_;
+    // Declared last so it is destroyed first: serving stops before the store it
+    // publishes is unmapped and unlinked.
+    nixl::telemetry::mp::scrapeEndpoint endpoint_;
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_PROMETHEUS_MP_EXPORTER_H

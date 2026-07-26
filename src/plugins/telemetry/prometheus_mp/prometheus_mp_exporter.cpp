@@ -36,10 +36,9 @@ namespace {
 
 using nixl::telemetry::mp::makeStoreFileName;
 using nixl::telemetry::mp::MP_DEFAULT_STALE_TTL;
-using nixl::telemetry::mp::storeWriter;
-using nixl::telemetry::mp::nixlMultiprocessCollector;
-using nixl::telemetry::mp::ownerElection;
 using nixl::telemetry::mp::readProcessStartTime;
+using nixl::telemetry::mp::scrapeEndpoint;
+using nixl::telemetry::mp::storeWriter;
 
 constexpr uint16_t defaultPort = 9090;
 constexpr char defaultRankEnvName[] = "LOCAL_RANK";
@@ -53,24 +52,12 @@ constexpr char staleTtlVar[] = "NIXL_TELEMETRY_MP_STALE_TTL";
 const std::string localAddress = "127.0.0.1";
 const std::string publicAddress = "0.0.0.0";
 
-// How often a writer re-runs the election to notice that the owner died. The
-// election is one non-blocking flock, but it sits on the export path, so it is
-// throttled; the endpoint is down for at most this plus the scrape interval.
-// Writers start at 0, so the first exported event re-checks immediately -- an
-// owner that died between this process's election and its first event is caught
-// at once.
-constexpr uint64_t electionRetryIntervalNs = 200000000ULL;
-
-// Once a re-election has won and still failed to bind, the port is held from
-// outside the run rather than by a rank of it, which is a condition that lasts.
-// Retrying an Exposer five times a second against it is the one costly case, so
-// back off; a transient conflict then clears in seconds instead of milliseconds.
-constexpr uint64_t electionBackoffNs = 5000000000ULL;
-
-// civetweb reports a failed port bind with this exact text (as used by the
-// single-process prometheus exporter). Only this case is treated as a benign
-// bind collision; any other Exposer failure is a genuine error.
-constexpr char bindFailureMarker[] = "Failed to setup server ports";
+[[nodiscard]] std::string
+resolveBindAddress() {
+    const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
+    const uint16_t port = nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);
+    return (local ? localAddress : publicAddress) + ":" + std::to_string(port);
+}
 
 // Resolves the optional local_rank label value: NIXL_TELEMETRY_RANK_ENV names
 // which env var holds the rank (default LOCAL_RANK); the value of that env var is
@@ -140,8 +127,7 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
       dir_(resolveMultiprocDir()),
-      staleTtl_(resolveStaleTtl()),
-      retryIntervalNs_(electionRetryIntervalNs) {
+      endpoint_(dir_, resolveBindAddress(), resolveStaleTtl()) {
     const int64_t pid = static_cast<int64_t>(::getpid());
     const uint64_t start_time = readProcessStartTime(pid);
     const uint64_t instance = s_instanceSeq.fetch_add(1, std::memory_order_relaxed);
@@ -154,91 +140,41 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
                                            instance,
                                            nixl::telemetry::resolveHistogramBucketsUs());
 
-    const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
-    const uint16_t port = nixl::config::getValueDefaulted(prometheusPortVar, defaultPort);
-    bindAddress_ = (local ? localAddress : publicAddress) + ":" + std::to_string(port);
-
-    election_ = ownerElection(dir_);
-    if (election_.won() && startServing()) {
-        NIXL_INFO << "prometheus_mp exporter (owner) serving " << bindAddress_
+    const std::string &bind_address = endpoint_.bindAddress();
+    switch (endpoint_.claim()) {
+    case scrapeEndpoint::status::SERVING:
+        NIXL_INFO << "prometheus_mp exporter (owner) serving " << bind_address
                   << ", aggregating telemetry dir " << dir_.string();
         return;
-    }
 
-    if (election_.won()) {
+    case scrapeEndpoint::status::PORT_TAKEN:
         // Elected, so no sibling can be serving: the port belongs to something
         // outside this run and nothing will aggregate this directory. The
-        // election was conceded in startServing(), so a process starting once the
-        // port frees -- a conflict as short as a previous run still shutting down
-        // -- can take the endpoint over.
+        // election is conceded rather than held, so once the port frees -- a
+        // conflict as short as a previous run still shutting down -- the next
+        // rank to win takes the endpoint over.
         NIXL_WARN << "prometheus_mp: elected to serve telemetry dir " << dir_.string() << " but "
-                  << bindAddress_ << " is held by a process outside this run (a foreign service, "
+                  << bind_address << " is held by a process outside this run (a foreign service, "
                   << "or a rank pointed at a different " << multiprocDirVar
                   << "); nothing aggregates this directory";
-    } else {
-        const std::string owner_endpoint = election_.publishedEndpoint();
-        if (!owner_endpoint.empty() && owner_endpoint != bindAddress_) {
-            NIXL_WARN << "prometheus_mp: this rank asks for " << bindAddress_
-                      << " but telemetry dir " << dir_.string() << " is already served on "
-                      << owner_endpoint << "; ranks disagree on " << prometheusPortVar << '/'
-                      << prometheusLocalVar << ", and only " << owner_endpoint << " is scrapeable";
+        break;
+
+    case scrapeEndpoint::status::SIBLING_OWNS:
+        if (const std::string owner = endpoint_.ownerEndpoint();
+            !owner.empty() && owner != bind_address) {
+            NIXL_WARN << "prometheus_mp: this rank asks for " << bind_address
+                      << " but telemetry dir " << dir_.string() << " is already served on " << owner
+                      << "; ranks disagree on " << prometheusPortVar << '/' << prometheusLocalVar
+                      << ", and only " << owner << " is scrapeable";
         }
-        election_.release();
+        break;
     }
-    NIXL_INFO << "prometheus_mp exporter (writer): endpoint " << bindAddress_
+    NIXL_INFO << "prometheus_mp exporter (writer): endpoint " << bind_address
               << " owned by another process; agent '" << init_params.agentName << "' writing to "
               << store_path.string();
 }
 
 nixlTelemetryPrometheusMpExporter::~nixlTelemetryPrometheusMpExporter() = default;
-
-bool
-nixlTelemetryPrometheusMpExporter::startServing() {
-    try {
-        auto exposer = std::make_shared<prometheus::Exposer>(bindAddress_);
-        auto collector = std::make_shared<nixlMultiprocessCollector>(dir_, staleTtl_);
-        exposer->RegisterCollectable(collector);
-        collector_ = std::move(collector);
-        exposer_ = std::move(exposer);
-        election_.publishEndpoint(bindAddress_);
-        return true;
-    }
-    catch (const std::exception &e) {
-        if (std::string(e.what()).find(bindFailureMarker) == std::string::npos) {
-            throw;
-        }
-        // Hold the lock and the port stays unreachable for the whole run, since
-        // no other rank can then be elected to try it.
-        election_.release();
-        return false;
-    }
-}
-
-void
-nixlTelemetryPrometheusMpExporter::retryElection(uint64_t now_ns) noexcept {
-    if (now_ns - lastElectionNs_ < retryIntervalNs_) {
-        return;
-    }
-    lastElectionNs_ = now_ns;
-    try {
-        election_ = ownerElection(dir_, false);
-        if (!election_.won()) {
-            election_.release();
-            return;
-        }
-        if (!startServing()) {
-            election_.release();
-            retryIntervalNs_ = electionBackoffNs;
-            return;
-        }
-        NIXL_INFO << "prometheus_mp exporter: no process owns telemetry dir " << dir_.string()
-                  << " any more; this one now serves " << bindAddress_;
-    }
-    catch (const std::exception &e) {
-        // Telemetry must not break the export path it is called from.
-        NIXL_DEBUG << "prometheus_mp: cannot take over " << bindAddress_ << ": " << e.what();
-    }
-}
 
 nixl_status_t
 nixlTelemetryPrometheusMpExporter::exportEvent(const nixlTelemetryEvent &event) {
@@ -258,8 +194,8 @@ nixlTelemetryPrometheusMpExporter::exportEvent(const nixlTelemetryEvent &event) 
     // Once per event, not once per slot updated: a duration event touches three
     // slots, and the clock read costs several times the atomics it would follow.
     const uint64_t now = store_->refreshHeartbeat();
-    if (!exposer_) {
-        retryElection(now);
+    if (!endpoint_.serving()) {
+        endpoint_.reclaim(now);
     }
     return NIXL_SUCCESS;
 }
