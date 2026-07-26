@@ -87,6 +87,7 @@ public:
         }
         if (::flock(fd_.get(), LOCK_EX | LOCK_NB) == 0) {
             won_ = true;
+            holdsLock_ = true;
             // A previous owner's endpoint outlives it in the file. Drop it now,
             // or a loser reading between this election and publishEndpoint()
             // takes the dead endpoint for ours and reports a disagreement.
@@ -102,7 +103,10 @@ public:
         }
     }
 
-    ownerElection(ownerElection &&) = default;
+    ownerElection(ownerElection &&other) noexcept
+        : fd_(std::move(other.fd_)),
+          won_(other.won_),
+          holdsLock_(std::exchange(other.holdsLock_, false)) {}
 
     /**
      * @brief Takes @p other over, unless this election holds the lock.
@@ -111,15 +115,18 @@ public:
      * since flock contends between two open file descriptions of the same
      * process, so moving it in would close the descriptor that holds the lock
      * and leave a process serving while holding nothing. Release first if
-     * giving the lock up is what was meant.
+     * giving the lock up is what was meant. Only the lock is protected: a loser
+     * keeps its descriptor open too, and re-running its election is the whole
+     * point of the retry.
      */
     ownerElection &
     operator=(ownerElection &&other) noexcept {
-        if (fd_.valid()) {
+        if (holdsLock_) {
             return *this;
         }
         fd_ = std::move(other.fd_);
         won_ = other.won_;
+        holdsLock_ = std::exchange(other.holdsLock_, false);
         return *this;
     }
 
@@ -162,6 +169,8 @@ public:
     void
     release() noexcept {
         fd_.reset();
+        won_ = false;
+        holdsLock_ = false;
     }
 
 private:
@@ -180,6 +189,9 @@ private:
 
     scopedFd fd_;
     bool won_ = false;
+    // Not won_: that is also set when the lock is unusable and every rank falls
+    // back to the port bind deciding, which holds nothing.
+    bool holdsLock_ = false;
 };
 
 } // namespace nixl::telemetry::mp

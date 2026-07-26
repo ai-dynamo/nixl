@@ -190,6 +190,22 @@ TEST_F(MpExporterTest, ReRunningAnElectionCannotDropTheHeldLock) {
     EXPECT_FALSE(contender.won()) << "re-running the election released the lock it had won";
 }
 
+TEST_F(MpExporterTest, TakeoverServesOnTheFirstAttemptAfterTheOwnerGoes) {
+    using nixl::telemetry::mp::monotonicNs;
+    using nixl::telemetry::mp::scrapeEndpoint;
+
+    const std::string bind = "127.0.0.1:" + std::to_string(port_);
+    auto owner = std::make_unique<scrapeEndpoint>(dir_, bind, std::chrono::seconds(2));
+    ASSERT_EQ(owner->claim(), scrapeEndpoint::status::SERVING);
+
+    scrapeEndpoint writer(dir_, bind, std::chrono::seconds(2));
+    ASSERT_EQ(writer.claim(), scrapeEndpoint::status::SIBLING_OWNS);
+
+    owner.reset();
+    writer.reclaim(monotonicNs());
+    EXPECT_TRUE(writer.serving()) << "the first re-election after the owner left did not serve";
+}
+
 TEST_F(MpExporterTest, ReclaimWhileServingKeepsTheElection) {
     using nixl::telemetry::mp::monotonicNs;
     using nixl::telemetry::mp::scrapeEndpoint;
