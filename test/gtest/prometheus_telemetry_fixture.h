@@ -21,6 +21,7 @@
 #include "plugin_manager.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -37,8 +38,13 @@ protected:
     static void
     SetUpTestSuite() {
         [[maybe_unused]] static const bool registered = [] {
-            nixlPluginManager::getInstance().addPluginDirectory(
-                std::string(BUILD_DIR) + "/src/plugins/telemetry/prometheus");
+            // Guarded: the plugin manager logs an ERROR for a directory that is
+            // not there, and this build does not always have the plugin.
+            const std::string build_plugin_dir =
+                std::string(BUILD_DIR) + "/src/plugins/telemetry/prometheus";
+            if (std::filesystem::is_directory(build_plugin_dir)) {
+                nixlPluginManager::getInstance().addPluginDirectory(build_plugin_dir);
+            }
             return true;
         }();
     }

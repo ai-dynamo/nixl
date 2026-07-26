@@ -17,7 +17,6 @@
 #include "mp_store.h"
 
 #include "common/nixl_log.h"
-#include "common/nixl_time.h"
 #include "scoped_fd.h"
 
 #include <fcntl.h>
@@ -31,6 +30,8 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -71,6 +72,26 @@ namespace {
         uint64_t histBuckets[MP_STORE_SLOT_COUNT][MP_STORE_MAX_BUCKETS + 1];
         uint64_t histSums[MP_STORE_SLOT_COUNT];
     };
+
+    // schemaVersion and slotCount alone do not catch a reordered field or a
+    // changed MP_MAX_* cap, both of which move every offset after them while a
+    // peer still validates the header. Failing the build is the only way to force
+    // the version bump that makes such a file rejectable.
+    static_assert(sizeof(storeLayout) == 6808,
+                  "storeLayout is an on-disk format: bump MP_STORE_SCHEMA_VERSION when its size "
+                  "changes, then update this assertion");
+
+    // A store owned by another uid is never reaped, so the same file would warn on
+    // every scrape for the life of the process. Bounded so a directory full of
+    // planted files cannot grow this without limit.
+    [[nodiscard]] bool
+    firstSightOf(const std::filesystem::path &path) {
+        constexpr std::size_t max_remembered = 64;
+        static std::mutex mutex;
+        static std::set<std::filesystem::path> seen;
+        const std::lock_guard<std::mutex> lock(mutex);
+        return seen.size() < max_remembered && seen.insert(path).second;
+    }
 
     void
     copyField(char *dst, std::size_t cap, const std::string &src, const char *what) {
@@ -174,7 +195,7 @@ storeWriter::storeWriter(std::filesystem::path path,
     copyField(layout->agentName, MP_MAX_AGENT_NAME, agent_name, "agent name");
     copyField(layout->hostname, MP_MAX_HOSTNAME, hostname, "hostname");
     copyField(layout->localRank, MP_MAX_LOCAL_RANK, local_rank, "local_rank");
-    __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELAXED);
+    __atomic_store_n(&layout->lastUpdateNs, monotonicNs(), __ATOMIC_RELAXED);
     // Publish the magic last so a concurrent reader never validates a
     // half-initialized header.
     __atomic_store_n(&layout->magic, MP_STORE_MAGIC, __ATOMIC_RELEASE);
@@ -192,7 +213,7 @@ storeWriter::~storeWriter() {
 void
 storeWriter::refreshHeartbeat() noexcept {
     auto *layout = static_cast<storeLayout *>(mapping_);
-    __atomic_store_n(&layout->lastUpdateNs, nixlTime::getNs(), __ATOMIC_RELAXED);
+    __atomic_store_n(&layout->lastUpdateNs, monotonicNs(), __ATOMIC_RELAXED);
 }
 
 void
@@ -255,8 +276,11 @@ readStoreSnapshot(const std::filesystem::path &path) {
     if (st.st_uid != ::geteuid()) {
         // Someone else's file in a shared directory: its contents are attacker-
         // controlled, and it is not ours to reap either.
-        NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
-                  << "' owned by uid " << st.st_uid;
+        if (firstSightOf(path)) {
+            NIXL_WARN << "prometheus_mp: ignoring telemetry store '" << path.string()
+                      << "' owned by uid " << st.st_uid
+                      << "; it cannot be reaped, so this is reported once";
+        }
         return {std::nullopt, false};
     }
 

@@ -185,6 +185,11 @@ every process warns and falls back to the port bind deciding. Full details:
 | `NIXL_TELEMETRY_MP_STALE_TTL` | Seconds after a dead process's last update before its store is stale and reaped | `30` |
 | `NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` | Shared with the other exporters, but capped at 32 bounds by the fixed-layout store | built-in µs defaults |
 
+Unlike a bind collision, a configuration error here is fatal: a missing
+`NIXL_TELEMETRY_MULTIPROC_DIR` and an over-long
+`NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` both throw out of the `nixlAgent`
+constructor rather than leaving the rank running without telemetry.
+
 Series are labeled by `hostname`, `agent_name`, `pid` (guarantees cross-process
 uniqueness), `agent_instance` (distinguishes multiple same-name agents within one
 process), and optionally `local_rank` (the local/per-GPU rank, not Dynamo's

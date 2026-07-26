@@ -21,8 +21,10 @@
 #include "common/nixl_log.h"
 #include "histogram_buckets.h"
 
+#include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -72,9 +74,12 @@ resolveLocalRank() {
 
 [[nodiscard]] std::chrono::nanoseconds
 resolveStaleTtl() {
-    const uint64_t seconds = nixl::config::getValueDefaulted<uint64_t>(
+    const uint64_t configured = nixl::config::getValueDefaulted<uint64_t>(
         staleTtlVar, static_cast<uint64_t>(MP_DEFAULT_STALE_TTL.count()));
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(seconds));
+    constexpr uint64_t max_seconds =
+        static_cast<uint64_t>(std::chrono::nanoseconds::max().count()) / 1000000000ULL;
+    const auto seconds = std::chrono::seconds(std::min(configured, max_seconds));
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(seconds);
 }
 
 [[nodiscard]] std::filesystem::path
@@ -86,10 +91,27 @@ resolveMultiprocDir() {
     }
     std::filesystem::path path(*dir);
     std::error_code ec;
-    std::filesystem::create_directories(path, ec);
+    const bool created = std::filesystem::create_directories(path, ec);
     if (ec) {
         throw std::runtime_error("prometheus_mp exporter: cannot create telemetry dir '" +
                                  path.string() + "': " + ec.message());
+    }
+    if (created) {
+        // The umask default (typically 0755) would leave the store files readable
+        // by every user on the host; the O_NOFOLLOW/0600/uid checks defend the
+        // files, but only 0700 keeps a co-tenant out of the directory itself.
+        std::filesystem::permissions(
+            path, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace, ec);
+        if (ec) {
+            NIXL_WARN << "prometheus_mp: cannot restrict telemetry dir '" << path.string()
+                      << "' to 0700: " << ec.message();
+        }
+    }
+    struct stat st{};
+    if (::stat(path.c_str(), &st) == 0 && (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        NIXL_WARN << "prometheus_mp: telemetry dir '" << path.string()
+                  << "' is writable by group or other; another user can plant store and lock "
+                  << "files there. Use a private directory owned by this user (mode 0700)";
     }
     return path;
 }

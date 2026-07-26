@@ -17,7 +17,6 @@
 #include "mp_collector.h"
 
 #include "common/nixl_log.h"
-#include "common/nixl_time.h"
 #include "telemetry_event.h"
 
 #include <prometheus/client_metric.h>
@@ -156,7 +155,7 @@ isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl) {
     if (isProcessAlive(snap.pid, snap.startTime)) {
         return true;
     }
-    const uint64_t now = nixlTime::getNs();
+    const uint64_t now = monotonicNs();
     const auto ttl_ns = static_cast<uint64_t>(ttl.count() < 0 ? 0 : ttl.count());
     return now >= snap.lastUpdateNs && (now - snap.lastUpdateNs) <= ttl_ns;
 }

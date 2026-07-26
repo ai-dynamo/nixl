@@ -17,8 +17,6 @@
 #include "mp_collector.h"
 #include "mp_store.h"
 
-#include "common/nixl_time.h"
-
 #include <gtest/gtest.h>
 
 #include <prometheus/client_metric.h>
@@ -42,6 +40,7 @@ using nixl::telemetry::mp::buildMetricFamilies;
 using nixl::telemetry::mp::isProcessAlive;
 using nixl::telemetry::mp::isSnapshotLive;
 using nixl::telemetry::mp::makeStoreFileName;
+using nixl::telemetry::mp::monotonicNs;
 using nixl::telemetry::mp::storeSnapshot;
 using nixl::telemetry::mp::storeWriter;
 using nixl::telemetry::mp::nixlMultiprocessCollector;
@@ -63,7 +62,7 @@ makeSnap(const std::string &agent, const std::string &rank) {
     storeSnapshot s;
     s.pid = ::getpid();
     s.startTime = 1;
-    s.lastUpdateNs = nixlTime::getNs();
+    s.lastUpdateNs = monotonicNs();
     s.agentName = agent;
     s.hostname = "host";
     s.localRank = rank;
@@ -283,13 +282,13 @@ TEST(MpCollectorTest, SnapshotLivenessByProcessThenTtl) {
 
     auto dead_fresh = makeSnap("b", "");
     dead_fresh.pid = 0x7fffffff;
-    dead_fresh.lastUpdateNs = nixlTime::getNs();
+    dead_fresh.lastUpdateNs = monotonicNs();
     EXPECT_TRUE(isSnapshotLive(dead_fresh, ttl));
 
     auto dead_stale = makeSnap("c", "");
     dead_stale.pid = 0x7fffffff;
     dead_stale.lastUpdateNs =
-        nixlTime::getNs() - std::chrono::nanoseconds(std::chrono::seconds(60)).count();
+        monotonicNs() - std::chrono::nanoseconds(std::chrono::seconds(60)).count();
     EXPECT_FALSE(isSnapshotLive(dead_stale, ttl));
 }
 

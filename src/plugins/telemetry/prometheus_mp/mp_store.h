@@ -19,6 +19,8 @@
 
 #include "telemetry_event.h"
 
+#include <ctime>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -53,6 +55,21 @@ inline constexpr std::size_t MP_STORE_SLOT_COUNT =
 // this is rejected rather than silently truncated -- the single-process exporter,
 // which keeps its buckets on the heap, has no such limit.
 inline constexpr std::size_t MP_STORE_MAX_BUCKETS = 32;
+
+/**
+ * @brief Reads the clock the store's timestamps are expressed in.
+ *
+ * CLOCK_MONOTONIC directly, not nixlTime::getNs(): a store timestamp is written
+ * by one process and compared by another, so the epoch has to be the kernel's
+ * boot time rather than whatever epoch an implementation's steady_clock happens
+ * to use. This is part of the on-disk contract.
+ */
+[[nodiscard]] inline uint64_t
+monotonicNs() noexcept {
+    struct timespec ts{};
+    ::clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
+}
 
 namespace detail {
     // Highest slot index the collector will index into the counter/gauge arrays,
@@ -118,7 +135,7 @@ struct storeSnapshot {
     // Process start time in clock ticks (/proc/<pid>/stat field 22); pairs with
     // pid to survive PID reuse when checking liveness.
     uint64_t startTime = 0;
-    // Monotonic nanoseconds (nixlTime::getNs, CLOCK_MONOTONIC -- host-wide, so
+    // Monotonic nanoseconds (monotonicNs(), CLOCK_MONOTONIC -- host-wide, so
     // comparable across processes) of the last writer update; used for TTL staleness.
     uint64_t lastUpdateNs = 0;
     // Per-process instance counter, distinguishing multiple agents that share the
@@ -205,9 +222,10 @@ public:
      * Deliberately separate from the mutators: it costs a CLOCK_MONOTONIC read
      * (~24ns, several times a metric update's atomic), and the only consumer is
      * the collector's staleness check, which has a 30s default TTL and applies
-     * to dead processes only. Call it once per batch of updates rather than per
-     * update; missing a refresh never hides a live process, it only shortens how
-     * long a dead one's last values linger.
+     * to dead processes only. The exporter therefore refreshes once per event,
+     * after the slot updates, instead of from each mutator -- a duration event
+     * touches three slots. Skipping refreshes never hides a live process, it
+     * only shortens how long a dead one's last values linger.
      */
     void
     refreshHeartbeat() noexcept;

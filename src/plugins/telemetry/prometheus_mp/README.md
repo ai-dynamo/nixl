@@ -98,6 +98,13 @@ export NIXL_TELEMETRY_EXPORTER="prometheus_mp" # selects libtelemetry_exporter_p
 export NIXL_TELEMETRY_MULTIPROC_DIR="/run/nixl_metrics" # REQUIRED: shared by all ranks in the pod
 ```
 
+Configuration errors here are **fatal, unlike a bind collision**: a missing (or
+uncreatable) `NIXL_TELEMETRY_MULTIPROC_DIR`, and a
+`NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US` list longer than 32 bounds, throw out of the
+`nixlAgent` constructor rather than leaving the rank running without telemetry.
+Selecting this exporter and forgetting the directory therefore fails every rank at
+startup, loudly, instead of exporting nothing.
+
 This mirrors Dynamo's `PROMETHEUS_MULTIPROC_DIR` convention (a shared folder that
 every related process writes into, one leader exports): all ranks that should be
 aggregated together must point `NIXL_TELEMETRY_MULTIPROC_DIR` at the **same**
@@ -120,14 +127,14 @@ Use a **private** directory (mode `0700`, owned by the run's user) rather than a
 world-writable location like `/tmp`. On a shared host a world-writable directory
 lets another user pre-plant paths the owner would truncate or unlink. The plugin
 already hardens the files themselves (opened with `O_NOFOLLOW`, created `0600`,
-and skipped at scrape time -- with a warning -- when the file's owner is not the
-reader's effective uid, so a co-tenant cannot inject series). The same check
-guards the election: a `nixl-owner.lock` that is not a regular file owned by the
-run's user is ignored rather than contended for, so a co-tenant holding a planted
-lock cannot demote every rank to writer-only and leave the run unscrapeable.
-The directory itself remains the deployment's responsibility: a missing one is
-created, but with the process umask rather than `0700`, so pre-create it with the
-permissions you want.
+and skipped at scrape time when the file's owner is not the reader's effective
+uid -- warned about once per file, since such a file is never reaped -- so a
+co-tenant cannot inject series). The same check guards the election: a
+`nixl-owner.lock` that is not a regular file owned by the run's user is ignored
+rather than contended for, so a co-tenant holding a planted lock cannot demote
+every rank to writer-only and leave the run unscrapeable.
+A missing directory is created `0700`; an existing one is left as it is, with a
+warning when it is group- or world-writable.
 
 All aggregated ranks must also share a **PID namespace** (and time namespace):
 staleness/liveness uses `kill(pid, 0)` + `/proc/<pid>/stat` and a host-wide
