@@ -130,7 +130,7 @@ __forceinline__ __device__ void nixl_barrier_wait(nixl_ep::gpu_nixl_ctx nixl_ctx
     st_release_sys_global(nixl_ctx.last_ht_barrier_counter, epoch + num_channels);
 }
 
-template <bool kLowLatencyMode, int kNumRDMARanks>
+template <int kNumRDMARanks>
 __global__ void notify_dispatch(const int* num_tokens_per_rank,
                                 int* moe_recv_counter_mapped,
                                 int num_ranks,
@@ -403,41 +403,40 @@ void notify_dispatch(const int* num_tokens_per_rank,
                      int64_t num_rdma_bytes,
                      int64_t num_nvl_bytes,
                      uint64_t timeout_cycles,
-                     bool low_latency_mode,
                      nixl_ep::gpu_nixl_ctx nixl_ctx) {
-#define NOTIFY_DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                                    \
-    {                                                                                                                                  \
-        auto notify_dispatch_func = low_latency_mode ? notify_dispatch<true, num_rdma_ranks> : notify_dispatch<false, num_rdma_ranks>; \
-        LAUNCH_KERNEL(&cfg,                                                                                                            \
-                      notify_dispatch_func,                                                                                            \
-                      num_tokens_per_rank,                                                                                             \
-                      moe_recv_counter_mapped,                                                                                         \
-                      num_ranks,                                                                                                       \
-                      num_tokens_per_rdma_rank,                                                                                        \
-                      moe_recv_rdma_counter_mapped,                                                                                    \
-                      num_tokens_per_expert,                                                                                           \
-                      moe_recv_expert_counter_mapped,                                                                                  \
-                      num_experts,                                                                                                     \
-                      is_token_in_rank,                                                                                                \
-                      num_tokens,                                                                                                      \
-                      num_channels,                                                                                                    \
-                      expert_alignment,                                                                                                \
-                      rdma_clean_meta.first,                                                                                           \
-                      rdma_clean_meta.second,                                                                                          \
-                      nvl_clean_meta.first,                                                                                            \
-                      nvl_clean_meta.second,                                                                                           \
-                      rdma_channel_prefix_matrix,                                                                                      \
-                      recv_rdma_rank_prefix_sum,                                                                                       \
-                      gbl_channel_prefix_matrix,                                                                                       \
-                      recv_gbl_rank_prefix_sum,                                                                                        \
-                      rdma_buffer_ptr,                                                                                                 \
-                      buffer_ptrs,                                                                                                     \
-                      barrier_signal_ptrs,                                                                                             \
-                      rank,                                                                                                            \
-                      timeout_cycles,                                                                                                  \
-                      nixl_ctx);                                                                                                       \
-    }                                                                                                                                  \
-    break
+#define NOTIFY_DISPATCH_LAUNCH_CASE(num_rdma_ranks)              \
+{                                                                \
+    auto notify_dispatch_func = notify_dispatch<num_rdma_ranks>; \
+    LAUNCH_KERNEL(&cfg,                                          \
+                  notify_dispatch_func,                          \
+                  num_tokens_per_rank,                           \
+                  moe_recv_counter_mapped,                       \
+                  num_ranks,                                     \
+                  num_tokens_per_rdma_rank,                      \
+                  moe_recv_rdma_counter_mapped,                  \
+                  num_tokens_per_expert,                         \
+                  moe_recv_expert_counter_mapped,                \
+                  num_experts,                                   \
+                  is_token_in_rank,                              \
+                  num_tokens,                                    \
+                  num_channels,                                  \
+                  expert_alignment,                              \
+                  rdma_clean_meta.first,                         \
+                  rdma_clean_meta.second,                        \
+                  nvl_clean_meta.first,                          \
+                  nvl_clean_meta.second,                         \
+                  rdma_channel_prefix_matrix,                    \
+                  recv_rdma_rank_prefix_sum,                     \
+                  gbl_channel_prefix_matrix,                     \
+                  recv_gbl_rank_prefix_sum,                      \
+                  rdma_buffer_ptr,                               \
+                  buffer_ptrs,                                   \
+                  barrier_signal_ptrs,                           \
+                  rank,                                          \
+                  timeout_cycles,                                \
+                  nixl_ctx);                                     \
+}                                                                \
+break
 
     constexpr int kNumThreads = 512;
     const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
@@ -470,8 +469,7 @@ constexpr int get_num_topk_rdma_ranks(int num_rdma_ranks) {
     return num_rdma_ranks < 8 ? num_rdma_ranks : 8;
 }
 
-template <bool kLowLatencyMode,
-          int kNumRDMARanks,
+template <int kNumRDMARanks,
           bool kCachedMode,
           int kNumTMABytesPerWarp,
           int kNumDispatchRDMASenderWarps,
@@ -1282,7 +1280,6 @@ void dispatch(void* recv_x,
               cudaStream_t stream,
               int num_channels,
               uint64_t timeout_cycles,
-              bool low_latency_mode,
               gpu_nixl_ctx nixl_ctx) {
     constexpr int kNumDispatchRDMASenderWarps = 7;
     constexpr int kNumTMABytesPerWarp = 16384;
@@ -1291,53 +1288,51 @@ void dispatch(void* recv_x,
     // Make sure never OOB
     EP_HOST_ASSERT(static_cast<int64_t>(num_scales) * scale_hidden_stride < std::numeric_limits<int>::max());
 
-#define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                                   \
-    {                                                                                                                          \
-        auto dispatch_func = low_latency_mode                                                                                  \
-            ? (is_cached_dispatch ? dispatch<true, num_rdma_ranks, true, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps>     \
-                                  : dispatch<true, num_rdma_ranks, false, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps>)   \
-            : (is_cached_dispatch ? dispatch<false, num_rdma_ranks, true, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps>    \
-                                  : dispatch<false, num_rdma_ranks, false, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps>); \
-        SET_SHARED_MEMORY_FOR_TMA(dispatch_func);                                                                              \
-        LAUNCH_KERNEL(&cfg,                                                                                                    \
-                      dispatch_func,                                                                                           \
-                      reinterpret_cast<int4*>(recv_x),                                                                         \
-                      recv_x_scales,                                                                                           \
-                      recv_topk_idx,                                                                                           \
-                      recv_topk_weights,                                                                                       \
-                      reinterpret_cast<SourceMeta*>(recv_src_meta),                                                            \
-                      reinterpret_cast<const int4*>(x),                                                                        \
-                      x_scales,                                                                                                \
-                      topk_idx,                                                                                                \
-                      topk_weights,                                                                                            \
-                      send_rdma_head,                                                                                          \
-                      send_nvl_head,                                                                                           \
-                      recv_rdma_channel_prefix_matrix,                                                                         \
-                      recv_gbl_channel_prefix_matrix,                                                                          \
-                      rdma_channel_prefix_matrix,                                                                              \
-                      recv_rdma_rank_prefix_sum,                                                                               \
-                      gbl_channel_prefix_matrix,                                                                               \
-                      recv_gbl_rank_prefix_sum,                                                                                \
-                      is_token_in_rank,                                                                                        \
-                      num_tokens,                                                                                              \
-                      hidden_int4,                                                                                             \
-                      num_scales,                                                                                              \
-                      num_topk,                                                                                                \
-                      num_experts,                                                                                             \
-                      scale_token_stride,                                                                                      \
-                      scale_hidden_stride,                                                                                     \
-                      rdma_buffer_ptr,                                                                                         \
-                      num_max_rdma_chunked_send_tokens,                                                                        \
-                      num_max_rdma_chunked_recv_tokens,                                                                        \
-                      buffer_ptrs,                                                                                             \
-                      num_max_nvl_chunked_send_tokens,                                                                         \
-                      num_max_nvl_chunked_recv_tokens,                                                                         \
-                      rank,                                                                                                    \
-                      num_ranks,                                                                                               \
-                      timeout_cycles,                                                                                          \
-                      nixl_ctx);                                                                                               \
-    }                                                                                                                          \
-    break
+#define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                               \
+{                                                                                          \
+    auto dispatch_func = is_cached_dispatch ?                                              \
+        dispatch<num_rdma_ranks, true, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps> : \
+        dispatch<num_rdma_ranks, false, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps>; \
+    SET_SHARED_MEMORY_FOR_TMA(dispatch_func);                                              \
+    LAUNCH_KERNEL(&cfg,                                                                    \
+                  dispatch_func,                                                           \
+                  reinterpret_cast<int4 *>(recv_x),                                        \
+                  recv_x_scales,                                                           \
+                  recv_topk_idx,                                                           \
+                  recv_topk_weights,                                                       \
+                  reinterpret_cast<SourceMeta *>(recv_src_meta),                           \
+                  reinterpret_cast<const int4 *>(x),                                       \
+                  x_scales,                                                                \
+                  topk_idx,                                                                \
+                  topk_weights,                                                            \
+                  send_rdma_head,                                                          \
+                  send_nvl_head,                                                           \
+                  recv_rdma_channel_prefix_matrix,                                         \
+                  recv_gbl_channel_prefix_matrix,                                          \
+                  rdma_channel_prefix_matrix,                                              \
+                  recv_rdma_rank_prefix_sum,                                               \
+                  gbl_channel_prefix_matrix,                                               \
+                  recv_gbl_rank_prefix_sum,                                                \
+                  is_token_in_rank,                                                        \
+                  num_tokens,                                                              \
+                  hidden_int4,                                                             \
+                  num_scales,                                                              \
+                  num_topk,                                                                \
+                  num_experts,                                                             \
+                  scale_token_stride,                                                      \
+                  scale_hidden_stride,                                                     \
+                  rdma_buffer_ptr,                                                         \
+                  num_max_rdma_chunked_send_tokens,                                        \
+                  num_max_rdma_chunked_recv_tokens,                                        \
+                  buffer_ptrs,                                                             \
+                  num_max_nvl_chunked_send_tokens,                                         \
+                  num_max_nvl_chunked_recv_tokens,                                         \
+                  rank,                                                                    \
+                  num_ranks,                                                               \
+                  timeout_cycles,                                                          \
+                  nixl_ctx);                                                               \
+}                                                                                          \
+break
 
     EP_HOST_ASSERT((topk_idx == nullptr) == (topk_weights == nullptr));
     EP_HOST_ASSERT((recv_topk_idx == nullptr) == (recv_topk_weights == nullptr));
@@ -1347,7 +1342,7 @@ void dispatch(void* recv_x,
 #undef DISPATCH_LAUNCH_CASE
 }
 
-template <bool kLowLatencyMode, int kNumTMABytesPerWarp>
+template <int kNumTMABytesPerWarp>
 __global__ void cached_notify(const int rdma_clean_offset,
                               const int rdma_num_int_clean,
                               const int nvl_clean_offset,
@@ -1529,7 +1524,6 @@ void cached_notify(int hidden_int4,
                    int64_t num_nvl_bytes,
                    uint64_t timeout_cycles,
                    bool is_cached_dispatch,
-                   bool low_latency_mode,
                    gpu_nixl_ctx nixl_ctx) {
     const int num_threads = std::max(128, 32 * num_channels);
     const int num_warps = num_threads / 32;
@@ -1556,7 +1550,7 @@ void cached_notify(int hidden_int4,
     EP_HOST_ASSERT(num_channels * 2 > 3);
 
     // Launch kernel
-    auto cached_notify_func = low_latency_mode ? cached_notify<true, kNumTMABytesPerWarp> : cached_notify<false, kNumTMABytesPerWarp>;
+    auto cached_notify_func = cached_notify<kNumTMABytesPerWarp>;
     SETUP_LAUNCH_CONFIG(num_channels * 2, num_threads, stream);
     SET_SHARED_MEMORY_FOR_TMA(cached_notify_func);
     LAUNCH_KERNEL(&cfg,
@@ -1746,8 +1740,7 @@ __device__ int combine_token(bool is_token_in_rank,
     return topk_ranks[0];
 }
 
-template <bool kLowLatencyMode,
-          int kNumRDMARanks,
+template <int kNumRDMARanks,
           typename dtype_t,
           int kNumCombineForwarderWarps,
           int kNumTMABytesPerSenderWarp,
@@ -2327,8 +2320,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
     }
 }
 
-void combine(cudaDataType_t type,
-             void* combined_x,
+void combine(void* combined_x,
              float* combined_topk_weights,
              const bool* is_combined_token_in_rank,
              const void* x,
@@ -2356,7 +2348,6 @@ void combine(cudaDataType_t type,
              cudaStream_t stream,
              int num_channels,
              uint64_t timeout_cycles,
-             bool low_latency_mode,
              gpu_nixl_ctx nixl_ctx) {
     constexpr int kNumCombineForwarderWarps = 24;
     constexpr int kNumTMABytesPerSenderWarp = 16384;
@@ -2364,52 +2355,45 @@ void combine(cudaDataType_t type,
     constexpr int smem_size =
         std::max(kNumTMABytesPerSenderWarp * NUM_MAX_NVL_PEERS, kNumTMABytesPerForwarderWarp * kNumCombineForwarderWarps);
 
-#define COMBINE_LAUNCH_CASE(num_rdma_ranks)                                           \
-    {                                                                                 \
-        auto combine_func = low_latency_mode ? combine<true,                          \
-                                                       num_rdma_ranks,                \
-                                                       nv_bfloat16,                   \
-                                                       kNumCombineForwarderWarps,     \
-                                                       kNumTMABytesPerSenderWarp,     \
-                                                       kNumTMABytesPerForwarderWarp>  \
-                                             : combine<false,                         \
-                                                       num_rdma_ranks,                \
-                                                       nv_bfloat16,                   \
-                                                       kNumCombineForwarderWarps,     \
-                                                       kNumTMABytesPerSenderWarp,     \
-                                                       kNumTMABytesPerForwarderWarp>; \
-        SET_SHARED_MEMORY_FOR_TMA(combine_func);                                      \
-        LAUNCH_KERNEL(&cfg,                                                           \
-                      combine_func,                                                   \
-                      reinterpret_cast<int4*>(combined_x),                            \
-                      combined_topk_weights,                                          \
-                      is_combined_token_in_rank,                                      \
-                      reinterpret_cast<const int4*>(x),                               \
-                      topk_weights,                                                   \
-                      reinterpret_cast<const int4*>(bias_0),                          \
-                      reinterpret_cast<const int4*>(bias_1),                          \
-                      combined_rdma_head,                                             \
-                      combined_nvl_head,                                              \
-                      reinterpret_cast<const SourceMeta*>(src_meta),                  \
-                      rdma_channel_prefix_matrix,                                     \
-                      rdma_rank_prefix_sum,                                           \
-                      gbl_channel_prefix_matrix,                                      \
-                      num_tokens,                                                     \
-                      num_combined_tokens,                                            \
-                      hidden,                                                         \
-                      num_topk,                                                       \
-                      rdma_buffer_ptr,                                                \
-                      num_max_rdma_chunked_send_tokens,                               \
-                      num_max_rdma_chunked_recv_tokens,                               \
-                      buffer_ptrs,                                                    \
-                      num_max_nvl_chunked_send_tokens,                                \
-                      num_max_nvl_chunked_recv_tokens,                                \
-                      rank,                                                           \
-                      num_ranks,                                                      \
-                      timeout_cycles,                                                 \
-                      nixl_ctx);                                                      \
-    }                                                                                 \
-    break
+#define COMBINE_LAUNCH_CASE(num_rdma_ranks)                       \
+{                                                                 \
+    auto combine_func = combine<num_rdma_ranks,                   \
+                                nv_bfloat16,                      \
+                                kNumCombineForwarderWarps,        \
+                                kNumTMABytesPerSenderWarp,        \
+                                kNumTMABytesPerForwarderWarp>;    \
+    SET_SHARED_MEMORY_FOR_TMA(combine_func);                      \
+    LAUNCH_KERNEL(&cfg,                                           \
+                  combine_func,                                   \
+                  reinterpret_cast<int4 *>(combined_x),           \
+                  combined_topk_weights,                          \
+                  is_combined_token_in_rank,                      \
+                  reinterpret_cast<const int4 *>(x),              \
+                  topk_weights,                                   \
+                  reinterpret_cast<const int4 *>(bias_0),         \
+                  reinterpret_cast<const int4 *>(bias_1),         \
+                  combined_rdma_head,                             \
+                  combined_nvl_head,                              \
+                  reinterpret_cast<const SourceMeta *>(src_meta), \
+                  rdma_channel_prefix_matrix,                     \
+                  rdma_rank_prefix_sum,                           \
+                  gbl_channel_prefix_matrix,                      \
+                  num_tokens,                                     \
+                  num_combined_tokens,                            \
+                  hidden,                                         \
+                  num_topk,                                       \
+                  rdma_buffer_ptr,                                \
+                  num_max_rdma_chunked_send_tokens,               \
+                  num_max_rdma_chunked_recv_tokens,               \
+                  buffer_ptrs,                                    \
+                  num_max_nvl_chunked_send_tokens,                \
+                  num_max_nvl_chunked_recv_tokens,                \
+                  rank,                                           \
+                  num_ranks,                                      \
+                  timeout_cycles,                                 \
+                  nixl_ctx);                                      \
+}                                                                 \
+break
 
     int num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
     auto num_warps_per_forwarder = std::max(kNumCombineForwarderWarps / num_rdma_ranks, 1);
@@ -2421,7 +2405,6 @@ void combine(cudaDataType_t type,
                    std::max(num_max_rdma_chunked_send_tokens, num_max_nvl_chunked_send_tokens));
     EP_HOST_ASSERT(num_max_nvl_chunked_recv_tokens / num_rdma_ranks - num_warps_per_forwarder >= num_max_nvl_chunked_send_tokens);
     EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens >= num_warps_per_forwarder);
-    EP_HOST_ASSERT(type == CUDA_R_16BF);
 
     SETUP_LAUNCH_CONFIG(num_channels * 2, (num_forwarder_warps + 1) * 32, stream);
     SWITCH_RDMA_RANKS(COMBINE_LAUNCH_CASE);

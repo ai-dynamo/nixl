@@ -126,6 +126,16 @@ This builds both stages from scratch without the `--wheel-base-image` override.
 #### Nightly Build
 The nightly job (`nixl-ci-build-wheel-nightly`) omits `--torch-versions` and `--wheel-base-image`, so it builds all torch versions and runs the full two-stage build.
 
+#### Optional: UCX spcx external plugin
+`build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir where `wheel_add_ucx_plugins.py` bundles it like any other UCX module. It requires `--dockerfile contrib/Dockerfile.manylinux` and two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:
+
+| Env var | Purpose | Jenkins credential | Credential type |
+|---|---|---|---|
+| `NIXL_SPCX_PLUGIN_REPO_URL` | Git URL of the plugin repo | `ucx-plugin-gitlab-url` | Secret text |
+| `NIXL_GITLAB_TOKEN` | GitLab token (`read_repository` scope) used via a git credential helper so it never appears in URLs, argv, or git error output | `svc-nixl-gitlab-token` | Username/Password (token in password field) |
+
+The plugin ref defaults to `main` and is selectable with `--ucx-spcx-plugin-ref`. This flag is not enabled in the PR CI pipeline; it is consumed by the QA/release invocations of `build-container.sh`, which bind both credentials into the environment.
+
 ### Key Dependencies Installed
 
 #### System Packages

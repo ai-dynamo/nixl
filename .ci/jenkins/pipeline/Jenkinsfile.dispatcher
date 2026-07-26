@@ -87,12 +87,13 @@ currentBuild.description = githubHelper.getBuildDescription()
 
 // Leaf jobs to dispatch, keyed by parallel-branch name
 def leafJobs = [
-    'non-gpu':    'nixl-ci-non-gpu',
-    'gpu':        'nixl-ci-gpu',
-    'dl-gpu':     'nixl-ci-dl-gpu',
-    'dl-gpu-ep':  'nixl-ci-dl-gpu-ep',
-    'wheel':      'nixl-ci-build-wheel',
-    'sanitizers': 'nixl-ci-test-sanitizers',
+    'non-gpu':         'nixl-ci-non-gpu',
+    'gpu':             'nixl-ci-gpu',
+    'dl-gpu':          'nixl-ci-dl-gpu',
+    'dl-gpu-ep':       'nixl-ci-dl-gpu-ep',
+    'wheel':           'nixl-ci-build-wheel',
+    'sanitizers':      'nixl-ci-test-sanitizers',
+    'build-container': 'nixl-ci-build-container-pr',
 ]
 
 try {

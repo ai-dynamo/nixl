@@ -31,6 +31,7 @@
 #include <functional>
 #include <iomanip>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 
@@ -454,23 +455,26 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     try {
         NIXL_INFO << "Rail Manager created with " << rail_manager_.getNumRails() << " rails";
 
-        // Set up notification callback on rail 0
-        size_t notification_rail_id = 0;
-        NIXL_DEBUG << "Set notification processor for rail 0";
+        // Set up notification + handshake callbacks on rail 0
+        const size_t notification_rail_id = 0;
+        NIXL_DEBUG << "Set notification + handshake processors for rail 0";
         rail_manager_.getRail(notification_rail_id)
-            .setNotificationCallback([this](const std::string &serialized_notif) {
-                processNotification(serialized_notif);
-            });
+            .setNotificationCallback(
+                [this](const std::string &serialized_notif, uint16_t sender_peer_idx) {
+                    processNotification(serialized_notif, sender_peer_idx);
+                });
+        rail_manager_.getRail(0).setHandshakeCallback(
+            [this](const std::string &payload) { handleHandshake(payload); });
 
         // Set up XFER_ID tracking callbacks for all rails
         NIXL_DEBUG << "Setting up XFER_ID tracking callbacks for " << rail_manager_.getNumRails()
                    << " rails";
         for (size_t rail_id = 0; rail_id < rail_manager_.getNumRails(); ++rail_id) {
-            rail_manager_.getRail(rail_id).setXferIdCallback([this](uint64_t imm_data) {
-                // Extract XFER_ID from immediate data
-                uint16_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(imm_data);
-                addReceivedXferId(xfer_id);
-            });
+            rail_manager_.getRail(rail_id).setXferIdCallback(
+                [this](uint64_t imm_data, uint16_t sender_peer_idx) {
+                    uint16_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(imm_data);
+                    addReceivedXferId(xfer_id, sender_peer_idx);
+                });
             NIXL_DEBUG << "Set XFER_ID callback for rail " << rail_id;
         }
 
@@ -597,7 +601,6 @@ nixlLibfabricEngine::getConnInfo(std::string &str) const {
 nixl_status_t
 nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
                                         const std::string &remote_conn_info) {
-    std::lock_guard<std::mutex> lock(connection_state_mutex_);
 
     NIXL_DEBUG << "Loading remote info for agent: " << remote_agent
                << ", info length=" << remote_conn_info.length() << ", info (hex): "
@@ -611,8 +614,8 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
     NIXL_DEBUG << "Processing " << rail_manager_.getNumRails()
                << " rails for agent: " << remote_agent;
 
-    // Use Rail Manager's connection SerDes method with "dest" prefix (remote is sending us their
-    // endpoints as "dest")
+    // Use Rail Manager's connection SerDes method with "dest" prefix
+    // (remote is sending us their endpoints as "dest")
     std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> data_endpoints;
     nixl_status_t status =
         rail_manager_.deserializeConnectionInfo("dest", remote_conn_info, data_endpoints);
@@ -620,11 +623,36 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
         NIXL_ERROR << "Rail Manager deserializeConnectionInfo failed";
         return status;
     }
-    // Create connection to remote agent using rail 0 for notifications
-    nixl_status_t conn_status = createAgentConnection(remote_agent, data_endpoints);
-    if (conn_status != NIXL_SUCCESS) {
-        NIXL_ERROR << "createAgentConnection failed with status: " << conn_status;
-        return conn_status;
+
+    std::shared_ptr<nixlLibfabricConnection> conn_for_handshake;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+
+        bool already_exists = (connections_.find(remote_agent) != connections_.end());
+        if (already_exists) {
+            NIXL_INFO << "Connection for " << remote_agent
+                      << " already exists, skipping duplicate loadRemoteConnInfo";
+            return NIXL_SUCCESS;
+        }
+
+        nixl_status_t conn_status = createAgentConnection(remote_agent, data_endpoints);
+        if (conn_status != NIXL_SUCCESS) {
+            NIXL_ERROR << "createAgentConnection failed with status: " << conn_status;
+            return conn_status;
+        }
+
+        if (remote_agent != localAgent) {
+            conn_for_handshake = connections_[remote_agent];
+        }
+    }
+
+    if (conn_for_handshake) {
+        nixl_status_t hs = sendHandshakeTo(*conn_for_handshake);
+        if (hs != NIXL_SUCCESS) {
+            NIXL_ERROR << "Handshake send to '" << remote_agent << "' failed with status " << hs
+                       << "; their first transfers to us will land in the pre-handshake bucket";
+            return hs;
+        }
     }
 
     NIXL_INFO << "Successfully stored multirail connection for " << remote_agent << " on "
@@ -634,36 +662,26 @@ nixlLibfabricEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
 nixl_status_t
 nixlLibfabricEngine::connect(const std::string &remote_agent) {
-    std::lock_guard<std::mutex> lock(connection_state_mutex_);
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
 
-    NIXL_DEBUG << "Connecting to agent: " << remote_agent
-               << ", connections_ size=" << connections_.size();
+        NIXL_DEBUG << "Connecting to agent: " << remote_agent
+                   << ", connections_ size=" << connections_.size();
 
-    // Check if connection is already established
-    auto it = connections_.find(remote_agent);
-    if (it != connections_.end() && it->second->overall_state_ == ConnectionState::CONNECTED) {
-        NIXL_INFO << "Connection already established for " << remote_agent
-                  << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
-        return NIXL_SUCCESS;
+        auto it = connections_.find(remote_agent);
+        if (it != connections_.end() &&
+            it->second->overall_state_.load(std::memory_order_acquire) ==
+                ConnectionState::CONNECTED) {
+            NIXL_INFO << "Connection already established for " << remote_agent
+                      << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
+            return NIXL_SUCCESS;
+        }
     }
-
-    // Connection exists but not established - trigger establishConnection()
-    NIXL_DEBUG << "Connection exists but not established, triggering establishConnection for "
-               << remote_agent;
-
-    // Release the lock before calling establishConnection since it acquires the same mutex
-    lock.~lock_guard();
 
     nixl_status_t status = establishConnection(remote_agent);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to establish connection with " << remote_agent;
         return status;
-    }
-
-    it = connections_.find(remote_agent);
-    if (it == connections_.end()) {
-        NIXL_DEBUG << "Connect failed. No metadata connection info for " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
     }
 
     NIXL_INFO << "Successfully established connection for " << remote_agent;
@@ -678,22 +696,10 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
         NIXL_WARN << "Disconnect failed. No metadata connection info for " << remote_agent;
         return NIXL_ERR_NOT_FOUND;
     }
-    // Connection exists - check if already disconnected
-    if (it->second->overall_state_ == ConnectionState::DISCONNECTED) {
-        NIXL_DEBUG << "Connection already disconnected for " << remote_agent
-                   << ", fi_addr=" << it->second->rail_remote_addr_list_[0][0];
-        return NIXL_SUCCESS;
-    }
-    // TODO: Implement disconnect logic to cleanup the AV Address Entries from both local and remote
-    // AV.
 
-    // Update connection state to DISCONNECTED before removing
-    it->second->overall_state_ = ConnectionState::DISCONNECTED;
-
-    // Remove connection from map
-    connections_.erase(remote_agent);
-    NIXL_INFO << "Disconnected from agent: " << remote_agent;
-    return NIXL_SUCCESS;
+    nixl_status_t status = it->second->disconnect();
+    connections_.erase(it);
+    return status;
 }
 
 nixl_status_t
@@ -713,14 +719,25 @@ nixlLibfabricEngine::createAgentConnection(
                   << ", remote: " << data_rail_endpoints.size() << ")";
     }
 
-    // Create connection object
-    auto conn = std::make_shared<nixlLibfabricConnection>();
+    if (agent_names_.size() > NIXL_AGENT_INDEX_MASK) {
+        NIXL_ERROR << "Cannot add agent '" << agent_name << "': agent index " << agent_names_.size()
+                   << " exceeds 8-bit wire limit (" << NIXL_AGENT_INDEX_MASK << ")";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    auto existing = connections_.find(agent_name);
+    if (existing != connections_.end()) {
+        NIXL_INFO << "Connection already exists for agent: " << agent_name
+                  << ", reusing existing connection";
+        return NIXL_SUCCESS;
+    }
+
+    auto conn = std::make_shared<nixlLibfabricConnection>(agent_name, agent_names_.size());
     if (!conn) {
         NIXL_ERROR << "Failed to allocate connection object";
         return NIXL_ERR_BACKEND;
     }
 
-    conn->remoteAgent_ = agent_name;
     conn->rail_remote_addr_list_.reserve(rail_manager_.getNumRails());
 
     // Process all rails in one operation
@@ -731,17 +748,36 @@ nixlLibfabricEngine::createAgentConnection(
         return data_status;
     }
 
-    // Manage agent names and index
     agent_names_.push_back(agent_name);
-    int index = 0;
-    std::for_each(agent_names_.begin(), agent_names_.end(), [&index](const std::string &name) {
-        NIXL_DEBUG << "Index " << index << ": " << name;
-        index++;
-    });
-    conn->agent_index_ = agent_names_.size() - 1;
+    for (size_t i = 0; i < agent_names_.size(); ++i) {
+        NIXL_DEBUG << "Index " << i << ": " << agent_names_[i];
+    }
 
-    // Store connection
     connections_[agent_name] = conn;
+
+    // Drain any handshake the peer already sent us before we'd registered
+    // them locally.
+    if (agent_name != localAgent) {
+        std::optional<uint16_t> buffered;
+        {
+            std::lock_guard<std::mutex> plk(pending_handshake_mutex_);
+            auto hit = pending_inbound_handshakes_.find(agent_name);
+            if (hit != pending_inbound_handshakes_.end()) {
+                buffered = hit->second;
+                pending_inbound_handshakes_.erase(hit);
+            }
+        }
+        if (buffered) {
+            {
+                std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
+                conn->local_agent_idx_at_remote_ = *buffered;
+                conn->handshake_received_.store(true, std::memory_order_release);
+            }
+            conn->handshake_cv_.notify_all();
+            NIXL_INFO << "Applied buffered handshake from '" << agent_name
+                      << "' assigned_idx=" << *buffered;
+        }
+    }
 
     NIXL_INFO << "Successfully created connection for agent: " << agent_name << " on "
               << rail_manager_.getNumRails() << " rails";
@@ -751,49 +787,62 @@ nixlLibfabricEngine::createAgentConnection(
 
 nixl_status_t
 nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const {
-    // Use existing connection_state_mutex_ to serialize connection establishment
-    std::lock_guard<std::mutex> lock(connection_state_mutex_);
+    std::shared_ptr<nixlLibfabricConnection> conn;
+    {
+        // Use existing connection_state_mutex_ to serialize connection establishment
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
 
-    // Check if another thread already established the connection
-    auto it = connections_.find(remote_agent);
-    if (it != connections_.end() && it->second->overall_state_ == ConnectionState::CONNECTED) {
-        NIXL_DEBUG << "Connection already established by another thread for " << remote_agent;
-        return NIXL_SUCCESS;
+        auto it = connections_.find(remote_agent);
+        if (it == connections_.end()) {
+            NIXL_ERROR << "No connection found for agent: " << remote_agent;
+            return NIXL_ERR_NOT_FOUND;
+        }
+
+        if (it->second->overall_state_.load(std::memory_order_acquire) ==
+            ConnectionState::CONNECTED) {
+            NIXL_DEBUG << "Connection already established for " << remote_agent;
+            return NIXL_SUCCESS;
+        }
+        conn = it->second;
     }
 
-    if (it == connections_.end()) {
-        NIXL_ERROR << "No connection found for agent: " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
+    // Wait for the peer's inbound handshake so we know our agent_idx at their side.
+    if (conn->remoteAgent_ != localAgent &&
+        !conn->handshake_received_.load(std::memory_order_acquire)) {
+
+        using namespace std::chrono_literals;
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S);
+
+        if (progress_thread_enabled_) {
+            std::unique_lock<std::mutex> lk(conn->handshake_mutex_);
+            conn->handshake_cv_.wait_until(lk, deadline, [&] {
+                return conn->handshake_received_.load(std::memory_order_acquire);
+            });
+        } else {
+            while (std::chrono::steady_clock::now() < deadline) {
+                if (conn->handshake_received_.load(std::memory_order_acquire)) {
+                    break;
+                }
+                nixl_status_t progress_status = rail_manager_.progressActiveRails();
+                if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
+                    NIXL_ERROR << "Failed to progress rails when waiting for handshake.";
+                    return progress_status;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+
+        if (!conn->handshake_received_.load(std::memory_order_acquire)) {
+            NIXL_ERROR << "Handshake from peer '" << remote_agent << "' not received after "
+                       << NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S
+                       << "s; connection cannot be established.";
+            return NIXL_ERR_REMOTE_DISCONNECT;
+        }
     }
 
-    // Verify we have addresses for all rails
-    if (it->second->rail_remote_addr_list_.size() != rail_manager_.getNumRails()) {
-        NIXL_ERROR << "Remote connection has " << it->second->rail_remote_addr_list_.size()
-                   << " rails, expected " << rail_manager_.getNumRails();
-        return NIXL_ERR_BACKEND;
-    }
-
-    NIXL_DEBUG << "Establishing rail connections for agent: " << remote_agent;
-
-    // Use single "Communicator" for CM
-    auto *conn_info = it->second.get();
-    if (!conn_info) {
-        NIXL_ERROR << "Connection info for agent " << remote_agent << " is null";
-        return NIXL_ERR_BACKEND;
-    }
-
-    NIXL_DEBUG << "Using connection info with " << conn_info->src_ep_names_.size() << " rails";
-    for (size_t i = 0; i < conn_info->src_ep_names_.size(); ++i) {
-        NIXL_DEBUG << "Rail " << i << ": "
-                   << LibfabricUtils::hexdump(conn_info->src_ep_names_[i], LF_EP_NAME_MAX_LEN);
-    }
-    NIXL_DEBUG << "Agent index: " << it->second->agent_index_;
-
-    conn_info->overall_state_ = ConnectionState::CONNECTED;
-    NIXL_INFO << "Connection state for agent " << remote_agent << " is now "
-              << conn_info->overall_state_;
-
-    return NIXL_SUCCESS;
+    // Mark connected only after handshake wait completes
+    return conn->establish();
 }
 
 /****************************************
@@ -989,9 +1038,13 @@ nixlLibfabricEngine::loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
 
 nixl_status_t
 nixlLibfabricEngine::loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) {
+    std::shared_ptr<nixlLibfabricConnection> conn;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+        conn = connections_[localAgent];
+    }
     nixlLibfabricPrivateMetadata *input_md = static_cast<nixlLibfabricPrivateMetadata *>(input);
-    return loadMetadataHelper(
-        input_md->rail_key_list_, input_md->buffer_, connections_[localAgent], output);
+    return loadMetadataHelper(input_md->rail_key_list_, input_md->buffer_, conn, output);
 }
 
 nixl_status_t
@@ -1001,27 +1054,28 @@ nixlLibfabricEngine::loadRemoteMD(const nixlBlobDesc &input,
                                   nixlBackendMD *&output) {
     NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
 
-    auto conn_it = connections_.find(remote_agent);
-    if (conn_it == connections_.end()) {
-        NIXL_ERROR << "Could not find connection for agent: " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
+    std::shared_ptr<nixlLibfabricConnection> conn;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+        auto conn_it = connections_.find(remote_agent);
+        if (conn_it == connections_.end()) {
+            NIXL_ERROR << "Could not find connection for agent: " << remote_agent;
+            return NIXL_ERR_NOT_FOUND;
+        }
+        conn = conn_it->second;
     }
 
     // Delegate to Rail Manager for SerDes operations (returns raw data)
     std::vector<uint64_t> remote_keys;
     uint64_t remote_addr;
-    nixl_status_t status =
-        rail_manager_.deserializeMemoryKeys(input.metaInfo,
-                                            conn_it->second->rail_remote_addr_list_.at(0).size(),
-                                            remote_keys,
-                                            remote_addr);
+    nixl_status_t status = rail_manager_.deserializeMemoryKeys(
+        input.metaInfo, conn->rail_remote_addr_list_.at(0).size(), remote_keys, remote_addr);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Rail Manager deserializeMemoryKeys failed";
         return status;
     }
 
-    return loadMetadataHelper(
-        remote_keys, reinterpret_cast<void *>(remote_addr), conn_it->second, output);
+    return loadMetadataHelper(remote_keys, reinterpret_cast<void *>(remote_addr), conn, output);
 }
 
 nixl_status_t
@@ -1060,10 +1114,13 @@ nixlLibfabricEngine::prepXfer(const nixl_xfer_op_t &operation,
                               const nixl_opt_b_args_t *opt_args) const {
     NIXL_DEBUG << "Preparing transfer for remote_agent: " << remote_agent;
 
-    auto conn_it = connections_.find(remote_agent);
-    if (conn_it == connections_.end() || !conn_it->second) {
-        NIXL_ERROR << "No valid connection found for agent: " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+        auto conn_it = connections_.find(remote_agent);
+        if (conn_it == connections_.end() || !conn_it->second) {
+            NIXL_ERROR << "No valid connection found for agent: " << remote_agent;
+            return NIXL_ERR_NOT_FOUND;
+        }
     }
 
     auto backend_handle = new nixlLibfabricBackendH(operation, remote_agent);
@@ -1106,6 +1163,40 @@ nixlLibfabricEngine::estimateXferCost(const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
+int
+nixlLibfabricEngine::batchingRail(const nixl_meta_dlist_t &local,
+                                  int desc_idx,
+                                  size_t xfer_base_offset) const {
+    auto *md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
+    if (!md || md->selected_rails_.empty()) {
+        return -1;
+    }
+    // Striped descriptors are split across their rails and posted without FI_MORE, so they
+    // are not part of the single-rail batching tracked here.
+    if (rail_manager_.usesStriping(local[desc_idx].len, md->selected_rails_.size())) {
+        return -1;
+    }
+    return (int)md->selected_rails_[nixlLibfabricRailManager::railSelectionIndex(
+        xfer_base_offset, desc_idx, /*batch_write=*/true, md->selected_rails_.size())];
+}
+
+bool
+nixlLibfabricEngine::useFiMore(int desc_idx,
+                               int rail_id,
+                               const std::vector<int> &last_desc_idx_per_rail,
+                               std::vector<int> &posts_since_flush) const {
+    if (rail_id < 0) {
+        return false;
+    }
+    if (desc_idx == last_desc_idx_per_rail[rail_id] ||
+        posts_since_flush[rail_id] == NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE - 1) {
+        posts_since_flush[rail_id] = 0;
+        return false;
+    }
+    ++posts_since_flush[rail_id];
+    return true;
+}
+
 nixl_status_t
 nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
                                          const nixl_meta_dlist_t &local,
@@ -1114,8 +1205,8 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
                                          nixlLibfabricBackendH *backend_handle,
                                          int start_idx,
                                          int end_idx,
-                                         int desc_count,
                                          size_t xfer_base_offset,
+                                         bool allow_fi_more,
                                          size_t &submitted_count) const {
     submitted_count = 0;
 
@@ -1147,7 +1238,30 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
     };
 #endif
 
+    // A FI_MORE post rings no doorbell; a rail's queued batch is only submitted by a later
+    // non-FI_MORE post on the same rail. Rails are resolved per-buffer, so descriptors of one
+    // round-robin group can land on different rails: every rail this chunk touches must have its
+    // last post flushed, or its batch would never be submitted.
+    // allow_fi_more is false on the thread-pool path: chunks on other threads can interleave
+    // posts on the same rail, so a per-chunk walk cannot know a rail's true last post there.
+    const bool batch_writes = allow_fi_more && op_type == nixlLibfabricReq::WRITE;
+
+    std::vector<int> last_desc_idx_per_rail(rail_manager_.getNumRails(), -1);
+    std::vector<int> posts_since_flush(rail_manager_.getNumRails(), 0);
+    if (batch_writes) {
+        for (int i = start_idx; i < end_idx; ++i) {
+            const int rail_id = batchingRail(local, i, xfer_base_offset);
+            if (rail_id >= 0) {
+                last_desc_idx_per_rail[rail_id] = i;
+            }
+        }
+    }
+
     for (int desc_idx = start_idx; desc_idx < end_idx; ++desc_idx) {
+        const int rail_id = batch_writes ? batchingRail(local, desc_idx, xfer_base_offset) : -1;
+        const bool apply_fi_more =
+            useFiMore(desc_idx, rail_id, last_desc_idx_per_rail, posts_since_flush);
+
         auto *local_md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
         auto *remote_md = static_cast<nixlLibfabricPublicMetadata *>(remote[desc_idx].metadataP);
 
@@ -1166,6 +1280,9 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         uint64_t remote_registered_base = remote_md->remote_buf_addr_;
 
         size_t desc_submitted_count = 0;
+        // imm_data.agent_idx = the value the receiver expects (our index in
+        // THEIR agent_names_), supplied by the handshake.
+        const uint16_t imm_agent_idx = senderImmDataAgentIdx(*conn);
         nixl_status_t status = rail_manager_.prepareAndSubmitTransfer(
             op_type,
             transfer_addr,
@@ -1177,13 +1294,13 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             remote_md->rail_remote_key_list_,
             remote_md->remote_selected_endpoints_,
             conn->rail_remote_addr_list_,
-            conn->agent_index_,
+            imm_agent_idx,
             backend_handle->post_xfer_id,
             [backend_handle]() { backend_handle->increment_completed_requests(); },
             desc_submitted_count,
             desc_idx,
-            desc_count,
-            xfer_base_offset);
+            xfer_base_offset,
+            apply_fi_more);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
@@ -1206,13 +1323,18 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                               const nixl_opt_b_args_t *opt_args) const {
 
     // Validate connection
-    auto conn_it = connections_.find(remote_agent);
-    if (conn_it == connections_.end() || !conn_it->second) {
-        NIXL_ERROR << "No valid connection found for agent: " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
+    std::shared_ptr<nixlLibfabricConnection> conn;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+        auto conn_it = connections_.find(remote_agent);
+        if (conn_it == connections_.end() || !conn_it->second) {
+            NIXL_ERROR << "No valid connection found for agent: " << remote_agent;
+            return NIXL_ERR_NOT_FOUND;
+        }
+        conn = conn_it->second;
     }
 
-    if (conn_it->second->overall_state_ == ConnectionState::DISCONNECTED) {
+    if (conn->overall_state_.load(std::memory_order_acquire) == ConnectionState::DISCONNECTED) {
         NIXL_DEBUG << "No existing connection for " << remote_agent
                    << ", establishing new connection";
         nixl_status_t status = this->establishConnection(remote_agent);
@@ -1222,7 +1344,6 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
         }
         NIXL_DEBUG << "Established new connection with remote_agent: " << remote_agent;
     }
-    auto conn = conn_it->second;
 
     NIXL_DEBUG << "Posting transfer for remote_agent: " << remote_agent
                << ", handle address: " << handle;
@@ -1294,8 +1415,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                                                    backend_handle,
                                                    0,
                                                    desc_count,
-                                                   desc_count,
                                                    xfer_base_offset,
+                                                   /*allow_fi_more=*/true,
                                                    total_submitted);
         if (status != NIXL_SUCCESS) {
             return status;
@@ -1327,8 +1448,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                                                      backend_handle,
                                                      start_idx,
                                                      end_idx,
-                                                     desc_count,
                                                      xfer_base_offset,
+                                                     /*allow_fi_more=*/false,
                                                      chunk_submitted);
                     }
                     catch (const std::exception &e) {
@@ -1577,13 +1698,25 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                                    uint32_t total_message_length,
                                    uint16_t notif_xfer_id,
                                    uint32_t expected_completions) const {
-    auto it = connections_.find(remote_agent);
-    if (it == connections_.end()) {
-        NIXL_ERROR << "No connection found for agent: " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
+    std::shared_ptr<nixlLibfabricConnection> connection;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+        auto it = connections_.find(remote_agent);
+        if (it == connections_.end()) {
+            NIXL_ERROR << "No connection found for agent: " << remote_agent;
+            return NIXL_ERR_NOT_FOUND;
+        }
+        connection = it->second;
     }
 
-    const auto &connection = it->second;
+    if (connection->overall_state_.load(std::memory_order_acquire) ==
+        ConnectionState::DISCONNECTED) {
+        nixl_status_t status = establishConnection(remote_agent);
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "notifSendPriv: failed to establish connection with " << remote_agent;
+            return status;
+        }
+    }
 
     NIXL_DEBUG << "Sending " << binary_notifications.size() << " notification fragments"
                << " total_message_length=" << total_message_length;
@@ -1616,7 +1749,6 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
             return NIXL_ERR_BACKEND;
         }
 
-        // Serialize BinaryNotification to control request buffer
         size_t serialized_size = binary_notification.serialize(control_request->buffer);
         control_request->buffer_size = serialized_size;
 
@@ -1625,12 +1757,13 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                    << " payload_chunk_size=" << header.payload_length << "B"
                    << " notif_xfer_id=" << header.notif_xfer_id;
 
-        // Use rail 0's remote address since notifications now use rails
+        const uint16_t imm_agent_idx =
+            senderImmDataAgentIdx(const_cast<nixlLibfabricConnection &>(*connection));
         nixl_status_t status = rail_manager_.postControlMessage(
             nixlLibfabricRailManager::ControlMessageType::NOTIFICATION,
             control_request,
             connection->rail_remote_addr_list_[rail_id][0],
-            connection->agent_index_);
+            imm_agent_idx);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "postControlMessage failed on rail " << rail_id << " for fragment "
@@ -1731,8 +1864,10 @@ nixlLibfabricEngine::progressThread() {
  *****************************************/
 
 void
-nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
-    NIXL_DEBUG << "Received notification size=" << serialized_notif.size();
+nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
+                                         uint16_t sender_peer_idx) {
+    NIXL_DEBUG << "Received notification size=" << serialized_notif.size()
+               << " sender_peer_idx=" << sender_peer_idx;
 
     // Deserialize binary notification
     BinaryNotification binary_notif;
@@ -1766,11 +1901,13 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
-        // Use try_emplace to construct in-place - eliminates extra copy
-        auto [it, inserted] = pending_notifications_.try_emplace(notif_xfer_id, notif_xfer_id);
+        const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
+        auto [it, inserted] = pending_notifications_.try_emplace(key, notif_xfer_id);
 
         if (inserted) {
-            NIXL_DEBUG << "Created pending notification" << " notif_xfer_id=" << notif_xfer_id
+            NIXL_DEBUG << "Created pending notification"
+                       << " sender_peer_idx=" << sender_peer_idx
+                       << " notif_xfer_id=" << notif_xfer_id
                        << " expected_completions=" << expected_completions
                        << " expected_msg_fragments=" << notif_seq_len;
         }
@@ -1790,7 +1927,8 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
 
         // Check for duplicate fragment
         if (!it->second.message_fragments[notif_seq_id].empty()) {
-            NIXL_WARN << "Duplicate fragment received: notif_seq_id=" << notif_seq_id;
+            NIXL_WARN << "Duplicate fragment received: sender_peer_idx=" << sender_peer_idx
+                      << " notif_xfer_id=" << notif_xfer_id << " notif_seq_id=" << notif_seq_id;
             return;
         }
 
@@ -1821,14 +1959,12 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif) {
  *****************************************/
 
 void
-nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id) {
+nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint16_t sender_peer_idx) {
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
 
-        // Use try_emplace to construct in-place - eliminates extra copy
-        // First parameter: map key for lookup
-        // Second parameter: constructor argument for PendingNotification
-        auto [it, inserted] = pending_notifications_.try_emplace(xfer_id, xfer_id);
+        const uint64_t key = makePendingKey(sender_peer_idx, xfer_id);
+        auto [it, inserted] = pending_notifications_.try_emplace(key, xfer_id);
 
         if (inserted) {
             // Set placeholder values for write-arrived-first case
@@ -1837,13 +1973,14 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id) {
             it->second.received_completions = 0;
             it->second.expected_msg_fragments = 1; // Default to 1 fragment
             it->second.received_msg_fragments = 0;
-            NIXL_DEBUG << "Created placeholder notification for notif_xfer_id " << xfer_id
-                       << " (write arrived first)";
+            NIXL_DEBUG << "Created placeholder notification for sender_peer_idx=" << sender_peer_idx
+                       << " notif_xfer_id=" << xfer_id << " (write arrived first)";
         }
 
         it->second.received_completions++;
-        NIXL_DEBUG << "Incremented received count for notif_xfer_id " << xfer_id << ": "
-                   << it->second.received_completions << "/" << it->second.expected_completions;
+        NIXL_DEBUG << "Incremented received count for sender_peer_idx=" << sender_peer_idx
+                   << " notif_xfer_id=" << xfer_id << ": " << it->second.received_completions << "/"
+                   << it->second.expected_completions;
     }
 
     // Check if any notifications can now be completed (after releasing the lock)
