@@ -103,6 +103,10 @@ public:
         }
     }
 
+    /**
+     * @brief Takes the election, and the lock if there is one, out of @p other.
+     * @param other The election to move from, left holding nothing.
+     */
     ownerElection(ownerElection &&other) noexcept
         : fd_(std::move(other.fd_)),
           won_(other.won_),
@@ -110,6 +114,8 @@ public:
 
     /**
      * @brief Takes @p other over, unless this election holds the lock.
+     * @param other The election to move from, left holding nothing.
+     * @return This election, unchanged if it holds the lock.
      *
      * An election re-run by the process already holding this one always loses,
      * since flock contends between two open file descriptions of the same
