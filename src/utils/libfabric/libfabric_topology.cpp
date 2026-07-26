@@ -100,6 +100,54 @@ nixlLibfabricTopology::discoverTopology() {
         // build nic info map regardless of accelerator to EFA mapping
         buildNicInfoMap();
 
+        // Preflight: warn on Neuron-accelerator vs EFA-NIC count mismatches. AWS Trainium
+        // instances that support DI need one EFA NIC per Neuron device (e.g. 16
+        // per-device EFA NICs on trn2.48xlarge). Some smaller Neuron instance types (e.g.
+        // trn2.3xlarge) expose only a single host-level EFA NIC and are not sufficient for
+        // FI_HMEM_NEURON memory registration on all Neuron devices. Also, EFA-typed NICs must
+        // be attached explicitly at instance launch time via
+        // `--network-interfaces InterfaceType=efa`; the AWS default only attaches an ENA NIC.
+        // Warn here so users see a clear diagnostic at plugin init rather than a mysterious
+        // fi_mr_reg -EINVAL later during memory registration.
+        if (num_aws_accel > 0 && num_nvidia_accel == 0) {
+            const size_t efa_nic_count = nic_info_map.size();
+            if (efa_nic_count == 0) {
+                NIXL_WARN
+                    << "Discovered " << num_aws_accel
+                    << " Neuron accelerator(s) but 0 EFA NIC(s) with usable PCIe topology; "
+                       "FI_HMEM_NEURON memory registration will fail. On AWS, launch the instance "
+                       "with EFA network interfaces attached (e.g. `--network-interfaces "
+                       "InterfaceType=efa` per NetworkCardIndex). On trn2.48xlarge attach 16 "
+                       "EFA NICs (one per Neuron device); on Trn3 attach the count matching the "
+                       "instance size. Instance types without any per-Neuron-device EFA "
+                       "(e.g. trn2.3xlarge, which exposes only a single host-level EFA) are not "
+                       "supported by the libfabric plugin for VRAM_SEG memory transfers.";
+            } else if (static_cast<int>(efa_nic_count) < num_aws_accel) {
+                NIXL_WARN
+                    << "Discovered " << num_aws_accel << " Neuron accelerator(s) but only "
+                    << efa_nic_count
+                    << " EFA NIC(s) with usable PCIe topology; FI_HMEM_NEURON memory "
+                       "registration for Neuron devices without a paired EFA NIC will fail. "
+                       "If this is trn2.3xlarge (or a similar smaller instance with only a "
+                       "single host-level EFA and no per-device EFA), the libfabric plugin "
+                       "cannot register Neuron device memory for RDMA; use trn2.48xlarge "
+                       "instead. If this is trn2.48xlarge or a larger Neuron instance, verify "
+                       "that all EFA network interfaces were attached at launch time via "
+                       "`--network-interfaces InterfaceType=efa` for each NetworkCardIndex "
+                       "(the AWS default attaches only an ENA NIC, not EFA).";
+            } else if (static_cast<int>(efa_nic_count) > num_aws_accel &&
+                       (static_cast<int>(efa_nic_count) % num_aws_accel) != 0) {
+                NIXL_WARN << "Discovered " << num_aws_accel << " Neuron accelerator(s) and "
+                          << efa_nic_count
+                          << " EFA NIC(s); NIC count is not a multiple of Neuron count, "
+                             "rail selection policy may be sub-optimal";
+            } else {
+                NIXL_INFO << "Neuron/EFA preflight: " << num_aws_accel << " Neuron device(s), "
+                          << efa_nic_count << " EFA NIC(s) (" << (efa_nic_count / num_aws_accel)
+                          << " NIC(s) per Neuron device)";
+            }
+        }
+
         // Build nVidia accelerator to EFA mapping based on PCIe topology
         if (num_nvidia_accel > 0) {
             status = buildAccelToEfaMapping();

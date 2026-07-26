@@ -35,6 +35,45 @@ Validated compatibility with:
 
 Any other Libfabric providers should also work but have not been validated in production environments. Community validation and feedback are highly appreciated!
 
+### AWS Neuron (Trainium) requirements
+
+For `FI_HMEM_NEURON` (VRAM_SEG registration of Neuron device memory) the plugin requires **one EFA network interface per Neuron device** attached to the instance at launch time, so that each Neuron device has a paired EFA NIC for peer-direct RDMA.
+
+Not all Neuron instance sizes meet this requirement. In particular:
+
+| Instance type | Neuron devices | EFA interfaces | `FI_HMEM_NEURON` supported |
+|--|--|--|--|
+| `trn2.48xlarge` | 16 | 16 (one per Neuron device) | Yes, when launched with all 16 EFA NICs attached |
+| `trn2.3xlarge` | 4 | 1 (host-level EFA only) | **No** -- single host EFA cannot be routed to individual Neuron devices |
+| `trn3.*` | varies | varies | Match Neuron device count to EFA interface count |
+
+**Launching trn2.48xlarge with all EFA NICs:** the default `aws ec2 run-instances` invocation only attaches a single ENA (non-EFA) interface, even on instance types that support 16 EFA NICs. You must explicitly attach 16 EFA-typed network interfaces at launch time. Example partial launch spec (JSON for `--cli-input-json`):
+
+```json
+{
+  "InstanceType": "trn2.48xlarge",
+  "NetworkInterfaces": [
+    {"DeviceIndex": 0, "NetworkCardIndex": 0, "InterfaceType": "efa",
+     "SubnetId": "...", "Groups": ["..."]},
+    {"DeviceIndex": 1, "NetworkCardIndex": 1, "InterfaceType": "efa",
+     "SubnetId": "...", "Groups": ["..."]},
+    ...
+    {"DeviceIndex": 1, "NetworkCardIndex": 15, "InterfaceType": "efa",
+     "SubnetId": "...", "Groups": ["..."]}
+  ]
+}
+```
+
+Verify on the running instance:
+
+```bash
+ls /sys/class/infiniband/ | wc -l          # should equal Neuron device count
+lspci | grep -c 'Elastic Fabric'           # same
+/opt/amazon/efa/bin/fi_info -p efa | grep -c '^provider:'  # non-zero
+```
+
+The plugin emits an `NIXL_WARN` at initialization time if it detects a Neuron accelerator count vs EFA NIC count mismatch, distinguishing the "wrong instance type" case (`trn2.3xlarge`-style, no per-device EFA in hardware) from the "instance launched without EFA NICs" case (missing `InterfaceType: efa` at `run-instances` time).
+
 ## Build Instructions
 
 ```bash
