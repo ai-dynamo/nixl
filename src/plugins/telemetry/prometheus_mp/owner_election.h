@@ -29,6 +29,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <utility>
 
 namespace nixl::telemetry::mp {
 
@@ -99,6 +100,27 @@ public:
         if (won_) {
             warnUnusable(strerror(errno), warn_if_unusable);
         }
+    }
+
+    ownerElection(ownerElection &&) = default;
+
+    /**
+     * @brief Takes @p other over, unless this election holds the lock.
+     *
+     * An election re-run by the process already holding this one always loses,
+     * since flock contends between two open file descriptions of the same
+     * process, so moving it in would close the descriptor that holds the lock
+     * and leave a process serving while holding nothing. Release first if
+     * giving the lock up is what was meant.
+     */
+    ownerElection &
+    operator=(ownerElection &&other) noexcept {
+        if (fd_.valid()) {
+            return *this;
+        }
+        fd_ = std::move(other.fd_);
+        won_ = other.won_;
+        return *this;
     }
 
     [[nodiscard]] bool

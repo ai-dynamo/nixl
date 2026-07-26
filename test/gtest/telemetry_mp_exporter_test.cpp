@@ -17,6 +17,7 @@
 #include "prometheus_mp_exporter.h"
 #include "histogram_buckets.h"
 #include "mp_store.h"
+#include "owner_election.h"
 #include "plugin_manager.h"
 #include "scrape_endpoint.h"
 #include "telemetry.h"
@@ -175,6 +176,18 @@ TEST_F(MpExporterTest, WriterTakesOverWhenTheOwnerExits) {
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
     writer.exportEvent({TX_BYTES, 1});
     EXPECT_TRUE(writer.isExporter());
+}
+
+TEST_F(MpExporterTest, ReRunningAnElectionCannotDropTheHeldLock) {
+    using nixl::telemetry::mp::ownerElection;
+
+    ownerElection held(dir_);
+    ASSERT_TRUE(held.won());
+
+    held = ownerElection(dir_);
+
+    ownerElection contender(dir_);
+    EXPECT_FALSE(contender.won()) << "re-running the election released the lock it had won";
 }
 
 TEST_F(MpExporterTest, ReclaimWhileServingKeepsTheElection) {
