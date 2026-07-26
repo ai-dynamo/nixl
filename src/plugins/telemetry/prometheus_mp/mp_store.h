@@ -229,7 +229,7 @@ public:
      * touches three slots. Skipping refreshes never hides a live process, it
      * only shortens how long a dead one's last values linger.
      */
-    uint64_t
+    [[nodiscard]] uint64_t
     refreshHeartbeat() noexcept;
 
     [[nodiscard]] const std::filesystem::path &

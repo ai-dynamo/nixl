@@ -118,11 +118,12 @@ TEST_F(MpStoreTest, HeartbeatAdvancesOnlyWhenRefreshed) {
     ASSERT_TRUE(after_updates.has_value());
     EXPECT_EQ(after_updates->lastUpdateNs, created->lastUpdateNs);
 
-    writer.refreshHeartbeat();
+    const uint64_t refreshed = writer.refreshHeartbeat();
 
     const auto after_refresh = readStoreSnapshot(path).snapshot;
     ASSERT_TRUE(after_refresh.has_value());
     EXPECT_GT(after_refresh->lastUpdateNs, created->lastUpdateNs);
+    EXPECT_EQ(after_refresh->lastUpdateNs, refreshed);
 }
 
 TEST_F(MpStoreTest, CounterAccumulatesGaugeReplaces) {
