@@ -84,6 +84,10 @@ protected:
         dir_ = std::filesystem::path(::testing::TempDir()) /
             ("nixl_mp_exporter_" + std::to_string(::getpid()) + "_" + info->name());
         std::filesystem::create_directories(dir_);
+        // What the exporter asks operators for; without it a permissive umask
+        // makes it warn about the directory and the gtest main counts that.
+        std::filesystem::permissions(
+            dir_, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
         port_ = gtest::PortAllocator::next_tcp_port();
         env_.addVar("NIXL_TELEMETRY_PROMETHEUS_LOCAL", "y");
         env_.addVar("NIXL_TELEMETRY_PROMETHEUS_PORT", std::to_string(port_));
