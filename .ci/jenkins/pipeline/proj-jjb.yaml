@@ -1017,6 +1017,7 @@
           keep-system-variables: true
           properties-content: |
             jjb_proj={jjb_proj}-nightly
+            conf_file=.ci/jenkins/lib/nightly-matrix.yaml
     description: >
       <b>NIXL nightly UCX-master validation</b><br/>
       Runs <code>nixl-ci-gpu</code>, <code>nixl-ci-dl-gpu</code> and
@@ -1052,7 +1053,7 @@
               recursive: true
               tracking: true
               parent-credentials: true
-      script-path: "{jjb_nightly_jenkinsfile}"  # Nightly fan-out orchestrator pipeline
+      script-path: "{jjb_jenkinsfile}"  # Main pipeline runs the nightly-matrix.yaml orchestrator
 
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
@@ -1062,7 +1063,6 @@
     jjb_git: 'https://github.com/ai-dynamo/nixl.git'  # Repository URL
     jjb_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile'  # Main pipeline definition
     jjb_dispatcher_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile.dispatcher'  # Dispatcher pipeline definition
-    jjb_nightly_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile.nightly'  # Nightly UCX-master orchestrator pipeline
     jjb_branch: 'main'            # Default branch
     jjb_gh_url: 'https://github.com/ai-dynamo/nixl'  # GitHub web URL
     jjb_gh_refspec: '+refs/heads/*:refs/remotes/origin/* +$sha1:refs/remotes/origin/$sha1'

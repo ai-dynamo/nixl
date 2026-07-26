@@ -142,9 +142,8 @@ All 14 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
 (Jenkins Job Builder config). The dispatcher runs its own pipeline,
 `.ci/jenkins/pipeline/Jenkinsfile.dispatcher`, checked out from the PR merge
 ref (`refs/pull/<n>/merge`) on webhook runs, or from any branch/commit passed
-in `sha1` on manual runs. `nixl-ci-nightly` runs its own orchestrator pipeline,
-`.ci/jenkins/pipeline/Jenkinsfile.nightly`; all other jobs run through the shared
-pipeline entry point `.ci/jenkins/pipeline/Jenkinsfile`. None of them run directly off GitHub
+in `sha1` on manual runs; all other jobs run through the shared pipeline
+entry point `.ci/jenkins/pipeline/Jenkinsfile`. None of them run directly off GitHub
 events — they only start via the Jenkins webhook fired by Blossom-CI, or via
 their own nightly/manual trigger. They split into two groups:
 
@@ -214,7 +213,7 @@ their own nightly/manual trigger. They split into two groups:
 
 - **Trigger:** Nightly cron (`H 2 * * *`), or manual run (`UCX_REF`, `MAIL_TO` parameters).
 - **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep` with `UCX_VER=master` (from `UCX_REF`), waits for all three, and emails one consolidated pass/fail report to `MAIL_TO`. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
-- **Pipeline:** `.ci/jenkins/pipeline/Jenkinsfile.nightly` — a flyweight fan-out orchestrator (no build agent, like the dispatcher), so the multi-hour wait on the GPU jobs holds no node.
+- **Matrix:** `.ci/jenkins/lib/nightly-matrix.yaml` — a lightweight ci-demo orchestrator (one groovy step: fan out, wait, mail), no GPU of its own.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.
 
 ## Slurm job naming
