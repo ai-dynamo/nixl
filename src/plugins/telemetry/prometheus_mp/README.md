@@ -46,7 +46,8 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   and no scary error is logged. The lock, not the bind, is what elects: two ranks
   binding concurrently cannot tell which of them got there first, so gating the
   bind on an exclusive lock is what makes exactly one process serve. The kernel
-  releases it when the holder dies, so it needs no cleanup.
+  releases the lock when the holder dies, so a crash needs no cleanup; the lock
+  file itself stays in the directory and is reused by the next run.
   That guarantee lasts as long as the lock is usable. If the lock file cannot be
   opened, is not a regular file owned by the run's user, or sits on a filesystem
   without `flock`, every process considers itself elected and falls back to the
@@ -124,7 +125,9 @@ reader's effective uid, so a co-tenant cannot inject series). The same check
 guards the election: a `nixl-owner.lock` that is not a regular file owned by the
 run's user is ignored rather than contended for, so a co-tenant holding a planted
 lock cannot demote every rank to writer-only and leave the run unscrapeable.
-The directory's permissions remain the deployment's responsibility.
+The directory itself remains the deployment's responsibility: a missing one is
+created, but with the process umask rather than `0700`, so pre-create it with the
+permissions you want.
 
 All aggregated ranks must also share a **PID namespace** (and time namespace):
 staleness/liveness uses `kill(pid, 0)` + `/proc/<pid>/stat` and a host-wide

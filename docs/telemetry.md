@@ -103,8 +103,8 @@ stream:
   (`updateData`, or the whole 4-event `addXferStats` batch), the event is dropped
   and counted. On each flush the core emits the count of new drops since the last
   flush as a synthetic `AGENT_TELEMETRY_EVENTS_DROPPED` event, which flows through
-  the shared descriptor as `agent_telemetry_events_dropped_total` on both
-  exporters and into the raw BUFFER stream. This counts only staging-queue loss
+  the shared descriptor as `agent_telemetry_events_dropped_total` on all three
+  metric exporters and into the raw BUFFER stream. This counts only staging-queue loss
   (events that never reach an exporter); it does **not** count BUFFER cyclic-ring
   loss from a slow downstream reader, which is a separate, uncounted condition.
 
@@ -157,7 +157,7 @@ Telemetry is configured by environment variables:
 - When telemetry is requested but no output sink is configured (neither `NIXL_TELEMETRY_EXPORTER` nor `NIXL_TELEMETRY_DIR`), it falls back to the collect-only NOP exporter: events are collected in-process so `getXferTelemetry()` / `get_xfer_telemetry()` works, but nothing is written out.
 - If telemetry is enabled but no exporter is set, or the exporter name is empty, then the sink depends on `NIXL_TELEMETRY_DIR` as explained below (falling back to NOP when it is unset).
 - Set `NIXL_TELEMETRY_EXPORTER=NOP` to explicitly keep telemetry active (events are collected and `getXferTelemetry()` works) while discarding all output. It needs no sink and writes nothing, so it can be used to measure the overhead of the telemetry collection path in isolation.
-- Exporters that expose a scrape endpoint (e.g. Prometheus) bind one port per process. Under multi-process runs (e.g. tensor/data parallelism) every rank tries to bind the same port; only one wins. With the single-process `prometheus` exporter, losing that race is benign and non-fatal: the affected process logs a single warning and runs without a telemetry sink instead of failing agent construction (see [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md)). To instead export **every** rank behind one endpoint, use the `prometheus_mp` exporter (see "Multi-process aggregation" below).
+- The single-process `prometheus` exporter binds one port per process, so under multi-process runs (e.g. tensor/data parallelism) every rank tries to bind the same port and only one wins. Losing that race is benign and non-fatal: the affected process logs a single warning and runs without a telemetry sink instead of failing agent construction (see [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md)). To instead export **every** rank behind one endpoint, use the `prometheus_mp` exporter, where the ranks elect one process to bind rather than racing for the port (see "Multi-process aggregation" below).
 
 ## Multi-process aggregation (`prometheus_mp`)
 
@@ -197,7 +197,8 @@ convention: a shared **local** folder (not NFS), one per pod / process-family,
 treated as ephemeral (e.g. a per-pod Kubernetes `emptyDir`). Because NIXL is a
 library loaded independently per rank -- with no parent to propagate the path as in
 Dynamo -- the launcher/operator must set the **same** directory for every rank, so
-it is required rather than auto-defaulted.
+it is required rather than auto-defaulted. The ranks sharing it must also share a
+PID namespace, since liveness is decided with `kill(pid, 0)` and `/proc`.
 
 ### Scope & limitations
 
