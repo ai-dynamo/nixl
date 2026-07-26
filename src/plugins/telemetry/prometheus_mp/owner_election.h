@@ -114,7 +114,8 @@ public:
 
     /**
      * @brief Takes @p other over, unless this election holds the lock.
-     * @param other The election to move from, left holding nothing.
+     * @param other The election to move from, left holding nothing -- or left
+     *        untouched, when this one holds the lock and the move is refused.
      * @return This election, unchanged if it holds the lock.
      *
      * An election re-run by the process already holding this one always loses,
