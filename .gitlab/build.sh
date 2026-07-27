@@ -141,6 +141,9 @@ else
                                  protobuf-compiler-grpc \
                                  pybind11-dev \
                                  etcd-server \
+                                 redis-server \
+                                 libhiredis-dev \
+                                 libevent-dev \
                                  net-tools \
                                  iproute2 \
                                  pciutils \

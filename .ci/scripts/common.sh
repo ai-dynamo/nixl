@@ -131,6 +131,33 @@ wait_for_etcd() {
     echo "Etcd is ready"
 }
 
+wait_for_redis_server() {
+    local port=$1
+    local timeout=30
+    echo "Waiting for Redis to be ready on port ${port} (timeout: ${timeout}s)..."
+    while ! redis-cli -p "${port}" ping 2>/dev/null | grep -q 'PONG'; do
+        timeout=$((timeout - 1))
+        if [ $timeout -eq 0 ]; then
+            echo "Redis failed to start"
+            exit 1
+        fi
+        sleep 1
+    done
+    echo "Redis is ready"
+}
+
+start_redis_server() {
+    echo "==== Running Redis server ===="
+    redis_port=$(get_next_tcp_port)
+    export REDIS_HOST="127.0.0.1"
+    export REDIS_PORT="${redis_port}"
+
+    redis-server --port "${redis_port}" --daemonize no --loglevel warning &
+    REDIS_PID=$!
+
+    wait_for_redis_server "${redis_port}"
+}
+
 start_etcd_server() {
     local namespace_prefix=$1
     if [ -z "${namespace_prefix}" ]; then
