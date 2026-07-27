@@ -161,7 +161,9 @@ steps:
 
   - name: Push
     containerSelector: "{name: 'podman'}"
+    credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
+      set -eo pipefail
       source version-info
       ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY_URL}/${BUILD_TARGET}"
       ARTIFACTORY_API="https://${REGISTRY_HOST_NAME}/artifactory/api/storage/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}/${BUILD_TARGET}"
@@ -177,7 +179,7 @@ steps:
         echo "Creating tag: ${target_tag}"
         docker tag "${LOCAL_TAG_BASE}${arch}" "${ARTIFACTORY_REGISTRY}:${target_tag}"
         docker push "${ARTIFACTORY_REGISTRY}:${target_tag}"
-        curl -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
+        curl --fail -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
           "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
       }
 
