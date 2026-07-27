@@ -153,6 +153,12 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
   wait_for "http://localhost:${PREFILL_PORT}/health" "$SERVER_TIMEOUT"
   wait_for "http://localhost:${DECODE_PORT}/health" "$SERVER_TIMEOUT"
 
+  # Re-pick PROXY_PORT now that the SGLang servers are fully up. SGLang binds internal
+  # ports derived from its base port (gRPC, ZMQ, etc.) that aren't visible to
+  # get_next_tcp_port() until the servers are running; re-allocating here ensures the
+  # router gets a port that doesn't collide with any of those.
+  PROXY_PORT="$(get_next_tcp_port)"
+
   # sglang-router fronts the prefill/decode pair (replaces the removed in-core mini_lb).
   # Installed into the sglang weights-base image (contrib/Dockerfile.sglang-base).
   setsid python3 -m sglang_router.launch_router --pd-disaggregation \
@@ -160,7 +166,7 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
     --decode "http://localhost:${DECODE_PORT}" \
     --host 0.0.0.0 --port "$PROXY_PORT" &
   pids+=($!)
-  wait_for "http://localhost:${PROXY_PORT}/health" "$PROXY_TIMEOUT" || true
+  wait_for "http://localhost:${PROXY_PORT}/health" "$PROXY_TIMEOUT"
   ENDPOINT="http://localhost:${PROXY_PORT}/v1/completions"
 
 else
