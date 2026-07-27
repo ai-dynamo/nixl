@@ -60,6 +60,25 @@ def non_negative_int(value: str) -> int:
     return int_value
 
 
+def format_cpu_affinity(cpus: set[int]) -> str:
+    ranges = []
+    first_cpu = previous_cpu = min(cpus)
+    for cpu in sorted(cpus)[1:]:
+        if cpu == previous_cpu + 1:
+            previous_cpu = cpu
+            continue
+        ranges.append(
+            str(first_cpu)
+            if first_cpu == previous_cpu
+            else f"{first_cpu}-{previous_cpu}"
+        )
+        first_cpu = previous_cpu = cpu
+    ranges.append(
+        str(first_cpu) if first_cpu == previous_cpu else f"{first_cpu}-{previous_cpu}"
+    )
+    return ",".join(ranges)
+
+
 def handle_sigterm(
     signum,
     frame,
@@ -479,8 +498,45 @@ def worker(torch_rank: int, args: argparse.Namespace):
         flush=True,
     )
 
-    # Initialize torch
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(local_rank % 8)
+    # Initialize torch on the local rank's entry from the caller-provided
+    # visible-device list, then keep its CPU proxy threads on the GPU-local
+    # NUMA node.
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES") or "0,1,2,3,4,5,6,7"
+    gpu_ids = [
+        gpu_id.strip() for gpu_id in visible_devices.split(",") if gpu_id.strip()
+    ]
+    worker_index = local_rank % len(gpu_ids)
+    selected_gpu = gpu_ids[worker_index]
+    os.environ["CUDA_VISIBLE_DEVICES"] = selected_gpu
+    try:
+        physical_gpu = int(selected_gpu)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"automatic CPU affinity requires a numeric GPU ordinal, got '{selected_gpu}'"
+        ) from exc
+    if 0 <= physical_gpu < 4:
+        numa_node = 0
+        requested_cpus = set(range(0, 32))
+    elif 4 <= physical_gpu < 8:
+        numa_node = 1
+        requested_cpus = set(range(32, 64))
+    else:
+        raise RuntimeError(
+            f"automatic CPU affinity is only defined for physical GPUs 0-7, got {physical_gpu}"
+        )
+    effective_cpus = requested_cpus & os.sched_getaffinity(0)
+    if not effective_cpus:
+        raise RuntimeError(
+            f"GPU {physical_gpu} NUMA {numa_node} CPU affinity has no CPUs "
+            "allowed by this process"
+        )
+    os.sched_setaffinity(0, effective_cpus)
+    print(
+        f"NIXL EP worker CPU affinity: local_rank={local_rank} "
+        f"physical_gpu={physical_gpu} numa={numa_node} "
+        f"cpus={format_cpu_affinity(effective_cpus)}",
+        flush=True,
+    )
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
     torch.cuda.set_device(0)
