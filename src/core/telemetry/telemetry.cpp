@@ -275,13 +275,15 @@ bool
 nixlTelemetry::flushPendingEvents() {
     auto pending = stagingQueue_.takePending();
 
-    for (auto &event : pending) {
-        // Deactivated metrics never enter the queue (filtered at the source), so
-        // everything here is already exportable.
-        exporter_->exportEvent(event);
-    }
+    exporter_->withBatch([&] {
+        for (auto &event : pending) {
+            // Deactivated metrics never enter the queue (filtered at the source),
+            // so everything here is already exportable.
+            exporter_->exportEvent(event);
+        }
 
-    exportDroppedEvents();
+        exportDroppedEvents();
+    });
 
     return true;
 }
