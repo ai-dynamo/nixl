@@ -27,6 +27,7 @@
 
 #include <cmath>
 #include <cassert>
+#include <optional>
 #include <thread>
 #include <bitset>
 
@@ -873,7 +874,10 @@ testNumaDramTopology(const TopologyInfo &topology_info) {
 // `InterfaceType=efa` network interfaces), the plugin's constructor throws because no
 // libfabric provider can be selected. The test captures this expected failure mode and
 // records that the fatal error surfaces at plugin init -- which is precisely when the
-// preflight WARN would fire in production (before construction throws).
+// preflight WARN would fire in production (before construction throws). Note: for these
+// zero-NIC cases, the `expected_num_aws_accel` field of the NeuronTopologyInfo is not
+// verified (the constructor throws before accelerator-count getters can be called);
+// it is retained purely as documentation of the underlying hardware topology.
 int
 testNeuronTopology(const NeuronTopologyInfo &topology_info) {
     // pretend an EFA-only topology (curr_topology is unused for accelerator counts, but
@@ -899,6 +903,19 @@ testNeuronTopology(const NeuronTopologyInfo &topology_info) {
 
     // tell hwloc to load topology from XML file
     setenv("HWLOC_XMLFILE", topology_info.topo_file, 1);
+
+    // RAII guard: unconditionally undo the env changes above (and clear the runtime
+    // testing flag) on every exit path, including any exception thrown from
+    // nixlLibfabricTopology's constructor. Without this, a regression that caused an
+    // unexpected throw in the positive-case branch below would leave
+    // NIXL_LIBFABRIC_TESTING set and HWLOC_XMLFILE pointing at the Trainium fixture,
+    // corrupting the subsequent DRAM_SEG tests in main().
+    struct TestEnvGuard {
+        ~TestEnvGuard() {
+            clearTesting();
+            unsetenv("HWLOC_XMLFILE");
+        }
+    } env_guard;
 
     int rc = 0;
 
@@ -926,8 +943,22 @@ testNeuronTopology(const NeuronTopologyInfo &topology_info) {
                          "in production the preflight WARN would fire before the throw.";
         }
     } else {
-        // load topology and let discoverTopology() run its preflight checks
-        nixlLibfabricTopology topology;
+        // Load topology and let discoverTopology() run its preflight checks. Catch any
+        // unexpected throw (which would indicate a regression in the "happy path"
+        // Neuron topology) and report it as a test failure rather than aborting the
+        // binary and leaving env vars set.
+        std::optional<nixlLibfabricTopology> topology_holder;
+        try {
+            topology_holder.emplace();
+        }
+        catch (const std::runtime_error &e) {
+            NIXL_ERROR << "Unexpected topology-discovery failure for "
+                       << topology_info.instance_type << ": " << e.what()
+                       << "; expected the topology to load successfully with "
+                       << topology_info.expected_nic_count << " EFA NIC(s).";
+            return 4;
+        }
+        const nixlLibfabricTopology &topology = *topology_holder;
 
         // verify discovered Neuron accelerator count
         if (topology.getNumAwsAccel() != topology_info.expected_num_aws_accel) {
@@ -958,9 +989,6 @@ testNeuronTopology(const NeuronTopologyInfo &topology_info) {
                       << topology.getTotalNicCount() << " EFA NIC(s))";
         }
     }
-
-    clearTesting();
-    unsetenv("HWLOC_XMLFILE");
 
     return rc;
 }
