@@ -33,6 +33,10 @@
 class ProxyWorker;
 
 static constexpr uint32_t kDefaultProxyRingDepth = 256;
+/** Slot 0 of the shared control slab: proxy shutdown word. */
+static constexpr size_t kProxyShutdownSlot = 0;
+/** Consumer-index slots start at index 1: [shutdown][ci_0..N). */
+static constexpr size_t kProxyCiSlotBase = 1;
 
 enum class nixl_proxy_channel_lifecycle_t : uint8_t {
     UNALLOCATED = 0,
@@ -68,8 +72,8 @@ struct alignas(64) nixlProxyChannelState {
     uint64_t *consumer_idx_dev_ = nullptr;
     /** Device-resident cache of consumer_idx_dev_ used by GPU enqueue backpressure. */
     uint64_t *consumer_idx_cache_dev_ = nullptr;
-    nixlGdrBuffer *consumer_indices_ = nullptr;
-    uint32_t consumer_idx_slot_ = 0;
+    nixlGdrBuffer *control_slots_ = nullptr;
+    size_t control_slot_index_ = 0;
     /** Host-side ring depth for the CPU worker; nixlProxyWorkRing itself is device-only. */
     uint32_t ring_depth_ = 0;
     /** Mapped pinned host memory; proxy worker writes directly via host alias. */
@@ -90,8 +94,8 @@ struct alignas(64) nixlProxyChannelState {
     allocate(uint32_t peer_index,
              uint32_t channel_id,
              uint32_t depth,
-             nixlGdrBuffer *consumer_indices,
-             uint32_t consumer_idx_slot);
+             nixlGdrBuffer *control_slots,
+             size_t control_slot_index);
 
     nixl_status_t
     publishConsumerIdx(uint64_t value) noexcept;
@@ -372,7 +376,7 @@ private:
     reconcileRemotePeers(const nixl_remote_meta_dlist_t &dlist);
 
     std::vector<nixlProxyChannelState> channels_;
-    nixlGdrBuffer consumer_indices_;
+    nixlGdrBuffer control_slots_;
     std::vector<nixlProxyChannelView> device_channel_views_;
     nixlProxyChannelView *device_channel_views_dev_ = nullptr;
     nixlProxyDeviceContextData *device_context_ = nullptr;
@@ -381,8 +385,9 @@ private:
     std::vector<std::unique_ptr<ProxyWorker>> workers_;
     nixlProxyMemViewRegistry memview_registry_;
     std::unique_ptr<nixlDeviceProxyBackendAdapter> backend_;
-    uint32_t *shutdown_word_host_ = nullptr;
-    uint32_t *shutdown_word_dev_ = nullptr;
+    /** CPU-only shutdown state polled by proxy workers; never aliases GPU memory. */
+    alignas(64) std::atomic<uint64_t> shutdown_state_{
+        static_cast<uint64_t>(nixl_proxy_control_state_t::RUNNING)};
     uint32_t peer_capacity_ = 0;
     uint32_t channel_count_ = 0;
     uint32_t worker_count_ = 0;

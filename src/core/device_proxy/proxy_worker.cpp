@@ -22,7 +22,7 @@
 
 ProxyWorker::ProxyWorker(nixlDeviceProxyBackendAdapter *backend,
                          const nixlProxyMemViewRegistry *proxy_memview_registry,
-                         uint32_t *shutdown_word,
+                         std::atomic<uint64_t> *shutdown_state,
                          nixlProxyChannelState *channels,
                          std::atomic<nixl_proxy_channel_lifecycle_t> *channel_lifecycle,
                          uint32_t peer_capacity,
@@ -32,7 +32,7 @@ ProxyWorker::ProxyWorker(nixlDeviceProxyBackendAdapter *backend,
                          uint64_t pthr_delay_us) noexcept
     : backend_(backend),
       proxy_memview_registry_(proxy_memview_registry),
-      shutdown_word_(shutdown_word),
+      shutdown_state_(shutdown_state),
       channels_(channels),
       channel_lifecycle_(channel_lifecycle),
       peer_capacity_(peer_capacity),
@@ -49,8 +49,8 @@ void
 ProxyWorker::start() {
     thread_ = std::thread([this]() {
         NIXL_DEBUG << "ProxyWorker thread " << worker_index_ << " started";
-        while (__atomic_load_n(shutdown_word_, __ATOMIC_ACQUIRE) ==
-               static_cast<uint32_t>(nixl_proxy_control_state_t::RUNNING)) {
+        while (shutdown_state_->load(std::memory_order_acquire) ==
+               static_cast<uint64_t>(nixl_proxy_control_state_t::RUNNING)) {
             runOnce();
             if (pthr_delay_us_ > 0) {
                 std::this_thread::sleep_for(std::chrono::microseconds(pthr_delay_us_));

@@ -105,7 +105,7 @@ struct nixlProxyDeviceContextData {
     /** Number of logical channels; each has one ring per destination peer slot. */
     uint32_t num_channels = 0;
     /** Runtime-wide shutdown signal shared by every peer and channel. */
-    uint32_t *shutdown_word = nullptr;
+    uint64_t *shutdown_word = nullptr;
 };
 
 #endif // NIXL_SRC_CORE_DEVICE_PROXY_PROXY_PROTOCOL_H

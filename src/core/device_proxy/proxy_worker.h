@@ -32,7 +32,7 @@ class ProxyWorker {
 public:
     ProxyWorker(nixlDeviceProxyBackendAdapter *backend,
                 const nixlProxyMemViewRegistry *proxy_memview_registry,
-                uint32_t *shutdown_word,
+                std::atomic<uint64_t> *shutdown_state,
                 nixlProxyChannelState *channels,
                 std::atomic<nixl_proxy_channel_lifecycle_t> *channel_lifecycle,
                 uint32_t peer_capacity,
@@ -82,7 +82,7 @@ private:
 
     nixlDeviceProxyBackendAdapter *backend_ = nullptr;
     const nixlProxyMemViewRegistry *proxy_memview_registry_ = nullptr;
-    uint32_t *shutdown_word_ = nullptr;
+    std::atomic<uint64_t> *shutdown_state_ = nullptr;
     nixlProxyChannelState *channels_ = nullptr;
     std::atomic<nixl_proxy_channel_lifecycle_t> *channel_lifecycle_ = nullptr;
     uint32_t peer_capacity_ = 0;
