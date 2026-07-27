@@ -1,0 +1,373 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+
+<!DOCTYPE topology SYSTEM "hwloc2.dtd">
+<topology version="2.0">
+  <object type="Machine" os_index="0" cpuset="0x00000fff" complete_cpuset="0x00000fff" allowed_cpuset="0x00000fff" nodeset="0x00000001" complete_nodeset="0x00000001" allowed_nodeset="0x00000001" gp_index="1">
+    <info name="Backend" value="Linux"/>
+    <object type="Package" os_index="0" cpuset="0x00000fff" complete_cpuset="0x00000fff" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="3">
+      <info name="CPUVendor" value="GenuineIntel"/>
+      <info name="CPUFamilyNumber" value="6"/>
+      <info name="CPUModelNumber" value="143"/>
+      <info name="CPUModel" value="Intel(R) Xeon(R) Platinum 8488C"/>
+      <info name="CPUStepping" value="8"/>
+      <object type="NUMANode" os_index="0" cpuset="0x00000fff" complete_cpuset="0x00000fff" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="46" local_memory="133975027712">
+        <page_type size="4096" count="32708747"/>
+        <page_type size="2097152" count="0"/>
+        <page_type size="1073741824" count="0"/>
+      </object>
+      <object type="L3Cache" os_index="0" cpuset="0x00000fff" complete_cpuset="0x00000fff" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="9" cache_size="110100480" depth="3" cache_linesize="64" cache_associativity="15" cache_type="0">
+        <info name="Inclusive" value="0"/>
+        <object type="L2Cache" os_index="0" cpuset="0x00000041" complete_cpuset="0x00000041" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="8" cache_size="2097152" depth="2" cache_linesize="64" cache_associativity="16" cache_type="0">
+          <info name="Inclusive" value="0"/>
+          <object type="L1Cache" os_index="0" cpuset="0x00000041" complete_cpuset="0x00000041" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="6" cache_size="49152" depth="1" cache_linesize="64" cache_associativity="12" cache_type="1">
+            <info name="Inclusive" value="0"/>
+            <object type="L1iCache" os_index="0" cpuset="0x00000041" complete_cpuset="0x00000041" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="7" cache_size="32768" depth="1" cache_linesize="64" cache_associativity="8" cache_type="2">
+              <info name="Inclusive" value="0"/>
+              <object type="Core" os_index="0" cpuset="0x00000041" complete_cpuset="0x00000041" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="2">
+                <object type="PU" os_index="0" cpuset="0x00000001" complete_cpuset="0x00000001" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="5"/>
+                <object type="PU" os_index="6" cpuset="0x00000040" complete_cpuset="0x00000040" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="40"/>
+              </object>
+            </object>
+          </object>
+        </object>
+        <object type="L2Cache" os_index="1" cpuset="0x00000082" complete_cpuset="0x00000082" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="15" cache_size="2097152" depth="2" cache_linesize="64" cache_associativity="16" cache_type="0">
+          <info name="Inclusive" value="0"/>
+          <object type="L1Cache" os_index="1" cpuset="0x00000082" complete_cpuset="0x00000082" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="13" cache_size="49152" depth="1" cache_linesize="64" cache_associativity="12" cache_type="1">
+            <info name="Inclusive" value="0"/>
+            <object type="L1iCache" os_index="1" cpuset="0x00000082" complete_cpuset="0x00000082" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="14" cache_size="32768" depth="1" cache_linesize="64" cache_associativity="8" cache_type="2">
+              <info name="Inclusive" value="0"/>
+              <object type="Core" os_index="1" cpuset="0x00000082" complete_cpuset="0x00000082" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="10">
+                <object type="PU" os_index="1" cpuset="0x00000002" complete_cpuset="0x00000002" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="12"/>
+                <object type="PU" os_index="7" cpuset="0x00000080" complete_cpuset="0x00000080" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="41"/>
+              </object>
+            </object>
+          </object>
+        </object>
+        <object type="L2Cache" os_index="2" cpuset="0x00000104" complete_cpuset="0x00000104" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="21" cache_size="2097152" depth="2" cache_linesize="64" cache_associativity="16" cache_type="0">
+          <info name="Inclusive" value="0"/>
+          <object type="L1Cache" os_index="2" cpuset="0x00000104" complete_cpuset="0x00000104" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="19" cache_size="49152" depth="1" cache_linesize="64" cache_associativity="12" cache_type="1">
+            <info name="Inclusive" value="0"/>
+            <object type="L1iCache" os_index="2" cpuset="0x00000104" complete_cpuset="0x00000104" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="20" cache_size="32768" depth="1" cache_linesize="64" cache_associativity="8" cache_type="2">
+              <info name="Inclusive" value="0"/>
+              <object type="Core" os_index="2" cpuset="0x00000104" complete_cpuset="0x00000104" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="16">
+                <object type="PU" os_index="2" cpuset="0x00000004" complete_cpuset="0x00000004" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="18"/>
+                <object type="PU" os_index="8" cpuset="0x00000100" complete_cpuset="0x00000100" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="42"/>
+              </object>
+            </object>
+          </object>
+        </object>
+        <object type="L2Cache" os_index="3" cpuset="0x00000208" complete_cpuset="0x00000208" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="27" cache_size="2097152" depth="2" cache_linesize="64" cache_associativity="16" cache_type="0">
+          <info name="Inclusive" value="0"/>
+          <object type="L1Cache" os_index="3" cpuset="0x00000208" complete_cpuset="0x00000208" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="25" cache_size="49152" depth="1" cache_linesize="64" cache_associativity="12" cache_type="1">
+            <info name="Inclusive" value="0"/>
+            <object type="L1iCache" os_index="3" cpuset="0x00000208" complete_cpuset="0x00000208" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="26" cache_size="32768" depth="1" cache_linesize="64" cache_associativity="8" cache_type="2">
+              <info name="Inclusive" value="0"/>
+              <object type="Core" os_index="3" cpuset="0x00000208" complete_cpuset="0x00000208" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="22">
+                <object type="PU" os_index="3" cpuset="0x00000008" complete_cpuset="0x00000008" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="24"/>
+                <object type="PU" os_index="9" cpuset="0x00000200" complete_cpuset="0x00000200" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="43"/>
+              </object>
+            </object>
+          </object>
+        </object>
+        <object type="L2Cache" os_index="4" cpuset="0x00000410" complete_cpuset="0x00000410" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="33" cache_size="2097152" depth="2" cache_linesize="64" cache_associativity="16" cache_type="0">
+          <info name="Inclusive" value="0"/>
+          <object type="L1Cache" os_index="4" cpuset="0x00000410" complete_cpuset="0x00000410" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="31" cache_size="49152" depth="1" cache_linesize="64" cache_associativity="12" cache_type="1">
+            <info name="Inclusive" value="0"/>
+            <object type="L1iCache" os_index="4" cpuset="0x00000410" complete_cpuset="0x00000410" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="32" cache_size="32768" depth="1" cache_linesize="64" cache_associativity="8" cache_type="2">
+              <info name="Inclusive" value="0"/>
+              <object type="Core" os_index="4" cpuset="0x00000410" complete_cpuset="0x00000410" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="28">
+                <object type="PU" os_index="4" cpuset="0x00000010" complete_cpuset="0x00000010" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="30"/>
+                <object type="PU" os_index="10" cpuset="0x00000400" complete_cpuset="0x00000400" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="44"/>
+              </object>
+            </object>
+          </object>
+        </object>
+        <object type="L2Cache" os_index="5" cpuset="0x00000820" complete_cpuset="0x00000820" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="39" cache_size="2097152" depth="2" cache_linesize="64" cache_associativity="16" cache_type="0">
+          <info name="Inclusive" value="0"/>
+          <object type="L1Cache" os_index="5" cpuset="0x00000820" complete_cpuset="0x00000820" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="37" cache_size="49152" depth="1" cache_linesize="64" cache_associativity="12" cache_type="1">
+            <info name="Inclusive" value="0"/>
+            <object type="L1iCache" os_index="5" cpuset="0x00000820" complete_cpuset="0x00000820" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="38" cache_size="32768" depth="1" cache_linesize="64" cache_associativity="8" cache_type="2">
+              <info name="Inclusive" value="0"/>
+              <object type="Core" os_index="5" cpuset="0x00000820" complete_cpuset="0x00000820" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="34">
+                <object type="PU" os_index="5" cpuset="0x00000020" complete_cpuset="0x00000020" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="36"/>
+                <object type="PU" os_index="11" cpuset="0x00000800" complete_cpuset="0x00000800" nodeset="0x00000001" complete_nodeset="0x00000001" gp_index="45"/>
+              </object>
+            </object>
+          </object>
+        </object>
+      </object>
+    </object>
+    <object type="Bridge" gp_index="107" bridge_type="0-1" depth="0" bridge_pci="0000:[00-00]">
+      <object type="PCIDev" gp_index="78" pci_busid="0000:00:00.0" pci_type="0600 [8086:1237] [1d0f:1237] 00" pci_link_speed="0.000000">
+        <info name="PCIVendor" value="Intel Corporation"/>
+        <info name="PCIDevice" value="440FX - 82441FX PMC [Natoma]"/>
+      </object>
+      <object type="PCIDev" gp_index="57" pci_busid="0000:00:01.0" pci_type="0601 [8086:7000] [0000:0000] 00" pci_link_speed="0.000000">
+        <info name="PCISlot" value="1"/>
+        <info name="PCIVendor" value="Intel Corporation"/>
+        <info name="PCIDevice" value="82371SB PIIX3 ISA [Natoma/Triton II]"/>
+      </object>
+      <object type="PCIDev" gp_index="81" pci_busid="0000:00:01.3" pci_type="0000 [8086:7113] [0000:0000] 08" pci_link_speed="0.000000">
+        <info name="PCISlot" value="1"/>
+        <info name="PCIVendor" value="Intel Corporation"/>
+        <info name="PCIDevice" value="82371AB/EB/MB PIIX4 ACPI"/>
+      </object>
+      <object type="PCIDev" gp_index="85" pci_busid="0000:00:03.0" pci_type="0300 [1d0f:1111] [0000:0000] 00" pci_link_speed="0.000000">
+        <info name="PCISlot" value="3"/>
+        <info name="PCIVendor" value="Amazon.com, Inc."/>
+        <object type="OSDev" gp_index="114" name="card0" osdev_type="1"/>
+      </object>
+      <object type="PCIDev" gp_index="64" pci_busid="0000:00:04.0" pci_type="0108 [1d0f:8061] [1d0f:0000] 00" pci_link_speed="0.000000">
+        <info name="PCISlot" value="4"/>
+        <info name="PCIVendor" value="Amazon.com, Inc."/>
+        <info name="PCIDevice" value="NVMe EBS Controller"/>
+        <object type="OSDev" gp_index="111" name="nvme0n1" subtype="Disk" osdev_type="0">
+          <info name="Size" value="314572800"/>
+          <info name="SectorSize" value="512"/>
+          <info name="LinuxDeviceID" value="259:0"/>
+          <info name="Model" value="Amazon Elastic Block Store"/>
+          <info name="Revision" value="2.0"/>
+        </object>
+      </object>
+    </object>
+    <object type="Bridge" gp_index="108" bridge_type="0-1" depth="0" bridge_pci="0000:[01-23]">
+      <object type="Bridge" gp_index="67" bridge_type="1-1" depth="1" bridge_pci="0000:[02-23]" pci_busid="0000:01:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="15.753846">
+        <info name="PCISlot" value="32"/>
+        <info name="PCIVendor" value="Amazon.com, Inc."/>
+        <object type="Bridge" gp_index="55" bridge_type="1-1" depth="2" bridge_pci="0000:[03-23]" pci_busid="0000:02:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="15.753846">
+          <info name="PCISlot" value="0"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <object type="Bridge" gp_index="48" bridge_type="1-1" depth="3" bridge_pci="0000:[04-04]" pci_busid="0000:03:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="77" bridge_type="1-1" depth="3" bridge_pci="0000:[05-05]" pci_busid="0000:03:00.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="103" bridge_type="1-1" depth="3" bridge_pci="0000:[06-06]" pci_busid="0000:03:00.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="70" bridge_type="1-1" depth="3" bridge_pci="0000:[07-07]" pci_busid="0000:03:00.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="97" bridge_type="1-1" depth="3" bridge_pci="0000:[08-08]" pci_busid="0000:03:00.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="65" bridge_type="1-1" depth="3" bridge_pci="0000:[09-09]" pci_busid="0000:03:00.5" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="92" bridge_type="1-1" depth="3" bridge_pci="0000:[0a-0a]" pci_busid="0000:03:00.6" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="56" bridge_type="1-1" depth="3" bridge_pci="0000:[0b-0b]" pci_busid="0000:03:00.7" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="91" bridge_type="1-1" depth="3" bridge_pci="0000:[0c-0c]" pci_busid="0000:03:01.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="54" bridge_type="1-1" depth="3" bridge_pci="0000:[0d-0d]" pci_busid="0000:03:01.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="87" bridge_type="1-1" depth="3" bridge_pci="0000:[0e-0e]" pci_busid="0000:03:01.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="49" bridge_type="1-1" depth="3" bridge_pci="0000:[0f-0f]" pci_busid="0000:03:01.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="79" bridge_type="1-1" depth="3" bridge_pci="0000:[10-10]" pci_busid="0000:03:01.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="105" bridge_type="1-1" depth="3" bridge_pci="0000:[11-11]" pci_busid="0000:03:01.5" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="74" bridge_type="1-1" depth="3" bridge_pci="0000:[12-12]" pci_busid="0000:03:01.6" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="100" bridge_type="1-1" depth="3" bridge_pci="0000:[13-13]" pci_busid="0000:03:01.7" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="72" bridge_type="1-1" depth="3" bridge_pci="0000:[14-14]" pci_busid="0000:03:02.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="99" bridge_type="1-1" depth="3" bridge_pci="0000:[15-15]" pci_busid="0000:03:02.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="66" bridge_type="1-1" depth="3" bridge_pci="0000:[16-16]" pci_busid="0000:03:02.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="93" bridge_type="1-1" depth="3" bridge_pci="0000:[17-17]" pci_busid="0000:03:02.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="58" bridge_type="1-1" depth="3" bridge_pci="0000:[18-18]" pci_busid="0000:03:02.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="88" bridge_type="1-1" depth="3" bridge_pci="0000:[19-19]" pci_busid="0000:03:02.5" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="52" bridge_type="1-1" depth="3" bridge_pci="0000:[1a-1a]" pci_busid="0000:03:02.6" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="84" bridge_type="1-1" depth="3" bridge_pci="0000:[1b-1b]" pci_busid="0000:03:02.7" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="51" bridge_type="1-1" depth="3" bridge_pci="0000:[1c-1c]" pci_busid="0000:03:03.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="83" bridge_type="1-1" depth="3" bridge_pci="0000:[1d-1d]" pci_busid="0000:03:03.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="47" bridge_type="1-1" depth="3" bridge_pci="0000:[1e-1e]" pci_busid="0000:03:03.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="76" bridge_type="1-1" depth="3" bridge_pci="0000:[1f-1f]" pci_busid="0000:03:03.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="102" bridge_type="1-1" depth="3" bridge_pci="0000:[20-20]" pci_busid="0000:03:03.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="69" bridge_type="1-1" depth="3" bridge_pci="0000:[21-21]" pci_busid="0000:03:03.5" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="96" bridge_type="1-1" depth="3" bridge_pci="0000:[22-22]" pci_busid="0000:03:03.6" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="63" bridge_type="1-1" depth="3" bridge_pci="0000:[23-23]" pci_busid="0000:03:03.7" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+        </object>
+      </object>
+    </object>
+    <object type="Bridge" gp_index="109" bridge_type="0-1" depth="0" bridge_pci="0000:[24-33]">
+      <object type="Bridge" gp_index="73" bridge_type="1-1" depth="1" bridge_pci="0000:[25-33]" pci_busid="0000:24:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="15.753846">
+        <info name="PCISlot" value="64"/>
+        <info name="PCIVendor" value="Amazon.com, Inc."/>
+        <object type="Bridge" gp_index="61" bridge_type="1-1" depth="2" bridge_pci="0000:[26-33]" pci_busid="0000:25:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="15.753846">
+          <info name="PCISlot" value="1-1"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <object type="Bridge" gp_index="50" bridge_type="1-1" depth="3" bridge_pci="0000:[27-27]" pci_busid="0000:26:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="15.753846">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+            <object type="PCIDev" gp_index="104" pci_busid="0000:27:00.0" pci_type="0200 [1d0f:ec20] [1d0f:ec20] 00" pci_link_speed="0.000000">
+              <info name="PCISlot" value="35-1"/>
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <info name="PCIDevice" value="Elastic Network Adapter (ENA)"/>
+              <object type="OSDev" gp_index="113" name="enp39s0" osdev_type="2">
+              </object>
+            </object>
+          </object>
+          <object type="Bridge" gp_index="82" bridge_type="1-1" depth="3" bridge_pci="0000:[28-28]" pci_busid="0000:26:00.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="106" bridge_type="1-1" depth="3" bridge_pci="0000:[29-29]" pci_busid="0000:26:00.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="75" bridge_type="1-1" depth="3" bridge_pci="0000:[2a-2a]" pci_busid="0000:26:00.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="101" bridge_type="1-1" depth="3" bridge_pci="0000:[2b-2b]" pci_busid="0000:26:00.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="68" bridge_type="1-1" depth="3" bridge_pci="0000:[2c-2c]" pci_busid="0000:26:00.5" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="95" bridge_type="1-1" depth="3" bridge_pci="0000:[2d-2d]" pci_busid="0000:26:00.6" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="62" bridge_type="1-1" depth="3" bridge_pci="0000:[2e-2e]" pci_busid="0000:26:00.7" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="94" bridge_type="1-1" depth="3" bridge_pci="0000:[2f-2f]" pci_busid="0000:26:01.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="60" bridge_type="1-1" depth="3" bridge_pci="0000:[30-30]" pci_busid="0000:26:01.1" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="90" bridge_type="1-1" depth="3" bridge_pci="0000:[31-31]" pci_busid="0000:26:01.2" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="53" bridge_type="1-1" depth="3" bridge_pci="0000:[32-32]" pci_busid="0000:26:01.3" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="0.000000">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+          </object>
+          <object type="Bridge" gp_index="86" bridge_type="1-1" depth="3" bridge_pci="0000:[33-33]" pci_busid="0000:26:01.4" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="15.753846">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+            <object type="PCIDev" gp_index="98" pci_busid="0000:33:00.0" pci_type="0880 [1d0f:7364] [0000:0000] 01" pci_link_speed="15.753846">
+              <info name="PCISlot" value="47-1"/>
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <info name="PCIDevice" value="NeuronDevice (Trainium2)"/>
+            </object>
+          </object>
+        </object>
+      </object>
+    </object>
+    <object type="Bridge" gp_index="110" bridge_type="0-1" depth="0" bridge_pci="0000:[34-37]">
+      <object type="Bridge" gp_index="89" bridge_type="1-1" depth="1" bridge_pci="0000:[35-37]" pci_busid="0000:34:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="7.876923">
+        <info name="PCISlot" value="96"/>
+        <info name="PCIVendor" value="Amazon.com, Inc."/>
+        <object type="Bridge" gp_index="80" bridge_type="1-1" depth="2" bridge_pci="0000:[36-37]" pci_busid="0000:35:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="7.876923">
+          <info name="PCISlot" value="2-1"/>
+          <info name="PCIVendor" value="Amazon.com, Inc."/>
+          <object type="Bridge" gp_index="71" bridge_type="1-1" depth="3" bridge_pci="0000:[37-37]" pci_busid="0000:36:00.0" pci_type="0604 [1d0f:0200] [1d0f:0200] 00" pci_link_speed="7.876923">
+            <info name="PCIVendor" value="Amazon.com, Inc."/>
+            <object type="PCIDev" gp_index="59" pci_busid="0000:37:00.0" pci_type="0108 [1d0f:cd01] [1d0f:0000] 00" pci_link_speed="0.000000">
+              <info name="PCISlot" value="48-1"/>
+              <info name="PCIVendor" value="Amazon.com, Inc."/>
+              <info name="PCIDevice" value="NVMe SSD Controller"/>
+              <object type="OSDev" gp_index="112" name="nvme1n1" subtype="Disk" osdev_type="0">
+                <info name="Size" value="458984375"/>
+                <info name="SectorSize" value="512"/>
+                <info name="LinuxDeviceID" value="259:1"/>
+                <info name="Model" value="Amazon EC2 NVMe Instance Storage"/>
+                <info name="Revision" value="0"/>
+              </object>
+            </object>
+          </object>
+        </object>
+      </object>
+    </object>
+  </object>
+  <support name="discovery.pu"/>
+  <support name="discovery.numa"/>
+  <support name="discovery.numa_memory"/>
+  <support name="discovery.disallowed_pu"/>
+  <support name="discovery.disallowed_numa"/>
+  <support name="discovery.cpukind_efficiency"/>
+  <support name="cpubind.set_thisproc_cpubind"/>
+  <support name="cpubind.get_thisproc_cpubind"/>
+  <support name="cpubind.set_proc_cpubind"/>
+  <support name="cpubind.get_proc_cpubind"/>
+  <support name="cpubind.set_thisthread_cpubind"/>
+  <support name="cpubind.get_thisthread_cpubind"/>
+  <support name="cpubind.set_thread_cpubind"/>
+  <support name="cpubind.get_thread_cpubind"/>
+  <support name="cpubind.get_thisproc_last_cpu_location"/>
+  <support name="cpubind.get_proc_last_cpu_location"/>
+  <support name="cpubind.get_thisthread_last_cpu_location"/>
+  <support name="membind.set_thisthread_membind"/>
+  <support name="membind.get_thisthread_membind"/>
+  <support name="membind.set_area_membind"/>
+  <support name="membind.get_area_membind"/>
+  <support name="membind.alloc_membind"/>
+  <support name="membind.firsttouch_membind"/>
+  <support name="membind.bind_membind"/>
+  <support name="membind.interleave_membind"/>
+  <support name="membind.migrate_membind"/>
+  <support name="membind.get_area_memlocation"/>
+  <support name="custom.exported_support"/>
+  <cpukind cpuset="0x00000fff" forced_efficiency="0">
+    <info name="LinuxCapacity" value="1024"/>
+  </cpukind>
+</topology>
