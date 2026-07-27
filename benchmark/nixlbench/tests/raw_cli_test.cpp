@@ -322,9 +322,8 @@ namespace {
         EXPECT_EQ(out.str().find("--plugin-param"), std::string::npos);
     }
 
-    TEST(RawPosixParserTest, GatesAllFileSurfacesOnAdvertisedFileSeg) {
+    TEST(RawPosixParserTest, HelpGatesFileOptionsAndExecutionRequiresFileSeg) {
         auto metadata = posixMetadata();
-        metadata.name = "OTHER";
         metadata.memory_types = {DRAM_SEG};
         Arguments help_arguments{"nixlbench", "raw", "posix", "--help"};
         RawPosixRequest request;
@@ -340,19 +339,14 @@ namespace {
             EXPECT_EQ(out.str().find(option), std::string::npos) << option;
         }
 
-        std::ostringstream plan;
-        printRawPosixPlan(
-            request, metadata, request.raw.iterations, request.raw.warmup_iterations, plan);
-        EXPECT_EQ(plan.str().find("file-resource options:"), std::string::npos);
-        const auto arguments = benchmarkFileArguments(request, "nixlbench");
-        for (const char *prefix :
-             {"--filepath=", "--filenames=", "--num_files=", "--storage_enable_direct="}) {
-            EXPECT_TRUE(std::none_of(
-                arguments.begin(),
-                arguments.end(),
-                [prefix](const auto &argument) { return argument.rfind(prefix, 0) == 0; }))
-                << prefix;
-        }
+        Arguments run_arguments{"nixlbench", "raw", "posix"};
+        request = {};
+        help = false;
+        out.str("");
+        err.str("");
+        EXPECT_EQ(parse(run_arguments, metadata, request, out, err, help), 2);
+        EXPECT_FALSE(help);
+        EXPECT_NE(err.str().find("must advertise FILE_SEG"), std::string::npos);
     }
 
     TEST(RawPlanTest, PrintsSeparatedSectionsAndSortedExactPluginParameters) {

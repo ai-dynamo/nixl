@@ -376,6 +376,10 @@ parseRawPosixCommand(int argc,
         err << "Error: POSIX plugin must advertise DRAM_SEG for local memory\n";
         return 2;
     }
+    if (!hasMemoryType(metadata, FILE_SEG)) {
+        err << "Error: POSIX plugin must advertise FILE_SEG for backing files\n";
+        return 2;
+    }
 
     for (const auto &[key, value] : plugin_parameter_overrides) {
         request.plugin_parameters[key] = value;
