@@ -97,22 +97,6 @@ def leafJobs = [
 ]
 
 try {
-    // Restrict the fan-out to the LEAF_JOBS parameter (comma-separated branch
-    // names). Webhook runs use the default (all jobs); a leaf job can be disabled
-    // temporarily by editing the parameter default in the job config, without a PR.
-    def requested = params.LEAF_JOBS?.trim() ? params.LEAF_JOBS.split(',').collect { it.trim() }.findAll { it } : []
-    def unknown = requested.findAll { !leafJobs.containsKey(it) }
-    if (unknown) {
-        error "Unknown LEAF_JOBS entries: ${unknown.join(', ')} (valid: ${leafJobs.keySet().join(', ')})"
-    }
-    if (requested) {
-        def skipped = leafJobs.keySet() - (requested as Set)
-        if (skipped) {
-            echo "LEAF_JOBS: skipping ${skipped.join(', ')}"
-        }
-        leafJobs = leafJobs.subMap(requested)
-    }
-
     // Compute the merged SHA once so all leaf jobs test the same commit
     def mergedSHA = githubHelper.getMergedSHA()
 
