@@ -18,6 +18,7 @@
 #define NIXL_SRC_CORE_DEVICE_PROXY_PROXY_RUNTIME_H
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -27,6 +28,7 @@
 #include "backend_aux.h"
 #include "proxy_protocol.h"
 #include "backend_adapter.h"
+#include "gdrcopy/nixl_gdr_buffer.h"
 
 class ProxyWorker;
 
@@ -54,16 +56,20 @@ struct alignas(64) nixlProxyChannelState {
     std::vector<nixlProxyRequestState> inflight_slots_;
     /** Host-only frontier advanced after a record is posted to the backend. */
     uint64_t submit_idx_ = 0;
+    /** Host shadow of the authoritative GPU-visible consumer index. */
+    uint64_t consumer_idx_shadow_ = 0;
     bool error_latched = false;
 
     nixlProxyWorkRing *work_ring_dev_ = nullptr;
     nixlProxySubmission *records_host_ = nullptr;
     /** Device-resident producer index; only the GPU updates it. */
     uint64_t *producer_idx_dev_ = nullptr;
-    /** Consumer count: host pinned; proxy uses __atomic_* on consumer_idx_host_. */
-    uint64_t *consumer_idx_host_ = nullptr;
-    /** Device-resident cache of consumer_idx_host_ used by GPU enqueue backpressure. */
+    /** Authoritative consumer count; CPU publishes through GDRCopy or mapped host memory. */
+    uint64_t *consumer_idx_dev_ = nullptr;
+    /** Device-resident cache of consumer_idx_dev_ used by GPU enqueue backpressure. */
     uint64_t *consumer_idx_cache_dev_ = nullptr;
+    nixlGdrBuffer *consumer_indices_ = nullptr;
+    uint32_t consumer_idx_slot_ = 0;
     /** Host-side ring depth for the CPU worker; nixlProxyWorkRing itself is device-only. */
     uint32_t ring_depth_ = 0;
     /** Mapped pinned host memory; proxy worker writes directly via host alias. */
@@ -81,7 +87,14 @@ struct alignas(64) nixlProxyChannelState {
     operator=(const nixlProxyChannelState &) = delete;
 
     nixl_status_t
-    allocate(uint32_t peer_index, uint32_t channel_id, uint32_t depth);
+    allocate(uint32_t peer_index,
+             uint32_t channel_id,
+             uint32_t depth,
+             nixlGdrBuffer *consumer_indices,
+             uint32_t consumer_idx_slot);
+
+    nixl_status_t
+    publishConsumerIdx(uint64_t value) noexcept;
 
     bool
     allocated() const {
@@ -359,6 +372,7 @@ private:
     reconcileRemotePeers(const nixl_remote_meta_dlist_t &dlist);
 
     std::vector<nixlProxyChannelState> channels_;
+    nixlGdrBuffer consumer_indices_;
     std::vector<nixlProxyChannelView> device_channel_views_;
     nixlProxyChannelView *device_channel_views_dev_ = nullptr;
     nixlProxyDeviceContextData *device_context_ = nullptr;

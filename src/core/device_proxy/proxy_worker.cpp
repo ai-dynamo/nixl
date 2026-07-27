@@ -135,7 +135,7 @@ ProxyWorker::runOnce() {
 
 bool
 ProxyWorker::submitReady(nixlProxyChannelState &channel) {
-    const uint64_t consumer_idx = __atomic_load_n(channel.consumer_idx_host_, __ATOMIC_RELAXED);
+    const uint64_t consumer_idx = channel.consumer_idx_shadow_;
     const uint64_t submit_idx = channel.submit_idx_;
     if (submit_idx - consumer_idx >= channel.ring_depth_) {
         return false;
@@ -213,7 +213,7 @@ ProxyWorker::driveBackendProgress() {
 void
 ProxyWorker::publishCompletions(nixlProxyChannelState &channel) {
     for (;;) {
-        const uint64_t consumer_idx = __atomic_load_n(channel.consumer_idx_host_, __ATOMIC_RELAXED);
+        const uint64_t consumer_idx = channel.consumer_idx_shadow_;
         if (consumer_idx == channel.submit_idx_) {
             break;
         }
@@ -246,6 +246,13 @@ ProxyWorker::publishCompletions(nixlProxyChannelState &channel) {
             }
         }
         front = nixlProxyRequestState{};
-        __atomic_store_n(channel.consumer_idx_host_, consumer_idx + 1, __ATOMIC_RELEASE);
+        if (channel.publishConsumerIdx(consumer_idx + 1) != NIXL_SUCCESS) {
+            NIXL_ERROR << "ProxyWorker::publishCompletions: failed to publish CI"
+                       << " channel=" << channel.device_view.channel_id
+                       << " peer=" << channel.device_view.peer_index
+                       << " consumer_idx=" << consumer_idx + 1;
+            channel.error_latched = true;
+            break;
+        }
     }
 }
