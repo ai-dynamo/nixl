@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,16 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
-subdir('stream')
-subdir('file')
-subdir('object')
-
-if cuda_dep.found()
-    subdir('gdrcopy')
+gdrcopy_utils_deps = [cuda_dep, nixl_common_dep]
+if have_gdrcopy
+    gdrcopy_utils_deps += [gdrcopy_dep]
 endif
 
-if libfabric_dep.found()
-    subdir('libfabric')
-endif
+gdrcopy_utils_lib = library(
+    'nixl_gdrcopy_utils',
+    'nixl_gdr_buffer.cpp',
+    'nixl_gdr_buffer.h',
+    include_directories: [nixl_inc_dirs, utils_inc_dirs],
+    dependencies: gdrcopy_utils_deps,
+    install: true,
+)
+
+gdrcopy_utils_interface = declare_dependency(link_with: gdrcopy_utils_lib)
