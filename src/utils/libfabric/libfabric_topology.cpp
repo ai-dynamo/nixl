@@ -72,6 +72,18 @@ nixlLibfabricTopology::discoverTopology() {
         return status;
     }
 
+    // Discover accelerators from hwloc early, before provider selection.
+    // This lets the Neuron/EFA preflight (below) fire even when the libfabric
+    // provider falls back to tcp/sockets (see PR discussion on ai-dynamo/nixl#1994).
+    // If EFA discovery runs later, `discoverAccelWithHwloc()` is called again
+    // from within `discoverHwlocTopology()`; both calls are idempotent, as they
+    // reset counters at the start.
+    status = discoverAccelWithHwloc();
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to discover accelerators from hwloc";
+        return status;
+    }
+
     status = discoverProviderWithDevices();
     if (status != NIXL_SUCCESS) {
         return status;
@@ -160,6 +172,24 @@ nixlLibfabricTopology::discoverTopology() {
         // For TCP/sockets devices, bypass complex topology discovery
         NIXL_INFO << "Using simplified topology for " << provider_name
                   << " devices (no topology mapping needed)";
+
+        // Preflight for TCP fallback with Neuron accelerators present: this typically
+        // means the instance has Neuron devices but no EFA NIC was found (either the
+        // instance type has no per-Neuron-device EFA, or it was launched without any
+        // EFA-typed network interfaces). Warn here before clearing num_aws_accel below.
+        if (num_aws_accel > 0 && num_nvidia_accel == 0) {
+            NIXL_WARN
+                << "Discovered " << num_aws_accel
+                << " Neuron accelerator(s) but the libfabric provider selected `" << provider_name
+                << "` (no EFA). FI_HMEM_NEURON memory registration is not available on the `"
+                << provider_name
+                << "` provider. On AWS, launch the instance with EFA network interfaces attached "
+                   "(e.g. `--network-interfaces InterfaceType=efa` per NetworkCardIndex). On "
+                   "trn2.48xlarge attach 16 EFA NICs (one per Neuron device); on Trn3 attach the "
+                   "count matching the instance size. Instance types without any per-Neuron-device "
+                   "EFA (e.g. trn2.3xlarge, which exposes only a single host-level EFA) are not "
+                   "supported by the libfabric plugin for VRAM_SEG memory transfers.";
+        }
 
         // Set basic values without hwloc discovery
         num_nvidia_accel = 0; // TCP doesn't need accelerator topology

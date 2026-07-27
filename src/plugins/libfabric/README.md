@@ -47,21 +47,28 @@ Not all Neuron instance sizes meet this requirement. In particular:
 | `trn2.3xlarge` | 4 | 1 (host-level EFA only) | **No** -- single host EFA cannot be routed to individual Neuron devices |
 | `trn3.*` | varies | varies | Match Neuron device count to EFA interface count |
 
-**Launching trn2.48xlarge with all EFA NICs:** the default `aws ec2 run-instances` invocation only attaches a single ENA (non-EFA) interface, even on instance types that support 16 EFA NICs. You must explicitly attach 16 EFA-typed network interfaces at launch time. Example partial launch spec (JSON for `--cli-input-json`):
+**Launching trn2.48xlarge with all EFA NICs:** the default `aws ec2 run-instances` invocation only attaches a single ENA (non-EFA) interface, even on instance types that support 16 EFA NICs. You must explicitly attach 16 EFA-typed network interfaces at launch time -- one per `NetworkCardIndex` (0-15). The launch spec's `NetworkInterfaces` array should contain 16 entries in this shape (values shown are illustrative; substitute real subnet and security-group IDs):
 
 ```json
 {
-  "InstanceType": "trn2.48xlarge",
-  "NetworkInterfaces": [
-    {"DeviceIndex": 0, "NetworkCardIndex": 0, "InterfaceType": "efa",
-     "SubnetId": "...", "Groups": ["..."]},
-    {"DeviceIndex": 1, "NetworkCardIndex": 1, "InterfaceType": "efa",
-     "SubnetId": "...", "Groups": ["..."]},
-    ...
-    {"DeviceIndex": 1, "NetworkCardIndex": 15, "InterfaceType": "efa",
-     "SubnetId": "...", "Groups": ["..."]}
-  ]
+  "DeviceIndex": <0 for the primary interface, 1 for the rest>,
+  "NetworkCardIndex": <0..15>,
+  "InterfaceType": "efa",
+  "SubnetId": "subnet-xxxxxxxxxxxxxxxxx",
+  "Groups": ["sg-xxxxxxxxxxxxxxxxx"]
 }
+```
+
+Or generate the full 16-entry array programmatically with a short Python helper:
+
+```python
+import json
+nifs = [{"DeviceIndex": 0 if i == 0 else 1,
+         "NetworkCardIndex": i,
+         "InterfaceType": "efa",
+         "SubnetId": "subnet-xxxxxxxxxxxxxxxxx",
+         "Groups": ["sg-xxxxxxxxxxxxxxxxx"]} for i in range(16)]
+print(json.dumps({"NetworkInterfaces": nifs}, indent=2))
 ```
 
 Verify on the running instance:
