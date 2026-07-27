@@ -154,8 +154,8 @@ namespace proxy_runtime {
         return view;
     }
 
-    // Resolve the pinned-host alias of a device-mapped pointer (ring records, completion
-    // slot, ...). The device side hands out a device alias; tests poke the host alias.
+    // Resolve the pinned-host alias of a device-mapped submission or completion buffer.
+    // GDR-backed control words do not have CUDA host aliases and must be read as device memory.
     template<class T>
     static T *
     hostAliasOf(T *device_alias) {
@@ -755,9 +755,7 @@ namespace proxy_runtime {
         const nixlProxyChannelView &view = runtime_.deviceChannelViews()[0];
         nixlProxyWorkRing ring = copyDeviceWorkRing(view);
         auto *records = hostAliasOf(ring.records);
-        auto *consumer = hostAliasOf(ring.consumer_idx);
         ASSERT_NE(records, nullptr);
-        ASSERT_NE(consumer, nullptr);
 
         // Leave an unsubmitted record and advance the producer frontier past it.
         const uint64_t producer_idx = 3;
@@ -774,7 +772,12 @@ namespace proxy_runtime {
                   NIXL_SUCCESS);
 
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::INACTIVE);
-        EXPECT_EQ(__atomic_load_n(consumer, __ATOMIC_ACQUIRE), producer_idx);
+        uint64_t consumer_idx = 0;
+        ASSERT_EQ(
+            cudaMemcpy(
+                &consumer_idx, ring.consumer_idx, sizeof(consumer_idx), cudaMemcpyDeviceToHost),
+            cudaSuccess);
+        EXPECT_EQ(consumer_idx, producer_idx);
         EXPECT_EQ(__atomic_load_n(&records[0].op_idx, __ATOMIC_ACQUIRE), 0u);
         EXPECT_EQ(__atomic_load_n(&records[1].op_idx, __ATOMIC_ACQUIRE), 0u);
         EXPECT_EQ(__atomic_load_n(&records[2].op_idx, __ATOMIC_ACQUIRE), 0u);
