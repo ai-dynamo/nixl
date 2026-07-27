@@ -883,18 +883,18 @@ testNeuronTopology(const NeuronTopologyInfo &topology_info) {
     // pretend an EFA-only topology (curr_topology is unused for accelerator counts, but
     // the fi_getinfo mock reads curr_topology->nic_line_speed; provide a compatible
     // dummy).
-    static TopologyInfo dummy = {.enable = true,
-                                 .instance_type = topology_info.instance_type,
-                                 .topo_file = topology_info.topo_file,
-                                 .numa_node_count = 0,
-                                 .nic_count = static_cast<size_t>(topology_info.expected_nic_count),
-                                 .nic_line_speed = 200, // arbitrary; not asserted here
-                                 .nic_upstream_link_speed = 0,
-                                 .switch_count = 0,
-                                 .numa_capacity = 0,
-                                 .numa_rail_count = 0,
-                                 .test_scenarios = {},
-                                 .rail_partition = {}};
+    TopologyInfo dummy = {.enable = true,
+                          .instance_type = topology_info.instance_type,
+                          .topo_file = topology_info.topo_file,
+                          .numa_node_count = 0,
+                          .nic_count = static_cast<size_t>(topology_info.expected_nic_count),
+                          .nic_line_speed = 200, // arbitrary; not asserted here
+                          .nic_upstream_link_speed = 0,
+                          .switch_count = 0,
+                          .numa_capacity = 0,
+                          .numa_rail_count = 0,
+                          .test_scenarios = {},
+                          .rail_partition = {}};
     curr_topology = &dummy;
     NIXL_TRACE << "Testing Neuron topology: " << topology_info.instance_type;
 
@@ -904,16 +904,19 @@ testNeuronTopology(const NeuronTopologyInfo &topology_info) {
     // tell hwloc to load topology from XML file
     setenv("HWLOC_XMLFILE", topology_info.topo_file, 1);
 
-    // RAII guard: unconditionally undo the env changes above (and clear the runtime
-    // testing flag) on every exit path, including any exception thrown from
+    // RAII guard: unconditionally undo the env changes above (clear the runtime
+    // testing flag, unset HWLOC_XMLFILE) and drop the dangling `curr_topology`
+    // pointer on every exit path, including any exception thrown from
     // nixlLibfabricTopology's constructor. Without this, a regression that caused an
     // unexpected throw in the positive-case branch below would leave
     // NIXL_LIBFABRIC_TESTING set and HWLOC_XMLFILE pointing at the Trainium fixture,
-    // corrupting the subsequent DRAM_SEG tests in main().
+    // corrupting the subsequent DRAM_SEG tests in main(). Also nulls curr_topology
+    // to avoid dangling to the stack-local `dummy` below.
     struct TestEnvGuard {
         ~TestEnvGuard() {
             clearTesting();
             unsetenv("HWLOC_XMLFILE");
+            curr_topology = nullptr;
         }
     } env_guard;
 
