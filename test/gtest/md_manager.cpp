@@ -83,23 +83,6 @@ namespace {
         return last;
     }
 
-    // Bounded polling around fetchRemoteMD for synchronous KV backends: a
-    // one-shot fetch can race a peer's just-issued publish and return
-    // NIXL_ERR_NOT_FOUND until the store write lands, so retry until it does.
-    nixl_status_t
-    waitForFetch(nixlAgent *agent,
-                 const std::string &remote_name,
-                 std::chrono::milliseconds timeout = std::chrono::seconds(3),
-                 std::chrono::milliseconds interval = std::chrono::milliseconds(25)) {
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        nixl_status_t last = agent->fetchRemoteMD(remote_name, nullptr);
-        while (last == NIXL_ERR_NOT_FOUND && std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(interval);
-            last = agent->fetchRemoteMD(remote_name, nullptr);
-        }
-        return last;
-    }
-
 } // namespace
 
 class MDManagerFixture : public testing::Test {
@@ -287,8 +270,8 @@ TEST_F(MDManagerEtcdFixture, InvalidateLocalRemovesRemote) {
 }
 
 // TCPStore (KV) backend: a no-address metadata call routes through the manager's
-// TCPStore backend, which does synchronous store I/O over the c10d wire protocol
-// (no libtorch). Gated on a live store via NIXL_TCPSTORE_ENDPOINTS (host:port),
+// TCPStore backend, which does its store I/O over the c10d wire protocol
+// (no libtorch). Gated on a live store via NIXL_TCPSTORE_ENDPOINT (host:port),
 // e.g. a torch.distributed.TCPStore master.
 class MDManagerTcpStoreFixture : public testing::Test {
 protected:
@@ -301,8 +284,8 @@ protected:
 
     void
     SetUp() override {
-        if (std::getenv("NIXL_TCPSTORE_ENDPOINTS") == nullptr) {
-            GTEST_SKIP() << "NIXL_TCPSTORE_ENDPOINTS not set; skipping TCPStore backend tests";
+        if (std::getenv("NIXL_TCPSTORE_ENDPOINT") == nullptr) {
+            GTEST_SKIP() << "NIXL_TCPSTORE_ENDPOINT not set; skipping TCPStore backend tests";
         }
         // ETCD and TCPStore are mutually exclusive; with both set the manager
         // selects ETCD and the agent ctor throws, so skip rather than exercise
@@ -369,7 +352,9 @@ TEST_F(MDManagerTcpStoreFixture, SendAndFetchByName) {
     auto &dst = agents_[1];
 
     ASSERT_EQ(src.agent->sendLocalMD(nullptr), NIXL_SUCCESS);
-    ASSERT_EQ(waitForFetch(dst.agent.get(), src.name), NIXL_SUCCESS);
+    // The fetch is asynchronous and stays pending until the key appears, so no
+    // retry loop is needed around it; readiness is observed via checkRemoteMD.
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, nullptr), NIXL_SUCCESS);
     EXPECT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
 }
 
@@ -378,13 +363,19 @@ TEST_F(MDManagerTcpStoreFixture, InvalidateLocalRemovesRemote) {
     auto &dst = agents_[1];
 
     ASSERT_EQ(src.agent->sendLocalMD(nullptr), NIXL_SUCCESS);
-    ASSERT_EQ(waitForFetch(dst.agent.get(), src.name), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, nullptr), NIXL_SUCCESS);
     ASSERT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
 
-    // invalidateLocal removes the key from the store; the already-loaded remote
-    // cache is dropped by re-fetching (store now returns NOT_FOUND).
+    // invalidateLocal removes the key from the store. TCPStore has no watch, so
+    // the peer drops its cached copy itself; the re-fetch then finds nothing and
+    // the entry stays absent.
     ASSERT_EQ(src.agent->invalidateLocalMD(nullptr), NIXL_SUCCESS);
-    EXPECT_EQ(dst.agent->fetchRemoteMD(src.name, nullptr), NIXL_ERR_NOT_FOUND);
+    ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, nullptr), NIXL_SUCCESS);
+    EXPECT_EQ(
+        waitForRemoteMD(
+            dst.agent.get(), src.name, {DRAM_SEG}, NIXL_SUCCESS, std::chrono::milliseconds(500)),
+        NIXL_ERR_NOT_FOUND);
 }
 
 } // namespace gtest::md_manager

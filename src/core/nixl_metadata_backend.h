@@ -24,12 +24,30 @@
 #include "nixl_descriptors.h"
 #include "nixl_types.h"
 
+#include <chrono>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
 
 /** A unit of transport I/O produced on the caller thread, run on the worker. */
 using nixlWorkerTask = std::function<void()>;
+
+/**
+ * @struct nixlMDConfig
+ * @brief The agent settings the manager and its backends need, carved out of
+ *        nixlAgentConfig so a backend never reaches the public nixl_params.h.
+ */
+struct nixlMDConfig {
+    /** P2P: listen for inbound peers. */
+    bool useListenThread = false;
+    /** P2P: port the listener binds. */
+    std::uint16_t listenPort = 0;
+    /** ETCD: how long a fetch waits on a watch for a key to appear. */
+    std::chrono::microseconds etcdWatchTimeout{0};
+    /** Manager: delay between worker loop iterations, in microseconds. */
+    std::uint64_t workerDelay = 0;
+};
 
 /**
  * @struct nixlPreparedOp

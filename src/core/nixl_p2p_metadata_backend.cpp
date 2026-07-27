@@ -183,8 +183,8 @@ recvCommMessage(int fd, std::string &msg) {
 } // namespace
 
 nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx) : ctx_(ctx) {
-    if (ctx_.getConfig().useListenThread) {
-        listener_ = std::make_unique<nixlMDStreamListener>(ctx_.getConfig().listenPort);
+    if (ctx_.mdConfig().useListenThread) {
+        listener_ = std::make_unique<nixlMDStreamListener>(ctx_.mdConfig().listenPort);
         listener_->setupListener(); // throws on bind/listen failure
     }
 }
@@ -205,7 +205,7 @@ nixlP2PMetadataBackend::name() const {
 
 bool
 nixlP2PMetadataBackend::needsWorker() const {
-    return ctx_.getConfig().useListenThread;
+    return ctx_.mdConfig().useListenThread;
 }
 
 nixlPreparedOp
@@ -264,7 +264,7 @@ nixlP2PMetadataBackend::prepareInvalidateLocal(const nixl_opt_args_t *extra_para
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
     return {NIXL_SUCCESS,
-            [this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:INVL" + ctx_.getName()); }};
+            [this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:INVL" + ctx_.agentName()); }};
 }
 
 void

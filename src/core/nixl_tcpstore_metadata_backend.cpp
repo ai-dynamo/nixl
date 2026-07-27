@@ -25,37 +25,52 @@
 
 #include <charconv>
 #include <chrono>
+#include <memory>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace {
 
 // Key layout mirrors the ETCD namespace and the architecture doc (Sec 2.4):
 // {namespace}/{label}/{src_agent}/{dst_agent | null_agent}. Full/broadcast
-// metadata uses dst = nixl_null_agent (shared to all).
-constexpr char namespace_prefix[] = "/nixl/agents";
+// metadata uses dst = nixl_null_agent (shared to all). No leading slash: the
+// client prepends the "/" that c10d clients use.
+constexpr char namespace_prefix[] = "nixl/agents";
 
-// Bound the connect and each blocking store op. Overridable for slow bring-up.
+// Bring-up budget: bounds the initial connect and how long a fetch keeps
+// waiting for a peer that has not published yet. Overridable for slow bring-up.
 constexpr long default_timeout_ms = 30000;
+
+// Bound on a single store operation once running. Kept well under the bring-up
+// budget because these run on the manager's shared worker thread.
+constexpr long default_op_timeout_ms = 5000;
 
 [[nodiscard]] std::string
 makeKey(const std::string &label, const std::string &src, const std::string &dst) {
     return std::string(namespace_prefix) + "/" + label + "/" + src + "/" + dst;
 }
 
-} // namespace
+[[nodiscard]] std::chrono::milliseconds
+bringUpTimeout() {
+    return std::chrono::milliseconds(
+        nixl::config::getValueDefaulted<long>("NIXL_TCPSTORE_TIMEOUT_MS", default_timeout_ms));
+}
 
-nixlTcpStoreMetadataBackend::nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx) : ctx_(ctx) {
-    const std::string endpoints = nixl::config::getNonEmptyString("NIXL_TCPSTORE_ENDPOINTS");
+// Parse and connect, so client_ can be a const member built in the init list.
+[[nodiscard]] std::unique_ptr<nixlTcpStoreClient>
+makeClient() {
+    const std::string endpoint = nixl::config::getNonEmptyString("NIXL_TCPSTORE_ENDPOINT");
 
-    // NIXL_TCPSTORE_ENDPOINTS is a single host:port (rfind keeps IPv4 hosts and
+    // NIXL_TCPSTORE_ENDPOINT is a single host:port (rfind keeps IPv4 hosts and
     // bracketless names simple; the port is the trailing field).
-    const auto pos = endpoints.rfind(':');
-    if (pos == std::string::npos || pos == 0 || pos + 1 >= endpoints.size()) {
-        throw std::runtime_error("NIXL_TCPSTORE_ENDPOINTS must be host:port, got: " + endpoints);
+    const auto pos = endpoint.rfind(':');
+    if (pos == std::string::npos || pos == 0 || pos + 1 >= endpoint.size()) {
+        throw std::runtime_error("NIXL_TCPSTORE_ENDPOINT must be host:port, got: " + endpoint);
     }
-    const std::string host = endpoints.substr(0, pos);
-    const std::string port_str = endpoints.substr(pos + 1);
+    const std::string host = endpoint.substr(0, pos);
+    const std::string port_str = endpoint.substr(pos + 1);
     // from_chars (not stoul) so trailing junk like "123abc" is rejected instead
     // of silently parsing to 123 and connecting to the wrong port.
     unsigned int port = 0;
@@ -63,15 +78,23 @@ nixlTcpStoreMetadataBackend::nixlTcpStoreMetadataBackend(nixlMetadataContext &ct
         std::from_chars(port_str.data(), port_str.data() + port_str.size(), port);
     if (ec != std::errc{} || parse_end != port_str.data() + port_str.size() || port == 0 ||
         port > 65535) {
-        throw std::runtime_error("NIXL_TCPSTORE_ENDPOINTS has invalid port: " + port_str);
+        throw std::runtime_error("NIXL_TCPSTORE_ENDPOINT has invalid port: " + port_str);
     }
 
-    const long timeout_ms =
-        nixl::config::getValueDefaulted<long>("NIXL_TCPSTORE_TIMEOUT_MS", default_timeout_ms);
+    const auto op_timeout = std::chrono::milliseconds(nixl::config::getValueDefaulted<long>(
+        "NIXL_TCPSTORE_OP_TIMEOUT_MS", default_op_timeout_ms));
 
-    client_ = std::make_unique<nixlTcpStoreClient>(
-        host, static_cast<std::uint16_t>(port), std::chrono::milliseconds(timeout_ms));
-    NIXL_DEBUG << "[" << ctx_.getName() << "] connected TCPStore client to " << endpoints;
+    return std::make_unique<nixlTcpStoreClient>(
+        host, static_cast<std::uint16_t>(port), bringUpTimeout(), op_timeout);
+}
+
+} // namespace
+
+nixlTcpStoreMetadataBackend::nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx)
+    : ctx_(ctx),
+      fetchTimeout_(bringUpTimeout()),
+      client_(makeClient()) {
+    NIXL_DEBUG << "[" << ctx_.agentName() << "] connected TCPStore client";
 }
 
 nixlTcpStoreMetadataBackend::~nixlTcpStoreMetadataBackend() = default;
@@ -81,17 +104,17 @@ nixlTcpStoreMetadataBackend::publishKey(const std::string &key, const nixl_blob_
     // Hold publishedMutex_ across the store write and the tracking update so a
     // concurrent invalidateLocal cannot delete this key's snapshot mid-publish,
     // which would drop the fresh value and leave publishedKeys_ out of sync.
-    const std::lock_guard<std::mutex> lk(publishedMutex_);
+    const std::lock_guard lk(publishedMutex_);
     try {
         client_->set(key, blob);
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << "[" << ctx_.getName() << "] TCPStore set failed for key " << key << ": "
+        NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore set failed for key " << key << ": "
                    << e.what();
         return NIXL_ERR_BACKEND;
     }
     publishedKeys_.insert(key);
-    NIXL_DEBUG << "[" << ctx_.getName() << "] TCPStore published key " << key;
+    NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore published key " << key;
     return NIXL_SUCCESS;
 }
 
@@ -102,7 +125,7 @@ nixlTcpStoreMetadataBackend::prepareSendLocal(const nixl_opt_args_t * /*extra_pa
     if (ret < 0) {
         return {ret, {}};
     }
-    const std::string key = makeKey(default_metadata_label, ctx_.getName(), nixl_null_agent);
+    const std::string key = makeKey(default_metadata_label, ctx_.agentName(), nixl_null_agent);
     return {NIXL_SUCCESS, [this, key, blob = std::move(blob)]() { (void)publishKey(key, blob); }};
 }
 
@@ -118,7 +141,7 @@ nixlTcpStoreMetadataBackend::prepareSendLocalPartial(const nixl_reg_dlist_t &des
     if (ret < 0) {
         return {ret, {}};
     }
-    const std::string key = makeKey(extra_params->metadataLabel, ctx_.getName(), nixl_null_agent);
+    const std::string key = makeKey(extra_params->metadataLabel, ctx_.agentName(), nixl_null_agent);
     return {NIXL_SUCCESS, [this, key, blob = std::move(blob)]() { (void)publishKey(key, blob); }};
 }
 
@@ -132,45 +155,64 @@ nixlTcpStoreMetadataBackend::prepareFetchRemote(const std::string &remote_name,
 
     // The fetch runs on the worker thread; the result lands in the agent cache
     // (observed via checkRemoteMD), matching the async model of the other backends.
+    // A key that is not published yet is kept pending rather than dropped, so a
+    // caller polling checkRemoteMD still converges once the peer publishes.
     return {NIXL_SUCCESS, [this, remote_name, key]() {
-                try {
-                    if (!client_->check(key)) {
-                        NIXL_DEBUG << "[" << ctx_.getName()
-                                   << "] TCPStore key not yet present: " << key;
-                        return;
-                    }
-                    const nixl_blob_t blob = client_->get(key);
-                    if (blob.empty()) {
-                        // The key was deleted between check() and get() (raced invalidate);
-                        // an empty read is never a valid MD blob.
-                        NIXL_DEBUG << "[" << ctx_.getName()
-                                   << "] TCPStore key vanished between check and get: " << key;
-                        return;
-                    }
-                    std::string loaded_name;
-                    const nixl_status_t ret = ctx_.loadRemoteMD(blob, loaded_name);
-                    if (ret < 0) {
-                        NIXL_ERROR << "[" << ctx_.getName()
-                                   << "] failed to load metadata fetched for " << remote_name
-                                   << " with status " << ret;
-                        return;
-                    }
-                    if (loaded_name != remote_name) {
-                        // A corrupted or mis-keyed store value could carry another agent's
-                        // metadata; reject it rather than accept it under the wrong name.
-                        NIXL_ERROR << "[" << ctx_.getName() << "] TCPStore metadata for "
-                                   << remote_name << " embeds mismatched agent name "
-                                   << loaded_name;
-                        return;
-                    }
-                    NIXL_DEBUG << "[" << ctx_.getName() << "] TCPStore fetched metadata for "
-                               << remote_name;
-                }
-                catch (const std::exception &e) {
-                    NIXL_ERROR << "[" << ctx_.getName() << "] TCPStore fetch failed for key " << key
-                               << ": " << e.what();
+                if (!tryFetch(remote_name, key)) {
+                    pendingFetches_[remote_name] = {
+                        key, std::chrono::steady_clock::now() + fetchTimeout_};
                 }
             }};
+}
+
+bool
+nixlTcpStoreMetadataBackend::tryFetch(const std::string &remote_name, const std::string &key) {
+    try {
+        const std::optional<std::string> blob = client_->get(key);
+        if (!blob) {
+            NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore key not yet present: " << key;
+            return false;
+        }
+        std::string loaded_name;
+        const nixl_status_t ret = ctx_.loadRemoteMD(*blob, loaded_name);
+        if (ret < 0) {
+            NIXL_ERROR << "[" << ctx_.agentName() << "] failed to load metadata fetched for "
+                       << remote_name << " with status " << ret;
+            return true;
+        }
+        if (loaded_name != remote_name) {
+            // A corrupted or mis-keyed store value could carry another agent's
+            // metadata; reject it rather than accept it under the wrong name.
+            NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore metadata for " << remote_name
+                       << " embeds mismatched agent name " << loaded_name;
+            return true;
+        }
+        NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore fetched metadata for " << remote_name;
+        return true;
+    }
+    catch (const std::exception &e) {
+        // Transport failure: the client reconnects on the next attempt, so this
+        // is retried like an absent key rather than failing the fetch outright.
+        NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch failed for key " << key << ": "
+                   << e.what();
+        return false;
+    }
+}
+
+void
+nixlTcpStoreMetadataBackend::serviceEvents() {
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = pendingFetches_.begin(); it != pendingFetches_.end();) {
+        if (tryFetch(it->first, it->second.key)) {
+            it = pendingFetches_.erase(it);
+        } else if (now >= it->second.deadline) {
+            NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch for " << it->first
+                       << " gave up waiting for key " << it->second.key;
+            it = pendingFetches_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 nixlPreparedOp
@@ -179,7 +221,7 @@ nixlTcpStoreMetadataBackend::prepareInvalidateLocal(const nixl_opt_args_t * /*ex
                 // Hold publishedMutex_ across the deletes and the tracking reset so this
                 // serializes with publishKey; lock order is always publishedMutex_ ->
                 // client mutex, so there is no deadlock.
-                const std::lock_guard<std::mutex> lk(publishedMutex_);
+                const std::lock_guard lk(publishedMutex_);
                 try {
                     for (const auto &key : publishedKeys_) {
                         client_->deleteKey(key);
@@ -187,13 +229,13 @@ nixlTcpStoreMetadataBackend::prepareInvalidateLocal(const nixl_opt_args_t * /*ex
                 }
                 catch (const std::exception &e) {
                     // Keep publishedKeys_ intact so a later invalidate retries the deletes.
-                    NIXL_ERROR << "[" << ctx_.getName()
+                    NIXL_ERROR << "[" << ctx_.agentName()
                                << "] TCPStore invalidate failed: " << e.what();
                     return;
                 }
                 const std::size_t count = publishedKeys_.size();
                 publishedKeys_.clear();
-                NIXL_DEBUG << "[" << ctx_.getName() << "] TCPStore invalidated " << count
+                NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore invalidated " << count
                            << " key(s)";
             }};
 }

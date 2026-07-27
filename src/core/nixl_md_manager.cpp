@@ -50,12 +50,12 @@ namespace {
 // ETCD and TCPStore are mutually exclusive (a run uses exactly one).
 [[nodiscard]] std::unique_ptr<nixlMetadataBackend>
 makeBackend([[maybe_unused]] nixlMetadataContext &ctx) {
-    const bool use_tcpstore = nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINTS");
+    const bool use_tcpstore = nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINT");
 #if HAVE_ETCD
     if (nixlMDManager::etcdConfigured()) {
         if (use_tcpstore) {
             throw std::runtime_error(
-                "NIXL_ETCD_ENDPOINTS and NIXL_TCPSTORE_ENDPOINTS are mutually exclusive");
+                "NIXL_ETCD_ENDPOINTS and NIXL_TCPSTORE_ENDPOINT are mutually exclusive");
         }
         return std::make_unique<nixlEtcdMetadataBackend>(ctx);
     }
@@ -79,11 +79,11 @@ hasAddress(const nixl_opt_args_t *extra_params) {
 noTransport() {
 #if HAVE_ETCD
     NIXL_ERROR_FUNC << "no peer address provided and no centralized store configured "
-                       "(set NIXL_ETCD_ENDPOINTS or NIXL_TCPSTORE_ENDPOINTS)";
+                       "(set NIXL_ETCD_ENDPOINTS or NIXL_TCPSTORE_ENDPOINT)";
     return NIXL_ERR_INVALID_PARAM;
 #else
     NIXL_ERROR_FUNC << "no peer address provided and no centralized store configured "
-                       "(set NIXL_TCPSTORE_ENDPOINTS; this build has no ETCD)";
+                       "(set NIXL_TCPSTORE_ENDPOINT; this build has no ETCD)";
     return NIXL_ERR_NOT_SUPPORTED;
 #endif
 }
@@ -108,11 +108,9 @@ nixlMDManager::nixlMDManager(nixlMetadataContext &ctx)
       p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx)),
       backend_(makeBackend(ctx)) {}
 
-nixlMDManager::~nixlMDManager() {
-    // Safety net: stop the worker before the backends (members) are destroyed,
-    // even if the agent did not call stop() explicitly.
-    stop();
-}
+// worker_ is declared after both backends, so ~nixlMetadataWorker joins before
+// they are destroyed; nothing extra is needed here.
+nixlMDManager::~nixlMDManager() = default;
 
 template<typename Prepare>
 nixl_status_t
@@ -175,11 +173,15 @@ nixlMDManager::pollBackends() {
     }
 }
 
+bool
+nixlMDManager::needsWorker() const {
+    return p2pBackend_->needsWorker() || (backend_ && backend_->needsWorker());
+}
+
 void
 nixlMDManager::start() {
-    const bool need = p2pBackend_->needsWorker() || (backend_ && backend_->needsWorker());
-    if (need) {
-        worker_.start([this] { pollBackends(); }, ctx_.getConfig().lthrDelay);
+    if (needsWorker()) {
+        worker_.start([this] { pollBackends(); }, ctx_.mdConfig().workerDelay);
     }
 }
 
@@ -202,7 +204,6 @@ nixlMetadataWorker::start(Poll poll, nixlTime::us_t delay) {
     poll_ = std::move(poll);
     delay_ = delay;
     stop_.store(false);
-    accepting_.store(true);
     thread_ = std::thread([this] {
         try {
             loop();
@@ -218,12 +219,12 @@ nixlMetadataWorker::stop() {
     if (!thread_.joinable()) {
         return;
     }
-    // Stop accepting new work, then let the loop drain what is queued so a
-    // send/invalidate issued just before shutdown still reaches the peer/store.
-    accepting_.store(false);
+    // Let the loop drain what is queued so a send/invalidate issued just before
+    // shutdown still reaches the peer/store. Nothing can enqueue meanwhile: only
+    // route() submits, and it is reachable only from the agent's public methods.
     while (true) {
         {
-            const std::lock_guard<std::mutex> lk(mutex_);
+            const std::lock_guard lk(mutex_);
             if (tasks_.empty()) {
                 break;
             }
@@ -245,10 +246,7 @@ nixlMetadataWorker::stop() {
 
 void
 nixlMetadataWorker::submit(nixlWorkerTask task) {
-    if (!accepting_.load()) {
-        return;
-    }
-    const std::lock_guard<std::mutex> lk(mutex_);
+    const std::lock_guard lk(mutex_);
     tasks_.push_back(std::move(task));
 }
 
@@ -257,7 +255,7 @@ nixlMetadataWorker::loop() {
     while (!stop_.load()) {
         std::deque<nixlWorkerTask> batch;
         {
-            const std::lock_guard<std::mutex> lk(mutex_);
+            const std::lock_guard lk(mutex_);
             batch.swap(tasks_);
         }
         // Isolate each unit of work: one throwing task or poll is logged and the

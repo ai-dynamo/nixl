@@ -18,6 +18,7 @@
 #define NIXL_SRC_CORE_AGENT_DATA_H
 
 #include "mem_section.h"
+#include "nixl_metadata_backend.h"
 #include "telemetry.h"
 #include "tracing/trace.h"
 #include "stream/metadata_stream.h"
@@ -71,11 +72,11 @@ public:
 
     /** This agent's name; used by centralized backends to build their KV keys. */
     [[nodiscard]] virtual const std::string &
-    getName() const = 0;
+    agentName() const = 0;
 
-    /** Agent configuration a backend needs (listen port/thread, watch timeout). */
-    [[nodiscard]] virtual const nixlAgentConfig &
-    getConfig() const = 0;
+    /** The subset of the agent configuration the manager and backends need. */
+    [[nodiscard]] virtual const nixlMDConfig &
+    mdConfig() const = 0;
 
     /**
      * Deserialize a received metadata blob into the remote-section cache,
@@ -98,8 +99,13 @@ class nixlAgentData : public nixlMetadataContext {
     private:
         const std::string name_;
         const nixlAgentConfig config_;
-        const bool useEtcd_;
-        const bool needsCommThread_;
+        const nixlMDConfig mdConfig_;
+        // Agent-owned metadata manager; always built (single metadata path).
+        // It owns the worker thread and the pluggable backends (which own their
+        // own transport state: sockets/listener for P2P, client for ETCD).
+        // Declared before `lock` because whether its backends need a worker is
+        // what decides the effective sync mode.
+        const std::unique_ptr<nixlMDManager> md_;
         nixlLock        lock;
         std::atomic<bool> efaWarningChecked = false;
 
@@ -115,11 +121,6 @@ class nixlAgentData : public nixlMetadataContext {
 
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
             remoteBackends_;
-
-        // Agent-owned metadata manager; always built (single metadata path).
-        // It owns the worker thread and the pluggable backends (which now own
-        // their own transport state: sockets/listener for P2P, client for ETCD).
-        const std::unique_ptr<nixlMDManager> md_;
 
         // The order of the following data members is crucial for destruction.
         // Bookkeeping for local connection metadata and user handles per backend
@@ -141,12 +142,12 @@ class nixlAgentData : public nixlMetadataContext {
                           nixl_blob_t &blob,
                           const nixl_opt_args_t *extra_params) override;
         [[nodiscard]] const std::string &
-        getName() const override {
+        agentName() const override {
             return name_;
         }
-        [[nodiscard]] const nixlAgentConfig &
-        getConfig() const override {
-            return config_;
+        [[nodiscard]] const nixlMDConfig &
+        mdConfig() const override {
+            return mdConfig_;
         }
         [[nodiscard]] nixl_status_t
         loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) override;
@@ -169,6 +170,11 @@ class nixlAgentData : public nixlMetadataContext {
 
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &config);
+
+        // Stops and joins the metadata worker before any member is destroyed,
+        // so no task can touch the caches (remoteSections_, backendEngines_)
+        // that are torn down after this body runs.
+        ~nixlAgentData();
 
         void
         addErrorTelemetry(nixl_status_t err_status) {

@@ -74,7 +74,7 @@ public:
 
 private:
     nixlMetadataContext &ctx_;
-    std::unique_ptr<nixlEtcdClient> client_;
+    const std::unique_ptr<nixlEtcdClient> client_;
 };
 
 #endif // HAVE_ETCD

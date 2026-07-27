@@ -23,10 +23,12 @@
 
 #include "nixl_metadata_backend.h"
 
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 
 class nixlMetadataContext;
@@ -36,21 +38,20 @@ class nixlTcpStoreClient;
  * @class nixlTcpStoreMetadataBackend
  * @brief Centralized-store metadata backend over the c10d TCPStore protocol.
  *
- * Unlike the P2P/ETCD backends (which enqueue work on the agent's comm thread),
- * this backend owns a nixlTcpStoreClient (nixl_tcpstore_client.h) and does its
- * store I/O synchronously: it reuses nixlMetadataContext for serialization
- * (getLocalMD / getLocalPartialMD) and cache load (loadRemoteMD), and builds
- * its own keys. It links no libtorch; it speaks the wire protocol directly, so
- * it interoperates with a torch.distributed.TCPStore server.
+ * Owns a nixlTcpStoreClient (nixl_tcpstore_client.h) and runs its store I/O as
+ * tasks on the manager's worker thread: it reuses nixlMetadataContext for
+ * serialization (getLocalMD / getLocalPartialMD) and cache load (loadRemoteMD),
+ * and builds its own keys. It links no libtorch; it speaks the wire protocol
+ * directly, so it interoperates with a torch.distributed.TCPStore server.
  *
- * There is no native watch: fetchRemote loads synchronously, so a subsequent
- * checkRemoteMD reports readiness. When the peer has not published yet,
- * fetchRemote returns NIXL_ERR_NOT_FOUND and the caller re-initiates.
- * Selected by nixlMDManager when NIXL_TCPSTORE_ENDPOINTS is set.
+ * There is no native watch. A fetch whose key is not published yet is kept
+ * pending and re-probed from serviceEvents() until its deadline, so the caller
+ * can fetch then poll checkRemoteMD as it would with etcd.
+ * Selected by nixlMDManager when NIXL_TCPSTORE_ENDPOINT is set.
  */
 class nixlTcpStoreMetadataBackend : public nixlMetadataBackend {
 public:
-    // Health gate: reads NIXL_TCPSTORE_ENDPOINTS (host:port), connects the
+    // Health gate: reads NIXL_TCPSTORE_ENDPOINT (host:port), connects the
     // client, and throws on failure.
     explicit nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx);
 
@@ -61,11 +62,16 @@ public:
         return "TCPStore";
     }
 
-    // Ops run their store I/O on the manager's worker thread (no background poll).
+    // Ops run their store I/O on the manager's worker thread, which also drives
+    // the pending-fetch retries.
     [[nodiscard]] bool
     needsWorker() const override {
         return true;
     }
+
+    // Re-probe the fetches whose key was not published yet.
+    void
+    serviceEvents() override;
 
     [[nodiscard]] nixlPreparedOp
     prepareSendLocal(const nixl_opt_args_t *extra_params) override;
@@ -82,16 +88,32 @@ public:
     prepareInvalidateLocal(const nixl_opt_args_t *extra_params) override;
 
 private:
+    // A fetch waiting for its key to appear in the store.
+    struct pendingFetch {
+        std::string key;
+        std::chrono::steady_clock::time_point deadline;
+    };
+
     // Publish blob under key, tracking it so invalidateLocal can remove it.
     [[nodiscard]] nixl_status_t
     publishKey(const std::string &key, const nixl_blob_t &blob);
 
+    // One fetch attempt. False means "not published yet, or the store was
+    // unreachable" - i.e. worth retrying; true means the fetch is settled
+    // (loaded, or rejected for a reason a retry cannot fix).
+    [[nodiscard]] bool
+    tryFetch(const std::string &remote_name, const std::string &key);
+
     nixlMetadataContext &ctx_;
-    std::unique_ptr<nixlTcpStoreClient> client_;
+    const std::chrono::milliseconds fetchTimeout_;
+    const std::unique_ptr<nixlTcpStoreClient> client_;
     std::mutex publishedMutex_;
     // Keys this agent has published; TCPStore has no recursive delete, so
     // invalidateLocal removes exactly these.
     std::unordered_set<std::string> publishedKeys_;
+    // Remote agent name -> in-flight fetch. Only ever touched from the worker
+    // thread (both the fetch task and serviceEvents run there).
+    std::unordered_map<std::string, pendingFetch> pendingFetches_;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_TCPSTORE_METADATA_BACKEND_H

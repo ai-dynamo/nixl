@@ -152,20 +152,15 @@ resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under
 
 namespace {
 
-[[nodiscard]] bool
-detectEtcd() {
-    // Single source of truth (shared with the manager's backend selection).
-    return nixlMDManager::etcdConfigured();
-}
-
-// The comm thread (used for etcd or listen-based metadata exchange) shares
-// agent data structures (remoteSections_, remoteBackends_, …) with the caller.
-// SYNC_NONE would leave those accesses unprotected, so upgrade to STRICT.
+// The metadata worker shares agent data structures (remoteSections_,
+// remoteBackends_, …) with the caller. SYNC_NONE performs no locking at all, so
+// it is the one mode that would leave those accesses unprotected; RW and STRICT
+// are both real locking and need no upgrade.
 [[nodiscard]] nixl_thread_sync_t
-effectiveSyncMode(nixl_thread_sync_t requested, bool needs_comm_thread) {
-    if (needs_comm_thread && (requested == nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)) {
+effectiveSyncMode(nixl_thread_sync_t requested, bool needs_worker) {
+    if (needs_worker && (requested == nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)) {
         NIXL_INFO << "syncMode upgraded from NONE to STRICT "
-                     "because a communication thread will be started";
+                     "because a metadata worker thread will be started";
         return nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
     }
     return requested;
@@ -195,25 +190,22 @@ makeMDManager(nixlMetadataContext &ctx) {
     return std::make_unique<nixlMDManager>(ctx);
 }
 
+[[nodiscard]] nixlMDConfig
+makeMDConfig(const nixlAgentConfig &config) {
+    return {config.useListenThread, config.listenPort, config.etcdWatchTimeout, config.lthrDelay};
+}
+
 } // namespace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
     : name_(name),
       config_(config),
-      useEtcd_(detectEtcd()),
-      // The manager runs a worker thread when P2P listens or a centralized store
-      // (etcd/tcpstore) is configured; that thread shares agent state, so the
-      // sync mode is upgraded to STRICT in those cases.
-      needsCommThread_(useEtcd_ || config.useListenThread ||
-                       nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINTS")),
-      lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
+      mdConfig_(makeMDConfig(config)),
       md_(makeMDManager(*this)),
+      // The manager's backends decide whether a worker thread runs, and that
+      // thread shares agent state - so they also decide the effective sync mode.
+      lock(effectiveSyncMode(config.syncMode, md_->needsWorker())),
       tracer_(makeAgentTracer(name)) {
-#if HAVE_ETCD
-    NIXL_DEBUG << "NIXL ETCD is " << (useEtcd_ ? "enabled" : "disabled");
-#else
-    NIXL_DEBUG << "NIXL ETCD is excluded";
-#endif
     if (name.empty()) {
         throw std::invalid_argument("Agent needs a non-empty name");
     }
@@ -234,6 +226,13 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
     }
 }
 
+nixlAgentData::~nixlAgentData() {
+    // This body runs before any member is destroyed, so stopping here is what
+    // guarantees no task is still touching the caches below (md_ itself is
+    // declared early and would otherwise be destroyed last).
+    md_->stop();
+}
+
 /*** nixlAgent implementation ***/
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
     : data(std::make_unique<nixlAgentData>(name, cfg)) {
@@ -244,12 +243,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
     data->md_->start();
 }
 
-nixlAgent::~nixlAgent() {
-    // Stop and join the manager's worker while the backends are still alive:
-    // they own sockets / etcd watchers that must be torn down only after the
-    // worker (which uses them) has joined.
-    data->md_->stop();
-}
+nixlAgent::~nixlAgent() = default;
 
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
@@ -1824,7 +1818,7 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
 }
 
 nixl_status_t
-nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
+nixlAgent::sendLocalMD(const nixl_opt_args_t *extra_params) const {
     // Metadata exchange is owned by the manager, which routes to P2P when a peer
     // address is given, otherwise to the configured name-addressed backend.
     return data->md_->sendLocalMD(extra_params);
@@ -1832,7 +1826,7 @@ nixlAgent::sendLocalMD (const nixl_opt_args_t* extra_params) const {
 
 nixl_status_t
 nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
-                              const nixl_opt_args_t* extra_params) const {
+                              const nixl_opt_args_t *extra_params) const {
     return data->md_->sendLocalPartialMD(descs, extra_params);
 }
 

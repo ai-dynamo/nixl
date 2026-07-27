@@ -70,7 +70,7 @@ public:
     void
     stop();
 
-    /** @brief Enqueue a task; ignored once the worker is stopping/stopped. */
+    /** @brief Enqueue a task to run on the worker. */
     void
     submit(nixlWorkerTask task);
 
@@ -84,7 +84,6 @@ private:
     std::mutex mutex_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
-    std::atomic<bool> accepting_{true};
     std::exception_ptr exception_;
 };
 
@@ -112,11 +111,20 @@ public:
 
     /**
      * @brief Whether the ETCD backend is selected (NIXL_ETCD_ENDPOINTS set and
-     *        this build has ETCD support). Single source of truth: the manager
-     *        uses it to pick the name backend, the agent to gate the comm thread.
+     *        this build has ETCD support), i.e. how the manager picks the
+     *        name-addressed backend.
      */
     [[nodiscard]] static bool
     etcdConfigured();
+
+    /**
+     * @brief Whether any backend needs the worker thread. Answered from the
+     *        backends alone, so callers do not re-derive it from the
+     *        environment. start() gates on this, and the agent uses it to
+     *        decide whether its sync mode must be upgraded.
+     */
+    [[nodiscard]] bool
+    needsWorker() const;
 
     /**
      * @brief Publish the full local metadata blob through the active backend.

@@ -237,6 +237,9 @@ public:
     void
     setupAgentWatcher(const std::string &agent_name) {
         if (agentWatchers.find(agent_name) != agentWatchers.end()) {
+            // Expected: fetchRemote re-arms after every successful fetch, and
+            // this is what keeps watchers from stacking up per fetch.
+            NIXL_DEBUG << "Watcher already registered for agent: " << agent_name;
             return;
         }
         // DELETE events are enqueued to be processed in serviceEvents (can't be
@@ -258,7 +261,7 @@ public:
             if (event.event_type() == etcd::Event::EventType::DELETE_) {
                 NIXL_DEBUG << "Watcher DELETE: " << event.kv().key() << " (rev "
                            << event.kv().modified_index() << ")";
-                std::lock_guard<std::mutex> lock(invalidated_agents_mutex);
+                const std::lock_guard lock(invalidated_agents_mutex);
                 invalidated_agents.push_back(agent_name);
             } else {
                 NIXL_ERROR << "Watcher for " << event.kv().key()
@@ -275,7 +278,7 @@ public:
     processInvalidatedAgents(nixlMetadataContext &ctx) {
         std::vector<std::string> tmp_invalidated_agents;
         {
-            std::lock_guard<std::mutex> lock(invalidated_agents_mutex);
+            const std::lock_guard lock(invalidated_agents_mutex);
             tmp_invalidated_agents = std::move(invalidated_agents);
         }
         for (const auto &agent : tmp_invalidated_agents) {
@@ -292,9 +295,9 @@ public:
     }
 };
 
-nixlEtcdMetadataBackend::nixlEtcdMetadataBackend(nixlMetadataContext &ctx) : ctx_(ctx) {
-    client_ = std::make_unique<nixlEtcdClient>(ctx_.getName(), ctx_.getConfig().etcdWatchTimeout);
-}
+nixlEtcdMetadataBackend::nixlEtcdMetadataBackend(nixlMetadataContext &ctx)
+    : ctx_(ctx),
+      client_(std::make_unique<nixlEtcdClient>(ctx.agentName(), ctx.mdConfig().etcdWatchTimeout)) {}
 
 nixlEtcdMetadataBackend::~nixlEtcdMetadataBackend() = default;
 
@@ -315,7 +318,7 @@ nixlEtcdMetadataBackend::prepareSendLocal(const nixl_opt_args_t * /*extra_params
     if (ret < 0) {
         return {ret, {}};
     }
-    const std::string agent = ctx_.getName();
+    const std::string agent = ctx_.agentName();
     return {NIXL_SUCCESS, [this, agent, blob = std::move(blob)]() {
                 (void)client_->storeMetadataInEtcd(agent, default_metadata_label, blob);
             }};
@@ -333,7 +336,7 @@ nixlEtcdMetadataBackend::prepareSendLocalPartial(const nixl_reg_dlist_t &descs,
     if (ret < 0) {
         return {ret, {}};
     }
-    const std::string agent = ctx_.getName();
+    const std::string agent = ctx_.agentName();
     const std::string label = extra_params->metadataLabel;
     return {NIXL_SUCCESS, [this, agent, label, blob = std::move(blob)]() {
                 (void)client_->storeMetadataInEtcd(agent, label, blob);
@@ -372,7 +375,7 @@ nixlEtcdMetadataBackend::prepareFetchRemote(const std::string &remote_name,
 
 nixlPreparedOp
 nixlEtcdMetadataBackend::prepareInvalidateLocal(const nixl_opt_args_t * /*extra_params*/) {
-    const std::string agent = ctx_.getName();
+    const std::string agent = ctx_.agentName();
     return {NIXL_SUCCESS, [this, agent]() { (void)client_->removeMetadataFromEtcd(agent); }};
 }
 

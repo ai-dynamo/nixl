@@ -16,10 +16,14 @@
  */
 #include "nixl_tcpstore_client.h"
 
+#include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -57,6 +61,7 @@ enum class check_response_t : std::uint8_t { READY = 0, NOT_READY = 1 };
 template<typename T>
 void
 appendValue(std::vector<std::uint8_t> &buf, T value) {
+    static_assert(std::is_integral_v<T>, "appendValue writes an object representation");
     const auto *begin = reinterpret_cast<const std::uint8_t *>(&value);
     buf.insert(buf.end(), begin, begin + sizeof(T));
 }
@@ -72,129 +77,161 @@ throwErrno(const std::string &what) {
     throw std::runtime_error("TCPStore client: " + what + ": " + std::strerror(errno));
 }
 
-} // namespace
-
-nixlTcpStoreClient::nixlTcpStoreClient(const std::string &host,
-                                       std::uint16_t port,
-                                       std::chrono::milliseconds timeout) {
-    if (timeout <= std::chrono::milliseconds::zero()) {
-        timeout = std::chrono::milliseconds(5000);
+struct addrInfoDeleter {
+    void
+    operator()(addrinfo *ai) const noexcept {
+        ::freeaddrinfo(ai);
     }
+};
 
+using addr_info_ptr_t = std::unique_ptr<addrinfo, addrInfoDeleter>;
+
+[[nodiscard]] addr_info_ptr_t
+resolveHost(const std::string &host, const std::string &port_str) {
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
     addrinfo *results = nullptr;
-    const std::string port_str = std::to_string(port);
     if (const int err = ::getaddrinfo(host.c_str(), port_str.c_str(), &hints, &results); err != 0) {
         throw std::runtime_error("TCPStore client: cannot resolve " + host + ":" + port_str + ": " +
                                  ::gai_strerror(err));
     }
+    return addr_info_ptr_t{results};
+}
 
-    int fd = -1;
-    for (addrinfo *ai = results; ai != nullptr; ai = ai->ai_next) {
-        fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (fd < 0) {
-            continue;
-        }
-        // Non-blocking connect bounded by the timeout, then restore blocking.
-        // If the mode switch itself fails, the bounded-connect logic below is
-        // unreliable, so drop this fd and try the next address.
-        const int flags = ::fcntl(fd, F_GETFL, 0);
-        if (flags < 0 || ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-            ::close(fd);
-            fd = -1;
-            continue;
-        }
-        int rc = ::connect(fd, ai->ai_addr, ai->ai_addrlen);
-        if (rc < 0 && errno == EINPROGRESS) {
-            pollfd pfd{fd, POLLOUT, 0};
-            rc = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
-            if (rc > 0) {
-                int so_err = 0;
-                socklen_t len = sizeof(so_err);
-                if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &len) == 0 && so_err == 0) {
-                    rc = 0;
-                } else {
-                    rc = -1;
-                }
-            } else {
-                rc = -1;
+// Bounded non-blocking connect to one address. Returns an empty owner when the
+// address cannot be reached within timeout, so the caller can try the next one.
+[[nodiscard]] nixlSocketFd
+connectOne(const addrinfo &ai, std::chrono::milliseconds timeout) {
+    nixlSocketFd fd{::socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol)};
+    if (!fd) {
+        return {};
+    }
+
+    // A failed mode switch makes the bounded connect unreliable; drop the address.
+    const int flags = ::fcntl(fd.get(), F_GETFL, 0);
+    if (flags < 0 || ::fcntl(fd.get(), F_SETFL, flags | O_NONBLOCK) < 0) {
+        return {};
+    }
+
+    int rc = ::connect(fd.get(), ai.ai_addr, ai.ai_addrlen);
+    if (rc < 0 && errno == EINPROGRESS) {
+        pollfd pfd{fd.get(), POLLOUT, 0};
+        rc = -1;
+        if (::poll(&pfd, 1, static_cast<int>(timeout.count())) > 0) {
+            int so_err = 0;
+            socklen_t len = sizeof(so_err);
+            if (::getsockopt(fd.get(), SOL_SOCKET, SO_ERROR, &so_err, &len) == 0 && so_err == 0) {
+                rc = 0;
             }
         }
-        // Restore blocking mode; if that fails the send/recv timeouts below
-        // cannot be relied on, so treat it as a failed attempt.
-        if (rc == 0 && ::fcntl(fd, F_SETFL, flags) == 0) {
-            break;
-        }
-        ::close(fd);
-        fd = -1;
     }
-    ::freeaddrinfo(results);
 
-    if (fd < 0) {
-        throw std::runtime_error("TCPStore client: failed to connect to " + host + ":" + port_str);
+    if (rc != 0 || ::fcntl(fd.get(), F_SETFL, flags) != 0) {
+        return {};
     }
-    fd_ = fd;
+    return fd;
+}
 
-    // Bound every blocking send/recv by the same timeout; without it a stalled
-    // server could block a metadata op forever, so abort if it cannot be set.
+// Bounds each blocking syscall; the sendAll/recvAll deadlines sit on top.
+void
+armTimeouts(int fd, std::chrono::milliseconds timeout) {
     timeval tv{};
     tv.tv_sec = timeout.count() / 1000;
     tv.tv_usec = static_cast<suseconds_t>((timeout.count() % 1000) * 1000);
-    if (::setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0 ||
-        ::setsockopt(fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0) {
-        ::close(fd_);
-        fd_ = -1;
+    if (::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0 ||
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0) {
         throwErrno("failed to set socket I/O timeout");
-    }
-
-    try {
-        // VALIDATE must be the first query; the server drops unvalidated peers.
-        std::vector<std::uint8_t> buf{static_cast<std::uint8_t>(query_type_t::VALIDATE)};
-        appendValue<std::uint32_t>(buf, validation_magic);
-        sendAll(buf.data(), buf.size());
-
-        // PING round-trips a nonce, confirming the server is responsive.
-        const auto nonce = static_cast<std::uint32_t>(::getpid());
-        buf = {static_cast<std::uint8_t>(query_type_t::PING)};
-        appendValue<std::uint32_t>(buf, nonce);
-        sendAll(buf.data(), buf.size());
-
-        std::uint32_t echoed = 0;
-        recvAll(&echoed, sizeof(echoed));
-        if (echoed != nonce) {
-            throw std::runtime_error("TCPStore client: ping nonce mismatch");
-        }
-    }
-    catch (...) {
-        ::close(fd_);
-        fd_ = -1;
-        throw;
     }
 }
 
-nixlTcpStoreClient::~nixlTcpStoreClient() {
+} // namespace
+
+void
+nixlSocketFd::reset() noexcept {
     if (fd_ >= 0) {
         ::close(fd_);
+        fd_ = -1;
+    }
+}
+
+nixlTcpStoreClient::nixlTcpStoreClient(std::string host,
+                                       std::uint16_t port,
+                                       std::chrono::milliseconds connect_timeout,
+                                       std::chrono::milliseconds op_timeout)
+    : host_(std::move(host)),
+      port_(port),
+      opTimeout_(op_timeout) {
+    connect(connect_timeout);
+}
+
+void
+nixlTcpStoreClient::connect(std::chrono::milliseconds timeout) {
+    const std::string port_str = std::to_string(port_);
+    const addr_info_ptr_t results = resolveHost(host_, port_str);
+
+    nixlSocketFd fd;
+    for (const addrinfo *ai = results.get(); ai != nullptr && !fd; ai = ai->ai_next) {
+        fd = connectOne(*ai, timeout);
+    }
+
+    if (!fd) {
+        throw std::runtime_error("TCPStore client: failed to connect to " + host_ + ":" + port_str);
+    }
+
+    // Arm before publishing to fd_: a failure here must not leave an unbounded
+    // socket behind for the next operation to pick up as "already connected".
+    armTimeouts(fd.get(), opTimeout_);
+    fd_ = std::move(fd);
+    handshake();
+}
+
+void
+nixlTcpStoreClient::ensureConnected() {
+    if (!fd_) {
+        connect(opTimeout_);
+    }
+}
+
+void
+nixlTcpStoreClient::handshake() {
+    // VALIDATE must be the first query; the server drops unvalidated peers.
+    std::vector<std::uint8_t> buf = {static_cast<std::uint8_t>(query_type_t::VALIDATE)};
+    appendValue<std::uint32_t>(buf, validation_magic);
+    sendAll(buf.data(), buf.size());
+
+    // PING round-trips a nonce, confirming the server is responsive.
+    const auto nonce = static_cast<std::uint32_t>(::getpid());
+    buf = {static_cast<std::uint8_t>(query_type_t::PING)};
+    appendValue<std::uint32_t>(buf, nonce);
+    sendAll(buf.data(), buf.size());
+
+    std::uint32_t echoed = 0;
+    recvAll(&echoed, sizeof(echoed));
+    if (echoed != nonce) {
+        fd_.reset();
+        throw std::runtime_error("TCPStore client: ping nonce mismatch");
     }
 }
 
 void
 nixlTcpStoreClient::sendAll(const void *data, std::size_t len) {
+    const auto deadline = std::chrono::steady_clock::now() + opTimeout_;
     const auto *p = static_cast<const char *>(data);
     while (len > 0) {
-        const ssize_t n = ::send(fd_, p, len, MSG_NOSIGNAL);
+        if (std::chrono::steady_clock::now() >= deadline) {
+            fd_.reset();
+            throw std::runtime_error("TCPStore client: send deadline exceeded");
+        }
+        const ssize_t n = ::send(fd_.get(), p, len, MSG_NOSIGNAL);
         if (n < 0 && errno == EINTR) {
             continue; // interrupted by a signal before any bytes moved; retry
         }
         if (n <= 0) {
-            // A failed/partial send leaves the request half-written; close so
-            // the desynced connection cannot be reused for later ops.
+            // Half-written request; close so the desynced socket is not reused.
             const int saved = errno;
-            ::close(fd_);
-            fd_ = -1;
+            fd_.reset();
             errno = saved;
             throwErrno("send failed");
         }
@@ -205,18 +242,21 @@ nixlTcpStoreClient::sendAll(const void *data, std::size_t len) {
 
 void
 nixlTcpStoreClient::recvAll(void *data, std::size_t len) {
+    const auto deadline = std::chrono::steady_clock::now() + opTimeout_;
     auto *p = static_cast<char *>(data);
     while (len > 0) {
-        const ssize_t n = ::recv(fd_, p, len, 0);
+        if (std::chrono::steady_clock::now() >= deadline) {
+            fd_.reset();
+            throw std::runtime_error("TCPStore client: recv deadline exceeded");
+        }
+        const ssize_t n = ::recv(fd_.get(), p, len, 0);
         if (n < 0 && errno == EINTR) {
             continue; // interrupted by a signal before any bytes moved; retry
         }
         if (n <= 0) {
-            // A timeout/short read mid-response desyncs the stream (the next op
-            // would parse leftover bytes); close so it cannot be reused.
+            // Partial response; the next op would parse leftover bytes.
             const int saved = errno;
-            ::close(fd_);
-            fd_ = -1;
+            fd_.reset();
             errno = saved;
             throwErrno("recv failed");
         }
@@ -225,45 +265,13 @@ nixlTcpStoreClient::recvAll(void *data, std::size_t len) {
     }
 }
 
-void
-nixlTcpStoreClient::set(const std::string &key, const std::string &value) {
-    const std::lock_guard<std::mutex> lk(mutex_);
-    std::vector<std::uint8_t> buf{static_cast<std::uint8_t>(query_type_t::SET)};
-    appendString(buf, key_prefix + key);
-    appendString(buf, value);
-    sendAll(buf.data(), buf.size());
-}
-
-bool
-nixlTcpStoreClient::check(const std::string &key) {
-    const std::lock_guard<std::mutex> lk(mutex_);
-    std::vector<std::uint8_t> buf{static_cast<std::uint8_t>(query_type_t::CHECK)};
-    appendValue<std::uint64_t>(buf, 1);
-    appendString(buf, key_prefix + key);
-    sendAll(buf.data(), buf.size());
-
-    auto response = check_response_t::NOT_READY;
-    recvAll(&response, sizeof(response));
-    return response == check_response_t::READY;
-}
-
-std::string
-nixlTcpStoreClient::get(const std::string &key) {
-    const std::lock_guard<std::mutex> lk(mutex_);
-    std::vector<std::uint8_t> buf{static_cast<std::uint8_t>(query_type_t::GET)};
-    appendString(buf, key_prefix + key);
-    sendAll(buf.data(), buf.size());
-    return recvBlob();
-}
-
 std::string
 nixlTcpStoreClient::recvBlob() {
     std::uint64_t len = 0;
     recvAll(&len, sizeof(len));
     if (len > max_blob_bytes) {
         // The stream is now desynced (the body won't be consumed); drop it.
-        ::close(fd_);
-        fd_ = -1;
+        fd_.reset();
         throw std::runtime_error("TCPStore client: response length " + std::to_string(len) +
                                  " exceeds cap");
     }
@@ -272,11 +280,55 @@ nixlTcpStoreClient::recvBlob() {
     return value;
 }
 
+void
+nixlTcpStoreClient::set(const std::string &key, const std::string &value) {
+    std::vector<std::uint8_t> buf = {static_cast<std::uint8_t>(query_type_t::SET)};
+    appendString(buf, key_prefix + key);
+    appendString(buf, value);
+
+    const std::lock_guard lk(mutex_);
+    ensureConnected();
+    sendAll(buf.data(), buf.size());
+}
+
+std::optional<std::string>
+nixlTcpStoreClient::get(const std::string &key) {
+    const std::string full_key = key_prefix + key;
+
+    std::vector<std::uint8_t> check_buf = {static_cast<std::uint8_t>(query_type_t::CHECK)};
+    appendValue<std::uint64_t>(check_buf, 1);
+    appendString(check_buf, full_key);
+
+    std::vector<std::uint8_t> get_buf = {static_cast<std::uint8_t>(query_type_t::GET)};
+    appendString(get_buf, full_key);
+
+    const std::lock_guard lk(mutex_);
+    ensureConnected();
+
+    sendAll(check_buf.data(), check_buf.size());
+    auto response = check_response_t::NOT_READY;
+    recvAll(&response, sizeof(response));
+    if (response != check_response_t::READY) {
+        return std::nullopt;
+    }
+
+    sendAll(get_buf.data(), get_buf.size());
+    std::string value = recvBlob();
+    if (value.empty()) {
+        // Deleted between the CHECK and the GET (raced invalidate); the store
+        // has no empty values of its own.
+        return std::nullopt;
+    }
+    return value;
+}
+
 bool
 nixlTcpStoreClient::deleteKey(const std::string &key) {
-    const std::lock_guard<std::mutex> lk(mutex_);
-    std::vector<std::uint8_t> buf{static_cast<std::uint8_t>(query_type_t::DELETE_KEY)};
+    std::vector<std::uint8_t> buf = {static_cast<std::uint8_t>(query_type_t::DELETE_KEY)};
     appendString(buf, key_prefix + key);
+
+    const std::lock_guard lk(mutex_);
+    ensureConnected();
     sendAll(buf.data(), buf.size());
 
     std::int64_t num_deleted = 0;
