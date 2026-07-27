@@ -204,6 +204,20 @@ their own nightly/manual trigger. They split into two groups:
 - **What it does:** Runs smoke/perf/accuracy tests for one published LLM inference container image on the `mizu` SLURM partition (2-GPU node); framework (vllm/sglang) is auto-detected from the image URL.
 - **Automatic on every PR:** No — standalone/manual only.
 
+## Slurm job naming
+
+Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-<variant>-${BUILD_NUMBER}`, where `JOB_BASE_NAME` is the Jenkins job name and `variant` disambiguates parallel allocations within a build:
+
+| Pipeline | Slurm job name pattern |
+|---|---|
+| `nixl-ci-gpu` | `nixl-ci-gpu-<ucx_version>-<build>` |
+| `nixl-ci-dl-gpu` | `nixl-ci-dl-gpu-<ucx_version>-<build>` |
+| `nixl-ci-dl-gpu-ep` | `nixl-ci-dl-gpu-ep-<ucx_version>-<build>` |
+| `nixl-ci-build-wheel` | `nixl-ci-build-wheel-<fw>-<build>` (`fw`: `vllm` or `sglang`) |
+| `nixl-ci-test-llm-container` | `nixl-ci-test-llm-container-<build>` |
+
+Use `squeue --name <pattern>` or `squeue -u <user>` to identify which pipeline owns a running job.
+
 ## How to trigger CI manually
 
 - **Full Jenkins pipeline for a PR:** comment `/build` on the PR (requires authorization — see `Authorization` step in `blossom-ci.yml`).
