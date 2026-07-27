@@ -26,7 +26,7 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | `nixl-ci-build-llm-container` | Jenkins (standalone) | Manual only | No — never runs as part of PR CI |
 | `nixl-ci-test-llm-container` | Jenkins (standalone) | Manual, or chained from `build-llm-container` via `RUN_TEST` | No — never runs as part of PR CI |
 | `nixl-ci-cleanup-artifacts` | Jenkins (standalone) | Daily cron (6 AM) + manual | No — never runs as part of PR CI |
-| `nixl-ci-nightly` | Jenkins (standalone) | Nightly cron (`H 2`) + manual | No — orchestrates the nightly UCX-`master` run of the 3 GPU jobs |
+| `nixl-ci-nightly` | Jenkins (standalone) | Nightly cron (`H 0`) + manual | No — orchestrates the nightly UCX-`master` run of the 3 GPU jobs |
 
 > **Note on Jenkins jobs:** `proj-jjb.yaml` defines 14 Jenkins jobs: the
 > dispatcher, the 7 jobs it fans out to (the PR CI flow), and 6 standalone jobs
@@ -211,7 +211,7 @@ their own nightly/manual trigger. They split into two groups:
 
 ### `nixl-ci-nightly` (standalone)
 
-- **Trigger:** Nightly cron (`H 2 * * *`), or manual run (`UCX_REF`, `MAIL_TO` parameters).
+- **Trigger:** Nightly cron (`H 0 * * *`), or manual run (`UCX_REF`, `MAIL_TO` parameters).
 - **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep` with `UCX_VER=master` (from `UCX_REF`), waits for all three, and emails one consolidated pass/fail report to `MAIL_TO`. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
 - **Matrix:** `.ci/jenkins/lib/nightly-matrix.yaml` — a lightweight ci-demo orchestrator (one groovy step: fan out, wait, mail), no GPU of its own.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.

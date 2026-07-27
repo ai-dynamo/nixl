@@ -1028,7 +1028,7 @@
     sandbox: true
     # Single nightly schedule for the UCX-master validation of the GPU test jobs.
     triggers:
-      - timed: "H 2 * * *"
+      - timed: "H 0 * * *"
     parameters:
       - string:
           name: "UCX_REF"
