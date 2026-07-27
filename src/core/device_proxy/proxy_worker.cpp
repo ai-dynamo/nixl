@@ -112,16 +112,19 @@ ProxyWorker::submitOwnedChannels() {
     }
     for (uint32_t channel_id = worker_index_; channel_id < channel_count_;
          channel_id += worker_count_) {
+        bool submitted = false;
         for (uint32_t i = 0; i < peer_capacity_; ++i) {
             const uint32_t peer = (submit_rr_peer_ + i) % peer_capacity_;
             nixlProxyChannelState *channel = activeOwnedSlot(channelSlot(peer, channel_id));
             if (channel == nullptr) {
                 continue;
             }
-            if (submitReady(*channel)) {
-                submit_rr_peer_ = (peer + 1) % peer_capacity_;
-                break;
-            }
+            submitted |= submitReady(*channel);
+        }
+        if (submitted) {
+            // Every peer was visited; rotate the starting point so a worker
+            // interrupted mid-pass does not consistently favor the same ring.
+            submit_rr_peer_ = (submit_rr_peer_ + 1) % peer_capacity_;
         }
     }
 }
