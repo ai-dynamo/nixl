@@ -47,7 +47,6 @@ public:
 private:
     const std::string agent_name_;
     std::shared_ptr<DocaSharedContext> ctx_;
-    bool inBatch_ = false;
     std::optional<uint64_t> batchTimestamp_;
 
     void

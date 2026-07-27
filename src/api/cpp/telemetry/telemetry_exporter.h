@@ -22,7 +22,6 @@
 
 #include <stdexcept>
 #include <string>
-#include <utility>
 
 inline constexpr char telemetryExporterVar[] = "NIXL_TELEMETRY_EXPORTER";
 
@@ -91,7 +90,7 @@ public:
     void
     withBatch(Body &&body) {
         const batchScope scope{*this};
-        std::forward<Body>(body)();
+        body();
     }
 
 private:

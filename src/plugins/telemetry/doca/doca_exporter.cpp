@@ -358,24 +358,16 @@ nixlTelemetryDocaExporter::~nixlTelemetryDocaExporter() {
 
 uint64_t
 nixlTelemetryDocaExporter::currentTimestamp() noexcept {
-    if (!inBatch_) {
-        return docaTimestamp();
-    }
-    if (!batchTimestamp_.has_value()) {
-        batchTimestamp_ = docaTimestamp();
-    }
-    return *batchTimestamp_;
+    return batchTimestamp_.has_value() ? *batchTimestamp_ : docaTimestamp();
 }
 
 void
 nixlTelemetryDocaExporter::onBatchBegin() noexcept {
-    inBatch_ = true;
-    batchTimestamp_.reset();
+    batchTimestamp_ = docaTimestamp();
 }
 
 void
 nixlTelemetryDocaExporter::onBatchEnd() noexcept {
-    inBatch_ = false;
     batchTimestamp_.reset();
 }
 
