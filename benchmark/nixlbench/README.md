@@ -480,6 +480,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --filepath PATH            # File path for storage operations
 --num_files NUM            # Number of files used by benchmark (default: 1)
 --storage_enable_direct    # Enable direct I/O for storage operations
+--storage_enable_path_mode # Use NIXL path-mode FILE registration (encode open spec in metaInfo; the backend opens/owns the fd). FILE_SEG backends only (POSIX, GDS, GDS_MT). Default off.
 ```
 
 #### Backend-Specific Options
