@@ -1,0 +1,447 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../.ci/scripts/common.sh"
+. /etc/rocm-build.env
+
+set -e
+set -x
+set -o pipefail
+
+# Parse commandline arguments with first argument being the install directory
+# and second argument being the UCX installation directory.
+# Source dependency options grouped with dep download/build/install steps.
+INSTALL_DIR=$1
+UCX_INSTALL_DIR=$2
+EXTRA_BUILD_ARGS=${3:-""}
+NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
+NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
+TMPDIR=$(mktemp -d)
+
+# DEPS_SANITIZE, when set (e.g. "address"), builds the C++ dependency stack that
+# shares Abseil's ABI with NIXL (abseil, protobuf/gRPC, etcd-cpp) using the
+# matching -fsanitize flags. Required for AddressSanitizer: Abseil changes its
+# SwissTable layout under ASan, so a prebuilt non-instrumented Abseil would
+# mismatch NIXL's instrumented one at runtime (new-delete-type-mismatch during
+# gRPC static init). Only ASan changes ABI (UBSan/TSan do not), so callers pass
+# DEPS_SANITIZE=address. The array expands to nothing when unset.
+DEPS_SANITIZE=${DEPS_SANITIZE:-""}
+DEPS_SANITIZE_CMAKE_ARGS=()
+if [ -n "$DEPS_SANITIZE" ]; then
+    _deps_san_cxxflags="-fsanitize=${DEPS_SANITIZE}"
+    case ",${DEPS_SANITIZE}," in
+        # Abseil's headers hit a GCC constexpr bug under UBSan's null checks
+        # (GCC #71962); drop those sub-checks if undefined is requested.
+        *,undefined,*) _deps_san_cxxflags="${_deps_san_cxxflags} -fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute" ;;
+    esac
+    DEPS_SANITIZE_CMAKE_ARGS=(
+        "-DCMAKE_C_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+        "-DCMAKE_CXX_FLAGS=${_deps_san_cxxflags}"
+        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+        "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"
+    )
+fi
+
+if [ -z "$INSTALL_DIR" ]; then
+    echo "Usage: $0 <install_dir> <ucx_install_dir>"
+    exit 1
+fi
+
+if [ -z "$UCX_INSTALL_DIR" ]; then
+    UCX_INSTALL_DIR=$INSTALL_DIR
+fi
+
+
+# For running as user - check if running as root, if not set sudo variable
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO=sudo
+else
+    SUDO=""
+fi
+
+ARCH=$(uname -m)
+[ "$ARCH" = "arm64" ] && ARCH="aarch64"
+
+LIBFABRIC_INSTALL_DIR=${LIBFABRIC_INSTALL_DIR:-$INSTALL_DIR}
+
+export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${INSTALL_DIR}/lib/$ARCH-linux-gnu:${INSTALL_DIR}/lib64:$LD_LIBRARY_PATH:${LIBFABRIC_INSTALL_DIR}/lib"
+export CPATH="${INSTALL_DIR}/include:${LIBFABRIC_INSTALL_DIR}/include:$CPATH"
+export PATH="${INSTALL_DIR}/bin:$HOME/.local/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
+export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${INSTALL_DIR}/lib64/pkgconfig:${INSTALL_DIR}:${LIBFABRIC_INSTALL_DIR}/lib/pkgconfig:$PKG_CONFIG_PATH"
+export NIXL_PLUGIN_DIR="${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins"
+export CMAKE_PREFIX_PATH="${INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
+
+if [ -n "$PRE_INSTALLED_ENV" ]; then
+    echo "PRE_INSTALLED_ENV is set, skipping package installation"
+else
+    # Some docker images are with broken installations:
+    $SUDO rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
+
+    $SUDO apt-get -qq update
+    $SUDO apt-get -qq install -y \
+        python3-dev \
+        python3-pip \
+        curl \
+        wget \
+        libnuma-dev \
+        numactl \
+        autotools-dev \
+        automake \
+        git \
+        libtool \
+        libz-dev \
+        libiberty-dev \
+        flex \
+        build-essential \
+        cmake \
+        libgoogle-glog-dev \
+        libgtest-dev \
+        libgmock-dev \
+        libjsoncpp-dev \
+        libpython3-dev \
+        libboost-all-dev \
+        libssl-dev \
+        libprotobuf-dev \
+        libcpprest-dev \
+        libaio-dev \
+        libelf-dev \
+        libgflags-dev \
+        patchelf \
+        meson \
+        ninja-build \
+        parallel \
+        pkg-config \
+        protobuf-compiler-grpc \
+        pybind11-dev \
+        etcd-server \
+        net-tools \
+        iproute2 \
+        pciutils \
+        libpci-dev \
+        uuid-dev \
+        libibmad-dev \
+        doxygen \
+        clang \
+        hwloc \
+        libhwloc-dev \
+        libxml2-dev \
+        libcurl4-openssl-dev \
+        zlib1g-dev
+    $SUDO apt-mark hold \
+        liburing2 \
+        liburing-dev
+
+    # Ubuntu 22.04 specific setup
+    if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
+        # Upgrade pip for '--break-system-packages' support
+        $SUDO pip3 install --upgrade pip
+    fi
+
+    # Install python dependencies and upgrade to latest version
+    $SUDO pip3 --no-cache-dir install --break-system-packages \
+        meson \
+        meson-python \
+        pybind11 \
+        patchelf \
+        click \
+        tabulate \
+        auditwheel \
+        tomlkit \
+        pytest \
+        pytest-timeout \
+        zmq \
+        mpmath \
+        typing-extensions \
+        sympy \
+        numpy \
+        networkx \
+        MarkupSafe \
+        fsspec \
+        filelock \
+        jinja2 \
+        nanobind
+
+    # Install torch from the ROCm package repository
+    # (PyTorch has only published torch for ROCm 7.2.2 at this time)
+    # (Download torch 2.11 built against ROCm prerelease 7.14.0rc0)
+    ROCM_TORCH_VERSION="2.11.0"
+    ROCM_TORCH_INDEX_URL=${ROCM_WHL_INDEX_URL:-"https://rocm.prereleases.amd.com/whl-multi-arch/"}
+    ROCM_TORCH_SUFFIX=${ROCM_TORCH_SUFFIX:-".0rc0"}
+    $SUDO pip3 --no-cache-dir install --break-system-packages \
+        --cert /etc/ssl/certs/ca-certificates.crt \
+        --index-url ${ROCM_TORCH_INDEX_URL} \
+        torch==${ROCM_TORCH_VERSION}+rocm${ROCM_MAJOR}.${ROCM_MINOR}${ROCM_TORCH_SUFFIX}
+
+    # Skipping DOCA?
+    # Nvidia installs RDMA packages from DOCA, just install the default
+    # packages here for now
+    $SUDO apt-get -qq -y install --reinstall \
+        libibverbs-dev \
+        rdma-core \
+        ibverbs-utils \
+        libibumad-dev \
+        libnuma-dev \
+        librdmacm-dev \
+        ibverbs-providers
+
+    # All other source dependencies
+# Rust
+    wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${TMPDIR}/rustup-init
+    chmod +x ${TMPDIR}/rustup-init
+    ${TMPDIR}/rustup-init -y --default-toolchain 1.86.0
+# Astral
+    wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${TMPDIR}/install_uv.sh
+    chmod +x ${TMPDIR}/install_uv.sh
+    ${TMPDIR}/install_uv.sh
+# Nodejs & Azurite
+    # Install Node Version Manager then Nodejs to install Azurite
+    AZURITE_VER="3.35.0"
+    wget --tries=3 --waitretry=5 "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh" -O ${TMPDIR}/install_nvm.sh
+    chmod +x ${TMPDIR}/install_nvm.sh
+    ${TMPDIR}/install_nvm.sh
+    export NVM_DIR=${HOME}/.nvm
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    nvm install --lts  # install nodejs
+    npm install -g azurite@${AZURITE_VER}
+# Libfabric
+    LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
+    wget --tries=3 --waitretry=5 -O "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+    tar xjf "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -C ${TMPDIR}
+    rm "${TMPDIR}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
+    ( \
+        cd ${TMPDIR}/libfabric-* && \
+        ./autogen.sh && \
+        ./configure \
+            --prefix="${LIBFABRIC_INSTALL_DIR}" \
+            --disable-verbs \
+            --disable-psm3 \
+            --disable-opx \
+            --disable-usnic \
+            --disable-rstream \
+            --enable-efa && \
+        make -j"$NPROC" && \
+        make install && \
+        $SUDO ldconfig && \
+        cd .. && \
+        rm -rf libfabric-*
+    )
+# Abseil-cpp
+    ABSL_TAG=${ABSL_TAG:-lts_2025_08_14}
+    ( \
+        cd ${TMPDIR} && \
+        git clone --depth 1 --branch "${ABSL_TAG}" https://github.com/abseil/abseil-cpp.git && \
+        cd abseil-cpp && \
+        mkdir -p build && cd build && \
+        cmake .. \
+            "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
+            -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_CXX_STANDARD=20 \
+            -DABSL_PROPAGATE_CXX_STD=ON \
+            -DABSL_ENABLE_INSTALL=ON && \
+        make -j"$NPROC" && \
+        $SUDO make install && \
+        $SUDO ldconfig && \
+        cd ${TMPDIR} && \
+        rm -rf abseil-cpp \
+    )
+# gRPC
+    # Possible tied to Abseil-cpp version
+    GRPC_TAG=${GRPC_TAG:-v1.73.0}
+    ( \
+        cd ${TMPDIR} && \
+        git clone --recurse-submodules -b "${GRPC_TAG}" --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+        cd grpc && \
+        mkdir -p cmake/build && \
+        cd cmake/build && \
+        cmake ../.. \
+            "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
+            -DgRPC_INSTALL=ON \
+            -DgRPC_BUILD_TESTS=OFF \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_CXX_STANDARD=20 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" \
+            -Dabsl_DIR="${INSTALL_DIR}/lib/cmake/absl" \
+            -DgRPC_SSL_PROVIDER=package \
+            -DgRPC_ABSL_PROVIDER=package \
+            -DgRPC_PROTOBUF_PROVIDER=module \
+            -DgRPC_ZLIB_PROVIDER=package && \
+        make -j"$NPROC" && \
+        $SUDO make install && \
+        $SUDO ldconfig && \
+        cd ${TMPDIR} && \
+        rm -rf grpc \
+    )
+# etcd
+    ( \
+        cd ${TMPDIR} && \
+        git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+        cd etcd-cpp-apiv3 && \
+        sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
+        mkdir build && cd build && \
+        cmake .. \
+            "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
+            -DBUILD_ETCD_CORE_ONLY=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DETCD_CMAKE_CXX_STANDARD=20 \
+            -DCMAKE_CXX_STANDARD=20 \
+            -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" && \
+        make -j"$NPROC" && \
+        $SUDO make install && \
+        $SUDO ldconfig \
+    )
+# AWS
+    ( \
+        cd ${TMPDIR} && \
+        git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+        mkdir aws_sdk_build && \
+        cd aws_sdk_build && \
+        cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_CXX_STANDARD=20 -DCMAKE_INSTALL_PREFIX=/usr/local && \
+        make -j"$NPROC" && \
+        $SUDO make install && \
+        cd .. && \
+        rm -rf aws_sdk_build aws-sdk-cpp
+    )
+# gusli
+    ( \
+        cd ${TMPDIR} && \
+        git clone --depth 1 https://github.com/nvidia/gusli.git && \
+        cd gusli && \
+        $SUDO make all CXX="g++ -std=c++20" BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 && \
+        $SUDO ldconfig && \
+        cd .. && \
+        $SUDO rm -rf gusli
+    )
+# Mookcake
+    MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}"
+    ( \
+        cd ${TMPDIR} && \
+        echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
+        git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
+        cd Mooncake && \
+        sed -i '/liburing-dev/d' dependencies.sh && \
+        $SUDO bash dependencies.sh -y && \
+        mkdir build && cd build && \
+        cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+        ninja -j"$NPROC" && \
+        $SUDO ninja install && \
+        $SUDO ldconfig && \
+        cd .. && \
+        rm -rf Mooncake
+    )
+# gTest
+    ( \
+        cd ${TMPDIR} &&
+        git clone --depth 1 https://github.com/google/gtest-parallel.git &&
+        mkdir -p ${INSTALL_DIR}/bin &&
+        cp ${TMPDIR}/gtest-parallel/* ${INSTALL_DIR}/bin/
+    )
+# Azure
+    ( \
+        cd ${TMPDIR} && \
+        df -h && \
+        curl -sL https://aka.ms/InstallAzureCLIDeb | $SUDO bash && \
+        git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
+        cd azure-sdk-for-cpp/ && \
+        mkdir build && cd build && \
+        AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
+        cmake --build . --parallel "$NPROC" --target azure-storage-blobs azure-identity && \
+        $SUDO cmake --install sdk/core && \
+        $SUDO cmake --install sdk/storage/azure-storage-common && \
+        $SUDO cmake --install sdk/storage/azure-storage-blobs && \
+        $SUDO cmake --install sdk/identity
+    )
+fi # PRE_INSTALLED_ENV
+
+if [ -n "$PRE_INSTALLED_UCX_ENV" ]; then
+    echo "PRE_INSTALLED_UCX_ENV is set, skipping UCX compilation"
+else
+    # UCCL is skipped if no Nvidia GPU is present.
+    # Skipping steps entirely for ROCm.
+    UCX_VERSION=${UCX_VERSION:-v1.21.x}
+    git clone --depth 1 --branch "${UCX_VERSION}" https://github.com/openucx/ucx.git ${TMPDIR}/ucx
+    ( \
+        cd ${TMPDIR}/ucx && \
+        ./autogen.sh && \
+        ./contrib/configure-release-mt \
+            --prefix="${UCX_INSTALL_DIR}" \
+            --enable-shared \
+            --disable-static \
+            --disable-doxygen-doc \
+            --enable-optimizations \
+            --enable-cma \
+            --enable-devel-headers \
+            --with-verbs \
+            --with-dm \
+            --without-gdrcopy \
+            ${UCX_CUDA_BUILD_ARGS} && \
+        make -j"$NPROC" && \
+        $SUDO make -j install-strip && \
+        $SUDO ldconfig \
+    )
+fi # PRE_INSTALLED_UCX_ENV end
+
+$SUDO rm -rf ${TMPDIR}
+
+export UCX_TLS=^cuda_ipc
+
+# Lastly build and install nixl + nixlbench
+if [ -n "$PRE_INSTALLED_NIXL_ENV" ]; then
+    echo "PRE_INSTALLED_NIXL_ENV is set, skipping compilation"
+else
+    if [ "${BUILD_NIXL_EP}" = "true" ]; then
+        EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
+    fi
+    # This image is CUDA-free. Restrict building to plugins that do not require cuFile.
+    # POSIX alone is enough to produce libnixl and nixlbench.
+    NIXL_ENABLE_PLUGINS="${NIXL_ENABLE_PLUGINS:-POSIX}"
+    # shellcheck disable=SC2086
+    meson setup \
+        ${NIXL_BUILD_DIR} \
+        --prefix=${INSTALL_DIR} \
+        -Ducx_path=${UCX_INSTALL_DIR} \
+        -Dbuild_docs=false \
+        -Drust=false \
+        ${EXTRA_BUILD_ARGS} \
+        -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" \
+        --buildtype=debug \
+        -Denable_plugins="${NIXL_ENABLE_PLUGINS}"
+    ninja -j"$NPROC" -C ${NIXL_BUILD_DIR}
+    ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
+    mkdir -p dist && cp ${NIXL_BUILD_DIR}/src/bindings/python/nixl-meta/nixl-*.whl dist/
+
+    # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
+    # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
+
+    cd benchmark/nixlbench
+    meson setup \
+        ${NIXLBENCH_BUILD_DIR} \
+        -Dnixl_path=${INSTALL_DIR} \
+        -Dprefix=${INSTALL_DIR} \
+        -Duse_rocm=true \
+        -Drocm_path="${ROCM_INSTALL_PATH}"
+    ninja -j"$NPROC" -C ${NIXLBENCH_BUILD_DIR}
+    ninja -j"$NPROC" -C ${NIXLBENCH_BUILD_DIR} install
+fi # PRE_INSTALLED_NIXL_ENV
