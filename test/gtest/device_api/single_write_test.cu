@@ -203,7 +203,7 @@ protected:
         cfg.pthrDelay = 100000;
 #ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
         cfg.enableDeviceProxy = true;
-        cfg.proxyPeerCapacity = 2;
+        cfg.proxyPeerCapacity = kProxyPeerCapacity;
         cfg.proxyChannelCount = kTransferChannelCount;
         cfg.proxyWorkerCount = kProxyCpuWorkerCount;
 #endif
@@ -374,11 +374,16 @@ protected:
 #ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
     static constexpr size_t kTransferChannelCount = 4;
     static constexpr uint32_t kProxyCpuWorkerCount = kTransferChannelCount;
+    static constexpr uint32_t kProxyPeerCapacity = 2;
+    // The UCX proxy adapter isolates one UCX worker per (channel, peer) pair -
+    // see nixlUcxProxyBackendAdapter::init(), which rejects any other count.
+    static constexpr size_t kUcxWorkerCount =
+        kTransferChannelCount * static_cast<size_t>(kProxyPeerCapacity);
 #else
     static constexpr size_t kTransferChannelCount = 32;
-#endif
     // Each logical transfer channel maps directly to one UCX worker.
     static constexpr size_t kUcxWorkerCount = kTransferChannelCount;
+#endif
 
 private:
     static constexpr uint64_t DEV_ID = 0;
