@@ -6,6 +6,7 @@
 #
 # Image selection: a single IMAGE_URL parameter. The framework (vllm vs sglang)
 # is auto-detected from the URL — "vllm" → test_vllm.sh, "sglang" → test_sglang.sh.
+# Supports vllm-cu12, vllm-cu13, sglang-cu12, sglang-cu13 image variants.
 # vllm has no built-in accuracy harness, so the accuracy phase no-ops for vllm.
 #
 # Test scripts live at .ci/scripts/llm-tests/{test_vllm.sh,test_sglang.sh}.
@@ -145,7 +146,7 @@ steps:
       nodes: "${SLURM_NODES}"
       jobTimeout: "${SLURM_JOB_TIMEOUT}"
       immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "nixl-llm-${BUILD_NUMBER}"
+      jobName: "${JOB_BASE_NAME}-${BUILD_NUMBER}"
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
       extraArgs: [

@@ -50,6 +50,11 @@
         }                                                       \
     } while (0)
 
+// Declare before NIXL_TRACE_SCOPE so the span is created while the id is active.
+// One per scope.
+#define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, id) \
+    ::nixl::trace::CorrelationScope nixl_trace_correlation_scope_((tracer_ptr), (id))
+
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value)        \
     do {                                                   \
         if ((span).active()) {                             \
@@ -67,6 +72,9 @@
     } while (0)
 #define NIXL_TRACE_ATTR(span, attr_key, attr_value) \
     do {                                            \
+    } while (0)
+#define NIXL_TRACE_CORRELATION_SCOPE(tracer_ptr, id) \
+    do {                                             \
     } while (0)
 
 #endif // NIXL_TRACE_ENABLED
