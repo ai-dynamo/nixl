@@ -115,6 +115,28 @@ nixlProxySync() {
     }
 }
 
+template<nixl_gpu_level_t level>
+__device__ inline nixl_status_t
+nixlProxyBroadcastStatus(nixl_status_t status) {
+    static_assert(level != nixl_gpu_level_t::GRID,
+                  "Proxy GPU backend does not support GRID-level operations");
+
+    if constexpr (level == nixl_gpu_level_t::WARP) {
+        status = static_cast<nixl_status_t>(__shfl_sync(0xffffffff, static_cast<int>(status), 0));
+    } else if constexpr (level == nixl_gpu_level_t::BLOCK) {
+        // Shared storage is reused across call sites; the trailing __syncthreads()
+        // keeps a later write from racing readers of this one.
+        __shared__ nixl_status_t s_status;
+        if (threadIdx.x == 0) {
+            s_status = status;
+        }
+        __syncthreads();
+        status = s_status;
+        __syncthreads();
+    }
+    return status;
+}
+
 struct ProxyDeviceContext : nixlProxyDeviceContextData {
 
     // Flat index into the channel x peer ring matrix: channel owns one ring per

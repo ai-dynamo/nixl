@@ -390,6 +390,30 @@ proxyAtomicAddKernel(nixlMemViewH counter_mvh, uint64_t value, nixl_status_t *ou
     *out_status = nixlAtomicAdd(value, counter);
 }
 
+// Records every participating thread's status, not just the leader lane's. Used
+// to verify that collective-level put/atomic_add broadcast the leader's result
+// instead of leaving non-leader threads with their local initializer.
+template<nixl_gpu_level_t level>
+__global__ void
+proxyPutAtPerThreadKernel(nixlMemViewH src_mvh,
+                          nixlMemViewH dst_mvh,
+                          uint32_t peer_index,
+                          uint32_t channel_id,
+                          nixl_status_t *out_status) {
+    nixlMemViewElem src{src_mvh, 0, 0}, dst{dst_mvh, peer_index, 0};
+    out_status[threadIdx.x] = nixlPut<level>(src, dst, /*size=*/0, channel_id);
+}
+
+template<nixl_gpu_level_t level>
+__global__ void
+proxyAtomicAddPerThreadKernel(nixlMemViewH counter_mvh,
+                              uint64_t value,
+                              uint32_t peer_index,
+                              nixl_status_t *out_status) {
+    nixlMemViewElem counter{counter_mvh, peer_index, 0};
+    out_status[threadIdx.x] = nixlAtomicAdd<level>(value, counter);
+}
+
 static void
 publishProxyContext(nixlProxyRuntime &runtime) {
     bool *d_warmup = nullptr;
@@ -590,6 +614,81 @@ TEST_F(ProxyDeviceApiTest, PeerBoundsAreValidatedAndChannelsAreNormalized) {
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
     EXPECT_EQ(deviceGet(d_status), NIXL_IN_PROG);
     ASSERT_TRUE(waitForCondition([adapter]() { return adapter->hasPendingForChannel(1); }));
+
+    cudaFree(d_status);
+    clearProxyContext();
+    ASSERT_EQ(runtime.shutdown(), NIXL_SUCCESS);
+}
+
+// Only lane 0 performs the ring operation, so an error status must be broadcast
+// to the rest of the warp/block. Without the broadcast the non-leader threads
+// return the NIXL_IN_PROG initializer and silently miss the failure - and a
+// caller whose error path contains a __syncthreads() deadlocks.
+TEST_F(ProxyDeviceApiTest, CollectiveLevelOperationsBroadcastErrorStatus) {
+    auto adapter_owner = std::make_unique<ControllableStubAdapter>();
+    nixlProxyRuntime runtime;
+
+    ASSERT_EQ(runtime.init(std::move(adapter_owner),
+                           /*peer_capacity=*/2,
+                           /*channel_count=*/1,
+                           /*worker_count=*/1),
+              NIXL_SUCCESS);
+    ASSERT_EQ(runtime.startWorkers(), NIXL_SUCCESS);
+    publishProxyContext(runtime);
+    // Only peer 0 is connected, so peer 1 drives the disconnect error path.
+    const auto mvhs = registerDummyMemViews(runtime, /*peer_count=*/1);
+
+    constexpr int kWarpThreads = 32;
+    constexpr int kBlockThreads = 128;
+
+    nixl_status_t *d_status = nullptr;
+    ASSERT_EQ(cudaMalloc(&d_status, kBlockThreads * sizeof(nixl_status_t)), cudaSuccess);
+
+    auto collectStatuses = [&](int threads) {
+        std::vector<nixl_status_t> host(threads);
+        EXPECT_EQ(
+            cudaMemcpy(
+                host.data(), d_status, threads * sizeof(nixl_status_t), cudaMemcpyDeviceToHost),
+            cudaSuccess);
+        return host;
+    };
+
+    auto expectAllThreads =
+        [](const std::vector<nixl_status_t> &statuses, nixl_status_t expected, const char *what) {
+            for (size_t i = 0; i < statuses.size(); ++i) {
+                EXPECT_EQ(statuses[i], expected)
+                    << what << ": thread " << i << " did not observe the leader lane's status";
+            }
+        };
+
+    // WARP-level put to a disconnected peer.
+    ASSERT_EQ(cudaMemset(d_status, 0, kBlockThreads * sizeof(nixl_status_t)), cudaSuccess);
+    proxyPutAtPerThreadKernel<nixl_gpu_level_t::WARP>
+        <<<1, kWarpThreads>>>(mvhs.src, mvhs.dst, /*peer_index=*/1, /*channel_id=*/0, d_status);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    expectAllThreads(collectStatuses(kWarpThreads), NIXL_ERR_REMOTE_DISCONNECT, "warp put");
+
+    // BLOCK-level put to a disconnected peer.
+    ASSERT_EQ(cudaMemset(d_status, 0, kBlockThreads * sizeof(nixl_status_t)), cudaSuccess);
+    proxyPutAtPerThreadKernel<nixl_gpu_level_t::BLOCK>
+        <<<1, kBlockThreads>>>(mvhs.src, mvhs.dst, /*peer_index=*/1, /*channel_id=*/0, d_status);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    expectAllThreads(collectStatuses(kBlockThreads), NIXL_ERR_REMOTE_DISCONNECT, "block put");
+
+    // WARP-level atomic_add to a disconnected peer.
+    ASSERT_EQ(cudaMemset(d_status, 0, kBlockThreads * sizeof(nixl_status_t)), cudaSuccess);
+    proxyAtomicAddPerThreadKernel<nixl_gpu_level_t::WARP>
+        <<<1, kWarpThreads>>>(mvhs.dst, /*value=*/1, /*peer_index=*/1, d_status);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    expectAllThreads(collectStatuses(kWarpThreads), NIXL_ERR_REMOTE_DISCONNECT, "warp atomic_add");
+
+    // BLOCK-level atomic_add to a disconnected peer.
+    ASSERT_EQ(cudaMemset(d_status, 0, kBlockThreads * sizeof(nixl_status_t)), cudaSuccess);
+    proxyAtomicAddPerThreadKernel<nixl_gpu_level_t::BLOCK>
+        <<<1, kBlockThreads>>>(mvhs.dst, /*value=*/1, /*peer_index=*/1, d_status);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    expectAllThreads(
+        collectStatuses(kBlockThreads), NIXL_ERR_REMOTE_DISCONNECT, "block atomic_add");
 
     cudaFree(d_status);
     clearProxyContext();

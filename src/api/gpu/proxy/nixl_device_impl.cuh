@@ -39,19 +39,7 @@ get_xfer_status(nixlGpuXferStatusH &xfer_status) {
         }
     }
 
-    if constexpr (level == nixl_gpu_level_t::WARP) {
-        status = static_cast<nixl_status_t>(__shfl_sync(0xffffffff, static_cast<int>(status), 0));
-    } else if constexpr (level == nixl_gpu_level_t::BLOCK) {
-        __shared__ nixl_status_t s_status;
-        if (threadIdx.x == 0) {
-            s_status = status;
-        }
-        __syncthreads();
-        status = s_status;
-        __syncthreads();
-    }
-
-    return status;
+    return nixlProxyBroadcastStatus<level>(status);
 }
 
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
@@ -85,8 +73,7 @@ put(const nixlMemViewElem &src,
                 xfer_status);
         }
     }
-    nixlProxySync<level>();
-    return status;
+    return nixlProxyBroadcastStatus<level>(status);
 }
 
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
@@ -116,8 +103,7 @@ atomic_add(uint64_t value,
                 xfer_status);
         }
     }
-    nixlProxySync<level>();
-    return status;
+    return nixlProxyBroadcastStatus<level>(status);
 }
 
 __device__ __forceinline__ void *
