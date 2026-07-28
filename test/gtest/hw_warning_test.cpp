@@ -45,6 +45,11 @@ protected:
     }
 };
 
+class UcxTlsValidationTest : public ::testing::Test {
+protected:
+    gtest::ScopedEnv envHelper_;
+};
+
 /**
  * Test that a warning is logged when NVIDIA GPUs are present but UCX
  * CUDA support is not available.
@@ -115,6 +120,43 @@ TEST_F(HardwareWarningTest, NoWarningWhenIbAndCudaSupported) {
     nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
 
     ctx.warnAboutHardwareSupportMismatch();
+
+    envHelper_.popVar();
+}
+
+TEST_F(UcxTlsValidationTest, InvalidTlsDenyListSyntaxFails) {
+    envHelper_.addVar("UCX_TLS", "sm,ib,^cuda_ipc");
+
+    const gtest::LogIgnoreGuard lig_tls(
+        "Invalid UCX_TLS=sm,ib,\\^cuda_ipc.*\\^.*first non-space character");
+    const gtest::LogIgnoreGuard lig_backend("backend creation failed for 'UCX'");
+
+    nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
+    nixlBackendH *backend = nullptr;
+    EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_ERR_BACKEND);
+    EXPECT_GE(lig_tls.getIgnoredCount(), 1);
+    EXPECT_EQ(lig_backend.getIgnoredCount(), 1);
+
+    envHelper_.popVar();
+}
+
+TEST_F(UcxTlsValidationTest, MissingCudaTlsFailsWhenCudaIsAvailable) {
+    if (std::getenv("NIXL_CI_NON_GPU") != nullptr) {
+        GTEST_SKIP() << "NIXL_CI_NON_GPU is set, skipping GPU UCX_TLS validation test";
+    }
+
+    envHelper_.addVar("UCX_TLS", "sm");
+
+    const gtest::LogIgnoreGuard lig_tls(
+        "Invalid UCX_TLS=sm.*Add cuda_copy for basic GPU support, or cuda to also include "
+        "NVLink support");
+    const gtest::LogIgnoreGuard lig_backend("backend creation failed for 'UCX'");
+
+    nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
+    nixlBackendH *backend = nullptr;
+    EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_ERR_BACKEND);
+    EXPECT_GE(lig_tls.getIgnoredCount(), 1);
+    EXPECT_EQ(lig_backend.getIgnoredCount(), 1);
 
     envHelper_.popVar();
 }
