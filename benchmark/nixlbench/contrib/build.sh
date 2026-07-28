@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,7 @@ DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
 UCX_SRC=""
 UCX_BUILD_CONTEXT_ARGS=""
 BUILD_TYPE="release"
+EFA_VERSION=""
 commit_id=$(git rev-parse --short HEAD)
 
 # Get latest TAG and add COMMIT_ID for dev
@@ -36,6 +37,7 @@ fi
 
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
 BASE_IMAGE_TAG=25.10-cuda13.0-devel-ubuntu24.04
+CUSTOM_BASE_IMAGE=0
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
@@ -53,6 +55,7 @@ get_options() {
         --base-image)
             if [ "$2" ]; then
                 BASE_IMAGE="$2"
+                CUSTOM_BASE_IMAGE=1
                 shift
             else
                 missing_requirement $1
@@ -61,6 +64,7 @@ get_options() {
         --base-image-tag)
             if [ "$2" ]; then
                 BASE_IMAGE_TAG=$2
+                CUSTOM_BASE_IMAGE=1
                 shift
             else
                 missing_requirement $1
@@ -69,6 +73,17 @@ get_options() {
         --build-type)
             if [ "$2" ]; then
                 BUILD_TYPE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --aws)
+            DOCKER_FILE="${SOURCE_DIR}/Dockerfile.aws-amzn2023"
+            ;;
+        --efa-version)
+            if [ "$2" ]; then
+                EFA_VERSION=$2
                 shift
             else
                 missing_requirement $1
@@ -162,13 +177,21 @@ get_options() {
 show_build_options() {
     echo ""
     echo "Building NIXLBench Image"
+    echo "Dockerfile: ${DOCKER_FILE}"
     echo "NIXL Source: ${NIXL_SRC}"
     echo "UCX Source: ${UCX_SRC} (optional)"
     echo "Build Type: ${BUILD_TYPE}"
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
     echo "Build Context Args: ${BUILD_CONTEXT_ARGS}"
-    echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+    if [ "$CUSTOM_BASE_IMAGE" -eq 1 ]; then
+        echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+    else
+        echo "Base Image: (using Dockerfile default)"
+    fi
+    if [ -n "$EFA_VERSION" ]; then
+        echo "EFA Version: ${EFA_VERSION}"
+    fi
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
@@ -176,8 +199,10 @@ show_build_options() {
 
 show_help() {
     echo "usage: build.sh --nixl <path to nixl source>"
-    echo "  [--base base image]"
+    echo "  [--base-image base image]"
     echo "  [--base-image-tag base image tag]"
+    echo "  [--aws build with Dockerfile.aws-amzn2023]"
+    echo "  [--efa-version EFA installer version]"
     echo "  [--nixlbench path/to/nixlbench/source/dir]"
     echo "  [--ucx path/to/ucx/source/dir]"
     echo "  [--build-type [debug|release] to select build type]"
@@ -199,12 +224,17 @@ error() {
 
 get_options "$@"
 
-BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+if [ "$CUSTOM_BASE_IMAGE" -eq 1 ]; then
+    BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+fi
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
+if [ -n "$EFA_VERSION" ]; then
+    BUILD_ARGS+=" --build-arg EFA_VERSION=$EFA_VERSION"
+fi
 
 show_build_options
 
