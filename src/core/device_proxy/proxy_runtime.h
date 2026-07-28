@@ -239,7 +239,7 @@ private:
     static void
     fillRemoteMetadata(const nixl_remote_meta_dlist_t &dlist, RemoteMetadata &out);
 
-    std::vector<RegistryEntry> entries_;
+    std::vector<std::unique_ptr<RegistryEntry>> entries_;
     uint64_t next_proxy_memview_id_ = 1;
 };
 

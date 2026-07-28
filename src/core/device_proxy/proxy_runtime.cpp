@@ -38,12 +38,12 @@ nixlProxyMemViewRegistry::registerProxyMemView(nixlMemViewH backend_memview,
         return NIXL_ERR_NOT_ALLOWED;
     }
 
-    RegistryEntry entry;
-    entry.proxy_memview_id = static_cast<uint32_t>(next_proxy_memview_id_);
-    entry.backend_memview = backend_memview;
-    entries_.push_back(entry);
+    auto entry = std::make_unique<RegistryEntry>();
+    entry->proxy_memview_id = static_cast<uint32_t>(next_proxy_memview_id_);
+    entry->backend_memview = backend_memview;
+    entries_.push_back(std::move(entry));
 
-    *proxy_memview = reinterpret_cast<nixlMemViewH>(static_cast<uintptr_t>(entry.proxy_memview_id));
+    *proxy_memview = reinterpret_cast<nixlMemViewH>(static_cast<uintptr_t>(next_proxy_memview_id_));
     ++next_proxy_memview_id_;
     NIXL_DEBUG << "nixlProxyMemViewRegistry::register: backend_mvh=" << backend_memview
                << " -> proxy_id=" << (next_proxy_memview_id_ - 1);
@@ -249,7 +249,7 @@ nixlProxyMemViewRegistry::prepareSubmission(const nixlProxySubmission &submissio
 void
 nixlProxyMemViewRegistry::clear() noexcept {
     for (auto &entry : entries_) {
-        entry.state = ProxyMemViewRegEntryState::ENTRY_RETIRED;
+        entry->state = ProxyMemViewRegEntryState::ENTRY_RETIRED;
     }
 }
 
@@ -269,7 +269,7 @@ nixlProxyMemViewRegistry::getEntryForId(uint64_t proxy_memview_id) {
         proxy_memview_id > entries_.size()) {
         return nullptr;
     }
-    return &entries_[proxy_memview_id - 1];
+    return entries_[proxy_memview_id - 1].get();
 }
 
 const nixlProxyMemViewRegistry::RegistryEntry *
@@ -278,7 +278,7 @@ nixlProxyMemViewRegistry::getEntryForId(uint64_t proxy_memview_id) const {
         proxy_memview_id > entries_.size()) {
         return nullptr;
     }
-    return &entries_[proxy_memview_id - 1];
+    return entries_[proxy_memview_id - 1].get();
 }
 
 nixl_status_t
