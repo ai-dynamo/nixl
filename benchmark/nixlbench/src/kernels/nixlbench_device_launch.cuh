@@ -7,7 +7,6 @@
 #define NIXL_BENCHMARK_NIXLBENCH_SRC_KERNELS_NIXLBENCH_DEVICE_LAUNCH_CUH
 
 #include <nixl_types.h>
-#include <cuda_runtime.h>
 #include <stddef.h>
 
 /**

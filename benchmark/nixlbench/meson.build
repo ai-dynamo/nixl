@@ -234,6 +234,10 @@ else
             'UCX GPU Device API is unavailable because CUDA ' +
             cuda.version() + ' is older than 12.8.')
     else
+        if cuda.version().version_compare('>=12.9') and cuda.version().version_compare('<12.10')
+            ucx_device_cuda_args += ['-D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE']
+            message('Applying CUDA 12.9 atomic storage flag')
+        endif
         doca_gpunetio_dep = dependency('doca-gpunetio', required: false)
         if ucx_device_cuda_arch_list == 'auto'
             ucx_device_cuda_arch_list = '80,86,89,90,100,103,120'
