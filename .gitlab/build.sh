@@ -109,6 +109,7 @@ else
                                  autotools-dev \
                                  automake \
                                  git \
+                                 gdb \
                                  libtool \
                                  libz-dev \
                                  libiberty-dev \
