@@ -13,9 +13,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if get_option('build_examples')
-    subdir('cpp')
-    subdir('plugins')
-endif
+inmemkv_sources = [
+    '../../../src/plugins/kv/kv_engine.cpp',
+    'inmemkv_backend.cpp',
+    'inmemkv_backend.h',
+    'inmemkv_engine_impl.cpp',
+    'inmemkv_engine_impl.h',
+    'inmemkv_store.cpp',
+    'inmemkv_store.h',
+    'inmemkv_plugin.cpp',
+]
 
-subdir('device')
+inmemkv_example_plugin = shared_library(
+    'INMEMKV',
+    inmemkv_sources,
+    dependencies: [nixl_infra, nixl_common_dep],
+    cpp_args: ['-fPIC'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs],
+    install: false,
+    name_prefix: 'libplugin_')
+
+# Convenience alias so "ninja -C build INMEMKV" works.
+alias_target('INMEMKV', inmemkv_example_plugin)

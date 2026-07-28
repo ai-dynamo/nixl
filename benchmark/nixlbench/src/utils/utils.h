@@ -31,6 +31,10 @@
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
 
+#ifndef NIXLBENCH_ENABLE_INMEMKV
+#define NIXLBENCH_ENABLE_INMEMKV 0
+#endif
+
 #if HAVE_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -94,6 +98,7 @@
 #define XFERBENCH_BACKEND_MOONCAKE "Mooncake"
 #define XFERBENCH_BACKEND_HF3FS "HF3FS"
 #define XFERBENCH_BACKEND_OBJ "OBJ"
+#define XFERBENCH_BACKEND_INMEMKV "INMEMKV"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"

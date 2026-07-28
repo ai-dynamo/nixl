@@ -23,3 +23,9 @@ option('nvshmem_inc_path', type: 'string', value: '', description: 'Path to NVSH
 option('nvshmem_lib_path', type: 'string', value: '', description: 'Path to NVSHMEM library directory')
 option('rocm_path', type: 'string', value: '', description: 'Path to the ROCm installation directory (used only when use_rocm=true). Empty falls back to /opt/rocm.')
 option('use_rocm', type: 'boolean', value: false, description: 'Build nixlbench against AMD ROCm/HIP instead of CUDA. Default false; the NVIDIA path is unchanged.')
+option(
+    'enable_inmemkv',
+    type: 'boolean',
+    value: false,
+    description: 'Enable INMEMKV-specific nixlbench support',
+)

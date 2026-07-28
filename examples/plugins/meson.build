@@ -13,9 +13,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if get_option('build_examples')
-    subdir('cpp')
-    subdir('plugins')
-endif
-
-subdir('device')
+subdir('inmemkv')
