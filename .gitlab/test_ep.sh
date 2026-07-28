@@ -68,7 +68,7 @@ run_elastic_test() {
             export UCX_TLS=^rc_gda
         fi
         PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
-            timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
+        timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
             --plan "$plan_file" \
             --num-processes 4 \
             --num-experts-per-rank 32 \
@@ -89,7 +89,6 @@ run_control_test() {
         if [[ "$extra_flags" != *--disable-ll-nvlink* ]]; then
             export UCX_TLS=^rc_gda
         fi
-        # `tests/` on PYTHONPATH lets control.py resolve `from utils import ...`.
         PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests${PYTHONPATH:+:$PYTHONPATH}" \
             timeout 300 python3 ${EP_SRC_DIR}/tests/control/control.py \
             --num-processes 4 $extra_flags
