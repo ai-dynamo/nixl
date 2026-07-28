@@ -503,17 +503,6 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
     }
 
-    for (auto &elm : backend->getSupportedMems()) {
-        // First time creating this backend handle, so unique
-        // The order of creation sets the preference order
-        data->memToBackend[elm].push_back(backend.get());
-    }
-
-    if (backend->supportsRemote()) {
-        data->notifEngines.push_back(backend.get());
-        data->connMd_[type] = conn_info;
-    }
-
     if (data->proxyModeEnabled()) {
         if (backend->supportsProxy()) {
             const nixl_status_t ret = data->createProxyRuntime(backend.get(), type, init_params);
@@ -526,6 +515,17 @@ nixlAgent::createBackend(const nixl_backend_t &type,
             NIXL_WARN << "Proxy runtime is enabled but backend '" << type
                       << "' does not support it";
         }
+    }
+
+    for (auto &elm : backend->getSupportedMems()) {
+        // First time creating this backend handle, so unique
+        // The order of creation sets the preference order
+        data->memToBackend[elm].push_back(backend.get());
+    }
+
+    if (backend->supportsRemote()) {
+        data->notifEngines.push_back(backend.get());
+        data->connMd_[type] = conn_info;
     }
 
     // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
