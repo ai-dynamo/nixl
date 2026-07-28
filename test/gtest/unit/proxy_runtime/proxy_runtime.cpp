@@ -634,10 +634,11 @@ namespace proxy_runtime {
     static void
     publishRecord(nixlProxySubmission *records,
                   uint32_t slot_idx,
-                  nixlProxySubmission record,
+                  const nixlProxySubmission &record,
                   uint64_t op_idx) {
-        record.op_idx = 0;
-        records[slot_idx] = record;
+        nixlProxySubmission staged = record;
+        staged.op_idx = 0;
+        records[slot_idx] = staged;
         __atomic_store_n(&records[slot_idx].op_idx, op_idx, __ATOMIC_RELEASE);
     }
 
