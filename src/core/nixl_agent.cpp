@@ -182,14 +182,8 @@ makeAgentTracer(const std::string &name) {
     return nixl::trace::makeTracer(nixl::trace::TracerConfig{name, std::move(requested_backends)});
 }
 
-// The metadata manager is the single path for metadata exchange; it selects its
-// backends from the environment (P2P plus an optional name-addressed backend).
-// Built unconditionally so the public methods can delegate without a fallback.
-[[nodiscard]] std::unique_ptr<nixlMDManager>
-makeMDManager(nixlMetadataContext &ctx) {
-    return std::make_unique<nixlMDManager>(ctx);
-}
-
+// The settings the manager and its backends need, taken at construction so they
+// never reach back into the agent for configuration.
 [[nodiscard]] nixlMDConfig
 makeMDConfig(const nixlAgentConfig &config) {
     return {config.useListenThread, config.listenPort, config.etcdWatchTimeout, config.lthrDelay};
@@ -200,11 +194,13 @@ makeMDConfig(const nixlAgentConfig &config) {
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
     : name_(name),
       config_(config),
-      mdConfig_(makeMDConfig(config)),
-      md_(makeMDManager(*this)),
+      // The manager is the single metadata path, built unconditionally so the
+      // public methods can delegate without a fallback. It selects its backends
+      // from the environment (P2P plus an optional name-addressed backend).
+      md_(*this, makeMDConfig(config)),
       // The manager's backends decide whether a worker thread runs, and that
       // thread shares agent state - so they also decide the effective sync mode.
-      lock(effectiveSyncMode(config.syncMode, md_->needsWorker())),
+      lock(effectiveSyncMode(config.syncMode, md_.needsWorker())),
       tracer_(makeAgentTracer(name)) {
     if (name.empty()) {
         throw std::invalid_argument("Agent needs a non-empty name");
@@ -230,7 +226,7 @@ nixlAgentData::~nixlAgentData() {
     // This body runs before any member is destroyed, so stopping here is what
     // guarantees no task is still touching the caches below (md_ itself is
     // declared early and would otherwise be destroyed last).
-    md_->stop();
+    md_.stop();
 }
 
 /*** nixlAgent implementation ***/
@@ -240,7 +236,7 @@ nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
     // (which own their transport state, e.g. the P2P listener bound during
     // nixlAgentData construction). Start the worker now that the agent is fully
     // constructed, so it never touches partially-built state.
-    data->md_->start();
+    data->md_.start();
 }
 
 nixlAgent::~nixlAgent() = default;
@@ -1821,13 +1817,13 @@ nixl_status_t
 nixlAgent::sendLocalMD(const nixl_opt_args_t *extra_params) const {
     // Metadata exchange is owned by the manager, which routes to P2P when a peer
     // address is given, otherwise to the configured name-addressed backend.
-    return data->md_->sendLocalMD(extra_params);
+    return data->md_.sendLocalMD(extra_params);
 }
 
 nixl_status_t
 nixlAgent::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
                               const nixl_opt_args_t *extra_params) const {
-    return data->md_->sendLocalPartialMD(descs, extra_params);
+    return data->md_.sendLocalPartialMD(descs, extra_params);
 }
 
 nixl_status_t
@@ -1837,12 +1833,12 @@ nixlAgent::fetchRemoteMD (const std::string remote_name,
         trace_span, data->tracer_.get(), "nixl::fetchRemoteMD", nixl::trace::Kind::Metadata);
     NIXL_TRACE_ATTR(trace_span, "remote_agent", std::string_view{remote_name});
 
-    return data->md_->fetchRemoteMD(remote_name, extra_params);
+    return data->md_.fetchRemoteMD(remote_name, extra_params);
 }
 
 nixl_status_t
 nixlAgent::invalidateLocalMD (const nixl_opt_args_t* extra_params) const {
-    return data->md_->invalidateLocalMD(extra_params);
+    return data->md_.invalidateLocalMD(extra_params);
 }
 
 nixl_status_t

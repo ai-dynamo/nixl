@@ -45,7 +45,7 @@ class nixlMDStreamListener;
  */
 class nixlP2PMetadataBackend : public nixlMetadataBackend {
 public:
-    explicit nixlP2PMetadataBackend(nixlMetadataContext &ctx);
+    nixlP2PMetadataBackend(nixlMetadataContext &ctx, const nixlMDConfig &config);
     ~nixlP2PMetadataBackend() override;
 
     [[nodiscard]] std::string_view
@@ -84,6 +84,7 @@ private:
     readIncoming();
 
     nixlMetadataContext &ctx_;
+    const nixlMDConfig config_;
     std::map<std::pair<std::string, int>, int> remoteSockets_;
     std::unique_ptr<nixlMDStreamListener> listener_;
 };

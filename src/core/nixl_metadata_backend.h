@@ -31,12 +31,15 @@
 #include <string_view>
 
 /** A unit of transport I/O produced on the caller thread, run on the worker. */
-using nixlWorkerTask = std::function<void()>;
+using nixl_worker_task_t = std::function<void()>;
 
 /**
  * @struct nixlMDConfig
  * @brief The agent settings the manager and its backends need, carved out of
  *        nixlAgentConfig so a backend never reaches the public nixl_params.h.
+ *
+ * Passed to the manager and on to each backend at construction; every field is
+ * fixed for the life of the agent.
  */
 struct nixlMDConfig {
     /** P2P: listen for inbound peers. */
@@ -61,7 +64,7 @@ struct nixlMDConfig {
  */
 struct nixlPreparedOp {
     nixl_status_t status = NIXL_SUCCESS;
-    nixlWorkerTask task;
+    nixl_worker_task_t task;
 };
 
 /**
@@ -76,9 +79,11 @@ struct nixlPreparedOp {
  * Thread contract, encoded in the interface:
  *  - the `prepare*` methods run on the CALLER thread: they validate and
  *    serialize, return a synchronous status, and hand back the transport work as
- *    a nixlWorkerTask. They must not block on I/O.
- *  - the returned nixlWorkerTask and `serviceEvents()` run on the manager's
- *    WORKER thread: that is where all blocking transport I/O belongs.
+ *    a nixl_worker_task_t. They must not block on I/O.
+ *  - the returned task and `serviceEvents()` run on the manager's WORKER thread:
+ *    that is where all blocking transport I/O belongs. A backend that returns
+ *    needsWorker() == false has no worker to run on, so the manager runs its
+ *    tasks inline on the caller thread instead.
  * The manager owns scheduling; backends never touch a queue or a thread.
  */
 class nixlMetadataBackend {

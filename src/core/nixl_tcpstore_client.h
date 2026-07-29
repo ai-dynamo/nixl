@@ -29,7 +29,6 @@
 
 #include <chrono>
 #include <cstdint>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -78,16 +77,19 @@ private:
     int fd_ = -1;
 };
 
+// All operations run on the metadata manager's worker thread (the backend that
+// owns this client requires it), so nothing here is synchronized.
 class nixlTcpStoreClient {
 public:
-    // Connects to host:port, runs the c10d VALIDATE/PING handshake, and arms
-    // the socket send/recv timeout. Throws std::runtime_error on any failure,
-    // so a constructed client is a connected one (health gate). connect_timeout
-    // is the bring-up budget; op_timeout bounds each operation once running.
+    // Does no I/O: the first operation connects and runs the c10d VALIDATE/PING
+    // handshake, so a store that is briefly unreachable does not fail agent
+    // construction. connect_timeout is the bring-up budget for that first
+    // connection; op_timeout bounds each operation, and each later reconnect,
+    // once running.
     nixlTcpStoreClient(std::string host,
                        std::uint16_t port,
                        std::chrono::milliseconds connect_timeout,
-                       std::chrono::milliseconds op_timeout);
+                       std::chrono::milliseconds op_timeout) noexcept;
 
     ~nixlTcpStoreClient() = default;
 
@@ -110,40 +112,52 @@ public:
     deleteKey(const std::string &key);
 
 private:
-    // Resolve, connect one address, arm the I/O timeouts, handshake.
+    using deadline_t = std::chrono::steady_clock::time_point;
+
+    // Bring-up within a single budget: resolve, try each address with whatever
+    // time is left, arm the I/O timeouts, handshake against the same deadline.
     void
     connect(std::chrono::milliseconds timeout);
 
-    // Reconnect when a previous operation dropped the socket. A partial
-    // exchange desyncs the framing, so it is closed rather than reused; ops are
-    // re-issued whole, so a fresh connection is equivalent.
+    // Connect on first use, and reconnect when a previous operation dropped the
+    // socket. A partial exchange desyncs the framing, so it is closed rather
+    // than reused; ops are re-issued whole, so a fresh connection is equivalent.
     void
     ensureConnected();
 
     // VALIDATE (required first query) followed by a PING round-trip.
     void
-    handshake();
+    handshake(deadline_t deadline);
 
-    // Both bound the whole call by a deadline taken on entry: SO_SNDTIMEO /
-    // SO_RCVTIMEO only bound one syscall, so a peer dribbling bytes could
-    // stretch a single transfer to len times the socket timeout.
+    // The deadline covers the whole operation, not one transfer: SO_SNDTIMEO /
+    // SO_RCVTIMEO only bound a single syscall, so a peer dribbling bytes could
+    // otherwise stretch an exchange to many times the socket timeout.
     void
-    sendAll(const void *data, std::size_t len);
+    sendAll(const void *data, std::size_t len, deadline_t deadline);
 
     void
-    recvAll(void *data, std::size_t len);
+    recvAll(void *data, std::size_t len, deadline_t deadline);
 
     // Rejects absurd lengths so a desynced response cannot trigger an
     // unbounded allocation.
     [[nodiscard]] std::string
-    recvBlob();
+    recvBlob(deadline_t deadline);
+
+    // Deadline for one operation, taken when it starts.
+    [[nodiscard]] deadline_t
+    opDeadline() const noexcept {
+        return std::chrono::steady_clock::now() + opTimeout_;
+    }
 
     const std::string host_;
     const std::uint16_t port_;
+    const std::chrono::milliseconds connectTimeout_;
     const std::chrono::milliseconds opTimeout_;
 
     nixlSocketFd fd_;
-    std::mutex mutex_; // serializes each request/response exchange on the socket
+    // Only the first connection gets the bring-up budget; later reconnects use
+    // the op budget so a retry cannot hold the worker for the whole window.
+    bool bringUp_ = true;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_TCPSTORE_CLIENT_H

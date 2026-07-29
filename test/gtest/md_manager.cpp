@@ -65,6 +65,14 @@ namespace {
         return args;
     }
 
+    // An empty value means "not configured": getenv is non-null for VAR="", and
+    // an empty endpoint would fail the fixture instead of skipping it.
+    bool
+    envConfigured(const char *name) {
+        const char *value = std::getenv(name);
+        return value != nullptr && *value != '\0';
+    }
+
     // Bounded polling around checkRemoteMD: avoids fixed sleeps that make
     // async assertions slow and timing-sensitive.
     nixl_status_t
@@ -118,8 +126,9 @@ protected:
 
     void
     SetUp() override {
-        // Route the agent's P2P metadata methods through the manager.
-        setenv("NIXL_USE_MD_MANAGER", "1", 1);
+        // Route the agent's P2P metadata methods through the manager. Scoped so
+        // it is restored even when a fatal assertion below skips TearDown.
+        env_.addVar("NIXL_USE_MD_MANAGER", "1");
 
         for (int i = 0; i < AGENT_COUNT_; i++) {
             AgentContext ctx;
@@ -143,13 +152,13 @@ protected:
     TearDown() override {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
-        unsetenv("NIXL_USE_MD_MANAGER");
     }
 
     static constexpr int AGENT_COUNT_ = 2;
     static constexpr size_t BUFF_COUNT_ = 4;
     static constexpr size_t BUFF_SIZE_ = 1024;
 
+    ScopedEnv env_;
     std::vector<AgentContext> agents_;
 };
 
@@ -165,6 +174,25 @@ TEST_F(MDManagerFixture, SendLocalAndInvalidateLocal) {
     ASSERT_EQ(src.agent->invalidateLocalMD(&args), NIXL_SUCCESS);
     EXPECT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_ERR_NOT_FOUND),
               NIXL_ERR_NOT_FOUND);
+}
+
+// An agent that does not listen has no metadata worker, so the manager has no
+// thread to run the send on and does it inline. Previously the task was queued
+// against a worker that never started and the peer was never contacted.
+TEST_F(MDManagerFixture, SendLocalWithoutWorker) {
+    auto &dst = agents_[0];
+
+    AgentContext src;
+    src.name = "mdm_agent_no_worker";
+    nixlAgentConfig cfg;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
+    src.agent = std::make_unique<nixlAgent>(src.name, cfg);
+    src.createBackend();
+    src.initAndRegisterBuffers(BUFF_COUNT_, BUFF_SIZE_);
+
+    const nixl_opt_args_t args = peerArgs(dst.ip, dst.port);
+    ASSERT_EQ(src.agent->sendLocalMD(&args), NIXL_SUCCESS);
+    EXPECT_EQ(waitForRemoteMD(dst.agent.get(), src.name, {DRAM_SEG}, NIXL_SUCCESS), NIXL_SUCCESS);
 }
 
 TEST_F(MDManagerFixture, FetchRemote) {
@@ -191,11 +219,11 @@ protected:
 
     void
     SetUp() override {
-        if (std::getenv("NIXL_ETCD_ENDPOINTS") == nullptr) {
+        if (!envConfigured("NIXL_ETCD_ENDPOINTS")) {
             GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS not set; skipping ETCD backend tests";
         }
         // No-address metadata routes through the manager (to the KV backend).
-        setenv("NIXL_USE_MD_MANAGER", "1", 1);
+        env_.addVar("NIXL_USE_MD_MANAGER", "1");
 
         // Unique per-run names so stale ETCD keys from earlier runs cannot leak in.
         const std::string suffix =
@@ -237,13 +265,13 @@ protected:
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
-        unsetenv("NIXL_USE_MD_MANAGER");
     }
 
     static constexpr int AGENT_COUNT_ = 2;
     static constexpr size_t BUFF_COUNT_ = 4;
     static constexpr size_t BUFF_SIZE_ = 1024;
 
+    ScopedEnv env_;
     std::vector<AgentContext> agents_;
 };
 
@@ -284,18 +312,18 @@ protected:
 
     void
     SetUp() override {
-        if (std::getenv("NIXL_TCPSTORE_ENDPOINT") == nullptr) {
+        if (!envConfigured("NIXL_TCPSTORE_ENDPOINT")) {
             GTEST_SKIP() << "NIXL_TCPSTORE_ENDPOINT not set; skipping TCPStore backend tests";
         }
         // ETCD and TCPStore are mutually exclusive; with both set the manager
         // selects ETCD and the agent ctor throws, so skip rather than exercise
         // the wrong backend under a "TCPStore" name.
-        if (std::getenv("NIXL_ETCD_ENDPOINTS") != nullptr) {
+        if (envConfigured("NIXL_ETCD_ENDPOINTS")) {
             GTEST_SKIP()
                 << "NIXL_ETCD_ENDPOINTS also set; skipping mutually-exclusive TCPStore tests";
         }
         // No-address metadata routes through the manager (to the KV backend).
-        setenv("NIXL_USE_MD_MANAGER", "1", 1);
+        env_.addVar("NIXL_USE_MD_MANAGER", "1");
 
         // Unique per-run names so stale keys from earlier runs cannot leak in.
         const std::string suffix =
@@ -337,13 +365,13 @@ protected:
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
-        unsetenv("NIXL_USE_MD_MANAGER");
     }
 
     static constexpr int AGENT_COUNT_ = 2;
     static constexpr size_t BUFF_COUNT_ = 4;
     static constexpr size_t BUFF_SIZE_ = 1024;
 
+    ScopedEnv env_;
     std::vector<AgentContext> agents_;
 };
 

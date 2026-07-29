@@ -18,7 +18,8 @@
 #define NIXL_SRC_CORE_AGENT_DATA_H
 
 #include "mem_section.h"
-#include "nixl_metadata_backend.h"
+#include "nixl_md_manager.h"
+#include "nixl_metadata_context.h"
 #include "telemetry.h"
 #include "tracing/trace.h"
 #include "stream/metadata_stream.h"
@@ -28,16 +29,6 @@
 #include <functional>
 #include <memory>
 
-#if HAVE_ETCD
-#include <etcd/SyncClient.hpp>
-
-namespace etcd {
-class SyncClient;
-}
-
-#define NIXL_ETCD_NAMESPACE_DEFAULT "/nixl/agents/"
-#endif // HAVE_ETCD
-
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
 // A peer socket (ip, port) and the map of open connections the P2P backend owns.
@@ -45,67 +36,20 @@ using nixl_socket_peer_t = std::pair<std::string, int>;
 
 using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
 
-class nixlMDManager;
-
-/**
- * @class nixlMetadataContext
- * @brief Core-internal interface: the agent-side operations a metadata backend
- *        needs.
- *
- * Implemented by nixlAgentData. Backends hold a reference to this interface
- * instead of the concrete agent, so they never reference nixlAgent (no cycle)
- * and need no friendship.
- */
-class nixlMetadataContext {
-public:
-    virtual ~nixlMetadataContext() = default;
-
-    /** Serialize this agent's full local metadata blob. */
-    [[nodiscard]] virtual nixl_status_t
-    getLocalMD(nixl_blob_t &blob) = 0;
-
-    /** Serialize a partial local metadata blob for the given descriptors. */
-    [[nodiscard]] virtual nixl_status_t
-    getLocalPartialMD(const nixl_reg_dlist_t &descs,
-                      nixl_blob_t &blob,
-                      const nixl_opt_args_t *extra_params) = 0;
-
-    /** This agent's name; used by centralized backends to build their KV keys. */
-    [[nodiscard]] virtual const std::string &
-    agentName() const = 0;
-
-    /** The subset of the agent configuration the manager and backends need. */
-    [[nodiscard]] virtual const nixlMDConfig &
-    mdConfig() const = 0;
-
-    /**
-     * Deserialize a received metadata blob into the remote-section cache,
-     * returning the embedded remote agent name. Used by every backend to load a
-     * fetched/received blob.
-     */
-    [[nodiscard]] virtual nixl_status_t
-    loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) = 0;
-
-    /** Evict a remote agent's cached metadata (used by inbound INVL / watches). */
-    virtual nixl_status_t
-    invalidateRemoteMD(const std::string &remote_name) = 0;
-};
-
-// Implements nixlMetadataContext so metadata backends reach the serialization
-// primitives and the comm thread without referencing nixlAgent.
+// Implements nixlMetadataContext, which is the whole surface a metadata backend
+// sees of the agent: serialization, cache load and invalidation, nothing else.
 // Preserve the grandfathered 8-space class layout below.
 // clang-format off
 class nixlAgentData : public nixlMetadataContext {
     private:
         const std::string name_;
         const nixlAgentConfig config_;
-        const nixlMDConfig mdConfig_;
         // Agent-owned metadata manager; always built (single metadata path).
         // It owns the worker thread and the pluggable backends (which own their
         // own transport state: sockets/listener for P2P, client for ETCD).
         // Declared before `lock` because whether its backends need a worker is
         // what decides the effective sync mode.
-        const std::unique_ptr<nixlMDManager> md_;
+        nixlMDManager md_;
         nixlLock        lock;
         std::atomic<bool> efaWarningChecked = false;
 
@@ -142,12 +86,8 @@ class nixlAgentData : public nixlMetadataContext {
                           nixl_blob_t &blob,
                           const nixl_opt_args_t *extra_params) override;
         [[nodiscard]] const std::string &
-        agentName() const override {
+        agentName() const noexcept override {
             return name_;
-        }
-        [[nodiscard]] const nixlMDConfig &
-        mdConfig() const override {
-            return mdConfig_;
         }
         [[nodiscard]] nixl_status_t
         loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) override;

@@ -16,7 +16,7 @@
  */
 #include "nixl_tcpstore_metadata_backend.h"
 
-#include "agent_data.h"
+#include "nixl_metadata_context.h"
 #include "nixl_tcpstore_client.h"
 #include "nixl_types.h"
 
@@ -47,6 +47,11 @@ constexpr long default_timeout_ms = 30000;
 // budget because these run on the manager's shared worker thread.
 constexpr long default_op_timeout_ms = 5000;
 
+// How long one serviceEvents() pass spends re-probing pending fetches. Each
+// probe is a store round-trip (and can pay a reconnect), so without a budget a
+// degraded store would hold the shared worker for the whole pending set.
+constexpr auto service_budget = std::chrono::milliseconds(50);
+
 [[nodiscard]] std::string
 makeKey(const std::string &label, const std::string &src, const std::string &dst) {
     return std::string(namespace_prefix) + "/" + label + "/" + src + "/" + dst;
@@ -58,7 +63,8 @@ bringUpTimeout() {
         nixl::config::getValueDefaulted<long>("NIXL_TCPSTORE_TIMEOUT_MS", default_timeout_ms));
 }
 
-// Parse and connect, so client_ can be a const member built in the init list.
+// Parse the endpoint and build the client (which connects on first use), so
+// client_ can be a const member built in the init list.
 [[nodiscard]] std::unique_ptr<nixlTcpStoreClient>
 makeClient() {
     const std::string endpoint = nixl::config::getNonEmptyString("NIXL_TCPSTORE_ENDPOINT");
@@ -94,17 +100,13 @@ nixlTcpStoreMetadataBackend::nixlTcpStoreMetadataBackend(nixlMetadataContext &ct
     : ctx_(ctx),
       fetchTimeout_(bringUpTimeout()),
       client_(makeClient()) {
-    NIXL_DEBUG << "[" << ctx_.agentName() << "] connected TCPStore client";
+    NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore backend ready";
 }
 
 nixlTcpStoreMetadataBackend::~nixlTcpStoreMetadataBackend() = default;
 
 nixl_status_t
 nixlTcpStoreMetadataBackend::publishKey(const std::string &key, const nixl_blob_t &blob) {
-    // Hold publishedMutex_ across the store write and the tracking update so a
-    // concurrent invalidateLocal cannot delete this key's snapshot mid-publish,
-    // which would drop the fresh value and leave publishedKeys_ out of sync.
-    const std::lock_guard lk(publishedMutex_);
     try {
         client_->set(key, blob);
     }
@@ -159,8 +161,8 @@ nixlTcpStoreMetadataBackend::prepareFetchRemote(const std::string &remote_name,
     // caller polling checkRemoteMD still converges once the peer publishes.
     return {NIXL_SUCCESS, [this, remote_name, key]() {
                 if (!tryFetch(remote_name, key)) {
-                    pendingFetches_[remote_name] = {
-                        key, std::chrono::steady_clock::now() + fetchTimeout_};
+                    pendingFetches_[key] = {remote_name,
+                                            std::chrono::steady_clock::now() + fetchTimeout_};
                 }
             }};
 }
@@ -202,12 +204,23 @@ nixlTcpStoreMetadataBackend::tryFetch(const std::string &remote_name, const std:
 void
 nixlTcpStoreMetadataBackend::serviceEvents() {
     const auto now = std::chrono::steady_clock::now();
+    const auto probe_until = now + service_budget;
     for (auto it = pendingFetches_.begin(); it != pendingFetches_.end();) {
-        if (tryFetch(it->first, it->second.key)) {
+        // Expiry is checked for every entry, whatever is left of the budget, so
+        // a fetch deferred to a later pass still gives up on schedule.
+        if (now >= it->second.deadline) {
+            NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch for "
+                       << it->second.remoteName << " gave up waiting for key " << it->first;
             it = pendingFetches_.erase(it);
-        } else if (now >= it->second.deadline) {
-            NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore fetch for " << it->first
-                       << " gave up waiting for key " << it->second.key;
+            continue;
+        }
+        // Out of budget: leave the rest pending and re-probe on the next pass,
+        // so the backends sharing this worker are not held up.
+        if (std::chrono::steady_clock::now() >= probe_until) {
+            ++it;
+            continue;
+        }
+        if (tryFetch(it->second.remoteName, it->first)) {
             it = pendingFetches_.erase(it);
         } else {
             ++it;
@@ -218,10 +231,6 @@ nixlTcpStoreMetadataBackend::serviceEvents() {
 nixlPreparedOp
 nixlTcpStoreMetadataBackend::prepareInvalidateLocal(const nixl_opt_args_t * /*extra_params*/) {
     return {NIXL_SUCCESS, [this]() {
-                // Hold publishedMutex_ across the deletes and the tracking reset so this
-                // serializes with publishKey; lock order is always publishedMutex_ ->
-                // client mutex, so there is no deadlock.
-                const std::lock_guard lk(publishedMutex_);
                 try {
                     for (const auto &key : publishedKeys_) {
                         client_->deleteKey(key);

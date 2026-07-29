@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -159,21 +160,28 @@ nixlSocketFd::reset() noexcept {
 nixlTcpStoreClient::nixlTcpStoreClient(std::string host,
                                        std::uint16_t port,
                                        std::chrono::milliseconds connect_timeout,
-                                       std::chrono::milliseconds op_timeout)
+                                       std::chrono::milliseconds op_timeout) noexcept
     : host_(std::move(host)),
       port_(port),
-      opTimeout_(op_timeout) {
-    connect(connect_timeout);
-}
+      connectTimeout_(connect_timeout),
+      opTimeout_(op_timeout) {}
 
 void
 nixlTcpStoreClient::connect(std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
     const std::string port_str = std::to_string(port_);
     const addr_info_ptr_t results = resolveHost(host_, port_str);
 
     nixlSocketFd fd;
     for (const addrinfo *ai = results.get(); ai != nullptr && !fd; ai = ai->ai_next) {
-        fd = connectOne(*ai, timeout);
+        // Whatever is left of the budget, so a multi-address host (dual stack,
+        // one address blackholed) cannot cost timeout per address.
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        if (left <= std::chrono::milliseconds::zero()) {
+            break;
+        }
+        fd = connectOne(*ai, left);
     }
 
     if (!fd) {
@@ -182,33 +190,35 @@ nixlTcpStoreClient::connect(std::chrono::milliseconds timeout) {
 
     // Arm before publishing to fd_: a failure here must not leave an unbounded
     // socket behind for the next operation to pick up as "already connected".
+    // The steady-state op timeout, since this socket outlives bring-up; the
+    // handshake stays inside the bring-up budget through its deadline.
     armTimeouts(fd.get(), opTimeout_);
     fd_ = std::move(fd);
-    handshake();
+    handshake(deadline);
 }
 
 void
 nixlTcpStoreClient::ensureConnected() {
     if (!fd_) {
-        connect(opTimeout_);
+        connect(std::exchange(bringUp_, false) ? connectTimeout_ : opTimeout_);
     }
 }
 
 void
-nixlTcpStoreClient::handshake() {
+nixlTcpStoreClient::handshake(deadline_t deadline) {
     // VALIDATE must be the first query; the server drops unvalidated peers.
     std::vector<std::uint8_t> buf = {static_cast<std::uint8_t>(query_type_t::VALIDATE)};
     appendValue<std::uint32_t>(buf, validation_magic);
-    sendAll(buf.data(), buf.size());
+    sendAll(buf.data(), buf.size(), deadline);
 
     // PING round-trips a nonce, confirming the server is responsive.
     const auto nonce = static_cast<std::uint32_t>(::getpid());
     buf = {static_cast<std::uint8_t>(query_type_t::PING)};
     appendValue<std::uint32_t>(buf, nonce);
-    sendAll(buf.data(), buf.size());
+    sendAll(buf.data(), buf.size(), deadline);
 
     std::uint32_t echoed = 0;
-    recvAll(&echoed, sizeof(echoed));
+    recvAll(&echoed, sizeof(echoed), deadline);
     if (echoed != nonce) {
         fd_.reset();
         throw std::runtime_error("TCPStore client: ping nonce mismatch");
@@ -216,8 +226,7 @@ nixlTcpStoreClient::handshake() {
 }
 
 void
-nixlTcpStoreClient::sendAll(const void *data, std::size_t len) {
-    const auto deadline = std::chrono::steady_clock::now() + opTimeout_;
+nixlTcpStoreClient::sendAll(const void *data, std::size_t len, deadline_t deadline) {
     const auto *p = static_cast<const char *>(data);
     while (len > 0) {
         if (std::chrono::steady_clock::now() >= deadline) {
@@ -241,8 +250,7 @@ nixlTcpStoreClient::sendAll(const void *data, std::size_t len) {
 }
 
 void
-nixlTcpStoreClient::recvAll(void *data, std::size_t len) {
-    const auto deadline = std::chrono::steady_clock::now() + opTimeout_;
+nixlTcpStoreClient::recvAll(void *data, std::size_t len, deadline_t deadline) {
     auto *p = static_cast<char *>(data);
     while (len > 0) {
         if (std::chrono::steady_clock::now() >= deadline) {
@@ -266,9 +274,9 @@ nixlTcpStoreClient::recvAll(void *data, std::size_t len) {
 }
 
 std::string
-nixlTcpStoreClient::recvBlob() {
+nixlTcpStoreClient::recvBlob(deadline_t deadline) {
     std::uint64_t len = 0;
-    recvAll(&len, sizeof(len));
+    recvAll(&len, sizeof(len), deadline);
     if (len > max_blob_bytes) {
         // The stream is now desynced (the body won't be consumed); drop it.
         fd_.reset();
@@ -276,7 +284,7 @@ nixlTcpStoreClient::recvBlob() {
                                  " exceeds cap");
     }
     std::string value(len, '\0');
-    recvAll(value.data(), len);
+    recvAll(value.data(), len, deadline);
     return value;
 }
 
@@ -286,9 +294,8 @@ nixlTcpStoreClient::set(const std::string &key, const std::string &value) {
     appendString(buf, key_prefix + key);
     appendString(buf, value);
 
-    const std::lock_guard lk(mutex_);
     ensureConnected();
-    sendAll(buf.data(), buf.size());
+    sendAll(buf.data(), buf.size(), opDeadline());
 }
 
 std::optional<std::string>
@@ -302,18 +309,20 @@ nixlTcpStoreClient::get(const std::string &key) {
     std::vector<std::uint8_t> get_buf = {static_cast<std::uint8_t>(query_type_t::GET)};
     appendString(get_buf, full_key);
 
-    const std::lock_guard lk(mutex_);
     ensureConnected();
+    // One deadline for the CHECK and the GET together: they are one operation
+    // from the caller's point of view.
+    const deadline_t deadline = opDeadline();
 
-    sendAll(check_buf.data(), check_buf.size());
+    sendAll(check_buf.data(), check_buf.size(), deadline);
     auto response = check_response_t::NOT_READY;
-    recvAll(&response, sizeof(response));
+    recvAll(&response, sizeof(response), deadline);
     if (response != check_response_t::READY) {
         return std::nullopt;
     }
 
-    sendAll(get_buf.data(), get_buf.size());
-    std::string value = recvBlob();
+    sendAll(get_buf.data(), get_buf.size(), deadline);
+    std::string value = recvBlob(deadline);
     if (value.empty()) {
         // Deleted between the CHECK and the GET (raced invalidate); the store
         // has no empty values of its own.
@@ -327,11 +336,11 @@ nixlTcpStoreClient::deleteKey(const std::string &key) {
     std::vector<std::uint8_t> buf = {static_cast<std::uint8_t>(query_type_t::DELETE_KEY)};
     appendString(buf, key_prefix + key);
 
-    const std::lock_guard lk(mutex_);
     ensureConnected();
-    sendAll(buf.data(), buf.size());
+    const deadline_t deadline = opDeadline();
+    sendAll(buf.data(), buf.size(), deadline);
 
     std::int64_t num_deleted = 0;
-    recvAll(&num_deleted, sizeof(num_deleted));
+    recvAll(&num_deleted, sizeof(num_deleted), deadline);
     return num_deleted == 1;
 }

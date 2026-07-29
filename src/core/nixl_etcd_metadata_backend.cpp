@@ -18,7 +18,7 @@
 
 #include "nixl_etcd_metadata_backend.h"
 
-#include "agent_data.h"
+#include "nixl_metadata_context.h"
 #include "nixl_types.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
@@ -37,17 +37,24 @@
 #include <utility>
 #include <vector>
 
-// Hand-rolled etcd client (connection + watchers). Moved verbatim from the
-// former nixl_listener.cpp, with processInvalidatedAgents now driving the cache
-// through nixlMetadataContext instead of a nixlAgent pointer.
-class nixlEtcdClient {
+namespace {
+constexpr char default_namespace[] = "/nixl/agents/";
+} // namespace
+
+// Hand-rolled etcd client (connection + watchers). Moved from the former
+// nixl_listener.cpp, with processInvalidatedAgents now driving the cache through
+// nixlMetadataContext instead of a nixlAgent pointer. Nested in the backend so
+// this implementation type has no linkage of its own to collide with.
+class nixlEtcdMetadataBackend::etcdClient {
 private:
     std::unique_ptr<etcd::SyncClient> etcd;
     const std::string namespace_prefix;
+    const std::string agentName_;
     std::vector<std::string> invalidated_agents;
     std::mutex invalidated_agents_mutex;
     std::unordered_map<std::string, std::unique_ptr<etcd::Watcher>> agentWatchers;
     std::chrono::microseconds watchTimeout_;
+    bool agentPrefixStored_ = false;
 
     std::string
     makeKey(const std::string &agent_name, const std::string &metadata_type) {
@@ -56,43 +63,49 @@ private:
         return ss.str();
     }
 
+    // Announce this agent by writing its prefix key. Deferred to the first
+    // publish so construction does no I/O and a store that is briefly
+    // unreachable does not fail agent construction.
+    nixl_status_t
+    ensureAgentPrefix() {
+        if (agentPrefixStored_) {
+            return NIXL_SUCCESS;
+        }
+        const etcd::Response response = etcd->put(makeKey(agentName_, ""), "");
+        if (!response.is_ok()) {
+            NIXL_ERROR << "Failed to store agent " << agentName_
+                       << " prefix key in etcd: " << response.error_message();
+            return NIXL_ERR_BACKEND;
+        }
+        agentPrefixStored_ = true;
+        return NIXL_SUCCESS;
+    }
+
 public:
-    explicit nixlEtcdClient(
-        const std::string &my_agent_name,
+    // Builds the client object (no connection is established here; the gRPC
+    // channel connects on first use). Throws only when the endpoint list itself
+    // is unusable.
+    explicit etcdClient(
+        std::string my_agent_name,
         const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000))
-        : namespace_prefix(
-              nixl::config::getValueDefaulted<std::string>("NIXL_ETCD_NAMESPACE",
-                                                           NIXL_ETCD_NAMESPACE_DEFAULT)),
+        : namespace_prefix(nixl::config::getValueDefaulted<std::string>("NIXL_ETCD_NAMESPACE",
+                                                                        default_namespace)),
+          agentName_(std::move(my_agent_name)),
           watchTimeout_(timeout) {
         const auto etcd_endpoints = nixl::config::getNonEmptyString("NIXL_ETCD_ENDPOINTS");
-
-        try {
-            etcd = std::make_unique<etcd::SyncClient>(etcd_endpoints);
-        }
-        catch (const std::exception &e) {
-            NIXL_ERROR << "Error creating etcd client: " << e.what();
-            return;
-        }
+        etcd = std::make_unique<etcd::SyncClient>(etcd_endpoints);
         NIXL_DEBUG << "Created etcd client to endpoints: " << etcd_endpoints;
         NIXL_DEBUG << "Using etcd namespace for agents: " << namespace_prefix;
-
-        std::string agent_prefix = makeKey(my_agent_name, "");
-        etcd::Response response = etcd->put(agent_prefix, "");
-        if (!response.is_ok()) {
-            throw std::runtime_error("Failed to store agent " + my_agent_name +
-                                     " prefix key in etcd: " + response.error_message());
-        }
     }
 
     nixl_status_t
     storeMetadataInEtcd(const std::string &agent_name,
                         const std::string &metadata_type,
                         const nixl_blob_t &metadata) {
-        if (!etcd) {
-            NIXL_ERROR << "ETCD client not available";
-            return NIXL_ERR_NOT_SUPPORTED;
-        }
         try {
+            if (const nixl_status_t ret = ensureAgentPrefix(); ret != NIXL_SUCCESS) {
+                return ret;
+            }
             std::string metadata_key = makeKey(agent_name, metadata_type);
             etcd::Response response = etcd->put(metadata_key, metadata);
             if (response.is_ok()) {
@@ -113,13 +126,13 @@ public:
 
     nixl_status_t
     removeMetadataFromEtcd(const std::string &agent_name) {
-        if (!etcd) {
-            NIXL_ERROR << "ETCD client not available";
-            return NIXL_ERR_NOT_SUPPORTED;
-        }
         try {
             std::string agent_prefix = makeKey(agent_name, "");
             etcd::Response response = etcd->rmdir(agent_prefix, true);
+            if (agent_name == agentName_) {
+                // Our own prefix key went with it, so a later publish re-announces.
+                agentPrefixStored_ = false;
+            }
             if (response.is_ok()) {
                 NIXL_DEBUG << "Successfully removed " << response.values().size()
                            << " etcd keys for agent: " << agent_name;
@@ -140,10 +153,6 @@ public:
     fetchMetadataFromEtcd(const std::string &agent_name,
                           const std::string &metadata_type,
                           nixl_blob_t &metadata) {
-        if (!etcd) {
-            NIXL_ERROR << "ETCD client not available";
-            return NIXL_ERR_NOT_SUPPORTED;
-        }
         std::string metadata_key = makeKey(agent_name, metadata_type);
         try {
             etcd::Response response = etcd->get(metadata_key);
@@ -295,9 +304,10 @@ public:
     }
 };
 
-nixlEtcdMetadataBackend::nixlEtcdMetadataBackend(nixlMetadataContext &ctx)
+nixlEtcdMetadataBackend::nixlEtcdMetadataBackend(nixlMetadataContext &ctx,
+                                                 const nixlMDConfig &config)
     : ctx_(ctx),
-      client_(std::make_unique<nixlEtcdClient>(ctx.agentName(), ctx.mdConfig().etcdWatchTimeout)) {}
+      client_(std::make_unique<etcdClient>(ctx.agentName(), config.etcdWatchTimeout)) {}
 
 nixlEtcdMetadataBackend::~nixlEtcdMetadataBackend() = default;
 

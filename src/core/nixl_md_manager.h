@@ -28,6 +28,7 @@
 #include "common/nixl_time.h"
 
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <exception>
 #include <functional>
@@ -50,7 +51,7 @@ class nixlMetadataContext;
  */
 class nixlMetadataWorker {
 public:
-    using Poll = std::function<void()>;
+    using poll_t = std::function<void()>;
 
     nixlMetadataWorker() = default;
     ~nixlMetadataWorker();
@@ -60,11 +61,11 @@ public:
     operator=(const nixlMetadataWorker &) = delete;
 
     /**
-     * @brief Launch the loop (no-op if already running). Each pass runs the
-     *        queued tasks, calls @p poll, then yields for @p delay.
+     * @brief Launch the loop (no-op if already running). Each pass runs queued
+     *        tasks up to a time budget, calls @p poll, then sleeps @p delay.
      */
     void
-    start(Poll poll, nixlTime::us_t delay);
+    start(poll_t poll, nixlTime::us_t delay);
 
     /** @brief Drain queued tasks, then stop and join. Idempotent. */
     void
@@ -72,15 +73,19 @@ public:
 
     /** @brief Enqueue a task to run on the worker. */
     void
-    submit(nixlWorkerTask task);
+    submit(nixl_worker_task_t task);
 
 private:
     void
     loop();
 
-    Poll poll_;
+    // Run queued tasks until @p until, leaving any remainder queued in order.
+    void
+    runQueuedTasks(std::chrono::steady_clock::time_point until);
+
+    poll_t poll_;
     nixlTime::us_t delay_ = 0;
-    std::deque<nixlWorkerTask> tasks_;
+    std::deque<nixl_worker_task_t> tasks_;
     std::mutex mutex_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
@@ -91,15 +96,16 @@ private:
  * @class nixlMDManager
  * @brief Core-internal: owns the metadata backends and routes each call.
  *
- * Built and owned by nixlAgentData (constructed unconditionally). Depends
- * only on the nixlMetadataContext interface (not nixlAgent), so there is no cycle.
+ * Built and owned by nixlAgentData (constructed unconditionally). Reaches the
+ * agent only through the nixlMetadataContext interface, and takes the settings
+ * it and its backends need as a constructor parameter.
  * Holds the address-routed backend (P2P) plus an optional name-addressed backend
  * chosen from the environment; a peer address selects P2P, otherwise the name
  * backend (address wins per call). Backend I/O runs on an owned nixlMetadataWorker.
  */
 class nixlMDManager {
 public:
-    explicit nixlMDManager(nixlMetadataContext &ctx);
+    nixlMDManager(nixlMetadataContext &ctx, const nixlMDConfig &config);
     ~nixlMDManager();
 
     nixlMDManager(const nixlMDManager &) = delete;
@@ -124,7 +130,7 @@ public:
      *        decide whether its sync mode must be upgraded.
      */
     [[nodiscard]] bool
-    needsWorker() const;
+    needsWorker() const noexcept;
 
     /**
      * @brief Publish the full local metadata blob through the active backend.
@@ -168,8 +174,8 @@ public:
 
 private:
     // Route a call: select the backend (address wins), run its caller-thread
-    // prepare step, and enqueue the resulting task on the worker. `prepare` is
-    // invoked as `prepare(nixlMetadataBackend&) -> nixlPreparedOp`.
+    // prepare step, and schedule the resulting task. `prepare` is invoked as
+    // `prepare(nixlMetadataBackend&) -> nixlPreparedOp`.
     template<typename Prepare>
     [[nodiscard]] nixl_status_t
     route(const nixl_opt_args_t *extra_params, Prepare prepare);
@@ -179,11 +185,13 @@ private:
     void
     pollBackends();
 
-    nixlMetadataContext &ctx_;
+    const nixlMDConfig config_;
     // P2P (address-routed), always present.
     const std::unique_ptr<nixlMetadataBackend> p2pBackend_;
     // Name-addressed backend (etcd/tcpstore/future), or null when none configured.
     const std::unique_ptr<nixlMetadataBackend> backend_;
+    // Fixed once the backends exist: they answer it from configuration only.
+    const bool workerNeeded_;
     // Runs backend I/O and background servicing off the caller thread.
     nixlMetadataWorker worker_;
 };

@@ -25,7 +25,6 @@
 
 #include <chrono>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -48,11 +47,15 @@ class nixlTcpStoreClient;
  * pending and re-probed from serviceEvents() until its deadline, so the caller
  * can fetch then poll checkRemoteMD as it would with etcd.
  * Selected by nixlMDManager when NIXL_TCPSTORE_ENDPOINT is set.
+ *
+ * Every member here is touched only from the manager's worker thread: the tasks
+ * returned by prepare* and serviceEvents() both run there, and this backend
+ * always requires the worker. Nothing is synchronized.
  */
 class nixlTcpStoreMetadataBackend : public nixlMetadataBackend {
 public:
-    // Health gate: reads NIXL_TCPSTORE_ENDPOINT (host:port), connects the
-    // client, and throws on failure.
+    // Parses NIXL_TCPSTORE_ENDPOINT (host:port) and throws when it is malformed.
+    // Does no I/O: the client connects on its first operation.
     explicit nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx);
 
     ~nixlTcpStoreMetadataBackend() override;
@@ -90,7 +93,7 @@ public:
 private:
     // A fetch waiting for its key to appear in the store.
     struct pendingFetch {
-        std::string key;
+        std::string remoteName;
         std::chrono::steady_clock::time_point deadline;
     };
 
@@ -107,12 +110,11 @@ private:
     nixlMetadataContext &ctx_;
     const std::chrono::milliseconds fetchTimeout_;
     const std::unique_ptr<nixlTcpStoreClient> client_;
-    std::mutex publishedMutex_;
     // Keys this agent has published; TCPStore has no recursive delete, so
     // invalidateLocal removes exactly these.
     std::unordered_set<std::string> publishedKeys_;
-    // Remote agent name -> in-flight fetch. Only ever touched from the worker
-    // thread (both the fetch task and serviceEvents run there).
+    // Store key -> in-flight fetch. Keyed by the store key, not the agent name:
+    // one peer can have a fetch pending per metadata label.
     std::unordered_map<std::string, pendingFetch> pendingFetches_;
 };
 

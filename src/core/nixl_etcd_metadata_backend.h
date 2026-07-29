@@ -30,7 +30,6 @@
 #include <string_view>
 
 class nixlMetadataContext;
-class nixlEtcdClient;
 
 /**
  * @class nixlEtcdMetadataBackend
@@ -44,7 +43,9 @@ class nixlEtcdClient;
  */
 class nixlEtcdMetadataBackend : public nixlMetadataBackend {
 public:
-    explicit nixlEtcdMetadataBackend(nixlMetadataContext &ctx);
+    // Builds the etcd client without contacting the store; the first operation
+    // connects.
+    nixlEtcdMetadataBackend(nixlMetadataContext &ctx, const nixlMDConfig &config);
     ~nixlEtcdMetadataBackend() override;
 
     [[nodiscard]] std::string_view
@@ -73,8 +74,12 @@ public:
     serviceEvents() override;
 
 private:
+    // etcd connection and watchers; defined in the .cpp, nested so the type is
+    // private to this backend.
+    class etcdClient;
+
     nixlMetadataContext &ctx_;
-    const std::unique_ptr<nixlEtcdClient> client_;
+    const std::unique_ptr<etcdClient> client_;
 };
 
 #endif // HAVE_ETCD

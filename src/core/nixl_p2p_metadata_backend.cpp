@@ -16,7 +16,7 @@
  */
 #include "nixl_p2p_metadata_backend.h"
 
-#include "agent_data.h"
+#include "nixl_metadata_context.h"
 #include "stream/metadata_stream.h"
 #include "common/nixl_log.h"
 
@@ -31,18 +31,27 @@
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_split.h>
 
+#include <chrono>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 namespace {
 
-// Socket helpers, moved verbatim from the former nixl_listener.cpp. They are the
-// wire mechanics of the P2P transport and belong with this backend.
+// Socket helpers, moved from the former nixl_listener.cpp. They are the wire
+// mechanics of the P2P transport and belong with this backend.
+
+// A peer supplies the frame length, so it is bounded before it drives an
+// allocation. Metadata blobs are orders of magnitude smaller than this.
+constexpr size_t max_frame_bytes = 1UL << 30; // 1 GiB
+
+// A peer that sends a length prefix and then stalls would otherwise hold the
+// worker in the forced body read indefinitely.
+constexpr auto frame_body_timeout = std::chrono::seconds(5);
 
 int
 connectToIP(const std::string &ip_addr, int port) {
-    struct sockaddr_in listenerAddr;
+    struct sockaddr_in listenerAddr{};
     listenerAddr.sin_port = htons(port);
     listenerAddr.sin_family = AF_INET;
 
@@ -139,6 +148,7 @@ sendCommMessage(int fd, const std::string &msg) {
 
 bool
 recvCommMessageType(int fd, void *data, size_t size, bool force = false) {
+    const auto deadline = std::chrono::steady_clock::now() + frame_body_timeout;
     for (size_t received = 0; received < size;) {
         auto bytes = recv(fd, static_cast<char *>(data) + received, size - received, 0);
         if (bytes > 0) {
@@ -156,6 +166,13 @@ recvCommMessageType(int fd, void *data, size_t size, bool force = false) {
                 if (!force && received == 0) {
                     return false; // nothing to read yet
                 }
+                if (std::chrono::steady_clock::now() >= deadline) {
+                    throw std::runtime_error(
+                        absl::StrFormat("recvCommMessage(fd=%d) timed out after %zu/%zu bytes",
+                                        fd,
+                                        received,
+                                        size));
+                }
                 continue;
             }
         }
@@ -172,9 +189,16 @@ recvCommMessageType(int fd, void *data, size_t size, bool force = false) {
 
 bool
 recvCommMessage(int fd, std::string &msg) {
-    size_t size;
+    size_t size = 0;
     if (!recvCommMessageType(fd, &size, sizeof(size))) {
         return false;
+    }
+    if (size > max_frame_bytes) {
+        throw std::runtime_error(
+            absl::StrFormat("recvCommMessage(fd=%d) declared %zu bytes, over the %zu cap",
+                            fd,
+                            size,
+                            max_frame_bytes));
     }
     msg.resize(size);
     return recvCommMessageType(fd, msg.data(), size, true);
@@ -182,9 +206,11 @@ recvCommMessage(int fd, std::string &msg) {
 
 } // namespace
 
-nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx) : ctx_(ctx) {
-    if (ctx_.mdConfig().useListenThread) {
-        listener_ = std::make_unique<nixlMDStreamListener>(ctx_.mdConfig().listenPort);
+nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx, const nixlMDConfig &config)
+    : ctx_(ctx),
+      config_(config) {
+    if (config_.useListenThread) {
+        listener_ = std::make_unique<nixlMDStreamListener>(config_.listenPort);
         listener_->setupListener(); // throws on bind/listen failure
     }
 }
@@ -205,7 +231,7 @@ nixlP2PMetadataBackend::name() const {
 
 bool
 nixlP2PMetadataBackend::needsWorker() const {
-    return ctx_.mdConfig().useListenThread;
+    return config_.useListenThread;
 }
 
 nixlPreparedOp
@@ -318,8 +344,8 @@ nixlP2PMetadataBackend::acceptPeers() {
             close(new_fd);
             continue;
         }
-        remoteSockets_[std::make_pair(std::string(client_ip), (int)client_address.sin_port)] =
-            new_fd;
+        remoteSockets_[std::make_pair(std::string(client_ip),
+                                      (int)ntohs(client_address.sin_port))] = new_fd;
         const int flags = fcntl(new_fd, F_GETFL, 0);
         if (flags == -1 || fcntl(new_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
             NIXL_PERROR << "fcntl failed for accepted client";
@@ -340,7 +366,10 @@ nixlP2PMetadataBackend::readIncoming() {
                 continue;
             }
         }
-        catch (const std::runtime_error &e) {
+        // std::exception, not std::runtime_error: a frame that fails to allocate
+        // throws std::bad_alloc, which must disconnect the peer rather than
+        // escape serviceEvents() and take down the worker.
+        catch (const std::exception &e) {
             NIXL_ERROR << "Failed to receive message from peer, disconnecting: " << e.what();
             close(socket_iter->second);
             socket_iter = remoteSockets_.erase(socket_iter);
@@ -374,8 +403,8 @@ nixlP2PMetadataBackend::readIncoming() {
                     break;
                 }
             } else if (header == "INVL") {
+                // No break: the rest of this batch is still ours to dispatch.
                 (void)ctx_.invalidateRemoteMD(std::string(command.substr(4)));
-                break;
             } else {
                 NIXL_ERROR << "Received socket message with bad header " << header << " from peer "
                            << socket_iter->first.first << ":" << socket_iter->first.second;
