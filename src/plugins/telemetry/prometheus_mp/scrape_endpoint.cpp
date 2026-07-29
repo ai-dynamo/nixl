@@ -28,8 +28,10 @@ namespace {
     // How often a non-owner re-runs the election to notice that the owner died.
     // The election is one non-blocking flock, but it sits on the export path, so
     // it is throttled; the endpoint is down for this plus the scrape interval,
-    // unless the rank that takes over cannot bind -- an owner that crashed can
-    // leave the port in TIME_WAIT -- which puts that rank on backoffNs instead.
+    // unless the rank that takes over cannot bind -- the port is held from
+    // outside the run -- which puts that rank on backoffNs instead. A dead
+    // owner does not hold it: civetweb sets SO_REUSEADDR, so its connections
+    // left in TIME_WAIT do not block the taker.
     // A non-owner starts at 0, so its first exported event re-checks immediately
     // -- an owner that died between this process's election and its first event
     // is caught at once.
