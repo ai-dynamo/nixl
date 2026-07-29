@@ -38,6 +38,10 @@ public:
     init(uint32_t proxy_worker_count, uint32_t channel_count, uint32_t peer_capacity) override;
 
     nixl_status_t
+    resolveDirectPointers(const nixl_remote_meta_dlist_t &dlist,
+                          std::vector<void *> &direct_ptrs) override;
+
+    nixl_status_t
     submit(const nixlBackendProxySubmission &submission, nixlBackendProxyRequest &request) override;
 
     nixl_status_t

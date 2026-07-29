@@ -35,8 +35,8 @@ unit_test_deps += [util_unit_test_dep]
 subdir('tracing')
 unit_test_deps += [tracing_unit_test_dep]
 
-subdir('proxy_memview_registry')
-unit_test_deps += [proxy_memview_registry_unit_test_dep]
+subdir('proxy_memview_store')
+unit_test_deps += [proxy_memview_store_unit_test_dep]
 
 subdir('proxy_runtime')
 unit_test_deps += [proxy_runtime_unit_test_dep]

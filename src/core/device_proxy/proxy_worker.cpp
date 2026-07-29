@@ -21,7 +21,7 @@
 #include <chrono>
 
 ProxyWorker::ProxyWorker(nixlDeviceProxyBackendAdapter *backend,
-                         const nixlProxyMemViewRegistry *proxy_memview_registry,
+                         const nixlProxyMemViewStore *proxy_memview_store,
                          std::atomic<uint64_t> *shutdown_state,
                          nixlProxyChannelState *channels,
                          std::atomic<nixl_proxy_channel_lifecycle_t> *channel_lifecycle,
@@ -31,7 +31,7 @@ ProxyWorker::ProxyWorker(nixlDeviceProxyBackendAdapter *backend,
                          uint32_t worker_count,
                          uint64_t pthr_delay_us) noexcept
     : backend_(backend),
-      proxy_memview_registry_(proxy_memview_registry),
+      proxy_memview_store_(proxy_memview_store),
       shutdown_state_(shutdown_state),
       channels_(channels),
       channel_lifecycle_(channel_lifecycle),
@@ -171,7 +171,7 @@ ProxyWorker::submitToBackend(nixlProxyChannelState &channel,
     inflight.op_idx = submission.op_idx;
     nixlBackendProxySubmission prepared_submission;
     nixl_status_t status =
-        proxy_memview_registry_->prepareSubmission(submission, prepared_submission);
+        proxy_memview_store_->prepareSubmission(submission, prepared_submission);
     // Route to the (channel, peer) UCX worker for this ring. The peer is the row this
     // worker is draining, independent of the memview element index used for addressing.
     prepared_submission.peer_index = channel.device_view.peer_index;

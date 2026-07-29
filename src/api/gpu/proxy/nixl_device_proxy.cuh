@@ -21,7 +21,7 @@
 #include <stdio.h>
 
 #include "../common/nixl_device_types.cuh"
-#include "../../../core/device_proxy/proxy_protocol.h"
+#include "device_proxy/proxy_protocol.h"
 
 struct ProxyDeviceContext;
 
@@ -70,7 +70,11 @@ nixlProxyClearContext() {
 
 __device__ __forceinline__ uint32_t
 proxyMemViewIdFromHandle(nixlMemViewH mvh) {
-    return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(mvh));
+    if (mvh == nullptr) {
+        return 0;
+    }
+    const auto *memview = static_cast<const nixlProxyDeviceMemView *>(mvh);
+    return memview->version == NIXL_PROXY_MEM_LIST_VERSION_V1 ? memview->proxy_memview_id : 0;
 }
 
 __device__ __forceinline__ ProxyDeviceContext *

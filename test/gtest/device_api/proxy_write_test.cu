@@ -856,13 +856,12 @@ registerDummyMemViews(nixlProxyRuntime &runtime, uint32_t peer_count) {
     static DummyBackendMD remote_md;
 
     DummyProxyMemViews handles;
-    nixlMemViewH dummy_local_backend = reinterpret_cast<nixlMemViewH>(uintptr_t{0xBEEF});
-
-    EXPECT_EQ(runtime.registerProxyMemView(dummy_local_backend, &handles.src), NIXL_SUCCESS);
 
     nixl_meta_dlist_t local_dlist(DRAM_SEG);
     local_dlist.addDesc(nixlMetaDesc(0x1000, 64, 0, &local_md));
-    EXPECT_EQ(runtime.storeMetadata(handles.src, local_dlist), NIXL_SUCCESS);
+    nixlPreparedProxyMemView local_prepared;
+    EXPECT_EQ(runtime.createLocal(local_dlist, local_prepared), NIXL_SUCCESS);
+    handles.src = local_prepared.handle;
 
     nixl_remote_meta_dlist_t remote_dlist(DRAM_SEG);
     for (uint32_t peer = 0; peer < peer_count; ++peer) {
@@ -873,7 +872,9 @@ registerDummyMemViews(nixlProxyRuntime &runtime, uint32_t peer_count) {
         remote_desc.metadataP = &remote_md;
         remote_dlist.addDesc(remote_desc);
     }
-    EXPECT_EQ(runtime.prepMemView(remote_dlist, &handles.dst), NIXL_SUCCESS);
+    nixlPreparedProxyMemView remote_prepared;
+    EXPECT_EQ(runtime.createRemote(remote_dlist, remote_prepared), NIXL_SUCCESS);
+    handles.dst = remote_prepared.handle;
 
     return handles;
 }
@@ -1017,10 +1018,10 @@ TEST_F(ProxyDeviceApiTest, DeactivateDropsInflightWithoutBackendDrain) {
     EXPECT_EQ(runtime.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
 
     // Deactivation must acknowledge locally without waiting for backend completion.
-    nixlMemViewH disconnected_mvh = nullptr;
     nixl_remote_meta_dlist_t null_peers(DRAM_SEG);
     null_peers.addDesc(nixlRemoteMetaDesc(nixl_null_agent));
-    ASSERT_EQ(runtime.prepMemView(null_peers, &disconnected_mvh), NIXL_SUCCESS);
+    nixlPreparedProxyMemView disconnected;
+    ASSERT_EQ(runtime.createRemote(null_peers, disconnected), NIXL_SUCCESS);
     EXPECT_EQ(runtime.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::INACTIVE);
     EXPECT_EQ(adapter->pendingCount(), 0u);
     EXPECT_TRUE(adapter->wasReleased(1));
@@ -1046,7 +1047,9 @@ TEST_F(ProxyDeviceApiTest, DeactivateDropsInflightWithoutBackendDrain) {
     remote_desc.devId = 0;
     remote_desc.metadataP = &remote_md;
     remote_dlist.addDesc(remote_desc);
-    ASSERT_EQ(runtime.prepMemView(remote_dlist, &reconnected_mvh), NIXL_SUCCESS);
+    nixlPreparedProxyMemView reconnected;
+    ASSERT_EQ(runtime.createRemote(remote_dlist, reconnected), NIXL_SUCCESS);
+    reconnected_mvh = reconnected.handle;
     EXPECT_EQ(runtime.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
 
     nixl_status_t *d_put_status2 = deviceAlloc<nixl_status_t>();

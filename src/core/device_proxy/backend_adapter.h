@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <nixl_types.h>
 #include "backend_aux.h"
@@ -81,6 +82,11 @@ public:
 
     virtual nixl_status_t
     loadRemoteConnInfo(const std::string &, const nixl_blob_t &) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    virtual nixl_status_t
+    resolveDirectPointers(const nixl_remote_meta_dlist_t &, std::vector<void *> &) {
         return NIXL_ERR_NOT_SUPPORTED;
     }
 

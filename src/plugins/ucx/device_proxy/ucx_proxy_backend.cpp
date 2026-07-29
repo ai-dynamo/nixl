@@ -23,6 +23,49 @@ static_assert(sizeof(nixlUcxReq) <= sizeof(uint64_t),
               "UCX request pointer must fit in the opaque request token");
 
 nixl_status_t
+nixlUcxProxyBackendAdapter::resolveDirectPointers(const nixl_remote_meta_dlist_t &dlist,
+                                                  std::vector<void *> &direct_ptrs) {
+    direct_ptrs.assign(dlist.descCount(), nullptr);
+    if (engine_ == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    if (dlist.getType() != VRAM_SEG) {
+        return NIXL_SUCCESS;
+    }
+
+    // The current multi-worker engine has no single "current" worker. Rkey 0
+    // is sufficient for direct-pointer resolution; the pointer is independent
+    // of the worker used later for network submissions.
+    constexpr size_t worker_id = 0;
+
+    size_t index = 0;
+    for (const auto &desc : dlist) {
+        if (desc.remoteAgent == nixl_null_agent) {
+            ++index;
+            continue;
+        }
+        if (desc.metadataP == nullptr) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
+        const auto *metadata = static_cast<const nixlUcxPublicMetadata *>(desc.metadataP);
+        void *direct_ptr = nullptr;
+        const ucs_status_t status =
+            ucp_rkey_ptr(metadata->getRkey(worker_id).get(),
+                         static_cast<uint64_t>(desc.addr),
+                         &direct_ptr);
+        if (status == UCS_OK) {
+            direct_ptrs[index] = direct_ptr;
+        } else {
+            NIXL_DEBUG << "Direct access unavailable for proxy descriptor " << index << ": "
+                       << ucs_status_string(status);
+        }
+        ++index;
+    }
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
 nixlUcxProxyBackendAdapter::init(uint32_t, uint32_t channel_count, uint32_t peer_capacity) {
     if (engine_ == nullptr || channel_count == 0 || peer_capacity == 0) {
         return NIXL_ERR_INVALID_PARAM;

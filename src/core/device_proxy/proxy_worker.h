@@ -24,14 +24,14 @@
 #include "proxy_protocol.h"
 
 class nixlDeviceProxyBackendAdapter;
-class nixlProxyMemViewRegistry;
+class nixlProxyMemViewStore;
 struct nixlProxyChannelState;
 enum class nixl_proxy_channel_lifecycle_t : uint8_t;
 
 class ProxyWorker {
 public:
     ProxyWorker(nixlDeviceProxyBackendAdapter *backend,
-                const nixlProxyMemViewRegistry *proxy_memview_registry,
+                const nixlProxyMemViewStore *proxy_memview_store,
                 std::atomic<uint64_t> *shutdown_state,
                 nixlProxyChannelState *channels,
                 std::atomic<nixl_proxy_channel_lifecycle_t> *channel_lifecycle,
@@ -81,7 +81,7 @@ private:
     publishCompletions(nixlProxyChannelState &channel);
 
     nixlDeviceProxyBackendAdapter *backend_ = nullptr;
-    const nixlProxyMemViewRegistry *proxy_memview_registry_ = nullptr;
+    const nixlProxyMemViewStore *proxy_memview_store_ = nullptr;
     std::atomic<uint64_t> *shutdown_state_ = nullptr;
     nixlProxyChannelState *channels_ = nullptr;
     std::atomic<nixl_proxy_channel_lifecycle_t> *channel_lifecycle_ = nullptr;

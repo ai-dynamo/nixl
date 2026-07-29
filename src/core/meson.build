@@ -93,6 +93,7 @@ nixl_lib_sources = [
     'telemetry/buffer_plugin.cpp',
     'telemetry/nop_plugin.cpp',
     'tracing/tracer.cpp',
+    'device_proxy/proxy_memview_store.cpp',
     'device_proxy/proxy_runtime.cpp',
     'device_proxy/proxy_worker.cpp',
 ]

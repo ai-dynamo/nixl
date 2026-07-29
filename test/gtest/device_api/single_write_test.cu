@@ -695,9 +695,6 @@ TEST_P(SingleWriteTest, MultiplePeersMultipleChannelsPut) {
 #endif
 
 TEST_P(SingleWriteTest, SingleWorkerPutGap) {
-#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
-    GTEST_SKIP() << "FIXME: get_ptr not implemented for proxy backend";
-#endif
     std::vector<MemBuffer> src_buffers, dst_buffers;
     constexpr size_t size = 4 * 1024;
     constexpr size_t count = 1;
@@ -731,9 +728,11 @@ TEST_P(SingleWriteTest, SingleWorkerPutGap) {
     status = dispatchLaunchPutKernel(GetParam(), put_params, num_iters, &gpu_timer);
     ASSERT_EQ(status, NIXL_SUCCESS);
 
-    void *ptr;
-    getPtrKernel<<<1, 1>>>(dst_mvh, 0, &ptr);
-    ASSERT_NE(ptr, nullptr);
+    gpuVar<void *> ptr;
+    getPtrKernel<<<1, 1>>>(dst_mvh, 0, ptr.get());
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    ASSERT_EQ(cudaGetLastError(), cudaSuccess);
+    ASSERT_NE(*ptr, nullptr);
 
     logResultsPublic(size, count, num_iters, *gpu_timer.start_, *gpu_timer.end_);
 

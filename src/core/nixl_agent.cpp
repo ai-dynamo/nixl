@@ -2014,18 +2014,20 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
     }
 
     if (data->hasProxyRuntime() && (data->proxyTransportEngine == engine)) {
-        const auto status = data->proxyRuntime->prepMemView(remote_meta_dlist, &mvh);
+        nixlPreparedProxyMemView prepared;
+        const auto status = data->proxyRuntime->createRemote(remote_meta_dlist, prepared);
         if (status != NIXL_SUCCESS) {
             return status;
         }
+        mvh = prepared.handle;
+        data->memViewRecords.emplace(mvh, ProxyMemViewRecord{prepared.id});
     } else {
         const auto status = engine->prepMemView(remote_meta_dlist, mvh, &opt_args);
         if (status != NIXL_SUCCESS) {
             return status;
         }
+        data->memViewRecords.emplace(mvh, DirectMemViewRecord{engine});
     }
-
-    data->mvhToEngine.emplace(mvh, *engine);
     return NIXL_SUCCESS;
 }
 
@@ -2064,18 +2066,20 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
     }
 
     if (data->hasProxyRuntime() && (data->proxyTransportEngine == engine)) {
-        const auto status = data->proxyRuntime->prepMemView(meta_dlist, &mvh);
+        nixlPreparedProxyMemView prepared;
+        const auto status = data->proxyRuntime->createLocal(meta_dlist, prepared);
         if (status != NIXL_SUCCESS) {
             return status;
         }
+        mvh = prepared.handle;
+        data->memViewRecords.emplace(mvh, ProxyMemViewRecord{prepared.id});
     } else {
         const auto status = engine->prepMemView(meta_dlist, mvh, &opt_args);
         if (status != NIXL_SUCCESS) {
             return status;
         }
+        data->memViewRecords.emplace(mvh, DirectMemViewRecord{engine});
     }
-
-    data->mvhToEngine.emplace(mvh, *engine);
     return NIXL_SUCCESS;
 }
 
@@ -2085,23 +2089,24 @@ nixlAgent::releaseMemView(nixlMemViewH mvh) const {
         trace_span, data->tracer_.get(), "nixl::releaseMemView", nixl::trace::Kind::Generic);
 
     const std::lock_guard lock_guard(data->lock);
-    const auto it = data->mvhToEngine.find(mvh);
-    if (it == data->mvhToEngine.end()) {
+    const auto it = data->memViewRecords.find(mvh);
+    if (it == data->memViewRecords.end()) {
         NIXL_WARN << "Invalid memory view handle: " << mvh;
         return;
     }
 
-    nixlMemViewH backend_mvh = mvh;
-    if (data->hasProxyRuntime()) {
-        nixlMemViewH resolved = nullptr;
-        if (data->proxyRuntime->resolveProxyMemView(mvh, resolved)) {
-            backend_mvh = resolved;
-            data->proxyRuntime->unregisterProxyMemView(mvh);
+    if (const auto *proxy = std::get_if<ProxyMemViewRecord>(&it->second)) {
+        if (!data->hasProxyRuntime()) {
+            NIXL_ERROR << "Proxy memory view outlived its runtime: " << mvh;
+        } else {
+            const nixl_status_t status = data->proxyRuntime->release(proxy->id, mvh);
+            if (status != NIXL_SUCCESS) {
+                NIXL_ERROR << "Failed to release proxy memory view " << mvh
+                           << " with status " << status;
+            }
         }
+    } else {
+        std::get<DirectMemViewRecord>(it->second).engine->releaseMemView(mvh);
     }
-
-    if (backend_mvh != nullptr) {
-        it->second.releaseMemView(backend_mvh);
-    }
-    data->mvhToEngine.erase(it);
+    data->memViewRecords.erase(it);
 }

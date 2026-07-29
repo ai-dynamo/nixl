@@ -20,10 +20,12 @@
 #include <chrono>
 #include <cstdint>
 #include <cuda_runtime.h>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "device_proxy/backend_adapter.h"
@@ -114,6 +116,14 @@ namespace proxy_runtime {
 
     class ProxyRuntimeTest : public testing::Test {
     protected:
+        void
+        SetUp() override {
+            int device = -1;
+            if (cudaGetDevice(&device) != cudaSuccess) {
+                GTEST_SKIP() << "No CUDA-capable GPU";
+            }
+        }
+
         nixl_status_t
         initRuntime(uint32_t channel_count,
                     uint32_t worker_count,
@@ -130,8 +140,50 @@ namespace proxy_runtime {
             runtime_.shutdown();
         }
 
+        nixl_status_t
+        prepare(const nixl_meta_dlist_t &dlist, nixlMemViewH *handle) {
+            if (handle == nullptr) {
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            nixlPreparedProxyMemView prepared;
+            const nixl_status_t status = runtime_.createLocal(dlist, prepared);
+            if (status == NIXL_SUCCESS) {
+                *handle = prepared.handle;
+                prepared_ids_[prepared.handle] = prepared.id;
+            }
+            return status;
+        }
+
+        nixl_status_t
+        prepare(const nixl_remote_meta_dlist_t &dlist, nixlMemViewH *handle) {
+            if (handle == nullptr) {
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            nixlPreparedProxyMemView prepared;
+            const nixl_status_t status = runtime_.createRemote(dlist, prepared);
+            if (status == NIXL_SUCCESS) {
+                *handle = prepared.handle;
+                prepared_ids_[prepared.handle] = prepared.id;
+            }
+            return status;
+        }
+
+        nixl_status_t
+        releasePrepared(nixlMemViewH handle) {
+            const auto it = prepared_ids_.find(handle);
+            if (it == prepared_ids_.end()) {
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            const nixl_status_t status = runtime_.release(it->second, handle);
+            if (status == NIXL_SUCCESS) {
+                prepared_ids_.erase(it);
+            }
+            return status;
+        }
+
         StubBackend *backend_ = nullptr;
         nixlProxyRuntime runtime_;
+        std::unordered_map<nixlMemViewH, nixlProxyMemViewId> prepared_ids_;
     };
 
     static nixlProxyWorkRing
@@ -152,6 +204,28 @@ namespace proxy_runtime {
         EXPECT_EQ(cudaMemcpy(&view, context.channels + slot, sizeof(view), cudaMemcpyDeviceToHost),
                   cudaSuccess);
         return view;
+    }
+
+    static uint32_t
+    proxyId(nixlMemViewH proxy_handle) {
+        nixlProxyDeviceMemView device_memview{};
+        EXPECT_EQ(
+            cudaMemcpy(
+                &device_memview, proxy_handle, sizeof(device_memview), cudaMemcpyDeviceToHost),
+            cudaSuccess);
+        EXPECT_LE(device_memview.proxy_memview_id,
+                  static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()));
+        return static_cast<uint32_t>(device_memview.proxy_memview_id);
+    }
+
+    static nixlProxyDeviceMemView
+    copyHeader(nixlMemViewH proxy_handle) {
+        nixlProxyDeviceMemView device_memview{};
+        EXPECT_EQ(
+            cudaMemcpy(
+                &device_memview, proxy_handle, sizeof(device_memview), cudaMemcpyDeviceToHost),
+            cudaSuccess);
+        return device_memview;
     }
 
     // Resolve the pinned-host alias of a device-mapped submission or completion buffer.
@@ -248,7 +322,7 @@ namespace proxy_runtime {
         DummyBackendMD remote_md;
         ASSERT_EQ(initRuntime(2, 1), NIXL_SUCCESS);
         nixlMemViewH remote_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"peer"}, &remote_md), &remote_mvh),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({"peer"}, &remote_md), &remote_mvh),
                   NIXL_SUCCESS);
         const nixlProxyChannelView *views = runtime_.deviceChannelViews();
         for (uint32_t channel = 0; channel < 2; ++channel) {
@@ -271,7 +345,7 @@ namespace proxy_runtime {
         DummyBackendMD remote_md;
         ASSERT_EQ(initRuntime(2, 1), NIXL_SUCCESS);
         nixlMemViewH remote_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"peer"}, &remote_md), &remote_mvh),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({"peer"}, &remote_md), &remote_mvh),
                   NIXL_SUCCESS);
         const nixlProxyChannelView *views = runtime_.deviceChannelViews();
         for (uint32_t channel = 0; channel < 2; ++channel) {
@@ -387,12 +461,10 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.shutdown(), NIXL_SUCCESS);
     }
 
-    TEST_F(ProxyRuntimeTest, PrepMemViewProducesReadyEntries) {
+    TEST_F(ProxyRuntimeTest, CreatesVersionedLocalAndRemoteHandles) {
         DummyBackendMD local_md;
         DummyBackendMD remote_md;
         ASSERT_EQ(initRuntime(1, 1), NIXL_SUCCESS);
-        const auto local_backend = reinterpret_cast<nixlMemViewH>(uintptr_t{0x10});
-        const auto remote_backend = reinterpret_cast<nixlMemViewH>(uintptr_t{0x20});
 
         nixl_meta_dlist_t local_dlist(DRAM_SEG);
         local_dlist.addDesc(nixlMetaDesc(0x1000, 64, 0, &local_md));
@@ -407,34 +479,17 @@ namespace proxy_runtime {
 
         nixlMemViewH src_proxy = nullptr;
         nixlMemViewH dst_proxy = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(local_backend, local_dlist, &src_proxy), NIXL_SUCCESS);
-        ASSERT_EQ(runtime_.prepMemView(remote_backend, remote_dlist, &dst_proxy), NIXL_SUCCESS);
+        ASSERT_EQ(prepare(local_dlist, &src_proxy), NIXL_SUCCESS);
+        ASSERT_EQ(prepare(remote_dlist, &dst_proxy), NIXL_SUCCESS);
 
-        nixlMemViewH resolved = nullptr;
-        EXPECT_TRUE(runtime_.resolveProxyMemView(src_proxy, resolved));
-        EXPECT_EQ(resolved, local_backend);
-        EXPECT_TRUE(runtime_.resolveProxyMemView(dst_proxy, resolved));
-        EXPECT_EQ(resolved, remote_backend);
-
-        nixlProxySubmission submission{};
-        submission.opcode = nixl_proxy_opcode_t::PUT;
-        submission.src_proxy_memview_id =
-            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
-        submission.src_offset = 4;
-        submission.dst_proxy_memview_id =
-            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
-        submission.dst_offset = 8;
-        submission.size = 32;
-
-        nixlBackendProxySubmission prepared_submission;
-        ASSERT_EQ(runtime_.memviewRegistry().prepareSubmission(submission, prepared_submission),
-                  NIXL_SUCCESS);
-        EXPECT_EQ(prepared_submission.local.desc.addr, 0x1004u);
-        EXPECT_EQ(prepared_submission.local.desc.len, 32u);
-        EXPECT_EQ(prepared_submission.local.desc.metadataP, &local_md);
-        EXPECT_EQ(prepared_submission.remote.desc.addr, 0x2008u);
-        EXPECT_EQ(prepared_submission.remote.desc.len, 32u);
-        EXPECT_EQ(prepared_submission.remote.desc.metadataP, &remote_md);
+        const auto local_header = copyHeader(src_proxy);
+        const auto remote_header = copyHeader(dst_proxy);
+        EXPECT_EQ(local_header.version, NIXL_PROXY_MEM_LIST_VERSION_V1);
+        EXPECT_EQ(local_header.kind, nixlProxyMemViewKind::LOCAL);
+        EXPECT_EQ(local_header.length, 1u);
+        EXPECT_EQ(remote_header.version, NIXL_PROXY_MEM_LIST_VERSION_V1);
+        EXPECT_EQ(remote_header.kind, nixlProxyMemViewKind::REMOTE);
+        EXPECT_EQ(remote_header.length, 1u);
     }
 
     TEST_F(ProxyRuntimeTest, PrepMemViewRejectsNullOutput) {
@@ -442,7 +497,7 @@ namespace proxy_runtime {
         nixl_meta_dlist_t local_dlist(DRAM_SEG);
         local_dlist.addDesc(nixlMetaDesc(0x1000, 64, 0, &local_md));
 
-        EXPECT_EQ(runtime_.prepMemView(local_dlist, nullptr), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(prepare(local_dlist, nullptr), NIXL_ERR_INVALID_PARAM);
     }
 
     TEST_F(ProxyRuntimeTest, WorkerSubmitsPreparedTransportDescriptors) {
@@ -458,13 +513,9 @@ namespace proxy_runtime {
 
         nixlMemViewH src_proxy = nullptr;
         nixlMemViewH dst_proxy = nullptr;
-        ASSERT_EQ(runtime_.registerProxyMemView(reinterpret_cast<nixlMemViewH>(uintptr_t{0x10}),
-                                                &src_proxy),
-                  NIXL_SUCCESS);
-
         nixl_meta_dlist_t local_dlist(DRAM_SEG);
         local_dlist.addDesc(nixlMetaDesc(0x1000, 64, 0, &local_md));
-        ASSERT_EQ(runtime_.storeMetadata(src_proxy, local_dlist), NIXL_SUCCESS);
+        ASSERT_EQ(prepare(local_dlist, &src_proxy), NIXL_SUCCESS);
 
         nixl_remote_meta_dlist_t remote_dlist(DRAM_SEG);
         nixlRemoteMetaDesc remote_desc("peer");
@@ -474,17 +525,15 @@ namespace proxy_runtime {
         remote_desc.metadataP = &remote_md;
         remote_dlist.addDesc(remote_desc);
         ASSERT_EQ(runtime_.startWorkers(), NIXL_SUCCESS);
-        ASSERT_EQ(runtime_.prepMemView(remote_dlist, &dst_proxy), NIXL_SUCCESS);
+        ASSERT_EQ(prepare(remote_dlist, &dst_proxy), NIXL_SUCCESS);
 
         nixlProxySubmission submission{};
         submission.op_idx = 11;
         submission.opcode = nixl_proxy_opcode_t::PUT;
         submission.channel_id = 0;
-        submission.src_proxy_memview_id =
-            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(src_proxy));
+        submission.src_proxy_memview_id = proxyId(src_proxy);
         submission.src_offset = 4;
-        submission.dst_proxy_memview_id =
-            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
+        submission.dst_proxy_memview_id = proxyId(dst_proxy);
         submission.dst_offset = 8;
         submission.size = 32;
 
@@ -557,14 +606,13 @@ namespace proxy_runtime {
         remote_desc.metadataP = &remote_md;
         remote_dlist.addDesc(remote_desc);
         ASSERT_EQ(runtime_.startWorkers(), NIXL_SUCCESS);
-        ASSERT_EQ(runtime_.prepMemView(remote_dlist, &dst_proxy), NIXL_SUCCESS);
+        ASSERT_EQ(prepare(remote_dlist, &dst_proxy), NIXL_SUCCESS);
 
         nixlProxySubmission submission{};
         submission.op_idx = 11;
         submission.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
         submission.channel_id = 0;
-        submission.dst_proxy_memview_id =
-            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dst_proxy));
+        submission.dst_proxy_memview_id = proxyId(dst_proxy);
         submission.dst_offset = 8;
         submission.size = sizeof(uint64_t);
         submission.value = 42;
@@ -656,7 +704,7 @@ namespace proxy_runtime {
         DummyBackendMD remote_md;
         ASSERT_EQ(initRuntime(1, 1, NIXL_SUCCESS, 2), NIXL_SUCCESS);
         nixlMemViewH mvh = nullptr;
-        EXPECT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"peer0", "peer1", "peer2"}, &remote_md),
+        EXPECT_EQ(prepare(makeRemotePeerDlist({"peer0", "peer1", "peer2"}, &remote_md),
                                        &mvh),
                   NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(mvh, nullptr);
@@ -676,7 +724,7 @@ namespace proxy_runtime {
 
         nixlMemViewH connected_mvh = nullptr;
         ASSERT_EQ(
-            runtime_.prepMemView(makeRemotePeerDlist({"", "peer1"}, &remote_md), &connected_mvh),
+            prepare(makeRemotePeerDlist({"", "peer1"}, &remote_md), &connected_mvh),
             NIXL_SUCCESS);
         ASSERT_NE(views[peer1_ch0].work_ring, nullptr);
         ASSERT_NE(views[peer1_ch1].work_ring, nullptr);
@@ -687,7 +735,7 @@ namespace proxy_runtime {
 
         nixlMemViewH disconnected_mvh = nullptr;
         ASSERT_EQ(
-            runtime_.prepMemView(makeRemotePeerDlist({"", ""}, &remote_md), &disconnected_mvh),
+            prepare(makeRemotePeerDlist({"", ""}, &remote_md), &disconnected_mvh),
             NIXL_SUCCESS);
         EXPECT_EQ(copyPublishedChannelView(runtime_, peer1_ch0).work_ring, nullptr);
         EXPECT_EQ(copyPublishedChannelView(runtime_, peer1_ch1).work_ring, nullptr);
@@ -695,7 +743,7 @@ namespace proxy_runtime {
         EXPECT_EQ(runtime_.channelLifecycle(1, 1), nixl_proxy_channel_lifecycle_t::INACTIVE);
 
         nixlMemViewH reconnected_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"", "peer1-new"}, &remote_md),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({"", "peer1-new"}, &remote_md),
                                        &reconnected_mvh),
                   NIXL_SUCCESS);
         EXPECT_EQ(views[peer1_ch0].work_ring, retained_ring0);
@@ -711,7 +759,7 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.startWorkers(), NIXL_SUCCESS);
 
         nixlMemViewH initial_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"peer"}, &remote_md), &initial_mvh),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({"peer"}, &remote_md), &initial_mvh),
                   NIXL_SUCCESS);
 
         const nixlProxyChannelView &view = runtime_.deviceChannelViews()[0];
@@ -731,14 +779,14 @@ namespace proxy_runtime {
         ASSERT_LT(completion->next_status, 0);
 
         nixlMemViewH disconnected_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({""}, &remote_md), &disconnected_mvh),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({""}, &remote_md), &disconnected_mvh),
                   NIXL_SUCCESS);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::INACTIVE);
         EXPECT_EQ(completion->next_status, NIXL_IN_PROG);
 
         nixlMemViewH reconnected_mvh = nullptr;
         ASSERT_EQ(
-            runtime_.prepMemView(makeRemotePeerDlist({"peer-new"}, &remote_md), &reconnected_mvh),
+            prepare(makeRemotePeerDlist({"peer-new"}, &remote_md), &reconnected_mvh),
             NIXL_SUCCESS);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
         EXPECT_EQ(completion->next_status, NIXL_IN_PROG);
@@ -749,7 +797,7 @@ namespace proxy_runtime {
         ASSERT_EQ(initRuntime(1, 1, NIXL_SUCCESS, 1), NIXL_SUCCESS);
 
         nixlMemViewH connected_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"peer"}, &remote_md), &connected_mvh),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({"peer"}, &remote_md), &connected_mvh),
                   NIXL_SUCCESS);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
 
@@ -769,7 +817,7 @@ namespace proxy_runtime {
         publishRecord(records, 2, badPut(0), 3);
 
         nixlMemViewH disconnected_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({""}, &remote_md), &disconnected_mvh),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({""}, &remote_md), &disconnected_mvh),
                   NIXL_SUCCESS);
 
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::INACTIVE);
@@ -803,7 +851,7 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.startWorkers(), NIXL_SUCCESS);
 
         nixlMemViewH connected_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"peer"}, &remote_md), &connected_mvh),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({"peer"}, &remote_md), &connected_mvh),
                   NIXL_SUCCESS);
         for (uint32_t channel = 0; channel < 4; ++channel) {
             EXPECT_EQ(runtime_.channelLifecycle(0, channel),
@@ -811,7 +859,7 @@ namespace proxy_runtime {
         }
 
         nixlMemViewH disconnected_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({""}, &remote_md), &disconnected_mvh),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({""}, &remote_md), &disconnected_mvh),
                   NIXL_SUCCESS);
         for (uint32_t channel = 0; channel < 4; ++channel) {
             EXPECT_EQ(runtime_.channelLifecycle(0, channel),
@@ -828,7 +876,7 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.startWorkers(), NIXL_SUCCESS);
 
         nixlMemViewH connected_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"peer0", "peer1"}, &remote_md),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({"peer0", "peer1"}, &remote_md),
                                        &connected_mvh),
                   NIXL_SUCCESS);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
@@ -836,7 +884,7 @@ namespace proxy_runtime {
 
         nixlMemViewH partial_mvh = nullptr;
         ASSERT_EQ(
-            runtime_.prepMemView(makeRemotePeerDlist({"", "peer1"}, &remote_md), &partial_mvh),
+            prepare(makeRemotePeerDlist({"", "peer1"}, &remote_md), &partial_mvh),
             NIXL_SUCCESS);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::INACTIVE);
         EXPECT_EQ(runtime_.channelLifecycle(1, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
@@ -852,7 +900,7 @@ namespace proxy_runtime {
         ASSERT_EQ(runtime_.startWorkers(), NIXL_SUCCESS);
 
         nixlMemViewH first_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({"peer"}, &remote_md), &first_mvh),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({"peer"}, &remote_md), &first_mvh),
                   NIXL_SUCCESS);
         ASSERT_NE(first_mvh, nullptr);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
@@ -860,16 +908,16 @@ namespace proxy_runtime {
         // Preparing the replacement view must deactivate the peer before the caller
         // releases the previous proxy handle.
         nixlMemViewH replacement_mvh = nullptr;
-        ASSERT_EQ(runtime_.prepMemView(makeRemotePeerDlist({""}, &remote_md), &replacement_mvh),
+        ASSERT_EQ(prepare(makeRemotePeerDlist({""}, &remote_md), &replacement_mvh),
                   NIXL_SUCCESS);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::INACTIVE);
         EXPECT_EQ(copyPublishedChannelView(runtime_, runtime_.channelSlot(0, 0)).work_ring,
                   nullptr);
-        EXPECT_EQ(runtime_.unregisterProxyMemView(first_mvh), NIXL_SUCCESS);
+        EXPECT_EQ(releasePrepared(first_mvh), NIXL_SUCCESS);
 
         nixlMemViewH reactivated_mvh = nullptr;
         ASSERT_EQ(
-            runtime_.prepMemView(makeRemotePeerDlist({"peer-again"}, &remote_md), &reactivated_mvh),
+            prepare(makeRemotePeerDlist({"peer-again"}, &remote_md), &reactivated_mvh),
             NIXL_SUCCESS);
         EXPECT_EQ(runtime_.channelLifecycle(0, 0), nixl_proxy_channel_lifecycle_t::ACTIVE);
         EXPECT_NE(copyPublishedChannelView(runtime_, runtime_.channelSlot(0, 0)).work_ring,

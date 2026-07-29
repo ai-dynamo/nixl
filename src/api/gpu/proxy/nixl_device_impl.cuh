@@ -107,9 +107,17 @@ atomic_add(uint64_t value,
 }
 
 __device__ __forceinline__ void *
-get_ptr(nixlMemViewH, size_t) {
-    // TODO: Implement support for NVLink fast-path over proxy - NIX-1342
-    return nullptr;
+get_ptr(nixlMemViewH mvh, size_t index) {
+    if (mvh == nullptr) {
+        return nullptr;
+    }
+
+    const auto *memview = static_cast<const nixlProxyDeviceMemView *>(mvh);
+    if (memview->version != NIXL_PROXY_MEM_LIST_VERSION_V1 ||
+        memview->kind != nixlProxyMemViewKind::REMOTE || index >= memview->length) {
+        return nullptr;
+    }
+    return memview->mem_elements[index].direct_ptr;
 }
 
 } // namespace nixl::gpu::proxy_impl

@@ -33,6 +33,46 @@ enum class nixl_proxy_control_state_t : uint32_t {
     SHUTDOWN = 1,
 };
 
+constexpr uint16_t NIXL_PROXY_MEM_LIST_NAMESPACE = 0x8000;
+constexpr uint16_t NIXL_PROXY_MEM_LIST_VERSION_V1 =
+    NIXL_PROXY_MEM_LIST_NAMESPACE | 1;
+
+using nixlProxyMemViewId = uint32_t;
+
+enum class nixlProxyMemViewKind : uint8_t {
+    LOCAL = 1,
+    REMOTE = 2,
+};
+
+struct nixlProxyDeviceMemViewElem {
+    void *direct_ptr;
+};
+
+/**
+ * GPU-resident proxy memory-list handle.
+ *
+ * The version/length prefix deliberately matches both UCX device memory-list
+ * representations. Generic Device API dispatch may therefore read only the
+ * leading version before deciding which complete representation is present.
+ */
+struct nixlProxyDeviceMemView {
+    uint16_t version;
+    uint16_t reserved0;
+    uint32_t length;
+
+    nixlProxyMemViewId proxy_memview_id;
+    nixlProxyMemViewKind kind;
+    uint8_t reserved1[3];
+
+    // Must remain the final member.
+    nixlProxyDeviceMemViewElem mem_elements[0];
+};
+
+static_assert(std::is_standard_layout_v<nixlProxyDeviceMemView>);
+static_assert(offsetof(nixlProxyDeviceMemView, version) == 0);
+static_assert(offsetof(nixlProxyDeviceMemView, length) == 4);
+static_assert(offsetof(nixlProxyDeviceMemView, mem_elements) % alignof(void *) == 0);
+
 struct alignas(64) nixlProxySubmission {
     uint64_t op_idx = 0;
     uint64_t value = 0;

@@ -27,6 +27,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <variant>
 
 #if HAVE_ETCD
 #include <etcd/SyncClient.hpp>
@@ -43,6 +44,16 @@ class nixlBackendInitParams;
 class nixlProxyRuntime;
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
+
+struct DirectMemViewRecord {
+    nixlBackendEngine *engine;
+};
+
+struct ProxyMemViewRecord {
+    nixlProxyMemViewId id;
+};
+
+using MemViewRecord = std::variant<DirectMemViewRecord, ProxyMemViewRecord>;
 
 enum class ProxyOrchestrationPhase : uint8_t {
     Disabled = 0,
@@ -94,8 +105,8 @@ class nixlAgentData {
         backend_list_t                         notifEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
-        // Bookkeeping from public memory view handles to backend engines
-        std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
+        // Bookkeeping from public memory view handles to their direct or proxy owner
+        std::unordered_map<nixlMemViewH, MemViewRecord> memViewRecords;
 
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
             remoteBackends_;
