@@ -19,9 +19,12 @@
 #include <gmock/gmock.h>
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <optional>
 #include <random>
 
 #include "common.h"
+#include "agent_data.h"
 #include "nixl.h"
 #include "plugin_manager.h"
 #include "mocks/gmock_engine.h"
@@ -31,6 +34,66 @@ namespace agent {
     static constexpr const char *local_agent_name = "LocalAgent";
     static constexpr const char *remote_agent_name = "RemoteAgent";
     static constexpr const char *nonexisting_plugin = "NonExistingPlugin";
+
+    class ScopedProxyEnv {
+    public:
+        explicit ScopedProxyEnv(const char *value) {
+            if (const char *current = std::getenv("NIXL_DEVICE_PROXY")) {
+                previous_ = current;
+            }
+            if (value == nullptr) {
+                ::unsetenv("NIXL_DEVICE_PROXY");
+            } else {
+                ::setenv("NIXL_DEVICE_PROXY", value, 1);
+            }
+        }
+
+        ~ScopedProxyEnv() {
+            if (previous_) {
+                ::setenv("NIXL_DEVICE_PROXY", previous_->c_str(), 1);
+            } else {
+                ::unsetenv("NIXL_DEVICE_PROXY");
+            }
+        }
+
+    private:
+        std::optional<std::string> previous_;
+    };
+
+    TEST(DeviceProxyModeSelection, ConfigurationIsDefaultWhenEnvironmentIsAbsent) {
+        ScopedProxyEnv env(nullptr);
+        const auto disabled = nixlResolveDeviceProxyMode(false);
+        EXPECT_FALSE(disabled.enabled);
+        EXPECT_FALSE(disabled.from_environment);
+
+        const auto enabled = nixlResolveDeviceProxyMode(true);
+        EXPECT_TRUE(enabled.enabled);
+        EXPECT_FALSE(enabled.from_environment);
+    }
+
+    TEST(DeviceProxyModeSelection, EnvironmentOverridesConfigurationWithZeroOrOne) {
+        {
+            ScopedProxyEnv env("0");
+            const auto selection = nixlResolveDeviceProxyMode(true);
+            EXPECT_FALSE(selection.enabled);
+            EXPECT_TRUE(selection.from_environment);
+        }
+
+        {
+            ScopedProxyEnv env("1");
+            const auto selection = nixlResolveDeviceProxyMode(false);
+            EXPECT_TRUE(selection.enabled);
+            EXPECT_TRUE(selection.from_environment);
+        }
+    }
+
+    TEST(DeviceProxyModeSelection, EnvironmentRejectsEveryOtherValue) {
+        for (const char *value : {"", "2", "01", "true", " 1", "1 "}) {
+            ScopedProxyEnv env(value);
+            EXPECT_THROW((void)nixlResolveDeviceProxyMode(false), std::invalid_argument)
+                << "value: '" << value << "'";
+        }
+    }
 
     /* Generates a random number in [0,255] (byte range). */
     unsigned char

@@ -19,6 +19,8 @@
 #include <chrono>
 #include <iostream>
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <numeric>
 #include <optional>
 #include <set>
@@ -190,9 +192,26 @@ makeAgentTracer(const std::string &name) {
 
 } // namespace
 
+nixlDeviceProxyModeSelection
+nixlResolveDeviceProxyMode(bool configured) {
+    const char *proxy_override = std::getenv("NIXL_DEVICE_PROXY");
+    if (proxy_override == nullptr) {
+        return {configured, false};
+    }
+    if (std::strcmp(proxy_override, "0") == 0) {
+        return {false, true};
+    }
+    if (std::strcmp(proxy_override, "1") == 0) {
+        return {true, true};
+    }
+    throw std::invalid_argument(
+        "NIXL_DEVICE_PROXY must be exactly 0 or 1; got '" + std::string(proxy_override) + "'");
+}
+
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
     : name_(name),
       config_(config),
+      proxyMode_(nixlResolveDeviceProxyMode(config.enableDeviceProxy)),
       useEtcd_(detectEtcd()),
       needsCommThread_(useEtcd_ || config.useListenThread),
       lock(effectiveSyncMode(config.syncMode, needsCommThread_)),
@@ -357,7 +376,13 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
 
 bool
 nixlAgentData::proxyModeEnabled() const {
-    return config_.enableDeviceProxy;
+    return proxyMode_.enabled;
+}
+
+const char *
+nixlAgentData::proxyModeSource() const {
+    return proxyMode_.from_environment ? "NIXL_DEVICE_PROXY environment override"
+                                       : "nixlAgentConfig";
 }
 
 bool
@@ -518,8 +543,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
                 return ret;
             }
         } else {
-            NIXL_WARN << "Proxy runtime is enabled but backend '" << type
-                      << "' does not support it";
+            NIXL_WARN << "Proxy runtime is enabled by " << data->proxyModeSource()
+                      << " but backend '" << type << "' does not support it";
         }
     }
 

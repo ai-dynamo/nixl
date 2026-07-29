@@ -55,6 +55,14 @@ struct ProxyMemViewRecord {
 
 using MemViewRecord = std::variant<DirectMemViewRecord, ProxyMemViewRecord>;
 
+struct nixlDeviceProxyModeSelection {
+    bool enabled;
+    bool from_environment;
+};
+
+[[nodiscard]] nixlDeviceProxyModeSelection
+nixlResolveDeviceProxyMode(bool configured);
+
 enum class ProxyOrchestrationPhase : uint8_t {
     Disabled = 0,
     Registered,
@@ -93,6 +101,7 @@ class nixlAgentData {
     private:
         const std::string name_;
         const nixlAgentConfig config_;
+        const nixlDeviceProxyModeSelection proxyMode_;
         const bool useEtcd_;
         const bool needsCommThread_;
         nixlLock        lock;
@@ -154,9 +163,11 @@ class nixlAgentData {
                     const nixlMemSection &section,
                     nixl_mem_t mem_type);
         [[nodiscard]] bool
-        proxyModeEnabled() const;
-        [[nodiscard]] bool
         hasProxyRuntime() const;
+        [[nodiscard]] bool
+        proxyModeEnabled() const;
+        [[nodiscard]] const char *
+        proxyModeSource() const;
         nixl_status_t
         createProxyRuntime(nixlBackendEngine *engine,
                            const nixl_backend_t &backend,
