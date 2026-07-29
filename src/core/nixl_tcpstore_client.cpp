@@ -103,10 +103,10 @@ resolveHost(const std::string &host, const std::string &port_str) {
 
 // Bounded non-blocking connect to one address. Returns an empty owner when the
 // address cannot be reached within timeout, so the caller can try the next one.
-[[nodiscard]] nixlSocketFd
+[[nodiscard]] nixl::scopedFd
 connectOne(const addrinfo &ai, std::chrono::milliseconds timeout) {
-    nixlSocketFd fd{::socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol)};
-    if (!fd) {
+    nixl::scopedFd fd{::socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol)};
+    if (!fd.valid()) {
         return {};
     }
 
@@ -149,14 +149,6 @@ armTimeouts(int fd, std::chrono::milliseconds timeout) {
 
 } // namespace
 
-void
-nixlSocketFd::reset() noexcept {
-    if (fd_ >= 0) {
-        ::close(fd_);
-        fd_ = -1;
-    }
-}
-
 nixlTcpStoreClient::nixlTcpStoreClient(std::string host,
                                        std::uint16_t port,
                                        std::chrono::milliseconds connect_timeout,
@@ -172,8 +164,8 @@ nixlTcpStoreClient::connect(std::chrono::milliseconds timeout) {
     const std::string port_str = std::to_string(port_);
     const addr_info_ptr_t results = resolveHost(host_, port_str);
 
-    nixlSocketFd fd;
-    for (const addrinfo *ai = results.get(); ai != nullptr && !fd; ai = ai->ai_next) {
+    nixl::scopedFd fd;
+    for (const addrinfo *ai = results.get(); ai != nullptr && !fd.valid(); ai = ai->ai_next) {
         // Whatever is left of the budget, so a multi-address host (dual stack,
         // one address blackholed) cannot cost timeout per address.
         const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -184,7 +176,7 @@ nixlTcpStoreClient::connect(std::chrono::milliseconds timeout) {
         fd = connectOne(*ai, left);
     }
 
-    if (!fd) {
+    if (!fd.valid()) {
         throw std::runtime_error("TCPStore client: failed to connect to " + host_ + ":" + port_str);
     }
 
@@ -199,7 +191,7 @@ nixlTcpStoreClient::connect(std::chrono::milliseconds timeout) {
 
 void
 nixlTcpStoreClient::ensureConnected() {
-    if (!fd_) {
+    if (!fd_.valid()) {
         connect(std::exchange(bringUp_, false) ? connectTimeout_ : opTimeout_);
     }
 }

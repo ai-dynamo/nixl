@@ -27,55 +27,13 @@
 #ifndef NIXL_SRC_CORE_NIXL_TCPSTORE_CLIENT_H
 #define NIXL_SRC_CORE_NIXL_TCPSTORE_CLIENT_H
 
+#include "common/scoped_fd.h"
+
 #include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
-
-/** Move-only socket descriptor owner; closes on destruction, no-op when empty. */
-class nixlSocketFd {
-public:
-    nixlSocketFd() = default;
-
-    explicit nixlSocketFd(int fd) noexcept : fd_(fd) {}
-
-    ~nixlSocketFd() {
-        reset();
-    }
-
-    nixlSocketFd(nixlSocketFd &&other) noexcept : fd_(std::exchange(other.fd_, -1)) {}
-
-    nixlSocketFd &
-    operator=(nixlSocketFd &&other) noexcept {
-        if (this != &other) {
-            reset();
-            fd_ = std::exchange(other.fd_, -1);
-        }
-        return *this;
-    }
-
-    nixlSocketFd(const nixlSocketFd &) = delete;
-    nixlSocketFd &
-    operator=(const nixlSocketFd &) = delete;
-
-    [[nodiscard]] int
-    get() const noexcept {
-        return fd_;
-    }
-
-    [[nodiscard]] explicit
-    operator bool() const noexcept {
-        return fd_ >= 0;
-    }
-
-    void
-    reset() noexcept;
-
-private:
-    int fd_ = -1;
-};
 
 // All operations run on the metadata manager's worker thread (the backend that
 // owns this client requires it), so nothing here is synchronized.
@@ -154,7 +112,7 @@ private:
     const std::chrono::milliseconds connectTimeout_;
     const std::chrono::milliseconds opTimeout_;
 
-    nixlSocketFd fd_;
+    nixl::scopedFd fd_;
     // Only the first connection gets the bring-up budget; later reconnects use
     // the op budget so a retry cannot hold the worker for the whole window.
     bool bringUp_ = true;
