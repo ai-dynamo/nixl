@@ -6,11 +6,16 @@
 #ifndef NIXL_SRC_PLUGINS_SPDK_SPDK_BACKEND_H
 #define NIXL_SRC_PLUGINS_SPDK_SPDK_BACKEND_H
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
+#include <string_view>
+#include <variant>
 #include <vector>
 
 #include "backend/backend_engine.h"
@@ -31,6 +36,7 @@ public:
     enum class Kind : uint8_t {
         Dram,
         Bdev,
+        Obj,
     };
 
     explicit nixlSpdkMD(Kind kind) noexcept : nixlBackendMD(true), kind_(kind) {}
@@ -59,12 +65,10 @@ struct nixlSpdkDramMD : nixlSpdkMD {
 };
 
 struct nixlSpdkBdevMD : nixlSpdkMD {
-    nixlSpdkBdevMD(uint64_t dev_id, std::string bdev_name)
+    explicit nixlSpdkBdevMD(std::string bdev_name)
         : nixlSpdkMD(Kind::Bdev),
-          devId(dev_id),
           bdevName(std::move(bdev_name)) {}
 
-    uint64_t devId;
     std::string bdevName;
     spdk_bdev_desc *desc = nullptr;
     spdk_bdev *bdev = nullptr;
@@ -74,15 +78,62 @@ struct nixlSpdkBdevMD : nixlSpdkMD {
     uint64_t numBlocks = 0;
 };
 
+// NVMe KV keys are 1..16 bytes.
+inline constexpr std::size_t kNixlSpdkMaxKeyLen = 16;
+
+// One object (key) on the KV device. Keys are per-object, as in NIXL's other
+// OBJ backends: captured from the descriptor metaInfo at registration and
+// recovered via metadataP at transfer. The KV device itself is the backend's
+// bdev (see 'bdev_name'), owned by the progress engine.
+class nixlSpdkObjMD : public nixlSpdkMD {
+public:
+    // Returns nullptr for an out-of-range key rather than truncating it.
+    [[nodiscard]] static std::unique_ptr<nixlSpdkObjMD>
+    create(std::string_view object_key) {
+        if (object_key.empty() || object_key.size() > kNixlSpdkMaxKeyLen) {
+            return nullptr;
+        }
+        return std::unique_ptr<nixlSpdkObjMD>(new nixlSpdkObjMD(object_key));
+    }
+
+    [[nodiscard]] std::span<const std::byte>
+    key() const noexcept {
+        return std::span(key_).first(keyLen_);
+    }
+
+private:
+    explicit nixlSpdkObjMD(std::string_view object_key) noexcept
+        : nixlSpdkMD(Kind::Obj),
+          keyLen_(static_cast<uint8_t>(object_key.size())) {
+        std::ranges::copy(std::as_bytes(std::span(object_key)), key_.begin());
+    }
+
+    std::array<std::byte, kNixlSpdkMaxKeyLen> key_{};
+    uint8_t keyLen_;
+};
+
+// A transfer targets either a block range on a bdev or a key on the KV device.
+// The offset lives in the BLK alternative because NVMe KV has no intra-object
+// offset.
+struct nixlSpdkBlkTarget {
+    nixlSpdkBdevMD *md;
+    uint64_t offset;
+};
+
+struct nixlSpdkObjTarget {
+    nixlSpdkObjMD *md;
+};
+
+using nixlSpdkIoTarget = std::variant<nixlSpdkBlkTarget, nixlSpdkObjTarget>;
+
 // One bdev I/O within a request.
 struct nixlSpdkIoContext {
     nixlSpdkBackendReqH *reqH = nullptr;
     nixlSpdkProgressEngine *engine = nullptr;
     nixlSpdkDramMD *dram = nullptr;
-    nixlSpdkBdevMD *bdev = nullptr;
-    void *buf = nullptr;
-    uint64_t offset = 0;
-    uint64_t nbytes = 0;
+    nixlSpdkIoTarget target;
+    void *buf = nullptr; // value buffer (from the local DRAM descriptor)
+    uint64_t nbytes = 0; // value size
     bool ioWaitQueued = false;
     spdk_bdev_io_wait_entry waitEntry = {};
 };
@@ -153,7 +204,7 @@ public:
 
     [[nodiscard]] nixl_mem_list_t
     getSupportedMems() const override {
-        return {DRAM_SEG, BLK_SEG};
+        return {DRAM_SEG, BLK_SEG, OBJ_SEG};
     }
 
     [[nodiscard]] nixl_status_t
@@ -203,11 +254,13 @@ public:
     [[nodiscard]] nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
-    [[nodiscard]] nixl_status_t
-    queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
+    // queryMem is deliberately not overridden. The registration descriptor list
+    // carries no resolved metadata, so there is no bdev or KV handle to consult;
+    // the base class reports NIXL_ERR_NOT_SUPPORTED, which is more useful to a
+    // caller than echoing back the length it just passed in.
 
 private:
     std::unique_ptr<nixlSpdkProgressEngine> progress_;
 };
 
-#endif
+#endif // NIXL_SRC_PLUGINS_SPDK_SPDK_BACKEND_H

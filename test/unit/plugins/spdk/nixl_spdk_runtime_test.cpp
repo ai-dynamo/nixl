@@ -86,8 +86,11 @@ makeParams(const nixl_b_params_t &base, const char *bdevName, const char *spdkNa
     params["bdev_block_size"] = std::to_string(kBlockSize);
     params["spdk_name"] = spdkName;
     // The default SPDK message mempool (256K entries) is far more than this test
-    // needs; a few thousand entries keeps the footprint small.
-    params["msg_mempool_size"] = "4095";
+    // needs; a few thousand entries keeps the footprint small. Only a default:
+    // an explicit value in base (from NIXL_SPDK_TEST_MSG_MEMPOOL_SIZE) wins.
+    if (!params.count("msg_mempool_size")) {
+        params["msg_mempool_size"] = "4095";
+    }
     return params;
 }
 
@@ -184,6 +187,18 @@ runTest(nixlAgent &agent, nixlBackendH *backend, void *dram, size_t dramLen) {
     CHECK_OK(runToCompletion(agent, freq), "final read transfer");
     CHECK_OK(agent.releaseXferReq(freq), "release final read req");
     std::printf("  phase 4 (post-cancel health check): OK\n");
+
+    // --- Phase 5: OBJ_SEG capability detection ---
+    // OBJ_SEG registers one object (key via metaInfo) and only works on a device
+    // that supports NVMe passthru and identifies as the KV command set. The
+    // malloc bdev is neither, so registration must fail cleanly (no crash). A
+    // real KV round trip needs a KV-capable device, which this in-memory
+    // environment lacks.
+    nixl_reg_dlist_t objReg(OBJ_SEG);
+    objReg.addDesc(nixlBlobDesc(0, kIoSize, kDevId, "nixl-kv-key"));
+    nixl_status_t objStatus = agent.registerMem(objReg, &backendParams);
+    CHECK(objStatus != NIXL_SUCCESS, "OBJ_SEG registration on a non-KV device must be rejected");
+    std::printf("  phase 5 (OBJ_SEG rejects non-KV device): OK (status=%d)\n", objStatus);
 
     CHECK_OK(agent.deregisterMem(dramReg, &backendParams), "deregister DRAM");
     CHECK_OK(agent.deregisterMem(bdevReg, &backendParams), "deregister bdev");

@@ -30,12 +30,13 @@ Build against SPDK **v26.05** or newer.
 - **`DRAM_SEG`** is the local staging buffer (host memory).
 - **`BLK_SEG`** is a block device (the "remote" side, even though the transfer
   is local/loopback).
+- **`OBJ_SEG`** is a key-value object on an NVMe Key-Value device.
 
-Transfers are always DRAM ↔ bdev, expressed as a loopback transfer whose remote
+Transfers are always DRAM ↔ device, expressed as a loopback transfer whose remote
 agent name is the agent's *own* name:
 
-- `NIXL_WRITE`: DRAM → bdev
-- `NIXL_READ`:  bdev → DRAM
+- `NIXL_WRITE`: DRAM → device (bdev write, or KV **Store** for `OBJ_SEG`)
+- `NIXL_READ`:  device → DRAM (bdev read, or KV **Retrieve** for `OBJ_SEG`)
 
 The plugin reports `supportsLocal() == true`, `supportsRemote() == false`, and
 `supportsNotif() == false`.
@@ -44,12 +45,12 @@ The plugin reports `supportsLocal() == true`, `supportsRemote() == false`, and
 
 Both sides are registered with `registerMem` before use.
 
-| Field      | `DRAM_SEG` (buffer)    | `BLK_SEG` (bdev)                  |
-|------------|------------------------|-----------------------------------|
-| `devId`    | Caller-chosen handle   | Same handle scheme                |
-| `metaInfo` | (unused)               | **bdev name** (e.g. `Nvme0n1`)    |
-| `addr`     | Buffer virtual address | Byte offset into the bdev         |
-| `len`      | Buffer length          | Accessible length in bytes        |
+| Field      | `DRAM_SEG` (buffer)    | `BLK_SEG` (bdev)                  | `OBJ_SEG` (KV object)           |
+|------------|------------------------|-----------------------------------|---------------------------------|
+| `devId`    | (unused)               | (unused)                          | (unused)                        |
+| `metaInfo` | (unused)               | **bdev name** (e.g. `Nvme0n1`)    | **object key** (1–16 bytes)     |
+| `addr`     | Buffer virtual address | Byte offset into the bdev         | Must be `0` (whole-value)       |
+| `len`      | Buffer length          | Accessible length in bytes        | Value length                    |
 
 - **DRAM must be page-aligned (4 KiB) in address and length.** The plugin
   registers host memory directly for zero-copy DMA and does **not** fall back to
@@ -59,6 +60,70 @@ Both sides are registered with `registerMem` before use.
   the bdev block size (and of its write-unit size) and stay within capacity.
 - **The bdev is selected by name** via `metaInfo`. An NVMe controller attached as
   `Nvme0` exposes its namespace as `Nvme0n1`.
+
+## OBJ_SEG: NVMe Key-Value
+
+`OBJ_SEG` maps a NIXL object onto a key on an NVMe Key-Value namespace. Requests
+become raw NVMe KV commands (Store for `NIXL_WRITE`, Retrieve for `NIXL_READ`)
+carried over **bdev NVMe passthru** — the plugin builds the `spdk_nvme_cmd`
+itself, as SPDK has no KV bdev abstraction.
+
+The KV device is the backend's `bdev_name` bdev. On the first `OBJ_SEG`
+registration the plugin opens it and requires that it both supports NVMe passthru
+(`SPDK_BDEV_IO_TYPE_NVME_IO`) and identifies as the KV command set
+(`spdk_bdev_get_nvme_csi() == SPDK_NVME_CSI_KV`); anything else fails with
+`NIXL_ERR_NOT_SUPPORTED`.
+
+Keys are per-object, as in NIXL's other OBJ backends: the key comes from
+`metaInfo` at registration and is recovered at transfer time. `metaInfo` is
+required — there is no fallback, because deriving a key from another field would
+silently collide when two descriptors shared it.
+
+```cpp
+// Store a value under the key "user:42", then read it back.
+nixl_b_params_t params;
+params["json_config"] =
+    R"({"subsystems":[{"subsystem":"bdev","config":[
+        {"method":"bdev_nvme_attach_controller",
+         "params":{"name":"Kv0","trtype":"TCP","adrfam":"IPv4",
+                   "traddr":"192.168.1.10","trsvcid":"4420",
+                   "subnqn":"nqn.2016-06.io.spdk:kv0"}}
+    ]}]})";
+// bdev_name selects the KV bdev itself, so it is the namespace (Kv0n1), not
+// the controller (Kv0) that the JSON above attaches.
+params["bdev_name"] = "Kv0n1";
+agent.createBackend("SPDK", params, spdk);
+
+nixl_opt_args_t args;
+args.backends.push_back(spdk);
+
+void *buf = nullptr;
+posix_memalign(&buf, 4096, 4096);
+
+nixl_reg_dlist_t dram(DRAM_SEG);
+dram.addDesc(nixlBlobDesc(reinterpret_cast<uintptr_t>(buf), 4096, 1));
+agent.registerMem(dram, &args);
+
+nixl_reg_dlist_t obj(OBJ_SEG);              // one registration per key
+obj.addDesc(nixlBlobDesc(0, 4096, 1, "user:42"));
+agent.registerMem(obj, &args);
+
+nixl_xfer_dlist_t src(DRAM_SEG), dst(OBJ_SEG);
+src.addDesc(nixlBasicDesc(reinterpret_cast<uintptr_t>(buf), 4096, 1));
+dst.addDesc(nixlBasicDesc(0, 4096, 1));     // addr must be 0
+nixlXferReqH *req = nullptr;
+agent.createXferReq(NIXL_WRITE, src, dst, agentName, req, &args);   // KV Store
+```
+
+**Whole-value only.** NVMe KV transfers the entire value, so the OBJ descriptor's
+offset must be `0` and its length must equal the local length. On Retrieve the
+caller sizes the buffer; the device's actual value length (returned in the
+completion) is not yet surfaced.
+
+> **Testing.** This is the *initiator* side; exercising it needs a target that
+> exposes an NVMe KV namespace. The in-memory `malloc` bdev is not KV, so the
+> bundled test only verifies that `OBJ_SEG` registration is correctly rejected on
+> a non-KV device.
 
 ## Configuration
 
@@ -82,7 +147,11 @@ For the common single-bdev case you can skip SPDK JSON entirely:
 |-------------|-----------------------------------------|--------------------------------|---------------------|
 | `malloc`    | `bdev_name`, `bdev_num_blocks`          | `bdev_block_size` (def. `512`) | `bdev_name`         |
 | `aio`       | `bdev_name`, `bdev_filename`            | `bdev_block_size`              | `bdev_name`         |
-| `nvme`      | `bdev_name`, `bdev_traddr`              | —                              | `<bdev_name>n1`     |
+| `nvme`      | `bdev_name`, `bdev_trtype`, `bdev_traddr`, `bdev_subnqn` | `bdev_trsvcid`, `bdev_adrfam` | `<bdev_name>n1`     |
+
+`bdev_trtype` must name a network transport (`RDMA` or `TCP`). `PCIe` is
+rejected at configuration time: this plugin does not probe PCI devices — see
+[No DPDK](#no-dpdk).
 
 ```cpp
 // In-memory malloc device for testing — no JSON, no file:
@@ -110,7 +179,7 @@ params["json_config"] =
 // ... register BLK_SEG with metaInfo = "Nvme0n1" ...
 ```
 
-`bdev_traddr` with `trtype: PCIe` will not attach — see [No DPDK](#no-dpdk).
+A `trtype: PCIe` controller will not attach — see [No DPDK](#no-dpdk).
 
 ### Runtime parameters
 
@@ -150,6 +219,8 @@ with — a host application that initializes its own copy of SPDK.
 - **Local transfers only.** No remote-agent support and no notifications.
 - **Config load needs a writable `/var/tmp`.** `spdk_subsystem_load_config`
   briefly opens an RPC socket there.
+- **`OBJ_SEG` is whole-value KV**: one KV device per backend, one registration
+  per key, keys 1–16 bytes, no partial-object access.
 
 ## Building
 
@@ -179,9 +250,9 @@ Two unit tests live under `test/unit/plugins/spdk/`:
 - `nixl_spdk_test` — plugin metadata and advertised-parameter checks (no SPDK
   runtime required).
 - `nixl_spdk_runtime_test` — a round trip over a `malloc` bdev: write/read/verify,
-  handle repost, release-while-in-flight, and a second backend sharing the
-  runtime with the first (including releasing the first one while the second
-  keeps running).
+  handle repost, release-while-in-flight, `OBJ_SEG` capability rejection, and a
+  second backend sharing the runtime with the first (including releasing the
+  first one while the second keeps running).
 
 ```bash
 # Tests are only built when buildtype != release, and the runtime test finds the
@@ -196,7 +267,7 @@ with a progress thread.
 
 ## Using SPDK with NIXLBench
 
-NIXLBench drives the backend with `--backend=SPDK`. Storage
+NIXLBench drives the backend with `--backend=SPDK` over `BLK_SEG`. Storage
 transfers are single-process (local DRAM initiator, bdev target); `--op_type`
 sets direction.
 

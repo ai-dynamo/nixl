@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
+#include <cstring>
 #include <format>
 #include <fstream>
 #include <iterator>
@@ -18,6 +19,7 @@
 #include <ranges>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 #include "backend/backend_aux.h"
 #include "common/backend.h"
@@ -27,6 +29,7 @@ extern "C" {
 #include <spdk/accel.h>
 #include <spdk/env.h>
 #include <spdk/init.h>
+#include <spdk/nvme_spec.h>
 #include <spdk/rpc.h>
 #include <spdk/thread.h>
 }
@@ -49,7 +52,10 @@ struct SharedRuntime {
     // Serializes execution on appThread. Backends acquire it opportunistically
     // (try_lock) from their poll loops, so no backend can block another.
     std::mutex appMutex;
-    spdk_thread *appThread = nullptr;
+    // Atomic because pollAppThread() reads it outside g_runtime.mutex: a second
+    // backend bringing the runtime up publishes it concurrently with an existing
+    // backend's poll loop.
+    std::atomic<spdk_thread *> appThread{nullptr};
     std::size_t refs = 0;
     bool envInitialized = false;
     bool threadLibInitialized = false;
@@ -183,12 +189,46 @@ buildBdevConfigJson(const nixl_b_params_t *params) {
             body += std::format(R"(, "block_size": {})", block_size);
         }
     } else if (type == "nvme") {
-        // Attaching an NVMe controller named <name> exposes namespaces as
-        // <name>n1, <name>n2, ...; that is the name to use in BLK descriptors.
+        // Transport-attached NVMe only. This plugin supplies its own env
+        // implementation, which does no PCI enumeration and cannot translate a
+        // virtual address to a physical one, so a local PCIe controller can
+        // never be driven from here. Reject it up front instead of letting the
+        // attach fail obscurely much later.
+        //
+        // Attaching a controller named <name> exposes namespaces as <name>n1,
+        // <name>n2, ...; that is the name to use in BLK descriptors.
+        const std::string trtype = opt("bdev_trtype");
+        if (trtype.empty()) {
+            NIXL_ERROR << "SPDK: bdev_type 'nvme' requires 'bdev_trtype' (RDMA or TCP)";
+            return "";
+        }
+        if (std::ranges::equal(trtype, std::string_view("pcie"), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == b;
+            })) {
+            NIXL_ERROR << "SPDK: bdev_trtype 'PCIe' is not supported: this plugin does not "
+                          "probe local PCI devices. Use an RDMA or TCP NVMe-oF target.";
+            return "";
+        }
+        const std::string traddr = opt("bdev_traddr");
+        const std::string subnqn = opt("bdev_subnqn");
+        if (traddr.empty() || subnqn.empty()) {
+            NIXL_ERROR << "SPDK: bdev_type 'nvme' requires 'bdev_traddr' and 'bdev_subnqn'";
+            return "";
+        }
         method = "bdev_nvme_attach_controller";
-        body = std::format(R"("name": "{}", "trtype": "PCIe", "traddr": "{}")",
+        body = std::format(R"("name": "{}", "trtype": "{}", "traddr": "{}", "subnqn": "{}")",
                            jsonEscape(name),
-                           jsonEscape(opt("bdev_traddr")));
+                           jsonEscape(trtype),
+                           jsonEscape(traddr),
+                           jsonEscape(subnqn));
+        const std::string adrfam = opt("bdev_adrfam");
+        if (!adrfam.empty()) {
+            body += std::format(R"(, "adrfam": "{}")", jsonEscape(adrfam));
+        }
+        const std::string trsvcid = opt("bdev_trsvcid");
+        if (!trsvcid.empty()) {
+            body += std::format(R"(, "trsvcid": "{}")", jsonEscape(trsvcid));
+        }
     } else {
         NIXL_ERROR << "SPDK: unknown bdev_type '" << type << "' (expected malloc, aio, or nvme)";
         return "";
@@ -199,11 +239,22 @@ buildBdevConfigJson(const nixl_b_params_t *params) {
         body);
 }
 
+template<typename... Ts> struct overloaded : Ts... {
+    using Ts::operator()...;
+};
+
 constexpr bool kOpenForWrite = true;
 // spdk_thread_poll() takes a message budget and a timestamp; 0 means "no limit"
 // and "read the current time" respectively.
 constexpr uint32_t kPollAllMessages = 0;
 constexpr uint64_t kPollUseCurrentTime = 0;
+
+// The SPDK handles an I/O is issued against, resolved from the transfer target.
+struct Device {
+    spdk_bdev *bdev;
+    spdk_bdev_desc *desc;
+    spdk_io_channel *channel;
+};
 
 // Makes the calling thread impersonate an SPDK thread for a scope. Restoring
 // from a destructor matters: the work run under it allocates, so an exception
@@ -233,7 +284,7 @@ thread_local bool t_onAppThread = false;
 
 class AppThreadScope {
 public:
-    AppThreadScope() : lock_(g_runtime.appMutex), scope_(g_runtime.appThread) {
+    AppThreadScope() : lock_(g_runtime.appMutex), scope_(g_runtime.appThread.load()) {
         t_onAppThread = true;
     }
 
@@ -301,6 +352,11 @@ nixlSpdkProgressEngine::parseParams(const nixlBackendInitParams *init_params) {
         if (auto value = nixl::getBackendParamOptional<size_t>(params, "msg_mempool_size")) {
             msgMempoolSize_ = *value;
         }
+        // OBJ_SEG (NVMe-KV) uses the backend's bdev, named by 'bdev_name' (the
+        // same parameter that names the convenience-config bdev).
+        if (auto value = nixl::getBackendParamOptional<std::string>(params, "bdev_name")) {
+            objBdevName_ = *value;
+        }
     }
     // Fall back to the convenience parameters only when no explicit JSON was
     // supplied; explicit json_config / json_config_file always take precedence.
@@ -344,10 +400,12 @@ nixlSpdkProgressEngine::runThread() {
         if (!producerQueue_.empty()) {
             continue;
         }
-        if (inFlight_ > 0) {
+        if (inFlight_ > 0 || ioWaiting_ > 0) {
             // I/O is outstanding: the device may post a completion at any moment,
-            // so keep polling. threadDelayUs_ optionally throttles the poll to
-            // trade completion latency for CPU; 0 means busy-poll.
+            // so keep polling. Entries parked on an io_wait queue count too --
+            // only continued polling of the channel drives their retry callback.
+            // threadDelayUs_ optionally throttles the poll to trade completion
+            // latency for CPU; 0 means busy-poll.
             if (threadDelayUs_ > 0) {
                 queueCv_.wait_for(lock, std::chrono::microseconds(threadDelayUs_));
             }
@@ -359,6 +417,13 @@ nixlSpdkProgressEngine::runThread() {
     }
 
     drainQueue();
+
+    // Drain before tearing anything down. cancelRequest() returns while its I/O
+    // may still be on the device, and the completion callback dereferences
+    // io->engine and io->reqH; finiRuntime() would close the bdev and run
+    // spdk_bdev_finish() underneath it, and the handle would never be retired.
+    pollUntil([this]() { return inFlight_ == 0 && ioWaiting_ == 0; });
+
     execute([this]() { finiRuntime(); });
 }
 
@@ -516,6 +581,22 @@ nixlSpdkProgressEngine::finiRuntimeLocked() {
     // reference; everything else here is this backend's own state.
     const bool last = ownsRuntimeRef_ && g_runtime.refs == 1;
 
+    if (spdkThread_) {
+        // Release this backend's KV device before any bdev teardown.
+        execute([this]() {
+            if (kvChannel_) {
+                spdk_put_io_channel(kvChannel_);
+                kvChannel_ = nullptr;
+            }
+            if (kvDesc_) {
+                spdk_bdev_close(kvDesc_);
+                kvDesc_ = nullptr;
+                kvBdev_ = nullptr;
+            }
+        });
+        kvOpened_ = false;
+    }
+
     if (last) {
         executeOnAppThread([this]() {
             if (g_runtime.bdevInitialized) {
@@ -588,16 +669,18 @@ nixlSpdkProgressEngine::pollOnce() {
 // thread never stalls behind one that is holding it.
 void
 nixlSpdkProgressEngine::pollAppThread() {
-    if (!g_runtime.appThread) {
+    // Loaded once: another backend may publish or clear it while this runs.
+    spdk_thread *const app_thread = g_runtime.appThread.load(std::memory_order_acquire);
+    if (!app_thread) {
         return;
     }
     if (t_onAppThread) {
-        spdk_thread_poll(g_runtime.appThread, kPollAllMessages, kPollUseCurrentTime);
+        spdk_thread_poll(app_thread, kPollAllMessages, kPollUseCurrentTime);
         return;
     }
     std::unique_lock<std::mutex> lock(g_runtime.appMutex, std::try_to_lock);
     if (lock.owns_lock()) {
-        spdk_thread_poll(g_runtime.appThread, kPollAllMessages, kPollUseCurrentTime);
+        spdk_thread_poll(app_thread, kPollAllMessages, kPollUseCurrentTime);
     }
 }
 
@@ -606,8 +689,23 @@ nixlSpdkProgressEngine::pollAppThread() {
 template<std::predicate F>
 void
 nixlSpdkProgressEngine::pollUntil(F &&done) {
+    // Deliberately no deadline: every caller is a bring-up, teardown or drain
+    // step with no way to recover from a half-finished operation, so abandoning
+    // the wait would leave the runtime in a worse state than continuing to poll.
+    // Warn periodically instead, so a bdev module that never completes shows up
+    // in the log rather than as a silent spin. None of these paths are on the
+    // per-transfer hot path, so the clock read costs nothing that matters.
+    constexpr auto kStallWarnInterval = std::chrono::seconds(30);
+    auto next_warn = std::chrono::steady_clock::now() + kStallWarnInterval;
+
     while (!done()) {
         pollOnce();
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_warn) {
+            NIXL_WARN << "SPDK: still waiting for an SPDK operation to complete after "
+                      << kStallWarnInterval.count() << "s; the bdev configuration may be stuck";
+            next_warn = now + kStallWarnInterval;
+        }
     }
 }
 
@@ -647,8 +745,6 @@ nixlSpdkProgressEngine::executeSync(F &&fn) {
     // Hand the work to the progress thread and block until it retires. The
     // latch is released from a destructor so an exception escaping fn() cannot
     // strand this thread waiting forever.
-    // The captured locals outlive these lambdas only because this thread blocks
-    // on the latch until the work has retired.
     std::latch done{1};
 
     struct Signal {
@@ -659,6 +755,8 @@ nixlSpdkProgressEngine::executeSync(F &&fn) {
         }
     };
 
+    // The captured locals outlive these lambdas only because this thread blocks
+    // on the latch until the work has retired.
     if constexpr (std::is_void_v<Result>) {
         enqueueAsync([&fn, &done]() {
             const Signal signal{done};
@@ -745,40 +843,98 @@ nixlSpdkProgressEngine::openBdev(nixlSpdkBdevMD &md) {
         md.channel = spdk_bdev_get_io_channel(md.desc);
         if (!md.channel) {
             NIXL_ERROR << "SPDK: failed to get I/O channel for bdev " << md.bdevName;
-            spdk_bdev_close(md.desc);
-            md.desc = nullptr;
-            md.bdev = nullptr;
+            releaseBdevHandles(md.desc, md.bdev, md.channel);
             return NIXL_ERR_BACKEND;
         }
         if (!spdk_bdev_io_type_supported(md.bdev, SPDK_BDEV_IO_TYPE_READ) ||
             !spdk_bdev_io_type_supported(md.bdev, SPDK_BDEV_IO_TYPE_WRITE)) {
             NIXL_ERROR << "SPDK: bdev " << md.bdevName << " does not support read/write";
-            spdk_put_io_channel(md.channel);
-            spdk_bdev_close(md.desc);
-            md.channel = nullptr;
-            md.desc = nullptr;
-            md.bdev = nullptr;
+            releaseBdevHandles(md.desc, md.bdev, md.channel);
             return NIXL_ERR_NOT_SUPPORTED;
         }
         md.blockSize = spdk_bdev_get_block_size(md.bdev);
         md.writeUnitSize = spdk_bdev_get_write_unit_size(md.bdev);
         md.numBlocks = spdk_bdev_get_num_blocks(md.bdev);
+        // Both are divisors in the descriptor validation on the transfer path;
+        // a module reporting zero would raise SIGFPE on the first transfer.
+        if (md.blockSize == 0 || md.writeUnitSize == 0) {
+            NIXL_ERROR << "SPDK: bdev " << md.bdevName << " reports an invalid geometry: "
+                       << "block size " << md.blockSize << ", write unit size " << md.writeUnitSize;
+            releaseBdevHandles(md.desc, md.bdev, md.channel);
+            return NIXL_ERR_BACKEND;
+        }
         return NIXL_SUCCESS;
     });
 }
 
 void
+nixlSpdkProgressEngine::releaseBdevHandles(spdk_bdev_desc *&desc,
+                                           spdk_bdev *&bdev,
+                                           spdk_io_channel *&channel) {
+    if (channel) {
+        spdk_put_io_channel(channel);
+        channel = nullptr;
+    }
+    if (desc) {
+        spdk_bdev_close(desc);
+        desc = nullptr;
+    }
+    bdev = nullptr;
+}
+
+void
 nixlSpdkProgressEngine::closeBdev(nixlSpdkBdevMD &md) {
-    executeSync([&]() {
-        if (md.channel) {
-            spdk_put_io_channel(md.channel);
-            md.channel = nullptr;
+    executeSync([&]() { releaseBdevHandles(md.desc, md.bdev, md.channel); });
+}
+
+nixl_status_t
+nixlSpdkProgressEngine::ensureKvBdev() {
+    return executeSync([&]() {
+        if (kvOpened_) {
+            return NIXL_SUCCESS;
         }
-        if (md.desc) {
-            spdk_bdev_close(md.desc);
-            md.desc = nullptr;
-            md.bdev = nullptr;
+        if (objBdevName_.empty()) {
+            NIXL_ERROR << "SPDK: OBJ_SEG requires the 'bdev_name' parameter naming a "
+                          "KV-capable bdev";
+            return NIXL_ERR_INVALID_PARAM;
         }
+        const int rc =
+            spdk_bdev_open_ext(objBdevName_.c_str(), kOpenForWrite, kvBdevEventCb, this, &kvDesc_);
+        if (rc != 0) {
+            NIXL_ERROR << "SPDK: failed to open KV bdev " << objBdevName_ << ": " << rc;
+            return NIXL_ERR_NOT_FOUND;
+        }
+        kvBdev_ = spdk_bdev_desc_get_bdev(kvDesc_);
+
+        // OBJ_SEG only works on devices that accept NVMe passthru (to carry the
+        // KV command) and identify as the NVMe KV command set.
+        nixl_status_t supported = NIXL_SUCCESS;
+        if (!spdk_bdev_io_type_supported(kvBdev_, SPDK_BDEV_IO_TYPE_NVME_IO)) {
+            NIXL_ERROR << "SPDK: KV bdev " << objBdevName_
+                       << " does not support NVMe passthru (SPDK_BDEV_IO_TYPE_NVME_IO)";
+            supported = NIXL_ERR_NOT_SUPPORTED;
+        } else if (spdk_bdev_get_nvme_csi(kvBdev_) != SPDK_NVME_CSI_KV) {
+            NIXL_ERROR << "SPDK: KV bdev " << objBdevName_
+                       << " does not identify as the NVMe KV command set";
+            supported = NIXL_ERR_NOT_SUPPORTED;
+        }
+        if (supported != NIXL_SUCCESS) {
+            spdk_bdev_close(kvDesc_);
+            kvDesc_ = nullptr;
+            kvBdev_ = nullptr;
+            return supported;
+        }
+
+        kvChannel_ = spdk_bdev_get_io_channel(kvDesc_);
+        if (!kvChannel_) {
+            NIXL_ERROR << "SPDK: failed to get I/O channel for KV bdev " << objBdevName_;
+            spdk_bdev_close(kvDesc_);
+            kvDesc_ = nullptr;
+            kvBdev_ = nullptr;
+            return NIXL_ERR_BACKEND;
+        }
+        kvOpened_ = true;
+        return NIXL_SUCCESS;
     });
 }
 
@@ -869,24 +1025,89 @@ nixlSpdkProgressEngine::submitOne(nixlSpdkIoContext *io) {
         return;
     }
 
+    // BLK_SEG issues read/write against the registered bdev's own handles;
+    // OBJ_SEG carries an NVMe KV command over passthru on the shared KV device.
+    // std::visit keeps the two exhaustive: a new target alternative will not
+    // compile until it is handled here.
+    const Device device = std::visit(
+        overloaded{
+            [](const nixlSpdkBlkTarget &blk) {
+                return Device{blk.md->bdev, blk.md->desc, blk.md->channel};
+            },
+            [this](const nixlSpdkObjTarget &) { return Device{kvBdev_, kvDesc_, kvChannel_}; },
+        },
+        io->target);
+
+    // The BLK handles come from the registration and the OBJ handles from this
+    // engine, so neither is guaranteed here: OBJ metadata registered against a
+    // different engine instance reaches this point with the KV device unopened,
+    // and passthru would receive a null descriptor and channel.
+    if (!device.bdev || !device.desc || !device.channel) {
+        NIXL_ERROR << "SPDK: transfer target has no open device";
+        completeOne(req_h, NIXL_ERR_BACKEND);
+        return;
+    }
+
     io->ioWaitQueued = false;
-    io->waitEntry.bdev = io->bdev->bdev;
+    io->waitEntry.bdev = device.bdev;
     io->waitEntry.cb_fn = ioWaitRetry;
     io->waitEntry.cb_arg = io;
 
-    int rc;
-    if (req_h->operation_ == NIXL_READ) {
-        rc = spdk_bdev_read(
-            io->bdev->desc, io->bdev->channel, io->buf, io->offset, io->nbytes, bdevComplete, io);
-    } else {
-        rc = spdk_bdev_write(
-            io->bdev->desc, io->bdev->channel, io->buf, io->offset, io->nbytes, bdevComplete, io);
-    }
+    const int rc = std::visit(
+        overloaded{
+            [&](const nixlSpdkBlkTarget &blk) {
+                return (req_h->operation_ == NIXL_READ) ? spdk_bdev_read(device.desc,
+                                                                         device.channel,
+                                                                         io->buf,
+                                                                         blk.offset,
+                                                                         io->nbytes,
+                                                                         bdevComplete,
+                                                                         io) :
+                                                          spdk_bdev_write(device.desc,
+                                                                          device.channel,
+                                                                          io->buf,
+                                                                          blk.offset,
+                                                                          io->nbytes,
+                                                                          bdevComplete,
+                                                                          io);
+            },
+            [&](const nixlSpdkObjTarget &obj) {
+                // Build a raw NVMe KV command (Store for WRITE, Retrieve for
+                // READ) and forward it via bdev NVMe passthru. The key packs into
+                // cdw2-3 (first 8 bytes) and cdw14-15 (next 8); cdw10.vsize is the
+                // value size and cdw11.kl the key length.
+                const std::span<const std::byte> key = obj.md->key();
+                spdk_nvme_cmd cmd = {};
+                cmd.opc = (req_h->operation_ == NIXL_WRITE) ? SPDK_NVME_OPC_KV_STORE :
+                                                              SPDK_NVME_OPC_KV_RETRIEVE;
+                cmd.cdw10_bits.kv.vsize = static_cast<uint32_t>(io->nbytes);
+                cmd.cdw11_bits.kv.kl = static_cast<uint32_t>(key.size());
+                cmd.cdw11_bits.kv.ro = 0;
+
+                // Assemble the key as four dwords and assign them individually.
+                // Each cdw member is 4 bytes wide, so copying 8 bytes through
+                // cdw2 (or cdw14) would write through one member into the next.
+                std::array<uint32_t, 4> kw{};
+                std::memcpy(
+                    kw.data(), key.data(), std::min(key.size(), kw.size() * sizeof(uint32_t)));
+                cmd.cdw2 = kw[0];
+                cmd.cdw3 = kw[1];
+                cmd.cdw14 = kw[2];
+                cmd.cdw15 = kw[3];
+                return spdk_bdev_nvme_io_passthru(
+                    device.desc, device.channel, &cmd, io->buf, io->nbytes, bdevComplete, io);
+            },
+        },
+        io->target);
 
     if (rc == -ENOMEM) {
-        int wait_rc = spdk_bdev_queue_io_wait(io->bdev->bdev, io->bdev->channel, &io->waitEntry);
+        int wait_rc = spdk_bdev_queue_io_wait(device.bdev, device.channel, &io->waitEntry);
         if (wait_rc == 0) {
             io->ioWaitQueued = true;
+            // Counted as outstanding work: the retry only runs while the poll
+            // loop keeps driving the channel, and without this the loop would
+            // see no in-flight I/O, block on the queue, and never resume.
+            ++ioWaiting_;
             return;
         }
         NIXL_ERROR << "SPDK: spdk_bdev_queue_io_wait failed: " << wait_rc;
@@ -952,6 +1173,7 @@ void
 nixlSpdkProgressEngine::ioWaitRetry(void *cb_arg) {
     auto *io = static_cast<nixlSpdkIoContext *>(cb_arg);
     io->ioWaitQueued = false;
+    --io->engine->ioWaiting_;
     io->engine->submitOne(io);
 }
 
@@ -961,4 +1183,13 @@ nixlSpdkProgressEngine::bdevEventCb(enum spdk_bdev_event_type type,
                                     void *event_ctx) {
     auto *md = static_cast<nixlSpdkBdevMD *>(event_ctx);
     NIXL_WARN << "SPDK: bdev event " << static_cast<int>(type) << " for " << md->bdevName;
+}
+
+void
+nixlSpdkProgressEngine::kvBdevEventCb(enum spdk_bdev_event_type type,
+                                      struct spdk_bdev *,
+                                      void *event_ctx) {
+    auto *engine = static_cast<nixlSpdkProgressEngine *>(event_ctx);
+    NIXL_WARN << "SPDK: bdev event " << static_cast<int>(type) << " for KV bdev "
+              << engine->objBdevName_;
 }
