@@ -17,11 +17,6 @@
 device_api_inc_dirs = include_directories('.')
 
 device_api_sources = [
-    'single_write_test.cu',
-    'utils.cu'
-]
-
-proxy_device_api_sources = [
     'proxy_write_test.cu',
     'single_write_test.cu',
     'utils.cu',
@@ -29,4 +24,5 @@ proxy_device_api_sources = [
 
 # Export for parent meson.build
 device_api_test_sources = files(device_api_sources)
-proxy_device_api_test_sources = files(proxy_device_api_sources)
+
+subdir('module_integration')

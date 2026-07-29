@@ -18,10 +18,6 @@ if not cuda_dep.found()
     subdir_done()
 endif
 
-if not [ 'ucx', 'proxy'].contains(gpu_device_api_backend_resolved)
-    error('nixl_ep requires gpu_device_api_backend=ucx or proxy')
-endif
-
 py = import('python').find_installation('python3', pure: false)
 
 # Check if PyTorch is available
@@ -100,7 +96,7 @@ nixl_ep_cpp_args = [
     '-Wno-sign-compare',
     '-Wno-reorder',
     '-Wno-attributes',
-] + gpu_device_api_cpp_args
+]
 
 nixl_ep_cuda_args = [
     '-DHAVE_CUDA',
@@ -113,7 +109,7 @@ nixl_ep_cuda_args = [
     '-Xcompiler', '-Wno-sign-compare',
     '-Xcompiler', '-Wno-reorder',
     '-Xcompiler', '-Wno-attributes',
-] + gpu_device_api_cuda_args
+]
 
 topk_idx_bits = meson.get_external_property('topk_idx_bits', '32')
 nixl_ep_cpp_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]

@@ -29,11 +29,7 @@ if cuda_dep.found()
     nixl_gpu_proxy_lib = static_library('nixl_gpu_proxy',
         'proxy/nixl_device_proxy.cpp',
         include_directories: [nixl_inc_dirs],
-        install: false)
+        install: true)
 
     nixl_gpu_proxy_dep = declare_dependency(link_with: nixl_gpu_proxy_lib)
-
-    if gpu_device_api_is_proxy
-        gpu_device_api_link_with = [nixl_gpu_proxy_lib]
-    endif
 endif
