@@ -95,6 +95,15 @@ python3 -c "import nixl; from importlib.metadata import version; print('nixl', v
 # the image, and vllm/sglang otherwise discover the cache miss deep in their own startup
 # path (burning the health-check timeout); an explicit download fails fast and clearly.
 # huggingface_hub ships in both framework images, so no extra install is needed.
+#
+# HF_ENDPOINT (set by the CI step to SANITY_HF_ENDPOINT, the internal HuggingFace mirror)
+# routes the pull through the mirror instead of huggingface.co, which rate-limits the shared
+# CI egress IP; huggingface_hub reads it from the environment, and the mirror allows anonymous
+# reads so no token is needed. Unset (e.g. a local run) it falls back to huggingface.co. The
+# long HF_HUB_*_TIMEOUT values keep the mirror's cold-cache first fetch from tripping the
+# default (10s) metadata/download timeouts.
+export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-86400}"
+export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-86400}"
 log "prefetching ${MODEL}"
 python3 -c "from huggingface_hub import snapshot_download; snapshot_download('${MODEL}')"
 
@@ -153,6 +162,12 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
   wait_for "http://localhost:${PREFILL_PORT}/health" "$SERVER_TIMEOUT"
   wait_for "http://localhost:${DECODE_PORT}/health" "$SERVER_TIMEOUT"
 
+  # Re-pick PROXY_PORT now that the SGLang servers are fully up. SGLang binds internal
+  # ports derived from its base port (gRPC, ZMQ, etc.) that aren't visible to
+  # get_next_tcp_port() until the servers are running; re-allocating here ensures the
+  # router gets a port that doesn't collide with any of those.
+  PROXY_PORT="$(get_next_tcp_port)"
+
   # sglang-router fronts the prefill/decode pair (replaces the removed in-core mini_lb).
   # Installed into the sglang weights-base image (contrib/Dockerfile.sglang-base).
   setsid python3 -m sglang_router.launch_router --pd-disaggregation \
@@ -160,7 +175,7 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
     --decode "http://localhost:${DECODE_PORT}" \
     --host 0.0.0.0 --port "$PROXY_PORT" &
   pids+=($!)
-  wait_for "http://localhost:${PROXY_PORT}/health" "$PROXY_TIMEOUT" || true
+  wait_for "http://localhost:${PROXY_PORT}/health" "$PROXY_TIMEOUT"
   ENDPOINT="http://localhost:${PROXY_PORT}/v1/completions"
 
 else

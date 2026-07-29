@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 #define NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 
+#include <atomic>
 #include <memory>
 #include <type_traits>
 
@@ -44,7 +45,7 @@ class nixlUcxMem;
 class nixlUcxEp {
 private:
     ucp_ep_h eph{nullptr};
-    nixl::ucx::ep_state_t state = nixl::ucx::ep_state_t::UNINITIALIZED;
+    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::UNINITIALIZED};
     const uint32_t closeFlags_;
 
     void
@@ -65,7 +66,7 @@ public:
 
     [[nodiscard]] nixl_status_t
     checkTxState() const noexcept {
-        return nixl::ucx::toNixlStatus(state);
+        return nixl::ucx::toNixlStatus(state_);
     }
 
     nixlUcxEp(ucp_worker_h worker,
