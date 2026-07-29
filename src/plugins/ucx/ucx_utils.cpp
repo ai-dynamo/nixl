@@ -28,6 +28,7 @@
 
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
+#include "common/operators.h"
 #include "config.h"
 #include "serdes/serdes.h"
 
@@ -620,6 +621,8 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         }
     }
 
+    NIXL_DEBUG << *this << ": registered " << nixl_mem_type << " " << mem.size << " bytes at "
+               << mem.base << ", memh " << mem.memh;
     return 0;
 }
 
@@ -635,11 +638,14 @@ nixlUcxContext::packRkey(nixlUcxMem &mem) {
     }
     const std::string result = nixlSerDes::_bytesToString(rkey_buf, size);
     ucp_rkey_buffer_release(rkey_buf);
+    NIXL_DEBUG << *this << ": packed rkey of " << size << " bytes for memh " << mem.memh;
     return result;
 }
 
 void
 nixlUcxContext::memDereg(nixlUcxMem &mem) {
+    NIXL_DEBUG << *this << ": deregistering " << mem.size << " bytes at " << mem.base << ", memh "
+               << mem.memh;
     ucp_mem_unmap(ctx, mem.memh);
 }
 
