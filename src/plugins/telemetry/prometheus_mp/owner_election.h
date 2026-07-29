@@ -29,7 +29,6 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
-#include <utility>
 
 namespace nixl::telemetry::mp {
 
@@ -48,12 +47,17 @@ inline constexpr char ownerLockFileName[] = "nixl-owner.lock";
  * publishes the endpoint it bound, which is how a loser can tell that it was
  * configured for a different one. The kernel releases the lock when the holder
  * dies, so it needs no cleanup -- and a writer that re-runs the election then
- * wins it, which is how the endpoint survives the owner's death.
+ * wins it, which is how the endpoint is served again after the owner's death.
+ *
+ * An election is run by constructing one and given up by destroying it: there
+ * is no empty state and no way to move one, because an election re-run by the
+ * process already holding it always loses -- flock contends between two open
+ * file descriptions of the same process -- so overwriting a held election in
+ * place would close the descriptor that holds the lock. Hold it in an optional
+ * and reset before re-electing.
  */
 class ownerElection {
 public:
-    ownerElection() = default;
-
     /**
      * @brief Runs the election for @p dir, without blocking.
      * @param dir The shared telemetry directory the ranks contend for.
@@ -87,7 +91,6 @@ public:
         }
         if (::flock(fd_.get(), LOCK_EX | LOCK_NB) == 0) {
             won_ = true;
-            holdsLock_ = true;
             // A previous owner's endpoint outlives it in the file. Drop it now,
             // or a loser reading between this election and publishEndpoint()
             // takes the dead endpoint for ours and reports a disagreement.
@@ -103,39 +106,9 @@ public:
         }
     }
 
-    /**
-     * @brief Takes the election, and the lock if there is one, out of @p other.
-     * @param other The election to move from, left holding nothing.
-     */
-    ownerElection(ownerElection &&other) noexcept
-        : fd_(std::move(other.fd_)),
-          won_(other.won_),
-          holdsLock_(std::exchange(other.holdsLock_, false)) {}
-
-    /**
-     * @brief Takes @p other over, unless this election holds the lock.
-     * @param other The election to move from, left holding nothing -- or left
-     *        untouched, when this one holds the lock and the move is refused.
-     * @return This election, unchanged if it holds the lock.
-     *
-     * An election re-run by the process already holding this one always loses,
-     * since flock contends between two open file descriptions of the same
-     * process, so moving it in would close the descriptor that holds the lock
-     * and leave a process serving while holding nothing. Release first if
-     * giving the lock up is what was meant. Only the lock is protected: a loser
-     * keeps its descriptor open too, and re-running its election is the whole
-     * point of the retry.
-     */
+    ownerElection(ownerElection &&) = delete;
     ownerElection &
-    operator=(ownerElection &&other) noexcept {
-        if (holdsLock_) {
-            return *this;
-        }
-        fd_ = std::move(other.fd_);
-        won_ = other.won_;
-        holdsLock_ = std::exchange(other.holdsLock_, false);
-        return *this;
-    }
+    operator=(ownerElection &&) = delete;
 
     [[nodiscard]] bool
     won() const noexcept {
@@ -146,7 +119,10 @@ public:
      * @brief Records where the winner listens, for the losers to read back.
      * @param endpoint The bound "address:port".
      *
-     * Best-effort: it only decides whether a loser warns.
+     * Best-effort: it only decides whether a loser warns. Truncates because the
+     * constructor only does so when it took the lock: an unusable lock leaves
+     * every rank believing it won, and a shorter endpoint written over a longer
+     * stale one would otherwise read back as the two spliced together.
      */
     void
     publishEndpoint(const std::string &endpoint) const {
@@ -173,13 +149,6 @@ public:
         return len > 0 ? std::string(buf, static_cast<std::size_t>(len)) : std::string();
     }
 
-    void
-    release() noexcept {
-        fd_.reset();
-        won_ = false;
-        holdsLock_ = false;
-    }
-
 private:
     // Every rank then believes it was elected, so those that go on to lose the
     // bind report the port as held from outside the run while a sibling is in
@@ -196,9 +165,6 @@ private:
 
     scopedFd fd_;
     bool won_ = false;
-    // Not won_: that is also set when the lock is unusable and every rank falls
-    // back to the port bind deciding, which holds nothing.
-    bool holdsLock_ = false;
 };
 
 } // namespace nixl::telemetry::mp

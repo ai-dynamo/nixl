@@ -161,9 +161,8 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     case scrapeEndpoint::status::PORT_TAKEN:
         // Elected, so no sibling can be serving: the port belongs to something
         // outside this run and nothing will aggregate this directory. The
-        // election is conceded rather than held, so once the port frees -- a
-        // conflict as short as a previous run still shutting down -- the next
-        // rank to win takes the endpoint over.
+        // election is conceded rather than held, so the next rank to win takes
+        // the endpoint over once the port frees.
         NIXL_WARN << "prometheus_mp: elected to serve telemetry dir " << dir_.string() << " but "
                   << bind_address << " is held by a process outside this run (a foreign service, "
                   << "or a rank pointed at a different " << multiprocDirVar
@@ -206,7 +205,7 @@ nixlTelemetryPrometheusMpExporter::exportEvent(const nixlTelemetryEvent &event) 
     // slots, and the clock read costs several times the atomics it would follow.
     const uint64_t now = store_->refreshHeartbeat();
     if (!endpoint_.serving()) {
-        endpoint_.reclaim(now);
+        endpoint_.reclaim(std::chrono::nanoseconds(now));
     }
     return NIXL_SUCCESS;
 }

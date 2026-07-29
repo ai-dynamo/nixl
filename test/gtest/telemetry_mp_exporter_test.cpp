@@ -17,7 +17,6 @@
 #include "prometheus_mp_exporter.h"
 #include "histogram_buckets.h"
 #include "mp_store.h"
-#include "owner_election.h"
 #include "plugin_manager.h"
 #include "scrape_endpoint.h"
 #include "telemetry.h"
@@ -186,18 +185,6 @@ TEST_F(MpExporterTest, WriterTakesOverWhenTheOwnerExits) {
     EXPECT_TRUE(writer.isExporter());
 }
 
-TEST_F(MpExporterTest, ReRunningAnElectionCannotDropTheHeldLock) {
-    using nixl::telemetry::mp::ownerElection;
-
-    ownerElection held(dir_);
-    ASSERT_TRUE(held.won());
-
-    held = ownerElection(dir_);
-
-    ownerElection contender(dir_);
-    EXPECT_FALSE(contender.won()) << "re-running the election released the lock it had won";
-}
-
 TEST_F(MpExporterTest, TakeoverServesOnTheFirstAttemptAfterTheOwnerGoes) {
     using nixl::telemetry::mp::monotonicNs;
     using nixl::telemetry::mp::scrapeEndpoint;
@@ -210,7 +197,7 @@ TEST_F(MpExporterTest, TakeoverServesOnTheFirstAttemptAfterTheOwnerGoes) {
     ASSERT_EQ(writer.claim(), scrapeEndpoint::status::SIBLING_OWNS);
 
     owner.reset();
-    writer.reclaim(monotonicNs());
+    writer.reclaim(std::chrono::nanoseconds(monotonicNs()));
     EXPECT_TRUE(writer.serving()) << "the first re-election after the owner left did not serve";
 }
 
@@ -222,7 +209,7 @@ TEST_F(MpExporterTest, ReclaimWhileServingKeepsTheElection) {
     scrapeEndpoint endpoint(dir_, bind, std::chrono::seconds(2));
     ASSERT_EQ(endpoint.claim(), scrapeEndpoint::status::SERVING);
 
-    endpoint.reclaim(monotonicNs() + std::chrono::nanoseconds(std::chrono::seconds(10)).count());
+    endpoint.reclaim(std::chrono::nanoseconds(monotonicNs()) + std::chrono::seconds(10));
     ASSERT_TRUE(endpoint.serving());
 
     scrapeEndpoint intruder(dir_, bind, std::chrono::seconds(2));

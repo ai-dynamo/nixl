@@ -23,9 +23,9 @@
 #include <prometheus/exposer.h>
 
 #include <chrono>
-#include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace nixl::telemetry::mp {
@@ -62,21 +62,21 @@ public:
      * @throw std::exception if the exposer fails for any reason other than the
      *        port being taken -- a genuine error, unlike a bind collision.
      */
-    status
+    [[nodiscard]] status
     claim();
 
     /**
      * @brief Re-runs the election of a non-owner, at most once per retry
      *        interval, and serves if it now wins. Does nothing while this
      *        process is the owner.
-     * @param now_ns A recent monotonicNs() reading, so the throttle costs the
+     * @param now A recent monotonicNs() reading, so the throttle costs the
      *        caller no clock of its own.
      *
      * Quiet and non-throwing: it runs on the export path, where a failure to
      * take over is the status quo rather than news.
      */
     void
-    reclaim(uint64_t now_ns) noexcept;
+    reclaim(std::chrono::nanoseconds now) noexcept;
 
     [[nodiscard]] bool
     serving() const noexcept {
@@ -86,7 +86,7 @@ public:
     /// The endpoint the current owner published, empty if there is none.
     [[nodiscard]] std::string
     ownerEndpoint() const {
-        return election_.publishedEndpoint();
+        return election_ ? election_->publishedEndpoint() : std::string();
     }
 
     /// The endpoint this process serves, or would serve if it won.
@@ -104,14 +104,16 @@ private:
     std::filesystem::path dir_;
     std::string bindAddress_;
     std::chrono::nanoseconds staleTtl_;
-    uint64_t lastAttemptNs_ = 0;
-    uint64_t retryIntervalNs_;
+    std::chrono::nanoseconds lastAttempt_{0};
+    std::chrono::nanoseconds retryInterval_;
 
+    // Optional because an election cannot be re-run in place: resetting it is
+    // how a non-owner gives up the descriptor before contending again.
     // Declared so destruction is exposer_ -> collector_ -> election_: stop
     // serving before dropping the collector it weak-references, and free the
     // port before releasing the election -- a rank that wins it in between
     // would otherwise fail to bind the port still held here.
-    ownerElection election_;
+    std::optional<ownerElection> election_;
     std::shared_ptr<nixlMultiprocessCollector> collector_;
     std::shared_ptr<prometheus::Exposer> exposer_;
 };
