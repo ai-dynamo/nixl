@@ -28,7 +28,6 @@
 
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
-#include "common/operators.h"
 #include "config.h"
 #include "serdes/serdes.h"
 
@@ -519,9 +518,10 @@ toUcsThreadModeChecked(const nixl::ucx::mt_mode_t t) {
 }
 
 struct nixlUcpWorkerParams : ucp_worker_params_t {
-    explicit nixlUcpWorkerParams(const nixl::ucx::mt_mode_t t) {
-        field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
+    nixlUcpWorkerParams(const nixl::ucx::mt_mode_t t, const std::string &worker_name) {
+        field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE | UCP_WORKER_PARAM_FIELD_NAME;
         thread_mode = toUcsThreadModeChecked(t);
+        name = worker_name.c_str();
     }
 };
 
@@ -530,26 +530,34 @@ static_assert(sizeof(nixlUcpWorkerParams) == sizeof(ucp_worker_params_t));
 } // namespace
 
 ucp_worker *
-nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
+nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) const {
     ucp_worker *worker = nullptr;
-    const nixlUcpWorkerParams params(ctx.mtType_);
+    const nixlUcpWorkerParams params(ctx.mtType_, name_);
     const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
     if (status != UCS_OK) {
-        throw std::runtime_error(std::string("Failed to create UCX worker: ") +
+        throw std::runtime_error(std::string("Failed to create UCX worker ") + name_ + ": " +
                                  ucs_status_string(status));
     }
 
     return worker;
 }
 
+std::ostream &
+operator<<(std::ostream &os, const nixlUcxWorker &worker) {
+    return os << "nixlUcxWorker " << worker.getName();
+}
+
 nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
                              ucp_err_handling_mode_t err_handling_mode,
                              uint32_t ep_close_flags,
                              size_t id)
-    : worker(createUcpWorker(ctx), &ucp_worker_destroy),
+    : name_(ctx.getName() + ":" + std::to_string(id)),
+      worker(createUcpWorker(ctx), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode),
       epCloseFlags_(ep_close_flags),
-      id_(id) {}
+      id_(id) {
+    NIXL_DEBUG << *this << ": created ucp worker " << worker.get();
+}
 
 std::string
 nixlUcxWorker::epAddr() {
@@ -558,8 +566,8 @@ nixlUcxWorker::epAddr() {
     wattr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS;
     const ucs_status_t status = ucp_worker_query(worker.get(), &wattr);
     if (UCS_OK != status) {
-        throw std::runtime_error(std::string("Unable to query UCX worker address: ") +
-                                 ucs_status_string(status));
+        throw std::runtime_error(std::string("Unable to query address of UCX worker ") + name_ +
+                                 ": " + ucs_status_string(status));
     }
 
     const std::string result = nixlSerDes::_bytesToString(wattr.address, wattr.address_length);
@@ -570,10 +578,13 @@ nixlUcxWorker::epAddr() {
 std::unique_ptr<nixlUcxEp>
 nixlUcxWorker::connect(void *addr) {
     try {
-        return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, epCloseFlags_);
+        auto ep =
+            std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, epCloseFlags_);
+        NIXL_DEBUG << *this << ": created ep " << ep->getEp();
+        return ep;
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << "UCX endpoint create failed: " << e.what();
+        NIXL_ERROR << *this << ": UCX endpoint create failed: " << e.what();
         return {};
     }
 }
@@ -621,8 +632,8 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         }
     }
 
-    NIXL_DEBUG << *this << ": registered " << nixl_mem_type << " " << mem.size << " bytes at "
-               << mem.base << ", memh " << mem.memh;
+    NIXL_DEBUG << *this << ": registered " << mem.size << " bytes at " << mem.base << ", memh "
+               << mem.memh;
     return 0;
 }
 
@@ -699,6 +710,8 @@ nixlUcxWorker::regAmCallback(nixl::ucx::am_cb_op_t msg_id, ucp_am_recv_callback_
         // TODO: error handling
         return -1;
     }
+
+    NIXL_DEBUG << *this << ": registered AM callback for " << msg_id;
     return 0;
 }
 
@@ -733,6 +746,7 @@ nixlUcxWorker::reqRelease(nixlUcxReq req) {
 
 void
 nixlUcxWorker::reqCancel(nixlUcxReq req) {
+    NIXL_DEBUG << *this << ": cancelling request " << req;
     ucp_request_cancel(worker.get(), req);
 }
 
@@ -746,8 +760,8 @@ nixlUcxWorker::getEfd() const {
     int fd;
     const auto status = ucp_worker_get_efd(worker.get(), &fd);
     if (status != UCS_OK) {
-        const auto err_str =
-            std::string("Couldn't obtain fd for a worker: ") + ucs_status_string(status);
+        const auto err_str = std::string("Couldn't obtain fd for UCX worker ") + name_ + ": " +
+            ucs_status_string(status);
         NIXL_ERROR << err_str;
         throw std::runtime_error(err_str);
     }

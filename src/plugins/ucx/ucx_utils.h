@@ -258,15 +258,24 @@ public:
         return id_;
     }
 
-private:
-    [[nodiscard]] static ucp_worker *
-    createUcpWorker(const nixlUcxContext &);
+    [[nodiscard]] const std::string &
+    getName() const noexcept {
+        return name_;
+    }
 
+private:
+    [[nodiscard]] ucp_worker *
+    createUcpWorker(const nixlUcxContext &) const;
+
+    const std::string name_;
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     const ucp_err_handling_mode_t err_handling_mode_;
     const uint32_t epCloseFlags_;
     const size_t id_;
 };
+
+std::ostream &
+operator<<(std::ostream &os, const nixlUcxWorker &worker);
 
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options();
