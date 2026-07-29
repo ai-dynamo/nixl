@@ -15,20 +15,12 @@
  * limitations under the License.
  */
 
-// UCX-specific device API facade.  Self-contained: no backend-selection macro
-// required.  Include this header (or place src/api/gpu/ucx on the include
-// path so that <nixl_device.cuh> resolves here) when building CUDA
-// translation units that use the UCX GPU device API directly.
+// Compatibility facade for build trees that still route nixl_device.cuh
+// through the UCX include directory.
 
 #ifndef NIXL_SRC_API_GPU_UCX_NIXL_DEVICE_CUH
 #define NIXL_SRC_API_GPU_UCX_NIXL_DEVICE_CUH
 
-#include "nixl_device_impl.cuh"
-
-namespace nixl::gpu {
-namespace selected_impl = ucx_impl;
-}
-
-#include "../common/nixl_device_wrappers.cuh"
+#include "../nixl_device.cuh"
 
 #endif // NIXL_SRC_API_GPU_UCX_NIXL_DEVICE_CUH

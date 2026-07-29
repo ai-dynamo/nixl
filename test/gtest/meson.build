@@ -181,12 +181,13 @@ if proxy_gtest_available
     proxy_test_exe = executable('gtest_proxy',
         sources : proxy_gtest_sources,
         include_directories : [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs,
-                               nixl_gpu_proxy_inc_dirs, include_directories('device_api')],
+                               nixl_gpu_device_api_inc_dirs, nixl_gpu_proxy_inc_dirs,
+                               include_directories('device_api')],
         cpp_args : cpp_flags + proxy_define,
         cuda_args : cuda_flags + proxy_define,
-        dependencies : [nixl_dep, nixl_common_dep, cuda_dep,
+        dependencies : [nixl_dep, nixl_common_dep,
                         gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep,
-                        file_utils_interface],
+                        file_utils_interface] + gpu_device_api_deps,
         # Retain the compatibility archive until configure-time backend
         # selection is removed.
         link_with : [nixl_build_lib, nixl_gpu_proxy_lib],

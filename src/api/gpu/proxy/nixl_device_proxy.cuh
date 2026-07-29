@@ -30,8 +30,8 @@ struct ProxyXferStatus {
     uint64_t op_idx;
 };
 
-static_assert(sizeof(ProxyXferStatus) <= sizeof(nixlGpuXferStatusH),
-              "ProxyXferStatus must fit in nixlGpuXferStatusH::storage");
+static_assert(sizeof(ProxyXferStatus) <= NIXL_GPU_XFER_STATUS_PAYLOAD_SIZE,
+              "ProxyXferStatus must fit in the transfer-status payload");
 
 __device__ __forceinline__ uint32_t
 proxyMemViewIdFromHandle(nixlMemViewH mvh) {

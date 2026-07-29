@@ -108,6 +108,23 @@ getPtrKernel(nixlMemViewH mvh, size_t index, void **ptr) {
     *ptr = nixlGetPtr(mvh, index);
 }
 
+// Compile-only probe: native UCX supports GRID operations. The runtime branch
+// must not instantiate proxy GRID templates.
+__global__ void
+gridLevelDeviceApiCompileProbe(putParams put_params,
+                               nixlGpuXferStatusH *xfer_status,
+                               nixl_status_t *statuses) {
+    statuses[0] = nixlPut<nixl_gpu_level_t::GRID>(put_params.src,
+                                                  put_params.dst,
+                                                  put_params.size,
+                                                  put_params.channelId,
+                                                  put_params.flags,
+                                                  xfer_status);
+    statuses[1] = nixlGpuGetXferStatus<nixl_gpu_level_t::GRID>(*xfer_status);
+    statuses[2] = nixlAtomicAdd<nixl_gpu_level_t::GRID>(
+        1, put_params.dst, put_params.channelId, put_params.flags, xfer_status);
+}
+
 template<typename T> class gpuVar {
 public:
     gpuVar() : ptr_{allocate(), &deallocate} {

@@ -15,13 +15,8 @@
  * limitations under the License.
  */
 
-// Generic backend-agnostic entry point.  Selects an implementation at
-// compile time via NIXL_GPU_DEVICE_BACKEND_UCX or
-// NIXL_GPU_DEVICE_BACKEND_PROXY; exactly one must be defined.
-//
-// When the backend is already known at the include site prefer the
-// backend-specific facade (ucx/nixl_device.cuh or proxy/nixl_device.cuh)
-// which requires no macro.
+// Generic backend-agnostic entry point. Each operation selects its
+// implementation from the version prefix of the supplied memory-view handle.
 
 #ifndef NIXL_SRC_API_GPU_NIXL_DEVICE_CUH
 #define NIXL_SRC_API_GPU_NIXL_DEVICE_CUH

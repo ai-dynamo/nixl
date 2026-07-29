@@ -13,6 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+gpu_device_config = configuration_data()
+gpu_device_config.set('NIXL_HAVE_UCX_GPU_DEVICE_API', ucx_gpu_device_api_available)
+nixl_gpu_device_config_header = configure_file(
+    input: 'nixl_device_config.h.in',
+    output: 'nixl_device_config.h',
+    configuration: gpu_device_config,
+    install: get_option('install_headers'),
+    install_dir: prefix_inc + '/gpu',
+)
+
 # Keep the compatibility archive while configure-time Device API selection is
 # still supported. Runtime state lives in proxy memory-view handles.
 if cuda_dep.found()

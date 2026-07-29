@@ -67,8 +67,8 @@ convert_status(ucs_status_t status) {
 
 __device__ inline ucp_device_request_t *
 request_ptr(nixlGpuXferStatusH *xfer_status) {
-    static_assert(sizeof(ucp_device_request_t) <= sizeof(nixlGpuXferStatusH{}.storage),
-                  "nixlGpuXferStatusH storage is too small for UCX device request");
+    static_assert(sizeof(ucp_device_request_t) <= NIXL_GPU_XFER_STATUS_PAYLOAD_SIZE,
+                  "UCX device request must fit in the transfer-status payload");
     return xfer_status ? reinterpret_cast<ucp_device_request_t *>(xfer_status->storage) : nullptr;
 }
 

@@ -27,6 +27,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -371,6 +372,26 @@ proxyPutKernel(nixlMemViewH src_mvh, nixlMemViewH dst_mvh, nixl_status_t *out_st
 }
 
 __global__ void
+proxyPutAndPollRegardlessKernel(nixlMemViewH src_mvh,
+                                nixlMemViewH dst_mvh,
+                                nixl_status_t *out_statuses) {
+    nixlMemViewElem src{src_mvh, 0, 0}, dst{dst_mvh, 0, 0};
+    nixlGpuXferStatusH xfer_status{};
+    out_statuses[0] = nixlPut(src, dst, /*size=*/0, 0, 0, &xfer_status);
+    out_statuses[1] = nixlGpuGetXferStatus(xfer_status);
+}
+
+__global__ void
+proxyPutAsyncKernel(nixlMemViewH src_mvh,
+                    nixlMemViewH dst_mvh,
+                    uint32_t channel_id,
+                    nixl_status_t *out_put_status,
+                    nixlGpuXferStatusH *out_xfer_status);
+
+__global__ void
+proxyPollOnceKernel(nixlGpuXferStatusH *xfer_status, nixl_status_t *out_poll_status);
+
+__global__ void
 proxyPutAtKernel(nixlMemViewH src_mvh,
                  nixlMemViewH dst_mvh,
                  uint32_t peer_index,
@@ -505,6 +526,104 @@ TEST_F(ProxyDeviceApiTest, AtomicAddReturnsInProgWhenEnqueued) {
     EXPECT_EQ(deviceGet(d_status), NIXL_IN_PROG);
     cudaFree(d_status);
 
+    ASSERT_EQ(runtime.shutdown(), NIXL_SUCCESS);
+}
+
+TEST_F(ProxyDeviceApiTest, HandleVersionsRejectMixedAndUnknownBackends) {
+    auto adapter = std::make_unique<StubProxyBackendAdapter>();
+    nixlProxyRuntime runtime;
+    ASSERT_EQ(runtime.init(std::move(adapter), 4, 1, 1), NIXL_SUCCESS);
+    ASSERT_EQ(runtime.startWorkers(), NIXL_SUCCESS);
+    const auto mvhs = registerDummyMemViews(runtime);
+
+    uint16_t *d_version = nullptr;
+    ASSERT_EQ(cudaMalloc(&d_version, sizeof(*d_version)), cudaSuccess);
+    nixl_status_t *d_statuses = nullptr;
+    ASSERT_EQ(cudaMalloc(&d_statuses, 2 * sizeof(*d_statuses)), cudaSuccess);
+
+    uint16_t version = 1;
+    ASSERT_EQ(cudaMemcpy(d_version, &version, sizeof(version), cudaMemcpyHostToDevice), cudaSuccess);
+    proxyPutAndPollRegardlessKernel<<<1, 1>>>(
+        d_version, mvhs.dst, d_statuses);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    nixl_status_t statuses[2]{};
+    ASSERT_EQ(
+        cudaMemcpy(statuses, d_statuses, sizeof(statuses), cudaMemcpyDeviceToHost), cudaSuccess);
+    EXPECT_EQ(statuses[0], NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(statuses[1], NIXL_ERR_INVALID_PARAM);
+
+#if !defined(NIXL_HAVE_UCX_GPU_DEVICE_API)
+    proxyPutAndPollRegardlessKernel<<<1, 1>>>(
+        d_version, d_version, d_statuses);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    ASSERT_EQ(
+        cudaMemcpy(statuses, d_statuses, sizeof(statuses), cudaMemcpyDeviceToHost), cudaSuccess);
+    EXPECT_EQ(statuses[0], NIXL_ERR_NOT_SUPPORTED);
+    EXPECT_EQ(statuses[1], NIXL_ERR_INVALID_PARAM);
+#endif
+
+    version = NIXL_PROXY_MEM_LIST_NAMESPACE | 2;
+    ASSERT_EQ(cudaMemcpy(d_version, &version, sizeof(version), cudaMemcpyHostToDevice), cudaSuccess);
+    proxyPutAndPollRegardlessKernel<<<1, 1>>>(
+        mvhs.src, d_version, d_statuses);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    ASSERT_EQ(
+        cudaMemcpy(statuses, d_statuses, sizeof(statuses), cudaMemcpyDeviceToHost), cudaSuccess);
+    EXPECT_EQ(statuses[0], NIXL_ERR_NOT_SUPPORTED);
+    EXPECT_EQ(statuses[1], NIXL_ERR_INVALID_PARAM);
+
+    cudaFree(d_statuses);
+    cudaFree(d_version);
+    ASSERT_EQ(runtime.shutdown(), NIXL_SUCCESS);
+}
+
+TEST_F(ProxyDeviceApiTest, TransferStatusFooterSelectsProxyAndRejectsInvalidFooters) {
+    auto adapter = std::make_unique<StubProxyBackendAdapter>();
+    nixlProxyRuntime runtime;
+    ASSERT_EQ(runtime.init(std::move(adapter), 4, 1, 1), NIXL_SUCCESS);
+    ASSERT_EQ(runtime.startWorkers(), NIXL_SUCCESS);
+    const auto mvhs = registerDummyMemViews(runtime);
+
+    auto *d_submit_status = deviceAlloc<nixl_status_t>();
+    auto *d_poll_status = deviceAlloc<nixl_status_t>();
+    auto *d_xfer_status = deviceAlloc<nixlGpuXferStatusH>();
+    proxyPutAsyncKernel<<<1, 1>>>(
+        mvhs.src, mvhs.dst, 0, d_submit_status, d_xfer_status);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    EXPECT_EQ(deviceGet(d_submit_status), NIXL_IN_PROG);
+
+    const auto status = deviceGet(d_xfer_status);
+    nixlDeviceXferStatusFooter footer{};
+    std::memcpy(
+        &footer, status.storage + NIXL_GPU_XFER_STATUS_PAYLOAD_SIZE, sizeof(footer));
+    EXPECT_EQ(footer.magic, NIXL_DEVICE_XFER_STATUS_MAGIC);
+    EXPECT_EQ(footer.abi_version, NIXL_DEVICE_XFER_STATUS_ABI_VERSION);
+    EXPECT_EQ(footer.backend,
+              static_cast<uint8_t>(nixlDeviceXferStatusBackend::PROXY));
+    EXPECT_EQ(footer.reserved, 0);
+
+    nixlGpuXferStatusH invalid{};
+    ASSERT_EQ(
+        cudaMemcpy(d_xfer_status, &invalid, sizeof(invalid), cudaMemcpyHostToDevice), cudaSuccess);
+    proxyPollOnceKernel<<<1, 1>>>(d_xfer_status, d_poll_status);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    EXPECT_EQ(deviceGet(d_poll_status), NIXL_ERR_INVALID_PARAM);
+
+    footer = {NIXL_DEVICE_XFER_STATUS_MAGIC,
+              NIXL_DEVICE_XFER_STATUS_ABI_VERSION,
+              0xff,
+              0};
+    std::memcpy(
+        invalid.storage + NIXL_GPU_XFER_STATUS_PAYLOAD_SIZE, &footer, sizeof(footer));
+    ASSERT_EQ(
+        cudaMemcpy(d_xfer_status, &invalid, sizeof(invalid), cudaMemcpyHostToDevice), cudaSuccess);
+    proxyPollOnceKernel<<<1, 1>>>(d_xfer_status, d_poll_status);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    EXPECT_EQ(deviceGet(d_poll_status), NIXL_ERR_INVALID_PARAM);
+
+    cudaFree(d_xfer_status);
+    cudaFree(d_poll_status);
+    cudaFree(d_submit_status);
     ASSERT_EQ(runtime.shutdown(), NIXL_SUCCESS);
 }
 

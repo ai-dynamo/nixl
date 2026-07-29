@@ -17,10 +17,8 @@
 
 // Public __device__ wrapper functions for the NIXL GPU transfer API.
 //
-// This file must be included AFTER nixl::gpu::selected_impl has been aliased
-// to the desired backend namespace (ucx_impl, proxy_impl, etc.).  It is
-// included automatically by each backend-specific nixl_device.cuh facade and
-// by the generic GPU API header; callers should not include it directly.
+// Included automatically by the generic GPU API header; callers should not
+// include it directly.
 
 #ifndef NIXL_SRC_API_GPU_COMMON_NIXL_DEVICE_WRAPPERS_CUH
 #define NIXL_SRC_API_GPU_COMMON_NIXL_DEVICE_WRAPPERS_CUH
@@ -28,7 +26,7 @@
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ inline nixl_status_t
 nixlGpuGetXferStatus(nixlGpuXferStatusH &xfer_status) {
-    return nixl::gpu::selected_impl::get_xfer_status<level>(xfer_status);
+    return nixl::gpu::api::get_xfer_status<level>(xfer_status);
 }
 
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
@@ -39,7 +37,7 @@ nixlPut(const nixlMemViewElem &src,
         unsigned channel_id = 0,
         uint64_t flags = 0,
         nixlGpuXferStatusH *xfer_status = nullptr) {
-    return nixl::gpu::selected_impl::put<level>(src, dst, size, channel_id, flags, xfer_status);
+    return nixl::gpu::api::put<level>(src, dst, size, channel_id, flags, xfer_status);
 }
 
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
@@ -49,13 +47,13 @@ nixlAtomicAdd(uint64_t value,
               unsigned channel_id = 0,
               uint64_t flags = 0,
               nixlGpuXferStatusH *xfer_status = nullptr) {
-    return nixl::gpu::selected_impl::atomic_add<level>(
+    return nixl::gpu::api::atomic_add<level>(
         value, counter, channel_id, flags, xfer_status);
 }
 
 __device__ inline void *
 nixlGetPtr(nixlMemViewH mvh, size_t index) {
-    return nixl::gpu::selected_impl::get_ptr(mvh, index);
+    return nixl::gpu::api::get_ptr(mvh, index);
 }
 
 #endif // NIXL_SRC_API_GPU_COMMON_NIXL_DEVICE_WRAPPERS_CUH

@@ -459,10 +459,15 @@ gpu_device_api_link_with = []
 
 if gpu_device_api_is_ucx
     gpu_device_api_define = '-DNIXL_GPU_DEVICE_BACKEND_UCX'
-    gpu_device_api_deps = [ucx_dep, doca_gpunetio_dep]
 elif gpu_device_api_is_proxy
     gpu_device_api_define = '-DNIXL_GPU_DEVICE_BACKEND_PROXY'
-    gpu_device_api_deps = [cuda_dep]
+endif
+
+if cuda_dep.found()
+    gpu_device_api_deps += [cuda_dep]
+endif
+if ucx_gpu_device_api_available
+    gpu_device_api_deps += [ucx_dep, doca_gpunetio_dep]
 endif
 
 if gpu_device_api_define != ''
