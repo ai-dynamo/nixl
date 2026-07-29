@@ -193,7 +193,8 @@ public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
-        uint32_t ep_close_flags = 0);
+        uint32_t ep_close_flags = 0,
+        size_t id = 0);
 
     nixlUcxWorker(nixlUcxWorker &&) = delete;
     nixlUcxWorker(const nixlUcxWorker &) = delete;
@@ -242,6 +243,11 @@ public:
         return worker.get();
     }
 
+    [[nodiscard]] size_t
+    getId() const noexcept {
+        return id_;
+    }
+
 private:
     [[nodiscard]] static ucp_worker *
     createUcpWorker(const nixlUcxContext &);
@@ -249,6 +255,7 @@ private:
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     const ucp_err_handling_mode_t err_handling_mode_;
     const uint32_t epCloseFlags_;
+    const size_t id_;
 };
 
 [[nodiscard]] nixl_b_params_t

@@ -531,10 +531,12 @@ nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) {
 
 nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
                              ucp_err_handling_mode_t err_handling_mode,
-                             uint32_t ep_close_flags)
+                             uint32_t ep_close_flags,
+                             size_t id)
     : worker(createUcpWorker(ctx), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode),
-      epCloseFlags_(ep_close_flags) {}
+      epCloseFlags_(ep_close_flags),
+      id_(id) {}
 
 std::string
 nixlUcxWorker::epAddr() {
