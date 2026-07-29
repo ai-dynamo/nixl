@@ -289,7 +289,7 @@ class nixl_agent:
         if getattr(self, "_leaked_xfer_handles", None):
             for h in list(self._leaked_xfer_handles):
                 try:
-                    self.releaseXferReq(h)
+                    self.agent.releaseXferReq(h)
                 except Exception as e:
                     try:
                         logger.error(
