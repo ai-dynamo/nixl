@@ -214,6 +214,8 @@ public:
      *        (posted with FI_MORE); false flushes the rail's batch. The caller passes false for
      *        a rail's last post and when a batch reaches NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE.
      *        Defaults to false so an unmarked descriptor flushes safely.
+     * @param device_id Device id when multi-GPU is enabled.
+     * @param is_cuda_device Specifies whether this is CUDA-VRAM transfer.
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
@@ -233,7 +235,20 @@ public:
                              size_t &submitted_count_out,
                              int desc_idx,
                              size_t base_offset,
-                             bool apply_fi_more = false);
+                             bool apply_fi_more = false,
+                             int device_id = -1,
+                             bool is_cuda_vram = false);
+
+    void
+    deferTransferRequest(nixlLibfabricReq::OpType op_type,
+                         uint16_t agent_idx,
+                         uint16_t xfer_id,
+                         uint64_t fi_flags,
+                         fi_addr_t dest_addr,
+                         int device_id,
+                         bool is_cuda_vram,
+                         size_t rail_id,
+                         nixlLibfabricReq *req);
 
     /** Reserve a base offset for a transfer to ensure stable rail assignment
      *  across all descriptors in the transfer. Call once per postXfer. */
