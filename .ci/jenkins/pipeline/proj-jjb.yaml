@@ -1036,8 +1036,8 @@
           description: "UCX ref to validate nightly (branch, tag, or commit). Passed to the GPU jobs as UCX_VER."
       - string:
           name: "MAIL_TO"
-          default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
-          description: "Recipient(s) for the consolidated nightly report (mailing list or Teams-channel bridge address)."
+          default: "nixl-ci-alerts@exchange.nvidia.com"
+          description: "Recipient(s) for the nightly failure report. Mail is sent only when a leg fails."
     pipeline-scm:
       scm:
         - git:
