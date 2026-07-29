@@ -798,7 +798,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
                                           num_workers,
                                           init_params.syncMode,
                                           num_device_channels,
-                                          engine_config);
+                                          engine_config,
+                                          localAgent);
 
     uc->warnAboutHardwareSupportMismatch();
 

@@ -153,6 +153,7 @@ private:
     ucp_context_h ctx;
     const nixl::ucx::mt_mode_t mtType_;
     const unsigned ucpVersion_;
+    const std::string name_;
 
 public:
     nixlUcxContext(const std::vector<std::string> &devs,
@@ -160,7 +161,8 @@ public:
                    unsigned long num_workers,
                    nixl_thread_sync_t sync_mode,
                    size_t num_device_channels,
-                   const std::string &engine_conf = "");
+                   const std::string &engine_conf = "",
+                   const std::string &name = "");
     ~nixlUcxContext();
 
     nixlUcxContext(nixlUcxContext &&) = delete;
@@ -170,6 +172,11 @@ public:
     operator=(nixlUcxContext &&) = delete;
     void
     operator=(const nixlUcxContext &) = delete;
+
+    [[nodiscard]] const std::string &
+    getName() const noexcept {
+        return name_;
+    }
 
     /* Memory management */
     int
@@ -184,6 +191,9 @@ public:
 
     friend class nixlUcxWorker;
 };
+
+std::ostream &
+operator<<(std::ostream &os, const nixlUcxContext &ctx);
 
 [[nodiscard]] bool
 nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t) noexcept;
