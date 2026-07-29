@@ -7,7 +7,8 @@ WDS KVCache directly, without going through the Mooncake store.
 
 ## Scope
 
-- Memory types: `DRAM_SEG` only
+- Memory types: `DRAM_SEG` (local data buffer) and `OBJ_SEG` (remote target is
+  a key-addressed WDS KV object; resolved via `metaInfo`/`devId`, `addr` ignored)
 - Locality: local-only backend (`supportsRemote() == false`,
   `supportsLocal() == true`)
 - Notifications: not supported
@@ -122,14 +123,14 @@ init state.
 
 | Method | Behavior |
 | --- | --- |
-| `registerMem` | Accepts only `DRAM_SEG`. Records `devId -> key` using `nixlBlobDesc::metaInfo`; falls back to `std::to_string(devId)` when `metaInfo` is empty. |
+| `registerMem` | Accepts `DRAM_SEG` (local buffer) and `OBJ_SEG` (key-addressed remote). Records `devId -> key` using `nixlBlobDesc::metaInfo`; falls back to `std::to_string(devId)` when `metaInfo` is empty. |
 | `deregisterMem` | Frees the per-registration metadata (`nixlWQSKVMetadata`). |
 | `queryMem` | Returns availability info per descriptor; no extra capability bits. |
-| `prepXfer` | Validates `op ∈ {NIXL_WRITE, NIXL_READ}` and both `local`/`remote` are `DRAM_SEG`. Allocates a request handle and pre-parses `opt_args->customParam` into a per-descriptor key vector when supplied. |
+| `prepXfer` | Validates `op ∈ {NIXL_WRITE, NIXL_READ}`, `local` is `DRAM_SEG` and `remote` is `OBJ_SEG`. Allocates a request handle and pre-parses `opt_args->customParam` into a per-descriptor key vector when supplied. |
 | `postXfer` | One descriptor → one vendor call (`wds_kvcache_put` for `NIXL_WRITE`, `wds_kvcache_get_vec` for `NIXL_READ`). Returns `NIXL_IN_PROG`; completion is signaled by the vendor callback decrementing a counter on the handle. |
 | `checkXfer` | Lock-free read of the pending counter — `NIXL_SUCCESS` at zero, otherwise `NIXL_IN_PROG`. |
 | `releaseReqH` | Waits on a condition variable until the counter reaches zero, then frees the handle. |
-| `getSupportedMems` | Returns `{DRAM_SEG}`. |
+| `getSupportedMems` | Returns `{DRAM_SEG, OBJ_SEG}`. |
 | `supportsRemote` / `supportsNotif` | Return `false`. |
 | `supportsLocal` | Returns `true`. |
 | `connect` / `disconnect` / `loadLocalMD` / `unloadMD` | Trivially succeed; this backend has no remote-state lifecycle. |
@@ -194,8 +195,9 @@ nixl_reg_dlist_t regs(DRAM_SEG);
 regs.addDesc({buf_addr, buf_len, /*devId=*/0, "my-kvcache-key"});
 agent.registerMem(regs);
 
-// PUT: local DRAM → WDS KVCache under "my-kvcache-key".
-nixl_xfer_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+// PUT: local DRAM → WDS KVCache under "my-kvcache-key". The remote target is
+// an OBJ_SEG object (key resolved via metaInfo/devId; addr ignored).
+nixl_xfer_dlist_t local(DRAM_SEG), remote(OBJ_SEG);
 local.addDesc({buf_addr, buf_len, 0});
 remote.addDesc({0, buf_len, 0});      // devId 0 → "my-kvcache-key"
 

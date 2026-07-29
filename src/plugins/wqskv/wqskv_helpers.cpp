@@ -158,8 +158,10 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
                                       local.getType());
         return false;
     }
-    if (remote.getType() != DRAM_SEG) {
-        NIXL_ERROR << absl::StrFormat("WQSKV: remote mem type must be DRAM_SEG, got %d",
+    // Remote is a key-addressed WDS KV object (metaInfo/devId = key, addr
+    // ignored), so it must be OBJ_SEG -- not a memory address.
+    if (remote.getType() != OBJ_SEG) {
+        NIXL_ERROR << absl::StrFormat("WQSKV: remote mem type must be OBJ_SEG, got %d",
                                       remote.getType());
         return false;
     }

@@ -22,7 +22,9 @@
  * Wraps the C-style vendor API exposed by libwclient_kvcache.so
  * (wds_kvcache_init / wds_kvcache_put / wds_kvcache_get_vec, etc.) so a
  * NIXL agent can PUT/GET DRAM buffers into WDS without going through the
- * mooncake store. Local-only backend (supportsRemote=false), DRAM_SEG only.
+ * mooncake store. Local-only backend (supportsRemote=false). Local memory is
+ * DRAM_SEG (the data buffer); the remote target is OBJ_SEG, a key-addressed
+ * WDS KV object (resolved via metaInfo/devId, addr ignored).
  *
  * postXfer is asynchronous: each descriptor maps to one vendor call; the
  * vendor invokes a per-request callback that decrements a pending counter
@@ -83,7 +85,9 @@ public:
 
     nixl_mem_list_t
     getSupportedMems() const override {
-        return {DRAM_SEG};
+        // DRAM_SEG: local data buffer. OBJ_SEG: remote target is a key-addressed
+        // WDS KV object (resolved via metaInfo/devId, addr ignored). Mirrors OBJ.
+        return {DRAM_SEG, OBJ_SEG};
     }
 
     bool

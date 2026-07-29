@@ -45,8 +45,8 @@ loadKVCacheOptionsFromJson(const std::string &conf_path, KVCacheOptions &opts);
 bool
 parseCustomParamKeys(const std::string &blob, int expected_count, std::vector<std::string> &out);
 
-// Validates prepXfer's operation type and that both descriptor lists are
-// DRAM_SEG (the only mem type WQSKV supports).
+// Validates prepXfer's operation type and that local is DRAM_SEG (the data
+// buffer) and remote is OBJ_SEG (a key-addressed WDS KV object).
 bool
 isValidPrepXferParams(const nixl_xfer_op_t &operation,
                       const nixl_meta_dlist_t &local,

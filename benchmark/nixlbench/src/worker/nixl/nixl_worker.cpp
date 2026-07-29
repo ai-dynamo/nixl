@@ -1026,8 +1026,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
         }
     } else if (backendEqualsWqskv(xferBenchConfig::backend)) {
-        // WQSKV backend: create DRAM_SEG descriptors with keys in metaInfo
-        // Same shape as other KV-style backends; backed by external WDS KV cache via plugin.
+        // WQSKV backend: remote target is a key-addressed WDS KV object. Register
+        // as OBJ_SEG (key in metaInfo), local data stays DRAM_SEG -- mirrors OBJ.
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -1038,15 +1038,16 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 std::string unique_name = "nixlbench_wqskv" + std::to_string(list_idx) + "_" +
                     std::to_string(i) + "_" + std::to_string(timestamp);
 
-                // Create a DRAM_SEG descriptor with key in metaInfo
+                // Create an OBJ_SEG descriptor with key in metaInfo. addr=0 =
+                // object offset 0 (vendor API has no offset; whole-object I/O).
                 xferBenchIOV wqskv_desc(0, buffer_size, i, unique_name);
                 std::cout << "Creating WQSKV key: " << unique_name << std::endl;
                 iov_list.push_back(wqskv_desc);
             }
-            // Register DRAM_SEG descriptors with keys in metaInfo
-            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, DRAM_SEG);
+            // Register OBJ_SEG descriptors with keys in metaInfo
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_regs_.emplace_back(*agent, backend_engine, DRAM_SEG, std::move(iov_list));
+            remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
         }
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         // GUSLI backend uses block device descriptors
@@ -1270,12 +1271,15 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     int desc_str_sz;
 
     // WQSKV never uses remote_fds; handle it before isStorageBackend() to avoid
-    // reaching remote_fds[fd_idx] with an empty vector.
+    // reaching remote_fds[fd_idx] with an empty vector. The remote target is a
+    // key-addressed WDS KV object (OBJ_SEG): build a descriptor carrying the key
+    // (metaInfo) with addr=0 (object offset 0), rather than copying the local
+    // DRAM iov's address -- the target is a key, not a memory address.
     if (backendEqualsWqskv(xferBenchConfig::backend)) {
         for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
             for (auto &iov : iov_list) {
-                remote_iov_list.push_back(iov);
+                remote_iov_list.emplace_back(0, iov.len, iov.devId, iov.metaInfo);
             }
             res.push_back(remote_iov_list);
         }
@@ -1387,7 +1391,7 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
     } else if (backendEqualsWqskv(xferBenchConfig::backend)) {
-        remote_desc = nixl_xfer_dlist_t(DRAM_SEG);
+        remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
     }
@@ -1399,6 +1403,8 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
 static nixl_mem_t
 getRemoteSegType() {
     if (xferBenchConfig::isObjStorageBackend()) {
+        return OBJ_SEG;
+    } else if (backendEqualsWqskv(xferBenchConfig::backend)) {
         return OBJ_SEG;
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         return BLK_SEG;

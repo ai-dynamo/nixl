@@ -137,28 +137,28 @@ TEST_F(WqskvResolveConfigPath, EmptyCustomParamFallsThroughToEnv) {
 
 // ----- isValidPrepXferParams -----
 
-TEST(WqskvIsValidPrepXferParams, AcceptsWriteWithDramDram) {
-    nixl_meta_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+TEST(WqskvIsValidPrepXferParams, AcceptsWriteWithDramObj) {
+    nixl_meta_dlist_t local(DRAM_SEG), remote(OBJ_SEG);
     EXPECT_TRUE(::wqskv::isValidPrepXferParams(NIXL_WRITE, local, remote));
 }
 
-TEST(WqskvIsValidPrepXferParams, AcceptsReadWithDramDram) {
-    nixl_meta_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+TEST(WqskvIsValidPrepXferParams, AcceptsReadWithDramObj) {
+    nixl_meta_dlist_t local(DRAM_SEG), remote(OBJ_SEG);
     EXPECT_TRUE(::wqskv::isValidPrepXferParams(NIXL_READ, local, remote));
 }
 
 TEST(WqskvIsValidPrepXferParams, RejectsUnknownOp) {
-    nixl_meta_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+    nixl_meta_dlist_t local(DRAM_SEG), remote(OBJ_SEG);
     const auto bad_op = static_cast<nixl_xfer_op_t>(42);
     EXPECT_FALSE(::wqskv::isValidPrepXferParams(bad_op, local, remote));
 }
 
 TEST(WqskvIsValidPrepXferParams, RejectsLocalNonDram) {
-    nixl_meta_dlist_t local(VRAM_SEG), remote(DRAM_SEG);
+    nixl_meta_dlist_t local(VRAM_SEG), remote(OBJ_SEG);
     EXPECT_FALSE(::wqskv::isValidPrepXferParams(NIXL_WRITE, local, remote));
 }
 
-TEST(WqskvIsValidPrepXferParams, RejectsRemoteNonDram) {
+TEST(WqskvIsValidPrepXferParams, RejectsRemoteNonObj) {
     nixl_meta_dlist_t local(DRAM_SEG), remote(FILE_SEG);
     EXPECT_FALSE(::wqskv::isValidPrepXferParams(NIXL_READ, local, remote));
 }
