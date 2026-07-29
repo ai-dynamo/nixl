@@ -24,16 +24,22 @@
 #include <ATen/cuda/CUDADataType.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <cuda_runtime.h>
 #include <memory>
 #include <optional>
 #include <pybind11/functional.h>
+#include <string>
+#include <string_view>
 #include <torch/python.h>
+#include <vector>
 
 #include "nixl_ep.hpp"
 #include "kernels/api.cuh"
@@ -80,6 +86,110 @@ uint32_t parse_positive_env(const char *name, uint32_t default_value) {
         throw std::runtime_error(std::string("Invalid positive integer for ") + name + ": " + raw);
     }
     return value;
+}
+
+bool parse_device_proxy_env(bool default_value) {
+    const char *raw = std::getenv("NIXL_DEVICE_PROXY");
+    if (raw == nullptr) {
+        return default_value;
+    }
+    if (std::strcmp(raw, "0") == 0) {
+        return false;
+    }
+    if (std::strcmp(raw, "1") == 0) {
+        return true;
+    }
+    throw std::runtime_error(std::string("NIXL_DEVICE_PROXY must be exactly 0 or 1; got: ") + raw);
+}
+
+std::string_view trim(std::string_view value) {
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) {
+        value.remove_prefix(1);
+    }
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
+        value.remove_suffix(1);
+    }
+    return value;
+}
+
+std::vector<std::string_view> split_comma_list(std::string_view value) {
+    std::vector<std::string_view> result;
+    while (true) {
+        const size_t comma = value.find(',');
+        result.push_back(trim(value.substr(0, comma)));
+        if (comma == std::string_view::npos) {
+            return result;
+        }
+        value.remove_prefix(comma + 1);
+    }
+}
+
+unsigned parse_unsigned(std::string_view value, const char *variable) {
+    value = trim(value);
+    if (value.empty()) {
+        throw std::runtime_error(std::string(variable) + " contains an empty GPU ordinal");
+    }
+
+    unsigned ordinal = 0;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), ordinal);
+    if (result.ec != std::errc{} || result.ptr != value.data() + value.size()) {
+        throw std::runtime_error(std::string(variable) + " contains invalid GPU ordinal '" +
+                                 std::string(value) + "'");
+    }
+    return ordinal;
+}
+
+unsigned get_proxy_physical_gpu_ordinal(int logical_device) {
+    const char *visible_devices_env = std::getenv("CUDA_VISIBLE_DEVICES");
+    if (visible_devices_env == nullptr || visible_devices_env[0] == '\0') {
+        return static_cast<unsigned>(logical_device);
+    }
+
+    const auto visible_devices = split_comma_list(visible_devices_env);
+    if (logical_device < 0 || static_cast<size_t>(logical_device) >= visible_devices.size()) {
+        throw std::runtime_error("logical CUDA device " + std::to_string(logical_device) +
+                                 " is outside CUDA_VISIBLE_DEVICES='" +
+                                 std::string(visible_devices_env) + "'");
+    }
+
+    return parse_unsigned(visible_devices[logical_device], "CUDA_VISIBLE_DEVICES");
+}
+
+std::string get_proxy_nic_for_gpu(unsigned physical_gpu) {
+    const char *nic_map_env = std::getenv("NIXL_GPU_NIC_MAP");
+    if (nic_map_env == nullptr || nic_map_env[0] == '\0') {
+        throw std::runtime_error(
+            "NIXL_GPU_NIC_MAP is required for the proxy backend; set a comma-separated "
+            "physical-GPU-indexed NIC list such as 'mlx5_0,mlx5_1,...'");
+    }
+
+    const auto nic_map = split_comma_list(nic_map_env);
+    if (physical_gpu >= nic_map.size()) {
+        throw std::runtime_error("physical GPU " + std::to_string(physical_gpu) +
+                                 " has no entry in NIXL_GPU_NIC_MAP='" +
+                                 std::string(nic_map_env) + "'");
+    }
+
+    const std::string_view nic = nic_map[physical_gpu];
+    if (nic.empty()) {
+        throw std::runtime_error("physical GPU " + std::to_string(physical_gpu) +
+                                 " maps to an empty NIC in NIXL_GPU_NIC_MAP");
+    }
+    if (nic.find(':') != std::string_view::npos) {
+        throw std::runtime_error(
+            "NIXL_GPU_NIC_MAP entries must be base NIC names without a port; use '" +
+            std::string(nic.substr(0, nic.find(':'))) + "' instead of '" + std::string(nic) + "'");
+    }
+
+    return std::string(nic);
+}
+
+void append_engine_config(nixl_b_params_t &init_params, std::string_view config) {
+    std::string &engine_config = init_params["engine_config"];
+    if (!engine_config.empty()) {
+        engine_config += ',';
+    }
+    engine_config += config;
 }
 
 } // namespace
@@ -1412,31 +1522,29 @@ void Buffer::_nixl_ep_destroy(void) {
 }
 
 void Buffer::_nixl_agent_init() {
+    c10::cuda::CUDAGuard device_guard(device_id);
     std::string agent_name = std::to_string(rank);
     nixlAgentConfig cfg;
 
-#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
-    const uint32_t proxy_channels = parse_positive_env("NIXL_EP_PROXY_CHANNELS", 4);
+    const bool use_proxy = parse_device_proxy_env(false);
+    const uint32_t proxy_channels =
+        use_proxy ? parse_positive_env("NIXL_EP_PROXY_CHANNELS", 4) : 1;
     const uint32_t proxy_workers =
-        parse_positive_env("NIXL_EP_PROXY_WORKER_COUNT", proxy_channels);
-#else
-    constexpr uint32_t proxy_channels = 1;
-    constexpr uint32_t proxy_workers = 1;
-#endif
+        use_proxy ? parse_positive_env("NIXL_EP_PROXY_WORKER_COUNT", proxy_channels) : 1;
 
     cfg.useProgThread = true;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     cfg.etcdWatchTimeout = NIXL_ETCD_WATCH_TIMEOUT;
-#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
-    cfg.enableDeviceProxy = true;
-    // Proxy drain threads own UCX progress for their assigned (channel, peer)
-    // workers. Disable the backend's shared progress thread so the adapter's
-    // targeted progress calls actively pump those workers.
-    cfg.useProgThread = false;
-    cfg.proxyPeerCapacity = static_cast<uint32_t>(max_num_ranks);
-    cfg.proxyChannelCount = proxy_channels;
-    cfg.proxyWorkerCount = proxy_workers;
-#endif
+    cfg.enableDeviceProxy = use_proxy;
+    if (use_proxy) {
+        // Proxy drain threads own UCX progress for their assigned (channel, peer)
+        // workers. Disable the backend's shared progress thread so the adapter's
+        // targeted progress calls actively pump those workers.
+        cfg.useProgThread = false;
+        cfg.proxyPeerCapacity = static_cast<uint32_t>(max_num_ranks);
+        cfg.proxyChannelCount = proxy_channels;
+        cfg.proxyWorkerCount = proxy_workers;
+    }
     auto agent = std::make_shared<nixlAgent>(agent_name, cfg);
 
     // Create UCX backend
@@ -1449,23 +1557,37 @@ void Buffer::_nixl_agent_init() {
                                 ", status: " + std::to_string(status));
     }
 
-#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
-    init_params["ucx_num_device_channels"] = "1";
-    // One UCX worker (EP/QP) per (channel, peer): the proxy adapter routes a submission to
-    // worker (channel_id * peer_capacity + peer_index), giving each peer of a channel an
-    // isolated QP and progress context. peer_capacity == max_num_ranks, so the local-rank
-    // lane is a dead worker for now (removed alongside the num_peers shrink).
-    init_params["num_workers"] =
-        std::to_string(proxy_channels * static_cast<uint32_t>(max_num_ranks));
-    // Peer error handling is incompatible with the host proxy path, otherwise host AMO fail.
-    init_params["ucx_error_handling_mode"] = "none";
-#else
-    const char* num_channels_env = std::getenv("NIXL_EP_NUM_CHANNELS");
-    init_params["ucx_num_device_channels"] = num_channels_env ? num_channels_env : "4";
-    init_params["num_workers"] = std::to_string(1);
-    init_params["ucx_error_handling_mode"] = "peer";
-    init_params["ucx_ep_close_force"] = "yes";
-#endif
+    if (use_proxy) {
+        init_params["ucx_num_device_channels"] = "1";
+
+        int logical_device;
+        CUDA_CHECK(cudaGetDevice(&logical_device));
+        const unsigned physical_gpu = get_proxy_physical_gpu_ordinal(logical_device);
+        const std::string selected_nic = get_proxy_nic_for_gpu(physical_gpu);
+        init_params["device_list"] = selected_nic;
+        append_engine_config(init_params, "TLS=rc_mlx5,MAX_RMA_RAILS=1");
+        const char *effective_tls = std::getenv("UCX_TLS");
+        const char *effective_max_rma_rails = std::getenv("UCX_MAX_RMA_RAILS");
+        printf("NIXL EP proxy affinity: logical_gpu=%d physical_gpu=%u nic=%s "
+               "UCX_TLS=%s UCX_MAX_RMA_RAILS=%s\n",
+               logical_device,
+               physical_gpu,
+               selected_nic.c_str(),
+               effective_tls ? effective_tls : "rc_mlx5",
+               effective_max_rma_rails ? effective_max_rma_rails : "1");
+
+        // One UCX worker (EP/QP) per (channel, peer): the proxy adapter routes a
+        // submission to worker (channel_id * peer_capacity + peer_index).
+        init_params["num_workers"] =
+            std::to_string(proxy_channels * static_cast<uint32_t>(max_num_ranks));
+        init_params["ucx_error_handling_mode"] = "none";
+    } else {
+        const char *num_channels_env = std::getenv("NIXL_EP_NUM_CHANNELS");
+        init_params["ucx_num_device_channels"] = num_channels_env ? num_channels_env : "4";
+        init_params["num_workers"] = std::to_string(1);
+        init_params["ucx_error_handling_mode"] = "peer";
+        init_params["ucx_ep_close_force"] = "yes";
+    }
 
     nixlBackendH* ucx_backend = nullptr;
     status = agent->createBackend("UCX", init_params, ucx_backend);

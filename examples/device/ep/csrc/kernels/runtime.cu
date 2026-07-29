@@ -30,9 +30,7 @@
 
 #include <cuda_runtime.h>
 
-#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
 #include <nixl_device.cuh>
-#endif
 
 namespace nixl_ep {
 
