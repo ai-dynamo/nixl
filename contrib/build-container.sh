@@ -44,6 +44,10 @@ OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
+# CUDA MAJOR.MINOR for the manylinux (Option B) wheel build — drives the torch
+# cuXXX index and the cu12/cu13 meta-wheel split. Default 13.0 matches the default
+# ubi8 BASE_IMAGE_TAG; override with --cuda-version (e.g. 12.9).
+CUDA_VERSION=${CUDA_VERSION:-13.0}
 BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
 BUILD_UCX_SPCX_PLUGIN="false"
@@ -126,6 +130,14 @@ get_options() {
         --torch-versions)
             if [ "$2" ]; then
                 WHL_TORCH_VERSIONS=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --cuda-version)
+            if [ "$2" ]; then
+                CUDA_VERSION=$2
                 shift
             else
                 missing_requirement $1
@@ -285,6 +297,7 @@ show_help() {
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
+    echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: ${CUDA_VERSION})]"
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
     echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; harbor.mellanox.com must be reachable)]"
     echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
@@ -310,6 +323,7 @@ fi
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
+BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"

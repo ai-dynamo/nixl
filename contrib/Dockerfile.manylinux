@@ -14,16 +14,59 @@
 # limitations under the License.
 
 
-ARG BASE_IMAGE
+# === Manylinux wheel build (public PyPA base + NGC CUDA) — "Option B" =========
+# Build the wheel_base deps stage on the PUBLIC PyPA manylinux_2_28 image and
+# bring CUDA in from a public NGC CUDA *devel* image (el8/ubi8), instead of a
+# combined internal manylinux+CUDA base. el8/ubi8 matches the AlmaLinux-8
+# manylinux base. ARCH / MANYLINUX_VERSION / BASE_IMAGE must be declared before
+# the FROM lines that interpolate them.
+ARG ARCH="x86_64"
+# Pin the PyPA manylinux release so the toolchain (gcc, CMake, CPython) is
+# reproducible; the implicit :latest would drift between builds.
+ARG MANYLINUX_VERSION="2026.06.06-1"
+# CUDA toolkit provider: a public NGC CUDA *devel* image, el8/ubi8 to match the
+# AlmaLinux-8 manylinux base (e.g. nvcr.io/nvidia/cuda:13.0.1-devel-ubi8).
+ARG BASE_IMAGE="nvcr.io/nvidia/cuda"
 ARG BASE_IMAGE_TAG
 # When overridden to an Artifactory URL, the wheel stage pulls the pre-built deps
-# image instead of building them locally. Default keeps the single-stage local build.
+# image instead of building wheel_base locally (CI caching). Default builds wheel_base here.
 ARG wheel_base=wheel_base
 
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS wheel_base
+# CUDA donor stage — the toolkit is copied onto the manylinux base below.
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS cuda
 
-ARG DEFAULT_PYTHON_VERSION="3.14"
+# Manylinux build base — official PyPA image (public on quay.io; ECR pull-through
+# available). AlmaLinux 8 / glibc 2.28 => manylinux_2_28 wheels.
+FROM quay.io/pypa/manylinux_2_28_${ARCH}:${MANYLINUX_VERSION} AS wheel_base
+
+# Re-declare args needed inside this stage (pre-FROM args are only visible to FROM lines).
 ARG ARCH="x86_64"
+ARG DEFAULT_PYTHON_VERSION="3.14"
+
+# CUDA version (e.g. 12.9 / 13.0) — passed explicitly (was an ENV from the old
+# combined base). Drives the torch cuXXX index and the cu12/cu13 wheel split.
+# Default matches build-container.sh's CUDA_VERSION fallback so a direct
+# `docker build` (bypassing build-container.sh / the CI yaml) still works.
+ARG CUDA_VERSION="13.0"
+ENV CUDA_VERSION=${CUDA_VERSION}
+
+# Bring the CUDA toolkit onto the manylinux base (dynamo wheel_builder pattern).
+COPY --from=cuda /usr/local/cuda /usr/local/cuda
+ENV CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH:-}
+
+# CUDA needs gcc <= 14. The PyPA manylinux base + system "Development Tools" can
+# pull in a gcc that CUDA rejects, so pin gcc-toolset-14 on PATH ahead of the
+# system gcc (gcc-toolset-14 is added to the dnf install list below).
+ENV PATH=/opt/rh/gcc-toolset-14/root/usr/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/rh/gcc-toolset-14/root/usr/lib64:${LD_LIBRARY_PATH:-}
+
+# PyPA manylinux_2_28 ships CMake 4.x, which removed support for
+# cmake_minimum_required(VERSION < 3.5). Some bundled deps (e.g. gRPC's c-ares)
+# still declare ancient minimums. This tells CMake 4.x to accept them.
+ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
+# === end Option B header ======================================================
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
 ARG BUILD_TYPE="release"
@@ -33,7 +76,7 @@ ARG GRPC_TAG="v1.73.0"
 ARG NPROC
 
 RUN yum groupinstall -y 'Development Tools' &&  \
-    dnf install -y almalinux-release-synergy && \
+    dnf install -y almalinux-release-synergy epel-release && \
     dnf config-manager --set-enabled powertools && \
     dnf install -y \
     boost \
@@ -46,6 +89,7 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     gflags \
     glibc-headers \
     gcc-c++ \
+    gcc-toolset-14 \
     libaio \
     libaio-devel \
     libtool-ltdl \
@@ -353,6 +397,13 @@ RUN cd /usr/local/src && \
      ldconfig
 
 FROM $wheel_base AS wheel
+
+# Re-declare CUDA_VERSION here so an explicit --cuda-version reaches this stage.
+# With the --wheel-base-image caching path, wheel_base is a pre-built external
+# image; without this ARG the wheel stage would silently use the CUDA_VERSION
+# baked into that cache instead of the value passed to this build (line 509).
+ARG CUDA_VERSION="13.0"
+ENV CUDA_VERSION=${CUDA_VERSION}
 
 ARG ARCH="x86_64"
 ARG BUILD_TYPE="release"
