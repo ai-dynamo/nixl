@@ -160,7 +160,7 @@ their own nightly/manual trigger. They split into two groups:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com)
-  - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (nixl_ep elastic tests on dlcluster.nvidia.com)
+  - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (nixl_ep elastic tests on dlcluster.nvidia.com; steps skipped via `enable:` when no EP-relevant files changed — see [nixl-ci-dl-gpu-ep](#nixl-ci-dl-gpu-ep-dispatcher-triggered))
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
   - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
@@ -169,6 +169,13 @@ their own nightly/manual trigger. They split into two groups:
 ### `nixl-ci-build-container-pr` (dispatcher-triggered)
 - **Trigger:** Fan-out from `nixl-ci-dispatcher` (same as the other PR CI jobs).
 - **What it does:** Build-only verification (no push) of the `nixl` (EP + debug) and `nixlbench` container images — one matrix cell per target/arch (x86_64 and aarch64), all in parallel. It runs the same `contrib/build-container.sh` / `benchmark/nixlbench/contrib/build.sh` the standalone `nixl-ci-build-container` job runs, so container/packaging breakage (e.g. a missing `--torch-versions`, or an EP nvlink register-count failure) is caught on the PR instead of only by the nightly job. Like the other leaf jobs it runs whenever the dispatcher fans out.
+- **Automatic on every PR:** No — only after a `/build` comment (like the other dispatcher jobs).
+
+### `nixl-ci-dl-gpu-ep` (dispatcher-triggered)
+- **Config:** `.ci/jenkins/lib/test-dl-ep-matrix.yaml`
+- **What it does:** Builds the EP Docker image (`BUILD_NIXL_EP=true`), allocates a Slurm node on `gb200nvl72_cx8`, and runs the `nixl_ep` elastic tests (NVLink + RDMA, 4 GPUs) via `.gitlab/test_ep.sh`.
+- **Path filter:** All three steps carry `enable: "${EP_ENABLED}"`. `EP_ENABLED` defaults to `"true"` in the `env:` section of `test-dl-ep-matrix.yaml`; `cidemo-init.sh` flips it to `"false"` (via `sed`, the same in-workspace patching used for `CI_IMAGE_TAG`) when the PR touches none of: `examples/device/ep/`, `.gitlab/test_ep.sh`, `.gitlab/build.sh`, `.ci/scripts/common.sh`, `.ci/jenkins/lib/test-dl-ep-matrix.yaml`, `.ci/dockerfiles/Dockerfile.base`, `.ci/dockerfiles/Dockerfile.gpu-test`, `.ci/dockerfiles/Dockerfile.build_helper`. That is the EP sources and tests plus every [CI file](#ci_image_tag-management) feeding the two images this job builds (`contrib/Dockerfile.manylinux` is excluded as wheel-only). A step that always runs, `EP path filter status`, reports which way the filter went so a skipped run is obvious in the Jenkins UI.
+- **How the diff is taken:** On a PR trigger the checked-out commit is the `refs/pull/<n>/merge` merge commit, so `cidemo-init.sh` diffs `HEAD^1..HEAD` — base branch tip vs merged result. The first parent is the base tip whatever the PR targets, so PRs into release branches work with no base branch to guess (unlike ci-demo's own `getChangedFilesList`, which falls back to `origin/main`/`origin/master`). Runs without `githubData` (manual/standalone) are excluded explicitly rather than by commit shape, since a manually built ref could itself be a merge commit and would otherwise engage the filter by accident. Every path logs its reason, so a filter that doesn't fire is visible in the job output rather than silent.
 - **Automatic on every PR:** No — only after a `/build` comment (like the other dispatcher jobs).
 
 ### `nixl-ci-build-wheel` (dispatcher-triggered)

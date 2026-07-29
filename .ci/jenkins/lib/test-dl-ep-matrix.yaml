@@ -46,6 +46,8 @@ credentials:
   - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 env:
+  # Set to "false" by cidemo-init.sh when no EP-relevant files changed.
+  EP_ENABLED: "true"
   ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
   NIXL_INSTALL_DIR: /opt/nixl
   NIXL_BUILD_DIR: nixl_build
@@ -101,7 +103,20 @@ matrix:
 taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
 
 steps:
+  # Always runs: makes a filtered-out run visible instead of just missing steps.
+  - name: EP path filter status
+    containerSelector: "{name: 'build_helper_dl_ep'}"
+    parallel: false
+    run: |
+      if [ "${EP_ENABLED}" != "true" ]; then
+          echo "=========================================================="
+          echo " nixl_ep elastic tests SKIPPED - no EP-relevant changes."
+          echo " Triggering paths are listed in .ci/cidemo-init.sh."
+          echo "=========================================================="
+      fi
+
   - name: Compiling NIXL EP Docker Image for DL
+    enable: "${EP_ENABLED}"
     containerSelector: "{name: 'build_helper_dl_ep'}"
     credentialsId: "svc-nixl-new-artifactory-token"
     parallel: false
@@ -122,6 +137,7 @@ steps:
       podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE}
 
   - name: Allocate DL EP Environment
+    enable: "${EP_ENABLED}"
     containerSelector: "{name: 'build_helper_dl_ep'}"
     parallel: false
     shell: action
@@ -142,6 +158,7 @@ steps:
       ]
 
   - name: Run DL EP elastic tests
+    enable: "${EP_ENABLED}"
     containerSelector: "{name: 'build_helper_dl_ep'}"
     timeout: "${TEST_TIMEOUT}"
     parallel: false

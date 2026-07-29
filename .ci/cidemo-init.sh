@@ -42,3 +42,46 @@ for yaml in "${YAML_FILES[@]}"; do
     sed -i "s/CI_IMAGE_TAG: \"CI_MANAGED\"/CI_IMAGE_TAG: \"${NEW_TAG}\"/" "$yaml"
     echo "Patched: $yaml"
 done
+
+# EP path filter: flip EP_ENABLED to "false" in test-dl-ep-matrix.yaml when the
+# PR changes no EP-relevant file. On a PR trigger HEAD is the refs/pull/<n>/merge
+# commit, so HEAD^1..HEAD is the PR's diff against whatever branch it targets.
+#
+# EP sources/tests plus the CI files feeding this job's images: CI_FILES above
+# minus the wheel-only manylinux Dockerfile.
+EP_PATHS=(
+    "examples/device/ep/"
+    ".gitlab/test_ep.sh"
+    ".gitlab/build.sh"
+    ".ci/scripts/common.sh"
+    ".ci/jenkins/lib/test-dl-ep-matrix.yaml"
+    ".ci/dockerfiles/Dockerfile.base"
+    ".ci/dockerfiles/Dockerfile.gpu-test"
+    ".ci/dockerfiles/Dockerfile.build_helper"
+)
+
+if [ -z "${githubData:-}" ]; then
+    # Manual run: a hand-picked ref could itself be a merge commit.
+    echo "EP filter: no githubData (manual run) - EP steps enabled"
+elif ! git rev-parse --verify -q HEAD^2 >/dev/null; then
+    echo "EP filter: HEAD is not a merge commit - EP steps enabled"
+else
+    CHANGED_FILES=$(git diff --name-only HEAD^1 HEAD)
+    echo "EP filter: changed files (HEAD^1..HEAD):"
+    echo "$CHANGED_FILES" | sed 's/^/    /'
+    EP_TOUCHED="false"
+    for ep_path in "${EP_PATHS[@]}"; do
+        # Here-string, so no pipeline runs under `set -o pipefail`.
+        if grep -q "^${ep_path}" <<< "$CHANGED_FILES"; then
+            EP_TOUCHED="true"
+            break
+        fi
+    done
+    if [ "$EP_TOUCHED" = "false" ]; then
+        sed -i 's/EP_ENABLED: "true"/EP_ENABLED: "false"/' \
+            ".ci/jenkins/lib/test-dl-ep-matrix.yaml"
+        echo "No EP-relevant files changed - EP steps disabled"
+    else
+        echo "EP-relevant files changed - EP steps enabled"
+    fi
+fi
