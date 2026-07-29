@@ -410,6 +410,7 @@ def main(
     rail_optimized: bool = False,
     prefix_hit_rate: Optional[float] = None,
     flops_per_gpu: float = 1000 * 1e12,
+    decode_compute_sec: float = 0.0,
     storage_only: bool = False,
     read_only: bool = False,
     all_nodes_per_pattern: bool = False,
@@ -430,6 +431,9 @@ def main(
         results_dir: Directory to save results
         rail_optimized: Whether to reorder decode workers for rail-optimized communication
         prefix_hit_rate: Fraction of KV cache to read from storage (0.0-1.0)
+        decode_compute_sec: Simulated decode compute per traffic pattern, in
+            seconds. Emitted as 'decode_compute_sec' in the generated YAML.
+            0.0 means no decode compute step.
         storage_only: If True, generate storage-only config (no RDMA matrices)
         read_only: If True, skip write operations in storage patterns
         all_nodes_per_pattern: If True, all prefill nodes are active in each pattern
@@ -670,11 +674,18 @@ def main(
         # (mem_type is not a legacy key and is still read by the runner.)
         tp_entry: dict[str, Any] = {
             "tp_file": f"tps/tp_{idx}.tp",
+            # Prefill compute. Scaled down by the prefix hit rate: the cached
+            # part of the prefix is read from storage, not recomputed.
             "sleep_before_launch_sec": matrix.compute_time * (1 - hit_rate),
             "metadata": {
                 "isl": matrix.isl,
             },
         }
+        # Decode compute. NOT scaled by the hit rate: decode always runs, a
+        # prefix cache hit does not remove it. Emitted only when asked for, so
+        # configs generated without the flag stay byte-identical.
+        if decode_compute_sec > 0:
+            tp_entry["decode_compute_sec"] = decode_compute_sec
         if storage_enabled:
             tp_entry["mem_type"] = mem_type
 
@@ -867,6 +878,14 @@ if __name__ == "__main__":
         default=5,
         help="Number of isolation iterations. Default: 5",
     )
+    @click.option(
+        "--decode-compute-sec",
+        type=click.FloatRange(min=0.0),
+        default=0.0,
+        help="Simulated decode compute in seconds, inserted after the RDMA "
+        "transfer and before the storage write. Default: 0.0 (no decode "
+        "compute step, same output as before).",
+    )
     def generate(
         num_user_requests,
         batch_size,
@@ -900,6 +919,7 @@ if __name__ == "__main__":
         mem_type,
         iters,
         isolation_iters,
+        decode_compute_sec,
     ):
         """Generate communication matrices for given configuration"""
 
@@ -951,6 +971,7 @@ if __name__ == "__main__":
             mem_type=mem_type,
             iters=iters,
             isolation_iters=isolation_iters,
+            decode_compute_sec=decode_compute_sec,
         )
 
     cli()

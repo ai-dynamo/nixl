@@ -3,6 +3,7 @@ A comprehensive utility for generating NIXL Bench commands that test KVCache tra
 
 ## Table of Contents
 - [Overview](#overview)
+  - [Quickstart (end-to-end)](#quickstart-end-to-end)
 - [Supported LLM Architectures](#supported-llm-architectures)
 - [Building](#building)
   - [Docker](#docker)
@@ -48,21 +49,152 @@ This design allows:
 KVBench simulates real application workloads combining:
 - Storage I/O (read/write per rank)
 - Network transfers (RDMA)
-- Compute simulation (sleep)
+- Compute simulation (sleep), before and after the RDMA transfer
 
 ### Execution Flow Per Traffic Pattern
 
 ```text
 Each Rank (per traffic pattern):
   ┌─────────────────────────────────────┐
-  │ 1. COMPUTE (sleep)                  │  Simulate reduced compute time
-  │ 2. STORAGE READ (blocking)          │  Read cached data from file
-  │ 3. RDMA TRANSFER (blocking)         │  Send/receive data to other ranks
-  │ 4. STORAGE WRITE (blocking)         │  Write new KV cache to file
+  │ 1. STORAGE READ (blocking)          │  Read the cached KV prefix from file
+  │ 2. PREFILL COMPUTE (sleep)          │  Compute the prefix that was not cached
+  │ 3. RDMA TRANSFER (blocking)         │  Send the KV cache to the decode ranks
+  │ 4. DECODE COMPUTE (sleep)           │  Decode step on the received KV cache
+  │ 5. STORAGE WRITE (blocking)         │  Write the new KV cache to file
   └─────────────────────────────────────┘
 ```
 
 Each operation is timed independently.
+
+### Quickstart (end-to-end)
+
+Five steps: start etcd, export the etcd variables, generate a workload, launch the ranks, read the table.
+
+#### Step 1 — Start an etcd server
+
+`sequential-ct-perftest` uses etcd to coordinate the ranks (barrier, allgather, allgather of results). It does **not** use the `--etcd-endpoints` flag from [Shared Benchmark Arguments](#shared-benchmark-arguments) — that flag belongs to the `plan` and `profile` commands, which drive `nixlbench`. The CTP commands read environment variables instead.
+
+Start one etcd server that every node can reach:
+
+```bash
+docker run -d --name kvbench-etcd --network host quay.io/coreos/etcd:v3.5.17 \
+    /usr/local/bin/etcd \
+    --listen-client-urls http://0.0.0.0:2379 \
+    --advertise-client-urls http://0.0.0.0:2379
+```
+
+#### Step 2 — Export the etcd variables
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `NIXL_ETCD_ENDPOINTS` | `http://localhost:2379` | etcd server, format `[http://]host[:port]`. `localhost` only works for a single-node run. |
+| `NIXL_ETCD_NAMESPACE` | `/nixl/kvbench` | Key prefix for this run. Rank 0 deletes the whole prefix at startup, so two runs that share a prefix erase each other. |
+
+```bash
+export NIXL_ETCD_ENDPOINTS="http://<etcd-host>:2379"
+export NIXL_ETCD_NAMESPACE="/nixl/kvbench/$(uuidgen)"
+```
+
+Every rank must see the **same** endpoint and the **same** namespace. Export both before the launcher, never inside the per-rank command: `$(uuidgen)` evaluated once per rank would give each rank a different prefix, and the ranks would never find each other.
+
+If `NIXL_ETCD_NAMESPACE` is not set, kvbench appends `run-<token>` to the default prefix, where the token comes from `SLURM_JOB_ID`, `SLURM_JOBID` or `PMIX_NAMESPACE`. If none of them exist it logs a warning and every run shares `/nixl/kvbench`. Setting the variable yourself is safer.
+
+Rank and world size also come from the environment: `SLURM_PROCID`/`SLURM_NTASKS`, `OMPI_COMM_WORLD_RANK`/`OMPI_COMM_WORLD_SIZE`, or `RANK`/`WORLD_SIZE`. One of those pairs must be set, otherwise the run fails at startup.
+
+#### Step 3 — Generate the workload
+
+`inference_workload_matgen.py` writes `metadata.yaml` and one `tps/tp_<idx>.tp` file per traffic pattern into `--results-dir`:
+
+```bash
+python test/inference_workload_matgen.py generate \
+    --model llama-405b \
+    --num-prefill-nodes 1 \
+    --num-decode-nodes 1 \
+    --prefill-tp 8 \
+    --decode-tp 8 \
+    --num-user-requests 10 \
+    --prefix-hit-rate 0.75 \
+    --results-dir ./workload
+```
+
+`metadata.yaml` is the file you pass to the runner. It holds `iters`, `isolation_iters` and the `traffic_patterns` list. Each pattern points at its `tp_file` and carries `sleep_before_launch_sec` (prefill compute), optionally `decode_compute_sec` (decode compute), plus free-form `metadata`. The `.tp` file holds the `[rdma]` matrix and the per-rank `[read]` / `[write]` sizes. Full field list: [Configuration Files](#configuration-files) and [docs/ct-perftest.md](docs/ct-perftest.md).
+
+The generated files fix the number of ranks: `(--num-prefill-nodes + --num-decode-nodes) * --ppn`, with `--ppn` defaulting to 8. The command above gives 16 ranks, so the run must start exactly 16 processes.
+
+#### Step 4 — Launch
+
+The config path is the positional argument of the command. Please read the note about `CUDA_VISIBLE_DEVICES` in the [CT Perftest section](#ct-perftest): one process per GPU, and each process must pin its own device.
+
+**Single node**, 8 ranks. Regenerate step 3 with `--num-prefill-nodes 1 --num-decode-nodes 0 --storage-only` to get 8 ranks and no RDMA:
+
+```bash
+export NIXL_ETCD_ENDPOINTS="http://localhost:2379"
+export NIXL_ETCD_NAMESPACE="/nixl/kvbench/$(uuidgen)"
+export WORLD_SIZE=8
+for r in $(seq 0 7); do
+  RANK=$r CUDA_VISIBLE_DEVICES=$r \
+    python main.py sequential-ct-perftest ./workload/metadata.yaml \
+      --storage-backend POSIX \
+      --storage-path /tmp/kvbench_storage \
+      --json-output-path ./results.json &
+done
+wait
+```
+
+**Multi-node with Slurm**, 2 nodes x 8 ranks = the 16 ranks of step 3:
+
+```bash
+export NIXL_ETCD_ENDPOINTS="http://<etcd-host>:2379"
+export NIXL_ETCD_NAMESPACE="/nixl/kvbench/$(uuidgen)"
+
+srun --partition=<partition> \
+     --nodes=2 \
+     --ntasks-per-node=8 \
+     --export=ALL \
+     bash -c 'export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID && \
+       python main.py sequential-ct-perftest ./workload/metadata.yaml \
+         --storage-backend POSIX \
+         --storage-path /mnt/shared/kvbench_storage \
+         --json-output-path ./results.json'
+```
+
+- Use single quotes around the `bash -c` body. `$SLURM_LOCALID` must expand on each rank, not in the submitting shell.
+- `--export=ALL` passes both `NIXL_ETCD_*` variables to every rank.
+- Each rank uses its own file `<storage-path>/tp_<pattern>/rank_<rank>.bin`, so point `--storage-path` at the filesystem you want to measure.
+- More options: [Running CTP Tests](#running-ctp-tests).
+
+#### Step 5 — Read the output
+
+Rank 0 prints one table per iteration. There are 18 columns in three groups: RDMA, storage read, storage write. Sizes are GB, latencies are ms, bandwidth is GB/s. A `-` means the pattern does not use that operation.
+
+| Column | Meaning |
+| ------ | ------- |
+| `RDMA (GB)` | Total bytes moved by the RDMA matrix of this pattern. |
+| `RDMA (ms)` | Workload latency: last rank end minus first rank start, all ranks running together. |
+| `Iso p50` / `Iso p90` | Isolated RDMA latency, p50 / p90 over `--isolation-iters` iterations, worst rank. |
+| `RDMA BW` | Workload bandwidth: mean over the sender ranks of (bytes that rank sent / that rank's elapsed time). |
+| `Iso BW` | Isolated RDMA bandwidth of the slowest sender (min across ranks = the bottleneck). |
+| `Read (GB)` | Total bytes read from storage by all ranks in this pattern. |
+| `Read (ms)` | Workload read latency of the slowest rank, all ranks reading together. |
+| `Rd p50` / `Rd p90` | Isolated read latency, p50 / p90 over `--isolation-iters` iterations. |
+| `Read BW` | Workload read bandwidth: `Read (GB)` / `Read (ms)`, so all ranks summed. |
+| `Iso Rd BW` | Isolated read bandwidth of the slowest rank (min across ranks). |
+| `Write (GB)` | Total bytes written to storage by all ranks in this pattern. |
+| `Write (ms)` | Workload write latency of the slowest rank, all ranks writing together. |
+| `Wr p50` / `Wr p90` | Isolated write latency, p50 / p90 over `--isolation-iters` iterations. |
+| `Write BW` | Workload write bandwidth: `Write (GB)` / `Write (ms)`, so all ranks summed. |
+| `Iso Wr BW` | Isolated write bandwidth of the slowest rank (min across ranks). |
+
+**Isolated vs workload.** Isolated numbers are measured with nothing else running:
+
+- Isolated RDMA runs one traffic pattern alone — only its senders, no storage I/O in flight, no other pattern at the same time.
+- Isolated storage is stricter: only the first rank that has the operation runs it, every other rank waits. It is one client against the storage target, with no contention at all.
+
+Workload numbers are measured with all ranks running the full pipeline together (read, RDMA, write). The gap between the two is the cost of contention — on the fabric for the RDMA columns, on the storage target for the read and write columns. That gap is the point of this benchmark. `Iso p50` close to `RDMA (ms)` means the fabric absorbs the load; a large gap means it does not.
+
+Compare latency against latency: `RDMA (ms)` vs `Iso p50`, `Read (ms)` vs `Rd p50`, `Write (ms)` vs `Wr p50`. Those are the same measurement under different load. Be careful with the bandwidth columns, they have different scopes: `Read BW` and `Write BW` sum all ranks, while `Iso Rd BW` and `Iso Wr BW` are single-rank rates.
+
+Add `--json-output-path ./results.json` for machine-readable output (rank 0 writes the file). It has two top-level keys, `metadata` and `iterations_results`. Each pattern entry carries `size`, `latency`, `mean_bw`, `num_senders`, `storage_read_max_ms`, `storage_write_max_ms`, `storage_read_size_gb`, `storage_write_size_gb`, and the `isolated_{rdma,read,write}_{p50,p90,p99,min,max}_ms` keys.
 
 ## Supported LLM Architectures
 - DeepSeek R1
@@ -367,7 +499,8 @@ traffic_patterns:
   # RDMA + Storage (75% cache hit)
   - matrix_file: /path/to/matrices/matrix_1.txt
     mem_type: cpu
-    sleep_before_launch_sec: 0.005
+    sleep_before_launch_sec: 0.005   # prefill compute, after read, before RDMA
+    decode_compute_sec: 0.002        # decode compute, after RDMA, before write
     storage:
       read:  [1572864, 1572864, 0, 0]  # Ranks 0,1 read 1.5MB each
       write: [524288, 524288, 0, 0]    # Ranks 0,1 write 0.5MB each
@@ -386,7 +519,8 @@ traffic_patterns:
 - `matrix_file`: File containing the RDMA transfer matrix (legacy, optional — omit for storage-only).
 - `matrix`: Inline RDMA matrix as 2D array (alternative to `matrix_file`).
 - `mem_type`: Memory type — `"cuda"`, `"vram"`, `"cpu"`, `"dram"` (default: `"cuda"`).
-- `sleep_before_launch_sec`: Seconds to sleep (compute simulation) before RDMA (default: 0).
+- `sleep_before_launch_sec`: Prefill compute simulation, in seconds. Sleeps after the storage read and before the RDMA transfer (default: 0). `sequential-ct-perftest` only.
+- `decode_compute_sec`: Decode compute simulation, in seconds. Sleeps after the RDMA transfer and before the storage write (default: 0). `sequential-ct-perftest` only. Replaces the old `sleep_after_launch_sec`, which is still accepted but deprecated.
 - `storage`: Per-rank storage requirements when using the legacy split format.
 - `storage.read`: Array of read sizes per rank (index = rank, use 0 to skip).
 - `storage.write`: Array of write sizes per rank (index = rank, use 0 to skip).
@@ -487,14 +621,15 @@ python main.py --debug sequential-ct-perftest ./config.yaml \
     --verify-buffers \
     --json-output-path ./results.json
 
-# With Slurm
-srun <params> bash -c "
-  CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
-  python main.py sequential-ct-perftest ./config.yaml \
-    --verify-buffers \
-    --json-output-path ./results.json
-"
+# With Slurm (see the Quickstart for the etcd setup this needs)
+srun --partition=<partition> --nodes=2 --ntasks-per-node=8 --export=ALL \
+  bash -c 'export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID && \
+    python main.py sequential-ct-perftest ./config.yaml \
+      --verify-buffers \
+      --json-output-path ./results.json'
 ```
+
+Multi-rank runs need `NIXL_ETCD_ENDPOINTS` and `NIXL_ETCD_NAMESPACE` exported before `srun`. See [Quickstart (end-to-end)](#quickstart-end-to-end).
 
 **CT Perftest**:
 ```bash

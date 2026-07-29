@@ -20,6 +20,7 @@ import logging
 import os
 import time
 from collections import defaultdict
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from itertools import chain
 from pathlib import Path
@@ -42,6 +43,67 @@ class StorageOpType(Enum):
 
     READ = auto()
     WRITE = auto()
+
+
+@dataclass
+class IterationReportData:
+    """All the numbers needed to print the tables of one iteration.
+
+    Every list has one entry per traffic pattern, except the *_by_ranks
+    lists which have one entry per rank (each of those entries is itself
+    one value per traffic pattern).
+    """
+
+    tp_sizes_gb: List[float]
+    tp_latencies_ms: List[Optional[float]]
+    storage_read_max_ms: List[float]
+    storage_write_max_ms: List[float]
+    storage_read_sizes_gb: List[float]
+    storage_write_sizes_gb: List[float]
+    isolated_rdma_stats_ms: List[Dict[str, float]]
+    isolated_read_stats_ms: List[Dict[str, float]]
+    isolated_write_stats_ms: List[Dict[str, float]]
+    isolated_rdma_stats_by_ranks: List[List[Dict[str, float]]]
+    isolated_read_stats_by_ranks: List[List[Dict[str, float]]]
+    isolated_write_stats_by_ranks: List[List[Dict[str, float]]]
+    tp_mean_bws: List[float]
+    tp_starts_by_ranks: List[List[Optional[float]]]
+    tp_ends_by_ranks: List[List[Optional[float]]]
+    storage_read_by_ranks: List[List[float]]
+    storage_write_by_ranks: List[List[float]]
+
+
+@dataclass
+class RunState:
+    """State shared by the phases of run().
+
+    It is created before the try block of run(), so _teardown() can always
+    read the handle lists, even when _setup() raises in the middle.
+    """
+
+    # Filled by _setup()
+    tp_handles: list[list] = field(default_factory=list)
+    storage_read_handles: list[list] = field(default_factory=list)
+    storage_write_handles: list[list] = field(default_factory=list)
+    tp_bufs: list = field(default_factory=list)
+    results: Dict[str, Any] = field(default_factory=dict)
+
+    # Filled by _run_isolated_phase()
+    isolated_rdma_stats_by_ranks: List[List[Dict[str, float]]] = field(
+        default_factory=list
+    )
+    isolated_read_stats_by_ranks: List[List[Dict[str, float]]] = field(
+        default_factory=list
+    )
+    isolated_write_stats_by_ranks: List[List[Dict[str, float]]] = field(
+        default_factory=list
+    )
+    isolated_rdma_stats_ms: List[Dict[str, float]] = field(default_factory=list)
+    isolated_read_stats_ms: List[Dict[str, float]] = field(default_factory=list)
+    isolated_write_stats_ms: List[Dict[str, float]] = field(default_factory=list)
+
+    # Filled by _run_workload_phase(): one entry per rank, each one entry per iteration
+    all_ranks_timings: List[List[Dict[str, Any]]] = field(default_factory=list)
 
 
 class SequentialCTPerftest(CTPerftest):
@@ -767,7 +829,8 @@ class SequentialCTPerftest(CTPerftest):
     # =========================================================================
 
     def _execute_workload_tp(self, tp_ix, tp, handles, read_h, write_h):
-        """Execute one TP's phases: Storage READ -> RDMA -> Notifications -> Storage WRITE."""
+        """Execute one TP's phases: Storage READ, prefill COMPUTE, RDMA,
+        Notifications, decode COMPUTE, Storage WRITE."""
         result = {
             "rdma_start": None,
             "rdma_end": None,
@@ -788,10 +851,23 @@ class SequentialCTPerftest(CTPerftest):
             result["read_start"] = read_start
             result["read_end"] = read_end
 
+        # PHASE 2: PREFILL COMPUTE (sleep).
+        # Simulates the compute for the part of the prefix that was NOT served
+        # from storage. It runs after read_end has been captured and before
+        # rdma_start is captured, so it sits inside no timed window.
+        if tp.sleep_before_launch_sec is not None:
+            logger.debug(
+                "[Rank %d] Prefill compute sleep %.3f s (TP %d)",
+                self.my_rank,
+                tp.sleep_before_launch_sec,
+                tp_ix,
+            )
+            time.sleep(tp.sleep_before_launch_sec)
+
         # No barrier between storage READ and RDMA SEND: each rank's RDMA
         # depends only on its own local read completion, not other ranks'.
 
-        # PHASE 2: RDMA SEND
+        # PHASE 3: RDMA SEND
         if is_sender:
             logger.debug(
                 "[Rank %d] Sender: Starting RDMA send (TP %d)", self.my_rank, tp_ix
@@ -808,7 +884,7 @@ class SequentialCTPerftest(CTPerftest):
                 tp_ix,
             )
 
-        # PHASE 3: Wait for RDMA notifications (receivers)
+        # PHASE 4: Wait for RDMA notifications (receivers)
         if is_receiver:
             expected_senders = self._get_expected_rdma_senders(tp)
             if expected_senders:
@@ -834,7 +910,22 @@ class SequentialCTPerftest(CTPerftest):
 
             # No receiver barrier: storage WRITEs are independent per rank.
 
-        # PHASE 4: Storage WRITE
+        # PHASE 5: DECODE COMPUTE (sleep).
+        # Simulates the decode step that consumes the KV cache just received.
+        # It runs after rdma_end has been captured and before write_start is
+        # captured, so it sits inside no timed window.
+        # Indented at method level on purpose: it must run on senders too, not
+        # only inside the `if is_receiver:` block above.
+        if tp.decode_compute_sec is not None:
+            logger.debug(
+                "[Rank %d] Decode compute sleep %.3f s (TP %d)",
+                self.my_rank,
+                tp.decode_compute_sec,
+                tp_ix,
+            )
+            time.sleep(tp.decode_compute_sec)
+
+        # PHASE 6: Storage WRITE
         if write_h:
             write_start = time.time()
             self._run_tp(write_h, blocking=True)
@@ -846,28 +937,12 @@ class SequentialCTPerftest(CTPerftest):
     # RESULTS REPORTING
     # =========================================================================
 
-    def _print_iteration_results(
-        self,
-        iter_ix,
-        tp_sizes_gb,
-        tp_latencies_ms,
-        storage_read_max_ms,
-        storage_write_max_ms,
-        storage_read_sizes_gb,
-        storage_write_sizes_gb,
-        isolated_rdma_stats_ms,
-        isolated_read_stats_ms,
-        isolated_write_stats_ms,
-        isolated_rdma_stats_by_ranks,
-        isolated_read_stats_by_ranks,
-        isolated_write_stats_by_ranks,
-        tp_mean_bws,
-        tp_starts_by_ranks,
-        tp_ends_by_ranks,
-        storage_read_by_ranks,
-        storage_write_by_ranks,
-    ):
-        """Print iteration results table and per-rank breakdown (rank 0 only)."""
+    def _print_iteration_results(self, iter_ix: int, data: IterationReportData):
+        """Print iteration results table and per-rank breakdown (rank 0 only).
+
+        Prints only, no collective calls, so the early return on non-zero
+        ranks is safe.
+        """
         if self.my_rank != 0:
             return
 
@@ -891,15 +966,15 @@ class SequentialCTPerftest(CTPerftest):
             "Write BW",
             "Iso Wr BW",
         ]
-        data = []
+        table_rows = []
         for i, tp in enumerate(self.traffic_patterns):
-            read_ms = storage_read_max_ms[i]
-            write_ms = storage_write_max_ms[i]
-            iso_rdma_stats = isolated_rdma_stats_ms[i]
-            iso_read_stats = isolated_read_stats_ms[i]
-            iso_write_stats = isolated_write_stats_ms[i]
-            read_size = storage_read_sizes_gb[i]
-            write_size = storage_write_sizes_gb[i]
+            read_ms = data.storage_read_max_ms[i]
+            write_ms = data.storage_write_max_ms[i]
+            iso_rdma_stats = data.isolated_rdma_stats_ms[i]
+            iso_read_stats = data.isolated_read_stats_ms[i]
+            iso_write_stats = data.isolated_write_stats_ms[i]
+            read_size = data.storage_read_sizes_gb[i]
+            write_size = data.storage_write_sizes_gb[i]
 
             iso_read_p50 = iso_read_stats["p50"]
             iso_write_p50 = iso_write_stats["p50"]
@@ -914,9 +989,9 @@ class SequentialCTPerftest(CTPerftest):
             # Per-rank isolated BWs (bottleneck = min across ranks)
             rdma_bws = []
             for rank in tp.senders_ranks():
-                if rank >= len(isolated_rdma_stats_by_ranks):
+                if rank >= len(data.isolated_rdma_stats_by_ranks):
                     continue
-                rank_stats = isolated_rdma_stats_by_ranks[rank][i]
+                rank_stats = data.isolated_rdma_stats_by_ranks[rank][i]
                 if rank_stats["p50"] > 0:
                     rank_size_gb = tp.total_src_size(rank) * 1e-9
                     rdma_bws.append(rank_size_gb / rank_stats["p50"])
@@ -925,8 +1000,10 @@ class SequentialCTPerftest(CTPerftest):
             read_bws = []
             if tp.storage_ops:
                 for rank, ops in tp.storage_ops.items():
-                    if ops.read_size > 0 and rank < len(isolated_read_stats_by_ranks):
-                        rank_stats = isolated_read_stats_by_ranks[rank][i]
+                    if ops.read_size > 0 and rank < len(
+                        data.isolated_read_stats_by_ranks
+                    ):
+                        rank_stats = data.isolated_read_stats_by_ranks[rank][i]
                         if rank_stats["p50"] > 0:
                             read_bws.append((ops.read_size * 1e-9) / rank_stats["p50"])
             iso_read_bw = min(read_bws) if read_bws else None
@@ -934,21 +1011,23 @@ class SequentialCTPerftest(CTPerftest):
             write_bws = []
             if tp.storage_ops:
                 for rank, ops in tp.storage_ops.items():
-                    if ops.write_size > 0 and rank < len(isolated_write_stats_by_ranks):
-                        rank_stats = isolated_write_stats_by_ranks[rank][i]
+                    if ops.write_size > 0 and rank < len(
+                        data.isolated_write_stats_by_ranks
+                    ):
+                        rank_stats = data.isolated_write_stats_by_ranks[rank][i]
                         if rank_stats["p50"] > 0:
                             write_bws.append(
                                 (ops.write_size * 1e-9) / rank_stats["p50"]
                             )
             iso_write_bw = min(write_bws) if write_bws else None
 
-            data.append(
+            table_rows.append(
                 [
-                    tp_sizes_gb[i],
-                    tp_latencies_ms[i],
+                    data.tp_sizes_gb[i],
+                    data.tp_latencies_ms[i],
                     iso_rdma_stats["p50"] if iso_rdma_stats["p50"] > 0 else None,
                     iso_rdma_stats["p90"] if iso_rdma_stats["p90"] > 0 else None,
-                    tp_mean_bws[i],
+                    data.tp_mean_bws[i],
                     iso_rdma_bw,
                     read_size if read_size > 0 else None,
                     read_ms if read_ms > 0 else None,
@@ -965,16 +1044,16 @@ class SequentialCTPerftest(CTPerftest):
                 ]
             )
         logger.info(
-            f"Iteration {iter_ix + 1}/{self.n_iters}\n{tabulate(data, headers=headers, floatfmt='.3f', missingval='-')}"
+            f"Iteration {iter_ix + 1}/{self.n_iters}\n{tabulate(table_rows, headers=headers, floatfmt='.3f', missingval='-')}"
         )
 
         if iter_ix == self.n_iters - 1:
             self._print_per_rank_breakdown(
-                tp_starts_by_ranks,
-                tp_ends_by_ranks,
-                storage_read_by_ranks,
-                storage_write_by_ranks,
-                isolated_rdma_stats_by_ranks,
+                data.tp_starts_by_ranks,
+                data.tp_ends_by_ranks,
+                data.storage_read_by_ranks,
+                data.storage_write_by_ranks,
+                data.isolated_rdma_stats_by_ranks,
             )
 
     def _print_per_rank_breakdown(
@@ -1065,13 +1144,27 @@ class SequentialCTPerftest(CTPerftest):
             json_output_path: Path to save results in JSON format
 
         Returns:
-            Total execution time in seconds
+            None. Results are logged, and written to json_output_path if given.
 
         This method initializes and executes multiple traffic patterns simultaneously,
         measures their performance, and optionally verifies the results.
         """
         logger.debug("[Rank %d] Running sequential CT perftest", self.my_rank)
 
+        # Built before the try so the finally block can always read the handle
+        # lists, even if setup (_init_buffers/_prepare_storage) raises.
+        state = RunState()
+
+        try:
+            self._setup(state)
+            self._run_isolated_phase(state)
+            self._run_workload_phase(state, verify_buffers, print_recv_buffers)
+            self._postprocess(state, json_output_path)
+        finally:
+            self._teardown(state)
+
+    def _setup(self, state: RunState) -> None:
+        """Check that all ranks are alive, then allocate buffers and handles."""
         # Health check: fail fast (30s) if any ranks crashed at startup
         logger.info(
             "[Rank %d] Health check: verifying all %d ranks are alive...",
@@ -1101,7 +1194,7 @@ class SequentialCTPerftest(CTPerftest):
             self._share_md()
         self._prepare_storage()
 
-        results: Dict[str, Any] = {
+        state.results = {
             "iterations_results": [],
             "metadata": {
                 "ts": time.time(),
@@ -1110,409 +1203,423 @@ class SequentialCTPerftest(CTPerftest):
             },
         }
 
-        tp_handles: list[list] = []
-        storage_read_handles: list[list] = []
-        storage_write_handles: list[list] = []
-        tp_bufs = []
+        s = time.time()
+        logger.info("[Rank %d] Preparing TPs", self.my_rank)
+        for i, tp in enumerate(self.traffic_patterns):
+            handles, send_bufs, recv_bufs = self._prepare_tp(tp)
+            state.tp_bufs.append((send_bufs, recv_bufs))
+            state.tp_handles.append(handles)
 
-        try:
-            s = time.time()
-            logger.info("[Rank %d] Preparing TPs", self.my_rank)
-            for i, tp in enumerate(self.traffic_patterns):
-                handles, send_bufs, recv_bufs = self._prepare_tp(tp)
-                tp_bufs.append((send_bufs, recv_bufs))
-                tp_handles.append(handles)
+        state.results["metadata"]["prepare_tp_time"] = time.time() - s
 
-            results["metadata"]["prepare_tp_time"] = time.time() - s
+        state.storage_read_handles = [
+            self._prepare_storage_read(i) for i in range(len(self.traffic_patterns))
+        ]
+        state.storage_write_handles = [
+            self._prepare_storage_write(i) for i in range(len(self.traffic_patterns))
+        ]
 
-            storage_read_handles = [
-                self._prepare_storage_read(i) for i in range(len(self.traffic_patterns))
-            ]
-            storage_write_handles = [
-                self._prepare_storage_write(i)
-                for i in range(len(self.traffic_patterns))
-            ]
+    def _run_isolated_phase(self, state: RunState) -> None:
+        """Warm up, then measure every pattern alone, without contention."""
+        self._run_warmup(
+            state.tp_handles, state.storage_read_handles, state.storage_write_handles
+        )
 
-            self._run_warmup(tp_handles, storage_read_handles, storage_write_handles)
+        # Isolated mode -  Measure SOL for every matrix
+        logger.info(
+            "[Rank %d] Running isolated benchmark (to measure perf without noise)",
+            self.my_rank,
+        )
+        my_isolated_read_stats: List[Dict] = [
+            self._EMPTY_STATS.copy() for _ in state.tp_handles
+        ]
+        my_isolated_write_stats: List[Dict] = [
+            self._EMPTY_STATS.copy() for _ in state.tp_handles
+        ]
 
-            # Isolated mode -  Measure SOL for every matrix
-            logger.info(
-                "[Rank %d] Running isolated benchmark (to measure perf without noise)",
-                self.my_rank,
+        state.results["metadata"]["sol_calculation_ts"] = time.time()
+
+        my_isolated_rdma_stats = self._run_isolated_rdma_benchmark(state.tp_handles)
+
+        # Barrier: sync all ranks after isolated RDMA, before storage benchmarks
+        # This ensures non-senders (who skipped RDMA) wait for senders to finish
+        dist_rt.barrier()
+
+        # Isolated storage read/write measurements
+        if self._has_storage:
+            # _run_isolated_storage_benchmark() runs a per-TP dist_rt.barrier()
+            # over ALL ranks, so whether to call it must be decided identically
+            # on every rank. Derive it from the globally-replicated traffic
+            # patterns, NOT this rank's local handles: gating on per-rank
+            # handles makes ranks without storage skip the call and deadlocks
+            # the barrier (mirrors the unconditional isolated RDMA benchmark).
+            has_reads = any(
+                op.read_size > 0
+                for tp in self.traffic_patterns
+                if tp.storage_ops
+                for op in tp.storage_ops.values()
             )
-            my_isolated_read_stats: List[Dict] = [
-                self._EMPTY_STATS.copy() for _ in tp_handles
-            ]
-            my_isolated_write_stats: List[Dict] = [
-                self._EMPTY_STATS.copy() for _ in tp_handles
-            ]
+            has_writes = any(
+                op.write_size > 0
+                for tp in self.traffic_patterns
+                if tp.storage_ops
+                for op in tp.storage_ops.values()
+            )
 
-            results["metadata"]["sol_calculation_ts"] = time.time()
+            if has_reads:
+                logger.info(
+                    "[Rank %d] Running isolated storage read benchmark",
+                    self.my_rank,
+                )
+                my_isolated_read_stats = self._run_isolated_storage_benchmark(
+                    state.storage_read_handles, "read"
+                )
 
-            my_isolated_rdma_stats = self._run_isolated_rdma_benchmark(tp_handles)
+            if has_writes:
+                logger.info(
+                    "[Rank %d] Running isolated storage write benchmark",
+                    self.my_rank,
+                )
+                my_isolated_write_stats = self._run_isolated_storage_benchmark(
+                    state.storage_write_handles, "write"
+                )
 
-            # Barrier: sync all ranks after isolated RDMA, before storage benchmarks
-            # This ensures non-senders (who skipped RDMA) wait for senders to finish
+        # Barrier: sync all ranks after isolated benchmarks
+        # Only first rank runs isolated storage, others wait here
+        if self.my_rank == 0:
+            logger.info(
+                "[Rank 0] Isolated benchmarks complete, syncing with other ranks"
+            )
+        # The isolated storage benchmarks run on a single rank only, so on a
+        # slow filesystem they can legitimately take several minutes. Use a
+        # generous timeout instead of no timeout, so one dead rank cannot
+        # hang the whole job forever.
+        dist_rt.barrier(timeout_sec=3600)
+
+        # Store isolated results
+        state.isolated_rdma_stats_by_ranks = dist_rt.allgather_obj(
+            my_isolated_rdma_stats
+        )
+        state.isolated_read_stats_by_ranks = dist_rt.allgather_obj(
+            my_isolated_read_stats
+        )
+        state.isolated_write_stats_by_ranks = dist_rt.allgather_obj(
+            my_isolated_write_stats
+        )
+
+        # Process isolated stats per TP - aggregate across ranks
+        for i in range(len(self.traffic_patterns)):
+            state.isolated_rdma_stats_ms.append(
+                self._aggregate_stats(state.isolated_rdma_stats_by_ranks, i)
+            )
+            state.isolated_read_stats_ms.append(
+                self._aggregate_stats(state.isolated_read_stats_by_ranks, i)
+            )
+            state.isolated_write_stats_ms.append(
+                self._aggregate_stats(state.isolated_write_stats_by_ranks, i)
+            )
+
+    def _run_workload_phase(
+        self,
+        state: RunState,
+        verify_buffers: bool,
+        print_recv_buffers: bool,
+    ) -> None:
+        """Run every iteration with all patterns together, then gather timings."""
+        # Clear stale notifications from isolated RDMA benchmark before workload
+        # (Isolated RDMA sends notifications but receivers don't consume them)
+        self._clear_stale_notifications()
+        dist_rt.barrier()  # Ensure all ranks have cleared before workload starts
+
+        logger.info("[Rank %d] Running workload benchmark", self.my_rank)
+
+        # Workload mode - Measure perf of the matrices while running the full workload
+        # Phase 1: Run all iterations, collecting local timing data
+        # (allgather is deferred to after all iterations to minimize etcd overhead)
+        all_local_timings: list[dict] = []
+
+        for iter_ix in range(self.n_iters):
+            logger.debug(
+                "[Rank %d] Running iteration %d/%d",
+                self.my_rank,
+                iter_ix + 1,
+                self.n_iters,
+            )
+            iter_metadata = state.results["metadata"]["iters"][iter_ix]
+
+            tp_starts: list[float | None] = [None] * len(state.tp_handles)
+            tp_ends: list[float | None] = [None] * len(state.tp_handles)
+            storage_read_times: list[float] = [0.0] * len(state.tp_handles)
+            storage_write_times: list[float] = [0.0] * len(state.tp_handles)
+            storage_read_starts: list[float | None] = [None] * len(state.tp_handles)
+            storage_read_ends: list[float | None] = [None] * len(state.tp_handles)
             dist_rt.barrier()
 
-            # Isolated storage read/write measurements
-            if self._has_storage:
-                # _run_isolated_storage_benchmark() runs a per-TP dist_rt.barrier()
-                # over ALL ranks, so whether to call it must be decided identically
-                # on every rank. Derive it from the globally-replicated traffic
-                # patterns, NOT this rank's local handles: gating on per-rank
-                # handles makes ranks without storage skip the call and deadlocks
-                # the barrier (mirrors the unconditional isolated RDMA benchmark).
-                has_reads = any(
-                    op.read_size > 0
-                    for tp in self.traffic_patterns
-                    if tp.storage_ops
-                    for op in tp.storage_ops.values()
+            iter_metadata["start_ts"] = time.time()
+            for tp_ix, handles in enumerate(state.tp_handles):
+                tp = self.traffic_patterns[tp_ix]
+
+                if self.my_rank not in tp.all_participating_ranks():
+                    continue
+
+                self._barrier_tp(tp)
+
+                # Both compute sleeps now run inside _execute_workload_tp, so
+                # they land between the right I/O phases.
+                tp_result = self._execute_workload_tp(
+                    tp_ix,
+                    tp,
+                    handles,
+                    state.storage_read_handles[tp_ix],
+                    state.storage_write_handles[tp_ix],
                 )
-                has_writes = any(
-                    op.write_size > 0
-                    for tp in self.traffic_patterns
-                    if tp.storage_ops
-                    for op in tp.storage_ops.values()
-                )
+                tp_starts[tp_ix] = tp_result["rdma_start"]
+                tp_ends[tp_ix] = tp_result["rdma_end"]
+                storage_read_times[tp_ix] = tp_result["read_time"]
+                storage_write_times[tp_ix] = tp_result["write_time"]
+                storage_read_starts[tp_ix] = tp_result["read_start"]
+                storage_read_ends[tp_ix] = tp_result["read_end"]
 
-                if has_reads:
-                    logger.info(
-                        "[Rank %d] Running isolated storage read benchmark",
-                        self.my_rank,
-                    )
-                    my_isolated_read_stats = self._run_isolated_storage_benchmark(
-                        storage_read_handles, "read"
-                    )
+            iter_metadata["tps_start_ts"] = tp_starts.copy()
+            iter_metadata["tps_end_ts"] = tp_ends.copy()
 
-                if has_writes:
-                    logger.info(
-                        "[Rank %d] Running isolated storage write benchmark",
-                        self.my_rank,
-                    )
-                    my_isolated_write_stats = self._run_isolated_storage_benchmark(
-                        storage_write_handles, "write"
-                    )
-
-            # Barrier: sync all ranks after isolated benchmarks
-            # Only first rank runs isolated storage, others wait here
-            if self.my_rank == 0:
-                logger.info(
-                    "[Rank 0] Isolated benchmarks complete, syncing with other ranks"
-                )
-            dist_rt.barrier(timeout_sec=None)
-
-            # Store isolated results
-            isolated_rdma_stats_by_ranks = dist_rt.allgather_obj(my_isolated_rdma_stats)
-            isolated_read_stats_by_ranks = dist_rt.allgather_obj(my_isolated_read_stats)
-            isolated_write_stats_by_ranks = dist_rt.allgather_obj(
-                my_isolated_write_stats
+            # Store local timing for batch gathering later
+            all_local_timings.append(
+                {
+                    "tp_starts": tp_starts,
+                    "tp_ends": tp_ends,
+                    "storage_read_times": storage_read_times,
+                    "storage_write_times": storage_write_times,
+                    "storage_read_starts": storage_read_starts,
+                    "storage_read_ends": storage_read_ends,
+                }
             )
 
-            # Process isolated stats per TP - aggregate across ranks
-            isolated_rdma_stats_ms = []
-            isolated_read_stats_ms = []
-            isolated_write_stats_ms = []
-
-            for i in range(len(self.traffic_patterns)):
-                isolated_rdma_stats_ms.append(
-                    self._aggregate_stats(isolated_rdma_stats_by_ranks, i)
-                )
-                isolated_read_stats_ms.append(
-                    self._aggregate_stats(isolated_read_stats_by_ranks, i)
-                )
-                isolated_write_stats_ms.append(
-                    self._aggregate_stats(isolated_write_stats_by_ranks, i)
-                )
-
-            # Clear stale notifications from isolated RDMA benchmark before workload
-            # (Isolated RDMA sends notifications but receivers don't consume them)
-            self._clear_stale_notifications()
-            dist_rt.barrier()  # Ensure all ranks have cleared before workload starts
-
-            logger.info("[Rank %d] Running workload benchmark", self.my_rank)
-
-            # Workload mode - Measure perf of the matrices while running the full workload
-            # Phase 1: Run all iterations, collecting local timing data
-            # (allgather is deferred to after all iterations to minimize etcd overhead)
-            all_local_timings: list[dict] = []
-
-            for iter_ix in range(self.n_iters):
-                logger.debug(
-                    "[Rank %d] Running iteration %d/%d",
-                    self.my_rank,
-                    iter_ix + 1,
-                    self.n_iters,
-                )
-                iter_metadata = results["metadata"]["iters"][iter_ix]
-
-                tp_starts: list[float | None] = [None] * len(tp_handles)
-                tp_ends: list[float | None] = [None] * len(tp_handles)
-                storage_read_times: list[float] = [0.0] * len(tp_handles)
-                storage_write_times: list[float] = [0.0] * len(tp_handles)
-                storage_read_starts: list[float | None] = [None] * len(tp_handles)
-                storage_read_ends: list[float | None] = [None] * len(tp_handles)
-                dist_rt.barrier()
-
-                iter_metadata["start_ts"] = time.time()
-                for tp_ix, handles in enumerate(tp_handles):
-                    tp = self.traffic_patterns[tp_ix]
-
-                    if self.my_rank not in tp.all_participating_ranks():
-                        continue
-
-                    self._barrier_tp(tp)
-                    if tp.sleep_before_launch_sec is not None:
-                        time.sleep(tp.sleep_before_launch_sec)
-
-                    tp_result = self._execute_workload_tp(
-                        tp_ix,
-                        tp,
-                        handles,
-                        storage_read_handles[tp_ix],
-                        storage_write_handles[tp_ix],
-                    )
-                    tp_starts[tp_ix] = tp_result["rdma_start"]
-                    tp_ends[tp_ix] = tp_result["rdma_end"]
-                    storage_read_times[tp_ix] = tp_result["read_time"]
-                    storage_write_times[tp_ix] = tp_result["write_time"]
-                    storage_read_starts[tp_ix] = tp_result["read_start"]
-                    storage_read_ends[tp_ix] = tp_result["read_end"]
-
-                    if tp.sleep_after_launch_sec is not None:
-                        time.sleep(tp.sleep_after_launch_sec)
-
-                iter_metadata["tps_start_ts"] = tp_starts.copy()
-                iter_metadata["tps_end_ts"] = tp_ends.copy()
-
-                # Store local timing for batch gathering later
-                all_local_timings.append(
-                    {
-                        "tp_starts": tp_starts,
-                        "tp_ends": tp_ends,
-                        "storage_read_times": storage_read_times,
-                        "storage_write_times": storage_write_times,
-                        "storage_read_starts": storage_read_starts,
-                        "storage_read_ends": storage_read_ends,
-                    }
-                )
-
-                if verify_buffers:
-                    for i, tp in enumerate(self.traffic_patterns):
-                        # Storage-only TPs have no RDMA matrix to validate.
-                        if not tp.has_rdma():
-                            continue
-                        send_bufs, recv_bufs = tp_bufs[i]
-                        self._verify_tp(tp, recv_bufs, print_recv_buffers)
-
-            # Phase 2: Single batch allgather of all iterations' timing data
-            # (replaces 6 * n_iters allgather calls with 1 total)
-            all_ranks_timings = dist_rt.allgather_obj(all_local_timings)
-
-            # Pre-compute constant values across iterations
-            tp_sizes_gb = [
-                self._get_tp_total_size(tp) / 1e9 for tp in self.traffic_patterns
-            ]
-            storage_read_sizes_gb: list[float] = []
-            storage_write_sizes_gb: list[float] = []
-            for tp in self.traffic_patterns:
-                read_total = 0
-                write_total = 0
-                if tp.storage_ops:
-                    for ops in tp.storage_ops.values():
-                        read_total += ops.read_size
-                        write_total += ops.write_size
-                storage_read_sizes_gb.append(read_total / 1e9)
-                storage_write_sizes_gb.append(write_total / 1e9)
-
-            # Phase 3: Post-process all iterations with cross-rank data
-            for iter_ix in range(self.n_iters):
-                # Reconstruct per-rank data for this iteration
-                tp_starts_by_ranks = [
-                    all_ranks_timings[r][iter_ix]["tp_starts"]
-                    for r in range(self.world_size)
-                ]
-                tp_ends_by_ranks = [
-                    all_ranks_timings[r][iter_ix]["tp_ends"]
-                    for r in range(self.world_size)
-                ]
-                storage_read_by_ranks = [
-                    all_ranks_timings[r][iter_ix]["storage_read_times"]
-                    for r in range(self.world_size)
-                ]
-                storage_write_by_ranks = [
-                    all_ranks_timings[r][iter_ix]["storage_write_times"]
-                    for r in range(self.world_size)
-                ]
-                storage_read_starts_by_ranks = [
-                    all_ranks_timings[r][iter_ix]["storage_read_starts"]
-                    for r in range(self.world_size)
-                ]
-                storage_read_ends_by_ranks = [
-                    all_ranks_timings[r][iter_ix]["storage_read_ends"]
-                    for r in range(self.world_size)
-                ]
-
-                tp_latencies_ms: list[float | None] = []
-                tp_mean_bws: list[float] = []
-                storage_read_max_ms: list[float] = []
-                storage_write_max_ms: list[float] = []
-
+            if verify_buffers:
                 for i, tp in enumerate(self.traffic_patterns):
-                    starts = [
-                        tp_starts_by_ranks[rank][i] for rank in range(self.world_size)
-                    ]
-                    ends = [
-                        tp_ends_by_ranks[rank][i] for rank in range(self.world_size)
-                    ]
-                    starts = [x for x in starts if x is not None]
-                    ends = [x for x in ends if x is not None]
+                    # Storage-only TPs have no RDMA matrix to validate.
+                    if not tp.has_rdma():
+                        continue
+                    send_bufs, recv_bufs = state.tp_bufs[i]
+                    self._verify_tp(tp, recv_bufs, print_recv_buffers)
 
-                    read_times = [
-                        storage_read_by_ranks[r][i]
-                        for r in range(self.world_size)
-                        if storage_read_by_ranks[r][i] > 0
-                    ]
-                    write_times = [
-                        storage_write_by_ranks[r][i]
-                        for r in range(self.world_size)
-                        if storage_write_by_ranks[r][i] > 0
-                    ]
-                    storage_read_max_ms.append(
-                        max(read_times) * 1e3 if read_times else 0.0
-                    )
-                    storage_write_max_ms.append(
-                        max(write_times) * 1e3 if write_times else 0.0
-                    )
+        # Phase 2: Single batch allgather of all iterations' timing data
+        # (replaces 6 * n_iters allgather calls with 1 total)
+        state.all_ranks_timings = dist_rt.allgather_obj(all_local_timings)
 
-                    tp_mean_bw = 0.0
-                    if not ends or not starts:
-                        tp_latencies_ms.append(None)
-                    else:
-                        tp_latencies_ms.append((max(ends) - min(starts)) * 1e3)
+    def _postprocess(self, state: RunState, json_output_path: Optional[str]) -> None:
+        """Turn the gathered timings into tables, and save the JSON report."""
+        all_ranks_timings = state.all_ranks_timings
 
-                        senders = tp.senders_ranks()
-                        for rank in senders:
-                            rank_start = tp_starts_by_ranks[rank][i]
-                            rank_end = tp_ends_by_ranks[rank][i]
-                            if not rank_start or not rank_end:
-                                raise ValueError(
-                                    f"Rank {rank} has no start or end time, but participated in TP, this is not normal."
-                                )
-                            tp_mean_bw += (
-                                tp.total_src_size(rank) * 1e-9 / (rank_end - rank_start)
+        # Pre-compute constant values across iterations
+        tp_sizes_gb = [
+            self._get_tp_total_size(tp) / 1e9 for tp in self.traffic_patterns
+        ]
+        storage_read_sizes_gb: list[float] = []
+        storage_write_sizes_gb: list[float] = []
+        for tp in self.traffic_patterns:
+            read_total = 0
+            write_total = 0
+            if tp.storage_ops:
+                for ops in tp.storage_ops.values():
+                    read_total += ops.read_size
+                    write_total += ops.write_size
+            storage_read_sizes_gb.append(read_total / 1e9)
+            storage_write_sizes_gb.append(write_total / 1e9)
+
+        # Phase 3: Post-process all iterations with cross-rank data
+        for iter_ix in range(self.n_iters):
+            # Reconstruct per-rank data for this iteration
+            tp_starts_by_ranks = [
+                all_ranks_timings[r][iter_ix]["tp_starts"]
+                for r in range(self.world_size)
+            ]
+            tp_ends_by_ranks = [
+                all_ranks_timings[r][iter_ix]["tp_ends"] for r in range(self.world_size)
+            ]
+            storage_read_by_ranks = [
+                all_ranks_timings[r][iter_ix]["storage_read_times"]
+                for r in range(self.world_size)
+            ]
+            storage_write_by_ranks = [
+                all_ranks_timings[r][iter_ix]["storage_write_times"]
+                for r in range(self.world_size)
+            ]
+            storage_read_starts_by_ranks = [
+                all_ranks_timings[r][iter_ix]["storage_read_starts"]
+                for r in range(self.world_size)
+            ]
+            storage_read_ends_by_ranks = [
+                all_ranks_timings[r][iter_ix]["storage_read_ends"]
+                for r in range(self.world_size)
+            ]
+
+            tp_latencies_ms: list[float | None] = []
+            tp_mean_bws: list[float] = []
+            storage_read_max_ms: list[float] = []
+            storage_write_max_ms: list[float] = []
+
+            for i, tp in enumerate(self.traffic_patterns):
+                starts = [
+                    tp_starts_by_ranks[rank][i] for rank in range(self.world_size)
+                ]
+                ends = [tp_ends_by_ranks[rank][i] for rank in range(self.world_size)]
+                starts = [x for x in starts if x is not None]
+                ends = [x for x in ends if x is not None]
+
+                read_times = [
+                    storage_read_by_ranks[r][i]
+                    for r in range(self.world_size)
+                    if storage_read_by_ranks[r][i] > 0
+                ]
+                write_times = [
+                    storage_write_by_ranks[r][i]
+                    for r in range(self.world_size)
+                    if storage_write_by_ranks[r][i] > 0
+                ]
+                storage_read_max_ms.append(max(read_times) * 1e3 if read_times else 0.0)
+                storage_write_max_ms.append(
+                    max(write_times) * 1e3 if write_times else 0.0
+                )
+
+                tp_mean_bw = 0.0
+                if not ends or not starts:
+                    tp_latencies_ms.append(None)
+                else:
+                    tp_latencies_ms.append((max(ends) - min(starts)) * 1e3)
+
+                    senders = tp.senders_ranks()
+                    for rank in senders:
+                        rank_start = tp_starts_by_ranks[rank][i]
+                        rank_end = tp_ends_by_ranks[rank][i]
+                        if not rank_start or not rank_end:
+                            raise ValueError(
+                                f"Rank {rank} has no start or end time, but participated in TP, this is not normal."
                             )
+                        tp_mean_bw += (
+                            tp.total_src_size(rank) * 1e-9 / (rank_end - rank_start)
+                        )
 
-                        if senders:
-                            tp_mean_bw /= len(senders)
-                    tp_mean_bws.append(tp_mean_bw)
+                    if senders:
+                        tp_mean_bw /= len(senders)
+                tp_mean_bws.append(tp_mean_bw)
 
-                self._print_iteration_results(
-                    iter_ix=iter_ix,
+            self._print_iteration_results(
+                iter_ix,
+                IterationReportData(
                     tp_sizes_gb=tp_sizes_gb,
                     tp_latencies_ms=tp_latencies_ms,
                     storage_read_max_ms=storage_read_max_ms,
                     storage_write_max_ms=storage_write_max_ms,
                     storage_read_sizes_gb=storage_read_sizes_gb,
                     storage_write_sizes_gb=storage_write_sizes_gb,
-                    isolated_rdma_stats_ms=isolated_rdma_stats_ms,
-                    isolated_read_stats_ms=isolated_read_stats_ms,
-                    isolated_write_stats_ms=isolated_write_stats_ms,
-                    isolated_rdma_stats_by_ranks=isolated_rdma_stats_by_ranks,
-                    isolated_read_stats_by_ranks=isolated_read_stats_by_ranks,
-                    isolated_write_stats_by_ranks=isolated_write_stats_by_ranks,
+                    isolated_rdma_stats_ms=state.isolated_rdma_stats_ms,
+                    isolated_read_stats_ms=state.isolated_read_stats_ms,
+                    isolated_write_stats_ms=state.isolated_write_stats_ms,
+                    isolated_rdma_stats_by_ranks=state.isolated_rdma_stats_by_ranks,
+                    isolated_read_stats_by_ranks=state.isolated_read_stats_by_ranks,
+                    isolated_write_stats_by_ranks=state.isolated_write_stats_by_ranks,
                     tp_mean_bws=tp_mean_bws,
                     tp_starts_by_ranks=tp_starts_by_ranks,
                     tp_ends_by_ranks=tp_ends_by_ranks,
                     storage_read_by_ranks=storage_read_by_ranks,
                     storage_write_by_ranks=storage_write_by_ranks,
+                ),
+            )
+
+            iter_results = []
+            for i, tp in enumerate(self.traffic_patterns):
+                starts = [
+                    x
+                    for x in (tp_starts_by_ranks[r][i] for r in range(self.world_size))
+                    if x is not None
+                ]
+                ends = [
+                    x
+                    for x in (tp_ends_by_ranks[r][i] for r in range(self.world_size))
+                    if x is not None
+                ]
+                stor_starts = [
+                    storage_read_starts_by_ranks[r][i]
+                    for r in range(self.world_size)
+                    if storage_read_starts_by_ranks[r][i] is not None
+                ]
+                stor_ends = [
+                    storage_read_ends_by_ranks[r][i]
+                    for r in range(self.world_size)
+                    if storage_read_ends_by_ranks[r][i] is not None
+                ]
+                iter_results.append(
+                    {
+                        "size": tp_sizes_gb[i],
+                        "latency": tp_latencies_ms[i],
+                        "isolated_rdma_p50_ms": state.isolated_rdma_stats_ms[i]["p50"],
+                        "isolated_rdma_p90_ms": state.isolated_rdma_stats_ms[i]["p90"],
+                        "isolated_rdma_p99_ms": state.isolated_rdma_stats_ms[i]["p99"],
+                        "isolated_rdma_min_ms": state.isolated_rdma_stats_ms[i]["min"],
+                        "isolated_rdma_max_ms": state.isolated_rdma_stats_ms[i]["max"],
+                        "num_senders": len(tp.senders_ranks()),
+                        "mean_bw": tp_mean_bws[i],
+                        "min_start_ts": min(starts) if starts else None,
+                        "max_end_ts": max(ends) if ends else None,
+                        "storage_read_max_ms": storage_read_max_ms[i],
+                        "storage_write_max_ms": storage_write_max_ms[i],
+                        "storage_read_start_ts": (
+                            min(stor_starts) if stor_starts else None
+                        ),
+                        "storage_read_end_ts": (max(stor_ends) if stor_ends else None),
+                        "isolated_read_p50_ms": state.isolated_read_stats_ms[i]["p50"],
+                        "isolated_read_p90_ms": state.isolated_read_stats_ms[i]["p90"],
+                        "isolated_read_p99_ms": state.isolated_read_stats_ms[i]["p99"],
+                        "isolated_read_min_ms": state.isolated_read_stats_ms[i]["min"],
+                        "isolated_read_max_ms": state.isolated_read_stats_ms[i]["max"],
+                        "isolated_write_p50_ms": state.isolated_write_stats_ms[i][
+                            "p50"
+                        ],
+                        "isolated_write_p90_ms": state.isolated_write_stats_ms[i][
+                            "p90"
+                        ],
+                        "isolated_write_p99_ms": state.isolated_write_stats_ms[i][
+                            "p99"
+                        ],
+                        "isolated_write_min_ms": state.isolated_write_stats_ms[i][
+                            "min"
+                        ],
+                        "isolated_write_max_ms": state.isolated_write_stats_ms[i][
+                            "max"
+                        ],
+                        "storage_read_size_gb": storage_read_sizes_gb[i],
+                        "storage_write_size_gb": storage_write_sizes_gb[i],
+                    }
                 )
+            state.results["iterations_results"].append(iter_results)
 
-                iter_results = []
-                for i, tp in enumerate(self.traffic_patterns):
-                    starts = [
-                        x
-                        for x in (
-                            tp_starts_by_ranks[r][i] for r in range(self.world_size)
-                        )
-                        if x is not None
-                    ]
-                    ends = [
-                        x
-                        for x in (
-                            tp_ends_by_ranks[r][i] for r in range(self.world_size)
-                        )
-                        if x is not None
-                    ]
-                    stor_starts = [
-                        storage_read_starts_by_ranks[r][i]
-                        for r in range(self.world_size)
-                        if storage_read_starts_by_ranks[r][i] is not None
-                    ]
-                    stor_ends = [
-                        storage_read_ends_by_ranks[r][i]
-                        for r in range(self.world_size)
-                        if storage_read_ends_by_ranks[r][i] is not None
-                    ]
-                    iter_results.append(
-                        {
-                            "size": tp_sizes_gb[i],
-                            "latency": tp_latencies_ms[i],
-                            "isolated_rdma_p50_ms": isolated_rdma_stats_ms[i]["p50"],
-                            "isolated_rdma_p90_ms": isolated_rdma_stats_ms[i]["p90"],
-                            "isolated_rdma_p99_ms": isolated_rdma_stats_ms[i]["p99"],
-                            "isolated_rdma_min_ms": isolated_rdma_stats_ms[i]["min"],
-                            "isolated_rdma_max_ms": isolated_rdma_stats_ms[i]["max"],
-                            "num_senders": len(tp.senders_ranks()),
-                            "mean_bw": tp_mean_bws[i],
-                            "min_start_ts": min(starts) if starts else None,
-                            "max_end_ts": max(ends) if ends else None,
-                            "storage_read_max_ms": storage_read_max_ms[i],
-                            "storage_write_max_ms": storage_write_max_ms[i],
-                            "storage_read_start_ts": (
-                                min(stor_starts) if stor_starts else None
-                            ),
-                            "storage_read_end_ts": (
-                                max(stor_ends) if stor_ends else None
-                            ),
-                            "isolated_read_p50_ms": isolated_read_stats_ms[i]["p50"],
-                            "isolated_read_p90_ms": isolated_read_stats_ms[i]["p90"],
-                            "isolated_read_p99_ms": isolated_read_stats_ms[i]["p99"],
-                            "isolated_read_min_ms": isolated_read_stats_ms[i]["min"],
-                            "isolated_read_max_ms": isolated_read_stats_ms[i]["max"],
-                            "isolated_write_p50_ms": isolated_write_stats_ms[i]["p50"],
-                            "isolated_write_p90_ms": isolated_write_stats_ms[i]["p90"],
-                            "isolated_write_p99_ms": isolated_write_stats_ms[i]["p99"],
-                            "isolated_write_min_ms": isolated_write_stats_ms[i]["min"],
-                            "isolated_write_max_ms": isolated_write_stats_ms[i]["max"],
-                            "storage_read_size_gb": storage_read_sizes_gb[i],
-                            "storage_write_size_gb": storage_write_sizes_gb[i],
-                        }
-                    )
-                results["iterations_results"].append(iter_results)
+        state.results["metadata"]["finished_ts"] = time.time()
+        if json_output_path and self.my_rank == 0:
+            logger.info("Saving results to %s", json_output_path)
+            with open(json_output_path, "w") as f:
+                # Use default=str to handle Path objects
+                json.dump(state.results, f, default=str)
 
-            results["metadata"]["finished_ts"] = time.time()
-            if json_output_path and self.my_rank == 0:
-                logger.info("Saving results to %s", json_output_path)
-                with open(json_output_path, "w") as f:
-                    # Use default=str to handle Path objects
-                    json.dump(results, f, default=str)
-        finally:
-            # Cleanup: always release handles and close backends, even on exception
-            logger.info("[Rank %d] Cleaning up resources", self.my_rank)
-            all_handles = [
-                h
-                for hs in tp_handles + storage_read_handles + storage_write_handles
-                for h in hs
-            ]
-            if all_handles:
-                # _destroy() runs _destroy_buffers() as a side-effect.
-                self._destroy(all_handles)
-            else:
-                # Storage-only runs allocate buffers but never go through
-                # the handle teardown path, so the buffers would leak if
-                # we didn't explicitly destroy them.
-                self._destroy_buffers()
+    def _teardown(self, state: RunState) -> None:
+        """Release handles, buffers and the storage backend. Always runs."""
+        # Cleanup: always release handles and close backends, even on exception
+        logger.info("[Rank %d] Cleaning up resources", self.my_rank)
+        all_handles = [
+            h
+            for hs in state.tp_handles
+            + state.storage_read_handles
+            + state.storage_write_handles
+            for h in hs
+        ]
+        if all_handles:
+            # _destroy() runs _destroy_buffers() as a side-effect.
+            self._destroy(all_handles)
+        else:
+            # Storage-only runs allocate buffers but never go through
+            # the handle teardown path, so the buffers would leak if
+            # we didn't explicitly destroy them.
+            self._destroy_buffers()
 
-            if self._storage_backend:
-                self._storage_backend.close()
+        if self._storage_backend:
+            self._storage_backend.close()

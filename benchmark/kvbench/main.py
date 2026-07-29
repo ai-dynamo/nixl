@@ -714,7 +714,23 @@ def sequential_ct_perftest(
 
         compute_time = tp_config.get("sleep_before_launch_sec")
         if compute_time:
-            logger.debug("TP %d: compute_time=%.3f sec", idx, compute_time)
+            logger.debug("TP %d: prefill compute_time=%.3f sec", idx, compute_time)
+
+        decode_compute = tp_config.get("decode_compute_sec")
+        if decode_compute is None and "sleep_after_launch_sec" in tp_config:
+            # Deprecated alias. The old key was never documented, and its
+            # docstring already promised "sleep after RDMA", which is what
+            # decode_compute_sec does. Keep it working, but say it moved.
+            logger.warning(
+                "TP %d: 'sleep_after_launch_sec' is deprecated, use "
+                "'decode_compute_sec'. The sleep now runs after the RDMA "
+                "transfer and before the storage write, not at the very end "
+                "of the traffic pattern.",
+                idx,
+            )
+            decode_compute = tp_config["sleep_after_launch_sec"]
+        if decode_compute:
+            logger.debug("TP %d: decode compute_time=%.3f sec", idx, decode_compute)
 
         pattern = TrafficPattern(
             mem_type=tp_config.get("mem_type", "cuda").lower(),  # Default: GPU memory
@@ -722,7 +738,7 @@ def sequential_ct_perftest(
             shards=tp_config.get("shards", 1),
             xfer_op=tp_config.get("xfer_op", "WRITE").upper(),
             sleep_before_launch_sec=compute_time,
-            sleep_after_launch_sec=tp_config.get("sleep_after_launch_sec", None),
+            decode_compute_sec=decode_compute,
             storage_ops=storage_ops,
         )
 
