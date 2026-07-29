@@ -20,6 +20,9 @@
 #include <nixl_types.h>
 #include "common.h"
 #include "nixl.h"
+#ifdef HAVE_UCX_BACKEND
+#include "ucx_utils.h"
+#endif
 
 namespace gtest {
 namespace nixl {
@@ -449,6 +452,29 @@ TEST_P(TestErrorHandling, XferPostThenFail) {
     testXfer<TestType::FAIL_AFTER_POST, NIXL_WRITE>();
     testXfer<TestType::FAIL_AFTER_POST, NIXL_READ>();
 }
+
+#ifdef HAVE_UCX_BACKEND
+TEST_P(TestErrorHandling, ErrorCallbackMarksEndpointFailedWithoutClosingIt) {
+    std::vector<std::string> devices;
+    const size_t num_workers = std::get<1>(GetParam());
+    const bool use_progress_thread = std::get<2>(GetParam()) > 0;
+    nixlUcxContext consumer_context(
+        devices, use_progress_thread, num_workers, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 1);
+    nixlUcxContext producer_context(
+        devices, use_progress_thread, num_workers, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 1);
+    nixlUcxWorker consumer(consumer_context, UCP_ERR_HANDLING_MODE_PEER);
+    nixlUcxWorker producer(producer_context, UCP_ERR_HANDLING_MODE_PEER);
+    std::string producer_address = producer.epAddr();
+    auto endpoint = consumer.connect(producer_address.data(), producer_address.size());
+    ASSERT_NE(endpoint, nullptr);
+
+    const ucp_ep_h native_endpoint = endpoint->getEp();
+    endpoint->err_cb(native_endpoint, UCS_ERR_CONNECTION_RESET);
+
+    EXPECT_EQ(endpoint->checkTxState(), NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(endpoint->getEp(), native_endpoint);
+}
+#endif
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestErrorHandling, testing::Values(std::make_tuple("UCX", 1, 0)));
 INSTANTIATE_TEST_SUITE_P(ucx_threadpool,
