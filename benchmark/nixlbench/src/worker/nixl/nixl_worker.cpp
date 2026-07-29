@@ -1458,8 +1458,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             std::string cc_str;
             cc_str.resize(static_cast<size_t>(desc_str_sz), '\0');
             if (rt->recvChar(cc_str.data(), cc_str.size(), srcrank) != 0) {
-                std::cerr << "NIXL: failed to receive completion counter descriptor"
-                          << std::endl;
+                std::cerr << "NIXL: failed to receive completion counter descriptor" << std::endl;
                 std::exit(EXIT_FAILURE);
             }
             cc_ser.importStr(cc_str);
@@ -1929,8 +1928,7 @@ execDeviceTransfer(nixlMemViewH local_mvh,
             stats.total_duration.add(total_timer.lap());
             return -1;
         }
-        nixl_status_t st =
-            nixlbenchLaunchDevicePut(params, static_cast<unsigned>(num_threads));
+        nixl_status_t st = nixlbenchLaunchDevicePut(params, static_cast<unsigned>(num_threads));
         if (__builtin_expect(st != NIXL_SUCCESS, 0)) {
             std::cerr << "nixlbenchLaunchDevicePut failed: " << nixlEnumStrings::statusStr(st)
                       << std::endl;
@@ -1971,8 +1969,7 @@ xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_
     if (expected_value == 0) {
         return true;
     }
-    CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId),
-                     "Failed to set completion counter device");
+    CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
 
     while (!signaled()) {
         xferBenchDeviceCounters counters{};
@@ -2015,8 +2012,7 @@ resetDeviceCounters(const xferBenchIOV &counter_iov) {
     CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
     CHECK_CUDA_ERROR(cudaMemset(reinterpret_cast<void *>(counter_iov.addr), 0, kDeviceCounterBytes),
                      "Failed to reset completion counters in VRAM");
-    CHECK_CUDA_ERROR(cudaStreamSynchronize(0),
-                     "Failed to synchronize completion counter reset");
+    CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize completion counter reset");
 
 #else
     (void)counter_iov;
@@ -2123,8 +2119,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            xfer_op,
                            num_iter,
                            xferBenchConfig::num_threads,
-                        stats,
-                       &terminate);
+                           stats,
+                           &terminate);
     }
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
@@ -2241,8 +2237,7 @@ xferBenchNixlWorker::prepareGPURemoteView(
     const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) {
     if (remote_agent_name.empty()) {
         std::cerr << "NIXL Device API: remote_agent_name is empty; "
-                  << "exchangeMetadata must be called before prepareGPURemoteView"
-                  << std::endl;
+                  << "exchangeMetadata must be called before prepareGPURemoteView" << std::endl;
         std::exit(EXIT_FAILURE);
     }
 
@@ -2255,11 +2250,10 @@ xferBenchNixlWorker::prepareGPURemoteView(
         }
     }
 
-    const nixlRemoteDesc remoteDesc{
-        completion_counter_iov.value().addr,
-        completion_counter_iov.value().len,
-        static_cast<uint64_t>(completion_counter_iov.value().devId),
-        remote_agent_name};
+    const nixlRemoteDesc remoteDesc{completion_counter_iov.value().addr,
+                                    completion_counter_iov.value().len,
+                                    static_cast<uint64_t>(completion_counter_iov.value().devId),
+                                    remote_agent_name};
     remote_list.addDesc(remoteDesc);
     CHECK_NIXL_ERROR(agent->prepMemView(remote_list, remote_mvh),
                      "prepMemView on remote view failed");
