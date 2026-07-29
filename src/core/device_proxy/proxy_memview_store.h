@@ -79,7 +79,7 @@ struct ProxyMemViewEntry {
 
 class nixlProxyMemViewStore {
 public:
-    explicit nixlProxyMemViewStore(int cuda_device);
+    nixlProxyMemViewStore(int cuda_device, const nixlProxyDeviceContextData &context);
     ~nixlProxyMemViewStore();
 
     nixlProxyMemViewStore(const nixlProxyMemViewStore &) = delete;
@@ -134,6 +134,7 @@ private:
     copyMetadata(const nixl_remote_meta_dlist_t &dlist);
 
     int cuda_device_;
+    const nixlProxyDeviceContextData context_;
     std::atomic<const SlotArray *> published_slots_{nullptr};
     mutable std::mutex writer_mutex_;
 

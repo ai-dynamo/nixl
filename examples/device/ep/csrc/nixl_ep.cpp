@@ -104,40 +104,6 @@ Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int tim
         explicitly_destroy(explicitly_destroy),
         comm_stream(at::cuda::getStreamFromPool(true)) {}
 
-void Buffer::_publish_proxy_context() {
-#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
-    void *proxy_context = nixl_agent_info->agent->getProxyDeviceContext();
-    if (proxy_context == nullptr) {
-        return;
-    }
-
-    c10::cuda::CUDAGuard device_guard(device_id);
-    proxy_context_owner_id = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this));
-    const cudaError_t status = publish_proxy_context(proxy_context, proxy_context_owner_id);
-    if (status != cudaSuccess) {
-        throw std::runtime_error(std::string("Failed to publish NIXL EP proxy context: ") +
-                                 cudaGetErrorString(status));
-    }
-    proxy_context_published = true;
-#endif
-}
-
-void Buffer::_clear_proxy_context() {
-#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
-    if (!proxy_context_published) {
-        return;
-    }
-
-    c10::cuda::CUDAGuard device_guard(device_id);
-    const cudaError_t status = clear_proxy_context(proxy_context_owner_id);
-    if (status != cudaSuccess) {
-        throw std::runtime_error(std::string("Failed to clear NIXL EP proxy context: ") +
-                                 cudaGetErrorString(status));
-    }
-    proxy_context_published = false;
-#endif
-}
-
 bool Buffer::_is_rank_connected(int rank_id) const {
     return rank_id == rank or std::find(remote_ranks.begin(), remote_ranks.end(), rank_id) != remote_ranks.end();
 }
@@ -277,7 +243,6 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
     _nixl_agent_init();
 
     _nixl_ep_init();
-    _publish_proxy_context();
 }
 
 Buffer::~Buffer() noexcept {
@@ -357,9 +322,6 @@ void Buffer::destroy() {
 
     // Synchronize
     warn_cuda(cudaDeviceSynchronize(), "synchronize device");
-
-    // The module-local symbol must be cleared while its runtime is still alive.
-    _clear_proxy_context();
 
     _nixl_ep_destroy();
 

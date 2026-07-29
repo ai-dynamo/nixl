@@ -248,20 +248,10 @@ protected:
         for (size_t i = 0; i < 2; i++) {
             ASSERT_NO_FATAL_FAILURE(addAgent());
         }
-
-#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
-        auto *ctx = static_cast<nixlProxyDeviceContextData *>(
-            agents[SENDER_AGENT]->getProxyDeviceContext());
-        ASSERT_NE(ctx, nullptr) << "Proxy device context not available";
-        ASSERT_EQ(nixlProxyPublishContext(ctx), cudaSuccess);
-#endif
     }
 
     void
     TearDown() override {
-#ifdef NIXL_GPU_DEVICE_BACKEND_PROXY
-        nixlProxyClearContext();
-#endif
         agents.clear();
         backend_handles.clear();
     }

@@ -158,14 +158,10 @@ private:
     NixlPeerInfo my_peer_info;
     nixl_ep::gpu_nixl_ctx gpu_ctx;
     nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
-    bool proxy_context_published = false;
-    uint64_t proxy_context_owner_id = 0;
     uint64_t* last_ht_barrier_counter = nullptr;
     uint64_t* local_ht_barrier_counter = nullptr;
 
     /* Common private funcs */
-    void _publish_proxy_context();
-    void _clear_proxy_context();
     void _nixl_agent_init();
     void _nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds = {});
     void _nixl_agents_disconnect(const std::vector<int>& ranks);

@@ -44,7 +44,8 @@ protected:
         if (cudaGetDevice(&device) != cudaSuccess) {
             GTEST_SKIP() << "No CUDA-capable GPU";
         }
-        store_ = std::make_unique<nixlProxyMemViewStore>(device);
+        store_ = std::make_unique<nixlProxyMemViewStore>(
+            device, nixlProxyDeviceContextData{nullptr, 4, 2, reinterpret_cast<uint64_t *>(0xabc0)});
     }
 
     nixl_meta_dlist_t
@@ -101,6 +102,10 @@ TEST_F(ProxyMemViewStoreTest, LocalHandleHasCompatiblePrefixAndNullElement) {
     EXPECT_EQ(header.length, 1u);
     EXPECT_EQ(header.proxy_memview_id, prepared.id);
     EXPECT_EQ(header.kind, nixlProxyMemViewKind::LOCAL);
+    EXPECT_EQ(header.context.channels, nullptr);
+    EXPECT_EQ(header.context.peer_capacity, 4u);
+    EXPECT_EQ(header.context.num_channels, 2u);
+    EXPECT_EQ(header.context.shutdown_word, reinterpret_cast<uint64_t *>(0xabc0));
 
     nixlProxyDeviceMemViewElem element{};
     ASSERT_EQ(cudaMemcpy(&element,

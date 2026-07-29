@@ -270,18 +270,11 @@ nixlProxyRuntime::init(std::unique_ptr<nixlDeviceProxyBackendAdapter> backend,
     backend_ = std::move(backend);
     peer_capacity_ = peer_capacity;
     channel_count_ = channel_count;
-    int cuda_device = -1;
-    if (cudaGetDevice(&cuda_device) != cudaSuccess) {
+    if (cudaGetDevice(&cuda_device_) != cudaSuccess) {
         backend_.reset();
         return NIXL_ERR_BACKEND;
     }
-    try {
-        memview_store_ = std::make_unique<nixlProxyMemViewStore>(cuda_device);
-    }
-    catch (const std::bad_alloc &) {
-        backend_.reset();
-        return NIXL_ERR_BACKEND;
-    }
+    unsafe_to_destroy_ = false;
 
     worker_count_ = std::min(worker_count, channel_count);
     NIXL_INFO << "ProxyRuntime::init: effective worker_count=" << worker_count_
@@ -322,19 +315,14 @@ nixlProxyRuntime::init(std::unique_ptr<nixlDeviceProxyBackendAdapter> backend,
         return NIXL_ERR_BACKEND;
     }
 
-    nixlProxyDeviceContextData device_context{device_channel_views_dev_,
-                                              peer_capacity_,
-                                              channel_count_,
-                                              control_slots_.devicePtr(kProxyShutdownSlot)};
-    if (cudaMalloc(reinterpret_cast<void **>(&device_context_),
-                   sizeof(nixlProxyDeviceContextData)) != cudaSuccess ||
-        cudaMemcpy(
-            device_context_, &device_context, sizeof(device_context), cudaMemcpyHostToDevice) !=
-            cudaSuccess) {
-        if (device_context_) {
-            cudaFree(device_context_);
-            device_context_ = nullptr;
-        }
+    device_context_ = {device_channel_views_dev_,
+                       peer_capacity_,
+                       channel_count_,
+                       control_slots_.devicePtr(kProxyShutdownSlot)};
+    try {
+        memview_store_ = std::make_unique<nixlProxyMemViewStore>(cuda_device_, device_context_);
+    }
+    catch (const std::bad_alloc &) {
         shutdown();
         return NIXL_ERR_BACKEND;
     }
@@ -369,7 +357,7 @@ nixlProxyRuntime::init(std::unique_ptr<nixlDeviceProxyBackendAdapter> backend,
 
     NIXL_INFO << "ProxyRuntime::init: complete — " << peer_capacity_ << " peers, " << channel_count_
               << " channels (rings per dest), " << worker_count_
-              << " workers, device_context(dev)=" << device_context_;
+              << " workers, CUDA device=" << cuda_device_;
     return NIXL_SUCCESS;
 }
 
@@ -702,7 +690,11 @@ nixlProxyRuntime::joinWorkerThreads() noexcept {
 
 nixl_status_t
 nixlProxyRuntime::shutdown() {
-    NIXL_INFO << "ProxyRuntime::shutdown: signalling workers to stop";
+    if (backend_ == nullptr) {
+        return NIXL_SUCCESS;
+    }
+
+    NIXL_INFO << "ProxyRuntime::shutdown: rejecting new GPU submissions";
     nixl_status_t control_status = NIXL_SUCCESS;
     if (control_slots_.hostPtr(kProxyShutdownSlot) != nullptr) {
         control_status = control_slots_.publish(
@@ -711,12 +703,36 @@ nixlProxyRuntime::shutdown() {
             NIXL_ERROR << "ProxyRuntime::shutdown: failed to publish SHUTDOWN state";
         }
     }
+
+    int original_device = -1;
+    const int runtime_device = cuda_device_;
+    cudaError_t quiesce_status = cudaGetDevice(&original_device);
+    if (control_status == NIXL_SUCCESS && quiesce_status == cudaSuccess &&
+        original_device != runtime_device) {
+        quiesce_status = cudaSetDevice(runtime_device);
+    }
+    if (control_status == NIXL_SUCCESS && quiesce_status == cudaSuccess) {
+        // Workers stay live while accepted submissions and polling kernels
+        // finish. No device-reachable allocation may be freed before this.
+        quiesce_status = cudaDeviceSynchronize();
+    }
+
     shutdown_state_.store(static_cast<uint64_t>(nixl_proxy_control_state_t::SHUTDOWN),
                           std::memory_order_release);
-
     joinWorkerThreads();
     workers_started_ = false;
     NIXL_INFO << "ProxyRuntime::shutdown: all worker threads joined";
+
+    if (control_status != NIXL_SUCCESS || quiesce_status != cudaSuccess) {
+        unsafe_to_destroy_ = true;
+        if (original_device >= 0 && original_device != runtime_device) {
+            cudaSetDevice(original_device);
+        }
+        NIXL_ERROR << "ProxyRuntime::shutdown: device quiescence was not established; "
+                      "retaining all device-reachable runtime state";
+        return control_status != NIXL_SUCCESS ? control_status : NIXL_ERR_BACKEND;
+    }
+    unsafe_to_destroy_ = false;
 
     // Workers are stopped, so the fixed inflight slots are stable. Release any
     // backend requests that never reached a terminal status before shutting
@@ -756,10 +772,6 @@ nixlProxyRuntime::shutdown() {
         memview_store_.reset();
     }
 
-    if (device_context_) {
-        cudaFree(device_context_);
-        device_context_ = nullptr;
-    }
     if (device_channel_views_dev_) {
         cudaFree(device_channel_views_dev_);
         device_channel_views_dev_ = nullptr;
@@ -773,7 +785,12 @@ nixlProxyRuntime::shutdown() {
     peer_capacity_ = 0;
     channel_count_ = 0;
     worker_count_ = 0;
+    device_context_ = {};
+    cuda_device_ = -1;
     backend_.reset();
+    if (original_device >= 0 && original_device != runtime_device) {
+        cudaSetDevice(original_device);
+    }
     NIXL_INFO << "ProxyRuntime::shutdown: complete";
     return backend_status != NIXL_SUCCESS ? backend_status : control_status;
 }

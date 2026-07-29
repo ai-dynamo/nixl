@@ -155,6 +155,11 @@ public:
     nixl_status_t
     shutdown();
 
+    bool
+    safeToDestroy() const noexcept {
+        return !unsafe_to_destroy_;
+    }
+
     uint32_t
     channelCount() const {
         return channel_count_;
@@ -178,11 +183,6 @@ public:
     const nixlProxyChannelView *
     deviceChannelViews() const {
         return device_channel_views_.empty() ? nullptr : device_channel_views_.data();
-    }
-
-    nixlProxyDeviceContextData *
-    deviceContext() const {
-        return device_context_;
     }
 
     /** Test/diagnostic accessor for per-channel lifecycle state. */
@@ -224,7 +224,7 @@ private:
     nixlGdrBuffer control_slots_;
     std::vector<nixlProxyChannelView> device_channel_views_;
     nixlProxyChannelView *device_channel_views_dev_ = nullptr;
-    nixlProxyDeviceContextData *device_context_ = nullptr;
+    nixlProxyDeviceContextData device_context_{};
     std::unique_ptr<std::atomic<nixl_proxy_channel_lifecycle_t>[]> channel_lifecycle_;
     std::vector<std::string> active_agents_;
     std::vector<std::unique_ptr<ProxyWorker>> workers_;
@@ -237,7 +237,9 @@ private:
     uint32_t channel_count_ = 0;
     uint32_t worker_count_ = 0;
     uint32_t ring_depth_ = kDefaultProxyRingDepth;
+    int cuda_device_ = -1;
     bool workers_started_ = false;
+    bool unsafe_to_destroy_ = false;
     std::mutex peer_reconcile_mutex_;
 };
 

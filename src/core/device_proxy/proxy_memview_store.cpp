@@ -100,7 +100,9 @@ nixlProxyMemViewStore::SlotArray::SlotArray(uint32_t capacity)
     }
 }
 
-nixlProxyMemViewStore::nixlProxyMemViewStore(int cuda_device) : cuda_device_(cuda_device) {
+nixlProxyMemViewStore::nixlProxyMemViewStore(int cuda_device,
+                                             const nixlProxyDeviceContextData &context)
+    : cuda_device_(cuda_device), context_(context) {
     auto initial = std::make_unique<SlotArray>(kInitialSlotCapacity);
     const SlotArray *published = initial.get();
     retained_slot_arrays_.push_back(std::move(initial));
@@ -205,6 +207,7 @@ nixlProxyMemViewStore::create(nixlProxyMemViewKind kind,
     auto *host_memview = reinterpret_cast<nixlProxyDeviceMemView *>(host_storage.data());
     host_memview->version = NIXL_PROXY_MEM_LIST_VERSION_V1;
     host_memview->length = static_cast<uint32_t>(metadata.size());
+    host_memview->context = context_;
     host_memview->proxy_memview_id = id;
     host_memview->kind = kind;
     for (size_t index = 0; index < direct_ptrs.size(); ++index) {

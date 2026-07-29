@@ -45,6 +45,12 @@ const std::vector<std::vector<std::string>> illegal_plugin_combinations = {
     {"GDS", "GDS_MT"},
 };
 
+void
+retainUnsafeProxyRuntime(std::unique_ptr<nixlProxyRuntime> &runtime) noexcept {
+    NIXL_ERROR << "Retaining stopped proxy runtime because CUDA device quiescence failed";
+    (void)runtime.release();
+}
+
 } // namespace
 
 void
@@ -391,7 +397,11 @@ nixlAgentData::createProxyRuntime(nixlBackendEngine *engine,
     status = proxyRuntime->startWorkers();
     if (status != NIXL_SUCCESS) {
         proxyRuntime->shutdown();
-        proxyRuntime.reset();
+        if (proxyRuntime->safeToDestroy()) {
+            proxyRuntime.reset();
+        } else {
+            retainUnsafeProxyRuntime(proxyRuntime);
+        }
         return status;
     }
 
@@ -406,17 +416,13 @@ void
 nixlAgentData::shutdownProxyRuntime() {
     if (proxyRuntime) {
         proxyRuntime->shutdown();
-        proxyRuntime.reset();
+        if (proxyRuntime->safeToDestroy()) {
+            proxyRuntime.reset();
+        } else {
+            retainUnsafeProxyRuntime(proxyRuntime);
+        }
     }
     proxyTransportEngine = nullptr;
-}
-
-void *
-nixlAgent::getProxyDeviceContext() const {
-    if (data->proxyRuntime) {
-        return data->proxyRuntime->deviceContext();
-    }
-    return nullptr;
 }
 
 nixl_status_t
