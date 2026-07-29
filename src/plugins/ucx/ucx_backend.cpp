@@ -875,7 +875,7 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
     nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
     std::shared_ptr<nixlUcxConnection> conn = std::make_shared<nixlUcxConnection>();
     for (const auto &uw : workers_) {
-        std::unique_ptr<nixlUcxEp> ep = uw->connect(addr.data(), size);
+        std::unique_ptr<nixlUcxEp> ep = uw->connect(addr.data());
         if (!ep) {
             return NIXL_ERR_BACKEND;
         }

@@ -217,7 +217,7 @@ public:
     [[nodiscard]] std::string
     epAddr();
     [[nodiscard]] std::unique_ptr<nixlUcxEp>
-    connect(void *addr, size_t size);
+    connect(void *addr);
 
     /* Active message handling */
     int

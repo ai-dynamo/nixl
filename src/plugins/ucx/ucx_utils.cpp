@@ -567,7 +567,7 @@ nixlUcxWorker::epAddr() {
 }
 
 std::unique_ptr<nixlUcxEp>
-nixlUcxWorker::connect(void *addr, std::size_t size) {
+nixlUcxWorker::connect(void *addr) {
     try {
         return std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, epCloseFlags_);
     }
