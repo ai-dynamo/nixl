@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
 failures=()
+
+# Accepted copyright holders. Add new orgs here — each must appear in a header line as:
+#   SPDX-FileCopyrightText: Copyright (c) YYYY(-YYYY) <AUTHOR>. All rights reserved.
+AUTHORS=(
+  "NVIDIA CORPORATION & AFFILIATES"
+  "Advanced Micro Devices, Inc"
+)
 
 for f in $(git ls-files); do
   # Normalize path
@@ -28,8 +35,24 @@ for f in $(git ls-files); do
 
   header=$(head -n 20 "$f")
 
-  # Match SPDX-FileCopyrightText with NVIDIA and year(s)
-  if ! echo "$header" | grep -Eq 'SPDX-FileCopyrightText:\s*Copyright \(c\) [0-9]{4}(-[0-9]{4})? NVIDIA CORPORATION & AFFILIATES\. All rights reserved\.'; then
+  # Match SPDX-FileCopyrightText with year(s)
+  copyright_lines=$(echo "$header" | grep -E 'SPDX-FileCopyrightText:\s*Copyright \(c\) [0-9]{4}(-[0-9]{4})? .+\. All rights reserved\.' || true)
+
+  # Keep only lines whose author field exactly matches an entry in AUTHORS.
+  # The author field is the text between the year and ". All rights reserved.";
+  # exact comparison rejects any extra text before/after an accepted author.
+  matched_lines=""
+  while IFS= read -r line; do
+    line_author=$(echo "$line" | sed -E 's/.*Copyright \(c\) [0-9]{4}(-[0-9]{4})? (.+)\. All rights reserved\..*/\2/')
+    for author in "${AUTHORS[@]}"; do
+      if [[ "$line_author" == "$author" ]]; then
+        matched_lines+="$line"$'\n'
+        break
+      fi
+    done
+  done <<< "$copyright_lines"
+
+  if [[ -z "$matched_lines" ]]; then
     failures+=("$f (missing or incorrect copyright line)")
     continue
   fi
@@ -37,18 +60,14 @@ for f in $(git ls-files); do
   # Extract last modification year from git
   last_modified=$(git log -1 --pretty="%cs" -- "$f" | cut -d- -f1)
 
-  # Extract copyright years (handles YYYY or YYYY-YYYY)
-  copyright_years=$(echo "$header" | \
-    grep NVIDIA | grep -Eo 'Copyright \(c\) [0-9]{4}(-[0-9]{4})?' | \
-    sed -E 's/.* ([0-9]{4})(-[0-9]{4})?/\1\2/' || true)
+  # Extract copyright years (handles YYYY or YYYY-YYYY) from every matched line;
+  # a file may carry more than one accepted author (e.g. a dual-attributed derivative).
+  copyright_years=$(echo "$matched_lines" | \
+    grep -Eo 'Copyright \(c\) [0-9]{4}(-[0-9]{4})?' | \
+    sed -E 's/.* ([0-9]{4})(-[0-9]{4})?/\1\2/')
 
-  if [[ -z "$copyright_years" ]]; then
-    failures+=("$f (missing copyright)")
-    continue
-  fi
-
-  # Get last year (handles range)
-  end_year=$(echo "$copyright_years" | sed -E 's/.*-//' || true)
+  # Get the latest end year across all matched authors (handles ranges)
+  end_year=$(echo "$copyright_years" | sed -E 's/.*-//' | sort -n | tail -1)
 
   # Validate date
   if (( end_year < last_modified )); then
