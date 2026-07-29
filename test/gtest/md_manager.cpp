@@ -185,6 +185,8 @@ TEST_F(MDManagerFixture, SendLocalWithoutWorker) {
     AgentContext src;
     src.name = "mdm_agent_no_worker";
     nixlAgentConfig cfg;
+    // Explicit, since it is the precondition under test: no listener, no worker.
+    cfg.useListenThread = false;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
     src.agent = std::make_unique<nixlAgent>(src.name, cfg);
     src.createBackend();

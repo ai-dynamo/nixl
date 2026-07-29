@@ -192,6 +192,8 @@ private:
     const std::unique_ptr<nixlMetadataBackend> backend_;
     // Fixed once the backends exist: they answer it from configuration only.
     const bool workerNeeded_;
+    // Serializes tasks run on the caller thread when there is no worker.
+    std::mutex inlineTaskMutex_;
     // Runs backend I/O and background servicing off the caller thread.
     nixlMetadataWorker worker_;
 };

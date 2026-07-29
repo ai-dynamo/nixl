@@ -145,7 +145,11 @@ nixlMDManager::route(const nixl_opt_args_t *extra_params, Prepare prepare) {
             // listener reaches this (the store backends always need the worker),
             // and prepare() has already done every agent-side step, so what is
             // left is a socket send: safe to run here, at the cost of making the
-            // call synchronous.
+            // call synchronous. The lock keeps the backend's promise that its
+            // transport state is touched by one thread at a time, which the
+            // worker provides in the other branch; metadata calls are not
+            // serialized by the agent lock.
+            const std::lock_guard lk(inlineTaskMutex_);
             op.task();
         }
     }
