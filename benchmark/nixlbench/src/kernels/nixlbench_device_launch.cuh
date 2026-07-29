@@ -16,22 +16,19 @@
  * order as xferBenchNixlWorker::prepareGPULocalView / prepareGPURemoteView (outer vector = thread
  * lists, inner vector = IOVs for that thread).
  *
- * @a numRegions is the **data** region count (put loop uses indices @c 0 .. @a numRegions-1). When
- * @a signalRemoteCompletion is true, the host must have appended a counter buffer as the last
- * remote descriptor so the view has @a numRegions + 1 regions. The counter buffer stores:
+ * @a numRegions is the **data** region count (put loop uses indices @c 0 .. @a numRegions-1).
+ * The host must append a counter buffer as the last remote descriptor, so the view has
+ * @a numRegions + 1 regions. The counter buffer stores:
  * - done counter at byte offset @a completionCounterOffsetBytes
  * - error counter at byte offset @a errorCounterOffsetBytes
  *
  * Kernel uses @c nixlAtomicAdd on @c { remoteMvh, numRegions, offset }.
- * When @a signalRemoteCompletion is false, @a remoteMvh has exactly @a numRegions regions and
- * no counter atomic is issued.
  */
 struct nixlbenchDeviceXferParams {
     nixlMemViewH localMvh; ///< Local memory view from prepMemView
     nixlMemViewH remoteMvh; ///< Remote memory view from prepMemView
     size_t numRegions; ///< Data region count (puts); completion index when signaling
     size_t regionSize; ///< Bytes per region for this transfer pattern
-    bool signalRemoteCompletion; ///< If true, counter region exists at index @a numRegions
     size_t completionCounterOffsetBytes; ///< Done counter offset in the counter region
     size_t errorCounterOffsetBytes; ///< Error counter offset in the counter region
 };

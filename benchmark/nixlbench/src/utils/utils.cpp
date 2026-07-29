@@ -360,6 +360,9 @@ isDeviceAPISupported() {
     if (xferBenchConfig::scheme != XFERBENCH_SCHEME_PAIRWISE) {
         return reject("scheme must be pairwise");
     }
+    if (xferBenchConfig::pipeline_depth != 1) {
+        return reject("pipeline_depth must be 1");
+    }
     return true;
 #else
     return reject("UCX GPU Device API support is not enabled in this build. "
@@ -559,6 +562,11 @@ xferBenchConfig::loadParams(void) {
     large_blk_iter_ftr = NB_ARG(large_blk_iter_ftr);
     warmup_iter = NB_ARG(warmup_iter);
     num_threads = NB_ARG(num_threads);
+    pipeline_depth = NB_ARG(pipeline_depth);
+    if (pipeline_depth < 1) {
+        std::cerr << "pipeline_depth must be >= 1" << std::endl;
+        return -1;
+    }
     bool intended_use_device_api = NB_ARG(use_device_api);
     use_device_api = intended_use_device_api && isDeviceAPISupported();
     if (intended_use_device_api && !use_device_api) {
@@ -595,11 +603,6 @@ xferBenchConfig::loadParams(void) {
     recreate_xfer = NB_ARG(recreate_xfer);
     reregister_mem = NB_ARG(reregister_mem);
     prepared_xfer = NB_ARG(prepared_xfer);
-    pipeline_depth = NB_ARG(pipeline_depth);
-    if (pipeline_depth < 1) {
-        std::cerr << "pipeline_depth must be >= 1" << std::endl;
-        return -1;
-    }
     use_hugepages = NB_ARG(use_hugepages);
     if (use_hugepages && (total_buffer_size % HUGEPAGE_SIZE) != 0) {
         size_t hugepage_aligned_size = ROUND_UP(total_buffer_size, HUGEPAGE_SIZE);

@@ -137,12 +137,6 @@ nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if (!params.signalRemoteCompletion) {
-        std::cerr << "nixlbench: nixlbenchLaunchDevicePut: remote completion signaling is "
-                     "required\n";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
     if (block_threads == 0 || block_threads > 1024u) {
         std::cerr << "nixlbench: nixlbenchLaunchDevicePut: invalid block_threads=" << block_threads
                   << " (must be 1..1024)\n";

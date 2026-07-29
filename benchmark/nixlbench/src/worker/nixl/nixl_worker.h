@@ -49,9 +49,6 @@ class xferBenchNixlWorker: public xferBenchWorker {
         nixlMemViewH local_mvh;
         nixlMemViewH remote_mvh;
         std::string remote_agent_name;
-        /// Device API: target holds local registered counter buffer (done + error uint64_t
-        /// counters); initiator holds peer descriptor after exchangeIOV (no local alloc on
-        /// initiator).
         std::optional<xferBenchIOV> completion_counter_iov;
 
     public:

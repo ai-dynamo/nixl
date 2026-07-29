@@ -29,6 +29,7 @@
 #include <numeric>
 #include <sstream>
 #include "utils/neuron.h"
+#include "utils/scope_guard.h"
 #include "utils/utils.h"
 #include <unistd.h>
 #include <utility>
@@ -1207,18 +1208,16 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         iov_lists.push_back(std::move(iov_list));
     }
 
-    if (xferBenchConfig::use_device_api && seg_type == VRAM_SEG) {
+    if (xferBenchConfig::use_device_api && isTarget()) {
         completion_counter_iov = initCompletionCounterVram();
-        if (isTarget() && !completion_counter_iov.has_value()) {
+        if (!completion_counter_iov.has_value()) {
             std::cerr << "NIXL: failed to allocate completion counter for Device API" << std::endl;
             std::exit(EXIT_FAILURE);
         }
-        if (completion_counter_iov.has_value()) {
-            std::vector<xferBenchIOV> cc_list{completion_counter_iov.value()};
-            nixl_reg_dlist_t cc_desc = iovListToNixlRegDlist(cc_list, VRAM_SEG);
-            CHECK_NIXL_ERROR(agent->registerMem(cc_desc, &opt_args),
-                             "registerMem failed for completion counter");
-        }
+        std::vector<xferBenchIOV> cc_list{completion_counter_iov.value()};
+        nixl_reg_dlist_t cc_desc = iovListToNixlRegDlist(cc_list, VRAM_SEG);
+        CHECK_NIXL_ERROR(agent->registerMem(cc_desc, &opt_args),
+                         "registerMem failed for completion counter");
     }
 
     return iov_lists;
@@ -1900,22 +1899,9 @@ execTransfer(nixlAgent *agent,
     return ret;
 }
 
-// Descriptor count after the same flattening as prepareGPULocalView.
-static size_t
-countFlattenedRegions(const std::vector<std::vector<xferBenchIOV>> &local_iovs) {
-    size_t n = 0;
-    for (const auto &lst : local_iovs) {
-        n += lst.size();
-    }
-    return n;
-}
-
-// Device PUT: MVHs from prepMemView; runs num_iter launches with CUDA block size num_threads.
-// signal_remote_completion: host appended counter as last remote region.
 static int
 execDeviceTransfer(nixlMemViewH local_mvh,
                    nixlMemViewH remote_mvh,
-                   bool signal_remote_completion,
                    const int num_iter,
                    const int num_threads,
                    size_t num_regions,
@@ -1925,17 +1911,11 @@ execDeviceTransfer(nixlMemViewH local_mvh,
 #ifdef HAVE_UCX_GPU_DEVICE_API
     stats.clear();
 
-    if (num_threads < 1 || num_threads > 1024) {
-        std::cerr << "execDeviceTransfer: num_threads must be >= 1 and <= 1024" << std::endl;
-        return -1;
-    }
-
     nixlbenchDeviceXferParams params;
     params.localMvh = local_mvh;
     params.remoteMvh = remote_mvh;
     params.numRegions = num_regions;
     params.regionSize = region_size;
-    params.signalRemoteCompletion = signal_remote_completion;
     params.completionCounterOffsetBytes = kDeviceCounterDoneOffsetBytes;
     params.errorCounterOffsetBytes = kDeviceCounterErrorOffsetBytes;
 
@@ -1966,7 +1946,6 @@ execDeviceTransfer(nixlMemViewH local_mvh,
 #else
     (void)local_mvh;
     (void)remote_mvh;
-    (void)signal_remote_completion;
     (void)num_iter;
     (void)num_threads;
     (void)num_regions;
@@ -1992,9 +1971,10 @@ xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_
     if (expected_value == 0) {
         return true;
     }
+    CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId),
+                     "Failed to set completion counter device");
+
     while (!signaled()) {
-        CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId),
-                         "Failed to set completion counter device");
         xferBenchDeviceCounters counters{};
         CHECK_CUDA_ERROR(cudaMemcpy(&counters,
                                     reinterpret_cast<const void *>(counter_iov.addr),
@@ -2035,6 +2015,9 @@ resetDeviceCounters(const xferBenchIOV &counter_iov) {
     CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
     CHECK_CUDA_ERROR(cudaMemset(reinterpret_cast<void *>(counter_iov.addr), 0, kDeviceCounterBytes),
                      "Failed to reset completion counters in VRAM");
+    CHECK_CUDA_ERROR(cudaStreamSynchronize(0),
+                     "Failed to synchronize completion counter reset");
+
 #else
     (void)counter_iov;
     std::cerr << "NIXL Device API support is not enabled in this build" << std::endl;
@@ -2064,24 +2047,37 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
     size_t num_regions = 0;
     if (xferBenchConfig::use_device_api) {
-        const size_t local_regions = countFlattenedRegions(local_iovs);
-        const size_t remote_regions = countFlattenedRegions(remote_iovs);
-        assert(local_regions == remote_regions);
+        if (local_iovs.size() != 1 || remote_iovs.size() != 1) {
+            std::cerr << "NIXL Device API requires exactly one local and one remote IOV list: "
+                      << "local=" << local_iovs.size() << ", remote=" << remote_iovs.size()
+                      << std::endl;
+            return std::variant<xferBenchStats, int>(-1);
+        }
+        const size_t local_regions = local_iovs.front().size();
+        const size_t remote_regions = remote_iovs.front().size();
         if (__builtin_expect(local_regions != remote_regions, 0)) {
-            std::cerr << "NIXL Device API requires equal flattened local/remote region counts: "
+            std::cerr << "NIXL Device API requires equal local/remote region counts: "
                       << "local=" << local_regions << ", remote=" << remote_regions << std::endl;
             return std::variant<xferBenchStats, int>(-1);
         }
         num_regions = remote_regions;
     }
 
+    auto gpu_view_guard = make_scope_guard([this] {
+        if (xferBenchConfig::use_device_api) {
+            releaseGPURemoteView();
+            releaseGPULocalView();
+        }
+    });
+    if (xferBenchConfig::use_device_api) {
+        prepareGPULocalView(local_iovs);
+        prepareGPURemoteView(remote_iovs);
+    }
+
     if (skip > 0) {
         if (xferBenchConfig::use_device_api) {
-            const bool signal_remote_completion =
-                completion_counter_iov.has_value() && remote_mvh != nullptr;
             ret = execDeviceTransfer(local_mvh,
                                      remote_mvh,
-                                     signal_remote_completion,
                                      skip,
                                      xferBenchConfig::block_threads,
                                      num_regions,
@@ -2110,11 +2106,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
     stats.clear();
 
     if (xferBenchConfig::use_device_api) {
-        const bool signal_remote_completion =
-            completion_counter_iov.has_value() && remote_mvh != nullptr;
         ret = execDeviceTransfer(local_mvh,
                                  remote_mvh,
-                                 signal_remote_completion,
                                  num_iter,
                                  xferBenchConfig::block_threads,
                                  num_regions,
@@ -2252,7 +2245,7 @@ xferBenchNixlWorker::prepareGPURemoteView(
                   << std::endl;
         std::exit(EXIT_FAILURE);
     }
-    // prepare remote memory view
+
     nixl_remote_dlist_t remote_list(VRAM_SEG);
     for (const auto &remote_iov_list : remote_iov_lists) {
         for (const auto &iov : remote_iov_list) {
@@ -2261,14 +2254,13 @@ xferBenchNixlWorker::prepareGPURemoteView(
             remote_list.addDesc(remoteDesc);
         }
     }
-    if (completion_counter_iov.has_value()) {
-        const nixlRemoteDesc remoteDesc{
-            completion_counter_iov.value().addr,
-            completion_counter_iov.value().len,
-            static_cast<uint64_t>(completion_counter_iov.value().devId),
-            remote_agent_name};
-        remote_list.addDesc(remoteDesc);
-    }
+
+    const nixlRemoteDesc remoteDesc{
+        completion_counter_iov.value().addr,
+        completion_counter_iov.value().len,
+        static_cast<uint64_t>(completion_counter_iov.value().devId),
+        remote_agent_name};
+    remote_list.addDesc(remoteDesc);
     CHECK_NIXL_ERROR(agent->prepMemView(remote_list, remote_mvh),
                      "prepMemView on remote view failed");
 }
