@@ -1231,8 +1231,6 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
     NIXL_ASSERT(int_handle->sgl);
     auto &sgl = *int_handle->sgl;
 
-    const ucp_dt_local_sgl_t local_sgl = sgl.localView();
-    const ucp_dt_remote_sgl_t remote_sgl = sgl.remoteView();
     const ucx_connection_ptr_t &conn = sgl.conn();
 
     auto &ep = conn->getEp(int_handle->getWorkerId());
@@ -1240,7 +1238,7 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
     int_handle->reserve(single_ep_request_count);
 
     nixlUcxReq req;
-    const nixl_status_t post_ret = ep->postSgl(local_sgl, remote_sgl, sgl.size(), req);
+    const nixl_status_t post_ret = sgl.post(*ep, req);
     if (int_handle->append(post_ret, req, conn) != NIXL_SUCCESS) {
         return post_ret;
     }

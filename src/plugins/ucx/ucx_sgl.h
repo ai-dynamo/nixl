@@ -39,16 +39,15 @@ public:
             size_t start_idx,
             size_t end_idx);
 
-    [[nodiscard]] size_t
-    size() const noexcept {
-        return size_;
-    }
-
     [[nodiscard]] const ucx_connection_ptr_t &
     conn() const noexcept {
         return conn_;
     }
 
+    [[nodiscard]] nixl_status_t
+    post(nixlUcxEp &ep, nixlUcxReq &req) const;
+
+private:
     [[nodiscard]] ucp_dt_local_sgl_t
     localView() const noexcept {
         return {
@@ -71,7 +70,6 @@ public:
         };
     }
 
-private:
     static constexpr size_t num_fields = 5;
 
     std::unique_ptr<std::byte[]> storage_;
