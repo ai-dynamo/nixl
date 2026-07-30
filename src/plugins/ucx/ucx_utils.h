@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 #define NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 
+#include <atomic>
 #include <memory>
 #include <type_traits>
 
@@ -44,12 +45,13 @@ class nixlUcxMem;
 class nixlUcxEp {
 private:
     ucp_ep_h eph{nullptr};
-    nixl::ucx::ep_state_t state = nixl::ucx::ep_state_t::UNINITIALIZED;
+    std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::UNINITIALIZED};
+    const uint32_t closeFlags_;
 
     void
     setState(nixl::ucx::ep_state_t new_state);
     nixl_status_t
-    closeImpl(ucp_ep_close_flags_t flags);
+    closeImpl();
 
     /* Connection */
     nixl_status_t
@@ -64,10 +66,13 @@ public:
 
     [[nodiscard]] nixl_status_t
     checkTxState() const noexcept {
-        return nixl::ucx::toNixlStatus(state);
+        return nixl::ucx::toNixlStatus(state_);
     }
 
-    nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
+    nixlUcxEp(ucp_worker_h worker,
+              void *addr,
+              ucp_err_handling_mode_t err_handling_mode,
+              uint32_t close_flags);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp &) = delete;
     nixlUcxEp &
@@ -187,7 +192,8 @@ class nixlUcxWorker {
 public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
-        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE);
+        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
+        uint32_t ep_close_flags = 0);
 
     nixlUcxWorker(nixlUcxWorker &&) = delete;
     nixlUcxWorker(const nixlUcxWorker &) = delete;
@@ -241,7 +247,8 @@ private:
     createUcpWorker(const nixlUcxContext &);
 
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
-    ucp_err_handling_mode_t err_handling_mode_;
+    const ucp_err_handling_mode_t err_handling_mode_;
+    const uint32_t epCloseFlags_;
 };
 
 [[nodiscard]] nixl_b_params_t
