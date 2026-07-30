@@ -50,10 +50,16 @@ template<typename T>
 bool
 sharedRingBuffer<T>::push(const T &item) {
     size_t write_pos = header_->write_pos.load(std::memory_order_relaxed);
-    size_t next_write = (write_pos + 1) & header_->mask;
+    size_t next_write = (write_pos + 1) & cachedMask_;
 
-    if (next_write == header_->read_pos.load(std::memory_order_acquire))
-        return false; // Buffer full
+    // Don't use full(): it re-reads the consumer-owned read_pos on every call.
+    // The cached check only touches that line when the buffer appears full.
+    if (next_write == cachedReadPos_) {
+        cachedReadPos_ = header_->read_pos.load(std::memory_order_acquire);
+        if (next_write == cachedReadPos_) {
+            return false; // Buffer full
+        }
+    }
 
     data_[write_pos] = item;
 
@@ -66,13 +72,20 @@ bool
 sharedRingBuffer<T>::pop(T &item) {
     size_t read_pos = header_->read_pos.load(std::memory_order_relaxed);
 
-    if (read_pos == header_->write_pos.load(std::memory_order_acquire)) return false;
+    // Don't use empty(): it re-reads the producer-owned write_pos on every call.
+    // The cached check only touches that line when the buffer appears empty.
+    if (read_pos == cachedWritePos_) {
+        cachedWritePos_ = header_->write_pos.load(std::memory_order_acquire);
+        if (read_pos == cachedWritePos_) {
+            return false;
+        }
+    }
 
     // Read data
     item = data_[read_pos];
 
     // Update read position
-    size_t next_read = (read_pos + 1) & header_->mask;
+    size_t next_read = (read_pos + 1) & cachedMask_;
     header_->read_pos.store(next_read, std::memory_order_release);
     return true;
 }
@@ -172,6 +185,8 @@ sharedRingBuffer<T>::createCyclicBuffer(const std::string &name, int version) {
     new (header_) bufferHeader(bufferSize_);
     header_->version.store(version, std::memory_order_release);
     header_->expected_version = version;
+
+    cachedMask_ = header_->mask;
 }
 
 template<typename T>
@@ -254,6 +269,11 @@ sharedRingBuffer<T>::openCyclicBuffer(const std::string &name, int version) {
 
     header_ = static_cast<bufferHeader *>(ptr);
     data_ = reinterpret_cast<T *>(static_cast<char *>(ptr) + sizeof(bufferHeader));
+
+    // When attaching to an existing buffer, cached values need to be seeded
+    cachedWritePos_ = header_->write_pos.load(std::memory_order_acquire);
+    cachedReadPos_ = header_->read_pos.load(std::memory_order_acquire);
+    cachedMask_ = header_->mask;
 }
 
 template class sharedRingBuffer<uint8_t>;

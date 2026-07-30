@@ -61,7 +61,7 @@ private:
         std::atomic<int> version{0};
         int expected_version{0};
         const size_t capacity;
-        size_t mask;
+        const size_t mask;
 
         bufferHeader(size_t size);
     };
@@ -76,6 +76,9 @@ private:
     bufferHeader *header_;
     T *data_;
     size_t bufferSize_;
+    size_t cachedWritePos_ = 0;
+    size_t cachedReadPos_ = 0;
+    size_t cachedMask_ = 0;
 };
 
 #include "cyclic_buffer.tpp"

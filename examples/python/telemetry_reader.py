@@ -116,9 +116,15 @@ class SharedRingBuffer:
         self.header = None
         self.data = None
         self.buffer_size = None
+        self.cached_write_pos = 0
+        self.cached_mask = 0
 
         self._open_file()
         self._map_memory()
+
+        # Seed the cached positions on attaching to an existing buffer
+        self.cached_write_pos = self.header.write_pos
+        self.cached_mask = self.header.mask
 
     def _open_file(self):
         """Open existing file"""
@@ -198,12 +204,14 @@ class SharedRingBuffer:
         """Pop an event from the buffer"""
         read_pos = self.header.read_pos
 
-        if read_pos == self.header.write_pos:
-            return None
+        if read_pos == self.cached_write_pos:
+            self.cached_write_pos = self.header.write_pos
+            if read_pos == self.cached_write_pos:
+                return None
 
         event = self.data[read_pos]
 
-        next_read = (read_pos + 1) & self.header.mask
+        next_read = (read_pos + 1) & self.cached_mask
         self.header.read_pos = next_read
 
         return event
