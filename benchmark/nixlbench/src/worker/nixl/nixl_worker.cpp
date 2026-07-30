@@ -2110,8 +2110,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                  block_size,
                                  stats,
                                  &terminate);
-    }
-    else {
+    } else {
         ret = execTransfer(agent,
                            backend_engine,
                            local_iovs,

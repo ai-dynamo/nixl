@@ -915,7 +915,8 @@ xferBenchConfig::printConfig() {
     printOption("Num threads (--num_threads=N)", std::to_string(num_threads));
     printOption("Use Device API (--use_device_api=[0,1])", std::to_string(use_device_api));
     if (use_device_api) {
-        printOption("Device API Kernel block threads (--num_threads=N)", std::to_string(block_threads));
+        printOption("Device API Kernel block threads (--num_threads=N)",
+                    std::to_string(block_threads) + " (default)");
     }
     printSeparator('-');
     std::cout << std::endl;
