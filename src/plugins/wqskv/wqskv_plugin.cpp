@@ -29,13 +29,15 @@ createStaticWQSKVPlugin() {
     // OBJ_SEG: remote target is a key-addressed WDS KV object, not a memory
     // address -- the plugin resolves the target via metaInfo/devId key and
     // ignores remote_desc.addr. Mirrors the OBJ plugin's segment contract.
-    return wqskv_plugin_t::create(NIXL_PLUGIN_API_VERSION, "WQSKV", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
+    return wqskv_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "WQSKV", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     // See STATIC_PLUGIN_WQSKV branch for the segment-type rationale.
-    return wqskv_plugin_t::create(NIXL_PLUGIN_API_VERSION, "WQSKV", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
+    return wqskv_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "WQSKV", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

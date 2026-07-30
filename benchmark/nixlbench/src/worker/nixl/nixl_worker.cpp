@@ -1532,7 +1532,9 @@ serializeWqskvCustomParam(const std::vector<xferBenchIOV> &base_remote_iov,
                           const std::string &suffix) {
     std::string out;
     for (size_t k = 0; k < base_remote_iov.size(); ++k) {
-        if (k > 0) out.push_back('\n');
+        if (k > 0) {
+            out.push_back('\n');
+        }
         out.append(base_remote_iov[k].metaInfo);
         out.append(suffix);
     }
