@@ -22,6 +22,8 @@
 namespace nixlbench {
 namespace {
 
+    constexpr int kInvalidArgumentsExitCode = 2;
+
     std::string
     upper(std::string value) {
         std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
@@ -74,7 +76,7 @@ namespace {
             return false;
         };
 
-        if (raw.operation != "READ" && raw.operation != "WRITE") {
+        if (raw.operation != XFERBENCH_OP_READ && raw.operation != XFERBENCH_OP_WRITE) {
             return fail("--operation must be read or write");
         }
         if (raw.threads < 1 || raw.iterations < 1 || raw.warmup_iterations < 0 ||
@@ -373,12 +375,12 @@ parseRawPosixCommand(int argc,
     }
 
     if (!hasMemoryType(metadata, DRAM_SEG)) {
-        err << "Error: POSIX plugin must advertise DRAM_SEG for local memory\n";
-        return 2;
+        err << "Error: " << metadata.name << " plugin must advertise DRAM_SEG for local memory\n";
+        return kInvalidArgumentsExitCode;
     }
     if (!hasMemoryType(metadata, FILE_SEG)) {
-        err << "Error: POSIX plugin must advertise FILE_SEG for backing files\n";
-        return 2;
+        err << "Error: " << metadata.name << " plugin must advertise FILE_SEG for backing files\n";
+        return kInvalidArgumentsExitCode;
     }
 
     for (const auto &[key, value] : plugin_parameter_overrides) {
@@ -396,18 +398,18 @@ parseRawPosixCommand(int argc,
         const auto parsed = parseHumanSize(*text, size_error);
         if (!parsed) {
             err << "Error: invalid size '" << *text << "': " << size_error << '\n';
-            return 2;
+            return kInvalidArgumentsExitCode;
         }
         *destination = *parsed;
     }
 
     if (!validateRawOptions(request.raw, err)) {
-        return 2;
+        return kInvalidArgumentsExitCode;
     }
     if (request.has_file_options && !validateFileOptions(request.file, request.raw, err)) {
-        return 2;
+        return kInvalidArgumentsExitCode;
     }
-    return 0;
+    return EXIT_SUCCESS;
 }
 
 std::vector<std::string>
@@ -416,9 +418,9 @@ benchmarkFileArguments(const RawPosixRequest &request, const std::string &progra
     std::vector<std::string> arguments = {
         program_name,
         // Fixed values select the existing NIXL/POSIX runner.
-        "--worker_type=nixl",
-        "--backend=POSIX",
-        "--initiator_seg_type=DRAM",
+        std::string("--worker_type=") + XFERBENCH_WORKER_NIXL,
+        std::string("--backend=") + XFERBENCH_BACKEND_POSIX,
+        std::string("--initiator_seg_type=") + XFERBENCH_SEG_TYPE_DRAM,
         // Backend-neutral raw benchmark configuration.
         "--op_type=" + request.raw.operation,
         "--check_consistency=" + std::string(boolean(request.raw.check_consistency)),
@@ -443,17 +445,17 @@ benchmarkFileArguments(const RawPosixRequest &request, const std::string &progra
 RawCommandResult
 prepareRawCommand(int argc, char *argv[], std::ostream &out, std::ostream &err) {
     std::string discovery_error;
-    const auto metadata = discoverPluginMetadata("POSIX", discovery_error);
+    const auto metadata = discoverPluginMetadata(XFERBENCH_BACKEND_POSIX, discovery_error);
     if (!metadata) {
         err << "Error: " << discovery_error << '\n';
-        return {1, false};
+        return {EXIT_FAILURE, false};
     }
 
     RawPosixRequest request;
     bool help_requested = false;
     const int parse_status =
         parseRawPosixCommand(argc, argv, *metadata, request, help_requested, out, err);
-    if (parse_status != 0 || help_requested) {
+    if (parse_status != EXIT_SUCCESS || help_requested) {
         return {parse_status, false};
     }
 
@@ -465,13 +467,13 @@ prepareRawCommand(int argc, char *argv[], std::ostream &out, std::ostream &err) 
     }
     int legacy_argc = static_cast<int>(argument_pointers.size());
     char **legacy_argv = argument_pointers.data();
-    if (xferBenchConfig::parseConfig(legacy_argc, legacy_argv) != 0) {
-        return {1, false};
+    if (xferBenchConfig::parseConfig(legacy_argc, legacy_argv) != EXIT_SUCCESS) {
+        return {EXIT_FAILURE, false};
     }
 
     printRawPosixPlan(
         request, *metadata, xferBenchConfig::num_iter, xferBenchConfig::warmup_iter, out);
-    return {0, !request.raw.dry_run, std::move(request.plugin_parameters)};
+    return {EXIT_SUCCESS, !request.raw.dry_run, std::move(request.plugin_parameters)};
 }
 
 } // namespace nixlbench

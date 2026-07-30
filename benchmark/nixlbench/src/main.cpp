@@ -161,14 +161,14 @@ static int processBatchSizes(xferBenchWorker &worker,
 namespace {
 std::unique_ptr<xferBenchWorker>
 createWorker(const std::optional<nixl_b_params_t> &plugin_parameters) {
-    if (xferBenchConfig::worker_type == "nixl") {
+    if (xferBenchConfig::worker_type == XFERBENCH_WORKER_NIXL) {
         std::vector<std::string> devices = xferBenchConfig::parseDeviceList();
         if (devices.empty()) {
             std::cerr << "Failed to parse device list" << std::endl;
             return nullptr;
         }
         return std::make_unique<xferBenchNixlWorker>(devices, plugin_parameters);
-    } else if (xferBenchConfig::worker_type == "nvshmem") {
+    } else if (xferBenchConfig::worker_type == XFERBENCH_WORKER_NVSHMEM) {
 #if HAVE_NVSHMEM && HAVE_CUDA
         return std::make_unique<xferBenchNvshmemWorker>();
 #else
@@ -242,14 +242,14 @@ int
 main(int argc, char *argv[]) {
     if (nixlbench::isRawCommand(argc, argv)) {
         const auto result = nixlbench::prepareRawCommand(argc, argv, std::cout, std::cerr);
-        if (result.status != 0 || !result.execute) {
+        if (result.status != EXIT_SUCCESS || !result.execute) {
             return result.status;
         }
         return runBenchmark(result.plugin_parameters);
     }
 
     // Preserve the flags-only interface by routing every non-raw invocation directly to gflags.
-    if (xferBenchConfig::parseConfig(argc, argv) != 0) {
+    if (xferBenchConfig::parseConfig(argc, argv) != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     return runBenchmark();

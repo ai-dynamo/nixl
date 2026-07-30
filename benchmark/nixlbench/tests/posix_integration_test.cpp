@@ -5,11 +5,14 @@
 
 #include <gtest/gtest.h>
 
+#include "utils/raw_cli.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -184,6 +187,32 @@ namespace {
                   std::string::npos);
         EXPECT_EQ(raw_contents.find("POSIX kernel queue size (--posix_kernel_queue_size"),
                   std::string::npos);
+    }
+
+    TEST(PosixIntegrationTest, RejectsConflictingAdvertisedQueueSelectors) {
+        std::string error;
+        const auto metadata = discoverPluginMetadata("POSIX", error);
+        ASSERT_TRUE(metadata) << error;
+
+        std::vector<std::string> selectors;
+        for (const char *key : {"use_aio", "use_uring", "use_posix_aio"}) {
+            if (metadata->parameters.find(key) != metadata->parameters.end()) {
+                selectors.emplace_back(key);
+            }
+        }
+        if (selectors.size() < 2) {
+            GTEST_SKIP() << "Fewer than two POSIX I/O queue selectors are available";
+        }
+
+        TemporaryDirectory directory;
+        ASSERT_FALSE(directory.path().empty());
+        const auto log = directory.path() / "conflicting-selectors.log";
+        const std::string command = smallRawCommand(directory.path(), "write") +
+            " --plugin-param " + selectors[0] + " true --plugin-param " + selectors[1] + " true";
+
+        EXPECT_NE(runCommand(command, log), 0);
+        EXPECT_EQ(regularFileCount(directory.path()), 1U);
+        EXPECT_NE(readFile(log).find("mutually exclusive"), std::string::npos);
     }
 
     TEST(PosixIntegrationTest, FailuresRespectOwnershipAndLeaveNoBenchmarkFiles) {

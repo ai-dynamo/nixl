@@ -146,11 +146,6 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     }
 
     agent->getPluginParams(backend_name, mems, backend_params);
-    if (plugin_parameters) {
-        for (const auto &[name, value] : *plugin_parameters) {
-            backend_params[name] = value;
-        }
-    }
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
@@ -349,6 +344,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
+    }
+
+    if (plugin_parameters) {
+        for (const auto &[name, value] : *plugin_parameters) {
+            backend_params[name] = value;
+        }
     }
 
     CHECK_NIXL_ERROR(agent->createBackend(backend_name, backend_params, backend_engine),

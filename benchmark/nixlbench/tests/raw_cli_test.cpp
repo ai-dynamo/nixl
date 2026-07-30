@@ -103,6 +103,7 @@ namespace {
         Arguments defaults{"nixlbench", "raw", "posix", "--dry-run"};
         auto metadata = posixMetadata();
         metadata.parameters.emplace("path,alias", "default-value");
+        metadata.parameters.emplace("--path", "plugin-default");
         RawPosixRequest request;
         bool help = false;
         std::ostringstream out;
@@ -124,7 +125,10 @@ namespace {
                             "not-a-number",
                             "--plugin-param",
                             "path,alias",
-                            "Exact Value"};
+                            "Exact Value",
+                            "--plugin-param",
+                            "--path",
+                            "Plugin Path"};
         request = {};
         out.str("");
         err.str("");
@@ -132,6 +136,8 @@ namespace {
         EXPECT_EQ(request.plugin_parameters.at("future_parameter"), "override");
         EXPECT_EQ(request.plugin_parameters.at("ios_pool_size"), "not-a-number");
         EXPECT_EQ(request.plugin_parameters.at("path,alias"), "Exact Value");
+        EXPECT_EQ(request.plugin_parameters.at("--path"), "Plugin Path");
+        EXPECT_TRUE(request.file.path.empty());
     }
 
     TEST(RawPosixParserTest, ParsesRawAndFileOptionsWithoutMixingPluginParameters) {
@@ -205,8 +211,9 @@ namespace {
         EXPECT_NE(err.str().find("block sizes"), std::string::npos);
     }
 
-    TEST(RawPosixParserTest, RejectsUnadvertisedPosixLocalMemoryType) {
+    TEST(RawPosixParserTest, RejectsUnadvertisedLocalMemoryTypeUsingMetadataName) {
         auto metadata = posixMetadata();
+        metadata.name = "STORAGE";
         metadata.memory_types = {FILE_SEG};
         Arguments arguments{"nixlbench", "raw", "posix", "--dry-run"};
         RawPosixRequest request;
@@ -215,7 +222,10 @@ namespace {
         std::ostringstream err;
 
         EXPECT_NE(parse(arguments, metadata, request, out, err, help), 0);
-        EXPECT_NE(err.str().find("DRAM_SEG"), std::string::npos) << err.str();
+        EXPECT_NE(err.str().find("STORAGE plugin must advertise DRAM_SEG for local memory"),
+                  std::string::npos)
+            << err.str();
+        EXPECT_EQ(err.str().find("POSIX plugin"), std::string::npos) << err.str();
     }
 
     TEST(RawPosixParserTest, ValidatesFileResourceOptions) {
@@ -324,6 +334,7 @@ namespace {
 
     TEST(RawPosixParserTest, HelpGatesFileOptionsAndExecutionRequiresFileSeg) {
         auto metadata = posixMetadata();
+        metadata.name = "STORAGE";
         metadata.memory_types = {DRAM_SEG};
         Arguments help_arguments{"nixlbench", "raw", "posix", "--help"};
         RawPosixRequest request;
@@ -344,9 +355,12 @@ namespace {
         help = false;
         out.str("");
         err.str("");
-        EXPECT_EQ(parse(run_arguments, metadata, request, out, err, help), 2);
+        EXPECT_NE(parse(run_arguments, metadata, request, out, err, help), 0);
         EXPECT_FALSE(help);
-        EXPECT_NE(err.str().find("must advertise FILE_SEG"), std::string::npos);
+        EXPECT_NE(err.str().find("STORAGE plugin must advertise FILE_SEG for backing files"),
+                  std::string::npos)
+            << err.str();
+        EXPECT_EQ(err.str().find("POSIX plugin"), std::string::npos) << err.str();
     }
 
     TEST(RawPlanTest, PrintsSeparatedSectionsAndSortedExactPluginParameters) {

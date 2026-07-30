@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <iosfwd>
 #include <optional>
 #include <string>
@@ -53,7 +54,7 @@ struct RawPosixRequest {
 };
 
 struct RawCommandResult {
-    int status = 0;
+    int status = EXIT_SUCCESS;
     bool execute = false;
     std::optional<nixl_b_params_t> plugin_parameters;
 };
