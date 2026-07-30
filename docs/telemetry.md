@@ -165,7 +165,7 @@ Following sections applied specifically for configuration and usage of cyclic bu
 
 Telemetry data is stored in shared memory files with the agent name passed when creating the agent.
 
-`TELEMETRY_VERSION` is the binary layout version of `nixlTelemetryEvent` as serialized in the shared-memory cyclic buffer. Bump it whenever the struct's size, field offsets, or enum widths change, or when a new event type is added to the stream (readers must know the full event-type set). Readers exact-match this value; the C++ shared-ring-buffer path unlinks the file on mismatch, while the Python example raises a `RuntimeError`. There is no backward-compatibility path. The current version is `4`: it was bumped from `3` when the `agent_telemetry_events_dropped` event type (`AGENT_TELEMETRY_EVENTS_DROPPED`) was added.
+`TELEMETRY_VERSION` is the binary layout version of `nixlTelemetryEvent` as serialized in the shared-memory cyclic buffer. Bump it whenever the struct's size, field offsets, or enum widths change, or when a new event type is added to the stream (readers must know the full event-type set). Readers exact-match this value; the C++ shared-ring-buffer path unlinks the file on mismatch, while the Python example raises a `RuntimeError`. There is no backward-compatibility path. The current version is `5`: it was bumped from `4` when the buffer header was padded to two 256-byte-aligned blocks (512 bytes) to eliminate false sharing between `write_pos` and `read_pos`, which changed all header field offsets and the data-array offset. Version `4` was bumped from `3` when the `agent_telemetry_events_dropped` event type (`AGENT_TELEMETRY_EVENTS_DROPPED`) was added.
 
 ### Using Telemetry Readers
 

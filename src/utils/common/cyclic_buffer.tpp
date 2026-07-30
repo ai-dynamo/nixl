@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -120,6 +120,8 @@ sharedRingBuffer<T>::bufferHeader::bufferHeader(size_t size) : capacity(size), m
 
     static_assert(std::is_trivially_copyable<T>::value,
                   "T must be trivially copyable for shared memory");
+    static_assert(sizeof(bufferHeader) == 2 * DESTRUCTIVE_INTERFERENCE_SIZE,
+                  "bufferHeader layout changed.");
 }
 
 template<typename T>

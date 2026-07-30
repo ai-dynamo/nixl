@@ -33,7 +33,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants from telemetry_event.h
-TELEMETRY_VERSION = 4
+TELEMETRY_VERSION = 5
+DESTRUCTIVE_INTERFERENCE_SIZE = 256
 
 # NIXL telemetry event types (nixl_telemetry_event_type_t)
 AGENT_TX_BYTES = 0
@@ -86,12 +87,21 @@ class BufferHeader(ctypes.Structure):
 
     _pack_ = 1
     _fields_ = [
-        ("write_pos", ctypes.c_size_t),
-        ("read_pos", ctypes.c_size_t),
-        ("version", ctypes.c_uint32),
-        ("expected_version", ctypes.c_uint32),
-        ("capacity", ctypes.c_size_t),
-        ("mask", ctypes.c_size_t),
+        ("write_pos", ctypes.c_size_t),  # [0, 8)
+        (
+            "_pad_write",
+            ctypes.c_char
+            * (DESTRUCTIVE_INTERFERENCE_SIZE - ctypes.sizeof(ctypes.c_size_t)),
+        ),  # pad write_pos to its own interference-size block: [8, 256)
+        ("read_pos", ctypes.c_size_t),  # [256,264)
+        ("version", ctypes.c_uint32),  # [264,268)
+        ("expected_version", ctypes.c_uint32),  # [268,272)
+        ("capacity", ctypes.c_size_t),  # [272,280)
+        ("mask", ctypes.c_size_t),  # [280,288)
+        (
+            "_pad_tail",
+            ctypes.c_char * 224,
+        ),  # match C++ compiler's tail padding: [288, 512)
     ]
 
 
