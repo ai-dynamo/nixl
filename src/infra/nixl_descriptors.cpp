@@ -333,6 +333,7 @@ template class nixlDescList<nixlBlobDesc>;
 template class nixlDescList<nixlSectionDesc>;
 template class nixlDescList<nixlRemoteDesc>;
 template class nixlDescList<nixlRemoteMetaDesc>;
+template class nixlDescList<nixlStrideDesc>;
 
 template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
                                          const nixlDescList<nixlBasicDesc> &rhs);
