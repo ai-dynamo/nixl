@@ -59,6 +59,23 @@ if enabled_plugins.get('GDS') or enabled_plugins.get('GDS_MT')
     endif
 endif
 
+# The AIS (AMD Infinity Storage) backends mirror the cuda_gds layout: one plugin
+# directory sharing an abstract hipFile engine, exposing a name per submission
+# strategy. Only "AIS_MT" exists today; the subdir builds the per-name entry
+# points internally based on enabled_plugins.
+disable_rocm_ais_backend = get_option('disable_rocm_ais_backend')
+if enabled_plugins.get('AIS_MT')
+    if (disable_rocm_ais_backend or not rocm_dep.found()) and is_explicit_enable
+        if disable_rocm_ais_backend
+            error('AIS_MT plugin requested but AIS backend is disabled (-Ddisable_rocm_ais_backend=true)')
+        else
+            error('AIS_MT plugin requested but HIP dependency not found')
+        endif
+    elif not disable_rocm_ais_backend and rocm_dep.found()
+        subdir('rocm_ais')
+    endif
+endif
+
 cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
 if enabled_plugins.get('MOONCAKE')
