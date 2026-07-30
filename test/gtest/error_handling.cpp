@@ -465,7 +465,7 @@ TEST_P(TestErrorHandling, ErrorCallbackMarksEndpointFailedWithoutClosingIt) {
     nixlUcxWorker consumer(consumer_context, UCP_ERR_HANDLING_MODE_PEER);
     nixlUcxWorker producer(producer_context, UCP_ERR_HANDLING_MODE_PEER);
     std::string producer_address = producer.epAddr();
-    auto endpoint = consumer.connect(producer_address.data(), producer_address.size());
+    auto endpoint = consumer.connect(producer_address.data());
     ASSERT_NE(endpoint, nullptr);
 
     const ucp_ep_h native_endpoint = endpoint->getEp();

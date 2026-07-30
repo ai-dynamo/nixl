@@ -93,7 +93,7 @@ main() {
     for (i = 0; i < 2; i++) {
         const std::string addr = w[i].epAddr();
         assert(!addr.empty());
-        auto result = w[!i].connect((void *)addr.data(), addr.size());
+        auto result = w[!i].connect((void *)addr.data());
         assert(result);
         ep[!i] = std::move(result);
         assert(0 == c[i].memReg(buffer[i], buf_size, mem[i], nixl_mem_type));
