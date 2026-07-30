@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
@@ -119,19 +120,20 @@ public:
      * @brief Records where the winner listens, for the losers to read back.
      * @param endpoint The bound "address:port".
      *
-     * Best-effort: it only decides whether a loser warns. Truncates because the
-     * constructor only does so when it took the lock: an unusable lock leaves
-     * every rank believing it won, and a shorter endpoint written over a longer
-     * stale one would otherwise read back as the two spliced together.
+     * Best-effort: it only decides whether a loser warns. One write of a fixed
+     * size record, never a truncate and a write: an unusable lock leaves every
+     * rank believing it won, and two of them publishing different endpoints
+     * must not be able to interleave into a spliced or empty read.
      */
     void
     publishEndpoint(const std::string &endpoint) const {
         if (!fd_.valid()) {
             return;
         }
-        if (::ftruncate(fd_.get(), 0) != 0 ||
-            ::pwrite(fd_.get(), endpoint.data(), endpoint.size(), 0) !=
-                static_cast<ssize_t>(endpoint.size())) {
+        char record[endpointRecordSize] = {};
+        std::memcpy(record, endpoint.data(), std::min(endpoint.size(), sizeof(record) - 1));
+        if (::pwrite(fd_.get(), record, sizeof(record), 0) !=
+            static_cast<ssize_t>(sizeof(record))) {
             NIXL_DEBUG << "prometheus_mp: cannot record the owner endpoint in " << ownerLockFileName
                        << ": " << strerror(errno);
         }
@@ -144,12 +146,15 @@ public:
      */
     [[nodiscard]] std::string
     publishedEndpoint() const {
-        char buf[64];
-        const ssize_t len = fd_.valid() ? ::pread(fd_.get(), buf, sizeof(buf), 0) : -1;
-        return len > 0 ? std::string(buf, static_cast<std::size_t>(len)) : std::string();
+        char record[endpointRecordSize] = {};
+        const ssize_t len = fd_.valid() ? ::pread(fd_.get(), record, sizeof(record), 0) : -1;
+        return len > 0 ? std::string(record, ::strnlen(record, static_cast<std::size_t>(len))) :
+                         std::string();
     }
 
 private:
+    static constexpr std::size_t endpointRecordSize = 64;
+
     // Every rank then believes it was elected, so those that go on to lose the
     // bind report the port as held from outside the run while a sibling is in
     // fact serving. This is the context that makes those reports readable.

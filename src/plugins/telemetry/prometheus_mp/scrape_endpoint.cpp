@@ -63,6 +63,8 @@ scrapeEndpoint::status
 scrapeEndpoint::claim() {
     election_.emplace(dir_);
     if (!election_->won()) {
+        // Kept, unlike in reclaim(): the caller reads the owner's endpoint off
+        // this descriptor to report a rank configured for a different one.
         return status::SIBLING_OWNS;
     }
     return serve() ? status::SERVING : status::PORT_TAKEN;
