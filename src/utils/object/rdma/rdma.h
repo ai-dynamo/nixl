@@ -39,7 +39,7 @@
 namespace nixl_obj_rdma {
 
 /**
- * Process-wide cuObjClient singleton.
+ * @brief Process-wide cuObjClient singleton.
  *
  * libcuobjclient is expensive to construct and its callbacks may fire on
  * threads other than the caller's; constructing one per backend (or per call)
@@ -50,30 +50,61 @@ namespace nixl_obj_rdma {
  */
 class SharedCuObjClient {
 public:
-    /// Returns the process-wide instance, or nullptr if the fabric is unavailable.
+    /**
+     * @brief Get the process-wide instance.
+     * @return The singleton, or nullptr if the RDMA fabric is unavailable.
+     */
     [[nodiscard]] static SharedCuObjClient *
     instance();
 
+    /**
+     * @brief Whether the RDMA fabric is connected.
+     * @return true if the underlying cuObjClient connected successfully.
+     */
     [[nodiscard]] bool
     isConnected() const {
         return connected_;
     }
 
-    /// Pin a buffer for RDMA. Required before minting a token for it.
+    /**
+     * @brief Pin a buffer for RDMA. Required before minting a token for it.
+     * @param ptr Start of the buffer to register.
+     * @param size Buffer length in bytes.
+     * @return true on success, false if registration failed.
+     */
     [[nodiscard]] bool
     registerBuffer(void *ptr, size_t size);
 
-    /// Release a buffer registration acquired via registerBuffer().
+    /**
+     * @brief Release a buffer registration acquired via registerBuffer().
+     * @param ptr Buffer previously passed to registerBuffer().
+     */
     void
     deregisterBuffer(void *ptr);
 
-    /// True if the pointer is CUDA device (VRAM) memory (no HTTP fallback possible).
+    /**
+     * @brief Test whether a pointer is CUDA device (VRAM) memory.
+     * @param ptr Pointer to classify.
+     * @return true for device memory (no HTTP fallback possible), false otherwise.
+     */
     [[nodiscard]] bool
     isDeviceMemory(const void *ptr) const;
 
-    /// Mint an RDMA token for a registered buffer (caller releases via putToken()).
+    /**
+     * @brief Mint an RDMA token for a registered buffer.
+     * @param ptr Registered buffer.
+     * @param size Length in bytes covered by the token.
+     * @param offset Byte offset into the buffer.
+     * @param op Operation the token authorizes (CUOBJ_GET / CUOBJ_PUT).
+     * @return An opaque token string (release via putToken()), or nullptr on failure.
+     */
     [[nodiscard]] char *
     getToken(void *ptr, size_t size, size_t offset, cuObjOpType_t op);
+
+    /**
+     * @brief Release a token acquired via getToken().
+     * @param token Token to release; a nullptr is ignored.
+     */
     void
     putToken(char *token);
 
@@ -85,19 +116,22 @@ private:
     std::mutex mutex_;
 };
 
-/// Per-call context for an RDMA PUT/GET control-plane request.
-/// (region/credentials live in the control plane's signer, not here.)
+/**
+ * @brief Per-call context for an RDMA PUT/GET control-plane request.
+ *
+ * Region and credentials live in the control plane's signer, not here.
+ */
 struct S3RdmaClientCtx {
-    std::string bucket;
-    std::string object;
-    std::string uploadId; // empty for single-shot (non-multipart)
-    uint32_t partNumber = 0; // 1..=10000 when uploadId is set
-    std::string checksumCrc64nvme; // optional, in/out
-    std::string etag; // populated on success
+    std::string bucket; ///< Target bucket.
+    std::string object; ///< Object key.
+    std::string uploadId; ///< Multipart upload id; empty for single-shot.
+    uint32_t partNumber = 0; ///< Part number 1..10000 when uploadId is set.
+    std::string checksumCrc64nvme; ///< Optional CRC64NVME checksum, in/out.
+    std::string etag; ///< ETag returned by the server; populated on success.
 };
 
 /**
- * S3 RDMA control plane.
+ * @brief S3 RDMA control plane.
  *
  * Owns the AWS SDK primitives (SigV4 signer + HTTP client + resolved endpoint)
  * used to issue the body-less, RDMA-token-carrying GET/PUT that negotiates the
@@ -107,29 +141,46 @@ struct S3RdmaClientCtx {
  */
 class S3RdmaControlPlane {
 public:
-    /// Build the control plane from backend params (endpoint, region, credentials).
-    /// If initialization fails, valid() returns false and the instance is unusable.
+    /**
+     * @brief Build the control plane from backend params.
+     *
+     * Resolves the endpoint, region, and credentials. On failure, valid()
+     * returns false and the instance is unusable.
+     * @param custom_params Backend key-value params; may be nullptr.
+     */
     explicit S3RdmaControlPlane(const nixl_b_params_t *custom_params);
     ~S3RdmaControlPlane();
 
-    /// True iff the HTTP client and (access + secret) credentials were resolved.
+    /**
+     * @brief Whether the control plane initialized successfully.
+     * @return true iff the HTTP client and (access + secret) credentials resolved.
+     */
     [[nodiscard]] bool
     valid() const {
         return valid_;
     }
 
     /**
-     * Issue the signed control-plane PUT carrying the RDMA token.
-     * @return bytes transferred (>0) on RDMA success, rdma_not_supported if the
+     * @brief Issue the signed control-plane PUT carrying the RDMA token.
+     * @param ctx Request context (bucket/object, multipart, checksum, etag out).
+     * @param token RDMA token minted for the buffer.
+     * @param buf_addr Start address of the source buffer.
+     * @param size Number of bytes to transfer.
+     * @return Bytes transferred (>0) on RDMA success, rdma_not_supported if the
      *         server declined, or rdma_error on transport failure.
      */
     [[nodiscard]] ssize_t
     rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t buf_addr, uint64_t size);
 
     /**
-     * Issue the signed control-plane GET carrying the RDMA token. When
-     * @p offset is non-zero a byte-range request is made (server replies 206).
-     * @return bytes transferred (>0), rdma_not_supported if declined, or
+     * @brief Issue the signed control-plane GET carrying the RDMA token.
+     * @param ctx Request context (bucket/object, checksum, etag out).
+     * @param token RDMA token minted for the buffer.
+     * @param buf_addr Start address of the destination buffer.
+     * @param size Number of bytes to fetch.
+     * @param offset Byte offset into the object; a byte-range request is made
+     *        (server replies 206) when it is non-zero.
+     * @return Bytes transferred (>0), rdma_not_supported if declined, or
      *         rdma_error on failure.
      */
     [[nodiscard]] ssize_t
@@ -146,10 +197,15 @@ private:
 };
 
 /**
- * Mint a token, run rdmaPut, release the token, with one transient retry
- * (covering token-mint and control-plane hiccups). The buffer must already be
- * registered via SharedCuObjClient::registerBuffer().
+ * @brief Mint a token, run rdmaPut, release the token, with one transient retry.
  *
+ * The retry covers token-mint and control-plane hiccups. The buffer must
+ * already be registered via SharedCuObjClient::registerBuffer().
+ * @param rdma Shared cuObject client used to mint/release the token.
+ * @param cp Control plane that issues the signed request.
+ * @param ctx Request context (bucket/object, multipart, checksum, etag out).
+ * @param buf Source buffer.
+ * @param size Number of bytes to transfer.
  * @return >0 bytes transferred (success), rdma_not_supported (server declined),
  *         or rdma_error (failure). The caller treats anything < 0 as an error —
  *         there is no HTTP fallback under accelerated=true.
@@ -162,10 +218,16 @@ rdmaPutWithRetry(SharedCuObjClient &rdma,
                  uint64_t size);
 
 /**
- * Mint a token, run rdmaGet (optionally byte-ranged via @p offset), release the
- * token, with one transient retry. The buffer must already be registered via
- * SharedCuObjClient::registerBuffer().
+ * @brief Mint a token, run rdmaGet, release the token, with one transient retry.
  *
+ * The transfer is byte-ranged via @p offset. The buffer must already be
+ * registered via SharedCuObjClient::registerBuffer().
+ * @param rdma Shared cuObject client used to mint/release the token.
+ * @param cp Control plane that issues the signed request.
+ * @param ctx Request context (bucket/object, checksum, etag out).
+ * @param buf Destination buffer.
+ * @param size Number of bytes to fetch.
+ * @param offset Byte offset into the object.
  * @return >0 bytes transferred (success), rdma_not_supported (server declined),
  *         or rdma_error (failure). The caller treats anything < 0 as an error —
  *         there is no HTTP fallback under accelerated=true.

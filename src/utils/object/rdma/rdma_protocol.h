@@ -58,7 +58,7 @@ inline constexpr long rdma_connect_timeout_secs = 5;
 inline constexpr long rdma_timeout_secs = 10;
 
 /**
- * Format the value of the x-amz-rdma-token header.
+ * @brief Format the value of the x-amz-rdma-token header.
  *
  * The token is the cuObject RDMA descriptor (as produced by
  * cuMemObjGetRDMAToken) followed by the buffer's start address and size:
@@ -66,6 +66,10 @@ inline constexpr long rdma_timeout_secs = 10;
  * The two trailing fields are 16-digit zero-padded lowercase hex; a compliant
  * S3 RDMA endpoint parses them with a base-16 parser, so the fixed field width
  * is preserved. The descriptor is opaque and of arbitrary length.
+ * @param descriptor Opaque cuObject RDMA descriptor.
+ * @param buf_addr Buffer start address.
+ * @param size Buffer length in bytes.
+ * @return The formatted x-amz-rdma-token header value.
  */
 [[nodiscard]] inline std::string
 formatRdmaToken(std::string_view descriptor, uint64_t buf_addr, uint64_t size) {
@@ -77,16 +81,16 @@ formatRdmaToken(std::string_view descriptor, uint64_t buf_addr, uint64_t size) {
 }
 
 /**
- * Map the server's x-amz-rdma-reply header value to a transfer outcome.
- *
- *   >0  reply code (200/204/206): treat as RDMA success
- *    0  unparsable non-empty value: treat as failure (-1) by the caller
- *   -2  reply is "501" OR absent/empty: server declined RDMA
+ * @brief Map the server's x-amz-rdma-reply header value to a transfer outcome.
  *
  * This drives the GET path and decline detection. A GET success carries
  * x-amz-rdma-reply: 200/206; its absence (a non-RDMA server never sets it) is
  * read as a decline. PUT success is determined separately by HTTP 200 + ETag
  * (the server does not set this header on the PUT success path).
+ * @param reply The raw x-amz-rdma-reply header value (may be empty/absent).
+ * @return The reply code (200/204/206) on RDMA success; 0 for an unparsable or
+ *         out-of-range value (caller treats as failure); rdma_not_supported (-2)
+ *         when the reply is "501" or absent/empty (server declined RDMA).
  */
 [[nodiscard]] inline int
 parseRdmaReply(const std::string &reply) {
