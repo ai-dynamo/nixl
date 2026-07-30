@@ -33,7 +33,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), GUSLI for storage operations
+- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -314,9 +314,9 @@ cmake --install sdk/identity
 **DOCA (Optional):**
 ```bash
 # Add Mellanox repository and install DOCA
-wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.2.0/host/doca-host_3.2.0-125000-25.10-ubuntu2404_amd64.deb -O doca-host.deb
+wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-ubuntu2404_amd64.deb -O doca-host.deb
 sudo dpkg -i doca-host.deb
-sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev
+sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 ```
 
 **GUSLI (Optional - for GUSLI backend):**
@@ -324,7 +324,7 @@ sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpu
 # Clone and build GUSLI
 git clone https://github.com/nvidia/gusli.git
 cd gusli
-make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0
+make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1
 
 # Install library and headers
 sudo cp libgusli_clnt.so /usr/lib/
@@ -435,7 +435,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --config_file PATH         # Configuraion file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
@@ -480,6 +480,12 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --filepath PATH            # File path for storage operations
 --num_files NUM            # Number of files used by benchmark (default: 1)
 --storage_enable_direct    # Enable direct I/O for storage operations
+--randomize_location_mode MODE    # Controls block location randomization [none, blockaligned, bytealigned] (default: none)
+                                  # blockaligned: randomizes the order of the otherwise sequentially block aligned iov's in the batch, also works on object plugins
+                                  # bytealigned: randomizes the offset per iov scrambling the block order instead of being sequential.
+--randomize_location_mode_seed NUM  # random seed used for randomized location mode (default: 0)
+                                    # 0 signals using the random_device for the seed
+
 ```
 
 #### Backend-Specific Options
@@ -536,8 +542,39 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --gusli_device_security LIST           # Comma-separated security flags per device (e.g., 'sec=0x3,sec=0x71')
 --gusli_device_byte_offsets LIST       # Comma-separated LBA offset in bytes per device (default: 1048576)
 --gusli_config_file CONTENT            # Custom config file content (auto-generated if not provided)
+--gusli_try_use_uring                  # Try to use io_uring engine in GUSLI backend (default: false)
 
 Note: storage_enable_direct is automatically enabled for GUSLI backend
+```
+
+**INFINIA Backend:**
+```
+--infinia_config_file PATH             # Path to INFINIA plugin configuration file (simple key=value format)
+
+INFINIA Config File Format:
+  Simple key=value format (one parameter per line, comments start with #)
+
+  Required Parameters:
+    cluster=NAME                       # Infinia cluster name
+    tenant=NAME                        # Tenant name
+    dataset=NAME                       # Dataset name
+
+  Optional Parameters:
+    subtenant=NAME                     # Subtenant (default: "red")
+    sthreads=NUM                       # Number of service threads (default: 8, limited by CPU cores)
+    num_buffers=NUM                    # Pre-allocated deferred operation buffers for async ops (default: 512)
+    num_ring_entries=NUM               # Depth of the asynchronous I/O ring buffer (default: 512)
+    coremasks=VALUE                    # CPU affinity: hex ("0x0F"), list ("[0-3,8]"), or empty disables (default: "")
+    max_retries=NUM                    # BatchTask retry limit (default: 3)
+
+Example INFINIA config file:
+  # INFINIA configuration
+  cluster=my_cluster
+  tenant=my_tenant
+  dataset=my_dataset
+  sthreads=8
+  num_buffers=512
+  num_ring_entries=512
 ```
 
 ### Configuration File
@@ -710,10 +747,51 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 - `--gusli_device_security`: Comma-separated security flags per device (default: "sec=0x3" for each device)
 - `--gusli_device_byte_offsets`: Comma-separated LBA offset in bytes per device (default: 1MB for each device)
 - `--gusli_config_file`: Custom config file content override
+- `--gusli_try_use_uring`: Try to use io_uring engine (default: false); can also be set via `--config_file` as `gusli_try_use_uring=true`
 
 **Notes**:
 - Number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`
 - Direct I/O is automatically enabled for GUSLI (no need to specify `--storage_enable_direct`)
+
+**INFINIA Backend:**
+
+INFINIA uses a simple key=value configuration file passed via the `--infinia_config_file` parameter.
+
+```bash
+# Step 1: Create INFINIA plugin config file (infinia.conf)
+cat > infinia.conf << EOF
+# INFINIA configuration
+cluster=my_cluster
+tenant=my_tenant
+dataset=my_dataset
+sthreads=8
+num_buffers=512
+num_ring_entries=512
+EOF
+
+# Step 2: Run basic INFINIA benchmark (no ETCD needed for single instance)
+./nixlbench --backend INFINIA --infinia_config_file infinia.conf
+
+# Step 3: Or use a nixlbench TOML config file
+cat > nixlbench.toml << EOF
+backend = "INFINIA"
+infinia_config_file = "infinia.conf"
+initiator_seg_type = "DRAM"
+target_seg_type = "DRAM"
+total_buffer_size = 67108864
+num_iter = 16
+EOF
+
+./nixlbench --config_file nixlbench.toml
+
+# Command-line only approach
+./nixlbench \
+  --backend INFINIA \
+  --infinia_config_file infinia.conf \
+  --initiator_seg_type DRAM \
+  --target_seg_type DRAM \
+  --num_iter 16
+```
 
 ### Worker Types
 

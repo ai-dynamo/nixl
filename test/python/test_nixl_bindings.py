@@ -15,6 +15,7 @@
 
 import os
 import pickle
+import shutil
 import tempfile
 
 import pytest
@@ -63,6 +64,11 @@ def test_list():
 
 def test_agent():
     os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
+    # getXferTelemetry() needs an active telemetry sink; without one, telemetry
+    # is disabled and the call returns NIXL_ERR_NO_TELEMETRY. Point telemetry at
+    # a temporary directory so the buffer exporter is created.
+    telemetry_dir = tempfile.mkdtemp(prefix="nixl-telemetry-test-")
+    os.environ["NIXL_TELEMETRY_DIR"] = telemetry_dir
     name1 = "Agent1"
     name2 = "Agent2"
 
@@ -169,6 +175,10 @@ def test_agent():
 
     nixl_utils.free_passthru(addr1)
     nixl_utils.free_passthru(addr2)
+
+    # Restore the no-sink default so telemetry stays inactive for later tests.
+    os.environ.pop("NIXL_TELEMETRY_DIR", None)
+    shutil.rmtree(telemetry_dir, ignore_errors=True)
 
 
 def test_query_mem():

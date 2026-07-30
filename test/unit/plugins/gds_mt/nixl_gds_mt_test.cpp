@@ -25,11 +25,16 @@
 #include <sstream>
 #include <cerrno>
 #include <cstring>
+#include <cstdio>
+#include <filesystem>
 #include <getopt.h>
 #include "nixl_descriptors.h"
 #include "nixl_params.h"
 #include "nixl.h"
 #include "common/nixl_time.h"
+#include "path_mode_common.h"
+
+namespace fs = std::filesystem;
 
 // Default values
 #define DEFAULT_NUM_TRANSFERS 250
@@ -89,6 +94,7 @@ print_usage (const char *program_name) {
         << "  -t, --iterations N      Number of iterations for each transfer (default: "
         << DEFAULT_ITERATIONS << ")\n"
         << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
+        << "  -P, --no-path-mode-smoke Skip the path-mode smoke (enabled by default)\n"
         << "  -G, --num-gpus          Number of GPUs to use (default: " << DEFAULT_NUM_GPUS << ")\n"
         << "  -N, --num-threads N     Number of CPU Threads to use (default: all CPUs detected)\n"
         << "  -h, --help              Show this help message\n"
@@ -219,6 +225,12 @@ format_duration (nixlTime::us_t us) {
     return ss.str();
 }
 
+static int
+runPathModeSmoke() {
+    return nixl_test::runPathModeSmoke(
+        "GDSMTPathModeSmoke", "GDS_MT", "/tmp/nixl_gds_mt_path_mode_smoke.bin", 4096);
+}
+
 int
 main (int argc, char *argv[]) {
     nixl_status_t ret = NIXL_SUCCESS;
@@ -242,6 +254,7 @@ main (int argc, char *argv[]) {
     bool use_direct = false;
     unsigned int iterations = DEFAULT_ITERATIONS;
     unsigned int num_gpus = DEFAULT_NUM_GPUS;
+    bool run_path_mode_smoke = true;
 
     // Parse command line options
     static struct option long_options[] = {{"dram", no_argument, 0, 'd'},
@@ -255,10 +268,11 @@ main (int argc, char *argv[]) {
                                            {"num-threads", required_argument, 0, 'N'},
                                            {"iterations", required_argument, 0, 't'},
                                            {"direct", no_argument, 0, 'D'},
+                                           {"no-path-mode-smoke", no_argument, 0, 'P'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long (argc, argv, "dvn:s:rwp:b:t:G:DhN:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwp:b:t:G:DPhN:", long_options, NULL)) != -1) {
         switch (opt) {
         case 'd':
             use_dram = true;
@@ -310,6 +324,9 @@ main (int argc, char *argv[]) {
         case 'D':
             use_direct = true;
             break;
+        case 'P':
+            run_path_mode_smoke = false;
+            break;
         case 'h':
             print_usage (argv[0]);
             return 0;
@@ -322,6 +339,12 @@ main (int argc, char *argv[]) {
     if (skip_read && skip_write) {
         std::cerr << "Error: Cannot skip both read and write tests\n";
         return 1;
+    }
+
+    if (run_path_mode_smoke) {
+        if (int rc = runPathModeSmoke(); rc != 0) {
+            return rc;
+        }
     }
 
     // Check if directory path is provided

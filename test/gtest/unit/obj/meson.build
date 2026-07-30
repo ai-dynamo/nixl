@@ -16,7 +16,7 @@
 obj_test_sources = ['obj.cpp']
 
 if cuobj_dep.found()
-    obj_test_sources += ['obj_cuobj.cpp']
+    obj_test_sources += ['mock_dell_s3_client.cpp', 'obj_cuobj.cpp']
 endif
 
 obj_unit_test_dep = declare_dependency(

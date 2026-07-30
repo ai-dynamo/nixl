@@ -25,6 +25,7 @@
 #include "nixl_types.h"
 #include "backend_engine.h"
 #include "telemetry.h"
+#include "common/nixl_duration.h"
 
 enum nixl_telemetry_stat_status_t {
     NIXL_TELEMETRY_POST = 0,
@@ -40,7 +41,8 @@ public:
                  const nixl_xfer_op_t backend_op,
                  const nixl_mem_t local_type,
                  const nixl_mem_t remote_type,
-                 const size_t desc_count = 0);
+                 const uint64_t remote_generation,
+                 const size_t desc_count);
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
@@ -69,6 +71,8 @@ private:
     nixl_meta_dlist_t targetDescs;
 
     const std::string remoteAgent;
+    // Generation of the remote-connection
+    const uint64_t remoteGeneration_;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 
@@ -76,10 +80,11 @@ private:
     nixl_status_t status = NIXL_ERR_NOT_POSTED;
 
     nixl_xfer_telem_t telemetry;
+    nixlTime::nixlDuration timer;
 };
 
 struct nixlDlistH {
-    using descs_t = std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_dlist_t>>;
+    using descs_t = std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_stride_dlist_t>>;
 
     nixlDlistH(const std::string &remote_agent, descs_t &&descs);
 

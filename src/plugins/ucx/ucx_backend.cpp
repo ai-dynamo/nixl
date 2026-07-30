@@ -18,6 +18,7 @@
 #include "ucx_backend.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
+#include "common/backend.h"
 #include "common/nixl_log.h"
 
 #include <optional>
@@ -31,6 +32,15 @@
 #include "absl/strings/str_split.h"
 #include <asio.hpp>
 
+namespace {
+[[nodiscard]] uint32_t
+epCloseFlags(const nixl_b_params_t *custom_params) {
+    return nixl::getBackendParamDefaulted(custom_params, "ucx_ep_close_force", false) ?
+        UCP_EP_CLOSE_FLAG_FORCE :
+        0;
+}
+} // namespace
+
 /****************************************
  * Backend request management
 *****************************************/
@@ -39,14 +49,13 @@ class nixlUcxBackendReqH : public nixlBackendReqH {
 private:
     std::set<ucx_connection_ptr_t> connections_;
     std::vector<nixlUcxReq> requests_;
-    nixlUcxWorker *worker_;
-    size_t workerId_;
+    nixlUcxWorker *worker_ = nullptr;
 
     [[nodiscard]] nixl_status_t
     checkConnection(const nixl_status_t status = NIXL_SUCCESS) const {
         NIXL_ASSERT(!connections_.empty());
         for (const auto &conn : connections_) {
-            const nixl_status_t conn_status = conn->getEp(workerId_)->checkTxState();
+            const nixl_status_t conn_status = conn->getEp(getWorkerId())->checkTxState();
             if (conn_status != NIXL_SUCCESS) {
                 return conn_status;
             }
@@ -56,10 +65,9 @@ private:
 
 protected:
     void
-    setWorker(nixlUcxWorker *worker, size_t worker_id) {
+    setWorker(nixlUcxWorker *worker) {
         NIXL_ASSERT(worker_ == nullptr || worker == nullptr);
         worker_ = worker;
-        workerId_ = worker_id;
     }
 
 public:
@@ -75,9 +83,9 @@ public:
 
     std::optional<Notif> notif;
 
-    nixlUcxBackendReqH(nixlUcxWorker *worker, size_t worker_id)
-        : worker_(worker),
-          workerId_(worker_id) {}
+    explicit nixlUcxBackendReqH(nixlUcxWorker *worker) {
+        setWorker(worker);
+    }
 
     void
     reserve(size_t size) {
@@ -182,7 +190,7 @@ public:
 
     [[nodiscard]] size_t
     getWorkerId() const noexcept {
-        return workerId_;
+        return worker_->getId();
     }
 };
 
@@ -222,20 +230,14 @@ public:
     }
 
     virtual void
-    addWorker(nixlUcxWorker *worker, size_t worker_id) {
+    addWorker(nixlUcxWorker *worker) {
         NIXL_ASSERT(workers_.size() < workers_.capacity());
         workers_.push_back(worker);
-        workerIds_.push_back(worker_id);
     }
 
     const std::vector<nixlUcxWorker *> &
     getWorkers() const {
         return workers_;
-    }
-
-    size_t
-    getWorkerId(size_t idx = 0) const {
-        return workerIds_[idx];
     }
 
     void
@@ -251,16 +253,13 @@ public:
         return tls;
     }
 
-    static bool
-    isProgressThread(const nixlUcxEngine *engine) noexcept {
-        nixlUcxThread *thread = tlsThread();
-        return thread && thread->engine_ == engine;
-    }
-
     friend std::ostream &
     operator<<(std::ostream &os, const nixlUcxThread &thread) {
+        const auto id_formatter = [](std::string *out, const nixlUcxWorker *worker) {
+            out->append(std::to_string(worker->getId()));
+        };
         return os << "thread " << &thread << "{engine: " << thread.engine_ << ", worker_ids: ["
-                  << absl::StrJoin(thread.workerIds_, ",") << "]}";
+                  << absl::StrJoin(thread.workers_, ",", id_formatter) << "]}";
     }
 
 protected:
@@ -270,7 +269,6 @@ protected:
 private:
     const nixlUcxEngine *engine_;
     std::vector<nixlUcxWorker *> workers_;
-    std::vector<size_t> workerIds_;
     std::unique_ptr<std::thread> thread_;
     std::unique_ptr<std::promise<void>> threadActive_;
 };
@@ -309,9 +307,9 @@ public:
     }
 
     void
-    addWorker(nixlUcxWorker *worker, size_t worker_id) override {
+    addWorker(nixlUcxWorker *worker) override {
         pollFds_[getWorkers().size()] = {worker->getEfd(), POLLIN, 0};
-        nixlUcxThread::addWorker(worker, worker_id);
+        nixlUcxThread::addWorker(worker);
     }
 
 protected:
@@ -358,22 +356,29 @@ private:
     std::vector<pollfd> pollFds_;
 };
 
-nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_params)
-    : nixlUcxEngine(init_params) {
+nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_params,
+                                         size_t num_dedicated_workers)
+    : nixlUcxEngine(init_params, num_dedicated_workers) {
+    if (!init_params.enableProgTh) {
+        return;
+    }
+
     if (!nixlUcxMtLevelIsSupported(nixl::ucx::mt_mode_t::WORKER)) {
         throw std::invalid_argument("UCX library does not support multi-threading");
     }
 
-    size_t num_workers = getWorkers().size();
-    thread_ = std::make_unique<nixlUcxSharedThread>(this, num_workers, init_params.pthrDelay);
-    for (size_t i = 0; i < num_workers; i++) {
-        thread_->addWorker(getWorkers()[i].get(), i);
+    const size_t shared_count = getSharedWorkers().size();
+    thread_ = std::make_unique<nixlUcxSharedThread>(this, shared_count, init_params.pthrDelay);
+    for (size_t i = 0; i < shared_count; i++) {
+        thread_->addWorker(getSharedWorkers()[i].get());
     }
     thread_->start();
 }
 
 nixlUcxThreadEngine::~nixlUcxThreadEngine() {
-    thread_->join();
+    if (thread_) {
+        thread_->join();
+    }
 }
 
 void
@@ -386,6 +391,10 @@ nixl_status_t
 nixlUcxThreadEngine::getNotifs(notif_list_t &notif_list) {
     if (!notif_list.empty()) {
         return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (!thread_) {
+        progressLoop();
     }
 
     const std::lock_guard lock(notifMutex_);
@@ -407,15 +416,14 @@ struct nixlUcxBackendSharedState;
  */
 class nixlUcxChunkBackendReqH : public nixlUcxBackendReqH {
 public:
-    nixlUcxChunkBackendReqH() : nixlUcxBackendReqH(nullptr, UINT64_MAX) {}
+    nixlUcxChunkBackendReqH() : nixlUcxBackendReqH(nullptr) {}
 
     void
     startXfer(const std::shared_ptr<nixlUcxBackendSharedState> &shared_state,
-              nixlUcxWorker *worker,
-              size_t worker_id) {
+              nixlUcxWorker *worker) {
         NIXL_ASSERT(sharedState_.get() == nullptr);
         sharedState_ = shared_state;
-        setWorker(worker, worker_id);
+        setWorker(worker);
     }
 
     void
@@ -426,8 +434,10 @@ public:
 
     friend std::ostream &
     operator<<(std::ostream &os, const nixlUcxChunkBackendReqH &chunk) {
-        return os << "chunk " << &chunk << "{worker_id: " << chunk.getWorkerId()
-                  << ", state: " << chunk.sharedState_.get() << "}";
+        std::string id = chunk.getWorker() ? std::to_string(chunk.getWorkerId()) : "none";
+        os << "chunk " << &chunk << "{worker_id: " << id << ", state: " << chunk.sharedState_.get()
+           << "}";
+        return os;
     }
 
 private:
@@ -462,7 +472,7 @@ nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     }
     sharedState_->pendingReqs.fetch_sub(1);
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
-    setWorker(nullptr, UINT64_MAX);
+    setWorker(nullptr);
     sharedState_.reset();
 }
 
@@ -484,11 +494,8 @@ nixlUcxChunkBackendReqH::status() {
  */
 class nixlUcxCompositeBackendReqH : public nixlUcxBackendReqH {
 public:
-    nixlUcxCompositeBackendReqH(nixlUcxWorker *worker,
-                                size_t worker_id,
-                                size_t chunk_size,
-                                size_t num_chunks)
-        : nixlUcxBackendReqH(worker, worker_id),
+    nixlUcxCompositeBackendReqH(nixlUcxWorker *worker, size_t chunk_size, size_t num_chunks)
+        : nixlUcxBackendReqH(worker),
           sharedState_(std::make_shared<nixlUcxBackendSharedState>()),
           chunkSize_(chunk_size) {
         sharedState_->chunks.resize(num_chunks);
@@ -512,9 +519,9 @@ public:
     }
 
     [[nodiscard]] nixlUcxChunkBackendReqH *
-    startChunk(size_t idx, nixlUcxWorker *worker, size_t worker_id) {
+    startChunk(size_t idx, nixlUcxWorker *worker) {
         nixlUcxChunkBackendReqH *chunk = &sharedState_->chunks[idx];
-        chunk->startXfer(sharedState_, worker, worker_id);
+        chunk->startXfer(sharedState_, worker);
         return chunk;
     }
 
@@ -618,9 +625,9 @@ protected:
         if (!requests_.empty()) {
             NIXL_WARN << "dedicated " << *this << " dropping " << requests_.size()
                       << " requests on exit";
-            for (auto it = requests_.begin(); it != requests_.end();) {
-                NIXL_INFO << "dropping " << *(*it);
-                (*it)->complete(NIXL_ERR_BACKEND);
+            for (auto *req : requests_) {
+                NIXL_INFO << "dropping " << *req;
+                req->complete(NIXL_ERR_BACKEND);
             }
             requests_.clear();
         }
@@ -633,40 +640,23 @@ private:
     std::vector<nixlUcxChunkBackendReqH *> requests_;
 };
 
-nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params)
-    : nixlUcxEngine(init_params) {
-    size_t num_threads = nixl_b_params_get(init_params.customParams, "num_threads", 0);
-    numSharedWorkers_ = getWorkers().size() - num_threads;
-    NIXL_ASSERT(numSharedWorkers_ > 0);
+nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
+                                                 size_t num_threads)
+    : nixlUcxThreadEngine(init_params, num_threads) {
+    splitBatchSize_ =
+        nixl::getBackendParamDefaulted(init_params.customParams, "split_batch_size", 1024u);
 
-    splitBatchSize_ = nixl_b_params_get(init_params.customParams, "split_batch_size", 1024);
-
-    if (init_params.enableProgTh) {
-        sharedThread_ =
-            std::make_unique<nixlUcxSharedThread>(this, numSharedWorkers_, init_params.pthrDelay);
-        for (size_t i = 0; i < numSharedWorkers_; i++) {
-            sharedThread_->addWorker(getWorkers()[i].get(), i);
-        }
-        sharedThread_->start();
-    }
-
-    if (num_threads > 0) {
-        io_.reset(new asio::io_context());
-        dedicatedThreads_.reserve(num_threads);
-        for (size_t i = 0; i < num_threads; ++i) {
-            size_t worker_id = numSharedWorkers_ + i;
-            dedicatedThreads_.emplace_back(std::make_unique<nixlUcxDedicatedThread>(this, *io_));
-            dedicatedThreads_.back()->addWorker(getWorker(worker_id).get(), worker_id);
-            dedicatedThreads_.back()->start();
-        }
+    const auto dedicated_workers = getDedicatedWorkers();
+    io_.reset(new asio::io_context());
+    dedicatedThreads_.reserve(dedicated_workers.size());
+    for (size_t i = 0; i < dedicated_workers.size(); ++i) {
+        dedicatedThreads_.emplace_back(std::make_unique<nixlUcxDedicatedThread>(this, *io_));
+        dedicatedThreads_.back()->addWorker(dedicated_workers[i].get());
+        dedicatedThreads_.back()->start();
     }
 }
 
 nixlUcxThreadPoolEngine::~nixlUcxThreadPoolEngine() {
-    if (sharedThread_) {
-        sharedThread_->join();
-    }
-
     if (io_) {
         io_->stop();
         for (auto &thread : dedicatedThreads_) {
@@ -690,9 +680,8 @@ nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
     size_t chunk_size = std::max(batch_size / dedicatedThreads_.size(), splitBatchSize_);
     size_t num_chunks = (batch_size + chunk_size - 1) / chunk_size;
 
-    size_t worker_id = getWorkerId();
     const auto comp_handle = new nixlUcxCompositeBackendReqH(
-        getWorker(worker_id).get(), worker_id, chunk_size, num_chunks);
+        getSharedWorker(getSharedWorkerId()).get(), chunk_size, num_chunks);
     NIXL_TRACE << "created " << *comp_handle;
     handle = comp_handle;
     return NIXL_SUCCESS;
@@ -728,7 +717,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
             NIXL_ASSERT(thread != nullptr);
 
             nixlUcxChunkBackendReqH *chunk_handle =
-                comp_handle->startChunk(i, thread->getWorkers()[0], thread->getWorkerId());
+                comp_handle->startChunk(i, thread->getWorkers()[0]);
             NIXL_TRACE << "dedicated " << *thread << " starting " << *chunk_handle;
 
             size_t start_idx = i * chunk_size;
@@ -754,27 +743,6 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     return status.load();
 }
 
-void
-nixlUcxThreadPoolEngine::appendNotif(std::string &&remote_name, std::string &&msg) {
-    const std::lock_guard lock(notifMutex_);
-    notifList_.emplace_back(std::move(remote_name), std::move(msg));
-}
-
-nixl_status_t
-nixlUcxThreadPoolEngine::getNotifs(notif_list_t &notif_list) {
-    if (!notif_list.empty()) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if (!sharedThread_) {
-        progressLoop();
-    }
-
-    const std::lock_guard lock(notifMutex_);
-    notifList_.swap(notif_list);
-    return NIXL_SUCCESS;
-}
-
 /****************************************
  * Constructor/Destructor
  *****************************************/
@@ -782,9 +750,10 @@ nixlUcxThreadPoolEngine::getNotifs(notif_list_t &notif_list) {
 std::unique_ptr<nixlUcxEngine>
 nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
     nixlUcxEngine *engine;
-    size_t num_threads = nixl_b_params_get(init_params.customParams, "num_threads", 0);
+    const size_t num_threads =
+        nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
     if (num_threads > 0) {
-        engine = new nixlUcxThreadPoolEngine(init_params);
+        engine = new nixlUcxThreadPoolEngine(init_params, num_threads);
     } else if (init_params.enableProgTh) {
         engine = new nixlUcxThreadEngine(init_params);
     } else {
@@ -793,53 +762,56 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
     return std::unique_ptr<nixlUcxEngine>(engine);
 }
 
-nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params)
+nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
     : nixlBackendEngine(&init_params),
       sharedWorkerIndex_(1) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
-    if (custom_params->count("device_list")!=0)
-        devs = absl::StrSplit((*custom_params)["device_list"], ", ");
-
-    size_t num_workers = nixl_b_params_get(custom_params, "num_workers", 1);
-    size_t num_threads = nixl_b_params_get(custom_params, "num_threads", 0);
-    size_t num_device_channels = nixl_b_params_get(custom_params, "ucx_num_device_channels", 4);
-
-    if (num_workers <= num_threads) {
-        /* There must be at least one shared worker */
-        num_workers = num_threads + 1;
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "device_list")) {
+        devs = absl::StrSplit(*opt, ", ");
     }
 
-    ucp_err_handling_mode_t err_handling_mode;
-    const auto err_handling_mode_it =
-        custom_params->find(std::string(nixl_ucx_err_handling_param_name));
-    if (err_handling_mode_it == custom_params->end()) {
-        err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
-    } else {
-        err_handling_mode = ucx_err_mode_from_string(err_handling_mode_it->second);
+    size_t num_workers = nixl::getBackendParamDefaulted(custom_params, "num_workers", 1u);
+    if (num_workers <= num_dedicated_workers) {
+        num_workers = num_dedicated_workers + 1;
+    }
+    numSharedWorkers_ = num_workers - num_dedicated_workers;
+
+    const size_t num_device_channels =
+        nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
+
+
+    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(
+            custom_params, std::string(nixl_ucx_err_handling_param_name))) {
+        err_handling_mode = ucx_err_mode_from_string(*opt);
     }
 
-    const auto engine_config_it = custom_params->find("engine_config");
+    const uint32_t ep_close_flags = epCloseFlags(custom_params);
+
     const auto engine_config =
-        (engine_config_it != custom_params->end()) ? engine_config_it->second : "";
+        nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
     uc = std::make_unique<nixlUcxContext>(devs,
                                           init_params.enableProgTh,
                                           num_workers,
                                           init_params.syncMode,
                                           num_device_channels,
-                                          engine_config);
+                                          engine_config,
+                                          localAgent);
 
     uc->warnAboutHardwareSupportMismatch();
 
+    workers_.reserve(num_workers);
     for (size_t i = 0; i < num_workers; i++) {
-        uws.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode));
+        workers_.emplace_back(
+            std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, ep_close_flags, i));
     }
 
-    auto &uw = uws.front();
-    workerAddr = uw->epAddr();
-    uw->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, notifAmCb, this);
+    auto &worker = workers_.front();
+    workerAddr = worker->epAddr();
+    worker->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, notifAmCb, this);
 }
 
 nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
@@ -863,10 +835,6 @@ nixlUcxEngine::~nixlUcxEngine() {
 /****************************************
  * Connection management
 *****************************************/
-
-nixl_status_t nixlUcxEngine::checkConn(const std::string &remote_agent) {
-    return remoteConnMap.count(remote_agent) ? NIXL_SUCCESS : NIXL_ERR_NOT_FOUND;
-}
 
 nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
     str = workerAddr;
@@ -906,12 +874,12 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
 
     nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
     std::shared_ptr<nixlUcxConnection> conn = std::make_shared<nixlUcxConnection>();
-    for (auto &uw : uws) {
-        std::unique_ptr<nixlUcxEp> result = uw->connect(addr.data(), size);
-        if (!result) {
+    for (const auto &uw : workers_) {
+        std::unique_ptr<nixlUcxEp> ep = uw->connect(addr.data());
+        if (!ep) {
             return NIXL_ERR_BACKEND;
         }
-        conn->eps.push_back(std::move(result));
+        conn->eps.push_back(std::move(ep));
     }
 
     remoteConnMap.insert({remote_agent, conn});
@@ -989,9 +957,15 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
             // TODO: err: remote connection not found
             return NIXL_ERR_NOT_FOUND;
         }
+        for (size_t i = 0; i < workers_.size(); ++i) {
+            const nixl_status_t status = it->second->getEp(i)->checkTxState();
+            if (status != NIXL_SUCCESS) {
+                return status;
+            }
+        }
         // nixlSerDes::_stringToBytes() was used to "unpack" blob here.
         output = new nixlUcxPublicMetadata(
-            it->second, makePublicMetadataRkeys(it->second, uws.size(), blob.data()));
+            it->second, makePublicMetadataRkeys(it->second, workers_.size(), blob.data()));
         return NIXL_SUCCESS;
     }
     catch (const std::runtime_error &e) {
@@ -1030,7 +1004,7 @@ nixl_status_t nixlUcxEngine::unloadMD (nixlBackendMD* input) {
 *****************************************/
 
 size_t
-nixlUcxEngine::getWorkerId(const nixl_opt_b_args_t *opt_args) const noexcept {
+nixlUcxEngine::getSharedWorkerId(const nixl_opt_b_args_t *opt_args) const noexcept {
     if (opt_args) {
         const std::optional<size_t> worker_id = getWorkerIdFromOptArgs(*opt_args);
         if (worker_id) {
@@ -1085,9 +1059,9 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    const size_t worker_id = getWorkerId(opt_args);
+    const size_t worker_id = getSharedWorkerId(opt_args);
     /* TODO: try to get from a pool first */
-    handle = new nixlUcxBackendReqH(getWorker(worker_id).get(), worker_id);
+    handle = new nixlUcxBackendReqH(getSharedWorker(worker_id).get());
 
     return NIXL_SUCCESS;
 }
@@ -1345,7 +1319,7 @@ unsigned
 nixlUcxEngine::progress() {
     // TODO: add listen for connection handling if necessary
     unsigned ret = 0;
-    for (auto &uw : uws) {
+    for (const auto &uw : getSharedWorkers()) {
         ret += uw->progress();
     }
     return ret;
@@ -1447,7 +1421,7 @@ nixlUcxEngine::genNotif(const std::string &remote_agent, const std::string &msg)
         return NIXL_ERR_NOT_FOUND;
     }
 
-    const nixl_status_t ret = notifSendPriv(remote_agent, msg, conn->getEp(getWorkerId()));
+    const nixl_status_t ret = notifSendPriv(remote_agent, msg, conn->getEp(getSharedWorkerId()));
     if (ret == NIXL_IN_PROG) {
         return NIXL_SUCCESS;
     }
@@ -1458,9 +1432,9 @@ nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
-    const size_t worker_id = getWorkerId(opt_args);
+    const size_t worker_id = getSharedWorkerId(opt_args);
     try {
-        mvh = nixl::ucx::createMemList(dlist, worker_id, *getWorker(worker_id));
+        mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
@@ -1473,9 +1447,9 @@ nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
-    const size_t worker_id = getWorkerId(opt_args);
+    const size_t worker_id = getSharedWorkerId(opt_args);
     try {
-        mvh = nixl::ucx::createMemList(dlist, *getWorker(worker_id));
+        mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
         return NIXL_SUCCESS;
     }
     catch (const std::exception &e) {
