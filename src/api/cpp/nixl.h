@@ -311,6 +311,19 @@ class nixlAgent {
         getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &telemetry) const;
 
         /**
+         * @brief  Get telemetry data and the selected backend name for `req_hndl`.
+         *
+         * @param  req_hndl          Transfer request handle from makeXferReq/createXferReq
+         * @param  telemetry [out]   Output telemetry information
+         * @param  backend_name [out] Name of the backend selected for the transfer
+         * @return nixl_status_t     Error code if call was not successful
+         */
+        nixl_status_t
+        getXferTelemetry(const nixlXferReqH *req_hndl,
+                         nixl_xfer_telem_t &telemetry,
+                         nixl_backend_t &backend_name) const;
+
+        /**
          * @brief  Query the backend associated with `req_hndl`. E.g., if for genNotif
          *         the same backend as a transfer is desired.
          *

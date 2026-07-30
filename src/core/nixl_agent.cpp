@@ -1295,6 +1295,17 @@ nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &tel
 }
 
 nixl_status_t
+nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl,
+                            nixl_xfer_telem_t &telemetry,
+                            nixl_backend_t &backend_name) const {
+    const auto status = getXferTelemetry(req_hndl, telemetry);
+    if (status == NIXL_SUCCESS) {
+        backend_name = req_hndl->engine->getType();
+    }
+    return status;
+}
+
+nixl_status_t
 nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
                             nixlBackendH* &backend) const {
     NIXL_LOCK_GUARD(data->lock);

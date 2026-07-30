@@ -436,18 +436,20 @@ protected:
                 }
 
                 nixl_xfer_telem_t telemetry;
+                nixl_backend_t backend_name;
                 if (expected_telem_status == NIXL_ERR_NO_TELEMETRY) {
                     const LogIgnoreGuard lig("cannot return values when telemetry is not enabled");
-                    status = from.getXferTelemetry(xfer_req, telemetry);
+                    status = from.getXferTelemetry(xfer_req, telemetry, backend_name);
                     EXPECT_EQ(status, expected_telem_status);
                 } else {
-                    status = from.getXferTelemetry(xfer_req, telemetry);
+                    status = from.getXferTelemetry(xfer_req, telemetry, backend_name);
                     EXPECT_EQ(status, expected_telem_status);
                     if (expected_telem_status == NIXL_SUCCESS) {
                         EXPECT_TRUE(telemetry.startTime > min_chrono_time);
                         EXPECT_TRUE(telemetry.postDuration > chrono_period_us_t(0));
                         EXPECT_TRUE(telemetry.xferDuration > chrono_period_us_t(0));
                         EXPECT_TRUE(telemetry.xferDuration >= telemetry.postDuration);
+                        EXPECT_EQ(backend_name, getBackendName());
                     }
                 }
 

@@ -160,6 +160,7 @@ def test_agent():
     assert telem.postDuration > 0
     assert telem.xferDuration > 0
     assert telem.xferDuration >= telem.postDuration
+    assert telem.backendName == "UCX"
 
     agent1.releaseXferReq(handle)
 
