@@ -17,8 +17,8 @@
 #include "mp_store.h"
 
 #include "common/nixl_log.h"
+#include "common/scoped_fd.h"
 #include "mp_store_layout.h"
-#include "scoped_fd.h"
 
 #include <fcntl.h>
 #include <sys/mman.h>

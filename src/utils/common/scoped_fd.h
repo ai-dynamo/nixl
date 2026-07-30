@@ -14,21 +14,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_SCOPED_FD_H
-#define NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_SCOPED_FD_H
+#ifndef NIXL_SRC_UTILS_COMMON_SCOPED_FD_H
+#define NIXL_SRC_UTILS_COMMON_SCOPED_FD_H
 
 #include <unistd.h>
 
 #include <utility>
 
-namespace nixl::telemetry::mp {
+namespace nixl {
 
 /**
  * @class scopedFd
- * @brief Owning wrapper over a file descriptor, closed on destruction.
+ * @brief Move-only owner of a file descriptor, closed on destruction.
  *
  * Held as a member, it also closes the descriptor when a constructor throws
- * after acquiring it.
+ * after acquiring it. An empty owner (no descriptor) is a valid state, so a
+ * factory can return one to mean failure.
  */
 class scopedFd {
 public:
@@ -77,6 +78,6 @@ private:
     int fd_ = -1;
 };
 
-} // namespace nixl::telemetry::mp
+} // namespace nixl
 
-#endif // NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_SCOPED_FD_H
+#endif // NIXL_SRC_UTILS_COMMON_SCOPED_FD_H

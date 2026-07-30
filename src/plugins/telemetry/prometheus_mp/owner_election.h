@@ -18,7 +18,7 @@
 #define NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_OWNER_ELECTION_H
 
 #include "common/nixl_log.h"
-#include "scoped_fd.h"
+#include "common/scoped_fd.h"
 
 #include <fcntl.h>
 #include <sys/file.h>
