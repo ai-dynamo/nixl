@@ -98,8 +98,6 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
     case nixl::ucx::ep_state_t::UNINITIALIZED:
     case nixl::ucx::ep_state_t::FAILED:
         // The error was already handled, nothing to do
-    case nixl::ucx::ep_state_t::DISCONNECTED:
-        // The EP has been disconnected, nothing to do
         return;
     case nixl::ucx::ep_state_t::CONNECTED:
         setState(nixl::ucx::ep_state_t::FAILED);
@@ -126,8 +124,7 @@ nixlUcxEp::closeImpl() {
 
     switch (current_state) {
     case nixl::ucx::ep_state_t::UNINITIALIZED:
-    case nixl::ucx::ep_state_t::DISCONNECTED:
-        // The EP has not been connected, or already disconnected.
+        // The EP has not been connected.
         // Nothing to do.
         NIXL_ASSERT(eph == nullptr);
         return NIXL_SUCCESS;
