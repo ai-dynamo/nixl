@@ -13,10 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-py = import('python').find_installation('python3', pure: false)
+staging_inc = include_directories('.')
 
-py.install_sources('_api.py', subdir: (cuda_wheel_dir))
-py.install_sources('_service_api.py', subdir: (cuda_wheel_dir))
-py.install_sources('__init__.py', subdir: (cuda_wheel_dir))
-py.install_sources('py.typed', subdir: (cuda_wheel_dir))
-py.install_sources('logging.py', subdir: (cuda_wheel_dir))
+staging_lib = library('nixl_marshal_staging',
+    'staging_backend.cpp',
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, marshal_inc, staging_inc, nixl_service_inc],
+    dependencies: nixl_service_deps,
+    install: true)
+
+staging_dep = declare_dependency(
+    link_with: staging_lib,
+    include_directories: [marshal_inc, staging_inc, nixl_service_inc],
+    dependencies: nixl_service_deps)

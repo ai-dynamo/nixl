@@ -332,6 +332,36 @@ if wheel_variant != ''
     cuda_wheel_dir = 'nixl_' + wheel_variant
 endif
 
+nvcomp_inc_path = get_option('nvcomp_path_inc')
+nvcomp_lib_path = get_option('nvcomp_path_lib')
+nvcomp_dep = disabler()
+
+# Prioritize the user-provided paths: if they are set, load nvCOMP from there.
+if nvcomp_lib_path != ''
+    nvcomp_lib = cpp.find_library('nvcomp', dirs: nvcomp_lib_path, required : false)
+    if nvcomp_lib.found()
+        if nvcomp_inc_path == '' or cpp.has_header('nvcomp.h', args : '-I' + nvcomp_inc_path)
+            if nvcomp_inc_path == ''
+                nvcomp_dep = declare_dependency(dependencies : nvcomp_lib)
+            else
+                nvcomp_dep = declare_dependency(
+                    include_directories : include_directories(nvcomp_inc_path),
+                    dependencies : nvcomp_lib)
+            endif
+        endif
+    endif
+endif
+
+if not nvcomp_dep.found()
+    message('nvCOMP not found via explicit paths, falling back to system discovery.')
+    nvcomp_dep = dependency('nvcomp', required : false)
+endif
+
+if not nvcomp_dep.found()
+    nvcomp_dep = disabler()
+    warning('nvCOMP not found. Compression marshal backend will be disabled.')
+endif
+
 # Check for etcd-cpp-api - use multiple methods for discovery
 etcd_dep = dependency('etcd-cpp-api', required : false)
 etcd_inc_path = get_option('etcd_inc_path')

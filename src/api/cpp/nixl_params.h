@@ -19,7 +19,11 @@
 
 #include <string>
 #include <cstdint>
+#include <functional>
+
 #include "nixl_types.h"
+
+struct nixlNotifCallbackArgs;
 
 /**
  * @struct nixlAgentConfig
@@ -103,6 +107,11 @@ struct nixlAgentConfig {
           pthrDelay(pthr_delay_us),
           lthrDelay(lthr_delay_us),
           etcdWatchTimeout(etcd_watch_timeout) {}
+
+protected:
+    friend class nixlAgent;
+    friend class nixlServiceAgent;
+    std::unordered_map<std::string, std::function<void(nixlNotifCallbackArgs)>> notifCallbacks_;
 };
 
 #endif

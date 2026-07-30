@@ -50,7 +50,7 @@ class nixlAgent {
         /**
          * @brief Destructor for nixlAgent object
          */
-        ~nixlAgent ();
+        virtual ~nixlAgent();
 
         /* It is unsafe to move nixlAgent object */
         nixlAgent(nixlAgent&&) noexcept = delete;

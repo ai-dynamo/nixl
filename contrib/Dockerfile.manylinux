@@ -74,6 +74,7 @@ ARG BUILD_NIXL_EP="true"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
 ARG NPROC
+ARG NVCOMP_VERSION="5.3.0"
 
 RUN yum groupinstall -y 'Development Tools' &&  \
     dnf install -y almalinux-release-synergy epel-release && \
@@ -110,6 +111,17 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     pciutils-devel \
     wget \
     zlib
+
+# Install nvCOMP package.
+RUN CUDA_MAJOR="$(echo "${CUDA_VERSION}" | cut -d. -f1)" && \
+    NVCOMP_OS="rhel$(rpm -E '%{rhel}')" && \
+    wget --tries=3 --waitretry=5 --no-verbose \
+        "https://developer.download.nvidia.com/compute/nvcomp/${NVCOMP_VERSION}/local_installers/nvcomp-local-repo-${NVCOMP_OS}-${NVCOMP_VERSION}-${NVCOMP_VERSION}-1.${ARCH}.rpm" \
+        -O nvcomp-local-repo.rpm && \
+    rpm --install nvcomp-local-repo.rpm && \
+    dnf clean expire-cache && \
+    dnf install -y "nvcomp-cuda-${CUDA_MAJOR}" && \
+    rm -f nvcomp-local-repo.rpm
 
 # Build latest hwloc from source to avoid older RHEL8 API limitations.
 RUN cd /tmp && \
@@ -483,6 +495,7 @@ RUN rm -rf build && \
     meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $NIXL_EP_FLAG -Ducx_path=/usr/local \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" \
+    -Dbuild_nixl_service=true \
     -Drelease_wheel=true && \
     cd build && \
     ninja && \
@@ -491,6 +504,10 @@ RUN rm -rf build && \
 ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/:$LD_LIBRARY_PATH
 ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/plugins:$LD_LIBRARY_PATH
 ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib64/plugins
+
+# Set environment variables for NIXL service
+ENV PYTHONPATH=/usr/local/nixl/lib/python3/dist-packages:$PYTHONPATH
+ENV UCX_TLS=^cuda_ipc
 
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
