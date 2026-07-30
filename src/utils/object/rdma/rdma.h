@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef NIXL_SRC_UTILS_OBJECT_RDMA_H
-#define NIXL_SRC_UTILS_OBJECT_RDMA_H
+#ifndef NIXL_SRC_UTILS_OBJECT_RDMA_RDMA_H
+#define NIXL_SRC_UTILS_OBJECT_RDMA_RDMA_H
 
 // Generic S3-over-RDMA data path for the object backend.
 //
@@ -182,4 +182,4 @@ rdmaGetWithRetry(SharedCuObjClient &rdma,
 
 #endif // HAVE_CUOBJ_CLIENT
 
-#endif // NIXL_SRC_UTILS_OBJECT_RDMA_H
+#endif // NIXL_SRC_UTILS_OBJECT_RDMA_RDMA_H

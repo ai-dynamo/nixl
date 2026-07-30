@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef NIXL_SRC_UTILS_OBJECT_RDMA_PROTOCOL_H
-#define NIXL_SRC_UTILS_OBJECT_RDMA_PROTOCOL_H
+#ifndef NIXL_SRC_UTILS_OBJECT_RDMA_RDMA_PROTOCOL_H
+#define NIXL_SRC_UTILS_OBJECT_RDMA_RDMA_PROTOCOL_H
 
 // Generic S3-over-RDMA wire protocol helpers.
 //
@@ -114,4 +114,4 @@ parseRdmaReply(const std::string &reply) {
 
 } // namespace nixl_obj_rdma
 
-#endif // NIXL_SRC_UTILS_OBJECT_RDMA_PROTOCOL_H
+#endif // NIXL_SRC_UTILS_OBJECT_RDMA_RDMA_PROTOCOL_H

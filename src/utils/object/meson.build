@@ -29,7 +29,8 @@ if aws_s3.found() and aws_s3_crt.found() and aws_core.found()
     # to nothing when the cuObjClient library is absent; rdma_protocol.h is
     # dependency-free. These live here (not in the OBJ plugin) so the accel
     # engines — and any future vendor engine — can compose them.
-    obj_utils_sources = ['s3/utils.cpp', 's3/utils.h', 'rdma_protocol.h', 'rdma.cpp', 'rdma.h']
+    obj_utils_sources = ['s3/utils.cpp', 's3/utils.h',
+                         'rdma/rdma_protocol.h', 'rdma/rdma.cpp', 'rdma/rdma.h']
     obj_utils_deps = [nixl_common_dep, partial_aws_s3, partial_aws_s3_crt, partial_aws_core]
     if cuobj_dep.found()
         obj_utils_deps += [cuobj_dep]

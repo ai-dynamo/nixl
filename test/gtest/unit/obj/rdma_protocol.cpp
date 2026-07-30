@@ -9,7 +9,7 @@
 
 #include <gtest/gtest.h>
 
-#include "object/rdma_protocol.h"
+#include "object/rdma/rdma_protocol.h"
 
 namespace {
 
