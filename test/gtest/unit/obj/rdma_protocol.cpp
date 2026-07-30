@@ -21,12 +21,20 @@ TEST(RdmaProtocol, FormatTokenIsDescColonAddrColonSize) {
     EXPECT_EQ(formatRdmaToken("", 0, 0), ":0000000000000000:0000000000000000");
 }
 
-TEST(RdmaProtocol, FormatTokenHandlesFullWidthAndNullDescriptor) {
+TEST(RdmaProtocol, FormatTokenHandlesFullWidthAndEmptyDescriptor) {
     // Full 64-bit values render as 16 lowercase hex digits (no truncation).
     EXPECT_EQ(formatRdmaToken("D", 0xffffffffffffffffULL, 0xdeadbeefcafef00dULL),
               "D:ffffffffffffffff:deadbeefcafef00d");
-    // A null descriptor is treated as an empty one (no crash, leading ':').
-    EXPECT_EQ(formatRdmaToken(nullptr, 0x1, 0x2), ":0000000000000001:0000000000000002");
+    // An empty descriptor produces a leading ':' (no crash).
+    EXPECT_EQ(formatRdmaToken(std::string_view{}, 0x1, 0x2), ":0000000000000001:0000000000000002");
+}
+
+TEST(RdmaProtocol, ParseReplyRejectsOutOfRangeCodes) {
+    // Values outside the HTTP status range are malformed, so a negative reply
+    // cannot alias rdma_not_supported (-2) nor a huge value look like success.
+    EXPECT_EQ(parseRdmaReply("-2"), 0);
+    EXPECT_EQ(parseRdmaReply("99"), 0);
+    EXPECT_EQ(parseRdmaReply("600"), 0);
 }
 
 TEST(RdmaProtocol, FormatTokenDoesNotTruncateLongDescriptor) {

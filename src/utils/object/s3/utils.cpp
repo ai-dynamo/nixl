@@ -22,7 +22,7 @@
 namespace nixl_s3_utils {
 
 [[nodiscard]] std::optional<Aws::Auth::AWSCredentials>
-createAWSCredentials(nixl_b_params_t *custom_params) {
+createAWSCredentials(const nixl_b_params_t *custom_params) {
     if (!custom_params) {
         return std::nullopt;
     }
@@ -46,12 +46,12 @@ createAWSCredentials(nixl_b_params_t *custom_params) {
 }
 
 [[nodiscard]] bool
-getUseVirtualAddressing(nixl_b_params_t *custom_params) {
+getUseVirtualAddressing(const nixl_b_params_t *custom_params) {
     return nixl::getBackendParamDefaulted(custom_params, "use_virtual_addressing", false);
 }
 
 [[nodiscard]] std::string
-getBucketName(nixl_b_params_t *custom_params) {
+getBucketName(const nixl_b_params_t *custom_params) {
     const auto str = nixl::getBackendParamDefaulted(custom_params, "bucket", std::string());
     if (!str.empty()) {
         return str;

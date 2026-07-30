@@ -8,9 +8,11 @@
 #ifdef HAVE_CUOBJ_CLIENT
 
 #include <algorithm>
+#include <charconv>
 #include <exception>
 #include <map>
 #include <sstream>
+#include <system_error>
 
 #include <aws/core/Aws.h>
 #include <aws/core/auth/AWSAuthSigner.h>
@@ -96,6 +98,9 @@ SharedCuObjClient::deregisterBuffer(void *ptr) {
 
 bool
 SharedCuObjClient::isDeviceMemory(const void *ptr) const {
+    // No mutex_: this is a static cuObjClient helper that inspects the pointer's
+    // memory type via CUDA and touches no cuObjClient instance state, so it needs
+    // no serialization against registerBuffer()/getToken().
     return cuObjClient::getMemoryType(ptr) == CUOBJ_MEMORY_CUDA_DEVICE;
 }
 
@@ -124,13 +129,10 @@ SharedCuObjClient::putToken(char *token) {
 // ---------------------------------------------------------------------------
 // S3RdmaControlPlane
 //
-// === UNVERIFIED SEAM ===
-// Everything in Impl touches the AWS SDK low-level HTTP/signing layer and could
-// not be compiled in the authoring environment (no aws-sdk-cpp present). The
-// surrounding protocol logic (rdmaPut/rdmaGet below) is SDK-agnostic and unit
-// tested via rdma_protocol.h. A reviewer with the SDK should focus validation
-// here: SigV4 UNSIGNED-PAYLOAD signing, URI construction (path vs virtual
-// addressing), and response-header retrieval.
+// Everything in Impl touches the AWS SDK low-level HTTP/signing layer: SigV4
+// UNSIGNED-PAYLOAD signing, URI construction (path vs virtual addressing), and
+// response-header retrieval. The surrounding protocol logic (rdmaPut/rdmaGet
+// below) is SDK-agnostic and unit tested via rdma_protocol.h.
 // ---------------------------------------------------------------------------
 
 struct S3RdmaControlPlane::Impl {
@@ -162,10 +164,16 @@ struct S3RdmaControlPlane::Impl {
         const Aws::String amz_date = now.ToGmtString("%Y%m%dT%H%M%SZ");
         const Aws::String date_stamp = now.ToGmtString("%Y%m%d");
 
-        // Host header (with port) must be signed and match what is sent.
+        // Host header (with port) must be signed and match what is sent. Only the
+        // scheme's own default port is omitted; a non-default explicit port (even
+        // 80 on https or 443 on http) must appear so the signed Host matches the
+        // wire, otherwise SigV4 verification fails.
         Aws::String host = req.GetUri().GetAuthority();
         const unsigned p = req.GetUri().GetPort();
-        if (p != 0 && p != 80 && p != 443) {
+        const bool default_port =
+            (req.GetUri().GetScheme() == Aws::Http::Scheme::HTTP && p == 80) ||
+            (req.GetUri().GetScheme() == Aws::Http::Scheme::HTTPS && p == 443);
+        if (p != 0 && !default_port) {
             host += ":" + std::to_string(p);
         }
         req.SetHeaderValue("host", host);
@@ -260,7 +268,7 @@ struct S3RdmaControlPlane::Impl {
     }
 };
 
-S3RdmaControlPlane::S3RdmaControlPlane(nixl_b_params_t *custom_params) : impl_(new Impl()) {
+S3RdmaControlPlane::S3RdmaControlPlane(const nixl_b_params_t *custom_params) : impl_(new Impl()) {
     try {
         nixl_s3_utils::initAWSSDK();
 
@@ -277,7 +285,13 @@ S3RdmaControlPlane::S3RdmaControlPlane(nixl_b_params_t *custom_params) : impl_(n
             Aws::Http::URI ep(config.endpointOverride);
             // Honor the override's scheme for both http and https (a bare http
             // config.scheme must not stick when the override is https).
-            impl_->scheme = (ep.GetScheme() == Aws::Http::Scheme::HTTP) ? "http" : "https";
+            const Aws::String ep_scheme =
+                (ep.GetScheme() == Aws::Http::Scheme::HTTP) ? "http" : "https";
+            if (ep_scheme != impl_->scheme) {
+                NIXL_WARN << "S3 RDMA endpoint_override scheme '" << ep_scheme
+                          << "' overrides the configured scheme '" << impl_->scheme << "'";
+            }
+            impl_->scheme = ep_scheme;
             impl_->host = ep.GetAuthority();
             impl_->port = ep.GetPort();
         } else {
@@ -323,6 +337,13 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx,
                             const char *token,
                             uint64_t buf_addr,
                             uint64_t size) {
+    // A 0-byte PUT would mint a 0-length RDMA region and move no data; the RDMA
+    // path is meaningless for it. Reject up front — a legitimate zero-byte object
+    // PUT must go through the ordinary HTTP path in the caller.
+    if (size == 0) {
+        NIXL_ERROR << "rdmaPut: zero-size request for key=" << ctx.object;
+        return rdma_error;
+    }
     try {
         Aws::Http::URI uri = impl_->buildUri(ctx.bucket, ctx.object);
         if (!ctx.uploadId.empty()) {
@@ -415,18 +436,16 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
                                          Aws::Utils::Stream::DefaultResponseStreamFactoryMethod);
         req->SetHeaderValue("x-amz-content-sha256", unsigned_payload);
         req->SetHeaderValue(amz_rdma_token, formatRdmaToken(token, buf_addr, size).c_str());
-        // Byte-range fetch when reading a slice of the object (server replies 206).
-        if (size != 0) {
-            if (offset > UINT64_MAX - (size - 1)) {
-                NIXL_ERROR << "rdmaGet: byte-range overflow (offset=" << offset << " size=" << size
-                           << ") for key=" << ctx.object;
-                return rdma_error;
-            }
-            req->SetHeaderValue(
-                "range",
-                ("bytes=" + std::to_string(offset) + "-" + std::to_string(offset + size - 1))
-                    .c_str());
+        // Byte-range fetch bounded to the caller's buffer (server replies 206 for
+        // a slice, 200 for a full object). size is guaranteed non-zero above.
+        if (offset > UINT64_MAX - (size - 1)) {
+            NIXL_ERROR << "rdmaGet: byte-range overflow (offset=" << offset << " size=" << size
+                       << ") for key=" << ctx.object;
+            return rdma_error;
         }
+        req->SetHeaderValue(
+            "range",
+            ("bytes=" + std::to_string(offset) + "-" + std::to_string(offset + size - 1)).c_str());
 
         impl_->signV4(*req);
 
@@ -447,7 +466,13 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
         if (reply_code == static_cast<int>(rdma_not_supported)) {
             return rdma_not_supported;
         }
-        if (reply_code != rdma_reply_success && reply_code != rdma_reply_partial_content) {
+        // The HTTP status and the RDMA reply must agree before we trust the
+        // transfer: 200 pairs with a full-object success, 206 with a ranged
+        // partial. A mismatch (e.g. an error status carrying a stale reply) is a
+        // failure.
+        const bool accepted = (http_status == 200 && reply_code == rdma_reply_success) ||
+            (http_status == 206 && reply_code == rdma_reply_partial_content);
+        if (!accepted) {
             NIXL_ERROR << "rdmaGet failed: http=" << http_status << " x-amz-rdma-reply='" << reply
                        << "' reply_code=" << reply_code << " key=" << ctx.object;
             return rdma_error;
@@ -461,18 +486,17 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
         // fully accepted, so a malformed byte count doesn't leave a stale ETag.
         ssize_t transferred = static_cast<ssize_t>(size);
         if (resp->HasHeader(amz_rdma_bytes_transferred)) {
-            try {
-                const long long n = std::stoll(resp->GetHeader(amz_rdma_bytes_transferred).c_str());
-                if (n < 0 || static_cast<uint64_t>(n) > size) {
-                    NIXL_ERROR << "rdmaGet: invalid x-amz-rdma-bytes-transferred=" << n
-                               << " (requested " << size << ") for key=" << ctx.object;
-                    return rdma_error;
-                }
-                transferred = static_cast<ssize_t>(n);
-            }
-            catch (const std::exception &) {
+            const std::string hdr = resp->GetHeader(amz_rdma_bytes_transferred).c_str();
+            uint64_t n = 0;
+            const char *begin = hdr.data();
+            const char *end = begin + hdr.size();
+            auto [parsed_end, ec] = std::from_chars(begin, end, n);
+            if (ec != std::errc{} || parsed_end != end || n > size) {
+                NIXL_ERROR << "rdmaGet: invalid x-amz-rdma-bytes-transferred='" << hdr
+                           << "' (requested " << size << ") for key=" << ctx.object;
                 return rdma_error;
             }
+            transferred = static_cast<ssize_t>(n);
         }
         ctx.etag = etag;
         return transferred;
@@ -483,18 +507,17 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
     }
 }
 
-// ---------------------------------------------------------------------------
-// Retry wrappers (token lifecycle + one transient retry). A token-mint failure
-// is itself transient (cuObject NIC selection / registration hiccup), so it is
-// retried rather than aborting on the first attempt.
-// ---------------------------------------------------------------------------
-
+/**
+ * Retry wrappers (token lifecycle + one transient retry). A token-mint failure
+ * is itself transient (cuObject NIC selection / registration hiccup), so it is
+ * retried rather than aborting on the first attempt.
+ */
 ssize_t
 rdmaPutWithRetry(SharedCuObjClient &rdma,
                  S3RdmaControlPlane &cp,
                  S3RdmaClientCtx &ctx,
                  void *buf,
-                 size_t size) {
+                 uint64_t size) {
     ssize_t ret = -1;
     for (int attempt = 0; attempt < rdma_max_attempts; ++attempt) {
         char *token = rdma.getToken(buf, size, 0, CUOBJ_PUT);
@@ -516,8 +539,8 @@ rdmaGetWithRetry(SharedCuObjClient &rdma,
                  S3RdmaControlPlane &cp,
                  S3RdmaClientCtx &ctx,
                  void *buf,
-                 size_t size,
-                 size_t offset) {
+                 uint64_t size,
+                 uint64_t offset) {
     // Reject a zero-size GET before minting a cuObject token (rdmaGet also
     // guards, but the token is minted here first).
     if (size == 0) {

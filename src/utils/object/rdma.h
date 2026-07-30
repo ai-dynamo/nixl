@@ -51,16 +51,16 @@ namespace nixl_obj_rdma {
 class SharedCuObjClient {
 public:
     /// Returns the process-wide instance, or nullptr if the fabric is unavailable.
-    static SharedCuObjClient *
+    [[nodiscard]] static SharedCuObjClient *
     instance();
 
-    bool
+    [[nodiscard]] bool
     isConnected() const {
         return connected_;
     }
 
     /// Pin a buffer for RDMA. Required before minting a token for it.
-    bool
+    [[nodiscard]] bool
     registerBuffer(void *ptr, size_t size);
 
     /// Release a buffer registration acquired via registerBuffer().
@@ -68,11 +68,11 @@ public:
     deregisterBuffer(void *ptr);
 
     /// True if the pointer is CUDA device (VRAM) memory (no HTTP fallback possible).
-    bool
+    [[nodiscard]] bool
     isDeviceMemory(const void *ptr) const;
 
     /// Mint an RDMA token for a registered buffer (caller releases via putToken()).
-    char *
+    [[nodiscard]] char *
     getToken(void *ptr, size_t size, size_t offset, cuObjOpType_t op);
     void
     putToken(char *token);
@@ -109,11 +109,11 @@ class S3RdmaControlPlane {
 public:
     /// Build the control plane from backend params (endpoint, region, credentials).
     /// If initialization fails, valid() returns false and the instance is unusable.
-    explicit S3RdmaControlPlane(nixl_b_params_t *custom_params);
+    explicit S3RdmaControlPlane(const nixl_b_params_t *custom_params);
     ~S3RdmaControlPlane();
 
     /// True iff the HTTP client and (access + secret) credentials were resolved.
-    bool
+    [[nodiscard]] bool
     valid() const {
         return valid_;
     }
@@ -123,7 +123,7 @@ public:
      * @return bytes transferred (>0) on RDMA success, rdma_not_supported if the
      *         server declined, or rdma_error on transport failure.
      */
-    ssize_t
+    [[nodiscard]] ssize_t
     rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t buf_addr, uint64_t size);
 
     /**
@@ -132,7 +132,7 @@ public:
      * @return bytes transferred (>0), rdma_not_supported if declined, or
      *         rdma_error on failure.
      */
-    ssize_t
+    [[nodiscard]] ssize_t
     rdmaGet(S3RdmaClientCtx &ctx,
             const char *token,
             uint64_t buf_addr,
@@ -154,12 +154,12 @@ private:
  *         or rdma_error (failure). The caller treats anything < 0 as an error —
  *         there is no HTTP fallback under accelerated=true.
  */
-ssize_t
+[[nodiscard]] ssize_t
 rdmaPutWithRetry(SharedCuObjClient &rdma,
                  S3RdmaControlPlane &cp,
                  S3RdmaClientCtx &ctx,
                  void *buf,
-                 size_t size);
+                 uint64_t size);
 
 /**
  * Mint a token, run rdmaGet (optionally byte-ranged via @p offset), release the
@@ -170,13 +170,13 @@ rdmaPutWithRetry(SharedCuObjClient &rdma,
  *         or rdma_error (failure). The caller treats anything < 0 as an error —
  *         there is no HTTP fallback under accelerated=true.
  */
-ssize_t
+[[nodiscard]] ssize_t
 rdmaGetWithRetry(SharedCuObjClient &rdma,
                  S3RdmaControlPlane &cp,
                  S3RdmaClientCtx &ctx,
                  void *buf,
-                 size_t size,
-                 size_t offset);
+                 uint64_t size,
+                 uint64_t offset);
 
 } // namespace nixl_obj_rdma
 

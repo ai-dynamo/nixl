@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 namespace nixl_obj_rdma {
@@ -59,19 +60,20 @@ inline constexpr long rdma_timeout_secs = 10;
 /**
  * Format the value of the x-amz-rdma-token header.
  *
- * Wire format (see AIStor server eos/internal/rdma/rdma.go Request.String):
+ * The token is the cuObject RDMA descriptor (as produced by
+ * cuMemObjGetRDMAToken) followed by the buffer's start address and size:
  *   "<descriptor>:<start_addr_hex>:<size_hex>"
- * where the two trailing fields are 16-digit zero-padded lowercase hex. The
- * server parses the address/size with a base-16 parser, so zero-padding is
- * accepted and keeps the field widths fixed.
+ * The two trailing fields are 16-digit zero-padded lowercase hex; a compliant
+ * S3 RDMA endpoint parses them with a base-16 parser, so the fixed field width
+ * is preserved. The descriptor is opaque and of arbitrary length.
  */
-inline std::string
-formatRdmaToken(const char *descriptor, uint64_t buf_addr, uint64_t size) {
+[[nodiscard]] inline std::string
+formatRdmaToken(std::string_view descriptor, uint64_t buf_addr, uint64_t size) {
     // Build via std::string so an opaque descriptor of any length is never
     // truncated; only the two fixed-width hex fields use a small buffer.
     char suffix[40];
     std::snprintf(suffix, sizeof(suffix), ":%016" PRIx64 ":%016" PRIx64, buf_addr, size);
-    return std::string(descriptor ? descriptor : "") + suffix;
+    return std::string(descriptor) + suffix;
 }
 
 /**
@@ -86,7 +88,7 @@ formatRdmaToken(const char *descriptor, uint64_t buf_addr, uint64_t size) {
  * read as a decline. PUT success is determined separately by HTTP 200 + ETag
  * (the server does not set this header on the PUT success path).
  */
-inline int
+[[nodiscard]] inline int
 parseRdmaReply(const std::string &reply) {
     if (reply.empty() || reply == "501") {
         return static_cast<int>(rdma_not_supported);
@@ -100,6 +102,12 @@ parseRdmaReply(const std::string &reply) {
     auto [parsed_end, ec] = std::from_chars(begin, end, value);
     if (ec != std::errc{} || parsed_end != end) {
         return 0; // malformed -> caller treats as failure
+    }
+    // Only HTTP-style status codes are meaningful here; anything outside the
+    // range (e.g. a negative value that would alias rdma_not_supported) is
+    // treated as malformed so it cannot masquerade as a decline or success.
+    if (value < 100 || value > 599) {
+        return 0;
     }
     return value;
 }

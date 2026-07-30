@@ -42,12 +42,13 @@ if aws_s3.found() and aws_s3_crt.found() and aws_core.found()
                dependencies: obj_utils_deps,
                install: true)
 
-    # rdma.h is part of the public surface and pulls in nixl_types.h, so consumers
-    # need nixl_common_dep too (alongside the AWS deps).
+    # rdma.h is part of the public surface: it pulls in nixl_types.h (nixl_common_dep)
+    # and, when enabled, <cuobjclient.h> (cuobj_dep). Forward the same public deps the
+    # library was built with so downstream consumers compile against the header.
     obj_utils_interface = declare_dependency(
         link_with: obj_utils_lib,
         include_directories: [include_directories('.'), include_directories('s3')],
-        dependencies: [nixl_common_dep, partial_aws_s3, partial_aws_s3_crt, partial_aws_core]
+        dependencies: obj_utils_deps
     )
 else
     warning('AWS SDK dependencies not found, skipping obj_utils library build')
