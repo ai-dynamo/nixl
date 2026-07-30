@@ -25,72 +25,12 @@
 #include "nixl_descriptors.h"
 #include "nixl_metadata_backend.h"
 #include "nixl_types.h"
-#include "common/nixl_time.h"
 
-#include <atomic>
-#include <chrono>
-#include <deque>
-#include <exception>
-#include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <string_view>
-#include <thread>
 
 class nixlMetadataContext;
-
-/**
- * @class nixlMetadataWorker
- * @brief A single background thread that drains a task queue and calls a poll
- *        callback each iteration.
- *
- * This is where all blocking metadata I/O and background servicing runs, off the
- * caller thread. It knows nothing about backends or routing; nixlMDManager gives
- * it tasks to run and a poll callback to invoke.
- */
-class nixlMetadataWorker {
-public:
-    using poll_t = std::function<void()>;
-
-    nixlMetadataWorker() = default;
-    ~nixlMetadataWorker();
-
-    nixlMetadataWorker(const nixlMetadataWorker &) = delete;
-    nixlMetadataWorker &
-    operator=(const nixlMetadataWorker &) = delete;
-
-    /**
-     * @brief Launch the loop (no-op if already running). Each pass runs queued
-     *        tasks up to a time budget, calls @p poll, then sleeps @p delay.
-     */
-    void
-    start(poll_t poll, nixlTime::us_t delay);
-
-    /** @brief Drain queued tasks, then stop and join. Idempotent. */
-    void
-    stop();
-
-    /** @brief Enqueue a task to run on the worker. */
-    void
-    submit(nixl_worker_task_t task);
-
-private:
-    void
-    loop();
-
-    // Run queued tasks until @p until, leaving any remainder queued in order.
-    void
-    runQueuedTasks(std::chrono::steady_clock::time_point until);
-
-    poll_t poll_;
-    nixlTime::us_t delay_ = 0;
-    std::deque<nixl_worker_task_t> tasks_;
-    std::mutex mutex_;
-    std::thread thread_;
-    std::atomic<bool> stop_{false};
-    std::exception_ptr exception_;
-};
 
 /**
  * @class nixlMDManager
@@ -101,7 +41,8 @@ private:
  * it and its backends need as a constructor parameter.
  * Holds the address-routed backend (P2P) plus an optional name-addressed backend
  * chosen from the environment; a peer address selects P2P, otherwise the name
- * backend (address wins per call). Backend I/O runs on an owned nixlMetadataWorker.
+ * backend (address wins per call). Routing is all it does: threading belongs to
+ * each backend, so the manager neither owns a thread nor schedules work.
  */
 class nixlMDManager {
 public:
@@ -124,19 +65,19 @@ public:
     etcdConfigured();
 
     /**
-     * @brief Whether any backend needs the worker thread. Answered from the
+     * @brief Whether any backend runs a thread of its own. Answered from the
      *        backends alone, so callers do not re-derive it from the
-     *        environment. start() gates on this, and the agent uses it to
-     *        decide whether its sync mode must be upgraded.
+     *        environment; the agent uses it to decide whether its sync mode must
+     *        be upgraded.
      */
     [[nodiscard]] bool
-    needsWorker() const noexcept;
+    usesThread() const noexcept;
 
     /**
      * @brief Publish the full local metadata blob through the active backend.
      *
-     * Routes to a backend's prepareSendLocal on the caller thread; any resulting
-     * transport work is scheduled on the worker thread.
+     * Returns the backend's synchronous result; whether the transport I/O has
+     * completed by then is the backend's business.
      */
     [[nodiscard]] nixl_status_t
     sendLocalMD(const nixl_opt_args_t *extra_params = nullptr);
@@ -162,40 +103,28 @@ public:
     backendName() const noexcept;
 
     /**
-     * @brief Start the worker thread if any backend needs it. Called by the
-     *        agent once construction is complete (not during it).
+     * @brief Let each backend begin its background work. Called by the agent
+     *        once construction is complete (not during it).
      */
     void
     start();
 
-    /** @brief Drain pending tasks, stop and join the worker. Idempotent. */
+    /** @brief Stop each backend's background work. Idempotent. */
     void
     stop();
 
 private:
-    // Route a call: select the backend (address wins), run its caller-thread
-    // prepare step, and schedule the resulting task. `prepare` is invoked as
-    // `prepare(nixlMetadataBackend&) -> nixlPreparedOp`.
-    template<typename Prepare>
-    [[nodiscard]] nixl_status_t
-    route(const nixl_opt_args_t *extra_params, Prepare prepare);
+    // The backend a call routes to: a peer address selects P2P, otherwise the
+    // name-addressed backend, which is null when none is configured.
+    [[nodiscard]] nixlMetadataBackend *
+    select(const nixl_opt_args_t *extra_params) const noexcept;
 
-    // Worker callback: poll each backend for background work (P2P accept/read,
-    // ETCD watch). Runs on the worker thread.
-    void
-    pollBackends();
-
-    const nixlMDConfig config_;
     // P2P (address-routed), always present.
     const std::unique_ptr<nixlMetadataBackend> p2pBackend_;
     // Name-addressed backend (etcd/tcpstore/future), or null when none configured.
     const std::unique_ptr<nixlMetadataBackend> backend_;
     // Fixed once the backends exist: they answer it from configuration only.
-    const bool workerNeeded_;
-    // Serializes tasks run on the caller thread when there is no worker.
-    std::mutex inlineTaskMutex_;
-    // Runs backend I/O and background servicing off the caller thread.
-    nixlMetadataWorker worker_;
+    const bool usesThread_;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_MD_MANAGER_H

@@ -26,30 +26,17 @@
 
 #include "common/configuration.h"
 #include "common/nixl_log.h"
-#include "common/nixl_time.h"
 
-#include <chrono>
-#include <deque>
-#include <functional>
-#include <iterator>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <thread>
 
 // Definition of the default metadata label (declared in nixl_types.h). It used
 // to live in the now-deleted nixl_listener.cpp; the manager is a natural home.
 const std::string default_metadata_label = "metadata";
 
 namespace {
-
-// How long one worker pass spends on queued tasks before polling the backends.
-// A task can block on store I/O, so draining the queue unconditionally would
-// hold back inbound servicing (P2P accepts, etcd invalidations) for as long as
-// the slowest backend takes; the remainder stays queued for the next pass.
-constexpr auto task_budget = std::chrono::milliseconds(100);
 
 // The name-addressed backend for this run, chosen from the environment (null
 // when none is configured, i.e. address-only / P2P). Adding a name-addressed
@@ -69,7 +56,7 @@ makeBackend([[maybe_unused]] nixlMetadataContext &ctx,
     }
 #endif
     if (use_tcpstore) {
-        return std::make_unique<nixlTcpStoreMetadataBackend>(ctx);
+        return std::make_unique<nixlTcpStoreMetadataBackend>(ctx, config);
     }
     return nullptr;
 }
@@ -112,75 +99,41 @@ nixlMDManager::etcdConfigured() {
 // otherwise the configured backend. This preserves the agent's original per-call
 // precedence (address wins over a configured backend).
 nixlMDManager::nixlMDManager(nixlMetadataContext &ctx, const nixlMDConfig &config)
-    : config_(config),
-      p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config)),
+    : p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config)),
       backend_(makeBackend(ctx, config)),
-      workerNeeded_(p2pBackend_->needsWorker() || (backend_ && backend_->needsWorker())) {}
+      usesThread_(p2pBackend_->usesThread() || (backend_ && backend_->usesThread())) {}
 
-// worker_ is declared after both backends, so ~nixlMetadataWorker joins before
-// they are destroyed; nothing extra is needed here.
+// Each backend joins its own thread as it is destroyed, so nothing to do here.
 nixlMDManager::~nixlMDManager() = default;
 
-template<typename Prepare>
-nixl_status_t
-nixlMDManager::route(const nixl_opt_args_t *extra_params, Prepare prepare) {
-    // Address wins per call: a peer address selects P2P, otherwise the configured
-    // name backend (which may be null when none is configured).
-    nixlMetadataBackend *b = hasAddress(extra_params) ?
-        static_cast<nixlMetadataBackend *>(p2pBackend_.get()) :
-        backend_.get();
-    if (!b) {
-        return noTransport();
-    }
-    const nixlPreparedOp op = prepare(*b); // caller thread: validate + serialize
-    if (op.status != NIXL_SUCCESS) {
-        return op.status;
-    }
-    if (op.task) {
-        if (workerNeeded_) {
-            worker_.submit(std::move(op.task)); // worker thread: the transport I/O
-        } else {
-            // No backend asked for a worker, so there is no thread to run this
-            // on and queueing it would drop it silently. Only P2P without a
-            // listener reaches this (the store backends always need the worker),
-            // and prepare() has already done every agent-side step, so what is
-            // left is a socket send: safe to run here, at the cost of making the
-            // call synchronous. The lock keeps the backend's promise that its
-            // transport state is touched by one thread at a time, which the
-            // worker provides in the other branch; metadata calls are not
-            // serialized by the agent lock.
-            const std::lock_guard lk(inlineTaskMutex_);
-            op.task();
-        }
-    }
-    return NIXL_SUCCESS;
+nixlMetadataBackend *
+nixlMDManager::select(const nixl_opt_args_t *extra_params) const noexcept {
+    return hasAddress(extra_params) ? p2pBackend_.get() : backend_.get();
 }
 
 nixl_status_t
 nixlMDManager::sendLocalMD(const nixl_opt_args_t *extra_params) {
-    return route(extra_params,
-                 [&](nixlMetadataBackend &b) { return b.prepareSendLocal(extra_params); });
+    nixlMetadataBackend *b = select(extra_params);
+    return b ? b->sendLocal(extra_params) : noTransport();
 }
 
 nixl_status_t
 nixlMDManager::sendLocalPartialMD(const nixl_reg_dlist_t &descs,
                                   const nixl_opt_args_t *extra_params) {
-    return route(extra_params, [&](nixlMetadataBackend &b) {
-        return b.prepareSendLocalPartial(descs, extra_params);
-    });
+    nixlMetadataBackend *b = select(extra_params);
+    return b ? b->sendLocalPartial(descs, extra_params) : noTransport();
 }
 
 nixl_status_t
 nixlMDManager::fetchRemoteMD(const std::string &remote_name, const nixl_opt_args_t *extra_params) {
-    return route(extra_params, [&](nixlMetadataBackend &b) {
-        return b.prepareFetchRemote(remote_name, extra_params);
-    });
+    nixlMetadataBackend *b = select(extra_params);
+    return b ? b->fetchRemote(remote_name, extra_params) : noTransport();
 }
 
 nixl_status_t
 nixlMDManager::invalidateLocalMD(const nixl_opt_args_t *extra_params) {
-    return route(extra_params,
-                 [&](nixlMetadataBackend &b) { return b.prepareInvalidateLocal(extra_params); });
+    nixlMetadataBackend *b = select(extra_params);
+    return b ? b->invalidateLocal(extra_params) : noTransport();
 }
 
 std::string_view
@@ -188,142 +141,23 @@ nixlMDManager::backendName() const noexcept {
     return backend_ ? backend_->name() : p2pBackend_->name();
 }
 
-void
-nixlMDManager::pollBackends() {
-    p2pBackend_->serviceEvents();
-    if (backend_) {
-        backend_->serviceEvents();
-    }
-}
-
 bool
-nixlMDManager::needsWorker() const noexcept {
-    return workerNeeded_;
+nixlMDManager::usesThread() const noexcept {
+    return usesThread_;
 }
 
 void
 nixlMDManager::start() {
-    if (workerNeeded_) {
-        worker_.start([this] { pollBackends(); }, config_.workerDelay);
+    p2pBackend_->start();
+    if (backend_) {
+        backend_->start();
     }
 }
 
 void
 nixlMDManager::stop() {
-    worker_.stop();
-}
-
-// ---- nixlMetadataWorker ----
-
-nixlMetadataWorker::~nixlMetadataWorker() {
-    stop();
-}
-
-void
-nixlMetadataWorker::start(poll_t poll, nixlTime::us_t delay) {
-    if (thread_.joinable()) {
-        return;
+    p2pBackend_->stop();
+    if (backend_) {
+        backend_->stop();
     }
-    poll_ = std::move(poll);
-    delay_ = delay;
-    stop_.store(false);
-    thread_ = std::thread([this] {
-        try {
-            loop();
-        }
-        catch (...) {
-            exception_ = std::current_exception();
-        }
-    });
-}
-
-void
-nixlMetadataWorker::stop() {
-    if (!thread_.joinable()) {
-        return;
-    }
-    // Let the loop drain what is queued so a send/invalidate issued just before
-    // shutdown still reaches the peer/store. Nothing can enqueue meanwhile: only
-    // route() submits, and it is reachable only from the agent's public methods.
-    while (true) {
-        {
-            const std::lock_guard lk(mutex_);
-            if (tasks_.empty()) {
-                break;
-            }
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    stop_.store(true);
-    thread_.join();
-    if (exception_) {
-        try {
-            std::rethrow_exception(exception_);
-        }
-        catch (const std::exception &e) {
-            NIXL_WARN << "Metadata worker thread threw an exception: " << e.what();
-        }
-        exception_ = nullptr;
-    }
-}
-
-void
-nixlMetadataWorker::submit(nixl_worker_task_t task) {
-    const std::lock_guard lk(mutex_);
-    tasks_.push_back(std::move(task));
-}
-
-void
-nixlMetadataWorker::runQueuedTasks(std::chrono::steady_clock::time_point until) {
-    std::deque<nixl_worker_task_t> batch;
-    {
-        const std::lock_guard lk(mutex_);
-        batch.swap(tasks_);
-    }
-    while (!batch.empty()) {
-        // Isolate each unit of work: one throwing task is logged and the worker
-        // keeps running, rather than tearing down all metadata processing.
-        try {
-            batch.front()();
-        }
-        catch (const std::exception &e) {
-            NIXL_ERROR << "Metadata worker task threw an exception: " << e.what();
-        }
-        batch.pop_front();
-        if (std::chrono::steady_clock::now() >= until) {
-            break;
-        }
-    }
-    if (!batch.empty()) {
-        // Put the remainder back in front of anything submitted meanwhile, so
-        // tasks still run in the order they were issued.
-        const std::lock_guard lk(mutex_);
-        tasks_.insert(tasks_.begin(),
-                      std::make_move_iterator(batch.begin()),
-                      std::make_move_iterator(batch.end()));
-    }
-}
-
-void
-nixlMetadataWorker::loop() {
-    while (!stop_.load()) {
-        // Spend a bounded slice on tasks, then poll the backends: a task can
-        // block on I/O (an etcd fetch waits on a watch), and draining the whole
-        // queue first would stall inbound servicing behind it. At least one task
-        // runs per pass, so the queue still drains.
-        runQueuedTasks(std::chrono::steady_clock::now() + task_budget);
-        try {
-            if (poll_) {
-                poll_();
-            }
-        }
-        catch (const std::exception &e) {
-            NIXL_ERROR << "Metadata worker poll threw an exception: " << e.what();
-        }
-        std::this_thread::sleep_for(std::chrono::microseconds(delay_));
-    }
-    // stop() waits for the queue to look empty, which it can while a pass still
-    // holds tasks the budget deferred; run those before leaving so nothing
-    // submitted before shutdown is dropped.
-    runQueuedTasks(std::chrono::steady_clock::time_point::max());
 }

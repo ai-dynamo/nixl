@@ -176,8 +176,8 @@ TEST_F(MDManagerFixture, SendLocalAndInvalidateLocal) {
               NIXL_ERR_NOT_FOUND);
 }
 
-// An agent that does not listen has no metadata worker, so the manager has no
-// thread to run the send on and does it inline. Previously the task was queued
+// An agent that does not listen runs no metadata thread, so the P2P backend has
+// nothing to run the send on and does it inline. Previously the task was queued
 // against a worker that never started and the peer was never contacted.
 TEST_F(MDManagerFixture, SendLocalWithoutWorker) {
     auto &dst = agents_[0];
@@ -185,7 +185,7 @@ TEST_F(MDManagerFixture, SendLocalWithoutWorker) {
     AgentContext src;
     src.name = "mdm_agent_no_worker";
     nixlAgentConfig cfg;
-    // Explicit, since it is the precondition under test: no listener, no worker.
+    // Explicit, since it is the precondition under test: no listener, no thread.
     cfg.useListenThread = false;
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
     src.agent = std::make_unique<nixlAgent>(src.name, cfg);

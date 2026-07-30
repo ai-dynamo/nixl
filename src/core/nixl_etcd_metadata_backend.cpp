@@ -98,6 +98,20 @@ public:
         NIXL_DEBUG << "Using etcd namespace for agents: " << namespacePrefix_;
     }
 
+    // First store round-trip, run once at start-up: it both announces this agent
+    // and reports an unreachable endpoint at bring-up instead of at the first
+    // publish. Later publishes find the prefix already stored and skip it.
+    nixl_status_t
+    announceAgent() {
+        try {
+            return ensureAgentPrefix();
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << "Failed to announce agent " << agentName_ << " in etcd: " << e.what();
+            return NIXL_ERR_BACKEND;
+        }
+    }
+
     nixl_status_t
     storeMetadataInEtcd(const std::string &agent_name,
                         const std::string &metadata_type,
@@ -307,6 +321,7 @@ public:
 nixlEtcdMetadataBackend::nixlEtcdMetadataBackend(nixlMetadataContext &ctx,
                                                  const nixlMDConfig &config)
     : ctx_(ctx),
+      workerDelay_(config.workerDelay),
       client_(std::make_unique<etcdClient>(ctx.agentName(), config.etcdWatchTimeout)) {}
 
 nixlEtcdMetadataBackend::~nixlEtcdMetadataBackend() = default;
@@ -317,76 +332,93 @@ nixlEtcdMetadataBackend::name() const {
 }
 
 void
+nixlEtcdMetadataBackend::start() {
+    worker_.start([this] { serviceEvents(); }, workerDelay_);
+    // Announcing here rather than in the constructor keeps network I/O off agent
+    // construction; queueing it rather than waiting for the first publish still
+    // surfaces an unreachable store at bring-up.
+    worker_.submit([this] { (void)client_->announceAgent(); });
+}
+
+void
+nixlEtcdMetadataBackend::stop() {
+    worker_.stop();
+}
+
+void
 nixlEtcdMetadataBackend::serviceEvents() {
     client_->processInvalidatedAgents(ctx_);
 }
 
-nixlPreparedOp
-nixlEtcdMetadataBackend::prepareSendLocal(const nixl_opt_args_t * /*extra_params*/) {
+nixl_status_t
+nixlEtcdMetadataBackend::sendLocal(const nixl_opt_args_t * /*extra_params*/) {
     nixl_blob_t blob;
     const nixl_status_t ret = ctx_.getLocalMD(blob);
     if (ret < 0) {
-        return {ret, {}};
+        return ret;
     }
     const std::string agent = ctx_.agentName();
-    return {NIXL_SUCCESS, [this, agent, blob = std::move(blob)]() {
-                (void)client_->storeMetadataInEtcd(agent, default_metadata_label, blob);
-            }};
+    worker_.submit([this, agent, blob = std::move(blob)]() {
+        (void)client_->storeMetadataInEtcd(agent, default_metadata_label, blob);
+    });
+    return NIXL_SUCCESS;
 }
 
-nixlPreparedOp
-nixlEtcdMetadataBackend::prepareSendLocalPartial(const nixl_reg_dlist_t &descs,
-                                                 const nixl_opt_args_t *extra_params) {
+nixl_status_t
+nixlEtcdMetadataBackend::sendLocalPartial(const nixl_reg_dlist_t &descs,
+                                          const nixl_opt_args_t *extra_params) {
     if (!extra_params || extra_params->metadataLabel.empty()) {
         NIXL_ERROR_FUNC << "metadata label is required for etcd send of local partial metadata";
-        return {NIXL_ERR_INVALID_PARAM, {}};
+        return NIXL_ERR_INVALID_PARAM;
     }
     nixl_blob_t blob;
     const nixl_status_t ret = ctx_.getLocalPartialMD(descs, blob, extra_params);
     if (ret < 0) {
-        return {ret, {}};
+        return ret;
     }
     const std::string agent = ctx_.agentName();
     const std::string label = extra_params->metadataLabel;
-    return {NIXL_SUCCESS, [this, agent, label, blob = std::move(blob)]() {
-                (void)client_->storeMetadataInEtcd(agent, label, blob);
-            }};
+    worker_.submit([this, agent, label, blob = std::move(blob)]() {
+        (void)client_->storeMetadataInEtcd(agent, label, blob);
+    });
+    return NIXL_SUCCESS;
 }
 
-nixlPreparedOp
-nixlEtcdMetadataBackend::prepareFetchRemote(const std::string &remote_name,
-                                            const nixl_opt_args_t *extra_params) {
+nixl_status_t
+nixlEtcdMetadataBackend::fetchRemote(const std::string &remote_name,
+                                     const nixl_opt_args_t *extra_params) {
     const std::string label = (extra_params && !extra_params->metadataLabel.empty()) ?
         extra_params->metadataLabel :
         default_metadata_label;
-    return {NIXL_SUCCESS, [this, remote_name, label]() {
-                nixl_blob_t blob;
-                if (client_->fetchOrWaitForMetadataFromEtcd(remote_name, label, blob) !=
-                    NIXL_SUCCESS) {
-                    NIXL_ERROR << "Failed to fetch metadata from etcd for agent: " << remote_name;
-                    return;
-                }
-                std::string loaded_name;
-                const nixl_status_t ret = ctx_.loadRemoteMD(blob, loaded_name);
-                if (ret != NIXL_SUCCESS) {
-                    NIXL_ERROR << "Failed to load remote metadata for agent: " << remote_name
-                               << ": " << ret;
-                    return;
-                }
-                if (loaded_name != remote_name) {
-                    NIXL_ERROR << "Metadata mismatch for agent: " << remote_name
-                               << " from md: " << loaded_name;
-                    return;
-                }
-                NIXL_DEBUG << "Successfully loaded metadata for agent: " << remote_name;
-                client_->setupAgentWatcher(remote_name);
-            }};
+    worker_.submit([this, remote_name, label]() {
+        nixl_blob_t blob;
+        if (client_->fetchOrWaitForMetadataFromEtcd(remote_name, label, blob) != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to fetch metadata from etcd for agent: " << remote_name;
+            return;
+        }
+        std::string loaded_name;
+        const nixl_status_t ret = ctx_.loadRemoteMD(blob, loaded_name);
+        if (ret != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to load remote metadata for agent: " << remote_name << ": "
+                       << ret;
+            return;
+        }
+        if (loaded_name != remote_name) {
+            NIXL_ERROR << "Metadata mismatch for agent: " << remote_name
+                       << " from md: " << loaded_name;
+            return;
+        }
+        NIXL_DEBUG << "Successfully loaded metadata for agent: " << remote_name;
+        client_->setupAgentWatcher(remote_name);
+    });
+    return NIXL_SUCCESS;
 }
 
-nixlPreparedOp
-nixlEtcdMetadataBackend::prepareInvalidateLocal(const nixl_opt_args_t * /*extra_params*/) {
+nixl_status_t
+nixlEtcdMetadataBackend::invalidateLocal(const nixl_opt_args_t * /*extra_params*/) {
     const std::string agent = ctx_.agentName();
-    return {NIXL_SUCCESS, [this, agent]() { (void)client_->removeMetadataFromEtcd(agent); }};
+    worker_.submit([this, agent]() { (void)client_->removeMetadataFromEtcd(agent); });
+    return NIXL_SUCCESS;
 }
 
 #endif // HAVE_ETCD

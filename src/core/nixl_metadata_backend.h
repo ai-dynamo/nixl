@@ -26,12 +26,8 @@
 
 #include <chrono>
 #include <cstdint>
-#include <functional>
 #include <string>
 #include <string_view>
-
-/** A unit of transport I/O produced on the caller thread, run on the worker. */
-using nixl_worker_task_t = std::function<void()>;
 
 /**
  * @struct nixlMDConfig
@@ -48,23 +44,8 @@ struct nixlMDConfig {
     std::uint16_t listenPort = 0;
     /** ETCD: how long a fetch waits on a watch for a key to appear. */
     std::chrono::microseconds etcdWatchTimeout{0};
-    /** Manager: delay between worker loop iterations, in microseconds. */
+    /** Delay between a backend worker's loop iterations, in microseconds. */
     std::uint64_t workerDelay = 0;
-};
-
-/**
- * @struct nixlPreparedOp
- * @brief Result of a backend's caller-thread prepare step.
- *
- * @var status  Synchronous validation/serialization result, returned to the
- *              caller. Anything other than NIXL_SUCCESS means the op was rejected
- *              and no task should run.
- * @var task    The transport work to run on the manager's worker thread. Empty
- *              when there is nothing to schedule.
- */
-struct nixlPreparedOp {
-    nixl_status_t status = NIXL_SUCCESS;
-    nixl_worker_task_t task;
 };
 
 /**
@@ -76,15 +57,12 @@ struct nixlPreparedOp {
  * into the public API. Operational addressing (`ipAddr`/`port`, `metadataLabel`)
  * is carried in `nixl_opt_args_t`.
  *
- * Thread contract, encoded in the interface:
- *  - the `prepare*` methods run on the CALLER thread: they validate and
- *    serialize, return a synchronous status, and hand back the transport work as
- *    a nixl_worker_task_t. They must not block on I/O.
- *  - the returned task and `serviceEvents()` run on the manager's WORKER thread:
- *    that is where all blocking transport I/O belongs. A backend that returns
- *    needsWorker() == false has no worker to run on, so the manager runs its
- *    tasks inline on the caller thread instead.
- * The manager owns scheduling; backends never touch a queue or a thread.
+ * Thread contract: a backend owns its own threading. The four operations are
+ * called on the CALLER thread and return the status of the synchronous part
+ * (validation, serialization); blocking transport I/O and background servicing
+ * belong on a thread of the backend's own, for which nixlMetadataWorker is the
+ * shared machinery. The manager does no scheduling and holds no thread, so a
+ * backend blocked on its store does not stall the others.
  */
 class nixlMetadataBackend {
 public:
@@ -94,39 +72,47 @@ public:
     [[nodiscard]] virtual std::string_view
     name() const = 0;
 
-    /** Caller thread: prepare a full-metadata publish. */
-    [[nodiscard]] virtual nixlPreparedOp
-    prepareSendLocal(const nixl_opt_args_t *extra_params) = 0;
+    /** Publish the full local metadata blob. */
+    [[nodiscard]] virtual nixl_status_t
+    sendLocal(const nixl_opt_args_t *extra_params) = 0;
 
-    /** Caller thread: prepare a partial-metadata publish. */
-    [[nodiscard]] virtual nixlPreparedOp
-    prepareSendLocalPartial(const nixl_reg_dlist_t &descs, const nixl_opt_args_t *extra_params) = 0;
+    /** Publish a partial local metadata blob. */
+    [[nodiscard]] virtual nixl_status_t
+    sendLocalPartial(const nixl_reg_dlist_t &descs, const nixl_opt_args_t *extra_params) = 0;
 
-    /** Caller thread: prepare retrieval of a remote agent's metadata. */
-    [[nodiscard]] virtual nixlPreparedOp
-    prepareFetchRemote(const std::string &remote_name, const nixl_opt_args_t *extra_params) = 0;
+    /** Initiate retrieval of a remote agent's metadata. */
+    [[nodiscard]] virtual nixl_status_t
+    fetchRemote(const std::string &remote_name, const nixl_opt_args_t *extra_params) = 0;
 
-    /** Caller thread: prepare withdrawal of our metadata. */
-    [[nodiscard]] virtual nixlPreparedOp
-    prepareInvalidateLocal(const nixl_opt_args_t *extra_params) = 0;
+    /** Withdraw our metadata. */
+    [[nodiscard]] virtual nixl_status_t
+    invalidateLocal(const nixl_opt_args_t *extra_params) = 0;
 
     /**
-     * @brief Whether this backend needs the manager's worker thread running
-     *        (for background servicing and/or to execute its tasks). Default
-     *        false (a backend that does nothing off-thread).
+     * @brief Whether this backend runs a thread of its own. That thread shares
+     *        agent state, so this is what decides the agent's effective sync
+     *        mode. Default false (a backend that does everything synchronously).
      */
     [[nodiscard]] virtual bool
-    needsWorker() const {
+    usesThread() const {
         return false;
     }
 
     /**
-     * @brief Worker thread: one pass of background servicing, called repeatedly
-     *        (e.g. accept peers / read replies for P2P, drain watch invalidations
-     *        for ETCD). Default no-op.
+     * @brief Begin background work. Called once by the agent after construction
+     *        completes, so a backend thread never touches half-built agent
+     *        state. Default no-op.
      */
     virtual void
-    serviceEvents() {}
+    start() {}
+
+    /**
+     * @brief Finish what is pending, then stop and join. Idempotent, and called
+     *        before the agent tears down the state a task could touch. Default
+     *        no-op.
+     */
+    virtual void
+    stop() {}
 };
 
 #endif // NIXL_SRC_CORE_NIXL_METADATA_BACKEND_H

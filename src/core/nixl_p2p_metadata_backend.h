@@ -22,6 +22,7 @@
 #define NIXL_SRC_CORE_NIXL_P2P_METADATA_BACKEND_H
 
 #include "nixl_metadata_backend.h"
+#include "nixl_metadata_worker.h"
 
 #include <map>
 #include <memory>
@@ -38,10 +39,12 @@ class nixlMDStreamListener;
  *
  * Owns its transport state: the open peer connections and (when the agent
  * enables listening) the accept socket. Outbound ops validate and serialize
- * synchronously, then submit the socket send as a task on the manager's worker
- * thread; inbound work (accepting peers, reading LOAD/SEND/INVL replies) happens
- * in serviceEvents(), also on that worker thread, so the connection map is only
- * ever touched by one thread. Depends only on nixlMetadataContext, not nixlAgent.
+ * synchronously, then submit the socket send to its worker; inbound work
+ * (accepting peers, reading LOAD/SEND/INVL replies) happens in serviceEvents()
+ * on the same thread, so the connection map is only ever touched by one thread.
+ * A listener is what there is to service, so the worker runs only then: without
+ * one the sends run inline on the caller thread and no thread is started.
+ * Depends only on nixlMetadataContext, not nixlAgent.
  */
 class nixlP2PMetadataBackend : public nixlMetadataBackend {
 public:
@@ -51,31 +54,35 @@ public:
     [[nodiscard]] std::string_view
     name() const override;
 
-    [[nodiscard]] nixlPreparedOp
-    prepareSendLocal(const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixl_status_t
+    sendLocal(const nixl_opt_args_t *extra_params) override;
 
-    [[nodiscard]] nixlPreparedOp
-    prepareSendLocalPartial(const nixl_reg_dlist_t &descs,
-                            const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixl_status_t
+    sendLocalPartial(const nixl_reg_dlist_t &descs, const nixl_opt_args_t *extra_params) override;
 
-    [[nodiscard]] nixlPreparedOp
-    prepareFetchRemote(const std::string &remote_name,
-                       const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixl_status_t
+    fetchRemote(const std::string &remote_name, const nixl_opt_args_t *extra_params) override;
 
-    [[nodiscard]] nixlPreparedOp
-    prepareInvalidateLocal(const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixl_status_t
+    invalidateLocal(const nixl_opt_args_t *extra_params) override;
 
-    // The worker is needed for inbound servicing when listening is enabled.
+    // A thread runs only when there is a listener to service.
     [[nodiscard]] bool
-    needsWorker() const override;
+    usesThread() const override;
 
-    // Accept new peers (if listening) and read/dispatch incoming messages.
     void
-    serviceEvents() override;
+    start() override;
+
+    void
+    stop() override;
 
 private:
-    // Connect-on-demand to (ip, port) and send msg; disconnect on error.
-    // Runs only on the worker thread (submitted task).
+    // Accept new peers and read/dispatch incoming messages. Worker poll.
+    void
+    serviceEvents();
+
+    // Connect-on-demand to (ip, port) and send msg; disconnect on error. Runs as
+    // a worker task, so never concurrently with serviceEvents().
     void
     sendToPeer(const std::string &ip, int port, const std::string &msg);
     void
@@ -87,6 +94,8 @@ private:
     const nixlMDConfig config_;
     std::map<std::pair<std::string, int>, int> remoteSockets_;
     std::unique_ptr<nixlMDStreamListener> listener_;
+    // Declared last so it joins before the state its tasks touch is destroyed.
+    nixlMetadataWorker worker_;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_P2P_METADATA_BACKEND_H

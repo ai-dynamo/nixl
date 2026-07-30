@@ -22,8 +22,10 @@
 #define NIXL_SRC_CORE_NIXL_TCPSTORE_METADATA_BACKEND_H
 
 #include "nixl_metadata_backend.h"
+#include "nixl_metadata_worker.h"
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -38,7 +40,7 @@ class nixlTcpStoreClient;
  * @brief Centralized-store metadata backend over the c10d TCPStore protocol.
  *
  * Owns a nixlTcpStoreClient (nixl_tcpstore_client.h) and runs its store I/O as
- * tasks on the manager's worker thread: it reuses nixlMetadataContext for
+ * tasks on its own worker thread: it reuses nixlMetadataContext for
  * serialization (getLocalMD / getLocalPartialMD) and cache load (loadRemoteMD),
  * and builds its own keys. It links no libtorch; it speaks the wire protocol
  * directly, so it interoperates with a torch.distributed.TCPStore server.
@@ -48,15 +50,15 @@ class nixlTcpStoreClient;
  * can fetch then poll checkRemoteMD as it would with etcd.
  * Selected by nixlMDManager when NIXL_TCPSTORE_ENDPOINT is set.
  *
- * Every member here is touched only from the manager's worker thread: the tasks
- * returned by prepare* and serviceEvents() both run there, and this backend
- * always requires the worker. Nothing is synchronized.
+ * Every member here is touched only from that worker thread: the tasks the
+ * operations submit and serviceEvents() both run there, and the thread always
+ * runs. Nothing is synchronized.
  */
 class nixlTcpStoreMetadataBackend : public nixlMetadataBackend {
 public:
     // Parses NIXL_TCPSTORE_ENDPOINT (host:port) and throws when it is malformed.
-    // Does no I/O: the client connects on its first operation.
-    explicit nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx);
+    // Does no I/O: start() connects on the worker thread.
+    nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx, const nixlMDConfig &config);
 
     ~nixlTcpStoreMetadataBackend() override;
 
@@ -65,32 +67,37 @@ public:
         return "TCPStore";
     }
 
-    // Ops run their store I/O on the manager's worker thread, which also drives
-    // the pending-fetch retries.
+    // The store I/O and the pending-fetch retries both need a thread.
     [[nodiscard]] bool
-    needsWorker() const override {
+    usesThread() const override {
         return true;
     }
 
-    // Re-probe the fetches whose key was not published yet.
+    // Starts the worker and connects on it, so an unreachable store is reported
+    // at bring-up without agent construction waiting for it.
     void
-    serviceEvents() override;
+    start() override;
 
-    [[nodiscard]] nixlPreparedOp
-    prepareSendLocal(const nixl_opt_args_t *extra_params) override;
+    void
+    stop() override;
 
-    [[nodiscard]] nixlPreparedOp
-    prepareSendLocalPartial(const nixl_reg_dlist_t &descs,
-                            const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixl_status_t
+    sendLocal(const nixl_opt_args_t *extra_params) override;
 
-    [[nodiscard]] nixlPreparedOp
-    prepareFetchRemote(const std::string &remote_name,
-                       const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixl_status_t
+    sendLocalPartial(const nixl_reg_dlist_t &descs, const nixl_opt_args_t *extra_params) override;
 
-    [[nodiscard]] nixlPreparedOp
-    prepareInvalidateLocal(const nixl_opt_args_t *extra_params) override;
+    [[nodiscard]] nixl_status_t
+    fetchRemote(const std::string &remote_name, const nixl_opt_args_t *extra_params) override;
+
+    [[nodiscard]] nixl_status_t
+    invalidateLocal(const nixl_opt_args_t *extra_params) override;
 
 private:
+    // Re-probe the fetches whose key was not published yet. Worker poll.
+    void
+    serviceEvents();
+
     // A fetch waiting for its key to appear in the store.
     struct pendingFetch {
         std::string remoteName;
@@ -109,6 +116,7 @@ private:
 
     nixlMetadataContext &ctx_;
     const std::chrono::milliseconds fetchTimeout_;
+    const std::uint64_t workerDelay_;
     const std::unique_ptr<nixlTcpStoreClient> client_;
     // Keys this agent has published; TCPStore has no recursive delete, so
     // invalidateLocal removes exactly these.
@@ -116,6 +124,8 @@ private:
     // Store key -> in-flight fetch. Keyed by the store key, not the agent name:
     // one peer can have a fetch pending per metadata label.
     std::unordered_map<std::string, pendingFetch> pendingFetches_;
+    // Declared last so it joins before the state its tasks touch is destroyed.
+    nixlMetadataWorker worker_;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_TCPSTORE_METADATA_BACKEND_H

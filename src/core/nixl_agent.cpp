@@ -152,15 +152,15 @@ resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under
 
 namespace {
 
-// The metadata worker shares agent data structures (remoteSections_,
+// A metadata backend thread shares agent data structures (remoteSections_,
 // remoteBackends_, …) with the caller. SYNC_NONE performs no locking at all, so
 // it is the one mode that would leave those accesses unprotected; RW and STRICT
 // are both real locking and need no upgrade.
 [[nodiscard]] nixl_thread_sync_t
-effectiveSyncMode(nixl_thread_sync_t requested, bool needs_worker) {
-    if (needs_worker && (requested == nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)) {
+effectiveSyncMode(nixl_thread_sync_t requested, bool uses_thread) {
+    if (uses_thread && (requested == nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE)) {
         NIXL_INFO << "syncMode upgraded from NONE to STRICT "
-                     "because a metadata worker thread will be started";
+                     "because a metadata backend thread will be started";
         return nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
     }
     return requested;
@@ -198,9 +198,9 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
       // public methods can delegate without a fallback. It selects its backends
       // from the environment (P2P plus an optional name-addressed backend).
       md_(*this, makeMDConfig(config)),
-      // The manager's backends decide whether a worker thread runs, and that
-      // thread shares agent state - so they also decide the effective sync mode.
-      lock(effectiveSyncMode(config.syncMode, md_.needsWorker())),
+      // Each backend decides whether it runs a thread, and such a thread shares
+      // agent state - so they also decide the effective sync mode.
+      lock(effectiveSyncMode(config.syncMode, md_.usesThread())),
       tracer_(makeAgentTracer(name)) {
     if (name.empty()) {
         throw std::invalid_argument("Agent needs a non-empty name");
@@ -224,18 +224,18 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 
 nixlAgentData::~nixlAgentData() {
     // This body runs before any member is destroyed, so stopping here is what
-    // guarantees no task is still touching the caches below (md_ itself is
-    // declared early and would otherwise be destroyed last).
+    // guarantees no backend task is still touching the caches below (md_ itself
+    // is declared early and would otherwise be destroyed last).
     md_.stop();
 }
 
 /*** nixlAgent implementation ***/
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
     : data(std::make_unique<nixlAgentData>(name, cfg)) {
-    // The metadata manager owns the worker thread and the pluggable backends
-    // (which own their transport state, e.g. the P2P listener bound during
-    // nixlAgentData construction). Start the worker now that the agent is fully
-    // constructed, so it never touches partially-built state.
+    // The manager's backends own their transport state (e.g. the P2P listener
+    // bound during nixlAgentData construction) and their threads. Start them now
+    // that the agent is fully constructed, so no backend thread touches
+    // partially-built state.
     data->md_.start();
 }
 

@@ -44,12 +44,12 @@ constexpr char namespace_prefix[] = "nixl/agents";
 constexpr long default_timeout_ms = 30000;
 
 // Bound on a single store operation once running. Kept well under the bring-up
-// budget because these run on the manager's shared worker thread.
+// budget so one degraded operation does not hold the worker for the window.
 constexpr long default_op_timeout_ms = 5000;
 
 // How long one serviceEvents() pass spends re-probing pending fetches. Each
 // probe is a store round-trip (and can pay a reconnect), so without a budget a
-// degraded store would hold the shared worker for the whole pending set.
+// degraded store would starve this backend's own task queue.
 constexpr auto service_budget = std::chrono::milliseconds(50);
 
 [[nodiscard]] std::string
@@ -96,14 +96,40 @@ makeClient() {
 
 } // namespace
 
-nixlTcpStoreMetadataBackend::nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx)
+nixlTcpStoreMetadataBackend::nixlTcpStoreMetadataBackend(nixlMetadataContext &ctx,
+                                                         const nixlMDConfig &config)
     : ctx_(ctx),
       fetchTimeout_(bringUpTimeout()),
+      workerDelay_(config.workerDelay),
       client_(makeClient()) {
     NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore backend ready";
 }
 
 nixlTcpStoreMetadataBackend::~nixlTcpStoreMetadataBackend() = default;
+
+void
+nixlTcpStoreMetadataBackend::start() {
+    worker_.start([this] { serviceEvents(); }, workerDelay_);
+    // Connecting here rather than in the constructor keeps network I/O off agent
+    // construction; queueing it rather than waiting for the first metadata call
+    // still surfaces a bad endpoint at bring-up.
+    worker_.submit([this] {
+        try {
+            client_->ensureConnected();
+            NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore connected";
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << "[" << ctx_.agentName()
+                       << "] TCPStore connect failed, retrying on the first operation: "
+                       << e.what();
+        }
+    });
+}
+
+void
+nixlTcpStoreMetadataBackend::stop() {
+    worker_.stop();
+}
 
 nixl_status_t
 nixlTcpStoreMetadataBackend::publishKey(const std::string &key, const nixl_blob_t &blob) {
@@ -120,36 +146,38 @@ nixlTcpStoreMetadataBackend::publishKey(const std::string &key, const nixl_blob_
     return NIXL_SUCCESS;
 }
 
-nixlPreparedOp
-nixlTcpStoreMetadataBackend::prepareSendLocal(const nixl_opt_args_t * /*extra_params*/) {
+nixl_status_t
+nixlTcpStoreMetadataBackend::sendLocal(const nixl_opt_args_t * /*extra_params*/) {
     nixl_blob_t blob;
     const nixl_status_t ret = ctx_.getLocalMD(blob);
     if (ret < 0) {
-        return {ret, {}};
+        return ret;
     }
     const std::string key = makeKey(default_metadata_label, ctx_.agentName(), nixl_null_agent);
-    return {NIXL_SUCCESS, [this, key, blob = std::move(blob)]() { (void)publishKey(key, blob); }};
+    worker_.submit([this, key, blob = std::move(blob)]() { (void)publishKey(key, blob); });
+    return NIXL_SUCCESS;
 }
 
-nixlPreparedOp
-nixlTcpStoreMetadataBackend::prepareSendLocalPartial(const nixl_reg_dlist_t &descs,
-                                                     const nixl_opt_args_t *extra_params) {
+nixl_status_t
+nixlTcpStoreMetadataBackend::sendLocalPartial(const nixl_reg_dlist_t &descs,
+                                              const nixl_opt_args_t *extra_params) {
     if (!extra_params || extra_params->metadataLabel.empty()) {
         NIXL_ERROR_FUNC << "metadata label is required for TCPStore send of local partial metadata";
-        return {NIXL_ERR_INVALID_PARAM, {}};
+        return NIXL_ERR_INVALID_PARAM;
     }
     nixl_blob_t blob;
     const nixl_status_t ret = ctx_.getLocalPartialMD(descs, blob, extra_params);
     if (ret < 0) {
-        return {ret, {}};
+        return ret;
     }
     const std::string key = makeKey(extra_params->metadataLabel, ctx_.agentName(), nixl_null_agent);
-    return {NIXL_SUCCESS, [this, key, blob = std::move(blob)]() { (void)publishKey(key, blob); }};
+    worker_.submit([this, key, blob = std::move(blob)]() { (void)publishKey(key, blob); });
+    return NIXL_SUCCESS;
 }
 
-nixlPreparedOp
-nixlTcpStoreMetadataBackend::prepareFetchRemote(const std::string &remote_name,
-                                                const nixl_opt_args_t *extra_params) {
+nixl_status_t
+nixlTcpStoreMetadataBackend::fetchRemote(const std::string &remote_name,
+                                         const nixl_opt_args_t *extra_params) {
     const std::string label = (extra_params && !extra_params->metadataLabel.empty()) ?
         extra_params->metadataLabel :
         default_metadata_label;
@@ -159,12 +187,12 @@ nixlTcpStoreMetadataBackend::prepareFetchRemote(const std::string &remote_name,
     // (observed via checkRemoteMD), matching the async model of the other backends.
     // A key that is not published yet is kept pending rather than dropped, so a
     // caller polling checkRemoteMD still converges once the peer publishes.
-    return {NIXL_SUCCESS, [this, remote_name, key]() {
-                if (!tryFetch(remote_name, key)) {
-                    pendingFetches_[key] = {remote_name,
-                                            std::chrono::steady_clock::now() + fetchTimeout_};
-                }
-            }};
+    worker_.submit([this, remote_name, key]() {
+        if (!tryFetch(remote_name, key)) {
+            pendingFetches_[key] = {remote_name, std::chrono::steady_clock::now() + fetchTimeout_};
+        }
+    });
+    return NIXL_SUCCESS;
 }
 
 bool
@@ -228,23 +256,22 @@ nixlTcpStoreMetadataBackend::serviceEvents() {
     }
 }
 
-nixlPreparedOp
-nixlTcpStoreMetadataBackend::prepareInvalidateLocal(const nixl_opt_args_t * /*extra_params*/) {
-    return {NIXL_SUCCESS, [this]() {
-                try {
-                    for (const auto &key : publishedKeys_) {
-                        client_->deleteKey(key);
-                    }
-                }
-                catch (const std::exception &e) {
-                    // Keep publishedKeys_ intact so a later invalidate retries the deletes.
-                    NIXL_ERROR << "[" << ctx_.agentName()
-                               << "] TCPStore invalidate failed: " << e.what();
-                    return;
-                }
-                const std::size_t count = publishedKeys_.size();
-                publishedKeys_.clear();
-                NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore invalidated " << count
-                           << " key(s)";
-            }};
+nixl_status_t
+nixlTcpStoreMetadataBackend::invalidateLocal(const nixl_opt_args_t * /*extra_params*/) {
+    worker_.submit([this]() {
+        try {
+            for (const auto &key : publishedKeys_) {
+                client_->deleteKey(key);
+            }
+        }
+        catch (const std::exception &e) {
+            // Keep publishedKeys_ intact so a later invalidate retries the deletes.
+            NIXL_ERROR << "[" << ctx_.agentName() << "] TCPStore invalidate failed: " << e.what();
+            return;
+        }
+        const std::size_t count = publishedKeys_.size();
+        publishedKeys_.clear();
+        NIXL_DEBUG << "[" << ctx_.agentName() << "] TCPStore invalidated " << count << " key(s)";
+    });
+    return NIXL_SUCCESS;
 }

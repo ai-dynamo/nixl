@@ -45,9 +45,9 @@ class nixlAgentData : public nixlMetadataContext {
         const std::string name_;
         const nixlAgentConfig config_;
         // Agent-owned metadata manager; always built (single metadata path).
-        // It owns the worker thread and the pluggable backends (which own their
-        // own transport state: sockets/listener for P2P, client for ETCD).
-        // Declared before `lock` because whether its backends need a worker is
+        // It owns the pluggable backends, which own their own transport state
+        // (sockets/listener for P2P, client for ETCD) and their own threads.
+        // Declared before `lock` because whether any backend runs a thread is
         // what decides the effective sync mode.
         nixlMDManager md_;
         nixlLock        lock;
@@ -111,7 +111,7 @@ class nixlAgentData : public nixlMetadataContext {
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &config);
 
-        // Stops and joins the metadata worker before any member is destroyed,
+        // Stops and joins the backend threads before any member is destroyed,
         // so no task can touch the caches (remoteSections_, backendEngines_)
         // that are torn down after this body runs.
         ~nixlAgentData();

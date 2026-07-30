@@ -216,8 +216,9 @@ nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx, const n
 }
 
 nixlP2PMetadataBackend::~nixlP2PMetadataBackend() {
-    // The worker is already stopped by the time backends are destroyed, so no
-    // other thread touches remoteSockets_ here.
+    // Before closing the sockets, not just when worker_ is destroyed after this
+    // body: its poll reads from remoteSockets_.
+    worker_.stop();
     for (auto &[peer, fd] : remoteSockets_) {
         shutdown(fd, SHUT_RDWR);
         close(fd);
@@ -230,74 +231,88 @@ nixlP2PMetadataBackend::name() const {
 }
 
 bool
-nixlP2PMetadataBackend::needsWorker() const {
+nixlP2PMetadataBackend::usesThread() const {
     return config_.useListenThread;
 }
 
-nixlPreparedOp
-nixlP2PMetadataBackend::prepareSendLocal(const nixl_opt_args_t *extra_params) {
+void
+nixlP2PMetadataBackend::start() {
+    if (config_.useListenThread) {
+        worker_.start([this] { serviceEvents(); }, config_.workerDelay);
+    }
+}
+
+void
+nixlP2PMetadataBackend::stop() {
+    worker_.stop();
+}
+
+nixl_status_t
+nixlP2PMetadataBackend::sendLocal(const nixl_opt_args_t *extra_params) {
     if (!extra_params || extra_params->ipAddr.empty()) {
-        return {NIXL_ERR_INVALID_PARAM, {}};
+        return NIXL_ERR_INVALID_PARAM;
     }
     nixl_blob_t blob;
     const nixl_status_t ret = ctx_.getLocalMD(blob);
     if (ret < 0) {
-        return {ret, {}};
+        return ret;
     }
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
-    return {NIXL_SUCCESS, [this, ip, port, blob = std::move(blob)]() {
-                sendToPeer(ip, port, "NIXLCOMM:LOAD" + blob);
-            }};
+    worker_.submit([this, ip, port, blob = std::move(blob)]() {
+        sendToPeer(ip, port, "NIXLCOMM:LOAD" + blob);
+    });
+    return NIXL_SUCCESS;
 }
 
-nixlPreparedOp
-nixlP2PMetadataBackend::prepareSendLocalPartial(const nixl_reg_dlist_t &descs,
-                                                const nixl_opt_args_t *extra_params) {
+nixl_status_t
+nixlP2PMetadataBackend::sendLocalPartial(const nixl_reg_dlist_t &descs,
+                                         const nixl_opt_args_t *extra_params) {
     if (!extra_params || extra_params->ipAddr.empty()) {
-        return {NIXL_ERR_INVALID_PARAM, {}};
+        return NIXL_ERR_INVALID_PARAM;
     }
     nixl_blob_t blob;
     const nixl_status_t ret = ctx_.getLocalPartialMD(descs, blob, extra_params);
     if (ret < 0) {
-        return {ret, {}};
+        return ret;
     }
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
-    return {NIXL_SUCCESS, [this, ip, port, blob = std::move(blob)]() {
-                sendToPeer(ip, port, "NIXLCOMM:LOAD" + blob);
-            }};
+    worker_.submit([this, ip, port, blob = std::move(blob)]() {
+        sendToPeer(ip, port, "NIXLCOMM:LOAD" + blob);
+    });
+    return NIXL_SUCCESS;
 }
 
-nixlPreparedOp
-nixlP2PMetadataBackend::prepareFetchRemote(const std::string & /*remote_name*/,
-                                           const nixl_opt_args_t *extra_params) {
+nixl_status_t
+nixlP2PMetadataBackend::fetchRemote(const std::string & /*remote_name*/,
+                                    const nixl_opt_args_t *extra_params) {
     if (!extra_params || extra_params->ipAddr.empty()) {
-        return {NIXL_ERR_INVALID_PARAM, {}};
+        return NIXL_ERR_INVALID_PARAM;
     }
     // Socket fetch is keyed by address, not name; the reply is loaded into the
     // remote-section cache by serviceEvents() when the peer answers.
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
-    return {NIXL_SUCCESS, [this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:SEND"); }};
+    worker_.submit([this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:SEND"); });
+    return NIXL_SUCCESS;
 }
 
-nixlPreparedOp
-nixlP2PMetadataBackend::prepareInvalidateLocal(const nixl_opt_args_t *extra_params) {
+nixl_status_t
+nixlP2PMetadataBackend::invalidateLocal(const nixl_opt_args_t *extra_params) {
     if (!extra_params || extra_params->ipAddr.empty()) {
-        return {NIXL_ERR_INVALID_PARAM, {}};
+        return NIXL_ERR_INVALID_PARAM;
     }
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
-    return {NIXL_SUCCESS,
-            [this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:INVL" + ctx_.agentName()); }};
+    worker_.submit(
+        [this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:INVL" + ctx_.agentName()); });
+    return NIXL_SUCCESS;
 }
 
 void
 nixlP2PMetadataBackend::serviceEvents() {
-    if (listener_) {
-        acceptPeers();
-    }
+    acceptPeers();
     readIncoming();
 }
 

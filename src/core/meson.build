@@ -65,6 +65,7 @@ nixl_lib_sources = [
     'nixl_agent.cpp',
     'nixl_enum_strings.cpp',
     'nixl_md_manager.cpp',
+    'nixl_metadata_worker.cpp',
     'nixl_p2p_metadata_backend.cpp',
     'nixl_etcd_metadata_backend.cpp',
     'nixl_tcpstore_metadata_backend.cpp',
