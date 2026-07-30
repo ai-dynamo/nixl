@@ -44,6 +44,7 @@ from utils import (  # noqa: E402
     bench_kineto,
     calc_diff,
     hash_tensor,
+    kineto_device_supported,
     per_token_cast_back,
 )
 
@@ -434,6 +435,11 @@ def test_main(
     if not kineto:
         return
 
+    kineto_supported, reason = kineto_device_supported(torch.cuda.current_device())
+    if not kineto_supported:
+        print(f"[rank {rank}] Skipping Kineto profiling: {reason}", flush=True)
+        return
+
     for return_recv_hook in (False, True):
         buffer.barrier()
         try:
@@ -446,7 +452,10 @@ def test_main(
                 barrier_fn=test_barrier,
             )
         except KinetoUnavailableError as exc:
-            print(f"[rank {rank}] Skipping Kineto profiling: {exc}", flush=True)
+            print(
+                f"[rank {rank}] Skipping Kineto profiling: {exc}",
+                flush=True,
+            )
             return
         if not return_recv_hook:
             print(
