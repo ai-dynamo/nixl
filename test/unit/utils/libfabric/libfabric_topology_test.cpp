@@ -250,6 +250,29 @@ static const NeuronTopologyInfo neuron_topologies[] = {
      .expected_num_aws_accel = 1,
      .expected_nic_count = 0},
 
+    // trn1.32xlarge (Trainium1 previous-generation instance) with all 8 EFA NICs
+    // attached at launch. Has 16 TRN1 devices sharing 8 EFA NICs (2:1 ratio by
+    // hardware design). Exercises the "fewer EFA than Neuron" WARN branch of the
+    // preflight, which the message text specifically calls out as an expected /
+    // supported topology on trn1.32xlarge -- the plugin works correctly with this
+    // 2:1 sharing.
+    {.enable = true,
+     .instance_type = "trn1.32xl",
+     .topo_file = "trn1.32xl-topo.xml",
+     .expected_num_aws_accel = 16,
+     .expected_nic_count = 8},
+
+    // trn1.2xlarge (smallest Trainium1 instance) in the AWS-default launch config.
+    // trn1.2xlarge does not support EFA at all (per describe-instance-types:
+    // EfaSupported=False), so this always presents 0 EFA NICs. Exercises the
+    // "0 EFA NIC(s)" WARN branch analogously to trn2.48xl-no-efa / trn2.3xl,
+    // documenting that trn1.2xlarge is not usable for FI_HMEM_NEURON transfers.
+    {.enable = true,
+     .instance_type = "trn1.2xl",
+     .topo_file = "trn1.2xl-topo.xml",
+     .expected_num_aws_accel = 1,
+     .expected_nic_count = 0},
+
     // end of list
 };
 static const size_t neuron_topology_count =

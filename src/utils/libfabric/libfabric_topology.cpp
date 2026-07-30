@@ -178,15 +178,19 @@ nixlLibfabricTopology::neuronEfaPreflightForEfaProvider() {
     } else if (static_cast<int>(efa_nic_count) < num_aws_accel) {
         NIXL_WARN << "Discovered " << num_aws_accel << " Neuron accelerator(s) but only "
                   << efa_nic_count
-                  << " EFA NIC(s) with usable PCIe topology; FI_HMEM_NEURON memory "
-                     "registration for Neuron devices without a paired EFA NIC will fail. "
-                     "If this is trn2.3xlarge (or a similar smaller instance with only a "
-                     "single host-level EFA and no per-device EFA), the libfabric plugin "
-                     "cannot register Neuron device memory for RDMA; use trn2.48xlarge "
-                     "instead. If this is trn2.48xlarge or a larger Neuron instance, verify "
-                     "that all EFA network interfaces were attached at launch time via "
-                     "`--network-interfaces InterfaceType=efa` for each NetworkCardIndex "
-                     "(the AWS default attaches only an ENA NIC, not EFA).";
+                  << " EFA NIC(s) with usable PCIe topology. Three cases: "
+                     "(1) trn1.32xlarge has 16 Neuron devices and 8 EFA NICs by design "
+                     "(2 Neurons share each EFA); if this is trn1.32xlarge, the plugin "
+                     "works and this warning can be ignored. "
+                     "(2) trn2.3xlarge (or a similar smaller Trn2 with only a single "
+                     "host-level EFA and no per-device EFA) cannot register Neuron device "
+                     "memory for RDMA; use trn2.48xlarge instead. "
+                     "(3) trn2.48xlarge or a larger Trn2/Trn3 instance launched without "
+                     "all EFA NICs attached: verify that all EFA network interfaces were "
+                     "attached at launch time via `--network-interfaces InterfaceType=efa` "
+                     "for each NetworkCardIndex (the AWS default attaches only an ENA NIC, "
+                     "not EFA). FI_HMEM_NEURON memory registration will fail for Neuron "
+                     "devices without a paired EFA NIC.";
     } else if (static_cast<int>(efa_nic_count) > num_aws_accel &&
                (static_cast<int>(efa_nic_count) % num_aws_accel) != 0) {
         NIXL_WARN << "Discovered " << num_aws_accel << " Neuron accelerator(s) and "
