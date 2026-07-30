@@ -121,24 +121,42 @@ public:
 private:
     void
     addSortedDescs(std::vector<nixlSectionDesc> batch);
+
+    bool
+    usesUnboundedLen() const noexcept {
+        return type == BLK_SEG || type == OBJ_SEG || type == FILE_SEG;
+    }
+
+    void
+    normalizeSecDesc(nixlSectionDesc &desc) const noexcept {
+        if (usesUnboundedLen() && desc.len == 0) {
+            desc.len = SIZE_MAX;
+        }
+    }
+
+    void
+    normalizeSecDescBatch(std::vector<nixlSectionDesc> &batch) const noexcept {
+        if (!usesUnboundedLen()) {
+            return;
+        }
+        for (auto &d : batch) {
+            if (d.len == 0) {
+                d.len = SIZE_MAX;
+            }
+        }
+    }
+
+    nixlBasicDesc
+    normalizeQuery(const nixlBasicDesc &query) const noexcept {
+        if (!usesUnboundedLen() || query.len != 0) {
+            return query;
+        }
+        return nixlBasicDesc(query.addr, SIZE_MAX, query.devId);
+    }
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;
 using section_map_t = std::map<section_key_t, nixlSecDescList>;
-
-/**
- * @brief Normalize a section descriptor for file-like segments.
- *
- * For BLK_SEG, OBJ_SEG, and FILE_SEG, a zero-length registration is stored
- * internally with len = SIZE_MAX (unlimited range).
- */
-inline nixlBasicDesc
-normalizeSecDesc(const nixlBasicDesc &desc, nixl_mem_t type) {
-    if ((type == BLK_SEG || type == OBJ_SEG || type == FILE_SEG) && desc.len == 0) {
-        return nixlBasicDesc(desc.addr, SIZE_MAX, desc.devId);
-    }
-    return desc;
-}
 
 class nixlMemSection {
     protected:
