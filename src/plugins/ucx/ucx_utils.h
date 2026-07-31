@@ -25,6 +25,10 @@ extern "C" {
 #include <ucp/api/ucp.h>
 }
 
+#if UCP_API_VERSION < UCP_VERSION(1, 11)
+#error "NIXL UCX endpoint naming requires UCX 1.11 or newer"
+#endif
+
 #include <nixl_types.h>
 
 #include "rkey.h"
@@ -69,6 +73,12 @@ public:
         return nixl::ucx::toNixlStatus(state_);
     }
 
+    /**
+     * Create a UCX endpoint.
+     *
+     * @param ep_name Optional endpoint identity exposed to UCX tracing tools.
+     *                An empty name preserves UCX's default endpoint naming.
+     */
     nixlUcxEp(ucp_worker_h worker,
               void *addr,
               const std::string &ep_name,
@@ -217,6 +227,12 @@ public:
     /* Connection */
     [[nodiscard]] std::string
     epAddr();
+    /**
+     * Connect to a remote worker.
+     *
+     * @param ep_name Optional endpoint identity exposed to UCX tracing tools.
+     *                An empty name preserves UCX's default endpoint naming.
+     */
     [[nodiscard]] std::unique_ptr<nixlUcxEp>
     connect(void *addr, const std::string &ep_name = {});
 

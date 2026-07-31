@@ -96,11 +96,19 @@ main() {
         const std::string endpoint_name = "Agent" + std::to_string(i);
         assert(!addr.empty());
         auto result = w[!i].connect((void *)addr.data(), endpoint_name);
-        assert(result);
+        if (!result) {
+            cerr << "Failed to connect UCX endpoint " << endpoint_name << endl;
+            return EXIT_FAILURE;
+        }
 
-        ucp_ep_attr_t attr;
+        ucp_ep_attr_t attr{};
         attr.field_mask = UCP_EP_ATTR_FIELD_NAME;
-        assert(ucp_ep_query(result->getEp(), &attr) == UCS_OK);
+        const ucs_status_t query_status = ucp_ep_query(result->getEp(), &attr);
+        if (query_status != UCS_OK) {
+            cerr << "Failed to query UCX endpoint " << endpoint_name << ": "
+                 << ucs_status_string(query_status) << endl;
+            return EXIT_FAILURE;
+        }
 
         char default_name[UCP_ENTITY_NAME_MAX];
         std::snprintf(
@@ -110,7 +118,11 @@ main() {
                     "documented pointer fallback"
                  << endl;
         } else {
-            assert(endpoint_name == attr.name);
+            if (endpoint_name != attr.name) {
+                cerr << "UCX endpoint name mismatch: expected " << endpoint_name << ", got "
+                     << attr.name << endl;
+                return EXIT_FAILURE;
+            }
         }
 
         ep[!i] = std::move(result);
