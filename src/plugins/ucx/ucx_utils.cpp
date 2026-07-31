@@ -162,6 +162,7 @@ nixlUcxEp::closeImpl() {
 
 nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
                      void *addr,
+                     const std::string &ep_name,
                      ucp_err_handling_mode_t err_handling_mode,
                      uint32_t close_flags)
     : closeFlags_{close_flags} {
@@ -174,6 +175,10 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
     ep_params.err_handler.cb = err_cb_wrapper;
     ep_params.err_handler.arg = static_cast<void *>(this);
     ep_params.address = reinterpret_cast<ucp_address_t *>(addr);
+    if (!ep_name.empty()) {
+        ep_params.field_mask |= UCP_EP_PARAM_FIELD_NAME;
+        ep_params.name = ep_name.c_str();
+    }
 
     status = nixl::ucx::ucsToNixlStatus(ucp_ep_create(worker, &ep_params, &eph));
     if (status == NIXL_SUCCESS)
@@ -577,10 +582,10 @@ nixlUcxWorker::epAddr() {
 }
 
 std::unique_ptr<nixlUcxEp>
-nixlUcxWorker::connect(void *addr) {
+nixlUcxWorker::connect(void *addr, const std::string &ep_name) {
     try {
-        auto ep =
-            std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, epCloseFlags_);
+        auto ep = std::make_unique<nixlUcxEp>(
+            worker.get(), addr, ep_name, err_handling_mode_, epCloseFlags_);
         NIXL_DEBUG << *this << ": created ep " << ep->getEp();
         return ep;
     }

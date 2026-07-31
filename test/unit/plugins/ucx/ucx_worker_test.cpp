@@ -17,6 +17,7 @@
 #include <vector>
 #include <string>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 
@@ -92,9 +93,26 @@ main() {
     /* Test control path */
     for (i = 0; i < 2; i++) {
         const std::string addr = w[i].epAddr();
+        const std::string endpoint_name = "Agent" + std::to_string(i);
         assert(!addr.empty());
-        auto result = w[!i].connect((void *)addr.data());
+        auto result = w[!i].connect((void *)addr.data(), endpoint_name);
         assert(result);
+
+        ucp_ep_attr_t attr;
+        attr.field_mask = UCP_EP_ATTR_FIELD_NAME;
+        assert(ucp_ep_query(result->getEp(), &attr) == UCS_OK);
+
+        char default_name[UCP_ENTITY_NAME_MAX];
+        std::snprintf(
+            default_name, sizeof(default_name), "%p", static_cast<void *>(result->getEp()));
+        if (std::strcmp(attr.name, default_name) == 0) {
+            cout << "NOTE: UCX debug data is disabled; endpoint name query returned the "
+                    "documented pointer fallback"
+                 << endl;
+        } else {
+            assert(endpoint_name == attr.name);
+        }
+
         ep[!i] = std::move(result);
         assert(0 == c[i].memReg(buffer[i], buf_size, mem[i], nixl_mem_type));
         std::string rkey_tmp = c[i].packRkey(mem[i]);

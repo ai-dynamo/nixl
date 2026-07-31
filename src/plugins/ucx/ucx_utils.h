@@ -71,6 +71,7 @@ public:
 
     nixlUcxEp(ucp_worker_h worker,
               void *addr,
+              const std::string &ep_name,
               ucp_err_handling_mode_t err_handling_mode,
               uint32_t close_flags);
     ~nixlUcxEp();
@@ -217,7 +218,7 @@ public:
     [[nodiscard]] std::string
     epAddr();
     [[nodiscard]] std::unique_ptr<nixlUcxEp>
-    connect(void *addr);
+    connect(void *addr, const std::string &ep_name = {});
 
     /* Active message handling */
     int
