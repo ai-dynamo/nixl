@@ -704,7 +704,6 @@ allocVramValueZero(int devid, size_t nbytes) {
     if (neuronCoreCount() > 0) {
         return getVramDescNeuron(devid, nbytes, 0);
     }
-
     CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
     if (xferBenchConfig::enable_vmm) {
         return getVramDescCudaVmm(devid, nbytes, 0);
@@ -723,12 +722,10 @@ xferBenchNixlWorker::initCompletionCounterVram() {
     if (!xferBenchConfig::use_device_api || !isTarget() || seg_type != VRAM_SEG) {
         return std::nullopt;
     }
-
     int counter_dev = 0;
     if (IS_PAIRWISE_AND_SG()) {
         counter_dev = rt->getRank() - xferBenchConfig::num_initiator_dev;
     }
-
     return allocVramValueZero(counter_dev, kDeviceCounterBytes);
 }
 
@@ -1431,7 +1428,6 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             cc_dlist.addDesc(cc_basic);
             cc_dlist.serialize(&cc_ser);
             std::string cc_export = cc_ser.exportStr();
-
             int destrank;
             if (IS_PAIRWISE_AND_SG()) {
                 destrank = rt->getRank() - xferBenchConfig::num_target_dev;
@@ -1909,7 +1905,6 @@ execDeviceTransfer(nixlMemViewH local_mvh,
                    const std::atomic<int> *terminate_ptr = nullptr) {
 #ifdef HAVE_UCX_GPU_DEVICE_API
     stats.clear();
-
     nixlbenchDeviceXferParams params;
     params.localMvh = local_mvh;
     params.remoteMvh = remote_mvh;
@@ -1917,12 +1912,10 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     params.regionSize = region_size;
     params.completionCounterOffsetBytes = kDeviceCounterDoneOffsetBytes;
     params.errorCounterOffsetBytes = kDeviceCounterErrorOffsetBytes;
-
     xferBenchTimer total_timer;
     xferBenchStats iter_stats;
     iter_stats.reserve(num_iter);
     xferBenchTimer timer;
-
     for (int i = 0; i < num_iter; ++i) {
         if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
             stats.total_duration.add(total_timer.lap());
@@ -1937,7 +1930,6 @@ execDeviceTransfer(nixlMemViewH local_mvh,
         }
         iter_stats.transfer_duration.add(timer.lap());
     }
-
     stats.add(iter_stats);
     stats.total_duration.add(total_timer.lap());
     return 0;
@@ -1965,12 +1957,10 @@ xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_
         uint64_t done;
         uint64_t error;
     };
-
     if (expected_value == 0) {
         return true;
     }
     CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
-
     while (!signaled()) {
         xferBenchDeviceCounters counters{};
         CHECK_CUDA_ERROR(cudaMemcpy(&counters,
@@ -2013,7 +2003,6 @@ resetDeviceCounters(const xferBenchIOV &counter_iov) {
     CHECK_CUDA_ERROR(cudaMemset(reinterpret_cast<void *>(counter_iov.addr), 0, kDeviceCounterBytes),
                      "Failed to reset completion counters in VRAM");
     CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize completion counter reset");
-
 #else
     (void)counter_iov;
     std::cerr << "NIXL Device API support is not enabled in this build" << std::endl;
@@ -2058,7 +2047,6 @@ xferBenchNixlWorker::transfer(size_t block_size,
         }
         num_regions = remote_regions;
     }
-
     auto gpu_view_guard = make_scope_guard([this] {
         if (xferBenchConfig::use_device_api) {
             releaseGPURemoteView();
@@ -2239,7 +2227,6 @@ xferBenchNixlWorker::prepareGPURemoteView(
                   << "exchangeMetadata must be called before prepareGPURemoteView" << std::endl;
         std::exit(EXIT_FAILURE);
     }
-
     nixl_remote_dlist_t remote_list(VRAM_SEG);
     for (const auto &remote_iov_list : remote_iov_lists) {
         for (const auto &iov : remote_iov_list) {
@@ -2248,7 +2235,6 @@ xferBenchNixlWorker::prepareGPURemoteView(
             remote_list.addDesc(remoteDesc);
         }
     }
-
     const nixlRemoteDesc remoteDesc{completion_counter_iov.value().addr,
                                     completion_counter_iov.value().len,
                                     static_cast<uint64_t>(completion_counter_iov.value().devId),
