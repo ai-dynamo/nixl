@@ -265,14 +265,13 @@ nixlLibfabricTopology::getNumaRailCount() const {
 void
 nixlLibfabricTopology::printTopologyInfo() const {
     NIXL_INFO << "Topology: " << num_numa_nodes << " NUMA nodes, " << num_devices << " NICs, "
-              << num_nvidia_accel << " NVIDIA GPUs, " << num_aws_accel << " AWS accelerators";
+              << num_nvidia_accel << " NVIDIA GPUs, " << num_amd_accel << " AMD GPUs, "
+              << num_aws_accel << " AWS accelerators";
     if (avg_nic_speed > 0) {
         NIXL_INFO << "Avg NIC bandwidth: " << avg_nic_speed << " Gbps";
     }
     NIXL_TRACE << "=== Libfabric Topology Information ===";
     NIXL_TRACE << "Topology discovered: " << (topology_discovered ? "Yes" : "No");
-    NIXL_TRACE << "Number of NVIDIA accelerators: " << num_nvidia_accel;
-    NIXL_TRACE << "Number of AMD accelerators: " << num_amd_accel;
     NIXL_TRACE << "Number of AWS Neuron accelerators: " << num_aws_accel;
     NIXL_TRACE << "Number of NUMA nodes: " << num_numa_nodes;
     NIXL_TRACE << "Number of EFA devices: " << num_devices;
@@ -302,9 +301,7 @@ std::string
 nixlLibfabricTopology::getTopologyString() const {
     std::stringstream ss;
     ss << "Libfabric Topology: ";
-    ss << "NVIDIA_GPUs=" << num_nvidia_accel << ", ";
-    ss << "AMD_GPUs=" << num_amd_accel << ", ";
-    ss << "Neuron_Accelerators=" << num_aws_accel << ", ";
+    ss << "AWS_Accelerators=" << num_aws_accel << ", ";
     ss << "NUMA=" << num_numa_nodes << ", ";
     ss << "EFA=" << num_devices << ", ";
     ss << "Discovered=" << (topology_discovered ? "Yes" : "No");
@@ -798,20 +795,7 @@ nixlLibfabricTopology::isAmdAccel(hwloc_obj_t obj) const {
     // Class 0x302 is 3D controller (GPU), 0x680 is other devices (network, etc.)
     // MI300X uses class 0x1200 (Processing accelerators), consumer GPUs use 0x300-0x3ff
     uint16_t class_id = obj->attr->pcidev.class_id;
-    return (class_id >= 0x300 && class_id < 0x400) || (class_id == 0x1200);
-}
-
-bool
-nixlLibfabricTopology::isEfaDevice(hwloc_obj_t obj) const {
-    if (!obj || obj->type != HWLOC_OBJ_PCI_DEVICE) {
-        return false;
-    }
-    NIXL_TRACE << "Checking isEfaDevice on device " << std::hex << std::showbase
-               << obj->attr->pcidev.vendor_id << " " << obj->attr->pcidev.device_id;
-
-    // Amazon EFA vendor ID is 0x1d0f, device ID matches 0xefa* (wildcard for any EFA device)
-    return obj->attr->pcidev.vendor_id == 0x1d0f &&
-        (obj->attr->pcidev.device_id & 0xfff0) == 0xefa0;
+    return (class_id >= 0x300 && class_id < 0x400) || (class_id >= 0x1200 && class_id < 0x1300);
 }
 
 size_t
