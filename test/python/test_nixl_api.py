@@ -252,7 +252,7 @@ def test_incorrect_plugin_env(monkeypatch):
 
 
 def _run_xfer_telemetry_check(
-    agent1, agent2, backend_name: str, expect_telemetry: bool = True
+    agent1, agent2, backend_name: str, *, expect_telemetry: bool = True
 ) -> None:
     mem_size = 128
     addr1 = utils.malloc_passthru(mem_size)
