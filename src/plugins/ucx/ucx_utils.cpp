@@ -237,9 +237,8 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return status;
     }
 
-    ucp_request_param_t param = {0};
-
-    param.op_attr_mask |= UCP_OP_ATTR_FIELD_FLAGS;
+    ucp_request_param_t param;
+    param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS;
     param.flags = flags;
 
     nixl_ucx_am_cb_ctx_ptr_t ctx;
@@ -277,14 +276,13 @@ nixlUcxEp::read(uint64_t raddr,
                 size_t size,
                 nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
-    if (status != NIXL_SUCCESS) {
+    if (status != NIXL_SUCCESS) [[unlikely]] {
         return status;
     }
 
-    ucp_request_param_t param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND,
-        .memh = mem.memh,
-    };
+    ucp_request_param_t param;
+    param.op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND;
+    param.memh = mem.memh;
 
     const ucs_status_ptr_t request = ucp_get_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
@@ -303,14 +301,13 @@ nixlUcxEp::write(void *laddr,
                  size_t size,
                  nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
-    if (status != NIXL_SUCCESS) {
+    if (status != NIXL_SUCCESS) [[unlikely]] {
         return status;
     }
 
-    ucp_request_param_t param = {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND,
-        .memh = mem.memh,
-    };
+    ucp_request_param_t param;
+    param.op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND;
+    param.memh = mem.memh;
 
     const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
