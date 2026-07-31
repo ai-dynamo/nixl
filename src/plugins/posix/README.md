@@ -26,6 +26,36 @@ Optionally POSIX plugin can also use liburing.
 `"<modes>:<path>"` string in `metaInfo` (path-mode, backend owns the
 open/close); see [`src/utils/file/README.md`](../../utils/file/README.md#path-mode-file-registration).
 
+## Transfer submission and completion
+
+Submission is batched: `postXfer` enqueues every descriptor of the request but
+issues at most `MAX_IO_SUBMIT_BATCH_SIZE` (64) I/Os to the kernel. The remaining
+I/Os are issued by later calls to `checkXfer`, which polls the I/O queue and
+submits the next batch before reaping completions. This is the same in all three
+queue implementations (Linux AIO, io_uring, POSIX AIO).
+
+Two consequences for callers:
+
+* **A request with more than 64 descriptors is not fully submitted until it has
+  been polled.** `getXferStatus` must be called repeatedly until it returns
+  `NIXL_SUCCESS`; a caller that posts and then stops polling (for example one
+  waiting on an external event instead) leaves the remaining I/Os unissued and
+  the transfer never completes. Polling is required for progress, not only to
+  observe it.
+* **Time to completion has a floor of `ceil(descriptors / 64)` polls**,
+  independent of device speed. With a sleep between polls, that floor is
+  `ceil(descriptors / 64) x poll_interval`: a 256-descriptor request polled every
+  5 ms cannot finish in less than about 20 ms even on an idle NVMe device. Poll
+  without sleeping, or size the interval against the descriptor count, when
+  latency matters.
+
+The I/O queue is shared by all requests on a POSIX backend instance, so polling
+any one transfer handle also advances the in-flight I/Os of the others.
+
+`MAX_IO_SUBMIT_BATCH_SIZE` is a compile-time constant. The surrounding queue
+sizes are tunable through the backend parameters `ios_pool_size` (default 65536)
+and `kernel_queue_size` (default 256).
+
 ## Dependencies
 To enable Linux AIO support, you need to install the libaio package:
 
