@@ -1957,6 +1957,7 @@ xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_
         uint64_t done;
         uint64_t error;
     };
+
     if (expected_value == 0) {
         return true;
     }
