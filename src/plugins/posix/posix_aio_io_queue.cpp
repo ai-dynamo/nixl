@@ -18,6 +18,7 @@
 #include "io_queue.h"
 #include "common/nixl_log.h"
 #include <aio.h>
+#include <cerrno>
 
 #define MAX_IO_SUBMIT_BATCH_SIZE 64
 #define MAX_IO_CHECK_COMPLETED_BATCH_SIZE 64
@@ -28,6 +29,7 @@ public:
     void *ctx_;
     struct aiocb aio_;
     bool read_;
+    bool force_error_ = false;
 };
 
 class nixlPosixIOQueueAIO : public nixlPosixIOQueueImpl<nixlPosixAioIO> {
@@ -47,6 +49,13 @@ public:
             void *ctx) override;
     virtual nixl_status_t
     poll(void) override;
+    virtual nixl_status_t
+    cancel(void *ctx) override;
+    virtual bool
+    hasPendingCleanup(void) const override {
+        return cancellations_pending_ != 0;
+    }
+
     virtual ~nixlPosixIOQueueAIO() override;
 
 protected:
@@ -54,6 +63,9 @@ protected:
     doCheckCompleted(void);
 
     std::list<nixlPosixAioIO *> ios_in_flight_;
+
+private:
+    unsigned cancellations_pending_ = 0;
 };
 
 nixlPosixIOQueueAIO::~nixlPosixIOQueueAIO() {
@@ -87,6 +99,7 @@ nixlPosixIOQueueAIO::enqueue(int fd,
     io->aio_.aio_buf = buf;
     io->aio_.aio_nbytes = len;
     io->aio_.aio_offset = offset;
+    io->force_error_ = false;
 
     ios_to_submit_.push_back(io);
 
@@ -112,9 +125,13 @@ nixlPosixIOQueueAIO::post(void) {
             ret = aio_write(&io->aio_);
         }
 
-        if (ret < 0) {
-            NIXL_ERROR << "aio_submit failed: " << nixl_strerror(-ret);
+        if (ret != 0) {
+            const int error = errno;
             ios_to_submit_.push_front(io);
+            if (error == EAGAIN || error == EINTR) {
+                return NIXL_IN_PROG;
+            }
+            NIXL_ERROR << "aio submission failed: " << nixl_strerror(error);
             return NIXL_ERR_BACKEND;
         }
 
@@ -131,38 +148,76 @@ nixlPosixIOQueueAIO::doCheckCompleted(void) {
     }
 
     int num_ios = std::min(MAX_IO_CHECK_COMPLETED_BATCH_SIZE, (int)ios_in_flight_.size());
-    for (auto it = ios_in_flight_.begin(); it != ios_in_flight_.end();) {
+    for (auto it = ios_in_flight_.begin(); it != ios_in_flight_.end() && num_ios > 0;) {
         nixlPosixAioIO *io = *it;
         int status = aio_error(&io->aio_);
-        if (status == 0) {
-            ssize_t ret = aio_return(&io->aio_);
-            if (ret < 0 || ret != static_cast<ssize_t>(io->aio_.aio_nbytes)) {
-                NIXL_ERROR << "aio_return failed: " << nixl_strerror(-ret);
-                ios_in_flight_.push_front(io);
-                return NIXL_ERR_BACKEND;
-            }
-            if (io->clb_) {
-                io->clb_(io->ctx_, ret, 0);
-            }
-            it = ios_in_flight_.erase(it);
-            free_ios_.push_back(io);
-        } else if (status == EINPROGRESS) {
-            return NIXL_IN_PROG;
-        } else {
-            NIXL_ERROR << "aio_error failed: " << nixl_strerror(-status);
-            ios_in_flight_.push_front(io);
-            return NIXL_ERR_BACKEND;
+        if (status == EINPROGRESS) {
+            ++it;
+            continue;
         }
 
-        it++;
-
+        ssize_t ret = aio_return(&io->aio_);
+        bool was_cancellation_pending = io->force_error_;
+        int error = was_cancellation_pending || status != 0 || ret < 0 ||
+                    ret != static_cast<ssize_t>(io->aio_.aio_nbytes);
+        if (status != 0) {
+            NIXL_DEBUG << "POSIX AIO operation failed: " << nixl_strerror(status);
+        } else if (error) {
+            NIXL_DEBUG << "POSIX AIO operation incomplete: " << ret << " expected "
+                       << io->aio_.aio_nbytes;
+        }
+        if (io->clb_) {
+            io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(ret), error);
+        }
+        io->force_error_ = false;
+        if (was_cancellation_pending) {
+            NIXL_ASSERT(cancellations_pending_ > 0);
+            cancellations_pending_--;
+        }
+        it = ios_in_flight_.erase(it);
+        free_ios_.push_back(io);
         num_ios--;
-        if (num_ios == 0) {
-            break;
-        }
     }
 
     return ios_in_flight_.empty() ? NIXL_SUCCESS : NIXL_IN_PROG;
+}
+
+nixl_status_t
+nixlPosixIOQueueAIO::cancel(void *ctx) {
+    if (!ctx) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    for (auto it = ios_to_submit_.begin(); it != ios_to_submit_.end();) {
+        nixlPosixAioIO *io = *it;
+        if (io->ctx_ != ctx) {
+            ++it;
+            continue;
+        }
+        if (io->clb_) {
+            io->clb_(io->ctx_, 0, 1);
+        }
+        io->force_error_ = false;
+        it = ios_to_submit_.erase(it);
+        free_ios_.push_back(io);
+    }
+
+    for (auto *io : ios_in_flight_) {
+        if (io->ctx_ != ctx || io->force_error_) {
+            continue;
+        }
+
+        // aio_cancel() is best effort for buffered file I/O. Keep the aiocb
+        // alive and poll it to terminal state for every return value.
+        io->force_error_ = true;
+        cancellations_pending_++;
+        int ret = aio_cancel(io->aio_.aio_fildes, &io->aio_);
+        if (ret == -1) {
+            NIXL_DEBUG << "aio_cancel failed: " << nixl_strerror(errno);
+        }
+    }
+
+    return hasPendingCleanup() ? NIXL_IN_PROG : NIXL_SUCCESS;
 }
 
 nixl_status_t

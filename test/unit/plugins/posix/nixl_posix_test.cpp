@@ -34,7 +34,173 @@
 #include <stdexcept>
 #include <cstdio>
 #include <getopt.h>
+#include <csignal>
+#include <chrono>
+#include <thread>
+#include <sys/resource.h>
 
+#ifdef HAVE_LIBURING
+#include <array>
+#include <cerrno>
+#include <cstdint>
+#include <liburing.h>
+
+#include "io_queue.h"
+extern "C" int
+__real_io_uring_submit(struct io_uring *ring);
+extern "C" int
+__wrap_io_uring_submit(struct io_uring *ring);
+
+namespace {
+constexpr int request_count = 32, ring_entries = 16, max_poll_iterations = 2000;
+constexpr size_t block_size = 4096;
+constexpr auto poll_pause = std::chrono::microseconds(50);
+using buffers_t = std::array<std::array<char, block_size>, request_count>;
+enum class submit_mode_t {
+    PARTIAL_ONLY,
+    TRANSIENT_ERRORS,
+    PASS_THROUGH,
+};
+submit_mode_t submit_mode = submit_mode_t::PASS_THROUGH;
+int submit_calls = 0, transient_submit_errors = 0;
+unsigned first_ready = 0, first_submitted = 0;
+
+struct completionState {
+    int count = 0;
+    int errors = 0;
+};
+
+void
+completionCallback(void *ctx, uint32_t, int error) {
+    auto *state = static_cast<completionState *>(ctx);
+    state->count++;
+    state->errors += error != 0;
+}
+
+struct uringTest {
+    int fd;
+    buffers_t buffers{};
+    std::unique_ptr<nixlPosixIOQueue> queue;
+
+    explicit uringTest(submit_mode_t mode) : fd(-1) {
+        submit_mode = mode;
+        submit_calls = transient_submit_errors = 0;
+        first_ready = first_submitted = 0;
+        char path[] = "/tmp/nixl_uring_test_XXXXXX";
+        fd = mkstemp(path);
+        if (fd < 0) {
+            throw std::runtime_error("mkstemp failed");
+        }
+        unlink(path);
+        for (size_t i = 0; i < buffers.size(); i++) {
+            std::memset(buffers[i].data(), static_cast<int>(i + 1), buffers[i].size());
+        }
+        queue = nixlPosixIOQueue::instantiate("URING", 64, ring_entries);
+    }
+
+    ~uringTest() {
+        queue.reset();
+        close(fd);
+    }
+
+    bool
+    enqueue(completionState &state, int start, int count) {
+        for (int i = start; i < start + count; i++) {
+            if (queue->enqueue(fd,
+                               buffers[i].data(),
+                               buffers[i].size(),
+                               i * block_size,
+                               false,
+                               completionCallback,
+                               &state) != NIXL_SUCCESS) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    nixl_status_t
+    drain() {
+        nixl_status_t status = NIXL_IN_PROG;
+        for (int i = 0; i < max_poll_iterations && status == NIXL_IN_PROG; i++) {
+            status = queue->poll();
+            std::this_thread::sleep_for(poll_pause);
+        }
+        return status;
+    }
+};
+
+#define URING_CHECK(condition) \
+    do {                       \
+        if (!(condition)) {    \
+            return 1;          \
+        }                      \
+    } while (false)
+
+} // namespace
+
+extern "C" int
+__wrap_io_uring_submit(struct io_uring *ring) {
+    if (submit_mode == submit_mode_t::TRANSIENT_ERRORS && transient_submit_errors < 3) {
+        constexpr int errors[] = {EAGAIN, EBUSY, EINTR};
+        return -errors[transient_submit_errors++];
+    }
+
+    const unsigned ready = io_uring_sq_ready(ring);
+    if (ready == 0 || submit_mode == submit_mode_t::PASS_THROUGH) {
+        return __real_io_uring_submit(ring);
+    }
+
+    submit_calls++;
+    if (submit_calls != 1 || ready < 2) {
+        return __real_io_uring_submit(ring);
+    }
+
+    const unsigned original_tail = ring->sq.sqe_tail;
+    ring->sq.sqe_tail = ring->sq.sqe_head + ready / 2;
+    const int ret = __real_io_uring_submit(ring);
+    ring->sq.sqe_tail = original_tail;
+    first_ready = ready;
+    first_submitted = ret > 0 ? static_cast<unsigned>(ret) : 0;
+    return ret;
+}
+
+int
+runUringSubmissionTests() {
+    struct io_uring probe_ring = {};
+    struct io_uring_params probe_params = {};
+    const int probe_status = io_uring_queue_init_params(ring_entries, &probe_ring, &probe_params);
+    if (probe_status < 0) {
+        std::cerr << "io_uring runtime probe failed: " << std::strerror(-probe_status) << std::endl;
+        return 1;
+    }
+    io_uring_queue_exit(&probe_ring);
+
+    {
+        uringTest test(submit_mode_t::PARTIAL_ONLY);
+        completionState state;
+        URING_CHECK(test.enqueue(state, 0, request_count));
+        URING_CHECK(test.queue->post() == NIXL_IN_PROG);
+        URING_CHECK(first_submitted > 0 && first_submitted < first_ready);
+        URING_CHECK(test.drain() == NIXL_SUCCESS);
+        URING_CHECK(state.count == request_count && state.errors == 0 && submit_calls > 1);
+    }
+    {
+        uringTest test(submit_mode_t::TRANSIENT_ERRORS);
+        completionState state;
+        URING_CHECK(test.enqueue(state, 0, request_count));
+        URING_CHECK(test.queue->post() == NIXL_IN_PROG);
+        URING_CHECK(test.queue->poll() == NIXL_IN_PROG);
+        URING_CHECK(test.queue->poll() == NIXL_IN_PROG);
+        URING_CHECK(test.drain() == NIXL_SUCCESS && transient_submit_errors == 3);
+        URING_CHECK(state.count == request_count && state.errors == 0);
+    }
+    submit_mode = submit_mode_t::PASS_THROUGH;
+    return 0;
+}
+
+#undef URING_CHECK
+#endif
 namespace {
     const size_t page_size = sysconf(_SC_PAGESIZE);
 
@@ -532,7 +698,9 @@ read_write_test (int num_transfers,
 
 int
 test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
-    constexpr int num_transfers = 16;
+    // More than two 64-I/O submit batches leaves queued work for the failed
+    // transfer's cancellation path to account for before queue reuse.
+    constexpr int num_transfers = 200;
     constexpr size_t transfer_size = 128 * 1024; // 128KB
     // Set up backend parameters
     nixl_b_params_t params;
@@ -715,6 +883,40 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
         fill_test_pattern ((void *)dram_buf[i].addr, repost_test_phrase_2, transfer_size);
     }
 
+    bool test_short_write_recovery = use_uring;
+#ifdef HAVE_LINUXAIO
+    test_short_write_recovery = true;
+#endif
+    if (test_short_write_recovery) {
+        for (const auto &file : fd) {
+            if (ftruncate(file.fd, 0) != 0) {
+                return 1;
+            }
+        }
+        struct rlimit saved{};
+        if (getrlimit(RLIMIT_FSIZE, &saved) != 0) {
+            return 1;
+        }
+        struct rlimit limit{page_size, saved.rlim_max};
+        if (setrlimit(RLIMIT_FSIZE, &limit) != 0) {
+            return 1;
+        }
+        auto previous_sigxfsz_handler = signal(SIGXFSZ, SIG_IGN);
+        status = agent.postXferReq(treq_write);
+        while (status == NIXL_IN_PROG) {
+            status = agent.getXferStatus(treq_write);
+        }
+        signal(SIGXFSZ, previous_sigxfsz_handler);
+        if (setrlimit(RLIMIT_FSIZE, &saved) != 0) {
+            return 1;
+        }
+        if (status >= 0) {
+            std::cerr << (use_uring ? "io_uring" : "Linux AIO")
+                      << " short write was not reported" << std::endl;
+            return 1;
+        }
+    }
+
     status = agent.postXferReq(treq_write);
     if (status < 0) {
         std::cerr << "Failed to post write transfer request - status: "
@@ -776,6 +978,297 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
     agent.releaseXferReq(treq_write);
     agent.releaseXferReq(treq_read);
 
+    return 0;
+}
+
+int
+test_aio_failure_recovery_case(const std::string &dir,
+                               const char *queue_name,
+                               const char *queue_param,
+                               int num_descs) {
+    constexpr size_t transfer_size = 4 * 4096;
+    constexpr int max_poll_iterations = 100000;
+
+    nixl_b_params_t params;
+    params[queue_param] = "true";
+    nixlAgentConfig cfg;
+    cfg.useProgThread = false;
+    nixlAgent agent("POSIXAIOFailureTester", cfg);
+    nixlBackendH *posix = nullptr;
+    if (agent.createBackend("POSIX", params, posix) != NIXL_SUCCESS) {
+        std::cout << queue_name << " unavailable, skipping failure-recovery test" << std::endl;
+        return 0;
+    }
+
+    nixl_reg_dlist_t dram_reg(DRAM_SEG);
+    nixl_reg_dlist_t file_reg(FILE_SEG);
+    nixl_xfer_dlist_t dram_xfer(DRAM_SEG);
+    nixl_xfer_dlist_t file_xfer(FILE_SEG);
+    std::vector<std::unique_ptr<void, PosixMemalignDeleter>> buffers;
+    std::vector<tempFile> files;
+    buffers.reserve(num_descs);
+    files.reserve(num_descs);
+
+    for (int i = 0; i < num_descs; i++) {
+        void *ptr = nullptr;
+        if (posix_memalign(&ptr, page_size, transfer_size) != 0) {
+            return 1;
+        }
+        buffers.emplace_back(ptr);
+        fill_test_pattern(ptr, read_write_test_phrase, transfer_size);
+
+        std::string path = dir + "/aio_failure_" + queue_name + "_" + std::to_string(num_descs) +
+                           "_" + std::to_string(i) + "_" + generate_timestamped_filename(test_file_name);
+        files.emplace_back(path, O_RDWR | O_CREAT | O_TRUNC);
+
+        nixlBlobDesc dram_desc;
+        dram_desc.addr = reinterpret_cast<uintptr_t>(ptr);
+        dram_desc.len = transfer_size;
+        dram_desc.devId = 0;
+        dram_reg.addDesc(dram_desc);
+        dram_xfer.addDesc(dram_desc);
+
+        nixlBlobDesc file_desc;
+        file_desc.addr = 0;
+        file_desc.len = transfer_size;
+        file_desc.devId = files.back().fd;
+        file_reg.addDesc(file_desc);
+        file_xfer.addDesc(file_desc);
+    }
+
+    if (agent.registerMem(dram_reg) != NIXL_SUCCESS ||
+        agent.registerMem(file_reg) != NIXL_SUCCESS) {
+        return 1;
+    }
+
+    auto run_transfer = [&](nixlXferReqH *request) {
+        nixl_status_t status = agent.postXferReq(request);
+        for (int i = 0; i < max_poll_iterations && status == NIXL_IN_PROG; i++) {
+            status = agent.getXferStatus(request);
+            std::this_thread::sleep_for(std::chrono::microseconds(20));
+        }
+        return status;
+    };
+
+    nixlXferReqH *failed_request = nullptr;
+    if (agent.createXferReq(
+            NIXL_WRITE, dram_xfer, file_xfer, "POSIXAIOFailureTester", failed_request) !=
+        NIXL_SUCCESS) {
+        return 1;
+    }
+
+    signal(SIGXFSZ, SIG_IGN);
+    struct rlimit saved = {};
+    if (getrlimit(RLIMIT_FSIZE, &saved) != 0) {
+        return 1;
+    }
+    struct rlimit limit = {page_size, saved.rlim_max};
+    if (setrlimit(RLIMIT_FSIZE, &limit) != 0) {
+        return 1;
+    }
+    nixl_status_t failed_status = run_transfer(failed_request);
+    if (setrlimit(RLIMIT_FSIZE, &saved) != 0) {
+        return 1;
+    }
+    agent.releaseXferReq(failed_request);
+
+    if (failed_status >= 0) {
+        std::cerr << queue_name << " x" << num_descs
+                  << " short write was not reported" << std::endl;
+        return 1;
+    }
+
+    for (const auto &file : files) {
+        if (ftruncate(file.fd, 0) != 0) {
+            return 1;
+        }
+    }
+
+    nixlXferReqH *recovery_request = nullptr;
+    if (agent.createXferReq(
+            NIXL_WRITE, dram_xfer, file_xfer, "POSIXAIOFailureTester", recovery_request) !=
+        NIXL_SUCCESS) {
+        return 1;
+    }
+    nixl_status_t recovery_status = run_transfer(recovery_request);
+    agent.releaseXferReq(recovery_request);
+    if (recovery_status != NIXL_SUCCESS) {
+        std::cerr << queue_name << " x" << num_descs
+                  << " did not recover after a failed transfer" << std::endl;
+        return 1;
+    }
+    for (const auto &file : files) {
+        if (lseek(file.fd, 0, SEEK_END) != static_cast<off_t>(transfer_size)) {
+            return 1;
+        }
+    }
+
+    agent.deregisterMem(file_reg);
+    agent.deregisterMem(dram_reg);
+    return 0;
+}
+
+int
+test_aio_cancel_scoping_case(const std::string &dir,
+                             const char *queue_name,
+                             const char *queue_param) {
+    constexpr int failing_descs = 200;
+    constexpr int bystander_descs = 200;
+    constexpr size_t failing_size = 4 * 4096;
+    constexpr size_t bystander_size = 4096;
+    constexpr int max_poll_iterations = 100000;
+
+    nixl_b_params_t params;
+    params[queue_param] = "true";
+    nixlAgentConfig cfg;
+    cfg.useProgThread = false;
+    nixlAgent agent("POSIXAIOScopingTester", cfg);
+    nixlBackendH *posix = nullptr;
+    if (agent.createBackend("POSIX", params, posix) != NIXL_SUCCESS) {
+        return 0;
+    }
+
+    nixl_reg_dlist_t dram_reg(DRAM_SEG);
+    nixl_reg_dlist_t file_reg(FILE_SEG);
+    nixl_xfer_dlist_t failing_dram(DRAM_SEG);
+    nixl_xfer_dlist_t failing_file(FILE_SEG);
+    nixl_xfer_dlist_t bystander_dram(DRAM_SEG);
+    nixl_xfer_dlist_t bystander_file(FILE_SEG);
+    std::vector<std::unique_ptr<void, PosixMemalignDeleter>> buffers;
+    std::vector<tempFile> files;
+    buffers.reserve(failing_descs + bystander_descs);
+    files.reserve(failing_descs + bystander_descs);
+
+    auto add_transfer = [&](const char *label,
+                            int count,
+                            size_t size,
+                            nixl_xfer_dlist_t &dram_xfer,
+                            nixl_xfer_dlist_t &file_xfer) {
+        for (int i = 0; i < count; i++) {
+            void *ptr = nullptr;
+            if (posix_memalign(&ptr, page_size, size) != 0) {
+                return false;
+            }
+            buffers.emplace_back(ptr);
+            fill_test_pattern(ptr, read_write_test_phrase, size);
+
+            std::string path = dir + "/aio_scope_" + queue_name + "_" + label + "_" +
+                               std::to_string(i) + "_" +
+                               generate_timestamped_filename(test_file_name);
+            files.emplace_back(path, O_RDWR | O_CREAT | O_TRUNC);
+
+            nixlBlobDesc dram_desc;
+            dram_desc.addr = reinterpret_cast<uintptr_t>(ptr);
+            dram_desc.len = size;
+            dram_desc.devId = 0;
+            dram_reg.addDesc(dram_desc);
+            dram_xfer.addDesc(dram_desc);
+
+            nixlBlobDesc file_desc;
+            file_desc.addr = 0;
+            file_desc.len = size;
+            file_desc.devId = files.back().fd;
+            file_reg.addDesc(file_desc);
+            file_xfer.addDesc(file_desc);
+        }
+        return true;
+    };
+
+    if (!add_transfer(
+            "failed", failing_descs, failing_size, failing_dram, failing_file) ||
+        !add_transfer(
+            "bystander", bystander_descs, bystander_size, bystander_dram, bystander_file)) {
+        return 1;
+    }
+    if (agent.registerMem(dram_reg) != NIXL_SUCCESS ||
+        agent.registerMem(file_reg) != NIXL_SUCCESS) {
+        return 1;
+    }
+
+    nixlXferReqH *failed_request = nullptr;
+    nixlXferReqH *bystander_request = nullptr;
+    if (agent.createXferReq(
+            NIXL_WRITE, failing_dram, failing_file, "POSIXAIOScopingTester", failed_request) !=
+            NIXL_SUCCESS ||
+        agent.createXferReq(NIXL_WRITE,
+                            bystander_dram,
+                            bystander_file,
+                            "POSIXAIOScopingTester",
+                            bystander_request) != NIXL_SUCCESS) {
+        return 1;
+    }
+
+    signal(SIGXFSZ, SIG_IGN);
+    struct rlimit saved = {};
+    if (getrlimit(RLIMIT_FSIZE, &saved) != 0) {
+        return 1;
+    }
+    struct rlimit limit = {page_size, saved.rlim_max};
+    if (setrlimit(RLIMIT_FSIZE, &limit) != 0) {
+        return 1;
+    }
+
+    nixl_status_t failed_status = agent.postXferReq(failed_request);
+    nixl_status_t bystander_status = agent.postXferReq(bystander_request);
+    for (int i = 0; i < max_poll_iterations && failed_status == NIXL_IN_PROG; i++) {
+        failed_status = agent.getXferStatus(failed_request);
+        std::this_thread::sleep_for(std::chrono::microseconds(20));
+    }
+    for (int i = 0; i < max_poll_iterations && bystander_status == NIXL_IN_PROG; i++) {
+        bystander_status = agent.getXferStatus(bystander_request);
+        std::this_thread::sleep_for(std::chrono::microseconds(20));
+    }
+
+    if (setrlimit(RLIMIT_FSIZE, &saved) != 0) {
+        return 1;
+    }
+    agent.releaseXferReq(failed_request);
+    agent.releaseXferReq(bystander_request);
+
+    if (failed_status >= 0 || bystander_status != NIXL_SUCCESS) {
+        std::cerr << queue_name << " cancellation scoping failed: failed="
+                  << nixlEnumStrings::statusStr(failed_status)
+                  << " bystander=" << nixlEnumStrings::statusStr(bystander_status) << std::endl;
+        return 1;
+    }
+
+    for (int i = failing_descs; i < failing_descs + bystander_descs; i++) {
+        if (lseek(files[i].fd, 0, SEEK_END) != static_cast<off_t>(bystander_size)) {
+            return 1;
+        }
+    }
+
+    agent.deregisterMem(file_reg);
+    agent.deregisterMem(dram_reg);
+    return 0;
+}
+
+int
+test_aio_failure_recovery(const std::string &dir) {
+    struct QueueConfig {
+        const char *name;
+        const char *param;
+    };
+    std::vector<QueueConfig> queues;
+#ifdef HAVE_LINUXAIO
+    queues.push_back({"AIO", "use_aio"});
+#endif
+#ifdef HAVE_POSIXAIO
+    queues.push_back({"POSIXAIO", "use_posix_aio"});
+#endif
+
+    for (int num_descs : {1, 8, 200}) {
+        for (const auto &queue : queues) {
+            if (test_aio_failure_recovery_case(dir, queue.name, queue.param, num_descs) != 0) {
+                return 1;
+            }
+        }
+    }
+    for (const auto &queue : queues) {
+        if (test_aio_cancel_scoping_case(dir, queue.name, queue.param) != 0) {
+            return 1;
+        }
+    }
     return 0;
 }
 
@@ -1007,8 +1500,9 @@ main (int argc, char *argv[]) {
     bool use_direct_io = false;
     bool use_uring = false;
     bool run_path_mode_smoke = true;
+    const struct option long_options[] = {{"enable-uring", no_argument, nullptr, 'U'}, {}};
 
-    while ((opt = getopt(argc, argv, "n:s:d:DUPh")) != -1) {
+    while ((opt = getopt_long(argc, argv, "n:s:d:DUPh", long_options, nullptr)) != -1) {
         switch (opt) {
         case 'n':
             num_transfers = std::stoi (optarg);
@@ -1031,7 +1525,7 @@ main (int argc, char *argv[]) {
         case 'h':
         default:
             std::cout << absl::StrFormat("Usage: %s [-n num_transfers] [-s transfer_size] [-d "
-                                         "test_files_dir_path] [-D] [-U] [-P]",
+                                         "test_files_dir_path] [-D] [--enable-uring] [-P]",
                                          argv[0])
                       << std::endl;
             std::cout << absl::StrFormat (
@@ -1048,7 +1542,8 @@ main (int argc, char *argv[]) {
                                          default_test_files_dir_path)
                       << std::endl;
             std::cout << absl::StrFormat ("  -D Use O_DIRECT for file I/O") << std::endl;
-            std::cout << absl::StrFormat("  -U Explicitly use the io_uring backend") << std::endl;
+            std::cout << absl::StrFormat("  -U, --enable-uring Use the io_uring backend")
+                      << std::endl;
             std::cout << absl::StrFormat("  -P Skip path-mode smoke (enabled by default)")
                       << std::endl;
             std::cout << absl::StrFormat ("  -h Show this help message") << std::endl;
@@ -1060,6 +1555,14 @@ main (int argc, char *argv[]) {
         print_unsupported_test_queue_error(use_uring);
         return 1;
     }
+
+#ifdef HAVE_LIBURING
+    if (use_uring) {
+        if (int rc = runUringSubmissionTests(); rc != 0) {
+            return rc;
+        }
+    }
+#endif
 
     if (run_path_mode_smoke) {
         checkPathModeParser();
@@ -1095,10 +1598,15 @@ main (int argc, char *argv[]) {
 
     // Reset phase number for repost test
     phase_num = 1;
-
     ret = test_posix_repost (test_files_dir_path_abs_path, use_uring);
     if (ret != 0) {
         std::cerr << "Repost Test failed" << std::endl;
+        return 1;
+    }
+
+    ret = test_aio_failure_recovery(test_files_dir_path_abs_path);
+    if (ret != 0) {
+        std::cerr << "AIO failure-recovery test failed" << std::endl;
         return 1;
     }
 
