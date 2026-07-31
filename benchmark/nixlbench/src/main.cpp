@@ -140,7 +140,6 @@ static int processBatchSizes(xferBenchWorker &worker,
                 worker.exchangeIOV(local_trans_lists, block_size));
 
             auto result = worker.transfer(block_size, local_trans_lists, remote_trans_lists);
-
             if (std::holds_alternative<int>(result)) {
                 return 1;
             }

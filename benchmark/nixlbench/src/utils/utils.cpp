@@ -574,13 +574,13 @@ xferBenchConfig::loadParams(void) {
     }
     if (use_device_api) {
         if (num_threads < 1 || num_threads > 1024) {
-            std::cerr << "Invalid value for --num-threads: " << num_threads
+            std::cerr << "Invalid value for --num_threads: " << num_threads
                       << ". Device API requires a GPU kernel block thread count in [1, 1024]"
                       << std::endl;
             return -1;
         }
         if (num_threads > 32 && num_threads % 32 != 0) {
-            std::cerr << "Invalid value for --num-threads: " << num_threads
+            std::cerr << "Invalid value for --num_threads: " << num_threads
                       << ". Device API requires block_threads > 32 must be a multiple of 32"
                       << std::endl;
             return -1;
@@ -916,7 +916,7 @@ xferBenchConfig::printConfig() {
     printOption("Use Device API (--use_device_api=[0,1])", std::to_string(use_device_api));
     if (use_device_api) {
         printOption("Device API Kernel block threads (--num_threads=N)",
-                    std::to_string(block_threads) + " (default)");
+                    std::to_string(block_threads));
     }
     printSeparator('-');
     std::cout << std::endl;
