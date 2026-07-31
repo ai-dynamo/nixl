@@ -1073,14 +1073,19 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
     nixl_status_t ret;
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
-    // Check if the remote agent connection info is still valid
-    // (assuming cost estimation requires connection info like transfers)
-    if (!req_hndl->remoteAgent.empty() &&
-        (data->remoteSections_.count(req_hndl->remoteAgent) == 0)) {
-        NIXL_ERROR_FUNC << "invalid request handle, remote agent was invalidated "
-                           "after transfer request creation";
-        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
-        return NIXL_ERR_NOT_FOUND;
+    // Check if the remote agent connection info is still valid, matching the
+    // generation guard in postXferReq: the handle's targetDescs pin raw
+    // metadata pointers from the section generation it was created against,
+    // which may have been invalidated (and re-registered) since.
+    if (!req_hndl->remoteAgent.empty()) {
+        const auto sec_it = data->remoteSections_.find(req_hndl->remoteAgent);
+        if (sec_it == data->remoteSections_.end() ||
+            sec_it->second.getGeneration() != req_hndl->remoteGeneration_) {
+            NIXL_ERROR_FUNC << "invalid request handle, remote agent was invalidated "
+                               "after transfer request creation";
+            data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
+            return NIXL_ERR_NOT_FOUND;
+        }
     }
 
     if (!req_hndl->engine) {
@@ -1136,10 +1141,25 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);
-    // Check if the remote was invalidated before post/repost
-    if (data->remoteSections_.count(req_hndl->remoteAgent) == 0) {
+    // Check if the remote was invalidated before post/repost. Guard on the
+    // connection generation, not only the name: the handle pins raw backend
+    // metadata pointers (targetDescs) from the section generation it was
+    // created against. If that generation was invalidated (freed) and the
+    // remote re-registered since, a name-only check would post using freed
+    // metadata.
+    const auto sec_it = data->remoteSections_.find(req_hndl->remoteAgent);
+    if (sec_it == data->remoteSections_.end()) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated after transfer request creation";
+        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
+        return NIXL_ERR_NOT_FOUND;
+    }
+    if (sec_it->second.getGeneration() != req_hndl->remoteGeneration_) {
+        NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
+                        << "' was re-registered after transfer request creation; "
+                           "refusing to post a stale-generation handle (created gen "
+                        << req_hndl->remoteGeneration_ << ", live gen "
+                        << sec_it->second.getGeneration() << ")";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
