@@ -52,20 +52,51 @@ struct SpanId {
  */
 class SpanBackend {
 public:
+    /** @brief Ends the backend-specific span and releases its resources. */
     virtual ~SpanBackend() = default;
 
+    /**
+     * @brief Adds a string attribute to this span.
+     * @param key Attribute name, consumed during the call.
+     * @param value Attribute value, consumed during the call.
+     */
     virtual void
     addAttribute(std::string_view key, std::string_view value) = 0;
+
+    /**
+     * @brief Adds an integer attribute to this span.
+     * @param key Attribute name, consumed during the call.
+     * @param value Attribute value.
+     */
     virtual void
     addAttribute(std::string_view key, std::int64_t value) = 0;
+
+    /**
+     * @brief Adds a floating-point attribute to this span.
+     * @param key Attribute name, consumed during the call.
+     * @param value Attribute value.
+     */
     virtual void
     addAttribute(std::string_view key, double value) = 0;
 
+    /**
+     * @brief Records a control dependency on another span.
+     * @param parent Identifier of the parent span.
+     */
     virtual void
     addCtrlDep(SpanId parent) = 0;
+
+    /**
+     * @brief Records a data dependency on another span.
+     * @param parent Identifier of the parent span.
+     */
     virtual void
     addDataDep(SpanId parent) = 0;
 
+    /**
+     * @brief Returns this span's backend-defined identifier.
+     * @return A non-zero identifier when supported, otherwise `{0}`.
+     */
     [[nodiscard]] virtual SpanId
     id() const noexcept = 0;
 };
@@ -73,19 +104,47 @@ public:
 /** @brief One enabled backend type (NVTX, Chakra, ...). */
 class TraceBackend {
 public:
+    /** @brief Releases the backend after all of its spans have been destroyed. */
     virtual ~TraceBackend() = default;
 
+    /**
+     * @brief Starts a backend-specific span.
+     * @param name Span name, consumed during the call.
+     * @param kind Operation kind used as a backend-specific label or hint.
+     * @return An owned active span, or `nullptr` when this backend does not
+     *         produce a span for the operation. Destroying it ends the span.
+     */
     [[nodiscard]] virtual std::unique_ptr<SpanBackend>
     beginSpan(std::string_view name, Kind kind) = 0;
 
+    /**
+     * @brief Emits an instantaneous marker.
+     * @param name Marker name, consumed during the call.
+     * @param kind Operation kind used as a backend-specific label or hint.
+     */
     virtual void
     mark(std::string_view name, Kind kind) = 0;
 
+    /**
+     * @brief Pushes a correlation identifier onto this thread's backend context.
+     * @param id Identifier to associate with subsequent backend events.
+     */
     virtual void
     pushCorrelationId(std::uint64_t id) = 0;
+
+    /**
+     * @brief Pops the most recently pushed correlation identifier.
+     *
+     * Calls must balance successful calls to pushCorrelationId() on the same
+     * thread.
+     */
     virtual void
     popCorrelationId() = 0;
 
+    /**
+     * @brief Returns the backend's stable name.
+     * @return A view that remains valid for this object's lifetime.
+     */
     [[nodiscard]] virtual std::string_view
     name() const noexcept = 0;
 };
