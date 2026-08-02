@@ -42,10 +42,11 @@ PROXY_PORT="${PROXY_PORT:-$(get_next_tcp_port)}"
 PROMPT="${PROMPT:-San Francisco is a}"
 SERVER_TIMEOUT="${SERVER_TIMEOUT:-300}"
 # Fraction of GPU memory each server may claim. The frameworks default to ~0.9, which
-# demands nearly the whole GPU to be free at startup; the sanity model needs only a small
-# slice (0.3 of a 186 GiB GB200 is ~56 GiB, ample for 8B weights + KV cache), so the lower
-# value leaves room for anything the driver or a previous step has not yet released.
-GPU_MEM_FRACTION="${GPU_MEM_FRACTION:-0.3}"
+# demands nearly the whole GPU to be free at startup; on the shared GB200 CI nodes other
+# processes may already hold GPU memory. Qwen3-8B weights are ~56.5 GiB; with a GB200
+# that may have only ~170 GiB free (not the full 186), 0.3 (~51 GiB) is too small to
+# fit weights + KV pool. 0.6 (~102 GiB) leaves headroom while not monopolising the GPU.
+GPU_MEM_FRACTION="${GPU_MEM_FRACTION:-0.6}"
 PROXY_TIMEOUT="${PROXY_TIMEOUT:-120}"
 REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-120}"
 
