@@ -48,7 +48,7 @@ def kineto_device_supported(device_ordinal: int):
         supported = cupti.device_supported(device_ordinal)
     except ImportError as exc:
         return False, f"unable to import cupti-python: {exc}"
-    except (OSError, RuntimeError) as exc:
+    except (cupti.cuptiError, OSError, RuntimeError) as exc:
         return False, f"unable to query CUPTI support for {device_description}: {exc}"
 
     if supported == 0:
