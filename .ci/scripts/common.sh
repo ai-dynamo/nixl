@@ -69,7 +69,13 @@ max_gtest_port=$((tcp_port_max + gtest_offset))
 
 # Check if a GPU is present
 if [ -z "${HAS_GPU}" ]; then
-    nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+    if command -v nvidia-smi > /dev/null 2>&1; then
+        nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+    elif command -v amd-smi > /dev/null 2>&1; then
+        amd-smi static -a | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+    else
+        HAS_GPU=false
+    fi
 fi
 
 # Ensure CUDA_HOME is set if CUDA is installed (cuda-dl-base images don't set it by default)

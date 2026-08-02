@@ -36,9 +36,9 @@ CODEOWNERS @ai-dynamo/Devops @ai-dynamo/nixl-maintainers
 /benchmark @aranadive @ovidiusm @brminich @ai-dynamo/nixl-maintainers
 
 # Libfabric Plugins
-/src/plugins/libfabric* @amitrad-aws @yexiang-aws @akkart-aws @fengjica
-/src/utils/libfabric @amitrad-aws @yexiang-aws @akkart-aws @fengjica
-/test/unit/utils/libfabric @amitrad-aws @yexiang-aws @akkart-aws @fengjica
+/src/plugins/libfabric* @amitrad-aws @akkart-aws @fengjica @oa-aws
+/src/utils/libfabric @amitrad-aws @akkart-aws @fengjica @oa-aws
+/test/unit/utils/libfabric @amitrad-aws @akkart-aws @fengjica @oa-aws
 
 # NIXL EP example
 /examples/device/ep @itayalroy @ebarilanM @rakhmets @ai-dynamo/nixl-maintainers
