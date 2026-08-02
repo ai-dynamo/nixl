@@ -932,8 +932,8 @@
           description: "Enable debug prints and traces, valid values are 0-9"
       - string:
           name: "MAIL_TO"
-          default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
-          description: "Email address to send build results to (optional)"
+          default: "nixl-ci-alerts@exchange.nvidia.com"
+          description: "Recipient(s) for the failure report. Mail is sent only when the build fails."
       - string:
           name: "ci_refspec"
           default: "{jjb_branch}"
@@ -999,8 +999,8 @@
           description: "Enable debug prints and traces, valid values are 0-9"
       - string:
           name: "MAIL_TO"
-          default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
-          description: "Email address to send build results to (optional)"
+          default: "nixl-ci-alerts@exchange.nvidia.com"
+          description: "Recipient(s) for the failure report. Mail is sent only when the build fails."
       - string:
           name: "ci_refspec"
           default: "{jjb_branch}"

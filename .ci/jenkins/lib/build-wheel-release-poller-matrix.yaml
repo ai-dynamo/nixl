@@ -124,16 +124,14 @@ steps:
 
 taskName: '${name}_cu_${base_tag}'
 
-# Email build result (success/failure) when MAIL_TO is set - notification for
-# the unattended poller, mirroring nixl-ci-build-wheel-nightly.
+# Mail the unattended poller only when it fails, mirroring the nightly.
 pipeline_stop:
   shell: action
   module: groovy
   containerSelector: "{name: 'poller'}"
   run: |
-    if (params.MAIL_TO) {
-        def jobStatus = currentBuild.result ?: 'SUCCESS'
-        def statusColor = jobStatus == 'SUCCESS' ? 'green' : 'red'
+    def jobStatus = currentBuild.result ?: 'SUCCESS'
+    if (jobStatus != 'SUCCESS' && params.MAIL_TO) {
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
         mail(
             from: env.MAIL_FROM,
@@ -142,7 +140,7 @@ pipeline_stop:
             mimeType: 'text/html',
             body: """
                 <p>Started by: <b>${userName}</b></p>
-                <p>Status: <span style="color: ${statusColor};"><b>${jobStatus}</b></span></p>
+                <p>Status: <span style="color: red;"><b>${jobStatus}</b></span></p>
                 <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
                 <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
                 <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
