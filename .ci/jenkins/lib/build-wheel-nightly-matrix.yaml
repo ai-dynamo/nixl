@@ -77,9 +77,16 @@ steps:
       fi
       [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot resolve UCX_VERSION=${UCX_VERSION}"; exit 1; }
       printf 'NIXL_SHA=%s\nUCX_SHA=%s\n' "${NIXL_SHA}" "${UCX_SHA}" > wheel_build_ids.env
+      # CUDA MAJOR.MINOR, derived from the leading version in BASE_TAG (e.g.
+      # 12.9-devel-manylinux--25.06 -> 12.9). Dockerfile.manylinux needs it for the
+      # torch cuXXX index and the cu12/cu13 meta-wheel split; deriving keeps BASE_TAG
+      # the single source of truth so a cu12 run cannot build against the cu13 default.
+      CUDA_VERSION="$(echo "${BASE_TAG}" | grep -oE '^[0-9]+\.[0-9]+')"
+      [ -n "${CUDA_VERSION}" ] || { echo "ERROR: cannot derive CUDA version from BASE_TAG=${BASE_TAG}"; exit 1; }
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
+        --cuda-version "${CUDA_VERSION}" \
         --wheel-base "manylinux_${manylinux}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
