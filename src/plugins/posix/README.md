@@ -37,17 +37,20 @@ queue implementations (Linux AIO, io_uring, POSIX AIO).
 Two consequences for callers:
 
 * **A request with more than 64 descriptors is not fully submitted until it has
-  been polled.** `getXferStatus` must be called repeatedly until it returns
-  `NIXL_SUCCESS`; a caller that posts and then stops polling (for example one
-  waiting on an external event instead) leaves the remaining I/Os unissued and
-  the transfer never completes. Polling is required for progress, not only to
-  observe it.
-* **Time to completion has a floor of `ceil(descriptors / 64)` polls**,
-  independent of device speed. With a sleep between polls, that floor is
-  `ceil(descriptors / 64) x poll_interval`: a 256-descriptor request polled every
-  5 ms cannot finish in less than about 20 ms even on an idle NVMe device. Poll
-  without sleeping, or size the interval against the descriptor count, when
-  latency matters.
+  been polled.** `getXferStatus` must be called repeatedly while the request
+  reports `NIXL_IN_PROG`, stopping only when it reaches completion or returns an
+  error; a caller that posts and then stops polling (for example one waiting on
+  an external event instead) leaves the remaining I/Os unissued and the transfer
+  never completes. Polling is required for progress, not only to observe it.
+* **Completion is bounded by the number of polls, not only by device speed.**
+  `postXfer` issues the first batch, so a request of N descriptors needs
+  `ceil(N / 64) - 1` further polls to finish submitting, plus at least one more
+  to observe completion. Any sleep the caller inserts between polls is therefore
+  multiplied by that count. Measured on a local NVMe device (256 KiB pages,
+  writes, 5 ms between status checks, median of 9 runs): a 64-descriptor request
+  completed in about 13 ms after 2 polls, and a 256-descriptor request in about
+  37 ms after 5 polls. Poll without sleeping, or scale the interval with the
+  descriptor count, when latency matters.
 
 The I/O queue is shared by all requests on a POSIX backend instance, so polling
 any one transfer handle also advances the in-flight I/Os of the others.

@@ -210,7 +210,7 @@ Note that inside a transfer, a backend might provide methods for network resilie
 
 ### Get transfer status:
 
-The agent will call the backend specific transfer handle that is stored within the agent transfer handle, and check the status of the transfer. This is achieved through a call to **checkXfer** in the SB API. Internal to the backend, they can call their internal progress method, if that’s necessary to get the latest status of the transfers. Because a backend may also complete submission inside this call, a user must keep calling **getXferStatus** until the request reaches DONE rather than checking once and waiting on something else; a request that stops being polled may stop making progress.
+The agent will call the backend specific transfer handle that is stored within the agent transfer handle, and check the status of the transfer. This is achieved through a call to **checkXfer** in the SB API. Internal to the backend, they can call their internal progress method, if that’s necessary to get the latest status of the transfers. Because a backend may also complete submission inside this call, a user must keep calling **getXferStatus** while the request reports NIXL_IN_PROG, stopping when it completes or returns an error, rather than checking once and waiting on something else; a request that stops being polled may stop making progress.
 
 ### Invalidate transfer request:
 
