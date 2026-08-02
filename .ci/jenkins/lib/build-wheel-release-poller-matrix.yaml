@@ -45,8 +45,8 @@ runs_on_dockers:
 matrix:
   axes:
     base_tag:
-      - "12.9-devel-manylinux--25.06"
-      - "13.0-devel-manylinux--25.09"
+      - "12.9.1-devel-ubi8"
+      - "13.0.1-devel-ubi8"
 
 env:
   # Releases older than this are not built. Anything newer is picked up automatically.

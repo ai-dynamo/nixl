@@ -129,10 +129,15 @@ steps:
       [ "${BUILD_UCX_SPCX_PLUGIN}" = "true" ] && SPCX_FLAGS="--build-ucx-spcx-plugin"
       INFINIA_FLAGS=""
       [ "${BUILD_INFINIA}" = "true" ] && INFINIA_FLAGS="--build-infinia"
+      # CUDA MAJOR.MINOR from BASE_TAG (12.9.1-devel-ubi8 -> 12.9): drives the
+      # torch cuXXX index and the cu12/cu13 wheel split.
+      CUDA_VERSION="$(echo "${BASE_TAG}" | grep -oE '^[0-9]+\.[0-9]+')"
+      [ -n "${CUDA_VERSION}" ] || { echo "ERROR: cannot derive CUDA version from BASE_TAG=${BASE_TAG}"; exit 1; }
       cd nixl-src
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
+        --cuda-version "${CUDA_VERSION}" \
         --wheel-base "manylinux_${manylinux}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
