@@ -220,9 +220,6 @@ env:
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: oberon-gb-ci
-  SLURM_GRES: gpu:2
-  SLURM_MEM: 128G
-  SLURM_MINCPUS: 24
   SLURM_JOB_TIMEOUT: '01:30:00'
   SLURM_IMMEDIATE_TIMEOUT: "3600"
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
@@ -353,10 +350,7 @@ steps:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
-        "--account=${SLURM_ACCOUNT}",
-        "--gres=${SLURM_GRES}",
-        "--mincpus=${SLURM_MINCPUS}",
-        "--mem=${SLURM_MEM}"
+        "--account=${SLURM_ACCOUNT}"
       ]
 
   # The two run steps are identical modulo ${fw} as well, but are kept as separate,
