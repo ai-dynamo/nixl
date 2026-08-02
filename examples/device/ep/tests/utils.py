@@ -18,7 +18,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ctypes
 import inspect
 import json
 import os
@@ -30,10 +29,6 @@ from typing import Callable, Optional, Union
 import numpy as np
 import torch
 import torch.distributed as dist
-
-
-class KinetoUnavailableError(RuntimeError):
-    """Raised when Kineto cannot collect CUDA timing activities."""
 
 
 def kineto_device_supported(device_ordinal: int):
@@ -48,45 +43,15 @@ def kineto_device_supported(device_ordinal: int):
     )
 
     try:
-        cuda = ctypes.CDLL("libcuda.so.1")
-        cuda_major = torch.version.cuda.split(".", maxsplit=1)[0]
-        cupti = ctypes.CDLL(f"libcupti.so.{cuda_major}")
-    except (AttributeError, OSError) as exc:
-        return False, f"unable to load CUDA/CUPTI: {exc}"
+        from cupti import cupti
 
-    cuda.cuInit.argtypes = [ctypes.c_uint]
-    cuda.cuInit.restype = ctypes.c_int
-    cuda.cuDeviceGet.argtypes = [
-        ctypes.POINTER(ctypes.c_int),
-        ctypes.c_int,
-    ]
-    cuda.cuDeviceGet.restype = ctypes.c_int
-    cupti.cuptiDeviceSupported.argtypes = [
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int),
-    ]
-    cupti.cuptiDeviceSupported.restype = ctypes.c_int
+        supported = cupti.device_supported(device_ordinal)
+    except ImportError as exc:
+        return False, f"unable to import cupti-python: {exc}"
+    except (OSError, RuntimeError) as exc:
+        return False, f"unable to query CUPTI support for {device_description}: {exc}"
 
-    result = cuda.cuInit(0)
-    if result != 0:
-        return False, f"cuInit failed with CUresult {result}"
-
-    cuda_device = ctypes.c_int()
-    result = cuda.cuDeviceGet(ctypes.byref(cuda_device), device_ordinal)
-    if result != 0:
-        return False, f"cuDeviceGet failed with CUresult {result}"
-
-    supported = ctypes.c_int()
-    result = cupti.cuptiDeviceSupported(
-        cuda_device.value,
-        ctypes.byref(supported),
-    )
-    if result != 0:
-        return False, (
-            f"cuptiDeviceSupported failed with CUptiResult {result} "
-            f"for {device_description}"
-        )
-    if supported.value == 0:
+    if supported == 0:
         return False, f"loaded CUPTI does not support {device_description}"
 
     return True, device_description
@@ -282,21 +247,17 @@ def bench_kineto(
     # Parse the profiling table
     assert isinstance(kernel_names, str) or isinstance(kernel_names, tuple)
     is_tuple = isinstance(kernel_names, tuple)
-    prof_table = prof.key_averages().table(
-        sort_by="cuda_time_total", max_name_column_width=100
+    prof_lines = (
+        prof.key_averages()
+        .table(sort_by="cuda_time_total", max_name_column_width=100)
+        .split("\n")
     )
-    if "CUDA" not in prof_table:
-        raise KinetoUnavailableError(
-            "Kineto recorded no CUDA timing activities; "
-            "per-kernel profiling is unavailable"
-        )
-    prof_lines = prof_table.split("\n")
     kernel_names = (kernel_names,) if isinstance(kernel_names, str) else kernel_names
     assert all([isinstance(name, str) for name in kernel_names])
     for name in kernel_names:
         assert (
             sum([name in line for line in prof_lines]) == 1
-        ), f"Errors of the kernel {name} in the profiling table:\n{prof_table}"
+        ), f"Errors of the kernel {name} in the profiling table"
 
     # Save chrome traces
     if trace_path is not None:
