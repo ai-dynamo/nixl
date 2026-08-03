@@ -1163,6 +1163,40 @@ nixlLibfabricEngine::estimateXferCost(const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
+int
+nixlLibfabricEngine::batchingRail(const nixl_meta_dlist_t &local,
+                                  int desc_idx,
+                                  size_t xfer_base_offset) const {
+    auto *md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
+    if (!md || md->selected_rails_.empty()) {
+        return -1;
+    }
+    // Striped descriptors are split across their rails and posted without FI_MORE, so they
+    // are not part of the single-rail batching tracked here.
+    if (rail_manager_.usesStriping(local[desc_idx].len, md->selected_rails_.size())) {
+        return -1;
+    }
+    return (int)md->selected_rails_[nixlLibfabricRailManager::railSelectionIndex(
+        xfer_base_offset, desc_idx, /*batch_write=*/true, md->selected_rails_.size())];
+}
+
+bool
+nixlLibfabricEngine::useFiMore(int desc_idx,
+                               int rail_id,
+                               const std::vector<int> &last_desc_idx_per_rail,
+                               std::vector<int> &posts_since_flush) const {
+    if (rail_id < 0) {
+        return false;
+    }
+    if (desc_idx == last_desc_idx_per_rail[rail_id] ||
+        posts_since_flush[rail_id] == NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE - 1) {
+        posts_since_flush[rail_id] = 0;
+        return false;
+    }
+    ++posts_since_flush[rail_id];
+    return true;
+}
+
 nixl_status_t
 nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
                                          const nixl_meta_dlist_t &local,
@@ -1171,8 +1205,8 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
                                          nixlLibfabricBackendH *backend_handle,
                                          int start_idx,
                                          int end_idx,
-                                         int desc_count,
                                          size_t xfer_base_offset,
+                                         bool allow_fi_more,
                                          size_t &submitted_count) const {
     submitted_count = 0;
 
@@ -1204,7 +1238,30 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
     };
 #endif
 
+    // A FI_MORE post rings no doorbell; a rail's queued batch is only submitted by a later
+    // non-FI_MORE post on the same rail. Rails are resolved per-buffer, so descriptors of one
+    // round-robin group can land on different rails: every rail this chunk touches must have its
+    // last post flushed, or its batch would never be submitted.
+    // allow_fi_more is false on the thread-pool path: chunks on other threads can interleave
+    // posts on the same rail, so a per-chunk walk cannot know a rail's true last post there.
+    const bool batch_writes = allow_fi_more && op_type == nixlLibfabricReq::WRITE;
+
+    std::vector<int> last_desc_idx_per_rail(rail_manager_.getNumRails(), -1);
+    std::vector<int> posts_since_flush(rail_manager_.getNumRails(), 0);
+    if (batch_writes) {
+        for (int i = start_idx; i < end_idx; ++i) {
+            const int rail_id = batchingRail(local, i, xfer_base_offset);
+            if (rail_id >= 0) {
+                last_desc_idx_per_rail[rail_id] = i;
+            }
+        }
+    }
+
     for (int desc_idx = start_idx; desc_idx < end_idx; ++desc_idx) {
+        const int rail_id = batch_writes ? batchingRail(local, desc_idx, xfer_base_offset) : -1;
+        const bool apply_fi_more =
+            useFiMore(desc_idx, rail_id, last_desc_idx_per_rail, posts_since_flush);
+
         auto *local_md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
         auto *remote_md = static_cast<nixlLibfabricPublicMetadata *>(remote[desc_idx].metadataP);
 
@@ -1242,8 +1299,8 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             [backend_handle]() { backend_handle->increment_completed_requests(); },
             desc_submitted_count,
             desc_idx,
-            desc_count,
-            xfer_base_offset);
+            xfer_base_offset,
+            apply_fi_more);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
@@ -1358,8 +1415,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                                                    backend_handle,
                                                    0,
                                                    desc_count,
-                                                   desc_count,
                                                    xfer_base_offset,
+                                                   /*allow_fi_more=*/true,
                                                    total_submitted);
         if (status != NIXL_SUCCESS) {
             return status;
@@ -1391,8 +1448,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                                                      backend_handle,
                                                      start_idx,
                                                      end_idx,
-                                                     desc_count,
                                                      xfer_base_offset,
+                                                     /*allow_fi_more=*/false,
                                                      chunk_submitted);
                     }
                     catch (const std::exception &e) {
