@@ -135,6 +135,13 @@ sharedRingBuffer<T>::bufferHeader::bufferHeader(size_t size) : capacity(size), m
                   "T must be trivially copyable for shared memory");
     static_assert(sizeof(bufferHeader) == 2 * DESTRUCTIVE_INTERFERENCE_SIZE,
                   "bufferHeader layout changed.");
+    static_assert(offsetof(bufferHeader, write_pos) == 0 &&
+                      offsetof(bufferHeader, capacity) == 8 &&
+                      offsetof(bufferHeader, version) == 16 &&
+                      offsetof(bufferHeader, expected_version) == 20 &&
+                      offsetof(bufferHeader, mask) == 24 &&
+                      offsetof(bufferHeader, read_pos) == 256,
+                  "bufferHeader field offsets changed.");
 }
 
 template<typename T>

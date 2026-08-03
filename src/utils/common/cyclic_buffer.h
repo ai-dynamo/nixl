@@ -18,6 +18,7 @@
 #define _NIXL_CYCLIC_BUFFER_HPP
 
 #include <atomic>
+#include <cstddef>
 #include <cstring>
 #include <stdexcept>
 #include <iostream>
