@@ -444,6 +444,12 @@ RUN if [ "$BUILD_INFINIA" = "true" ]; then \
 # the doca-host repo installed above; libflexio is compile-against only —
 # it is not bundled into the wheel, at runtime it comes from the target
 # machine's DOCA/FlexIO installation (like libmlx5 from rdma-core).
+# ac_cv_prog_cc_c23=no: gcc-toolset-14 supports C23, so AC_PROG_CC resolves
+# CC to "gcc -std=gnu23". The plugin's src/gdp/Makefile.am passes the compiler
+# through unsplit as -hostcc=$(CC), so dpacc receives a bare -std=gnu23 argument
+# and rejects it ("Unknown option"). Presetting the cache var makes autoconf fall
+# back to C11 (already covered by gcc 14's default gnu17), leaving CC as plain
+# gcc. Drop this once the plugin splits the compiler from its flags.
 ARG BUILD_UCX_SPCX_PLUGIN=false
 RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
         rpm -ivh --nodeps /usr/share/doca-host-3.3.0/repo/Packages/flexio-sdk-*rpm && \
@@ -451,6 +457,7 @@ RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
         ldconfig && \
         cd ucx-spcx-plugin-src && \
         export ACLOCAL_PATH="/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}" && \
+        export ac_cv_prog_cc_c23=no && \
         ./autogen.sh /usr/local/src/ucx && \
         ./configure --prefix=/usr --libdir=/usr/lib64 \
             --enable-shared --disable-static \
