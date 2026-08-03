@@ -32,6 +32,8 @@ namespace cg = cooperative_groups;
 
 namespace nixl_ep {
 
+constexpr int kNumMaxWarpGroups = 32;
+
 __device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst_rank) {
     if (dst_rank == ctx.rank) return (void*) dst_ptr;
 
@@ -115,7 +117,6 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
     EP_DEVICE_ASSERT(num_bytes_per_msg % sizeof(int4) == 0);
 
     // Expert counts
-    constexpr int kNumMaxWarpGroups = 32;
     __shared__ int shared_num_tokens_sent_per_expert[kNumMaxWarpGroups];
 
     // Sending phase
@@ -675,7 +676,7 @@ combine(void* combined_x,
         int num_combined_tokens, int hidden, int num_topk,
         int num_max_dispatch_tokens_per_rank,
         int active_rank_bound, int num_local_experts, int rank,
-        int num_warp_groups, int num_warps_per_group,
+        int num_warp_groups, int num_warps_per_group, int send_slices, int send_signals,
         uint64_t timeout_cycles, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr) {
     auto nixl_ctx = *nixl_ctx_ptr;
     const auto sm_id = __shfl_sync(0xffffffff, static_cast<int>(blockIdx.x), 0);
@@ -723,13 +724,22 @@ combine(void* combined_x,
         // Notify before executing `int_p`
         __syncwarp();
         if (lane_id == 0)
-            atomic_add_release_global(atomic_clean_flag, active_expert_bound);
+            atomic_add_release_global(atomic_clean_flag, active_expert_bound * send_slices);
     }
 
     // Issue NIXL sends
-    if (responsible_expert_idx < active_expert_bound) {
-        const auto dst_rank = responsible_expert_idx / num_local_experts;
-        const auto local_expert_idx = responsible_expert_idx % num_local_experts;
+    // Split each (destination rank, local expert) send across `send_slices` blocks
+    int send_expert_idx, send_slice;
+    if (send_slices > 1) {
+        send_expert_idx = sm_id % active_expert_bound;
+        send_slice = sm_id / active_expert_bound;
+    } else {
+        send_expert_idx = responsible_expert_idx;
+        send_slice = 0;
+    }
+    if (send_expert_idx < active_expert_bound and send_slice < send_slices) {
+        const auto dst_rank = send_expert_idx / num_local_experts;
+        const auto local_expert_idx = send_expert_idx % num_local_experts;
         const auto global_expert_idx = rank * num_local_experts + local_expert_idx;
         const auto layout = __ldg(layout_range + local_expert_idx * active_rank_bound + dst_rank);
         const auto local_x = static_cast<const int4*>(x) +
@@ -773,7 +783,9 @@ combine(void* combined_x,
 
         // Issue NIXL send
         if (not is_rank_masked<true>(mask_buffer_ptr, dst_rank)) {
-            for (int token_idx = offset + sub_warp_id; token_idx < offset + num_tokens_to_send; token_idx += num_warps_per_group) {
+            const int worker_id = send_slice * num_warps_per_group + sub_warp_id;
+            const int num_workers = send_slices * num_warps_per_group;
+            for (int token_idx = offset + worker_id; token_idx < offset + num_tokens_to_send; token_idx += num_workers) {
                 const auto x_int4 = local_x + token_idx * hidden_bf16_int4;
                 const auto rdma_send_type_row = reinterpret_cast<int*>(rdma_send_x_vec + token_idx * num_bytes_per_slot);
                 const auto rdma_send_x_vec_row = reinterpret_cast<uint8_t*>(rdma_send_type_row);
@@ -862,13 +874,16 @@ combine(void* combined_x,
         if (sub_warp_id == 1 and lane_id == 0) {
             while (ld_acquire_global(atomic_clean_flag) == 0);
             auto dst_ptr = reinterpret_cast<uint64_t>(rdma_recv_flag + global_expert_idx);
+            // Slice 0 covers the signals for slices this grid had no room to run
+            const uint64_t signals = 1 + (send_slice == 0 ? send_signals - send_slices : 0);
             if (not is_rank_masked(mask_buffer_ptr, dst_rank)) {
                 void* dst_p2p_ptr = p2p_ptr_get(nixl_ctx, dst_ptr, dst_rank);
                 if (dst_p2p_ptr == 0) {
                     nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t) dst_rank, nixl_ctx.offset_get(dst_ptr)};
-                    EP_DEVICE_ASSERT(nixlAtomicAdd(1, dst_mdesc, local_expert_idx) == NIXL_IN_PROG);
+                    EP_DEVICE_ASSERT(nixlAtomicAdd(signals, dst_mdesc, local_expert_idx) == NIXL_IN_PROG);
                 } else {
-                    st_release_sys_global(static_cast<uint64_t*>(dst_p2p_ptr), 1);
+                    // Several slices share the flag, so accumulate
+                    atomic_add_release_sys_global(static_cast<uint64_t*>(dst_p2p_ptr), signals);
                 }
             }
             atomic_add_release_global(atomic_clean_flag, -1);
@@ -895,9 +910,10 @@ COMBINE_RECV:
             const auto src_rank = responsible_expert_idx / num_local_experts;
             auto start_time = clock64();
             uint64_t wait_recv_cost = 0;
+            const auto signals_needed = static_cast<uint64_t>(send_signals);
             if (not is_rank_masked(mask_buffer_ptr, src_rank)) {
-                while (ld_acquire_sys_global(rdma_recv_flag + responsible_expert_idx) == 0  // recv not ready
-                       && (wait_recv_cost = clock64() - start_time) <= timeout_cycles        // not timeout
+                while (ld_acquire_sys_global(rdma_recv_flag + responsible_expert_idx) < signals_needed  // recv not ready
+                       && (wait_recv_cost = clock64() - start_time) <= timeout_cycles                   // not timeout
                 )
                     ;
             }
@@ -1086,6 +1102,15 @@ void combine(void* combined_x,
     const auto num_sms = max(ceil_div(active_expert_bound, num_warp_groups),
                              num_recv_per_sm == 0 ? 1 : ceil_div(num_combined_tokens, num_recv_per_sm));
 
+    // NOTES: `send_signals` must agree across ranks, so derive it from the dispatch
+    // capacity, never from a device property; `send_slices` is what this grid can run
+    const int tokens_per_pair = ceil_div(num_max_dispatch_tokens_per_rank * num_topk,
+                                         active_expert_bound);
+    const int send_signals = max(1, ceil_div(tokens_per_pair, kNumMaxWarpGroups));
+    int send_slices = 1;
+    if (num_warp_groups == 1 and num_sms > active_expert_bound)
+        send_slices = min(send_signals, num_sms / active_expert_bound);
+
     // Check workspace
     auto atomic_clean_flag = static_cast<int*>(workspace);
     EP_HOST_ASSERT(sizeof(int) <= NUM_WORKSPACE_BYTES);
@@ -1126,7 +1151,7 @@ LAUNCH_KERNEL(&cfg, combine_func, \
               num_combined_tokens, hidden, num_topk, \
               num_max_dispatch_tokens_per_rank, \
               active_rank_bound, num_experts_per_rank, rank, \
-              num_warp_groups, num_warps_per_group, \
+              num_warp_groups, num_warps_per_group, send_slices, send_signals, \
               timeout_cycles, phases, zero_copy, nixl_ctx); } break
 
     SETUP_LAUNCH_CONFIG(num_sms, num_warps * 32, stream);
