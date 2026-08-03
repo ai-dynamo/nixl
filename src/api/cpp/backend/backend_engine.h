@@ -43,6 +43,7 @@ class nixlBackendEngine {
         bool              initErr = false;
         const std::string localAgent;
         const bool enableTelemetry_;
+        nixl::trace::Tracer *const tracer_;
 
         [[nodiscard]] nixl_status_t
         setInitParam(const std::string &key, const std::string &value) {
@@ -78,7 +79,8 @@ class nixlBackendEngine {
             : backendType(init_params->type),
               customParams(*init_params->customParams),
               localAgent(init_params->localAgent),
-              enableTelemetry_(init_params->enableTelemetry_) {}
+              enableTelemetry_(init_params->enableTelemetry_),
+              tracer_(init_params->tracer_) {}
 
         nixlBackendEngine(nixlBackendEngine&&) = delete;
         nixlBackendEngine(const nixlBackendEngine&) = delete;

@@ -28,6 +28,12 @@ libfabric_plugin_deps = [
 
 compile_flags = ['-DHAVE_LIBFABRIC']
 
+# The nixl::trace facade method bodies (Span/Tracer) live in nixl core, which this
+# plugin cannot link (core loads plugins at runtime).
+# Here, compile those method bodies straight into the plugin so the symbols resolve
+# under -Wl,--no-undefined, when it is not staticaly built.
+nixl_trace_facade_src = files('../../core/tracing/tracer.cpp')
+
 # Add CUDA support if available
 if cuda_dep.found()
     libfabric_plugin_deps += [cuda_dep]
@@ -59,6 +65,7 @@ else
         'libfabric_connection.h',
         'libfabric_handshake.cpp',
         'libfabric_plugin.cpp',
+        nixl_trace_facade_src,
         dependencies: libfabric_plugin_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
