@@ -41,11 +41,12 @@ DECODE_PORT="${DECODE_PORT:-$(get_next_tcp_port)}"
 PROXY_PORT="${PROXY_PORT:-$(get_next_tcp_port)}"
 PROMPT="${PROMPT:-San Francisco is a}"
 SERVER_TIMEOUT="${SERVER_TIMEOUT:-300}"
-# Fraction of GPU memory each server may claim. The frameworks default to ~0.9, which
-# demands nearly the whole GPU to be free at startup; on the shared GB200 CI nodes other
-# processes may already hold GPU memory. Qwen3-8B weights are ~56.5 GiB; with a GB200
-# that may have only ~170 GiB free (not the full 186), 0.3 (~51 GiB) is too small to
-# fit weights + KV pool. 0.6 (~102 GiB) leaves headroom while not monopolising the GPU.
+# Fraction of GPU memory each server may claim (fraction of total GPU memory).
+# The frameworks default to ~0.9, which demands nearly the whole GPU to be free at
+# startup; on the shared GB200 CI nodes other processes may already hold GPU memory.
+# Qwen3-8B weights are ~56.5 GiB; 0.3 × 186 GiB ≈ 56 GiB is too small to fit
+# weights + KV pool. 0.6 × 186 GiB ≈ 112 GiB leaves headroom while a GB200 that
+# has ~170 GiB free (not the full 186) can still satisfy the request.
 GPU_MEM_FRACTION="${GPU_MEM_FRACTION:-0.6}"
 PROXY_TIMEOUT="${PROXY_TIMEOUT:-120}"
 REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-120}"
