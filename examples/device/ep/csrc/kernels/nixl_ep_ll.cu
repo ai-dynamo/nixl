@@ -233,10 +233,11 @@ dispatch(void* packed_recv_x, void* packed_recv_x_scales,
         int expert_count[kNumMaxWarpGroups] = {0};
         const auto expert_begin_idx = sm_id * num_warp_groups;
         const auto expert_end_idx = min(expert_begin_idx + num_warp_groups, active_expert_bound);
+        const auto scan_len = expert_begin_idx < active_expert_bound ? num_tokens * num_topk : 0;
 
         // Per lane count
         #pragma unroll 8
-        for (int i = lane_id; i < num_tokens * num_topk; i += 32) {
+        for (int i = lane_id; i < scan_len; i += 32) {
             auto idx = static_cast<int>(__ldg(topk_idx + i));
             if (idx >= expert_begin_idx and idx < expert_end_idx)
                 expert_count[idx - expert_begin_idx]++;
@@ -417,7 +418,10 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
     EP_HOST_ASSERT(kNumMaxTopK + 1 <= num_warp_groups * num_warps_per_group);
 
     const auto num_warps = num_warp_groups * num_warps_per_group;
-    const auto num_sms = ceil_div(active_expert_bound, num_warp_groups);
+    // Size the grid by tokens or experts. Cap at `num_device_sms`
+    const int num_send_per_sm = max(1, ceil_div(num_tokens, num_device_sms));
+    const auto num_sms = max(ceil_div(active_expert_bound, num_warp_groups),
+                             ceil_div(num_tokens, num_send_per_sm));
     EP_HOST_ASSERT(num_topk <= kNumMaxTopK);
 
     // Workspace checks
