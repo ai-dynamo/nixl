@@ -61,10 +61,9 @@ scrapeEndpoint::scrapeEndpoint(std::filesystem::path dir,
 
 scrapeEndpoint::status
 scrapeEndpoint::claim() {
-    election_.emplace(dir_);
+    election_.emplace(dir_, bindAddress_);
     if (!election_->won()) {
-        // Kept, unlike in reclaim(): the caller reads the owner's endpoint off
-        // this descriptor to report a rank configured for a different one.
+        election_.reset();
         return status::SIBLING_OWNS;
     }
     return serve() ? status::SERVING : status::PORT_TAKEN;
@@ -84,7 +83,7 @@ scrapeEndpoint::reclaim(std::chrono::nanoseconds now) noexcept {
     try {
         // Quiet: an unusable lock file is the condition claim() already warned
         // about once, and repeating it every retry would bury the log.
-        election_.emplace(dir_, false);
+        election_.emplace(dir_, bindAddress_, false);
         if (!election_->won()) {
             election_.reset();
             return;
@@ -123,7 +122,6 @@ scrapeEndpoint::serve() {
         exposer->RegisterCollectable(collector);
         collector_ = std::move(collector);
         exposer_ = std::move(exposer);
-        election_->publishEndpoint(bindAddress_);
         return true;
     }
     catch (const std::exception &e) {

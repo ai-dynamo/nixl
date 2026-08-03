@@ -37,36 +37,42 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 - **Every process writes its own metric state** to a per-process memory-mapped
   file in a shared directory (`NIXL_TELEMETRY_MULTIPROC_DIR`). Updates are
   lock-free; there is no serialization.
-- **Locked owner election.** On startup -- and, for a process that is not serving,
-  again as it exports -- each process races for an `flock` on
-  `nixl-owner.lock` in the shared directory. The one that wins ("owner") binds the
-  scrape port and runs the HTTP endpoint plus a collector that, on each scrape,
-  reads every live process's file and republishes them as one exposition. The
-  processes that lose run in **writer-only** mode and never bind. Losing is
-  therefore benign -- every process gets a valid telemetry sink; no rank is dropped
-  and no scary error is logged. The lock, not the bind, is what elects: two ranks
-  binding concurrently cannot tell which of them got there first, so gating the
-  bind on an exclusive lock is what makes exactly one process serve. The kernel
-  releases the lock when the holder dies, so a crash needs no cleanup; the lock
-  file itself stays in the directory and is reused by the next run.
+- **Locked owner election, one per endpoint.** On startup -- and, for a process
+  that is not serving, again as it exports -- each process races for an `flock` on
+  `nixl-owner.<address:port>.lock` in the shared directory. The one that wins
+  ("owner") binds the scrape port and runs the HTTP endpoint plus a collector that,
+  on each scrape, reads every live process's file and republishes them as one
+  exposition. The processes that lose run in **writer-only** mode and never bind.
+  Losing is therefore benign -- every process gets a valid telemetry sink; no rank
+  is dropped and no scary error is logged. The lock, not the bind, is what elects:
+  two ranks binding concurrently cannot tell which of them got there first, so
+  gating the bind on an exclusive lock is what makes exactly one process serve. The
+  endpoint is part of the lock file's *name*, so the file never needs contents, and
+  ranks contend only with the ranks they would actually collide with. The kernel
+  releases the lock when the holder dies, so a crash needs no cleanup; the lock file
+  itself stays in the directory and is reused by the next run.
   That guarantee lasts as long as the lock is usable. If the lock file cannot be
   opened, is not a regular file owned by the run's user, or sits on a filesystem
   without `flock`, every process considers itself elected and falls back to the
   port bind deciding -- one owner still, unless the ranks also disagree on the
   port, in which case each binds its own. Every such process warns first, so the
   fallback is never silent.
-- **Two misconfigurations are reported.** The owner records its endpoint in the
-  lock file it holds, which lets both silent failure modes be named:
-  - The **owner cannot bind** -- since no sibling can be serving, the port belongs
-    to something outside the run (a foreign service, or a rank pointed at a
-    different `NIXL_TELEMETRY_MULTIPROC_DIR`). Nothing aggregates the directory, so
-    it is a warning. Every rank reports it, because the election is conceded on a
-    failed bind: once the port frees -- a conflict as short as a previous run still
-    shutting down -- the next rank to win the election takes the endpoint over.
-  - A **loser was configured for a different endpoint** than the one recorded, so
-    the ranks disagree on `NIXL_TELEMETRY_PROMETHEUS_PORT` (or
-    `NIXL_TELEMETRY_PROMETHEUS_LOCAL`). Only the owner's endpoint is scrapeable;
-    the rank is still exported behind it, so this is a warning, not a failure.
+- **Two misconfigurations are reported.**
+  - The **owner cannot bind** -- no rank asking for the same endpoint can be
+    serving, so the port belongs to something outside the run (a foreign service, a
+    rank pointed at a different `NIXL_TELEMETRY_MULTIPROC_DIR`, or a rank that asked
+    for the same port on a different address). Nothing aggregates the directory on
+    that endpoint, so it is a warning. Every rank reports it, because the election
+    is conceded on a failed bind: once the port frees, the next rank to win the
+    election takes the endpoint over.
+  - The **directory is served on more than one endpoint**, because the ranks
+    disagree on `NIXL_TELEMETRY_PROMETHEUS_PORT` (or
+    `NIXL_TELEMETRY_PROMETHEUS_LOCAL`). Each such rank wins its own election and
+    serves what it was configured with, which is what the operator asked for, but
+    every endpoint exports *every* rank -- so a Prometheus that scrapes more than
+    one sees the same series on each target. An owner detects this by trying the
+    other lock files in the directory: one it can lock is a leftover from an earlier
+    run, one it cannot is a live second owner.
 
   Ranks split across *directories* are only detected from the abandoned side. The
   directory that did elect an owner cannot tell that ranks it never saw went
@@ -141,7 +147,7 @@ already hardens the files themselves (opened with `O_NOFOLLOW`, created `0600`,
 and skipped at scrape time when the file's owner is not the reader's effective
 uid -- warned about once per file, since such a file is never reaped -- so a
 co-tenant cannot inject series). The same check guards the election: a
-`nixl-owner.lock` that is not a regular file owned by the run's user is ignored
+`nixl-owner.<address:port>.lock` that is not a regular file owned by the run's user is ignored
 rather than contended for, so a co-tenant holding a planted lock cannot demote
 every rank to writer-only and leave the run unscrapeable.
 A missing directory is created `0700`; an existing one is left as it is, with a

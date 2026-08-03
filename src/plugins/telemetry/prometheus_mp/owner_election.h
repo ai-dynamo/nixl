@@ -30,25 +30,60 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace nixl::telemetry::mp {
 
 // Deliberately outside the collector's <prefix>*<suffix> store pattern so the
 // directory scan never sees it.
-inline constexpr char ownerLockFileName[] = "nixl-owner.lock";
+inline constexpr char ownerLockPrefix[] = "nixl-owner.";
+inline constexpr char ownerLockSuffix[] = ".lock";
+
+/**
+ * @brief The lock file one endpoint of a telemetry directory is elected on.
+ * @param endpoint The "address:port" a rank is configured to serve.
+ *
+ * The endpoint is part of the name, so ranks contend only with the ranks they
+ * would collide with, and no lock file ever needs contents: what its holder
+ * serves is the name itself.
+ */
+[[nodiscard]] inline std::string
+ownerLockFileName(const std::string &endpoint) {
+    std::string name = std::string(ownerLockPrefix) + endpoint + ownerLockSuffix;
+    std::replace(name.begin(), name.end(), '/', '_');
+    return name;
+}
+
+/**
+ * @brief The endpoint a lock file name belongs to, empty if it is not one.
+ */
+[[nodiscard]] inline std::string
+endpointOfLockFile(const std::string &name) {
+    constexpr std::size_t prefix_len = sizeof(ownerLockPrefix) - 1;
+    constexpr std::size_t suffix_len = sizeof(ownerLockSuffix) - 1;
+    if (name.size() <= prefix_len + suffix_len ||
+        name.compare(0, prefix_len, ownerLockPrefix) != 0 ||
+        name.compare(name.size() - suffix_len, suffix_len, ownerLockSuffix) != 0) {
+        return {};
+    }
+    return name.substr(prefix_len, name.size() - prefix_len - suffix_len);
+}
 
 /**
  * @class ownerElection
- * @brief Picks the single process of a telemetry directory allowed to serve the
+ * @brief Picks the single process of a telemetry directory allowed to serve one
  *        scrape endpoint.
  *
  * The election is an flock rather than the port bind itself: two processes
  * binding concurrently cannot tell which of them got there first, whereas the
- * lock admits exactly one, so only the winner ever binds. The winner then
- * publishes the endpoint it bound, which is how a loser can tell that it was
- * configured for a different one. The kernel releases the lock when the holder
- * dies, so it needs no cleanup -- and a writer that re-runs the election then
- * wins it, which is how the endpoint is served again after the owner's death.
+ * lock admits exactly one, so only the winner ever binds. It is per endpoint --
+ * the lock file is named after the address -- so ranks configured for different
+ * ports do not contend at all: each such endpoint gets its own owner, which is
+ * what the operator asked for by configuring them differently.
+ * heldEndpointsExcept() is how that is noticed and reported, separately from
+ * the election itself. The kernel releases the lock when the holder dies, so it
+ * needs no cleanup -- and a writer that re-runs the election then wins it,
+ * which is how the endpoint is served again after the owner's death.
  *
  * An election is run by constructing one and given up by destroying it: there
  * is no empty state and no way to move one, because an election re-run by the
@@ -60,17 +95,19 @@ inline constexpr char ownerLockFileName[] = "nixl-owner.lock";
 class ownerElection {
 public:
     /**
-     * @brief Runs the election for @p dir, without blocking.
-     * @param dir The shared telemetry directory the ranks contend for.
+     * @brief Runs the election for @p endpoint in @p dir, without blocking.
+     * @param dir The shared telemetry directory the ranks contend in.
+     * @param endpoint The "address:port" this process would serve.
      * @param warn_if_unusable Whether an unusable lock is worth a warning. False
      *        for the periodic re-elections a writer runs to detect the owner's
      *        death: the condition is unchanged since startup said it once, and
      *        repeating it every retry would bury the log.
      */
-    explicit ownerElection(const std::filesystem::path &dir, bool warn_if_unusable = true)
-        : fd_(::open((dir / ownerLockFileName).c_str(),
-                     O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
-                     0600)) {
+    ownerElection(const std::filesystem::path &dir,
+                  const std::string &endpoint,
+                  bool warn_if_unusable = true)
+        : lockName_(ownerLockFileName(endpoint)),
+          fd_(::open((dir / lockName_).c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600)) {
         // Anything that leaves the lock unusable -- no lock file, a filesystem
         // without flock, ENOLCK -- must not read as a loss: every rank would
         // concede and none would serve. Only EWOULDBLOCK means a sibling holds
@@ -92,13 +129,6 @@ public:
         }
         if (::flock(fd_.get(), LOCK_EX | LOCK_NB) == 0) {
             won_ = true;
-            // A previous owner's endpoint outlives it in the file. Drop it now,
-            // or a loser reading between this election and publishEndpoint()
-            // takes the dead endpoint for ours and reports a disagreement.
-            if (::ftruncate(fd_.get(), 0) != 0) {
-                NIXL_DEBUG << "prometheus_mp: cannot clear " << ownerLockFileName << ": "
-                           << strerror(errno);
-            }
             return;
         }
         won_ = errno != EWOULDBLOCK;
@@ -116,61 +146,63 @@ public:
         return won_;
     }
 
-    /**
-     * @brief Records where the winner listens, for the losers to read back.
-     * @param endpoint The bound "address:port".
-     *
-     * Best-effort: it only decides whether a loser warns. One write of a fixed
-     * size record, never a truncate and a write: an unusable lock leaves every
-     * rank believing it won, and two of them publishing different endpoints
-     * must not be able to interleave into a spliced or empty read.
-     */
-    void
-    publishEndpoint(const std::string &endpoint) const {
-        if (!fd_.valid()) {
-            return;
-        }
-        char record[endpointRecordSize] = {};
-        std::memcpy(record, endpoint.data(), std::min(endpoint.size(), sizeof(record) - 1));
-        if (::pwrite(fd_.get(), record, sizeof(record), 0) !=
-            static_cast<ssize_t>(sizeof(record))) {
-            NIXL_DEBUG << "prometheus_mp: cannot record the owner endpoint in " << ownerLockFileName
-                       << ": " << strerror(errno);
-        }
-    }
-
-    /**
-     * @brief The endpoint the winner published.
-     * @return Empty if nothing has been published yet -- the election is decided
-     *         before the bind, so a loser can observe the gap.
-     */
-    [[nodiscard]] std::string
-    publishedEndpoint() const {
-        char record[endpointRecordSize] = {};
-        const ssize_t len = fd_.valid() ? ::pread(fd_.get(), record, sizeof(record), 0) : -1;
-        return len > 0 ? std::string(record, ::strnlen(record, static_cast<std::size_t>(len))) :
-                         std::string();
-    }
-
 private:
-    static constexpr std::size_t endpointRecordSize = 64;
-
     // Every rank then believes it was elected, so those that go on to lose the
     // bind report the port as held from outside the run while a sibling is in
     // fact serving. This is the context that makes those reports readable.
-    static void
-    warnUnusable(const char *reason, bool enabled) {
+    void
+    warnUnusable(const char *reason, bool enabled) const {
         if (!enabled) {
             return;
         }
-        NIXL_WARN << "prometheus_mp: cannot use " << ownerLockFileName << " (" << reason
+        NIXL_WARN << "prometheus_mp: cannot use " << lockName_ << " (" << reason
                   << "); falling back to letting the port bind decide which process serves, so "
                   << "a later report of the port being held from outside the run may be a sibling";
     }
 
+    std::string lockName_;
     scopedFd fd_;
     bool won_ = false;
 };
+
+/**
+ * @brief The endpoints of @p dir that some live process is currently elected on,
+ *        other than @p endpoint.
+ *
+ * Ranks that disagree about the port each win their own election, so this is
+ * what tells an owner that the directory is served more than once. Lock files
+ * outlive their run -- unlinking one would let a rank between open() and flock()
+ * lock a file nobody else can find, and two owners would serve one endpoint --
+ * so a leftover is told from a live one by trying to take its lock rather than
+ * by its existence.
+ */
+[[nodiscard]] inline std::vector<std::string>
+heldEndpointsExcept(const std::filesystem::path &dir, const std::string &endpoint) {
+    const std::string own = ownerLockFileName(endpoint);
+    std::vector<std::string> held;
+    std::error_code ec;
+    for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
+        const std::string name = entry.path().filename().string();
+        if (name == own) {
+            continue;
+        }
+        const std::string other = endpointOfLockFile(name);
+        if (other.empty()) {
+            continue;
+        }
+        const scopedFd fd(::open(entry.path().c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+        if (!fd.valid()) {
+            continue;
+        }
+        if (::flock(fd.get(), LOCK_EX | LOCK_NB) == 0) {
+            continue;
+        }
+        if (errno == EWOULDBLOCK) {
+            held.push_back(other);
+        }
+    }
+    return held;
+}
 
 } // namespace nixl::telemetry::mp
 

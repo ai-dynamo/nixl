@@ -165,7 +165,7 @@ The `prometheus_mp` exporter aggregates the telemetry of all processes of a
 multi-process NIXL run behind a **single** Prometheus scrape endpoint, natively
 (no DOCA/DTS). Every process writes its own metric state to a per-process
 memory-mapped file in a shared directory; the processes race for an exclusive
-`flock` on `nixl-owner.lock` in that directory, and only the winner binds the
+`flock` on `nixl-owner.<address:port>.lock` in that directory, and only the winner binds the
 scrape port and serves `/metrics` by reading and republishing all live processes'
 files on each scrape (labeled per process). The losers run as writers only, so
 losing is benign and no rank is dropped, and a writer re-runs the election as it
@@ -226,15 +226,19 @@ interval. A process that exports nothing never re-elects, so a run that goes
 fully idle stays down until any rank produces telemetry again. Alert on the
 scrape target's `up` metric rather than on missing series.
 
-The owner is elected by an `flock` on `nixl-owner.lock` in the shared directory
-rather than by the bind itself, so exactly one process ever binds and losing the
-election is routine (logged at INFO). The owner records its endpoint in that lock
-file, which turns the two otherwise silent misconfigurations into warnings: the
-**owner failing to bind** means the port belongs to something outside the run, so
-nothing aggregates the directory; and a **loser configured for a different
-endpoint** than the recorded one means the ranks disagree on
-`NIXL_TELEMETRY_PROMETHEUS_PORT` (or `NIXL_TELEMETRY_PROMETHEUS_LOCAL`), and only
-the owner's endpoint is scrapeable.
+The owner is elected by an `flock` on `nixl-owner.<address:port>.lock` in the
+shared directory rather than by the bind itself, so exactly one process ever binds
+that endpoint and losing the election is routine (logged at INFO). Naming the lock
+file after the endpoint keeps it contentless and scopes the election to the ranks
+that would collide, which turns the two otherwise silent misconfigurations into
+warnings: the **owner failing to bind** means the port belongs to something outside
+the run, so nothing aggregates the directory there; and a directory **served on
+more than one endpoint** means the ranks disagree on
+`NIXL_TELEMETRY_PROMETHEUS_PORT` (or `NIXL_TELEMETRY_PROMETHEUS_LOCAL`). Each of
+those ranks serves what it was configured with, but every endpoint exports every
+rank, so scraping more than one yields the same series twice. Owners find each
+other by trying the directory's other lock files: one that can be locked is a
+leftover from an earlier run, one that cannot is a live second owner.
 
 The single-binder guarantee holds while the lock is usable. A lock file that
 cannot be opened, is not a regular file owned by the run's user, or lives on a

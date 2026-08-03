@@ -17,6 +17,7 @@
 #include "prometheus_mp_exporter.h"
 #include "histogram_buckets.h"
 #include "mp_store.h"
+#include "owner_election.h"
 #include "plugin_manager.h"
 #include "scrape_endpoint.h"
 #include "telemetry.h"
@@ -41,6 +42,7 @@
 
 namespace {
 
+using nixl::telemetry::mp::ownerLockFileName;
 using nixl::telemetry::mp::readStoreSnapshot;
 
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
@@ -217,26 +219,38 @@ TEST_F(MpExporterTest, ReclaimWhileServingKeepsTheElection) {
         << "the serving process gave its election away";
 }
 
-TEST_F(MpExporterTest, WriterConfiguredForAnotherEndpointWarns) {
+TEST_F(MpExporterTest, RanksConfiguredForAnotherEndpointServeItAndWarn) {
     nixlTelemetryPrometheusMpExporter owner(initParams("agent-owner"));
     ASSERT_TRUE(owner.isExporter());
 
     env_.addVar("NIXL_TELEMETRY_PROMETHEUS_PORT",
                 std::to_string(gtest::PortAllocator::next_tcp_port()));
     {
-        const gtest::LogIgnoreGuard lig("ranks disagree on");
-        nixlTelemetryPrometheusMpExporter writer(initParams("agent-writer"));
-        EXPECT_FALSE(writer.isExporter());
+        // Elections are per endpoint, so this rank contends with nobody and
+        // serves what it was configured with; the directory being served twice
+        // is what gets reported.
+        const gtest::LogIgnoreGuard lig("is not the only endpoint serving it");
+        nixlTelemetryPrometheusMpExporter second(initParams("agent-second"));
+        EXPECT_TRUE(second.isExporter());
         EXPECT_EQ(lig.getIgnoredCount(), 1);
     }
     env_.popVar();
+}
+
+TEST_F(MpExporterTest, LeftoverLockFileIsNotASecondOwner) {
+    // Lock files outlive the run that created them, so a second endpoint counts
+    // only while someone holds its lock. Any warning here fails the test.
+    { std::ofstream(dir_ / ownerLockFileName("127.0.0.1:1")); }
+
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-owner"));
+    EXPECT_TRUE(exporter.isExporter());
 }
 
 TEST_F(MpExporterTest, ForeignOwnedLockFileCannotSilenceTheRun) {
     if (::geteuid() != 0) {
         GTEST_SKIP() << "needs privileges to give the lock file another owner";
     }
-    const auto lock = dir_ / "nixl-owner.lock";
+    const auto lock = dir_ / ownerLockFileName("127.0.0.1:" + std::to_string(port_));
     { std::ofstream(lock).put('\0'); }
     constexpr uid_t nobody = 65534;
     if (::chown(lock.c_str(), nobody, static_cast<gid_t>(-1)) != 0) {

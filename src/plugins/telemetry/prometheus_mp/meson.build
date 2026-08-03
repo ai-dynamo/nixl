@@ -60,8 +60,9 @@ if prometheus_found
         ['prometheus_mp_exporter.cpp', 'scrape_endpoint.cpp'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs, prometheus_mp_inc_dirs,
                               include_directories('../common')],
-        dependencies: [nixl_common_dep, prometheus_core_dep, prometheus_pull_dep,
-                       nixl_telemetry_mp_store_dep, nixl_telemetry_mp_collector_dep],
+        dependencies: [nixl_common_dep, absl_strings_dep, prometheus_core_dep,
+                       prometheus_pull_dep, nixl_telemetry_mp_store_dep,
+                       nixl_telemetry_mp_collector_dep],
         install: false,
         pic: true,
     )
@@ -69,8 +70,9 @@ if prometheus_found
     nixl_telemetry_mp_exporter_dep = declare_dependency(
         link_with: telemetry_mp_exporter_lib,
         include_directories: prometheus_mp_inc_dirs,
-        dependencies: [nixl_common_dep, prometheus_core_dep, prometheus_pull_dep,
-                       nixl_telemetry_mp_store_dep, nixl_telemetry_mp_collector_dep],
+        dependencies: [nixl_common_dep, absl_strings_dep, prometheus_core_dep,
+                       prometheus_pull_dep, nixl_telemetry_mp_store_dep,
+                       nixl_telemetry_mp_collector_dep],
     )
 
     # Installable plugin: selected via NIXL_TELEMETRY_EXPORTER=prometheus_mp.
