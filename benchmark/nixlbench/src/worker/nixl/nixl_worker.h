@@ -46,8 +46,6 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<NixlMemRegion> remote_regs_;
         std::vector<NixlMemRegion> local_regs_;
         std::vector<GusliDeviceConfig> gusli_devices;
-        nixlMemViewH local_mvh;
-        nixlMemViewH remote_mvh;
         std::string remote_agent_name;
         std::optional<xferBenchIOV> completion_counter_iov;
 
@@ -75,15 +73,6 @@ class xferBenchNixlWorker: public xferBenchWorker {
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
-        void
-        prepareGPULocalView(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists);
-        void
-        prepareGPURemoteView(const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists);
-        void
-        releaseGPULocalView();
-        void
-        releaseGPURemoteView();
-
     private:
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
@@ -101,6 +90,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
         getFileOffset(size_t current_offset, size_t max_offset_in_blocks, size_t block_size);
         void
         releaseMemView(nixlMemViewH &mvh);
+        nixlMemViewH
+        prepareGPULocalView(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists);
+        nixlMemViewH
+        prepareGPURemoteView(const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists);
         std::optional<xferBenchIOV>
         initCompletionCounterVram();
         bool

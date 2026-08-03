@@ -115,8 +115,6 @@ getRandomSeed() {
 
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
     : xferBenchWorker(),
-      local_mvh(nullptr),
-      remote_mvh(nullptr),
       default_rng_(getRandomSeed()) {
     seg_type = GET_SEG_TYPE(isInitiator());
 
@@ -363,8 +361,6 @@ xferBenchNixlWorker::~xferBenchNixlWorker() {
     rt = nullptr;
 
     if (agent) {
-        releaseGPURemoteView();
-        releaseGPULocalView();
         delete agent;
         agent = nullptr;
     }
@@ -719,13 +715,7 @@ allocVramValueZero(int devid, size_t nbytes) {
 
 std::optional<xferBenchIOV>
 xferBenchNixlWorker::initCompletionCounterVram() {
-    if (!xferBenchConfig::use_device_api || !isTarget() || seg_type != VRAM_SEG) {
-        return std::nullopt;
-    }
-    int counter_dev = 0;
-    if (IS_PAIRWISE_AND_SG()) {
-        counter_dev = rt->getRank() - xferBenchConfig::num_initiator_dev;
-    }
+    int counter_dev = rt->getRank() - xferBenchConfig::num_initiator_dev; // pairwise SG only
     return allocVramValueZero(counter_dev, kDeviceCounterBytes);
 }
 
@@ -1464,13 +1454,12 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 std::cerr << "NIXL: expected 1 completion counter descriptor, got "
                           << cc_iovs.size() << std::endl;
                 std::exit(EXIT_FAILURE);
-            } else {
-                completion_counter_iov = cc_iovs[0];
-                if (completion_counter_iov->len < kDeviceCounterBytes) {
-                    std::cerr << "NIXL: completion counter descriptor too small: "
-                              << completion_counter_iov->len << " bytes" << std::endl;
-                    std::exit(EXIT_FAILURE);
-                }
+            }
+            completion_counter_iov = cc_iovs[0];
+            if (completion_counter_iov->len < kDeviceCounterBytes) {
+                std::cerr << "NIXL: completion counter descriptor too small: "
+                          << completion_counter_iov->len << " bytes" << std::endl;
+                std::exit(EXIT_FAILURE);
             }
         }
     }
@@ -1913,8 +1902,7 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     params.completionCounterOffsetBytes = kDeviceCounterDoneOffsetBytes;
     params.errorCounterOffsetBytes = kDeviceCounterErrorOffsetBytes;
     xferBenchTimer total_timer;
-    xferBenchStats iter_stats;
-    iter_stats.reserve(num_iter);
+    stats.transfer_duration.reserve(num_iter);
     xferBenchTimer timer;
     for (int i = 0; i < num_iter; ++i) {
         if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
@@ -1928,9 +1916,8 @@ execDeviceTransfer(nixlMemViewH local_mvh,
             stats.total_duration.add(total_timer.lap());
             return -1;
         }
-        iter_stats.transfer_duration.add(timer.lap());
+        stats.transfer_duration.add(timer.lap());
     }
-    stats.add(iter_stats);
     stats.total_duration.add(total_timer.lap());
     return 0;
 #else
@@ -2031,6 +2018,13 @@ xferBenchNixlWorker::transfer(size_t block_size,
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
+    nixlMemViewH local_mvh = nullptr;
+    nixlMemViewH remote_mvh = nullptr;
+    auto gpu_view_guard = make_scope_guard([this, &local_mvh, &remote_mvh] {
+        releaseMemView(remote_mvh);
+        releaseMemView(local_mvh);
+    });
+
     size_t num_regions = 0;
     if (xferBenchConfig::use_device_api) {
         if (local_iovs.size() != 1 || remote_iovs.size() != 1) {
@@ -2047,16 +2041,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
             return std::variant<xferBenchStats, int>(-1);
         }
         num_regions = remote_regions;
-    }
-    auto gpu_view_guard = make_scope_guard([this] {
-        if (xferBenchConfig::use_device_api) {
-            releaseGPURemoteView();
-            releaseGPULocalView();
-        }
-    });
-    if (xferBenchConfig::use_device_api) {
-        prepareGPULocalView(local_iovs);
-        prepareGPURemoteView(remote_iovs);
+        local_mvh = prepareGPULocalView(local_iovs);
+        remote_mvh = prepareGPURemoteView(remote_iovs);
     }
 
     if (skip > 0) {
@@ -2087,8 +2073,6 @@ xferBenchNixlWorker::transfer(size_t block_size,
 
     // Synchronize to ensure all processes have completed the warmup (iter and polling)
     synchronize();
-
-    stats.clear();
 
     if (xferBenchConfig::use_device_api) {
         ret = execDeviceTransfer(local_mvh,
@@ -2207,7 +2191,7 @@ xferBenchNixlWorker::synchronizeStart() {
     return -1;
 }
 
-void
+nixlMemViewH
 xferBenchNixlWorker::prepareGPULocalView(
     const std::vector<std::vector<xferBenchIOV>> &local_iov_lists) {
     nixl_xfer_dlist_t local_list(VRAM_SEG);
@@ -2217,10 +2201,12 @@ xferBenchNixlWorker::prepareGPULocalView(
             local_list.addDesc(localDesc);
         }
     }
+    nixlMemViewH local_mvh = nullptr;
     CHECK_NIXL_ERROR(agent->prepMemView(local_list, local_mvh), "prepMemView on local view failed");
+    return local_mvh;
 }
 
-void
+nixlMemViewH
 xferBenchNixlWorker::prepareGPURemoteView(
     const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) {
     if (remote_agent_name.empty()) {
@@ -2241,8 +2227,10 @@ xferBenchNixlWorker::prepareGPURemoteView(
                                     static_cast<uint64_t>(completion_counter_iov.value().devId),
                                     remote_agent_name};
     remote_list.addDesc(remoteDesc);
+    nixlMemViewH remote_mvh = nullptr;
     CHECK_NIXL_ERROR(agent->prepMemView(remote_list, remote_mvh),
                      "prepMemView on remote view failed");
+    return remote_mvh;
 }
 
 void
@@ -2251,14 +2239,4 @@ xferBenchNixlWorker::releaseMemView(nixlMemViewH &mvh) {
         agent->releaseMemView(mvh);
         mvh = nullptr;
     }
-}
-
-void
-xferBenchNixlWorker::releaseGPULocalView() {
-    releaseMemView(local_mvh);
-}
-
-void
-xferBenchNixlWorker::releaseGPURemoteView() {
-    releaseMemView(remote_mvh);
 }

@@ -53,7 +53,6 @@ nixlbenchPutLevel(const nixlbenchDeviceXferParams &params,
     return status;
 }
 
-template<nixl_gpu_level_t Level>
 __device__ nixl_status_t
 nixlbenchSignalCounter(const nixlbenchDeviceXferParams &params,
                        size_t counter_offset,
@@ -61,8 +60,9 @@ nixlbenchSignalCounter(const nixlbenchDeviceXferParams &params,
                        const char *counter_name) {
     const nixlMemViewElem counter{params.remoteMvh, params.numRegions, counter_offset};
     nixlGpuXferStatusH xfer_status;
-    nixl_status_t status = nixlAtomicAdd<Level>(value, counter, 0, 0, &xfer_status);
-    status = nixlbenchPollXferStatus<Level>(status, xfer_status);
+    nixl_status_t status =
+        nixlAtomicAdd<nixl_gpu_level_t::THREAD>(value, counter, 0, 0, &xfer_status);
+    status = nixlbenchPollXferStatus<nixl_gpu_level_t::THREAD>(status, xfer_status);
 
     if (status != NIXL_SUCCESS) {
         printf("[nixlbenchSignalCounter] nixlAtomicAdd(%s) did not complete: final_status=%d\n",
@@ -74,18 +74,16 @@ nixlbenchSignalCounter(const nixlbenchDeviceXferParams &params,
 
 __device__ nixl_status_t
 nixlbenchSignalCompletion(nixlbenchDeviceXferParams params) {
-    return nixlbenchSignalCounter<nixl_gpu_level_t::THREAD>(
-        params, params.completionCounterOffsetBytes, 1ull, "completion");
+    return nixlbenchSignalCounter(params, params.completionCounterOffsetBytes, 1ull, "completion");
 }
 
 __device__ nixl_status_t
 nixlbenchSignalError(nixlbenchDeviceXferParams params) {
-    return nixlbenchSignalCounter<nixl_gpu_level_t::THREAD>(
-        params, params.errorCounterOffsetBytes, 1ull, "error");
+    return nixlbenchSignalCounter(params, params.errorCounterOffsetBytes, 1ull, "error");
 }
 
 /**
- * Performs device-initiated NIXL PUT transfers and optionally reports completion or errors
+ * Performs device-initiated NIXL PUT transfers and reports completion or errors
  * through remote counters.
  */
 template<nixl_gpu_level_t Level>

@@ -332,7 +332,7 @@ bool xferBenchConfig::use_device_api = false;
 int xferBenchConfig::block_threads = 1;
 
 static bool
-isDeviceAPISupported() {
+validateDeviceAPIConfig() {
     auto reject = [](const char *reason) {
         std::cerr << "Invalid configuration for NIXL Device API: " << reason << std::endl;
         return false;
@@ -567,9 +567,8 @@ xferBenchConfig::loadParams(void) {
         std::cerr << "pipeline_depth must be >= 1" << std::endl;
         return -1;
     }
-    bool intended_use_device_api = NB_ARG(use_device_api);
-    use_device_api = intended_use_device_api && isDeviceAPISupported();
-    if (intended_use_device_api && !use_device_api) {
+    use_device_api = NB_ARG(use_device_api);
+    if (use_device_api && !validateDeviceAPIConfig()) {
         return -1;
     }
     if (use_device_api) {
