@@ -74,13 +74,20 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 - **Per-process series.** Each process is exported as its own series (cumulative
   counters, last-operation gauges and duration histograms), never summed across
   processes, so per-process values stay correct and monotonic.
-- **Stale handling.** On clean shutdown a process removes its own store file. If
-  it instead crashes or is killed -- and so cannot clean up after itself -- the
-  owner keeps publishing its last values until *both* the process is gone
-  (verified by pid + `/proc` start time) and its last update has aged past the
-  TTL; only then are the series dropped and the file reaped. Both are evaluated
-  during a scrape, so a live process is never dropped for being idle, and a dead
-  one keeps being published until the first scrape after its TTL expires.
+- **Stale handling.** A departing process leaves its store file behind, whether it
+  exits cleanly or is killed: its last values are usually not scraped yet, and
+  unlinking on exit would drop everything produced since the previous scrape. The
+  owner keeps publishing them until *both* the process is gone (verified by pid +
+  `/proc` start time) and its last update has aged past the TTL; only then are the
+  series dropped and the file reaped. Both are evaluated during a scrape, so a live
+  process is never dropped for being idle, and a dead one keeps being published
+  until the first scrape after its TTL expires. Keep the TTL at or above the
+  Prometheus scrape interval, or a rank that exits between two scrapes is reaped
+  before its final values are ever read.
+
+  This leaves at most one file per run on disk -- the last process to exit has no
+  owner left to reap it. It is harmless: the next run reaps it on its first scrape,
+  since it is both dead and stale.
 - **The owner's death is survived, not fatal.** The kernel releases the lock when
   the owner dies, so a writer re-running the election wins it, binds the port and
   starts aggregating -- reaping the dead owner's own store included. Writers

@@ -59,7 +59,7 @@ private:
     std::filesystem::path dir_;
     std::unique_ptr<nixl::telemetry::mp::storeWriter> store_;
     // Declared last so it is destroyed first: serving stops before the store it
-    // publishes is unmapped and unlinked.
+    // publishes is unmapped.
     nixl::telemetry::mp::scrapeEndpoint endpoint_;
 };
 

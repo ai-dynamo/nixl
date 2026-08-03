@@ -199,13 +199,19 @@ TEST_F(MpStoreTest, TooManyBucketsRejected) {
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
-TEST_F(MpStoreTest, DestructorRemovesStoreFile) {
+TEST_F(MpStoreTest, DestructorKeepsStoreFileWithFinalValues) {
     const auto path = storePath("agent-cleanup");
     {
         storeWriter writer(path, "agent-cleanup", "host-1", "", 0, kBuckets);
+        writer.addCounter(TX_BYTES, 4096);
+        (void)writer.refreshHeartbeat();
         EXPECT_TRUE(std::filesystem::exists(path));
     }
-    EXPECT_FALSE(std::filesystem::exists(path));
+    ASSERT_TRUE(std::filesystem::exists(path)) << "a clean exit must not drop unscraped values";
+
+    const auto result = readStoreSnapshot(path);
+    ASSERT_TRUE(result.snapshot.has_value());
+    EXPECT_EQ(result.snapshot->counters[idx(TX_BYTES)], 4096u);
 }
 
 TEST_F(MpStoreTest, LongAgentNameTruncated) {

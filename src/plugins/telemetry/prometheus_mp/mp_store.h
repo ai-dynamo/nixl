@@ -191,6 +191,16 @@ public:
                 const std::string &local_rank,
                 uint64_t instance,
                 const std::vector<double> &histogram_buckets);
+
+    /**
+     * @brief Unmaps the store but leaves the file in place.
+     *
+     * The last values a process recorded are typically not scraped yet when it
+     * exits, so the file must outlive it: the collector goes on publishing them
+     * until the process is gone *and* its last update has aged past the stale
+     * TTL, then reaps the file. Unlinking here would drop everything produced
+     * since the previous scrape.
+     */
     ~storeWriter();
 
     storeWriter(const storeWriter &) = delete;
