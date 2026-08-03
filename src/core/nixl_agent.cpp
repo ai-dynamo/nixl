@@ -1073,10 +1073,8 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
     nixl_status_t ret;
     NIXL_SHARED_LOCK_GUARD(data->lock);
 
-    // Check if the remote agent connection info is still valid, matching the
-    // generation guard in postXferReq: the handle's targetDescs pin raw
-    // metadata pointers from the section generation it was created against,
-    // which may have been invalidated (and re-registered) since.
+    // Check if the remote agent connection info is still valid
+    // (assuming cost estimation requires connection info like transfers)
     if (!req_hndl->remoteAgent.empty()) {
         const auto sec_it = data->remoteSections_.find(req_hndl->remoteAgent);
         if (sec_it == data->remoteSections_.end() ||
@@ -1141,12 +1139,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);
-    // Check if the remote was invalidated before post/repost. Guard on the
-    // connection generation, not only the name: the handle pins raw backend
-    // metadata pointers (targetDescs) from the section generation it was
-    // created against. If that generation was invalidated (freed) and the
-    // remote re-registered since, a name-only check would post using freed
-    // metadata.
+    // Check if the remote was invalidated before post/repost
     const auto sec_it = data->remoteSections_.find(req_hndl->remoteAgent);
     if (sec_it == data->remoteSections_.end()) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
