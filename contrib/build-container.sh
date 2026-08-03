@@ -51,7 +51,7 @@ CUDA_VERSION=${CUDA_VERSION:-13.0}
 BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
 BUILD_UCX_SPCX_PLUGIN="false"
-UCX_SPCX_PLUGIN_REF="main"
+UCX_SPCX_PLUGIN_REF="v0.2.x"
 
 get_options() {
     while :; do
