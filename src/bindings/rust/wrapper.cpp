@@ -23,6 +23,7 @@
 #include <cstring>
 #include <exception>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 #include <chrono>
@@ -99,6 +100,13 @@ struct nixl_capi_notif_map_s {
 struct nixl_capi_query_resp_list_s {
     std::vector<nixl_query_resp_t> responses;
 };
+
+struct nixl_capi_remote_dlist_s {
+    nixl_remote_dlist_t *dlist;
+};
+
+static nixl_capi_status_t
+nixl_capi_status_from_nixl_status(nixl_status_t status);
 
 nixl_capi_status_t
 nixl_capi_create_agent(const char* name, nixl_capi_agent_t* agent)
@@ -1895,6 +1903,124 @@ nixl_capi_query_mem(nixl_capi_agent_t agent,
         nixl_opt_args_t *args = opt_args ? &opt_args->args : nullptr;
         nixl_status_t ret = agent->inner->queryMem(*descs->dlist, resp->responses, args);
         return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+// Memory view functions
+nixl_capi_status_t
+nixl_capi_prep_mem_view_local(nixl_capi_agent_t agent,
+                              nixl_capi_xfer_dlist_t descs,
+                              nixl_capi_mem_view_t *mvh,
+                              nixl_capi_opt_args_t opt_args) {
+    if (!agent || !descs || !mvh) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        nixl_opt_args_t *args = opt_args ? &opt_args->args : nullptr;
+        nixlMemViewH view = nullptr;
+        nixl_status_t ret = agent->inner->prepMemView(*descs->dlist, view, args);
+        if (ret != NIXL_SUCCESS) {
+            return nixl_capi_status_from_nixl_status(ret);
+        }
+        *mvh = static_cast<nixl_capi_mem_view_t>(view);
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_prep_mem_view_remote(nixl_capi_agent_t agent,
+                               nixl_capi_remote_dlist_t descs,
+                               nixl_capi_mem_view_t *mvh,
+                               nixl_capi_opt_args_t opt_args) {
+    if (!agent || !descs || !mvh) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        nixl_opt_args_t *args = opt_args ? &opt_args->args : nullptr;
+        nixlMemViewH view = nullptr;
+        nixl_status_t ret = agent->inner->prepMemView(*descs->dlist, view, args);
+        if (ret != NIXL_SUCCESS) {
+            return nixl_capi_status_from_nixl_status(ret);
+        }
+        *mvh = static_cast<nixl_capi_mem_view_t>(view);
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_create_remote_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_remote_dlist_t *dlist) {
+    if (!dlist) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        auto d = std::make_unique<nixl_capi_remote_dlist_s>();
+        auto inner = std::make_unique<nixl_remote_dlist_t>(static_cast<nixl_mem_t>(mem_type));
+        d->dlist = inner.release();
+        *dlist = d.release();
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_destroy_remote_dlist(nixl_capi_remote_dlist_t dlist) {
+    if (!dlist) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        delete dlist->dlist;
+        delete dlist;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_remote_dlist_add_desc(nixl_capi_remote_dlist_t dlist,
+                                uintptr_t addr,
+                                size_t len,
+                                uint64_t dev_id,
+                                const char *remote_agent) {
+    if (!dlist) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        dlist->dlist->addDesc(
+            nixlRemoteDesc(addr, len, dev_id, remote_agent ? remote_agent : nixl_null_agent));
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_release_mem_view(nixl_capi_agent_t agent, nixl_capi_mem_view_t mvh) {
+    if (!agent || !mvh) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        agent->inner->releaseMemView(static_cast<nixlMemViewH>(mvh));
+        return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;
