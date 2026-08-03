@@ -157,7 +157,7 @@ TEST_F(MpExporterTest, WriterModeWhenPortTaken) {
 }
 
 TEST_F(MpExporterTest, WriterBehindSiblingOwnerIsQuiet) {
-    // Losing the election to a sibling on the same endpoint is the routine case:
+    // Losing the election to a sibling on the same address is the routine case:
     // no warning, otherwise the gtest problem counter fails this test.
     nixlTelemetryPrometheusMpExporter owner(initParams("agent-owner"));
     ASSERT_TRUE(owner.isExporter());
@@ -174,7 +174,7 @@ TEST_F(MpExporterTest, WriterTakesOverWhenTheOwnerExits) {
     ASSERT_FALSE(writer.isExporter());
 
     writer.exportEvent({TX_BYTES, 1});
-    ASSERT_FALSE(writer.isExporter()) << "took the endpoint from a live owner";
+    ASSERT_FALSE(writer.isExporter()) << "took the address from a live owner";
 
     owner.reset();
     // Export until the re-election throttle the export above armed has passed,
@@ -219,17 +219,17 @@ TEST_F(MpExporterTest, ReclaimWhileServingKeepsTheElection) {
         << "the serving process gave its election away";
 }
 
-TEST_F(MpExporterTest, RanksConfiguredForAnotherEndpointServeItAndWarn) {
+TEST_F(MpExporterTest, RanksConfiguredForAnotherAddressServeItAndWarn) {
     nixlTelemetryPrometheusMpExporter owner(initParams("agent-owner"));
     ASSERT_TRUE(owner.isExporter());
 
     env_.addVar("NIXL_TELEMETRY_PROMETHEUS_PORT",
                 std::to_string(gtest::PortAllocator::next_tcp_port()));
     {
-        // Elections are per endpoint, so this rank contends with nobody and
+        // Elections are per address, so this rank contends with nobody and
         // serves what it was configured with; the directory being served twice
         // is what gets reported.
-        const gtest::LogIgnoreGuard lig("is not the only endpoint serving it");
+        const gtest::LogIgnoreGuard lig("is not the only address serving it");
         nixlTelemetryPrometheusMpExporter second(initParams("agent-second"));
         EXPECT_TRUE(second.isExporter());
         EXPECT_EQ(lig.getIgnoredCount(), 1);
@@ -238,7 +238,7 @@ TEST_F(MpExporterTest, RanksConfiguredForAnotherEndpointServeItAndWarn) {
 }
 
 TEST_F(MpExporterTest, LeftoverLockFileIsNotASecondOwner) {
-    // Lock files outlive the run that created them, so a second endpoint counts
+    // Lock files outlive the run that created them, so a second address counts
     // only while someone holds its lock. Any warning here fails the test.
     { std::ofstream(dir_ / ownerLockFileName("127.0.0.1:1")); }
 

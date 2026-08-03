@@ -39,11 +39,11 @@ namespace nixl::telemetry::mp {
  * exposer and the collector behind it -- so that a process which is not the
  * owner holds none of it and costs nothing. claim() decides at startup;
  * reclaim() is how a non-owner keeps checking, since the kernel frees the
- * election when the owner dies and someone has to take the endpoint over.
+ * election when the owner dies and someone has to take the address over.
  *
  * "The" endpoint is per configured address: a rank asking for a different port
  * contends with nobody and serves it itself. Whether that is worth reporting is
- * the exporter's business too, via heldEndpointsExcept().
+ * the exporter's business too, via heldAddressesExcept().
  *
  * The outcomes are reported rather than logged: what a lost election means to
  * the user depends on which process it is and what it was configured with,
@@ -53,8 +53,8 @@ class scrapeEndpoint {
 public:
     enum class status {
         SERVING, ///< This process won the election and is serving the endpoint.
-        SIBLING_OWNS, ///< Another process of this directory serves this endpoint.
-        PORT_TAKEN, ///< Won the endpoint's election, but the port is held.
+        SIBLING_OWNS, ///< Another process of this directory serves this address.
+        PORT_TAKEN, ///< Won the address's election, but the port is held.
     };
 
     scrapeEndpoint(std::filesystem::path dir,
@@ -87,7 +87,7 @@ public:
         return static_cast<bool>(exposer_);
     }
 
-    /// The endpoint this process serves, or would serve if it won.
+    /// The address this process serves, or would serve if it won.
     [[nodiscard]] const std::string &
     bindAddress() const noexcept {
         return bindAddress_;

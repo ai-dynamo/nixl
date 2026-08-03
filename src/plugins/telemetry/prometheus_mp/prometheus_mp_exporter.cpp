@@ -37,7 +37,7 @@
 
 namespace {
 
-using nixl::telemetry::mp::heldEndpointsExcept;
+using nixl::telemetry::mp::heldAddressesExcept;
 using nixl::telemetry::mp::makeStoreFileName;
 using nixl::telemetry::mp::MP_DEFAULT_STALE_TTL;
 using nixl::telemetry::mp::readProcessStartTime;
@@ -157,17 +157,17 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
 
     const std::string &bind_address = endpoint_.bindAddress();
     const auto claimed = endpoint_.claim();
-    // Elections are per endpoint, so ranks that disagree about the port each own
+    // Elections are per address, so ranks that disagree about the port each own
     // one instead of contending. Reported from whichever side notices, since the
     // ranks start in no particular order.
     const std::vector<std::string> others = claimed == scrapeEndpoint::status::SIBLING_OWNS ?
         std::vector<std::string>{} :
-        heldEndpointsExcept(dir_, bind_address);
+        heldAddressesExcept(dir_, bind_address);
     if (!others.empty()) {
         NIXL_WARN << "prometheus_mp: ranks of telemetry dir " << dir_.string() << " disagree on "
                   << prometheusPortVar << '/' << prometheusLocalVar << ": " << bind_address
-                  << " is not the only endpoint serving it (" << absl::StrJoin(others, ", ")
-                  << "). Each endpoint exports every rank, so Prometheus scraping more than one "
+                  << " is not the only address serving it (" << absl::StrJoin(others, ", ")
+                  << "). Each of them exports every rank, so Prometheus scraping more than one "
                   << "sees the same series twice";
     }
 
@@ -178,10 +178,10 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
         return;
 
     case scrapeEndpoint::status::PORT_TAKEN:
-        // Elected for this endpoint, so no sibling asking for the same one can be
+        // Elected for this address, so no sibling asking for the same one can be
         // serving: the port belongs to something outside the run, or to a rank
         // that asked for the same port on a different address. The election is
-        // conceded rather than held, so the next rank to win takes the endpoint
+        // conceded rather than held, so the next rank to win takes the address
         // over once the port frees.
         NIXL_WARN << "prometheus_mp: elected to serve telemetry dir " << dir_.string() << " but "
                   << bind_address << " is held by a process outside this run (a foreign service, "
@@ -192,7 +192,7 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
     case scrapeEndpoint::status::SIBLING_OWNS:
         break;
     }
-    NIXL_INFO << "prometheus_mp exporter (writer): endpoint " << bind_address
+    NIXL_INFO << "prometheus_mp exporter (writer): address " << bind_address
               << " owned by another process; agent '" << init_params.agentName << "' writing to "
               << store_path.string();
 }

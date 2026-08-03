@@ -228,15 +228,15 @@ scrape target's `up` metric rather than on missing series.
 
 The owner is elected by an `flock` on `nixl-owner.<address:port>.lock` in the
 shared directory rather than by the bind itself, so exactly one process ever binds
-that endpoint and losing the election is routine (logged at INFO). Naming the lock
-file after the endpoint keeps it contentless and scopes the election to the ranks
+that address and losing the election is routine (logged at INFO). Naming the lock
+file after the address keeps it contentless and scopes the election to the ranks
 that would collide, which turns the two otherwise silent misconfigurations into
 warnings: the **owner failing to bind** means the port belongs to something outside
 the run, so nothing aggregates the directory there; and a directory **served on
-more than one endpoint** means the ranks disagree on
+more than one address** means the ranks disagree on
 `NIXL_TELEMETRY_PROMETHEUS_PORT` (or `NIXL_TELEMETRY_PROMETHEUS_LOCAL`). Each of
-those ranks serves what it was configured with, but every endpoint exports every
-rank, so scraping more than one yields the same series twice. Owners find each
+those ranks serves what it was configured with, but every one of them exports
+every rank, so scraping more than one yields the same series twice. Owners find each
 other by trying the directory's other lock files: one that can be locked is a
 leftover from an earlier run, one that cannot is a live second owner.
 

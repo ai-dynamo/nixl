@@ -40,25 +40,25 @@ inline constexpr char ownerLockPrefix[] = "nixl-owner.";
 inline constexpr char ownerLockSuffix[] = ".lock";
 
 /**
- * @brief The lock file one endpoint of a telemetry directory is elected on.
- * @param endpoint The "address:port" a rank is configured to serve.
+ * @brief The lock file one address of a telemetry directory is elected on.
+ * @param address The "address:port" a rank is configured to serve.
  *
- * The endpoint is part of the name, so ranks contend only with the ranks they
+ * The address is part of the name, so ranks contend only with the ranks they
  * would collide with, and no lock file ever needs contents: what its holder
  * serves is the name itself.
  */
 [[nodiscard]] inline std::string
-ownerLockFileName(const std::string &endpoint) {
-    std::string name = std::string(ownerLockPrefix) + endpoint + ownerLockSuffix;
+ownerLockFileName(const std::string &address) {
+    std::string name = std::string(ownerLockPrefix) + address + ownerLockSuffix;
     std::replace(name.begin(), name.end(), '/', '_');
     return name;
 }
 
 /**
- * @brief The endpoint a lock file name belongs to, empty if it is not one.
+ * @brief The address a lock file name belongs to, empty if it is not one.
  */
 [[nodiscard]] inline std::string
-endpointOfLockFile(const std::string &name) {
+addressOfLockFile(const std::string &name) {
     constexpr std::size_t prefix_len = sizeof(ownerLockPrefix) - 1;
     constexpr std::size_t suffix_len = sizeof(ownerLockSuffix) - 1;
     if (name.size() <= prefix_len + suffix_len ||
@@ -72,18 +72,18 @@ endpointOfLockFile(const std::string &name) {
 /**
  * @class ownerElection
  * @brief Picks the single process of a telemetry directory allowed to serve one
- *        scrape endpoint.
+ *        address.
  *
  * The election is an flock rather than the port bind itself: two processes
  * binding concurrently cannot tell which of them got there first, whereas the
- * lock admits exactly one, so only the winner ever binds. It is per endpoint --
- * the lock file is named after the address -- so ranks configured for different
- * ports do not contend at all: each such endpoint gets its own owner, which is
- * what the operator asked for by configuring them differently.
- * heldEndpointsExcept() is how that is noticed and reported, separately from
- * the election itself. The kernel releases the lock when the holder dies, so it
- * needs no cleanup -- and a writer that re-runs the election then wins it,
- * which is how the endpoint is served again after the owner's death.
+ * lock admits exactly one, so only the winner ever binds. It is per address --
+ * the lock file is named after it -- so ranks configured for different ports do
+ * not contend at all: each such address gets its own owner, which is what the
+ * operator asked for by configuring them differently. heldAddressesExcept() is
+ * how that is noticed and reported, separately from the election itself. The
+ * kernel releases the lock when the holder dies, so it needs no cleanup -- and
+ * a writer that re-runs the election then wins it, which is how the address is
+ * served again after the owner's death.
  *
  * An election is run by constructing one and given up by destroying it: there
  * is no empty state and no way to move one, because an election re-run by the
@@ -95,18 +95,18 @@ endpointOfLockFile(const std::string &name) {
 class ownerElection {
 public:
     /**
-     * @brief Runs the election for @p endpoint in @p dir, without blocking.
+     * @brief Runs the election for @p address in @p dir, without blocking.
      * @param dir The shared telemetry directory the ranks contend in.
-     * @param endpoint The "address:port" this process would serve.
+     * @param address The "address:port" this process would serve.
      * @param warn_if_unusable Whether an unusable lock is worth a warning. False
      *        for the periodic re-elections a writer runs to detect the owner's
      *        death: the condition is unchanged since startup said it once, and
      *        repeating it every retry would bury the log.
      */
     ownerElection(const std::filesystem::path &dir,
-                  const std::string &endpoint,
+                  const std::string &address,
                   bool warn_if_unusable = true)
-        : lockName_(ownerLockFileName(endpoint)),
+        : lockName_(ownerLockFileName(address)),
           fd_(::open((dir / lockName_).c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600)) {
         // Anything that leaves the lock unusable -- no lock file, a filesystem
         // without flock, ENOLCK -- must not read as a loss: every rank would
@@ -166,19 +166,19 @@ private:
 };
 
 /**
- * @brief The endpoints of @p dir that some live process is currently elected on,
- *        other than @p endpoint.
+ * @brief The addresses of @p dir that some live process is currently elected on,
+ *        other than @p address.
  *
  * Ranks that disagree about the port each win their own election, so this is
  * what tells an owner that the directory is served more than once. Lock files
  * outlive their run -- unlinking one would let a rank between open() and flock()
- * lock a file nobody else can find, and two owners would serve one endpoint --
+ * lock a file nobody else can find, and two owners would serve one address --
  * so a leftover is told from a live one by trying to take its lock rather than
  * by its existence.
  */
 [[nodiscard]] inline std::vector<std::string>
-heldEndpointsExcept(const std::filesystem::path &dir, const std::string &endpoint) {
-    const std::string own = ownerLockFileName(endpoint);
+heldAddressesExcept(const std::filesystem::path &dir, const std::string &address) {
+    const std::string own = ownerLockFileName(address);
     std::vector<std::string> held;
     std::error_code ec;
     for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
@@ -186,7 +186,7 @@ heldEndpointsExcept(const std::filesystem::path &dir, const std::string &endpoin
         if (name == own) {
             continue;
         }
-        const std::string other = endpointOfLockFile(name);
+        const std::string other = addressOfLockFile(name);
         if (other.empty()) {
             continue;
         }
