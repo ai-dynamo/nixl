@@ -188,6 +188,8 @@ class suppress_stdout_stderr:
 
 def _has_cuda_profiler_events(key_averages) -> bool:
     for event in key_averages:
+        if getattr(event, "is_legacy", False):
+            continue
         for attr in (
             "device_time_total",
             "self_device_time_total",
