@@ -56,12 +56,15 @@ private:
     static constexpr size_t DESTRUCTIVE_INTERFERENCE_SIZE = 256;
 
     struct bufferHeader {
+        // version stays at byte offset 16 across layout versions, so a reader
+        // on a mismatched file always reads a real version field instead of
+        // arbitrary bytes.
         alignas(DESTRUCTIVE_INTERFERENCE_SIZE) std::atomic<size_t> write_pos{0};
-        alignas(DESTRUCTIVE_INTERFERENCE_SIZE) std::atomic<size_t> read_pos{0};
+        const size_t capacity;
         std::atomic<int> version{0};
         int expected_version{0};
-        const size_t capacity;
         const size_t mask;
+        alignas(DESTRUCTIVE_INTERFERENCE_SIZE) std::atomic<size_t> read_pos{0};
 
         bufferHeader(size_t size);
     };

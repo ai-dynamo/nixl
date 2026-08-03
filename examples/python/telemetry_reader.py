@@ -88,20 +88,21 @@ class BufferHeader(ctypes.Structure):
     _pack_ = 1
     _fields_ = [
         ("write_pos", ctypes.c_size_t),  # [0, 8)
+        ("capacity", ctypes.c_size_t),  # [8, 16)
+        # version stays at offset 16 across layout versions (see cyclic_buffer.h)
+        ("version", ctypes.c_uint32),  # [16, 20)
+        ("expected_version", ctypes.c_uint32),  # [20, 24)
+        ("mask", ctypes.c_size_t),  # [24, 32)
         (
             "_pad_write",
-            ctypes.c_char
-            * (DESTRUCTIVE_INTERFERENCE_SIZE - ctypes.sizeof(ctypes.c_size_t)),
-        ),  # pad write_pos to its own interference-size block: [8, 256)
-        ("read_pos", ctypes.c_size_t),  # [256,264)
-        ("version", ctypes.c_uint32),  # [264,268)
-        ("expected_version", ctypes.c_uint32),  # [268,272)
-        ("capacity", ctypes.c_size_t),  # [272,280)
-        ("mask", ctypes.c_size_t),  # [280,288)
+            ctypes.c_char * (DESTRUCTIVE_INTERFERENCE_SIZE - 32),
+        ),  # pad write_pos's interference-size block: [32, 256)
+        ("read_pos", ctypes.c_size_t),  # [256, 264)
         (
             "_pad_tail",
-            ctypes.c_char * 224,
-        ),  # match C++ compiler's tail padding: [288, 512)
+            ctypes.c_char
+            * (DESTRUCTIVE_INTERFERENCE_SIZE - ctypes.sizeof(ctypes.c_size_t)),
+        ),  # match C++ compiler's tail padding: [264, 512)
     ]
 
 
