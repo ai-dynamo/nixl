@@ -193,6 +193,9 @@ sharedRingBuffer<T>::createCyclicBuffer(const std::string &name, int version) {
     header_->version.store(version, std::memory_order_release);
     header_->expected_version = version;
 
+    // Seed the cached values from the header
+    cachedWritePos_ = header_->write_pos.load(std::memory_order_acquire);
+    cachedReadPos_ = header_->read_pos.load(std::memory_order_acquire);
     cachedMask_ = header_->mask;
 }
 
@@ -277,7 +280,7 @@ sharedRingBuffer<T>::openCyclicBuffer(const std::string &name, int version) {
     header_ = static_cast<bufferHeader *>(ptr);
     data_ = reinterpret_cast<T *>(static_cast<char *>(ptr) + sizeof(bufferHeader));
 
-    // When attaching to an existing buffer, cached values need to be seeded
+    // Seed the cached values from the header
     cachedWritePos_ = header_->write_pos.load(std::memory_order_acquire);
     cachedReadPos_ = header_->read_pos.load(std::memory_order_acquire);
     cachedMask_ = header_->mask;
