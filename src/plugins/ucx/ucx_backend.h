@@ -292,6 +292,16 @@ private:
                        size_t start_idx,
                        size_t end_idx);
 
+#ifdef HAVE_UCX_SGL_API
+    nixl_status_t
+    prepXferSgl(const nixl_meta_dlist_t &local,
+                const nixl_meta_dlist_t &remote,
+                nixlBackendReqH *handle) const;
+
+    nixl_status_t
+    sendXferSgl(nixlBackendReqH *handle) const;
+#endif
+
     /**
      * Get the worker ID from the optional arguments.
      * Returns std::nullopt if the 'worker_id' option extraction fails.
@@ -309,6 +319,7 @@ private:
     size_t numSharedWorkers_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
+    const bool sglEnabled_;
 
     const nixlNotifCallbacks notifCallbacks_;
 
