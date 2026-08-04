@@ -100,8 +100,7 @@ nixlMDManager::etcdConfigured() {
 // precedence (address wins over a configured backend).
 nixlMDManager::nixlMDManager(nixlMetadataContext &ctx, const nixlMDConfig &config)
     : p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config)),
-      backend_(makeBackend(ctx, config)),
-      usesThread_(p2pBackend_->usesThread() || (backend_ && backend_->usesThread())) {}
+      backend_(makeBackend(ctx, config)) {}
 
 // Each backend joins its own thread as it is destroyed, so nothing to do here.
 nixlMDManager::~nixlMDManager() = default;
@@ -143,7 +142,8 @@ nixlMDManager::backendName() const noexcept {
 
 bool
 nixlMDManager::usesThread() const noexcept {
-    return usesThread_;
+    // The backends answer from configuration they already hold.
+    return p2pBackend_->usesThread() || (backend_ && backend_->usesThread());
 }
 
 void

@@ -89,7 +89,7 @@ private:
     serviceEvents();
 
     nixlMetadataContext &ctx_;
-    const std::uint64_t workerDelay_;
+    const std::chrono::microseconds workerDelay_;
     const std::unique_ptr<etcdClient> client_;
     // Declared last so it joins before the state its tasks touch is destroyed.
     nixlMetadataWorker worker_;

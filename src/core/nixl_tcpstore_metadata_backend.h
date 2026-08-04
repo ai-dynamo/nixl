@@ -116,7 +116,7 @@ private:
 
     nixlMetadataContext &ctx_;
     const std::chrono::milliseconds fetchTimeout_;
-    const std::uint64_t workerDelay_;
+    const std::chrono::microseconds workerDelay_;
     const std::unique_ptr<nixlTcpStoreClient> client_;
     // Keys this agent has published; TCPStore has no recursive delete, so
     // invalidateLocal removes exactly these.

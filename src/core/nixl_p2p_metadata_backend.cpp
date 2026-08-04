@@ -220,7 +220,6 @@ nixlP2PMetadataBackend::~nixlP2PMetadataBackend() {
     // body: its poll reads from remoteSockets_.
     worker_.stop();
     for (auto &[peer, fd] : remoteSockets_) {
-        shutdown(fd, SHUT_RDWR);
         close(fd);
     }
 }

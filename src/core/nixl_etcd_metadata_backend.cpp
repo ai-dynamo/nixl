@@ -31,7 +31,6 @@
 #include <future>
 #include <memory>
 #include <mutex>
-#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -56,11 +55,9 @@ private:
     std::chrono::microseconds watchTimeout_;
     bool agentPrefixStored_ = false;
 
-    std::string
-    makeKey(const std::string &agent_name, const std::string &metadata_type) {
-        std::stringstream ss;
-        ss << namespacePrefix_ << "/" << agent_name << "/" << metadata_type;
-        return ss.str();
+    [[nodiscard]] std::string
+    makeKey(const std::string &agent_name, const std::string &metadata_type) const {
+        return namespacePrefix_ + "/" + agent_name + "/" + metadata_type;
     }
 
     // Announce this agent by writing its prefix key. Deferred to the first
@@ -85,9 +82,7 @@ public:
     // Builds the client object (no connection is established here; the gRPC
     // channel connects on first use). Throws only when the endpoint list itself
     // is unusable.
-    explicit etcdClient(
-        std::string my_agent_name,
-        const std::chrono::microseconds &timeout = std::chrono::microseconds(5000000))
+    explicit etcdClient(std::string my_agent_name, std::chrono::microseconds timeout)
         : namespacePrefix_(nixl::config::getValueDefaulted<std::string>("NIXL_ETCD_NAMESPACE",
                                                                         default_namespace)),
           agentName_(std::move(my_agent_name)),
@@ -120,8 +115,8 @@ public:
             if (const nixl_status_t ret = ensureAgentPrefix(); ret != NIXL_SUCCESS) {
                 return ret;
             }
-            std::string metadata_key = makeKey(agent_name, metadata_type);
-            etcd::Response response = etcd_->put(metadata_key, metadata);
+            const std::string metadata_key = makeKey(agent_name, metadata_type);
+            const etcd::Response response = etcd_->put(metadata_key, metadata);
             if (response.is_ok()) {
                 NIXL_DEBUG << "Successfully stored " << metadata_type
                            << " in etcd with key: " << metadata_key << " (rev "
@@ -141,8 +136,8 @@ public:
     nixl_status_t
     removeMetadataFromEtcd(const std::string &agent_name) {
         try {
-            std::string agent_prefix = makeKey(agent_name, "");
-            etcd::Response response = etcd_->rmdir(agent_prefix, true);
+            const std::string agent_prefix = makeKey(agent_name, "");
+            const etcd::Response response = etcd_->rmdir(agent_prefix, true);
             if (agent_name == agentName_) {
                 // Our own prefix key went with it, so a later publish re-announces.
                 agentPrefixStored_ = false;
@@ -167,9 +162,9 @@ public:
     fetchMetadataFromEtcd(const std::string &agent_name,
                           const std::string &metadata_type,
                           nixl_blob_t &metadata) {
-        std::string metadata_key = makeKey(agent_name, metadata_type);
+        const std::string metadata_key = makeKey(agent_name, metadata_type);
         try {
-            etcd::Response response = etcd_->get(metadata_key);
+            const etcd::Response response = etcd_->get(metadata_key);
             if (response.is_ok()) {
                 metadata = response.value().as_string();
                 if (metadata.empty()) {
@@ -198,8 +193,8 @@ public:
     nixl_status_t
     waitForMetadataFromEtcd(const std::string &metadata_key, nixl_blob_t &remote_metadata) {
         try {
-            etcd::Response response = etcd_->get(metadata_key);
-            int64_t watch_index = response.index();
+            const etcd::Response response = etcd_->get(metadata_key);
+            const int64_t watch_index = response.index();
             std::promise<nixl_status_t> ret_prom;
             auto future = ret_prom.get_future();
             std::atomic<bool> promise_set{false};
@@ -227,15 +222,14 @@ public:
 
             auto watcher = etcd::Watcher(*etcd_, metadata_key, watch_index, watcher_callback);
 
-            auto status = future.wait_for(watchTimeout_);
+            const auto status = future.wait_for(watchTimeout_);
+            // Cancel before returning so the callback cannot fire after the
+            // stack locals it captures by reference go out of scope.
+            watcher.Cancel();
             if (status == std::future_status::timeout) {
                 NIXL_ERROR << "Watch timed out for key: " << metadata_key;
-                // Cancel before returning so the callback cannot fire after the
-                // stack locals it captures by reference go out of scope.
-                watcher.Cancel();
                 return NIXL_ERR_BACKEND;
             }
-            watcher.Cancel();
             return future.get();
         }
         catch (const std::exception &e) {
@@ -248,11 +242,12 @@ public:
     fetchOrWaitForMetadataFromEtcd(const std::string &remote_agent,
                                    const std::string &metadata_label,
                                    nixl_blob_t &remote_metadata) {
-        nixl_status_t ret = fetchMetadataFromEtcd(remote_agent, metadata_label, remote_metadata);
+        const nixl_status_t ret =
+            fetchMetadataFromEtcd(remote_agent, metadata_label, remote_metadata);
         if (ret == NIXL_SUCCESS) {
             return NIXL_SUCCESS;
         }
-        std::string metadata_key = makeKey(remote_agent, metadata_label);
+        const std::string metadata_key = makeKey(remote_agent, metadata_label);
         NIXL_DEBUG << "Metadata not found, setting up watch for: " << metadata_key;
         return waitForMetadataFromEtcd(metadata_key, remote_metadata);
     }
@@ -267,7 +262,7 @@ public:
         }
         // DELETE events are enqueued to be processed in serviceEvents (can't be
         // done inside the Watcher callback).
-        auto process_response = [this, agent_name](etcd::Response response) -> void {
+        const auto process_response = [this, agent_name](etcd::Response response) -> void {
             if (!response.is_ok()) {
                 NIXL_ERROR << "Watcher failed to watch agent " << agent_name
                            << " from etcd: " << response.error_message();
@@ -292,7 +287,7 @@ public:
                            << static_cast<int>(event.event_type());
             }
         };
-        std::string agent_prefix = makeKey(agent_name, "");
+        const std::string agent_prefix = makeKey(agent_name, "");
         agentWatchers_[agent_name] =
             std::make_unique<etcd::Watcher>(*etcd_, agent_prefix, process_response);
     }
@@ -307,7 +302,7 @@ public:
         for (const auto &agent : tmp_invalidated_agents) {
             NIXL_DEBUG << "Invalidated agent: " << agent;
             agentWatchers_.erase(agent);
-            nixl_status_t ret = ctx.invalidateRemoteMD(agent);
+            const nixl_status_t ret = ctx.invalidateRemoteMD(agent);
             if (ret != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to invalidate remote metadata for agent: " << agent << ": "
                            << ret;

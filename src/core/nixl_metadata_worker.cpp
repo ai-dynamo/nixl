@@ -19,10 +19,7 @@
 #include "common/nixl_log.h"
 
 #include <chrono>
-#include <deque>
-#include <iterator>
 #include <mutex>
-#include <thread>
 #include <utility>
 
 namespace {
@@ -40,20 +37,26 @@ nixlMetadataWorker::~nixlMetadataWorker() {
 }
 
 void
-nixlMetadataWorker::start(poll_t poll, nixlTime::us_t delay) {
+nixlMetadataWorker::start(poll_t poll, std::chrono::microseconds delay) {
     if (thread_.joinable()) {
         return;
     }
     poll_ = std::move(poll);
     delay_ = delay;
-    stop_.store(false);
-    running_.store(true);
+    {
+        const std::lock_guard lk(mutex_);
+        stopping_ = false;
+        started_ = true;
+    }
     thread_ = std::thread([this] {
         try {
             loop();
         }
+        catch (const std::exception &e) {
+            NIXL_ERROR << "Metadata worker thread died: " << e.what();
+        }
         catch (...) {
-            exception_ = std::current_exception();
+            NIXL_ERROR << "Metadata worker thread died with an unknown exception";
         }
     });
 }
@@ -63,82 +66,80 @@ nixlMetadataWorker::stop() {
     if (!thread_.joinable()) {
         return;
     }
-    // Let the loop drain what is queued so a send/invalidate issued just before
-    // shutdown still reaches the peer/store. running_ stays set until the thread
-    // is gone, so a task submitted meanwhile is drained here rather than run by
-    // its caller alongside the still-running loop.
-    while (true) {
-        {
-            const std::lock_guard lk(mutex_);
-            if (tasks_.empty()) {
-                break;
-            }
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    {
+        const std::lock_guard lk(mutex_);
+        stopping_ = true;
     }
-    stop_.store(true);
+    cv_.notify_all();
+    // The loop drains what is queued before it exits, so a send/invalidate
+    // issued just before shutdown still reaches the peer/store. started_ stays
+    // set until the thread is gone, so a task submitted meanwhile is drained
+    // there rather than run by its caller alongside the still-running loop.
     thread_.join();
-    running_.store(false);
-    if (exception_) {
-        try {
-            std::rethrow_exception(exception_);
-        }
-        catch (const std::exception &e) {
-            NIXL_WARN << "Metadata worker thread threw an exception: " << e.what();
-        }
-        exception_ = nullptr;
-    }
+    const std::lock_guard lk(mutex_);
+    started_ = false;
 }
 
 void
 nixlMetadataWorker::submit(nixl_worker_task_t task) {
-    if (!running_.load()) {
-        // No thread to run this on, and queueing it would drop it silently. The
-        // caller pays for the I/O, at the cost of making the call synchronous;
-        // the lock keeps the owner's promise that its transport state is touched
-        // by one thread at a time, which the loop provides in the other branch.
-        const std::lock_guard lk(inlineMutex_);
-        task();
-        return;
+    {
+        const std::lock_guard lk(mutex_);
+        if (started_) {
+            tasks_.push_back(std::move(task));
+            cv_.notify_one();
+            return;
+        }
     }
-    const std::lock_guard lk(mutex_);
-    tasks_.push_back(std::move(task));
+    // Nothing would ever run a queued task here: with no thread it would sit in
+    // tasks_ until the worker is destroyed. The caller pays for the I/O instead,
+    // at the cost of making the call synchronous, and the lock keeps the owner's
+    // promise that its transport state is touched by one thread at a time.
+    const std::lock_guard lk(inlineMutex_);
+    task();
 }
 
 void
 nixlMetadataWorker::runQueuedTasks(std::chrono::steady_clock::time_point until) {
-    std::deque<nixl_worker_task_t> batch;
-    {
-        const std::lock_guard lk(mutex_);
-        batch.swap(tasks_);
-    }
-    while (!batch.empty()) {
+    while (true) {
+        nixl_worker_task_t task;
+        {
+            const std::lock_guard lk(mutex_);
+            if (tasks_.empty()) {
+                return;
+            }
+            task = std::move(tasks_.front());
+            tasks_.pop_front();
+        }
         // Isolate each unit of work: one throwing task is logged and the worker
         // keeps running, rather than tearing down all metadata processing.
         try {
-            batch.front()();
+            task();
         }
         catch (const std::exception &e) {
             NIXL_ERROR << "Metadata worker task threw an exception: " << e.what();
         }
-        batch.pop_front();
-        if (std::chrono::steady_clock::now() >= until) {
-            break;
+        catch (...) {
+            NIXL_ERROR << "Metadata worker task threw an unknown exception";
         }
-    }
-    if (!batch.empty()) {
-        // Put the remainder back in front of anything submitted meanwhile, so
-        // tasks still run in the order they were issued.
-        const std::lock_guard lk(mutex_);
-        tasks_.insert(tasks_.begin(),
-                      std::make_move_iterator(batch.begin()),
-                      std::make_move_iterator(batch.end()));
+        if (std::chrono::steady_clock::now() >= until) {
+            return;
+        }
     }
 }
 
 void
 nixlMetadataWorker::loop() {
-    while (!stop_.load()) {
+    while (true) {
+        {
+            std::unique_lock lk(mutex_);
+            // Wake on submitted work or shutdown; time out to poll anyway, which
+            // is what makes delay_ the interval between polls rather than a floor
+            // on how long a submitted task waits to start.
+            cv_.wait_for(lk, delay_, [this] { return stopping_ || !tasks_.empty(); });
+            if (stopping_) {
+                break;
+            }
+        }
         // Spend a bounded slice on tasks, then poll: a task can block on I/O (an
         // etcd fetch waits on a watch), and draining the whole queue first would
         // stall inbound servicing behind it. At least one task runs per pass, so
@@ -152,10 +153,11 @@ nixlMetadataWorker::loop() {
         catch (const std::exception &e) {
             NIXL_ERROR << "Metadata worker poll threw an exception: " << e.what();
         }
-        std::this_thread::sleep_for(std::chrono::microseconds(delay_));
+        catch (...) {
+            NIXL_ERROR << "Metadata worker poll threw an unknown exception";
+        }
     }
-    // stop() waits for the queue to look empty, which it can while a pass still
-    // holds tasks the budget deferred; run those before leaving so nothing
-    // submitted before shutdown is dropped.
+    // Anything queued before shutdown, including tasks a pass deferred when its
+    // budget ran out, runs before the thread leaves.
     runQueuedTasks(std::chrono::steady_clock::time_point::max());
 }

@@ -22,7 +22,6 @@
 #include "nixl_metadata_context.h"
 #include "telemetry.h"
 #include "tracing/trace.h"
-#include "stream/metadata_stream.h"
 #include "sync.h"
 
 #include <atomic>
@@ -31,16 +30,11 @@
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
-// A peer socket (ip, port) and the map of open connections the P2P backend owns.
-using nixl_socket_peer_t = std::pair<std::string, int>;
-
-using nixl_socket_map_t = std::map<nixl_socket_peer_t, int>;
-
 // Implements nixlMetadataContext, which is the whole surface a metadata backend
 // sees of the agent: serialization, cache load and invalidation, nothing else.
 // Preserve the grandfathered 8-space class layout below.
 // clang-format off
-class nixlAgentData : public nixlMetadataContext {
+class nixlAgentData final : public nixlMetadataContext {
     private:
         const std::string name_;
         const nixlAgentConfig config_;

@@ -21,12 +21,9 @@
 #ifndef NIXL_SRC_CORE_NIXL_METADATA_WORKER_H
 #define NIXL_SRC_CORE_NIXL_METADATA_WORKER_H
 
-#include "common/nixl_time.h"
-
-#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <deque>
-#include <exception>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -60,10 +57,11 @@ public:
 
     /**
      * @brief Launch the loop (no-op if already running). Each pass runs queued
-     *        tasks up to a time budget, calls @p poll, then sleeps @p delay.
+     *        tasks up to a time budget and calls @p poll; @p delay is how long
+     *        a pass waits for work before polling anyway.
      */
     void
-    start(poll_t poll, nixlTime::us_t delay);
+    start(poll_t poll, std::chrono::microseconds delay);
 
     /** @brief Drain queued tasks, then stop and join. Idempotent. */
     void
@@ -85,15 +83,20 @@ private:
     runQueuedTasks(std::chrono::steady_clock::time_point until);
 
     poll_t poll_;
-    nixlTime::us_t delay_ = 0;
-    std::deque<nixl_worker_task_t> tasks_;
+    std::chrono::microseconds delay_{0};
     std::mutex mutex_;
-    // Serializes the inline path, where callers run tasks themselves.
+    std::condition_variable cv_;
+    std::deque<nixl_worker_task_t> tasks_;
+    // Whether a thread exists to run tasks. Held under mutex_ rather than read
+    // off thread_: submit() is reachable from any thread, and inspecting
+    // thread_ while stop() is inside join() would race on the thread object.
+    bool started_ = false;
+    bool stopping_ = false;
+    // Serializes the inline path. Separate from mutex_ so running a task never
+    // holds the queue lock across transport I/O, and so a task that submits
+    // cannot deadlock against a non-recursive mutex.
     std::mutex inlineMutex_;
     std::thread thread_;
-    std::atomic<bool> running_{false};
-    std::atomic<bool> stop_{false};
-    std::exception_ptr exception_;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_METADATA_WORKER_H

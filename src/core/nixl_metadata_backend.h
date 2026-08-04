@@ -42,10 +42,12 @@ struct nixlMDConfig {
     bool useListenThread = false;
     /** P2P: port the listener binds. */
     std::uint16_t listenPort = 0;
+    // TODO: Remove ETCD watch timeout from nixlAgentConfig and here on next
+    // ABI/API breaking update.
     /** ETCD: how long a fetch waits on a watch for a key to appear. */
     std::chrono::microseconds etcdWatchTimeout{0};
-    /** Delay between a backend worker's loop iterations, in microseconds. */
-    std::uint64_t workerDelay = 0;
+    /** How long a backend worker waits for work before polling anyway. */
+    std::chrono::microseconds workerDelay{0};
 };
 
 /**

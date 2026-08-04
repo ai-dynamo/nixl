@@ -123,8 +123,6 @@ private:
     const std::unique_ptr<nixlMetadataBackend> p2pBackend_;
     // Name-addressed backend (etcd/tcpstore/future), or null when none configured.
     const std::unique_ptr<nixlMetadataBackend> backend_;
-    // Fixed once the backends exist: they answer it from configuration only.
-    const bool usesThread_;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_MD_MANAGER_H
