@@ -172,5 +172,5 @@ Test Complete.
 ```
 
 <Tip>
-For `CUFILE_ENV_PATH_JSON` and other GDS configuration, see [Environment Variables](../resources/environment-variables#gds-gpudirect-storage).
+For `CUFILE_ENV_PATH_JSON` and other GDS configuration, see [Environment Variables](/nixl/resources/environment-variables#gds-gpudirect-storage).
 </Tip>

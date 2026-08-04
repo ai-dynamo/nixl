@@ -107,6 +107,7 @@ navigation:
       - page: Northbound API Semantics
         path: api-reference/northbound-api.md
       - page: C++ API
+        slug: cpp-api
         path: api-reference/cpp-api.md
       - page: Python API
         path: api-reference/python-api.md

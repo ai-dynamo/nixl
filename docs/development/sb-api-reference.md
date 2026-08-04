@@ -5,7 +5,7 @@ description: Complete reference for the NIXL Southbound API backend engine inter
 
 The Southbound API (SB API) is the standardized interface between NIXL's Transfer Agent and backend plug-ins. Every backend plug-in must implement this interface by inheriting from the `nixlBackendEngine` base class and overriding the required virtual methods.
 
-This reference documents all 25 methods in the SB API: 13 pure virtual methods that every backend must implement, 7 conditionally required methods based on capability flags, and 5 optional methods with default implementations. For a step-by-step tutorial on building a plug-in, see [Building a Backend Plugin](./building-a-backend-plugin). For the user-facing API, see the [C++ API Reference](../api-reference/cpp-api).
+This reference documents all 25 methods in the SB API: 13 pure virtual methods that every backend must implement, 7 conditionally required methods based on capability flags, and 5 optional methods with default implementations. For a step-by-step tutorial on building a plug-in, see [Building a Backend Plugin](/nixl/developer-guide/building-a-backend-plugin). For the user-facing API, see the [C++ API Reference](/nixl/api-reference/cpp-api).
 
 ## Base Class Hierarchy
 
@@ -300,7 +300,7 @@ Based on these flags, the required methods change. A network backend should have
 ## Memory Management
 
 <Tip>
-For descriptor identity and user-facing registration behavior, see [Northbound API Semantics](../api-reference/northbound-api#registration-behavior). For the C++ methods, see [C++ API Reference -- Memory Registration](../api-reference/cpp-api#registermem).
+For descriptor identity and user-facing registration behavior, see [Northbound API Semantics](/nixl/api-reference/northbound-api-semantics#registration-behavior). For the C++ methods, see [C++ API Reference -- Memory Registration](/nixl/api-reference/cpp-api#registermem).
 </Tip>
 
 The agent calls `registerMem()` and `deregisterMem()` while holding its exclusive lock. A backend may rely on this lock for state accessed only by these two callbacks. If transfer callbacks or backend-owned threads access the same state, the backend must provide its own synchronization.
@@ -573,7 +573,7 @@ If `loadLocalMD()` returns the same pointer as input (identity return), `unloadM
 ## Transfer Operations
 
 <Tip>
-For the user-facing transfer workflow, see [C++ API Reference -- Transfer Operations](../api-reference/cpp-api#postxferreq).
+For the user-facing transfer workflow, see [C++ API Reference -- Transfer Operations](/nixl/api-reference/cpp-api#postxferreq).
 </Tip>
 
 The agent calls `prepXfer()`, `postXfer()`, and `checkXfer()` while holding its shared/read lock. Backends must not treat that lock as exclusive serialization. A backend must synchronize state that these callbacks or its own worker threads can modify concurrently.

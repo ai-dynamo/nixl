@@ -3,7 +3,7 @@ title: KVBench
 description: A KV cache benchmarking utility that generates and runs NIXLBench commands to profile LLM inference transfer performance.
 ---
 
-KVBench is a benchmarking utility that generates and runs [NIXLBench](../nixlbench/index.md) commands for profiling KV cache transfer performance across LLM architectures. The `profile` command invokes `nixlbench` as a subprocess, executing the transfer benchmarks that KVBench plans based on model architecture and access patterns.
+KVBench is a benchmarking utility that generates and runs [NIXLBench](/nixl/user-guide/benchmarking-nixl/nixl-bench) commands for profiling KV cache transfer performance across LLM architectures. The `profile` command invokes `nixlbench` as a subprocess, executing the transfer benchmarks that KVBench plans based on model architecture and access patterns.
 
 ## Command Categories
 
@@ -20,9 +20,9 @@ KVBench is a benchmarking utility that generates and runs [NIXLBench](../nixlben
 
 ## Supported Models
 
-KVBench includes model architecture definitions for several LLM families: DeepSeek R1, Llama 3.1, and more. See [Commands and Examples](./commands.md) for details on defining custom model architectures.
+KVBench includes model architecture definitions for several LLM families: DeepSeek R1, Llama 3.1, and more. See [Commands and Examples](/nixl/user-guide/benchmarking-nixl/kv-bench/using-kv-bench) for details on defining custom model architectures.
 
 ## Next Steps
 
-- **[Building KVBench](./build.md)** -- Docker and Python virtual environment installation
-- **[Commands and Examples](./commands.md)** -- Full command reference and usage examples
+- **[Building KVBench](/nixl/user-guide/benchmarking-nixl/kv-bench/building-kv-bench)** -- Docker and Python virtual environment installation
+- **[Commands and Examples](/nixl/user-guide/benchmarking-nixl/kv-bench/using-kv-bench)** -- Full command reference and usage examples

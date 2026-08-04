@@ -43,7 +43,7 @@ meson test -C build
 ```
 
 <Tip>
-See the [Quick Start](./quick-start) for PyPI installation or [Building NIXL from Source](../user-guide/building-nixl) for source build options including Meson flags and Docker containers.
+See the [Quick Start](/nixl/getting-started/quick-start) for PyPI installation or [Building NIXL from Source](/nixl/developer-guide/building-nixl-from-source) for source build options including Meson flags and Docker containers.
 </Tip>
 
 ### Setting Up clang-format
@@ -510,7 +510,7 @@ Your plug-in's README.md must include:
 - **Example Usage**: Simple, working example
 
 <Tip>
-See [Building a Backend Plugin](../development/building-a-backend-plugin) for the full step-by-step tutorial on implementing the SB API.
+See [Building a Backend Plugin](/nixl/developer-guide/building-a-backend-plugin) for the full step-by-step tutorial on implementing the SB API.
 </Tip>
 
 ## Testing Requirements

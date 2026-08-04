@@ -24,7 +24,7 @@ The available log levels are:
 | `TRACE` | Very detailed trace for deep debugging |
 
 <Tip>
-See [Environment Variables](environment-variables#core-variables) for the full `NIXL_LOG_LEVEL` reference and all other NIXL configuration knobs.
+See [Environment Variables](/nixl/resources/environment-variables#core-variables) for the full `NIXL_LOG_LEVEL` reference and all other NIXL configuration knobs.
 </Tip>
 
 ## Error Codes Reference
@@ -67,7 +67,7 @@ pip install meson ninja
 ```
 
 <Tip>
-See [Building NIXL from Source](../user-guide/building-nixl) for detailed source build instructions including Docker containers, or [Quick Start](../getting-started/quick-start) for PyPI installation.
+See [Building NIXL from Source](/nixl/developer-guide/building-nixl-from-source) for detailed source build instructions including Docker containers, or [Quick Start](/nixl/getting-started/quick-start) for PyPI installation.
 </Tip>
 
 ### UCX Not Found During Build
@@ -174,7 +174,7 @@ The remote agent became unreachable during the operation:
 ## Backend-Specific Issues
 
 <Note>
-See [Backend Selection](../user-guide/backend-selection) for backend requirements and memory type compatibility.
+See [Backend Selection](/nixl/user-guide/backend-selection) for backend requirements and memory type compatibility.
 </Note>
 
 ### UCX
@@ -239,7 +239,7 @@ export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountNam
 ## etcd Connection Issues
 
 <Tip>
-See [Metadata Exchange with etcd](../user-guide/etcd-metadata-exchange) for the full etcd setup and configuration guide.
+See [Metadata Exchange with etcd](/nixl/user-guide/metadata-exchange-with-etcd) for the full etcd setup and configuration guide.
 </Tip>
 
 ### etcd Not Connecting

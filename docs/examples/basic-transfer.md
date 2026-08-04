@@ -3,7 +3,7 @@ title: Basic Two-Peer Transfer
 description: Create two Transfer Agents, register memory, exchange metadata, and execute an asynchronous data transfer between them using the UCX backend.
 ---
 
-The examples below are taken from the `examples/` directory in the [NIXL repository](https://github.com/ai-dynamo/nixl), annotated with inline explanations. For the conceptual overview of NIXL's transfer workflow, see [Quick Start](../getting-started/quick-start).
+The examples below are taken from the `examples/` directory in the [NIXL repository](https://github.com/ai-dynamo/nixl), annotated with inline explanations. For the conceptual overview of NIXL's transfer workflow, see [Quick Start](/nixl/getting-started/quick-start).
 
 **What you'll learn:** How to create two Transfer Agents, register memory regions, exchange metadata via a side channel, and execute an asynchronous data transfer between them.
 
@@ -400,5 +400,5 @@ Test done
 ```
 
 <Tip>
-For a step-by-step explanation of the NIXL transfer workflow (initialization, registration, metadata exchange, transfer, teardown), see [Quick Start](../getting-started/quick-start).
+For a step-by-step explanation of the NIXL transfer workflow (initialization, registration, metadata exchange, transfer, teardown), see [Quick Start](/nixl/getting-started/quick-start).
 </Tip>

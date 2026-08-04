@@ -39,5 +39,5 @@ See [Build Options](/docs/user-guide/building-nixl#build-options) for the full l
 </Tip>
 
 <Note>
-For backend-specific build instructions, see [NIXL Backends](/docs/user-guide/backend-selection).
+For backend-specific build instructions, see [NIXL Backends](/nixl/user-guide/backend-selection).
 </Note>

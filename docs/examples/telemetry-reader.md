@@ -239,5 +239,5 @@ Total events read: 2
 ```
 
 <Tip>
-For the full telemetry architecture, event categories, Prometheus integration, and configuration details, see the [Telemetry Guide](../user-guide/telemetry).
+For the full telemetry architecture, event categories, Prometheus integration, and configuration details, see the [Telemetry Guide](/nixl/user-guide/telemetry-guide).
 </Tip>

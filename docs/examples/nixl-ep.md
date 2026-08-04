@@ -163,5 +163,5 @@ python3 tests/elastic/elastic.py \
 | `expansion_contraction.json` | 4 to 8 to 6 ranks (scale up then down) |
 
 <Tip>
-NIXL-EP builds on the [NIXL Device API](../api-reference/device-api). For general NIXL concepts, see [Architecture](../getting-started/architecture).
+NIXL-EP builds on the [NIXL Device API](/nixl/api-reference/device-api). For general NIXL concepts, see [Architecture](/nixl/getting-started/architecture).
 </Tip>

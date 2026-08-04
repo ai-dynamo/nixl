@@ -3,7 +3,7 @@ title: Device API Reference
 description: CUDA device-side API for GPU-initiated data transfers in NIXL.
 ---
 
-This is the CUDA device-side API reference for NIXL. The Device API enables GPU kernels to initiate and monitor data transfers directly from device code, without returning to the host. For the host-side C++ API, see the [C++ API Reference](./cpp-api).
+This is the CUDA device-side API reference for NIXL. The Device API enables GPU kernels to initiate and monitor data transfers directly from device code, without returning to the host. For the host-side C++ API, see the [C++ API Reference](/nixl/api-reference/cpp-api).
 
 To use the NIXL Device API, include the device header:
 
@@ -54,7 +54,7 @@ Memory view element referencing a buffer in a prepared memory view.
 | `index` | `size_t` | Index in the memory view |
 | `offset` | `size_t` | Byte offset within the buffer |
 
-Memory views must be prepared on the host using `nixlAgent::prepMemView` before device code can access them. See the [C++ API Reference](./cpp-api) for details.
+Memory views must be prepared on the host using `nixlAgent::prepMemView` before device code can access them. See the [C++ API Reference](/nixl/api-reference/cpp-api) for details.
 
 ## Flags
 

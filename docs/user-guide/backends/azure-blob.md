@@ -49,4 +49,4 @@ After installing the Azure SDK, rebuild NIXL to enable the Azure Blob backend.
 
 - **Azure cloud storage** -- Deployments where Blob Storage is the target object store.
 - **Checkpoint workflows** -- Save and load model checkpoints on Azure infrastructure.
-- **Azure-native object storage** -- Use this backend for Azure Blob; use [OBJ](./obj) for S3-compatible storage.
+- **Azure-native object storage** -- Use this backend for Azure Blob; use [OBJ](/nixl/user-guide/backend-selection/obj) for S3-compatible storage.

@@ -76,7 +76,7 @@ Each backend inherits from nixlBackendMD base class to store any metadata requir
 For backends that support `FILE_SEG`, NIXL ships a shared **path-mode**
 helper (`nixl::parsePathMeta()` + `nixlFilePathMD`) that lets callers
 register files by path in `nixlBlobDesc::metaInfo` instead of by
-pre-opened fd; see [`src/utils/file/README.md`](../src/utils/file/README.md#path-mode-file-registration).
+pre-opened fd; see [`src/utils/file/README.md`](https://github.com/ai-dynamo/nixl/blob/main/src/utils/file/README.md#path-mode-file-registration).
 
 ### Metadata Management:
 

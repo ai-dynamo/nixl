@@ -38,7 +38,7 @@ These variables configure NIXL's distributed metadata exchange via etcd.
 | `NIXL_ETCD_NAMESPACE` | String (path) | `/nixl/agents/` | Key prefix namespace for agent metadata stored in etcd. |
 
 <Tip>
-For detailed etcd setup and usage, see the [Metadata Exchange with etcd](../user-guide/etcd-metadata-exchange) guide.
+For detailed etcd setup and usage, see the [Metadata Exchange with etcd](/nixl/user-guide/metadata-exchange-with-etcd) guide.
 </Tip>
 
 ## Telemetry Variables
@@ -57,7 +57,7 @@ These variables control NIXL's built-in telemetry collection and export system.
 | `NIXL_TELEMETRY_PROMETHEUS_LOCAL` | Boolean | `false` | When `true`, binds the Prometheus exporter to localhost only (`127.0.0.1`) instead of all interfaces (`0.0.0.0`). |
 
 <Tip>
-For the full telemetry architecture and usage examples, see the [Telemetry Guide](../user-guide/telemetry).
+For the full telemetry architecture and usage examples, see the [Telemetry Guide](/nixl/user-guide/telemetry-guide).
 </Tip>
 
 ## Backend-Specific Variables

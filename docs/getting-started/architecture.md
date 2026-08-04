@@ -42,9 +42,9 @@ application initialization so metadata is exchanged only once.
 
 Each backend registers with the Transfer Agent during initialization, making the agent aware of available transports.
 
-NIXL automatically selects the optimal backend based on the source and destination memory types. For the full backend support matrix and selection logic, see [Backend Selection](/docs/user-guide/backend-selection).
+NIXL automatically selects the optimal backend based on the source and destination memory types. For the full backend support matrix and selection logic, see [Backend Selection](/nixl/user-guide/backend-selection).
 
-NIXL ships with 12 transfer backends: UCX, GDS, GDS-MT, POSIX, Object (S3, S3_CRT, S3/RDMA), Mooncake, DOCA GPUNetIO, Libfabric, HF3FS, UCCL-P2P, Azure Blob, and GUSLI. Each backend is implemented as a plug-in that registers with the Transfer Agent during initialization. See the [Overview](./overview) page for an interactive diagram showing the full software stack with backend and memory type compatibility.
+NIXL ships with 12 transfer backends: UCX, GDS, GDS-MT, POSIX, Object (S3, S3_CRT, S3/RDMA), Mooncake, DOCA GPUNetIO, Libfabric, HF3FS, UCCL-P2P, Azure Blob, and GUSLI. Each backend is implemented as a plug-in that registers with the Transfer Agent during initialization. See the [Overview](/nixl/getting-started/overview) page for an interactive diagram showing the full software stack with backend and memory type compatibility.
 
 ## Metadata Handler
 

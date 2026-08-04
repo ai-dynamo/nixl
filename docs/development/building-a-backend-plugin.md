@@ -5,7 +5,7 @@ description: Step-by-step guide to implementing a custom NIXL backend plug-in us
 
 Build a custom NIXL backend plug-in from scratch, using the POSIX plug-in as a teaching example. A backend plug-in implements the Southbound API (SB API) to add support for a new transfer mechanism -- whether that is a networking transport, a GPU-direct storage interface, or a local file I/O system.
 
-Plug-in development is C++ only. All backend plug-ins inherit from `nixlBackendEngine` (defined in `src/api/cpp/backend/backend_engine.h`) and override the required virtual methods. The Plugin Manager handles loading your plug-in at runtime, discovering it from a shared library that exports a standard entry point. For the complete method-by-method SB API reference, see the [SB API Reference](./sb-api-reference). For the user-facing API that triggers these backend calls, see the [C++ API Reference](../api-reference/cpp-api).
+Plug-in development is C++ only. All backend plug-ins inherit from `nixlBackendEngine` (defined in `src/api/cpp/backend/backend_engine.h`) and override the required virtual methods. The Plugin Manager handles loading your plug-in at runtime, discovering it from a shared library that exports a standard entry point. For the complete method-by-method SB API reference, see the [SB API Reference](/nixl/api-reference/plugin-southbound-api). For the user-facing API that triggers these backend calls, see the [C++ API Reference](/nixl/api-reference/cpp-api).
 
 First, understand how user-facing (NB) API calls map to the backend (SB) API methods that your plug-in implements.
 
@@ -27,7 +27,7 @@ When a user interacts with a `nixlAgent`, the Transfer Agent translates those hi
 | `agent.connect(remote)` | `backend.connect(remote_agent)` per common backend |
 
 <Tip>
-See the [C++ API Reference](../api-reference/cpp-api) for full NB API documentation and the [Quick Start](../getting-started/quick-start) guide for the user workflow.
+See the [C++ API Reference](/nixl/api-reference/cpp-api) for full NB API documentation and the [Quick Start](/nixl/getting-started/quick-start) guide for the user workflow.
 </Tip>
 
 Users call the NB API, the Transfer Agent routes calls to the appropriate backend, and your plug-in handles the data transfer through SB API methods.
@@ -454,4 +454,4 @@ If you are building a storage backend, the POSIX plug-in is your closest referen
 | Remote metadata | Full implementation | Not needed |
 | Connection management | Full implementation | Returns `NIXL_SUCCESS` |
 
-For the complete list of which methods are required for each capability flag combination, see the [Capability Matrix](./sb-api-reference#capability-matrix) in the SB API Reference.
+For the complete list of which methods are required for each capability flag combination, see the [Capability Matrix](/nixl/api-reference/plugin-southbound-api#capability-matrix) in the SB API Reference.

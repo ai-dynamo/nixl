@@ -3,7 +3,7 @@ title: Building NIXLBench
 description: Build NIXLBench using Docker or natively from source with Meson.
 ---
 
-NIXLBench requires a NIXL installation -- see [Building NIXL from Source](../../building-nixl/index.md) for instructions.
+NIXLBench requires a NIXL installation -- see [Building NIXL from Source](/nixl/developer-guide/building-nixl-from-source) for instructions.
 
 ## System Requirements
 
@@ -67,11 +67,11 @@ docker run -it --gpus all --network host nixlbench:latest \
 </Tab>
 <Tab title="Native">
 
-Build NIXLBench natively when Docker is not available or for development workflows. NIXL must be built and installed first -- see [Building NIXL from Source](../../building-nixl/index.md).
+Build NIXLBench natively when Docker is not available or for development workflows. NIXL must be built and installed first -- see [Building NIXL from Source](/nixl/developer-guide/building-nixl-from-source).
 
 ### Core Dependencies
 
-- [UCX](../../backends/ucx.md)
+- [UCX](/nixl/user-guide/backend-selection/ucx)
 - CUDA Toolkit (12.8 or later)
 - Meson
 - Ninja

@@ -3,11 +3,11 @@ title: NIXLBench Usage and Troubleshooting
 description: How to run NIXLBench benchmarks and troubleshoot common issues.
 ---
 
-This page covers running NIXLBench benchmarks end-to-end, including etcd coordination, the four communication patterns, storage backend examples, and essential CLI options. For installation prerequisites, see [Building NIXLBench](./build.md).
+This page covers running NIXLBench benchmarks end-to-end, including etcd coordination, the four communication patterns, storage backend examples, and essential CLI options. For installation prerequisites, see [Building NIXLBench](/nixl/user-guide/benchmarking-nixl/nixl-bench/building-nixl-bench).
 
 ## etcd Coordination
 
-NIXLBench workers coordinate through [etcd](../../etcd-metadata-exchange.md) for discovery and synchronization. Network backends ([UCX](../../backends/ucx.md), [DOCA GPUNetIO](../../backends/gpunetio.md), [Mooncake](../../backends/mooncake.md), [Libfabric](../../backends/libfabric.md)) and all multi-node setups require etcd. Storage backends ([GPUDirect Storage](../../backends/gds.md), [GPUDirect Storage MT](../../backends/gds-mt.md), [POSIX](../../backends/posix.md), [HF3FS](../../backends/hf3fs.md), [OBJ](../../backends/obj.md), [GUSLI](../../backends/gusli.md)) can run without etcd when launched as a single instance.
+NIXLBench workers coordinate through [etcd](/nixl/user-guide/metadata-exchange-with-etcd) for discovery and synchronization. Network backends ([UCX](/nixl/user-guide/backend-selection/ucx), [DOCA GPUNetIO](/nixl/user-guide/backend-selection/doca-gpu-net-io), [Mooncake](/nixl/user-guide/backend-selection/mooncake), [Libfabric](/nixl/user-guide/backend-selection/libfabric)) and all multi-node setups require etcd. Storage backends ([GPUDirect Storage](/nixl/user-guide/backend-selection/gpu-direct-storage), [GPUDirect Storage MT](/nixl/user-guide/backend-selection/gpu-direct-storage-mt), [POSIX](/nixl/user-guide/backend-selection/posix), [HF3FS](/nixl/user-guide/backend-selection/hf-3-fs), [OBJ](/nixl/user-guide/backend-selection/obj), [GUSLI](/nixl/user-guide/backend-selection/gusli)) can run without etcd when launched as a single instance.
 
 Start an etcd server with Docker:
 
@@ -25,7 +25,7 @@ docker run -d --name etcd-server \
 ```
 
 <Warning>
-All NIXLBench workers in a benchmark group must connect to etcd within 60 seconds of the first worker joining. Workers that miss this window cause the barrier to fail and the benchmark to abort. For etcd setup and configuration details, see [Metadata Exchange with etcd](../../etcd-metadata-exchange.md).
+All NIXLBench workers in a benchmark group must connect to etcd within 60 seconds of the first worker joining. Workers that miss this window cause the barrier to fail and the benchmark to abort. For etcd setup and configuration details, see [Metadata Exchange with etcd](/nixl/user-guide/metadata-exchange-with-etcd).
 </Warning>
 
 <Note>
@@ -108,7 +108,7 @@ Storage backends benchmark file and object I/O operations. They can run without 
 
 ### GPUDirect Storage (GDS)
 
-Run a single-instance GDS benchmark with direct I/O. For backend-specific flags, see the [GPUDirect Storage](../../backends/gds.md) page.
+Run a single-instance GDS benchmark with direct I/O. For backend-specific flags, see the [GPUDirect Storage](/nixl/user-guide/backend-selection/gpu-direct-storage) page.
 
 ```bash
 nixlbench --backend GDS --filepath /mnt/storage/testfile --storage_enable_direct
@@ -116,7 +116,7 @@ nixlbench --backend GDS --filepath /mnt/storage/testfile --storage_enable_direct
 
 ### OBJ (S3)
 
-Run an S3 object storage benchmark using CLI flags for credentials. For backend-specific flags, see the [OBJ](../../backends/obj.md) page.
+Run an S3 object storage benchmark using CLI flags for credentials. For backend-specific flags, see the [OBJ](/nixl/user-guide/backend-selection/obj) page.
 
 ```bash
 nixlbench --backend OBJ \
@@ -126,7 +126,7 @@ nixlbench --backend OBJ \
   --obj_bucket_name my-bucket
 ```
 
-For backend-specific options not listed on this page, see the corresponding backend page in the [User Guide](../../backends/index.md).
+For backend-specific options not listed on this page, see the corresponding backend page in the [User Guide](/nixl/user-guide/backend-selection).
 
 ## CLI Options
 
@@ -234,7 +234,7 @@ For Docker build failures, clear the cache and rebuild:
 docker system prune -a
 ```
 
-For full build instructions, see [Building NIXLBench](./build.md).
+For full build instructions, see [Building NIXLBench](/nixl/user-guide/benchmarking-nixl/nixl-bench/building-nixl-bench).
 
 ### CUDA / GPU Not Found
 

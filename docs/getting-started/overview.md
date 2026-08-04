@@ -23,13 +23,13 @@ NIXL delivers high-bandwidth, low-latency point-to-point data transfers across V
 <Tip>
 NIXL automatically selects the optimal backend based on the source and destination
 memory types and the backends available on both agents. You do not need to manually
-specify which transport to use. See [Backend Selection](/docs/user-guide/backend-selection) for the full support matrix.
+specify which transport to use. See [Backend Selection](/nixl/user-guide/backend-selection) for the full support matrix.
 </Tip>
 
 <div className="nixl-stack-diagram">
 <div className="nixl-stack-layer"><div className="nixl-stack-layer-title">Framework and Application Layer</div></div>
 <div className="nixl-stack-agent-box">
-<div className="nixl-stack-agent-layer nixl-stack-agent-nb"><div className="nixl-stack-agent-layer-title">Northbound API</div><span className="nixl-stack-agent-layer-sub"><a href="/nixl/api-reference/c-api">C++</a> / <a href="/nixl/api-reference/python-api">Python</a> / <a href="/nixl/api-reference/rust-api">Rust</a></span></div>
+<div className="nixl-stack-agent-layer nixl-stack-agent-nb"><div className="nixl-stack-agent-layer-title">Northbound API</div><span className="nixl-stack-agent-layer-sub"><a href="/nixl/api-reference/cpp-api">C++</a> / <a href="/nixl/api-reference/python-api">Python</a> / <a href="/nixl/api-reference/rust-api">Rust</a></span></div>
 <div className="nixl-stack-agent-layer nixl-stack-agent-core"><div className="nixl-stack-agent-layer-title">NIXL Core</div><div className="nixl-stack-agent-chips"><span className="nixl-stack-chip">Metadata</span><span className="nixl-stack-chip">Cost Model</span><span className="nixl-stack-chip">Resiliency</span><span className="nixl-stack-chip">Telemetry</span><span className="nixl-stack-chip">Batching</span><span className="nixl-stack-chip">Multi-threading</span><span className="nixl-stack-chip">Path Optimization</span></div></div>
 <div className="nixl-stack-agent-layer nixl-stack-agent-sb"><div className="nixl-stack-agent-layer-title">Southbound API</div><span className="nixl-stack-agent-layer-sub"><a href="/nixl/api-reference/plugin-southbound-api">C++</a></span></div>
 </div>

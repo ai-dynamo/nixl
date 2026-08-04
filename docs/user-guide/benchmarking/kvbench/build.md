@@ -10,7 +10,7 @@ KVBench requires Python 3.12 or later. For GPU-accelerated benchmarks, PyTorch i
 <Tabs>
 <Tab title="Docker">
 
-KVBench is included in the NIXLBench Docker container. See [Building NIXLBench](../nixlbench/build.md) for Docker build and setup instructions.
+KVBench is included in the NIXLBench Docker container. See [Building NIXLBench](/nixl/user-guide/benchmarking-nixl/nixl-bench/building-nixl-bench) for Docker build and setup instructions.
 
 After building the container, KVBench is available at `/workspace/benchmark/kvbench/` inside the container.
 

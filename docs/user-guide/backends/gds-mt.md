@@ -15,7 +15,7 @@ GDS_MT is the multi-threaded variant of the GDS backend. It uses the same NVIDIA
 
 ## Installation
 
-GDS_MT shares the same prerequisites and installation requirements as the [GDS](./gds) backend. See the [GDS Installation](./gds#installation) section for prerequisites, cuFile verification, and build options.
+GDS_MT shares the same prerequisites and installation requirements as the [GDS](/nixl/user-guide/backend-selection/gpu-direct-storage) backend. See the [GDS Installation](/nixl/user-guide/backend-selection/gpu-direct-storage#installation) section for prerequisites, cuFile verification, and build options.
 
 ## Configuration
 

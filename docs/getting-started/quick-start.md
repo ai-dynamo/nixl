@@ -132,7 +132,7 @@ let backend = agent.create_backend("UCX", &params)?;
 <Tip>
 You can create multiple backends on the same agent. NIXL will automatically select
 the best one for each transfer based on source and destination memory types.
-See [NIXL Backends](/docs/user-guide/backend-selection) for guidance on which backends to enable.
+See [NIXL Backends](/nixl/user-guide/backend-selection) for guidance on which backends to enable.
 </Tip>
 
 ## Memory Registration
@@ -237,7 +237,7 @@ use the etcd mode or implement your own transport for the metadata blobs.
 For centralized metadata exchange using a distributed key-value store. Agents publish metadata to an etcd server and fetch from it by agent name. Requires an etcd server running and the `NIXL_ETCD_ENDPOINTS` environment variable set.
 
 <Note>
-For etcd server setup, configuration, and key prefix scheme details, see the [Metadata Exchange with etcd](../user-guide/etcd-metadata-exchange) guide. This section
+For etcd server setup, configuration, and key prefix scheme details, see the [Metadata Exchange with etcd](/nixl/user-guide/metadata-exchange-with-etcd) guide. This section
 shows only the API calls for etcd-based metadata exchange.
 </Note>
 

@@ -3,7 +3,7 @@ title: etcd Metadata Exchange
 description: Use etcd for automatic distributed metadata exchange between Transfer Agents, eliminating manual side-channel metadata serialization.
 ---
 
-The examples below are taken from the `examples/` directory in the [NIXL repository](https://github.com/ai-dynamo/nixl), annotated with inline explanations. For the conceptual overview of NIXL's transfer workflow, see [Quick Start](../getting-started/quick-start).
+The examples below are taken from the `examples/` directory in the [NIXL repository](https://github.com/ai-dynamo/nixl), annotated with inline explanations. For the conceptual overview of NIXL's transfer workflow, see [Quick Start](/nixl/getting-started/quick-start).
 
 **What you'll learn:** How to use etcd for automatic distributed metadata exchange between Transfer Agents, eliminating the need for manual side-channel metadata serialization.
 
@@ -258,5 +258,5 @@ Example completed.
 ```
 
 <Tip>
-For full etcd setup instructions including server deployment, namespace configuration, and connection tuning, see [Metadata Exchange with etcd](../user-guide/etcd-metadata-exchange).
+For full etcd setup instructions including server deployment, namespace configuration, and connection tuning, see [Metadata Exchange with etcd](/nixl/user-guide/metadata-exchange-with-etcd).
 </Tip>

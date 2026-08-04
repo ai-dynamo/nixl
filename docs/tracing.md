@@ -18,7 +18,7 @@ visible as ranges on an [NVIDIA Nsight Systems](https://docs.nvidia.com/nsight-s
 timeline; it ships as `libtrace_backend_nvtx.so`. Additional backends (e.g. MLCommons
 **Chakra** execution traces) are planned and plug into the same call sites.
 
-Tracing is independent of the [telemetry](telemetry.md) system: telemetry collects
+Tracing is independent of the [telemetry](https://github.com/ai-dynamo/nixl/blob/main/docs/telemetry.md) system: telemetry collects
 numeric metrics/events, while tracing records spans/markers for profiling and
 execution-trace tools.
 

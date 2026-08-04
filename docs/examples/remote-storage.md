@@ -234,5 +234,5 @@ Server names must match what is listed in the client agents file. The `buf_size`
 - For network tuning, set `UCX_MAX_RMA_RAILS=1` for VRAM-to-DRAM transfers (may need higher for larger messages)
 
 <Tip>
-For GDS configuration details, see [Environment Variables](../resources/environment-variables#gds-gpudirect-storage). For backend-specific documentation, see [NIXL Backends](/docs/user-guide/backend-selection).
+For GDS configuration details, see [Environment Variables](/nixl/resources/environment-variables#gds-gpudirect-storage). For backend-specific documentation, see [NIXL Backends](/nixl/user-guide/backend-selection).
 </Tip>

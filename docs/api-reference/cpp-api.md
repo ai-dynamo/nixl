@@ -3,9 +3,9 @@ title: C++ API Reference
 description: Complete C++ API reference for NIXL data transfers.
 ---
 
-This is the C++ API reference for the NVIDIA Inference Xfer Library (NIXL). C++ is the native API -- all other language bindings are built on top of it. For Python bindings, see the [Python API Reference](./python-api). For Rust bindings, see the [Rust API Reference](./rust-api).
+This is the C++ API reference for the NVIDIA Inference Xfer Library (NIXL). C++ is the native API -- all other language bindings are built on top of it. For Python bindings, see the [Python API Reference](/nixl/api-reference/python-api). For Rust bindings, see the [Rust API Reference](/nixl/api-reference/rust-api).
 
-Behavior shared by all bindings is documented in [Northbound API Semantics](./northbound-api).
+Behavior shared by all bindings is documented in [Northbound API Semantics](/nixl/api-reference/northbound-api-semantics).
 
 To use the NIXL C++ API, include a single header:
 
@@ -309,7 +309,7 @@ descs.addDesc(nixlBlobDesc(reinterpret_cast<uintptr_t>(buf), 256, 0, ""));
 ## Initialization and Configuration
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Agent Initialization](../getting-started/quick-start#agent-initialization).
+For a complete workflow example, see [Quick Start -- Agent Initialization](/nixl/getting-started/quick-start#agent-initialization).
 </Tip>
 
 ### nixlAgent
@@ -361,7 +361,7 @@ agent.getAvailPlugins(plugins);
 ## Backend Management
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Backend Creation](../getting-started/quick-start#backend-creation).
+For a complete workflow example, see [Quick Start -- Backend Creation](/nixl/getting-started/quick-start#backend-creation).
 </Tip>
 
 ### getPluginParams
@@ -422,7 +422,7 @@ agent.createBackend("UCX", params, backend);
 ## Memory Registration
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Memory Registration](../getting-started/quick-start#memory-registration).
+For a complete workflow example, see [Quick Start -- Memory Registration](/nixl/getting-started/quick-start#memory-registration).
 </Tip>
 
 ### registerMem
@@ -498,7 +498,7 @@ agent.makeConnection("remote_agent");
 ## Transfer Preparation
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Creating and Executing Transfers](../getting-started/quick-start#creating-and-executing-transfers).
+For a complete workflow example, see [Quick Start -- Creating and Executing Transfers](/nixl/getting-started/quick-start#creating-and-executing-transfers).
 </Tip>
 
 ### prepXferDlist (4-parameter)
@@ -592,7 +592,7 @@ agent.createXferReq(NIXL_WRITE, local_descs, remote_descs,
 ## Transfer Operations
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Creating and Executing Transfers](../getting-started/quick-start#creating-and-executing-transfers).
+For a complete workflow example, see [Quick Start -- Creating and Executing Transfers](/nixl/getting-started/quick-start#creating-and-executing-transfers).
 </Tip>
 
 ### estimateXferCost
@@ -813,7 +813,7 @@ agent.genNotif("remote_agent", "control_message");
 ## Metadata -- Side Channel
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Metadata Exchange](../getting-started/quick-start#metadata-exchange).
+For a complete workflow example, see [Quick Start -- Metadata Exchange](/nixl/getting-started/quick-start#metadata-exchange).
 </Tip>
 
 Side-channel metadata methods use a serialized blob that the application transports between agents using its own mechanism (shared memory, message queue, custom RPC, etc.).
@@ -885,7 +885,7 @@ agent.invalidateRemoteMD("remote_agent");
 ## Metadata -- Direct Channel
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Metadata Exchange](../getting-started/quick-start#metadata-exchange).
+For a complete workflow example, see [Quick Start -- Metadata Exchange](/nixl/getting-started/quick-start#metadata-exchange).
 </Tip>
 
 Direct-channel methods send and fetch metadata over peer-to-peer TCP sockets or an etcd metadata server, without the application needing to transport blobs manually.

@@ -3,9 +3,9 @@ title: Python API Reference
 description: Complete Python API reference for NIXL data transfers.
 ---
 
-This is the Python API reference for the NVIDIA Inference Xfer Library (NIXL). Python provides a high-level, Pythonic interface to NIXL via the `nixl_agent` class. For the C++ API, see the [C++ API Reference](./cpp-api). For Rust bindings, see the [Rust API Reference](./rust-api).
+This is the Python API reference for the NVIDIA Inference Xfer Library (NIXL). Python provides a high-level, Pythonic interface to NIXL via the `nixl_agent` class. For the C++ API, see the [C++ API Reference](/nixl/api-reference/cpp-api). For Rust bindings, see the [Rust API Reference](/nixl/api-reference/rust-api).
 
-Behavior shared by all bindings is documented in [Northbound API Semantics](./northbound-api).
+Behavior shared by all bindings is documented in [Northbound API Semantics](/nixl/api-reference/northbound-api-semantics).
 
 Key Python-specific features:
 
@@ -139,14 +139,14 @@ The Python API also accepts device-style aliases `"cpu"` (maps to `DRAM`) and `"
 ## Initialization and Configuration
 
 <Tip>
-For a complete walkthrough of agent setup and the overall transfer workflow, see [Quick Start -- Agent Initialization](../getting-started/quick-start#agent-initialization).
+For a complete walkthrough of agent setup and the overall transfer workflow, see [Quick Start -- Agent Initialization](/nixl/getting-started/quick-start#agent-initialization).
 </Tip>
 
 ### \_\_init\_\_
 
 Create a new Transfer Agent. The agent manages backends, memory registrations, metadata, and transfer operations for a single process.
 
-**C++ equivalent:** [`nixlAgent`](./cpp-api#nixlagent)
+**C++ equivalent:** [`nixlAgent`](/nixl/api-reference/cpp-api#nixlagent)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -177,7 +177,7 @@ Unlike C++, Python auto-creates backends listed in the config during constructio
 
 Get the list of all available backend plug-ins discovered at agent initialization.
 
-**C++ equivalent:** [`getAvailPlugins`](./cpp-api#getavailplugins)
+**C++ equivalent:** [`getAvailPlugins`](/nixl/api-reference/cpp-api#getavailplugins)
 
 | **Returns** | Type | Description |
 |-------------|------|-------------|
@@ -196,7 +196,7 @@ The plug-in list is cached at agent initialization. This call returns the cached
 
 Get the memory types supported by a specific plug-in.
 
-**C++ equivalent:** [`getPluginParams`](./cpp-api#getpluginparams) (memory types portion)
+**C++ equivalent:** [`getPluginParams`](/nixl/api-reference/cpp-api#getpluginparams) (memory types portion)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -215,7 +215,7 @@ mem_types = agent.get_plugin_mem_types("UCX")
 
 Get the initialization parameters of a plug-in. Returns a dictionary where keys are parameter names and values are their default values.
 
-**C++ equivalent:** [`getPluginParams`](./cpp-api#getpluginparams) (parameters portion)
+**C++ equivalent:** [`getPluginParams`](/nixl/api-reference/cpp-api#getpluginparams) (parameters portion)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -233,14 +233,14 @@ params = agent.get_plugin_params("UCX")
 ## Backend Management
 
 <Tip>
-For a walkthrough of backend creation and selection, see [Quick Start -- Backend Creation](../getting-started/quick-start#backend-creation).
+For a walkthrough of backend creation and selection, see [Quick Start -- Backend Creation](/nixl/getting-started/quick-start#backend-creation).
 </Tip>
 
 ### get_backend_mem_types
 
 Get the memory types supported by an initialized backend. After initialization, supported memory types may differ from the plug-in defaults.
 
-**C++ equivalent:** [`getBackendParams`](./cpp-api#getbackendparams) (memory types portion)
+**C++ equivalent:** [`getBackendParams`](/nixl/api-reference/cpp-api#getbackendparams) (memory types portion)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -258,7 +258,7 @@ mem_types = agent.get_backend_mem_types("UCX")
 
 Get the parameters of an initialized backend. Available parameters may differ from the plug-in defaults after initialization.
 
-**C++ equivalent:** [`getBackendParams`](./cpp-api#getbackendparams) (parameters portion)
+**C++ equivalent:** [`getBackendParams`](/nixl/api-reference/cpp-api#getbackendparams) (parameters portion)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -276,7 +276,7 @@ params = agent.get_backend_params("UCX")
 
 Initialize a backend with the specified parameters. This is only needed for backends not listed in the `backends` config field at agent creation time.
 
-**C++ equivalent:** [`createBackend`](./cpp-api#createbackend)
+**C++ equivalent:** [`createBackend`](/nixl/api-reference/cpp-api#createbackend)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -295,14 +295,14 @@ The Python API automatically caches the backend's parameters and supported memor
 ## Memory Registration
 
 <Tip>
-For a complete walkthrough of memory registration in the transfer workflow, see [Quick Start -- Memory Registration](../getting-started/quick-start#memory-registration).
+For a complete walkthrough of memory registration in the transfer workflow, see [Quick Start -- Memory Registration](/nixl/getting-started/quick-start#memory-registration).
 </Tip>
 
 ### register_memory
 
 Register memory regions with one or more backends. Accepts multiple input formats including PyTorch tensors for convenience.
 
-**C++ equivalent:** [`registerMem`](./cpp-api#registermem)
+**C++ equivalent:** [`registerMem`](/nixl/api-reference/cpp-api#registermem)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -348,7 +348,7 @@ You can pass tensors directly -- there is no need to manually extract `data_ptr(
 
 Deregister memory regions from backends.
 
-**C++ equivalent:** [`deregisterMem`](./cpp-api#deregistermem)
+**C++ equivalent:** [`deregisterMem`](/nixl/api-reference/cpp-api#deregistermem)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -363,7 +363,7 @@ agent.deregister_memory(reg_descs)
 
 Query information about registered memory or storage for a specific backend.
 
-**C++ equivalent:** [`queryMem`](./cpp-api#querymem)
+**C++ equivalent:** [`queryMem`](/nixl/api-reference/cpp-api#querymem)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -383,7 +383,7 @@ results = agent.query_memory(reg_descs, "UCX")
 
 Proactively establish a connection with a remote agent to reduce first-transfer latency. This is optional -- NIXL establishes connections on demand if not called.
 
-**C++ equivalent:** [`makeConnection`](./cpp-api#makeconnection)
+**C++ equivalent:** [`makeConnection`](/nixl/api-reference/cpp-api#makeconnection)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -480,14 +480,14 @@ Transfer descriptors use 3-tuples `(address, size, device_id)` while registratio
 ## Transfer Preparation
 
 <Tip>
-For a walkthrough of the full transfer lifecycle including preparation, posting, and status checking, see [Quick Start -- Creating and Executing Transfers](../getting-started/quick-start#creating-and-executing-transfers).
+For a walkthrough of the full transfer lifecycle including preparation, posting, and status checking, see [Quick Start -- Creating and Executing Transfers](/nixl/getting-started/quick-start#creating-and-executing-transfers).
 </Tip>
 
 ### prep_xfer_dlist
 
 Prepare a transfer descriptor list for efficient reuse across multiple transfers. Both the local and remote sides of a transfer must be prepared before creating a transfer request.
 
-**C++ equivalent:** [`prepXferDlist`](./cpp-api#prepxferdlist-4-parameter)
+**C++ equivalent:** [`prepXferDlist`](/nixl/api-reference/cpp-api#prepxferdlist-4-parameter)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -516,7 +516,7 @@ Preparation succeeds if at least one backend can handle all elements in the desc
 
 Estimate the cost of a transfer operation.
 
-**C++ equivalent:** [`estimateXferCost`](./cpp-api#estimatexfercost)
+**C++ equivalent:** [`estimateXferCost`](/nixl/api-reference/cpp-api#estimatexfercost)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -534,7 +534,7 @@ duration, err_margin, method = agent.estimate_xfer_cost(xfer_handle)
 
 Create a transfer request from prepared descriptor list handles. This is the recommended approach when the same descriptors are used in multiple transfers.
 
-**C++ equivalent:** [`makeXferReq`](./cpp-api#makexferreq)
+**C++ equivalent:** [`makeXferReq`](/nixl/api-reference/cpp-api#makexferreq)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -562,7 +562,7 @@ xfer_handle = agent.make_prepped_xfer(
 
 Create a transfer request directly from descriptor lists without prior preparation. This is a combined API that prepares the descriptor lists and creates the transfer in one call.
 
-**C++ equivalent:** [`createXferReq`](./cpp-api#createxferreq)
+**C++ equivalent:** [`createXferReq`](/nixl/api-reference/cpp-api#createxferreq)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -590,14 +590,14 @@ If you share common descriptors across different transfer requests, prefer `prep
 ## Transfer Operations
 
 <Tip>
-For a walkthrough of transfer posting and status checking, see [Quick Start -- Creating and Executing Transfers](../getting-started/quick-start#creating-and-executing-transfers).
+For a walkthrough of transfer posting and status checking, see [Quick Start -- Creating and Executing Transfers](/nixl/getting-started/quick-start#creating-and-executing-transfers).
 </Tip>
 
 ### transfer
 
 Initiate a data transfer. After calling this, poll `check_xfer_state()` until completion.
 
-**C++ equivalent:** [`postXferReq`](./cpp-api#postxferreq)
+**C++ equivalent:** [`postXferReq`](/nixl/api-reference/cpp-api#postxferreq)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -619,7 +619,7 @@ if status == "PROC":
 
 Check the current state of a transfer operation.
 
-**C++ equivalent:** [`getXferStatus`](./cpp-api#getxferstatus)
+**C++ equivalent:** [`getXferStatus`](/nixl/api-reference/cpp-api#getxferstatus)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -637,7 +637,7 @@ status = agent.check_xfer_state(xfer_handle)
 
 Get telemetry data for a transfer request. Requires `capture_telemetry=True` in the agent config.
 
-**C++ equivalent:** [`getXferTelemetry`](./cpp-api#getxfertelemetry)
+**C++ equivalent:** [`getXferTelemetry`](/nixl/api-reference/cpp-api#getxfertelemetry)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -656,7 +656,7 @@ print(f"Transfer took {telem.xferDuration} us for {telem.totalBytes} bytes")
 
 Query which backend was selected for a transfer operation.
 
-**C++ equivalent:** [`queryXferBackend`](./cpp-api#queryxferbackend)
+**C++ equivalent:** [`queryXferBackend`](/nixl/api-reference/cpp-api#queryxferbackend)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -675,7 +675,7 @@ backend = agent.query_xfer_backend(xfer_handle)
 
 Release a transfer handle, freeing associated resources. If the transfer is active, NIXL will attempt to cancel it.
 
-**C++ equivalent:** [`releaseXferReq`](./cpp-api#releasexferreq)
+**C++ equivalent:** [`releaseXferReq`](/nixl/api-reference/cpp-api#releasexferreq)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -693,7 +693,7 @@ This delegates to `handle.release()`. You can also call `release()` directly on 
 
 Release a prepared descriptor list handle, freeing associated resources.
 
-**C++ equivalent:** [`releasedDlistH`](./cpp-api#releaseddlisth)
+**C++ equivalent:** [`releasedDlistH`](/nixl/api-reference/cpp-api#releaseddlisth)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -706,7 +706,7 @@ agent.release_dlist_handle(prep_handle)
 ## Memory View
 
 <Note>
-Memory View APIs (`prepMemView`, `releaseMemView`) are not currently exposed in the Python bindings. For memory view operations, refer to the [C++ API Reference -- Memory View](./cpp-api#memory-view).
+Memory View APIs (`prepMemView`, `releaseMemView`) are not currently exposed in the Python bindings. For memory view operations, refer to the [C++ API Reference -- Memory View](/nixl/api-reference/cpp-api#memory-view).
 </Note>
 
 ## Notification Handling
@@ -715,7 +715,7 @@ Memory View APIs (`prepMemView`, `releaseMemView`) are not currently exposed in 
 
 Get new notifications that have arrived at the agent since the last call. Returns a fresh dictionary each time (does not accumulate).
 
-**C++ equivalent:** [`getNotifs`](./cpp-api#getnotifs)
+**C++ equivalent:** [`getNotifs`](/nixl/api-reference/cpp-api#getnotifs)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -735,7 +735,7 @@ for agent_name, messages in notifs.items():
 
 Get new notifications and accumulate them in the agent's internal notification map. Unlike `get_new_notifs()`, this builds up all unhandled notifications over time.
 
-**C++ equivalent:** [`getNotifs`](./cpp-api#getnotifs) (with accumulation)
+**C++ equivalent:** [`getNotifs`](/nixl/api-reference/cpp-api#getnotifs) (with accumulation)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -780,7 +780,7 @@ When a matching notification is found, it is removed from the internal notificat
 
 Send a standalone notification to a remote agent, not bound to any transfer.
 
-**C++ equivalent:** [`genNotif`](./cpp-api#gennotif)
+**C++ equivalent:** [`genNotif`](/nixl/api-reference/cpp-api#gennotif)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -797,14 +797,14 @@ agent.send_notif("remote_agent", b"step_complete")
 Side-channel metadata exchange uses an out-of-band mechanism to serialize and transfer agent metadata as opaque byte blobs. This is useful when agents communicate through a shared store or message queue.
 
 <Tip>
-For a walkthrough of metadata exchange patterns, see [Quick Start -- Metadata Exchange](../getting-started/quick-start#metadata-exchange).
+For a walkthrough of metadata exchange patterns, see [Quick Start -- Metadata Exchange](/nixl/getting-started/quick-start#metadata-exchange).
 </Tip>
 
 ### get_agent_metadata
 
 Get the full serialized metadata of the local agent, including all registered memory regions and backend connection information.
 
-**C++ equivalent:** [`getLocalMD`](./cpp-api#getlocalmd)
+**C++ equivalent:** [`getLocalMD`](/nixl/api-reference/cpp-api#getlocalmd)
 
 | **Returns** | Type | Description |
 |-------------|------|-------------|
@@ -819,7 +819,7 @@ metadata = agent.get_agent_metadata()
 
 Get partial metadata containing only specified descriptors and optionally connection information. Useful for incremental metadata updates.
 
-**C++ equivalent:** [`getLocalPartialMD`](./cpp-api#getlocalpartialmd)
+**C++ equivalent:** [`getLocalPartialMD`](/nixl/api-reference/cpp-api#getlocalpartialmd)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -839,7 +839,7 @@ partial_md = agent.get_partial_agent_metadata(reg_descs, inc_conn_info=True)
 
 Add a remote agent using its serialized metadata. After this call, the local agent can initiate transfers toward the remote agent.
 
-**C++ equivalent:** [`loadRemoteMD`](./cpp-api#loadremotemd)
+**C++ equivalent:** [`loadRemoteMD`](/nixl/api-reference/cpp-api#loadremotemd)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -857,7 +857,7 @@ remote_name = agent.add_remote_agent(remote_metadata)
 
 Remove a remote agent. After this call, the local agent cannot initiate transfers toward that remote agent. This also disconnects the two agents.
 
-**C++ equivalent:** [`invalidateRemoteMD`](./cpp-api#invalidateremotemd)
+**C++ equivalent:** [`invalidateRemoteMD`](/nixl/api-reference/cpp-api#invalidateremotemd)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -872,14 +872,14 @@ agent.remove_remote_agent("old_remote_agent")
 Direct-channel metadata exchange uses the NIXL listen thread to send and receive metadata over the network, or communicates through a central metadata server (e.g., etcd). The listen thread must be enabled in the agent config.
 
 <Tip>
-For a walkthrough of direct metadata exchange and etcd-based patterns, see [Quick Start -- Metadata Exchange](../getting-started/quick-start#metadata-exchange).
+For a walkthrough of direct metadata exchange and etcd-based patterns, see [Quick Start -- Metadata Exchange](/nixl/getting-started/quick-start#metadata-exchange).
 </Tip>
 
 ### send_local_metadata
 
 Send all local metadata to a specific peer or to a central metadata server.
 
-**C++ equivalent:** [`sendLocalMD`](./cpp-api#sendlocalmd)
+**C++ equivalent:** [`sendLocalMD`](/nixl/api-reference/cpp-api#sendlocalmd)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -898,7 +898,7 @@ agent.send_local_metadata()
 
 Send partial metadata (specific descriptors and optional connection info) to a peer or central server.
 
-**C++ equivalent:** [`sendLocalPartialMD`](./cpp-api#sendlocalpartialmd)
+**C++ equivalent:** [`sendLocalPartialMD`](/nixl/api-reference/cpp-api#sendlocalpartialmd)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -919,7 +919,7 @@ agent.send_partial_agent_metadata(
 
 Request metadata from a central metadata server or a specific peer.
 
-**C++ equivalent:** [`fetchRemoteMD`](./cpp-api#fetchremotemd)
+**C++ equivalent:** [`fetchRemoteMD`](/nixl/api-reference/cpp-api#fetchremotemd)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -936,7 +936,7 @@ agent.fetch_remote_metadata("remote_agent", ip_addr="192.168.1.10")
 
 Invalidate local metadata from a central metadata server or a specific peer.
 
-**C++ equivalent:** [`invalidateLocalMD`](./cpp-api#invalidatelocalmd)
+**C++ equivalent:** [`invalidateLocalMD`](/nixl/api-reference/cpp-api#invalidatelocalmd)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -951,7 +951,7 @@ agent.invalidate_local_metadata()
 
 Check if remote metadata for a specific agent is available. When partial metadata methods are used, you can specify which descriptors to check for.
 
-**C++ equivalent:** [`checkRemoteMD`](./cpp-api#checkremotemd)
+**C++ equivalent:** [`checkRemoteMD`](/nixl/api-reference/cpp-api#checkremotemd)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|

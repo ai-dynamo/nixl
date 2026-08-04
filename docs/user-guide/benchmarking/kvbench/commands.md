@@ -3,7 +3,7 @@ title: KVBench Commands and Examples
 description: KVBench command reference, model configuration guide, and LLM example configurations.
 ---
 
-This page covers the KVBench command reference, model configuration schemas, and end-to-end LLM examples. For installation and build instructions, see [Building KVBench](./build.md). KVBench's `profile` command invokes [NIXLBench](../nixlbench/index.md) as a subprocess to run the actual transfer benchmarks.
+This page covers the KVBench command reference, model configuration schemas, and end-to-end LLM examples. For installation and build instructions, see [Building KVBench](/nixl/user-guide/benchmarking-nixl/kv-bench/building-kv-bench). KVBench's `profile` command invokes [NIXLBench](/nixl/user-guide/benchmarking-nixl/nixl-bench) as a subprocess to run the actual transfer benchmarks.
 
 ## Command Reference
 
@@ -132,7 +132,7 @@ These arguments are used by both `plan` and `profile` commands and are passed th
 | -------- | ----------- |
 | `--source` | Source of the NIXL descriptors: `file`, `memory`, or `gpu` (default: `file`) |
 | `--destination` | Destination of the NIXL descriptors: `file`, `memory`, or `gpu` (default: `memory`) |
-| `--backend` | Communication backend: [UCX](../../backends/ucx.md), [GDS](../../backends/gds.md), [GDS_MT](../../backends/gds-mt.md), [POSIX](../../backends/posix.md), [GPUNETIO](../../backends/gpunetio.md), [Mooncake](../../backends/mooncake.md), [HF3FS](../../backends/hf3fs.md), [OBJ](../../backends/obj.md) (default: `UCX`) |
+| `--backend` | Communication backend: [UCX](/nixl/user-guide/backend-selection/ucx), [GDS](/nixl/user-guide/backend-selection/gpu-direct-storage), [GDS_MT](/nixl/user-guide/backend-selection/gpu-direct-storage-mt), [POSIX](/nixl/user-guide/backend-selection/posix), [GPUNETIO](/nixl/user-guide/backend-selection/doca-gpu-net-io), [Mooncake](/nixl/user-guide/backend-selection/mooncake), [HF3FS](/nixl/user-guide/backend-selection/hf-3-fs), [OBJ](/nixl/user-guide/backend-selection/obj) (default: `UCX`) |
 | `--worker_type` | Worker to use to transfer data: `nixl` or `nvshmem` (default: `nixl`) |
 | `--initiator_seg_type` | Memory segment type for initiator: `DRAM`, `VRAM`, `FILE`, or `OBJ` (default: `DRAM`) |
 | `--target_seg_type` | Memory segment type for target: `DRAM`, `VRAM`, `FILE`, or `OBJ` (default: `DRAM`) |
@@ -155,7 +155,7 @@ These arguments are used by both `plan` and `profile` commands and are passed th
 | `--progress_threads` | Number of progress threads (default: `0`) |
 | `--device_list` | Comma-separated device names (default: all) |
 | `--runtime_type` | Type of runtime to use: `ETCD` (default: `ETCD`) |
-| `--etcd-endpoints` | [etcd](../../etcd-metadata-exchange.md) server URL for coordination (default: `http://localhost:2379`) |
+| `--etcd-endpoints` | [etcd](/nixl/user-guide/metadata-exchange-with-etcd) server URL for coordination (default: `http://localhost:2379`) |
 | `--storage_enable_direct` | Enable direct I/O for storage operations |
 | `--filepath` | File path for storage operations |
 | `--enable_vmm` | Enable VMM memory allocation when DRAM is requested |

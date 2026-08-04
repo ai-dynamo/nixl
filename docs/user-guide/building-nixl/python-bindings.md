@@ -60,5 +60,5 @@ NIXL INFO    _api.py:253 Initialized NIXL agent: agent1
 ```
 
 <Note>
-For backend-specific build instructions, see [NIXL Backends](/docs/user-guide/backend-selection).
+For backend-specific build instructions, see [NIXL Backends](/nixl/user-guide/backend-selection).
 </Note>

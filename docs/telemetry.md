@@ -4,7 +4,7 @@
 
 The NIXL telemetry system provides real-time monitoring and performance tracking capabilities for NIXL applications. It collects various metrics and events during runtime and exports them via an active telemetry plug-in. Only one plug-in can be loaded per NIXL instance.
 The Plug-In that stores telemetry data in shared memory buffer can only work as a built-in module (static linking). Other plug-ins (e.g., the one that uses Prometheus exporter) can only be linked dynamically.
-Custom telemetry exporter plug-ins can be created according to [src/plugins/telemetry/README.md](../src/plugins/telemetry/README.md).
+Custom telemetry exporter plug-ins can be created according to [src/plugins/telemetry/README.md](https://github.com/ai-dynamo/nixl/blob/main/src/plugins/telemetry/README.md).
 
 ## Architecture
 
@@ -13,8 +13,8 @@ Custom telemetry exporter plug-ins can be created according to [src/plugins/tele
 1. **Telemetry Collection**: Built into the NIXL core library, collects events and metrics
 2. **Shared Memory Buffer**: Statically-linked built in implementation of telemetry exporter. Uses shared memory cyclic buffer for efficient event storage and export.
 3. **Telemetry Readers**: C++ and Python applications to read and display telemetry data from the cyclic buffer.
-4. **Prometheus exporter**: EXPERIMENTAL (beta) Prometheus compatible telemetry exporter, see [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md).
-5. **DOCA exporter**: EXPERIMENTAL DOCA/CollectX telemetry exporter. Drives one or more delivery backends (`NIXL_TELEMETRY_DOCA_BACKENDS`, default `scrape`): a local Prometheus scrape endpoint and/or `ipc` push to the DOCA Telemetry Service (DTS) for single-endpoint multi-process aggregation. See [src/plugins/telemetry/doca/README.md](../src/plugins/telemetry/doca/README.md).
+4. **Prometheus exporter**: EXPERIMENTAL (beta) Prometheus compatible telemetry exporter, see [src/plugins/telemetry/prometheus/README.md](https://github.com/ai-dynamo/nixl/blob/main/src/plugins/telemetry/prometheus/README.md).
+5. **DOCA exporter**: EXPERIMENTAL DOCA/CollectX telemetry exporter. Drives one or more delivery backends (`NIXL_TELEMETRY_DOCA_BACKENDS`, default `scrape`): a local Prometheus scrape endpoint and/or `ipc` push to the DOCA Telemetry Service (DTS) for single-endpoint multi-process aggregation. See [src/plugins/telemetry/doca/README.md](https://github.com/ai-dynamo/nixl/blob/main/src/plugins/telemetry/doca/README.md).
 
 ### Event Structure
 
@@ -147,7 +147,7 @@ Telemetry is configured by environment variables:
 - When telemetry is requested but no output sink is configured (neither `NIXL_TELEMETRY_EXPORTER` nor `NIXL_TELEMETRY_DIR`), it falls back to the collect-only NOP exporter: events are collected in-process so `getXferTelemetry()` / `get_xfer_telemetry()` works, but nothing is written out.
 - If telemetry is enabled but no exporter is set, or the exporter name is empty, then the sink depends on `NIXL_TELEMETRY_DIR` as explained below (falling back to NOP when it is unset).
 - Set `NIXL_TELEMETRY_EXPORTER=NOP` to explicitly keep telemetry active (events are collected and `getXferTelemetry()` works) while discarding all output. It needs no sink and writes nothing, so it can be used to measure the overhead of the telemetry collection path in isolation.
-- Exporters that expose a scrape endpoint (e.g. Prometheus) bind one port per process. Under multi-process runs (e.g. tensor/data parallelism) every rank tries to bind the same port; only one wins. Losing that race is benign and non-fatal: the affected process logs a single warning and runs without a telemetry sink instead of failing agent construction. See [src/plugins/telemetry/prometheus/README.md](../src/plugins/telemetry/prometheus/README.md).
+- Exporters that expose a scrape endpoint (e.g. Prometheus) bind one port per process. Under multi-process runs (e.g. tensor/data parallelism) every rank tries to bind the same port; only one wins. Losing that race is benign and non-fatal: the affected process logs a single warning and runs without a telemetry sink instead of failing agent construction. See [src/plugins/telemetry/prometheus/README.md](https://github.com/ai-dynamo/nixl/blob/main/src/plugins/telemetry/prometheus/README.md).
 
 ## Cyclic Buffer
 

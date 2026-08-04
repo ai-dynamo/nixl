@@ -26,5 +26,5 @@ The container includes a prebuilt Python wheel in `/workspace/dist` for installi
 </Tip>
 
 <Note>
-For backend-specific build instructions, see [NIXL Backends](/docs/user-guide/backend-selection).
+For backend-specific build instructions, see [NIXL Backends](/nixl/user-guide/backend-selection).
 </Note>

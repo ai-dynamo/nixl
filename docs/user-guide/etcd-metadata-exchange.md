@@ -5,7 +5,7 @@ description: Configure etcd-based distributed metadata exchange for NIXL agents 
 
 NIXL supports three metadata exchange approaches: side-channel (TCP), programmatic, and etcd. This page covers the etcd approach, where agents publish metadata (connection information and registered memory descriptors) to a distributed key-value store and fetch remote agent metadata by name. Each approach suits different deployment patterns -- etcd centralizes coordination, side-channel exchanges metadata peer-to-peer, and programmatic exchange gives the application full control.
 
-When etcd mode is enabled, agents store and retrieve metadata using a structured key prefix scheme. NIXL sets up watchers on remote agents so that when a remote agent goes down or invalidates its metadata, the local agent is notified and discards stale metadata. For the API calls that trigger these operations, see [Quick Start -- Metadata Exchange](../getting-started/quick-start#metadata-exchange).
+When etcd mode is enabled, agents store and retrieve metadata using a structured key prefix scheme. NIXL sets up watchers on remote agents so that when a remote agent goes down or invalidates its metadata, the local agent is notified and discards stale metadata. For the API calls that trigger these operations, see [Quick Start -- Metadata Exchange](/nixl/getting-started/quick-start#metadata-exchange).
 
 <Note>
 etcd support requires building NIXL with etcd enabled (`HAVE_ETCD` compile flag). If NIXL was not built with etcd support, setting `NIXL_ETCD_ENDPOINTS` will have no effect. The etcd integration depends on the `etcd-cpp-apiv3` library, which is included as a Meson subproject.

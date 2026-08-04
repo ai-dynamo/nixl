@@ -42,5 +42,5 @@ nixl-sys = { path = "path/to/nixl/bindings/rust" }
 ```
 
 <Note>
-For backend-specific build instructions, see [NIXL Backends](/docs/user-guide/backend-selection).
+For backend-specific build instructions, see [NIXL Backends](/nixl/user-guide/backend-selection).
 </Note>

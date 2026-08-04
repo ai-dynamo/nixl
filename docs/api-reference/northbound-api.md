@@ -4,10 +4,10 @@ description: Binding-independent rules for descriptor matching, registration, tr
 ---
 
 This page covers behavior shared by the C++, Python, and Rust bindings. For the
-overall data-transfer lifecycle, see [Architecture](../getting-started/architecture).
-For a working end-to-end sequence, see [Quick Start](../getting-started/quick-start).
+overall data-transfer lifecycle, see [Architecture](/nixl/getting-started/architecture).
+For a working end-to-end sequence, see [Quick Start](/nixl/getting-started/quick-start).
 Exact type and method names are documented in the
-[C++](./cpp-api), [Python](./python-api), and [Rust](./rust-api) API references.
+[C++](/nixl/api-reference/cpp-api), [Python](/nixl/api-reference/python-api), and [Rust](/nixl/api-reference/rust-api) API references.
 
 ## Descriptor matching
 

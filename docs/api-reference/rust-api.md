@@ -3,9 +3,9 @@ title: Rust API Reference
 description: Complete Rust API reference for NIXL data transfers.
 ---
 
-This is the Rust API reference for the NVIDIA Inference Xfer Library (NIXL). The Rust bindings provide a safe, idiomatic interface through the `Agent` struct. For the C++ native API, see the [C++ API Reference](./cpp-api). For Python bindings, see the [Python API Reference](./python-api).
+This is the Rust API reference for the NVIDIA Inference Xfer Library (NIXL). The Rust bindings provide a safe, idiomatic interface through the `Agent` struct. For the C++ native API, see the [C++ API Reference](/nixl/api-reference/cpp-api). For Python bindings, see the [Python API Reference](/nixl/api-reference/python-api).
 
-Behavior shared by all bindings is documented in [Northbound API Semantics](./northbound-api).
+Behavior shared by all bindings is documented in [Northbound API Semantics](/nixl/api-reference/northbound-api-semantics).
 
 Key Rust-specific features of the NIXL bindings:
 
@@ -81,7 +81,7 @@ Thread synchronization mode enum for multi-threaded agent usage.
 | `Rw` | Reader-writer lock: concurrent reads, exclusive writes. |
 | `Default` | Alias for `None`. |
 
-**C++ equivalent:** [`nixl_thread_sync_t`](./cpp-api#nixl_thread_sync_t)
+**C++ equivalent:** [`nixl_thread_sync_t`](/nixl/api-reference/cpp-api#nixl_thread_sync_t)
 
 ### XferStatus
 
@@ -110,7 +110,7 @@ Transfer operation direction.
 | `Read` | Read data from the remote side into local buffers |
 | `Write` | Write data from local buffers to the remote side |
 
-**C++ equivalent:** [`nixl_xfer_op_t`](./cpp-api#nixl_xfer_op_t)
+**C++ equivalent:** [`nixl_xfer_op_t`](/nixl/api-reference/cpp-api#nixl_xfer_op_t)
 
 ### CostMethod
 
@@ -121,7 +121,7 @@ Cost estimation method identifier returned by `estimate_xfer_cost()`.
 | `AnalyticalBackend` | Analytical backend cost estimate |
 | `Unknown` | Unknown estimation method |
 
-**C++ equivalent:** [`nixl_cost_t`](./cpp-api#nixl_cost_t)
+**C++ equivalent:** [`nixl_cost_t`](/nixl/api-reference/cpp-api#nixl_cost_t)
 
 ### NixlError
 
@@ -156,7 +156,7 @@ match agent.create_backend("UCX", &params) {
 
 Opaque handle to a NIXL backend engine. Implements `Send + Sync` (safe to share across threads) and `Debug`. The backend is destroyed when the owning `Agent` is dropped.
 
-**C++ equivalent:** [`nixlBackendH*`](./cpp-api#handle-types)
+**C++ equivalent:** [`nixlBackendH*`](/nixl/api-reference/cpp-api#handle-types)
 
 ### OptArgs
 
@@ -177,7 +177,7 @@ Optional arguments struct passed to many agent methods. Uses setter methods to c
 
 All setter methods return `Result<(), NixlError>`. `OptArgs` implements `Drop` for automatic cleanup.
 
-**C++ equivalent:** [`nixlAgentOptionalArgs`](./cpp-api#nixlagentoptionalargs)
+**C++ equivalent:** [`nixlAgentOptionalArgs`](/nixl/api-reference/cpp-api#nixlagentoptionalargs)
 
 ```rust
 use nixl_sys::OptArgs;
@@ -202,7 +202,7 @@ Memory segment types supported by NIXL.
 
 `MemType` derives `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Serialize`, `Deserialize`, and implements `Display`.
 
-**C++ equivalent:** [`nixl_mem_t`](./cpp-api#nixl_mem_t)
+**C++ equivalent:** [`nixl_mem_t`](/nixl/api-reference/cpp-api#nixl_mem_t)
 
 ### Descriptor Types
 
@@ -225,7 +225,7 @@ NIXL uses descriptor lists to represent sets of memory regions for registration 
 
 Also supports `Index<usize>`, `IndexMut<usize>`, `PartialEq`, `Debug`, and `Drop`.
 
-**C++ equivalent:** [`nixl_reg_dlist_t`](./cpp-api#nixl-descriptors)
+**C++ equivalent:** [`nixl_reg_dlist_t`](/nixl/api-reference/cpp-api#nixl-descriptors)
 
 **`XferDescList`** -- Transfer descriptor list for memory regions in transfer operations.
 
@@ -243,11 +243,11 @@ Also supports `Index<usize>`, `IndexMut<usize>`, `PartialEq`, `Debug`, and `Drop
 
 Also supports `Index<usize>`, `IndexMut<usize>`, `PartialEq`, `Debug`, and `Drop`.
 
-**C++ equivalent:** [`nixl_xfer_dlist_t`](./cpp-api#nixl-descriptors)
+**C++ equivalent:** [`nixl_xfer_dlist_t`](/nixl/api-reference/cpp-api#nixl-descriptors)
 
 **`XferDlistHandle`** -- Opaque handle to a prepared descriptor list. Returned by `prepare_xfer_dlist()` and consumed by `make_xfer_req()`. Implements `Drop`, which releases the prepared list on the agent side.
 
-**C++ equivalent:** [`nixlDlistH*`](./cpp-api#handle-types)
+**C++ equivalent:** [`nixlDlistH*`](/nixl/api-reference/cpp-api#handle-types)
 
 **`RegistrationHandle`** -- Handle to a registered memory region. Implements `Drop`, which automatically deregisters the memory via the agent. Call `deregister()` for explicit deregistration.
 
@@ -270,7 +270,7 @@ Handle to an active transfer request. Implements `Send + Sync` (safe to share ac
 |--------|---------|-------------|
 | `get_telemetry(&self)` | `Result<XferTelemetry, NixlError>` | Get telemetry data for this transfer |
 
-**C++ equivalent:** [`nixlXferReqH*`](./cpp-api#handle-types)
+**C++ equivalent:** [`nixlXferReqH*`](/nixl/api-reference/cpp-api#handle-types)
 
 ### NotificationMap
 
@@ -318,7 +318,7 @@ Transfer telemetry data containing timing and performance metrics.
 | `total_duration()` | `Duration` | Total duration (post + transfer) |
 | `transfer_rate_bps()` | `f64` | Transfer rate in bytes per second |
 
-**C++ equivalent:** [`nixlXferTelemetry`](./cpp-api#nixlxfertelemetry)
+**C++ equivalent:** [`nixlXferTelemetry`](/nixl/api-reference/cpp-api#nixlxfertelemetry)
 
 ### Collection Types
 
@@ -347,7 +347,7 @@ Key-value parameter map used for backend configuration. Returned by `get_plugin_
 
 Supports `IntoIterator` (yields `(&str, &str)` pairs) and conversion to `HashMap<String, String>`.
 
-**C++ equivalent:** [`nixl_b_params_t`](./cpp-api#type-aliases)
+**C++ equivalent:** [`nixl_b_params_t`](/nixl/api-reference/cpp-api#type-aliases)
 
 ```rust
 use nixl_sys::Params;
@@ -443,14 +443,14 @@ Implement these traits on your own types to integrate custom memory (e.g., GPU m
 ## Initialization and Configuration
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Agent Initialization](../getting-started/quick-start#agent-initialization).
+For a complete workflow example, see [Quick Start -- Agent Initialization](/nixl/getting-started/quick-start#agent-initialization).
 </Tip>
 
 ### new
 
 Create a new Transfer Agent with default configuration.
 
-**C++ equivalent:** [`nixlAgent`](./cpp-api#nixlagent)
+**C++ equivalent:** [`nixlAgent`](/nixl/api-reference/cpp-api#nixlagent)
 
 ```rust
 pub fn new(name: &str) -> Result<Self, NixlError>
@@ -469,7 +469,7 @@ let agent = Agent::new("my_agent")?;
 
 Create a new Transfer Agent with custom configuration.
 
-**C++ equivalent:** [`nixlAgent`](./cpp-api#nixlagent) (with config parameter)
+**C++ equivalent:** [`nixlAgent`](/nixl/api-reference/cpp-api#nixlagent) (with config parameter)
 
 ```rust
 pub fn new_configured(name: &str, cfg: &AgentConfig) -> Result<Self, NixlError>
@@ -504,7 +504,7 @@ pub fn name(&self) -> String
 
 Discover the available backend plug-ins found in the plug-in search paths.
 
-**C++ equivalent:** [`getAvailPlugins`](./cpp-api#getavailplugins)
+**C++ equivalent:** [`getAvailPlugins`](/nixl/api-reference/cpp-api#getavailplugins)
 
 ```rust
 pub fn get_available_plugins(&self) -> Result<StringList, NixlError>
@@ -526,14 +526,14 @@ The `Agent` destructor (`Drop`) automatically invalidates all remote metadata, d
 ## Backend Management
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Backend Creation](../getting-started/quick-start#backend-creation).
+For a complete workflow example, see [Quick Start -- Backend Creation](/nixl/getting-started/quick-start#backend-creation).
 </Tip>
 
 ### get_plugin_params
 
 Get the supported memory types and initialization parameters for a backend plug-in, before creating an instance.
 
-**C++ equivalent:** [`getPluginParams`](./cpp-api#getpluginparams)
+**C++ equivalent:** [`getPluginParams`](/nixl/api-reference/cpp-api#getpluginparams)
 
 ```rust
 pub fn get_plugin_params(
@@ -558,7 +558,7 @@ for mem in mems.iter() {
 
 Get the parameters and memory types of an already-instantiated backend.
 
-**C++ equivalent:** [`getBackendParams`](./cpp-api#getbackendparams)
+**C++ equivalent:** [`getBackendParams`](/nixl/api-reference/cpp-api#getbackendparams)
 
 ```rust
 pub fn get_backend_params(
@@ -576,7 +576,7 @@ pub fn get_backend_params(
 
 Instantiate a backend engine with the given parameters.
 
-**C++ equivalent:** [`createBackend`](./cpp-api#createbackend)
+**C++ equivalent:** [`createBackend`](/nixl/api-reference/cpp-api#createbackend)
 
 ```rust
 pub fn create_backend(
@@ -617,14 +617,14 @@ pub fn get_backend(&self, name: &str) -> Option<Backend>
 ## Memory Registration
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Memory Registration](../getting-started/quick-start#memory-registration).
+For a complete workflow example, see [Quick Start -- Memory Registration](/nixl/getting-started/quick-start#memory-registration).
 </Tip>
 
 ### register_memory
 
 Register a memory descriptor with the agent. Returns a `RegistrationHandle` that automatically deregisters the memory when dropped.
 
-**C++ equivalent:** [`registerMem`](./cpp-api#registermem)
+**C++ equivalent:** [`registerMem`](/nixl/api-reference/cpp-api#registermem)
 
 ```rust
 pub fn register_memory(
@@ -658,7 +658,7 @@ storage.register(&agent, None)?;
 
 Query information about registered memory or storage segments from a specific backend.
 
-**C++ equivalent:** [`queryMem`](./cpp-api#querymem)
+**C++ equivalent:** [`queryMem`](/nixl/api-reference/cpp-api#querymem)
 
 ```rust
 pub fn query_mem(
@@ -690,7 +690,7 @@ for resp in responses.iter()? {
 
 Proactively establish a connection to a remote agent, instead of deferring it to the first transfer.
 
-**C++ equivalent:** [`makeConnection`](./cpp-api#makeconnection)
+**C++ equivalent:** [`makeConnection`](/nixl/api-reference/cpp-api#makeconnection)
 
 ```rust
 pub fn make_connection(
@@ -717,14 +717,14 @@ agent.make_connection("remote_agent", None)?;
 ## Transfer Preparation
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Creating and Executing Transfers](../getting-started/quick-start#creating-and-executing-transfers).
+For a complete workflow example, see [Quick Start -- Creating and Executing Transfers](/nixl/getting-started/quick-start#creating-and-executing-transfers).
 </Tip>
 
 ### prepare_xfer_dlist
 
 Prepare a descriptor list for use in transfer requests. Elements from the prepared list can later be selected by index in `make_xfer_req()`.
 
-**C++ equivalent:** [`prepXferDlist`](./cpp-api#prepxferdlist-4-parameter)
+**C++ equivalent:** [`prepXferDlist`](/nixl/api-reference/cpp-api#prepxferdlist-4-parameter)
 
 ```rust
 pub fn prepare_xfer_dlist(
@@ -755,7 +755,7 @@ let remote_hndl = agent.prepare_xfer_dlist("remote_agent", &remote_descs, None)?
 
 Create a transfer request by selecting indices from already-prepared descriptor list handles.
 
-**C++ equivalent:** [`makeXferReq`](./cpp-api#makexferreq)
+**C++ equivalent:** [`makeXferReq`](/nixl/api-reference/cpp-api#makexferreq)
 
 ```rust
 pub fn make_xfer_req(
@@ -793,7 +793,7 @@ let req = agent.make_xfer_req(
 
 Combined API that creates a transfer request directly from two descriptor lists. Internally prepares both sides and creates the transfer handle. Equivalent to calling `prepare_xfer_dlist()` for each side followed by `make_xfer_req()` with all indices.
 
-**C++ equivalent:** [`createXferReq`](./cpp-api#createxferreq)
+**C++ equivalent:** [`createXferReq`](/nixl/api-reference/cpp-api#createxferreq)
 
 ```rust
 pub fn create_xfer_req(
@@ -832,14 +832,14 @@ let req = agent.create_xfer_req(
 ## Transfer Operations
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Creating and Executing Transfers](../getting-started/quick-start#creating-and-executing-transfers).
+For a complete workflow example, see [Quick Start -- Creating and Executing Transfers](/nixl/getting-started/quick-start#creating-and-executing-transfers).
 </Tip>
 
 ### estimate_xfer_cost
 
 Estimate the cost (duration) of executing a transfer request before posting it.
 
-**C++ equivalent:** [`estimateXferCost`](./cpp-api#estimatexfercost)
+**C++ equivalent:** [`estimateXferCost`](/nixl/api-reference/cpp-api#estimatexfercost)
 
 ```rust
 pub fn estimate_xfer_cost(
@@ -864,7 +864,7 @@ println!("Estimated: {}us +/- {}us ({:?})", duration_us, margin_us, method);
 
 Submit a transfer request, initiating the data transfer. The operation is non-blocking.
 
-**C++ equivalent:** [`postXferReq`](./cpp-api#postxferreq)
+**C++ equivalent:** [`postXferReq`](/nixl/api-reference/cpp-api#postxferreq)
 
 ```rust
 pub fn post_xfer_req(
@@ -891,7 +891,7 @@ if in_progress {
 
 Check the status of a transfer request.
 
-**C++ equivalent:** [`getXferStatus`](./cpp-api#getxferstatus)
+**C++ equivalent:** [`getXferStatus`](/nixl/api-reference/cpp-api#getxferstatus)
 
 ```rust
 pub fn get_xfer_status(&self, req: &XferRequest) -> Result<XferStatus, NixlError>
@@ -920,7 +920,7 @@ loop {
 
 Get telemetry data for a completed transfer request. Called on the `XferRequest` directly.
 
-**C++ equivalent:** [`getXferTelemetry`](./cpp-api#getxfertelemetry)
+**C++ equivalent:** [`getXferTelemetry`](/nixl/api-reference/cpp-api#getxfertelemetry)
 
 ```rust
 pub fn get_telemetry(&self) -> Result<XferTelemetry, NixlError>
@@ -942,7 +942,7 @@ println!("Transfer rate: {:.2} MB/s",
 
 Query which backend was selected for a transfer request.
 
-**C++ equivalent:** [`queryXferBackend`](./cpp-api#queryxferbackend)
+**C++ equivalent:** [`queryXferBackend`](/nixl/api-reference/cpp-api#queryxferbackend)
 
 ```rust
 pub fn query_xfer_backend(&self, req: &XferRequest) -> Result<Backend, NixlError>
@@ -960,7 +960,7 @@ pub fn query_xfer_backend(&self, req: &XferRequest) -> Result<Backend, NixlError
 ## Memory View
 
 <Note>
-Memory View is not currently exposed in the Rust bindings. For Memory View functionality, use the [C++ API](./cpp-api#memory-view) directly or request this feature in the NIXL repository.
+Memory View is not currently exposed in the Rust bindings. For Memory View functionality, use the [C++ API](/nixl/api-reference/cpp-api#memory-view) directly or request this feature in the NIXL repository.
 </Note>
 
 ## Notification Handling
@@ -969,7 +969,7 @@ Memory View is not currently exposed in the Rust bindings. For Memory View funct
 
 Retrieve pending notifications from remote agents.
 
-**C++ equivalent:** [`getNotifs`](./cpp-api#getnotifs)
+**C++ equivalent:** [`getNotifs`](/nixl/api-reference/cpp-api#getnotifs)
 
 ```rust
 pub fn get_notifications(
@@ -1002,7 +1002,7 @@ for (agent_name, messages) in &all {
 
 Send a notification to a remote agent.
 
-**C++ equivalent:** [`genNotif`](./cpp-api#gennotif)
+**C++ equivalent:** [`genNotif`](/nixl/api-reference/cpp-api#gennotif)
 
 ```rust
 pub fn send_notification(
@@ -1027,7 +1027,7 @@ agent.send_notification("remote_agent", b"transfer_done", None)?;
 ## Metadata -- Side Channel
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Metadata Exchange](../getting-started/quick-start#metadata-exchange).
+For a complete workflow example, see [Quick Start -- Metadata Exchange](/nixl/getting-started/quick-start#metadata-exchange).
 </Tip>
 
 The side channel uses serialized byte arrays to exchange metadata between agents without relying on etcd. One agent calls `get_local_md()` to serialize its metadata, sends the bytes over an application-level channel (TCP, gRPC, shared memory, etc.), and the other agent calls `load_remote_md()` to deserialize and load it.
@@ -1036,7 +1036,7 @@ The side channel uses serialized byte arrays to exchange metadata between agents
 
 Get this agent's metadata serialized as a byte array, suitable for sending to a remote agent via an application-level channel.
 
-**C++ equivalent:** [`getLocalMD`](./cpp-api#getlocalmd)
+**C++ equivalent:** [`getLocalMD`](/nixl/api-reference/cpp-api#getlocalmd)
 
 ```rust
 pub fn get_local_md(&self) -> Result<Vec<u8>, NixlError>
@@ -1053,7 +1053,7 @@ let metadata = agent.get_local_md()?;
 
 Get partial metadata for specific registered memory regions.
 
-**C++ equivalent:** [`getLocalPartialMD`](./cpp-api#getlocalpartialmd)
+**C++ equivalent:** [`getLocalPartialMD`](/nixl/api-reference/cpp-api#getlocalpartialmd)
 
 ```rust
 pub fn get_local_partial_md(
@@ -1073,7 +1073,7 @@ pub fn get_local_partial_md(
 
 Load a remote agent's metadata from a byte slice received via an application-level channel.
 
-**C++ equivalent:** [`loadRemoteMD`](./cpp-api#loadremotemd)
+**C++ equivalent:** [`loadRemoteMD`](/nixl/api-reference/cpp-api#loadremotemd)
 
 ```rust
 pub fn load_remote_md(&self, metadata: &[u8]) -> Result<String, NixlError>
@@ -1094,7 +1094,7 @@ println!("Loaded metadata for: {}", remote_name);
 
 Invalidate a specific remote agent's cached metadata.
 
-**C++ equivalent:** [`invalidateRemoteMD`](./cpp-api#invalidateremotemd)
+**C++ equivalent:** [`invalidateRemoteMD`](/nixl/api-reference/cpp-api#invalidateremotemd)
 
 ```rust
 pub fn invalidate_remote_md(&self, remote_agent: &str) -> Result<(), NixlError>
@@ -1118,7 +1118,7 @@ pub fn invalidate_all_remotes(&self) -> Result<(), NixlError>
 ## Metadata -- Direct Channel
 
 <Tip>
-For a complete workflow example, see [Quick Start -- Metadata Exchange](../getting-started/quick-start#metadata-exchange).
+For a complete workflow example, see [Quick Start -- Metadata Exchange](/nixl/getting-started/quick-start#metadata-exchange).
 </Tip>
 
 The direct channel uses etcd as a shared key-value store for automatic metadata discovery. Agents publish their metadata to etcd and fetch remote agent metadata by name, without needing an application-level transport.
@@ -1127,7 +1127,7 @@ The direct channel uses etcd as a shared key-value store for automatic metadata 
 
 Publish this agent's metadata to etcd for discovery by other agents.
 
-**C++ equivalent:** [`sendLocalMD`](./cpp-api#sendlocalmd)
+**C++ equivalent:** [`sendLocalMD`](/nixl/api-reference/cpp-api#sendlocalmd)
 
 ```rust
 pub fn send_local_md(&self, opt_args: Option<&OptArgs>) -> Result<(), NixlError>
@@ -1149,7 +1149,7 @@ agent.send_local_md(Some(&opts))?;
 
 Publish partial metadata for specific registered memory regions to etcd.
 
-**C++ equivalent:** [`sendLocalPartialMD`](./cpp-api#sendlocalpartialmd)
+**C++ equivalent:** [`sendLocalPartialMD`](/nixl/api-reference/cpp-api#sendlocalpartialmd)
 
 ```rust
 pub fn send_local_partial_md(
@@ -1169,7 +1169,7 @@ pub fn send_local_partial_md(
 
 Fetch a remote agent's metadata from etcd. Once fetched, the metadata is loaded and cached locally, enabling communication with the remote agent.
 
-**C++ equivalent:** [`fetchRemoteMD`](./cpp-api#fetchremotemd)
+**C++ equivalent:** [`fetchRemoteMD`](/nixl/api-reference/cpp-api#fetchremotemd)
 
 ```rust
 pub fn fetch_remote_md(
@@ -1193,7 +1193,7 @@ agent.fetch_remote_md("remote_agent", Some(&opts))?;
 
 Remove this agent's metadata from etcd, signaling to other agents that it is no longer available.
 
-**C++ equivalent:** [`invalidateLocalMD`](./cpp-api#invalidatelocalmd)
+**C++ equivalent:** [`invalidateLocalMD`](/nixl/api-reference/cpp-api#invalidatelocalmd)
 
 ```rust
 pub fn invalidate_local_md(&self, opt_args: Option<&OptArgs>) -> Result<(), NixlError>
@@ -1208,7 +1208,7 @@ pub fn invalidate_local_md(&self, opt_args: Option<&OptArgs>) -> Result<(), Nixl
 
 Check if a remote agent's metadata is available and optionally if specific descriptors can be found.
 
-**C++ equivalent:** [`checkRemoteMD`](./cpp-api#checkremotemd)
+**C++ equivalent:** [`checkRemoteMD`](/nixl/api-reference/cpp-api#checkremotemd)
 
 ```rust
 pub fn check_remote_metadata(

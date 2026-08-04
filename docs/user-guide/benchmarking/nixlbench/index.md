@@ -3,12 +3,12 @@ title: NIXLBench
 description: A benchmarking tool for measuring NIXL data transfer performance across network and storage backends with etcd-based coordination.
 ---
 
-NIXLBench is a benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) that measures data transfer performance across distributed computing environments. It enables developers to evaluate throughput and latency for point-to-point communication, multi-node transfers, and storage I/O by exercising the full range of NIXL backends. Workers coordinate through [etcd](../../etcd-metadata-exchange.md), making NIXLBench well suited for containerized and cloud-native deployments.
+NIXLBench is a benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) that measures data transfer performance across distributed computing environments. It enables developers to evaluate throughput and latency for point-to-point communication, multi-node transfers, and storage I/O by exercising the full range of NIXL backends. Workers coordinate through [etcd](/nixl/user-guide/metadata-exchange-with-etcd), making NIXLBench well suited for containerized and cloud-native deployments.
 
 ## Features
 
-- **Network backends** -- [UCX](../../backends/ucx.md), [Libfabric](../../backends/libfabric.md), [Mooncake](../../backends/mooncake.md), and [DOCA GPUNetIO](../../backends/gpunetio.md) for high-speed network communication
-- **Storage backends** -- [GPUDirect Storage](../../backends/gds.md), [GPUDirect Storage MT](../../backends/gds-mt.md), [POSIX](../../backends/posix.md), [HF3FS](../../backends/hf3fs.md), [OBJ](../../backends/obj.md), [Azure Blob](../../backends/azure-blob.md), and [GUSLI](../../backends/gusli.md) for storage operations
+- **Network backends** -- [UCX](/nixl/user-guide/backend-selection/ucx), [Libfabric](/nixl/user-guide/backend-selection/libfabric), [Mooncake](/nixl/user-guide/backend-selection/mooncake), and [DOCA GPUNetIO](/nixl/user-guide/backend-selection/doca-gpu-net-io) for high-speed network communication
+- **Storage backends** -- [GPUDirect Storage](/nixl/user-guide/backend-selection/gpu-direct-storage), [GPUDirect Storage MT](/nixl/user-guide/backend-selection/gpu-direct-storage-mt), [POSIX](/nixl/user-guide/backend-selection/posix), [HF3FS](/nixl/user-guide/backend-selection/hf-3-fs), [OBJ](/nixl/user-guide/backend-selection/obj), [Azure Blob](/nixl/user-guide/backend-selection/azure-blob), and [GUSLI](/nixl/user-guide/backend-selection/gusli) for storage operations
 - **Communication patterns** -- Pairwise, many-to-one, one-to-many, and TP (tensor parallel)
 - **Memory types** -- CPU (DRAM) and GPU (VRAM) transfers
 - **Worker types** -- NIXL worker with full backend support, and NVSHMEM worker for GPU-focused VRAM-only transfers
@@ -17,5 +17,5 @@ NIXLBench is a benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) th
 
 ## Next Steps
 
-- **[Building NIXLBench](./build.md)** -- Docker and native build instructions
-- **[Usage and Troubleshooting](./usage.md)** -- Running benchmarks and resolving common issues
+- **[Building NIXLBench](/nixl/user-guide/benchmarking-nixl/nixl-bench/building-nixl-bench)** -- Docker and native build instructions
+- **[Usage and Troubleshooting](/nixl/user-guide/benchmarking-nixl/nixl-bench/using-nixl-bench)** -- Running benchmarks and resolving common issues

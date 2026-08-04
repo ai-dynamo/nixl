@@ -96,7 +96,7 @@ Telemetry is controlled by environment variables set before agent initialization
 | `NIXL_TELEMETRY_DIR` | Directory for shared memory telemetry files | None |
 
 <Tip>
-For the complete list of telemetry-related environment variables including Prometheus settings, see the [Environment Variables](../resources/environment-variables) page.
+For the complete list of telemetry-related environment variables including Prometheus settings, see the [Environment Variables](/nixl/resources/environment-variables) page.
 </Tip>
 
 `NIXL_TELEMETRY_ENABLE` accepts `y`, `yes`, `on`, `true`, `enable`, or `1` (case-insensitive). Any other value or absence disables telemetry.
@@ -145,7 +145,7 @@ if (agent.getXferTelemetry(req, telem) == NIXL_SUCCESS) {
 ```
 
 <Tip>
-For the complete C++ API reference including transfer and telemetry methods, see the [C++ API Reference](../api-reference/cpp-api#getxfertelemetry).
+For the complete C++ API reference including transfer and telemetry methods, see the [C++ API Reference](/nixl/api-reference/cpp-api#getxfertelemetry).
 </Tip>
 
 ### get_xfer_telemetry (Python)
@@ -161,7 +161,7 @@ print(f"Total bytes: {telem.totalBytes}")
 The returned object has the same fields as the C++ version: `startTime`, `postDuration`, `xferDuration`, `totalBytes`, and `descCount`.
 
 <Tip>
-For the complete Python API reference including transfer and telemetry methods, see the [Python API Reference](../api-reference/python-api#get_xfer_telemetry).
+For the complete Python API reference including transfer and telemetry methods, see the [Python API Reference](/nixl/api-reference/python-api#get_xfer_telemetry).
 </Tip>
 
 ### addTelemetryEvent / getTelemetryEvents (Backend API)
@@ -171,14 +171,14 @@ These methods are available on the backend engine base class (`nixlBackendEngine
 - `addTelemetryEvent(event_name, value)` -- Add a custom event to the telemetry buffer
 - `getTelemetryEvents()` -- Retrieve recorded events from a backend
 
-These are internal to the backend plug-in interface. For plug-in development details, see [Building a Backend Plugin](../development/building-a-backend-plugin).
+These are internal to the backend plug-in interface. For plug-in development details, see [Building a Backend Plugin](/nixl/developer-guide/building-a-backend-plugin).
 
 ## Telemetry Reader
 
 NIXL provides telemetry reader utilities in both C++ and Python for consuming events from the shared memory cyclic buffer. Below are short snippets showing the core reading loop.
 
 <Tip>
-For the full annotated telemetry reader example, see [Telemetry Reader](../examples/telemetry-reader).
+For the full annotated telemetry reader example, see [Telemetry Reader](/nixl/examples/telemetry-reader).
 </Tip>
 
 <CodeBlocks>
@@ -296,4 +296,4 @@ The Prometheus exporter is experimental (beta). It is suitable for development a
 
 NIXL supports custom telemetry exporter plug-ins that implement the telemetry export interface. A custom plug-in consumes events from the cyclic buffer and routes them to any monitoring backend -- CSV files, dashboards, or cloud monitoring services.
 
-For the plug-in development pattern and a walkthrough of building a CSV telemetry exporter, see the [Building a Backend Plugin](../development/building-a-backend-plugin) guide.
+For the plug-in development pattern and a walkthrough of building a CSV telemetry exporter, see the [Building a Backend Plugin](/nixl/developer-guide/building-a-backend-plugin) guide.
