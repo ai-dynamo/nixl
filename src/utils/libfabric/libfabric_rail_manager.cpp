@@ -367,11 +367,6 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
     return NIXL_SUCCESS;
 }
 
-bool
-nixlLibfabricRailManager::shouldUseStriping(size_t transfer_size) const {
-    return transfer_size >= striping_threshold_;
-}
-
 size_t
 nixlLibfabricRailManager::reserveBaseOffset() {
     return round_robin_counter.fetch_add(1);
@@ -394,8 +389,10 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     std::function<void()> completion_callback,
     size_t &submitted_count_out,
     int desc_idx,
-    int desc_count,
-    size_t base_offset) {
+    size_t base_offset,
+    bool apply_fi_more,
+    int device_id,
+    bool is_cuda_vram) {
     // Initialize output parameter
     submitted_count_out = 0;
 
@@ -405,22 +402,22 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     }
 
     // Determine striping strategy
-    bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
+    bool use_striping = usesStriping(transfer_size, selected_rails.size());
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
-        // WRITE: group 16 consecutive descs to same rail for FI_MORE batching.
-        // READ: per-descriptor round-robin (FI_MORE has no benefit for reads).
-        constexpr int FI_MORE_BATCH_SIZE = 16;
+        // WRITE: group NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE consecutive descriptors on one rail
+        // for FI_MORE batching. READ: per-descriptor round-robin (FI_MORE has no benefit).
+        // apply_fi_more is precomputed by the caller, which leaves it false for the last post
+        // on each rail so that every rail's FI_MORE batch is flushed.
         const bool batch_write = (op_type == nixlLibfabricReq::WRITE);
-        const size_t rr_idx =
-            batch_write ? (base_offset + desc_idx / FI_MORE_BATCH_SIZE) : (base_offset + desc_idx);
-        const size_t rail_id = selected_rails[rr_idx % selected_rails.size()];
-        const size_t remote_ep_id =
-            remote_selected_endpoints[rr_idx % remote_selected_endpoints.size()];
-        const int pos_in_group = desc_idx % FI_MORE_BATCH_SIZE;
-        const bool is_last_in_group =
-            (pos_in_group == FI_MORE_BATCH_SIZE - 1) || (desc_idx == desc_count - 1);
-        const uint64_t fi_flags = (batch_write && !is_last_in_group) ? FI_MORE : 0;
+        const size_t rail_sel_idx =
+            railSelectionIndex(base_offset, desc_idx, batch_write, selected_rails.size());
+        const size_t rail_id = selected_rails[rail_sel_idx];
+        // The remote endpoint round-robins over its own count, which can differ from the
+        // local rail count.
+        const size_t remote_ep_id = remote_selected_endpoints[railSelectionIndex(
+            base_offset, desc_idx, batch_write, remote_selected_endpoints.size())];
+        const uint64_t fi_flags = (batch_write && apply_fi_more) ? FI_MORE : 0;
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
         nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
@@ -448,9 +445,22 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         req->local_mr = local_mrs[rail_id];
         req->remote_key = remote_keys[remote_ep_id];
         req->rail_id = rail_id;
-        // Submit immediately
+        // Submit: either enqueue for PT, or post directly
         nixl_status_t status;
-        if (op_type == nixlLibfabricReq::WRITE) {
+        if (rails_[rail_id]->isProgressThreadEnabled()) {
+            // PT-owns-endpoint: enqueue for progress thread to post
+            deferTransferRequest(op_type,
+                                 agent_idx,
+                                 xfer_id,
+                                 fi_flags,
+                                 dest_addrs.at(rail_id)[remote_ep_id],
+                                 device_id,
+                                 is_cuda_vram,
+                                 rail_id,
+                                 req);
+            status = NIXL_SUCCESS;
+        } else if (op_type == nixlLibfabricReq::WRITE) {
+            // Direct post (PT OFF path)
             // Generate next SEQ_ID for this specific write operation
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
             uint64_t imm_data =
@@ -500,7 +510,9 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                 remote_selected_endpoints[i % remote_selected_endpoints.size()];
             NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id=" << remote_ep_id;
             size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
-            if (current_chunk_size == 0) break;
+            if (current_chunk_size == 0) {
+                break;
+            }
             // Allocate request
             nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
             if (!req) {
@@ -532,7 +544,19 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             req->remote_key = remote_keys[remote_ep_id];
             req->rail_id = rail_id;
             nixl_status_t status;
-            if (op_type == nixlLibfabricReq::WRITE) {
+            if (rails_[rail_id]->isProgressThreadEnabled()) {
+                // PT-owns-endpoint: enqueue for progress thread to post
+                deferTransferRequest(op_type,
+                                     agent_idx,
+                                     xfer_id,
+                                     fi_flags,
+                                     dest_addrs.at(rail_id)[remote_ep_id],
+                                     device_id,
+                                     is_cuda_vram,
+                                     rail_id,
+                                     req);
+                status = NIXL_SUCCESS;
+            } else if (op_type == nixlLibfabricReq::WRITE) {
                 // Generate next SEQ_ID for this specific transfer operation
                 uint8_t seq_id = LibfabricUtils::getNextSeqId();
                 uint64_t imm_data =
@@ -574,6 +598,37 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
 
     return NIXL_SUCCESS;
+}
+
+void
+nixlLibfabricRailManager::deferTransferRequest(nixlLibfabricReq::OpType op_type,
+                                               uint16_t agent_idx,
+                                               uint16_t xfer_id,
+                                               uint64_t fi_flags,
+                                               fi_addr_t dest_addr,
+                                               int device_id,
+                                               bool is_cuda_vram,
+                                               size_t rail_id,
+                                               nixlLibfabricReq *req) {
+    uint8_t seq_id = (op_type == nixlLibfabricReq::WRITE) ? LibfabricUtils::getNextSeqId() : 0;
+    uint64_t imm_data = (op_type == nixlLibfabricReq::WRITE) ?
+        NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id) :
+        0;
+    nixlLibfabricPostRequest pr{};
+    pr.type = (op_type == nixlLibfabricReq::WRITE) ? nixlLibfabricPostRequest::WRITE :
+                                                     nixlLibfabricPostRequest::READ;
+    pr.local_addr = req->local_addr;
+    pr.length = req->chunk_size;
+    pr.local_desc = fi_mr_desc(req->local_mr);
+    pr.immediate_data = imm_data;
+    pr.dest_addr = dest_addr;
+    pr.remote_addr = req->remote_addr;
+    pr.remote_key = req->remote_key;
+    pr.req = req;
+    pr.fi_flags = fi_flags;
+    pr.device_id = device_id;
+    pr.is_cuda_vram = is_cuda_vram;
+    rails_[rail_id]->enqueuePost(pr);
 }
 
 bool
@@ -958,6 +1013,9 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     switch (msg_type) {
     case ControlMessageType::NOTIFICATION:
         msg_type_value = NIXL_LIBFABRIC_MSG_NOTIFICTION;
+        break;
+    case ControlMessageType::HANDSHAKE:
+        msg_type_value = NIXL_LIBFABRIC_MSG_HANDSHAKE;
         break;
     default:
         NIXL_ERROR << "Unknown message type";

@@ -185,6 +185,38 @@ private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;
 };
 
+/**
+ * @brief RAII guard that keeps a correlation id active on the tracer for its
+ *        lifetime, so every span/mark created while it is in scope is tagged
+ *        with that id. Null-tracer-safe. Used to link spans emitted on different
+ *        threads (e.g. postXferReq on the caller thread vs. the completion on
+ *        the polling thread) to the same logical request.
+ */
+class CorrelationScope {
+public:
+    [[nodiscard]] CorrelationScope(Tracer *tracer, std::uint64_t id) : tracer_(tracer) {
+        if (tracer_ != nullptr) {
+            tracer_->pushCorrelationId(id);
+        }
+    }
+
+    ~CorrelationScope() {
+        if (tracer_ != nullptr) {
+            tracer_->popCorrelationId();
+        }
+    }
+
+    CorrelationScope(const CorrelationScope &) = delete;
+    CorrelationScope &
+    operator=(const CorrelationScope &) = delete;
+    CorrelationScope(CorrelationScope &&) = delete;
+    CorrelationScope &
+    operator=(CorrelationScope &&) = delete;
+
+private:
+    Tracer *tracer_;
+};
+
 /** @brief Inputs used to build the composite tracer from enabled backends. */
 struct TracerConfig {
     /** @brief Agent name; used e.g. as the NVTX domain name. */

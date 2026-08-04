@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -26,6 +27,15 @@
 
 #include "common.h"
 #include "tracing/trace.h"
+
+namespace nixl::trace {
+// Agent-wiring backend-selection policy, defined in nixl_agent.cpp (not exposed
+// via a header — declared here so the unit test can exercise it directly).
+[[nodiscard]] bool
+runningUnderNsys();
+[[nodiscard]] std::vector<std::string>
+resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under_nsys);
+} // namespace nixl::trace
 
 namespace {
 
@@ -38,6 +48,8 @@ struct CallLog {
     std::vector<std::pair<std::string, std::string>> strAttrs;
     std::vector<std::pair<std::string, std::int64_t>> intAttrs;
     std::vector<std::pair<std::string, double>> dblAttrs;
+    std::vector<std::uint64_t> pushedCorrelationIds;
+    int correlationPops = 0;
 };
 
 class MockSpan final : public nixl::trace::SpanBackend {
@@ -98,10 +110,14 @@ public:
     }
 
     void
-    pushCorrelationId(std::uint64_t) override {}
+    pushCorrelationId(std::uint64_t id) override {
+        log_->pushedCorrelationIds.push_back(id);
+    }
 
     void
-    popCorrelationId() override {}
+    popCorrelationId() override {
+        ++log_->correlationPops;
+    }
 
     [[nodiscard]] std::string_view
     name() const noexcept override {
@@ -222,6 +238,79 @@ TEST(Tracing, DefaultSpanIsInert) {
     EXPECT_EQ(span.id().value, 0u);
 }
 
+// NVTX auto-enable precedence (NIX-1576). resolveTraceBackends is the pure
+// policy behind makeAgentTracer: an explicit NIXL_TRACE_BACKENDS list is always
+// honored, nsys auto-enables NVTX *in addition to* it, and a set-but-empty value
+// forces tracing off. The result is deduplicated (backends are collected in a
+// std::set), so the returned list is sorted.
+TEST(Tracing, ResolveBackendsExplicitListIsHonored) {
+    using nixl::trace::resolveTraceBackends;
+
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx"}, /*under_nsys=*/false),
+              (std::vector<std::string>{"nvtx"}));
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx,chakra"}, false),
+              (std::vector<std::string>{"chakra", "nvtx"}));
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"chakra"}, false),
+              (std::vector<std::string>{"chakra"}));
+}
+
+// nsys auto-enable must not suppress an explicitly requested backend: it adds
+// NVTX to the explicit list (and dedups when NVTX is already requested).
+TEST(Tracing, ResolveBackendsNsysAddsNvtxToExplicitList) {
+    using nixl::trace::resolveTraceBackends;
+
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"chakra"}, /*under_nsys=*/true),
+              (std::vector<std::string>{"chakra", "nvtx"}));
+    // Already-requested NVTX is not loaded twice.
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx"}, /*under_nsys=*/true),
+              (std::vector<std::string>{"nvtx"}));
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"nvtx,chakra"}, /*under_nsys=*/true),
+              (std::vector<std::string>{"chakra", "nvtx"}));
+}
+
+TEST(Tracing, ResolveBackendsExplicitEmptyIsOff) {
+    using nixl::trace::resolveTraceBackends;
+
+    // Set-but-empty is an explicit "off" that must beat the nsys auto-enable.
+    EXPECT_TRUE(resolveTraceBackends(std::optional<std::string>{""}, /*under_nsys=*/true).empty());
+    EXPECT_TRUE(resolveTraceBackends(std::optional<std::string>{""}, /*under_nsys=*/false).empty());
+    // All-whitespace entries are dropped, so this is still an explicit "off".
+    EXPECT_TRUE(
+        resolveTraceBackends(std::optional<std::string>{" , "}, /*under_nsys=*/true).empty());
+}
+
+// Entries are trimmed, so surrounding whitespace does not create bogus backend
+// names and does not defeat the nsys dedup ("chakra, nvtx" under nsys stays two).
+TEST(Tracing, ResolveBackendsTrimsWhitespace) {
+    using nixl::trace::resolveTraceBackends;
+
+    EXPECT_EQ(
+        resolveTraceBackends(std::optional<std::string>{" nvtx , chakra "}, /*under_nsys=*/false),
+        (std::vector<std::string>{"chakra", "nvtx"}));
+    // Trimmed "nvtx" is recognized by the dedup, so nsys does not add it again.
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"chakra, nvtx"}, /*under_nsys=*/true),
+              (std::vector<std::string>{"chakra", "nvtx"}));
+    EXPECT_EQ(resolveTraceBackends(std::optional<std::string>{"  nvtx  "}, /*under_nsys=*/true),
+              (std::vector<std::string>{"nvtx"}));
+}
+
+TEST(Tracing, ResolveBackendsAutoEnablesNvtxUnderNsys) {
+    using nixl::trace::resolveTraceBackends;
+
+    // Unset + under nsys -> auto-enable NVTX; unset + not under nsys -> inert.
+    EXPECT_EQ(resolveTraceBackends(std::nullopt, /*under_nsys=*/true),
+              (std::vector<std::string>{"nvtx"}));
+    EXPECT_TRUE(resolveTraceBackends(std::nullopt, /*under_nsys=*/false).empty());
+}
+
+// runningUnderNsys keys off NVTX_INJECTION64_PATH, the variable nsys injects
+// into the profiled process's environment.
+TEST(Tracing, RunningUnderNsysDetectsInjectionVar) {
+    gtest::ScopedEnv env;
+    env.addVar("NVTX_INJECTION64_PATH", "/opt/nvidia/nsight/libInjectionNvtx64.so");
+    EXPECT_TRUE(nixl::trace::runningUnderNsys());
+}
+
 // makeTracer ignores empty entries and returns null when no backend resolves to
 // a loadable plugin (so callers can cheaply null-check).
 TEST(Tracing, MakeTracerUnknownBackendReturnsNull) {
@@ -255,4 +344,46 @@ TEST(Tracing, RequestedBackendWithoutPluginIsInert) {
     span.addAttribute("bytes", std::int64_t{1024});
     span.addAttribute("peer", std::string_view{"peer_agent"});
     EXPECT_EQ(span.id().value, 0u);
+}
+
+// Cross-thread correlation: push/pop must fan out to every backend, so a
+// correlation id set at the request boundary reaches all active backends.
+TEST(Tracing, CorrelationIdFansOutToAllBackends) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+
+    tracer->pushCorrelationId(0xABCDu);
+    tracer->popCorrelationId();
+
+    ASSERT_EQ(a.pushedCorrelationIds.size(), 1u);
+    ASSERT_EQ(b.pushedCorrelationIds.size(), 1u);
+    EXPECT_EQ(a.pushedCorrelationIds[0], 0xABCDu);
+    EXPECT_EQ(b.pushedCorrelationIds[0], 0xABCDu);
+    EXPECT_EQ(a.correlationPops, 1);
+    EXPECT_EQ(b.correlationPops, 1);
+}
+
+// CorrelationScope is the RAII guard used at call sites: it pushes on
+// construction and pops on destruction, across every backend.
+TEST(Tracing, CorrelationScopeBalancesPushPop) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+
+    {
+        const nixl::trace::CorrelationScope scope(tracer.get(), 0x1234u);
+        const auto span = tracer->beginSpan("op");
+    }
+
+    ASSERT_EQ(a.pushedCorrelationIds.size(), 1u);
+    EXPECT_EQ(a.pushedCorrelationIds[0], 0x1234u);
+    EXPECT_EQ(a.correlationPops, 1);
+    EXPECT_EQ(b.pushedCorrelationIds.size(), 1u);
+    EXPECT_EQ(b.correlationPops, 1);
+}
+
+// A null tracer (no active backend) must make CorrelationScope a safe no-op.
+TEST(Tracing, CorrelationScopeNullTracerIsInert) {
+    nixl::trace::Tracer *tracer = nullptr;
+    { const nixl::trace::CorrelationScope scope(tracer, 0x1u); }
+    SUCCEED();
 }

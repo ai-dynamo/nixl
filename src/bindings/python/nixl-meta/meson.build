@@ -29,6 +29,7 @@ pyproject_toml = configure_file(
 )
 
 readme_md = fs.copyfile('README.md')
+nixl_meta_utils_copy = fs.copyfile('nixl_meta_utils.py')
 
 source_root = meson.project_source_root()
 root_license_path = join_paths(source_root, 'LICENSE')
@@ -38,6 +39,8 @@ subdir('nixl')
 
 if get_option('build_nixl_ep')
   subdir('nixl_ep')
+else
+  nixl_ep_init_copy = []
 endif
 
 uv = find_program('uv', required: false)
@@ -47,21 +50,18 @@ if uv.found()
   # fs.copyfile() captured in the subdirs), not the source files. This way
   # ninja runs the copies before `uv build` and incremental rebuilds pick
   # up edits to the source __init__.py files.
-  meta_inputs = [
-        pyproject_toml,
-        readme_md,
-        license_path,
-        nixl_init_copy,
-        nixl_api_copy,
-        nixl_logging_copy,
-      ]
-  if get_option('build_nixl_ep')
-    meta_inputs +=  [nixl_ep_init_copy]
-  endif
-
   meta_wheel = custom_target(
     'build_nixl_meta',
-    input: meta_inputs,
+    input: [
+      pyproject_toml,
+      readme_md,
+      license_path,
+      nixl_meta_utils_copy,
+      nixl_init_copy,
+      nixl_api_copy,
+      nixl_logging_copy,
+      nixl_ep_init_copy,
+    ],
     output: [wheel_name],
     command: [uv, 'build', '--wheel', '--out-dir', build_dir, build_dir],
     install: false,

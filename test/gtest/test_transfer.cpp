@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +26,7 @@
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -35,9 +37,7 @@
 #include <thread>
 #include <mutex>
 
-#ifdef HAVE_CUDA
-#include <cuda_runtime.h>
-#endif
+#include "gpu_utils.h"
 
 constexpr auto min_chrono_time = std::chrono::steady_clock::time_point::min();
 
@@ -70,10 +70,12 @@ private:
         switch (mem_type) {
         case DRAM_SEG:
             return malloc(size);
-#ifdef HAVE_CUDA
-        case VRAM_SEG:
-            void *ptr;
-            return cudaSuccess == cudaMalloc(&ptr, size)? ptr : nullptr;
+#if defined(HAVE_GPU)
+        case VRAM_SEG: {
+            void *ptr = nullptr;
+            gpuMalloc(&ptr, size, "MemBuffer allocation");
+            return ptr;
+        }
 #endif
         default:
             return nullptr; // TODO
@@ -86,9 +88,9 @@ private:
         case DRAM_SEG:
             free(ptr);
             break;
-#ifdef HAVE_CUDA
+#if defined(HAVE_GPU)
         case VRAM_SEG:
-            cudaFree(ptr);
+            gpuFree(ptr, "MemBuffer release");
             break;
 #endif
         default:
@@ -146,9 +148,9 @@ protected:
 
     void SetUp() override
     {
-#ifdef HAVE_CUDA
-        m_cuda_device = (cudaSetDevice(0) == cudaSuccess);
-#endif
+        int gpu_count = 0;
+        gpuGetDeviceCount(&gpu_count, "Probing GPU devices");
+        m_gpu_device = (gpu_count > 0);
 
         // Disabling Telemetry until the corresponding test
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
@@ -472,7 +474,7 @@ protected:
         return absl::StrFormat("agent_%d", idx);
     }
 
-    bool m_cuda_device = false;
+    bool m_gpu_device = false;
     gtest::ScopedEnv env;
     std::vector<nixlBackendH *> backend_handles;
 
@@ -576,7 +578,7 @@ TEST_P(TestTransfer, remoteMDFromSocket)
     std::vector<MemBuffer> src_buffers, dst_buffers;
     constexpr size_t size = 16 * 1024;
     constexpr size_t count = 4;
-    nixl_mem_t mem_type = m_cuda_device? VRAM_SEG : DRAM_SEG;
+    nixl_mem_t mem_type = m_gpu_device ? VRAM_SEG : DRAM_SEG;
 
     createRegisteredMem(getAgent(0), size, count, mem_type, src_buffers);
     createRegisteredMem(getAgent(1), size, count, mem_type, dst_buffers);
@@ -770,6 +772,22 @@ TEST_P(TestTransferTracing, NvtxNotifications) {
                        /*num_threads=*/1);
 }
 
+// Exercises loadRemoteMD via direct metadata blob exchange (exchangeMD path).
+TEST_P(TestTransferTracing, NvtxMetadataExchange) {
+    constexpr size_t size = 4096;
+    constexpr size_t count = 1;
+
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
+    createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+
+    exchangeMD(0, 1);
+
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
+    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+}
+
 // Single clean pass through every traced agent op in lifecycle order, so the
 // nsys capture is an easy-to-narrate demo timeline (see the demo plan in
 // docs/proposals/shared-tracing-api-plan.md). makeConnection is invoked
@@ -823,5 +841,37 @@ TEST_P(TestTransferTracing, NvtxDemoWalkthrough) {
 
 NIXL_INSTANTIATE_TEST(ucx_tracing, TestTransferTracing, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_tracing_no_pt, TestTransferTracing, "UCX", false, 2, 0, "");
+
+// Auto-enable path (NIX-1576): with NIXL_TRACE_BACKENDS unset, a process running
+// under Nsight Systems (nsys injects NVTX_INJECTION64_PATH) must activate the
+// NVTX backend on its own. Reuses TestTransferTracing's plugin-dir registration
+// and transfer body; only the environment differs.
+class TestTransferTracingNsysAuto : public TestTransferTracing {
+protected:
+    void
+    SetUp() override {
+        if (!nvtxPluginAvailable_) {
+            GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+        }
+        env.addVar("NIXL_TELEMETRY_ENABLE", "n");
+        // Leave NIXL_TRACE_BACKENDS unset so the NVTX backend can only come from
+        // nsys auto-enable. Under a real nsys run NVTX_INJECTION64_PATH is already
+        // set (real injection library) -- don't clobber it. Otherwise simulate an
+        // nsys process; the path need not exist, as the NVTX runtime falls back to
+        // no-op ranges when injection is absent.
+        if (std::getenv("NVTX_INJECTION64_PATH") == nullptr) {
+            env.addVar("NVTX_INJECTION64_PATH", "/nonexistent/libInjectionNvtx64.so");
+        }
+        for (size_t i = 0; i < 2; i++) {
+            addAgent(i);
+        }
+    }
+};
+
+TEST_P(TestTransferTracingNsysAuto, AutoEnabledTransferLoop) {
+    runTracingTransferTest();
+}
+
+NIXL_INSTANTIATE_TEST(ucx_tracing_nsys_auto, TestTransferTracingNsysAuto, "UCX", true, 2, 0, "");
 
 } // namespace gtest

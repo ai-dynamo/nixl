@@ -19,6 +19,10 @@ shared_library(
     'libtrace_backend_nvtx',
     'nvtx_plugin.cpp',
     'nvtx_backend.cpp',
+    'nvtx_payload_schemas.cpp',
+    'nvtx_events.cpp',
+    'nvtx_span.cpp',
+    'nvtx_trace_backend.cpp',
     include_directories: [nixl_inc_dirs, utils_inc_dirs],
     # dl_dep: nvtx3 injection thunks call dlopen/dlsym/dlclose, so with --no-undefined
     # libdl must be linked where dl* isn't merged into libc (e.g. the manylinux wheel build).
