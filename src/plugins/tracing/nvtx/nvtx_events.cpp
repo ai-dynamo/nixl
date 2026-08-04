@@ -38,6 +38,16 @@ namespace {
         "nixl::fetchRemoteMD",
         "nixl::prepMemView",
         "nixl::releaseMemView",
+        // libfabric backend (src/utils/libfabric)
+        "nixl::libfabric.transfer.write",
+        "nixl::libfabric.transfer.read",
+        "nixl::libfabric.post_write",
+        "nixl::libfabric.post_read",
+        "nixl::libfabric.post_send",
+        "nixl::libfabric.local_completion.write",
+        "nixl::libfabric.local_completion.read",
+        "nixl::libfabric.recv_completion",
+        "nixl::libfabric.remote_write_completion",
     };
 
     [[nodiscard]] constexpr std::uint32_t
