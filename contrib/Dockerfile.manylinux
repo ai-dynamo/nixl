@@ -226,7 +226,7 @@ RUN git clone https://github.com/nvidia/gusli.git && \
      cd ..
 
 # Required for Azure SDK
-RUN git clone --depth 1 https://gitlab.gnome.org/GNOME/libxml2.git --branch 2.15 && \
+RUN git clone --depth 1 https://github.com/GNOME/libxml2.git --branch 2.15 && \
     cd libxml2 && \
     ACLOCAL_PATH=/usr/share/aclocal ./autogen.sh && make -j${NPROC:-$(nproc)} && \
     make install
