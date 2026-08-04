@@ -38,6 +38,27 @@
 #include <taskflow/taskflow.hpp>
 #include <unordered_map>
 
+nixl_status_t
+gdsMtResolveRegisteredBuffer(void *registered_base,
+                             size_t registered_size,
+                             uintptr_t descriptor_addr,
+                             size_t descriptor_size,
+                             gdsMtResolvedBuffer &resolved) {
+    const uintptr_t base = reinterpret_cast<uintptr_t> (registered_base);
+    if (descriptor_addr < base || descriptor_size > registered_size) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    const size_t descriptor_delta = static_cast<size_t> (descriptor_addr - base);
+    if (descriptor_delta > registered_size - descriptor_size) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    resolved.devPtrBase = registered_base;
+    resolved.devPtrOffset = descriptor_delta;
+    return NIXL_SUCCESS;
+}
+
 namespace {
 const size_t default_thread_count = std::max (1u, std::thread::hardware_concurrency() / 2);
 
@@ -52,23 +73,36 @@ struct FileSegData {
 
 struct MemSegData {
     std::unique_ptr<gdsMtMemBuf> buf;
-    MemSegData (void *addr, size_t size, int flags)
-        : buf (std::make_unique<gdsMtMemBuf> (addr, size, flags)) {}
+    void *registeredBase;
+    size_t registeredSize;
+
+    MemSegData(void *addr, size_t size, int flags)
+        : buf (std::make_unique<gdsMtMemBuf>(addr, size, flags)),
+          registeredBase (addr),
+          registeredSize (size) {}
 };
 
 struct GdsMtTransferRequestH {
-    GdsMtTransferRequestH (void *a,
+    GdsMtTransferRequestH(void *base,
+                           size_t buffer_offset,
                            size_t s,
                            size_t offset,
                            CUfileHandle_t handle,
                            CUfileOpcode_t operation)
-        : addr{a},
+        : devPtrBase{base},
+          devPtrOffset{buffer_offset},
           size{s},
           file_offset{offset},
           fh{handle},
           op{operation} {}
 
-    void *addr;
+    uintptr_t
+    effectiveAddr() const {
+        return reinterpret_cast<uintptr_t> (devPtrBase) + devPtrOffset;
+    }
+
+    void *devPtrBase;
+    size_t devPtrOffset;
     size_t size;
     size_t file_offset;
     CUfileHandle_t fh;
@@ -120,14 +154,22 @@ void
 runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_status) {
     ssize_t nbytes = 0;
     if (req->op == CUFILE_READ) {
-        nbytes = cuFileRead (req->fh, req->addr, req->size, req->file_offset, 0);
+        nbytes = cuFileRead(req->fh,
+                             req->devPtrBase,
+                             req->size,
+                             req->file_offset,
+                             req->devPtrOffset);
         if (nbytes < 0) {
             NIXL_ERROR << "GDS_MT: cuFileRead failed: " << strerror (errno);
             overall_status->store (NIXL_ERR_BACKEND);
             return;
         }
     } else if (req->op == CUFILE_WRITE) {
-        nbytes = cuFileWrite (req->fh, req->addr, req->size, req->file_offset, 0);
+        nbytes = cuFileWrite(req->fh,
+                              req->devPtrBase,
+                              req->size,
+                              req->file_offset,
+                              req->devPtrOffset);
         if (nbytes < 0) {
             NIXL_ERROR << "GDS_MT: cuFileWrite failed: " << strerror (errno);
             overall_status->store (NIXL_ERR_BACKEND);
@@ -140,7 +182,10 @@ runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_sta
 
     if ((size_t)nbytes != req->size) {
         NIXL_ERROR << "GDS_MT: error: short " << ((req->op == CUFILE_READ) ? "read: " : "write: ")
-                   << nbytes << " out of " << req->size << " bytes - address=" << req->addr;
+                   << nbytes << " out of " << req->size
+                   << " bytes - devPtrBase=" << req->devPtrBase
+                   << " devPtrOffset=" << req->devPtrOffset
+                   << " effective_address=" << reinterpret_cast<void *> (req->effectiveAddr());
         overall_status->store (NIXL_ERR_BACKEND);
         return;
     }
@@ -149,13 +194,43 @@ runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_sta
 nixl_status_t
 extractTransferParams (const nixlMetaDesc &mem_desc,
                        const nixlMetaDesc &file_desc,
-                       void *&base_addr,
+                       void *&dev_ptr_base,
+                       size_t &dev_ptr_offset,
                        size_t &total_size,
-                       size_t &base_offset,
+                       size_t &file_offset,
                        CUfileHandle_t &cu_fhandle) {
-    base_addr = (void *)mem_desc.addr;
     total_size = mem_desc.len;
-    base_offset = (size_t)file_desc.addr;
+    file_offset = (size_t)file_desc.addr;
+
+    auto *metadata = static_cast<nixlGdsMtMetadata *> (mem_desc.metadataP);
+    if (!metadata) {
+        NIXL_ERROR << "GDS_MT: error: memory metadata not found";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    auto *mem_data = std::get_if<MemSegData>(&metadata->data_);
+    if (!mem_data) {
+        NIXL_ERROR << "GDS_MT: error: memory metadata is not a registered memory buffer";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    gdsMtResolvedBuffer resolved{};
+    nixl_status_t status = gdsMtResolveRegisteredBuffer(mem_data->registeredBase,
+                                                         mem_data->registeredSize,
+                                                         mem_desc.addr,
+                                                         mem_desc.len,
+                                                         resolved);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "GDS_MT: error: transfer descriptor is outside registered memory"
+                   << " descriptor_addr=" << reinterpret_cast<void *> (mem_desc.addr)
+                   << " descriptor_size=" << mem_desc.len
+                   << " registeredBase=" << mem_data->registeredBase
+                   << " registeredSize=" << mem_data->registeredSize;
+        return status;
+    }
+
+    dev_ptr_base = resolved.devPtrBase;
+    dev_ptr_offset = resolved.devPtrOffset;
 
     const auto *md = static_cast<const nixlGdsMtMetadata *>(file_desc.metadataP);
     if (!md) {
@@ -306,25 +381,28 @@ nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
     gds_mt_handle->request_list.clear();
     bool is_local_file = (local.getType() == FILE_SEG);
     for (size_t i = 0; i < buf_cnt; i++) {
-        void *base_addr;
+        void *dev_ptr_base;
+        size_t dev_ptr_offset;
         size_t total_size;
-        size_t base_offset;
+        size_t file_offset;
         CUfileHandle_t cu_fhandle;
 
         nixl_status_t param_status;
         if (is_local_file) {
             param_status = extractTransferParams (remote[i],
                                                   local[i],
-                                                  base_addr,
+                                                  dev_ptr_base,
+                                                  dev_ptr_offset,
                                                   total_size,
-                                                  base_offset,
+                                                  file_offset,
                                                   cu_fhandle);
         } else {
             param_status = extractTransferParams (local[i],
                                                   remote[i],
-                                                  base_addr,
+                                                  dev_ptr_base,
+                                                  dev_ptr_offset,
                                                   total_size,
-                                                  base_offset,
+                                                  file_offset,
                                                   cu_fhandle);
         }
 
@@ -332,9 +410,10 @@ nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
             return param_status;
         }
 
-        gds_mt_handle->request_list.emplace_back (base_addr,
+        gds_mt_handle->request_list.emplace_back(dev_ptr_base,
+                                                  dev_ptr_offset,
                                                   total_size,
-                                                  base_offset,
+                                                  file_offset,
                                                   cu_fhandle,
                                                   (operation == NIXL_READ) ? CUFILE_READ :
                                                                              CUFILE_WRITE);

@@ -24,3 +24,18 @@ nixl_gds_mt_app = executable('nixl_gds_mt_test', 'nixl_gds_mt_test.cpp',
                              install: true)
 
 test('gds_mt_path_mode_smoke', nixl_gds_mt_app)
+
+gds_mt_offset_test = executable('gds_mt_offset_test', 'gds_mt_offset_test.cpp',
+                                dependencies: [nixl_dep,
+                                               nixl_infra,
+                                               nixl_common_dep,
+                                               cuda_dep,
+                                               cufile_dep,
+                                               taskflow_proj,
+                                               file_utils_interface,
+                                               gds_mt_backend_interface],
+                                include_directories: [nixl_inc_dirs,
+                                                      utils_inc_dirs,
+                                                      include_directories('../../../../src/plugins/gds_mt')])
+
+test('gds_mt_offset_test', gds_mt_offset_test)
