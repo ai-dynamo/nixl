@@ -390,9 +390,10 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 
 ## Usage
 
-### Raw POSIX command
+### Verb-based interface
 
-The scoped CLI11 path runs the existing NIXLBench worker with three explicit
+NIXLBench also provides a verb-based interface. The first available command is
+`raw posix`, which runs the existing NIXLBench worker with three explicit
 ownership layers:
 
 - `raw` owns benchmark controls such as operation, transfer sizes, iterations,
@@ -408,19 +409,6 @@ Raw options are accepted before or after the backend subcommand. Sizes accept
 binary human-readable suffixes such as `KiB`, `MiB`, and `GiB`. The shorter
 `KB`, `MB`, `GB`, and `TB` spellings are accepted as binary aliases for
 compatibility.
-
-```text
-CLI11 raw posix
-├── raw + FILE_SEG options ──> narrow compatibility bridge ──> xferBenchConfig ─┐
-└── exact plugin strings ───────────────────────────────────────────────────────┤
-                                                                                v
-                                            worker gets plugin defaults, applies map
-                                                                                |
-                                                                                v
-                                                                          POSIX plugin
-
-Legacy gflags ──> existing xferBenchConfig ──> existing plugin-specific assembly
-```
 
 ```bash
 # Create the directory used by the examples below
@@ -465,8 +453,7 @@ interprets and validates the resolved values during backend creation rather than
 through copied NIXLBench rules, so the `use_uring` example depends on that
 parameter being advertised by the installed POSIX plugin.
 
-Only explicit `raw` commands use CLI11. All existing flags-only commands keep
-their gflags syntax and behavior.
+The existing flags-only interface remains available for all other commands.
 
 ### ETCD Coordination Setup
 
