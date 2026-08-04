@@ -333,6 +333,7 @@ template class nixlDescList<nixlBlobDesc>;
 template class nixlDescList<nixlSectionDesc>;
 template class nixlDescList<nixlRemoteDesc>;
 template class nixlDescList<nixlRemoteMetaDesc>;
+template class nixlDescList<nixlStrideDesc>;
 
 template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
                                          const nixlDescList<nixlBasicDesc> &rhs);
@@ -352,13 +353,16 @@ operator== <nixlRemoteMetaDesc>(const nixlDescList<nixlRemoteMetaDesc> &lhs,
 // nixlSecDescList keeps the elements sorted
 void
 nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
+    nixlSectionDesc normalized = desc;
+    normalizeSecDesc(normalized);
     auto &vec = this->descs;
-    auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
-    vec.insert(itr, desc);
+    auto itr = std::upper_bound(vec.begin(), vec.end(), normalized);
+    vec.insert(itr, std::move(normalized));
 }
 
 void
 nixlSecDescList::addDesc(nixlSectionDesc &&desc) {
+    normalizeSecDesc(desc);
     auto &vec = this->descs;
     auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
     vec.insert(itr, std::move(desc));
@@ -427,6 +431,8 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, order ord) {
         return;
     }
 
+    normalizeSecDescBatch(batch);
+
     if (ord == order::SORTED) {
         NIXL_ASSERT(std::is_sorted(batch.begin(), batch.end()));
     } else {
@@ -473,7 +479,7 @@ nixlSecDescList::remDescs(std::vector<size_t> indices, order ord) {
 
 int
 nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
-    const nixlBasicDesc adjusted_query = normalizeSecDesc(query, this->getType());
+    const nixlBasicDesc adjusted_query = normalizeQuery(query);
 
     auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), adjusted_query);
     if (itr == this->descs.end() || static_cast<const nixlBasicDesc &>(*itr) != adjusted_query)

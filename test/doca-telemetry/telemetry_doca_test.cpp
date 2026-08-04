@@ -22,14 +22,13 @@
 
 #include <chrono>
 #include <cstdint>
-#include <iostream>
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
 
 using nixl::doca_test::loopbackConnection;
-using nixl::doca_test::metricValue;
-using nixl::doca_test::scrapeUntil;
+using nixl::doca_test::scrapeUntilValue;
 
 class docaTelemetryTest : public ::testing::Test {
 protected:
@@ -44,9 +43,9 @@ protected:
 
 // Raw DOCA Metrics API proof, mirroring the DOCA prometheus_example sample:
 // stand up schema/source/metrics, accumulate a counter via add_counter_increment,
-// flush explicitly, and confirm the CollectX-backed Prometheus endpoint serves
-// the cumulative value. Establishes that DOCA + CollectX work in-process (the
-// gRPC duplicate-flag clash is resolved by CollectX >= 1.26).
+// flush explicitly, and confirm the DOCA Prometheus endpoint serves the
+// cumulative value. Establishes that the DOCA telemetry exporter works in-process
+// (the gRPC duplicate-flag clash is resolved in current DOCA).
 TEST_F(docaTelemetryTest, RawDocaApiServesAccumulatingCounter) {
     // PROMETHEUS_ENDPOINT must be set before schema_init (per the DOCA sample).
     const std::string endpoint = "http://127.0.0.1:" + std::to_string(port_);
@@ -81,13 +80,13 @@ TEST_F(docaTelemetryTest, RawDocaApiServesAccumulatingCounter) {
     }
     ASSERT_EQ(doca_telemetry_exporter_metrics_flush(source), DOCA_SUCCESS);
 
-    const std::string body = scrapeUntil(port_, "raw_ops_total", std::chrono::seconds(12));
-    std::cout << "=== DOCA /metrics scrape (port " << port_ << ") ===\n"
-              << body << "\n=== end scrape ===" << std::endl;
-    EXPECT_NE(body.find("raw_ops_total"), std::string::npos)
-        << "raw_ops_total not served at the DOCA Prometheus endpoint";
-    EXPECT_EQ(metricValue(body, "raw_ops_total"), 3.0)
-        << "add_counter_increment x3 (by 1) must yield a cumulative 3";
+    const nixl::doca_test::labelSet labels{{"type", "counter"}};
+    const auto metrics =
+        scrapeUntilValue(port_, "raw_ops_total", 3.0, std::chrono::seconds(12), labels);
+    const std::optional<double> value = metrics.latestValue("raw_ops_total", labels);
+    ASSERT_TRUE(value.has_value())
+        << "raw_ops_total{type=counter} not served at the DOCA Prometheus endpoint";
+    EXPECT_EQ(*value, 3.0) << "add_counter_increment x3 (by 1) must yield a cumulative 3";
 
     doca_telemetry_exporter_metrics_destroy_context(source);
     doca_telemetry_exporter_source_destroy(source);

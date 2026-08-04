@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants from telemetry_event.h
-TELEMETRY_VERSION = 3
+TELEMETRY_VERSION = 4
 
 # NIXL telemetry event types (nixl_telemetry_event_type_t)
 AGENT_TX_BYTES = 0
@@ -56,6 +56,7 @@ AGENT_ERR_NOT_SUPPORTED = 16
 AGENT_ERR_REMOTE_DISCONNECT = 17
 AGENT_ERR_CANCELED = 18
 AGENT_ERR_NO_TELEMETRY = 19
+AGENT_TELEMETRY_EVENTS_DROPPED = 20
 
 # Global flag for graceful shutdown
 running = True
@@ -239,6 +240,7 @@ _EVENT_TYPE_STRINGS = {
     AGENT_ERR_REMOTE_DISCONNECT: "agent_err_remote_disconnect",
     AGENT_ERR_CANCELED: "agent_err_canceled",
     AGENT_ERR_NO_TELEMETRY: "agent_err_no_telemetry",
+    AGENT_TELEMETRY_EVENTS_DROPPED: "agent_telemetry_events_dropped",
 }
 
 

@@ -179,7 +179,7 @@ __device__  __forceinline__ int64_t ld_volatile_global(const uint64_t *ptr) {
 #ifndef DISABLE_AGGRESSIVE_PTX_INSTRS
 #define LD_NC_FUNC "ld.global.nc.L1::no_allocate.L2::256B"
 #else
-#define LD_NC_FUNC "ld.volatile.global"
+#define LD_NC_FUNC "ld.volatile.global.L2::256B"
 #endif
 
 // `ld.global.nc.L1::no_allocate` will be translated into `LDG.E.NA.[width].CONSTANT` in SASS
@@ -377,7 +377,7 @@ __device__ __forceinline__ void tma_store_1d(const void* smem_ptr, const void* g
 
 template <int N = 0>
 __device__ __forceinline__ void tma_store_wait() {
-    asm volatile("cp.async.bulk.wait_group.read %0;" :: "n"(N) : "memory");
+    asm volatile("cp.async.bulk.wait_group %0;" :: "n"(N) : "memory");
 }
 
 #endif

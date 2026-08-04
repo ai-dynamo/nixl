@@ -20,6 +20,7 @@
 
 set -e
 set -x
+ulimit -c unlimited
 TEXT_YELLOW="\033[1;33m"
 TEXT_CLEAR="\033[0m"
 
@@ -106,6 +107,12 @@ kill -s INT $telePID
 # shellcheck disable=SC2154
 gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
+
+# DOCA telemetry exporter tests: present only when built with the DOCA SDK
+# (TELEMETRY_DOCA). Self-contained - each binds a free loopback port via
+# findFreePort(); the DOCA telemetry exporter libs resolve through ldconfig.
+if [ -x ./bin/doca_test ]; then ./bin/doca_test; fi
+if [ -x ./bin/doca_nixl_test ]; then ./bin/doca_nixl_test; fi
 
 # Run NIXL client-server test
 nixl_test_port=$(get_next_tcp_port)
