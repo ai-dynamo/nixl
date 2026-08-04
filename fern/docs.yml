@@ -73,9 +73,133 @@ page-actions:
 # Basic DocSearch works without this block. Re-add when Dashboard is enabled.
 # See .planning/debug/search-bar-no-entry-symbol.md
 
-products:
-  - display-name: NIXL
-    path: ../docs/index.yml
+navigation:
+  # ==================== Getting Started ====================
+  - section: Getting Started
+    contents:
+      - page: Overview
+        path: ../docs/getting-started/overview.md
+      - page: Architecture
+        path: ../docs/getting-started/architecture.md
+      - page: Quick Start
+        path: ../docs/getting-started/quick-start.md
+      - page: Contribution Guide
+        path: ../docs/getting-started/contributing.md
+
+  # ==================== User Guide ====================
+  - section: User Guide
+    contents:
+      - section: NIXL Backends
+        collapsed: open-by-default
+        path: ../docs/user-guide/backends/index.md
+        contents:
+          # Network transports
+          - page: UCX
+            path: ../docs/user-guide/backends/ucx.md
+          - page: Libfabric
+            path: ../docs/user-guide/backends/libfabric.md
+          - page: Mooncake
+            path: ../docs/user-guide/backends/mooncake.md
+          - page: UCCL-P2P
+            path: ../docs/user-guide/backends/uccl.md
+          - page: DOCA GPUNetIO
+            path: ../docs/user-guide/backends/gpunetio.md
+          # Storage & file backends
+          - page: GPUDirect Storage
+            path: ../docs/user-guide/backends/gds.md
+          - page: GPUDirect Storage MT
+            path: ../docs/user-guide/backends/gds-mt.md
+          - page: POSIX
+            path: ../docs/user-guide/backends/posix.md
+          - page: HF3FS
+            path: ../docs/user-guide/backends/hf3fs.md
+          - page: OBJ
+            path: ../docs/user-guide/backends/obj.md
+          - page: Azure Blob
+            path: ../docs/user-guide/backends/azure-blob.md
+          - page: GUSLI
+            path: ../docs/user-guide/backends/gusli.md
+      - page: "Metadata Exchange with etcd"
+        path: ../docs/user-guide/etcd-metadata-exchange.md
+      - page: Telemetry Guide
+        path: ../docs/user-guide/telemetry.md
+      - section: Benchmarking NIXL
+        contents:
+          - section: NIXLBench
+            collapsed: open-by-default
+            path: ../docs/user-guide/benchmarking/nixlbench/index.md
+            contents:
+              - page: Building NIXLBench
+                path: ../docs/user-guide/benchmarking/nixlbench/build.md
+              - page: Using NIXLBench
+                path: ../docs/user-guide/benchmarking/nixlbench/usage.md
+          - section: KVBench
+            collapsed: open-by-default
+            path: ../docs/user-guide/benchmarking/kvbench/index.md
+            contents:
+              - page: Building KVBench
+                path: ../docs/user-guide/benchmarking/kvbench/build.md
+              - page: Using KVBench
+                path: ../docs/user-guide/benchmarking/kvbench/commands.md
+
+  # ==================== Developer Guide ====================
+  - section: Developer Guide
+    contents:
+      - section: Building NIXL from Source
+        collapsed: open-by-default
+        path: ../docs/user-guide/building-nixl/index.md
+        contents:
+          - page: Docker
+            path: ../docs/user-guide/building-nixl/docker.md
+          - page: "NIXL C++ (Meson)"
+            path: ../docs/user-guide/building-nixl/nixl-cpp.md
+          - page: Python Bindings
+            path: ../docs/user-guide/building-nixl/python-bindings.md
+          - page: Rust Bindings
+            path: ../docs/user-guide/building-nixl/rust-bindings.md
+      - page: Building a Backend Plugin
+        path: ../docs/development/building-a-backend-plugin.md
+
+  # ==================== Examples ====================
+  - section: Examples
+    contents:
+      - page: Basic Two-Peer Transfer
+        path: ../docs/examples/basic-transfer.md
+      - page: GDS Direct Storage
+        path: ../docs/examples/gds-direct-storage.md
+      - page: Remote Storage Transfer
+        path: ../docs/examples/remote-storage.md
+      - page: "NIXL-EP: Expert-Parallel Communication"
+        path: ../docs/examples/nixl-ep.md
+      - page: etcd Metadata Exchange
+        path: ../docs/examples/etcd-metadata-exchange.md
+      - page: Telemetry Reader
+        path: ../docs/examples/telemetry-reader.md
+
+  # ==================== API Reference ====================
+  - section: API Reference
+    contents:
+      - page: Northbound API Semantics
+        path: ../docs/api-reference/northbound-api.md
+      - page: C++ API
+        slug: cpp-api
+        path: ../docs/api-reference/cpp-api.md
+      - page: Python API
+        path: ../docs/api-reference/python-api.md
+      - page: Rust API
+        path: ../docs/api-reference/rust-api.md
+      - page: Device API
+        path: ../docs/api-reference/device-api.md
+      - page: "Plugin (Southbound) API"
+        path: ../docs/development/sb-api-reference.md
+
+  # ==================== Resources ====================
+  - section: Resources
+    contents:
+      - page: Environment Variables
+        path: ../docs/resources/environment-variables.md
+      - page: Troubleshooting
+        path: ../docs/resources/troubleshooting.md
 
 logo:
   dark: ../docs/assets/NVIDIA_dark.svg
