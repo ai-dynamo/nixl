@@ -59,14 +59,16 @@ void
 runCuFileOp(const gdsXferReq *req, std::atomic<nixl_status_t> *overall_status) {
     ssize_t nbytes = 0;
     if (req->op == CUFILE_READ) {
-        nbytes = cuFileRead(req->fh, req->addr, req->size, req->file_offset, 0);
+        nbytes = cuFileRead(req->fh, req->dev_ptr_base, req->size, req->file_offset,
+                            req->dev_ptr_offset);
         if (nbytes < 0) {
             logCuFileIOError("cuFileRead", nbytes);
             overall_status->store(NIXL_ERR_BACKEND);
             return;
         }
     } else if (req->op == CUFILE_WRITE) {
-        nbytes = cuFileWrite(req->fh, req->addr, req->size, req->file_offset, 0);
+        nbytes = cuFileWrite(req->fh, req->dev_ptr_base, req->size, req->file_offset,
+                             req->dev_ptr_offset);
         if (nbytes < 0) {
             logCuFileIOError("cuFileWrite", nbytes);
             overall_status->store(NIXL_ERR_BACKEND);

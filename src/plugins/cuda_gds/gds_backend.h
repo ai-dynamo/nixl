@@ -18,6 +18,7 @@
 #define NIXL_SRC_PLUGINS_CUDA_GDS_GDS_BACKEND_H
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -32,15 +33,29 @@
 #include "file/file_path_mode.h"
 #include "gds_utils.h"
 
+struct gdsResolvedBuffer {
+    void *dev_ptr_base{nullptr};
+    size_t dev_ptr_offset{0};
+};
+
 // One logical mem<->file I/O produced by the shared preparation path. The
 // concrete engines turn these into their own posted, pollable request handles.
 struct gdsXferReq {
-    void *addr;
-    size_t size;
-    size_t file_offset;
-    CUfileHandle_t fh;
-    CUfileOpcode_t op;
+    void *addr{nullptr};
+    void *dev_ptr_base{nullptr};
+    size_t dev_ptr_offset{0};
+    size_t size{0};
+    size_t file_offset{0};
+    CUfileHandle_t fh{nullptr};
+    CUfileOpcode_t op{CUFILE_READ};
 };
+
+nixl_status_t
+gds_resolve_registered_buffer(void *registered_base,
+                              size_t registered_size,
+                              uintptr_t descriptor_addr,
+                              size_t descriptor_size,
+                              gdsResolvedBuffer &resolved);
 
 // Abstract base for the GDS family of backends. It owns everything that is
 // identical between "GDS" and "GDS_MT": the cuFile driver lifecycle, memory and
