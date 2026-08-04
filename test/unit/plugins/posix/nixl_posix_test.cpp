@@ -34,7 +34,173 @@
 #include <stdexcept>
 #include <cstdio>
 #include <getopt.h>
+#include <csignal>
+#include <chrono>
+#include <thread>
+#include <sys/resource.h>
 
+#ifdef HAVE_LIBURING
+#include <array>
+#include <cerrno>
+#include <cstdint>
+#include <liburing.h>
+
+#include "io_queue.h"
+extern "C" int
+__real_io_uring_submit(struct io_uring *ring);
+extern "C" int
+__wrap_io_uring_submit(struct io_uring *ring);
+
+namespace {
+constexpr int request_count = 32, ring_entries = 16, max_poll_iterations = 2000;
+constexpr size_t block_size = 4096;
+constexpr auto poll_pause = std::chrono::microseconds(50);
+using buffers_t = std::array<std::array<char, block_size>, request_count>;
+enum class submit_mode_t {
+    PARTIAL_ONLY,
+    TRANSIENT_ERRORS,
+    PASS_THROUGH,
+};
+submit_mode_t submit_mode = submit_mode_t::PASS_THROUGH;
+int submit_calls = 0, transient_submit_errors = 0;
+unsigned first_ready = 0, first_submitted = 0;
+
+struct completionState {
+    int count = 0;
+    int errors = 0;
+};
+
+void
+completionCallback(void *ctx, uint32_t, int error) {
+    auto *state = static_cast<completionState *>(ctx);
+    state->count++;
+    state->errors += error != 0;
+}
+
+struct uringTest {
+    int fd;
+    buffers_t buffers{};
+    std::unique_ptr<nixlPosixIOQueue> queue;
+
+    explicit uringTest(submit_mode_t mode) : fd(-1) {
+        submit_mode = mode;
+        submit_calls = transient_submit_errors = 0;
+        first_ready = first_submitted = 0;
+        char path[] = "/tmp/nixl_uring_test_XXXXXX";
+        fd = mkstemp(path);
+        if (fd < 0) {
+            throw std::runtime_error("mkstemp failed");
+        }
+        unlink(path);
+        for (size_t i = 0; i < buffers.size(); i++) {
+            std::memset(buffers[i].data(), static_cast<int>(i + 1), buffers[i].size());
+        }
+        queue = nixlPosixIOQueue::instantiate("URING", 64, ring_entries);
+    }
+
+    ~uringTest() {
+        queue.reset();
+        close(fd);
+    }
+
+    bool
+    enqueue(completionState &state, int start, int count) {
+        for (int i = start; i < start + count; i++) {
+            if (queue->enqueue(fd,
+                               buffers[i].data(),
+                               buffers[i].size(),
+                               i * block_size,
+                               false,
+                               completionCallback,
+                               &state) != NIXL_SUCCESS) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    nixl_status_t
+    drain() {
+        nixl_status_t status = NIXL_IN_PROG;
+        for (int i = 0; i < max_poll_iterations && status == NIXL_IN_PROG; i++) {
+            status = queue->poll();
+            std::this_thread::sleep_for(poll_pause);
+        }
+        return status;
+    }
+};
+
+#define URING_CHECK(condition) \
+    do {                       \
+        if (!(condition)) {    \
+            return 1;          \
+        }                      \
+    } while (false)
+
+} // namespace
+
+extern "C" int
+__wrap_io_uring_submit(struct io_uring *ring) {
+    if (submit_mode == submit_mode_t::TRANSIENT_ERRORS && transient_submit_errors < 3) {
+        constexpr int errors[] = {EAGAIN, EBUSY, EINTR};
+        return -errors[transient_submit_errors++];
+    }
+
+    const unsigned ready = io_uring_sq_ready(ring);
+    if (ready == 0 || submit_mode == submit_mode_t::PASS_THROUGH) {
+        return __real_io_uring_submit(ring);
+    }
+
+    submit_calls++;
+    if (submit_calls != 1 || ready < 2) {
+        return __real_io_uring_submit(ring);
+    }
+
+    const unsigned original_tail = ring->sq.sqe_tail;
+    ring->sq.sqe_tail = ring->sq.sqe_head + ready / 2;
+    const int ret = __real_io_uring_submit(ring);
+    ring->sq.sqe_tail = original_tail;
+    first_ready = ready;
+    first_submitted = ret > 0 ? static_cast<unsigned>(ret) : 0;
+    return ret;
+}
+
+int
+runUringSubmissionTests() {
+    struct io_uring probe_ring = {};
+    struct io_uring_params probe_params = {};
+    const int probe_status = io_uring_queue_init_params(ring_entries, &probe_ring, &probe_params);
+    if (probe_status < 0) {
+        std::cerr << "io_uring runtime probe failed: " << std::strerror(-probe_status) << std::endl;
+        return 1;
+    }
+    io_uring_queue_exit(&probe_ring);
+
+    {
+        uringTest test(submit_mode_t::PARTIAL_ONLY);
+        completionState state;
+        URING_CHECK(test.enqueue(state, 0, request_count));
+        URING_CHECK(test.queue->post() == NIXL_IN_PROG);
+        URING_CHECK(first_submitted > 0 && first_submitted < first_ready);
+        URING_CHECK(test.drain() == NIXL_SUCCESS);
+        URING_CHECK(state.count == request_count && state.errors == 0 && submit_calls > 1);
+    }
+    {
+        uringTest test(submit_mode_t::TRANSIENT_ERRORS);
+        completionState state;
+        URING_CHECK(test.enqueue(state, 0, request_count));
+        URING_CHECK(test.queue->post() == NIXL_IN_PROG);
+        URING_CHECK(test.queue->poll() == NIXL_IN_PROG);
+        URING_CHECK(test.queue->poll() == NIXL_IN_PROG);
+        URING_CHECK(test.drain() == NIXL_SUCCESS && transient_submit_errors == 3);
+        URING_CHECK(state.count == request_count && state.errors == 0);
+    }
+    submit_mode = submit_mode_t::PASS_THROUGH;
+    return 0;
+}
+
+#undef URING_CHECK
+#endif
 namespace {
     const size_t page_size = sysconf(_SC_PAGESIZE);
 
@@ -715,6 +881,37 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
         fill_test_pattern ((void *)dram_buf[i].addr, repost_test_phrase_2, transfer_size);
     }
 
+#ifdef HAVE_LIBURING
+    if (use_uring) {
+        for (const auto &file : fd) {
+            if (ftruncate(file.fd, 0) != 0) {
+                return 1;
+            }
+        }
+        struct rlimit saved{};
+        if (getrlimit(RLIMIT_FSIZE, &saved) != 0) {
+            return 1;
+        }
+        struct rlimit limit{page_size, saved.rlim_max};
+        if (setrlimit(RLIMIT_FSIZE, &limit) != 0) {
+            return 1;
+        }
+        auto previous_sigxfsz_handler = signal(SIGXFSZ, SIG_IGN);
+        status = agent.postXferReq(treq_write);
+        while (status == NIXL_IN_PROG) {
+            status = agent.getXferStatus(treq_write);
+        }
+        signal(SIGXFSZ, previous_sigxfsz_handler);
+        if (setrlimit(RLIMIT_FSIZE, &saved) != 0) {
+            return 1;
+        }
+        if (status >= 0) {
+            std::cerr << "io_uring short write was not reported" << std::endl;
+            return 1;
+        }
+    }
+#endif
+
     status = agent.postXferReq(treq_write);
     if (status < 0) {
         std::cerr << "Failed to post write transfer request - status: "
@@ -1007,8 +1204,9 @@ main (int argc, char *argv[]) {
     bool use_direct_io = false;
     bool use_uring = false;
     bool run_path_mode_smoke = true;
+    const struct option long_options[] = {{"enable-uring", no_argument, nullptr, 'U'}, {}};
 
-    while ((opt = getopt(argc, argv, "n:s:d:DUPh")) != -1) {
+    while ((opt = getopt_long(argc, argv, "n:s:d:DUPh", long_options, nullptr)) != -1) {
         switch (opt) {
         case 'n':
             num_transfers = std::stoi (optarg);
@@ -1031,7 +1229,7 @@ main (int argc, char *argv[]) {
         case 'h':
         default:
             std::cout << absl::StrFormat("Usage: %s [-n num_transfers] [-s transfer_size] [-d "
-                                         "test_files_dir_path] [-D] [-U] [-P]",
+                                         "test_files_dir_path] [-D] [--enable-uring] [-P]",
                                          argv[0])
                       << std::endl;
             std::cout << absl::StrFormat (
@@ -1048,7 +1246,8 @@ main (int argc, char *argv[]) {
                                          default_test_files_dir_path)
                       << std::endl;
             std::cout << absl::StrFormat ("  -D Use O_DIRECT for file I/O") << std::endl;
-            std::cout << absl::StrFormat("  -U Explicitly use the io_uring backend") << std::endl;
+            std::cout << absl::StrFormat("  -U, --enable-uring Use the io_uring backend")
+                      << std::endl;
             std::cout << absl::StrFormat("  -P Skip path-mode smoke (enabled by default)")
                       << std::endl;
             std::cout << absl::StrFormat ("  -h Show this help message") << std::endl;
@@ -1060,6 +1259,14 @@ main (int argc, char *argv[]) {
         print_unsupported_test_queue_error(use_uring);
         return 1;
     }
+
+#ifdef HAVE_LIBURING
+    if (use_uring) {
+        if (int rc = runUringSubmissionTests(); rc != 0) {
+            return rc;
+        }
+    }
+#endif
 
     if (run_path_mode_smoke) {
         checkPathModeParser();
@@ -1095,7 +1302,6 @@ main (int argc, char *argv[]) {
 
     // Reset phase number for repost test
     phase_num = 1;
-
     ret = test_posix_repost (test_files_dir_path_abs_path, use_uring);
     if (ret != 0) {
         std::cerr << "Repost Test failed" << std::endl;

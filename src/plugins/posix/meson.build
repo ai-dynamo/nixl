@@ -18,24 +18,18 @@ if not has_posix_plugin
     subdir_done()
 endif
 
-plugin_deps = [nixl_infra, nixl_common_dep, file_utils_interface]
+plugin_deps = [nixl_infra]
 
-# Define base source files
-posix_sources = [
-    'posix_backend.cpp',
-    'posix_backend.h',
-    'posix_plugin.cpp',
-    'io_queue.h',
-    'io_queue.cpp'
-]
-
+posix_sources = ['posix_backend.cpp', 'posix_backend.h', 'posix_plugin.cpp']
+posix_queue_sources = files('io_queue.h', 'io_queue.cpp')
+posix_queue_deps = [nixl_common_dep, file_utils_interface]
 compile_defs = []
 plugin_link_args = []
 
 if has_linux_aio
     compile_defs += ['-DHAVE_LINUXAIO']
-    posix_sources += ['linux_aio_io_queue.cpp']
-    plugin_deps += [ linux_aio_dep ]
+    posix_queue_sources += files('linux_aio_io_queue.cpp')
+    posix_queue_deps += [linux_aio_dep]
     message('Linux AIO found, adding Linux AIO support')
 else
     warning('Linux AIO not found')
@@ -43,8 +37,8 @@ endif
 
 if has_io_uring
     compile_defs += ['-DHAVE_LIBURING']
-    posix_sources += ['io_uring_io_queue.cpp']
-    plugin_deps += [ io_uring_dep ]
+    posix_queue_sources += files('io_uring_io_queue.cpp')
+    posix_queue_deps += [io_uring_dep]
     message('liburing found, adding io_uring support')
 else
     warning('liburing not found')
@@ -52,13 +46,19 @@ endif
 
 if has_posix_aio
     compile_defs += ['-DHAVE_POSIXAIO']
-    posix_sources += ['posix_aio_io_queue.cpp']
-    plugin_deps += [ rt_dep ]
+    posix_queue_sources += files('posix_aio_io_queue.cpp')
+    posix_queue_deps += [rt_dep]
     message('POSIX AIO found, adding POSIX AIO support')
 else
     message('POSIX AIO not found')
 endif
 
+posix_queue_dep = declare_dependency(
+    sources: posix_queue_sources,
+    dependencies: posix_queue_deps,
+    compile_args: compile_defs,
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, include_directories('.')])
+plugin_deps += [posix_queue_dep]
 if 'POSIX' in static_plugins
     posix_backend_lib = static_library('POSIX',
         posix_sources,
