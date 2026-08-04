@@ -362,6 +362,38 @@ nixlUcxEp::flushEp(nixlUcxReq &req) {
     return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
 }
 
+#ifdef HAVE_UCX_SGL_API
+nixl_status_t
+nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
+                   const ucp_dt_remote_sgl_t &remote,
+                   size_t count,
+                   nixlUcxReq &req) {
+    const nixl_status_t status = checkTxState();
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
+    const ucp_request_param_t param = {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_REMOTE_DATATYPE |
+            UCP_OP_ATTR_FIELD_REMOTE | UCP_OP_ATTR_FIELD_REMOTE_COUNT,
+        .datatype = ucp_dt_make_sgl(),
+        .remote_datatype = ucp_dt_make_sgl(),
+        .remote = &remote,
+        .remote_count = count,
+    };
+
+    const ucs_status_ptr_t request =
+        ucp_put_nbx(eph, &local, count, UCP_REMOTE_ADDR_INVALID, UCP_RKEY_INVALID, &param);
+    if (UCS_PTR_IS_PTR(request)) {
+        req = static_cast<nixlUcxReq>(request);
+        return NIXL_IN_PROG;
+    }
+
+    req = nullptr;
+    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+}
+#endif
+
 bool
 nixlUcxMtLevelIsSupported(const nixl::ucx::mt_mode_t mt_type) noexcept {
     ucp_lib_attr_t attr;
