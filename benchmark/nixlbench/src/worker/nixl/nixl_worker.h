@@ -30,6 +30,7 @@
 #include <nixl.h>
 #include "utils/utils.h"
 #include "worker/worker.h"
+#include <random>
 #include "worker/nixl/nixl_mem_region.h"
 
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
@@ -81,6 +82,10 @@ class xferBenchNixlWorker: public xferBenchWorker {
         initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
         bool
         ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
+        uint64_t
+        getFileOffset(size_t current_offset, size_t max_offset_in_blocks, size_t block_size);
+
+        std::mt19937_64 default_rng_;
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H

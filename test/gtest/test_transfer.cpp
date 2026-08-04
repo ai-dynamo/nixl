@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,9 +37,7 @@
 #include <thread>
 #include <mutex>
 
-#ifdef HAVE_CUDA
-#include <cuda_runtime.h>
-#endif
+#include "gpu_utils.h"
 
 constexpr auto min_chrono_time = std::chrono::steady_clock::time_point::min();
 
@@ -71,10 +70,12 @@ private:
         switch (mem_type) {
         case DRAM_SEG:
             return malloc(size);
-#ifdef HAVE_CUDA
-        case VRAM_SEG:
-            void *ptr;
-            return cudaSuccess == cudaMalloc(&ptr, size)? ptr : nullptr;
+#if defined(HAVE_GPU)
+        case VRAM_SEG: {
+            void *ptr = nullptr;
+            gpuMalloc(&ptr, size, "MemBuffer allocation");
+            return ptr;
+        }
 #endif
         default:
             return nullptr; // TODO
@@ -87,9 +88,9 @@ private:
         case DRAM_SEG:
             free(ptr);
             break;
-#ifdef HAVE_CUDA
+#if defined(HAVE_GPU)
         case VRAM_SEG:
-            cudaFree(ptr);
+            gpuFree(ptr, "MemBuffer release");
             break;
 #endif
         default:
@@ -147,9 +148,9 @@ protected:
 
     void SetUp() override
     {
-#ifdef HAVE_CUDA
-        m_cuda_device = (cudaSetDevice(0) == cudaSuccess);
-#endif
+        int gpu_count = 0;
+        gpuGetDeviceCount(&gpu_count, "Probing GPU devices");
+        m_gpu_device = (gpu_count > 0);
 
         // Disabling Telemetry until the corresponding test
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
@@ -473,7 +474,7 @@ protected:
         return absl::StrFormat("agent_%d", idx);
     }
 
-    bool m_cuda_device = false;
+    bool m_gpu_device = false;
     gtest::ScopedEnv env;
     std::vector<nixlBackendH *> backend_handles;
 
@@ -577,7 +578,7 @@ TEST_P(TestTransfer, remoteMDFromSocket)
     std::vector<MemBuffer> src_buffers, dst_buffers;
     constexpr size_t size = 16 * 1024;
     constexpr size_t count = 4;
-    nixl_mem_t mem_type = m_cuda_device? VRAM_SEG : DRAM_SEG;
+    nixl_mem_t mem_type = m_gpu_device ? VRAM_SEG : DRAM_SEG;
 
     createRegisteredMem(getAgent(0), size, count, mem_type, src_buffers);
     createRegisteredMem(getAgent(1), size, count, mem_type, dst_buffers);
