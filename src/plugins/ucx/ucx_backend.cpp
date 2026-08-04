@@ -26,7 +26,6 @@
 #include <optional>
 #include <limits>
 #include <future>
-#include <set>
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
@@ -67,20 +66,15 @@ constexpr size_t single_ep_request_count = 3;
 
 class nixlUcxBackendReqH : public nixlBackendReqH {
 private:
-    std::set<ucx_connection_ptr_t> connections_;
+    ucx_connection_ptr_t conn_;
     std::vector<nixlUcxReq> requests_;
     nixlUcxWorker *worker_ = nullptr;
 
     [[nodiscard]] nixl_status_t
     checkConnection(const nixl_status_t status = NIXL_SUCCESS) const {
-        NIXL_ASSERT(!connections_.empty());
-        for (const auto &conn : connections_) {
-            const nixl_status_t conn_status = conn->getEp(getWorkerId())->checkTxState();
-            if (conn_status != NIXL_SUCCESS) {
-                return conn_status;
-            }
-        }
-        return status;
+        NIXL_ASSERT(conn_ != nullptr);
+        const nixl_status_t conn_status = conn_->getEp(getWorkerId())->checkTxState();
+        return (conn_status != NIXL_SUCCESS) ? conn_status : status;
     }
 
 protected:
@@ -114,30 +108,22 @@ public:
     void
     reserve(size_t size) {
         requests_.reserve(size);
-        NIXL_ASSERT(connections_.empty());
+        NIXL_ASSERT(conn_ == nullptr);
     }
 
     [[nodiscard]] nixl_status_t
     append(nixl_status_t status, nixlUcxReq req, const ucx_connection_ptr_t &conn) {
-        switch (status) {
-        case NIXL_IN_PROG:
+        if (status == NIXL_IN_PROG) [[likely]] {
             requests_.push_back(req);
-            connections_.insert(conn);
-            break;
-        case NIXL_SUCCESS:
-            connections_.insert(conn);
-            break;
-        default:
+        } else if (status != NIXL_SUCCESS) {
             // Error. Release all previously initiated ops and exit:
             release();
             return status;
         }
-        return NIXL_SUCCESS;
-    }
 
-    [[nodiscard]] const std::set<ucx_connection_ptr_t> &
-    getConnections() const noexcept {
-        return connections_;
+        NIXL_ASSERT(conn_ == nullptr || conn_ == conn);
+        conn_ = conn;
+        return NIXL_SUCCESS;
     }
 
     [[nodiscard]] virtual bool
@@ -158,14 +144,14 @@ public:
             worker_->reqRelease(req);
         }
         requests_.clear();
-        connections_.clear();
+        conn_.reset();
     }
 
     [[nodiscard]] virtual nixl_status_t
     status() {
         if (requests_.empty()) {
             /* No pending transmissions */
-            connections_.clear();
+            conn_.reset();
             return NIXL_SUCCESS;
         }
 
@@ -202,7 +188,7 @@ public:
 
         requests_.resize(incomplete_reqs);
         if (requests_.empty()) {
-            connections_.clear();
+            conn_.reset();
         }
         return out_ret;
     }
@@ -1154,56 +1140,6 @@ nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
-nixlUcxEngine::batchResult
-nixlUcxEngine::sendXferRangeBatch(nixlUcxEp &ep,
-                                  nixl_xfer_op_t operation,
-                                  const nixl_meta_dlist_t &local,
-                                  const nixl_meta_dlist_t &remote,
-                                  size_t worker_id,
-                                  size_t start_idx,
-                                  size_t end_idx) {
-    batchResult result = {NIXL_SUCCESS, 0, nullptr};
-
-    for (size_t i = start_idx; i < end_idx; ++i) {
-        void *laddr = (void *)local[i].addr;
-        size_t lsize = local[i].len;
-        uint64_t raddr = static_cast<uint64_t>(remote[i].addr);
-        NIXL_ASSERT(lsize == remote[i].len);
-
-        const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
-        const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
-        auto &rmd_ep = rmd->conn->getEp(worker_id);
-        if (rmd_ep.get() != &ep) [[unlikely]] {
-            break;
-        }
-
-        ++result.size;
-        nixlUcxReq req;
-        const nixl_status_t ret = operation == NIXL_READ ?
-            ep.read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
-            ep.write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
-
-        if (ret == NIXL_IN_PROG) {
-            if (result.req != nullptr) [[likely]] {
-                ucp_request_free(result.req);
-            }
-            result.req = req;
-        } else if (ret != NIXL_SUCCESS) {
-            result.status = ret;
-            if (result.req != nullptr) {
-                ucp_request_free(result.req);
-                result.req = nullptr;
-            }
-            break;
-        }
-    }
-
-    if (result.status == NIXL_SUCCESS && result.req) {
-        result.status = NIXL_IN_PROG;
-    }
-    return result;
-}
-
 #ifdef HAVE_UCX_SGL_API
 nixl_status_t
 nixlUcxEngine::prepXferSgl(const nixl_meta_dlist_t &local,
@@ -1270,34 +1206,59 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     int_handle->reserve(single_ep_request_count);
 
-    for (size_t i = start_idx; i < end_idx;) {
-        /* Send requests to a single EP */
+    const ucx_connection_ptr_t &conn =
+        static_cast<nixlUcxPublicMetadata *>(remote[start_idx].metadataP)->conn;
+    auto &ep = conn->getEp(worker_id);
+
+    nixl_status_t status = NIXL_SUCCESS;
+    nixlUcxReq pending_req = nullptr;
+
+    for (size_t i = start_idx; i < end_idx; ++i) {
+        void *laddr = (void *)local[i].addr;
+        size_t lsize = local[i].len;
+        uint64_t raddr = static_cast<uint64_t>(remote[i].addr);
+        NIXL_ASSERT(lsize == remote[i].len);
+
+        const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
         const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
-        auto &ep = rmd->conn->getEp(worker_id);
-        const batchResult result =
-            sendXferRangeBatch(*ep, operation, local, remote, worker_id, i, end_idx);
+        NIXL_ASSERT(rmd->conn->getEp(worker_id).get() == ep.get());
 
-        /* Append a single pending request for the entire EP batch */
-        const nixl_status_t ret = int_handle->append(result.status, result.req, rmd->conn);
-        if (ret != NIXL_SUCCESS) {
-            return ret;
+        nixlUcxReq req;
+        const nixl_status_t ret = operation == NIXL_READ ?
+            ep->read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
+            ep->write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
+
+        if (ret == NIXL_IN_PROG) {
+            if (pending_req != nullptr) [[likely]] {
+                ucp_request_free(pending_req);
+            }
+            pending_req = req;
+        } else if (ret != NIXL_SUCCESS) {
+            status = ret;
+            if (pending_req != nullptr) {
+                ucp_request_free(pending_req);
+                pending_req = nullptr;
+            }
+            break;
         }
+    }
 
-        i += result.size;
+    if (status == NIXL_SUCCESS && pending_req) {
+        status = NIXL_IN_PROG;
+    }
+
+    if (int_handle->append(status, pending_req, conn) != NIXL_SUCCESS) {
+        return status;
     }
 
     /*
      * Flush keeps int_handle non-empty until the operation is actually
      * completed, which can happen after local requests completion.
-     * We need to flush all distinct connections to ensure that the operation
-     * is actually completed.
      */
-    for (auto &conn : int_handle->getConnections()) {
-        nixlUcxReq req;
-        const nixl_status_t ret = conn->getEp(worker_id)->flushEp(req);
-        if (int_handle->append(ret, req, conn) != NIXL_SUCCESS) {
-            return ret;
-        }
+    nixlUcxReq flush_req;
+    const nixl_status_t flush_ret = ep->flushEp(flush_req);
+    if (int_handle->append(flush_ret, flush_req, conn) != NIXL_SUCCESS) {
+        return flush_ret;
     }
 
     return NIXL_SUCCESS;
