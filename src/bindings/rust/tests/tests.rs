@@ -1277,8 +1277,8 @@ fn test_prep_xfer_dlist_invalid_agent() {
         let result = agent.prepare_xfer_dlist("invalid_agent", &dlist, None);
 
         assert!(
-            result.is_err_and(|e| matches!(e, NixlError::BackendError)),
-            "Expected InvalidParam for invalid agent name"
+            result.is_err_and(|e| matches!(e, NixlError::NotFound)),
+            "Expected NotFound for invalid agent name"
         );
     }
 }

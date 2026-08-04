@@ -231,7 +231,7 @@ nixl_capi_get_local_partial_md(nixl_capi_agent_t agent,
         // Copy the data
         memcpy(*data, blob.data(), blob.size());
         *len = blob.size();
-        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;
@@ -280,7 +280,7 @@ nixl_capi_invalidate_remote_md(nixl_capi_agent_t agent, const char* remote_agent
 
   try {
     nixl_status_t ret = agent->inner->invalidateRemoteMD(std::string(remote_agent));
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -297,7 +297,7 @@ nixl_capi_send_local_md(nixl_capi_agent_t agent, nixl_capi_opt_args_t opt_args)
   try {
     nixl_opt_args_t* args = opt_args ? &opt_args->args : nullptr;
     nixl_status_t ret = agent->inner->sendLocalMD(args);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -314,7 +314,7 @@ nixl_capi_send_local_partial_md(nixl_capi_agent_t agent,
     try {
         nixl_opt_args_t *args = opt_args ? &opt_args->args : nullptr;
         nixl_status_t ret = agent->inner->sendLocalPartialMD(*descs->dlist, args);
-        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;
@@ -331,7 +331,7 @@ nixl_capi_fetch_remote_md(nixl_capi_agent_t agent, const char* remote_name, nixl
   try {
     nixl_opt_args_t* args = opt_args ? &opt_args->args : nullptr;
     nixl_status_t ret = agent->inner->fetchRemoteMD(std::string(remote_name), args);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -348,7 +348,7 @@ nixl_capi_invalidate_local_md(nixl_capi_agent_t agent, nixl_capi_opt_args_t opt_
   try {
     nixl_opt_args_t* args = opt_args ? &opt_args->args : nullptr;
     nixl_status_t ret = agent->inner->invalidateLocalMD(args);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -367,10 +367,10 @@ nixl_capi_check_remote_md(nixl_capi_agent_t agent, const char* remote_name, nixl
     if (!descs) {
         nixl_xfer_dlist_t empty_list(DRAM_SEG);
         nixl_status_t ret = agent->inner->checkRemoteMD(remote_name, empty_list);
-        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_status_from_nixl_status(ret);
     } else {
         nixl_status_t ret = agent->inner->checkRemoteMD(remote_name, *descs->dlist);
-        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_status_from_nixl_status(ret);
     }
   }
   catch (...) {
@@ -1360,7 +1360,7 @@ nixl_capi_register_mem(nixl_capi_agent_t agent, nixl_capi_reg_dlist_t dlist, nix
     printf("** Registered memory\n");
 #endif
     nixl_status_t ret = agent->inner->registerMem(*dlist->dlist, opt_args ? &opt_args->args : nullptr);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -1381,7 +1381,7 @@ nixl_capi_deregister_mem(nixl_capi_agent_t agent, nixl_capi_reg_dlist_t dlist, n
     printf("** Deregistered memory\n");
 #endif
     nixl_status_t ret = agent->inner->deregisterMem(*dlist->dlist, opt_args ? &opt_args->args : nullptr);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -1398,7 +1398,7 @@ nixl_capi_status_t nixl_capi_agent_make_connection(
   try {
     nixl_status_t ret = agent->inner->makeConnection(std::string(remote_agent),
                                                     opt_args ? &opt_args->args : nullptr);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -1421,7 +1421,7 @@ nixl_capi_prep_xfer_dlist(nixl_capi_agent_t agent,
                                                         *descs->dlist,
                                                         (*dlist_handle)->handle,
                                                         opt_args ? &opt_args->args : nullptr);
-        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;
@@ -1438,7 +1438,7 @@ nixl_capi_release_xfer_dlist_handle(nixl_capi_agent_t agent,
     try {
         nixl_status_t ret = agent->inner->releasedDlistH(dlist_handle->handle);
         delete dlist_handle;
-        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;
@@ -1530,7 +1530,7 @@ nixl_capi_estimate_xfer_cost(
     *duration_us = duration_us_ref.count();
     *err_margin_us = err_margin_us_ref.count();
     *method = static_cast<nixl_capi_cost_t>(method_ref);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -1585,7 +1585,7 @@ nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
             return NIXL_CAPI_ERROR_BACKEND;
         }
         *backend = backend_handle;
-        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;
@@ -1624,7 +1624,7 @@ nixl_capi_release_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req)
     if (ret == NIXL_SUCCESS) {
       req->req = nullptr;  // Prevent double-free in destroy
     }
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -1666,7 +1666,7 @@ nixl_capi_gen_notif(nixl_capi_agent_t agent, const char* remote_agent,
     // Call the C++ function with the correct signature
     nixl_status_t ret = agent->inner->genNotif(std::string(remote_agent), msg,
                                               opt_args ? &opt_args->args : nullptr);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -1902,7 +1902,7 @@ nixl_capi_query_mem(nixl_capi_agent_t agent,
     try {
         nixl_opt_args_t *args = opt_args ? &opt_args->args : nullptr;
         nixl_status_t ret = agent->inner->queryMem(*descs->dlist, resp->responses, args);
-        return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;
@@ -2036,6 +2036,10 @@ nixl_capi_status_from_nixl_status(nixl_status_t status) {
         return NIXL_CAPI_IN_PROG;
     case NIXL_ERR_NO_TELEMETRY:
         return NIXL_CAPI_ERROR_NO_TELEMETRY;
+    case NIXL_ERR_INVALID_PARAM:
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    case NIXL_ERR_NOT_FOUND:
+        return NIXL_CAPI_ERROR_NOT_FOUND;
     default:
         return NIXL_CAPI_ERROR_BACKEND;
     }

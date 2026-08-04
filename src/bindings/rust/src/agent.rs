@@ -313,6 +313,7 @@ impl Agent {
                 mem_type: descriptor.mem_type(),
             }),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -348,6 +349,7 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok(resp),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -383,6 +385,7 @@ impl Agent {
                 NonNull::new(view).ok_or(NixlError::InvalidDataPointer)?,
             )),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -419,6 +422,7 @@ impl Agent {
                 NonNull::new(view).ok_or(NixlError::InvalidDataPointer)?,
             )),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -461,6 +465,10 @@ impl Agent {
             NIXL_CAPI_ERROR_INVALID_PARAM => {
                 tracing::error!(error = "invalid_param", "Failed to get local metadata");
                 Err(NixlError::InvalidParam)
+            }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to get local metadata");
+                Err(NixlError::NotFound)
             }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to get local metadata");
@@ -508,6 +516,10 @@ impl Agent {
                 tracing::error!(error = "invalid_param", "Failed to get local partial metadata");
                 Err(NixlError::InvalidParam)
             }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to get local partial metadata");
+                Err(NixlError::NotFound)
+            }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to get local partial metadata");
                 Err(NixlError::BackendError)
@@ -545,6 +557,10 @@ impl Agent {
                 tracing::error!(error = "invalid_param", "Failed to load remote metadata");
                 Err(NixlError::InvalidParam)
             }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to load remote metadata");
+                Err(NixlError::NotFound)
+            }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to load remote metadata");
                 Err(NixlError::BackendError)
@@ -567,6 +583,7 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok(()),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -593,6 +610,8 @@ impl Agent {
 
         match status {
             NIXL_CAPI_SUCCESS => Ok(XferDlistHandle::new(dlist_hndl, inner_guard.handle)),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -625,6 +644,7 @@ impl Agent {
                 self.inner.clone(),
             )),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -751,6 +771,10 @@ impl Agent {
             NIXL_CAPI_ERROR_INVALID_PARAM => {
                 tracing::error!(error = "invalid_param", "Failed to send local partial metadata to etcd");
                 Err(NixlError::InvalidParam)
+            }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to send local partial metadata to etcd");
+                Err(NixlError::NotFound)
             }
             _ => Err(NixlError::BackendError)
         }
@@ -981,6 +1005,7 @@ impl Agent {
         match status {
             NIXL_CAPI_SUCCESS => Ok((duration_us, err_margin_us, CostMethod::from(method))),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -1029,6 +1054,10 @@ impl Agent {
                 tracing::error!(error = "invalid_param", "Failed to post transfer request");
                 Err(NixlError::InvalidParam)
             }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to post transfer request");
+                Err(NixlError::NotFound)
+            }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to post transfer request");
                 Err(NixlError::BackendError)
@@ -1051,6 +1080,7 @@ impl Agent {
             NIXL_CAPI_SUCCESS => Ok(XferStatus::Success), // Transfer completed
             NIXL_CAPI_IN_PROG => Ok(XferStatus::InProgress),  // Transfer in progress
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -1080,6 +1110,7 @@ impl Agent {
                 Ok(Backend{ inner: NonNull::new(backend).ok_or(NixlError::FailedToCreateBackend)? })
             }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
@@ -1112,6 +1143,10 @@ impl Agent {
             NIXL_CAPI_ERROR_INVALID_PARAM => {
                 tracing::error!(error = "invalid_param", "Failed to get notifications");
                 Err(NixlError::InvalidParam)
+            }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to get notifications");
+                Err(NixlError::NotFound)
             }
             _ => {
                 tracing::error!(error = "backend_error", "Failed to get notifications");
