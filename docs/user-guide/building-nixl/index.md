@@ -5,10 +5,10 @@ description: Build NIXL from source -- C++ library, Python bindings, Rust bindin
 
 Build NIXL from source using one of the following methods:
 
-- **[Docker](./building-nixl/docker)** -- Build and run NIXL in a container
-- **[NIXL C++ (Meson)](./building-nixl/nixl-cpp)** -- Build the core C++ library
-- **[Python Bindings](./building-nixl/python-bindings)** -- Build and install the Python package from source
-- **[Rust Bindings](./building-nixl/rust-bindings)** -- Build the Rust bindings
+- **[Docker](./docker)** -- Build and run NIXL in a container
+- **[NIXL C++ (Meson)](./nixl-cpp)** -- Build the core C++ library
+- **[Python Bindings](./python-bindings)** -- Build and install the Python package from source
+- **[Rust Bindings](./rust-bindings)** -- Build the Rust bindings
 
 ## Build Options
 

@@ -47,7 +47,7 @@ The POSIX plug-in is the simplest backend in NIXL, making it an ideal learning e
 | Plugin name | `"POSIX"` |
 | Plugin version | `"0.1.0"` |
 
-The POSIX plug-in is ideal for learning because it is a storage backend that only needs local transfer methods. Methods like `connect()`, `disconnect()`, and `getPublicData()` simply return `NIXL_SUCCESS` or are not needed at all, letting you focus on the core transfer lifecycle: registering memory, preparing transfers, submitting I/O, checking completion, and cleaning up. The POSIX plug-in has only 6-7 substantive method implementations, compared to a full network plug-in like UCX which implements all methods including remote metadata, notifications, and inter-agent connections.
+The POSIX plug-in is useful for learning because it is a local storage backend. It must still override the backend interface's pure virtual methods: `connect()` and `disconnect()` return `NIXL_SUCCESS`, while remote metadata methods are unnecessary because it does not support remote transfers. This lets the implementation focus on registration, transfer preparation, I/O submission, completion, and cleanup.
 
 ## Key Method Implementations
 
@@ -99,7 +99,7 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
 ```
 
 **Key patterns:**
-- This is the simplest possible registration implementation -- it validates that the memory type is supported and does nothing else. The `out` parameter is left as `nullptr` since the POSIX plug-in does not need backend-specific metadata for registered memory.
+- POSIX registration validates the supported memory type and creates backend metadata for file/path-mode descriptors; this preserves the file descriptor or path information needed by later I/O operations.
 - More complex backends (like UCX) would create a metadata object, store it in `out`, and later use it during transfer operations for memory keys, handles, or registration tokens.
 - Return `NIXL_SUCCESS` to accept the memory or `NIXL_ERR_NOT_SUPPORTED` to reject it.
 
@@ -138,7 +138,7 @@ nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     try {
         auto posix_handle =
-            std::make_unique<nixlPosixBackendReqH>(operation, local, remote, opt_args, io_queue_);
+            std::make_unique<nixlPosixBackendReqH>(operation, local, remote, io_queue_);
         NIXL_LOCK_GUARD(io_queue_lock_);
         nixl_status_t status = posix_handle->prepXfer();
         if (status != NIXL_SUCCESS) {
@@ -246,7 +246,7 @@ nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
 ```
 
 **Key patterns:**
-- Cast the handle and explicitly call its destructor to clean up resources. The agent allocated the handle in `prepXfer`, and this is where it gets freed.
+- Cast the handle and delete it to clean up resources. The handle was allocated in `prepXfer`, and this is where its storage is freed.
 - Always return `NIXL_SUCCESS` on successful cleanup, even if there is nothing to free. The agent relies on this to know it can safely discard the handle pointer.
 - This is called after the transfer completes (or is aborted), so the handle should not have any pending I/O at this point.
 

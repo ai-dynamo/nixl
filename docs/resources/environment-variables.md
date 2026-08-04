@@ -48,6 +48,7 @@ These variables control NIXL's built-in telemetry collection and export system.
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `NIXL_TELEMETRY_ENABLE` | Boolean | `false` | Enable telemetry collection. Accepts `y`/`yes`/`on`/`true`/`enable`/`1` (case-insensitive) to enable. |
+| `NIXL_TELEMETRY_ENABLED_METRICS` | String | None | Optional comma-separated fnmatch allowlist of event names. Unset or empty exports all events. |
 | `NIXL_TELEMETRY_BUFFER_SIZE` | Integer | `4096` | Number of events in the cyclic telemetry buffer. Must be a power of 2. |
 | `NIXL_TELEMETRY_RUN_INTERVAL` | Integer (ms) | `100` | Flush interval in milliseconds for the telemetry exporter. |
 | `NIXL_TELEMETRY_EXPORTER` | String | None | Name of the telemetry exporter plug-in to load (e.g., `prometheus`). |

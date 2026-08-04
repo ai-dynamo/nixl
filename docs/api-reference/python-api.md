@@ -34,7 +34,8 @@ Configuration dataclass for creating a Transfer Agent. Pass an instance to the `
 |-------|------|---------|-------------|
 | `enable_prog_thread` | `bool` | `True` | Enable the progress thread for asynchronous transfer completion |
 | `enable_listen_thread` | `bool` | `False` | Enable the listener thread for direct metadata communication |
-| `listen_port` | `int` | `0` | Port for the listener thread (0 for auto-assign) |
+| `listen_port` | `int` | `8888` | Port for the listener thread (0 for auto-assign) |
+| `sync_mode` | `nixl_thread_sync_t \| None` | `None` | Thread synchronization mode. `None` resolves to `STRICT` when a listener is enabled and `NONE` otherwise. |
 | `capture_telemetry` | `bool` | `False` | Enable telemetry capture for transfer performance metrics |
 | `num_threads` | `int` | `0` | Number of threads for supported multi-threaded backends |
 | `backends` | `list[str]` | `["UCX"]` | Backends to auto-create at agent initialization |

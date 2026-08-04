@@ -29,7 +29,7 @@ The primary class that every backend plug-in inherits from. Defined in `backend_
 |--------|-----------|-------------|
 | `setInitParam` | `nixl_status_t setInitParam(const std::string &key, const std::string &value)` | Store a custom parameter. Returns `NIXL_ERR_NOT_ALLOWED` if the key already exists. |
 | `getInitParam` | `nixl_status_t getInitParam(const std::string &key, std::string &value) const` | Retrieve a custom parameter. Returns `NIXL_ERR_INVALID_PARAM` if the key is not found. |
-| `addTelemetryEvent` | `void addTelemetryEvent(const std::string &event_name, uint64_t value)` | Record a telemetry event. No-op if telemetry is disabled or queue is full (max 1000 events). |
+| `addTelemetryEvent` | `void addTelemetryEvent(nixl_telemetry_event_type_t event_type, uint64_t value)` | Record a typed telemetry event. No-op if telemetry is disabled or the queue is full (max 1000 events). |
 
 **Public helper methods:**
 

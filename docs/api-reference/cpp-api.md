@@ -139,7 +139,7 @@ Per-agent configuration struct. All fields have defaults, so a default-construct
 |-------|------|---------|-------------|
 | `useProgThread` | `bool` | `false` | Enable progress thread for asynchronous transfer advancement |
 | `useListenThread` | `bool` | `false` | Enable listener thread for incoming peer connections |
-| `listenPort` | `int` | `0` | Port for the listener thread (0 = system-assigned) |
+| `listenPort` | `int` | `8888` | Port for the listener thread (0 = system-assigned) |
 | `syncMode` | `nixl_thread_sync_t` | `NIXL_THREAD_SYNC_NONE` | Thread synchronization mode for multi-threaded usage |
 | `captureTelemetry` | `bool` | `false` | Enable telemetry capture regardless of environment variables |
 | `pthrDelay` | `uint64_t` | `0` | Progress thread delay between iterations (microseconds) |
