@@ -106,6 +106,25 @@ class BufferHeader(ctypes.Structure):
     ]
 
 
+# Mirror the static_asserts in cyclic_buffer.tpp so a layout drift fails.
+# The pads are checked too since they are maintained by hand here, while
+# the C++ compiler derives them from alignas.
+if ctypes.sizeof(BufferHeader) != 2 * DESTRUCTIVE_INTERFERENCE_SIZE:
+    raise RuntimeError("BufferHeader layout drift: unexpected size")
+for _field, _offset in [
+    ("write_pos", 0),
+    ("capacity", 8),
+    ("version", 16),
+    ("expected_version", 20),
+    ("mask", 24),
+    ("_pad_write", 32),
+    ("read_pos", 256),
+    ("_pad_tail", 264),
+]:
+    if getattr(BufferHeader, _field).offset != _offset:
+        raise RuntimeError(f"BufferHeader layout drift: {_field} moved")
+
+
 class SharedRingBuffer:
     """Python wrapper for the C++ SharedRingBuffer class"""
 
