@@ -81,12 +81,12 @@ and only the transfer phase repeats.
 
 <div className="diagram-light sequence-diagram">
 <Frame caption="Phase 1: Initialization">
-<img src="../figures/data-flow/nixl_flow_01_init_light.svg" alt="Initialization sequence diagram showing agent creation, backend registration, and memory registration" />
+<img src="../../assets/figures/data-flow/nixl_flow_01_init_light.svg" alt="Initialization sequence diagram showing agent creation, backend registration, and memory registration" />
 </Frame>
 </div>
 <div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 1: Initialization">
-<img src="../figures/data-flow/nixl_flow_01_init_dark.svg" alt="Initialization sequence diagram showing agent creation, backend registration, and memory registration" />
+<img src="../../assets/figures/data-flow/nixl_flow_01_init_dark.svg" alt="Initialization sequence diagram showing agent creation, backend registration, and memory registration" />
 </Frame>
 </div>
 
@@ -107,12 +107,12 @@ foreach alloced_mem:
 
 <div className="diagram-light sequence-diagram">
 <Frame caption="Phase 2: Metadata Exchange">
-<img src="../figures/data-flow/nixl_flow_02_metadata_light.svg" alt="Metadata exchange sequence diagram showing local metadata retrieval, central server publish, and remote fetch" />
+<img src="../../assets/figures/data-flow/nixl_flow_02_metadata_light.svg" alt="Metadata exchange sequence diagram showing local metadata retrieval, central server publish, and remote fetch" />
 </Frame>
 </div>
 <div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 2: Metadata Exchange">
-<img src="../figures/data-flow/nixl_flow_02_metadata_dark.svg" alt="Metadata exchange sequence diagram showing local metadata retrieval, central server publish, and remote fetch" />
+<img src="../../assets/figures/data-flow/nixl_flow_02_metadata_dark.svg" alt="Metadata exchange sequence diagram showing local metadata retrieval, central server publish, and remote fetch" />
 </Frame>
 </div>
 
@@ -150,12 +150,12 @@ for each target_agent:
 
 <div className="diagram-light sequence-diagram">
 <Frame caption="Phase 3: Transfer">
-<img src="../figures/data-flow/nixl_flow_03_transfer_light.svg" alt="Transfer sequence diagram showing request creation, backend selection, RDMA write, and status check" />
+<img src="../../assets/figures/data-flow/nixl_flow_03_transfer_light.svg" alt="Transfer sequence diagram showing request creation, backend selection, RDMA write, and status check" />
 </Frame>
 </div>
 <div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 3: Transfer">
-<img src="../figures/data-flow/nixl_flow_03_transfer_dark.svg" alt="Transfer sequence diagram showing request creation, backend selection, RDMA write, and status check" />
+<img src="../../assets/figures/data-flow/nixl_flow_03_transfer_dark.svg" alt="Transfer sequence diagram showing request creation, backend selection, RDMA write, and status check" />
 </Frame>
 </div>
 
@@ -183,12 +183,12 @@ for n iterations:
 
 <div className="diagram-light sequence-diagram">
 <Frame caption="Phase 4: Teardown">
-<img src="../figures/data-flow/nixl_flow_04_teardown_light.svg" alt="Teardown sequence diagram showing metadata invalidation, memory deregistration, and agent deletion" />
+<img src="../../assets/figures/data-flow/nixl_flow_04_teardown_light.svg" alt="Teardown sequence diagram showing metadata invalidation, memory deregistration, and agent deletion" />
 </Frame>
 </div>
 <div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 4: Teardown">
-<img src="../figures/data-flow/nixl_flow_04_teardown_dark.svg" alt="Teardown sequence diagram showing metadata invalidation, memory deregistration, and agent deletion" />
+<img src="../../assets/figures/data-flow/nixl_flow_04_teardown_dark.svg" alt="Teardown sequence diagram showing metadata invalidation, memory deregistration, and agent deletion" />
 </Frame>
 </div>
 
@@ -218,12 +218,12 @@ delete agent
 
 <div className="diagram-light sequence-diagram">
 <Frame caption="Phase 5: Dynamic Scaling">
-<img src="../figures/data-flow/nixl_flow_05_scaling_light.svg" alt="Dynamic scaling sequence diagram showing new agent creation, metadata publish, and failure handling" />
+<img src="../../assets/figures/data-flow/nixl_flow_05_scaling_light.svg" alt="Dynamic scaling sequence diagram showing new agent creation, metadata publish, and failure handling" />
 </Frame>
 </div>
 <div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 5: Dynamic Scaling">
-<img src="../figures/data-flow/nixl_flow_05_scaling_dark.svg" alt="Dynamic scaling sequence diagram showing new agent creation, metadata publish, and failure handling" />
+<img src="../../assets/figures/data-flow/nixl_flow_05_scaling_dark.svg" alt="Dynamic scaling sequence diagram showing new agent creation, metadata publish, and failure handling" />
 </Frame>
 </div>
 

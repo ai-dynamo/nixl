@@ -6,10 +6,10 @@ import { exit } from 'node:process';
 // Constants
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = join(import.meta.dirname, '..', '..');
+const REPO_ROOT = join(import.meta.dirname, '..', '..', '..');
 const PLUGINS_DIR = join(REPO_ROOT, 'src', 'plugins');
-const OUTPUT_PATH = join(REPO_ROOT, 'docs', 'data', 'stack-data.json');
-const SCHEMA_PATH = join(REPO_ROOT, 'docs', 'data', 'stack-data.schema.json');
+const OUTPUT_PATH = join(REPO_ROOT, 'fern', 'docs', 'assets', 'data', 'stack-data.json');
+const SCHEMA_PATH = join(REPO_ROOT, 'fern', 'docs', 'assets', 'data', 'stack-data.schema.json');
 
 // ---------------------------------------------------------------------------
 // Memory type mapping  (C++ enum -> human-readable)
@@ -325,13 +325,13 @@ function main() {
   }
 
   // 12. Ensure output directory exists
-  mkdirSync(join(REPO_ROOT, 'docs', 'data'), { recursive: true });
+  mkdirSync(join(REPO_ROOT, 'fern', 'docs', 'assets', 'data'), { recursive: true });
 
   // 13. Write output
   writeFileSync(OUTPUT_PATH, JSON.stringify(data, null, 2) + '\n');
 
   // 14. Print summary
-  console.log(`Generated stack-data.json: ${data.length} plugins parsed, written to docs/data/stack-data.json`);
+  console.log(`Generated stack-data.json: ${data.length} plugins parsed, written to fern/docs/assets/data/stack-data.json`);
   exit(0);
 }
 

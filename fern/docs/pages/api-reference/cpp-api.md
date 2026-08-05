@@ -231,12 +231,12 @@ NIXL uses a hierarchy of descriptor classes to represent memory regions for regi
 
 <div className="diagram-light">
 <Frame caption="Descriptor class hierarchy">
-<img src="../figures/data-flow/nixl_desc_hierarchy_light.svg" alt="Descriptor class hierarchy" style={{width: '100%'}} />
+<img src="../../assets/figures/data-flow/nixl_desc_hierarchy_light.svg" alt="Descriptor class hierarchy" style={{width: '100%'}} />
 </Frame>
 </div>
 <div className="diagram-dark">
 <Frame caption="Descriptor class hierarchy">
-<img src="../figures/data-flow/nixl_desc_hierarchy_dark.svg" alt="Descriptor class hierarchy" style={{width: '100%'}} />
+<img src="../../assets/figures/data-flow/nixl_desc_hierarchy_dark.svg" alt="Descriptor class hierarchy" style={{width: '100%'}} />
 </Frame>
 </div>
 

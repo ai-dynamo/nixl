@@ -76,7 +76,7 @@ Each backend inherits from nixlBackendMD base class to store any metadata requir
 For backends that support `FILE_SEG`, NIXL ships a shared **path-mode**
 helper (`nixl::parsePathMeta()` + `nixlFilePathMD`) that lets callers
 register files by path in `nixlBlobDesc::metaInfo` instead of by
-pre-opened fd; see [`src/utils/file/README.md`](https://github.com/ai-dynamo/nixl/blob/main/src/utils/file/README.md#path-mode-file-registration).
+pre-opened fd; see [`src/utils/file/README.md`](../src/utils/file/README.md#path-mode-file-registration).
 
 ### Metadata Management:
 
@@ -97,7 +97,7 @@ getPublicData and loadRemoteMD are required if backend supportsRemote, and loadL
 * checkXfer(): Checks the status of a transfer request.
 * releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Note that the NIXL agent may release that handle at a number of error cases, expecting this function to handle proper cancellation of requests in addition to freeing resources.
 
-Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotif(), no such notification will be asked.
+Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotifications, no such notification will be asked.
 
 Note that any transfer request will be prepped only once, but can be posted multiple times, as long as it gets to DONE state before getting reposted. There is no ordering guarantee across transfer requests, and no locking mechanism for any specific memory region; the user is in charge of not corrupting the memory by having two simultaneous transfers to the same location.
 
@@ -107,7 +107,7 @@ Finally, note that a call to releaseXferReq should not block and be asynchronous
 * getNotifs(): Gets notifications received from remote agents (or local in case of loopback). The output is a map from remote agent name to a list (vector) of notifications, in the form of byte array.
 * genNotif(): Generates a notification to a remote agent, used for control or dummy notifications.
 
-Note that getNotifs does not know which agent it should look for to receive the notification. So there should be a method to extract the agent name from the notification received, corresponding to a transfer. genNotif generates a notification which is not bound to any transfers, and does not provide any ordering guarantees. If a backend does not set supportsNotif(), these two methods are not needed.
+Note that getNotifs does not know which agent it should look for to receive the notification. So there should be a method to extract the agent name from the notification received, corresponding to a transfer. genNotif generates a notification which is not bound to any transfers, and does not provide any ordering guarantees. If a backend does not set supportsNotifications, these two methods are not needed.
 
 ## Descriptor List Abstraction
 
@@ -143,15 +143,14 @@ NIXL UCX plugin provides networking across different nodes, while GDS plugin pro
 
 However, for NIXL storage backends, there is no need to run a NIXL agent on a remote storage node. Instead, a distributed storage client on the local agent talks to the remote distributed storage, and therefore from NIXL agent point of view for all storage, whether local or remote, it has to talk to this local storage client. In other words, all the transfers are loopback to the agent itself. For the current use case, there is no need for notifications within the same agent.
 
-Moreover, the GDS plugin does not require a local connection to itself, so its required `connect()` and `disconnect()` overrides return `NIXL_SUCCESS`. Its `loadLocalMD()` override simply returns the input pointer. Storage backends also implement the following transfer and metadata lifecycle methods:
+Moreover, the GDS plugin does not require a local connection to itself, so it returns SUCCESS for connect and disconnect, and for loadLocal simply returns back the input pointer as its output. The only 6 remaining methods that it has to implement are:
 
-* `registerMem`
-* `deregisterMem`
-* `unloadMD`
-* `prepXfer`
-* `postXfer`
-* `checkXfer`
-* `releaseReqH`.
+* registerMem
+* deregisterMem
+* prepXfer
+* postXfer
+* checkXfer
+* releaseReqH.
 
 # NIXL Agent usage of Plugin manager and SB APIs
 
