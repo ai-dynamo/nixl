@@ -204,8 +204,14 @@ convention: a shared **local** folder (not NFS), one per pod / process-family,
 treated as ephemeral (e.g. a per-pod Kubernetes `emptyDir`). Because NIXL is a
 library loaded independently per rank -- with no parent to propagate the path as in
 Dynamo -- the launcher/operator must set the **same** directory for every rank, so
-it is required rather than auto-defaulted. The ranks sharing it must also share a
-PID namespace, since liveness is decided with `kill(pid, 0)` and `/proc`.
+it is required rather than auto-defaulted.
+
+Whether a rank is still alive is decided by the lock it holds on its own store,
+not by its pid: a store is `flock`-ed before it is given a name and stays locked
+for the writer's lifetime, so a store the collector can lock has no writer left
+and will never change again. The kernel releases the lock however the rank died,
+which is what makes a killed rank indistinguishable from a clean exit here, and
+what lets ranks in different PID namespaces aggregate each other.
 
 ### Scope & limitations
 

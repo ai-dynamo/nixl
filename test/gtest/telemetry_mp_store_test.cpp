@@ -36,6 +36,7 @@
 namespace {
 
 using nixl::telemetry::mp::storeWriter;
+using nixl::telemetry::mp::storeWriterAlive;
 using nixl::telemetry::mp::readProcessStartTime;
 using nixl::telemetry::mp::readStoreSnapshot;
 
@@ -91,7 +92,6 @@ TEST_F(MpStoreTest, WriteReadRoundTrip) {
     EXPECT_EQ(snap->localRank, "3");
     EXPECT_EQ(snap->instance, 7u);
     EXPECT_EQ(snap->pid, static_cast<int64_t>(::getpid()));
-    EXPECT_GT(snap->startTime, 0u);
     EXPECT_GT(snap->lastUpdateNs, 0u);
     EXPECT_EQ(snap->counters[idx(TX_BYTES)], 1000u);
     EXPECT_EQ(snap->gauges[idx(TX_BYTES)], 1000u);
@@ -214,6 +214,45 @@ TEST_F(MpStoreTest, DestructorKeepsStoreFileWithFinalValues) {
     EXPECT_EQ(result.snapshot->counters[idx(TX_BYTES)], 4096u);
 }
 
+TEST_F(MpStoreTest, LiveWriterHoldsItsStoreAndReleasesItOnDestruction) {
+    const auto path = storePath("agent-lock");
+    {
+        const storeWriter writer(path, "agent-lock", "host-1", "", 0, kBuckets);
+        // The probe runs in the writer's own process, which is the exporter's case:
+        // it owns a store and collects every store in the directory, its own
+        // included, so the lock has to be visible to it too.
+        EXPECT_TRUE(storeWriterAlive(path));
+    }
+    EXPECT_FALSE(storeWriterAlive(path));
+}
+
+TEST_F(MpStoreTest, StoreNobodyEverWroteReadsAsAbandoned) {
+    const auto path = storePath("planted");
+    { std::ofstream(path) << "not a store"; }
+    EXPECT_FALSE(storeWriterAlive(path));
+}
+
+TEST_F(MpStoreTest, UnprobableStoreReadsAsHeld) {
+    // Nothing to lock is not evidence that a writer is gone: a probe that could
+    // not run must never license a reap.
+    EXPECT_TRUE(storeWriterAlive(storePath("does-not-exist")));
+}
+
+TEST_F(MpStoreTest, CreationPublishesTheStoreAndLeavesNothingBehind) {
+    const auto path = storePath("agent-atomic");
+    const storeWriter writer(path, "agent-atomic", "host-1", "", 0, kBuckets);
+
+    // A store becomes visible only once it is initialized and locked, so the
+    // directory holds exactly the published file -- never a staging one, and never
+    // a store with an unwritten header.
+    std::vector<std::string> names;
+    for (const auto &entry : std::filesystem::directory_iterator(dir_)) {
+        names.push_back(entry.path().filename().string());
+    }
+    ASSERT_EQ(names, std::vector<std::string>{path.filename().string()});
+    EXPECT_TRUE(readStoreSnapshot(path).snapshot.has_value());
+}
+
 TEST_F(MpStoreTest, LongAgentNameTruncated) {
     const auto path = storePath("agent-long");
     const std::string long_name(1000, 'x');
@@ -273,8 +312,8 @@ TEST_F(MpStoreTest, TooSmallFileReturnsNullopt) {
 TEST_F(MpStoreTest, ZeroMagicReturnsNulloptQuietly) {
     const auto path = storePath("zero-magic");
     {
-        // Large enough to pass the size check, but all-zero: a store mid-creation
-        // or an orphan. Must be skipped WITHOUT a warning (no LogIgnoreGuard).
+        // Large enough to pass the size check, but all-zero: a file somebody left
+        // in the directory. Must be skipped WITHOUT a warning (no LogIgnoreGuard).
         std::ofstream f(path, std::ios::binary);
         const std::string zeros(64 * 1024, '\0');
         f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));

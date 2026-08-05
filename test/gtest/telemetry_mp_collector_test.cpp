@@ -23,6 +23,8 @@
 #include <prometheus/metric_family.h>
 #include <prometheus/metric_type.h>
 
+#include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -37,14 +39,12 @@
 namespace {
 
 using nixl::telemetry::mp::buildMetricFamilies;
-using nixl::telemetry::mp::isProcessAlive;
 using nixl::telemetry::mp::isSnapshotLive;
 using nixl::telemetry::mp::makeStoreFileName;
 using nixl::telemetry::mp::monotonicNs;
 using nixl::telemetry::mp::storeSnapshot;
 using nixl::telemetry::mp::storeWriter;
 using nixl::telemetry::mp::nixlMultiprocessCollector;
-using nixl::telemetry::mp::readProcessStartTime;
 
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
 constexpr auto ERR_BACKEND = nixl_telemetry_event_type_t::AGENT_ERR_BACKEND;
@@ -61,7 +61,6 @@ idx(nixl_telemetry_event_type_t t) {
 makeSnap(const std::string &agent, const std::string &rank) {
     storeSnapshot s;
     s.pid = ::getpid();
-    s.startTime = 1;
     s.lastUpdateNs = monotonicNs();
     s.agentName = agent;
     s.hostname = "host";
@@ -264,35 +263,24 @@ TEST(MpCollectorTest, HistogramsAreNotAggregatedAcrossProcesses) {
     EXPECT_EQ(m_b->histogram.sample_count, 5u);
 }
 
-TEST(MpCollectorTest, IsProcessAliveGuardsPidReuse) {
-    EXPECT_TRUE(isProcessAlive(::getpid(), readProcessStartTime(::getpid())));
-    EXPECT_TRUE(isProcessAlive(::getpid(), 0)); // unknown start time -> existence only
-    EXPECT_FALSE(isProcessAlive(0x7fffffff, 0)); // no such process
-    // Existing pid but wrong start time -> treated as reused -> not our process.
-    EXPECT_FALSE(isProcessAlive(::getpid(), 0xffffffffffffffffULL));
-}
-
-TEST(MpCollectorTest, SnapshotLivenessByProcessThenTtl) {
+TEST(MpCollectorTest, SnapshotLivenessByWriterThenTtl) {
     const auto ttl = std::chrono::seconds(30);
 
-    auto alive = makeSnap("a", "");
-    alive.startTime = readProcessStartTime(::getpid());
-    alive.lastUpdateNs = 0; // even with an old heartbeat, a live process stays live
-    EXPECT_TRUE(isSnapshotLive(alive, ttl));
+    auto held = makeSnap("a", "");
+    held.lastUpdateNs = 0; // a writer that still holds its store stays live
+    EXPECT_TRUE(isSnapshotLive(held, ttl, /*writer_alive=*/true));
 
-    auto dead_fresh = makeSnap("b", "");
-    dead_fresh.pid = 0x7fffffff;
-    dead_fresh.lastUpdateNs = monotonicNs();
-    EXPECT_TRUE(isSnapshotLive(dead_fresh, ttl));
+    auto gone_fresh = makeSnap("b", "");
+    gone_fresh.lastUpdateNs = monotonicNs();
+    EXPECT_TRUE(isSnapshotLive(gone_fresh, ttl, /*writer_alive=*/false));
 
     // A zero heartbeat is as old as this boot, and a zero TTL makes that stale on
     // any host. Subtracting a fixed age from monotonicNs() instead would wrap on
     // a host that booted seconds ago, and then pass as a future timestamp rather
     // than as an expired one.
-    auto dead_stale = makeSnap("c", "");
-    dead_stale.pid = 0x7fffffff;
-    dead_stale.lastUpdateNs = 0;
-    EXPECT_FALSE(isSnapshotLive(dead_stale, std::chrono::seconds(0)));
+    auto gone_stale = makeSnap("c", "");
+    gone_stale.lastUpdateNs = 0;
+    EXPECT_FALSE(isSnapshotLive(gone_stale, std::chrono::seconds(0), /*writer_alive=*/false));
 }
 
 class MpCollectorFileTest : public ::testing::Test {
@@ -339,29 +327,64 @@ TEST_F(MpCollectorFileTest, CollectReadsLiveStoresAndIgnoresOthers) {
     EXPECT_DOUBLE_EQ(m2->counter.value, 700.0);
 }
 
-TEST_F(MpCollectorFileTest, ReapsOldOrphanFilesButKeepsFreshMidInitFiles) {
+TEST_F(MpCollectorFileTest, ReapsUnparsableFilesNobodyHoldsAndKeepsHeldOnes) {
     const auto writeZeroFile = [](const std::filesystem::path &p) {
         std::ofstream f(p, std::ios::binary);
         const std::string zeros(64 * 1024, '\0');
         f.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
     };
 
-    // Orphan: zero-magic store backdated well past the reap grace -> removed.
+    // Unlocked: nothing will ever write it again, so age does not enter into it.
     const auto orphan = dir_ / makeStoreFileName(999, 1, 0);
     writeZeroFile(orphan);
-    std::filesystem::last_write_time(
-        orphan, std::filesystem::file_time_type::clock::now() - std::chrono::hours(1));
 
-    // Fresh mid-init file (a live process just created it) -> must be kept.
-    const auto fresh = dir_ / makeStoreFileName(998, 1, 0);
-    writeZeroFile(fresh);
+    // Locked by somebody, however unparsable: not ours to remove.
+    const auto held = dir_ / makeStoreFileName(998, 1, 0);
+    writeZeroFile(held);
+    const nixl::scopedFd held_fd(::open(held.c_str(), O_RDONLY | O_CLOEXEC));
+    ASSERT_TRUE(held_fd.valid());
+    ASSERT_EQ(::flock(held_fd.get(), LOCK_EX | LOCK_NB), 0);
 
     nixlMultiprocessCollector collector(dir_, std::chrono::seconds(0), /*reap_stale=*/true);
     const auto fams = collector.Collect();
 
     EXPECT_TRUE(fams.empty());
     EXPECT_FALSE(std::filesystem::exists(orphan));
-    EXPECT_TRUE(std::filesystem::exists(fresh));
+    EXPECT_TRUE(std::filesystem::exists(held));
+}
+
+TEST_F(MpCollectorFileTest, LiveWriterOutlivesAZeroTtl) {
+    // The heartbeat says nothing about a writer that is simply idle, so a store
+    // its writer still holds must survive even a TTL that expires everything.
+    storeWriter writer(dir_ / makeStoreFileName(444, 1, 0), "agent-idle", "host", "", 0, kBuckets);
+    writer.addCounter(TX_BYTES, 7);
+
+    nixlMultiprocessCollector collector(dir_, std::chrono::seconds(0), /*reap_stale=*/true);
+    const auto fams = collector.Collect();
+
+    ASSERT_NE(findFamily(fams, "agent_tx_bytes_total"), nullptr);
+    EXPECT_TRUE(std::filesystem::exists(writer.path()));
+}
+
+TEST_F(MpCollectorFileTest, DepartedWriterIsPublishedOnceMoreThenReaped) {
+    const auto path = dir_ / makeStoreFileName(333, 1, 0);
+    {
+        storeWriter writer(path, "agent-gone", "host", "", 0, kBuckets);
+        writer.addCounter(TX_BYTES, 42);
+    }
+
+    nixlMultiprocessCollector within_ttl(dir_, std::chrono::seconds(30), /*reap_stale=*/true);
+    const auto fams = within_ttl.Collect();
+    const auto *tx = findFamily(fams, "agent_tx_bytes_total");
+    ASSERT_NE(tx, nullptr);
+    ASSERT_EQ(tx->metric.size(), 1u);
+    EXPECT_DOUBLE_EQ(tx->metric.front().counter.value, 42.0)
+        << "the values recorded after the last scrape were lost";
+    EXPECT_TRUE(std::filesystem::exists(path));
+
+    nixlMultiprocessCollector expired(dir_, std::chrono::seconds(0), /*reap_stale=*/true);
+    EXPECT_TRUE(expired.Collect().empty());
+    EXPECT_FALSE(std::filesystem::exists(path));
 }
 
 TEST_F(MpCollectorFileTest, CollectOnEmptyDirYieldsNoFamilies) {

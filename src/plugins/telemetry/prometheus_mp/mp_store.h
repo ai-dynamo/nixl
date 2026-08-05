@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_MP_STORE_H
 #define NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_MP_STORE_H
 
+#include "common/scoped_fd.h"
 #include "telemetry_event.h"
 
 #include <ctime>
@@ -41,6 +42,11 @@ inline constexpr uint32_t MP_STORE_SCHEMA_VERSION = 1;
 // collector can discover peer files by globbing "<prefix>*<suffix>".
 inline constexpr std::string_view MP_STORE_FILE_PREFIX = "nixl.";
 inline constexpr std::string_view MP_STORE_FILE_SUFFIX = ".mmap";
+
+// Name a store carries only while it is being created, on the filesystems that
+// cannot hold a nameless one (see storeWriter). Outside the <prefix>*<suffix>
+// pattern, so the collector never reads or reaps a store mid-creation.
+inline constexpr std::string_view MP_STORE_STAGING_SUFFIX = ".staging";
 
 // Number of value slots in each of the counter and gauge arrays. Indexed
 // directly by nixl_telemetry_event_type_t, so every event type has a reserved
@@ -132,9 +138,6 @@ static_assert(detail::maxTelemetrySlot() < MP_STORE_SLOT_COUNT,
  */
 struct storeSnapshot {
     int64_t pid = 0;
-    // Process start time in clock ticks (/proc/<pid>/stat field 22); pairs with
-    // pid to survive PID reuse when checking liveness.
-    uint64_t startTime = 0;
     // Monotonic nanoseconds (monotonicNs(), CLOCK_MONOTONIC -- host-wide, so
     // comparable across processes) of the last writer update; used for TTL staleness.
     uint64_t lastUpdateNs = 0;
@@ -169,6 +172,16 @@ struct storeSnapshot {
  * are lock-free atomic operations directly on the mapped file, so the exporter
  * process can read peers' files concurrently without coordination. The file has
  * a fixed size (fixed slot layout), so it never needs to grow.
+ *
+ * The store is flock-ed before it is given a name and stays locked for as long
+ * as this object lives, which is what lets a reader tell a live writer from a
+ * dead one by trying the lock alone -- see storeWriterAlive(). Creating it
+ * nameless (O_TMPFILE) and linking it in afterwards is what makes that "before"
+ * airtight: no reader can ever find a store that is initialized but unlocked, so
+ * there is no window in which a live writer's store looks abandoned. A
+ * filesystem without O_TMPFILE gets a MP_STORE_STAGING_SUFFIX name instead,
+ * renamed into place once locked and initialized; a process killed inside that
+ * window leaks one staging file, which is the price of not having O_TMPFILE.
  */
 class storeWriter {
 public:
@@ -182,8 +195,8 @@ public:
      *        same-named agents in one process so their series stay distinct.
      * @param histogram_buckets Histogram bucket upper bounds, at most
      *        MP_STORE_MAX_BUCKETS of them.
-     * @throws std::runtime_error on open/ftruncate/mmap failure, or when
-     *         @p histogram_buckets does not fit the store.
+     * @throws std::runtime_error on create/ftruncate/mmap/publish failure, or
+     *         when @p histogram_buckets does not fit the store.
      */
     storeWriter(std::filesystem::path path,
                 const std::string &agent_name,
@@ -193,13 +206,13 @@ public:
                 const std::vector<double> &histogram_buckets);
 
     /**
-     * @brief Unmaps the store but leaves the file in place.
+     * @brief Unmaps the store and releases its lock, leaving the file in place.
      *
      * The last values a process recorded are typically not scraped yet when it
-     * exits, so the file must outlive it: the collector goes on publishing them
-     * until the process is gone *and* its last update has aged past the stale
-     * TTL, then reaps the file. Unlinking here would drop everything produced
-     * since the previous scrape.
+     * exits, so the file must outlive it: releasing the lock is what tells the
+     * collector to go on publishing them until they age past the stale TTL, and
+     * to reap the file then. Unlinking here would drop everything produced since
+     * the previous scrape.
      */
     ~storeWriter();
 
@@ -249,9 +262,28 @@ public:
 
 private:
     std::filesystem::path path_;
+    // Held open for the writer's lifetime: closing it releases the lock, which is
+    // how every reader learns this process is done with the store.
+    scopedFd fd_;
     void *mapping_ = nullptr;
     std::size_t mappingSize_ = 0;
 };
+
+/**
+ * @brief Whether the process that created the store at @p path still holds it.
+ *
+ * A store is locked before it has a name and unlocked only when its writer dies
+ * or destroys it, and no process ever locks a store it did not create. So a lock
+ * this succeeds in taking means the writer is gone for good and the file will
+ * never change again -- which is the whole liveness test, with no pids, no
+ * /proc, and no need to share a PID namespace with the writer.
+ *
+ * Conservative on failure: a store that cannot be opened or locked for any other
+ * reason (a filesystem without flock, EMFILE) reads as held, so nothing is ever
+ * reaped on the strength of a probe that did not work.
+ */
+[[nodiscard]] bool
+storeWriterAlive(const std::filesystem::path &path);
 
 /**
  * @brief Outcome of readStoreSnapshot().

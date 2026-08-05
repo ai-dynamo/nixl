@@ -22,14 +22,7 @@
 #include <prometheus/client_metric.h>
 #include <prometheus/metric_type.h>
 
-#include <signal.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
-#include <algorithm>
-#include <cerrno>
 #include <chrono>
-#include <ctime>
 #include <exception>
 #include <limits>
 #include <system_error>
@@ -98,27 +91,6 @@ namespace {
         return m;
     }
 
-    // Minimum age before an unparsable file is reaped, even when the TTL is 0.
-    // Protects a store a live process is actively creating (a sub-second window)
-    // from being deleted out from under it.
-    constexpr long kInvalidFileFloorSeconds = 2;
-
-    // Whether an unparsable store file (bad/zero magic, wrong schema, truncated)
-    // is old enough to be an orphan worth removing, rather than a live process's
-    // store mid-creation.
-    [[nodiscard]] bool
-    invalidFileReapable(const std::filesystem::path &path, std::chrono::nanoseconds ttl) {
-        struct stat st{};
-        if (::stat(path.c_str(), &st) != 0) {
-            return false;
-        }
-        const long ttl_seconds =
-            static_cast<long>(std::chrono::duration_cast<std::chrono::seconds>(ttl).count());
-        const long grace = std::max<long>(ttl_seconds, kInvalidFileFloorSeconds);
-        const long age = static_cast<long>(::time(nullptr) - st.st_mtime);
-        return age > grace;
-    }
-
     [[nodiscard]] bool
     nameMatchesStore(const std::string &name) {
         return name.size() > MP_STORE_FILE_PREFIX.size() + MP_STORE_FILE_SUFFIX.size() &&
@@ -128,28 +100,8 @@ namespace {
 } // namespace
 
 bool
-isProcessAlive(int64_t pid, uint64_t start_time) {
-    if (pid <= 0) {
-        return false;
-    }
-    if (::kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH) {
-        return false;
-    }
-    // Process exists (kill succeeded, or failed with EPERM). Guard against PID
-    // reuse: if we recorded a start time and can read the current one, they must
-    // match.
-    if (start_time != 0) {
-        const uint64_t current = readProcessStartTime(pid);
-        if (current != 0 && current != start_time) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool
-isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl) {
-    if (isProcessAlive(snap.pid, snap.startTime)) {
+isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl, bool writer_alive) {
+    if (writer_alive) {
         return true;
     }
     const uint64_t now = monotonicNs();
@@ -278,19 +230,20 @@ nixlMultiprocessCollector::scanLiveStores() const {
         if (!entry.is_regular_file(ec) || !nameMatchesStore(entry.path().filename().string())) {
             continue;
         }
+        const bool writer_alive = storeWriterAlive(entry.path());
         auto [snap, content_invalid] = readStoreSnapshot(entry.path());
         if (!snap) {
             // Reap only genuinely bad content (bad/zero magic, wrong schema,
-            // truncated) that is old enough to not be mid-creation. A transient
-            // open/mmap failure leaves contentInvalid false, so a healthy peer we
-            // simply failed to read is never unlinked.
-            if (reapStale_ && content_invalid && invalidFileReapable(entry.path(), staleTtl_)) {
+            // truncated) that nobody holds. A transient open/mmap failure leaves
+            // contentInvalid false, so a healthy peer we simply failed to read is
+            // never unlinked.
+            if (reapStale_ && content_invalid && !writer_alive) {
                 std::error_code rm_ec;
                 std::filesystem::remove(entry.path(), rm_ec);
             }
             continue;
         }
-        if (isSnapshotLive(*snap, staleTtl_)) {
+        if (isSnapshotLive(*snap, staleTtl_, writer_alive)) {
             live.push_back(std::move(*snap));
         } else if (reapStale_) {
             std::error_code rm_ec;

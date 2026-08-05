@@ -21,6 +21,7 @@
 #include "mp_store_layout.h"
 
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -51,6 +52,55 @@ namespace {
         static std::set<std::filesystem::path> seen;
         const std::lock_guard<std::mutex> lock(mutex);
         return seen.size() < max_remembered && seen.insert(path).second;
+    }
+
+    // A store being created: nameless where the filesystem allows it, otherwise
+    // under a staging name no reader looks at. Either way it is invisible as a
+    // store until publishStore() links it in.
+    struct stagedStore {
+        scopedFd fd;
+        // Empty when the descriptor has no name at all.
+        std::filesystem::path stagingPath;
+    };
+
+    [[nodiscard]] stagedStore
+    stageStore(const std::filesystem::path &path) {
+        scopedFd nameless(
+            ::open(path.parent_path().c_str(), O_TMPFILE | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR));
+        if (nameless.valid()) {
+            return {std::move(nameless), {}};
+        }
+        // No O_TMPFILE (NFS, or a kernel older than 3.11). The staging name is
+        // unique to this process and instance, so O_EXCL can only collide with a
+        // leftover from a process that had this pid and start time -- and if one
+        // somehow exists, refusing to adopt a file of unknown provenance is the
+        // right answer.
+        std::filesystem::path staging = path;
+        staging += MP_STORE_STAGING_SUFFIX;
+        return {scopedFd(::open(staging.c_str(),
+                                O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
+                                S_IRUSR | S_IWUSR)),
+                std::move(staging)};
+    }
+
+    // Gives the initialized, locked store its final name, at which point readers
+    // can find it. AT_SYMLINK_FOLLOW resolves the /proc/self/fd symlink to the
+    // nameless inode, which is the unprivileged way to link one in (the
+    // AT_EMPTY_PATH form needs CAP_DAC_READ_SEARCH).
+    void
+    publishStore(int fd, const std::filesystem::path &staging, const std::filesystem::path &path) {
+        if (!staging.empty()) {
+            if (::rename(staging.c_str(), path.c_str()) != 0) {
+                throw std::runtime_error("prometheus_mp: cannot publish telemetry store '" +
+                                         path.string() + "': " + std::strerror(errno));
+            }
+            return;
+        }
+        const std::string proc_path = "/proc/self/fd/" + std::to_string(fd);
+        if (::linkat(AT_FDCWD, proc_path.c_str(), AT_FDCWD, path.c_str(), AT_SYMLINK_FOLLOW) != 0) {
+            throw std::runtime_error("prometheus_mp: cannot publish telemetry store '" +
+                                     path.string() + "': " + std::strerror(errno));
+        }
     }
 
 } // namespace
@@ -108,18 +158,29 @@ storeWriter::storeWriter(std::filesystem::path path,
                                  " a multi-process store can hold");
     }
 
-    const scopedFd fd(::open(path_.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600));
-    if (fd.get() < 0) {
-        throw std::runtime_error("prometheus_mp: cannot open telemetry store '" + path_.string() +
+    auto staged = stageStore(path_);
+    if (!staged.fd.valid()) {
+        throw std::runtime_error("prometheus_mp: cannot create telemetry store '" + path_.string() +
                                  "': " + std::strerror(errno));
     }
 
-    if (::ftruncate(fd.get(), static_cast<off_t>(mappingSize_)) != 0) {
+    // Not fatal: without the lock the store is still written and scraped, only
+    // its liveness stops being provable, so the collector keeps publishing it
+    // after this process dies until the values age past the stale TTL.
+    if (::flock(staged.fd.get(), LOCK_EX | LOCK_NB) != 0) {
+        NIXL_WARN << "prometheus_mp: cannot lock telemetry store '" << path_.string() << "' ("
+                  << std::strerror(errno)
+                  << "); a reader cannot tell whether this process is alive, so its store will "
+                  << "linger for the stale TTL after it exits";
+    }
+
+    if (::ftruncate(staged.fd.get(), static_cast<off_t>(mappingSize_)) != 0) {
         throw std::runtime_error("prometheus_mp: cannot size telemetry store '" + path_.string() +
                                  "': " + std::strerror(errno));
     }
 
-    mapping_ = ::mmap(nullptr, mappingSize_, PROT_READ | PROT_WRITE, MAP_SHARED, fd.get(), 0);
+    mapping_ =
+        ::mmap(nullptr, mappingSize_, PROT_READ | PROT_WRITE, MAP_SHARED, staged.fd.get(), 0);
     if (mapping_ == MAP_FAILED) {
         mapping_ = nullptr;
         throw std::runtime_error("prometheus_mp: cannot map telemetry store '" + path_.string() +
@@ -131,7 +192,6 @@ storeWriter::storeWriter(std::filesystem::path path,
     layout->schemaVersion = MP_STORE_SCHEMA_VERSION;
     layout->slotCount = static_cast<uint32_t>(MP_STORE_SLOT_COUNT);
     layout->pid = static_cast<int64_t>(::getpid());
-    layout->startTime = readProcessStartTime(layout->pid);
     layout->instance = instance;
     layout->bucketCount = histogram_buckets.size();
     std::copy(histogram_buckets.begin(), histogram_buckets.end(), layout->bucketBounds);
@@ -139,9 +199,18 @@ storeWriter::storeWriter(std::filesystem::path path,
     copyField(layout->hostname, MP_MAX_HOSTNAME, hostname, "hostname");
     copyField(layout->localRank, MP_MAX_LOCAL_RANK, local_rank, "local_rank");
     __atomic_store_n(&layout->lastUpdateNs, monotonicNs(), __ATOMIC_RELAXED);
-    // Publish the magic last so a concurrent reader never validates a
-    // half-initialized header.
     __atomic_store_n(&layout->magic, MP_STORE_MAGIC, __ATOMIC_RELEASE);
+
+    try {
+        publishStore(staged.fd.get(), staged.stagingPath, path_);
+    }
+    catch (...) {
+        // The constructor is failing, so ~storeWriter() will not run.
+        ::munmap(mapping_, mappingSize_);
+        mapping_ = nullptr;
+        throw;
+    }
+    fd_ = std::move(staged.fd);
 }
 
 storeWriter::~storeWriter() {
@@ -149,6 +218,17 @@ storeWriter::~storeWriter() {
         ::munmap(mapping_, mappingSize_);
         mapping_ = nullptr;
     }
+}
+
+bool
+storeWriterAlive(const std::filesystem::path &path) {
+    const scopedFd fd(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+    if (!fd.valid()) {
+        return true;
+    }
+    // Taking the lock proves nobody holds it; closing the descriptor gives it
+    // straight back, so nothing is kept from a writer that never existed.
+    return ::flock(fd.get(), LOCK_EX | LOCK_NB) != 0;
 }
 
 uint64_t
@@ -243,9 +323,9 @@ readStoreSnapshot(const std::filesystem::path &path) {
 
     const uint64_t magic = __atomic_load_n(&layout->magic, __ATOMIC_ACQUIRE);
     if (magic == 0) {
-        // Zeroed header: either a store still being initialized by a live process,
-        // or an orphan left by a process that died mid-creation. Skip quietly (no
-        // WARN); the collector reaps stale orphans by file age.
+        // A store is named only once it is initialized, so a zeroed header is not
+        // a writer mid-creation: it is a file somebody else left here. Quiet (no
+        // WARN) because the collector reaps it once nobody holds it.
         return {std::nullopt, true};
     }
     if (magic != MP_STORE_MAGIC) {
@@ -263,7 +343,6 @@ readStoreSnapshot(const std::filesystem::path &path) {
 
     storeSnapshot snap;
     snap.pid = layout->pid;
-    snap.startTime = layout->startTime;
     snap.instance = layout->instance;
     snap.lastUpdateNs = __atomic_load_n(&layout->lastUpdateNs, __ATOMIC_ACQUIRE);
     snap.agentName = readField(layout->agentName, MP_MAX_AGENT_NAME);

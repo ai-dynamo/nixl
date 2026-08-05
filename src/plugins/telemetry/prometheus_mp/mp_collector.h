@@ -33,24 +33,18 @@ namespace nixl::telemetry::mp {
 inline constexpr std::chrono::seconds MP_DEFAULT_STALE_TTL{30};
 
 /**
- * @brief Whether a process is still running, guarding against PID reuse.
- * @param pid Process id from a store header.
- * @param start_time Process start time from the same header (0 = unknown/skip check).
- * @return True if the pid exists and (when known) its start time still matches.
- */
-[[nodiscard]] bool
-isProcessAlive(int64_t pid, uint64_t start_time);
-
-/**
  * @brief Whether a store snapshot should still be published.
- *
- * Live if the owning process is alive, or (to smooth over a just-exited process)
- * if its last update is within @p ttl.
  * @param snap Store snapshot.
- * @param ttl Freshness window for a process that is no longer alive.
+ * @param ttl Freshness window for a store whose writer is gone.
+ * @param writer_alive Whether the writer still holds the store
+ *        (storeWriterAlive()).
+ *
+ * A live writer is always published. A departed one is published until its last
+ * values age out of @p ttl, so whatever it recorded after the previous scrape is
+ * still exported at least once.
  */
 [[nodiscard]] bool
-isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl);
+isSnapshotLive(const storeSnapshot &snap, std::chrono::nanoseconds ttl, bool writer_alive);
 
 /**
  * @brief Converts per-process snapshots into Prometheus metric families.
@@ -78,8 +72,8 @@ public:
     /**
      * @param dir Shared telemetry directory holding peer store files.
      * @param stale_ttl Freshness window for a process that has exited.
-     * @param reap_stale When true, unlink store files whose process is gone and
-     *        whose data is older than @p stale_ttl.
+     * @param reap_stale When true, unlink store files that no writer holds any
+     *        more and whose data is older than @p stale_ttl.
      */
     explicit nixlMultiprocessCollector(std::filesystem::path dir,
                                        std::chrono::nanoseconds stale_ttl = MP_DEFAULT_STALE_TTL,

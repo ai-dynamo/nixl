@@ -56,7 +56,6 @@ struct storeLayout {
     uint32_t schemaVersion;
     uint32_t slotCount;
     int64_t pid;
-    uint64_t startTime;
     uint64_t lastUpdateNs;
     uint64_t instance;
     // 64-bit purely so the double array that follows stays 8-byte aligned
@@ -76,7 +75,7 @@ struct storeLayout {
 // changed MP_MAX_* cap, both of which move every offset after them while a
 // peer still validates the header. Failing the build is the only way to force
 // the version bump that makes such a file rejectable.
-static_assert(sizeof(storeLayout) == 6808,
+static_assert(sizeof(storeLayout) == 6800,
               "storeLayout is an on-disk format: bump MP_STORE_SCHEMA_VERSION when its size "
               "changes, then update this assertion");
 

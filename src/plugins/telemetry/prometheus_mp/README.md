@@ -80,16 +80,32 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
 - **Per-process series.** Each process is exported as its own series (cumulative
   counters, last-operation gauges and duration histograms), never summed across
   processes, so per-process values stay correct and monotonic.
+- **Liveness is a lock, not a pid.** Each process `flock`s its store *before* the
+  file has a name, keeps it locked for as long as it lives, and only then links it
+  into the directory. So a reader that manages to take the lock knows the writer
+  is gone for good -- no other process ever locks a store it did not create -- and
+  a store it cannot lock belongs to a live writer. The kernel releases the lock
+  however the process died, so nothing needs cleaning up, and none of this needs
+  pids, `/proc`, or a PID namespace shared with the writers. Creating the store
+  nameless (`O_TMPFILE`) is what closes the last window: a reader can never find a
+  store that is initialized but not yet locked. A filesystem without `O_TMPFILE`
+  (NFS) gets a `.staging` name renamed into place instead, and a process killed
+  inside that window leaks one staging file, which no reader ever looks at.
+
+  The store descriptor is `O_CLOEXEC`, so a child that `exec`s does not hold its
+  parent's store. A child that only `fork`s does inherit the lock, and keeps the
+  parent's store looking live until it too exits -- correct, in that such a child
+  can still write to it.
 - **Stale handling.** A departing process leaves its store file behind, whether it
   exits cleanly or is killed: its last values are usually not scraped yet, and
   unlinking on exit would drop everything produced since the previous scrape. The
-  owner keeps publishing them until *both* the process is gone (verified by pid +
-  `/proc` start time) and its last update has aged past the TTL; only then are the
-  series dropped and the file reaped. Both are evaluated during a scrape, so a live
-  process is never dropped for being idle, and a dead one keeps being published
-  until the first scrape after its TTL expires. Keep the TTL at or above the
-  Prometheus scrape interval, or a rank that exits between two scrapes is reaped
-  before its final values are ever read.
+  owner keeps publishing them until *both* the writer has released the store and
+  its last update has aged past the TTL; only then are the series dropped and the
+  file reaped. Both are evaluated during a scrape, so a live process is never
+  dropped for being idle, and a dead one keeps being published until the first
+  scrape after its TTL expires. Keep the TTL at or above the Prometheus scrape
+  interval, or a rank that exits between two scrapes is reaped before its final
+  values are ever read.
 
   This leaves at most one file per run on disk -- the last process to exit has no
   owner left to reap it. It is harmless: the next run reaps it on its first scrape,
@@ -153,12 +169,11 @@ every rank to writer-only and leave the run unscrapeable.
 A missing directory is created `0700`; an existing one is left as it is, with a
 warning when it is group- or world-writable.
 
-All aggregated ranks must also share a **PID namespace** (and time namespace):
-staleness/liveness uses `kill(pid, 0)` + `/proc/<pid>/stat` and a host-wide
-`CLOCK_MONOTONIC`, so ranks must run in one process family / container (or a pod
-with `shareProcessNamespace: true`). Ranks in separate PID namespaces sharing only
-the directory would misidentify each other's liveness -- keeping dead series or
-reaping live ones.
+All aggregated ranks must also share a **time namespace**: staleness compares a
+host-wide `CLOCK_MONOTONIC`, so the ranks have to agree on it. No PID namespace
+requirement -- liveness is the store's lock, which the kernel resolves regardless
+of which namespace the writer's pid lives in. The `pid` label is then only a label
+(and part of the file name), never something a reader interprets.
 
 ### Optional configuration
 
