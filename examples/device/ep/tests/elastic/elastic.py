@@ -488,8 +488,6 @@ def worker(torch_rank: int, args: argparse.Namespace):
     torch.set_default_device("cuda")
     torch.cuda.set_device(0)
 
-    kineto = args.kineto
-
     tcp_store = store_group.create_client_store(
         master_addr=server_addr,
         port=TCP_STORE_PORT,
@@ -579,7 +577,7 @@ def worker(torch_rank: int, args: argparse.Namespace):
             current_num_ranks,
             max_num_ranks,
             buffer,
-            kineto=kineto,
+            kineto=args.kineto,
             fault_tolerance_test=kill_rank,
         )
         # Query mask buffer to detect rank failures and clean them up
