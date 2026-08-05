@@ -71,7 +71,8 @@ struct nixlAgentConfig {
     std::chrono::microseconds etcdWatchTimeout = kDefaultEtcdWatchTimeout;
 
     /**
-     * @var Transfer stall timeout in microseconds. Zero (the default) disables the check.
+     * @var Transfer stall timeout in microseconds. Any non-positive value, including zero
+     *      (the default), disables the check.
      *      Upper bound on how long a posted transfer may stay NIXL_IN_PROG before
      *      getXferStatus reports NIXL_ERR_XFER_STALLED. A transfer can stay NIXL_IN_PROG
      *      indefinitely when the peer is alive but making no progress, or when the backend
@@ -100,7 +101,8 @@ struct nixlAgentConfig {
      * @param capture_telemetry  Optional flag to enable telemetry capture
      * @param etcd_watch_timeout Optional timeout for etcd watch operations in microseconds
      * @param xfer_stall_timeout Optional timeout after which an in-progress transfer is
-     *                           reported as stalled, in microseconds. Zero disables it.
+     *                           reported as stalled, in microseconds. Non-positive
+     *                           values disable it.
      */
     explicit nixlAgentConfig(
         const bool use_prog_thread,

@@ -505,6 +505,31 @@ namespace agent {
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
     }
 
+    TEST_F(dualAgentStallFixture, StalledXferCannotBeReposted) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+
+        /* The backend must see exactly one post. A stalled transfer is still posted, so the
+           repost below has to be rejected by the agent instead of reaching a backend request
+           that can still be in flight. */
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), postXfer)
+            .Times(1)
+            .WillRepeatedly(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), checkXfer)
+            .WillRepeatedly(testing::Return(NIXL_IN_PROG));
+
+        nixlXferReqH *xfer_req = postXfer(s);
+        std::this_thread::sleep_for(stall_timeout + std::chrono::milliseconds(20));
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_ERR_XFER_STALLED);
+
+        EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_ERR_REPOST_ACTIVE);
+
+        /* The rejected repost leaves the stall visible instead of reverting it. */
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_ERR_XFER_STALLED);
+
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
     TEST_F(dualAgentStallFixture, XferWithinTimeoutStaysInProgress) {
         DualAgentSetup s(DRAM_SEG);
         setupDualAgent(s);

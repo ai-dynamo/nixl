@@ -1144,14 +1144,18 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    // We can't repost while a request is in progress
-    if (req_hndl->status == NIXL_IN_PROG) {
-        req_hndl->status = req_hndl->engine->checkXfer(
-                                     req_hndl->backendHandle);
-        if (req_hndl->status == NIXL_IN_PROG) {
+    // We can't repost while a request is in progress. A stalled transfer is still posted, so
+    // it is active here too: only the status the caller was given differs.
+    if (req_hndl->status == NIXL_IN_PROG || req_hndl->status == NIXL_ERR_XFER_STALLED) {
+        const nixl_status_t checked_status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
+        if (checked_status == NIXL_IN_PROG) {
             NIXL_ERROR_FUNC << "transfer request is still in progress and cannot be reposted";
+            // Deliberately not overwriting status here: a handle already reported as stalled
+            // keeps that status rather than reverting to a healthy-looking NIXL_IN_PROG.
             return NIXL_ERR_REPOST_ACTIVE;
         }
+
+        req_hndl->status = checked_status;
 
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
             read_lock.unlock();
@@ -1196,7 +1200,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     // Stamped here rather than at entry so a rejected repost cannot push the stall
     // deadline of a transfer that is already in flight.
-    req_hndl->postTime = std::chrono::steady_clock::now();
+    req_hndl->postTime_ = std::chrono::steady_clock::now();
 
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
@@ -1253,7 +1257,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status == NIXL_IN_PROG && data->config_.xferStallTimeout.count() > 0) {
             const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - req_hndl->postTime);
+                std::chrono::steady_clock::now() - req_hndl->postTime_);
             if (elapsed > data->config_.xferStallTimeout) {
                 NIXL_ERROR_FUNC << "transfer to remote agent '" << req_hndl->remoteAgent
                                 << "' on backend '" << req_hndl->engine->getType()

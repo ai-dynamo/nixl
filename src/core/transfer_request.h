@@ -81,7 +81,7 @@ private:
 
     // Set on every post, unlike telemetry.startTime which is only recorded when telemetry
     // is enabled. getXferStatus measures the stall deadline against this.
-    chrono_point_t postTime;
+    chrono_point_t postTime_;
 
     nixl_xfer_telem_t telemetry;
     nixlTime::nixlDuration timer;
