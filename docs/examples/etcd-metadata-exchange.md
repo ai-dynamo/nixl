@@ -13,14 +13,14 @@ The five phases below -- initialization, publish, fetch, transfer, and invalidat
 
 ### Initialization
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 1: Initialization">
-<img src="../figures/etcd-metadata/nixl_etcd_metadata_01_init_light.svg" alt="Initialization sequence diagram showing environment configuration, agent creation, UCX backend setup, and memory registration" style={{maxWidth: '78%'}} />
+<img src="../figures/etcd-metadata/nixl_etcd_metadata_01_init_light.svg" alt="Initialization sequence diagram showing environment configuration, agent creation, UCX backend setup, and memory registration" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 1: Initialization">
-<img src="../figures/etcd-metadata/nixl_etcd_metadata_01_init_dark.svg" alt="Initialization sequence diagram showing environment configuration, agent creation, UCX backend setup, and memory registration" style={{maxWidth: '78%'}} />
+<img src="../figures/etcd-metadata/nixl_etcd_metadata_01_init_dark.svg" alt="Initialization sequence diagram showing environment configuration, agent creation, UCX backend setup, and memory registration" />
 </Frame>
 </div>
 
@@ -28,14 +28,14 @@ The `NIXL_ETCD_ENDPOINTS` environment variable enables etcd mode -- no code chan
 
 ### Publish Metadata to etcd
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 2: Publish Metadata">
-<img src="../figures/etcd-metadata/nixl_etcd_metadata_02_publish_light.svg" alt="Publish sequence diagram showing both agents serializing and publishing metadata to etcd keys" style={{maxWidth: '78%'}} />
+<img src="../figures/etcd-metadata/nixl_etcd_metadata_02_publish_light.svg" alt="Publish sequence diagram showing both agents serializing and publishing metadata to etcd keys" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 2: Publish Metadata">
-<img src="../figures/etcd-metadata/nixl_etcd_metadata_02_publish_dark.svg" alt="Publish sequence diagram showing both agents serializing and publishing metadata to etcd keys" style={{maxWidth: '78%'}} />
+<img src="../figures/etcd-metadata/nixl_etcd_metadata_02_publish_dark.svg" alt="Publish sequence diagram showing both agents serializing and publishing metadata to etcd keys" />
 </Frame>
 </div>
 
@@ -43,14 +43,14 @@ Each agent serializes its memory descriptors and UCX connection info, then publi
 
 ### Fetch & Discover from etcd
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 3: Fetch & Discover">
-<img src="../figures/etcd-metadata/nixl_etcd_metadata_03_fetch_light.svg" alt="Fetch sequence diagram showing agents retrieving remote metadata from etcd, loading it locally, and creating watchers" style={{maxWidth: '78%'}} />
+<img src="../figures/etcd-metadata/nixl_etcd_metadata_03_fetch_light.svg" alt="Fetch sequence diagram showing agents retrieving remote metadata from etcd, loading it locally, and creating watchers" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 3: Fetch & Discover">
-<img src="../figures/etcd-metadata/nixl_etcd_metadata_03_fetch_dark.svg" alt="Fetch sequence diagram showing agents retrieving remote metadata from etcd, loading it locally, and creating watchers" style={{maxWidth: '78%'}} />
+<img src="../figures/etcd-metadata/nixl_etcd_metadata_03_fetch_dark.svg" alt="Fetch sequence diagram showing agents retrieving remote metadata from etcd, loading it locally, and creating watchers" />
 </Frame>
 </div>
 
@@ -58,14 +58,14 @@ Each agent fetches the other's metadata from etcd by name. The metadata is loade
 
 ### Transfer
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 4: Transfer">
-<img src="../figures/etcd-metadata/nixl_etcd_metadata_04_transfer_light.svg" alt="Transfer sequence diagram showing standard RDMA write, status polling, and notification delivery" style={{maxWidth: '78%'}} />
+<img src="../figures/etcd-metadata/nixl_etcd_metadata_04_transfer_light.svg" alt="Transfer sequence diagram showing standard RDMA write, status polling, and notification delivery" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 4: Transfer">
-<img src="../figures/etcd-metadata/nixl_etcd_metadata_04_transfer_dark.svg" alt="Transfer sequence diagram showing standard RDMA write, status polling, and notification delivery" style={{maxWidth: '78%'}} />
+<img src="../figures/etcd-metadata/nixl_etcd_metadata_04_transfer_dark.svg" alt="Transfer sequence diagram showing standard RDMA write, status polling, and notification delivery" />
 </Frame>
 </div>
 
@@ -73,14 +73,14 @@ The transfer is identical to the non-etcd workflow -- etcd is only used for meta
 
 ### Invalidation & Teardown
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 5: Invalidation & Teardown">
-<img src="../figures/etcd-metadata/nixl_etcd_metadata_05_invalidation_light.svg" alt="Invalidation sequence diagram showing etcd key deletion, watcher-triggered cache invalidation, and memory deregistration" style={{maxWidth: '78%'}} />
+<img src="../figures/etcd-metadata/nixl_etcd_metadata_05_invalidation_light.svg" alt="Invalidation sequence diagram showing etcd key deletion, watcher-triggered cache invalidation, and memory deregistration" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 5: Invalidation & Teardown">
-<img src="../figures/etcd-metadata/nixl_etcd_metadata_05_invalidation_dark.svg" alt="Invalidation sequence diagram showing etcd key deletion, watcher-triggered cache invalidation, and memory deregistration" style={{maxWidth: '78%'}} />
+<img src="../figures/etcd-metadata/nixl_etcd_metadata_05_invalidation_dark.svg" alt="Invalidation sequence diagram showing etcd key deletion, watcher-triggered cache invalidation, and memory deregistration" />
 </Frame>
 </div>
 

@@ -371,10 +371,19 @@ html[data-theme=dark] {
 .diagram-dark { display: none; }
 .dark .diagram-light { display: none; }
 .dark .diagram-dark { display: block; }
-/* Ensure all images inside Frame/figure containers fill their width */
-.fern-card img {
+/* Sequence diagrams in example pages: size Fern's generated image wrapper. */
+.sequence-diagram .fern-card > div > span {
+    flex: 0 0 78%;
+    width: 78%;
+}
+.sequence-diagram .fern-card > div > span > span {
+    display: block;
+    width: 100%;
+}
+.sequence-diagram .fern-card img {
     width: 100% !important;
     height: auto !important;
+    max-width: none !important;
 }
 .footer-links {
     display: flex;

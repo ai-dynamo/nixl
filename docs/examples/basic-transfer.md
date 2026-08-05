@@ -13,14 +13,14 @@ The four phases below -- initialization, metadata exchange, transfer, and teardo
 
 ### Initialization
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 1: Initialization">
-<img src="../figures/basic-transfer/nixl_basic_transfer_01_init_light.svg" alt="Initialization sequence diagram showing target and initiator agent creation, UCX backend setup, tensor allocation, and memory registration" style={{maxWidth: '78%'}} />
+<img src="../figures/basic-transfer/nixl_basic_transfer_01_init_light.svg" alt="Initialization sequence diagram showing target and initiator agent creation, UCX backend setup, tensor allocation, and memory registration" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 1: Initialization">
-<img src="../figures/basic-transfer/nixl_basic_transfer_01_init_dark.svg" alt="Initialization sequence diagram showing target and initiator agent creation, UCX backend setup, tensor allocation, and memory registration" style={{maxWidth: '78%'}} />
+<img src="../figures/basic-transfer/nixl_basic_transfer_01_init_dark.svg" alt="Initialization sequence diagram showing target and initiator agent creation, UCX backend setup, tensor allocation, and memory registration" />
 </Frame>
 </div>
 
@@ -28,14 +28,14 @@ Both agents are created with configuration for progress threads and notification
 
 ### Metadata & Descriptor Exchange
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 2: Metadata & Descriptor Exchange">
-<img src="../figures/basic-transfer/nixl_basic_transfer_02_metadata_light.svg" alt="Metadata exchange sequence diagram showing side-channel metadata fetch, descriptor serialization, and notification-based descriptor delivery" style={{maxWidth: '78%'}} />
+<img src="../figures/basic-transfer/nixl_basic_transfer_02_metadata_light.svg" alt="Metadata exchange sequence diagram showing side-channel metadata fetch, descriptor serialization, and notification-based descriptor delivery" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 2: Metadata & Descriptor Exchange">
-<img src="../figures/basic-transfer/nixl_basic_transfer_02_metadata_dark.svg" alt="Metadata exchange sequence diagram showing side-channel metadata fetch, descriptor serialization, and notification-based descriptor delivery" style={{maxWidth: '78%'}} />
+<img src="../figures/basic-transfer/nixl_basic_transfer_02_metadata_dark.svg" alt="Metadata exchange sequence diagram showing side-channel metadata fetch, descriptor serialization, and notification-based descriptor delivery" />
 </Frame>
 </div>
 
@@ -43,14 +43,14 @@ The initiator fetches the target's metadata via direct TCP, then the target seri
 
 ### Transfer Execution
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 3: Transfer Execution">
-<img src="../figures/basic-transfer/nixl_basic_transfer_03_transfer_light.svg" alt="Transfer sequence diagram showing READ request creation, RDMA data transfer, status polling, and completion notification" style={{maxWidth: '78%'}} />
+<img src="../figures/basic-transfer/nixl_basic_transfer_03_transfer_light.svg" alt="Transfer sequence diagram showing READ request creation, RDMA data transfer, status polling, and completion notification" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 3: Transfer Execution">
-<img src="../figures/basic-transfer/nixl_basic_transfer_03_transfer_dark.svg" alt="Transfer sequence diagram showing READ request creation, RDMA data transfer, status polling, and completion notification" style={{maxWidth: '78%'}} />
+<img src="../figures/basic-transfer/nixl_basic_transfer_03_transfer_dark.svg" alt="Transfer sequence diagram showing READ request creation, RDMA data transfer, status polling, and completion notification" />
 </Frame>
 </div>
 
@@ -58,14 +58,14 @@ The initiator creates a READ transfer request to pull data from the target's ten
 
 ### Teardown
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 4: Teardown">
-<img src="../figures/basic-transfer/nixl_basic_transfer_04_teardown_light.svg" alt="Teardown sequence diagram showing remote agent removal, handle release, metadata invalidation, and memory deregistration" style={{maxWidth: '78%'}} />
+<img src="../figures/basic-transfer/nixl_basic_transfer_04_teardown_light.svg" alt="Teardown sequence diagram showing remote agent removal, handle release, metadata invalidation, and memory deregistration" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 4: Teardown">
-<img src="../figures/basic-transfer/nixl_basic_transfer_04_teardown_dark.svg" alt="Teardown sequence diagram showing remote agent removal, handle release, metadata invalidation, and memory deregistration" style={{maxWidth: '78%'}} />
+<img src="../figures/basic-transfer/nixl_basic_transfer_04_teardown_dark.svg" alt="Teardown sequence diagram showing remote agent removal, handle release, metadata invalidation, and memory deregistration" />
 </Frame>
 </div>
 

@@ -23,14 +23,14 @@ In production, initialization and metadata exchange happen once at startup. Only
 
 ### Initialization
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 1: Initialization">
-<img src="../figures/remote-storage/nixl_remote_storage_01_init_light.svg" alt="Initialization sequence diagram showing client and server agent creation, backend registration, and memory registration" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_01_init_light.svg" alt="Initialization sequence diagram showing client and server agent creation, backend registration, and memory registration" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 1: Initialization">
-<img src="../figures/remote-storage/nixl_remote_storage_01_init_dark.svg" alt="Initialization sequence diagram showing client and server agent creation, backend registration, and memory registration" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_01_init_dark.svg" alt="Initialization sequence diagram showing client and server agent creation, backend registration, and memory registration" />
 </Frame>
 </div>
 
@@ -51,14 +51,14 @@ nixl_file_reg_descs = my_agent.register_memory(file_list, "FILE")
 
 ### Metadata Exchange
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 2: Metadata Exchange">
-<img src="../figures/remote-storage/nixl_remote_storage_02_metadata_light.svg" alt="Metadata exchange sequence diagram showing client publishing metadata and fetching server metadata" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_02_metadata_light.svg" alt="Metadata exchange sequence diagram showing client publishing metadata and fetching server metadata" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 2: Metadata Exchange">
-<img src="../figures/remote-storage/nixl_remote_storage_02_metadata_dark.svg" alt="Metadata exchange sequence diagram showing client publishing metadata and fetching server metadata" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_02_metadata_dark.svg" alt="Metadata exchange sequence diagram showing client publishing metadata and fetching server metadata" />
 </Frame>
 </div>
 
@@ -76,14 +76,14 @@ while my_agent.check_remote_metadata(server_name) is False:
 
 ### Remote Write Request
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 3: Remote Write Request">
-<img src="../figures/remote-storage/nixl_remote_storage_03_write_light.svg" alt="Remote write sequence diagram showing notification, pipelined network read and storage write, and completion" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_03_write_light.svg" alt="Remote write sequence diagram showing notification, pipelined network read and storage write, and completion" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 3: Remote Write Request">
-<img src="../figures/remote-storage/nixl_remote_storage_03_write_dark.svg" alt="Remote write sequence diagram showing notification, pipelined network read and storage write, and completion" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_03_write_dark.svg" alt="Remote write sequence diagram showing notification, pipelined network read and storage write, and completion" />
 </Frame>
 </div>
 
@@ -116,14 +116,14 @@ my_agent.send_notif(client_name, b"COMPLETE")
 
 ### Remote Read Request
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 4: Remote Read Request">
-<img src="../figures/remote-storage/nixl_remote_storage_04_read_light.svg" alt="Remote read sequence diagram showing notification, pipelined storage read and network write, and completion" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_04_read_light.svg" alt="Remote read sequence diagram showing notification, pipelined storage read and network write, and completion" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 4: Remote Read Request">
-<img src="../figures/remote-storage/nixl_remote_storage_04_read_dark.svg" alt="Remote read sequence diagram showing notification, pipelined storage read and network write, and completion" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_04_read_dark.svg" alt="Remote read sequence diagram showing notification, pipelined storage read and network write, and completion" />
 </Frame>
 </div>
 
@@ -160,27 +160,27 @@ To improve throughput, the server pipelines storage and network operations acros
 
 #### Read Pipeline (Storage Read → Network Write)
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Read Pipeline: storage read overlaps with previous network write">
-<img src="../figures/remote-storage/nixl_remote_storage_pipeline_read_light.svg" alt="Read pipeline sequence diagram showing overlapping storage reads and network writes across iterations" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_pipeline_read_light.svg" alt="Read pipeline sequence diagram showing overlapping storage reads and network writes across iterations" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Read Pipeline: storage read overlaps with previous network write">
-<img src="../figures/remote-storage/nixl_remote_storage_pipeline_read_dark.svg" alt="Read pipeline sequence diagram showing overlapping storage reads and network writes across iterations" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_pipeline_read_dark.svg" alt="Read pipeline sequence diagram showing overlapping storage reads and network writes across iterations" />
 </Frame>
 </div>
 
 #### Write Pipeline (Network Read → Storage Write)
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Write Pipeline: network read overlaps with previous storage write">
-<img src="../figures/remote-storage/nixl_remote_storage_pipeline_write_light.svg" alt="Write pipeline sequence diagram showing overlapping network reads and storage writes across iterations" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_pipeline_write_light.svg" alt="Write pipeline sequence diagram showing overlapping network reads and storage writes across iterations" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Write Pipeline: network read overlaps with previous storage write">
-<img src="../figures/remote-storage/nixl_remote_storage_pipeline_write_dark.svg" alt="Write pipeline sequence diagram showing overlapping network reads and storage writes across iterations" style={{maxWidth: '78%'}} />
+<img src="../figures/remote-storage/nixl_remote_storage_pipeline_write_dark.svg" alt="Write pipeline sequence diagram showing overlapping network reads and storage writes across iterations" />
 </Frame>
 </div>
 

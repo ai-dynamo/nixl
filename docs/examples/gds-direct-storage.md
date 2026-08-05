@@ -13,14 +13,14 @@ The four phases below -- initialization, write transfer, read transfer, and veri
 
 ### Initialization
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 1: Initialization">
-<img src="../figures/gds-direct/nixl_gds_direct_01_init_light.svg" alt="Initialization sequence diagram showing agent creation, GDS backend setup, DRAM buffer allocation, and file registration" style={{maxWidth: '78%'}} />
+<img src="../figures/gds-direct/nixl_gds_direct_01_init_light.svg" alt="Initialization sequence diagram showing agent creation, GDS backend setup, DRAM buffer allocation, and file registration" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 1: Initialization">
-<img src="../figures/gds-direct/nixl_gds_direct_01_init_dark.svg" alt="Initialization sequence diagram showing agent creation, GDS backend setup, DRAM buffer allocation, and file registration" style={{maxWidth: '78%'}} />
+<img src="../figures/gds-direct/nixl_gds_direct_01_init_dark.svg" alt="Initialization sequence diagram showing agent creation, GDS backend setup, DRAM buffer allocation, and file registration" />
 </Frame>
 </div>
 
@@ -28,14 +28,14 @@ A single agent is created with the GDS backend. Two DRAM buffers are allocated -
 
 ### Write Transfer (DRAM to File)
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 2: Write Transfer">
-<img src="../figures/gds-direct/nixl_gds_direct_02_write_light.svg" alt="Write transfer sequence diagram showing GDS direct write from DRAM buffer to file" style={{maxWidth: '78%'}} />
+<img src="../figures/gds-direct/nixl_gds_direct_02_write_light.svg" alt="Write transfer sequence diagram showing GDS direct write from DRAM buffer to file" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 2: Write Transfer">
-<img src="../figures/gds-direct/nixl_gds_direct_02_write_dark.svg" alt="Write transfer sequence diagram showing GDS direct write from DRAM buffer to file" style={{maxWidth: '78%'}} />
+<img src="../figures/gds-direct/nixl_gds_direct_02_write_dark.svg" alt="Write transfer sequence diagram showing GDS direct write from DRAM buffer to file" />
 </Frame>
 </div>
 
@@ -43,14 +43,14 @@ A WRITE transfer moves data from DRAM buf1 directly to the file via the GDS back
 
 ### Read Transfer (File to DRAM)
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 3: Read Transfer">
-<img src="../figures/gds-direct/nixl_gds_direct_03_read_light.svg" alt="Read transfer sequence diagram showing GDS direct read from file to DRAM buffer" style={{maxWidth: '78%'}} />
+<img src="../figures/gds-direct/nixl_gds_direct_03_read_light.svg" alt="Read transfer sequence diagram showing GDS direct read from file to DRAM buffer" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 3: Read Transfer">
-<img src="../figures/gds-direct/nixl_gds_direct_03_read_dark.svg" alt="Read transfer sequence diagram showing GDS direct read from file to DRAM buffer" style={{maxWidth: '78%'}} />
+<img src="../figures/gds-direct/nixl_gds_direct_03_read_dark.svg" alt="Read transfer sequence diagram showing GDS direct read from file to DRAM buffer" />
 </Frame>
 </div>
 
@@ -58,14 +58,14 @@ A READ transfer moves data from the file back into DRAM buf2 via GDS. This compl
 
 ### Verify & Teardown
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Phase 4: Verify & Teardown">
-<img src="../figures/gds-direct/nixl_gds_direct_04_verify_light.svg" alt="Verify and teardown sequence diagram showing buffer comparison, handle release, memory deregistration, and cleanup" style={{maxWidth: '78%'}} />
+<img src="../figures/gds-direct/nixl_gds_direct_04_verify_light.svg" alt="Verify and teardown sequence diagram showing buffer comparison, handle release, memory deregistration, and cleanup" />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Phase 4: Verify & Teardown">
-<img src="../figures/gds-direct/nixl_gds_direct_04_verify_dark.svg" alt="Verify and teardown sequence diagram showing buffer comparison, handle release, memory deregistration, and cleanup" style={{maxWidth: '78%'}} />
+<img src="../figures/gds-direct/nixl_gds_direct_04_verify_dark.svg" alt="Verify and teardown sequence diagram showing buffer comparison, handle release, memory deregistration, and cleanup" />
 </Frame>
 </div>
 
