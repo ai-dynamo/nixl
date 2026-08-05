@@ -272,20 +272,15 @@ private:
     ucx_connection_ptr_t
     getConnection(const std::string &remote_agent) const;
 
-    struct batchResult {
-        nixl_status_t status;
-        size_t size;
-        nixlUcxReq req;
-    };
+#ifdef HAVE_UCX_SGL_API
+    nixl_status_t
+    prepXferSgl(const nixl_meta_dlist_t &local,
+                const nixl_meta_dlist_t &remote,
+                nixlBackendReqH *handle) const;
 
-    static batchResult
-    sendXferRangeBatch(nixlUcxEp &ep,
-                       nixl_xfer_op_t operation,
-                       const nixl_meta_dlist_t &local,
-                       const nixl_meta_dlist_t &remote,
-                       size_t worker_id,
-                       size_t start_idx,
-                       size_t end_idx);
+    nixl_status_t
+    sendXferSgl(nixlBackendReqH *handle) const;
+#endif
 
     /**
      * Get the worker ID from the optional arguments.
@@ -300,6 +295,7 @@ private:
     size_t numSharedWorkers_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
+    const bool sglEnabled_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
