@@ -229,12 +229,12 @@ The following are opaque handle types returned by NIXL methods. They should not 
 
 NIXL uses a hierarchy of descriptor classes to represent memory regions for registration and transfer.
 
-<div className="diagram-light">
+<div className="diagram-light sequence-diagram">
 <Frame caption="Descriptor class hierarchy">
 <img src="../../assets/figures/data-flow/nixl_desc_hierarchy_light.svg" alt="Descriptor class hierarchy" style={{width: '100%'}} />
 </Frame>
 </div>
-<div className="diagram-dark">
+<div className="diagram-dark sequence-diagram">
 <Frame caption="Descriptor class hierarchy">
 <img src="../../assets/figures/data-flow/nixl_desc_hierarchy_dark.svg" alt="Descriptor class hierarchy" style={{width: '100%'}} />
 </Frame>
