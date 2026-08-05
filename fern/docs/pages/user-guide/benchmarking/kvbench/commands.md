@@ -132,7 +132,7 @@ These arguments are used by both `plan` and `profile` commands and are passed th
 | -------- | ----------- |
 | `--source` | Source of the NIXL descriptors: `file`, `memory`, or `gpu` (default: `file`) |
 | `--destination` | Destination of the NIXL descriptors: `file`, `memory`, or `gpu` (default: `memory`) |
-| `--backend` | Communication backend: [UCX](/nixl/user-guide/backend-selection/ucx), [GDS](/nixl/user-guide/backend-selection/gpu-direct-storage), [GDS_MT](/nixl/user-guide/backend-selection/gpu-direct-storage-mt), [POSIX](/nixl/user-guide/backend-selection/posix), [GPUNETIO](/nixl/user-guide/backend-selection/doca-gpu-net-io), [Mooncake](/nixl/user-guide/backend-selection/mooncake), [HF3FS](/nixl/user-guide/backend-selection/hf-3-fs), [OBJ](/nixl/user-guide/backend-selection/obj) (default: `UCX`) |
+| `--backend` | Communication backend: [UCX](/nixl/user-guide/backend-selection/ucx), [GDS](/nixl/user-guide/backend-selection/gds), [GDS_MT](/nixl/user-guide/backend-selection/gds-mt), [POSIX](/nixl/user-guide/backend-selection/posix), [GPUNETIO](/nixl/user-guide/backend-selection/gpunetio), [Mooncake](/nixl/user-guide/backend-selection/mooncake), [HF3FS](/nixl/user-guide/backend-selection/hf3fs), [OBJ](/nixl/user-guide/backend-selection/obj) (default: `UCX`) |
 | `--worker_type` | Worker to use to transfer data: `nixl` or `nvshmem` (default: `nixl`) |
 | `--initiator_seg_type` | Memory segment type for initiator: `DRAM`, `VRAM`, `FILE`, or `OBJ` (default: `DRAM`) |
 | `--target_seg_type` | Memory segment type for target: `DRAM`, `VRAM`, `FILE`, or `OBJ` (default: `DRAM`) |

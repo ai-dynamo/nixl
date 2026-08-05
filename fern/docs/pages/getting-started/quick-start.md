@@ -43,7 +43,7 @@ NIXL INFO    _api.py:253 Initialized NIXL agent: agent1
 The sections below follow the Transfer Agent lifecycle: initialization, backend creation, memory registration, metadata exchange, transfer, and teardown.
 
 <Note>
-If you installed NIXL via pip above, you're ready to go. For building from source, see [Building NIXL from Source](/docs/user-guide/building-nixl).
+If you installed NIXL via pip above, you're ready to go. For building from source, see [Building NIXL from Source](/nixl/developer-guide/building-nixl-from-source).
 </Note>
 
 The NIXL workflow follows a strict order:

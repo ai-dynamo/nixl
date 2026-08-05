@@ -102,17 +102,22 @@ navigation:
           - page: Mooncake
             path: ./docs/pages/user-guide/backends/mooncake.md
           - page: UCCL-P2P
+            slug: uccl
             path: ./docs/pages/user-guide/backends/uccl.md
           - page: DOCA GPUNetIO
+            slug: gpunetio
             path: ./docs/pages/user-guide/backends/gpunetio.md
           # Storage & file backends
           - page: GPUDirect Storage
+            slug: gds
             path: ./docs/pages/user-guide/backends/gds.md
           - page: GPUDirect Storage MT
+            slug: gds-mt
             path: ./docs/pages/user-guide/backends/gds-mt.md
           - page: POSIX
             path: ./docs/pages/user-guide/backends/posix.md
           - page: HF3FS
+            slug: hf3fs
             path: ./docs/pages/user-guide/backends/hf3fs.md
           - page: OBJ
             path: ./docs/pages/user-guide/backends/obj.md

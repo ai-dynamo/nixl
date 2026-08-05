@@ -35,7 +35,7 @@ ninja install
 ```
 
 <Tip>
-See [Build Options](/docs/user-guide/building-nixl#build-options) for the full list of Meson configuration options (e.g., `ucx_path`, `enable_plugins`, `rust`).
+See [Build Options](/nixl/developer-guide/building-nixl-from-source#build-options) for the full list of Meson configuration options (e.g., `ucx_path`, `enable_plugins`, `rust`).
 </Tip>
 
 <Note>

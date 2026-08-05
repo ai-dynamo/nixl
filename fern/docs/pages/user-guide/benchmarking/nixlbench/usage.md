@@ -7,7 +7,7 @@ This page covers running NIXLBench benchmarks end-to-end, including etcd coordin
 
 ## etcd Coordination
 
-NIXLBench workers coordinate through [etcd](/nixl/user-guide/metadata-exchange-with-etcd) for discovery and synchronization. Network backends ([UCX](/nixl/user-guide/backend-selection/ucx), [DOCA GPUNetIO](/nixl/user-guide/backend-selection/doca-gpu-net-io), [Mooncake](/nixl/user-guide/backend-selection/mooncake), [Libfabric](/nixl/user-guide/backend-selection/libfabric)) and all multi-node setups require etcd. Storage backends ([GPUDirect Storage](/nixl/user-guide/backend-selection/gpu-direct-storage), [GPUDirect Storage MT](/nixl/user-guide/backend-selection/gpu-direct-storage-mt), [POSIX](/nixl/user-guide/backend-selection/posix), [HF3FS](/nixl/user-guide/backend-selection/hf-3-fs), [OBJ](/nixl/user-guide/backend-selection/obj), [GUSLI](/nixl/user-guide/backend-selection/gusli)) can run without etcd when launched as a single instance.
+NIXLBench workers coordinate through [etcd](/nixl/user-guide/metadata-exchange-with-etcd) for discovery and synchronization. Network backends ([UCX](/nixl/user-guide/backend-selection/ucx), [DOCA GPUNetIO](/nixl/user-guide/backend-selection/gpunetio), [Mooncake](/nixl/user-guide/backend-selection/mooncake), [Libfabric](/nixl/user-guide/backend-selection/libfabric)) and all multi-node setups require etcd. Storage backends ([GPUDirect Storage](/nixl/user-guide/backend-selection/gds), [GPUDirect Storage MT](/nixl/user-guide/backend-selection/gds-mt), [POSIX](/nixl/user-guide/backend-selection/posix), [HF3FS](/nixl/user-guide/backend-selection/hf3fs), [OBJ](/nixl/user-guide/backend-selection/obj), [GUSLI](/nixl/user-guide/backend-selection/gusli)) can run without etcd when launched as a single instance.
 
 Start an etcd server with Docker:
 
@@ -108,7 +108,7 @@ Storage backends benchmark file and object I/O operations. They can run without 
 
 ### GPUDirect Storage (GDS)
 
-Run a single-instance GDS benchmark with direct I/O. For backend-specific flags, see the [GPUDirect Storage](/nixl/user-guide/backend-selection/gpu-direct-storage) page.
+Run a single-instance GDS benchmark with direct I/O. For backend-specific flags, see the [GPUDirect Storage](/nixl/user-guide/backend-selection/gds) page.
 
 ```bash
 nixlbench --backend GDS --filepath /mnt/storage/testfile --storage_enable_direct

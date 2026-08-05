@@ -7,8 +7,8 @@ NIXLBench is a benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) th
 
 ## Features
 
-- **Network backends** -- [UCX](/nixl/user-guide/backend-selection/ucx), [Libfabric](/nixl/user-guide/backend-selection/libfabric), [Mooncake](/nixl/user-guide/backend-selection/mooncake), and [DOCA GPUNetIO](/nixl/user-guide/backend-selection/doca-gpu-net-io) for high-speed network communication
-- **Storage backends** -- [GPUDirect Storage](/nixl/user-guide/backend-selection/gpu-direct-storage), [GPUDirect Storage MT](/nixl/user-guide/backend-selection/gpu-direct-storage-mt), [POSIX](/nixl/user-guide/backend-selection/posix), [HF3FS](/nixl/user-guide/backend-selection/hf-3-fs), [OBJ](/nixl/user-guide/backend-selection/obj), [Azure Blob](/nixl/user-guide/backend-selection/azure-blob), and [GUSLI](/nixl/user-guide/backend-selection/gusli) for storage operations
+- **Network backends** -- [UCX](/nixl/user-guide/backend-selection/ucx), [Libfabric](/nixl/user-guide/backend-selection/libfabric), [Mooncake](/nixl/user-guide/backend-selection/mooncake), and [DOCA GPUNetIO](/nixl/user-guide/backend-selection/gpunetio) for high-speed network communication
+- **Storage backends** -- [GPUDirect Storage](/nixl/user-guide/backend-selection/gds), [GPUDirect Storage MT](/nixl/user-guide/backend-selection/gds-mt), [POSIX](/nixl/user-guide/backend-selection/posix), [HF3FS](/nixl/user-guide/backend-selection/hf3fs), [OBJ](/nixl/user-guide/backend-selection/obj), [Azure Blob](/nixl/user-guide/backend-selection/azure-blob), and [GUSLI](/nixl/user-guide/backend-selection/gusli) for storage operations
 - **Communication patterns** -- Pairwise, many-to-one, one-to-many, and TP (tensor parallel)
 - **Memory types** -- CPU (DRAM) and GPU (VRAM) transfers
 - **Worker types** -- NIXL worker with full backend support, and NVSHMEM worker for GPU-focused VRAM-only transfers
