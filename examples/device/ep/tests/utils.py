@@ -210,14 +210,17 @@ def _run_cuda_profiler_sentinel():
 
 
 def kineto_cuda_available() -> bool:
-    with suppress_stdout_stderr():
-        with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CUDA]
-        ) as prof:
-            _run_cuda_profiler_sentinel()
-            torch.cuda.synchronize()
+    try:
+        with suppress_stdout_stderr():
+            with torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CUDA]
+            ) as prof:
+                _run_cuda_profiler_sentinel()
+                torch.cuda.synchronize()
 
-    return _has_cuda_profiler_events(prof.key_averages())
+        return _has_cuda_profiler_events(prof.key_averages())
+    except Exception:
+        return False
 
 
 def bench_kineto(
