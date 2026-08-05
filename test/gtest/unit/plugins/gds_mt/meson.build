@@ -13,14 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if cuda_dep.found() == false
-    subdir_done()
-endif
-
-nixl_gds_mt_app = executable('nixl_gds_mt_test', 'nixl_gds_mt_test.cpp',
-                             dependencies: [nixl_dep, nixl_infra, cuda_dep, nixl_common_dep],
-                             include_directories: [nixl_inc_dirs, utils_inc_dirs,
-                                                   include_directories('..')],
-                             install: true)
-
-test('gds_mt_path_mode_smoke', nixl_gds_mt_app)
+gds_mt_unit_test_dep = declare_dependency(
+    sources: [
+        'gds_mt_offset_test.cpp',
+    ],
+    include_directories: [
+        nixl_inc_dirs,
+        utils_inc_dirs,
+        include_directories('../../../../../src/plugins/gds_mt'),
+    ],
+    dependencies: [
+        nixl_dep,
+        nixl_infra,
+        nixl_common_dep,
+        cuda_dep,
+        cufile_dep,
+        taskflow_proj,
+        file_utils_interface,
+        gds_mt_backend_interface,
+    ],
+)
