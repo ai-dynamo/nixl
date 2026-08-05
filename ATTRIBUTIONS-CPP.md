@@ -737,7 +737,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## libxml2 - 2.9.14
+## libxml2 - 2.15
 
 - **Repository URL**: https://gitlab.gnome.org/GNOME/libxml2
 - **License URL**: https://gitlab.gnome.org/GNOME/libxml2/-/blob/master/Copyright
