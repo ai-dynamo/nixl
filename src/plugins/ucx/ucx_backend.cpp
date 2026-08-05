@@ -26,6 +26,7 @@
 #include <optional>
 #include <limits>
 #include <future>
+#include <thread>
 #include <string.h>
 #include <unistd.h>
 #include "absl/strings/numbers.h"
@@ -133,18 +134,71 @@ public:
 
     virtual void
     release() {
-        // TODO: Error log: uncompleted requests found! Cancelling ...
         for (nixlUcxReq req : requests_) {
             const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
             if (ret == NIXL_IN_PROG) {
-                // TODO: Need process this properly.
-                // it may not be enough to cancel UCX request
+                // A no-op for RMA - ucp_request_cancel() only acts on tag receives - but
+                // kept so tag-based operations still get cancelled before the drain.
                 worker_->reqCancel(req);
+                if (!drainRequest(req)) {
+                    NIXL_ERROR << "Request " << req
+                               << " is still in flight after the drain timeout. It is not "
+                                  "safe to deregister the memory backing this transfer yet: "
+                                  "UCX dereferences the ucp_mem_h when the operation "
+                                  "eventually completes.";
+                }
             }
             worker_->reqRelease(req);
         }
         requests_.clear();
         conn_.reset();
+    }
+
+    // Progress the worker until req reaches a terminal state, so that UCX is done with the
+    // ucp_mem_h before the caller is free to deregister it. Returns false if the request is
+    // still in flight when the deadline expires.
+    //
+    // RMA operations are posted with UCP_OP_ATTR_FIELD_MEMH, and UCX keeps that ucp_mem_h in
+    // the request as a plain pointer (ucp_datatype_iter contig.memh): a user memh is not
+    // reference counted. On completion ucp_datatype_iter_cleanup() calls ucp_memh_put() on
+    // it, which dereferences memh->context and memh->parent. If the caller deregistered in
+    // the meantime, ucp_mem_unmap() has already ucs_free()d the memh and the completion
+    // faults inside ucp_memh_put().
+    //
+    // Releasing the request object itself is safe either way: ucp_request_free() on an
+    // uncompleted request only marks it released, and UCX returns it to the request pool
+    // when it completes. What the drain protects is the memory handle, not the request.
+    //
+    // The deadline keeps release() from blocking forever when a transfer is wedged on an
+    // endpoint that is alive but no longer making progress.
+    [[nodiscard]] bool
+    drainRequest(nixlUcxReq req) const {
+        using namespace std::chrono_literals;
+
+        const auto timeout =
+            nixl::config::getValueDefaulted("NIXL_UCX_REQUEST_DRAIN_TIMEOUT", 10'000ms);
+        const auto warning_interval =
+            nixl::config::getValueDefaulted("NIXL_UCX_WARNING_TIMEOUT", 5'000ms);
+        auto next_warning = warning_interval;
+
+        const auto start = std::chrono::steady_clock::now();
+        while (nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req)) == NIXL_IN_PROG) {
+            const auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed > timeout) {
+                return false;
+            }
+
+            if (elapsed > next_warning) {
+                NIXL_WARN << "Still draining in-flight request " << req << " after "
+                          << next_warning.count() << " ms";
+                next_warning += warning_interval;
+            }
+
+            if (worker_->progress() == 0) {
+                std::this_thread::sleep_for(1ms);
+            }
+        }
+        return true;
     }
 
     [[nodiscard]] virtual nixl_status_t

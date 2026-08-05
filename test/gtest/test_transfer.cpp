@@ -26,7 +26,10 @@
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -663,6 +666,114 @@ TEST_P(TestTransferTelemetry, GetXferTelemetryDisabled) {
     runTelemetryTransferTest(512, NIXL_ERR_NO_TELEMETRY, false);
     EXPECT_LE(lig.getIgnoredCount(), 1);
 }
+
+// Releasing a transfer handle while its requests are still in flight must not return until
+// UCX is done with the memory handles the transfer was posted with. NIXL posts RMA with
+// UCP_OP_ATTR_FIELD_MEMH, and UCX keeps that ucp_mem_h in the request as a plain pointer,
+// dereferencing it from ucp_memh_put() when the operation completes. A caller that
+// deregisters as soon as release() returns therefore frees the memh from under UCX.
+//
+// The data path is pinned to TCP so that a large transfer is genuinely asynchronous: over
+// shm/self UCX copies inline, the post completes immediately and there is nothing in flight
+// for release() to drain.
+class TestTransferRelease : public TestTransfer {
+protected:
+    void
+    SetUp() override {
+        env.addVar("NIXL_TELEMETRY_ENABLE", "n");
+        env.addVar("UCX_TLS", "tcp");
+        addAgent(0);
+        addAgent(1);
+    }
+
+    static void
+    fillBuffers(const std::vector<MemBuffer> &buffers, uint8_t value) {
+        for (const auto &buffer : buffers) {
+            std::memset(
+                reinterpret_cast<void *>(static_cast<uintptr_t>(buffer)), value, buffer.getSize());
+        }
+    }
+
+    static size_t
+    countBytes(const std::vector<MemBuffer> &buffers, uint8_t value) {
+        size_t found = 0;
+        for (const auto &buffer : buffers) {
+            const auto *data = reinterpret_cast<const uint8_t *>(static_cast<uintptr_t>(buffer));
+            found += static_cast<size_t>(std::count(data, data + buffer.getSize(), value));
+        }
+        return found;
+    }
+};
+
+TEST_P(TestTransferRelease, InFlightXferIsDrainedBeforeReleaseReturns) {
+    // The descriptor count is above the fixture's split_batch_size so that the threadpool
+    // parameterisations exercise the composite handle rather than the plain one.
+    constexpr size_t size = 1024 * 1024;
+    constexpr size_t count = 64;
+    constexpr uint8_t src_pattern = 0xab;
+    constexpr uint8_t dst_pattern = 0x00;
+
+    std::vector<MemBuffer> local_buffers, remote_buffers;
+    createRegisteredMem(getAgent(0), size, count, DRAM_SEG, local_buffers);
+    createRegisteredMem(getAgent(1), size, count, DRAM_SEG, remote_buffers);
+    fillBuffers(remote_buffers, src_pattern);
+    fillBuffers(local_buffers, dst_pattern);
+
+    exchangeMD(0, 1);
+
+    nixlXferReqH *xfer_req = nullptr;
+    ASSERT_EQ(getAgent(0).createXferReq(NIXL_READ,
+                                        makeDescList<nixlBasicDesc>(local_buffers, DRAM_SEG),
+                                        makeDescList<nixlBasicDesc>(remote_buffers, DRAM_SEG),
+                                        getAgentName(1),
+                                        xfer_req),
+              NIXL_SUCCESS);
+    ASSERT_NE(xfer_req, nullptr);
+
+    const nixl_status_t post_status = getAgent(0).postXferReq(xfer_req);
+    ASSERT_TRUE((post_status == NIXL_SUCCESS) || (post_status == NIXL_IN_PROG));
+
+    // release() only progresses the local worker. Over TCP the peer has to progress too, so
+    // stand in for a live remote process while the drain runs; without a progress thread
+    // nothing else would advance agent 1.
+    std::atomic<bool> pump_peer{true};
+    std::thread peer_thread([&]() {
+        nixl_notifs_t notifs;
+        while (pump_peer.load(std::memory_order_relaxed)) {
+            getAgent(1).getNotifs(notifs);
+        }
+    });
+
+    // A timed-out drain is a failure of this test, not of the run, so keep it out of the
+    // global problem counter and assert on it here instead.
+    const LogIgnoreGuard lig_drain("Still draining in-flight request");
+    const LogIgnoreGuard lig_timeout("is still in flight after the drain timeout");
+
+    const nixl_status_t release_status = getAgent(0).releaseXferReq(xfer_req);
+    pump_peer = false;
+    peer_thread.join();
+
+    EXPECT_EQ(release_status, NIXL_SUCCESS);
+    EXPECT_EQ(lig_timeout.getIgnoredCount(), 0u) << "release() gave up before the read finished";
+
+    // A read completes only once the data has landed locally, so a release() that drained
+    // implies the whole destination is written by the time it returns. Without the drain the
+    // read is still outstanding here and the destination is only partly filled.
+    if (post_status == NIXL_IN_PROG) {
+        EXPECT_EQ(countBytes(local_buffers, src_pattern), size * count)
+            << "releaseXferReq() returned while the read was still in flight";
+    } else {
+        Logger() << "transfer completed inline, nothing was in flight to drain";
+    }
+
+    // Deregistering is what would free the ucp_mem_h from under an in-flight request.
+    invalidateMD(0, 1);
+    deregisterMem(getAgent(0), local_buffers, DRAM_SEG);
+    deregisterMem(getAgent(1), remote_buffers, DRAM_SEG);
+}
+
+NIXL_INSTANTIATE_TEST(ucx, TestTransferRelease, "UCX", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransferRelease, "UCX", false, 2, 0, "");
 
 NIXL_INSTANTIATE_TEST(ucx, TestTransfer, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransfer, "UCX", false, 2, 0, "");
