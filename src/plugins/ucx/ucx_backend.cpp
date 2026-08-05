@@ -601,10 +601,57 @@ public:
         if (sharedState_) {
             // Set failed status to stop progress chunks
             sharedState_->status.store(NIXL_ERR_NOT_FOUND);
+
+            if (!waitForPendingChunks()) {
+                NIXL_ERROR << *this << " still has " << sharedState_->pendingReqs.load()
+                           << " chunk request(s) in flight after the drain timeout; "
+                              "deregistering the memory backing this transfer is not safe.";
+            }
+
             // Reset shared state - it will be effectively released when the last chunk
             // resets the shared state pointer
             sharedState_.reset();
         }
+    }
+
+    // Wait for chunks already in flight to finish. Setting the failed status stops new
+    // chunks from starting, but it does not complete requests that are already posted,
+    // and resetting the shared state only drops our reference to it. Returns false if
+    // chunks are still in flight when the deadline expires.
+    //
+    // Returning while a chunk request is still in flight lets the caller deregister its
+    // memory: ucp_mem_unmap() then frees the memory handle while a zcopy completion is
+    // still pending, and that completion later dereferences the freed handle on a
+    // progress thread (use-after-free inside ucp_memh_put).
+    //
+    // The deadline keeps release() from blocking forever when a chunk is wedged on an
+    // endpoint that is alive but no longer making progress.
+    [[nodiscard]] bool
+    waitForPendingChunks() const {
+        using namespace std::chrono_literals;
+
+        const auto timeout =
+            nixl::config::getValueDefaulted("NIXL_UCX_REQUEST_DRAIN_TIMEOUT", 10'000ms);
+        const auto warning_interval =
+            nixl::config::getValueDefaulted("NIXL_UCX_WARNING_TIMEOUT", 5'000ms);
+        auto next_warning = warning_interval;
+
+        const auto start = std::chrono::steady_clock::now();
+        while (sharedState_->pendingReqs.load() > 0) {
+            const auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed > timeout) {
+                return false;
+            }
+
+            if (elapsed > next_warning) {
+                NIXL_WARN << *this << " still waiting for " << sharedState_->pendingReqs.load()
+                          << " in-flight chunk(s) after " << next_warning.count() << " ms";
+                next_warning += warning_interval;
+            }
+
+            std::this_thread::yield();
+        }
+        return true;
     }
 
     [[nodiscard]] nixl_status_t
