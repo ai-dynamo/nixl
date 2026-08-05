@@ -76,14 +76,17 @@ else
 endif
 
 cpp_flags = []
+cuda_flags = []
 
 gpu_dependencies = []
+
 if rocm_dep.found()
     gpu_dependencies = [rocm_dep]
     cpp_flags += ['-DHAVE_GPU', '-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
 elif cuda_dep.found()
     gpu_dependencies = [cuda_dep]
     cpp_flags += ['-DHAVE_GPU', '-DHAVE_CUDA']
+    cuda_flags += '-DHAVE_CUDA'
 endif
 
 if libfabric_dep.found()
@@ -131,14 +134,24 @@ else
     ucx_hw_warning_dep = []
 endif
 
-test_exe = executable('gtest',
-    sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../doca-telemetry'), include_directories('../../src/plugins/telemetry/common')],
-    cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
-    link_with: [nixl_build_lib],
-    install : true
-)
+if cuda_dep.found()
+    test_exe = executable('gtest',
+        sources : gtest_sources,
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../doca-telemetry'), include_directories('../../src/plugins/telemetry/common')],
+        cpp_args : cpp_flags,
+        cuda_args : cuda_flags,
+        dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
+        link_with: [nixl_build_lib],
+        install : true)
+else
+    test_exe = executable('gtest',
+        sources : gtest_sources,
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../doca-telemetry'), include_directories('../../src/plugins/telemetry/common')],
+        cpp_args : cpp_flags,
+        dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
+        link_with: [nixl_build_lib],
+        install : true)
+endif
 
 # MetadataExchangeTestFixture rapidly creates and tears down comm-thread agents,
 # which trips the GCC 13.3 libsanitizer thread-registry crash (a flaky SIGSEGV in

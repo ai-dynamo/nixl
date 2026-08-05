@@ -52,7 +52,7 @@ env:
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-25.06-cuda12.9-ubuntu24.04", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
+     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg NO_NVTX=1'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-pytorch26.06-cuda13.3-ubuntu24.04", tag: "${CI_IMAGE_TAG}",
