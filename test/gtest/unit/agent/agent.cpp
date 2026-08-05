@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <random>
+#include <thread>
 
 #include "common.h"
 #include "nixl.h"
@@ -70,10 +71,13 @@ namespace agent {
         std::unique_ptr<nixlAgent> agent_;
 
     public:
-        agentHelper(const std::string &name)
-            : agent_([&name]() {
+        explicit agentHelper(const std::string &name,
+                             std::chrono::microseconds xfer_stall_timeout =
+                                 nixlAgentConfig::kDefaultXferStallTimeout)
+            : agent_([&]() {
                   nixlAgentConfig cfg;
                   cfg.useProgThread = true;
+                  cfg.xferStallTimeout = xfer_stall_timeout;
                   return std::make_unique<nixlAgent>(name, cfg);
               }()) {}
 
@@ -134,10 +138,17 @@ namespace agent {
         std::unique_ptr<agentHelper> local_agent_helper_, remote_agent_helper_;
         nixlAgent *local_agent_, *remote_agent_;
 
+        virtual std::chrono::microseconds
+        getXferStallTimeout() const {
+            return nixlAgentConfig::kDefaultXferStallTimeout;
+        }
+
         void
         SetUp() override {
-            local_agent_helper_ = std::make_unique<agentHelper>(local_agent_name);
-            remote_agent_helper_ = std::make_unique<agentHelper>(remote_agent_name);
+            local_agent_helper_ =
+                std::make_unique<agentHelper>(local_agent_name, getXferStallTimeout());
+            remote_agent_helper_ =
+                std::make_unique<agentHelper>(remote_agent_name, getXferStallTimeout());
             local_agent_ = local_agent_helper_->getAgent();
             remote_agent_ = remote_agent_helper_->getAgent();
         }
@@ -181,6 +192,47 @@ namespace agent {
             }
             EXPECT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, s.remote_agent_name),
                       NIXL_SUCCESS);
+        }
+    };
+
+    /* Same as dualAgentBridgeFixture, but with a short transfer stall timeout so a
+       transfer that never completes can be observed without a long test. */
+    class dualAgentStallFixture : public dualAgentBridgeFixture {
+    protected:
+        static constexpr std::chrono::microseconds stall_timeout{50000};
+
+        std::chrono::microseconds
+        getXferStallTimeout() const override {
+            return stall_timeout;
+        }
+
+        /* Makes the local backend accept the post but never complete it and never report an
+           error, which is how a stalled peer, or a failed endpoint whose request the backend
+           left outstanding, appears to NIXL. */
+        void
+        stallLocalBackend() {
+            EXPECT_CALL(local_agent_helper_->getGMockEngine(), postXfer)
+                .WillRepeatedly(testing::Return(NIXL_IN_PROG));
+            EXPECT_CALL(local_agent_helper_->getGMockEngine(), checkXfer)
+                .WillRepeatedly(testing::Return(NIXL_IN_PROG));
+        }
+
+        nixlXferReqH *
+        postXfer(DualAgentSetup &s) {
+            nixl_xfer_dlist_t local_xfer_dlist(DRAM_SEG), remote_xfer_dlist(DRAM_SEG);
+            local_xfer_dlist.addDesc(s.local_blob.getDesc());
+            remote_xfer_dlist.addDesc(s.remote_blob.getDesc());
+
+            nixlXferReqH *xfer_req = nullptr;
+            EXPECT_EQ(local_agent_->createXferReq(NIXL_READ,
+                                                  local_xfer_dlist,
+                                                  remote_xfer_dlist,
+                                                  s.remote_agent_name,
+                                                  xfer_req,
+                                                  &s.local_extra_params),
+                      NIXL_SUCCESS);
+            EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_IN_PROG);
+            return xfer_req;
         }
     };
 
@@ -430,6 +482,92 @@ namespace agent {
         EXPECT_EQ(notif_map[local_agent_name].size(), 1u);
         EXPECT_EQ(notif_map[local_agent_name].front(), msg);
 
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
+    TEST_F(dualAgentStallFixture, XferStalledPastTimeoutIsReported) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+        stallLocalBackend();
+
+        nixlXferReqH *xfer_req = postXfer(s);
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_IN_PROG);
+
+        std::this_thread::sleep_for(stall_timeout + std::chrono::milliseconds(20));
+
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_ERR_XFER_STALLED);
+        /* Sticky: once reported the caller keeps seeing the stall rather than flipping back
+           to a healthy-looking NIXL_IN_PROG on the next poll. */
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_ERR_XFER_STALLED);
+
+        /* A stalled transfer is still posted, so releasing it must take the same cancel
+           path as one reported in progress. */
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
+    TEST_F(dualAgentStallFixture, XferWithinTimeoutStaysInProgress) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+        stallLocalBackend();
+
+        nixlXferReqH *xfer_req = postXfer(s);
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_IN_PROG);
+
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
+    TEST_F(dualAgentBridgeFixture, XferStallTimeoutDisabledByDefault) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), postXfer)
+            .WillRepeatedly(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), checkXfer)
+            .WillRepeatedly(testing::Return(NIXL_IN_PROG));
+
+        nixl_xfer_dlist_t local_xfer_dlist(DRAM_SEG), remote_xfer_dlist(DRAM_SEG);
+        local_xfer_dlist.addDesc(s.local_blob.getDesc());
+        remote_xfer_dlist.addDesc(s.remote_blob.getDesc());
+
+        nixlXferReqH *xfer_req = nullptr;
+        EXPECT_EQ(local_agent_->createXferReq(NIXL_READ,
+                                              local_xfer_dlist,
+                                              remote_xfer_dlist,
+                                              s.remote_agent_name,
+                                              xfer_req,
+                                              &s.local_extra_params),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_IN_PROG);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(70));
+
+        /* Default configuration keeps the pre-existing behaviour of polling indefinitely. */
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_IN_PROG);
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
+    TEST_F(dualAgentStallFixture, CompletedXferIsNotReportedStalled) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+
+        nixl_xfer_dlist_t local_xfer_dlist(DRAM_SEG), remote_xfer_dlist(DRAM_SEG);
+        local_xfer_dlist.addDesc(s.local_blob.getDesc());
+        remote_xfer_dlist.addDesc(s.remote_blob.getDesc());
+
+        nixlXferReqH *xfer_req = nullptr;
+        EXPECT_EQ(local_agent_->createXferReq(NIXL_READ,
+                                              local_xfer_dlist,
+                                              remote_xfer_dlist,
+                                              s.remote_agent_name,
+                                              xfer_req,
+                                              &s.local_extra_params),
+                  NIXL_SUCCESS);
+        /* Default GMock behaviour completes the post inline. */
+        EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_SUCCESS);
+
+        std::this_thread::sleep_for(stall_timeout + std::chrono::milliseconds(20));
+
+        /* The deadline only applies while a transfer is still in progress. */
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
     }
 

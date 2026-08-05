@@ -79,6 +79,10 @@ private:
     const nixl_xfer_op_t backendOp;
     nixl_status_t status = NIXL_ERR_NOT_POSTED;
 
+    // Set on every post, unlike telemetry.startTime which is only recorded when telemetry
+    // is enabled. getXferStatus measures the stall deadline against this.
+    chrono_point_t postTime;
+
     nixl_xfer_telem_t telemetry;
     nixlTime::nixlDuration timer;
 };

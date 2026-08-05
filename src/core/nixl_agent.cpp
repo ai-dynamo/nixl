@@ -1194,6 +1194,10 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_BACKEND;
     }
 
+    // Stamped here rather than at entry so a rejected repost cannot push the stall
+    // deadline of a transfer that is already in flight.
+    req_hndl->postTime = std::chrono::steady_clock::now();
+
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
                                                   req_hndl->initiatorDescs,
@@ -1247,13 +1251,28 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         }
 
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
+        if (req_hndl->status == NIXL_IN_PROG && data->config_.xferStallTimeout.count() > 0) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - req_hndl->postTime);
+            if (elapsed > data->config_.xferStallTimeout) {
+                NIXL_ERROR_FUNC << "transfer to remote agent '" << req_hndl->remoteAgent
+                                << "' on backend '" << req_hndl->engine->getType()
+                                << "' has been in progress for " << elapsed.count()
+                                << "us, past the configured stall timeout of "
+                                << data->config_.xferStallTimeout.count()
+                                << "us; reporting it as stalled. The request handle and its "
+                                   "memory remain owned by the caller because a stalled "
+                                   "transfer may still complete later.";
+                req_hndl->status = NIXL_ERR_XFER_STALLED;
+            }
+        }
         if (req_hndl->status < 0) {
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
                 read_lock.unlock();
                 NIXL_LOCK_GUARD(data->lock);
                 data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
                 return NIXL_ERR_REMOTE_DISCONNECT;
-            } else {
+            } else if (req_hndl->status != NIXL_ERR_XFER_STALLED) {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
                                 << "' returned error status " << req_hndl->status;
             }
@@ -1307,7 +1326,9 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     //attempt to cancel request
-    if(req_hndl->status == NIXL_IN_PROG) {
+    // A stalled transfer is still posted, so it takes the same cancel path as one that is
+    // reported in progress; only the status the caller sees differs.
+    if (req_hndl->status == NIXL_IN_PROG || req_hndl->status == NIXL_ERR_XFER_STALLED) {
         req_hndl->status = req_hndl->engine->checkXfer(
                                      req_hndl->backendHandle);
 
