@@ -1326,6 +1326,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     //attempt to cancel request
+
     // A stalled transfer is still posted, so it takes the same cancel path as one that is
     // reported in progress; only the status the caller sees differs.
     if (req_hndl->status == NIXL_IN_PROG || req_hndl->status == NIXL_ERR_XFER_STALLED) {
