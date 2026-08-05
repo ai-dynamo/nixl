@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,19 +22,16 @@
 // Plugin type alias for convenience
 using posix_plugin_t = nixlBackendPluginCreator<nixlPosixEngine>;
 
-#ifdef STATIC_PLUGIN_POSIX
+namespace {
 nixlBackendPlugin *
-createStaticPOSIXPlugin() {
+createPosixPluginInstance() {
     return posix_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", {}, {DRAM_SEG, FILE_SEG});
 }
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return posix_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", {}, {DRAM_SEG, FILE_SEG});
-}
+} // namespace
 
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+#ifdef STATIC_PLUGIN_POSIX
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticPOSIXPlugin, createPosixPluginInstance)
+#else
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createPosixPluginInstance)
 #endif

@@ -110,6 +110,32 @@ private:
     }
 };
 
+// Most plugins expose the exact same pair of entry points (a "createStatic<X>Plugin"
+// function for static builds, or nixl_plugin_init/nixl_plugin_fini for dynamic
+// loading), differing only in which one is compiled based on STATIC_PLUGIN_<X>.
+// These helper macros let a plugin's .cpp file define the actual plugin-creation
+// logic exactly once (typically via nixlBackendPluginCreator<T>::create(...)) and
+// avoid re-stating that call, along with the boilerplate around it, for both the
+// static and dynamic entry points.
+//
+// Usage:
+//   nixlBackendPlugin *createFooPluginInstance() { return foo_plugin_t::create(...); }
+//
+//   #ifdef STATIC_PLUGIN_FOO
+//   NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticFOOPlugin, createFooPluginInstance)
+//   #else
+//   NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createFooPluginInstance)
+//   #endif
+#define NIXL_STATIC_PLUGIN_ENTRYPOINT(FuncName, CreateInstanceFn) \
+    nixlBackendPlugin *FuncName() {                               \
+        return CreateInstanceFn();                                \
+    }
+
+#define NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(CreateInstanceFn)                  \
+    extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *nixl_plugin_init() { \
+        return CreateInstanceFn();                                        \
+    }                                                                     \
+    extern "C" NIXL_PLUGIN_EXPORT void nixl_plugin_fini() {}
 
 // Creator Function type for static plugins
 typedef nixlBackendPlugin* (*nixlStaticPluginCreatorFunc)();

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,19 +23,16 @@
 // Plugin type alias for convenience
 using hf3fs_plugin_t = nixlBackendPluginCreator<nixlHf3fsEngine>;
 
-#ifdef STATIC_PLUGIN_HF3FS
+namespace {
 nixlBackendPlugin *
-createStaticHF3FSPlugin() {
+createHf3fsPluginInstance() {
     return hf3fs_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "HF3FS", "0.1.0", {}, {FILE_SEG, DRAM_SEG});
 }
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return hf3fs_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "HF3FS", "0.1.0", {}, {FILE_SEG, DRAM_SEG});
-}
+} // namespace
 
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+#ifdef STATIC_PLUGIN_HF3FS
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticHF3FSPlugin, createHf3fsPluginInstance)
+#else
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createHf3fsPluginInstance)
 #endif
