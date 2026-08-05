@@ -25,6 +25,10 @@
 
 namespace nixl_obj_rdma {
 
+// S3 multipart upload caps a single upload at 10000 parts, so a part number is
+// valid only in 1..s3_max_multipart_part_number.
+inline constexpr uint32_t s3_max_multipart_part_number = 10000;
+
 /**
  * @brief Per-call context for an RDMA PUT/GET control-plane request.
  *

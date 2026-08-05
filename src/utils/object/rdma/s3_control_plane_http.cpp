@@ -9,6 +9,7 @@
 
 #include <charconv>
 #include <exception>
+#include <functional>
 #include <map>
 #include <sstream>
 #include <system_error>
@@ -34,6 +35,9 @@
 namespace nixl_obj_rdma {
 
 namespace {
+    // Cap on how much of an error response body is echoed into a log line.
+    constexpr size_t error_body_log_max = 400;
+
     // S3 ETag values are returned wrapped in double quotes; strip them.
     std::string
     stripQuotes(const std::string &s) {
@@ -44,37 +48,22 @@ namespace {
         }
         return s.substr(b, e - b);
     }
-} // namespace
 
-// ---------------------------------------------------------------------------
-// S3RdmaControlPlane
-//
-// Everything in Impl touches the AWS SDK low-level HTTP/signing layer: SigV4
-// UNSIGNED-PAYLOAD signing, URI construction (path vs virtual addressing), and
-// response-header retrieval. The surrounding protocol logic (rdmaPut/rdmaGet
-// below) is SDK-agnostic and unit tested via rdma_protocol.h.
-// ---------------------------------------------------------------------------
-
-struct S3RdmaControlPlane::Impl {
-    Aws::String scheme; // "http" / "https"
-    Aws::String host; // endpoint host (no port; GetAuthority strips it)
-    unsigned port = 0; // explicit port (0 => scheme default)
-    Aws::String region;
-    bool virtual_addressing = false;
-    std::shared_ptr<Aws::Http::HttpClient> http;
-    Aws::String access_key;
-    Aws::String secret_key;
-    Aws::String session_token;
-
-    // SigV4-sign the request with payload hash "UNSIGNED-PAYLOAD". We sign
-    // manually (rather than via the SDK's AWSAuthV4Signer) because that signer
-    // hashes the empty body over plain HTTP — the S3 RDMA server only skips
-    // content-sha256 validation when the header is exactly UNSIGNED-PAYLOAD, and
-    // the data here travels out-of-band over RDMA. Mirrors minio-cpp/rs SignV4S3.
-    // All non-signed headers (host, x-amz-rdma-token, content-*, checksum) must
-    // already be set on the request before calling this.
+    // SigV4-sign the request with payload hash "UNSIGNED-PAYLOAD". A free
+    // function (not a member): it derives everything from the request plus the
+    // resolved credentials/region, so it has no dependency on the control plane's
+    // internals. We sign manually (rather than via the SDK's AWSAuthV4Signer)
+    // because that signer hashes the empty body over plain HTTP — the S3 RDMA
+    // server only skips content-sha256 validation when the header is exactly
+    // UNSIGNED-PAYLOAD, and the data here travels out-of-band over RDMA. Mirrors
+    // minio-cpp/rs SignV4S3. All non-signed headers (host, x-amz-rdma-token,
+    // content-*, checksum) must already be set on the request before calling.
     void
-    signV4(Aws::Http::HttpRequest &req) const {
+    signV4(Aws::Http::HttpRequest &req,
+           const Aws::String &access_key,
+           const Aws::String &secret_key,
+           const Aws::String &session_token,
+           const Aws::String &region) {
         using Aws::Utils::HashingUtils;
         using Aws::Utils::StringUtils;
         const Aws::String service = "s3";
@@ -165,6 +154,48 @@ struct S3RdmaControlPlane::Impl {
                            "AWS4-HMAC-SHA256 Credential=" + access_key + "/" + scope +
                                ", SignedHeaders=" + signed_headers + ", Signature=" + signature);
     }
+} // namespace
+
+// ---------------------------------------------------------------------------
+// S3RdmaControlPlane
+//
+// Everything in Impl touches the AWS SDK low-level HTTP/signing layer: SigV4
+// UNSIGNED-PAYLOAD signing, URI construction (path vs virtual addressing), and
+// response-header retrieval. The surrounding protocol logic (rdmaPut/rdmaGet
+// below) is SDK-agnostic and unit tested via rdma_protocol.h.
+// ---------------------------------------------------------------------------
+
+struct S3RdmaControlPlane::Impl {
+    Aws::String scheme; // "http" / "https"
+    Aws::String host; // endpoint host (no port; GetAuthority strips it)
+    unsigned port = 0; // explicit port (0 => scheme default)
+    Aws::String region;
+    bool virtual_addressing = false;
+    std::shared_ptr<Aws::Http::HttpClient> http;
+    Aws::String access_key;
+    Aws::String secret_key;
+    Aws::String session_token;
+
+    // Build the token-carrying control-plane request, apply the op-specific
+    // headers, SigV4-sign it, and send it. The common prologue (rdma token +
+    // content-sha256 sentinel) is shared by PUT and GET; @p set_op_headers adds
+    // whatever else the op needs (content-length/checksum for PUT, range for
+    // GET) before signing, since the signer canonicalizes the final header set.
+    std::shared_ptr<Aws::Http::HttpResponse>
+    sendRdmaRequest(Aws::Http::HttpMethod method,
+                    const Aws::Http::URI &uri,
+                    const char *token,
+                    uint64_t buf_addr,
+                    uint64_t size,
+                    const std::function<void(Aws::Http::HttpRequest &)> &set_op_headers) const {
+        auto req = Aws::Http::CreateHttpRequest(
+            uri, method, Aws::Utils::Stream::DefaultResponseStreamFactoryMethod);
+        req->SetHeaderValue("x-amz-content-sha256", unsigned_payload);
+        req->SetHeaderValue(amz_rdma_token, formatRdmaToken(token, buf_addr, size).c_str());
+        set_op_headers(*req);
+        signV4(*req, access_key, secret_key, session_token, region);
+        return http->MakeRequest(req);
+    }
 
     // Build the request URI for a given object key, applying path-style or
     // virtual-hosted-style addressing.
@@ -220,7 +251,7 @@ S3RdmaControlPlane::S3RdmaControlPlane(const nixl_b_params_t *custom_params) : i
         }
 
         // Resolve credentials once (explicit params, else the default chain) and
-        // store them for manual SigV4 signing (see Impl::signV4).
+        // store them for manual SigV4 signing (see signV4).
         //
         // KNOWN LIMITATION: credentials are captured at construction and not
         // refreshed. A long-lived backend using rotating/temporary IAM session
@@ -267,30 +298,28 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx,
     try {
         Aws::Http::URI uri = impl_->buildUri(ctx.bucket, ctx.object);
         if (!ctx.uploadId.empty()) {
-            if (ctx.partNumber == 0 || ctx.partNumber > 10000) {
-                NIXL_ERROR << "rdmaPut: invalid partNumber " << ctx.partNumber
-                           << " (expected 1..10000) for key=" << ctx.object;
+            if (ctx.partNumber == 0 || ctx.partNumber > s3_max_multipart_part_number) {
+                NIXL_ERROR << "rdmaPut: invalid partNumber " << ctx.partNumber << " (expected 1.."
+                           << s3_max_multipart_part_number << ") for key=" << ctx.object;
                 return rdma_error;
             }
             uri.AddQueryStringParameter("uploadId", ctx.uploadId.c_str());
             uri.AddQueryStringParameter("partNumber", std::to_string(ctx.partNumber).c_str());
         }
 
-        auto req =
-            Aws::Http::CreateHttpRequest(uri,
-                                         Aws::Http::HttpMethod::HTTP_PUT,
-                                         Aws::Utils::Stream::DefaultResponseStreamFactoryMethod);
-        req->SetHeaderValue("x-amz-content-sha256", unsigned_payload);
-        req->SetHeaderValue(amz_rdma_token, formatRdmaToken(token, buf_addr, size).c_str());
-        req->SetHeaderValue("content-type", "application/octet-stream");
-        req->SetContentLength("0");
-        if (!ctx.checksumCrc64nvme.empty()) {
-            req->SetHeaderValue("x-amz-checksum-crc64nvme", ctx.checksumCrc64nvme.c_str());
-        }
-
-        impl_->signV4(*req); // manual SigV4 with UNSIGNED-PAYLOAD
-
-        auto resp = impl_->http->MakeRequest(req);
+        auto resp = impl_->sendRdmaRequest(
+            Aws::Http::HttpMethod::HTTP_PUT,
+            uri,
+            token,
+            buf_addr,
+            size,
+            [&ctx](Aws::Http::HttpRequest &req) {
+                req.SetHeaderValue("content-type", "application/octet-stream");
+                req.SetContentLength("0");
+                if (!ctx.checksumCrc64nvme.empty()) {
+                    req.SetHeaderValue("x-amz-checksum-crc64nvme", ctx.checksumCrc64nvme.c_str());
+                }
+            });
         if (!resp) {
             NIXL_ERROR << "rdmaPut: MakeRequest returned null for key=" << ctx.object;
             return rdma_error;
@@ -322,12 +351,14 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx,
         body << resp->GetResponseBody().rdbuf();
         if (reply == "501") {
             NIXL_ERROR << "rdmaPut declined: http=" << http_status << " x-amz-rdma-reply='" << reply
-                       << "' url=" << uri.GetURIString() << " body=" << body.str().substr(0, 400)
+                       << "' url=" << uri.GetURIString()
+                       << " body=" << body.str().substr(0, error_body_log_max)
                        << " key=" << ctx.object;
             return rdma_not_supported;
         }
         NIXL_ERROR << "rdmaPut failed: http=" << http_status << " x-amz-rdma-reply='" << reply
-                   << "' key=" << ctx.object << " body=" << body.str().substr(0, 400);
+                   << "' key=" << ctx.object
+                   << " body=" << body.str().substr(0, error_body_log_max);
         return rdma_error;
     }
     catch (const std::exception &e) {
@@ -350,12 +381,6 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
     }
     try {
         Aws::Http::URI uri = impl_->buildUri(ctx.bucket, ctx.object);
-        auto req =
-            Aws::Http::CreateHttpRequest(uri,
-                                         Aws::Http::HttpMethod::HTTP_GET,
-                                         Aws::Utils::Stream::DefaultResponseStreamFactoryMethod);
-        req->SetHeaderValue("x-amz-content-sha256", unsigned_payload);
-        req->SetHeaderValue(amz_rdma_token, formatRdmaToken(token, buf_addr, size).c_str());
         // Byte-range fetch bounded to the caller's buffer (server replies 206 for
         // a slice, 200 for a full object). size is guaranteed non-zero above.
         if (offset > UINT64_MAX - (size - 1)) {
@@ -363,13 +388,16 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
                        << ") for key=" << ctx.object;
             return rdma_error;
         }
-        req->SetHeaderValue(
-            "range",
-            ("bytes=" + std::to_string(offset) + "-" + std::to_string(offset + size - 1)).c_str());
+        const std::string range =
+            "bytes=" + std::to_string(offset) + "-" + std::to_string(offset + size - 1);
 
-        impl_->signV4(*req);
-
-        auto resp = impl_->http->MakeRequest(req);
+        auto resp = impl_->sendRdmaRequest(
+            Aws::Http::HttpMethod::HTTP_GET,
+            uri,
+            token,
+            buf_addr,
+            size,
+            [&range](Aws::Http::HttpRequest &req) { req.SetHeaderValue("range", range.c_str()); });
         if (!resp) {
             NIXL_ERROR << "rdmaGet: MakeRequest returned null for key=" << ctx.object;
             return rdma_error;
