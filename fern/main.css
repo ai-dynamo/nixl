@@ -371,7 +371,7 @@ html[data-theme=dark] {
 .diagram-dark { display: none; }
 .dark .diagram-light { display: none; }
 .dark .diagram-dark { display: block; }
-/* Sequence diagrams in example pages: size Fern's generated image wrapper. */
+/* Sequence diagrams: size Fern's generated image wrapper. */
 .sequence-diagram .fern-card > div > span {
     flex: 0 0 78%;
     width: 78%;
