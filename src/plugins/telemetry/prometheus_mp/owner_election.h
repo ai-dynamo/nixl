@@ -61,9 +61,8 @@ ownerLockFileName(const std::string &address) {
 addressOfLockFile(const std::string &name) {
     constexpr std::size_t prefix_len = sizeof(ownerLockPrefix) - 1;
     constexpr std::size_t suffix_len = sizeof(ownerLockSuffix) - 1;
-    if (name.size() <= prefix_len + suffix_len ||
-        name.compare(0, prefix_len, ownerLockPrefix) != 0 ||
-        name.compare(name.size() - suffix_len, suffix_len, ownerLockSuffix) != 0) {
+    if (name.size() <= prefix_len + suffix_len || !name.starts_with(ownerLockPrefix) ||
+        !name.ends_with(ownerLockSuffix)) {
         return {};
     }
     return name.substr(prefix_len, name.size() - prefix_len - suffix_len);

@@ -122,10 +122,7 @@ namespace {
     [[nodiscard]] bool
     nameMatchesStore(const std::string &name) {
         return name.size() > MP_STORE_FILE_PREFIX.size() + MP_STORE_FILE_SUFFIX.size() &&
-            name.compare(0, MP_STORE_FILE_PREFIX.size(), MP_STORE_FILE_PREFIX) == 0 &&
-            name.compare(name.size() - MP_STORE_FILE_SUFFIX.size(),
-                         MP_STORE_FILE_SUFFIX.size(),
-                         MP_STORE_FILE_SUFFIX) == 0;
+            name.starts_with(MP_STORE_FILE_PREFIX) && name.ends_with(MP_STORE_FILE_SUFFIX);
     }
 
 } // namespace
