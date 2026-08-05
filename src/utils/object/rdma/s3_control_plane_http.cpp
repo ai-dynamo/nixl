@@ -3,11 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "rdma.h"
+#include "s3_control_plane_http.h"
 
 #ifdef HAVE_CUOBJ_CLIENT
 
-#include <algorithm>
 #include <charconv>
 #include <exception>
 #include <map>
@@ -46,85 +45,6 @@ namespace {
         return s.substr(b, e - b);
     }
 } // namespace
-
-// ---------------------------------------------------------------------------
-// SharedCuObjClient
-// ---------------------------------------------------------------------------
-
-SharedCuObjClient::SharedCuObjClient() {
-    try {
-        // The token-based flow does not use the get/put callbacks, so empty ops
-        // suffice (matches the reference SDKs' availability probe).
-        client_ = std::make_unique<cuObjClient>(ops_, CUOBJ_PROTO_RDMA_DC_V1);
-        connected_ = client_ && client_->isConnected();
-        if (connected_) {
-            NIXL_INFO << "S3 RDMA fabric connected (cuObject)";
-        } else {
-            NIXL_INFO << "S3 RDMA fabric not connected; transfers use HTTP";
-        }
-    }
-    catch (const std::exception &e) {
-        NIXL_WARN << "cuObjClient init failed: " << e.what() << "; transfers use HTTP";
-        connected_ = false;
-    }
-}
-
-SharedCuObjClient *
-SharedCuObjClient::instance() {
-    static SharedCuObjClient inst;
-    return inst.connected_ ? &inst : nullptr;
-}
-
-bool
-SharedCuObjClient::registerBuffer(void *ptr, size_t size) {
-    const std::lock_guard<std::mutex> lock(mutex_);
-    cuObjErr_t rc = client_->cuMemObjGetDescriptor(ptr, size);
-    if (rc != CU_OBJ_SUCCESS) {
-        NIXL_ERROR << "cuMemObjGetDescriptor failed rc=" << rc << " ptr=" << ptr
-                   << " size=" << size;
-        return false;
-    }
-    NIXL_DEBUG << "cuMemObjGetDescriptor OK ptr=" << ptr << " size=" << size;
-    return true;
-}
-
-void
-SharedCuObjClient::deregisterBuffer(void *ptr) {
-    const std::lock_guard<std::mutex> lock(mutex_);
-    if (client_->cuMemObjPutDescriptor(ptr) != CU_OBJ_SUCCESS) {
-        NIXL_WARN << "cuMemObjPutDescriptor failed for ptr " << ptr;
-    }
-}
-
-bool
-SharedCuObjClient::isDeviceMemory(const void *ptr) const {
-    // No mutex_: this is a static cuObjClient helper that inspects the pointer's
-    // memory type via CUDA and touches no cuObjClient instance state, so it needs
-    // no serialization against registerBuffer()/getToken().
-    return cuObjClient::getMemoryType(ptr) == CUOBJ_MEMORY_CUDA_DEVICE;
-}
-
-char *
-SharedCuObjClient::getToken(void *ptr, size_t size, size_t offset, cuObjOpType_t op) {
-    const std::lock_guard<std::mutex> lock(mutex_);
-    char *token = nullptr;
-    cuObjErr_t rc = client_->cuMemObjGetRDMAToken(ptr, size, offset, op, &token);
-    if (rc != CU_OBJ_SUCCESS || token == nullptr) {
-        NIXL_ERROR << "cuMemObjGetRDMAToken failed rc=" << rc << " ptr=" << ptr << " size=" << size
-                   << " op=" << op << " token=" << static_cast<void *>(token);
-        return nullptr;
-    }
-    return token;
-}
-
-void
-SharedCuObjClient::putToken(char *token) {
-    if (token == nullptr) {
-        return;
-    }
-    const std::lock_guard<std::mutex> lock(mutex_);
-    client_->cuMemObjPutRDMAToken(token);
-}
 
 // ---------------------------------------------------------------------------
 // S3RdmaControlPlane
@@ -505,62 +425,6 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
         NIXL_ERROR << "rdmaGet failed: " << e.what();
         return rdma_error;
     }
-}
-
-/**
- * Retry wrappers (token lifecycle + one transient retry). A token-mint failure
- * is itself transient (cuObject NIC selection / registration hiccup), so it is
- * retried rather than aborting on the first attempt.
- */
-ssize_t
-rdmaPutWithRetry(SharedCuObjClient &rdma,
-                 S3RdmaControlPlane &cp,
-                 S3RdmaClientCtx &ctx,
-                 void *buf,
-                 uint64_t size) {
-    ssize_t ret = -1;
-    for (int attempt = 0; attempt < rdma_max_attempts; ++attempt) {
-        char *token = rdma.getToken(buf, size, 0, CUOBJ_PUT);
-        if (token == nullptr) {
-            ret = -1;
-            continue; // transient mint failure: retry
-        }
-        ret = cp.rdmaPut(ctx, token, reinterpret_cast<uint64_t>(buf), size);
-        rdma.putToken(token);
-        if (ret > 0 || ret == rdma_not_supported) {
-            break;
-        }
-    }
-    return ret;
-}
-
-ssize_t
-rdmaGetWithRetry(SharedCuObjClient &rdma,
-                 S3RdmaControlPlane &cp,
-                 S3RdmaClientCtx &ctx,
-                 void *buf,
-                 uint64_t size,
-                 uint64_t offset) {
-    // Reject a zero-size GET before minting a cuObject token (rdmaGet also
-    // guards, but the token is minted here first).
-    if (size == 0) {
-        NIXL_ERROR << "rdmaGet: zero-size request for key=" << ctx.object;
-        return rdma_error;
-    }
-    ssize_t ret = -1;
-    for (int attempt = 0; attempt < rdma_max_attempts; ++attempt) {
-        char *token = rdma.getToken(buf, size, 0, CUOBJ_GET);
-        if (token == nullptr) {
-            ret = -1;
-            continue; // transient mint failure: retry
-        }
-        ret = cp.rdmaGet(ctx, token, reinterpret_cast<uint64_t>(buf), size, offset);
-        rdma.putToken(token);
-        if (ret > 0 || ret == rdma_not_supported) {
-            break;
-        }
-    }
-    return ret;
 }
 
 } // namespace nixl_obj_rdma
