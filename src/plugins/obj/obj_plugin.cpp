@@ -25,17 +25,15 @@ using obj_plugin_t = nixlBackendPluginCreator<nixlObjEngine>;
 
 static const nixl_mem_list_t supported_segments = {DRAM_SEG, OBJ_SEG};
 
-#ifdef STATIC_PLUGIN_OBJ
+namespace {
 nixlBackendPlugin *
-createStaticOBJPlugin() {
+createObjPluginInstance() {
     return obj_plugin_t::create(NIXL_PLUGIN_API_VERSION, "OBJ", "0.10.0", {}, supported_segments);
 }
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return obj_plugin_t::create(NIXL_PLUGIN_API_VERSION, "OBJ", "0.10.0", {}, supported_segments);
-}
+} // namespace
 
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+#ifdef STATIC_PLUGIN_OBJ
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticOBJPlugin, createObjPluginInstance)
+#else
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createObjPluginInstance)
 #endif

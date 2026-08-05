@@ -89,16 +89,7 @@ getGdsPlugin() {
 } // namespace
 
 #ifdef STATIC_PLUGIN_GDS
-nixlBackendPlugin *
-createStaticGDSPlugin() {
-    return getGdsPlugin();
-}
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticGDSPlugin, getGdsPlugin)
 #else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return getGdsPlugin();
-}
-
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(getGdsPlugin)
 #endif

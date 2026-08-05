@@ -24,21 +24,16 @@ using posix_plugin_t = nixlBackendPluginCreator<nixlPosixEngine>;
 
 namespace {
 const nixl_b_params_t posix_plugin_params = nixlPosixEngine::getPluginParams();
+
+nixlBackendPlugin *
+createPosixPluginInstance() {
+    return posix_plugin_t::create(
+        NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", posix_plugin_params, {DRAM_SEG, FILE_SEG});
+}
 } // namespace
 
 #ifdef STATIC_PLUGIN_POSIX
-nixlBackendPlugin *
-createStaticPOSIXPlugin() {
-    return posix_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", posix_plugin_params, {DRAM_SEG, FILE_SEG});
-}
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticPOSIXPlugin, createPosixPluginInstance)
 #else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return posix_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "POSIX", "0.1.0", posix_plugin_params, {DRAM_SEG, FILE_SEG});
-}
-
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createPosixPluginInstance)
 #endif
