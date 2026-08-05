@@ -86,8 +86,6 @@ navigation:
         path: ./docs/pages/getting-started/architecture.md
       - page: Quick Start
         path: ./docs/pages/getting-started/quick-start.md
-      - page: Contribution Guide
-        path: ./docs/pages/getting-started/contributing.md
 
   # ==================== User Guide ====================
   - section: User Guide
@@ -162,6 +160,8 @@ navigation:
             path: ./docs/pages/user-guide/building-nixl/rust-bindings.md
       - page: Building a Backend Plugin
         path: ./docs/pages/development/building-a-backend-plugin.md
+      - page: Contribution Guide
+        path: ./docs/pages/development/contribution-guide.md
 
   # ==================== Examples ====================
   - section: Examples

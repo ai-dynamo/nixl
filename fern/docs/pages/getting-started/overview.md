@@ -18,7 +18,7 @@ NIXL delivers high-bandwidth, low-latency point-to-point data transfers across V
 - **Multiple backend plug-ins** -- UCX, Libfabric, GPUDirect Storage, S3 over RDMA, and others
 - **Dynamic scaling** -- agents can be added or removed at runtime without disrupting existing transfers
 - **Asynchronous transfer model** with non-blocking status checking for overlapping computation with data movement
-- **Modular plug-in architecture** for extensibility, allowing new backends to be added without modifying the core library
+- **Modular plug-in architecture** for extensibility, allowing new backends to be added without modifying the core library. See [Building a Backend Plugin](/nixl/developer-guide/building-a-backend-plugin).
 
 <Tip>
 NIXL automatically selects the optimal backend based on the source and destination
