@@ -920,11 +920,11 @@
           description: "Artifactory publish subdir; empty = verification (nightly default). The release poller passes release/&lt;ver&gt;."
       - bool:
           name: "BUILD_UCX_SPCX_PLUGIN"
-          default: false
+          default: true
           description: "Build and bundle the UCX spcx external plugin (the built source ref pins the plugin version in contrib/build-container.sh)"
       - bool:
           name: "BUILD_INFINIA"
-          default: false
+          default: true
           description: "Build and bundle the Infinia DDN plugin (the built source ref pins the plugin version in contrib/build-container.sh; harbor.mellanox.com must be reachable)"
       - string:
           name: "DEBUG"
