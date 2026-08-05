@@ -49,6 +49,7 @@ from utils import (  # noqa: E402
 
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
+SINGLE_PROCESS_WORKER_RANK = 0
 
 
 def non_negative_int(value: str) -> int:
@@ -487,12 +488,6 @@ def worker(torch_rank: int, args: argparse.Namespace):
     torch.cuda.set_device(0)
 
     kineto = args.kineto
-    if kineto and not kineto_cuda_available():
-        print(
-            f"[rank {global_rank}] Kineto profiling is unavailable; running without profiler",
-            flush=True,
-        )
-        kineto = False
 
     tcp_store = store_group.create_client_store(
         master_addr=server_addr,
@@ -673,6 +668,13 @@ def main():
 
     args = parser.parse_args()
 
+    if args.kineto:
+        torch.cuda.set_device(SINGLE_PROCESS_WORKER_RANK)
+        if not kineto_cuda_available():
+            raise SystemExit(
+                "Kineto profiling was requested but is unavailable"
+            )
+
     if not args.tcp_server:
         print("Starting TCPStore and rank server locally", flush=True)
         server_process = torch.multiprocessing.Process(target=run_server, daemon=True)
@@ -680,7 +682,7 @@ def main():
         time.sleep(0.5)
 
     if args.num_processes == 1:
-        worker(0, args)
+        worker(SINGLE_PROCESS_WORKER_RANK, args)
         return
 
     ctx = torch.multiprocessing.spawn(
