@@ -50,7 +50,7 @@ from utils import (  # noqa: E402
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
 SINGLE_PROCESS_WORKER_RANK = 0
-KINETO_UNAVAILABLE_MSG = "Kineto profiling was requested but is unavailable"
+KINETO_UNAVAILABLE_MSG = "Kineto profiling was requested but is not supported"
 
 
 def non_negative_int(value: str) -> int:
