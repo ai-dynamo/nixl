@@ -774,6 +774,9 @@ TEST_P(TestTransferRelease, InFlightXferIsDrainedBeforeReleaseReturns) {
 
 NIXL_INSTANTIATE_TEST(ucx, TestTransferRelease, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransferRelease, "UCX", false, 2, 0, "");
+// The threadpool parameterisations take the composite handle path.
+NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransferRelease, "UCX", true, 6, 4, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransferRelease, "UCX", false, 6, 4, "");
 
 NIXL_INSTANTIATE_TEST(ucx, TestTransfer, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransfer, "UCX", false, 2, 0, "");
