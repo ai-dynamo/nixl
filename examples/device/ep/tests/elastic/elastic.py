@@ -673,10 +673,8 @@ def main():
         server_process.start()
         time.sleep(0.5)
 
-    if args.kineto:
-        torch.cuda.set_device(SINGLE_PROCESS_WORKER_RANK)
-        if not kineto_cuda_available():
-            raise SystemExit(KINETO_UNAVAILABLE_MSG)
+    if args.kineto and not kineto_cuda_available(SINGLE_PROCESS_WORKER_RANK):
+        raise SystemExit(KINETO_UNAVAILABLE_MSG)
 
     if args.num_processes == 1:
         worker(SINGLE_PROCESS_WORKER_RANK, args)

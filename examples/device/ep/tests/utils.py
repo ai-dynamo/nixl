@@ -209,8 +209,9 @@ def _run_cuda_profiler_sentinel():
     sentinel.fill_(1.0)
 
 
-def kineto_cuda_available() -> bool:
+def kineto_cuda_available(device_id: int) -> bool:
     try:
+        torch.cuda.set_device(device_id)
         with suppress_stdout_stderr():
             with torch.profiler.profile(
                 activities=[torch.profiler.ProfilerActivity.CUDA]
@@ -219,7 +220,7 @@ def kineto_cuda_available() -> bool:
                 torch.cuda.synchronize()
 
         return _has_cuda_profiler_events(prof.key_averages())
-    except Exception:
+    except RuntimeError:
         return False
 
 
