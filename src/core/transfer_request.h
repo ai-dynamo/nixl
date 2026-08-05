@@ -33,6 +33,8 @@ enum nixl_telemetry_stat_status_t {
     NIXL_TELEMETRY_FINISH = 2
 };
 
+class nixlRemoteSection;
+
 // Contains pointers to corresponding backend engine and its handler, and populated
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
 class nixlXferReqH {
@@ -42,7 +44,8 @@ public:
                  const nixl_mem_t local_type,
                  const nixl_mem_t remote_type,
                  const uint64_t remote_generation,
-                 const size_t desc_count);
+                 const size_t desc_count,
+                 const std::weak_ptr<nixlRemoteSection> &remote_section_ref);
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
@@ -73,6 +76,9 @@ private:
     const std::string remoteAgent;
     // Generation of the remote-connection
     const uint64_t remoteGeneration_;
+    // Weak ref to the owning remote section: expires when that registration generation is
+    // invalidated or replaced, which is the staleness signal for this handle.
+    const std::weak_ptr<nixlRemoteSection> remoteSectionRef_;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 
@@ -86,10 +92,14 @@ private:
 struct nixlDlistH {
     using descs_t = std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_stride_dlist_t>>;
 
-    nixlDlistH(const std::string &remote_agent, descs_t &&descs);
+    nixlDlistH(const std::string &remote_agent,
+               descs_t &&descs,
+               const std::weak_ptr<nixlRemoteSection> &remote_section_ref);
 
     const std::string remoteAgent; // Empty means "local".
     const descs_t descs;
+    // Weak ref to the remote section this dlist was prepared from (empty for local).
+    const std::weak_ptr<nixlRemoteSection> remoteSectionRef_;
 };
 
 #endif

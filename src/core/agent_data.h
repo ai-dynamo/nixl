@@ -100,7 +100,10 @@ class nixlAgentData {
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
         backend_map_t backendEngines_;
-        std::unordered_map<std::string, nixlRemoteSection> remoteSections_;
+        // Owning shared_ptr per registered remote generation: invalidating or re-registering
+        // an agent destroys the old section object, so weak pointers from transfer-request and
+        // prepped-dlist handles to it expire, flagging them as outdated without a map lookup.
+        std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
         std::unique_ptr<nixlTelemetry> telemetry_;
         // Composite tracer (fans out to every enabled backend); null when no
         // backend is active.
