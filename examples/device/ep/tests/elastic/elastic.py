@@ -39,6 +39,7 @@ from plan import Plan
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils import (  # noqa: E402
+    KinetoUnavailableError,
     bench,
     bench_kineto,
     calc_diff,
@@ -435,14 +436,18 @@ def test_main(
 
     for return_recv_hook in (False, True):
         buffer.barrier()
-        dispatch_t, combine_t = bench_kineto(
-            partial(test_func, return_recv_hook=return_recv_hook),
-            kernel_names=("dispatch", "combine"),
-            barrier_comm_profiling=True,
-            suppress_kineto_output=False,
-            num_kernels_per_period=2 if return_recv_hook else 1,
-            barrier_fn=test_barrier,
-        )
+        try:
+            dispatch_t, combine_t = bench_kineto(
+                partial(test_func, return_recv_hook=return_recv_hook),
+                kernel_names=("dispatch", "combine"),
+                barrier_comm_profiling=True,
+                suppress_kineto_output=False,
+                num_kernels_per_period=2 if return_recv_hook else 1,
+                barrier_fn=test_barrier,
+            )
+        except KinetoUnavailableError as exc:
+            print(f"[rank {rank}] Skipping Kineto profiling: {exc}", flush=True)
+            return
         if not return_recv_hook:
             print(
                 f"[rank {rank}] Dispatch bandwidth: {num_dispatch_comm_bytes / 1e9 / dispatch_t:.2f} GB/s, avg_t={dispatch_t * 1e6:.2f} us | "
