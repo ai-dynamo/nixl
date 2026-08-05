@@ -16,6 +16,7 @@
  */
 #include "mp_store.h"
 
+#include "common/mapped_region.h"
 #include "common/nixl_log.h"
 #include "common/scoped_fd.h"
 #include "mp_store_layout.h"
@@ -29,12 +30,8 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
-#include <fstream>
-#include <iterator>
-#include <memory>
 #include <mutex>
 #include <set>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -72,7 +69,7 @@ namespace {
         }
         // No O_TMPFILE (NFS, or a kernel older than 3.11). The staging name is
         // unique to this process and instance, so O_EXCL can only collide with a
-        // leftover from a process that had this pid and start time -- and if one
+        // leftover from a process that had this pid and run marker -- and if one
         // somehow exists, refusing to adopt a file of unknown provenance is the
         // right answer.
         std::filesystem::path staging = path;
@@ -106,41 +103,20 @@ namespace {
 } // namespace
 
 std::string
-makeStoreFileName(int64_t pid, uint64_t start_time, uint64_t instance) {
+makeStoreFileName(int64_t pid, uint64_t run_marker, uint64_t instance) {
     return std::string(MP_STORE_FILE_PREFIX) + std::to_string(pid) + "." +
-        std::to_string(start_time) + "." + std::to_string(instance) +
+        std::to_string(run_marker) + "." + std::to_string(instance) +
         std::string(MP_STORE_FILE_SUFFIX);
 }
 
 uint64_t
-readProcessStartTime(int64_t pid) {
-    std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
-    if (!stat.is_open()) {
-        return 0;
-    }
-    std::string content((std::istreambuf_iterator<char>(stat)), std::istreambuf_iterator<char>());
-
-    // comm (field 2) is wrapped in parentheses and may itself contain spaces or
-    // ')', so split on the LAST ')': everything after it starts at field 3.
-    const auto close = content.rfind(')');
-    if (close == std::string::npos) {
-        return 0;
-    }
-
-    std::istringstream rest(content.substr(close + 1));
-    std::vector<std::string> tokens{std::istream_iterator<std::string>(rest),
-                                    std::istream_iterator<std::string>()};
-    // starttime is field 22; tokens[0] is field 3, so index 22 - 3 = 19.
-    constexpr std::size_t kStartTimeIndex = 19;
-    if (tokens.size() <= kStartTimeIndex) {
-        return 0;
-    }
-    try {
-        return static_cast<uint64_t>(std::stoull(tokens[kStartTimeIndex]));
-    }
-    catch (const std::exception &) {
-        return 0;
-    }
+processRunMarker() noexcept {
+    static const uint64_t marker = [] {
+        struct timespec ts{};
+        ::clock_gettime(CLOCK_REALTIME, &ts);
+        return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
+    }();
+    return marker;
 }
 
 storeWriter::storeWriter(std::filesystem::path path,
@@ -149,8 +125,7 @@ storeWriter::storeWriter(std::filesystem::path path,
                          const std::string &local_rank,
                          uint64_t instance,
                          const std::vector<double> &histogram_buckets)
-    : path_(std::move(path)),
-      mappingSize_(sizeof(storeLayout)) {
+    : path_(std::move(path)) {
     if (histogram_buckets.size() > MP_STORE_MAX_BUCKETS) {
         throw std::runtime_error("prometheus_mp: NIXL_TELEMETRY_HISTOGRAM_BUCKETS_US has " +
                                  std::to_string(histogram_buckets.size()) +
@@ -177,21 +152,19 @@ storeWriter::storeWriter(std::filesystem::path path,
                   << "and departed ranks stay published indefinitely";
     }
 
-    if (::ftruncate(staged.fd.get(), static_cast<off_t>(mappingSize_)) != 0) {
+    if (::ftruncate(staged.fd.get(), static_cast<off_t>(sizeof(storeLayout))) != 0) {
         throw std::runtime_error("prometheus_mp: cannot size telemetry store '" + path_.string() +
                                  "': " + std::strerror(errno));
     }
 
-    mapping_ =
-        ::mmap(nullptr, mappingSize_, PROT_READ | PROT_WRITE, MAP_SHARED, staged.fd.get(), 0);
-    if (mapping_ == MAP_FAILED) {
-        mapping_ = nullptr;
+    mappedRegion mapping(staged.fd.get(), sizeof(storeLayout), PROT_READ | PROT_WRITE, MAP_SHARED);
+    if (!mapping.valid()) {
         throw std::runtime_error("prometheus_mp: cannot map telemetry store '" + path_.string() +
                                  "': " + std::strerror(errno));
     }
 
-    auto *layout = static_cast<storeLayout *>(mapping_);
-    std::memset(layout, 0, mappingSize_);
+    auto *layout = static_cast<storeLayout *>(mapping.get());
+    std::memset(layout, 0, mapping.size());
     layout->schemaVersion = MP_STORE_SCHEMA_VERSION;
     layout->slotCount = static_cast<uint32_t>(MP_STORE_SLOT_COUNT);
     layout->pid = static_cast<int64_t>(::getpid());
@@ -204,29 +177,17 @@ storeWriter::storeWriter(std::filesystem::path path,
     __atomic_store_n(&layout->lastUpdateNs, monotonicNs(), __ATOMIC_RELAXED);
     __atomic_store_n(&layout->magic, MP_STORE_MAGIC, __ATOMIC_RELEASE);
 
-    try {
-        publishStore(staged.fd.get(), staged.stagingPath, path_);
-    }
-    catch (...) {
-        // The constructor is failing, so ~storeWriter() will not run.
-        ::munmap(mapping_, mappingSize_);
-        mapping_ = nullptr;
-        throw;
-    }
+    publishStore(staged.fd.get(), staged.stagingPath, path_);
     fd_ = std::move(staged.fd);
-}
-
-storeWriter::~storeWriter() {
-    if (mapping_ != nullptr) {
-        ::munmap(mapping_, mappingSize_);
-        mapping_ = nullptr;
-    }
+    mapping_ = std::move(mapping);
 }
 
 bool
 storeWriterAlive(const std::filesystem::path &path) {
     const scopedFd fd(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
     if (!fd.valid()) {
+        // Nothing was probed, so nothing is concluded: whatever stopped the open
+        // is for the next operation on the path to report.
         return true;
     }
     // Taking the lock proves nobody holds it; closing the descriptor gives it
@@ -236,7 +197,7 @@ storeWriterAlive(const std::filesystem::path &path) {
 
 uint64_t
 storeWriter::refreshHeartbeat() noexcept {
-    auto *layout = static_cast<storeLayout *>(mapping_);
+    auto *layout = static_cast<storeLayout *>(mapping_.get());
     const uint64_t now = monotonicNs();
     __atomic_store_n(&layout->lastUpdateNs, now, __ATOMIC_RELAXED);
     return now;
@@ -248,7 +209,7 @@ storeWriter::addCounter(nixl_telemetry_event_type_t type, uint64_t delta) noexce
     if (idx >= MP_STORE_SLOT_COUNT) {
         return;
     }
-    auto *layout = static_cast<storeLayout *>(mapping_);
+    auto *layout = static_cast<storeLayout *>(mapping_.get());
     __atomic_fetch_add(&layout->counters[idx], delta, __ATOMIC_RELAXED);
 }
 
@@ -258,7 +219,7 @@ storeWriter::setGauge(nixl_telemetry_event_type_t type, uint64_t value) noexcept
     if (idx >= MP_STORE_SLOT_COUNT) {
         return;
     }
-    auto *layout = static_cast<storeLayout *>(mapping_);
+    auto *layout = static_cast<storeLayout *>(mapping_.get());
     __atomic_store_n(&layout->gauges[idx], value, __ATOMIC_RELAXED);
 }
 
@@ -271,7 +232,7 @@ storeWriter::observeHistogram(nixl_telemetry_event_type_t type, uint64_t value) 
         nixlEnumStrings::telemetryMetricDescriptor(type).histogramName == nullptr) {
         return;
     }
-    auto *layout = static_cast<storeLayout *>(mapping_);
+    auto *layout = static_cast<storeLayout *>(mapping_.get());
     const double *const first = layout->bucketBounds;
     const double *const last = first + layout->bucketCount;
     // lower_bound, not upper_bound: Prometheus buckets are `value <= le`, so the
@@ -310,8 +271,8 @@ readStoreSnapshot(const std::filesystem::path &path) {
         return {std::nullopt, false};
     }
 
-    void *mapping = ::mmap(nullptr, sizeof(storeLayout), PROT_READ, MAP_SHARED, fd.get(), 0);
-    if (mapping == MAP_FAILED) {
+    const mappedRegion mapping(fd.get(), sizeof(storeLayout), PROT_READ, MAP_SHARED);
+    if (!mapping.valid()) {
         // Transient (e.g. ENOMEM): the file may be a healthy peer's, so do not
         // mark it reapable.
         NIXL_WARN << "prometheus_mp: cannot map telemetry store '" << path.string()
@@ -319,10 +280,7 @@ readStoreSnapshot(const std::filesystem::path &path) {
         return {std::nullopt, false};
     }
 
-    const std::unique_ptr<void, void (*)(void *)> guard(
-        mapping, [](void *p) noexcept { ::munmap(p, sizeof(storeLayout)); });
-
-    const auto *layout = static_cast<const storeLayout *>(mapping);
+    const auto *layout = static_cast<const storeLayout *>(mapping.get());
 
     const uint64_t magic = __atomic_load_n(&layout->magic, __ATOMIC_ACQUIRE);
     if (magic == 0) {

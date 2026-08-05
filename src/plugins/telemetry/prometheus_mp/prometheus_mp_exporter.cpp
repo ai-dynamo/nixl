@@ -40,7 +40,7 @@ namespace {
 using nixl::telemetry::mp::heldAddressesExcept;
 using nixl::telemetry::mp::makeStoreFileName;
 using nixl::telemetry::mp::MP_DEFAULT_STALE_TTL;
-using nixl::telemetry::mp::readProcessStartTime;
+using nixl::telemetry::mp::processRunMarker;
 using nixl::telemetry::mp::scrapeEndpoint;
 using nixl::telemetry::mp::storeWriter;
 
@@ -144,9 +144,9 @@ nixlTelemetryPrometheusMpExporter::nixlTelemetryPrometheusMpExporter(
       dir_(resolveMultiprocDir()),
       endpoint_(dir_, resolveBindAddress(), resolveStaleTtl()) {
     const int64_t pid = static_cast<int64_t>(::getpid());
-    const uint64_t start_time = readProcessStartTime(pid);
     const uint64_t instance = s_instanceSeq.fetch_add(1, std::memory_order_relaxed);
-    const std::filesystem::path store_path = dir_ / makeStoreFileName(pid, start_time, instance);
+    const std::filesystem::path store_path =
+        dir_ / makeStoreFileName(pid, processRunMarker(), instance);
 
     store_ = std::make_unique<storeWriter>(store_path,
                                            init_params.agentName,

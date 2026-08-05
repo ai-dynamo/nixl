@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_MP_STORE_H
 #define NIXL_SRC_PLUGINS_TELEMETRY_PROMETHEUS_MP_MP_STORE_H
 
+#include "common/mapped_region.h"
 #include "common/scoped_fd.h"
 #include "telemetry_event.h"
 
@@ -214,7 +215,7 @@ public:
      * to reap the file then. Unlinking here would drop everything produced since
      * the previous scrape.
      */
-    ~storeWriter();
+    ~storeWriter() = default;
 
     storeWriter(const storeWriter &) = delete;
     storeWriter &
@@ -265,8 +266,7 @@ private:
     // Held open for the writer's lifetime: closing it releases the lock, which is
     // how every reader learns this process is done with the store.
     scopedFd fd_;
-    void *mapping_ = nullptr;
-    std::size_t mappingSize_ = 0;
+    mappedRegion mapping_;
 };
 
 /**
@@ -309,23 +309,26 @@ struct storeReadResult {
 readStoreSnapshot(const std::filesystem::path &path);
 
 /**
- * @brief Reads a process's start time (/proc/<pid>/stat field 22, clock ticks).
- * @param pid Process id.
- * @return The start time, or 0 if it could not be read.
+ * @brief A value fixed for the life of this process.
+ * @return The same value on every call, in this process.
+ *
+ * Only two runs sharing a pid have to tell their store files apart, so any
+ * per-process constant serves: this is the wall clock at first call.
  */
 [[nodiscard]] uint64_t
-readProcessStartTime(int64_t pid);
+processRunMarker() noexcept;
 
 /**
  * @brief Builds a store file name (MP_STORE_FILE_PREFIX / suffix).
  * @param pid Process id.
- * @param start_time Process start time (disambiguates PID reuse across restarts).
+ * @param run_marker processRunMarker() of the writing process (disambiguates PID
+ *        reuse across restarts).
  * @param instance Per-process instance counter (disambiguates multiple agents in
  *        the same process so their store files never collide).
- * @return File name of the form "nixl.<pid>.<start_time>.<instance>.mmap".
+ * @return File name of the form "nixl.<pid>.<run_marker>.<instance>.mmap".
  */
 [[nodiscard]] std::string
-makeStoreFileName(int64_t pid, uint64_t start_time, uint64_t instance);
+makeStoreFileName(int64_t pid, uint64_t run_marker, uint64_t instance);
 
 } // namespace nixl::telemetry::mp
 

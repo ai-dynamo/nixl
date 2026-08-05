@@ -37,7 +37,7 @@ namespace {
 
 using nixl::telemetry::mp::storeWriter;
 using nixl::telemetry::mp::storeWriterAlive;
-using nixl::telemetry::mp::readProcessStartTime;
+using nixl::telemetry::mp::processRunMarker;
 using nixl::telemetry::mp::readStoreSnapshot;
 
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
@@ -339,10 +339,10 @@ TEST_F(MpStoreTest, BadMagicWarnsAndReturnsNullopt) {
     EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 
-TEST_F(MpStoreTest, ProcessStartTimeSelfNonZeroBogusZero) {
-    EXPECT_GT(readProcessStartTime(::getpid()), 0u);
-    // A pid that will not exist -> 0.
-    EXPECT_EQ(readProcessStartTime(0x7fffffff), 0u);
+TEST_F(MpStoreTest, RunMarkerIsNonZeroAndFixedForThisProcess) {
+    const uint64_t marker = processRunMarker();
+    EXPECT_GT(marker, 0u);
+    EXPECT_EQ(processRunMarker(), marker);
 }
 
 } // namespace
