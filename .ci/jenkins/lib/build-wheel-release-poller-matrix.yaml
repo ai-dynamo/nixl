@@ -1,0 +1,149 @@
+# Release wheel poller. Runs every 4 hours on main; compares release-branch
+# commits against the wheels already published in Artifactory
+# (sw-nbu-swx-nixl-pypi-local) and triggers nixl-ci-build-wheel-nightly for
+# every release-branch commit x CUDA variant whose wheels are still missing.
+#
+# How it works:
+# - CUDA variants are the matrix axis (base_tag): each cell scans and triggers
+#   one variant. The scan itself is .ci/scripts/scan-missing-release-wheels.sh.
+# - Which releases build: every release/* branch with version >= MIN_RELEASE,
+#   picked up automatically - new release branches need no change anywhere.
+# - Which UCX: the UCX_REF default in the release's own build-container.sh
+#   (each release carries the UCX it ships with).
+# - Which commits: newest MAX_COMMITS first-parent commits past the fork from main.
+# - Folder: release/<ver>/<nixl_sha8> - the nightly job's
+#   publish layout. A variant counts as published when a nixl_cuNN wheel is
+#   present in the folder; there are no marker files.
+# - Consequences: a failing build retries every cycle until it succeeds or the
+#   commit falls out of the MAX_COMMITS window; a partial upload of a variant
+#   looks complete - delete the folder in Artifactory to force a rebuild.
+
+---
+job: nixl-build-wheel-release-poller
+
+timeout_minutes: 30
+
+registry_host: artifactory.nvidia.com
+
+credentials:
+  - credentialsId: 'svc-nixl-new-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USER'
+    passwordVariable: 'ARTIFACTORY_TOKEN'
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  imagePullSecrets: "['artifactory-pull-secret']"
+  limits: '{memory: 2Gi, cpu: 2000m}'
+  requests: '{memory: 2Gi, cpu: 2000m}'
+
+runs_on_dockers:
+  - { name: "poller", url: "quay.io/podman/stable:v5.7.1", arch: "x86_64" }
+
+# One cell per CUDA variant: the base-image tag both selects the CUDA toolkit
+# of the triggered build and names the variant (cuNN = major).
+matrix:
+  axes:
+    base_tag:
+      - "12.9.1-devel-ubi8"
+      - "13.0.1-devel-ubi8"
+
+env:
+  # Releases older than this are not built. Anything newer is picked up automatically.
+  MIN_RELEASE: "1.4.0"
+  # Newest N commits to check per release branch.
+  MAX_COMMITS: "10"
+  NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
+  # Artifactory storage API root of the SWX NIXL pypi repo (folder listing).
+  STORAGE_API_URL: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
+  # Plugins to bundle into release wheels, forwarded to each triggered build.
+  # The release source must carry the plugin flags in build-container.sh.
+  BUILD_UCX_SPCX_PLUGIN: "true"
+  BUILD_INFINIA: "true"
+  MAIL_FROM: "jenkins@nvidia.com"
+
+steps:
+  - name: Discover Missing Wheels
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    parallel: false
+    run: |
+      # Scan this cell's CUDA variant; writes triggers.txt for the next step.
+      .ci/scripts/scan-missing-release-wheels.sh
+
+  - name: Trigger Release Builds
+    shell: action
+    module: groovy
+    parallel: false
+    run: |
+      def triggers = fileExists('triggers.txt') ? readFile('triggers.txt').trim() : ''
+      if (triggers) {
+          // Forward our CI ref so a pre-merge test poller run drives builds
+          // with the same pipeline + config revision.
+          def ciRefspec = params.ci_refspec ?: 'main'
+          def spawned = []
+          def failed = []
+          for (line in triggers.split('\n')) {
+              // line: <nixl_sha> <ver> <ucx_ver> <base_tag>
+              def parts = line.trim().split(/\s+/)
+              def cu = "cu${parts[3].tokenize('.')[0]}"
+              // Per-line guard: one bad trigger must not drop the remaining
+              // lines; the next poll retries anything missed.
+              try {
+                  build(job: 'nixl-ci-build-wheel-nightly',
+                        parameters: [
+                            string(name: 'NIXL_VERSION', value: parts[0]),
+                            string(name: 'UCX_VERSION', value: parts[2]),
+                            string(name: 'BASE_TAG', value: parts[3]),
+                            string(name: 'PUBLISH_DIR', value: "release/${parts[1]}"),
+                            string(name: 'ci_refspec', value: ciRefspec),
+                            booleanParam(name: 'BUILD_UCX_SPCX_PLUGIN', value: env.BUILD_UCX_SPCX_PLUGIN == 'true'),
+                            booleanParam(name: 'BUILD_INFINIA', value: env.BUILD_INFINIA == 'true'),
+                        ],
+                        wait: false,
+                        propagate: false)
+                  spawned << "release/${parts[1]}/${parts[0].take(8)} ${cu}  (NIXL_VERSION=${parts[0]} BASE_TAG=${parts[3]} spcx=${env.BUILD_UCX_SPCX_PLUGIN} infinia=${env.BUILD_INFINIA})"
+              } catch (err) {
+                  failed << "${line}: ${err}"
+                  currentBuild.result = 'UNSTABLE'
+              }
+          }
+          // Outcome report. build(wait:false) yields no per-run URL, so link the
+          // nightly job; each spawned build back-links here as "upstream
+          // #${BUILD_NUMBER}", and its per-build downstream link is on this
+          // build's page in the classic UI (Blue Ocean hides the widget).
+          def report = ["", "===== poller spawned ${spawned.size()} build(s) -> ${env.JENKINS_URL}job/nixl-ci-build-wheel-nightly/ ====="]
+          report += spawned.collect { "  + ${it}" }
+          if (failed) {
+              report << "----- ${failed.size()} failed to trigger (retried next cycle) -----"
+              report += failed.collect { "  ! ${it}" }
+          }
+          echo report.join('\n')
+      } else {
+          echo 'No missing wheels - nothing to trigger.'
+      }
+
+taskName: '${name}_cu_${base_tag}'
+
+# Mail the unattended poller only when it fails, mirroring the nightly.
+pipeline_stop:
+  shell: action
+  module: groovy
+  containerSelector: "{name: 'poller'}"
+  run: |
+    def jobStatus = currentBuild.result ?: 'SUCCESS'
+    if (jobStatus != 'SUCCESS' && params.MAIL_TO) {
+        def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
+        mail(
+            from: env.MAIL_FROM,
+            to: params.MAIL_TO,
+            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
+            mimeType: 'text/html',
+            body: """
+                <p>Started by: <b>${userName}</b></p>
+                <p>Status: <span style="color: red;"><b>${jobStatus}</b></span></p>
+                <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
+                <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+                <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
+            """
+        )
+    }
