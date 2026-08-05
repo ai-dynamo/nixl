@@ -107,6 +107,14 @@ Same as the `prometheus` plug-in: the bundled prometheus-cpp subproject and
   interval, or a rank that exits between two scrapes is reaped before its final
   values are ever read.
 
+  Being kept while idle lasts as long as the store's lock is usable, the same
+  qualifier the election carries. A writer whose `flock` failed (it warns) looks
+  abandoned to every reader that *can* lock the store, so going quiet for longer
+  than the TTL gets its series dropped and its file reaped while it still runs --
+  after which it writes to an unlinked inode and never reappears. Where no process
+  can lock at all, the readers' probes fail too and nothing is reaped, so departed
+  ranks stay published indefinitely instead.
+
   This leaves at most one file per run on disk -- the last process to exit has no
   owner left to reap it. It is harmless: the next run reaps it on its first scrape,
   since it is both dead and stale.

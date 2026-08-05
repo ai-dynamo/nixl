@@ -164,14 +164,17 @@ storeWriter::storeWriter(std::filesystem::path path,
                                  "': " + std::strerror(errno));
     }
 
-    // Not fatal: without the lock the store is still written and scraped, only
-    // its liveness stops being provable, so the collector keeps publishing it
-    // after this process dies until the values age past the stale TTL.
+    // Not fatal: the store is still written and scraped, only its liveness stops
+    // being provable. Which way that degrades depends on whether readers can lock
+    // it either, so the warning states both outcomes rather than one.
     if (::flock(staged.fd.get(), LOCK_EX | LOCK_NB) != 0) {
         NIXL_WARN << "prometheus_mp: cannot lock telemetry store '" << path_.string() << "' ("
                   << std::strerror(errno)
-                  << "); a reader cannot tell whether this process is alive, so its store will "
-                  << "linger for the stale TTL after it exits";
+                  << "); no reader can tell whether this process is alive. One that can lock the "
+                  << "store reads it as abandoned, so this rank's series are dropped and its file "
+                  << "reaped if it stops exporting for longer than the stale TTL, while it is "
+                  << "still running; where no process can lock at all, nothing is reaped instead "
+                  << "and departed ranks stay published indefinitely";
     }
 
     if (::ftruncate(staged.fd.get(), static_cast<off_t>(mappingSize_)) != 0) {

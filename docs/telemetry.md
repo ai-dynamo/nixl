@@ -213,6 +213,12 @@ and will never change again. The kernel releases the lock however the rank died,
 which is what makes a killed rank indistinguishable from a clean exit here, and
 what lets ranks in different PID namespaces aggregate each other.
 
+As with the election, this holds while the lock is usable. A rank whose store lock
+failed warns at startup and is judged by its heartbeat alone from then on, so
+going idle for longer than the TTL costs it its series and its file -- or, on a
+filesystem where no process can lock, nothing is ever reaped and departed ranks
+stay published.
+
 ### Scope & limitations
 
 `prometheus_mp` is purpose-built for NIXL's telemetry model, **not** a generic
