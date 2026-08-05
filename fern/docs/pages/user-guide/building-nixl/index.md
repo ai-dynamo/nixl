@@ -17,6 +17,7 @@ Build NIXL from source using one of the following methods:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `build_docs` | `false` | Build Doxygen documentation |
+| `build_nixl_ep` | `false` | Build NIXL-EP, Expert-parallel communication |
 | `ucx_path` | `""` | Path to UCX installation |
 | `libfabric_path` | `""` | Path to Libfabric installation |
 | `gds_path` | `/usr/local/cuda/` | Path to GDS CuFile installation |

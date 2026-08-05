@@ -10,42 +10,19 @@ NIXL EP is a complete example implementation of expert-parallel communication fo
 - **Dispatch and Combine support**: Dispatch and combine operations for MoE inference
 - **RDMA and NVLink support**: Utilizes NIXL's abstractions for both RDMA and NVLink transports
 - **Elastic Scaling**: Dynamically add or remove ranks during runtime
+- **Fault tolerance**: Detect and report failed ranks, mask them from communication, and recover through elastic scaling
 
-## Building NIXL-EP
+## Install NIXL-EP
 
-Configure pkg-config paths (only needed when dependencies are installed to non-default paths):
-
-```bash
-export PKG_CONFIG_PATH=<path to rdma-core install>/lib/pkgconfig:$PKG_CONFIG_PATH
-export PKG_CONFIG_PATH=<path to UCX install>/lib/pkgconfig:$PKG_CONFIG_PATH
-export PKG_CONFIG_PATH=<path to DOCA install>/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
-```
-
-Set the NIXL plug-in directory and library path:
+Install the NIXL Python package:
 
 ```bash
-export NIXL_PLUGIN_DIR=<path to NIXL install>/lib/x86_64-linux-gnu/plugins
-export LD_LIBRARY_PATH=<path to rdma-core install>/lib:$LD_LIBRARY_PATH
+pip install nixl
 ```
 
-Build and install with NIXL-EP enabled:
-
-```bash
-meson setup build \
-    -Ducx_path=<path to UCX install> \
-    -Dprefix=<path to NIXL install> \
-    -Dbuildtype=release \
-    -Dbuild_nixl_ep=true
-
-cd build
-ninja install
-```
-
-Add NIXL-EP to your Python path:
-
-```bash
-export PYTHONPATH=<path to NIXL build>/examples/device/ep
-```
+<Info>
+For development or other source builds, follow [Building NIXL from Source](/nixl/developer-guide/building-nixl-from-source#build-options) and activate NIXL-EP by passing `-Dbuild_nixl_ep=true` to `meson setup`.
+</Info>
 
 ## Python API
 
@@ -59,7 +36,7 @@ buffer.connect_ranks(initial_ranks)
 
 # Dispatch tokens to experts
 recv_x, recv_count, handle, event, hook = buffer.dispatch(
-    x, topk_idx, num_max_dispatch_tokens_per_rank, num_experts
+    x, topk_idx, num_max_dispatch_tokens_per_rank
 )
 
 # ... process tokens through experts ...
@@ -87,7 +64,11 @@ buffer.destroy()
 | `update_memory_buffers(num_ranks, num_experts_per_rank, num_rdma_bytes)` | Allocate remote memory for communication |
 | `connect_ranks(remote_ranks)` | Establish NIXL connections to new peers (can be called multiple times) |
 | `disconnect_ranks(remote_ranks)` | Clean up connections to departing peers |
-| `dispatch(x, topk_idx, num_max_dispatch_tokens_per_rank, num_experts, ...)` | Low-latency dispatch with NIXL device API |
+| `update_mask_buffer(rank_to_mask, mask=False)` | Mask or unmask a connected rank during low-latency communication |
+| `query_mask_buffer(mask_status)` | Copy the device rank-mask state into a `torch.int32` tensor; `1` means masked |
+| `clean_mask_buffer()` | Unmask connected ranks and mask unconnected ranks |
+| `barrier()` | Synchronize active ranks and update the rank mask when a rank times out |
+| `dispatch(x, topk_idx, num_max_dispatch_tokens_per_rank, ...)` | Low-latency dispatch with NIXL device API |
 | `combine(x, topk_idx, topk_weights, handle, ...)` | Low-latency combine (reduce with weights) via NIXL device API |
 | `get_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)` | Get minimum RDMA buffer size requirement |
 | `clean_buffer(num_max_dispatch_tokens_per_rank, hidden, num_experts)` | Zero-initialize buffer (required before reuse) |
