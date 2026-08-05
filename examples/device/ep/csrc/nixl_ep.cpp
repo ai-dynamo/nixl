@@ -1281,13 +1281,16 @@ void Buffer::update_mask_buffer(int rank_to_mask, bool mask) {
     ep_kernels::update_mask_buffer(mask_buffer_ptr, rank_to_mask, mask, at::cuda::getCurrentCUDAStream());
 }
 
-void Buffer::query_mask_buffer(const torch::Tensor& mask_status) {
+void
+Buffer::query_mask_buffer(const torch::Tensor &mask_status) const {
     EP_HOST_ASSERT(mask_buffer_ptr != nullptr and "Shrink mode must be enabled");
-    EP_HOST_ASSERT(mask_status.numel() == max_num_ranks && mask_status.scalar_type() == torch::kInt32);
+    EP_HOST_ASSERT(mask_status.numel() == max_num_ranks &&
+                   mask_status.scalar_type() == torch::kInt32);
 
-    ep_kernels::query_mask_buffer(mask_buffer_ptr, max_num_ranks,
-                                    reinterpret_cast<int*>(mask_status.data_ptr()),
-                                    at::cuda::getCurrentCUDAStream());
+    ep_kernels::query_mask_buffer(mask_buffer_ptr,
+                                  max_num_ranks,
+                                  mask_status.data_ptr<int>(),
+                                  at::cuda::getCurrentCUDAStream());
 }
 
 void Buffer::clean_mask_buffer() {
