@@ -110,17 +110,12 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
     const bool any_put_failed = __syncthreads_or(put_status != NIXL_SUCCESS);
     if (threadIdx.x == 0) {
         if (any_put_failed) {
-            if (nixlbenchSignalError(params) != NIXL_SUCCESS) {
-                printf("[nixlbenchPutKernel] error nixlAtomicAdd failed\n");
-            }
+            (void)nixlbenchSignalError(params);
             return;
         }
 
         if (nixlbenchSignalCompletion(params) != NIXL_SUCCESS) {
-            printf("[nixlbenchPutKernel] completion nixlAtomicAdd failed\n");
-            if (nixlbenchSignalError(params) != NIXL_SUCCESS) {
-                printf("[nixlbenchPutKernel] error nixlAtomicAdd failed\n");
-            }
+            (void)nixlbenchSignalError(params);
         }
     }
 }
