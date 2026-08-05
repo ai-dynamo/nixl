@@ -38,6 +38,7 @@ UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
+ROCM_PATH=${ROCM_PATH:-/opt/rocm}
 TMPDIR=$(mktemp -d)
 
 # DEPS_SANITIZE, when set (e.g. "address"), builds the C++ dependency stack that
@@ -434,6 +435,7 @@ else
         -Drust=false \
         ${EXTRA_BUILD_ARGS} \
         -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" \
+        -Drocm_path="${ROCM_PATH}" \
         --buildtype=debug \
         -Denable_plugins="${NIXL_ENABLE_PLUGINS}"
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR}

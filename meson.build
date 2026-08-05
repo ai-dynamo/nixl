@@ -361,43 +361,6 @@ else
     cuda_wheel_dir = 'nixl_cu12'
 endif
 
-# --- ROCm / HIP detection (independent of CUDA; both stacks may coexist) ---
-hip_inc_path = get_option('hippath_inc')
-hip_lib_path = get_option('hippath_lib')
-hip_dep = disabler()
-
-if hip_lib_path != ''
-    message('HIP lib path: ' + hip_lib_path)
-    hip_dep = declare_dependency(
-        link_args : ['-L' + hip_lib_path, '-lamdhip64'],
-        include_directories : include_directories(hip_inc_path))
-else
-    rocm_home = run_command('bash', '-c', 'echo ${ROCM_PATH:-${ROCM_HOME:-/opt/rocm}}').stdout().strip()
-    if rocm_home == ''
-        rocm_home = '/opt/rocm'
-    endif
-    hip_lib = rocm_home + '/lib'
-    hip_inc = rocm_home + '/include'
-    if fs.exists(hip_lib) and fs.exists(hip_inc)
-        hip_dep = declare_dependency(
-            link_args : ['-L' + hip_lib, '-lamdhip64'],
-            include_directories : include_directories(hip_inc))
-        message('Found ROCm/HIP installation: ' + rocm_home)
-    endif
-endif
-
-if hip_dep.found()
-    add_project_arguments('-DHAVE_HIP', language: 'cpp')
-    add_project_arguments('-D__HIP_PLATFORM_AMD__', language: 'cpp')
-    message('ROCm/HIP support enabled')
-endif
-
-if cuda_dep.found() and hip_dep.found()
-    message('CUDA and ROCm/HIP are both available; NVIDIA and AMD plugin stacks may be built together when enabled.')
-endif
-
-has_gpu = cuda_dep.found() or hip_dep.found()
-
 # Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
 # without otherwise affecting the build. Non-empty value wins over the
 # autodetected CUDA-major value above: e.g. -Dwheel_variant=rocm -> nixl_rocm.
@@ -406,49 +369,53 @@ if wheel_variant != ''
     cuda_wheel_dir = 'nixl_' + wheel_variant
 endif
 
-# AMD ROCm/HIP support for the libfabric plugin (mutually exclusive with CUDA;
-# default off). ROCm is requested by setting -Drocm_path=<prefix>; if rocm_path
-# is empty, ROCm support is not requested (there is no default path). Defined
-# here in the root meson.build -- ahead of subdir('src') and subdir('test') --
-# so every libfabric subdir (src/utils, src/plugins, test/unit/utils) consumes a
-# single rocm_dep and hipify_src, with no ordering dependency between them. The
-# plugin's CUDA sources are translated to HIP at build time via hipify-perl;
-# rocm_dep supplies the HIP headers and runtime those translated sources compile
-# and link against. __HIP_PLATFORM_AMD__ lets the HIP headers work under a
-# non-hipcc host compiler. Kept separate from cuda_dep.
-#
-# hipify injects <hip/hip_runtime.h> at the top of each translated source, ahead
-# of the nixl/toml++ headers. HIP defines __noinline__ as a macro, which breaks
-# toml++'s TOML_HAS_ATTR(__noinline__) preprocessor check; TOML_CUDA=1 routes
-# toml++ around that line. HIP also maps some CUDA driver calls onto deprecated
-# HIP APIs, so deprecation is downgraded from error (the tree builds with
-# werror=true) to a warning.
-#
-# hipify-perl ships only with the ROCm/HIP toolchain, so it is required when
-# ROCm is requested and unused (absent) on CUDA-only builds.
+# AMD ROCm/HIP support for NIXL (default off).
+# ROCm is requested by setting -Drocm_path=<prefix>; if rocm_path is empty,
+# ROCm support is disabled. All modules/plugins/tests using ROCm should use
+# the rocm_dep (and if needed, hipify_src) declared here. rocm_dep supplies
+# the HIP runtime and headers, hipify_src uses hipify-perl to translate
+# libfabric's CUDA sources into HIP at build time.
 rocm_path = get_option('rocm_path')
 if rocm_path != ''
-    if not fs.exists(rocm_path)
-        error('rocm_path set but ROCm install root not found at ' + rocm_path +
+    rocm_inc = include_directories(rocm_path + '/include')
+    rocm_lib_path = rocm_path + '/lib'
+    amdhip64_lib = cpp.find_library('amdhip64', dirs : [rocm_lib_path], required : true)
+    if not cpp.has_header('hip/hip_runtime.h', include_directories : rocm_inc)
+        error('rocm_path set but hip/hip_runtime.h not found under ' + rocm_path +
               '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
     endif
     rocm_dep = declare_dependency(
+        dependencies : amdhip64_lib,
         compile_args : [
-            '-I' + rocm_path + '/include',
+            # Lets the HIP headers work under a non-hipcc host compiler.
             '-D__HIP_PLATFORM_AMD__',
+
+            # HIP defines __noinline__, breaking toml++'s TOML_HAS_ATTR check.
+            # TOML_CUDA=1 routes around that line.
             '-DTOML_CUDA=1',
+
+            # hipify maps some CUDA driver calls to deprecated HIP APIs, and builds
+            # with error=true. Drop the errors to warnings.
             '-Wno-error=deprecated-declarations',
         ],
-        link_args : ['-L' + rocm_path + '/lib', '-lamdhip64', '-lhiprtc'],
+        # find_library resolves the libraries; the rpath keeps them reachable at
+        # runtime from a non-default prefix.
+        link_args : ['-Wl,-rpath,' + rocm_lib_path],
+        include_directories : rocm_inc,
     )
     message('ROCm/HIP enabled; toolchain path: ' + rocm_path)
 
+    # hipify-perl is shipped with ROCm and is required for all ROCm builds.
     hipify_cmd = find_program('hipify-perl')
     hipify_src = generator(hipify_cmd,
                            output : ['@BASENAME@_hip.cpp'],
                            arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
 else
     rocm_dep = disabler()
+endif
+
+if cuda_dep.found() and rocm_dep.found()
+    message('CUDA and ROCm/HIP are both available; NVIDIA and AMD plugin stacks may be built together when enabled.')
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
