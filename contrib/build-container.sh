@@ -50,6 +50,7 @@ BUILD_TYPE="release"
 CUDA_VERSION=${CUDA_VERSION:-13.0}
 BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
+APT_MIRROR=""
 BUILD_UCX_SPCX_PLUGIN="false"
 UCX_SPCX_PLUGIN_REF="v0.2.x"
 
@@ -87,6 +88,14 @@ get_options() {
         --os)
             if [ "$2" ]; then
                 OS=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --apt-mirror)
+            if [ "$2" ]; then
+                APT_MIRROR=$2
                 shift
             else
                 missing_requirement $1
@@ -301,6 +310,7 @@ show_help() {
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
     echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; harbor.mellanox.com must be reachable)]"
     echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
+    echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
     exit 0
 }
 
@@ -335,6 +345,7 @@ BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 BUILD_ARGS+=" --build-arg BUILD_INFINIA=$BUILD_INFINIA"
+BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
 BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
 
 # The plugin source is fetched on the host and placed inside the build

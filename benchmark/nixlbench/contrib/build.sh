@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +42,7 @@ WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 NPROC=${NPROC:-$(nproc)}
+APT_MIRROR=""
 
 get_options() {
     while :; do
@@ -129,6 +130,14 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --apt-mirror)
+            if [ "$2" ]; then
+                APT_MIRROR=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --)
             shift
             break
@@ -185,6 +194,7 @@ show_help() {
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--tag tag for image]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
+    echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
     exit 0
 }
 
@@ -205,6 +215,7 @@ BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
+BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
 
 show_build_options
 
