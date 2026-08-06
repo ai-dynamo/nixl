@@ -36,11 +36,13 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace {
 
+using nixl::metrics_test::labelSet;
 using nixl::metrics_test::scrapeMetrics;
 using nixl::metrics_test::timeSeries;
 
@@ -181,19 +183,28 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     EXPECT_DOUBLE_EQ(phase1.at("agent-1"), 200.0);
     EXPECT_DOUBLE_EQ(phase1.at("agent-2"), 300.0);
 
-    const auto hist_buckets = seriesByAgent(metrics, "agent_xfer_time_us_bucket");
     const auto hist_count = seriesByAgent(metrics, "agent_xfer_time_us_count");
     const auto hist_sum = seriesByAgent(metrics, "agent_xfer_time_us_sum");
-    EXPECT_EQ(hist_buckets.size(), static_cast<std::size_t>(kChildren + 1))
-        << absl::StrJoin(hist_buckets, ", ", absl::PairFormatter("="));
     ASSERT_EQ(hist_count.size(), static_cast<std::size_t>(kChildren + 1))
         << absl::StrJoin(hist_count, ", ", absl::PairFormatter("="));
     ASSERT_EQ(hist_sum.size(), static_cast<std::size_t>(kChildren + 1))
         << absl::StrJoin(hist_sum, ", ", absl::PairFormatter("="));
     EXPECT_DOUBLE_EQ(hist_count.at("agent-parent"), 1.0);
     EXPECT_DOUBLE_EQ(hist_sum.at("agent-parent"), 1234.0);
+
+    // Buckets are cumulative and carry one series per bound, so where the
+    // parent's single 1234us sample landed is only visible per `le`.
+    const auto bucket = [&](const std::string &agent, const std::string &le) {
+        return metrics.latestValue("agent_xfer_time_us_bucket",
+                                   labelSet{{"agent_name", agent}, {"le", le}});
+    };
+    EXPECT_EQ(bucket("agent-parent", "1000"), std::optional<double>(0.0));
+    EXPECT_EQ(bucket("agent-parent", "2500"), std::optional<double>(1.0));
+    EXPECT_EQ(bucket("agent-parent", "+Inf"), std::optional<double>(1.0));
+
     // Writers that observed nothing still expose the family, at zero.
     EXPECT_DOUBLE_EQ(hist_count.at("agent-0"), 0.0);
+    EXPECT_EQ(bucket("agent-0", "+Inf"), std::optional<double>(0.0));
 
     // Kill one child and reap it so its pid is truly gone before the next scrape.
     const pid_t dead = children_.front();
