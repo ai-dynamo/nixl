@@ -38,7 +38,6 @@
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -52,11 +51,6 @@ using nixl::telemetry::mp::readStoreSnapshot;
 
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
 constexpr auto RX_BYTES = nixl_telemetry_event_type_t::AGENT_RX_BYTES;
-
-[[nodiscard]] std::size_t
-idx(nixl_telemetry_event_type_t t) {
-    return static_cast<std::size_t>(t);
-}
 
 // The plugin manager probes every registered plugin directory, so it warns about
 // the ones that do not hold this plugin before finding the one that does.
@@ -99,7 +93,7 @@ TEST_F(MpExporterTest, DroppedEventsCounterAccumulates) {
     ASSERT_NE(handle, nullptr);
 
     const std::string agent_name = "mp_dropped_events_agent";
-    auto exporter = handle->createExporter(nixlTelemetryExporterInitParams{agent_name, 4096});
+    auto exporter = handle->createExporter(initParams(agent_name));
     ASSERT_NE(exporter, nullptr);
 
     // Two flush deltas (7 then 5) as the core would emit them; the counter must

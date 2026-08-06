@@ -49,16 +49,6 @@ constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
 constexpr auto RX_BYTES = nixl_telemetry_event_type_t::AGENT_RX_BYTES;
 constexpr auto XFER_TIME = nixl_telemetry_event_type_t::AGENT_XFER_TIME;
 
-[[nodiscard]] std::size_t
-idx(nixl_telemetry_event_type_t t) {
-    return static_cast<std::size_t>(t);
-}
-
-[[nodiscard]] nixlTelemetryExporterInitParams
-initParams(const std::string &agent) {
-    return nixlTelemetryExporterInitParams{agent, 4096};
-}
-
 TEST_F(MpExporterTest, OwnerBindsAndRecordsToStore) {
     nixlTelemetryPrometheusMpExporter exporter(initParams("agent-owner"));
     EXPECT_TRUE(exporter.isExporter());
