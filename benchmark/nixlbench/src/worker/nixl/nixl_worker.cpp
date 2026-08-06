@@ -220,10 +220,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
         std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
                   << xferBenchConfig::gpunetio_device_list << " OOB interface "
-                  << xferBenchConfig::gpunetio_oob_list << std::endl;
+                  << xferBenchConfig::gpunetio_oob_list << " GID index "
+                  << xferBenchConfig::gpunetio_gid_index << std::endl;
         backend_params["network_devices"] = devices[0];
         backend_params["gpu_devices"] = xferBenchConfig::gpunetio_device_list;
         backend_params["oob_interface"] = xferBenchConfig::gpunetio_oob_list;
+        backend_params["gid_index"] = xferBenchConfig::gpunetio_gid_index;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
         std::cout << "Mooncake backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
