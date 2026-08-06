@@ -44,14 +44,9 @@ then
     # Raise exceptions for logging errors
     export NIXL_DEBUG_LOGGING=yes
 
-    # Install build dependencies
-    if [ -n "$VIRTUAL_ENV" ] ; then
-        # Install full build dependencies in venv
-        $pip3 install --break-system-packages meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
-    else
-        # Install minimal build dependencies in system python
-        $pip3 install --break-system-packages tomlkit
-    fi
+    # The install below uses --no-build-isolation, so pip does not provision
+    # [build-system].requires itself.
+    $pip3 install --break-system-packages --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
     # Set the correct wheel name based on the CUDA version
     cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
     case "$cuda_major" in
@@ -60,7 +55,7 @@ then
     esac
     ./contrib/tomlutil.py --wheel-name "nixl-cu${cuda_major}" pyproject.toml
     # Control ninja parallelism during pip build to prevent OOM (NPROC from common.sh)
-    $pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
+    $pip3 install --break-system-packages --no-build-isolation --config-settings=compile-args="-j${NPROC}" .
     $pip3 install --break-system-packages dist/nixl-*none-any.whl
 fi
 
