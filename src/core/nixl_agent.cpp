@@ -62,14 +62,12 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_xfer_op_t backend_op,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
-                           const uint64_t remote_generation,
                            const size_t desc_count,
-                           const std::weak_ptr<nixlRemoteSection> &remote_section_ref)
+                           const nixl_remote_section_weak_t &remote_section_ref)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
-      remoteGeneration_(remote_generation),
-      remoteSectionRef_(remote_section_ref),
+      remoteSectionRef(remote_section_ref),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -107,7 +105,7 @@ nixlDlistH::nixlDlistH(const std::string &remote_agent,
                        const std::weak_ptr<nixlRemoteSection> &remote_section_ref)
     : remoteAgent(remote_agent),
       descs(std::move(descs)),
-      remoteSectionRef_(remote_section_ref) {}
+      remoteSectionRef(remote_section_ref) {}
 
 /*** nixlAgentData constructor/destructor, as part of nixlAgent's ***/
 
@@ -817,7 +815,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // The prepped remote dlist snapshot is only valid for the remote registration generation
     // it was prepared from: reject if that generation was invalidated or replaced since.
-    const auto remote_sec_ref = remote_side->remoteSectionRef_.lock();
+    const auto remote_sec_ref = remote_side->remoteSectionRef.lock();
     if (!remote_sec_ref) {
         NIXL_ERROR_FUNC << "remote agent '" << remote_side->remoteAgent
                         << "' was invalidated or re-registered after prepped xfer request "
@@ -835,9 +833,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
-                                                 remote_sec_ref->getGeneration(),
                                                  desc_count,
-                                                 remote_side->remoteSectionRef_);
+                                                 remote_side->remoteSectionRef);
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -1004,7 +1001,6 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
-                                                 rem_sec_it->second->getGeneration(),
                                                  local_descs.descCount(),
                                                  rem_sec_it->second);
 
@@ -1087,7 +1083,7 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
 
     // Check if the remote agent connection info is still valid
     // (assuming cost estimation requires connection info like transfers)
-    if (!req_hndl->remoteAgent.empty() && req_hndl->remoteSectionRef_.expired()) {
+    if (!req_hndl->remoteAgent.empty() && req_hndl->remoteSectionRef.expired()) {
         NIXL_ERROR_FUNC << "invalid request handle, remote agent was invalidated or "
                            "re-registered after transfer request creation";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -1149,7 +1145,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     std::shared_lock<nixlLock> read_lock(data->lock);
     // The request was created against a specific remote registration generation: refuse to
     // post if that generation was invalidated or replaced by a re-registration meanwhile.
-    if (req_hndl->remoteSectionRef_.expired()) {
+    if (req_hndl->remoteSectionRef.expired()) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated or re-registered after transfer request creation; "
                            "refusing to post a stale-generation handle";
@@ -1169,7 +1165,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
             read_lock.unlock();
             NIXL_LOCK_GUARD(data->lock);
-            data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
+            if (auto section = req_hndl->remoteSectionRef.lock()) {
+                data->invalidateRemoteData(req_hndl->remoteAgent, section->getGeneration());
+            }
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
             return NIXL_ERR_REMOTE_DISCONNECT;
@@ -1221,7 +1219,9 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
             NIXL_LOCK_GUARD(data->lock);
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
-            data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
+            if (auto section = req_hndl->remoteSectionRef.lock()) {
+                data->invalidateRemoteData(req_hndl->remoteAgent, section->getGeneration());
+            }
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
             NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1253,7 +1253,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
     // Same for users incorrectly recalling this method in error/done.
     if (req_hndl->status == NIXL_IN_PROG) {
         // Check if the remote was invalidated before completion
-        if (req_hndl->remoteSectionRef_.expired()) {
+        if (req_hndl->remoteSectionRef.expired()) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was invalidated or re-registered during transfer";
             return NIXL_ERR_NOT_FOUND;
@@ -1264,7 +1264,9 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
                 read_lock.unlock();
                 NIXL_LOCK_GUARD(data->lock);
-                data->invalidateRemoteData(req_hndl->remoteAgent, req_hndl->remoteGeneration_);
+                if (auto section = req_hndl->remoteSectionRef.lock()) {
+                data->invalidateRemoteData(req_hndl->remoteAgent, section->getGeneration());
+            }
                 return NIXL_ERR_REMOTE_DISCONNECT;
             } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
