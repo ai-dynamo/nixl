@@ -17,10 +17,11 @@ import os
 import tempfile
 import uuid
 
-import nixl._bindings as bindings
-import nixl._utils as utils
 import pytest
 import torch
+
+import nixl._bindings as bindings
+import nixl._utils as utils
 from nixl._api import nixl_agent, nixl_agent_config, nixl_thread_sync_t
 
 # NIXL pytest fixtures
