@@ -23,7 +23,7 @@
 
 #include "gpunetio_backend.h"
 
-#if DOCA_VERSION_MINOR >= 2
+#if DOCA_VERSION_MAJOR == 3 && DOCA_VERSION_MINOR >= 2
 #define NIXL_GPUNETIO_QP_NEEDS_DUMP(qp) ((qp)->need_mcst)
 #else
 #define NIXL_GPUNETIO_QP_NEEDS_DUMP(qp) ((qp)->need_dump)

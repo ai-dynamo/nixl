@@ -176,7 +176,7 @@ NB_ARG_STRING(
     "",
     "Comma-separated OOB network interface name for control path (only used with nixl worker)");
 NB_ARG_STRING(gpunetio_gid_index,
-              "",
+              "0",
               "RoCE GID table index for GPUNetIO (only used with nixl worker; default: 0)");
 
 // OBJ options - only used when backend is OBJ
@@ -288,7 +288,7 @@ int xferBenchConfig::gds_batch_limit = 0;
 int xferBenchConfig::gds_mt_num_threads = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
 std::string xferBenchConfig::gpunetio_oob_list = "";
-std::string xferBenchConfig::gpunetio_gid_index = "";
+std::string xferBenchConfig::gpunetio_gid_index = "0";
 std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
