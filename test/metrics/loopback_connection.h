@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_TEST_DOCA_TELEMETRY_LOOPBACK_CONNECTION_H
-#define NIXL_TEST_DOCA_TELEMETRY_LOOPBACK_CONNECTION_H
+#ifndef NIXL_TEST_METRICS_LOOPBACK_CONNECTION_H
+#define NIXL_TEST_METRICS_LOOPBACK_CONNECTION_H
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -28,7 +28,7 @@
 #include <string>
 #include <thread>
 
-namespace nixl::doca_test {
+namespace nixl::metrics_test {
 
 // RAII blocking TCP client to 127.0.0.1:<port>: connects (with send/recv
 // timeouts) on construction and closes the socket on destruction. Single-use
@@ -168,6 +168,6 @@ private:
     int fd_ = -1;
 };
 
-} // namespace nixl::doca_test
+} // namespace nixl::metrics_test
 
-#endif // NIXL_TEST_DOCA_TELEMETRY_LOOPBACK_CONNECTION_H
+#endif // NIXL_TEST_METRICS_LOOPBACK_CONNECTION_H
