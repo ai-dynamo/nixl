@@ -28,7 +28,7 @@ const char info_delimiter = '-';
 
 namespace {
 int
-parse_gid_index(const std::string &value) {
+parseGidIndex(const std::string &value) {
     if (value.empty()) {
         return 0;
     }
@@ -122,7 +122,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
-    gid_index = parse_gid_index((*custom_params)["gid_index"]);
+    gid_index = parseGidIndex((*custom_params)["gid_index"]);
     NIXL_INFO << "RoCE GID index: " << gid_index;
 
     /* Open DOCA device */
