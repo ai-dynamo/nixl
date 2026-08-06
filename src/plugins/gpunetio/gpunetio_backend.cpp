@@ -29,19 +29,22 @@ const char info_delimiter = '-';
 namespace {
 int
 parse_gid_index(const std::string &value) {
-    if (value.empty())
+    if (value.empty()) {
         return 0;
+    }
 
     size_t parsed_chars = 0;
     int parsed_value = 0;
     try {
         parsed_value = std::stoi(value, &parsed_chars);
-    } catch (const std::exception &) {
+    }
+    catch (const std::exception &) {
         throw std::invalid_argument("gid_index must be an integer in the range [0, 255]");
     }
 
-    if (parsed_chars != value.size() || parsed_value < 0 || parsed_value > 255)
+    if (parsed_chars != value.size() || parsed_value < 0 || parsed_value > 255) {
         throw std::invalid_argument("gid_index must be an integer in the range [0, 255]");
+    }
 
     return parsed_value;
 }
