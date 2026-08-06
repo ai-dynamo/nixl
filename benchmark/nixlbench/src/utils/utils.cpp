@@ -175,10 +175,9 @@ NB_ARG_STRING(
     gpunetio_oob_list,
     "",
     "Comma-separated OOB network interface name for control path (only used with nixl worker)");
-NB_ARG_STRING(
-    gpunetio_gid_index,
-    "",
-    "RoCE GID table index for GPUNetIO (only used with nixl worker; default: 0)");
+NB_ARG_STRING(gpunetio_gid_index,
+              "",
+              "RoCE GID table index for GPUNetIO (only used with nixl worker; default: 0)");
 
 // OBJ options - only used when backend is OBJ
 NB_ARG_STRING(obj_access_key, "", "Access key for S3 backend");
