@@ -113,7 +113,11 @@ def test_sync_mode_agent(monkeypatch, sync_mode, enable_listen):
         return real_ctor(agent_name, agent_config)
 
     monkeypatch.setattr(bindings, "nixlAgent", spy_ctor)
-    config = nixl_agent_config(sync_mode=sync_mode, enable_listen_thread=enable_listen)
+    # listen_port=0 lets the OS pick an ephemeral port, so concurrent agents (parametrized
+    # cases here, or parallel CI jobs sharing a node) don't collide on the fixed default port.
+    config = nixl_agent_config(
+        sync_mode=sync_mode, enable_listen_thread=enable_listen, listen_port=0
+    )
     nixl_agent(str(uuid.uuid4()), nixl_conf=config)
     if sync_mode is not None:
         assert captured["syncMode"] == sync_mode.value
@@ -170,7 +174,7 @@ def test_metadata_pass(two_agents):
     utils.free_passthru(addr)
 
 
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(5, func_only=True)
 def test_empty_notif_tag(two_connected_agents):
     agent1, agent2 = two_connected_agents
 
