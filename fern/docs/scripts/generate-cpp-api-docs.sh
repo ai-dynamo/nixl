@@ -12,16 +12,21 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(git -C "${script_dir}" rev-parse --show-toplevel)"
 output_parent="${repo_root}/fern/docs/generated"
 output_dir="${output_parent}/cpp"
+snippet_output_dir="${output_parent}/snippets/cpp"
 snippet_manifest="${repo_root}/fern/docs/cpp-api-snippets.json"
 snippet_extractor="${script_dir}/extract-doxygen-snippets.py"
 tool_cache="${NIXL_DOC_TOOLS_CACHE:-/tmp/nixl-doc-tools}"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/nixl-cpp-docs.XXXXXX")"
 stage_dir=""
+snippet_stage_dir=""
 
 cleanup() {
     rm -rf -- "${work_dir}"
     if [[ -n "${stage_dir}" && -d "${stage_dir}" ]]; then
         rm -rf -- "${stage_dir}"
+    fi
+    if [[ -n "${snippet_stage_dir}" && -d "${snippet_stage_dir}" ]]; then
+        rm -rf -- "${snippet_stage_dir}"
     fi
 }
 trap cleanup EXIT
@@ -74,12 +79,9 @@ PROJECT_NAME = "NIXL C++ API"
 OUTPUT_DIRECTORY = "${doxygen_output}"
 STRIP_FROM_PATH = "${repo_root}/"
 
-INPUT = "${repo_root}/src/api/cpp/nixl.h" \
-        "${repo_root}/src/api/cpp/nixl_types.h" \
-        "${repo_root}/src/api/cpp/nixl_params.h" \
-        "${repo_root}/src/api/cpp/nixl_descriptors.h"
+INPUT = "${repo_root}/src/api/cpp"
 FILE_PATTERNS = *.h
-RECURSIVE = NO
+RECURSIVE = YES
 
 EXTRACT_ALL = YES
 EXTRACT_PRIVATE = NO
@@ -103,23 +105,25 @@ doxygen "${doxyfile}"
 
 mkdir -p -- "${output_parent}"
 stage_dir="$(mktemp -d "${output_parent}/.cpp.generated.XXXXXX")"
+snippet_stage_dir="$(mktemp -d "${output_parent}/.cpp.snippets.generated.XXXXXX")"
 
 echo "Converting Doxygen XML to Markdown..."
 "${doxybook2_bin}" \
     --quiet \
     --input "${doxygen_output}/xml" \
     --output "${stage_dir}" \
-    --config-data '{"useFolders":false,"foldersToGenerate":["classes","files","namespaces"]}'
+    --config-data '{"useFolders":true,"foldersToGenerate":["classes","files","namespaces"]}'
 
 echo "Making generated Markdown MDX-compatible..."
 python3 - "${stage_dir}" <<'PY'
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import os
 import re
 import sys
 
 output_dir = Path(sys.argv[1])
 
-for path in sorted(output_dir.glob("*.md")):
+for path in sorted(output_dir.rglob("*.md")):
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     output = []
     in_fence = False
@@ -164,34 +168,115 @@ for path in sorted(output_dir.glob("*.md")):
         output.append("`".join(segments))
 
     path.write_text("".join(output), encoding="utf-8")
+
+# Doxybook2 renders file names as only their extension in index_files.md
+# and repeats full paths for nested directory entries. Use each target page's
+# frontmatter title to display only the local file or directory name.
+page_titles = {}
+for path in sorted(output_dir.rglob("*.md")):
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("title: "):
+            page_titles[path.name] = PurePosixPath(line.removeprefix("title: ").strip()).name
+            break
+
+link = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+listing_pages = [output_dir / "index_files.md", *sorted(output_dir.rglob("dir_*.md"))]
+for path in listing_pages:
+    content = path.read_text(encoding="utf-8")
+
+    def clean_listing_label(match):
+        label, target = match.groups()
+        target_name = PurePosixPath(target.split("#", 1)[0]).name
+        clean_title = page_titles.get(target_name)
+        if clean_title is not None and (label == "h" or "/" in label):
+            label = clean_title
+        return f"[{label}]({target})"
+
+    content = link.sub(clean_listing_label, content)
+    if path.name == "index_files.md":
+        content = content.replace("**dir [", "**[").replace("**file [", "**[")
+    path.write_text(content, encoding="utf-8")
+
+# Fern renders the frontmatter title as the page heading. Remove Doxybook2's
+# identical H1 so generated pages do not display their title twice.
+for path in sorted(output_dir.rglob("*.md")):
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        continue
+
+    frontmatter_end = next(
+        (index for index in range(1, len(lines)) if lines[index].strip() == "---"),
+        None,
+    )
+    if frontmatter_end is None:
+        continue
+
+    title = next(
+        (
+            line.removeprefix("title: ").strip()
+            for line in lines[1:frontmatter_end]
+            if line.startswith("title: ")
+        ),
+        None,
+    )
+    heading_index = next(
+        (index for index in range(frontmatter_end + 1, len(lines)) if lines[index].strip()),
+        None,
+    )
+    if heading_index is not None and lines[heading_index].strip() == f"# {title}":
+        del lines[heading_index]
+        path.write_text("".join(lines), encoding="utf-8")
+
+# Distinguish top-level index pages from their corresponding Fern folders.
+index_titles = {
+    "index_classes.md": "Classes Index",
+    "index_files.md": "Files Index",
+    "index_namespaces.md": "Namespaces Index",
+}
+for filename, title in index_titles.items():
+    path = output_dir / filename
+    content = path.read_text(encoding="utf-8")
+    content = re.sub(r"^title: .+$", f"title: {title}", content, count=1, flags=re.MULTILINE)
+    path.write_text(content, encoding="utf-8")
+
+# In folder mode Doxybook2 emits links relative to the output root even from
+# pages inside Classes/, Files/, and Namespaces/. Rewrite them relative to the
+# Markdown file so Fern resolves the native Doxybook2 layout correctly.
+generated_link_target = re.compile(r"\]\(((?:Classes|Files|Namespaces)/[^)]+)\)")
+for path in sorted(output_dir.rglob("*.md")):
+    content = path.read_text(encoding="utf-8")
+
+    def make_generated_link_relative(match):
+        target = match.group(1)
+        target_path, separator, fragment = target.partition("#")
+        relative_target = os.path.relpath(output_dir / target_path, start=path.parent)
+        target = PurePosixPath(relative_target).as_posix()
+        if separator:
+            target = f"{target}#{fragment}"
+        return f"]({target})"
+
+    path.write_text(generated_link_target.sub(make_generated_link_relative, content), encoding="utf-8")
 PY
 
 echo "Extracting reusable Doxygen snippets..."
 python3 "${snippet_extractor}" \
     --xml-dir "${doxygen_output}/xml" \
     --manifest "${snippet_manifest}" \
-    --output-dir "${stage_dir}/snippets"
-
-expected_pages=(
-    classnixlAgent.md
-    structnixlAgentConfig.md
-    nixl__types_8h.md
-    classnixlBasicDesc.md
-    classnixlBlobDesc.md
-    structnixlRemoteDesc.md
-    classnixlDescList.md
-)
-
-for page in "${expected_pages[@]}"; do
-    [[ -s "${stage_dir}/${page}" ]] || fail "expected generated page is missing or empty: ${page}"
-done
+    --output-dir "${snippet_stage_dir}"
 
 expected_output_dir="${repo_root}/fern/docs/generated/cpp"
+expected_snippet_output_dir="${repo_root}/fern/docs/generated/snippets/cpp"
 [[ "${output_dir}" == "${expected_output_dir}" ]] ||
     fail "refusing to replace unexpected output directory: ${output_dir}"
+[[ "${snippet_output_dir}" == "${expected_snippet_output_dir}" ]] ||
+    fail "refusing to replace unexpected snippet output directory: ${snippet_output_dir}"
 
-rm -rf -- "${output_dir}"
+rm -rf -- "${output_dir}" "${snippet_output_dir}"
+mkdir -p -- "$(dirname -- "${snippet_output_dir}")"
 mv -- "${stage_dir}" "${output_dir}"
+mv -- "${snippet_stage_dir}" "${snippet_output_dir}"
 stage_dir=""
+snippet_stage_dir=""
 
 echo "Generated C++ API Markdown in ${output_dir}"
+echo "Generated C++ API snippets in ${snippet_output_dir}"

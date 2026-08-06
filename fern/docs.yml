@@ -208,59 +208,11 @@ navigation:
   # ==================== API Reference (Generated) ====================
   - section: API Reference (Generated)
     contents:
-      - section: C++
+      - folder: ./docs/generated/cpp
+        title: C++
+        title-source: frontmatter
+        slug: c
         collapsed: open-by-default
-        contents:
-          - section: src/api/cpp
-            collapsed: open-by-default
-            contents:
-              - section: nixl.h
-                contents:
-                  - page: nixl.h
-                    slug: nixl-header-doxygen
-                    path: ./docs/generated/cpp/nixl_8h.md
-                  - page: nixlAgent
-                    slug: nixl-agent-doxygen
-                    path: ./docs/generated/cpp/classnixlAgent.md
-              - section: nixl_params.h
-                contents:
-                  - page: nixl_params.h
-                    slug: nixl-params-header-doxygen
-                    path: ./docs/generated/cpp/nixl__params_8h.md
-                  - page: nixlAgentConfig
-                    slug: nixl-agent-config-doxygen
-                    path: ./docs/generated/cpp/structnixlAgentConfig.md
-              - section: nixl_types.h
-                contents:
-                  - page: nixl_types.h
-                    slug: nixl-cpp-enums-doxygen
-                    path: ./docs/generated/cpp/nixl__types_8h.md
-                  - page: nixlAgentOptionalArgs
-                    slug: nixl-agent-optional-args-doxygen
-                    path: ./docs/generated/cpp/structnixlAgentOptionalArgs.md
-                  - page: nixlXferTelemetry
-                    slug: nixl-xfer-telemetry-doxygen
-                    path: ./docs/generated/cpp/structnixlXferTelemetry.md
-                  - page: nixlEnumStrings
-                    slug: nixl-enum-strings-doxygen
-                    path: ./docs/generated/cpp/namespacenixlEnumStrings.md
-              - section: nixl_descriptors.h
-                contents:
-                  - page: nixl_descriptors.h
-                    slug: nixl-descriptors-header-doxygen
-                    path: ./docs/generated/cpp/nixl__descriptors_8h.md
-                  - page: nixlBasicDesc
-                    slug: nixl-basic-desc-doxygen
-                    path: ./docs/generated/cpp/classnixlBasicDesc.md
-                  - page: nixlBlobDesc
-                    slug: nixl-blob-desc-doxygen
-                    path: ./docs/generated/cpp/classnixlBlobDesc.md
-                  - page: nixlRemoteDesc
-                    slug: nixl-remote-desc-doxygen
-                    path: ./docs/generated/cpp/structnixlRemoteDesc.md
-                  - page: nixlDescList
-                    slug: nixl-desc-list-doxygen
-                    path: ./docs/generated/cpp/classnixlDescList.md
       - page: Python
         slug: nixl-python-api-generated
         path: ./docs/generated/python/python-api.md

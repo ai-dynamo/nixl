@@ -23,7 +23,7 @@ This section documents the enumerations, type aliases, configuration structs, de
 
 ### nixl_mem_t
 
-<Markdown src="/docs/generated/cpp/snippets/nixl_mem_t.mdx" />
+<Markdown src="/docs/generated/snippets/cpp/nixl_mem_t.mdx" />
 
 ### nixl_xfer_op_t
 

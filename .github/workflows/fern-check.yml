@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Fern Documentation Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fern-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fern-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install documentation generator dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes doxygen python3-venv
+
+      - name: Install Fern CLI
+        run: npm install --global fern-api
+
+      - name: Generate API documentation
+        run: |
+          fern/docs/scripts/generate-cpp-api-docs.sh
+          fern/docs/scripts/generate-python-api-docs.sh
+          fern/docs/scripts/generate-rust-api-docs.sh
+
+      - name: Validate Fern documentation
+        working-directory: fern
+        run: fern check
+
+      - name: Validate Fern Markdown
+        working-directory: fern
+        run: fern docs md check
