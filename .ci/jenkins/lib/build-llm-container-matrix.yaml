@@ -13,7 +13,9 @@
 # verification stays isolated to the NIXL change.
 #
 # Wheels are pulled from Artifactory at:
-#   sw-dynamo-nixl-pypi-local/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}/<arch>/
+#   sw-nbu-swx-nixl-pypi-local/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}/
+# The directory is flat - both architectures share it, the arch is part of the
+# wheel filename. Reads need the svc-nixl Artifactory credentials.
 #
 # Runtime: podman (no docker). Cross-arch aarch64 builds on x86_64 hosts use
 # `podman build --platform linux/arm64` with QEMU registered via
@@ -58,7 +60,7 @@ env:
   REGISTRY_REPO_NAME: "sw-nbu-swx-nixl-docker-local"
   REGISTRY_REPO_PATH: "verification/llm"
   ARTIFACTORY_REGISTRY_URL: "${REGISTRY_HOST_NAME}/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}"
-  WHEELS_REPO_NAME: "sw-dynamo-nixl-pypi-local"
+  WHEELS_REPO_NAME: "sw-nbu-swx-nixl-pypi-local"
   WHEELS_ARTIFACTORY_URL: "https://${REGISTRY_HOST_NAME}/artifactory/${WHEELS_REPO_NAME}"
   WHEELS_DIR: "${WORKSPACE}/llm-wheels"
   MAIL_FROM: "jenkins@nvidia.com"
@@ -155,7 +157,7 @@ steps:
       rm -rf "${DEST}"
       mkdir -p "${DEST}"
 
-      BASE="${WHEELS_ARTIFACTORY_URL}/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}/${arch}"
+      BASE="${WHEELS_ARTIFACTORY_URL}/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}"
       WHEELS=(
         "nixl-${NIXL_VERSION}-py3-none-any.whl"
         "nixl_cu12-${NIXL_VERSION}-${PYTHON_TAG}-${PYTHON_TAG}-manylinux_${MANYLINUX_TAG}_${arch}.whl"
