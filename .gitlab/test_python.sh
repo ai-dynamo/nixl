@@ -46,7 +46,8 @@ then
 
     # The install below uses --no-build-isolation, so pip does not provision
     # [build-system].requires itself.
-    $pip3 install --break-system-packages --upgrade meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
+    # --ignore-installed: the distro-packaged copies have no pip RECORD and cannot be uninstalled.
+    $pip3 install --break-system-packages --upgrade --ignore-installed meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
     # Set the correct wheel name based on the CUDA version
     cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
     case "$cuda_major" in
