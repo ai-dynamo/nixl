@@ -21,6 +21,7 @@
 #ifndef NIXL_SRC_CORE_NIXL_P2P_METADATA_BACKEND_H
 #define NIXL_SRC_CORE_NIXL_P2P_METADATA_BACKEND_H
 
+#include "nixl_md_config.h"
 #include "nixl_metadata_backend.h"
 #include "nixl_metadata_worker.h"
 

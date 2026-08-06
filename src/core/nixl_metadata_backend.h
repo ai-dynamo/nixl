@@ -24,31 +24,8 @@
 #include "nixl_descriptors.h"
 #include "nixl_types.h"
 
-#include <chrono>
-#include <cstdint>
 #include <string>
 #include <string_view>
-
-/**
- * @struct nixlMDConfig
- * @brief The agent settings the manager and its backends need, carved out of
- *        nixlAgentConfig so a backend never reaches the public nixl_params.h.
- *
- * Passed to the manager and on to each backend at construction; every field is
- * fixed for the life of the agent.
- */
-struct nixlMDConfig {
-    /** P2P: listen for inbound peers. */
-    bool useListenThread = false;
-    /** P2P: port the listener binds. */
-    std::uint16_t listenPort = 0;
-    // TODO: Remove ETCD watch timeout from nixlAgentConfig and here on next
-    // ABI/API breaking update.
-    /** ETCD: how long a fetch waits on a watch for a key to appear. */
-    std::chrono::microseconds etcdWatchTimeout{0};
-    /** How long a backend worker waits for work before polling anyway. */
-    std::chrono::microseconds workerDelay{0};
-};
 
 /**
  * @class nixlMetadataBackend

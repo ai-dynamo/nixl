@@ -23,6 +23,7 @@
 
 #if HAVE_ETCD
 
+#include "nixl_md_config.h"
 #include "nixl_metadata_backend.h"
 #include "nixl_metadata_worker.h"
 

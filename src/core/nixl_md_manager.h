@@ -23,6 +23,7 @@
 #define NIXL_SRC_CORE_NIXL_MD_MANAGER_H
 
 #include "nixl_descriptors.h"
+#include "nixl_md_config.h"
 #include "nixl_metadata_backend.h"
 #include "nixl_types.h"
 
