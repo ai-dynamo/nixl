@@ -23,19 +23,7 @@ This section documents the enumerations, type aliases, configuration structs, de
 
 ### nixl_mem_t
 
-Memory segment types supported by NIXL. Each type represents a different class of memory or storage that NIXL can register and transfer.
-
-| Value | Description |
-|-------|-------------|
-| `DRAM_SEG` | Standard host memory (CPU DRAM) |
-| `VRAM_SEG` | GPU high-bandwidth memory (HBM/VRAM) |
-| `BLK_SEG` | Block-level storage devices |
-| `OBJ_SEG` | Distributed object stores (S3, Azure Blob) |
-| `FILE_SEG` | Local and remote file systems |
-
-```cpp
-nixl_reg_dlist_t descs(VRAM_SEG);  // Create descriptor list for GPU memory
-```
+<Markdown src="/docs/generated/cpp/snippets/nixl_mem_t.mdx" />
 
 ### nixl_xfer_op_t
 

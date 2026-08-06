@@ -12,6 +12,8 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(git -C "${script_dir}" rev-parse --show-toplevel)"
 output_parent="${repo_root}/fern/docs/generated"
 output_dir="${output_parent}/cpp"
+snippet_manifest="${repo_root}/fern/docs/cpp-api-snippets.json"
+snippet_extractor="${script_dir}/extract-doxygen-snippets.py"
 tool_cache="${NIXL_DOC_TOOLS_CACHE:-/tmp/nixl-doc-tools}"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/nixl-cpp-docs.XXXXXX")"
 stage_dir=""
@@ -163,6 +165,12 @@ for path in sorted(output_dir.glob("*.md")):
 
     path.write_text("".join(output), encoding="utf-8")
 PY
+
+echo "Extracting reusable Doxygen snippets..."
+python3 "${snippet_extractor}" \
+    --xml-dir "${doxygen_output}/xml" \
+    --manifest "${snippet_manifest}" \
+    --output-dir "${stage_dir}/snippets"
 
 expected_pages=(
     classnixlAgent.md

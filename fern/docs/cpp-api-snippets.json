@@ -1,0 +1,10 @@
+{
+  "snippets": [
+    {
+      "compound": "nixl_types.h",
+      "kind": "enum",
+      "member": "nixl_mem_t",
+      "output": "nixl_mem_t.mdx"
+    }
+  ]
+}
