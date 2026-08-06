@@ -17,6 +17,7 @@
 #include "prometheus_mp_exporter.h"
 
 #include "common.h"
+#include "mp_telemetry_fixture.h"
 
 #include "scrape_util.h"
 #include "timeseries.h"
@@ -44,11 +45,6 @@ using nixl::metrics_test::timeSeries;
 
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
 constexpr auto XFER_TIME = nixl_telemetry_event_type_t::AGENT_XFER_TIME;
-
-[[nodiscard]] nixlTelemetryExporterInitParams
-initParams(const std::string &agent) {
-    return nixlTelemetryExporterInitParams{agent, 4096};
-}
 
 // The `metric` series of every agent in the scrape, keyed by agent_name.
 [[nodiscard]] std::map<std::string, double>
@@ -86,22 +82,11 @@ runWriterChild(int go_fd, int ready_fd, int quit_fd, const std::string &agent, u
     ::_exit(rc);
 }
 
-class MpE2ETest : public ::testing::Test {
+class MpE2ETest : public MpExporterTest {
 protected:
     void
     SetUp() override {
-        const auto *info = ::testing::UnitTest::GetInstance()->current_test_info();
-        dir_ = std::filesystem::path(::testing::TempDir()) /
-            ("nixl_mp_e2e_" + std::to_string(::getpid()) + "_" + info->name());
-        std::filesystem::create_directories(dir_);
-        // What the exporter asks operators for; without it a permissive umask
-        // makes it warn about the directory and the gtest main counts that.
-        std::filesystem::permissions(
-            dir_, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
-        port_ = gtest::PortAllocator::next_tcp_port();
-        env_.addVar("NIXL_TELEMETRY_PROMETHEUS_LOCAL", "y");
-        env_.addVar("NIXL_TELEMETRY_PROMETHEUS_PORT", std::to_string(port_));
-        env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", dir_.string());
+        MpExporterTest::SetUp();
         // Dead processes become stale immediately so the reaping check is prompt.
         env_.addVar("NIXL_TELEMETRY_MP_STALE_TTL", "0");
     }
@@ -116,8 +101,7 @@ protected:
             ::kill(pid, SIGKILL);
             ::waitpid(pid, nullptr, 0);
         }
-        std::error_code ec;
-        std::filesystem::remove_all(dir_, ec);
+        MpExporterTest::TearDown();
     }
 
     [[nodiscard]] std::size_t
@@ -137,9 +121,6 @@ protected:
         }
     }
 
-    gtest::ScopedEnv env_;
-    uint16_t port_ = 0;
-    std::filesystem::path dir_;
     std::vector<pid_t> children_;
     int goWrite_ = -1;
     int readyRead_ = -1;
