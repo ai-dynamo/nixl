@@ -49,8 +49,6 @@ from utils import (  # noqa: E402
 
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
-SINGLE_PROCESS_WORKER_RANK = 0
-KINETO_UNAVAILABLE_MSG = "Kineto profiling was requested but is not supported"
 
 
 def non_negative_int(value: str) -> int:
@@ -673,11 +671,11 @@ def main():
         server_process.start()
         time.sleep(0.5)
 
-    if args.kineto and not kineto_cuda_available(SINGLE_PROCESS_WORKER_RANK):
-        raise SystemExit(KINETO_UNAVAILABLE_MSG)
+    if args.kineto and not kineto_cuda_available(0):
+        raise SystemExit("Kineto profiling was requested but is not supported")
 
     if args.num_processes == 1:
-        worker(SINGLE_PROCESS_WORKER_RANK, args)
+        worker(0, args)
         return
 
     ctx = torch.multiprocessing.spawn(
