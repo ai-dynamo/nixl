@@ -31,6 +31,32 @@ import torch
 import torch.distributed as dist
 
 
+def kineto_device_supported(device_ordinal: int):
+    """Return whether CUPTI supports the selected CUDA device."""
+    if not torch.cuda.is_available():
+        return False, "CUDA is unavailable"
+
+    properties = torch.cuda.get_device_properties(device_ordinal)
+    device_description = (
+        f"{properties.name}, compute capability "
+        f"{properties.major}.{properties.minor}"
+    )
+
+    try:
+        from cupti import cupti
+
+        supported = cupti.device_supported(device_ordinal)
+    except ImportError as exc:
+        return False, f"unable to import cupti-python: {exc}"
+    except (cupti.cuptiError, OSError, RuntimeError) as exc:
+        return False, f"unable to query CUPTI support for {device_description}: {exc}"
+
+    if supported == 0:
+        return False, f"loaded CUPTI does not support {device_description}"
+
+    return True, device_description
+
+
 def init_dist(local_rank: int, num_local_ranks: int):
     # NOTES: you may rewrite this function with your own cluster settings
     ip = os.getenv("MASTER_ADDR", "127.0.0.1")

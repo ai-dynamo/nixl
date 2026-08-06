@@ -32,6 +32,7 @@ import nixl_ep
 import rank_server
 import store_group
 import torch
+import torch.distributed as dist
 from nixl_ep.buffer import DEFAULT_TIMEOUT_MS
 from plan import Plan
 
@@ -43,6 +44,7 @@ from utils import (  # noqa: E402
     bench_kineto,
     calc_diff,
     hash_tensor,
+    kineto_device_supported,
     per_token_cast_back,
 )
 
@@ -97,6 +99,8 @@ def test_main(
     num_ranks: int,
     max_num_ranks: int,
     buffer: nixl_ep.Buffer,
+    tcp_store: dist.TCPStore,
+    phase: int,
     use_logfmt: bool = False,
     seed: int = 0,
     kineto: bool = False,
@@ -433,6 +437,22 @@ def test_main(
     if not kineto:
         return
 
+    def kineto_unavailable_on_any_rank(unavailable: bool, step: str) -> bool:
+        key = f"kineto_unavailable:{phase}:{step}"
+        tcp_store.add(key, int(unavailable))
+        buffer.barrier()
+        return int(tcp_store.get(key)) > 0
+
+    kineto_supported, reason = kineto_device_supported(torch.cuda.current_device())
+    if kineto_unavailable_on_any_rank(
+        not kineto_supported,
+        "device_support",
+    ):
+        if kineto_supported:
+            reason = "CUPTI is unavailable on another rank"
+        print(f"[rank {rank}] Skipping Kineto profiling: {reason}", flush=True)
+        return
+
     for return_recv_hook in (False, True):
         buffer.barrier()
         dispatch_t, combine_t = bench_kineto(
@@ -574,6 +594,8 @@ def worker(torch_rank: int, args: argparse.Namespace):
             current_num_ranks,
             max_num_ranks,
             buffer,
+            tcp_store,
+            plan.get_phase(),
             kineto=args.kineto,
             fault_tolerance_test=kill_rank,
         )
