@@ -36,7 +36,7 @@ build_doca_tests = enabled_plugins.get('TELEMETRY_DOCA') and doca_telemetry_dep.
 if build_doca_tests
     doca_test_exe = executable('doca_test',
         sources: ['telemetry_doca_test.cpp'],
-        include_directories: [include_directories('../metrics')],
+        include_directories: [utils_inc_dirs, include_directories('../metrics')],
         dependencies: [gtest_dep, doca_telemetry_dep, doca_common_dep],
         # DOCA telemetry metrics APIs are marked experimental (deprecated
         # attribute); mirror the DOCA sample Makefile and the plugin sources.

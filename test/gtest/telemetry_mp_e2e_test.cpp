@@ -19,6 +19,8 @@
 #include "common.h"
 #include "mp_telemetry_fixture.h"
 
+#include "common/scoped_fd.h"
+
 #include "scrape_util.h"
 #include "timeseries.h"
 
@@ -30,7 +32,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <chrono>
 #include <csignal>
 #include <cstring>
 #include <filesystem>
@@ -94,9 +95,9 @@ protected:
     // Runs even when a fatal assertion aborts the test body mid-fork.
     void
     TearDown() override {
-        for (int *fd : {&goWrite_, &readyRead_, &quitWrite_}) {
-            closeFd(*fd);
-        }
+        goWrite_.reset();
+        readyRead_.reset();
+        quitWrite_.reset();
         for (const pid_t pid : children_) {
             ::kill(pid, SIGKILL);
             ::waitpid(pid, nullptr, 0);
@@ -113,18 +114,10 @@ protected:
         return n;
     }
 
-    static void
-    closeFd(int &fd) {
-        if (fd >= 0) {
-            ::close(fd);
-            fd = -1;
-        }
-    }
-
     std::vector<pid_t> children_;
-    int goWrite_ = -1;
-    int readyRead_ = -1;
-    int quitWrite_ = -1;
+    nixl::scopedFd goWrite_;
+    nixl::scopedFd readyRead_;
+    nixl::scopedFd quitWrite_;
 };
 
 TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) {
@@ -137,9 +130,9 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     ASSERT_EQ(::pipe(ready_pipe), 0);
     ASSERT_EQ(::pipe(quit_pipe), 0);
 
-    goWrite_ = go_pipe[1];
-    readyRead_ = ready_pipe[0];
-    quitWrite_ = quit_pipe[1];
+    goWrite_ = nixl::scopedFd(go_pipe[1]);
+    readyRead_ = nixl::scopedFd(ready_pipe[0]);
+    quitWrite_ = nixl::scopedFd(quit_pipe[1]);
 
     // Fork children while the parent is still single-threaded (before it builds
     // the owner exporter, which starts civetweb threads).
@@ -170,12 +163,12 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     owner.exportEvent({XFER_TIME, 1234});
 
     // Release the children (they now become writers) and wait for readiness.
-    closeFd(goWrite_);
+    goWrite_.reset();
     for (int i = 0; i < kChildren; ++i) {
-        pollfd pfd{readyRead_, POLLIN, 0};
+        pollfd pfd{readyRead_.get(), POLLIN, 0};
         ASSERT_GT(::poll(&pfd, 1, 30000), 0) << "writer " << i << " never signalled readiness";
         char c = 0;
-        ASSERT_EQ(::read(readyRead_, &c, 1), 1);
+        ASSERT_EQ(::read(readyRead_.get(), &c, 1), 1);
     }
 
     // Phase 1: every process must appear behind the single owner endpoint.
