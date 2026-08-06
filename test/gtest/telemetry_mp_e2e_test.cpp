@@ -203,8 +203,12 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     EXPECT_EQ(bucket("agent-parent", "+Inf"), std::optional<double>(1.0));
 
     // Writers that observed nothing still expose the family, at zero.
-    EXPECT_DOUBLE_EQ(hist_count.at("agent-0"), 0.0);
-    EXPECT_EQ(bucket("agent-0", "+Inf"), std::optional<double>(0.0));
+    for (int i = 0; i < kChildren; ++i) {
+        const std::string agent = "agent-" + std::to_string(i);
+        EXPECT_DOUBLE_EQ(hist_count.at(agent), 0.0) << agent;
+        EXPECT_DOUBLE_EQ(hist_sum.at(agent), 0.0) << agent;
+        EXPECT_EQ(bucket(agent, "+Inf"), std::optional<double>(0.0)) << agent;
+    }
 
     // Kill one child and reap it so its pid is truly gone before the next scrape.
     const pid_t dead = children_.front();
