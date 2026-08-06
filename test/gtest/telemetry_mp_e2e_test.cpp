@@ -208,13 +208,16 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     }
 
     // Kill one child and reap it so its pid is truly gone before the next scrape.
+    // It stays in children_ until reaped, so TearDown() finishes the job if an
+    // assertion below leaves the test body first, and stops tracking it once
+    // reaped, so a recycled pid is never signalled.
     const pid_t dead = children_.front();
-    children_.erase(children_.begin());
     const std::string dead_prefix =
         std::string(nixl::telemetry::mp::MP_STORE_FILE_PREFIX) + std::to_string(dead) + ".";
     ASSERT_EQ(countStores(dead_prefix), 1u);
     ASSERT_EQ(::kill(dead, SIGKILL), 0);
     ASSERT_EQ(::waitpid(dead, nullptr, 0), dead);
+    children_.erase(children_.begin());
 
     // Phase 2: the dead child's series is dropped (and its store reaped).
     const auto phase2 = seriesByAgent(scrapeMetrics(port_), "agent_tx_bytes_total");
