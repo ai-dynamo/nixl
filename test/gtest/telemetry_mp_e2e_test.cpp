@@ -42,6 +42,7 @@
 
 namespace {
 
+using nixl::scopedFd;
 using nixl::metrics_test::labelSet;
 using nixl::metrics_test::scrapeMetrics;
 using nixl::metrics_test::timeSeries;
@@ -97,9 +98,6 @@ protected:
     // Runs even when a fatal assertion aborts the test body mid-fork.
     void
     TearDown() override {
-        goWrite_.reset();
-        readyRead_.reset();
-        quitWrite_.reset();
         for (const pid_t pid : children_) {
             ::kill(pid, SIGKILL);
             ::waitpid(pid, nullptr, 0);
@@ -117,9 +115,6 @@ protected:
     }
 
     std::vector<pid_t> children_;
-    nixl::scopedFd goWrite_;
-    nixl::scopedFd readyRead_;
-    nixl::scopedFd quitWrite_;
 };
 
 TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) {
@@ -129,12 +124,14 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     int ready_pipe[2];
     int quit_pipe[2];
     ASSERT_EQ(::pipe(go_pipe), 0);
+    scopedFd go_read(go_pipe[0]);
+    scopedFd go_write(go_pipe[1]);
     ASSERT_EQ(::pipe(ready_pipe), 0);
+    scopedFd ready_read(ready_pipe[0]);
+    scopedFd ready_write(ready_pipe[1]);
     ASSERT_EQ(::pipe(quit_pipe), 0);
-
-    goWrite_ = nixl::scopedFd(go_pipe[1]);
-    readyRead_ = nixl::scopedFd(ready_pipe[0]);
-    quitWrite_ = nixl::scopedFd(quit_pipe[1]);
+    scopedFd quit_read(quit_pipe[0]);
+    scopedFd quit_write(quit_pipe[1]);
 
     // Fork children while the parent is still single-threaded (before it builds
     // the owner exporter, which starts civetweb threads).
@@ -142,21 +139,21 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
         const pid_t pid = ::fork();
         ASSERT_GE(pid, 0);
         if (pid == 0) {
-            ::close(go_pipe[1]);
-            ::close(ready_pipe[0]);
-            ::close(quit_pipe[1]);
-            runWriterChild(go_pipe[0],
-                           ready_pipe[1],
-                           quit_pipe[0],
+            go_write.reset();
+            ready_read.reset();
+            quit_write.reset();
+            runWriterChild(go_read.get(),
+                           ready_write.get(),
+                           quit_read.get(),
                            "agent-" + std::to_string(i),
                            static_cast<uint64_t>((i + 1) * 100));
         }
         children_.push_back(pid);
     }
 
-    ::close(go_pipe[0]);
-    ::close(ready_pipe[1]);
-    ::close(quit_pipe[0]);
+    go_read.reset();
+    ready_write.reset();
+    quit_read.reset();
 
     // Parent wins the election and serves the endpoint.
     nixlTelemetryPrometheusMpExporter owner(initParams("agent-parent"));
@@ -165,12 +162,12 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     owner.exportEvent({XFER_TIME, 1234});
 
     // Release the children (they now become writers) and wait for readiness.
-    goWrite_.reset();
+    go_write.reset();
     for (int i = 0; i < kChildren; ++i) {
-        pollfd pfd{readyRead_.get(), POLLIN, 0};
+        pollfd pfd{ready_read.get(), POLLIN, 0};
         ASSERT_GT(::poll(&pfd, 1, 30000), 0) << "writer " << i << " never signalled readiness";
         char c = 0;
-        ASSERT_EQ(::read(readyRead_.get(), &c, 1), 1);
+        ASSERT_EQ(::read(ready_read.get(), &c, 1), 1);
     }
 
     // Phase 1: every process must appear behind the single owner endpoint.
