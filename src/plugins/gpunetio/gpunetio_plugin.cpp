@@ -57,6 +57,7 @@ get_backend_options() {
     params["oob_interface"] = "";
     params["gpu_devices"] = "";
     params["cuda_streams"] = "";
+    params["gid_index"] = "";
     return params;
 }
 

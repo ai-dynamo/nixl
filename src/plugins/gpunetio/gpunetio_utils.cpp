@@ -428,7 +428,7 @@ netif_get_addr(const char *if_name,
                sa_family_t af,
                struct sockaddr *saddr,
                struct sockaddr *netmask) {
-    int status = 0;
+    int status = -1;
     struct ifaddrs *ifa;
     struct ifaddrs *ifaddrs;
     const struct sockaddr_in6 *saddr6;
