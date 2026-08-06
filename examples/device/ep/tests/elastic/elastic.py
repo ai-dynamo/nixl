@@ -49,6 +49,17 @@ from utils import (  # noqa: E402
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
 
+# NIXL EP stores FP8 scales channel-major, so the gap between channel blocks is
+# 4 * num_ranks * max_tokens_per_rank bytes and TMA needs it 16-byte aligned,
+# i.e. num_ranks * max_tokens_per_rank must be a multiple of 4.
+TMA_TOKEN_ALIGNMENT = 4
+
+
+def tma_aligned_max_tokens(num_tokens: int) -> int:
+    return (
+        (num_tokens + TMA_TOKEN_ALIGNMENT - 1) // TMA_TOKEN_ALIGNMENT
+    ) * TMA_TOKEN_ALIGNMENT
+
 
 def non_negative_int(value: str) -> int:
     try:
@@ -90,6 +101,7 @@ def self_kill():
 
 def test_main(
     num_tokens: int,
+    max_tokens_per_rank: int,
     hidden: int,
     num_experts: int,
     num_topk: int,
@@ -208,7 +220,7 @@ def test_main(
                                 buffer.dispatch(
                                     current_x,
                                     topk_idx,
-                                    num_tokens,
+                                    max_tokens_per_rank,
                                     num_experts,
                                     use_fp8=dispatch_use_fp8,
                                     round_scale=round_scale,
@@ -389,7 +401,7 @@ def test_main(
         recv_x, recv_count, handle, event, hook = buffer.dispatch(
             current_x,
             topk_idx,
-            num_tokens,
+            max_tokens_per_rank,
             num_experts,
             cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
             use_fp8=True,
@@ -491,8 +503,15 @@ def worker(torch_rank: int, args: argparse.Namespace):
     )
 
     # Initialize nixl_ep buffer
+    max_tokens_per_rank = tma_aligned_max_tokens(args.num_tokens)
+    if local_rank == 0 and max_tokens_per_rank != args.num_tokens:
+        print(
+            f"Rounding max tokens per rank {args.num_tokens} -> {max_tokens_per_rank} "
+            f"for TMA alignment; dispatching {args.num_tokens} tokens",
+            flush=True,
+        )
     num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
-        args.num_tokens,
+        max_tokens_per_rank,
         args.hidden_dim,
         max_num_ranks,
         args.num_experts_per_rank * max_num_ranks,
@@ -567,6 +586,7 @@ def worker(torch_rank: int, args: argparse.Namespace):
 
         test_main(
             args.num_tokens,
+            max_tokens_per_rank,
             args.hidden_dim,
             current_num_experts,
             args.num_topk,
