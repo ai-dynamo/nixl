@@ -55,7 +55,7 @@ canonicalLabelValue(const std::string &raw) {
 // <base>_count, so the families are discovered by their _bucket component and no
 // metric name is hard-coded.
 [[nodiscard]] inline seriesLines
-histogramSeriesLines(const nixl::doca_test::timeSeries &metrics, const std::string &agent_name) {
+histogramSeriesLines(const nixl::metrics_test::timeSeries &metrics, const std::string &agent_name) {
     const auto endsWith = [](const std::string &name, const std::string &suffix) {
         return name.size() > suffix.size() &&
             name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
