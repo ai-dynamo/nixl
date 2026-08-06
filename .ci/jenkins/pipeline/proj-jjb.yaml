@@ -288,6 +288,10 @@
             name: "conf_file"
             default: ".ci/jenkins/lib/test-matrix.yaml"  # Test matrix configuration
             description: "Job config file"
+        - string:
+            name: "UCX_VER"
+            default: ""
+            description: "UCX ref (branch/tag/commit) to build against. Empty uses the Dockerfile ARG UCX_VERSION default (kept per branch in one place); the nixl-ci-nightly job sets it to master."
         - bool:
             name: "build_dockers"
             default: false
@@ -349,6 +353,10 @@
             name: "conf_file"
             default: ".ci/jenkins/lib/test-dl-ep-matrix.yaml"  # DLCluster EP test matrix configuration
             description: "Job config file"
+        - string:
+            name: "UCX_VER"
+            default: ""
+            description: "UCX ref (branch/tag/commit) to build against. Empty uses the Dockerfile ARG UCX_VERSION default (kept per branch in one place); the nixl-ci-nightly job sets it to master."
         - bool:
             name: "build_dockers"
             default: false
@@ -410,6 +418,10 @@
             name: "conf_file"
             default: ".ci/jenkins/lib/test-dl-matrix.yaml"  # DLCluster test matrix configuration
             description: "Job config file"
+        - string:
+            name: "UCX_VER"
+            default: ""
+            description: "UCX ref (branch/tag/commit) to build against. Empty uses the Dockerfile ARG UCX_VERSION default (kept per branch in one place); the nixl-ci-nightly job sets it to master."
         - bool:
             name: "build_dockers"
             default: false
@@ -985,6 +997,60 @@
                     parent-credentials: true
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
+# Nightly UCX-master validation orchestrator.
+# Single scheduled job that fans out to the three GPU test jobs against UCX
+# master and emails one consolidated report (the one place nightly results are
+# collected and sent from).
+- job-template:
+    name: "{jjb_proj}-nightly"      # Will be expanded to 'nixl-ci-nightly'
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 30
+          num-to-keep: 100
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj={jjb_proj}-nightly
+            conf_file=.ci/jenkins/lib/nightly-matrix.yaml
+    description: >
+      <b>NIXL nightly UCX-master validation</b><br/>
+      Runs <code>nixl-ci-gpu</code>, <code>nixl-ci-dl-gpu</code> and
+      <code>nixl-ci-dl-gpu-ep</code> against UCX <code>master</code> nightly and
+      emails one consolidated pass/fail report.<br/>
+      <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: false
+    sandbox: true
+    # Single nightly schedule for the UCX-master validation of the GPU test jobs.
+    triggers:
+      - timed: "H 0 * * *"
+    parameters:
+      - string:
+          name: "UCX_REF"
+          default: "master"
+          description: "UCX ref to validate nightly (branch, tag, or commit). Passed to the GPU jobs as UCX_VER."
+      - string:
+          name: "MAIL_TO"
+          default: "nixl-ci-alerts@exchange.nvidia.com"
+          description: "Recipient(s) for the nightly failure report. Mail is sent only when a leg fails."
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            branches: ['{jjb_branch}']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/*"
+            browser: githubweb
+            browser-url: "{jjb_git}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"  # Main pipeline runs the nightly-matrix.yaml orchestrator
+
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
 - project:
@@ -1010,3 +1076,4 @@
         - "{jjb_proj}-build-wheel"  # Create build wheel job
         - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
         - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job
+        - "{jjb_proj}-nightly"  # Create nightly UCX-master validation orchestrator
