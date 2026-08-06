@@ -213,9 +213,11 @@ navigation:
         title-source: frontmatter
         slug: c
         collapsed: open-by-default
-      - page: Python
-        slug: nixl-python-api-generated
-        path: ./docs/generated/python/python-api.md
+      - folder: ./docs/generated/python
+        title: Python
+        title-source: frontmatter
+        slug: python
+        collapsed: open-by-default
       - section: Rust
         collapsed: open-by-default
         contents:

@@ -141,9 +141,13 @@ nixl_backend_handle = int
 
 
 class nixl_thread_sync_t(Enum):
+    # Disable synchronization
     NIXL_THREAD_SYNC_NONE = nixlBind.NIXL_THREAD_SYNC_NONE
+    # Serialize all access with an exclusive lock
     NIXL_THREAD_SYNC_STRICT = nixlBind.NIXL_THREAD_SYNC_STRICT
+    # Allow concurrent readers while serializing writers
     NIXL_THREAD_SYNC_RW = nixlBind.NIXL_THREAD_SYNC_RW
+    # Use the default synchronization mode
     NIXL_THREAD_SYNC_DEFAULT = nixlBind.NIXL_THREAD_SYNC_DEFAULT
 
 
