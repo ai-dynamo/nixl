@@ -30,16 +30,11 @@ constexpr size_t interior_size = 512;
 
 TEST(GdsMtOffsetTest, InteriorDescriptorUsesRegisteredBase) {
     alignas(4096) char registered[registered_size]{};
-    const uintptr_t descriptor_addr =
-        reinterpret_cast<uintptr_t>(registered) + interior_offset;
+    const uintptr_t descriptor_addr = reinterpret_cast<uintptr_t>(registered) + interior_offset;
 
     gdsMtResolvedBuffer resolved{};
     const nixl_status_t status = gdsMtResolveRegisteredBuffer(
-        registered,
-        sizeof(registered),
-        descriptor_addr,
-        interior_size,
-        resolved);
+        registered, sizeof(registered), descriptor_addr, interior_size, resolved);
 
     EXPECT_EQ(status, NIXL_SUCCESS);
     EXPECT_TRUE(resolved.devPtrBase == static_cast<void *>(registered));
@@ -50,12 +45,12 @@ TEST(GdsMtOffsetTest, ExactBaseUsesZeroOffset) {
     alignas(4096) char registered[registered_size]{};
 
     gdsMtResolvedBuffer resolved{};
-    const nixl_status_t status = gdsMtResolveRegisteredBuffer(
-        registered,
-        sizeof(registered),
-        reinterpret_cast<uintptr_t>(registered),
-        sizeof(registered),
-        resolved);
+    const nixl_status_t status =
+        gdsMtResolveRegisteredBuffer(registered,
+                                     sizeof(registered),
+                                     reinterpret_cast<uintptr_t>(registered),
+                                     sizeof(registered),
+                                     resolved);
 
     EXPECT_EQ(status, NIXL_SUCCESS);
     EXPECT_TRUE(resolved.devPtrBase == static_cast<void *>(registered));
@@ -67,11 +62,7 @@ TEST(GdsMtOffsetTest, DescriptorBeforeRegisteredBaseIsRejected) {
 
     gdsMtResolvedBuffer resolved{};
     const nixl_status_t status = gdsMtResolveRegisteredBuffer(
-        registered,
-        sizeof(registered),
-        reinterpret_cast<uintptr_t>(registered) - 1,
-        1,
-        resolved);
+        registered, sizeof(registered), reinterpret_cast<uintptr_t>(registered) - 1, 1, resolved);
 
     EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
 }
@@ -80,12 +71,12 @@ TEST(GdsMtOffsetTest, DescriptorPastRegisteredEndIsRejected) {
     alignas(4096) char registered[registered_size]{};
 
     gdsMtResolvedBuffer resolved{};
-    const nixl_status_t status = gdsMtResolveRegisteredBuffer(
-        registered,
-        sizeof(registered),
-        reinterpret_cast<uintptr_t>(registered) + 3584,
-        1024,
-        resolved);
+    const nixl_status_t status =
+        gdsMtResolveRegisteredBuffer(registered,
+                                     sizeof(registered),
+                                     reinterpret_cast<uintptr_t>(registered) + 3584,
+                                     1024,
+                                     resolved);
 
     EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
 }

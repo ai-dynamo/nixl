@@ -33,3 +33,57 @@ gds_mt_unit_test_dep = declare_dependency(
         gds_mt_backend_interface,
     ],
 )
+
+gds_mt_interior_pointer_test = executable(
+    'gds_mt_interior_pointer_test',
+    sources: [
+        'gds_mt_interior_pointer_test.cpp',
+        '../../../main.cpp',
+        '../../../common.cpp',
+    ],
+    include_directories: [
+        nixl_inc_dirs,
+        utils_inc_dirs,
+        include_directories('../../../'),
+        include_directories('../../../../../src/plugins/gds_mt'),
+    ],
+    cpp_args: [
+        '-DHAVE_CUDA',
+        '-DBUILD_DIR="' + meson.project_build_root() + '"',
+    ],
+    dependencies: [
+        nixl_dep,
+        nixl_infra,
+        nixl_common_dep,
+        cuda_dep,
+        cufile_dep,
+        taskflow_proj,
+        file_utils_interface,
+        gds_mt_backend_interface,
+        gtest_dep,
+        gmock_dep,
+        absl_strings_dep,
+        absl_time_dep,
+    ],
+    link_with: [nixl_build_lib],
+    install: true,
+)
+
+gds_mt_interior_pointer_test_env = environment()
+gds_mt_interior_pointer_test_env.set(
+    'NIXL_PLUGIN_DIR',
+    meson.project_build_root() / 'src/plugins/gds_mt',
+)
+gds_mt_interior_pointer_test_env.set(
+    'NIXL_GDS_TEST_DIR',
+    meson.current_build_dir(),
+)
+
+test(
+    'gds_mt_interior_pointer_integration',
+    gds_mt_interior_pointer_test,
+    env: gds_mt_interior_pointer_test_env,
+    is_parallel: false,
+    timeout: 600,
+    suite: 'gds_mt_integration',
+)
