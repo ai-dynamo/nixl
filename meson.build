@@ -411,8 +411,8 @@ if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
 
-if get_option('enable_rcache')
-    add_project_arguments('-DNIXL_UCX_ENABLE_RCACHE', language: 'cpp')
+if get_option('enable_cache')
+    add_project_arguments('-DNIXL_UCX_ENABLE_CACHE', language: 'cpp')
 endif
 
 # Configure NDEBUG for release builds
