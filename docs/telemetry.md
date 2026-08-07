@@ -136,6 +136,13 @@ The **Shared Memory Buffer** plug-in, contains the data per transaction event, w
 - Current design allows silent telemetry loss.
 - Current design does not support selective telemetry. All the telemetry events could be either ON or OFF.
 
+#### Per-transfer request telemetry
+
+The three-output C++ overload `getXferTelemetry(request, telemetry, backend_name)` returns the
+selected NIXL backend name without changing the ABI of `nixlXferTelemetry`. Python exposes the
+same value as `backendName` on the object returned by `get_xfer_telemetry()` (for example, `UCX`,
+`GDS`, or `POSIX`).
+
 ## Enabling Telemetry
 
 ### Runtime Configuration
