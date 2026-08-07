@@ -64,7 +64,14 @@ enum nixl_status_t {
     NIXL_ERR_NOT_SUPPORTED = -9,
     NIXL_ERR_REMOTE_DISCONNECT = -10,
     NIXL_ERR_CANCELED = -11,
-    NIXL_ERR_NO_TELEMETRY = -12
+    NIXL_ERR_NO_TELEMETRY = -12,
+    /**
+     * @brief Posted transfer exceeded nixlAgentConfig::xferStallTimeout.
+     *
+     * The transfer is not aborted and may still complete later, so the request handle and
+     * the memory it refers to stay owned by the caller.
+     */
+    NIXL_ERR_XFER_STALLED = -13
 };
 
 /**

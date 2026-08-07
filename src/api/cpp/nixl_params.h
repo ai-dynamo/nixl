@@ -37,6 +37,8 @@ struct nixlAgentConfig {
     static constexpr uint64_t kDefaultLthrDelayUs = 100000;
     static constexpr std::chrono::microseconds kDefaultEtcdWatchTimeout =
         std::chrono::microseconds(5000000);
+    static constexpr std::chrono::microseconds kDefaultXferStallTimeout =
+        std::chrono::microseconds(0);
 
     /** @var Enable progress thread */
     bool useProgThread = kDefaultUseProgThread;
@@ -69,6 +71,20 @@ struct nixlAgentConfig {
     std::chrono::microseconds etcdWatchTimeout = kDefaultEtcdWatchTimeout;
 
     /**
+     * @var Transfer stall timeout in microseconds. Any non-positive value, including zero
+     *      (the default), disables the check.
+     *      Upper bound on how long a posted transfer may stay NIXL_IN_PROG before
+     *      getXferStatus reports NIXL_ERR_XFER_STALLED. A transfer can stay NIXL_IN_PROG
+     *      indefinitely when the peer is alive but making no progress, or when the backend
+     *      has already failed the endpoint yet left the request outstanding. In both cases
+     *      nothing ever signals the handle, so without a deadline getXferStatus stays
+     *      NIXL_IN_PROG for the lifetime of the handle and a caller cannot distinguish a
+     *      slow transfer from a dead one. The handle and its memory stay owned by the
+     *      caller on this path, since a stalled transfer may still complete later.
+     */
+    std::chrono::microseconds xferStallTimeout = kDefaultXferStallTimeout;
+
+    /**
      * @brief  Default constructor.
      */
     nixlAgentConfig() = default;
@@ -84,6 +100,9 @@ struct nixlAgentConfig {
      * @param lthr_delay_us      Optional delay for listener thread in us
      * @param capture_telemetry  Optional flag to enable telemetry capture
      * @param etcd_watch_timeout Optional timeout for etcd watch operations in microseconds
+     * @param xfer_stall_timeout Optional timeout after which an in-progress transfer is
+     *                           reported as stalled, in microseconds. Non-positive
+     *                           values disable it.
      */
     explicit nixlAgentConfig(
         const bool use_prog_thread,
@@ -94,7 +113,8 @@ struct nixlAgentConfig {
         uint64_t pthr_delay_us = kDefaultPthrDelayUs,
         uint64_t lthr_delay_us = kDefaultLthrDelayUs,
         bool capture_telemetry = kDefaultCaptureTelemetry,
-        std::chrono::microseconds etcd_watch_timeout = kDefaultEtcdWatchTimeout) noexcept
+        std::chrono::microseconds etcd_watch_timeout = kDefaultEtcdWatchTimeout,
+        std::chrono::microseconds xfer_stall_timeout = kDefaultXferStallTimeout) noexcept
         : useProgThread(use_prog_thread),
           useListenThread(use_listen_thread),
           listenPort(port),
@@ -102,7 +122,8 @@ struct nixlAgentConfig {
           captureTelemetry(capture_telemetry),
           pthrDelay(pthr_delay_us),
           lthrDelay(lthr_delay_us),
-          etcdWatchTimeout(etcd_watch_timeout) {}
+          etcdWatchTimeout(etcd_watch_timeout),
+          xferStallTimeout(xfer_stall_timeout) {}
 };
 
 #endif
