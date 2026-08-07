@@ -225,7 +225,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
                   size_t len,
                   uint32_t flags,
                   nixlUcxReq *req,
-                  const am_deleter_t &deleter) {
+                  const am_deleter_t &deleter) const {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         // The endpoint is already in a failed state (e.g. the peer disconnected),
