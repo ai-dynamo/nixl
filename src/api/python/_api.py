@@ -303,12 +303,6 @@ class nixl_agent:
                         pass
             self._leaked_xfer_handles.clear()
 
-    """
-    @brief Get the list of available plugins.
-
-    @return List of plugin names.
-    """
-
     def _load_plugin_params(self, plugin: str):
         if plugin not in self.plugin_list:
             return
@@ -320,6 +314,23 @@ class nixl_agent:
             logger.warning("Failed to load params for plugin %s", plugin, exc_info=True)
 
     def get_plugin_list(self) -> list[str]:
+        """Get the available backend plugins discovered during agent initialization.
+
+        The C++ equivalent is `getAvailPlugins`.
+
+        Returns:
+            list[str]: Plugin names, for example `["UCX", "GDS", "POSIX"]`.
+
+        Examples:
+            ```python
+            plugins = agent.get_plugin_list()
+            # ['UCX', 'GDS', 'POSIX', ...]
+            ```
+
+        Notes:
+            The plugin list is cached during agent initialization. This method
+            returns the cached list without re-querying the system.
+        """
         return self.plugin_list
 
     """
