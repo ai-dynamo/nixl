@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,19 +30,16 @@ get_mooncake_options() {
 // Plugin type alias for convenience
 using mooncake_plugin_t = nixlBackendPluginCreator<nixlMooncakeEngine>;
 
-#ifdef STATIC_PLUGIN_MOONCAKE
+namespace {
 nixlBackendPlugin *
-createStaticMOONCAKEPlugin() {
+createMooncakePluginInstance() {
     return mooncake_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
 }
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return mooncake_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
-}
+} // namespace
 
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+#ifdef STATIC_PLUGIN_MOONCAKE
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticMOONCAKEPlugin, createMooncakePluginInstance)
+#else
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createMooncakePluginInstance)
 #endif

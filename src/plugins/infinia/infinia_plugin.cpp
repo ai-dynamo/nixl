@@ -24,25 +24,19 @@ using infinia_plugin_t = nixlBackendPluginCreator<infinia_engine>;
 
 static const nixl_mem_list_t supported_segments = {DRAM_SEG, VRAM_SEG, OBJ_SEG};
 
-#ifdef STATIC_PLUGIN_INFINIA
+namespace {
 nixlBackendPlugin *
-createStaticInfiniaPlugin() {
+createInfiniaPluginInstance() {
     return infinia_plugin_t::create(NIXL_PLUGIN_API_VERSION,
                                     INFINIA_PLUGIN_NAME,
                                     INFINIA_PLUGIN_VERSION,
                                     {},
                                     supported_segments);
 }
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return infinia_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                    INFINIA_PLUGIN_NAME,
-                                    INFINIA_PLUGIN_VERSION,
-                                    {},
-                                    supported_segments);
-}
+} // namespace
 
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+#ifdef STATIC_PLUGIN_INFINIA
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticInfiniaPlugin, createInfiniaPluginInstance)
+#else
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createInfiniaPluginInstance)
 #endif

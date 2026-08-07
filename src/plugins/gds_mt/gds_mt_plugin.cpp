@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,19 +24,16 @@
 // Plugin type alias for convenience
 using gds_mt_plugin_t = nixlBackendPluginCreator<nixlGdsMtEngine>;
 
-#ifdef STATIC_PLUGIN_GDS_MT
+namespace {
 nixlBackendPlugin *
-createStaticGDS_MTPlugin() {
+createGdsMtPluginInstance() {
     return gds_mt_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
 }
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return gds_mt_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "GDS_MT", "0.1.0", {}, {DRAM_SEG, VRAM_SEG, FILE_SEG});
-}
+} // namespace
 
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+#ifdef STATIC_PLUGIN_GDS_MT
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticGDS_MTPlugin, createGdsMtPluginInstance)
+#else
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createGdsMtPluginInstance)
 #endif
