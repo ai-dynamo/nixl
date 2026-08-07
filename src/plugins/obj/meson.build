@@ -41,7 +41,7 @@ compile_defs = []
 compile_flags = []
 
 if cuobj_dep.found()
-    message('Found CUObjClient Library. Enabling S3 Accelerated engines')
+    message('Found CUObjClient Library ' + cuobj_dep.version() + '. Enabling S3 Accelerated engines')
     obj_sources += [
         's3_accel/client.cpp',
         's3_accel/client.h',
@@ -54,7 +54,7 @@ if cuobj_dep.found()
     ]
     plugin_deps += [ cuobj_dep ]
 else
-    message('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
+    message('Could not find CUObjClient Library >= ' + cuobj_min_version + '. Skipping S3 Accelerated engines')
 endif
 
 if 'OBJ' in static_plugins
