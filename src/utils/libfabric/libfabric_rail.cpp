@@ -1107,9 +1107,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLi
                << " XFER_ID=" << NIXL_GET_XFER_ID_FROM_IMM(immediate_data)
                << " dest_addr=" << dest_addr << std::dec << " context=" << &req->ctx;
 
-    // Tracing: span covers the (possibly retried) control-message send. xfer_id
-    // is carried in the immediate data on this path; correlate on it.
-    const std::uint64_t send_xfer_id = NIXL_GET_XFER_ID_FROM_IMM(immediate_data);
+    [[maybe_unused]] const std::uint64_t send_xfer_id = NIXL_GET_XFER_ID_FROM_IMM(immediate_data);
     NIXL_TRACE_CORRELATION_SCOPE(tracer_, send_xfer_id);
     NIXL_TRACE_SCOPE(trace_span, tracer_, "nixl::libfabric.post_send", nixl::trace::Kind::CommSend);
     NIXL_TRACE_ATTR(trace_span, "rail_id", static_cast<std::int64_t>(rail_id));

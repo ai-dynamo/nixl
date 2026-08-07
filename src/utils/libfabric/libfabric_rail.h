@@ -599,7 +599,7 @@ private:
     std::function<void(uint64_t, uint16_t)> xferIdCallback;
     std::function<void(const std::string &)> handshakeCallback;
 
-    nixl::trace::Tracer *const tracer_;
+    [[maybe_unused]] nixl::trace::Tracer *const tracer_;
 
     // Separate request pools for optimal performance
     ControlRequestPool control_request_pool_;
