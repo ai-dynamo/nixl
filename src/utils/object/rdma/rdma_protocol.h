@@ -58,29 +58,6 @@ inline constexpr long rdma_connect_timeout_secs = 5;
 inline constexpr long rdma_timeout_secs = 10;
 
 /**
- * @brief Format the value of the x-amz-rdma-token header.
- *
- * The token is the cuObject RDMA descriptor (as produced by
- * cuMemObjGetRDMAToken) followed by the buffer's start address and size:
- *   "<descriptor>:<start_addr_hex>:<size_hex>"
- * The two trailing fields are 16-digit zero-padded lowercase hex; a compliant
- * S3 RDMA endpoint parses them with a base-16 parser, so the fixed field width
- * is preserved. The descriptor is opaque and of arbitrary length.
- * @param descriptor Opaque cuObject RDMA descriptor.
- * @param buf_addr Buffer start address.
- * @param size Buffer length in bytes.
- * @return The formatted x-amz-rdma-token header value.
- */
-[[nodiscard]] inline std::string
-formatRdmaToken(std::string_view descriptor, uint64_t buf_addr, uint64_t size) {
-    // Build via std::string so an opaque descriptor of any length is never
-    // truncated; only the two fixed-width hex fields use a small buffer.
-    char suffix[40];
-    std::snprintf(suffix, sizeof(suffix), ":%016" PRIx64 ":%016" PRIx64, buf_addr, size);
-    return std::string(descriptor) + suffix;
-}
-
-/**
  * @brief Map the server's x-amz-rdma-reply header value to a transfer outcome.
  *
  * This drives the GET path and decline detection. A GET success carries

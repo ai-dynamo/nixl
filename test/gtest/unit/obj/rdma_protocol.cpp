@@ -15,36 +15,12 @@ namespace {
 
 using namespace nixl_obj_rdma;
 
-TEST(RdmaProtocol, FormatTokenIsDescColonAddrColonSize) {
-    // Wire format: "<descriptor>:<addr:016x>:<size:016x>" (lowercase, zero-padded).
-    EXPECT_EQ(formatRdmaToken("DESC", 0x10, 0x200), "DESC:0000000000000010:0000000000000200");
-    EXPECT_EQ(formatRdmaToken("", 0, 0), ":0000000000000000:0000000000000000");
-}
-
-TEST(RdmaProtocol, FormatTokenHandlesFullWidthAndEmptyDescriptor) {
-    // Full 64-bit values render as 16 lowercase hex digits (no truncation).
-    EXPECT_EQ(formatRdmaToken("D", 0xffffffffffffffffULL, 0xdeadbeefcafef00dULL),
-              "D:ffffffffffffffff:deadbeefcafef00d");
-    // An empty descriptor produces a leading ':' (no crash).
-    EXPECT_EQ(formatRdmaToken(std::string_view{}, 0x1, 0x2), ":0000000000000001:0000000000000002");
-}
-
 TEST(RdmaProtocol, ParseReplyRejectsOutOfRangeCodes) {
     // Values outside the HTTP status range are malformed, so a negative reply
     // cannot alias rdma_not_supported (-2) nor a huge value look like success.
     EXPECT_EQ(parseRdmaReply("-2"), 0);
     EXPECT_EQ(parseRdmaReply("99"), 0);
     EXPECT_EQ(parseRdmaReply("600"), 0);
-}
-
-TEST(RdmaProtocol, FormatTokenDoesNotTruncateLongDescriptor) {
-    // The descriptor is opaque and has no fixed length; it must never be cut off
-    // (a fixed stack buffer used to truncate it). The suffix is always
-    // ":<16 hex>:<16 hex>" = 34 chars.
-    const std::string desc(1024, 'a');
-    const std::string token = formatRdmaToken(desc.c_str(), 0xabc, 0xdef);
-    EXPECT_EQ(token, desc + ":0000000000000abc:0000000000000def");
-    EXPECT_EQ(token.size(), desc.size() + 34);
 }
 
 TEST(RdmaProtocol, ParseReplySuccessCodes) {

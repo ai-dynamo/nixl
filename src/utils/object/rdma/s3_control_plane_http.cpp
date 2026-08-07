@@ -185,13 +185,13 @@ struct S3RdmaControlPlane::Impl {
     sendRdmaRequest(Aws::Http::HttpMethod method,
                     const Aws::Http::URI &uri,
                     const char *token,
-                    uint64_t buf_addr,
-                    uint64_t size,
                     const std::function<void(Aws::Http::HttpRequest &)> &set_op_headers) const {
         auto req = Aws::Http::CreateHttpRequest(
             uri, method, Aws::Utils::Stream::DefaultResponseStreamFactoryMethod);
         req->SetHeaderValue("x-amz-content-sha256", unsigned_payload);
-        req->SetHeaderValue(amz_rdma_token, formatRdmaToken(token, buf_addr, size).c_str());
+        // The token is the RDMA descriptor verbatim; addr/size are its own
+        // leading fields, so it is sent as-is (no append).
+        req->SetHeaderValue(amz_rdma_token, token);
         set_op_headers(*req);
         signV4(*req, access_key, secret_key, session_token, region);
         return http->MakeRequest(req);
@@ -284,10 +284,7 @@ S3RdmaControlPlane::S3RdmaControlPlane(const nixl_b_params_t *custom_params) : i
 S3RdmaControlPlane::~S3RdmaControlPlane() = default;
 
 ssize_t
-S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx,
-                            const char *token,
-                            uint64_t buf_addr,
-                            uint64_t size) {
+S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t size) {
     // A 0-byte PUT would mint a 0-length RDMA region and move no data; the RDMA
     // path is meaningless for it. Reject up front — a legitimate zero-byte object
     // PUT must go through the ordinary HTTP path in the caller.
@@ -308,12 +305,7 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx,
         }
 
         auto resp = impl_->sendRdmaRequest(
-            Aws::Http::HttpMethod::HTTP_PUT,
-            uri,
-            token,
-            buf_addr,
-            size,
-            [&ctx](Aws::Http::HttpRequest &req) {
+            Aws::Http::HttpMethod::HTTP_PUT, uri, token, [&ctx](Aws::Http::HttpRequest &req) {
                 req.SetHeaderValue("content-type", "application/octet-stream");
                 req.SetContentLength("0");
                 if (!ctx.checksumCrc64nvme.empty()) {
@@ -370,7 +362,6 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx,
 ssize_t
 S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
                             const char *token,
-                            uint64_t buf_addr,
                             uint64_t size,
                             uint64_t offset) {
     // A 0-byte transfer would mint/register a 0-length RDMA region; reject it up
@@ -392,12 +383,9 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
             "bytes=" + std::to_string(offset) + "-" + std::to_string(offset + size - 1);
 
         auto resp = impl_->sendRdmaRequest(
-            Aws::Http::HttpMethod::HTTP_GET,
-            uri,
-            token,
-            buf_addr,
-            size,
-            [&range](Aws::Http::HttpRequest &req) { req.SetHeaderValue("range", range.c_str()); });
+            Aws::Http::HttpMethod::HTTP_GET, uri, token, [&range](Aws::Http::HttpRequest &req) {
+                req.SetHeaderValue("range", range.c_str());
+            });
         if (!resp) {
             NIXL_ERROR << "rdmaGet: MakeRequest returned null for key=" << ctx.object;
             return rdma_error;

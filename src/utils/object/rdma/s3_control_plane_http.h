@@ -76,20 +76,20 @@ public:
     /**
      * @brief Issue the signed control-plane PUT carrying the RDMA token.
      * @param ctx Request context (bucket/object, multipart, checksum, etag out).
-     * @param token RDMA token minted for the buffer.
-     * @param buf_addr Start address of the source buffer.
+     * @param token RDMA descriptor (carries the buffer address and size in its
+     *        own leading fields; sent verbatim as x-amz-rdma-token).
      * @param size Number of bytes to transfer.
      * @return Bytes transferred (>0) on RDMA success, rdma_not_supported if the
      *         server declined, or rdma_error on transport failure.
      */
     [[nodiscard]] ssize_t
-    rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t buf_addr, uint64_t size);
+    rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t size);
 
     /**
      * @brief Issue the signed control-plane GET carrying the RDMA token.
      * @param ctx Request context (bucket/object, checksum, etag out).
-     * @param token RDMA token minted for the buffer.
-     * @param buf_addr Start address of the destination buffer.
+     * @param token RDMA descriptor (carries the buffer address and size in its
+     *        own leading fields; sent verbatim as x-amz-rdma-token).
      * @param size Number of bytes to fetch.
      * @param offset Byte offset into the object; a byte-range request is made
      *        (server replies 206) when it is non-zero.
@@ -97,11 +97,7 @@ public:
      *         rdma_error on failure.
      */
     [[nodiscard]] ssize_t
-    rdmaGet(S3RdmaClientCtx &ctx,
-            const char *token,
-            uint64_t buf_addr,
-            uint64_t size,
-            uint64_t offset);
+    rdmaGet(S3RdmaClientCtx &ctx, const char *token, uint64_t size, uint64_t offset);
 
 private:
     struct Impl;

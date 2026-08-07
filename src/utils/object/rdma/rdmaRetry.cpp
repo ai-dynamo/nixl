@@ -29,7 +29,7 @@ rdmaPutWithRetry(SharedCuObjClient &rdma,
             ret = -1;
             continue; // transient mint failure: retry
         }
-        ret = cp.rdmaPut(ctx, token, reinterpret_cast<uint64_t>(buf), size);
+        ret = cp.rdmaPut(ctx, token, size);
         rdma.putToken(token);
         if (ret > 0 || ret == rdma_not_supported) {
             break;
@@ -58,7 +58,7 @@ rdmaGetWithRetry(SharedCuObjClient &rdma,
             ret = -1;
             continue; // transient mint failure: retry
         }
-        ret = cp.rdmaGet(ctx, token, reinterpret_cast<uint64_t>(buf), size, offset);
+        ret = cp.rdmaGet(ctx, token, size, offset);
         rdma.putToken(token);
         if (ret > 0 || ret == rdma_not_supported) {
             break;
