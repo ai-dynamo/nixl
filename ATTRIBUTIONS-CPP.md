@@ -737,7 +737,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## libxml2 - 2.9.14
+## libxml2 - 2.15
 
 - **Repository URL**: https://gitlab.gnome.org/GNOME/libxml2
 - **License URL**: https://gitlab.gnome.org/GNOME/libxml2/-/blob/master/Copyright
@@ -1823,7 +1823,7 @@ This file contains the copying permission notices for various files in the
   72 requirements of the license of GCC.
   73
   ```
-## ucx - 1.21.x
+## ucx - 1.22.x
 
 - **Repository URL**: https://github.com/openucx/ucx/
 - **License URL**: https://github.com/openucx/ucx/blob/master/LICENSE

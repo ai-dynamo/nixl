@@ -22,9 +22,6 @@
 #include <optional>
 #include <set>
 
-#include <absl/strings/ascii.h>
-#include <absl/strings/str_split.h>
-
 #include "nixl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
@@ -35,6 +32,7 @@
 #include "common/nixl_log.h"
 #include "common/operators.h"
 #include "common/hw_info.h"
+#include "common/str_util.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "tracing/trace.h"
@@ -81,8 +79,7 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
 
     static const std::array<std::string, 3> nixl_post_status_str = {
         " Posted", " Posted and Completed", " Completed"};
-    auto duration = std::chrono::duration_cast<chrono_period_us_t>(
-        std::chrono::steady_clock::now() - telemetry.startTime);
+    auto duration = timer.elapsed();
     if (stat_status == NIXL_TELEMETRY_POST) {
         telemetry.postDuration = duration;
     } else if (stat_status == NIXL_TELEMETRY_POST_AND_FINISH) {
@@ -130,12 +127,7 @@ resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under
     if (explicit_spec) {
         // Trim entries so a padded value like "chakra, nvtx" matches backend
         // names; the set dedups them.
-        for (const absl::string_view raw : absl::StrSplit(*explicit_spec, ',')) {
-            const absl::string_view name = absl::StripAsciiWhitespace(raw);
-            if (!name.empty()) {
-                backends.emplace(name);
-            }
-        }
+        backends = nixl::str::splitStrippedSet(*explicit_spec);
         // Set-but-empty (or all-blank) is an explicit "off" that must beat the
         // nsys auto-enable below.
         explicit_off = backends.empty();
@@ -1083,12 +1075,15 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
 
     // Check if the remote agent connection info is still valid
     // (assuming cost estimation requires connection info like transfers)
-    if (!req_hndl->remoteAgent.empty() &&
-        (data->remoteSections_.count(req_hndl->remoteAgent) == 0)) {
-        NIXL_ERROR_FUNC << "invalid request handle, remote agent was invalidated "
-                           "after transfer request creation";
-        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
-        return NIXL_ERR_NOT_FOUND;
+    if (!req_hndl->remoteAgent.empty()) {
+        const auto sec_it = data->remoteSections_.find(req_hndl->remoteAgent);
+        if (sec_it == data->remoteSections_.end() ||
+            sec_it->second.getGeneration() != req_hndl->remoteGeneration_) {
+            NIXL_ERROR_FUNC << "invalid request handle, remote agent was invalidated "
+                               "after transfer request creation";
+            data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
+            return NIXL_ERR_NOT_FOUND;
+        }
     }
 
     if (!req_hndl->engine) {
@@ -1140,13 +1135,24 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     if (data->telemetry_) {
         req_hndl->telemetry.startTime = std::chrono::steady_clock::now();
+        req_hndl->timer.restart();
     }
 
     std::shared_lock<nixlLock> read_lock(data->lock);
     // Check if the remote was invalidated before post/repost
-    if (data->remoteSections_.count(req_hndl->remoteAgent) == 0) {
+    const auto sec_it = data->remoteSections_.find(req_hndl->remoteAgent);
+    if (sec_it == data->remoteSections_.end()) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated after transfer request creation";
+        data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
+        return NIXL_ERR_NOT_FOUND;
+    }
+    if (sec_it->second.getGeneration() != req_hndl->remoteGeneration_) {
+        NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
+                        << "' was re-registered after transfer request creation; "
+                           "refusing to post a stale-generation handle (created gen "
+                        << req_hndl->remoteGeneration_ << ", live gen "
+                        << sec_it->second.getGeneration() << ")";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
@@ -1880,8 +1886,12 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
 
     nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
+    nixl_opt_b_args_t opt_args;
+    if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
+    }
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    const std::lock_guard lock_guard(data->lock);
     for (size_t i = 0; i < desc_count; ++i) {
         const auto &desc = dlist[i];
         if (desc.remoteAgent == nixl_null_agent) {
@@ -1929,11 +1939,6 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixl_opt_b_args_t opt_args;
-    if (extra_params) {
-        opt_args.customParam = extra_params->customParam;
-    }
-
     const auto status = engine->prepMemView(remote_meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
         data->mvhToEngine.emplace(mvh, *engine);
@@ -1954,8 +1959,12 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
 
     nixl_meta_dlist_t meta_dlist{mem_type};
     nixlBackendEngine *engine{nullptr};
+    nixl_opt_b_args_t opt_args;
+    if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
+    }
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    const std::lock_guard lock_guard(data->lock);
     const auto backends = data->getBackends(extra_params, data->localSection_, mem_type);
     for (const auto &backend : backends) {
         const auto status = data->localSection_.populate(dlist, backend, meta_dlist);
@@ -1972,11 +1981,6 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    nixl_opt_b_args_t opt_args;
-    if (extra_params) {
-        opt_args.customParam = extra_params->customParam;
-    }
-
     const auto status = engine->prepMemView(meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
         data->mvhToEngine.emplace(mvh, *engine);
@@ -1990,8 +1994,7 @@ nixlAgent::releaseMemView(nixlMemViewH mvh) const {
     NIXL_TRACE_SCOPE(
         trace_span, data->tracer_.get(), "nixl::releaseMemView", nixl::trace::Kind::Generic);
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-
+    const std::lock_guard lock_guard(data->lock);
     const auto it = data->mvhToEngine.find(mvh);
     if (it == data->mvhToEngine.end()) {
         NIXL_WARN << "Invalid memory view handle: " << mvh;

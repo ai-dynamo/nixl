@@ -24,7 +24,7 @@ ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
-ARG UCX_REF="v1.21.x"
+ARG UCX_REF="v1.22.x"
 ARG UCX_SONAME_SUFFIX=""
 ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
@@ -35,12 +35,25 @@ ARG NIXL_PREFIX="/usr/local/nixl"
 ARG NIXL_PLUGIN_DIR="$NIXL_PREFIX/lib/$ARCH-linux-gnu/plugins"
 ARG NPROC
 ARG WHL_DEFAULT_PYTHON_VERSIONS="3.12"
-ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG APT_MIRROR=""
+
+# Optional apt mirror override, e.g. for CI environments with an internal
+# Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
+RUN if [ -n "$APT_MIRROR" ]; then \
+        . /etc/os-release && \
+        printf '%s\n' \
+            'Types: deb' \
+            "URIs: $APT_MIRROR" \
+            "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+            'Components: main restricted universe multiverse' \
+            'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
+        grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
+    fi
 
 # Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
@@ -150,7 +163,7 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
 
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
-     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 CXX="g++ -std=c++20" && \
+     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
      cd ..
 
 RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
@@ -316,21 +329,10 @@ ENV PYTHONPATH=/workspace/nixl/build/examples/device/ep
 
 RUN cd src/bindings/rust && cargo build --release --locked
 
-# Build wheel using the build-wheel.sh script for better UCX plugin bundling and library management
-RUN mkdir -p dist && \
-    if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAGS="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; else EP_BUILD_FLAGS=""; fi && \
-    if [ -n "$UCX_SONAME_SUFFIX" ]; then \
-        UCX_PLUGIN_SONAME_FLAG="--plugin-soname-suffix $UCX_SONAME_SUFFIX"; \
-    else UCX_PLUGIN_SONAME_FLAG=""; fi && \
-    ./contrib/build-wheel.sh \
-    --python-version $DEFAULT_PYTHON_VERSION \
-    --platform manylinux_2_39_$ARCH \
-    --ucx-plugins-dir $UCX_PLUGIN_DIR \
-    --nixl-plugins-dir $NIXL_PLUGIN_DIR \
-    --output-dir /workspace/nixl/dist \
-    $UCX_PLUGIN_SONAME_FLAG \
-    $EP_BUILD_FLAGS
-
-RUN cp build/src/bindings/python/nixl-meta/nixl-*.whl dist/
-RUN uv pip install --system \
-    dist/nixl*cp${DEFAULT_PYTHON_VERSION//./}*.whl dist/nixl-*-none-any.whl
+# Install the python bindings from source, built against the container's own
+# torch - works on any base, no dependency on public torch wheels.
+# Redistributable wheels are produced by the wheel CI pipelines, not here.
+RUN CUDA_MAJOR=$(echo "${CUDA_VERSION}" | cut -d. -f1) && \
+    ./contrib/tomlutil.py --wheel-name "nixl-cu${CUDA_MAJOR}" pyproject.toml && \
+    uv pip install --system --no-build-isolation . && \
+    uv pip install --system build/src/bindings/python/nixl-meta/nixl-*.whl
