@@ -22,7 +22,11 @@
 #include "common/nixl_log.h"
 
 #ifdef CUDA_FOUND
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#else
 #include <cuda_runtime.h>
+#endif
 #endif
 
 #include <cmath>
@@ -312,7 +316,7 @@ testBasicTopology() {
         topology.printTopologyInfo();
 
         // Test GPU-specific queries only if GPUs are detected
-        int num_gpus = topology.getNumNvidiaAccel();
+        int num_gpus = topology.getNumNvidiaAccel() + topology.getNumAmdAccel();
         if (num_gpus > 0) {
             NIXL_INFO << "3. Testing GPU-specific queries (detected " << num_gpus << " GPUs)...";
             int test_gpus = std::min(num_gpus, 3); // Test up to 3 GPUs or all available
@@ -320,7 +324,12 @@ testBasicTopology() {
 #ifdef CUDA_FOUND
                 // Get PCI bus ID for this GPU
                 cudaDeviceProp prop;
-                cudaGetDeviceProperties(&prop, gpu_id);
+                cudaError_t err = cudaGetDeviceProperties(&prop, gpu_id);
+                if (err != cudaSuccess) {
+                    NIXL_WARN << "   Failed to get properties for GPU " << gpu_id << ": "
+                              << cudaGetErrorString(err);
+                    continue;
+                }
 
                 char pci_bus_id[32];
                 snprintf(pci_bus_id,
