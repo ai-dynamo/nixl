@@ -21,12 +21,13 @@ SharedCuObjClient::SharedCuObjClient() {
         connected_ = client_ && client_->isConnected();
         if (connected_) {
             NIXL_INFO << "S3 RDMA fabric connected (cuObject)";
-        } else {
-            NIXL_INFO << "S3 RDMA fabric not connected; transfers use HTTP";
         }
+        // A not-connected fabric is not logged here and does not imply an HTTP
+        // fallback: instance() returns nullptr and the caller decides (a hard
+        // error under accelerated=true).
     }
     catch (const std::exception &e) {
-        NIXL_WARN << "cuObjClient init failed: " << e.what() << "; transfers use HTTP";
+        NIXL_WARN << "cuObjClient init failed: " << e.what();
         connected_ = false;
     }
 }
