@@ -112,6 +112,7 @@ python3 - "${stage_dir}" "${repo_root}" <<'PYTHON'
 import ast
 from pathlib import Path
 import re
+import shutil
 import sys
 
 output_dir = Path(sys.argv[1])
@@ -239,13 +240,55 @@ write_page(
     "Modules Index",
     "\n".join(module_lines) or "No documented modules were found.",
 )
+
+# Fern does not resolve Handsdown's relative .md links within an auto-generated
+# folder. Normalize page paths and replace those links with absolute Fern routes.
+route_root = "/nixl/api-reference-generated/python"
+source_pages = sorted(output_dir.rglob("*.md"))
+destinations = {}
+for source_path in source_pages:
+    relative_path = source_path.relative_to(output_dir)
+    destinations[relative_path.as_posix()] = Path(
+        *(part.lower().replace("_", "-") for part in relative_path.parts)
+    )
+
+normalized_dir = output_dir.with_name(f"{output_dir.name}-fern")
+link_pattern = re.compile(r"\]\(([^)#]+\.md)(#[^)]*)?\)")
+for source_path in source_pages:
+    relative_path = source_path.relative_to(output_dir)
+    content = source_path.read_text(encoding="utf-8")
+
+    def replace_link(match: re.Match[str]) -> str:
+        target_path = (source_path.parent / match.group(1)).resolve()
+        try:
+            target_relative = target_path.relative_to(output_dir.resolve()).as_posix()
+        except ValueError as error:
+            raise RuntimeError(
+                f"generated link escapes the Python documentation: {source_path}: {match.group(1)}"
+            ) from error
+        target_destination = destinations.get(target_relative)
+        if target_destination is None:
+            raise RuntimeError(f"unresolved generated link in {source_path}: {match.group(1)}")
+
+        route_parts = target_destination.with_suffix("").parts
+        if route_parts[-1] == "index":
+            route_parts = route_parts[:-1]
+        route = "/".join((route_root.rstrip("/"), *route_parts))
+        return f"]({route}{match.group(2) or ''})"
+
+    destination_path = normalized_dir / destinations[relative_path.as_posix()]
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    destination_path.write_text(link_pattern.sub(replace_link, content), encoding="utf-8")
+
+shutil.rmtree(output_dir)
+normalized_dir.rename(output_dir)
 PYTHON
 
 # Guard against malformed annotations and ensure every generated API group is indexed.
-python_api_page="${stage_dir}/Files/src/api/python/api.md"
-python_logging_page="${stage_dir}/Files/src/api/python/logging.md"
-ep_buffer_page="${stage_dir}/Files/examples/device/ep/nixl_ep/buffer.md"
-ep_utils_page="${stage_dir}/Files/examples/device/ep/nixl_ep/utils.md"
+python_api_page="${stage_dir}/files/src/api/python/api.md"
+python_logging_page="${stage_dir}/files/src/api/python/logging.md"
+ep_buffer_page="${stage_dir}/files/examples/device/ep/nixl-ep/buffer.md"
+ep_utils_page="${stage_dir}/files/examples/device/ep/nixl-ep/utils.md"
 
 grep -Fq "agent_name: str" "${python_api_page}" ||
     fail "generated page is missing the nixl_agent constructor"
@@ -257,11 +300,11 @@ grep -Fq "### Buffer().dispatch" "${ep_buffer_page}" ||
     fail "generated page is missing the Expert Parallel Buffer API"
 grep -Fq "## EventOverlap" "${ep_utils_page}" ||
     fail "generated page is missing the Expert Parallel utilities API"
-grep -Fq "nixl_thread_sync_t" "${stage_dir}/index_classes.md" ||
+grep -Fq "nixl_thread_sync_t" "${stage_dir}/index-classes.md" ||
     fail "classes index is missing the Python bindings API"
-grep -Fq "Buffer" "${stage_dir}/index_classes.md" ||
+grep -Fq "Buffer" "${stage_dir}/index-classes.md" ||
     fail "classes index is missing the Expert Parallel API"
-grep -Fq "nixl_ep.buffer" "${stage_dir}/index_modules.md" ||
+grep -Fq "nixl_ep.buffer" "${stage_dir}/index-modules.md" ||
     fail "modules index is missing the Expert Parallel package"
 if grep -Fq "self self" "${python_api_page}"; then
     fail "generated page contains a malformed self parameter"
