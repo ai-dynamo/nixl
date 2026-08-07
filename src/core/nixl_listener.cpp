@@ -793,7 +793,7 @@ nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd
 }
 
 nixl_status_t
-nixlAgentData::invalidateRemoteData(const std::string &remote_name, uint64_t generation) {
+nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
     lock.assertHeld();
 
     if (remote_name == name_) {
@@ -802,7 +802,7 @@ nixlAgentData::invalidateRemoteData(const std::string &remote_name, uint64_t gen
     }
 
     const auto sec_it = remoteSections_.find(remote_name);
-    if (sec_it == remoteSections_.end() || sec_it->second->getGeneration() != generation) {
+    if (sec_it == remoteSections_.end()) {
         return NIXL_ERR_NOT_FOUND;
     }
 

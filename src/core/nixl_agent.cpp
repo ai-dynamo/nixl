@@ -102,7 +102,7 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
 
 nixlDlistH::nixlDlistH(const std::string &remote_agent,
                        descs_t &&descs,
-                       const std::weak_ptr<nixlRemoteSection> &remote_section_ref)
+                       const nixl_remote_section_weak_t &remote_section_ref)
     : remoteAgent(remote_agent),
       descs(std::move(descs)),
       remoteSectionRef(remote_section_ref) {}
@@ -1165,8 +1165,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
             read_lock.unlock();
             NIXL_LOCK_GUARD(data->lock);
-            if (auto section = req_hndl->remoteSectionRef.lock()) {
-                data->invalidateRemoteData(req_hndl->remoteAgent, section->getGeneration());
+            if (!req_hndl->remoteSectionRef.expired()) {
+                data->invalidateRemoteData(req_hndl->remoteAgent);
             }
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
@@ -1219,8 +1219,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
             NIXL_LOCK_GUARD(data->lock);
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
-            if (auto section = req_hndl->remoteSectionRef.lock()) {
-                data->invalidateRemoteData(req_hndl->remoteAgent, section->getGeneration());
+            if (!req_hndl->remoteSectionRef.expired()) {
+                data->invalidateRemoteData(req_hndl->remoteAgent);
             }
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
@@ -1264,9 +1264,9 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
                 read_lock.unlock();
                 NIXL_LOCK_GUARD(data->lock);
-                if (auto section = req_hndl->remoteSectionRef.lock()) {
-                data->invalidateRemoteData(req_hndl->remoteAgent, section->getGeneration());
-            }
+                if (!req_hndl->remoteSectionRef.expired()) {
+                    data->invalidateRemoteData(req_hndl->remoteAgent);
+                }
                 return NIXL_ERR_REMOTE_DISCONNECT;
             } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
