@@ -16,7 +16,6 @@ tool_cache="${NIXL_DOC_TOOLS_CACHE:-/tmp/nixl-doc-tools}"
 rust_toolchain="${NIXL_RUSTDOC_TOOLCHAIN:-${RUST_TOOLCHAIN_DEFAULT}}"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/nixl-rust-docs.XXXXXX")"
 stage_parent=""
-stage_dir=""
 
 cleanup() {
     rm -rf -- "${work_dir}"
@@ -57,7 +56,6 @@ elif command -v cargo-doc-md >/dev/null 2>&1; then
 else
     cargo_doc_md_root="${tool_cache}/cargo-doc-md-${CARGO_DOC_MD_VERSION}"
     cargo_doc_md_bin="${cargo_doc_md_root}/bin/cargo-doc-md"
-
     if [[ ! -x "${cargo_doc_md_bin}" ]]; then
         echo "Installing cargo-doc-md v${CARGO_DOC_MD_VERSION}..."
         cargo "+${rust_toolchain}" install cargo-doc-md \
@@ -71,6 +69,7 @@ fi
 
 cargo_target="${work_dir}/target"
 converted_output="${work_dir}/markdown"
+organized_output="${work_dir}/organized"
 
 echo "Generating rustdoc JSON for nixl-sys..."
 (
@@ -87,7 +86,7 @@ echo "Generating rustdoc JSON for nixl-sys..."
 rustdoc_json="${cargo_target}/doc/nixl_sys.json"
 [[ -s "${rustdoc_json}" ]] || fail "rustdoc did not generate the expected JSON file"
 
-echo "Converting rustdoc JSON to Markdown..."
+echo "Converting rustdoc JSON to module-oriented Markdown..."
 "${cargo_doc_md_bin}" \
     --json "${rustdoc_json}" \
     --output "${converted_output}"
@@ -95,85 +94,111 @@ echo "Converting rustdoc JSON to Markdown..."
 generated_crate="${converted_output}/nixl_sys"
 [[ -d "${generated_crate}" ]] || fail "cargo-doc-md did not generate the nixl_sys documentation"
 
-# Fern cannot resolve a local link when a Markdown file and directory share the
-# same basename. Preserve the module hierarchy while disambiguating this page.
-mv -- "${generated_crate}/descriptors.md" "${generated_crate}/descriptor-types.md"
-echo "Making generated Markdown MDX-compatible..."
-python3 - "${generated_crate}" <<'PYTHON'
+echo "Applying Fern compatibility fixes..."
+python3 - "${generated_crate}" "${organized_output}" <<'PYTHON'
 from pathlib import Path
+import re
 import sys
 
-output_dir = Path(sys.argv[1])
-index = output_dir / "index.md"
-content = index.read_text(encoding="utf-8")
-content = content.replace("](descriptors.md)", "](descriptor-types.md)")
-index.write_text(content, encoding="utf-8")
+source_dir = Path(sys.argv[1])
+output_dir = Path(sys.argv[2])
+route_root = "/nixl/api-reference-generated/rust"
+tick = chr(96)
 
-for path in sorted(output_dir.rglob("*.md")):
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+
+def make_mdx_compatible(content: str) -> str:
     output = []
     in_fence = False
-
-    for line in lines:
-        if line.lstrip().startswith("```"):
+    for line in content.splitlines(keepends=True):
+        if line.lstrip().startswith(tick * 3):
             in_fence = not in_fence
             output.append(line)
             continue
-
         if in_fence:
             output.append(line)
             continue
 
-        # MDX treats raw Rust generic syntax as JSX. Escape angle brackets in
-        # prose while preserving fenced and inline code spans.
-        segments = line.split("`")
-        for segment_index in range(0, len(segments), 2):
-            segment = segments[segment_index]
-            line_break = "__NIXL_CARGO_DOC_MD_LINE_BREAK__"
-            segment = segment.replace("<br>", line_break)
-            segment = segment.replace("<br />", line_break)
+        segments = line.split(tick)
+        for index in range(0, len(segments), 2):
+            marker = "__NIXL_LINE_BREAK__"
+            segment = segments[index].replace("<br>", marker).replace("<br />", marker)
             segment = segment.replace("<", "&lt;").replace(">", "&gt;")
-            segments[segment_index] = segment.replace(line_break, "<br />")
+            segments[index] = segment.replace(marker, "<br />")
+        output.append(tick.join(segments))
+    return "".join(output)
 
-        output.append("`".join(segments))
 
-    path.write_text("".join(output), encoding="utf-8")
+source_pages = [
+    path for path in sorted(source_dir.rglob("*.md"))
+    if path.relative_to(source_dir) != Path("bindings.md")
+]
+destinations = {}
+for source_path in source_pages:
+    relative = source_path.relative_to(source_dir)
+    fern_relative = Path(*(part.replace("_", "-") for part in relative.parts))
+    module_dir = source_dir / relative.with_suffix("")
+    destination = fern_relative.with_suffix("") / "index.md" if module_dir.is_dir() else fern_relative
+    destinations[relative.as_posix()] = destination
+
+link_pattern = re.compile(r"\]\(([^)#]+\.md)(#[^)]*)?\)")
+for source_path in source_pages:
+    relative = source_path.relative_to(source_dir)
+    destination = destinations[relative.as_posix()]
+    content = source_path.read_text(encoding="utf-8")
+
+    if relative == Path("index.md"):
+        content = re.sub(
+            r"\n### \[`bindings`\]\(bindings\.md\)\n\n\*[^\n]+\*\n",
+            "\n",
+            content,
+        )
+        title = "Rust API Reference"
+    else:
+        heading = re.search(r"(?m)^# Module: (.+)$", content)
+        if heading is None:
+            raise RuntimeError(f"module heading is missing from {source_path}")
+        title = heading.group(1)
+        content = content[:heading.start()] + content[heading.end():]
+
+    def replace_link(match: re.Match[str]) -> str:
+        target = (relative.parent / match.group(1)).as_posix()
+        target_destination = destinations.get(target)
+        if target_destination is None:
+            raise RuntimeError(f"unresolved generated link in {source_path}: {target}")
+        route_parts = target_destination.with_suffix("").parts
+        if route_parts[-1] == "index":
+            route_parts = route_parts[:-1]
+        route_parts = tuple(part.replace("_", "-") for part in route_parts)
+        route = "/".join((route_root.rstrip("/"), *route_parts))
+        return f"]({route}{match.group(2) or ''})"
+
+    content = link_pattern.sub(replace_link, content)
+    content = re.sub(r"(?m)^## nixl_sys(?:::[^\n:]+)*::([^:\n]+)$", r"## \1", content)
+    body = make_mdx_compatible(content.strip())
+    destination_path = output_dir / destination
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    destination_path.write_text(
+        f"---\ntitle: {title}\n---\n\n{body}\n",
+        encoding="utf-8",
+    )
 PYTHON
 
-expected_pages=(
-    index.md
-    nixl_sys.md
-    agent.md
-    descriptor-types.md
-    descriptors/query.md
-    descriptors/reg.md
-    descriptors/sync_manager.md
-    descriptors/xfer.md
-    descriptors/xfer_dlist_handle.md
-    notify.md
-    utils/params.md
-    utils/string_list.md
-    xfer.md
-)
-
-for page in "${expected_pages[@]}"; do
-    [[ -s "${generated_crate}/${page}" ]] ||
-        fail "expected generated page is missing or empty: ${page}"
-done
-
-grep -Fq "nixl_sys::agent::Agent" "${generated_crate}/agent.md" ||
+grep -Fq "## Agent" "${organized_output}/agent.md" ||
     fail "generated Agent API is missing"
-grep -Fq "nixl_sys::agent::AgentConfig" "${generated_crate}/agent.md" ||
-    fail "generated AgentConfig API is missing"
-grep -Fq "nixl_sys::descriptors::MemType" "${generated_crate}/descriptor-types.md" ||
-    fail "generated descriptor API is missing"
-grep -Fq "nixl_sys::xfer::XferRequest" "${generated_crate}/xfer.md" ||
-    fail "generated transfer API is missing"
+grep -Fq "fn new(name: &str)" "${organized_output}/agent.md" ||
+    fail "generated Agent methods are missing"
+grep -Fq "## MemType" "${organized_output}/descriptors/index.md" ||
+    fail "generated MemType API is missing"
+grep -Fq "## XferRequest" "${organized_output}/xfer.md" ||
+    fail "generated XferRequest API is missing"
+if [[ -e "${organized_output}/bindings.md" ]]; then
+    fail "private raw FFI bindings leaked into the generated documentation"
+fi
 
 mkdir -p -- "${output_parent}"
 stage_parent="$(mktemp -d "${output_parent}/.rust.generated.XXXXXX")"
 stage_dir="${stage_parent}/rust"
-mv -- "${generated_crate}" "${stage_dir}"
+mv -- "${organized_output}" "${stage_dir}"
 
 expected_output_dir="${repo_root}/fern/docs/generated/rust"
 [[ "${output_dir}" == "${expected_output_dir}" ]] ||
@@ -183,6 +208,5 @@ rm -rf -- "${output_dir}"
 mv -- "${stage_dir}" "${output_dir}"
 rmdir -- "${stage_parent}"
 stage_parent=""
-stage_dir=""
 
 echo "Generated Rust API Markdown in ${output_dir}"

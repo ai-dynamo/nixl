@@ -218,54 +218,11 @@ navigation:
         title-source: frontmatter
         slug: python
         collapsed: open-by-default
-      - section: Rust
+      - folder: ./docs/generated/rust
+        title: Rust
+        title-source: frontmatter
+        slug: rust
         collapsed: open-by-default
-        contents:
-          - page: Overview
-            slug: nixl-rust-api-generated
-            path: ./docs/generated/rust/index.md
-          - page: Core Types and Traits
-            slug: nixl-rust-core-generated
-            path: ./docs/generated/rust/nixl_sys.md
-          - page: Agent and Configuration
-            slug: nixl-rust-agent-generated
-            path: ./docs/generated/rust/agent.md
-          - section: Descriptors
-            collapsed: open-by-default
-            contents:
-              - page: Memory Types
-                slug: nixl-rust-memory-types-generated
-                path: ./docs/generated/rust/descriptor-types.md
-              - page: Registration Descriptors
-                slug: nixl-rust-registration-descriptors-generated
-                path: ./docs/generated/rust/descriptors/reg.md
-              - page: Transfer Descriptors
-                slug: nixl-rust-transfer-descriptors-generated
-                path: ./docs/generated/rust/descriptors/xfer.md
-              - page: Query Responses
-                slug: nixl-rust-query-responses-generated
-                path: ./docs/generated/rust/descriptors/query.md
-              - page: Prepared Descriptor Handles
-                slug: nixl-rust-descriptor-handles-generated
-                path: ./docs/generated/rust/descriptors/xfer_dlist_handle.md
-              - page: Synchronization
-                slug: nixl-rust-descriptor-sync-generated
-                path: ./docs/generated/rust/descriptors/sync_manager.md
-          - page: Transfers
-            slug: nixl-rust-transfers-generated
-            path: ./docs/generated/rust/xfer.md
-          - page: Notifications
-            slug: nixl-rust-notifications-generated
-            path: ./docs/generated/rust/notify.md
-          - section: Utilities
-            collapsed: open-by-default
-            contents:
-              - page: Parameters
-                slug: nixl-rust-parameters-generated
-                path: ./docs/generated/rust/utils/params.md
-              - page: String Lists
-                slug: nixl-rust-string-lists-generated
-                path: ./docs/generated/rust/utils/string_list.md
 
   # ==================== Resources ====================
   - section: Resources
