@@ -21,6 +21,8 @@
 #include "libfabric/libfabric_topology.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
+#include "tracing/trace.h"
+#include "tracing/trace_macros.h"
 #include <sstream>
 #include <algorithm>
 #include <numaif.h>
@@ -192,8 +194,10 @@ private:
     buildNumaDistanceMap();
 };
 
-nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
+nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold,
+                                                   nixl::trace::Tracer *tracer)
     : striping_threshold_(striping_threshold),
+      tracer_(tracer),
       runtime_(FI_HMEM_CUDA) {
     NIXL_DEBUG << "Creating rail manager with striping threshold: " << striping_threshold_
                << " bytes";
@@ -351,7 +355,7 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
 
         for (size_t i = 0; i < num_rails_; ++i) {
             rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
-                efa_devices[i], provider_name, static_cast<uint16_t>(i)));
+                efa_devices[i], provider_name, static_cast<uint16_t>(i), tracer_));
 
             // Initialize EFA device mapping
             efa_device_to_rail_map[efa_devices[i]] = i;
@@ -403,6 +407,23 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
     // Determine striping strategy
     bool use_striping = usesStriping(transfer_size, selected_rails.size());
+
+    // Tracing: one span covers the prepare+submit for this descriptor. Correlate
+    // on xfer_id so it links to the per-rail post spans and the completion marker
+    // (which may fire on the progress thread). The RAII span ends on any return.
+    NIXL_TRACE_CORRELATION_SCOPE(tracer_, static_cast<std::uint64_t>(xfer_id));
+    NIXL_TRACE_SCOPE(trace_span,
+                     tracer_,
+                     op_type == nixlLibfabricReq::WRITE ? "nixl::libfabric.transfer.write" :
+                                                          "nixl::libfabric.transfer.read",
+                     op_type == nixlLibfabricReq::WRITE ? nixl::trace::Kind::CommSend :
+                                                          nixl::trace::Kind::CommRecv);
+    NIXL_TRACE_ATTR(trace_span, "device_id", static_cast<std::int64_t>(device_id));
+    NIXL_TRACE_ATTR(trace_span, "transfer_size", static_cast<std::int64_t>(transfer_size));
+    NIXL_TRACE_ATTR(trace_span, "num_rails", static_cast<std::int64_t>(selected_rails.size()));
+    NIXL_TRACE_ATTR(trace_span, "use_striping", static_cast<std::int64_t>(use_striping ? 1 : 0));
+    NIXL_TRACE_ATTR(trace_span, "xfer_id", static_cast<std::int64_t>(xfer_id));
+
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
         // WRITE: group NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE consecutive descriptors on one rail
@@ -427,6 +448,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         }
         // Set completion callback and populate request
         req->completion_callback = completion_callback;
+        req->device_id = device_id;
         req->chunk_offset = 0;
         req->chunk_size = transfer_size;
         req->local_addr = local_addr;
@@ -521,6 +543,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             }
 
             req->completion_callback = completion_callback;
+            req->device_id = device_id;
 
             // Calculate and populate chunk info
             size_t chunk_offset = i * chunk_size;
@@ -594,6 +617,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         NIXL_DEBUG << "Striping: submitted " << submitted_count_out << " requests for "
                    << transfer_size << " bytes";
     }
+
+    NIXL_TRACE_ATTR(trace_span, "submitted_count", static_cast<std::int64_t>(submitted_count_out));
 
     NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
 

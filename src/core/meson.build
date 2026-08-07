@@ -71,7 +71,11 @@ nixl_lib_sources = [
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',
     'telemetry/nop_plugin.cpp',
+# tracer.cpp is kept separate from the factory so
+# backend plugins that instrument their own tracing code can compile it into their
+# .so to resolve the facade symbols without linking libnixl (otherwise cyclic linking).
     'tracing/tracer.cpp',
+    'tracing/tracer_factory.cpp',
 ]
 
 nixl_lib = library('nixl',
