@@ -20,18 +20,15 @@
 
 import argparse
 import os
-import sys
 import time
 
-# Add elastic subdirectory to path for store_group import
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "elastic"))
 # noinspection PyUnresolvedReferences
-import nixl_ep  # noqa: E402
-import store_group  # noqa: E402
-import torch  # noqa: E402
-import torch.distributed as dist  # noqa: E402
+import nixl_ep
+import torch
+import torch.distributed as dist
 
-from utils import (  # noqa: E402
+from utils import store_group
+from utils.utils import (
     bench,
     bench_kineto,
     calc_diff,

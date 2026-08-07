@@ -29,35 +29,26 @@ from functools import partial
 from typing import cast
 
 import nixl_ep
-import rank_server
-import store_group
 import torch
 from nixl_ep.buffer import DEFAULT_TIMEOUT_MS
 from plan import Plan
 
-# Add tests directory to path to import test utils
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Prepend the tests directory to path to import shared utils package
+# (so the local `utils` package shadows any system-wide package with the same name)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils import (  # noqa: E402
+from utils import rank_server, store_group  # noqa: E402
+from utils.utils import (  # noqa: E402
     bench,
     bench_kineto,
     calc_diff,
     hash_tensor,
+    non_negative_int,
     per_token_cast_back,
 )
 
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
-
-
-def non_negative_int(value: str) -> int:
-    try:
-        int_value = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
-    if int_value < 0:
-        raise argparse.ArgumentTypeError("must be a non-negative integer")
-    return int_value
 
 
 def handle_sigterm(
@@ -480,10 +471,9 @@ def worker(torch_rank: int, args: argparse.Namespace):
     )
 
     # Initialize torch
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(local_rank % 8)
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
-    torch.cuda.set_device(0)
+    torch.cuda.set_device(local_rank % torch.cuda.device_count())
 
     tcp_store = store_group.create_client_store(
         master_addr=server_addr,

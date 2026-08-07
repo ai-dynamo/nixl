@@ -17,7 +17,7 @@
 
 import importlib
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nixl_meta_utils import detect_cuda_major
 
@@ -74,4 +74,5 @@ if TYPE_CHECKING:
     from nixl_ep.buffer import Buffer  # noqa: F401
     from nixl_ep.utils import EventOverlap  # noqa: F401
 
+    Config: Any
     topk_idx_t: torch.dtype
