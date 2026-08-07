@@ -141,29 +141,57 @@ nixl_backend_handle = int
 
 
 class nixl_thread_sync_t(Enum):
+    # Disable synchronization
     NIXL_THREAD_SYNC_NONE = nixlBind.NIXL_THREAD_SYNC_NONE
+    # Serialize all access with an exclusive lock
     NIXL_THREAD_SYNC_STRICT = nixlBind.NIXL_THREAD_SYNC_STRICT
+    # Allow concurrent readers while serializing writers
     NIXL_THREAD_SYNC_RW = nixlBind.NIXL_THREAD_SYNC_RW
+    # Use the default synchronization mode
     NIXL_THREAD_SYNC_DEFAULT = nixlBind.NIXL_THREAD_SYNC_DEFAULT
 
 
-"""
-@brief Configuration class for NIXL agent.
-
-@param enable_prog_thread Whether to enable the progress thread, if available.
-@param enable_listen_thread Whether to enable the listener thread for metadata communication.
-@param listen_port Specify the port for the listener thread to listen on.
-@param capture_telemetry Whether to enable telemetry capture.
-@param num_threads Specify number of threads for the supported multi-threaded backends.
-@param backends List of backend names for agent to initialize.
-        Default is UCX, other backends can be added to the list, or after
-        agent creation, can be initialized with create_backend.
-@param sync_mode Thread synchronization mode to use for the agent.
-        If None, sync_mode is set based on the enable_listen flag.
-"""
-
-
 class nixl_agent_config:
+    """Configure a NIXL transfer agent.
+
+    Pass an instance to `nixl_agent` to customize agent behavior.
+
+    Arguments:
+        enable_prog_thread: Enable the progress thread for asynchronous
+            transfer completion, if available.
+        enable_listen_thread: Enable the listener thread for direct metadata
+            communication.
+        listen_port: Port for the listener thread; use 0 to request automatic
+            assignment.
+        capture_telemetry: Enable telemetry capture for transfer performance
+            metrics.
+        num_threads: Number of threads for supported multi-threaded backends.
+        backends: Backend plugins to create automatically during agent
+            initialization.
+        sync_mode: Thread synchronization mode. When `None`, agent creation
+            selects `NIXL_THREAD_SYNC_STRICT` if the listener is enabled and
+            `NIXL_THREAD_SYNC_NONE` otherwise.
+
+    Examples:
+        ```python
+        from nixl._api import nixl_agent_config
+
+        # Default configuration creates a UCX backend.
+        config = nixl_agent_config()
+
+        # Configure multiple backends, telemetry, and worker threads.
+        config = nixl_agent_config(
+            backends=["UCX", "GDS"],
+            capture_telemetry=True,
+            num_threads=4,
+        )
+        ```
+
+    Notes:
+        The `backends` setting triggers backend creation during
+        `nixl_agent` construction. Additional backends can be created later
+        with `create_backend()`.
+    """
     def __init__(
         self,
         enable_prog_thread: bool = True,
@@ -299,12 +327,6 @@ class nixl_agent:
                         pass
             self._leaked_xfer_handles.clear()
 
-    """
-    @brief Get the list of available plugins.
-
-    @return List of plugin names.
-    """
-
     def _load_plugin_params(self, plugin: str):
         if plugin not in self.plugin_list:
             return
@@ -316,6 +338,23 @@ class nixl_agent:
             logger.warning("Failed to load params for plugin %s", plugin, exc_info=True)
 
     def get_plugin_list(self) -> list[str]:
+        """Get the available backend plugins discovered during agent initialization.
+
+        The C++ equivalent is `getAvailPlugins`.
+
+        Returns:
+            list[str]: Plugin names, for example `["UCX", "GDS", "POSIX"]`.
+
+        Examples:
+            ```python
+            plugins = agent.get_plugin_list()
+            # ['UCX', 'GDS', 'POSIX', ...]
+            ```
+
+        Notes:
+            The plugin list is cached during agent initialization. This method
+            returns the cached list without re-querying the system.
+        """
         return self.plugin_list
 
     """
