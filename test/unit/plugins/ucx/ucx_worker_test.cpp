@@ -17,6 +17,7 @@
 #include <vector>
 #include <string>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 
@@ -92,9 +93,38 @@ main() {
     /* Test control path */
     for (i = 0; i < 2; i++) {
         const std::string addr = w[i].epAddr();
+        const std::string endpoint_name = "Agent" + std::to_string(i);
         assert(!addr.empty());
-        auto result = w[!i].connect((void *)addr.data());
-        assert(result);
+        auto result = w[!i].connect((void *)addr.data(), endpoint_name);
+        if (!result) {
+            cerr << "Failed to connect UCX endpoint " << endpoint_name << endl;
+            return EXIT_FAILURE;
+        }
+
+        ucp_ep_attr_t attr{};
+        attr.field_mask = UCP_EP_ATTR_FIELD_NAME;
+        const ucs_status_t query_status = ucp_ep_query(result->getEp(), &attr);
+        if (query_status != UCS_OK) {
+            cerr << "Failed to query UCX endpoint " << endpoint_name << ": "
+                 << ucs_status_string(query_status) << endl;
+            return EXIT_FAILURE;
+        }
+
+        char default_name[UCP_ENTITY_NAME_MAX];
+        std::snprintf(
+            default_name, sizeof(default_name), "%p", static_cast<void *>(result->getEp()));
+        if (std::strcmp(attr.name, default_name) == 0) {
+            cout << "NOTE: UCX debug data is disabled; endpoint name query returned the "
+                    "documented pointer fallback"
+                 << endl;
+        } else {
+            if (endpoint_name != attr.name) {
+                cerr << "UCX endpoint name mismatch: expected " << endpoint_name << ", got "
+                     << attr.name << endl;
+                return EXIT_FAILURE;
+            }
+        }
+
         ep[!i] = std::move(result);
         assert(0 == c[i].memReg(buffer[i], buf_size, mem[i], nixl_mem_type));
         std::string rkey_tmp = c[i].packRkey(mem[i]);
