@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,17 @@
 
 #include <doca_gpunetio_dev_verbs_onesided.cuh>
 #include <doca_gpunetio_dev_verbs_twosided.cuh>
+#include <doca_version.h>
 #include <cuda.h>
 #include <cuda/atomic>
 
 #include "gpunetio_backend.h"
+
+#if DOCA_VERSION_MAJOR == 3 && DOCA_VERSION_MINOR >= 2
+#define NIXL_GPUNETIO_QP_NEEDS_DUMP(qp) ((qp)->need_mcst)
+#else
+#define NIXL_GPUNETIO_QP_NEEDS_DUMP(qp) ((qp)->need_dump)
+#endif
 
 #define ENABLE_DEBUG 0
 
@@ -107,10 +114,11 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
     tot_wqe = xferReqRing[pos].num;
 
     if (threadIdx.x == 0) {
-        if (qp->need_mcst == true)
+        if (NIXL_GPUNETIO_QP_NEEDS_DUMP(qp) == true) {
             base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe + 1);
-        else
+        } else {
             base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+        }
     }
     __syncthreads();
 
@@ -131,7 +139,7 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
     __syncthreads();
 
     if ((idx - blockDim.x) == (tot_wqe - 1)) {
-        if (qp->need_mcst == true) {
+        if (NIXL_GPUNETIO_QP_NEEDS_DUMP(qp) == true) {
             wqe_idx++;
             wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
 
@@ -162,6 +170,8 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
                base_wqe_idx);
 #endif
 }
+
+#undef NIXL_GPUNETIO_QP_NEEDS_DUMP
 
 __global__ void
 kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
