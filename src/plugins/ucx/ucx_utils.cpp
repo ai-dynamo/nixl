@@ -237,9 +237,10 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return status;
     }
 
-    ucp_request_param_t param;
-    param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS;
+    ucp_request_param_t param = {0};
+    param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_MEMORY_TYPE;
     param.flags = flags;
+    param.memory_type = UCS_MEMORY_TYPE_HOST;
 
     nixl_ucx_am_cb_ctx_ptr_t ctx;
     if (deleter) {
@@ -484,6 +485,14 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     config.modify("RNDV_THRESH", "inf");
     config.modify("MAX_RMA_RAILS", "2");
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
+    config.modify("RCACHE_MAX_UNRELEASED", "1024");
+#ifndef NIXL_UCX_ENABLE_CACHE
+    // Disable rcache to improve performance and avoid bugs.
+    config.modify("RCACHE_ENABLE", "n");
+    config.modify("GDR_COPY_RCACHE", "n");
+    config.modify("ROCM_COPY_RCACHE", "n");
+    config.modify("MEMTYPE_CACHE", "n");
+#endif
 
     // NIXL only needs AMs to be visible after previous PUTs which RC already
     // provides without the need of strict order key.
