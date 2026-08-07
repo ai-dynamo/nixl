@@ -18,12 +18,16 @@ utils_sources = [
   'neuron.h',
   'utils.cpp',
   'utils.h',
+  'raw_cli.cpp',
+  'raw_cli.h',
   'scope_guard.h'
 ]
 
 utils_deps = [
   openmp_dep,
   gflags_dep,
+  cli11_dep,
+  nixl_lib,
   tomlplusplus_dep,
   dependency('dl', required: true)
 ]
@@ -44,4 +48,3 @@ utils_dep = declare_dependency(
   dependencies: utils_deps,
   include_directories: inc_dir
 )
-

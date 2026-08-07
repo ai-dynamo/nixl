@@ -57,6 +57,9 @@ public:
     static std::string_view
     getDefaultIoQueueType(void);
 
+    static const uint32_t DEF_IOS_POOL_SIZE;
+    static const uint32_t DEF_KERNEL_QUEUE_SIZE;
+
 protected:
     static uint32_t
     normalizedIOSPoolSize(uint32_t ios_pool_size) {
@@ -72,10 +75,8 @@ protected:
     uint32_t kernel_queue_size_;
     static const uint32_t MIN_IOS_POOL_SIZE;
     static const uint32_t MAX_IOS_POOL_SIZE;
-    static const uint32_t DEF_IOS_POOL_SIZE;
     static const uint32_t MIN_KERNEL_QUEUE_SIZE;
     static const uint32_t MAX_KERNEL_QUEUE_SIZE;
-    static const uint32_t DEF_KERNEL_QUEUE_SIZE;
 };
 
 template<typename Entry> class nixlPosixIOQueueImpl : public nixlPosixIOQueue {
