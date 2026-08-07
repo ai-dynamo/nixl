@@ -79,7 +79,6 @@ template<nixl_gpu_level_t Level>
 __global__ void
 nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
     __shared__ nixlGpuXferStatusH xfer_statuses[kMaxGroups];
-
     unsigned group_id, num_groups;
     if constexpr (Level == nixl_gpu_level_t::THREAD) {
         group_id = threadIdx.x;
@@ -97,11 +96,9 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
             break;
         }
     }
-
     if (put_status == NIXL_IN_PROG) {
         put_status = nixlbenchPollXferStatus<Level>(put_status, xfer_status);
     }
-
     if (put_status != NIXL_SUCCESS &&
         (Level == nixl_gpu_level_t::THREAD || threadIdx.x % warpSize == 0)) {
         printf("[nixlbenchPutKernel] transfer did not complete: "
