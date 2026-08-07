@@ -75,6 +75,8 @@ fi
 
 start_etcd_server "/nixl/cpp_ci"
 
+start_redis_server
+
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
 ./bin/desc_example
@@ -125,6 +127,8 @@ echo "./bin/ucx_worker_test disabled"
 echo "${TEXT_CLEAR}"
 
 kill -9 $ETCD_PID 2>/dev/null || true
+
+kill -9 $REDIS_PID 2>/dev/null || true
 
 sleep 5
 
