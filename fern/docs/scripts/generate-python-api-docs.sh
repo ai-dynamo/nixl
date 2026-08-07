@@ -254,6 +254,7 @@ for source_path in source_pages:
 
 normalized_dir = output_dir.with_name(f"{output_dir.name}-fern")
 link_pattern = re.compile(r"\]\(([^)#]+\.md)(#[^)]*)?\)")
+note_pattern = re.compile(r"(?ms)^#### Notes\s*\n+(.*?)(?=^#{1,4}\s|\Z)")
 for source_path in source_pages:
     relative_path = source_path.relative_to(output_dir)
     content = source_path.read_text(encoding="utf-8")
@@ -276,9 +277,14 @@ for source_path in source_pages:
         route = "/".join((route_root.rstrip("/"), *route_parts))
         return f"]({route}{match.group(2) or ''})"
 
+    content = note_pattern.sub(
+        lambda match: f"<Note>\n{match.group(1).strip()}\n</Note>\n\n",
+        content,
+    )
+    content = link_pattern.sub(replace_link, content)
     destination_path = normalized_dir / destinations[relative_path.as_posix()]
     destination_path.parent.mkdir(parents=True, exist_ok=True)
-    destination_path.write_text(link_pattern.sub(replace_link, content), encoding="utf-8")
+    destination_path.write_text(content, encoding="utf-8")
 
 shutil.rmtree(output_dir)
 normalized_dir.rename(output_dir)
@@ -294,6 +300,8 @@ grep -Fq "agent_name: str" "${python_api_page}" ||
     fail "generated page is missing the nixl_agent constructor"
 grep -Fq "backends: list[str]" "${python_api_page}" ||
     fail "generated page is missing Python generic type annotations"
+grep -Fq "<Note>" "${python_api_page}" ||
+    fail "generated page is missing Python API note callouts"
 grep -Fq "get_logger" "${python_logging_page}" ||
     fail "generated page is missing the logging API"
 grep -Fq "### Buffer().dispatch" "${ep_buffer_page}" ||
