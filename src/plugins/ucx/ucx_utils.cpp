@@ -238,8 +238,9 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     }
 
     ucp_request_param_t param;
-    param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS;
+    param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_MEMORY_TYPE;
     param.flags = flags;
+    param.memory_type = UCS_MEMORY_TYPE_HOST;
 
     nixl_ucx_am_cb_ctx_ptr_t ctx;
     if (deleter) {
