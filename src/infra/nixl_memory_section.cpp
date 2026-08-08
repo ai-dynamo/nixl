@@ -106,7 +106,7 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
 nixl_status_t
 nixlMemSection::populate(const nixl_xfer_dlist_t &query,
                          nixlBackendEngine *backend,
-                         nixl_stride_dlist_t &resp) const {
+                         nixl_meta_stride_dlist_t &resp) const {
 
     if ((query.getType() != resp.getType()) || (query.isEmpty())) {
         return NIXL_ERR_INVALID_PARAM;
@@ -129,7 +129,7 @@ nixlMemSection::populate(const nixl_xfer_dlist_t &query,
         return NIXL_ERR_UNKNOWN;
     }
 
-    nixlStrideDesc current(
+    nixlMetaStrideDesc current(
         query[0].addr, query[0].len, query[0].devId, base[s_index].metadataP, query[0].len, 1);
     uintptr_t prev_addr = query[0].addr;
 
@@ -173,13 +173,60 @@ nixlMemSection::populate(const nixl_xfer_dlist_t &query,
             prev_addr = it.addr;
         } else {
             resp.addDesc(current);
-            current = nixlStrideDesc(it.addr, it.len, it.devId, meta, it.len, 1);
+            current = nixlMetaStrideDesc(it.addr, it.len, it.devId, meta, it.len, 1);
             current.start_idx = static_cast<size_t>(i);
             prev_addr = it.addr;
         }
     }
 
     resp.addDesc(current);
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlMemSection::populate(const nixl_stride_dlist_t &query,
+                         nixlBackendEngine *backend,
+                         nixl_meta_stride_dlist_t &resp) const {
+
+    if ((query.getType() != resp.getType()) || (query.isEmpty())) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    const section_key_t sec_key(query.getType(), backend);
+    const auto it = sectionMap.find(sec_key);
+    if (it == sectionMap.end()) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    const nixlSecDescList &base = it->second;
+    const int n = query.descCount();
+
+    resp.clear();
+    resp.reserve(n);
+
+    size_t start_idx = 0;
+    for (int i = 0; i < n; ++i) {
+        const nixlStrideDesc &run = query[i];
+        if (run.count == 0) [[unlikely]] {
+            resp.clear();
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
+        // Full byte extent of the run: from the first block start to the last block end.
+        // Covering this single span guarantees every block in the run is registered.
+        const size_t span_len = (run.count - 1) * run.stride + run.len;
+        const int s_index = base.getCoveringIndex(nixlBasicDesc(run.addr, span_len, run.devId));
+        if (s_index < 0) [[unlikely]] {
+            resp.clear();
+            return NIXL_ERR_UNKNOWN;
+        }
+
+        nixlMetaStrideDesc &md = resp.emplace(
+            run.addr, run.len, run.devId, base[s_index].metadataP, run.stride, run.count);
+        md.start_idx = start_idx;
+        start_idx += run.count;
+    }
+
     return NIXL_SUCCESS;
 }
 
