@@ -307,6 +307,15 @@ public:
 
             if (response.is_ok()) {
                 metadata = response.value().as_string();
+                if (metadata.empty()) {
+                    // A present-but-empty value is never a valid MD blob (e.g. the
+                    // agent-prefix anchor, or a key observed mid-write). Treat as
+                    // not-found so the caller watches/retries instead of handing an
+                    // empty blob to loadRemoteMD.
+                    NIXL_INFO << "Fetched empty value for key: " << metadata_key
+                              << "; treating as not found";
+                    return NIXL_ERR_NOT_FOUND;
+                }
                 NIXL_DEBUG << "Successfully fetched key: " << metadata_key
                            << " (rev " << response.value().modified_index() << ")";
                 return NIXL_SUCCESS;
@@ -361,6 +370,9 @@ public:
             auto status = future.wait_for(watchTimeout_);
             if (status == std::future_status::timeout) {
                 NIXL_ERROR << "Watch timed out for key: " << metadata_key;
+                // Cancel before returning so the callback cannot fire after the
+                // stack locals it captures by reference go out of scope.
+                watcher.Cancel();
                 return NIXL_ERR_BACKEND;
             }
             watcher.Cancel();
