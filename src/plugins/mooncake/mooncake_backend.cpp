@@ -97,6 +97,13 @@ nixlMooncakeEngine::getSupportedMems() const {
 
 // Through parent destructor the unregister will be called.
 nixlMooncakeEngine::~nixlMooncakeEngine() {
+    // Close all open remote segments before destroying the engine.
+    for (const auto &[agent, info] : connected_agents_) {
+        if (closeSegment(engine_, info.segment_id)) {
+            NIXL_WARN << "~nixlMooncakeEngine: failed to close segment " << info.segment_id
+                      << " for agent " << agent;
+        }
+    }
     destroyTransferEngine(engine_);
 }
 
@@ -114,10 +121,24 @@ nixlMooncakeEngine::connect(const std::string &remote_agent) {
     return NIXL_SUCCESS;
 }
 
-// TODO We purposely set this function as empty.
-// Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
 nixl_status_t
 nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
+    segment_id_t segment_id;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = connected_agents_.find(remote_agent);
+        if (it == connected_agents_.end()) {
+            return NIXL_SUCCESS;
+        }
+        segment_id = it->second.segment_id;
+        // Erase under the lock so concurrent postXfer/genNotif calls will see
+        // the agent as gone and return NIXL_ERR_INVALID_PARAM before using
+        // the segment handle.
+        connected_agents_.erase(it);
+    }
+    if (closeSegment(engine_, segment_id)) {
+        return NIXL_ERR_BACKEND;
+    }
     return NIXL_SUCCESS;
 }
 
@@ -136,7 +157,16 @@ nixlMooncakeEngine::loadRemoteConnInfo(const std::string &remote_agent,
     std::lock_guard<std::mutex> lock(mutex_);
     auto segment_id = openSegment(engine_, remote_conn_info.c_str());
     if (segment_id < 0) return NIXL_ERR_BACKEND;
-    connected_agents_[remote_agent].segment_id = segment_id;
+    // Close the previous segment if this agent was already connected,
+    // so we don't leak the old handle on reconnect.
+    auto [it, inserted] = connected_agents_.try_emplace(remote_agent);
+    if (!inserted) {
+        if (closeSegment(engine_, it->second.segment_id)) {
+            NIXL_WARN << "loadRemoteConnInfo: failed to close old segment " << it->second.segment_id
+                      << " for agent " << remote_agent;
+        }
+    }
+    it->second.segment_id = segment_id;
     return NIXL_SUCCESS;
 }
 
@@ -251,7 +281,7 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
-    int segment_id;
+    segment_id_t segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto agent = connected_agents_.find(remote_agent);
@@ -271,9 +301,12 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     size_t request_count = local.descCount();
-    transfer_request_t *request = new transfer_request_t[request_count];
+    // Validate lengths before allocating so an early return cannot leak.
     for (size_t index = 0; index < request_count; ++index) {
         if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
+    }
+    transfer_request_t *request = new transfer_request_t[request_count];
+    for (size_t index = 0; index < request_count; ++index) {
         request[index].opcode = (operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE;
         request[index].source = (void *)local[index].addr;
         request[index].target_offset = remote[index].addr;
@@ -299,13 +332,28 @@ nixl_status_t
 nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
     bool has_failed = false;
+    bool has_pending = false;
     for (size_t index = 0; index < priv->request_count; ++index) {
         transfer_status_t status;
         int rc = getTransferStatus(engine_, priv->batch_id, index, &status);
-        if (rc || status.status == STATUS_FAILED)
+        // STATUS_CANCELED: set when the underlying RDMA endpoint is reset or
+        //   destroyed (e.g. remote disconnect, link error). Terminal, no retry.
+        // STATUS_TIMEOUT:  set by the worker thread when a slice exceeds the
+        //   configured timeout (default 10 s). The endpoint is then disabled,
+        //   making retries futile. Terminal, no retry.
+        if (rc || status.status == STATUS_FAILED || status.status == STATUS_CANCELED ||
+            status.status == STATUS_TIMEOUT || status.status == STATUS_INVALID) {
             has_failed = true;
-        else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING)
-            return NIXL_IN_PROG;
+        } else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING) {
+            has_pending = true;
+        } else if (status.status != STATUS_COMPLETED) {
+            // Catch any unrecognised status values defensively.
+            NIXL_WARN << "checkXfer: unexpected transfer status " << status.status;
+            has_failed = true;
+        }
+    }
+    if (has_pending) {
+        return NIXL_IN_PROG;
     }
     if (!has_failed) {
         // Each batch_id has the batch size, and cannot process more requests
@@ -341,7 +389,7 @@ nixlMooncakeEngine::getNotifs(notif_list_t &notif_list) {
 
 nixl_status_t
 nixlMooncakeEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
-    int segment_id;
+    segment_id_t segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto agent = connected_agents_.find(remote_agent);
