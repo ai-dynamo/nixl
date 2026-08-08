@@ -95,6 +95,7 @@
 #define XFERBENCH_BACKEND_HF3FS "HF3FS"
 #define XFERBENCH_BACKEND_OBJ "OBJ"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
+#define XFERBENCH_BACKEND_SPDK "SPDK"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
@@ -227,6 +228,10 @@ public:
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
     static bool gusli_try_use_uring;
+    static std::string spdk_json_config_file;
+    static std::string spdk_bdev_name;
+    static size_t spdk_bdev_offset;
+    static size_t spdk_msg_mempool_size;
 
     static int
     parseConfig(int argc, char *argv[]);
