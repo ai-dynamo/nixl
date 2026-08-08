@@ -36,7 +36,12 @@ root_license_path = join_paths(source_root, 'LICENSE')
 license_path = fs.copyfile(root_license_path)
 
 subdir('nixl')
-subdir('nixl_ep')
+
+if get_option('build_nixl_ep')
+  subdir('nixl_ep')
+else
+  nixl_ep_init_copy = []
+endif
 
 uv = find_program('uv', required: false)
 if uv.found()
