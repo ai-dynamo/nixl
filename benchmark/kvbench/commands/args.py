@@ -279,6 +279,23 @@ def nixl_bench_args(func):
         type=str,
         help="Path to CA bundle for S3 backend (only used with OBJ backend)",
     )(func)
+    func = click.option(
+        "--obj_accelerated_enable",
+        is_flag=True,
+        default=False,
+        help="Enable the accelerated OBJ client for GPU-direct transfers (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_accelerated_type",
+        type=str,
+        help="Accelerated OBJ client type, e.g. 'scality_ai_connector' (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_num_threads",
+        type=click.IntRange(min=0),
+        help="HTTP worker pool size for the accelerated OBJ connector; 0 = engine default "
+        "(only used with OBJ backend)",
+    )(func)
     return func
 
 
