@@ -44,6 +44,8 @@ namespace {
         "nixl::libfabric.post_write",
         "nixl::libfabric.post_read",
         "nixl::libfabric.post_send",
+        "nixl::libfabric.post_deferred.write",
+        "nixl::libfabric.post_deferred.read",
         "nixl::libfabric.local_completion.write",
         "nixl::libfabric.local_completion.read",
         "nixl::libfabric.recv_completion",

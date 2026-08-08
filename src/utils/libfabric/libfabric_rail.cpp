@@ -1202,6 +1202,29 @@ nixlLibfabricRail::drainPostQueue() {
         ++post_req_count;
         int ret = -FI_EAGAIN;
 
+        // Tracing: this is where the post actually happens when a progress thread
+        // is enabled -- postWrite()/postRead() are bypassed entirely on that path
+        // -- so emit the same post span here, or PT mode would show no post at
+        // all. Unlike those two, this runs on the progress thread, where no
+        // correlation id is active (the backend keeps that stack thread_local),
+        // so push xfer_id here to link back to the submitting thread's spans.
+        [[maybe_unused]] const std::uint64_t post_xfer_id = pr.req ? pr.req->xfer_id : 0;
+        [[maybe_unused]] int attempt = 0;
+        NIXL_TRACE_CORRELATION_SCOPE(tracer_, post_xfer_id);
+        NIXL_TRACE_SCOPE(trace_span,
+                         tracer_,
+                         pr.type == nixlLibfabricPostRequest::WRITE ? "nixl::libfabric.post_write" :
+                                                                      "nixl::libfabric.post_read",
+                         pr.type == nixlLibfabricPostRequest::WRITE ? nixl::trace::Kind::CommSend :
+                                                                      nixl::trace::Kind::CommRecv);
+        NIXL_TRACE_ATTR(trace_span, "device_id", static_cast<std::int64_t>(pr.device_id));
+        NIXL_TRACE_ATTR(trace_span, "rail_id", static_cast<std::int64_t>(rail_id));
+        NIXL_TRACE_ATTR(trace_span, "length", static_cast<std::int64_t>(pr.length));
+        NIXL_TRACE_ATTR(trace_span, "xfer_id", static_cast<std::int64_t>(post_xfer_id));
+        // Distinguishes this from a same-named span emitted inline by
+        // postWrite()/postRead(), so a trace shows which path a transfer took.
+        NIXL_TRACE_ATTR(trace_span, "deferred", static_cast<std::int64_t>(1));
+
 #if HAVE_CUDA
         if (pr.is_cuda_vram) {
             // NOTE: for now we do not call engine to try to set context in work-around mode - this
@@ -1289,13 +1312,19 @@ nixlLibfabricRail::drainPostQueue() {
             }
 
             if (ret == -FI_EAGAIN) {
+                ++attempt;
                 pollForCompletions();
             }
         }
 
+        // Recorded on both the success and failure paths, unlike the inline
+        // post_write/post_read spans, so a post that spun on EAGAIN is visible.
+        NIXL_TRACE_ATTR(trace_span, "retries", static_cast<std::int64_t>(attempt));
+
         if (ret != 0) {
             NIXL_ERROR << "drainPostQueue: post failed ret=" << ret << " (" << fi_strerror(-ret)
                        << ") on rail " << rail_id;
+            NIXL_TRACE_ATTR(trace_span, "failed", static_cast<std::int64_t>(1));
             if (pr.req && pr.req->completion_callback) {
                 // completion is notified also for failed requests
                 // (otherwise counters would never match)

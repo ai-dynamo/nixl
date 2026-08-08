@@ -135,6 +135,34 @@ backends/PRs):
 | `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
 | `nixl::releaseMemView` | `Generic` | - |
 
+The libfabric backend (`src/utils/libfabric`) additionally emits the spans below.
+All of them carry a correlation id of `xfer_id`, so a viewer can join the submit
+span, the per-rail post, and the completion marker (which fires on the progress
+thread) for one logical transfer:
+
+| Span / marker | Kind | Attributes |
+| ------------- | ---- | ---------- |
+| `nixl::libfabric.transfer.write` | `CommSend` | `device_id`, `transfer_size`, `num_rails`, `use_striping`, `xfer_id`, `submitted_count` |
+| `nixl::libfabric.transfer.read` | `CommRecv` | as above |
+| `nixl::libfabric.post_write` | `CommSend` | `device_id`, `rail_id`, `length`, `xfer_id`, `retries`; `deferred`, `failed` on the progress-thread path |
+| `nixl::libfabric.post_read` | `CommRecv` | as above |
+| `nixl::libfabric.post_send` | `CommSend` | `rail_id`, `length`, `xfer_id`, `retries` |
+| `nixl::libfabric.post_deferred.write` | `Metadata` (marker) | - |
+| `nixl::libfabric.post_deferred.read` | `Metadata` (marker) | - |
+| `nixl::libfabric.local_completion.write` | `Metadata` (marker) | - |
+| `nixl::libfabric.local_completion.read` | `Metadata` (marker) | - |
+| `nixl::libfabric.recv_completion` | `CommRecv` (marker) | - |
+| `nixl::libfabric.remote_write_completion` | `CommRecv` (marker) | - |
+
+Where the post span comes from depends on the progress thread. With it disabled,
+`post_write`/`post_read` are emitted inline by the submitting thread, nested
+inside the enclosing `transfer.*` span. With it enabled (the default), submission
+only enqueues onto a per-rail ring -- so `transfer.*` measures enqueue latency,
+a `post_deferred.*` marker records the hand-off, and the post span itself is
+emitted later by the progress thread from `drainPostQueue()` with `deferred=1`.
+In that mode the post span is a sibling of `transfer.*` rather than nested in it,
+and may outlive it; correlate on `xfer_id` rather than on nesting.
+
 Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
 when `getXferStatus` first observes success. How a backend renders attributes and
 dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each

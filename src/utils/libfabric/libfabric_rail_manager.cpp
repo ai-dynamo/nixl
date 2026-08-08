@@ -653,6 +653,14 @@ nixlLibfabricRailManager::deferTransferRequest(nixlLibfabricReq::OpType op_type,
     pr.fi_flags = fi_flags;
     pr.device_id = device_id;
     pr.is_cuda_vram = is_cuda_vram;
+    // Tracing: marks the hand-off to the progress thread. The enclosing
+    // transfer.write/read span ends here on this path, so without this marker the
+    // gap between submit and the (progress-thread) post span is unexplained.
+    // Correlation comes from the caller's scope, which is still active.
+    NIXL_TRACE_MARK(tracer_,
+                    op_type == nixlLibfabricReq::WRITE ? "nixl::libfabric.post_deferred.write" :
+                                                         "nixl::libfabric.post_deferred.read",
+                    nixl::trace::Kind::Metadata);
     rails_[rail_id]->enqueuePost(pr);
 }
 
