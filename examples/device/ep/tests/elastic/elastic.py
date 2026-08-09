@@ -49,9 +49,6 @@ from utils import (  # noqa: E402
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
 
-# NIXL EP stores FP8 scales channel-major, so the gap between channel blocks is
-# 4 * num_ranks * max_tokens_per_rank bytes and TMA needs it 16-byte aligned,
-# i.e. num_ranks * max_tokens_per_rank must be a multiple of 4.
 TMA_TOKEN_ALIGNMENT = 4
 
 
@@ -504,12 +501,6 @@ def worker(torch_rank: int, args: argparse.Namespace):
 
     # Initialize nixl_ep buffer
     max_tokens_per_rank = tma_aligned_max_tokens(args.num_tokens)
-    if local_rank == 0 and max_tokens_per_rank != args.num_tokens:
-        print(
-            f"Rounding max tokens per rank {args.num_tokens} -> {max_tokens_per_rank} "
-            f"for TMA alignment; dispatching {args.num_tokens} tokens",
-            flush=True,
-        )
     num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
         max_tokens_per_rank,
         args.hidden_dim,
