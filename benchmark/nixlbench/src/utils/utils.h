@@ -355,6 +355,8 @@ public:
           metaInfo(m) {}
 };
 
+class xferBenchWorker;
+
 class xferBenchUtils {
 private:
     static xferBenchRT *rt;
@@ -398,6 +400,7 @@ public:
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
     static bool
     validateTransfer(bool is_initiator,
+                     xferBenchWorker &worker,
                      std::vector<std::vector<xferBenchIOV>> &local_lists,
                      std::vector<std::vector<xferBenchIOV>> &remote_lists);
     static void
