@@ -43,6 +43,7 @@ from utils import (  # noqa: E402
     bench_kineto,
     calc_diff,
     hash_tensor,
+    kineto_cuda_available,
     per_token_cast_back,
 )
 
@@ -669,6 +670,9 @@ def main():
         server_process = torch.multiprocessing.Process(target=run_server, daemon=True)
         server_process.start()
         time.sleep(0.5)
+
+    if args.kineto and not kineto_cuda_available(0):
+        raise SystemExit("Kineto profiling was requested but is not supported")
 
     if args.num_processes == 1:
         worker(0, args)

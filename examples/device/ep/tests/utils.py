@@ -186,6 +186,44 @@ class suppress_stdout_stderr:
         self.errnull_file.close()
 
 
+def _has_cuda_profiler_events(key_averages) -> bool:
+    for event in key_averages:
+        if getattr(event, "is_legacy", False):
+            continue
+        for attr in (
+            "device_time_total",
+            "self_device_time_total",
+            "cuda_time_total",
+            "self_cuda_time_total",
+        ):
+            try:
+                if getattr(event, attr, 0) > 0:
+                    return True
+            except TypeError:
+                pass
+    return False
+
+
+def _run_cuda_profiler_sentinel():
+    sentinel = torch.empty((1024,), dtype=torch.float, device="cuda")
+    sentinel.fill_(1.0)
+
+
+def kineto_cuda_available(device_id: int) -> bool:
+    try:
+        torch.cuda.set_device(device_id)
+        with suppress_stdout_stderr():
+            with torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CUDA]
+            ) as prof:
+                _run_cuda_profiler_sentinel()
+                torch.cuda.synchronize()
+
+        return _has_cuda_profiler_events(prof.key_averages())
+    except RuntimeError:
+        return False
+
+
 def bench_kineto(
     fn,
     kernel_names: Union[str, tuple],

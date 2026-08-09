@@ -237,7 +237,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return status;
     }
 
-    ucp_request_param_t param = {0};
+    ucp_request_param_t param;
     param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_MEMORY_TYPE;
     param.flags = flags;
     param.memory_type = UCS_MEMORY_TYPE_HOST;
