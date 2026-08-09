@@ -281,7 +281,7 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         request[index].target_id = segment_id;
     }
     int rc = 0;
-    if (opt_args->hasNotif) {
+    if (opt_args && opt_args->hasNotif) {
         notify_msg_t notify_msg;
         notify_msg.name = const_cast<char *>(local_agent_name_.c_str());
         notify_msg.msg = const_cast<char *>(opt_args->notifMsg.c_str());
