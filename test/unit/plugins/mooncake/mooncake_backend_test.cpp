@@ -293,6 +293,7 @@ allocateWrongGPUTest(nixlBackendEngine *mooncake, int dev_id) {
     nixlBackendMD *md;
     void *buf;
 
+    desc.len = 4096;
     allocateBuffer(VRAM_SEG, dev_id, desc.len, buf);
 
     desc.devId = dev_id;
