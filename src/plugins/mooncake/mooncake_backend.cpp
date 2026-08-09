@@ -226,8 +226,8 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
 
     virtual ~nixlMooncakeBackendReqH() {}
 
-    uint64_t batch_id;
-    size_t request_count;
+    uint64_t batch_id = INVALID_BATCH;
+    size_t request_count = 0;
 };
 
 nixl_status_t
@@ -298,6 +298,12 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
 nixl_status_t
 nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
+    // Once every request completed, the batch is freed below and batch_id is
+    // reset to INVALID_BATCH. A later checkXfer() on the same handle must not
+    // reach the engine: getTransferStatus() and freeBatchID() cast the batch
+    // id to a BatchDesc pointer and dereference it, so passing INVALID_BATCH
+    // (UINT64_MAX) crashes. Report the already-reached terminal state instead.
+    if (priv->batch_id == INVALID_BATCH) return NIXL_SUCCESS;
     bool has_failed = false;
     for (size_t index = 0; index < priv->request_count; ++index) {
         transfer_status_t status;
@@ -313,6 +319,7 @@ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
         // where the same nixlBackendReqH could be used to post multiple transfer.
         freeBatchID(engine_, priv->batch_id);
         priv->batch_id = INVALID_BATCH;
+        priv->request_count = 0;
     }
     return has_failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }
