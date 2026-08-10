@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <numeric>
 #include <sstream>
@@ -362,6 +363,10 @@ validateDeviceAPIConfig() {
     }
     if (xferBenchConfig::pipeline_depth != 1) {
         return reject("pipeline_depth must be 1");
+    }
+    if (std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr) {
+        return reject("UCX_RC_GDA_NUM_CHANNELS must not be set; "
+                      "NIXLBench configures Device API channels automatically");
     }
     return true;
 #else

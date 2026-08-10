@@ -77,6 +77,8 @@ resolveVramSegment() {
 constexpr size_t kDeviceCounterDoneOffsetBytes = 0;
 constexpr size_t kDeviceCounterErrorOffsetBytes = sizeof(uint64_t);
 constexpr size_t kDeviceCounterBytes = 2 * sizeof(uint64_t);
+constexpr int kDeviceWarpSize = 32;
+constexpr int kDefaultDeviceChannels = 4;
 
 // Reuse parser from utils
 
@@ -155,6 +157,15 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
+        if (xferBenchConfig::use_device_api) {
+            const int num_device_groups = xferBenchConfig::block_threads <= kDeviceWarpSize ?
+                xferBenchConfig::block_threads :
+                xferBenchConfig::block_threads / kDeviceWarpSize;
+            const int num_device_channels = std::max(kDefaultDeviceChannels, num_device_groups);
+            backend_params["ucx_num_device_channels"] = std::to_string(num_device_channels);
+            std::cout << "Device API mode: configuring " << num_device_channels
+                      << " UCX device channels for execution groups" << std::endl;
+        }
 
         // No need to set device_list if all is specified
         // fallback to backend preference
