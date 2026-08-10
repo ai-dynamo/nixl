@@ -63,7 +63,11 @@ public:
     void
     start(poll_t poll, std::chrono::microseconds delay);
 
-    /** @brief Drain queued tasks, then stop and join. Idempotent. */
+    /**
+     * @brief Drain queued tasks, then stop and join. Idempotent and safe from
+     *        several threads. Not callable from a task: it would join the
+     *        thread the task runs on.
+     */
     void
     stop();
 
@@ -75,6 +79,15 @@ public:
     submit(nixl_worker_task_t task);
 
 private:
+    // Held under mutex_: submit() runs on any thread, and reading thread_ while
+    // stop() is inside join() would race. The transitions also serialize
+    // start/stop, since only the caller taking RUNNING -> STOPPING joins.
+    enum class state {
+        IDLE, // no thread; submit() runs on the caller
+        RUNNING, // thread alive, taking tasks
+        STOPPING, // one caller owns the shutdown, queue still open
+    };
+
     void
     loop();
 
@@ -82,16 +95,21 @@ private:
     void
     runQueuedTasks(std::chrono::steady_clock::time_point until);
 
+    // Run a task with its exceptions logged rather than escaping.
+    static void
+    runTask(nixl_worker_task_t &task);
+
+    // Post-join: drain until the queue is empty and settle into IDLE in that
+    // same locked check, so a late task cannot be left queued.
+    void
+    drainAndSettle();
+
     poll_t poll_;
     std::chrono::microseconds delay_{0};
     std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<nixl_worker_task_t> tasks_;
-    // Whether a thread exists to run tasks. Held under mutex_ rather than read
-    // off thread_: submit() is reachable from any thread, and inspecting
-    // thread_ while stop() is inside join() would race on the thread object.
-    bool started_ = false;
-    bool stopping_ = false;
+    state state_ = state::IDLE;
     // Serializes the inline path. Separate from mutex_ so running a task never
     // holds the queue lock across transport I/O, and so a task that submits
     // cannot deadlock against a non-recursive mutex.
