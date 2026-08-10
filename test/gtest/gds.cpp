@@ -163,8 +163,10 @@ dramRoundTrip(nixlAgent &agent, const std::string &self, nixlBackendH *be, size_
 
 // Try to create the backend; on failure, the caller should skip (no GDS hw).
 nixl_status_t
-tryCreate(nixlAgent &agent, const std::string &name, nixlBackendH *&be) {
-    nixl_b_params_t params;
+tryCreate(nixlAgent &agent,
+          const std::string &name,
+          nixlBackendH *&be,
+          const nixl_b_params_t &params = {}) {
     return agent.createBackend(name, params, be);
 }
 
@@ -201,9 +203,12 @@ TEST(GdsBatchOptions, AdvertisesBatchConfiguration) {
         GTEST_SKIP() << "GDS plugin not available in this build";
     }
 
+    EXPECT_EQ(params["mode"], "batch");
     EXPECT_EQ(params["batch_pool_size"], "16");
     EXPECT_EQ(params["batch_limit"], "128");
     EXPECT_EQ(params["max_request_size"], "16777216");
+    EXPECT_EQ(params["thread_count"],
+              std::to_string(std::max(1u, std::thread::hardware_concurrency() / 2)));
     EXPECT_EQ(params.find("submit_threads"), params.end());
     EXPECT_EQ(params.find("submit_cpus"), params.end());
 }
@@ -222,6 +227,27 @@ TEST(GdsMtOptions, AdvertisesThreadCount) {
     ASSERT_NE(thread_count, params.end());
     EXPECT_EQ(thread_count->second,
               std::to_string(std::max(1u, std::thread::hardware_concurrency() / 2)));
+}
+
+TEST(GdsMode, RejectsUnknownMode) {
+    nixlAgentConfig cfg;
+    nixlAgent agent("gds_invalid_mode", cfg);
+
+    nixl_mem_list_t mems;
+    nixl_b_params_t advertised_params;
+    if (agent.getPluginParams("GDS", mems, advertised_params) != NIXL_SUCCESS) {
+        GTEST_SKIP() << "GDS plugin not available in this build";
+    }
+
+    nixl_b_params_t params = {{"mode", "invalid"}};
+    nixlBackendH *be = nullptr;
+    const gtest::LogIgnoreGuard invalid_mode(
+        "GDS: invalid mode 'invalid'; expected 'batch' or 'mt'");
+    const gtest::LogIgnoreGuard creation_failed("createBackend: backend creation failed for 'GDS'");
+    EXPECT_EQ(agent.createBackend("GDS", params, be), NIXL_ERR_BACKEND);
+    EXPECT_EQ(be, nullptr);
+    EXPECT_EQ(invalid_mode.getIgnoredCount(), 1);
+    EXPECT_EQ(creation_failed.getIgnoredCount(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +277,34 @@ TEST_P(GdsBackend, DramFileRoundTrip) {
     nixlBackendH *be = nullptr;
     if (tryCreate(agent, GetParam(), be) != NIXL_SUCCESS || be == nullptr) {
         GTEST_SKIP() << GetParam() << " backend unavailable (no cuFile/GDS)";
+    }
+
+    EXPECT_TRUE(dramRoundTrip(agent, self, be, 1 * 1024 * 1024));
+}
+
+TEST(GdsMode, ExplicitBatchRoundTrip) {
+    nixlAgentConfig cfg;
+    const std::string self = "gds_explicit_batch";
+    nixlAgent agent(self, cfg);
+
+    const nixl_b_params_t params = {{"mode", "batch"}};
+    nixlBackendH *be = nullptr;
+    if (tryCreate(agent, "GDS", be, params) != NIXL_SUCCESS || be == nullptr) {
+        GTEST_SKIP() << "GDS backend unavailable (no cuFile/GDS)";
+    }
+
+    EXPECT_TRUE(dramRoundTrip(agent, self, be, 1 * 1024 * 1024));
+}
+
+TEST(GdsMode, MtRoundTripThroughGdsName) {
+    nixlAgentConfig cfg;
+    const std::string self = "gds_mt_mode";
+    nixlAgent agent(self, cfg);
+
+    const nixl_b_params_t params = {{"mode", "mt"}, {"thread_count", "1"}};
+    nixlBackendH *be = nullptr;
+    if (tryCreate(agent, "GDS", be, params) != NIXL_SUCCESS || be == nullptr) {
+        GTEST_SKIP() << "GDS backend unavailable (no cuFile/GDS)";
     }
 
     EXPECT_TRUE(dramRoundTrip(agent, self, be, 1 * 1024 * 1024));

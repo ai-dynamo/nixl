@@ -15,35 +15,88 @@
  * limitations under the License.
  */
 
+#include <exception>
+#include <string>
+
 #include "backend/backend_plugin.h"
+#include "common/backend.h"
+#include "common/nixl_log.h"
 #include "gds_batch_engine.h"
+#include "gds_mt_engine.h"
 
 namespace {
 nixl_b_params_t
 getGdsBackendOptions() {
-    return {{"batch_pool_size", "16"}, {"batch_limit", "128"}, {"max_request_size", "16777216"}};
+    return {{"mode", "batch"},
+            {"batch_pool_size", "16"},
+            {"batch_limit", "128"},
+            {"max_request_size", "16777216"},
+            {"thread_count", std::to_string(defaultGdsMtThreadCount())}};
 }
 
-using gds_plugin_t = nixlBackendPluginCreator<nixlGdsBatchEngine>;
+nixlBackendEngine *
+createGdsEngine(const nixlBackendInitParams *init_params) {
+    try {
+        const std::string mode =
+            nixl::getBackendParamDefaulted(init_params->customParams, "mode", std::string("batch"));
+        if (mode == "batch") {
+            return new nixlGdsBatchEngine(init_params);
+        }
+        if (mode == "mt") {
+            return new nixlGdsMtEngine(init_params);
+        }
+
+        NIXL_ERROR << "GDS: invalid mode '" << mode << "'; expected 'batch' or 'mt'";
+        return nullptr;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to create GDS engine: " << e.what();
+        return nullptr;
+    }
+}
+
+void
+destroyGdsEngine(nixlBackendEngine *engine) {
+    delete engine;
+}
+
+const char *
+getGdsPluginName() {
+    return "GDS";
+}
+
+const char *
+getGdsPluginVersion() {
+    return "0.1.1";
+}
+
+nixl_mem_list_t
+getGdsBackendMems() {
+    return {DRAM_SEG, VRAM_SEG, FILE_SEG};
+}
+
+nixlBackendPlugin *
+getGdsPlugin() {
+    static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
+                                       createGdsEngine,
+                                       destroyGdsEngine,
+                                       getGdsPluginName,
+                                       getGdsPluginVersion,
+                                       getGdsBackendOptions,
+                                       getGdsBackendMems};
+    return &plugin;
+}
 } // namespace
 
 #ifdef STATIC_PLUGIN_GDS
 nixlBackendPlugin *
 createStaticGDSPlugin() {
-    return gds_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                "GDS",
-                                "0.1.1",
-                                getGdsBackendOptions(),
-                                {DRAM_SEG, VRAM_SEG, FILE_SEG});
+    return getGdsPlugin();
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return gds_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                "GDS",
-                                "0.1.1",
-                                getGdsBackendOptions(),
-                                {DRAM_SEG, VRAM_SEG, FILE_SEG});
+    return getGdsPlugin();
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
