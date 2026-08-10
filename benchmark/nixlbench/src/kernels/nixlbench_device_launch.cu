@@ -79,7 +79,7 @@ nixlbenchSignalError(nixlbenchDeviceXferParams params) {
 template<nixl_gpu_level_t Level>
 __global__ void
 nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
-    __shared__ nixlGpuXferStatusH post_xfer_statuses[2][kMaxGroups];
+    __shared__ nixlGpuXferStatusH xfer_statuses[kMaxGroups];
     unsigned group_id, num_groups;
     if constexpr (Level == nixl_gpu_level_t::THREAD) {
         group_id = threadIdx.x;
@@ -88,49 +88,33 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
         group_id = threadIdx.x / warpSize;
         num_groups = (blockDim.x + warpSize - 1) / warpSize;
     }
-
-    int cur_idx = 0;
-    nixl_status_t post_status = NIXL_SUCCESS;
-    bool has_succ_post = false;
-    bool post_failed = false;
+    nixlGpuXferStatusH &xfer_status = xfer_statuses[group_id];
+    nixl_status_t put_status = NIXL_SUCCESS;
     // Each group uses a UCX channel; the host configures at least num_groups channels.
     for (size_t region_idx = group_id; region_idx < params.numRegions; region_idx += num_groups) {
-        post_status = nixlbenchPostPut<Level>(
-            params, region_idx, group_id, post_xfer_statuses[cur_idx][group_id]);
-        if (post_status != NIXL_IN_PROG) {
-            post_failed = true;
+        put_status = nixlbenchPostPut<Level>(params, region_idx, group_id, xfer_status);
+        if (put_status != NIXL_IN_PROG) {
             break;
         }
-        has_succ_post = true;
-        cur_idx ^= 1;
     }
-
-    nixl_status_t poll_status = NIXL_SUCCESS;
-    if (has_succ_post) {
-        const int last_succ_idx = cur_idx ^ 1; // last successful post index
-        poll_status = nixlbenchPollXferStatus<Level>(NIXL_IN_PROG,
-                                                     post_xfer_statuses[last_succ_idx][group_id]);
+    if (put_status == NIXL_IN_PROG) {
+        put_status = nixlbenchPollXferStatus<Level>(put_status, xfer_status);
     }
-
-    const bool group_failed = post_failed || poll_status != NIXL_SUCCESS;
-    if (group_failed && (Level == nixl_gpu_level_t::THREAD || threadIdx.x % warpSize == 0)) {
+    if (put_status != NIXL_SUCCESS &&
+        (Level == nixl_gpu_level_t::THREAD || threadIdx.x % warpSize == 0)) {
         printf("[nixlbenchPutKernel] transfer did not complete: "
-               "threadIdx.x=%u blockIdx.x=%u blockDim.x=%u "
-               "post_status=%d poll_status=%d\n",
+               "threadIdx.x=%u blockIdx.x=%u blockDim.x=%u final_status=%d",
                threadIdx.x,
                blockIdx.x,
                blockDim.x,
-               static_cast<int>(post_status),
-               static_cast<int>(poll_status));
+               static_cast<int>(put_status));
     }
-
-    const bool any_put_failed = __syncthreads_or(group_failed);
+    const bool any_put_failed = __syncthreads_or(put_status != NIXL_SUCCESS);
     if (threadIdx.x == 0) {
         if (any_put_failed) {
             (void)nixlbenchSignalError(params);
             return;
         }
-
         if (nixlbenchSignalCompletion(params) != NIXL_SUCCESS) {
             (void)nixlbenchSignalError(params);
         }
