@@ -22,7 +22,12 @@ namespace {
 nixl_b_params_t
 get_mooncake_options() {
     nixl_b_params_t params;
-    params["mooncake_devices"] = "";
+    // "classic" (default) drives the original Mooncake Transfer Engine,
+    // "tent" its next-generation engine; the latter requires Mooncake built
+    // with -DUSE_TENT=ON and can also be selected via NIXL_MOONCAKE_MODE.
+    params["mooncake_mode"] = "classic";
+    // Optional TENT configuration file, only read in tent mode.
+    params["tent_config_path"] = "";
     return params;
 }
 } // namespace
@@ -34,13 +39,13 @@ using mooncake_plugin_t = nixlBackendPluginCreator<nixlMooncakeEngine>;
 nixlBackendPlugin *
 createStaticMOONCAKEPlugin() {
     return mooncake_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
+        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.2.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return mooncake_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.1.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
+        NIXL_PLUGIN_API_VERSION, "MOONCAKE", "0.2.0", get_mooncake_options(), {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
