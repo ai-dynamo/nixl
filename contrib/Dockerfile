@@ -298,6 +298,42 @@ COPY . /workspace/nixl
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$RDMA_CORE_PREFIX/lib:$LD_LIBRARY_PATH
 
+# Opt-in: build the internal ucx-spcx-plugin against the UCX built above and
+# install it into the UCX plugins dir, where UCX loads it like any other module.
+# The plugin source is cloned into the build context (ucx-spcx-plugin-src/) by
+# build-container.sh --build-ucx-spcx-plugin, so this must come after the
+# `COPY . /workspace/nixl` above.
+# FlexIO SDK + dpacc (build-time dependencies of the plugin's DPA transport) come
+# from the doca-host repo added above; libflexio is compile-against only — at
+# runtime it comes from the target machine's DOCA/FlexIO installation.
+# ac_cv_prog_cc_c23=no: on toolchains defaulting to C23, AC_PROG_CC resolves CC to
+# "gcc -std=gnu23". The plugin's src/gdp/Makefile.am passes the compiler through
+# unsplit as -hostcc=$(CC), so dpacc receives a bare -std=gnu23 and rejects it.
+# Drop this once the plugin splits the compiler from its flags.
+ARG BUILD_UCX_SPCX_PLUGIN=false
+RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
+        apt-get update -y && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            flexio-sdk dpacc && \
+        ldconfig && \
+        cd ucx-spcx-plugin-src && \
+        export ACLOCAL_PATH="/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}" && \
+        export ac_cv_prog_cc_c23=no && \
+        ./autogen.sh /usr/local/src/ucx && \
+        ./configure --prefix=$UCX_PREFIX --libdir=$UCX_PREFIX/lib \
+            --enable-shared --disable-static \
+            --with-ucx-src=/usr/local/src/ucx \
+            --with-ucx-build=/usr/local/src/ucx \
+            --with-cuda=/usr/local/cuda \
+            --with-flexio=/opt/mellanox/flexio \
+            --with-dpacc=$DOCA_PREFIX/tools/dpacc \
+            LDFLAGS="-L$UCX_PLUGIN_DIR -L$UCX_PREFIX/lib" && \
+        make -j${NPROC:-$(nproc)} && \
+        make install && \
+        ldconfig && \
+        cd /workspace/nixl && rm -rf ucx-spcx-plugin-src; \
+    fi
+
 # Install pybind11 via apt
 RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 
