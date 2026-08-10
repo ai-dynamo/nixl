@@ -1,0 +1,104 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Publish the nixl-sys Rust crate to Artifactory.
+#
+# Crate publishing lives here (GitHub), not in the nixl-ci GitLab pipeline: the
+# source is native to the checkout (no mirror clone / build-id pinning), and the
+# Artifactory cargo token is already scoped to this repo's Actions secrets. Wheels
+# are built on blossom; nSpect register + scan happen GitLab-side; this owns crates.
+#
+# Fires on a release/RC tag (v*), or run manually. Publishes the workspace crate
+# (nixl-sys) to sw-dynamo-nixl-cargo-local. --no-verify: the source is already
+# built + tested by the wheel/CI path, so we package + upload without a full build.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   ARTIFACTORY_URL          - e.g. https://artifactory.nvidia.com/artifactory
+#   ARTIFACTORY_CARGO_TOKEN  - token with deploy access to the cargo repo
+name: Publish nixl-sys crate
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      crate_version:
+        description: "Version to publish. Default: derived from the tag (v1.4.0 -> 1.4.0); for a manual untagged run, the workspace version + -rc.<run_id>."
+        required: false
+        default: ""
+      dry_run:
+        description: "Package only, do not upload (adds cargo publish --dry-run)."
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  publish-crate:
+    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    env:
+      ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+      ARTIFACTORY_CARGO_TOKEN: ${{ secrets.ARTIFACTORY_CARGO_TOKEN }}
+      CARGO_REPO: sw-dynamo-nixl-cargo-local
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute crate version
+        id: ver
+        run: |
+          set -e
+          IN_VER="${{ github.event.inputs.crate_version }}"
+          if [ -n "$IN_VER" ]; then
+            VERSION="$IN_VER"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"          # v1.4.0 -> 1.4.0 ; v1.4.0-rc1 -> 1.4.0-rc1
+          else
+            BASE="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')"
+            VERSION="${BASE}-rc.${GITHUB_RUN_ID}"    # manual untagged run -> pre-release
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing nixl-sys version: $VERSION"
+
+      - name: Guard secrets
+        run: |
+          echo "ARTIFACTORY_CARGO_TOKEN length: ${#ARTIFACTORY_CARGO_TOKEN}"
+          [ -n "$ARTIFACTORY_CARGO_TOKEN" ] || { echo "ERROR: ARTIFACTORY_CARGO_TOKEN secret is empty/unavailable for this ref."; exit 1; }
+          [ -n "$ARTIFACTORY_URL" ] || { echo "ERROR: ARTIFACTORY_URL secret is empty."; exit 1; }
+
+      - name: Set workspace version
+        run: |
+          set -e
+          # Bump the [workspace.package] version (nixl-sys uses version.workspace = true).
+          sed -i -E "s/^(version = \")([^\"]+)(\")/\1${{ steps.ver.outputs.version }}\3/" Cargo.toml
+          grep -m1 '^version = ' Cargo.toml
+
+      - name: Publish nixl-sys to Artifactory
+        run: |
+          set -e
+          # The nixl-builder runner ships cargo; fall back to rustup if absent.
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "cargo not found; installing via rustup"
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            . "$HOME/.cargo/env"
+          fi
+          DRY=""
+          [ "${{ github.event.inputs.dry_run }}" = "true" ] && DRY="--dry-run"
+          # Token passed via env inside the arg; do not enable `set -x` around this line.
+          cargo publish --manifest-path src/bindings/rust/Cargo.toml \
+            --token "Bearer ${ARTIFACTORY_CARGO_TOKEN}" \
+            --index "sparse+${ARTIFACTORY_URL}/api/cargo/${CARGO_REPO}/index/" \
+            --no-verify --allow-dirty $DRY
