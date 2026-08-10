@@ -321,9 +321,11 @@ std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 bool xferBenchConfig::gusli_try_use_uring = false;
+std::optional<nixl_b_params_t> xferBenchConfig::plugin_parameters = std::nullopt;
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
+    plugin_parameters.reset();
     std::string usage("NIXL Benchmark.  Sample usage:\n\n");
     usage += std::string(argv[0]) + " [flags]";
     gflags::SetUsageMessage(usage);

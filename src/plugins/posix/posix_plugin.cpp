@@ -16,33 +16,14 @@
  */
 
 #include <memory>
-#include <string>
 #include "posix_backend.h"
-#include "io_queue.h"
 #include "backend/backend_plugin.h"
 
 // Plugin type alias for convenience
 using posix_plugin_t = nixlBackendPluginCreator<nixlPosixEngine>;
 
 namespace {
-nixl_b_params_t
-makePosixPluginParams() {
-    nixl_b_params_t params = {
-        {"ios_pool_size", std::to_string(nixlPosixIOQueue::DEF_IOS_POOL_SIZE)},
-        {"kernel_queue_size", std::to_string(nixlPosixIOQueue::DEF_KERNEL_QUEUE_SIZE)}};
-#ifdef HAVE_LINUXAIO
-    params["use_aio"] = "false";
-#endif
-#ifdef HAVE_LIBURING
-    params["use_uring"] = "false";
-#endif
-#ifdef HAVE_POSIXAIO
-    params["use_posix_aio"] = "false";
-#endif
-    return params;
-}
-
-const nixl_b_params_t posix_plugin_params = makePosixPluginParams();
+const nixl_b_params_t posix_plugin_params = nixlPosixEngine::getPluginParams();
 } // namespace
 
 #ifdef STATIC_PLUGIN_POSIX

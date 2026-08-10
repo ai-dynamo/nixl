@@ -73,7 +73,7 @@ namespace {
     std::string
     smallRawCommand(const std::filesystem::path &path, const std::string &operation) {
         return "raw posix --path " + shellQuote(path.string()) + " --operation " + operation +
-            " --total-buffer-size 64KiB --start-block-size 4KiB --max-block-size 4KiB "
+            " --total-buffer-size 64KB --start-block-size 4KB --max-block-size 4KB "
             "--iterations 16 --warmup-iterations 0 --check-consistency";
     }
 
@@ -98,14 +98,22 @@ namespace {
         return {(std::istreambuf_iterator<char>(stream)), {}};
     }
 
-    TEST(PosixIntegrationTest, RawPosixHelpShowsAdvertisedPluginParameterDefaults) {
+    TEST(PosixIntegrationTest, RawHelpSeparatesSharedAndPluginOptions) {
         TemporaryDirectory directory;
         ASSERT_FALSE(directory.path().empty());
-        const auto log = directory.path() / "help.log";
-        EXPECT_EQ(runCommand("raw posix --help", log), 0);
+        const auto raw_log = directory.path() / "raw-help.log";
+        EXPECT_EQ(runCommand("raw --help", raw_log), 0);
 
-        const auto contents = readFile(log);
-        EXPECT_NE(contents.find("FILE_SEG resource options"), std::string::npos);
+        const auto raw_contents = readFile(raw_log);
+        EXPECT_NE(raw_contents.find("Raw benchmark options"), std::string::npos);
+        EXPECT_NE(raw_contents.find("FILE_SEG resource options"), std::string::npos);
+        EXPECT_EQ(raw_contents.find("Plugin initialization parameters"), std::string::npos);
+
+        const auto posix_log = directory.path() / "posix-help.log";
+        EXPECT_EQ(runCommand("raw posix --help", posix_log), 0);
+
+        const auto contents = readFile(posix_log);
+        EXPECT_EQ(contents.find("FILE_SEG resource options"), std::string::npos);
         EXPECT_NE(contents.find("Plugin initialization parameters"), std::string::npos);
         EXPECT_NE(contents.find("--plugin-param"), std::string::npos);
         EXPECT_NE(contents.find("Advertised parameters and defaults:"), std::string::npos);
@@ -135,7 +143,7 @@ namespace {
         ASSERT_FALSE(directory.path().empty());
         const auto log = directory.path() / "normalized-dry-run.log";
         const std::string command = "raw posix --path " + shellQuote(directory.path().string()) +
-            " --total-buffer-size 4MiB --start-block-size 2MiB --max-block-size 2MiB "
+            " --total-buffer-size 4MB --start-block-size 2MB --max-block-size 2MB "
             "--iterations 17 --warmup-iterations 1 --dry-run";
         EXPECT_EQ(runCommand(command, log), 0);
         EXPECT_EQ(regularFileCount(directory.path()), 1U); // log only
@@ -239,7 +247,7 @@ namespace {
         const auto failure_log = failure_directory.path() / "failure.log";
         const auto missing_file = failure_directory.path() / "missing" / "file";
         const std::string command = "raw posix --filenames " + shellQuote(missing_file.string()) +
-            " --total-buffer-size 64KiB --start-block-size 4KiB --max-block-size 4KiB "
+            " --total-buffer-size 64KB --start-block-size 4KB --max-block-size 4KB "
             "--iterations 16 --warmup-iterations 0";
         EXPECT_NE(runCommand(command, failure_log), 0);
         EXPECT_FALSE(std::filesystem::exists(missing_file));

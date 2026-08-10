@@ -205,6 +205,23 @@ nixlPosixBackendReqH::postXfer() {
 // POSIX Engine Implementation
 // -----------------------------------------------------------------------------
 
+nixl_b_params_t
+nixlPosixEngine::getPluginParams() {
+    nixl_b_params_t params = {
+        {"ios_pool_size", std::to_string(nixlPosixIOQueue::DEF_IOS_POOL_SIZE)},
+        {"kernel_queue_size", std::to_string(nixlPosixIOQueue::DEF_KERNEL_QUEUE_SIZE)}};
+#ifdef HAVE_LINUXAIO
+    params["use_aio"] = "false";
+#endif
+#ifdef HAVE_LIBURING
+    params["use_uring"] = "false";
+#endif
+#ifdef HAVE_POSIXAIO
+    params["use_posix_aio"] = "false";
+#endif
+    return params;
+}
+
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       io_queue_type_(getIoQueueType(init_params->customParams)),

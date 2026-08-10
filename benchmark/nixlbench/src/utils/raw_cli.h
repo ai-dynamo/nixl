@@ -46,7 +46,7 @@ struct FileOptions {
     bool direct = false;
 };
 
-struct RawPosixRequest {
+struct RawCommandRequest {
     RawOptions raw;
     FileOptions file;
     bool has_file_options = false;
@@ -56,14 +56,10 @@ struct RawPosixRequest {
 struct RawCommandResult {
     int status = EXIT_SUCCESS;
     bool execute = false;
-    std::optional<nixl_b_params_t> plugin_parameters;
 };
 
 bool
 isRawCommand(int argc, char *argv[]);
-
-std::optional<size_t>
-parseHumanSize(const std::string &value, std::string &error);
 
 std::optional<PluginMetadata>
 discoverPluginMetadata(const std::string &name, std::string &error);
@@ -75,7 +71,7 @@ int
 parseRawPosixCommand(int argc,
                      char *argv[],
                      const PluginMetadata &metadata,
-                     RawPosixRequest &request,
+                     RawCommandRequest &request,
                      bool &help_requested,
                      std::ostream &out,
                      std::ostream &err);
@@ -84,20 +80,20 @@ int
 parseRawCommand(int argc,
                 char *argv[],
                 const std::vector<PluginMetadata> &file_plugins,
-                RawPosixRequest &request,
+                RawCommandRequest &request,
                 bool &help_requested,
                 std::ostream &out,
                 std::ostream &err);
 
 std::vector<std::string>
-benchmarkFileArguments(const RawPosixRequest &request, const std::string &program_name);
+benchmarkFileArguments(const RawCommandRequest &request, const std::string &program_name);
 
 void
-printRawPosixPlan(const RawPosixRequest &request,
-                  const PluginMetadata &metadata,
-                  int normalized_iterations,
-                  int normalized_warmup_iterations,
-                  std::ostream &out);
+printRawPlan(const RawCommandRequest &request,
+             const PluginMetadata &metadata,
+             int normalized_iterations,
+             int normalized_warmup_iterations,
+             std::ostream &out);
 
 RawCommandResult
 prepareRawCommand(int argc, char *argv[], std::ostream &out, std::ostream &err);

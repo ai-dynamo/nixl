@@ -48,7 +48,7 @@ namespace {
     int
     parse(Arguments &arguments,
           const PluginMetadata &metadata,
-          RawPosixRequest &request,
+          RawCommandRequest &request,
           std::ostringstream &out,
           std::ostringstream &err,
           bool &help) {
@@ -109,7 +109,7 @@ namespace {
         other.name = "GDS";
         other.parameters = {{"gds_parameter", "default"}};
         Arguments arguments{"nixlbench", "raw", "posix", "--dry-run"};
-        RawPosixRequest request;
+        RawCommandRequest request;
         bool help = false;
         std::ostringstream out;
         std::ostringstream err;
@@ -127,14 +127,32 @@ namespace {
         EXPECT_EQ(request.plugin_parameters.find("gds_parameter"), request.plugin_parameters.end());
     }
 
-    TEST(HumanSizeTest, ParsesAndRejectsHumanReadableSizes) {
-        std::string error;
-        EXPECT_EQ(parseHumanSize("4KiB", error), 4096U);
-        EXPECT_EQ(parseHumanSize("2 MB", error), 2U * 1024 * 1024);
-        EXPECT_EQ(parseHumanSize("1g", error), 1ULL * 1024 * 1024 * 1024);
-        EXPECT_FALSE(parseHumanSize("0", error));
-        EXPECT_FALSE(parseHumanSize("4XB", error));
-        EXPECT_FALSE(parseHumanSize("999999999999999999999TiB", error));
+    TEST(RawPosixParserTest, UsesCli11ForBinarySizeParsingAndValidation) {
+        Arguments valid{"nixlbench",
+                        "raw",
+                        "posix",
+                        "--total-buffer-size",
+                        "1g",
+                        "--start-block-size",
+                        "4KB",
+                        "--max-block-size",
+                        "2 MB"};
+        RawCommandRequest request;
+        bool help = false;
+        std::ostringstream out;
+        std::ostringstream err;
+        ASSERT_EQ(parse(valid, posixMetadata(), request, out, err, help), 0) << err.str();
+        EXPECT_EQ(request.raw.total_buffer_size, 1ULL * 1024 * 1024 * 1024);
+        EXPECT_EQ(request.raw.start_block_size, 4U * 1024);
+        EXPECT_EQ(request.raw.max_block_size, 2U * 1024 * 1024);
+
+        for (const char *size : {"0", "4KiB", "4XB", "999999999999999999999TB"}) {
+            Arguments invalid{"nixlbench", "raw", "posix", "--total-buffer-size", size};
+            request = {};
+            out.str("");
+            err.str("");
+            EXPECT_NE(parse(invalid, posixMetadata(), request, out, err, help), 0) << size;
+        }
     }
 
     TEST(RawPosixParserTest, PreservesAdvertisedPluginDefaultsOverridesAndValues) {
@@ -142,7 +160,7 @@ namespace {
         auto metadata = posixMetadata();
         metadata.parameters.emplace("path,alias", "default-value");
         metadata.parameters.emplace("--path", "plugin-default");
-        RawPosixRequest request;
+        RawCommandRequest request;
         bool help = false;
         std::ostringstream out;
         std::ostringstream err;
@@ -184,7 +202,7 @@ namespace {
                             "--operation",
                             "read",
                             "--total-buffer-size",
-                            "8MiB",
+                            "8MB",
                             "--iterations",
                             "32",
                             "--threads",
@@ -198,7 +216,7 @@ namespace {
                             "--plugin-param",
                             "future_parameter",
                             "Exact-Value"};
-        RawPosixRequest request;
+        RawCommandRequest request;
         bool help = false;
         std::ostringstream out;
         std::ostringstream err;
@@ -219,7 +237,7 @@ namespace {
         metadata.parameters.erase("future_parameter");
         Arguments unadvertised{
             "nixlbench", "raw", "posix", "--plugin-param", "future_parameter", "override"};
-        RawPosixRequest request;
+        RawCommandRequest request;
         bool help = false;
         std::ostringstream out;
         std::ostringstream err;
@@ -233,7 +251,7 @@ namespace {
 
     TEST(RawPosixParserTest, ValidatesRawBenchmarkOptions) {
         Arguments threads{"nixlbench", "raw", "posix", "--threads", "0"};
-        RawPosixRequest request;
+        RawCommandRequest request;
         bool help = false;
         std::ostringstream out;
         std::ostringstream err;
@@ -241,12 +259,12 @@ namespace {
         EXPECT_NE(err.str().find("threads"), std::string::npos);
 
         Arguments sweep{
-            "nixlbench", "raw", "posix", "--start-block-size", "8KiB", "--max-block-size", "4KiB"};
+            "nixlbench", "raw", "posix", "--start-block-size", "8KB", "--max-block-size", "4KB"};
         request = {};
         out.str("");
         err.str("");
         EXPECT_NE(parse(sweep, posixMetadata(), request, out, err, help), 0);
-        EXPECT_NE(err.str().find("block sizes"), std::string::npos);
+        EXPECT_NE(err.str().find("block size"), std::string::npos);
     }
 
     TEST(RawPosixParserTest, RejectsUnadvertisedLocalMemoryTypeUsingMetadataName) {
@@ -254,7 +272,7 @@ namespace {
         metadata.name = "STORAGE";
         metadata.memory_types = {FILE_SEG};
         Arguments arguments{"nixlbench", "raw", "posix", "--dry-run"};
-        RawPosixRequest request;
+        RawCommandRequest request;
         bool help = false;
         std::ostringstream out;
         std::ostringstream err;
@@ -268,12 +286,18 @@ namespace {
 
     TEST(RawPosixParserTest, ValidatesFileResourceOptions) {
         Arguments files{"nixlbench", "raw", "posix", "--threads", "1", "--num-files", "2"};
-        RawPosixRequest request;
+        RawCommandRequest request;
         bool help = false;
         std::ostringstream out;
         std::ostringstream err;
         EXPECT_NE(parse(files, posixMetadata(), request, out, err, help), 0);
         EXPECT_NE(err.str().find("--num-files"), std::string::npos);
+
+        Arguments conflicting{"nixlbench", "raw", "posix", "--path", "/tmp", "--filenames", "one"};
+        request = {};
+        out.str("");
+        err.str("");
+        EXPECT_NE(parse(conflicting, posixMetadata(), request, out, err, help), 0);
 
         Arguments names{"nixlbench",
                         "raw",
@@ -300,7 +324,7 @@ namespace {
                                  num_files,
                                  "--filenames",
                                  filenames};
-            RawPosixRequest invalid_request;
+            RawCommandRequest invalid_request;
             bool invalid_help = false;
             std::ostringstream invalid_out;
             std::ostringstream invalid_err;
@@ -325,17 +349,17 @@ namespace {
         metadata.parameters.emplace("middle_parameter", "m");
         metadata.parameters.emplace("path,alias", "default-value");
         Arguments posix_help{"nixlbench", "raw", "posix", "--help"};
-        RawPosixRequest request;
+        RawCommandRequest request;
         bool help = false;
         std::ostringstream out;
         std::ostringstream err;
         EXPECT_EQ(parse(posix_help, metadata, request, out, err, help), 0);
         EXPECT_TRUE(help);
-        EXPECT_NE(out.str().find("FILE_SEG resource options"), std::string::npos);
+        EXPECT_EQ(out.str().find("FILE_SEG resource options"), std::string::npos);
         EXPECT_NE(out.str().find("Plugin initialization parameters"), std::string::npos);
         EXPECT_NE(out.str().find("--plugin-param"), std::string::npos);
         EXPECT_NE(out.str().find("Advertised parameters and defaults:"), std::string::npos);
-        EXPECT_NE(out.str().find("--path"), std::string::npos);
+        EXPECT_EQ(out.str().find("--path"), std::string::npos);
         EXPECT_NE(out.str().find("future_parameter: default"), std::string::npos);
         EXPECT_NE(out.str().find("path,alias: default-value"), std::string::npos);
         EXPECT_EQ(out.str().find("KEY VALUE:{"), std::string::npos);
@@ -362,11 +386,12 @@ namespace {
         EXPECT_EQ(parse(raw_help, metadata, request, out, err, help), 0);
         EXPECT_TRUE(help);
         EXPECT_NE(out.str().find("Raw benchmark options"), std::string::npos);
+        EXPECT_NE(out.str().find("FILE_SEG resource options"), std::string::npos);
         EXPECT_NE(out.str().find("--operation"), std::string::npos);
-        EXPECT_NE(out.str().find("8 GiB (8589934592 bytes)"), std::string::npos);
-        EXPECT_NE(out.str().find("4 KiB (4096 bytes)"), std::string::npos);
-        EXPECT_NE(out.str().find("64 MiB (67108864 bytes)"), std::string::npos);
-        EXPECT_EQ(out.str().find("--path"), std::string::npos);
+        EXPECT_NE(out.str().find("8 GB (8589934592 bytes)"), std::string::npos);
+        EXPECT_NE(out.str().find("4 KB (4096 bytes)"), std::string::npos);
+        EXPECT_NE(out.str().find("64 MB (67108864 bytes)"), std::string::npos);
+        EXPECT_NE(out.str().find("--path"), std::string::npos);
         EXPECT_EQ(out.str().find("--plugin-param"), std::string::npos);
     }
 
@@ -374,8 +399,8 @@ namespace {
         auto metadata = posixMetadata();
         metadata.name = "STORAGE";
         metadata.memory_types = {DRAM_SEG};
-        Arguments help_arguments{"nixlbench", "raw", "posix", "--help"};
-        RawPosixRequest request;
+        Arguments help_arguments{"nixlbench", "raw", "--help"};
+        RawCommandRequest request;
         bool help = false;
         std::ostringstream out;
         std::ostringstream err;
@@ -402,7 +427,7 @@ namespace {
     }
 
     TEST(RawPlanTest, PrintsSeparatedSectionsAndSortedExactPluginParameters) {
-        RawPosixRequest request;
+        RawCommandRequest request;
         request.raw.operation = "READ";
         request.has_file_options = true;
         request.file.path = "/tmp/nixlbench";
@@ -410,8 +435,7 @@ namespace {
         const PluginMetadata metadata{"POSIX", {FILE_SEG, DRAM_SEG}, request.plugin_parameters};
         std::ostringstream out;
 
-        printRawPosixPlan(
-            request, metadata, request.raw.iterations, request.raw.warmup_iterations, out);
+        printRawPlan(request, metadata, request.raw.iterations, request.raw.warmup_iterations, out);
 
         const auto benchmark = out.str().find("benchmark options:");
         const auto file = out.str().find("file-resource options:");
@@ -430,7 +454,7 @@ namespace {
     }
 
     TEST(RawRequestConversionTest, BridgeContainsOnlyBenchmarkAndFileResourceSettings) {
-        RawPosixRequest request;
+        RawCommandRequest request;
         request.raw.operation = "READ";
         request.raw.total_buffer_size = 65536;
         request.raw.start_block_size = 4096;

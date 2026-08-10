@@ -106,8 +106,7 @@ getRandomSeed() {
     return seed;
 }
 
-xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices,
-                                         const std::optional<nixl_b_params_t> &plugin_parameters)
+xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
     : xferBenchWorker(),
       default_rng_(getRandomSeed()) {
     seg_type = GET_SEG_TYPE(isInitiator());
@@ -199,7 +198,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
         std::cout << "GDS MT Num threads: " << xferBenchConfig::gds_mt_num_threads << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
-        if (!plugin_parameters) {
+        if (!xferBenchConfig::plugin_parameters) {
             // Preserve the existing flags-only POSIX parameter assembly.
             if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
                 backend_params["use_aio"] = "true";
@@ -346,8 +345,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         exit(EXIT_FAILURE);
     }
 
-    if (plugin_parameters) {
-        for (const auto &[name, value] : *plugin_parameters) {
+    if (xferBenchConfig::plugin_parameters) {
+        for (const auto &[name, value] : *xferBenchConfig::plugin_parameters) {
             backend_params[name] = value;
         }
     }

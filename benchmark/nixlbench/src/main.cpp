@@ -20,7 +20,9 @@
 #include <nixl.h>
 #include <sys/time.h>
 #include "utils/utils.h"
+#if HAVE_RAW_CLI
 #include "utils/raw_cli.h"
+#endif
 #include "utils/scope_guard.h"
 #include "worker/nixl/nixl_worker.h"
 #if HAVE_NVSHMEM && HAVE_CUDA
@@ -28,7 +30,6 @@
 #endif
 #include <unistd.h>
 #include <memory>
-#include <optional>
 #include <csignal>
 
 static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int num_threads) {
@@ -160,14 +161,14 @@ static int processBatchSizes(xferBenchWorker &worker,
 
 namespace {
 std::unique_ptr<xferBenchWorker>
-createWorker(const std::optional<nixl_b_params_t> &plugin_parameters) {
+createWorker() {
     if (xferBenchConfig::worker_type == XFERBENCH_WORKER_NIXL) {
         std::vector<std::string> devices = xferBenchConfig::parseDeviceList();
         if (devices.empty()) {
             std::cerr << "Failed to parse device list" << std::endl;
             return nullptr;
         }
-        return std::make_unique<xferBenchNixlWorker>(devices, plugin_parameters);
+        return std::make_unique<xferBenchNixlWorker>(devices);
     } else if (xferBenchConfig::worker_type == XFERBENCH_WORKER_NVSHMEM) {
 #if HAVE_NVSHMEM && HAVE_CUDA
         return std::make_unique<xferBenchNvshmemWorker>();
@@ -183,12 +184,12 @@ createWorker(const std::optional<nixl_b_params_t> &plugin_parameters) {
 } // namespace
 
 static int
-runBenchmark(const std::optional<nixl_b_params_t> &plugin_parameters = std::nullopt) {
+runBenchmark() {
     int ret = 0;
     int num_threads = xferBenchConfig::num_threads;
 
     // Create the appropriate worker based on worker configuration
-    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker(plugin_parameters);
+    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker();
     if (!worker_ptr) {
         return EXIT_FAILURE;
     }
@@ -214,7 +215,7 @@ runBenchmark(const std::optional<nixl_b_params_t> &plugin_parameters = std::null
     }
 
     if (worker_ptr->isInitiator() && worker_ptr->isMasterRank()) {
-        if (!plugin_parameters) {
+        if (!xferBenchConfig::plugin_parameters) {
             xferBenchConfig::printConfig();
         }
         xferBenchUtils::printStatsHeader();
@@ -240,13 +241,15 @@ runBenchmark(const std::optional<nixl_b_params_t> &plugin_parameters = std::null
 
 int
 main(int argc, char *argv[]) {
+#if HAVE_RAW_CLI
     if (nixlbench::isRawCommand(argc, argv)) {
         const auto result = nixlbench::prepareRawCommand(argc, argv, std::cout, std::cerr);
         if (result.status != EXIT_SUCCESS || !result.execute) {
             return result.status;
         }
-        return runBenchmark(result.plugin_parameters);
+        return runBenchmark();
     }
+#endif
 
     // Preserve the flags-only interface by routing every non-raw invocation directly to gflags.
     if (xferBenchConfig::parseConfig(argc, argv) != EXIT_SUCCESS) {

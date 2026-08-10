@@ -46,9 +46,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<GusliDeviceConfig> gusli_devices;
 
     public:
-        explicit xferBenchNixlWorker(
-            const std::vector<std::string> &devices,
-            const std::optional<nixl_b_params_t> &plugin_parameters = std::nullopt);
+        explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
         ~xferBenchNixlWorker() override;
 
         // Memory management

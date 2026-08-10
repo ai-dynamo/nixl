@@ -142,9 +142,16 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 # GFlags
 gflags_dep = dependency('gflags', required: true)
 
-# CLI11 is used only by the explicit `raw` command hierarchy. Legacy invocations
-# continue to use gflags unchanged.
-cli11_dep = dependency('CLI11', required: true, fallback: ['cli11', 'CLI11_dep'])
+# CLI11 is used only by the opt-in `raw` command hierarchy. Legacy invocations
+# continue to use gflags unchanged when CLI11 is unavailable or raw is disabled.
+cli11_dep = disabler()
+if get_option('build_raw_cli')
+    cli11_dep = dependency('CLI11', required: false, fallback: ['cli11', 'CLI11_dep'])
+    if not cli11_dep.found()
+        warning('CLI11 not found. The raw command path will not be built.')
+    endif
+endif
+raw_cli_available = get_option('build_raw_cli') and cli11_dep.found()
 
 # ASIO (usually via libasio-dev package)
 asio_dep = dependency('asio', required: true)
@@ -332,13 +339,17 @@ configure_file(
         'HAVE_CUDA': cuda_available ? '1' : '0',
         'HAVE_ROCM': rocm_available ? '1' : '0',
         'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
+        'HAVE_RAW_CLI': raw_cli_available ? '1' : '0',
     },
     install: true,
     install_dir: get_option('includedir') / 'nixlbench'
 )
 
-deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, cli11_dep, tomlplusplus_dep, asio_dep]
+deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, tomlplusplus_dep, asio_dep]
 args = []
+if raw_cli_available
+    deps += [cli11_dep]
+endif
 if etcd_available
     deps += [etcd_dep]
 endif
@@ -388,12 +399,15 @@ if nvshmem_available
     nvcc_args += args
     nvcc_cmd_files = [
                  meson.current_build_dir() + '/src/utils/libutils.a.p/utils.cpp.o',
-                 meson.current_build_dir() + '/src/utils/libutils.a.p/raw_cli.cpp.o',
                  meson.current_build_dir() + '/src/runtime/libruntime.a.p/runtime.cpp.o',
                  meson.current_build_dir() + '/src/worker/libworker.a.p/worker.cpp.o',
                  meson.current_build_dir() + '/src/worker/nixl/libnixl_worker.a.p/nixl_worker.cpp.o',
                  meson.current_build_dir() + '/src/worker/nvshmem/libnvshmemWorker.a.p/nvshmem_worker.cpp.o'
                  ]
+
+    if raw_cli_available
+        nvcc_cmd_files += meson.current_build_dir() + '/src/utils/libutils.a.p/raw_cli.cpp.o'
+    endif
 
     if etcd_available
         nvcc_args += ['-letcd-cpp-api-core', '-lcpprest']
@@ -423,5 +437,9 @@ else
 endif
 
 if get_option('build_tests') and get_option('buildtype') != 'release'
-    subdir('tests')
+    if raw_cli_available
+        subdir('tests')
+    else
+        message('Skipping raw CLI tests because the raw command path is not built.')
+    endif
 endif
