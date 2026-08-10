@@ -167,7 +167,7 @@ private:
     Agent        m_Initiator;
     Agent        m_Target;
     std::string  m_backend_name;
-    bool progThread_;
+    const bool progThread_;
     size_t numWorkers_;
     size_t numThreads_;
 };
