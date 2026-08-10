@@ -349,6 +349,10 @@ int main(int argc, char *argv[])
                 break;
             case 'N':
                 num_threads = atoi(optarg);
+                if (num_threads == 0) {
+                    std::cerr << "Error: Number of threads must be positive\n";
+                    return 1;
+                }
                 break;
             case 't':
                 iterations = atoi(optarg);
