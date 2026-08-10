@@ -57,10 +57,18 @@ protected:
 };
 
 nixlPosixIOQueueAIO::~nixlPosixIOQueueAIO() {
-    for (auto &io : ios_) {
-        if (io.aio_.aio_fildes != 0) {
-            aio_cancel(io.aio_.aio_fildes, &io.aio_);
+    // aio_cancel() is only a hint and can itself fail (e.g. EBADF): any operation it does
+    // not report as done stays active and keeps referencing its aiocb. Whatever the
+    // cancel result, wait until the operation leaves EINPROGRESS and reap it before ios_
+    // is destroyed, without invoking completion callbacks: at teardown their context may
+    // already be gone.
+    for (auto *io : ios_in_flight_) {
+        aio_cancel(io->aio_.aio_fildes, &io->aio_);
+        const struct aiocb *cbs[] = {&io->aio_};
+        while (aio_error(&io->aio_) == EINPROGRESS) {
+            aio_suspend(cbs, 1, nullptr);
         }
+        aio_return(&io->aio_);
     }
 }
 

@@ -154,7 +154,7 @@ nixlPosixBackendReqH::prepXfer() {
 
 nixl_status_t
 nixlPosixBackendReqH::checkXfer() {
-    if (num_confirmed_ios_ == queue_depth_) {
+    if (allConfirmed()) {
         return NIXL_SUCCESS;
     }
 
@@ -222,6 +222,14 @@ nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
     }
     NIXL_INFO << absl::StrFormat("POSIX backend initialized using io queue type: %s",
                                  io_queue_type_);
+}
+
+// Released requests whose completions were never fully reaped are still parked here;
+// nothing can poll the queue once the engine is going away, so free them now.
+nixlPosixEngine::~nixlPosixEngine() {
+    for (auto *req : released_reqs_) {
+        delete req;
+    }
 }
 
 nixl_status_t
@@ -328,7 +336,9 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
     try {
         auto &posix_handle = castPosixHandle(handle);
         NIXL_LOCK_GUARD(io_queue_lock_);
-        return posix_handle.checkXfer();
+        nixl_status_t status = posix_handle.checkXfer();
+        reapReleasedReqs();
+        return status;
     }
     catch (const nixlPosixBackendReqH::exception &e) {
         NIXL_ERROR << e.what();
@@ -337,11 +347,47 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
     return NIXL_ERR_BACKEND;
 }
 
+// Free released requests whose outstanding I/Os have since been confirmed. Must be called
+// with io_queue_lock_ held, which serializes it against the polls that confirm the I/Os.
+void
+nixlPosixEngine::reapReleasedReqs() const {
+    auto it = released_reqs_.begin();
+    while (it != released_reqs_.end()) {
+        if ((*it)->allConfirmed()) {
+            delete *it;
+            it = released_reqs_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+// A request with all I/Os confirmed can be freed on the spot: every queue entry that
+// referenced it has already been reaped under io_queue_lock_. A request with I/Os still
+// queued or in flight must outlive them, because each entry stores the request as its
+// completion callback context and none of the I/O queues can abort submitted operations.
+// Such a request is parked on released_reqs_ and freed once its completions drain. Note
+// that a parked request's descriptor-list references die with the agent-side handle, so
+// nothing on the parked path (ioDone(), allConfirmed(), the destructor) may touch them.
 nixl_status_t
 nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
-    NIXL_ASSERT(handle != nullptr);
-    delete handle;
-    return NIXL_SUCCESS;
+    try {
+        auto &posix_handle = castPosixHandle(handle);
+        NIXL_LOCK_GUARD(io_queue_lock_);
+        if (posix_handle.allConfirmed()) {
+            delete handle;
+        } else {
+            NIXL_DEBUG << "POSIX request released while in progress; deferring free until its "
+                          "outstanding I/Os complete";
+            released_reqs_.push_back(&posix_handle);
+        }
+        return NIXL_SUCCESS;
+    }
+    catch (const nixlPosixBackendReqH::exception &e) {
+        NIXL_ERROR << e.what();
+        return e.code();
+    }
+    return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
