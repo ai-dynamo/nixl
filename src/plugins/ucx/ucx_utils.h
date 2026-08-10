@@ -89,7 +89,7 @@ public:
            size_t len,
            uint32_t flags,
            nixlUcxReq *req = nullptr,
-           const am_deleter_t &deleter = nullptr) const;
+           am_deleter_t &&deleter = nullptr) const;
 
     /* Data access */
     [[nodiscard]] nixl_status_t

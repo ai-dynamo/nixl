@@ -225,7 +225,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
                   size_t len,
                   uint32_t flags,
                   nixlUcxReq *req,
-                  const am_deleter_t &deleter) const {
+                  am_deleter_t &&deleter) const {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         // The endpoint is already in a failed state (e.g. the peer disconnected),
@@ -243,7 +243,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
 
     nixl_ucx_am_cb_ctx_ptr_t ctx;
     if (deleter) {
-        ctx = std::make_unique<nixl_ucx_am_cb_ctx_t>(buffer, deleter);
+        ctx = std::make_unique<nixl_ucx_am_cb_ctx_t>(buffer, std::move(deleter));
         param.op_attr_mask |= UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA;
         param.cb.send = sendAmCallback;
         param.user_data = ctx.get();
@@ -257,8 +257,8 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
             *req = static_cast<nixlUcxReq>(request);
         }
         return NIXL_IN_PROG;
-    } else if (deleter) {
-        deleter(nullptr, buffer);
+    } else if (ctx) {
+        ctx->second(nullptr, ctx->first);
     }
 
     return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));

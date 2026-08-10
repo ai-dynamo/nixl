@@ -1400,7 +1400,7 @@ nixlUcxEngine::sendNotif(std::unique_ptr<std::string> &&msg, const nixlUcxEp &ep
                      buffer->size(),
                      UCP_AM_SEND_FLAG_EAGER,
                      req,
-                     deleter);
+                     std::move(deleter));
 }
 
 nixl_status_t
