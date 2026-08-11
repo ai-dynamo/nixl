@@ -33,6 +33,16 @@ on:
   push:
     tags:
       - 'v*'
+  # PRs that touch the crate/workflow run this as a DRY RUN (validate; never publish).
+  pull_request:
+    branches:
+      - 'release/**'
+      - main
+    paths:
+      - '.github/workflows/publish-crate.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/bindings/rust/**'
   workflow_dispatch:
     inputs:
       crate_version:
@@ -95,8 +105,12 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
             . "$HOME/.cargo/env"
           fi
+          # Never publish from a PR — force a dry run there. Real publish only on a v* tag
+          # (or a manual run with dry_run unchecked). The manual input can also force dry.
           DRY=""
+          [ "${{ github.event_name }}" = "pull_request" ] && DRY="--dry-run"
           [ "${{ github.event.inputs.dry_run }}" = "true" ] && DRY="--dry-run"
+          [ -n "$DRY" ] && echo "DRY RUN: packaging only, no upload"
           # Token passed via env inside the arg; do not enable `set -x` around this line.
           cargo publish --manifest-path src/bindings/rust/Cargo.toml \
             --token "Bearer ${ARTIFACTORY_CARGO_TOKEN}" \
