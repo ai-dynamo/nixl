@@ -42,7 +42,8 @@ using nixl_worker_task_t = std::function<void()>;
  *
  * A worker that was never started still accepts tasks: submit() runs them on
  * the caller thread, serialized, which is what a backend with no background
- * work needs (P2P without a listener).
+ * work needs (P2P without a listener). A task must not call stop(), which would
+ * join the thread it is running on.
  */
 class nixlMetadataWorker {
 public:
@@ -85,7 +86,7 @@ private:
     enum class state {
         IDLE, // no thread; submit() runs on the caller
         RUNNING, // thread alive, taking tasks
-        STOPPING, // one caller owns the shutdown, queue still open
+        STOPPING, // one caller owns the shutdown, queue closed
     };
 
     void
@@ -95,25 +96,29 @@ private:
     void
     runQueuedTasks(std::chrono::steady_clock::time_point until);
 
-    // Run a task with its exceptions logged rather than escaping.
-    static void
-    runTask(nixl_worker_task_t &task);
-
-    // Post-join: drain until the queue is empty and settle into IDLE in that
-    // same locked check, so a late task cannot be left queued.
+    // Run one unit of work, serialized against every other task and poll, with
+    // its exceptions logged rather than escaping.
     void
-    drainAndSettle();
+    runTask(nixl_worker_task_t &task);
 
     poll_t poll_;
     std::chrono::microseconds delay_{0};
     std::mutex mutex_;
+    // Queued work, waited on by the loop alone: one predicate per condition
+    // variable, so submit()'s notify cannot be taken by a stop() waiting below.
     std::condition_variable cv_;
+    // Reaching IDLE, waited on by the stop() callers that do not own the join.
+    std::condition_variable idleCv_;
     std::deque<nixl_worker_task_t> tasks_;
     state state_ = state::IDLE;
-    // Serializes the inline path. Separate from mutex_ so running a task never
-    // holds the queue lock across transport I/O, and so a task that submits
-    // cannot deadlock against a non-recursive mutex.
-    std::mutex inlineMutex_;
+    // Set while a thread exists, so submit() can tell a task submitting more
+    // work from an outside caller. Cleared on settle: thread ids are reused, and
+    // an unrelated caller matching a dead worker would queue with no runner.
+    std::thread::id workerId_;
+    // Held while a task or the poll runs, whichever thread runs it: that is the
+    // backends' promise that their transport state sees one thread at a time.
+    // Never taken with mutex_ held, so no two locks here ever nest.
+    std::mutex taskMutex_;
     std::thread thread_;
 };
 
