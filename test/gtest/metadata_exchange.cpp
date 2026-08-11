@@ -554,7 +554,7 @@ TEST_F(MetadataExchangeTestFixture, LocalNonLocalMDExchange) {
     nixlBackendH *backend;
     std::string backend_name;
     for (const auto& name : std::set<std::string>{"GDS", "POSIX"}) {
-        const LogIgnoreGuard lig1("Error initializing GPU Direct Storage driver");
+        const LogIgnoreGuard lig1("cuFileDriverOpen failed");
         const LogIgnoreGuard lig2("createBackend: backend initialization error for 'GDS'");
         status = src.agent->createBackend(name, {}, backend);
         if (status == NIXL_SUCCESS) {
