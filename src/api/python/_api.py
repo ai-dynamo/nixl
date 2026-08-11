@@ -504,8 +504,12 @@ class nixl_agent:
     @param agent_name Name of the agent. It can be "NIXL_INIT_AGENT", local agent name, or remote agent name
     @param xfer_list List of transfer descriptors, can be list of memory region tuples, tensors,
                      Nx3 numpy array, or nixlXferDList. See get_xfer_descs for more details on the structure.
-                     A nixlStrideDList (from get_strided_xfer_descs) is also accepted.
-    @param mem_type Optional memory type necessary for list of memory regions.
+                     An Nx5 numpy array is taken as a compressed (strided) list, where each row is
+                     (address, len, device ID, stride, count): `count` blocks of `len` bytes spaced
+                     `stride` bytes apart (stride == len is dense). This avoids materializing every
+                     block of a large regular pattern such as a KV cache. The resulting handle is
+                     indexed by flattened block index, same as if the blocks were listed one by one.
+    @param mem_type Optional memory type necessary for list of memory regions, mandatory for Nx5 arrays.
     @param backends Optional list of backend names to limit which backends are used during preparation
     @return Opaque handle to the prepared transfer descriptor list.
     """
@@ -517,10 +521,11 @@ class nixl_agent:
         mem_type: Optional[str] = None,
         backends: list[str] = [],
     ) -> nixl_prepped_dlist_handle:
-        if isinstance(xfer_list, nixlBind.nixlStrideDList):
-            descs = xfer_list
-        else:
-            descs = self.get_xfer_descs(xfer_list, mem_type)
+        is_strided = (
+            isinstance(xfer_list, np.ndarray)
+            and xfer_list.ndim == 2
+            and xfer_list.shape[1] == 5
+        )
 
         is_local = agent_name == "NIXL_INIT_AGENT" or agent_name == ""
         if is_local:
@@ -530,10 +535,15 @@ class nixl_agent:
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
 
-        if is_local:
-            handle = self.agent.prepXferDlist(descs, handle_list)
+        args = [] if is_local else [agent_name]
+        if is_strided:
+            if mem_type is None:
+                raise ValueError("Please specify a mem type for strided descriptors")
+            args += [self.nixl_mems[mem_type], xfer_list]
         else:
-            handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
+            args.append(self.get_xfer_descs(xfer_list, mem_type))
+
+        handle = self.agent.prepXferDlist(*args, handle_list)
         return nixl_prepped_dlist_handle(self.agent, handle)
 
     """
@@ -1036,55 +1046,6 @@ class nixl_agent:
                 dlist[i, :] = (base_addr, region_len, gpu_id)
             mem_type = self._tensor_mem_type(descs[0])
             new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
-        else:
-            new_descs = None
-
-        return new_descs
-
-    """
-    @brief Build a compressed nixlStrideDList. Each run is (address, len, device ID, stride,
-            count): `count` blocks of `len` bytes spaced `stride` bytes apart (stride == len is
-            dense). Avoids materializing every block (e.g. for a KV cache). descCount() counts
-            runs, while flatSize() gives the block count that make_prepped_xfer indices address.
-
-    @param descs List of 5-tuples, Nx5 numpy array, or nixlStrideDList (passed through).
-    @param mem_type Memory type, required unless descs is already a nixlStrideDList.
-    @return Strided transfer descriptor list, nixlStrideDList.
-    """
-
-    def get_strided_xfer_descs(
-        self,
-        descs,
-        mem_type: Optional[str] = None,
-    ) -> nixlBind.nixlStrideDList:
-        if isinstance(descs, nixlBind.nixlStrideDList):
-            return descs
-        elif isinstance(descs, (nixlBind.nixlXferDList, nixlBind.nixlRegDList)):
-            logger.error(
-                "Xfer/Reg list detected for strided transfer, please use a "
-                "5-tuple list, Nx5 numpy array, or nixlStrideDList"
-            )
-            new_descs = None
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 5:
-                new_descs = nixlBind.nixlStrideDList(self.nixl_mems[mem_type], descs)
-            elif mem_type is None:
-                logger.error("Please specify a mem type for strided descriptors")
-                new_descs = None
-            else:
-                logger.error("5-tuple list needed for strided transfer")
-                new_descs = None
-        elif isinstance(descs, np.ndarray):
-            if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 5:
-                new_descs = nixlBind.nixlStrideDList(self.nixl_mems[mem_type], descs)
-            elif mem_type is None:
-                logger.error("Please specify a mem type for strided descriptors")
-                new_descs = None
-            else:
-                logger.error(
-                    "Nx5 shape required for strided transfer descriptor list from numpy array"
-                )
-                new_descs = None
         else:
             new_descs = None
 
