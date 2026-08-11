@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.4.0',
+project('nixl', 'CPP', 'C', version: '1.4.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'SPDK', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
 
 enabled_plugins = {}
 
@@ -392,6 +392,22 @@ if libfabric_path != ''
 else
   libfabric_dep = dependency('libfabric', required: false)
 endif
+
+# The pkg-config components the SPDK plugin links; src/plugins/spdk/meson.build
+# resolves this same list to build its link line. Detection and linking must
+# agree: a component missing here but required there turns a clean "plugin
+# skipped" into a hard configure failure. Note spdk_env_dpdk is deliberately
+# absent — the plugin supplies its own implementation of SPDK's env interface.
+spdk_pc_components = ['spdk_event_bdev', 'spdk_event_accel', 'spdk_init',
+                      'spdk_bdev_malloc']
+# spdk_syslibs is queried separately rather than as part of the closure above:
+# it names the system and ISA-L libraries the SPDK archives depend on, which
+# must land outside the --whole-archive group. It is still required, so it
+# belongs in this gate.
+spdk_dep_found = dependency('spdk_syslibs', required: false).found()
+foreach spdk_pc_component : spdk_pc_components
+    spdk_dep_found = spdk_dep_found and dependency(spdk_pc_component, required: false).found()
+endforeach
 
 # UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)

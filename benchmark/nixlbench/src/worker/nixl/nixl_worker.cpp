@@ -316,6 +316,18 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                       << "]: " << dev.device_path << " (" << dev.security_flags << ")"
                       << ", offset = " << dev.dev_offset << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_SPDK)) {
+        backend_params["json_config_file"] = xferBenchConfig::spdk_json_config_file;
+        if (xferBenchConfig::spdk_msg_mempool_size > 0) {
+            backend_params["msg_mempool_size"] =
+                std::to_string(xferBenchConfig::spdk_msg_mempool_size);
+        }
+        std::cout << "SPDK backend initialized:" << std::endl;
+        std::cout << "  JSON config file: " << xferBenchConfig::spdk_json_config_file << std::endl;
+        std::cout << "  bdev name: " << xferBenchConfig::spdk_bdev_name << std::endl;
+        std::cout << "  bdev offset: " << xferBenchConfig::spdk_bdev_offset << std::endl;
+        std::cout << "  message mempool size: " << xferBenchConfig::spdk_msg_mempool_size
+                  << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
         std::cout << "UCCL backend" << std::endl;
         backend_params["in_python"] = "0";
@@ -895,6 +907,12 @@ xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t
     return std::optional<xferBenchIOV>(std::in_place, dev_offset, buffer_size, mem_dev_id);
 }
 
+static std::optional<xferBenchIOV>
+initBasicDescSpdk(size_t buffer_size, int mem_dev_id, size_t dev_offset) {
+    return std::optional<xferBenchIOV>(
+        std::in_place, dev_offset, buffer_size, mem_dev_id, xferBenchConfig::spdk_bdev_name);
+}
+
 bool
 xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size) {
     int flags = O_RDWR | O_CREAT | O_LARGEFILE;
@@ -1047,6 +1065,20 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 // Use device IDs from parsed configuration (num_devices == gusli_devices.size())
                 basic_desc = initBasicDescBlk(
                     buffer_size, gusli_devices[i].device_id, gusli_devices[i].dev_offset);
+                if (basic_desc) {
+                    iov_list.push_back(basic_desc.value());
+                }
+            }
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, BLK_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
+        }
+    } else if (XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                auto basic_desc =
+                    initBasicDescSpdk(buffer_size, i, xferBenchConfig::spdk_bdev_offset);
                 if (basic_desc) {
                     iov_list.push_back(basic_desc.value());
                 }
@@ -1269,6 +1301,13 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
+                } else if (XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = xferBenchConfig::spdk_bdev_offset + file_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = iov.devId;
+                    iov_remote.metaInfo = xferBenchConfig::spdk_bdev_name;
+                    remote_iov_list.push_back(iov_remote);
                 } else {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
@@ -1291,7 +1330,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             }
 
             res.push_back(remote_iov_list);
-            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+                XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
                 const size_t max_offset_in_blocks = local_iovs.size() - 1;
                 file_offset = getFileOffset(file_offset, max_offset_in_blocks, block_size);
             }
@@ -1361,7 +1401,8 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
     // Set remote descriptor type based on backend
     if (xferBenchConfig::isObjStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
-    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+               XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
@@ -1375,7 +1416,8 @@ static nixl_mem_t
 getRemoteSegType() {
     if (xferBenchConfig::isObjStorageBackend()) {
         return OBJ_SEG;
-    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+               XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
         return BLK_SEG;
     } else if (xferBenchConfig::isStorageBackend()) {
         return FILE_SEG;
