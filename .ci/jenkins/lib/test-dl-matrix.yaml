@@ -103,6 +103,7 @@ steps:
       if [ -n "${UCX_VER}" ]; then UCX_ARG="--build-arg UCX_VERSION=${UCX_VER}"; fi
       export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-dl-gpu-test:${BUILD_NUMBER}
       rm -rf /etc/containers/storage.conf && rm -f /usr/share/containers/storage.conf
+      set +x -v
       podman build --network host --creds ${REPO_USER}:${REPO_PASS} \
       ${UCX_ARG} \
       --build-arg PRE_INSTALLED_ENV="true" \
