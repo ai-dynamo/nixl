@@ -425,10 +425,10 @@ fi
 # block is guarded so external docker build runs are unaffected when
 # BUILD_INFINIA=false (default): no filesystem writes and no EXIT trap installed.
 if [ "$BUILD_INFINIA" = "true" ]; then
-    case "$DOCKER_FILE" in
-        *Dockerfile.manylinux) ;;
-        *) error "ERROR:" "--build-infinia requires --dockerfile contrib/Dockerfile.manylinux" ;;
-    esac
+    # Ask the dockerfile itself rather than matching paths, as for the spcx flag.
+    if ! grep -q '^ARG BUILD_INFINIA' "$DOCKER_FILE"; then
+        error "ERROR:" "--build-infinia requires a dockerfile that consumes it (contrib/Dockerfile or contrib/Dockerfile.manylinux); $DOCKER_FILE does not"
+    fi
     INFINIA_LIBS_DIR="$BUILD_CONTEXT/infinia-libs"
     rm -rf "$INFINIA_LIBS_DIR"
     mkdir -p "$INFINIA_LIBS_DIR"

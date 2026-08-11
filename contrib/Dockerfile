@@ -334,6 +334,22 @@ RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
         cd /workspace/nixl && rm -rf ucx-spcx-plugin-src; \
     fi
 
+# Opt-in: place the pre-staged DDN Infinia libs (from infinia-libs/ in the build
+# context, populated by build-container.sh --build-infinia) into /opt/ddn/red, the
+# infinia_path meson default, so meson auto-detects red_client and builds
+# libplugin_INFINIA.so. No registry pull here: the libs arrive via the COPY above.
+# uuid/uuid.h, included by the DDN red_client headers, comes from the uuid-dev
+# installed with the aws-sdk-cpp deps above.
+ARG BUILD_INFINIA=false
+RUN if [ "$BUILD_INFINIA" = "true" ]; then \
+        if [ -z "$(ls -A /workspace/nixl/infinia-libs 2>/dev/null)" ]; then \
+            echo "ERROR: BUILD_INFINIA=true but /workspace/nixl/infinia-libs is empty (staging failed?)" >&2; \
+            exit 1; \
+        fi; \
+        mkdir -p /opt/ddn/red && \
+        cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
+    fi
+
 # Install pybind11 via apt
 RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 

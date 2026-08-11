@@ -547,13 +547,12 @@
           name: "BUILD_INFINIA"
           default: false
           description: >
-            Build and bundle the Infinia DDN plugin (pass <code>--build-infinia</code>;
-            harbor.mellanox.com must be reachable).<br/>
+            Build the Infinia DDN plugin into the image (pass
+            <code>--build-infinia</code>; harbor.mellanox.com must be reachable to
+            pull the DDN libs).<br/>
             Applies to the <b>nixl</b> target only; nixlbench builds ignore it.<br/>
-            <b>Not yet supported on this job:</b> <code>build-container.sh</code> only
-            consumes <code>--build-infinia</code> with
-            <code>--dockerfile contrib/Dockerfile.manylinux</code>, so enabling this
-            fails until the Infinia block is ported into <code>contrib/Dockerfile</code>.
+            Off by default — the DDN libs come from an external registry, so the
+            build gains a dependency the other targets do not have.
       - string:
           name: "MAIL_TO"
           default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
