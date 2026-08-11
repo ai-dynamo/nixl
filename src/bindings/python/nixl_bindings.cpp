@@ -595,24 +595,6 @@ PYBIND11_MODULE(_bindings, m) {
         .def(
             "prepXferDlist",
             [](nixlAgent &agent,
-               const nixl_xfer_dlist_t &descs,
-               const std::vector<uintptr_t> &backends) -> uintptr_t {
-                nixlDlistH *handle = nullptr;
-                nixl_opt_args_t extra_params;
-
-                for (uintptr_t backend : backends)
-                    extra_params.backends.push_back((nixlBackendH *)backend);
-
-                throw_nixl_exception(agent.prepXferDlist(descs, handle, &extra_params));
-
-                return (uintptr_t)handle;
-            },
-            py::arg("descs"),
-            py::arg("backend") = std::vector<uintptr_t>({}),
-            py::call_guard<py::gil_scoped_release>())
-        .def(
-            "prepXferDlist",
-            [](nixlAgent &agent,
                std::string &agent_name,
                nixl_mem_t mem,
                const py::array &descs,
@@ -634,30 +616,6 @@ PYBIND11_MODULE(_bindings, m) {
                 return (uintptr_t)handle;
             },
             py::arg("agent_name"),
-            py::arg("mem_type"),
-            py::arg("descs").noconvert(),
-            py::arg("backend") = std::vector<uintptr_t>({}))
-        .def(
-            "prepXferDlist",
-            [](nixlAgent &agent,
-               nixl_mem_t mem,
-               const py::array &descs,
-               const std::vector<uintptr_t> &backends) -> uintptr_t {
-                nixlDlistH *handle = nullptr;
-                nixl_opt_args_t extra_params;
-
-                for (uintptr_t backend : backends) {
-                    extra_params.backends.push_back((nixlBackendH *)backend);
-                }
-
-                const nixl_stride_dlist_t stride_descs = to_stride_dlist(mem, descs);
-                {
-                    py::gil_scoped_release release;
-                    throw_nixl_exception(agent.prepXferDlist(stride_descs, handle, &extra_params));
-                }
-
-                return (uintptr_t)handle;
-            },
             py::arg("mem_type"),
             py::arg("descs").noconvert(),
             py::arg("backend") = std::vector<uintptr_t>({}))

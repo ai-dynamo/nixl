@@ -535,15 +535,16 @@ class nixl_agent:
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
 
-        args = [] if is_local else [agent_name]
         if is_strided:
             if mem_type is None:
                 raise ValueError("Please specify a mem type for strided descriptors")
-            args += [self.nixl_mems[mem_type], xfer_list]
+            # An Nx5 array carries no memory type, so it is passed separately
+            handle = self.agent.prepXferDlist(
+                agent_name, self.nixl_mems[mem_type], xfer_list, handle_list
+            )
         else:
-            args.append(self.get_xfer_descs(xfer_list, mem_type))
-
-        handle = self.agent.prepXferDlist(*args, handle_list)
+            descs = self.get_xfer_descs(xfer_list, mem_type)
+            handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
         return nixl_prepped_dlist_handle(self.agent, handle)
 
     """
