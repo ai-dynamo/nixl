@@ -203,7 +203,7 @@ nixlUcxEp::disconnect_nb() {
  * Active message handling
  * =========================================== */
 
-using nixl_ucx_am_cb_ctx_t = std::pair<void *, nixlUcxEp::am_deleter_t>;
+using nixl_ucx_am_cb_ctx_t = std::pair<void *, nixlUcxEp::am_cleanup_t>;
 using nixl_ucx_am_cb_ctx_ptr_t = std::unique_ptr<nixl_ucx_am_cb_ctx_t>;
 
 void
@@ -225,14 +225,14 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
                   size_t len,
                   uint32_t flags,
                   nixlUcxReq *req,
-                  const am_deleter_t &deleter) {
+                  am_cleanup_t &&cleanup) const {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         // The endpoint is already in a failed state (e.g. the peer disconnected),
-        // so no request will be issued. Invoke the deleter -- as the inline
+        // so no request will be issued. Invoke the cleanup -- as the inline
         // completion path below does -- so the caller's buffer is not leaked.
-        if (deleter) {
-            deleter(nullptr, buffer);
+        if (cleanup) {
+            cleanup(nullptr, buffer);
         }
         return status;
     }
@@ -243,8 +243,8 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     param.memory_type = UCS_MEMORY_TYPE_HOST;
 
     nixl_ucx_am_cb_ctx_ptr_t ctx;
-    if (deleter) {
-        ctx = std::make_unique<nixl_ucx_am_cb_ctx_t>(buffer, deleter);
+    if (cleanup) {
+        ctx = std::make_unique<nixl_ucx_am_cb_ctx_t>(buffer, std::move(cleanup));
         param.op_attr_mask |= UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA;
         param.cb.send = sendAmCallback;
         param.user_data = ctx.get();
@@ -258,8 +258,8 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
             *req = static_cast<nixlUcxReq>(request);
         }
         return NIXL_IN_PROG;
-    } else if (deleter) {
-        deleter(nullptr, buffer);
+    } else if (ctx) {
+        ctx->second(nullptr, ctx->first);
     }
 
     return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
