@@ -791,5 +791,3 @@ nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd
 
     return NIXL_SUCCESS;
 }
-
-
