@@ -675,7 +675,8 @@ class nixl_agent:
            The output object has three time values fields in microseconds
            (startTime, postDuration, xferDuration), as well as integer totalBytes transferred
            for the request, and integer descCount representing number of descriptors involved
-           (for example if there was some merging of descriptors).
+           (for example if there was some merging of descriptors), and backendName identifying
+           the backend selected for the transfer.
 
     @param handle Handle to the transfer operation, from make_prepped_xfer or initialize_xfer.
     @return nixlXferTelemetry object

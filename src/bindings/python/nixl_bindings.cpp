@@ -30,6 +30,11 @@ namespace py = pybind11;
 
 typedef std::map<std::string, std::vector<py::bytes>> nixl_py_notifs_t;
 
+struct nixlPyXferTelemetry {
+    nixl_xfer_telem_t telemetry;
+    nixl_backend_t backendName;
+};
+
 class nixlNotPostedError : public std::runtime_error {
 public:
     nixlNotPostedError(const char *what) : runtime_error(what) {}
@@ -187,20 +192,25 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_ERR_NOT_SUPPORTED", NIXL_ERR_NOT_SUPPORTED)
         .export_values();
 
-    py::class_<nixl_xfer_telem_t>(m, "nixlXferTelemetry")
+    py::class_<nixlPyXferTelemetry>(m, "nixlXferTelemetry")
         .def(py::init<>())
         .def_property_readonly("startTime",
-                               [](const nixl_xfer_telem_t &t) {
+                               [](const nixlPyXferTelemetry &t) {
                                    return std::chrono::duration_cast<chrono_period_us_t>(
-                                              t.startTime.time_since_epoch())
+                                              t.telemetry.startTime.time_since_epoch())
                                        .count();
                                })
-        .def_property_readonly("postDuration",
-                               [](const nixl_xfer_telem_t &t) { return t.postDuration.count(); })
-        .def_property_readonly("xferDuration",
-                               [](const nixl_xfer_telem_t &t) { return t.xferDuration.count(); })
-        .def_readonly("totalBytes", &nixl_xfer_telem_t::totalBytes)
-        .def_readonly("descCount", &nixl_xfer_telem_t::descCount);
+        .def_property_readonly(
+            "postDuration",
+            [](const nixlPyXferTelemetry &t) { return t.telemetry.postDuration.count(); })
+        .def_property_readonly(
+            "xferDuration",
+            [](const nixlPyXferTelemetry &t) { return t.telemetry.xferDuration.count(); })
+        .def_property_readonly("totalBytes",
+                               [](const nixlPyXferTelemetry &t) { return t.telemetry.totalBytes; })
+        .def_property_readonly("descCount",
+                               [](const nixlPyXferTelemetry &t) { return t.telemetry.descCount; })
+        .def_readonly("backendName", &nixlPyXferTelemetry::backendName);
 
 
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
@@ -723,9 +733,10 @@ PYBIND11_MODULE(_bindings, m) {
             py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferTelemetry",
-            [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_telem_t {
-                nixl_xfer_telem_t telemetry;
-                nixl_status_t ret = agent.getXferTelemetry((nixlXferReqH *)reqh, telemetry);
+            [](nixlAgent &agent, uintptr_t reqh) -> nixlPyXferTelemetry {
+                nixlPyXferTelemetry telemetry;
+                nixl_status_t ret = agent.getXferTelemetry(
+                    (nixlXferReqH *)reqh, telemetry.telemetry, telemetry.backendName);
                 throw_nixl_exception(ret);
                 return telemetry;
             },
