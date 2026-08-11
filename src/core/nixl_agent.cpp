@@ -1163,11 +1163,6 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         }
 
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
-            read_lock.unlock();
-            NIXL_LOCK_GUARD(data->lock);
-            if (!req_hndl->remoteSectionRef.expired()) {
-                data->invalidateRemoteData(req_hndl->remoteAgent);
-            }
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
             return NIXL_ERR_REMOTE_DISCONNECT;
@@ -1215,13 +1210,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     if (req_hndl->status < 0) {
         if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
-            read_lock.unlock();
-            NIXL_LOCK_GUARD(data->lock);
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was disconnected after transfer request creation";
-            if (!req_hndl->remoteSectionRef.expired()) {
-                data->invalidateRemoteData(req_hndl->remoteAgent);
-            }
             return NIXL_ERR_REMOTE_DISCONNECT;
         } else {
             NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
@@ -1262,11 +1252,6 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status < 0) {
             if (req_hndl->status == NIXL_ERR_REMOTE_DISCONNECT) {
-                read_lock.unlock();
-                NIXL_LOCK_GUARD(data->lock);
-                if (!req_hndl->remoteSectionRef.expired()) {
-                    data->invalidateRemoteData(req_hndl->remoteAgent);
-                }
                 return NIXL_ERR_REMOTE_DISCONNECT;
             } else {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()

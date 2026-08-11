@@ -792,30 +792,4 @@ nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd
     return NIXL_SUCCESS;
 }
 
-nixl_status_t
-nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
-    lock.assertHeld();
 
-    if (remote_name == name_) {
-        NIXL_ERROR << "Agent " << name_ << " cannot invalidate itself";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    const auto sec_it = remoteSections_.find(remote_name);
-    if (sec_it == remoteSections_.end()) {
-        return NIXL_ERR_NOT_FOUND;
-    }
-
-    remoteSections_.erase(sec_it);
-
-    auto it_backends = remoteBackends_.find(remote_name);
-    if (it_backends != remoteBackends_.end()) {
-        for (auto &it : it_backends->second) {
-            backendEngines_[it.first]->disconnect(remote_name);
-        }
-
-        remoteBackends_.erase(it_backends);
-    }
-
-    return NIXL_SUCCESS;
-}

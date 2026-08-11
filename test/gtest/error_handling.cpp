@@ -317,6 +317,11 @@ void TestErrorHandling::testXfer() {
             }
 
             if (test_type == TestType::XFER_FAIL_RESTORE) {
+                // postXferReq/getXferStatus no longer invalidate remote metadata
+                // on disconnect: the consumer must do it explicitly before
+                // re-registering the failed agent.
+                EXPECT_EQ(m_Initiator.getAgent()->invalidateRemoteMD(target_name),
+                          NIXL_SUCCESS);
                 m_Target.init(target_name, m_backend_name, numWorkers_, numThreads_);
                 exchangeMetaData();
             }
