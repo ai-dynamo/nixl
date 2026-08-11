@@ -615,18 +615,23 @@ PYBIND11_MODULE(_bindings, m) {
                 auto indices_to_span = [](const py::object &indices,
                                           std::vector<int> &backing) -> std::span<const int> {
                     if (py::isinstance<py::array>(indices)) {
-                        auto indices_array = indices.cast<py::array>();
+                        const auto indices_array = indices.cast<py::array>();
                         if (indices_array.ndim() != 1)
                             throw std::invalid_argument("indices numpy array must be 1D");
-                        if (!py::dtype::of<uint32_t>().equal(indices_array.dtype()) &&
-                            !py::dtype::of<int32_t>().equal(indices_array.dtype()))
-                            throw std::invalid_argument(
-                                "indices numpy array must be 1D of uint32 or int32");
-                        if (!(indices_array.flags() & py::array::c_style))
-                            throw std::invalid_argument("indices numpy array must be C-contiguous");
 
-                        return std::span<const int>(static_cast<const int *>(indices_array.data()),
-                                                    static_cast<size_t>(indices_array.size()));
+                        if (py::dtype::of<int>().equal(indices_array.dtype()) &&
+                            (indices_array.flags() & py::array::c_style)) {
+                            return std::span<const int>(
+                                static_cast<const int *>(indices_array.data()),
+                                static_cast<size_t>(indices_array.size()));
+                        }
+
+                        // TODO: compatibility with previous version, to be removed
+                        using int_array_t =
+                            py::array_t<int, py::array::c_style | py::array::forcecast>;
+                        const auto converted = indices.cast<int_array_t>();
+                        backing.assign(converted.data(), converted.data() + converted.size());
+                        return std::span<const int>(backing);
                     }
                     backing = indices.cast<std::vector<int>>();
                     return std::span<const int>(backing);
