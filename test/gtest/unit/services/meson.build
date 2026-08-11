@@ -13,10 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-py = import('python').find_installation('python3', pure: false)
+services_unit_test_deps = []
 
-py.install_sources('_api.py', subdir: (cuda_wheel_dir))
-py.install_sources('_service_api.py', subdir: (cuda_wheel_dir))
-py.install_sources('__init__.py', subdir: (cuda_wheel_dir))
-py.install_sources('py.typed', subdir: (cuda_wheel_dir))
-py.install_sources('logging.py', subdir: (cuda_wheel_dir))
+subdir('marshals')
+services_unit_test_deps += [marshals_unit_test_dep]
+
+service_agent_unit_test_dep = declare_dependency(
+    sources: [
+        'nixl_service_test.cpp',
+    ],
+    include_directories: [nixl_inc_dirs, gtest_inc_dirs],
+    dependencies: [nixl_common_dep, nixl_service_dep],
+)
+services_unit_test_deps += [service_agent_unit_test_dep]
+
+services_unit_test_dep = declare_dependency(
+    dependencies: services_unit_test_deps,
+)

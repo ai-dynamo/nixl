@@ -13,10 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-py = import('python').find_installation('python3', pure: false)
+marshals_unit_test_sources = ['staging_backend_test.cpp', 'delta_backend_test.cpp']
+marshals_unit_test_deps = [staging_dep, nixl_common_dep, delta_dep, cuda_dep]
 
-py.install_sources('_api.py', subdir: (cuda_wheel_dir))
-py.install_sources('_service_api.py', subdir: (cuda_wheel_dir))
-py.install_sources('__init__.py', subdir: (cuda_wheel_dir))
-py.install_sources('py.typed', subdir: (cuda_wheel_dir))
-py.install_sources('logging.py', subdir: (cuda_wheel_dir))
+if nvcomp_dep.found()
+    marshals_unit_test_sources += ['compression_backend_test.cpp']
+    marshals_unit_test_deps += [nixl_service_dep]
+endif
+
+marshals_unit_test_dep = declare_dependency(
+    sources: marshals_unit_test_sources,
+    include_directories: [nixl_inc_dirs, gtest_inc_dirs],
+    dependencies: marshals_unit_test_deps,
+)

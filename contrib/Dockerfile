@@ -40,6 +40,7 @@ ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG NVCOMP_VERSION="5.3.0"
 
 # Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
@@ -71,6 +72,18 @@ RUN apt-get update -y && \
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
     # azure-sdk-for-cpp dependencies
     libxml2-dev
+
+# Install nvCOMP package.
+RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
+    CUDA_MAJOR="$(echo "${CUDA_VERSION}" | cut -d. -f1)" && \
+    NVCOMP_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
+    wget --tries=3 --waitretry=5 --no-verbose \
+    https://developer.download.nvidia.com/compute/nvcomp/${NVCOMP_VERSION}/local_installers/nvcomp-local-repo-${NVCOMP_OS}-${NVCOMP_VERSION}_${NVCOMP_VERSION}-1_${ARCH_SUFFIX}.deb \
+    -O nvcomp-local-repo.deb && \
+    dpkg -i nvcomp-local-repo.deb && \
+    cp /var/nvcomp-local-repo-${NVCOMP_OS}-${NVCOMP_VERSION}/nvcomp-*-keyring.gpg /usr/share/keyrings/ && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "nvcomp-cuda-${CUDA_MAJOR}"
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
 # Skip only the DOCA SDK install when the base image already ships it.
@@ -300,7 +313,7 @@ RUN rm -rf build && \
     else \
         NIXL_EP_FLAG=""; \
     fi && \
-    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
+    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE -Dbuild_nixl_service=true && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
@@ -312,6 +325,10 @@ RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
 # Set environment variables for NIXL EP
 ENV NIXL_PLUGIN_DIR=$NIXL_PLUGIN_DIR
 ENV PYTHONPATH=/workspace/nixl/build/examples/device/ep
+
+# Set environment variables for NIXL service
+ENV PYTHONPATH=/usr/local/nixl/lib/python3/dist-packages:$PYTHONPATH
+ENV UCX_TLS=^cuda_ipc
 
 RUN cd src/bindings/rust && cargo build --release --locked
 

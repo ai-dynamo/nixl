@@ -387,6 +387,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
+    init_params.notifCallbacks_ = data->config_.notifCallbacks_;
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
@@ -446,6 +447,13 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     if (backend->supportsRemote()) {
         data->notifEngines.push_back(backend.get());
         data->connMd_[type] = conn_info;
+    }
+
+    if (!backend->supportsNotifInjection() && !data->config_.notifCallbacks_.empty()) {
+        NIXL_ERROR_FUNC << "backend '" << type
+                        << "' does not support notification injection but notification callbacks "
+                           "are configured";
+        return NIXL_ERR_BACKEND;
     }
 
     // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?

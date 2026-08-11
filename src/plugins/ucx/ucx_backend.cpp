@@ -1388,6 +1388,15 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     std::string remote_name = ser_des.getStr("name");
     std::string msg = ser_des.getStr("msg");
 
+    for (const auto &callback : engine->notifCallbacks_) {
+        if (msg.rfind(callback.first, 0) == 0) {
+            nixlNotifCallbackArgs args{msg, remote_name};
+            callback.second(args);
+
+            return UCS_OK;
+        }
+    }
+
     engine->appendNotif(std::move(remote_name), std::move(msg));
     return UCS_OK;
 }

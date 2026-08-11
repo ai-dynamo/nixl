@@ -47,11 +47,24 @@ def _load_cuda_backend() -> str:
 
 _pkg = sys.modules[_load_cuda_backend()]
 
-submodules = ["_api", "_bindings", "_utils", "logging"]
-for sub_name in submodules:
-    # Import submodule from actual wheel
-    module = importlib.import_module(f"{_pkg.__name__}.{sub_name}")
-    # Make it accessible as nixl._api, nixl._utils, nixl.logging
+# (name, required) — required submodules raise ImportError when missing,
+# optional ones are silently skipped so a plain build (no -Dbuild_nixl_service)
+# still yields a working `import nixl`.
+submodules: list[tuple[str, bool]] = [
+    ("_api", True),
+    ("_bindings", True),
+    ("_utils", True),
+    ("logging", True),
+    ("_service_bindings", False),
+]
+for sub_name, required in submodules:
+    try:
+        module = importlib.import_module(f"{_pkg.__name__}.{sub_name}")
+    except ModuleNotFoundError:
+        if required:
+            raise
+        continue
+    # Make it accessible as nixl._api, nixl._utils, nixl.logging, ...
     sys.modules[f"nixl.{sub_name}"] = module
     # Also add the submodule itself to the nixl namespace
     setattr(sys.modules[__name__], sub_name, module)

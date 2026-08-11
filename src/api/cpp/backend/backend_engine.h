@@ -43,6 +43,8 @@ class nixlBackendEngine {
         bool              initErr = false;
         const std::string localAgent;
         const bool enableTelemetry_;
+        const std::unordered_map<std::string, std::function<void(nixlNotifCallbackArgs)>>
+            notifCallbacks_;
 
         [[nodiscard]] nixl_status_t
         setInitParam(const std::string &key, const std::string &value) {
@@ -78,7 +80,8 @@ class nixlBackendEngine {
             : backendType(init_params->type),
               customParams(*init_params->customParams),
               localAgent(init_params->localAgent),
-              enableTelemetry_(init_params->enableTelemetry_) {}
+              enableTelemetry_(init_params->enableTelemetry_),
+              notifCallbacks_(init_params->notifCallbacks_) {}
 
         nixlBackendEngine(nixlBackendEngine&&) = delete;
         nixlBackendEngine(const nixlBackendEngine&) = delete;
@@ -109,7 +112,13 @@ class nixlBackendEngine {
 
         // Determines if a backend supports sending notifications. Related methods are not
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
-        virtual bool supportsNotif() const = 0;
+        virtual bool
+        supportsNotif() const = 0;
+
+        virtual bool
+        supportsNotifInjection() const {
+            return false;
+        }
 
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 

@@ -13,10 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-py = import('python').find_installation('python3', pure: false)
+delta_inc = include_directories('.')
 
-py.install_sources('_api.py', subdir: (cuda_wheel_dir))
-py.install_sources('_service_api.py', subdir: (cuda_wheel_dir))
-py.install_sources('__init__.py', subdir: (cuda_wheel_dir))
-py.install_sources('py.typed', subdir: (cuda_wheel_dir))
-py.install_sources('logging.py', subdir: (cuda_wheel_dir))
+delta_lib = library('nixl_marshal_delta',
+    'delta_backend.cpp',
+    'delta_kernel.cu',
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, marshal_inc, delta_inc, nixl_service_inc],
+    dependencies: nixl_service_deps,
+    install: true)
+
+delta_dep = declare_dependency(
+    link_with: delta_lib,
+    include_directories: [marshal_inc, delta_inc, nixl_service_inc],
+    dependencies: nixl_service_deps)

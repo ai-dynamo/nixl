@@ -13,10 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-py = import('python').find_installation('python3', pure: false)
+marshal_inc = include_directories('.')
 
-py.install_sources('_api.py', subdir: (cuda_wheel_dir))
-py.install_sources('_service_api.py', subdir: (cuda_wheel_dir))
-py.install_sources('__init__.py', subdir: (cuda_wheel_dir))
-py.install_sources('py.typed', subdir: (cuda_wheel_dir))
-py.install_sources('logging.py', subdir: (cuda_wheel_dir))
+subdir('staging')
+subdir('delta')
+
+if nvcomp_dep.found()
+    subdir('compression')
+endif
