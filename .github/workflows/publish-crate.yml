@@ -54,10 +54,6 @@ on:
         type: boolean
         required: false
         default: false
-      wheel_build_id:
-        description: "Blossom wheel build-id (short SHA, e.g. 51a42f86) under sw-nbu-swx-nixl-pypi-local/release/<ver>/. Needed to trigger the GitLab wheel scan after publish."
-        required: false
-        default: ""
 
 jobs:
   publish-crate:
@@ -129,66 +125,7 @@ jobs:
               --no-verify --allow-dirty $DRY
           fi
 
-  # After a REAL crate publish (tag, or manual non-dry), trigger the nixl-ci GitLab
-  # pipeline to run the wheel nSpect register + scan (PIPELINE_TYPE=rc). The wheels
-  # live on blossom at sw-nbu-swx-nixl-pypi-local/release/<WHEEL_VERSION>/<WHEEL_BUILD_ID>/,
-  # so the blossom build-id must be supplied (workflow_dispatch input wheel_build_id, or
-  # repo var WHEEL_BUILD_ID); without it the wheel scan can't locate the wheels and the
-  # trigger is skipped. MUST run on an NVIDIA-internal runner group — the AWS builders
-  # can't reach gitlab-master.nvidia.com.
-  # Required secrets (release environment): GITLAB_NIXL_PIPELINE_URL, GITLAB_NIXL_TRIGGER_TOKEN.
-  # NOTE: until the nspect/scan rewire lands on nixl-ci main, set repo var NIXL_CI_REF to
-  # the feature branch (nmailhot/rc-nbuswx-nspect-crates) so the trigger runs the new jobs.
-  trigger-scan:
-    needs: publish-crate
-    if: ${{ github.event_name != 'pull_request' && github.event.inputs.dry_run != 'true' }}
-    runs-on:
-      group: gitlab_ci_runners
-    environment: release
-    env:
-      GITLAB_TRIGGER_URL: ${{ secrets.GITLAB_NIXL_PIPELINE_URL }}
-      GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_NIXL_TRIGGER_TOKEN }}
-      NSPECT_ID: NSPECT-WO64-8O3P
-      NIXL_CI_REF: ${{ vars.NIXL_CI_REF || 'main' }}
-      WHEEL_BUILD_ID: ${{ github.event.inputs.wheel_build_id || vars.WHEEL_BUILD_ID || '' }}
-    steps:
-      - name: Trigger nixl-ci wheel scan + nSpect
-        run: |
-          set -euo pipefail
-          # Base version + rc from the tag (v1.4.0-rc1 -> 1.4.0 / 1), else the manual input.
-          REF="${GITHUB_REF_NAME}"
-          if [ "${{ github.ref_type }}" = "tag" ]; then VER="${REF#v}"; else VER="${{ github.event.inputs.crate_version }}"; fi
-          BASE_VERSION="${VER%%-rc*}"
-          RC_NUMBER="${VER##*-rc}"; [ "$RC_NUMBER" = "$VER" ] && RC_NUMBER=""
-          if [ -z "${WHEEL_BUILD_ID}" ]; then
-            echo "::warning::No wheel_build_id — GitLab wheel scan can't locate the blossom wheels; skipping trigger. Re-run via 'Run workflow' with wheel_build_id set (or set repo var WHEEL_BUILD_ID)."
-            exit 0
-          fi
-          # Trigger token via @file so it never lands in process listings / set -x.
-          TOKEN_FILE=$(mktemp); trap 'rm -f "${TOKEN_FILE}"' EXIT; chmod 600 "${TOKEN_FILE}"
-          printf '%s' "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
-          RESPONSE=$(curl -fsSL --request POST \
-            --form "token=<${TOKEN_FILE}" \
-            --form "ref=${NIXL_CI_REF}" \
-            --form "variables[PIPELINE_TYPE]=rc" \
-            --form "variables[NSPECT_ID]=${NSPECT_ID}" \
-            --form "variables[WHEEL_VERSION]=${BASE_VERSION}" \
-            --form "variables[WHEEL_BUILD_ID]=${WHEEL_BUILD_ID}" \
-            --form "variables[RC_TAG]=${REF}" \
-            --form "variables[RC_NUMBER]=${RC_NUMBER}" \
-            --form "variables[COMMIT_SHA]=${GITHUB_SHA}" \
-            --form "variables[ENABLE_WHEEL_SCAN]=true" \
-            "${GITLAB_TRIGGER_URL}")
-          PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
-          PIPELINE_URL=$(echo "${RESPONSE}" | jq -r '.web_url // empty')
-          if [ -z "${PIPELINE_ID}" ]; then
-            echo "::error::Failed to trigger nixl-ci pipeline"; echo "Response: ${RESPONSE}"; exit 1
-          fi
-          echo "Triggered nixl-ci scan pipeline ${PIPELINE_ID}: ${PIPELINE_URL}"
-          {
-            echo "## nixl-ci wheel scan + nSpect"
-            echo "| Pipeline | ${PIPELINE_URL:-$PIPELINE_ID} |"
-            echo "|--|--|"
-            echo "| Version | ${BASE_VERSION}${RC_NUMBER:+ (rc$RC_NUMBER)} |"
-            echo "| Wheel build-id | ${WHEEL_BUILD_ID} |"
-          } >> "${GITHUB_STEP_SUMMARY}"
+# The downstream GitLab compliance pipeline (wheel scan + SonarQube + nSpect) is
+# triggered by the separate .github/workflows/nixl-compliance.yml, which calls the
+# shared release-automation reusable workflow (PROJECT=nixl). It finds the wheels in
+# Artifactory by name+version, so no blossom build-id is needed here.

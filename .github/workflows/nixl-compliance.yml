@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Trigger the centralized release-automation compliance pipeline for nixl.
+#
+# On an RC tag (v*-rc*), call the shared release-automation reusable workflow, which
+# fires the GitLab compliance pipeline (PROJECT=nixl): wheel scan (wheeltamer, wheels
+# pulled from sw-nbu-swx-nixl-pypi-local by name+version — no build-id needed),
+# SonarQube source scan, and nSpect registration. Replaces the bespoke nixl-ci trigger.
+#
+# PREREQUISITES (confirm before first real run):
+#   1. The reusable workflow path/org below is the release-automation GitHub location
+#      (documented as nvidia/release-automation; adjust if it lives under ai-dynamo),
+#      and nixl's org allows calling it (reusable-workflow allowlist).
+#   2. Secrets in the `automated-release` environment (secrets: inherit):
+#        GITLAB_TRIGGER_TOKEN  - release-automation pipeline trigger token
+#        GITLAB_PROJECT_ID     - numeric GitLab project id for release-automation
+#        GITLAB_API_TOKEN      - PAT (read_api) for polling
+#   3. release-automation's projects/nixl.yml + configs/projects.yml onboard nixl as
+#      wheel+crate (see MR nmailhot/nixl-wheel-crate-onboarding).
+name: NIXL compliance (release-automation)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      rc_tag:
+        description: "RC tag, e.g. v1.4.0-rc0 (defaults to the pushed tag)."
+        required: false
+        default: ""
+      wheel_version:
+        description: "PEP 440 wheel version, e.g. 1.4.0rc0 (default: derived from the tag)."
+        required: false
+        default: ""
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      rc_tag: ${{ steps.v.outputs.rc_tag }}
+      wheel_version: ${{ steps.v.outputs.wheel_version }}
+      sonar_branch: ${{ steps.v.outputs.sonar_branch }}
+    steps:
+      - id: v
+        run: |
+          set -e
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            RC_TAG="${GITHUB_REF_NAME}"
+          else
+            RC_TAG="${{ github.event.inputs.rc_tag }}"
+          fi
+          [ -n "$RC_TAG" ] || { echo "::error::rc_tag is required (push a v* tag or set the input)"; exit 1; }
+          T="${RC_TAG#v}"                          # 1.4.0-rc0
+          BASE="${T%%-rc*}"                        # 1.4.0
+          RC="${T##*-rc}"; [ "$RC" = "$T" ] && RC=""
+          WV="${{ github.event.inputs.wheel_version }}"
+          [ -n "$WV" ] || WV="${BASE}${RC:+rc$RC}"  # PEP 440: 1.4.0rc0
+          echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
+          echo "wheel_version=$WV" >> "$GITHUB_OUTPUT"
+          echo "sonar_branch=release/${BASE}" >> "$GITHUB_OUTPUT"
+          echo "rc_tag=$RC_TAG  wheel_version=$WV  sonar_branch=release/${BASE}"
+
+  compliance:
+    needs: prep
+    # NOTE: confirm the org (nvidia vs ai-dynamo) hosting the reusable workflow.
+    uses: nvidia/release-automation/.github/workflows/trigger-compliance.yml@main
+    with:
+      project: nixl
+      pipeline_type: rc
+      release_type: rc
+      wheel_version: ${{ needs.prep.outputs.wheel_version }}
+      rc_tag: ${{ needs.prep.outputs.rc_tag }}
+      artifacts: wheel,crate
+      commit_sha: ${{ github.sha }}
+      sonar_branch: ${{ needs.prep.outputs.sonar_branch }}
+      # Where blossom staged the wheels; the wheel scan pip-downloads nixl_cu12/cu13 from here.
+      artifactory_pypi_url: https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-swx-nixl-pypi-local/simple
+    secrets: inherit
