@@ -598,7 +598,7 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_opt_args_t extra_params;
 
                 if (!local_side || !remote_side) {
-                    throw std::invalid_argument(
+                    throw nixlInvalidParamError(
                         "local_side and remote_side must be valid pointers");
                 }
 
