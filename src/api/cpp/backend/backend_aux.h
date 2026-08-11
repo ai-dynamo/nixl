@@ -20,6 +20,8 @@
 #include <mutex>
 #include <string>
 #include "common/nixl_log.h"
+#include <functional>
+
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
@@ -38,6 +40,10 @@ struct nixlBackendOptionalArgs {
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
 
+struct nixlNotifCallbackArgs {
+    std::string raw_notif;
+    std::string remote_agent;
+};
 
 // A base class to point to backend initialization data
 // User doesn't know about fields such as local_agent but can access it
@@ -54,6 +60,13 @@ class nixlBackendInitParams {
         nixlTime::us_t pthrDelay = 0;
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_ = false;
+
+        /**
+         * @brief A map of notification callbacks.
+         *        The key is a prefix which if prepended to the notification message, will match the
+         * callback function.
+         */
+        std::unordered_map<std::string, std::function<void(nixlNotifCallbackArgs)>> notifCallbacks_;
 };
 
 // Pure virtual class to have a common pointer type

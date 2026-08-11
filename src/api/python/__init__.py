@@ -34,3 +34,22 @@ __all__ = [
     "nixl_thread_sync_t",
     "nixl_xfer_handle",
 ]
+
+try:
+    from ._service_api import (
+        nixl_service_agent,
+        nixl_service_agent_config,
+        nixlMarshalCompressConfig,
+        nixlMarshalDirectConfig,
+        nixlMarshalStagingConfig,
+    )
+
+    __all__ += [
+        "nixl_service_agent",
+        "nixl_service_agent_config",
+        "nixlMarshalDirectConfig",
+        "nixlMarshalStagingConfig",
+        "nixlMarshalCompressConfig",
+    ]
+except ImportError:
+    pass

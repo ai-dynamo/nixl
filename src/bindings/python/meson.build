@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,5 +31,14 @@ py.extension_module('_utils',
            subdir: (cuda_wheel_dir),
            dependencies: [pybind_dep],
            install: true)
+
+if get_option('build_nixl_service')
+    py.extension_module('_service_bindings',
+                ['nixl_service_bindings.cpp'],
+                subdir: (cuda_wheel_dir),
+                dependencies: [nixl_dep, nixl_service_dep, nixl_service_deps, pybind_dep],
+                include_directories: [nixl_inc_dirs, utils_inc_dirs, nixl_service_inc],
+                install: true)
+endif
 
 subdir('nixl-meta')
