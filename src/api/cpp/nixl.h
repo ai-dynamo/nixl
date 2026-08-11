@@ -223,9 +223,8 @@ class nixlAgent {
                      const nixl_opt_args_t* extra_params = nullptr) const;
 
         /**
-         * `@brief` Span-based overload of makeXferReq.
-         * `@see` makeXferReq(const nixl_xfer_op_t&, const nixlDlistH*, const std::vector<int>&,
-         * const nixlDlistH*, const std::vector<int>&, nixlXferReqH*&, const nixl_opt_args_t*) const
+         * @overload
+         * @brief Span-based overload of makeXferReq.
          */
         nixl_status_t
         makeXferReq(nixl_xfer_op_t operation,
