@@ -15,20 +15,22 @@
 
 # Trigger the centralized release-automation compliance pipeline for nixl.
 #
-# On an RC tag (v*-rc*), call the shared release-automation reusable workflow, which
-# fires the GitLab compliance pipeline (PROJECT=nixl): wheel scan (wheeltamer, wheels
-# pulled from sw-nbu-swx-nixl-pypi-local by name+version — no build-id needed),
-# SonarQube source scan, and nSpect registration. Replaces the bespoke nixl-ci trigger.
+# release-automation lives on GitLab (dl/ai-dynamo/release-automation), not GitHub, so
+# there is no reusable workflow to `uses:` — the trigger+poll logic from its
+# github-actions/trigger-compliance.yml is replicated inline here. On an RC tag (v*),
+# fire the GitLab compliance pipeline for PROJECT=nixl: wheel scan (wheeltamer; wheels
+# pulled from sw-nbu-swx-nixl-pypi-local by name+version — no build-id), SonarQube source
+# scan, and nSpect registration. Replaces the bespoke nixl-ci trigger.
 #
-# PREREQUISITES (confirm before first real run):
-#   1. nixl's org (ai-dynamo) allows calling the ai-dynamo/release-automation reusable
-#      workflow (reusable-workflow allowlist / the repo is accessible to this repo).
-#   2. Secrets in the `automated-release` environment (secrets: inherit):
-#        GITLAB_TRIGGER_TOKEN  - release-automation pipeline trigger token
-#        GITLAB_PROJECT_ID     - numeric GitLab project id for release-automation
-#        GITLAB_API_TOKEN      - PAT (read_api) for polling
-#   3. release-automation's projects/nixl.yml + configs/projects.yml onboard nixl as
-#      wheel+crate (see MR nmailhot/nixl-wheel-crate-onboarding).
+# PREREQUISITES (before the first real run):
+#   Runner: an internal runner with corp-net reach to gitlab-master.nvidia.com
+#           (the `gitlab_ci_runners` group — same one nixl's other GitLab triggers use).
+#   Secrets (in the `automated-release` environment of this repo):
+#     GITLAB_TRIGGER_TOKEN  - pipeline trigger token for the release-automation project
+#     GITLAB_PROJECT_ID     - numeric GitLab project id for release-automation
+#     GITLAB_API_TOKEN      - PAT with read_api scope (for polling)
+#   release-automation projects/nixl.yml + configs/projects.yml onboard nixl as
+#   wheel+crate (MR nmailhot/nixl-wheel-crate-onboarding).
 name: NIXL compliance (release-automation)
 
 on:
@@ -75,16 +77,75 @@ jobs:
 
   compliance:
     needs: prep
-    uses: ai-dynamo/release-automation/.github/workflows/trigger-compliance.yml@main
-    with:
-      project: nixl
-      pipeline_type: rc
-      release_type: rc
-      wheel_version: ${{ needs.prep.outputs.wheel_version }}
-      rc_tag: ${{ needs.prep.outputs.rc_tag }}
-      artifacts: wheel,crate
-      commit_sha: ${{ github.sha }}
-      sonar_branch: ${{ needs.prep.outputs.sonar_branch }}
-      # Where blossom staged the wheels; the wheel scan pip-downloads nixl_cu12/cu13 from here.
-      artifactory_pypi_url: https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-swx-nixl-pypi-local/simple
-    secrets: inherit
+    # Internal runner with reach to gitlab-master (same group nixl's other triggers use).
+    runs-on:
+      group: gitlab_ci_runners
+    environment: automated-release
+    steps:
+      - name: Trigger release-automation compliance pipeline (PROJECT=nixl)
+        id: trigger
+        env:
+          GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+          GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
+          RC_TAG: ${{ needs.prep.outputs.rc_tag }}
+          WHEEL_VERSION: ${{ needs.prep.outputs.wheel_version }}
+          SONAR_BRANCH: ${{ needs.prep.outputs.sonar_branch }}
+        run: |
+          set -euo pipefail
+          GITLAB_API="https://gitlab-master.nvidia.com/api/v4"
+          # Trigger token via @file so it never lands in process listings.
+          TF=$(mktemp); trap 'rm -f "$TF"' EXIT; chmod 600 "$TF"
+          printf '%s' "${GITLAB_TRIGGER_TOKEN}" > "$TF"
+          HTTP_CODE=$(curl -sS -o /tmp/gl_response.json -w "%{http_code}" -X POST \
+            "${GITLAB_API}/projects/${GITLAB_PROJECT_ID}/trigger/pipeline" \
+            --form "token=<${TF}" \
+            --form "ref=main" \
+            --form "variables[PIPELINE_TYPE]=rc" \
+            --form "variables[RELEASE_TYPE]=rc" \
+            --form "variables[PROJECT]=nixl" \
+            --form "variables[RC_TAG]=${RC_TAG}" \
+            --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
+            --form "variables[ARTIFACTS]=wheel,crate" \
+            --form "variables[COMMIT_SHA]=${GITHUB_SHA}" \
+            --form "variables[ARTIFACTORY_PYPI_URL]=https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-swx-nixl-pypi-local/simple" \
+            --form "variables[SONAR_BRANCH]=${SONAR_BRANCH}" \
+            --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}")
+          echo "GitLab API HTTP status: ${HTTP_CODE}"
+          jq . /tmp/gl_response.json 2>/dev/null || cat /tmp/gl_response.json
+          if [ "${HTTP_CODE}" -lt 200 ] || [ "${HTTP_CODE}" -ge 300 ]; then
+            echo "::error::Failed to trigger release-automation pipeline (HTTP ${HTTP_CODE})"; exit 1
+          fi
+          PIPELINE_ID=$(jq -r '.id' /tmp/gl_response.json)
+          PIPELINE_URL=$(jq -r '.web_url' /tmp/gl_response.json)
+          echo "pipeline_id=${PIPELINE_ID}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## release-automation compliance (nixl)"
+            echo "Triggered: ${PIPELINE_URL}"
+            echo "Version: ${WHEEL_VERSION} (${RC_TAG})"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Poll pipeline status
+        env:
+          GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
+          GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          PIPELINE_ID="${{ steps.trigger.outputs.pipeline_id }}"
+          GITLAB_API="https://gitlab-master.nvidia.com/api/v4"
+          MAX_WAIT=1800; INTERVAL=30; ELAPSED=0
+          while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
+            STATUS=$(curl -sS -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+              "${GITLAB_API}/projects/${GITLAB_PROJECT_ID}/pipelines/${PIPELINE_ID}" | jq -r '.status')
+            echo "[${ELAPSED}s] pipeline status: ${STATUS}"
+            case "${STATUS}" in
+              success)
+                echo "## release-automation compliance: PASSED" >> "$GITHUB_STEP_SUMMARY"; exit 0 ;;
+              failed|canceled|skipped)
+                echo "::error::compliance pipeline ${STATUS}"
+                echo "## release-automation compliance: FAILED (${STATUS})" >> "$GITHUB_STEP_SUMMARY"; exit 1 ;;
+              running|pending|waiting_for_resource|preparing|created) ;;
+              *) echo "::warning::unexpected status: ${STATUS}" ;;
+            esac
+            sleep "${INTERVAL}"; ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          echo "::error::poll timed out after ${MAX_WAIT}s"; exit 1
