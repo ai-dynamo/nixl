@@ -1448,8 +1448,8 @@ nixl_capi_make_xfer_req(nixl_capi_agent_t agent,
                         size_t remote_indices_count,
                         nixl_capi_xfer_req_t *req_hndl,
                         nixl_capi_opt_args_t opt_args) {
-    if (!agent || !local_descs || !local_descs->handle || !remote_descs ||
-        !remote_descs->handle || !req_hndl) {
+    if (!agent || !local_descs || !local_descs->handle || !remote_descs || !remote_descs->handle ||
+        !req_hndl) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
 
