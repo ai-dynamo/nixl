@@ -1,0 +1,245 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+instances:
+  - url: nvidia-nixl.docs.buildwithfern.com/nixl
+    custom-domain: docs.nvidia.com/nixl
+    multi-source: true
+    # edit-this-page: removed — ai-dynamo/nixl GitHub repo does not contain fern/ directory.
+    # Re-add when fern/ is pushed to the public GitHub repo. See .planning/debug/edit-this-page-not-visible.md
+
+title: NIXL Documentation
+
+check:
+  rules:
+    broken-links: error
+
+# Navbar with GitHub link
+navbar-links:
+  - type: github
+    value: https://github.com/ai-dynamo/nixl
+
+# Custom footer component
+footer: ./components/CustomFooter.tsx
+
+layout:
+  searchbar-placement: header
+  page-width: 1376px
+  sidebar-width: 248px
+  content-width: 812px
+  tabs-placement: header
+  hide-feedback: true
+
+experimental:
+  mdx-components:
+    - ./components
+
+css:
+  - ./main.css
+js:
+  - url: https://assets.adobedtm.com/5d4962a43b79/c1061d2c5e7b/launch-191c2462b890.min.js
+    strategy: beforeInteractive
+
+colors:
+  accentPrimary:
+    dark: '#76B900'
+    light: '#76B900'
+  background:
+    light: '#FFFFFF'
+    dark: '#000000'
+
+typography:
+  bodyFont:
+    name: NVIDIA
+    paths:
+      - path: ./docs/assets/fonts/NVIDIASans.woff2
+        style: normal
+      - path: ./docs/assets/fonts/NVIDIASans_Italic.woff2
+        style: italic
+  codeFont:
+    name: RobotoMono
+    paths:
+      - path: ./docs/assets/fonts/RobotoMono.woff2
+
+theme:
+  page-actions: toolbar
+  footer-nav: minimal
+
+page-actions:
+  default: ask-ai
+  options:
+    copy-page: true
+    view-as-markdown: true
+    ask-ai: true
+    claude: true
+    chatgpt: true
+    cursor: false
+    vscode: false
+
+# ai-search: removed — AI search requires Fern Dashboard enablement + Pro plan.
+# Basic DocSearch works without this block. Re-add when Dashboard is enabled.
+# See .planning/debug/search-bar-no-entry-symbol.md
+
+navigation:
+  # ==================== Getting Started ====================
+  - section: Getting Started
+    contents:
+      - page: Overview
+        path: ./docs/pages/getting-started/overview.md
+      - page: Architecture
+        path: ./docs/pages/getting-started/architecture.md
+      - page: Quick Start
+        path: ./docs/pages/getting-started/quick-start.md
+
+  # ==================== User Guide ====================
+  - section: User Guide
+    contents:
+      - section: NIXL Backends
+        collapsed: open-by-default
+        path: ./docs/pages/user-guide/backends/index.md
+        contents:
+          # Network transports
+          - page: UCX
+            path: ./docs/pages/user-guide/backends/ucx.md
+          - page: Libfabric
+            path: ./docs/pages/user-guide/backends/libfabric.md
+          - page: Mooncake
+            path: ./docs/pages/user-guide/backends/mooncake.md
+          - page: UCCL-P2P
+            slug: uccl
+            path: ./docs/pages/user-guide/backends/uccl.md
+          - page: DOCA GPUNetIO
+            slug: gpunetio
+            path: ./docs/pages/user-guide/backends/gpunetio.md
+          # Storage & file backends
+          - page: GPUDirect Storage
+            slug: gds
+            path: ./docs/pages/user-guide/backends/gds.md
+          - page: GPUDirect Storage MT
+            slug: gds-mt
+            path: ./docs/pages/user-guide/backends/gds-mt.md
+          - page: POSIX
+            path: ./docs/pages/user-guide/backends/posix.md
+          - page: HF3FS
+            slug: hf3fs
+            path: ./docs/pages/user-guide/backends/hf3fs.md
+          - page: OBJ
+            path: ./docs/pages/user-guide/backends/obj.md
+          - page: Azure Blob
+            path: ./docs/pages/user-guide/backends/azure-blob.md
+          - page: GUSLI
+            path: ./docs/pages/user-guide/backends/gusli.md
+      - page: "Metadata Exchange with etcd"
+        path: ./docs/pages/user-guide/etcd-metadata-exchange.md
+      - page: Telemetry Guide
+        path: ./docs/pages/user-guide/telemetry.md
+      - section: Benchmarking NIXL
+        contents:
+          - section: NIXLBench
+            collapsed: open-by-default
+            path: ./docs/pages/user-guide/benchmarking/nixlbench/index.md
+            contents:
+              - page: Building NIXLBench
+                path: ./docs/pages/user-guide/benchmarking/nixlbench/build.md
+              - page: Using NIXLBench
+                path: ./docs/pages/user-guide/benchmarking/nixlbench/usage.md
+          - section: KVBench
+            collapsed: open-by-default
+            path: ./docs/pages/user-guide/benchmarking/kvbench/index.md
+            contents:
+              - page: Building KVBench
+                path: ./docs/pages/user-guide/benchmarking/kvbench/build.md
+              - page: Using KVBench
+                path: ./docs/pages/user-guide/benchmarking/kvbench/commands.md
+
+  # ==================== Developer Guide ====================
+  - section: Developer Guide
+    contents:
+      - section: Building NIXL from Source
+        collapsed: open-by-default
+        path: ./docs/pages/user-guide/building-nixl/index.md
+        contents:
+          - page: Docker
+            path: ./docs/pages/user-guide/building-nixl/docker.md
+          - page: "NIXL C++ (Meson)"
+            path: ./docs/pages/user-guide/building-nixl/nixl-cpp.md
+          - page: Python Bindings
+            path: ./docs/pages/user-guide/building-nixl/python-bindings.md
+          - page: Rust Bindings
+            path: ./docs/pages/user-guide/building-nixl/rust-bindings.md
+      - page: Building a Backend Plugin
+        path: ./docs/pages/development/building-a-backend-plugin.md
+      - page: Contribution Guide
+        path: ./docs/pages/development/contribution-guide.md
+
+  # ==================== Examples ====================
+  - section: Examples
+    contents:
+      - page: Basic Two-Peer Transfer
+        path: ./docs/pages/examples/basic-transfer.md
+      - page: GDS Direct Storage
+        path: ./docs/pages/examples/gds-direct-storage.md
+      - page: Remote Storage Transfer
+        path: ./docs/pages/examples/remote-storage.md
+      - page: "NIXL-EP: Expert-Parallel Communication"
+        path: ./docs/pages/examples/nixl-ep.md
+      - page: etcd Metadata Exchange
+        path: ./docs/pages/examples/etcd-metadata-exchange.md
+      - page: Telemetry Reader
+        path: ./docs/pages/examples/telemetry-reader.md
+
+  # ==================== API Reference ====================
+  - section: API Reference
+    contents:
+      - page: Northbound API Semantics
+        path: ./docs/pages/api-reference/northbound-api.md
+      - page: C++ API
+        slug: cpp-api
+        path: ./docs/pages/api-reference/cpp-api.md
+      - page: Python API
+        path: ./docs/pages/api-reference/python-api.md
+      - page: Rust API
+        path: ./docs/pages/api-reference/rust-api.md
+      - page: Device API
+        path: ./docs/pages/api-reference/device-api.md
+      - page: "Plugin (Southbound) API"
+        path: ./docs/pages/development/sb-api-reference.md
+
+  # ==================== API Reference (Generated) ====================
+  - section: API Reference (Generated)
+    contents:
+      - folder: ./docs/generated/cpp
+        title: C++
+        title-source: frontmatter
+        slug: c
+        collapsed: open-by-default
+      - folder: ./docs/generated/python
+        title: Python
+        title-source: frontmatter
+        slug: python
+        collapsed: open-by-default
+      - folder: ./docs/generated/rust
+        title: Rust
+        title-source: frontmatter
+        slug: rust
+        collapsed: open-by-default
+
+  # ==================== Resources ====================
+  - section: Resources
+    contents:
+      - page: Environment Variables
+        path: ./docs/pages/resources/environment-variables.md
+      - page: Troubleshooting
+        path: ./docs/pages/resources/troubleshooting.md
+
+logo:
+  dark: ./docs/assets/NVIDIA_dark.svg
+  light: ./docs/assets/NVIDIA_light.svg
+  height: 20
+  href: https://nvidia.com
+  right-text: Documentation
+
+favicon: ./docs/assets/NVIDIA_symbol.svg
+
+# Redirects scaffolding - empty, ready for future use
+redirects: []

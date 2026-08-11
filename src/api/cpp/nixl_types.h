@@ -37,8 +37,26 @@ class nixlAgentData;
  * @enum   nixl_mem_t
  * @brief  An enumeration of segment types for NIXL
  *         FILE_SEG must be last
+ *
+ * @details Memory segment types supported by NIXL. Each type represents a different class of memory
+ *          or storage that NIXL can register and transfer.
+ *
+ * @code{.cpp}
+ * nixl_reg_dlist_t descs(VRAM_SEG);  // Create descriptor list for GPU memory
+ * @endcode
  */
-enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
+enum nixl_mem_t {
+    /** Standard host memory (CPU DRAM) */
+    DRAM_SEG,
+    /** GPU high-bandwidth memory (HBM/VRAM) */
+    VRAM_SEG,
+    /** Block-level storage devices */
+    BLK_SEG,
+    /** Distributed object stores (S3, Azure Blob) */
+    OBJ_SEG,
+    /** Local and remote file systems */
+    FILE_SEG
+};
 
 /**
  * @enum   nixl_xfer_op_t

@@ -13,11 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Raw FFI bindings to the NIXL library
+//! Rust bindings for the NIXL library
 //!
-//! This crate provides low-level bindings to the NIXL C++ library.
-//! It is not meant to be used directly, but rather through the higher-level
-//! `nixl` crate.
+//! This crate provides safe Rust wrappers around the NIXL C API. The generated
+//! low-level bindings are kept private.
 
 use libc::uintptr_t;
 use serde::{Deserialize, Serialize};
@@ -508,7 +507,7 @@ pub trait NixlRegistration: NixlDescriptor {
     fn register(&mut self, agent: &Agent, opt_args: Option<&OptArgs>) -> Result<(), NixlError>;
 }
 
-/// System memory storage implementation using a Vec<u8>
+/// System memory storage implementation using a `Vec<u8>`
 #[derive(Debug)]
 pub struct SystemStorage {
     data: Vec<u8>,
