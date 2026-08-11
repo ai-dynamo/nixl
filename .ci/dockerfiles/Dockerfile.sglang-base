@@ -20,7 +20,7 @@
 # wheels on top of this image.
 # BASE_IMAGE is pinned to a concrete version so the per-PR gsm8k accuracy gate is
 # reproducible; bump it (and CI_IMAGE_TAG) deliberately to move to a newer SGLang.
-ARG BASE_IMAGE=docker.io/lmsysorg/sglang:v0.5.13.post1
+ARG BASE_IMAGE=docker.io/lmsysorg/sglang:v0.5.17
 FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
 
 ARG MODEL_ID=Qwen/Qwen3-8B

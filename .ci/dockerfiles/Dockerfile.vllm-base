@@ -20,7 +20,7 @@
 # wheels on top of this image.
 # BASE_IMAGE is pinned to a concrete version so the per-PR sanity gate is reproducible;
 # bump it (and CI_IMAGE_TAG) deliberately to move to a newer vLLM.
-ARG BASE_IMAGE=docker.io/vllm/vllm-openai:v0.23.0
+ARG BASE_IMAGE=docker.io/vllm/vllm-openai:v0.27.1
 FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
 
 ARG MODEL_ID=Qwen/Qwen3-8B
