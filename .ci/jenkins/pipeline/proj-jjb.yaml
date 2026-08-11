@@ -543,6 +543,17 @@
             Build the internal UCX spcx external plugin and install it into the
             image's UCX plugin dir (pass <code>--build-ucx-spcx-plugin</code>).<br/>
             Applies to the <b>nixl</b> target only; nixlbench builds ignore it.
+      - bool:
+          name: "BUILD_INFINIA"
+          default: false
+          description: >
+            Build and bundle the Infinia DDN plugin (pass <code>--build-infinia</code>;
+            harbor.mellanox.com must be reachable).<br/>
+            Applies to the <b>nixl</b> target only; nixlbench builds ignore it.<br/>
+            <b>Not yet supported on this job:</b> <code>build-container.sh</code> only
+            consumes <code>--build-infinia</code> with
+            <code>--dockerfile contrib/Dockerfile.manylinux</code>, so enabling this
+            fails until the Infinia block is ported into <code>contrib/Dockerfile</code>.
       - string:
           name: "MAIL_TO"
           default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
