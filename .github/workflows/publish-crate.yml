@@ -57,7 +57,9 @@ on:
 
 jobs:
   publish-crate:
-    runs-on: ${{ vars.NIXL_RUNNER_PREFIX || 'prod' }}-nixl-builder-amd-v1
+    # PRs validate on a GitHub-hosted runner (the nixl-builder velonix runners reject
+    # pull_request events at admission); tag/manual runs publish on the nixl-builder runner.
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || format('{0}-nixl-builder-amd-v1', vars.NIXL_RUNNER_PREFIX || 'prod') }}
     env:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
       ARTIFACTORY_CARGO_TOKEN: ${{ secrets.ARTIFACTORY_CARGO_TOKEN }}
@@ -84,6 +86,8 @@ jobs:
           echo "Publishing nixl-sys version: $VERSION"
 
       - name: Guard secrets
+        # Only the real-publish path needs the token; the PR package check does not.
+        if: github.event_name != 'pull_request'
         run: |
           echo "ARTIFACTORY_CARGO_TOKEN length: ${#ARTIFACTORY_CARGO_TOKEN}"
           [ -n "$ARTIFACTORY_CARGO_TOKEN" ] || { echo "ERROR: ARTIFACTORY_CARGO_TOKEN secret is empty/unavailable for this ref."; exit 1; }
@@ -96,23 +100,27 @@ jobs:
           sed -i -E "s/^(version = \")([^\"]+)(\")/\1${{ steps.ver.outputs.version }}\3/" Cargo.toml
           grep -m1 '^version = ' Cargo.toml
 
-      - name: Publish nixl-sys to Artifactory
+      - name: Package (PR) or publish (tag/manual)
         run: |
           set -e
-          # The nixl-builder runner ships cargo; fall back to rustup if absent.
+          # The nixl-builder runner ships cargo; ubuntu-latest does too. Fall back to rustup.
           if ! command -v cargo >/dev/null 2>&1; then
             echo "cargo not found; installing via rustup"
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
             . "$HOME/.cargo/env"
           fi
-          # Never publish from a PR — force a dry run there. Real publish only on a v* tag
-          # (or a manual run with dry_run unchecked). The manual input can also force dry.
-          DRY=""
-          [ "${{ github.event_name }}" = "pull_request" ] && DRY="--dry-run"
-          [ "${{ github.event.inputs.dry_run }}" = "true" ] && DRY="--dry-run"
-          [ -n "$DRY" ] && echo "DRY RUN: packaging only, no upload"
-          # Token passed via env inside the arg; do not enable `set -x` around this line.
-          cargo publish --manifest-path src/bindings/rust/Cargo.toml \
-            --token "Bearer ${ARTIFACTORY_CARGO_TOKEN}" \
-            --index "sparse+${ARTIFACTORY_URL}/api/cargo/${CARGO_REPO}/index/" \
-            --no-verify --allow-dirty $DRY
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # PR validation only: assemble the .crate locally — no upload, no registry, no token.
+            echo "PR validation: cargo package (no upload)"
+            cargo package --manifest-path src/bindings/rust/Cargo.toml --no-verify --allow-dirty
+          else
+            # Real publish on a v* tag; a manual run can force a dry run via the input.
+            DRY=""
+            [ "${{ github.event.inputs.dry_run }}" = "true" ] && DRY="--dry-run"
+            [ -n "$DRY" ] && echo "DRY RUN: packaging only, no upload"
+            # Token passed via env inside the arg; do not enable `set -x` around this line.
+            cargo publish --manifest-path src/bindings/rust/Cargo.toml \
+              --token "Bearer ${ARTIFACTORY_CARGO_TOKEN}" \
+              --index "sparse+${ARTIFACTORY_URL}/api/cargo/${CARGO_REPO}/index/" \
+              --no-verify --allow-dirty $DRY
+          fi
