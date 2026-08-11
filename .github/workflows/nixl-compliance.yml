@@ -21,9 +21,8 @@
 # SonarQube source scan, and nSpect registration. Replaces the bespoke nixl-ci trigger.
 #
 # PREREQUISITES (confirm before first real run):
-#   1. The reusable workflow path/org below is the release-automation GitHub location
-#      (documented as nvidia/release-automation; adjust if it lives under ai-dynamo),
-#      and nixl's org allows calling it (reusable-workflow allowlist).
+#   1. nixl's org (ai-dynamo) allows calling the ai-dynamo/release-automation reusable
+#      workflow (reusable-workflow allowlist / the repo is accessible to this repo).
 #   2. Secrets in the `automated-release` environment (secrets: inherit):
 #        GITLAB_TRIGGER_TOKEN  - release-automation pipeline trigger token
 #        GITLAB_PROJECT_ID     - numeric GitLab project id for release-automation
@@ -76,8 +75,7 @@ jobs:
 
   compliance:
     needs: prep
-    # NOTE: confirm the org (nvidia vs ai-dynamo) hosting the reusable workflow.
-    uses: nvidia/release-automation/.github/workflows/trigger-compliance.yml@main
+    uses: ai-dynamo/release-automation/.github/workflows/trigger-compliance.yml@main
     with:
       project: nixl
       pipeline_type: rc
