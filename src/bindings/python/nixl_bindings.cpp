@@ -142,8 +142,8 @@ namespace {
 nixl_opt_args_t
 make_opt_args(const std::vector<uintptr_t> &backends) {
     nixl_opt_args_t extra_params;
-    for (uintptr_t b : backends) {
-        extra_params.backends.push_back(reinterpret_cast<nixlBackendH *>(b));
+    for (uintptr_t backend : backends) {
+        extra_params.backends.push_back(reinterpret_cast<nixlBackendH *>(backend));
     }
     return extra_params;
 }

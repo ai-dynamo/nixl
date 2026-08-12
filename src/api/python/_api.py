@@ -1091,13 +1091,13 @@ class nixl_agent:
 
     def get_remote_descs(
         self,
-        descs,
+        descs: Union[nixlBind.nixlRemoteDList, list[tuple]],
         mem_type: Optional[str] = None,
     ) -> nixlBind.nixlRemoteDList:
         if isinstance(descs, nixlBind.nixlRemoteDList):
             return descs
         elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 4:
+            if (mem_type is not None) and (len(descs[0]) == 4):
                 new_descs = nixlBind.nixlRemoteDList(self.nixl_mems[mem_type], descs)
             elif mem_type is None:
                 logger.error("Please specify a mem type")
