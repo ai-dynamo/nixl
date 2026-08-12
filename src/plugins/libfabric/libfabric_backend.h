@@ -86,7 +86,8 @@ public:
 #endif
 
 #ifdef HAVE_ROCM
-/** ROCm/HIP device identifier. */
+/** ROCm/HIP device identifier. Valid ids are non-negative; the underlying type must remain
+ *  signed (int, not unsigned) since kInvalidRocmDeviceId below uses -1 as a sentinel. */
 enum class RocmDeviceId : int {};
 
 /** Sentinel meaning "no device selected" */
