@@ -65,6 +65,7 @@ class TestUcclBackend : public testing::Test {
             void
             init(nixlBackendH *backend) {
                 m_params = {.backends = {backend}};
+                m_dlist.clear();
                 nixl::fillRegList(m_dlist, m_desc, m_data);
             }
 
