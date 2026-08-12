@@ -29,7 +29,7 @@
 #include <thread>
 
 /** A unit of transport I/O produced on the caller thread, run on the worker. */
-using nixl_worker_task_t = std::function<void()>;
+using nixl_metadata_task_t = std::function<void()>;
 
 /**
  * @class nixlMetadataWorker
@@ -44,11 +44,13 @@ using nixl_worker_task_t = std::function<void()>;
  * the caller thread, serialized, which is what a backend with no background
  * work needs (P2P without a listener). A task must not call stop(), which would
  * join the thread it is running on.
+ *
+ * Tasks run one at a time, in submission order while the thread is up. Shutdown
+ * ends that order for a caller still submitting: it runs its own task, so that
+ * task can overtake what is queued.
  */
 class nixlMetadataWorker {
 public:
-    using poll_t = std::function<void()>;
-
     nixlMetadataWorker() = default;
     ~nixlMetadataWorker();
 
@@ -62,7 +64,7 @@ public:
      *        a pass waits for work before polling anyway.
      */
     void
-    start(poll_t poll, std::chrono::microseconds delay);
+    start(nixl_metadata_task_t poll, std::chrono::microseconds delay);
 
     /**
      * @brief Drain queued tasks, then stop and join. Idempotent and safe from
@@ -77,7 +79,7 @@ public:
      *        when this worker is not running.
      */
     void
-    submit(nixl_worker_task_t task);
+    submit(nixl_metadata_task_t task);
 
 private:
     // Held under mutex_: submit() runs on any thread, and reading thread_ while
@@ -99,9 +101,9 @@ private:
     // Run one unit of work, serialized against every other task and poll, with
     // its exceptions logged rather than escaping.
     void
-    runTask(nixl_worker_task_t &task);
+    runTask(nixl_metadata_task_t &task);
 
-    poll_t poll_;
+    nixl_metadata_task_t poll_;
     std::chrono::microseconds delay_{0};
     std::mutex mutex_;
     // Queued work, waited on by the loop alone: one predicate per condition
@@ -109,12 +111,8 @@ private:
     std::condition_variable cv_;
     // Reaching IDLE, waited on by the stop() callers that do not own the join.
     std::condition_variable idleCv_;
-    std::deque<nixl_worker_task_t> tasks_;
+    std::deque<nixl_metadata_task_t> tasks_;
     state state_ = state::IDLE;
-    // Set while a thread exists, so submit() can tell a task submitting more
-    // work from an outside caller. Cleared on settle: thread ids are reused, and
-    // an unrelated caller matching a dead worker would queue with no runner.
-    std::thread::id workerId_;
     // Held while a task or the poll runs, whichever thread runs it: that is the
     // backends' promise that their transport state sees one thread at a time.
     // Never taken with mutex_ held, so no two locks here ever nest.
