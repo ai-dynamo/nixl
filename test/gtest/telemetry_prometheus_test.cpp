@@ -17,6 +17,7 @@
 
 #include "common.h"
 #include "plugin_manager.h"
+#include "prometheus_telemetry_fixture.h"
 #include "telemetry.h"
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
@@ -58,7 +59,9 @@ struct PrometheusSample {
 std::string
 httpGet(uint16_t port, const std::string &path) {
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return {};
+    if (fd < 0) {
+        return {};
+    }
 
     const struct timeval tv{3, 0};
     ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -81,7 +84,9 @@ httpGet(uint16_t port, const std::string &path) {
     char buf[4096];
     while (true) {
         const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
-        if (n <= 0) break;
+        if (n <= 0) {
+            break;
+        }
         response.append(buf, n);
     }
     ::close(fd);
@@ -367,35 +372,6 @@ private:
 
 } // namespace
 
-class prometheusTelemetryTest : public ::testing::Test {
-protected:
-    // Register the freshly built plugin directory exactly once for the whole
-    // test suite. Doing it in SetUp() instead would re-register on every
-    // test and trip the plugin manager's "already registered" warning, which
-    // the gtest main() treats as a test failure.
-    static void
-    SetUpTestSuite() {
-        nixlPluginManager::getInstance().addPluginDirectory(std::string(BUILD_DIR) +
-                                                            "/src/plugins/telemetry/prometheus");
-    }
-
-    void
-    SetUp() override {
-        port_ = gtest::PortAllocator::next_tcp_port();
-        env_.addVar("NIXL_TELEMETRY_PROMETHEUS_LOCAL", "y");
-        env_.addVar("NIXL_TELEMETRY_PROMETHEUS_PORT", std::to_string(port_));
-    }
-
-    void
-    TearDown() override {
-        env_.popVar();
-        env_.popVar();
-    }
-
-    gtest::ScopedEnv env_;
-    uint16_t port_ = 0;
-};
-
 // Regression test for a bug where the pre-registered per-agent metric
 // families were immediately wiped from the shared prometheus::Registry by
 // the dtor of a temporary CounterEntry/GaugeEntry created during
@@ -495,6 +471,12 @@ TEST_F(prometheusTelemetryTest, ScrapeEmitsExactlyTheDescriptorSeries) {
         if (descriptor.gaugeName != nullptr) {
             expected.insert(descriptor.gaugeName);
         }
+        if (descriptor.histogramName != nullptr) {
+            const std::string base = descriptor.histogramName;
+            expected.insert(base + "_bucket");
+            expected.insert(base + "_sum");
+            expected.insert(base + "_count");
+        }
     }
     expected.insert("agent_errors_total");
 
@@ -577,10 +559,8 @@ TEST_F(prometheusTelemetryTest, ExportEventIncrementReflectedInScrape) {
     ASSERT_FALSE(after_peer_teardown_body.empty())
         << "Got empty /metrics response on port " << port_;
     PrometheusSample remaining_sample;
-    ASSERT_TRUE(findAgentMetricSample(after_peer_teardown_body,
-                                      "agent_tx_bytes_total",
-                                      agent_name,
-                                      remaining_sample))
+    ASSERT_TRUE(findAgentMetricSample(
+        after_peer_teardown_body, "agent_tx_bytes_total", agent_name, remaining_sample))
         << "First agent metrics were removed when peer exporter was destroyed";
     EXPECT_EQ(remaining_sample.value, static_cast<double>(kIncrement * kEventCount));
     EXPECT_FALSE(hasAnyAgentMetricSample(after_peer_teardown_body, peer_agent_name))
@@ -716,6 +696,38 @@ TEST_F(prometheusTelemetryTest, DroppedEventsCounterAccumulates) {
         << "agent_telemetry_events_dropped_total for this agent is not in scrape body";
     EXPECT_EQ(sample.value, static_cast<double>(expected_total))
         << "dropped-events counter must sum every emitted delta (7+5)";
+}
+
+// End-to-end through the core: a per-event allowlist skips deactivated metrics at
+// the source, so an enabled metric advances while a disabled one stays at its
+// pre-registered 0. Families are always registered, so this asserts values, not
+// series presence (event-type granularity, not per-series).
+TEST_F(prometheusTelemetryTest, MetricAllowlistDeactivatesMetric) {
+    gtest::ScopedEnv telemetry_env;
+    telemetry_env.addVar(TELEMETRY_ENABLED_METRICS_VAR, "agent_tx_bytes");
+    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, "1");
+
+    const std::string agent_name = "prometheus_allowlist_agent";
+    nixlTelemetry telemetry(agent_name, "prometheus");
+    telemetry.updateTxBytes(1000); // allowed
+    telemetry.updateRxBytes(2000); // filtered
+
+    bool tx_seen = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do {
+        const std::string body = httpGet(port_, "/metrics");
+        PrometheusSample tx;
+        if (!body.empty() && findAgentMetricSample(body, "agent_tx_bytes_total", agent_name, tx) &&
+            tx.value == 1000.0) {
+            tx_seen = true;
+            PrometheusSample rx;
+            ASSERT_TRUE(findAgentMetricSample(body, "agent_rx_bytes_total", agent_name, rx));
+            EXPECT_EQ(rx.value, 0.0) << "filtered metric must not be exported";
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    } while (std::chrono::steady_clock::now() < deadline);
+    EXPECT_TRUE(tx_seen) << "allowed metric agent_tx_bytes_total never reached 1000";
 }
 
 // End-to-end through the core: flooding a small staging queue via updateData

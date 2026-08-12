@@ -20,3 +20,9 @@ subprojects/*
 # Local Python environments
 .venv/
 .venv*/
+
+# Infinia DDN libs staged into the build context by build-container.sh --build-infinia
+/infinia-libs/
+
+# ucx-spcx-plugin source fetched into the build context by build-container.sh
+ucx-spcx-plugin-src/

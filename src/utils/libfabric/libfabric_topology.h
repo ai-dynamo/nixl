@@ -81,7 +81,7 @@ private:
     nixl_status_t
     discoverAccelWithHwloc();
     nixl_status_t
-    discoverEfaDevicesWithHwloc();
+    discoverRDMADevicesWithHwloc();
     nixl_status_t
     buildAccelToEfaMapping();
     void
@@ -228,9 +228,9 @@ public:
         return all_devices;
     }
 
-    const std::string &
+    std::string
     getProviderName() const {
-        return provider_name;
+        return provider_name.empty() ? "libfabric" : provider_name;
     }
 
     // Validation

@@ -755,7 +755,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                                  buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens,
                                  barrier_signal_ptrs_gpu, rank, comm_stream,
                                  config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
-                                 num_nvl_bytes, timeout_cycles, true, low_latency_mode, gpu_ctx);
+                                 num_nvl_bytes, timeout_cycles, true, gpu_ctx);
     } else {
         rdma_channel_prefix_matrix = torch::empty({num_rdma_ranks, num_channels}, dtype(torch::kInt32).device(torch::kCUDA));
         recv_rdma_rank_prefix_sum = torch::empty({num_rdma_ranks}, dtype(torch::kInt32).device(torch::kCUDA));
@@ -778,7 +778,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                                    buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens,
                                    barrier_signal_ptrs_gpu, rank, comm_stream,
                                    config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
-                                   num_nvl_bytes, timeout_cycles, low_latency_mode, gpu_ctx);
+                                   num_nvl_bytes, timeout_cycles, gpu_ctx);
 
         // Synchronize total received tokens and tokens per expert
         auto start_time = std::chrono::high_resolution_clock::now();
@@ -862,7 +862,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
                         rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens, config.num_max_rdma_chunked_recv_tokens,
                         buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
                         rank, num_ranks, cached_mode,
-                        comm_stream, num_channels, timeout_cycles, low_latency_mode, gpu_ctx);
+                        comm_stream, num_channels, timeout_cycles, gpu_ctx);
 
     // Wait streams
     std::optional<EventHandle> event;
@@ -915,6 +915,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
 
     // Shape and contiguous checks
     EP_HOST_ASSERT(x.dim() == 2 and x.is_contiguous());
+    EP_HOST_ASSERT(at::cuda::ScalarTypeToCudaDataType(x.scalar_type()) == CUDA_R_16BF);
     EP_HOST_ASSERT(src_meta.dim() == 2 and src_meta.is_contiguous() and src_meta.scalar_type() == torch::kByte);
     EP_HOST_ASSERT(is_combined_token_in_rank.dim() == 2 and is_combined_token_in_rank.is_contiguous() and is_combined_token_in_rank.scalar_type() == torch::kBool);
     EP_HOST_ASSERT(rdma_channel_prefix_matrix.dim() == 2 and rdma_channel_prefix_matrix.is_contiguous() and rdma_channel_prefix_matrix.scalar_type() == torch::kInt32);
@@ -977,7 +978,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
                              buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens,
                              barrier_signal_ptrs_gpu, rank, comm_stream,
                              config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
-                             num_nvl_bytes, timeout_cycles, false, low_latency_mode, gpu_ctx);
+                             num_nvl_bytes, timeout_cycles, false, gpu_ctx);
 
     // Assign bias pointers
     auto bias_opts = std::vector<std::optional<torch::Tensor>>({bias_0, bias_1});
@@ -992,8 +993,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
 
     // Launch data combine
     auto combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
-    ht::combine(at::cuda::ScalarTypeToCudaDataType(x.scalar_type()),
-                       combined_x.data_ptr(), combined_topk_weights_ptr,
+    ht::combine(combined_x.data_ptr(), combined_topk_weights_ptr,
                        is_combined_token_in_rank.data_ptr<bool>(),
                        x.data_ptr(), topk_weights_ptr, bias_ptrs[0], bias_ptrs[1],
                        combined_rdma_head.data_ptr<int>(), combined_nvl_head.data_ptr<int>(),
@@ -1001,7 +1001,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
                        num_tokens, num_combined_tokens, hidden, num_topk,
                        rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens, config.num_max_rdma_chunked_recv_tokens,
                        buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
-                       rank, num_ranks, comm_stream, num_channels, timeout_cycles, low_latency_mode, gpu_ctx);
+                       rank, num_ranks, comm_stream, num_channels, timeout_cycles, gpu_ctx);
 
     // Wait streams
     std::optional<EventHandle> event;
@@ -1281,13 +1281,16 @@ void Buffer::update_mask_buffer(int rank_to_mask, bool mask) {
     ep_kernels::update_mask_buffer(mask_buffer_ptr, rank_to_mask, mask, at::cuda::getCurrentCUDAStream());
 }
 
-void Buffer::query_mask_buffer(const torch::Tensor& mask_status) {
+void
+Buffer::query_mask_buffer(const torch::Tensor &mask_status) const {
     EP_HOST_ASSERT(mask_buffer_ptr != nullptr and "Shrink mode must be enabled");
-    EP_HOST_ASSERT(mask_status.numel() == max_num_ranks && mask_status.scalar_type() == torch::kInt32);
+    EP_HOST_ASSERT(mask_status.numel() == max_num_ranks &&
+                   mask_status.scalar_type() == torch::kInt32);
 
-    ep_kernels::query_mask_buffer(mask_buffer_ptr, max_num_ranks,
-                                    reinterpret_cast<int*>(mask_status.data_ptr()),
-                                    at::cuda::getCurrentCUDAStream());
+    ep_kernels::query_mask_buffer(mask_buffer_ptr,
+                                  max_num_ranks,
+                                  mask_status.data_ptr<int>(),
+                                  at::cuda::getCurrentCUDAStream());
 }
 
 void Buffer::clean_mask_buffer() {

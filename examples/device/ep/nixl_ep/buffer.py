@@ -147,6 +147,7 @@ class Buffer:
 
         Arguments:
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
+                `num_ranks * num_max_dispatch_tokens_per_rank` must be a multiple of 4 to match `low_latency_dispatch()`.
             hidden: the hidden dimension of each token.
             num_ranks: rank capacity used to size the low-latency buffers.
             num_experts: expert capacity, normally num_ranks * num_experts_per_rank.
@@ -353,6 +354,7 @@ class Buffer:
             topk_idx: `torch.Tensor` with `nixl_ep.topk_idx_t`, shaped as `[num_tokens, num_topk]`, only several top-k shapes
                 are supported. `-1` indices (not selecting any expert) are supported.
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
+                `num_ranks * num_max_dispatch_tokens_per_rank` must be a multiple of 4 for TMA alignment.
             num_experts: deprecated optional parameter. This value is ignored by low-latency
                 dispatch; the number of experts is determined from the `num_experts_per_rank`
                 passed to `update_memory_buffers()` and the currently active ranks.

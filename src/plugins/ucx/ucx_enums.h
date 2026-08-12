@@ -52,7 +52,6 @@ enum class ep_state_t {
     UNINITIALIZED,
     CONNECTED,
     FAILED,
-    DISCONNECTED,
 };
 
 [[nodiscard]] constexpr std::string_view
@@ -64,8 +63,6 @@ toStringView(const ep_state_t t) noexcept {
         return "CONNECTED";
     case ep_state_t::FAILED:
         return "FAILED";
-    case ep_state_t::DISCONNECTED:
-        return "DISCONNECTED";
     }
     return nixl::ucx::invalid_string;
 }
@@ -121,7 +118,6 @@ toNixlStatus(const ep_state_t t) noexcept {
     case ep_state_t::FAILED:
         return NIXL_ERR_REMOTE_DISCONNECT;
     case ep_state_t::UNINITIALIZED:
-    case ep_state_t::DISCONNECTED:
         return NIXL_ERR_BACKEND;
     }
     return NIXL_ERR_BACKEND;

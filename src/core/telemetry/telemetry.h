@@ -19,12 +19,11 @@
 
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
+#include "telemetry_staging_queue.h"
 #include "mem_section.h"
 #include "nixl_types.h"
 
 #include <string>
-#include <vector>
-#include <mutex>
 #include <memory>
 #include <chrono>
 #include <functional>
@@ -88,9 +87,10 @@ public:
     /**
      * @brief Records one completed transfer's stats as a single telemetry batch.
      *
-     * Appends the four per-transfer events (transfer time, bytes, request count,
-     * post time) under one lock. The batch is all-or-none: if the buffer cannot
-     * hold all four, none are recorded.
+     * Appends the activated subset of the four per-transfer events (transfer
+     * time, bytes, request count, post time) under one lock; deactivated metrics
+     * are skipped before batching. The batch is all-or-none: if the buffer cannot
+     * hold the filtered batch, none of its events are recorded.
      * @param xfer_time Start-to-complete transfer duration.
      * @param is_write True for TX events (agent_tx_*), false for RX (agent_rx_*).
      * @param bytes Bytes transferred by the request.
@@ -116,6 +116,15 @@ private:
     registerPeriodicTask(periodicTask &task);
     void
     updateData(nixl_telemetry_event_type_t event_type, uint64_t value);
+
+    // Whether the given event type is exported. Deactivated types are dropped at
+    // the source (before the staging queue), so they cost no lock/append. This is
+    // a lock-free read of an immutable, construction-time mask -- safe on the
+    // multi-producer hot path.
+    [[nodiscard]] bool
+    isMetricEnabled(nixl_telemetry_event_type_t event_type) const noexcept {
+        return metricEnabled_[static_cast<size_t>(event_type)];
+    }
     bool
     flushPendingEvents();
     // Emits the staging-queue drops accumulated since the last flush as a
@@ -128,14 +137,18 @@ private:
     const std::string agentName_;
     const size_t maxBufferedEvents_;
     const std::unique_ptr<nixlTelemetryExporter> exporter_;
-    std::vector<nixlTelemetryEvent> events_;
-    std::mutex mutex_;
-    // Producer-side staging-queue drop counter: incremented from any thread when
-    // updateData / addXferStats cannot append because events_ is full, so the
-    // event never reaches any exporter. Does not track BUFFER cyclic-ring loss
-    // (a separate, downstream condition). Each flush takes and resets it
-    // (exchange) and publishes the count as an AGENT_TELEMETRY_EVENTS_DROPPED event.
-    std::atomic<uint64_t> droppedEvents_{0};
+    // Per-event-type export allowlist resolved once from NIXL_TELEMETRY_ENABLED_METRICS.
+    // Indexed by nixl_telemetry_event_type_t; a deactivated event is skipped at
+    // the source before it enters the staging queue. All-true when the variable
+    // is unset (backward compatible).
+    const nixl_telemetry_metric_mask_t metricEnabled_;
+    // Bounded producer/consumer staging queue: owns event storage, the capacity
+    // reserve, the producer mutex, capacity enforcement, single/batch insertion,
+    // the swap-drain, and the staging-drop counter. Its drops do not track BUFFER
+    // cyclic-ring loss (a separate, downstream condition); each flush takes and
+    // resets the drop count and publishes it as an AGENT_TELEMETRY_EVENTS_DROPPED
+    // event.
+    nixlTelemetryStagingQueue stagingQueue_;
     asio::thread_pool pool_;
     periodicTask writeTask_;
 };
