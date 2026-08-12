@@ -226,15 +226,15 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
         telemetry_ = nixlTelemetry::create(name);
     }
 
-    // Last statement: a backend thread sees this object through
-    // nixlMetadataContext, so everything it can reach is now built, and nothing
-    // after this point can throw while those threads run.
+    // Last statement: a metadata backend thread sees the agent data object
+    // through nixlMetadataContext, so everything it can reach is now built, and
+    // nothing after this point can throw while those threads run.
     md_.start();
 }
 
 nixlAgentData::~nixlAgentData() {
-    // Runs before any member is destroyed, so no backend task can still be in
-    // the caches below.
+    // Runs before any member is destroyed, so no metadata backend thread can
+    // still be in the caches below.
     md_.stop();
 }
 

@@ -105,9 +105,9 @@ class nixlAgentData final : public nixlMetadataContext {
     public:
         nixlAgentData(const std::string &name, const nixlAgentConfig &config);
 
-        // Stops and joins the backend threads before any member is destroyed,
-        // so no task can touch the caches (remoteSections_, backendEngines_)
-        // that are torn down after this body runs.
+        // Stops and joins the metadata backends' worker threads before any
+        // member is destroyed, so no backend work can touch the caches
+        // (remoteSections_, backendEngines_) torn down after this body runs.
         ~nixlAgentData();
 
         void
