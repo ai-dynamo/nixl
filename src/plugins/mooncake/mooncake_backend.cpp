@@ -135,7 +135,9 @@ nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
     std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
     });
-    if (mode.empty()) mode = "classic";
+    if (mode.empty()) {
+        mode = "classic";
+    }
 
     if (mode == "tent") {
 #ifdef HAVE_MOONCAKE_TENT
@@ -158,8 +160,7 @@ nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
         // Optional user-provided TENT configuration file; the settings below
         // override whatever it contains.
         std::string config_path;
-        if (getInitParam("tent_config_path", config_path) == NIXL_SUCCESS &&
-            !config_path.empty()) {
+        if (getInitParam("tent_config_path", config_path) == NIXL_SUCCESS && !config_path.empty()) {
             tent_load_config_from_file(config_path.c_str());
         }
         // Equivalent of the classic createTransferEngine("P2PHANDSHAKE", ...):
@@ -205,11 +206,15 @@ nixlMooncakeEngine::getSupportedMems() const {
 nixlMooncakeEngine::~nixlMooncakeEngine() {
 #ifdef HAVE_MOONCAKE_TENT
     if (mode_ == Mode::Tent) {
-        if (tent_engine_) tent_destroy_engine(tent_engine_);
+        if (tent_engine_) {
+            tent_destroy_engine(tent_engine_);
+        }
         return;
     }
 #endif
-    if (engine_) destroyTransferEngine(engine_);
+    if (engine_) {
+        destroyTransferEngine(engine_);
+    }
 }
 
 // TODO We purposely set this function as empty.
@@ -239,8 +244,9 @@ nixlMooncakeEngine::getConnInfo(std::string &str) const {
     if (mode_ == Mode::Tent) {
         char addr[64] = {0};
         uint16_t port = 0;
-        if (tent_rpc_server_addr_port(tent_engine_, addr, sizeof(addr), &port))
+        if (tent_rpc_server_addr_port(tent_engine_, addr, sizeof(addr), &port)) {
             return NIXL_ERR_BACKEND;
+        }
         addr[sizeof(addr) - 1] = '\0';
         // In TENT p2p mode the segment name is the "ip:port" of the local RPC
         // server, the same shape the classic engine reports.
@@ -262,8 +268,9 @@ nixlMooncakeEngine::loadRemoteConnInfo(const std::string &remote_agent,
 #ifdef HAVE_MOONCAKE_TENT
     if (mode_ == Mode::Tent) {
         tent_segment_id_t segment_id = 0;
-        if (tent_open_segment(tent_engine_, &segment_id, remote_conn_info.c_str()))
+        if (tent_open_segment(tent_engine_, &segment_id, remote_conn_info.c_str())) {
             return NIXL_ERR_BACKEND;
+        }
         connected_agents_[remote_agent].segment_id = segment_id;
         return NIXL_SUCCESS;
     }
@@ -340,9 +347,9 @@ nixlMooncakeEngine::deregisterMem(nixlBackendMD *meta) {
     if (priv->ref_cnt) return NIXL_SUCCESS;
     int err;
 #ifdef HAVE_MOONCAKE_TENT
-    if (mode_ == Mode::Tent)
+    if (mode_ == Mode::Tent) {
         err = tent_unregister_memory(tent_engine_, priv->addr, priv->length);
-    else
+    } else
 #endif
         err = unregisterLocalMemory(engine_, priv->addr);
     mem_reg_info_.erase((uint64_t)priv->addr);
@@ -414,11 +421,14 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         segment_id = agent->second.segment_id;
     }
     if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
-    if (priv->abort_requested) return NIXL_ERR_INVALID_PARAM;
+    if (priv->abort_requested) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
 #ifdef HAVE_MOONCAKE_TENT
-    if (mode_ == Mode::Tent)
+    if (mode_ == Mode::Tent) {
         return postXferTent(operation, local, remote, segment_id, priv, opt_args);
+    }
 #endif
     return postXferClassic(operation, local, remote, segment_id, priv, opt_args);
 }
@@ -493,7 +503,9 @@ nixlMooncakeEngine::postXferTent(const nixl_xfer_op_t &operation,
     // 0 is the default.
     std::vector<tent_request_t> requests(request_count);
     for (size_t index = 0; index < request_count; ++index) {
-        if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
+        if (local[index].len != remote[index].len) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
         requests[index].opcode = (operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE;
         requests[index].source = (void *)local[index].addr;
         requests[index].target_offset = remote[index].addr;
@@ -502,7 +514,9 @@ nixlMooncakeEngine::postXferTent(const nixl_xfer_op_t &operation,
     }
     int rc = 0;
     if (opt_args && opt_args->hasNotif) {
-        if (opt_args->notifMsg.size() > kMaxNotifMsgLen) return NIXL_ERR_INVALID_PARAM;
+        if (opt_args->notifMsg.size() > kMaxNotifMsgLen) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
         rc = tent_submit_notif(tent_engine_,
                                priv->batch_id,
                                requests.data(),
@@ -512,7 +526,9 @@ nixlMooncakeEngine::postXferTent(const nixl_xfer_op_t &operation,
     } else {
         rc = tent_submit(tent_engine_, priv->batch_id, requests.data(), request_count);
     }
-    if (rc) return NIXL_ERR_BACKEND;
+    if (rc) {
+        return NIXL_ERR_BACKEND;
+    }
     priv->request_count += request_count;
     return NIXL_IN_PROG;
 }
@@ -535,9 +551,13 @@ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     // status query on the same handle is a terminal no-op. Without this guard a
     // stale batch id would be handed back to the engine, which casts it to a
     // descriptor pointer and dereferences it.
-    if (priv->batch_id == invalid_batch_) return NIXL_SUCCESS;
+    if (priv->batch_id == invalid_batch_) {
+        return NIXL_SUCCESS;
+    }
 #ifdef HAVE_MOONCAKE_TENT
-    if (mode_ == Mode::Tent) return checkXferTent(priv);
+    if (mode_ == Mode::Tent) {
+        return checkXferTent(priv);
+    }
 #endif
     return checkXferClassic(priv);
 }
@@ -571,7 +591,9 @@ nixlMooncakeEngine::checkXferTent(nixlMooncakeBackendReqH *priv) const {
     // One aggregated poll instead of a per-task loop: COMPLETED only when every
     // task succeeded, the worst terminal state when all tasks are terminal,
     // PENDING otherwise. The call also drives engine-internal progress.
-    if (tent_overall_status(tent_engine_, priv->batch_id, &status)) return NIXL_ERR_BACKEND;
+    if (tent_overall_status(tent_engine_, priv->batch_id, &status)) {
+        return NIXL_ERR_BACKEND;
+    }
     switch (status.status) {
     case STATUS_WAITING:
     case STATUS_PENDING:
@@ -602,7 +624,9 @@ nixl_status_t
 nixlMooncakeEngine::releaseReqH(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
 #ifdef HAVE_MOONCAKE_TENT
-    if (mode_ == Mode::Tent) return releaseReqHTent(priv);
+    if (mode_ == Mode::Tent) {
+        return releaseReqHTent(priv);
+    }
 #endif
     return releaseReqHClassic(priv);
 }
@@ -680,7 +704,9 @@ nixlMooncakeEngine::getNotifs(notif_list_t &notif_list) {
         tent_notifi_info info;
         info.num_records = 0;
         info.records = nullptr;
-        if (tent_recv_notifs(tent_engine_, &info)) return NIXL_ERR_BACKEND;
+        if (tent_recv_notifs(tent_engine_, &info)) {
+            return NIXL_ERR_BACKEND;
+        }
         for (int i = 0; i < info.num_records; i++) {
             // The C shim copies with strncpy and does not guarantee
             // termination at full length; clamp before constructing strings.
@@ -713,7 +739,9 @@ nixlMooncakeEngine::genNotif(const std::string &remote_agent, const std::string 
     }
 #ifdef HAVE_MOONCAKE_TENT
     if (mode_ == Mode::Tent) {
-        if (msg.size() > kMaxNotifMsgLen) return NIXL_ERR_INVALID_PARAM;
+        if (msg.size() > kMaxNotifMsgLen) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
         int ret =
             tent_send_notifs(tent_engine_, segment_id, local_agent_name_.c_str(), msg.c_str());
         return ret == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;

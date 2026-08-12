@@ -14,13 +14,7 @@ The backend can drive either Mooncake engine, selected by the `mooncake_mode` ba
 | `classic` (default) | Transfer Engine (`transfer_engine_c.h`) | Unchanged behavior, works with every Mooncake release |
 | `tent` | TENT, the next-generation engine, through its native C API (`tent/transfer_engine.h`) | Requires Mooncake built with `-DUSE_TENT=ON` |
 
-`tent` mode additionally provides:
-
-- a `releaseReqH()` that follows the BackendGuide cancellation protocol (best-effort `tent_cancel_task()` on every in-flight task, non-blocking poll, and a refusal to release until every task reached a terminal state) instead of the classic path, where the engine offers no cancellation primitive;
-- `O(1)` completion polling through the aggregated batch status, which also drives engine-internal progress and failover;
-- memory registration that carries the transport type and, for `VRAM_SEG`, the `cuda:<devId>` location.
-
-If NIXL is built against a Mooncake without TENT, the plugin still builds and offers `classic` only; requesting `tent` then fails engine creation with a clear error.
+`tent` mode additionally provides a `releaseReqH()` that follows the BackendGuide cancellation protocol (best-effort `tent_cancel_task()`, non-blocking poll, release refused until every task is terminal — the classic engine has no cancellation primitive), `O(1)` completion polling through the aggregated batch status, and registration that carries the transport type plus, for `VRAM_SEG`, the `cuda:<devId>` location. Against a Mooncake without TENT the plugin still builds and offers `classic` only; requesting `tent` then fails engine creation with a clear error.
 
 ## Usage Guide
 1. Build and install Mooncake. You can refer to the [installation guide here](https://github.com/kvcache-ai/Mooncake?tab=readme-ov-file#build-and-use-binaries). Add `-DUSE_TENT=ON` if you want the `tent` mode.
