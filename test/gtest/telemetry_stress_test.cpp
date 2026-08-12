@@ -18,11 +18,11 @@
 #include <gtest/gtest.h>
 
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <future>
+#include <latch>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -48,8 +48,7 @@ namespace {
 // Sanitizer builds run the same correctness checks with fewer repetitions: it
 // keeps TSan/ASan within a CI-friendly runtime and limits the repeated
 // thread-pool create/destroy that stresses the sanitizer thread registry, while
-// still surfacing intermittent timer/queue/exporter defects. Detection is
-// compile-time and test-only.
+// still surfacing intermittent timer/queue/exporter defects.
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
 constexpr bool kSanitizerBuild = true;
 #elif defined(__has_feature)
@@ -95,27 +94,6 @@ ringSizeAbove(uint64_t n) {
     }
     return size;
 }
-
-// A start latch so every producer thread is released together, maximizing the
-// concurrency the staging queue actually sees (per the plan: coordinate with
-// atomics/barriers, do not rely on sleeps).
-class StartGate {
-public:
-    void
-    wait() {
-        while (!go_.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
-    }
-
-    void
-    release() {
-        go_.store(true, std::memory_order_release);
-    }
-
-private:
-    std::atomic<bool> go_{false};
-};
 
 // Non-destructively poll the writer's published event count (the reader never
 // pops during polling, so read_pos stays 0 and size() == events pushed) until it
@@ -266,54 +244,54 @@ TEST_F(telemetryStressTest, MixedConcurrentValueParityUnderCapacity) {
     env_.addVar(TELEMETRY_BUFFER_SIZE_VAR, std::to_string(ring_size));
     env_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "5");
 
-    StartGate gate;
+    std::latch start_gate(1);
     nixlTelemetry telemetry(file, "BUFFER");
 
     std::vector<std::thread> producers;
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateTxBytes(kTxBytesBase + i);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateRxBytes(kRxBytesBase + i);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateTxRequestsNum(static_cast<uint32_t>(kTxReqBase + i));
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateRxRequestsNum(static_cast<uint32_t>(kRxReqBase + i));
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateMemoryRegistered(kMemRegBase + i);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateMemoryDeregistered(kMemDeregBase + i);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateErrorCount(error_statuses[i % error_statuses.size()]);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.addXferStats(std::chrono::microseconds(kWXferBase + i),
                                    true,
@@ -322,7 +300,7 @@ TEST_F(telemetryStressTest, MixedConcurrentValueParityUnderCapacity) {
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.addXferStats(std::chrono::microseconds(kRXferBase + i),
                                    false,
@@ -331,7 +309,7 @@ TEST_F(telemetryStressTest, MixedConcurrentValueParityUnderCapacity) {
         }
     });
 
-    gate.release();
+    start_gate.count_down();
     for (auto &producer : producers) {
         producer.join();
     }
@@ -405,13 +383,13 @@ TEST_F(telemetryStressTest, PipelineBatchAtomicity) {
     env_.addVar(TELEMETRY_BUFFER_SIZE_VAR, std::to_string(ring_size));
     env_.addVar(TELEMETRY_RUN_INTERVAL_VAR, "5");
 
-    StartGate gate;
+    std::latch start_gate(1);
     nixlTelemetry telemetry(file, "BUFFER");
 
     std::vector<std::thread> producers;
     for (int w = 0; w < kWriteThreads; ++w) {
         producers.emplace_back([&, w] {
-            gate.wait();
+            start_gate.wait();
             for (uint64_t i = 0; i < iters; ++i) {
                 const uint64_t id = kWriteIdBase + static_cast<uint64_t>(w) * iters + i;
                 telemetry.addXferStats(
@@ -421,7 +399,7 @@ TEST_F(telemetryStressTest, PipelineBatchAtomicity) {
     }
     for (int r = 0; r < kReadThreads; ++r) {
         producers.emplace_back([&, r] {
-            gate.wait();
+            start_gate.wait();
             for (uint64_t i = 0; i < iters; ++i) {
                 const uint64_t id = kReadIdBase + static_cast<uint64_t>(r) * iters + i;
                 telemetry.addXferStats(
@@ -430,19 +408,19 @@ TEST_F(telemetryStressTest, PipelineBatchAtomicity) {
         });
     }
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateMemoryRegistered(4096 + i);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateErrorCount(NIXL_ERR_BACKEND);
         }
     });
 
-    gate.release();
+    start_gate.count_down();
     for (auto &producer : producers) {
         producer.join();
     }
@@ -546,14 +524,14 @@ TEST_F(telemetryStressTest, RepeatedLifecycleShakeOut) {
 
     for (int iteration = 0; iteration < iterations; ++iteration) {
         const std::string file = "lifecycle_" + std::to_string(iteration);
-        StartGate gate;
+        std::latch start_gate(1);
         {
             nixlTelemetry telemetry(file, "BUFFER");
 
             std::vector<std::thread> producers;
             for (int t = 0; t < 3; ++t) {
                 producers.emplace_back([&, t] {
-                    gate.wait();
+                    start_gate.wait();
                     for (uint64_t i = 0; i < iters; ++i) {
                         if (t == 0) {
                             telemetry.updateTxBytes(1024 + i);
@@ -569,7 +547,7 @@ TEST_F(telemetryStressTest, RepeatedLifecycleShakeOut) {
                 });
             }
 
-            gate.release();
+            start_gate.count_down();
             for (auto &producer : producers) {
                 producer.join();
             }
@@ -617,14 +595,14 @@ TEST_F(telemetryStressTest, SafeShutdownWithInFlightConsumer) {
 
     for (int iteration = 0; iteration < iterations; ++iteration) {
         const std::string file = "shutdown_" + std::to_string(iteration);
-        StartGate gate;
+        std::latch start_gate(1);
 
         auto telemetry = std::make_unique<nixlTelemetry>(file, "BUFFER");
 
         std::vector<std::thread> producers;
         for (int t = 0; t < 4; ++t) {
             producers.emplace_back([&] {
-                gate.wait();
+                start_gate.wait();
                 for (uint64_t i = 0; i < iters; ++i) {
                     telemetry->addXferStats(
                         std::chrono::microseconds(20), true, 256, std::chrono::microseconds(2));
@@ -632,7 +610,7 @@ TEST_F(telemetryStressTest, SafeShutdownWithInFlightConsumer) {
             });
         }
 
-        gate.release();
+        start_gate.count_down();
         for (auto &producer : producers) {
             producer.join();
         }

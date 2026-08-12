@@ -19,8 +19,11 @@
 // Prometheus suite (telemetry_prometheus_test.cpp) but sharing its fixture via
 // prometheus_telemetry_fixture.h and scraping through the same OpenMetrics
 // parser/time-series helpers the DOCA and histogram tests use. The Prometheus
-// exporter is lossless and ring-free, so concurrent staging overflow and mixed
-// aggregation resolve to exact, hardware-independent conservation identities.
+// exporter never drops on export and has no fixed-size ring behind it, so the
+// staging queue is the only place an event can be lost. Both tests can therefore
+// assert exact totals -- accepted plus dropped equals produced, and the
+// no-overflow case reaches exact counter sums -- instead of tolerances, whatever
+// order the threads happen to run in.
 
 #include "prometheus_telemetry_fixture.h"
 
@@ -32,11 +35,11 @@
 #include "open_metrics_text_parser.h"
 #include "timeseries.h"
 
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <latch>
 #include <optional>
 #include <string>
 #include <thread>
@@ -51,8 +54,7 @@ using nixl::doca_test::timeSeries;
 namespace {
 
 // Sanitizer builds run the same concurrent aggregation with fewer producer
-// iterations so TSan/ASan stay within a CI-friendly runtime. Compile-time
-// detection in test code only.
+// iterations so TSan/ASan stay within a CI-friendly runtime.
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
 constexpr bool kSanitizerBuild = true;
 #elif defined(__has_feature)
@@ -64,27 +66,6 @@ constexpr bool kSanitizerBuild = false;
 #else
 constexpr bool kSanitizerBuild = false;
 #endif
-
-// A start latch so every producer thread is released together, after all threads
-// exist -- otherwise early threads can finish before later ones are created and
-// the workload runs largely serially, hiding concurrency defects.
-class StartGate {
-public:
-    void
-    wait() const {
-        while (!go_.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
-    }
-
-    void
-    release() {
-        go_.store(true, std::memory_order_release);
-    }
-
-private:
-    std::atomic<bool> go_{false};
-};
 
 timeSeries
 scrapeMetrics(uint16_t port) {
@@ -115,7 +96,7 @@ scrapeCoreOverflow(uint16_t port,
                    const std::function<void(nixlTelemetry &)> &produce) {
     gtest::ScopedEnv telemetry_env;
     telemetry_env.addVar(TELEMETRY_BUFFER_SIZE_VAR, "256");
-    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, "5");
+    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, "50");
 
     nixlTelemetry telemetry(agent_name, "prometheus");
     produce(telemetry);
@@ -152,8 +133,12 @@ scrapeCoreOverflow(uint16_t port,
 // either fully accepted (advancing agent_tx_requests_num_total by one per call,
 // weight 4 slots) or fully dropped (four staging drops). Thread scheduling may
 // change the accepted/dropped split but not the total, so
-// accepted*4 + dropped must equal the produced event slots, drops must be
-// nonzero, and drops must remain a multiple of four.
+// accepted*4 + dropped must equal the produced event slots and drops must remain
+// a multiple of four. Nonzero drops are bounded rather than merely likely: a
+// drain removes at most the 256 staged slots, so at the 50 ms flush interval
+// producing 640000 slots (80000 under sanitizers) without a single drop would
+// take over two minutes (15 s), against a workload that finishes in well under a
+// second even under TSan.
 TEST_F(prometheusTelemetryTest, ConcurrentAddXferStatsOverflowConservation) {
     const std::string agent_name = "prometheus_concurrent_xfer_overflow_agent";
     constexpr uint64_t kThreads = kSanitizerBuild ? 4 : 8;
@@ -168,12 +153,12 @@ TEST_F(prometheusTelemetryTest, ConcurrentAddXferStatsOverflowConservation) {
                            kEventsPerCall,
                            kProducedEvents,
                            [](nixlTelemetry &telemetry) {
-                               StartGate gate;
+                               std::latch start_gate(1);
                                std::vector<std::thread> producers;
                                producers.reserve(kThreads);
                                for (uint64_t t = 0; t < kThreads; ++t) {
-                                   producers.emplace_back([&telemetry, &gate] {
-                                       gate.wait();
+                                   producers.emplace_back([&telemetry, &start_gate] {
+                                       start_gate.wait();
                                        for (uint64_t i = 0; i < kCallsPerThread; ++i) {
                                            telemetry.addXferStats(std::chrono::microseconds(10),
                                                                   true,
@@ -182,7 +167,7 @@ TEST_F(prometheusTelemetryTest, ConcurrentAddXferStatsOverflowConservation) {
                                        }
                                    });
                                }
-                               gate.release();
+                               start_gate.count_down();
                                for (auto &producer : producers) {
                                    producer.join();
                                }
@@ -220,57 +205,57 @@ TEST_F(prometheusTelemetryTest, ConcurrentMixedWorkloadAggregation) {
     constexpr uint64_t kRxB = 1500;
     constexpr uint64_t kMem = 4096;
 
-    StartGate gate;
+    std::latch start_gate(1);
     std::vector<std::thread> producers;
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateTxBytes(kTxA);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateTxBytes(kTxB);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateRxBytes(kRxA);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateRxBytes(kRxB);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateTxRequestsNum(1);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateMemoryRegistered(kMem);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateErrorCount(NIXL_ERR_BACKEND);
         }
     });
     producers.emplace_back([&] {
-        gate.wait();
+        start_gate.wait();
         for (uint64_t i = 0; i < iters; ++i) {
             telemetry.updateErrorCount(NIXL_ERR_INVALID_PARAM);
         }
     });
-    gate.release();
+    start_gate.count_down();
     for (auto &producer : producers) {
         producer.join();
     }

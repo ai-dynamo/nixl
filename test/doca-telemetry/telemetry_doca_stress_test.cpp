@@ -20,8 +20,9 @@
 // test/doca-telemetry/doca_nixl_test intentionally does not link full NIXL core,
 // so this exercises the NIXL DOCA exporter's volume handling only -- not the core
 // staging queue, whose concurrency is validated through BUFFER and Prometheus in
-// the gtest stress suite. Kept in its own source/binary so the sustained
-// high-volume case stays isolated from the functional DOCA exporter tests.
+// the gtest stress suite. Kept in its own source (linked into doca_nixl_test) so
+// the sustained high-volume case stays readable next to, but separate from, the
+// functional DOCA exporter tests.
 
 #include "scrape_util.h"
 
@@ -107,8 +108,12 @@ TEST_F(docaNixlExporterStressTest, HighVolumeSequenceCounterGaugeAndDropAccumula
 
     ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
 
+    // Gate on the drop counter: it carries the last events pushed before the
+    // flush, so once it reads its final total the earlier byte events have
+    // certainly landed too. Gating on the byte counter instead would leave the
+    // drop assertion below reading a still-settling series.
     const auto metrics = scrapeUntilValue(
-        port_, txCounter, static_cast<double>(counter_sum), std::chrono::seconds(15), labels);
+        port_, dropCounter, static_cast<double>(drop_total), std::chrono::seconds(15), labels);
     const std::optional<double> observed_counter = metrics.latestValue(txCounter, labels);
     ASSERT_TRUE(observed_counter.has_value())
         << txCounter << "{agent_name=" << agentName << "} not served after flush";
@@ -122,10 +127,4 @@ TEST_F(docaNixlExporterStressTest, HighVolumeSequenceCounterGaugeAndDropAccumula
     EXPECT_EQ(metrics.latestValue(dropCounter, labels), std::optional<double>(drop_total))
         << "drop counter must accumulate every emitted delta at volume (" << kDropDeltas << "*"
         << kDropPerDelta << ")";
-}
-
-int
-main(int argc, char **argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }
