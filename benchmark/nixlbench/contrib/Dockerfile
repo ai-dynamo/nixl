@@ -159,8 +159,12 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     ldconfig
 
 # Build gRPC from source against /usr/local Abseil.
-RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+# ponytail: init then disable abseil submodule before recursive update; -c can't handle slash in subsection
+RUN git clone -b ${GRPC_TAG} --depth 1 https://github.com/grpc/grpc && \
     cd grpc && \
+    git submodule init && \
+    git config submodule."third_party/abseil-cpp".update none && \
+    git submodule update --recursive --depth 1 && \
     mkdir -p cmake/build && \
     cd cmake/build && \
     export CMAKE_PREFIX_PATH="/usr/local${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" && \
