@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+import tempfile
 import uuid
 
 import pytest
@@ -112,7 +113,11 @@ def test_sync_mode_agent(monkeypatch, sync_mode, enable_listen):
         return real_ctor(agent_name, agent_config)
 
     monkeypatch.setattr(bindings, "nixlAgent", spy_ctor)
-    config = nixl_agent_config(sync_mode=sync_mode, enable_listen_thread=enable_listen)
+    # listen_port=0 lets the OS pick an ephemeral port, so concurrent agents (parametrized
+    # cases here, or parallel CI jobs sharing a node) don't collide on the fixed default port.
+    config = nixl_agent_config(
+        sync_mode=sync_mode, enable_listen_thread=enable_listen, listen_port=0
+    )
     nixl_agent(str(uuid.uuid4()), nixl_conf=config)
     if sync_mode is not None:
         assert captured["syncMode"] == sync_mode.value
@@ -169,7 +174,7 @@ def test_metadata_pass(two_agents):
     utils.free_passthru(addr)
 
 
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(5, func_only=True)
 def test_empty_notif_tag(two_connected_agents):
     agent1, agent2 = two_connected_agents
 
@@ -246,7 +251,7 @@ def test_incorrect_plugin_env(monkeypatch):
         nixl_agent("bad env agent")
 
 
-def _run_xfer_telemetry_check(agent1, agent2):
+def _run_xfer_telemetry_check(agent1, agent2, expect_telemetry: bool = True) -> None:
     mem_size = 128
     addr1 = utils.malloc_passthru(mem_size)
     addr2 = utils.malloc_passthru(mem_size)
@@ -280,6 +285,12 @@ def _run_xfer_telemetry_check(agent1, agent2):
         while not agent2.check_remote_xfer_done(agent1.name, b"telem_msg"):
             pass
 
+        if not expect_telemetry:
+            with pytest.raises(bindings.nixlNoTelemetryError):
+                agent1.get_xfer_telemetry(handle)
+            agent1.release_xfer_handle(handle)
+            return
+
         telem = agent1.get_xfer_telemetry(handle)
         assert telem.descCount == 2
         assert telem.totalBytes == mem_size
@@ -294,8 +305,14 @@ def _run_xfer_telemetry_check(agent1, agent2):
         utils.free_passthru(addr2)
 
 
-def test_get_xfer_telemetry(backend_name):
+def test_get_xfer_telemetry_without_sink(backend_name):
+    # Telemetry enabled with no sink still collects in-process via the NOP
+    # fallback, so get_xfer_telemetry() works. Clear any inherited sink vars so
+    # the sinkless path is exercised.
+    prev_enable = os.environ.get("NIXL_TELEMETRY_ENABLE")
     os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
+    prev_dir = os.environ.pop("NIXL_TELEMETRY_DIR", None)
+    prev_exporter = os.environ.pop("NIXL_TELEMETRY_EXPORTER", None)
     try:
         agent1 = nixl_agent(
             str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
@@ -303,9 +320,32 @@ def test_get_xfer_telemetry(backend_name):
         agent2 = nixl_agent(
             str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
         )
-        _run_xfer_telemetry_check(agent1, agent2)
+        _run_xfer_telemetry_check(agent1, agent2, expect_telemetry=True)
     finally:
-        os.environ.pop("NIXL_TELEMETRY_ENABLE")
+        os.environ.pop("NIXL_TELEMETRY_ENABLE", None)
+        if prev_enable is not None:
+            os.environ["NIXL_TELEMETRY_ENABLE"] = prev_enable
+        if prev_dir is not None:
+            os.environ["NIXL_TELEMETRY_DIR"] = prev_dir
+        if prev_exporter is not None:
+            os.environ["NIXL_TELEMETRY_EXPORTER"] = prev_exporter
+
+
+def test_get_xfer_telemetry_with_buffer(backend_name):
+    os.environ["NIXL_TELEMETRY_ENABLE"] = "y"
+    with tempfile.TemporaryDirectory() as telemetry_dir:
+        os.environ["NIXL_TELEMETRY_DIR"] = telemetry_dir
+        try:
+            agent1 = nixl_agent(
+                str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+            )
+            agent2 = nixl_agent(
+                str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
+            )
+            _run_xfer_telemetry_check(agent1, agent2)
+        finally:
+            os.environ.pop("NIXL_TELEMETRY_ENABLE")
+            os.environ.pop("NIXL_TELEMETRY_DIR")
 
 
 def test_get_xfer_telemetry_cfg(backend_name):
@@ -321,7 +361,7 @@ def test_get_xfer_telemetry_cfg(backend_name):
         agent2 = nixl_agent(
             str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
         )
-        _run_xfer_telemetry_check(agent1, agent2)
+        _run_xfer_telemetry_check(agent1, agent2, expect_telemetry=False)
     finally:
         os.environ.pop("NIXL_TELEMETRY_ENABLE")
         os.environ.pop("NIXL_TELEMETRY_DIR")

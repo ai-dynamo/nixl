@@ -333,6 +333,7 @@ template class nixlDescList<nixlBlobDesc>;
 template class nixlDescList<nixlSectionDesc>;
 template class nixlDescList<nixlRemoteDesc>;
 template class nixlDescList<nixlRemoteMetaDesc>;
+template class nixlDescList<nixlStrideDesc>;
 
 template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
                                          const nixlDescList<nixlBasicDesc> &rhs);
@@ -352,13 +353,16 @@ operator== <nixlRemoteMetaDesc>(const nixlDescList<nixlRemoteMetaDesc> &lhs,
 // nixlSecDescList keeps the elements sorted
 void
 nixlSecDescList::addDesc(const nixlSectionDesc &desc) {
+    nixlSectionDesc normalized = desc;
+    normalizeSecDesc(normalized);
     auto &vec = this->descs;
-    auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
-    vec.insert(itr, desc);
+    auto itr = std::upper_bound(vec.begin(), vec.end(), normalized);
+    vec.insert(itr, std::move(normalized));
 }
 
 void
 nixlSecDescList::addDesc(nixlSectionDesc &&desc) {
+    normalizeSecDesc(desc);
     auto &vec = this->descs;
     auto itr = std::upper_bound(vec.begin(), vec.end(), desc);
     vec.insert(itr, std::move(desc));
@@ -427,6 +431,8 @@ nixlSecDescList::addDescs(std::vector<nixlSectionDesc> batch, order ord) {
         return;
     }
 
+    normalizeSecDescBatch(batch);
+
     if (ord == order::SORTED) {
         NIXL_ASSERT(std::is_sorted(batch.begin(), batch.end()));
     } else {
@@ -443,11 +449,40 @@ nixlSecDescList::addDescs(nixlSecDescList &&other) {
     addDescs(std::move(other.descs), order::SORTED);
 }
 
+void
+nixlSecDescList::remDescs(std::vector<size_t> indices, order ord) {
+    if (indices.empty()) {
+        return;
+    }
+
+    if (ord == order::SORTED) {
+        NIXL_ASSERT(std::is_sorted(indices.begin(), indices.end()));
+    } else {
+        std::sort(indices.begin(), indices.end());
+    }
+
+    size_t ri = 0;
+    size_t write = 0;
+    for (size_t read = 0; read < descs.size(); ++read) {
+        if (ri < indices.size() && read == indices[ri]) {
+            ++ri;
+        } else {
+            if (write != read) {
+                descs[write] = std::move(descs[read]);
+            }
+            ++write;
+        }
+    }
+    descs.resize(write);
+}
+
 
 int
 nixlSecDescList::getIndex(const nixlBasicDesc &query) const {
-    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), query);
-    if (itr == this->descs.end() || static_cast<const nixlBasicDesc &>(*itr) != query)
+    const nixlBasicDesc adjusted_query = normalizeQuery(query);
+
+    auto itr = std::lower_bound(this->descs.begin(), this->descs.end(), adjusted_query);
+    if (itr == this->descs.end() || static_cast<const nixlBasicDesc &>(*itr) != adjusted_query)
         return NIXL_ERR_NOT_FOUND;
     return static_cast<int>(itr - this->descs.begin());
 }

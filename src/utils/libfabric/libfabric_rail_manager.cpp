@@ -249,58 +249,72 @@ nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
     // NOTE: in non-uniform topology, the selection policy should have been per NUMA node, but that
     // is not a use case we relate to for now
 
-    // get bandwidth/rail limit from user or compute it, then select policy
-    size_t max_bw = 0;
-    size_t max_rails = 0;
-    size_t recommended_rails = 0;
-    size_t nic_speed = topology->getAvgNicBandwidth();
-    if (!getDramRailLimit(custom_params, max_bw, max_rails, recommended_rails) || max_rails == 0) {
-        // had some error in deducing rail count, so just use default policy
-        NIXL_WARN << "Using default (all) rail selection policy for DRAM memory type due to "
-                     "previous errors";
+    // when a provider does not provide PCIe data, there is no need to employ PCIe congestion
+    // avoidance mechanisms, which is one major part of what NUMA-aware rail selection policy does
+    if (!topology->hasPcieDevices()) {
+        // either an error occurred or there is no PCIe bus data, in either case we use the
+        // default policy
+        NIXL_INFO << "Using default (all) rail selection policy for DRAM memory type when "
+                     "provider is \""
+                  << topology->getProviderName() << "\" and no PCIe bus data is available";
         dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
-    } else if (topology->getAllDevices().size() == 1) {
-        // system has only 1 EFA, so use default policy (don't issue warning)
-        dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
-    }
-    // NOTE: from this point onward we regard only rails that are attached to a PCIe switch because
-    // these are the only ones that matter for avoiding PCIe congestion (the instance types we deal
-    // with have either all rails connected to PCIe switches, or have only one EFA that is either
-    // not attached to a NUMA node, as in C-series, or not attached to a PCIe switch, as in
-    // G-series), so we test rail count against topology->getTotalNicCount() (which represents the
-    // total number of "usable" rails, i.e. that are attached to a PCIe switch) and not against
-    // topology->getAllDevices().size()
-    else if (max_rails < topology->getTotalNicCount()) {
-        // bandwidth does not exceed total machine capacity, so use NUMA-aware rail selection policy
-        NIXL_INFO << "DRAM rail selection policy: numa-aware (max_rails=" << max_rails << ")";
-        size_t numa_rail_count = topology->getNumaRailCount(); // NOTE: averaged if non-uniform
-        if (max_rails > numa_rail_count) {
-            size_t numa_speed = numa_rail_count * nic_speed;
-            NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
-                      << " Gbps) exceeds single NUMA node capacity of " << numa_speed
-                      << " Gbps, and will spill over to other NUMA nodes";
-        } else if (max_rails > recommended_rails) {
-            // configured rail count does not spill over to other nodes, but still exceeds PCIe
-            // switch capacity, and is expected to cause congestion, so warn user
-            size_t recommended_bw = recommended_rails * nic_speed;
-            NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
-                      << " Gbps), which results in " << max_rails
-                      << " rails, exceeds the congestion-free recommendation of " << recommended_bw
-                      << " Gbps (" << recommended_rails
-                      << " rails per NUMA node), and is expected to cause PCIe congestion";
-        }
-        NIXL_TRACE << "Using " << max_rails
-                   << " rails in NUMA-aware rail selection policy for DRAM_SEG";
-        dram_rail_selection_policy_ =
-            std::make_unique<nixlLibfabricNumaRailSelectionPolicy>(max_rails);
     } else {
-        // this must be coming from user, it exceeds total machine capacity
-        size_t total_nic_speed = nic_speed * topology->getTotalNicCount();
-        NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
-                  << " Gbps) exceeds or equals to total machine capacity of " << total_nic_speed
-                  << " Gbps, and will use all available rails";
-        NIXL_WARN << "Using default (all) rail selection policy for DRAM_SEG memory type";
-        dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
+        // get bandwidth/rail limit from user or compute it, then select policy
+        size_t max_bw = 0;
+        size_t max_rails = 0;
+        size_t recommended_rails = 0;
+        size_t nic_speed = topology->getAvgNicBandwidth();
+
+        if (!getDramRailLimit(custom_params, max_bw, max_rails, recommended_rails) ||
+            max_rails == 0) {
+            // had some error in deducing rail count, so just use default policy
+            NIXL_WARN << "Using default (all) rail selection policy for DRAM memory type due to "
+                         "previous errors";
+            dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
+        } else if (topology->getAllDevices().size() == 1) {
+            // system has only 1 EFA, so use default policy (don't issue warning)
+            dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
+        }
+        // NOTE: from this point onward we regard only rails that are attached to a PCIe switch
+        // because these are the only ones that matter for avoiding PCIe congestion (the instance
+        // types we deal with have either all rails connected to PCIe switches, or have only one EFA
+        // that is either not attached to a NUMA node, as in C-series, or not attached to a PCIe
+        // switch, as in G-series), so we test rail count against topology->getTotalNicCount()
+        // (which represents the total number of "usable" rails, i.e. that are attached to a PCIe
+        // switch) and not against topology->getAllDevices().size()
+        else if (max_rails < topology->getTotalNicCount()) {
+            // bandwidth does not exceed total machine capacity, so use NUMA-aware rail selection
+            // policy
+            NIXL_INFO << "Using NUMA-aware rail selection policy for DRAM memory type";
+            size_t numa_rail_count = topology->getNumaRailCount(); // NOTE: averaged if non-uniform
+            if (max_rails > numa_rail_count) {
+                size_t numa_speed = numa_rail_count * nic_speed;
+                NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
+                          << " Gbps) exceeds single NUMA node capacity of " << numa_speed
+                          << " Gbps, and will spill over to other NUMA nodes";
+            } else if (max_rails > recommended_rails) {
+                // configured rail count does not spill over to other nodes, but still exceeds PCIe
+                // switch capacity, and is expected to cause congestion, so warn user
+                size_t recommended_bw = recommended_rails * nic_speed;
+                NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
+                          << " Gbps), which results in " << max_rails
+                          << " rails, exceeds the congestion-free recommendation of "
+                          << recommended_bw << " Gbps (" << recommended_rails
+                          << " rails per NUMA node), and is expected to cause PCIe congestion";
+            }
+            NIXL_TRACE << "Using " << max_rails
+                       << " rails in NUMA-aware rail selection policy for DRAM_SEG";
+            dram_rail_selection_policy_ =
+                std::make_unique<nixlLibfabricNumaRailSelectionPolicy>(max_rails);
+        } else {
+            // this must be coming from user, it exceeds total machine capacity
+            size_t total_nic_speed = nic_speed * topology->getTotalNicCount();
+            NIXL_WARN << "User-provided configuration value for max_bw_per_dram_seg (" << max_bw
+                      << " Gbps) exceeds or equals to total machine capacity of " << total_nic_speed
+                      << " Gbps, and will use all available rails";
+            NIXL_WARN << "Using default (all) rail selection policy for DRAM_SEG memory type";
+            dram_rail_selection_policy_ = std::make_unique<nixlLibfabricAllRailSelectionPolicy>();
+        }
     }
 
     // load policy
@@ -353,9 +367,9 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
     return NIXL_SUCCESS;
 }
 
-bool
-nixlLibfabricRailManager::shouldUseStriping(size_t transfer_size) const {
-    return transfer_size >= striping_threshold_;
+size_t
+nixlLibfabricRailManager::reserveBaseOffset() {
+    return round_robin_counter.fetch_add(1);
 }
 
 nixl_status_t
@@ -373,7 +387,12 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     uint16_t agent_idx,
     uint16_t xfer_id,
     std::function<void()> completion_callback,
-    size_t &submitted_count_out) {
+    size_t &submitted_count_out,
+    int desc_idx,
+    size_t base_offset,
+    bool apply_fi_more,
+    int device_id,
+    bool is_cuda_vram) {
     // Initialize output parameter
     submitted_count_out = 0;
 
@@ -383,14 +402,22 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     }
 
     // Determine striping strategy
-    bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
+    bool use_striping = usesStriping(transfer_size, selected_rails.size());
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
-        // Round-robin: use one rail for entire transfer
-        const auto counter_value = round_robin_counter.fetch_add(1);
-        const size_t rail_id = selected_rails[counter_value % selected_rails.size()];
-        const size_t remote_ep_id =
-            remote_selected_endpoints[counter_value % remote_selected_endpoints.size()];
+        // WRITE: group NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE consecutive descriptors on one rail
+        // for FI_MORE batching. READ: per-descriptor round-robin (FI_MORE has no benefit).
+        // apply_fi_more is precomputed by the caller, which leaves it false for the last post
+        // on each rail so that every rail's FI_MORE batch is flushed.
+        const bool batch_write = (op_type == nixlLibfabricReq::WRITE);
+        const size_t rail_sel_idx =
+            railSelectionIndex(base_offset, desc_idx, batch_write, selected_rails.size());
+        const size_t rail_id = selected_rails[rail_sel_idx];
+        // The remote endpoint round-robins over its own count, which can differ from the
+        // local rail count.
+        const size_t remote_ep_id = remote_selected_endpoints[railSelectionIndex(
+            base_offset, desc_idx, batch_write, remote_selected_endpoints.size())];
+        const uint64_t fi_flags = (batch_write && apply_fi_more) ? FI_MORE : 0;
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
         nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
@@ -418,9 +445,22 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         req->local_mr = local_mrs[rail_id];
         req->remote_key = remote_keys[remote_ep_id];
         req->rail_id = rail_id;
-        // Submit immediately
+        // Submit: either enqueue for PT, or post directly
         nixl_status_t status;
-        if (op_type == nixlLibfabricReq::WRITE) {
+        if (rails_[rail_id]->isProgressThreadEnabled()) {
+            // PT-owns-endpoint: enqueue for progress thread to post
+            deferTransferRequest(op_type,
+                                 agent_idx,
+                                 xfer_id,
+                                 fi_flags,
+                                 dest_addrs.at(rail_id)[remote_ep_id],
+                                 device_id,
+                                 is_cuda_vram,
+                                 rail_id,
+                                 req);
+            status = NIXL_SUCCESS;
+        } else if (op_type == nixlLibfabricReq::WRITE) {
+            // Direct post (PT OFF path)
             // Generate next SEQ_ID for this specific write operation
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
             uint64_t imm_data =
@@ -432,7 +472,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                 dest_addrs.at(rail_id)[remote_ep_id],
                                                 req->remote_addr,
                                                 req->remote_key,
-                                                req);
+                                                req,
+                                                fi_flags);
         } else {
             status = rails_[rail_id]->postRead(req->local_addr,
                                                req->chunk_size,
@@ -458,7 +499,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                    << transfer_size << " bytes, XFER_ID=" << req->xfer_id;
 
     } else {
-        // Striping: distribute across multiple rails
+        // Striping: distribute across multiple rails (no FI_MORE for striped transfers)
+        uint64_t fi_flags = 0;
         size_t num_rails = selected_rails.size();
         size_t chunk_size = transfer_size / num_rails;
         size_t remainder = transfer_size % num_rails;
@@ -468,7 +510,9 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                 remote_selected_endpoints[i % remote_selected_endpoints.size()];
             NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id=" << remote_ep_id;
             size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
-            if (current_chunk_size == 0) break;
+            if (current_chunk_size == 0) {
+                break;
+            }
             // Allocate request
             nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
             if (!req) {
@@ -500,7 +544,19 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             req->remote_key = remote_keys[remote_ep_id];
             req->rail_id = rail_id;
             nixl_status_t status;
-            if (op_type == nixlLibfabricReq::WRITE) {
+            if (rails_[rail_id]->isProgressThreadEnabled()) {
+                // PT-owns-endpoint: enqueue for progress thread to post
+                deferTransferRequest(op_type,
+                                     agent_idx,
+                                     xfer_id,
+                                     fi_flags,
+                                     dest_addrs.at(rail_id)[remote_ep_id],
+                                     device_id,
+                                     is_cuda_vram,
+                                     rail_id,
+                                     req);
+                status = NIXL_SUCCESS;
+            } else if (op_type == nixlLibfabricReq::WRITE) {
                 // Generate next SEQ_ID for this specific transfer operation
                 uint8_t seq_id = LibfabricUtils::getNextSeqId();
                 uint64_t imm_data =
@@ -512,7 +568,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                                     dest_addrs.at(rail_id)[remote_ep_id],
                                                     req->remote_addr,
                                                     req->remote_key,
-                                                    req);
+                                                    req,
+                                                    fi_flags);
             } else {
                 status = rails_[rail_id]->postRead(req->local_addr,
                                                    req->chunk_size,
@@ -541,6 +598,37 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
 
     return NIXL_SUCCESS;
+}
+
+void
+nixlLibfabricRailManager::deferTransferRequest(nixlLibfabricReq::OpType op_type,
+                                               uint16_t agent_idx,
+                                               uint16_t xfer_id,
+                                               uint64_t fi_flags,
+                                               fi_addr_t dest_addr,
+                                               int device_id,
+                                               bool is_cuda_vram,
+                                               size_t rail_id,
+                                               nixlLibfabricReq *req) {
+    uint8_t seq_id = (op_type == nixlLibfabricReq::WRITE) ? LibfabricUtils::getNextSeqId() : 0;
+    uint64_t imm_data = (op_type == nixlLibfabricReq::WRITE) ?
+        NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id) :
+        0;
+    nixlLibfabricPostRequest pr{};
+    pr.type = (op_type == nixlLibfabricReq::WRITE) ? nixlLibfabricPostRequest::WRITE :
+                                                     nixlLibfabricPostRequest::READ;
+    pr.local_addr = req->local_addr;
+    pr.length = req->chunk_size;
+    pr.local_desc = fi_mr_desc(req->local_mr);
+    pr.immediate_data = imm_data;
+    pr.dest_addr = dest_addr;
+    pr.remote_addr = req->remote_addr;
+    pr.remote_key = req->remote_key;
+    pr.req = req;
+    pr.fi_flags = fi_flags;
+    pr.device_id = device_id;
+    pr.is_cuda_vram = is_cuda_vram;
+    rails_[rail_id]->enqueuePost(pr);
 }
 
 bool
@@ -925,6 +1013,9 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     switch (msg_type) {
     case ControlMessageType::NOTIFICATION:
         msg_type_value = NIXL_LIBFABRIC_MSG_NOTIFICTION;
+        break;
+    case ControlMessageType::HANDSHAKE:
+        msg_type_value = NIXL_LIBFABRIC_MSG_HANDSHAKE;
         break;
     default:
         NIXL_ERROR << "Unknown message type";

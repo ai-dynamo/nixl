@@ -80,7 +80,7 @@ private:
     nixl_status_t
     discoverAccelWithHwloc();
     nixl_status_t
-    discoverEfaDevicesWithHwloc();
+    discoverRDMADevicesWithHwloc();
     nixl_status_t
     buildAccelToEfaMapping();
     void
@@ -124,6 +124,7 @@ private:
     NicInfoMap nic_info_map;
     size_t avg_nic_speed; // average NIC speed
     size_t avg_nic_upstream_speed; // average NIC upstream link speed
+    bool has_pcie_devices_;
 
     // NIXL topology-aware grouping algorithm methods
     nixl_status_t
@@ -144,8 +145,6 @@ private:
     isNvidiaAccel(hwloc_obj_t obj) const;
     bool
     isNeuronAccel(hwloc_obj_t obj) const;
-    bool
-    isEfaDevice(hwloc_obj_t obj) const;
 
     // retrieves line speed of NIC from map
     size_t
@@ -215,9 +214,9 @@ public:
         return all_devices;
     }
 
-    const std::string &
+    std::string
     getProviderName() const {
-        return provider_name;
+        return provider_name.empty() ? "libfabric" : provider_name;
     }
 
     // Validation
@@ -236,6 +235,12 @@ public:
 
     /** @brief Invalid NUMA node id constant. */
     static const uint16_t INVALID_NUMA_NODE_ID = UINT16_MAX;
+
+    /** @brief Queries whether there is any NIC with PCIe bus info. */
+    inline bool
+    hasPcieDevices() const {
+        return has_pcie_devices_;
+    }
 
     /**
      * @brief Retrieves the NUMA node id with which the given EFA device is associated.

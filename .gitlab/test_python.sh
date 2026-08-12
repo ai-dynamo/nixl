@@ -19,6 +19,7 @@
 
 set -e
 set -x
+ulimit -c unlimited
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
@@ -43,14 +44,10 @@ then
     # Raise exceptions for logging errors
     export NIXL_DEBUG_LOGGING=yes
 
-    # Install build dependencies
-    if [ -n "$VIRTUAL_ENV" ] ; then
-        # Install full build dependencies in venv
-        $pip3 install --break-system-packages meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
-    else
-        # Install minimal build dependencies in system python
-        $pip3 install --break-system-packages tomlkit
-    fi
+    # The install below uses --no-build-isolation, so pip does not provision
+    # [build-system].requires itself.
+    # --ignore-installed: the distro-packaged copies have no pip RECORD and cannot be uninstalled.
+    $pip3 install --break-system-packages --upgrade --ignore-installed meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit 'setuptools>=80.9.0'
     # Set the correct wheel name based on the CUDA version
     cuda_major=$(nvcc --version | grep -oP 'release \K[0-9]+')
     case "$cuda_major" in
@@ -59,7 +56,7 @@ then
     esac
     ./contrib/tomlutil.py --wheel-name "nixl-cu${cuda_major}" pyproject.toml
     # Control ninja parallelism during pip build to prevent OOM (NPROC from common.sh)
-    $pip3 install --break-system-packages --config-settings=compile-args="-j${NPROC}" .
+    $pip3 install --break-system-packages --no-build-isolation --config-settings=compile-args="-j${NPROC}" .
     $pip3 install --break-system-packages dist/nixl-*none-any.whl
 fi
 
@@ -93,19 +90,48 @@ python3 partial_md_example.py --init-port "$(get_next_tcp_port)" --target-port "
 python3 partial_md_example.py --etcd
 python3 query_mem_example.py
 
-basic_two_peers_port=$(get_next_tcp_port)
-python3 basic_two_peers.py --mode="target" --ip=127.0.0.1 --port="$basic_two_peers_port"&
-sleep 15
-python3 basic_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$basic_two_peers_port"
+# Run a two-peers example: starts a target on an OS-assigned port,
+# reads the port from the target's NIXL_INFO log line on stderr,
+# then launches the initiator against it.
+# Extra arguments are passed as env vars to the initiator.
+# Usage: run_two_peers <script> [ENV=val ...]
+run_two_peers() {
+    local script=$1
+    shift
+
+    local target_log
+    target_log=$(mktemp)
+    trap "rm -f '$target_log'" EXIT
+
+    NIXL_LOG_LEVEL=INFO \
+        python3 "$script" --mode="target" --ip=127.0.0.1 --port=0 \
+        2> "$target_log" &
+    local target_pid=$!
+
+    # Look for the listening port in the target's log
+    local port=""
+    for _ in $(seq 30); do
+        port=$(awk '/MD listener is listening on port/ { print $NF; exit }' "$target_log")
+        [[ -n "$port" ]] && break
+        sleep 1
+    done
+
+    if [[ -z "$port" ]]; then
+        echo "Target (pid=$target_pid) failed to report port within 30s"
+        kill "$target_pid" 2>/dev/null
+        exit 1
+    fi
+
+    env "$@" python3 "$script" --mode="initiator" --ip=127.0.0.1 --port="$port"
+}
+
+run_two_peers basic_two_peers.py
 
 # Running telemetry for the last test
-expanded_two_peers_port=$(get_next_tcp_port)
 mkdir -p /tmp/telemetry_test
 
-python3 expanded_two_peers.py --mode="target" --ip=127.0.0.1 --port="$expanded_two_peers_port"&
-sleep 15
-NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test \
-python3 expanded_two_peers.py --mode="initiator" --ip=127.0.0.1 --port="$expanded_two_peers_port"
+run_two_peers expanded_two_peers.py \
+    NIXL_TELEMETRY_ENABLE=y NIXL_TELEMETRY_DIR=/tmp/telemetry_test
 
 python3 telemetry_reader.py --telemetry_path /tmp/telemetry_test/initiator &
 telePID=$!

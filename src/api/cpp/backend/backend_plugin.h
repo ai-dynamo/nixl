@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +15,19 @@
  * limitations under the License.
  */
 
-#ifndef __BACKEND_PLUGIN_H
-#define __BACKEND_PLUGIN_H
+#ifndef NIXL_SRC_API_CPP_BACKEND_BACKEND_PLUGIN_H
+#define NIXL_SRC_API_CPP_BACKEND_BACKEND_PLUGIN_H
 
 #include "backend/backend_engine.h"
 #include "common/nixl_log.h"
 
+#include <string>
+
 // Forward declarations for special engine types
 class nixlUcxEngine;
+
+// Plugins must be compiled with the same C++ standard and a compatible
+// libstdc++ ABI as the NIXL core library. NIXL core currently requires C++20.
 
 // Define the plugin API version
 #define NIXL_PLUGIN_API_VERSION 1
@@ -64,16 +69,16 @@ public:
            const nixl_b_params_t &params,
            const nixl_mem_list_t &mem_list) {
 
-        static const char *plugin_name = name;
-        static const char *plugin_version = version;
+        static const std::string plugin_name = name;
+        static const std::string plugin_version = version;
         static const nixl_b_params_t plugin_params = params;
         static const nixl_mem_list_t plugin_mems = mem_list;
 
         static nixlBackendPlugin plugin_instance = {api_version,
                                                     createEngine,
                                                     destroyEngine,
-                                                    []() { return plugin_name; },
-                                                    []() { return plugin_version; },
+                                                    []() { return plugin_name.c_str(); },
+                                                    []() { return plugin_version.c_str(); },
                                                     []() { return plugin_params; },
                                                     []() { return plugin_mems; }};
 

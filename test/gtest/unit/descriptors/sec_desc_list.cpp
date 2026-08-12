@@ -212,4 +212,126 @@ TEST_F(secDescListTest, AddRandomBatches) {
     }
 }
 
+TEST_F(secDescListTest, ZeroLenFileSegQuery) {
+    nixlSecDescList list(FILE_SEG);
+    // Simulate addDescList behavior: zero-length FILE_SEG is stored as SIZE_MAX
+    nixlSectionDesc desc(0, SIZE_MAX, 0);
+    list.addDesc(desc);
+
+    // Query with len=0 should match the stored SIZE_MAX entry
+    nixlBasicDesc query(0, 0, 0);
+    EXPECT_EQ(list.getIndex(query), 0);
+}
+
+TEST_F(secDescListTest, ZeroLenBlkSegQuery) {
+    nixlSecDescList list(BLK_SEG);
+    nixlSectionDesc desc(100, SIZE_MAX, 1);
+    list.addDesc(desc);
+
+    nixlBasicDesc query(100, 0, 1);
+    EXPECT_EQ(list.getIndex(query), 0);
+}
+
+TEST_F(secDescListTest, ZeroLenObjSegQuery) {
+    nixlSecDescList list(OBJ_SEG);
+    nixlSectionDesc desc(200, SIZE_MAX, 2);
+    list.addDesc(desc);
+
+    nixlBasicDesc query(200, 0, 2);
+    EXPECT_EQ(list.getIndex(query), 0);
+}
+
+TEST_F(secDescListTest, ZeroLenQueryNotFound) {
+    nixlSecDescList list(FILE_SEG);
+    nixlSectionDesc desc(0, SIZE_MAX, 0);
+    list.addDesc(desc);
+
+    // Different addr should not match
+    nixlBasicDesc query(1, 0, 0);
+    EXPECT_EQ(list.getIndex(query), NIXL_ERR_NOT_FOUND);
+}
+
+TEST_F(secDescListTest, ZeroLenDramSegQueryNotRewritten) {
+    nixlSecDescList list(DRAM_SEG);
+    // For DRAM_SEG, len=0 must remain len=0 — a stored SIZE_MAX entry must NOT match.
+    nixlSectionDesc stored(0, SIZE_MAX, 0);
+    list.addDesc(stored);
+
+    nixlBasicDesc query(0, 0, 0);
+    EXPECT_EQ(list.getIndex(query), NIXL_ERR_NOT_FOUND);
+}
+
+TEST_F(secDescListTest, AddDescNormalizesZeroLenFileSeg) {
+    nixlSecDescList list(FILE_SEG);
+    nixlSectionDesc desc(0, 0, 0);
+    list.addDesc(desc);
+
+    EXPECT_EQ(list[0].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescNormalizesZeroLenBlkSeg) {
+    nixlSecDescList list(BLK_SEG);
+    nixlSectionDesc desc(100, 0, 1);
+    list.addDesc(desc);
+
+    EXPECT_EQ(list[0].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescNormalizesZeroLenObjSeg) {
+    nixlSecDescList list(OBJ_SEG);
+    nixlSectionDesc desc(200, 0, 2);
+    list.addDesc(desc);
+
+    EXPECT_EQ(list[0].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescsBatchNormalizesZeroLen) {
+    nixlSecDescList list(FILE_SEG);
+    std::vector<nixlSectionDesc> batch;
+    batch.emplace_back(0, 0, 0);
+    batch.emplace_back(64, 0, 1);
+    list.addDescs(std::move(batch));
+
+    EXPECT_EQ(list[0].len, SIZE_MAX);
+    EXPECT_EQ(list[1].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescsSingleElementNormalizesZeroLen) {
+    nixlSecDescList list(OBJ_SEG);
+    std::vector<nixlSectionDesc> batch;
+    batch.emplace_back(128, 0, 0);
+    list.addDescs(std::move(batch));
+
+    EXPECT_EQ(list[0].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescsFromOtherListNormalizesZeroLen) {
+    nixlSecDescList src(BLK_SEG);
+    src.addDesc(nixlSectionDesc(256, 0, 0));
+
+    nixlSecDescList dst(BLK_SEG);
+    dst.addDescs(std::move(src));
+
+    EXPECT_EQ(dst[0].len, SIZE_MAX);
+}
+
+TEST_F(secDescListTest, AddDescDoesNotNormalizeDramSeg) {
+    nixlSecDescList list(DRAM_SEG);
+    nixlSectionDesc desc(0, 0, 0);
+    list.addDesc(desc);
+
+    EXPECT_EQ(list[0].len, 0);
+}
+
+TEST_F(secDescListTest, AddDescsDoesNotNormalizeDramSeg) {
+    nixlSecDescList list(DRAM_SEG);
+    std::vector<nixlSectionDesc> batch;
+    batch.emplace_back(0, 0, 0);
+    batch.emplace_back(64, 0, 1);
+    list.addDescs(std::move(batch));
+
+    EXPECT_EQ(list[0].len, 0);
+    EXPECT_EQ(list[1].len, 0);
+}
+
 } // namespace descriptors

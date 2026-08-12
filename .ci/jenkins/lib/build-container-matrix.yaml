@@ -12,8 +12,8 @@ timeout_minutes: 240
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  limits: "{memory: 16Gi, cpu: 8000m}"
-  requests: "{memory: 8Gi, cpu: 4000m}"
+  limits: "{memory: 24Gi, cpu: 12000m}"
+  requests: "{memory: 24Gi, cpu: 12000m}"
 
 runs_on_dockers:
   - { name: "podman", url: "quay.io/podman/stable:v5.7.1", privileged: true }
@@ -27,13 +27,16 @@ matrix:
 
 # Configuration
 env:
+  NPROC: 24
+  GRPC_NPROC: 24
   REGISTRY_HOST_NAME: "artifactory.nvidia.com"
   REGISTRY_REPO_NAME: "sw-nbu-swx-nixl-docker-local"
   REGISTRY_REPO_PATH: "verification"
   ARTIFACTORY_REGISTRY_URL: "${REGISTRY_HOST_NAME}/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}"
-  ARTIFACTORY_CLEANUP_AGE: "3m" # 3 months
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
+  # Internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
+  APT_MIRROR: "https://urm.nvidia.com/artifactory/ubuntu-public"
 
 taskName: "${BUILD_TARGET}/${arch}"
 
@@ -41,6 +44,9 @@ credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USERNAME'
     passwordVariable: 'ARTIFACTORY_PASSWORD'
+  - credentialsId: 'nixl-gitlab-registry-token'
+    type: 'string'
+    variable: 'GITLAB_REGISTRY_TOKEN'
 
 pipeline_start:
   shell: action
@@ -60,6 +66,9 @@ pipeline_start:
 steps:
   - name: Prepare
     containerSelector: "{name: 'podman'}"
+    credentialsId:
+      - 'svc-nixl-new-artifactory-token'
+      - 'nixl-gitlab-registry-token'
     run: |
       # Setup podman and dependencies
       set -x
@@ -67,6 +76,14 @@ steps:
       podman system reset -f || true
       podman info
       ln -sfT $(type -p podman) /usr/bin/docker
+      # Login to Artifactory
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+      # Login to the GitLab registry so DLFW base images hosted there can be pulled.
+      # GitLab accepts any username with a read_registry token, so the username is a placeholder.
+      if [ -n "${GITLAB_REGISTRY_TOKEN:-}" ]; then
+        echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 -u nixl-ci --password-stdin
+      fi
+
       yum install -y gettext
 
   - name: Build NIXLBench
@@ -83,6 +100,7 @@ steps:
         --tag "${LOCAL_TAG_BASE}${arch}" \
         --arch "${arch}" \
         --no-cache \
+        --apt-mirror "${APT_MIRROR}" \
         --nixl "$WORKSPACE" \
         --ucx "$WORKSPACE/ucx-src"
 
@@ -104,6 +122,7 @@ steps:
         --arch "${arch}" \
         --build-type debug \
         --no-cache \
+        --apt-mirror "${APT_MIRROR}" \
         ${NIXL_EP_FLAG}
 
   - name: Add Version Info
@@ -148,6 +167,7 @@ steps:
     containerSelector: "{name: 'podman'}"
     credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
+      set -eo pipefail
       source version-info
       ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY_URL}/${BUILD_TARGET}"
       ARTIFACTORY_API="https://${REGISTRY_HOST_NAME}/artifactory/api/storage/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}/${BUILD_TARGET}"
@@ -157,16 +177,13 @@ steps:
       IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
       IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
 
-      # Login to Artifactory
-      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
-
       # Function to tag, push, and set properties
       tag_push_set_properties() {
         local target_tag="$1"
         echo "Creating tag: ${target_tag}"
         docker tag "${LOCAL_TAG_BASE}${arch}" "${ARTIFACTORY_REGISTRY}:${target_tag}"
         docker push "${ARTIFACTORY_REGISTRY}:${target_tag}"
-        curl -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
+        curl --fail -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
           "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
       }
 
@@ -231,7 +248,4 @@ pipeline_stop:
                 ${params.BUILD_NIXL_EP ? "<p>Build NIXL EP: <b>Yes</b></p>" : ''}
             """
         )
-    }
-    withCredentials([usernamePassword(credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN')]) {
-      sh "yum install -y jq > /dev/null && .ci/scripts/artifactory-cleanup-by-time.sh --path ${REGISTRY_REPO_PATH}/${BUILD_TARGET} ${REGISTRY_REPO_NAME} ${ARTIFACTORY_CLEANUP_AGE}"
     }

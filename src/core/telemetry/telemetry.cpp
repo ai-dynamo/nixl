@@ -14,16 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <array>
 #include <chrono>
+#include <span>
 #include <sstream>
 #include <thread>
 #include <filesystem>
+#include <fnmatch.h>
 #include <unistd.h>
 #include <cstdlib>
 #include <algorithm>
+#include <set>
+#include <vector>
 
 #include "common/configuration.h"
+#include "common/nixl_duration.h"
 #include "common/nixl_log.h"
+#include "common/str_util.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "util.h"
@@ -72,115 +79,228 @@ nixlTelemetryEventTypeForStatus(nixl_status_t s) {
 constexpr std::chrono::milliseconds DEFAULT_TELEMETRY_RUN_INTERVAL = 100ms;
 constexpr size_t DEFAULT_TELEMETRY_BUFFER_SIZE = 4096;
 constexpr const char *defaultTelemetryPlugin = "BUFFER";
+// Collect-only sink (registered as "NOP"): events are still recorded in process
+// (so getXferTelemetry() returns data) but nothing is written out. Used when
+// telemetry is explicitly requested but no output sink is configured.
+constexpr const char *collectOnlyTelemetryPlugin = "NOP";
 
-nixlTelemetry::nixlTelemetry(const std::string &agent_name)
-    : pool_(1),
-      writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false),
-      agentName_(agent_name) {
-    if (agent_name.empty()) {
-        throw std::invalid_argument("Expected non-empty agent name in nixl telemetry create");
+namespace {
+// Defined below; declared here for use by create() and the constructor's
+// member-initializer list.
+[[nodiscard]] std::string
+getExporterName();
+[[nodiscard]] std::string
+validateAgentName(const std::string &agent_name);
+[[nodiscard]] size_t
+resolveMaxBufferedEvents();
+[[nodiscard]] nixl_telemetry_metric_mask_t
+resolveEnabledMetrics();
+} // namespace
+
+[[nodiscard]] std::unique_ptr<nixlTelemetry>
+nixlTelemetry::create(const std::string &agent_name) {
+    try {
+        return std::make_unique<nixlTelemetry>(agent_name, getExporterName());
     }
-    initializeTelemetry();
+    catch (const nixlTelemetryBindFailed &e) {
+        NIXL_WARN << e.what() << "; this process will run without a telemetry sink";
+        return nullptr;
+    }
+}
+
+nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &exporter_name)
+    : agentName_(validateAgentName(agent_name)),
+      maxBufferedEvents_(resolveMaxBufferedEvents()),
+      exporter_(makeExporter(exporter_name)),
+      metricEnabled_(resolveEnabledMetrics()),
+      stagingQueue_(maxBufferedEvents_),
+      pool_(1),
+      writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false) {
+    // A constructed nixlTelemetry always has an exporter (makeExporter throws
+    // otherwise), so start the periodic export task.
+    startExportTask();
+
+    if (!nixlTime::fastClockUsesHwCounter()) {
+        NIXL_WARN << "telemetry: no invariant CPU counter available; per-transfer timing falls "
+                     "back to steady_clock (higher overhead)";
+    }
 }
 
 nixlTelemetry::~nixlTelemetry() {
     writeTask_.enabled_ = false;
     try {
-        writeTask_.timer_.cancel();
+        // The pool thread re-arms writeTask_.timer_ from its own callback
+        // (registerPeriodicTask -> async_wait), so cancelling the timer here on
+        // the main thread races that re-arm. Stop and join the pool first; once
+        // join() returns no other thread touches the timer, so cancel() is safe.
         pool_.stop();
         pool_.join();
+        writeTask_.timer_.cancel();
     }
     catch (const asio::system_error &e) {
         NIXL_DEBUG << "Failed to cancel telemetry write timer: " << e.what();
         // continue anyway since it's not critical
     }
-
-    if (buffer_) {
-        writeEventHelper();
-        buffer_.reset();
-    }
 }
 
 namespace {
-[[nodiscard]] std::optional<std::string>
+[[nodiscard]] std::string
 getExporterName() {
     if (const auto name = nixl::config::getValueOptional<std::string>(telemetryExporterVar)) {
         if (!name->empty()) {
-            return name;
+            return *name;
         }
         NIXL_DEBUG << "Ignoring empty " << telemetryExporterVar << " environment variable";
     }
 
-    if (!nixl::config::checkExistence(telemetryDirVar)) {
-        NIXL_DEBUG << telemetryDirVar
-                   << " is not set, NIXL telemetry is enabled without any exporter";
-        return std::nullopt;
+    if (nixl::config::checkExistence(telemetryDirVar)) {
+        NIXL_INFO << "No telemetry exporter was specified, using default: "
+                  << defaultTelemetryPlugin;
+        return defaultTelemetryPlugin;
     }
 
-    NIXL_INFO << "No telemetry exporter was specified, using default: " << defaultTelemetryPlugin;
+    // No output sink configured; collect in-process via the NOP sink.
+    NIXL_INFO << "No telemetry sink configured; using in-process telemetry collection via "
+              << collectOnlyTelemetryPlugin;
+    return collectOnlyTelemetryPlugin;
+}
 
-    return defaultTelemetryPlugin;
+[[nodiscard]] std::string
+validateAgentName(const std::string &agent_name) {
+    if (agent_name.empty()) {
+        throw std::invalid_argument("Expected non-empty agent name in nixl telemetry create");
+    }
+    return agent_name;
+}
+
+[[nodiscard]] size_t
+resolveMaxBufferedEvents() {
+    const size_t max_events = nixl::config::getValueDefaulted<size_t>(
+        TELEMETRY_BUFFER_SIZE_VAR, DEFAULT_TELEMETRY_BUFFER_SIZE);
+    if (max_events == 0) {
+        throw std::invalid_argument("Telemetry buffer size cannot be 0");
+    }
+    return max_events;
+}
+
+[[nodiscard]] std::string
+joinMetricNames(const nixl_telemetry_metric_mask_t &mask, bool active) {
+    std::string result;
+    for (size_t i = 0; i < nixl_telemetry_event_type_count; ++i) {
+        if (mask[i] != active) {
+            continue;
+        }
+        const auto name =
+            nixlEnumStrings::telemetryEventTypeStr(static_cast<nixl_telemetry_event_type_t>(i));
+        if (!result.empty()) {
+            result += ',';
+        }
+        result.append(name.data(), name.size());
+    }
+    return result;
+}
+
+[[nodiscard]] nixl_telemetry_metric_mask_t
+resolveEnabledMetrics() {
+    nixl_telemetry_metric_mask_t enabled{};
+
+    const auto spec = nixl::config::getValueOptional<std::string>(TELEMETRY_ENABLED_METRICS_VAR);
+    const std::set<std::string> tokens =
+        spec ? nixl::str::splitStrippedSet(*spec) : std::set<std::string>{};
+
+    // Unset / empty / all-whitespace: export everything (backward compatible).
+    if (tokens.empty()) {
+        enabled.fill(true);
+        return enabled;
+    }
+
+    std::set<std::string> unmatched(tokens);
+    for (size_t i = 0; i < nixl_telemetry_event_type_count; ++i) {
+        const std::string name{
+            nixlEnumStrings::telemetryEventTypeStr(static_cast<nixl_telemetry_event_type_t>(i))};
+        for (const auto &token : tokens) {
+            if (fnmatch(token.c_str(), name.c_str(), 0) == 0) {
+                enabled[i] = true;
+                unmatched.erase(token);
+            }
+        }
+    }
+
+    for (const auto &token : unmatched) {
+        NIXL_WARN << "Ignoring " << TELEMETRY_ENABLED_METRICS_VAR << " entry '" << token
+                  << "': no telemetry metric matches";
+    }
+
+    NIXL_DEBUG << "Telemetry metric activation (" << TELEMETRY_ENABLED_METRICS_VAR << "): active=["
+               << joinMetricNames(enabled, true) << "] inactive=["
+               << joinMetricNames(enabled, false) << "]";
+
+    return enabled;
 }
 
 } // namespace
 
-void
-nixlTelemetry::initializeTelemetry() {
-    maxBufferedEvents_ = nixl::config::getValueDefaulted<size_t>(TELEMETRY_BUFFER_SIZE_VAR,
-                                                                 DEFAULT_TELEMETRY_BUFFER_SIZE);
-
-    if (maxBufferedEvents_ == 0) {
-        throw std::invalid_argument("Telemetry buffer size cannot be 0");
-    }
-
-    const std::optional<std::string> exporter_name = getExporterName();
-
-    if (!exporter_name) {
-        return;
-    }
-
+[[nodiscard]] std::unique_ptr<nixlTelemetryExporter>
+nixlTelemetry::makeExporter(const std::string &exporter_name) const {
     auto &plugin_manager = nixlPluginManager::getInstance();
     std::shared_ptr<const nixlTelemetryPluginHandle> plugin_handle =
-        plugin_manager.loadTelemetryPlugin(*exporter_name);
+        plugin_manager.loadTelemetryPlugin(exporter_name);
 
     if (plugin_handle == nullptr) {
-        throw std::runtime_error("Failed to load telemetry plugin: " + *exporter_name);
+        throw std::runtime_error("Failed to load telemetry plugin: " + exporter_name);
     }
 
     const nixlTelemetryExporterInitParams init_params{agentName_, maxBufferedEvents_};
-    exporter_ = plugin_handle->createExporter(init_params);
-    if (!exporter_) {
-        NIXL_ERROR << "Failed to create telemetry exporter: " << *exporter_name;
-        return;
+    auto exporter = plugin_handle->createExporter(init_params);
+    if (!exporter) {
+        throw std::runtime_error("Failed to create telemetry exporter: " + exporter_name);
     }
 
-    NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << *exporter_name;
+    NIXL_DEBUG << "NIXL telemetry is enabled with exporter: " << exporter_name;
+    return exporter;
+}
 
+void
+nixlTelemetry::startExportTask() {
     const auto run_interval =
         nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
 
-    // Update write task interval and start it
-    writeTask_.callback_ = [this]() { return writeEventHelper(); };
+    writeTask_.callback_ = [this]() { return flushPendingEvents(); };
     writeTask_.interval_ = run_interval;
     writeTask_.enabled_ = true;
     registerPeriodicTask(writeTask_);
 }
 
 bool
-nixlTelemetry::writeEventHelper() {
-    std::vector<nixlTelemetryEvent> next_queue;
-    next_queue.reserve(maxBufferedEvents_);
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        events_.swap(next_queue);
-    }
+nixlTelemetry::flushPendingEvents() {
+    auto pending = stagingQueue_.takePending();
 
-    for (auto &event : next_queue) {
-        // if full, ignore
-        exporter_->exportEvent(event);
-    }
+    exporter_->withBatch([&] {
+        for (auto &event : pending) {
+            // Deactivated metrics never enter the queue (filtered at the source),
+            // so everything here is already exportable.
+            exporter_->exportEvent(event);
+        }
+
+        exportDroppedEvents();
+    });
 
     return true;
+}
+
+void
+nixlTelemetry::exportDroppedEvents() {
+    // Atomically take and reset the drops accumulated since the last flush and
+    // emit them as a synthetic AGENT_TELEMETRY_EVENTS_DROPPED event. Bypassing the
+    // staging queue, it can never itself be staging-dropped; emitting only a
+    // positive count keeps the no-overflow path event-free (preserving
+    // exact-count contracts).
+    const uint64_t dropped = stagingQueue_.takeNumDropped();
+    if (dropped > 0 &&
+        isMetricEnabled(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)) {
+        exporter_->exportEvent(
+            {nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED, dropped});
+    }
 }
 
 void
@@ -201,44 +321,36 @@ nixlTelemetry::registerPeriodicTask(periodicTask &task) {
 }
 
 void
-nixlTelemetry::updateData(nixl_telemetry_event_type_t event_type,
-                          nixl_telemetry_category_t category,
-                          uint64_t value) {
-    // agent can be multi-threaded
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (events_.size() >= maxBufferedEvents_) {
+nixlTelemetry::updateData(nixl_telemetry_event_type_t event_type, uint64_t value) {
+    // Skip deactivated metrics before taking the lock: no staging cost, and a
+    // deactivated metric is not a drop.
+    if (!isMetricEnabled(event_type)) {
         return;
     }
-    events_.emplace_back(category, event_type, value);
+    // agent can be multi-threaded; the queue performs its own drop accounting,
+    // so the accepted/dropped result is intentionally not consumed here.
+    (void)stagingQueue_.tryPush({event_type, value});
 }
 
-// The next 4 methods might be removed, as addXferTime covers them.
+// TODO: the next 4 update* methods may be removable -- addXferStats covers them.
 void
 nixlTelemetry::updateTxBytes(uint64_t tx_bytes) {
-    updateData(nixl_telemetry_event_type_t::AGENT_TX_BYTES,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-               tx_bytes);
+    updateData(nixl_telemetry_event_type_t::AGENT_TX_BYTES, tx_bytes);
 }
 
 void
 nixlTelemetry::updateRxBytes(uint64_t rx_bytes) {
-    updateData(nixl_telemetry_event_type_t::AGENT_RX_BYTES,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-               rx_bytes);
+    updateData(nixl_telemetry_event_type_t::AGENT_RX_BYTES, rx_bytes);
 }
 
 void
 nixlTelemetry::updateTxRequestsNum(uint32_t tx_requests_num) {
-    updateData(nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-               tx_requests_num);
+    updateData(nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM, tx_requests_num);
 }
 
 void
 nixlTelemetry::updateRxRequestsNum(uint32_t rx_requests_num) {
-    updateData(nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER,
-               rx_requests_num);
+    updateData(nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM, rx_requests_num);
 }
 
 void
@@ -246,60 +358,61 @@ nixlTelemetry::updateErrorCount(nixl_status_t error_type) {
     NIXL_ASSERT_ALWAYS(static_cast<int>(error_type) < 0)
         << "nixlTelemetry::updateErrorCount expects a negative nixl_status_t error code";
     const auto event_type = nixlTelemetryEventTypeForStatus(error_type);
-    updateData(event_type, nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR, 1);
+    updateData(event_type, 1);
 }
 
 void
 nixlTelemetry::updateMemoryRegistered(uint64_t memory_registered) {
-    updateData(nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
-               memory_registered);
+    updateData(nixl_telemetry_event_type_t::AGENT_MEMORY_REGISTERED, memory_registered);
 }
 
 void
 nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
-    updateData(nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY,
-               memory_deregistered);
+    updateData(nixl_telemetry_event_type_t::AGENT_MEMORY_DEREGISTERED, memory_deregistered);
 }
 
 void
-nixlTelemetry::addXferTime(std::chrono::microseconds xfer_time, bool is_write, uint64_t bytes) {
+nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
+                            bool is_write,
+                            uint64_t bytes,
+                            std::chrono::microseconds post_time) {
     const auto bytes_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_BYTES :
                                        nixl_telemetry_event_type_t::AGENT_RX_BYTES;
     const auto requests_type = is_write ? nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM :
                                           nixl_telemetry_event_type_t::AGENT_RX_REQUESTS_NUM;
 
-    const std::lock_guard lock(mutex_);
-    if (events_.size() + 3 > maxBufferedEvents_) {
+    // Resolve the activation of each candidate once (lock-free), then reuse it for
+    // both the capacity check and the appends -- no intermediate buffer/copies.
+    const bool post_on = isMetricEnabled(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME);
+    const bool time_on = isMetricEnabled(nixl_telemetry_event_type_t::AGENT_XFER_TIME);
+    const bool bytes_on = isMetricEnabled(bytes_type);
+    const bool requests_on = isMetricEnabled(requests_type);
+    const size_t batch_size = static_cast<size_t>(post_on) + time_on + bytes_on + requests_on;
+    if (batch_size == 0) {
         return;
     }
-    events_.emplace_back(nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-                         nixl_telemetry_event_type_t::AGENT_XFER_TIME,
-                         static_cast<uint64_t>(xfer_time.count()));
-    events_.emplace_back(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, bytes_type, bytes);
-    events_.emplace_back(nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER, requests_type, 1);
-}
 
-void
-nixlTelemetry::addPostTime(std::chrono::microseconds post_time) {
-    updateData(nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
-               nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE,
-               static_cast<uint64_t>(post_time.count()));
-}
+    // Build the activated subset in a fixed-size stack array (post time, transfer
+    // time, bytes, request count) and submit it as one all-or-none batch; the
+    // queue accepts every event or drops the whole batch.
+    std::array<nixlTelemetryEvent, 4> batch;
+    size_t count = 0;
+    if (post_on) {
+        batch[count++] = {nixl_telemetry_event_type_t::AGENT_XFER_POST_TIME,
+                          static_cast<uint64_t>(post_time.count())};
+    }
+    if (time_on) {
+        batch[count++] = {nixl_telemetry_event_type_t::AGENT_XFER_TIME,
+                          static_cast<uint64_t>(xfer_time.count())};
+    }
+    if (bytes_on) {
+        batch[count++] = {bytes_type, bytes};
+    }
+    if (requests_on) {
+        batch[count++] = {requests_type, 1};
+    }
 
-std::string
-nixlEnumStrings::telemetryCategoryStr(const nixl_telemetry_category_t &category) {
-    static std::array<std::string, 9> nixl_telemetry_category_str = {"NIXL_TELEMETRY_MEMORY",
-                                                                     "NIXL_TELEMETRY_TRANSFER",
-                                                                     "NIXL_TELEMETRY_CONNECTION",
-                                                                     "NIXL_TELEMETRY_BACKEND",
-                                                                     "NIXL_TELEMETRY_ERROR",
-                                                                     "NIXL_TELEMETRY_PERFORMANCE",
-                                                                     "NIXL_TELEMETRY_SYSTEM",
-                                                                     "NIXL_TELEMETRY_CUSTOM",
-                                                                     "NIXL_TELEMETRY_MAX"};
-    size_t category_int = static_cast<size_t>(category);
-    if (category_int >= nixl_telemetry_category_str.size()) return "BAD_CATEGORY";
-    return nixl_telemetry_category_str[category_int];
+    // The queue performs its own drop accounting, so the accepted/dropped
+    // result is intentionally not consumed here.
+    (void)stagingQueue_.tryPushBatch(std::span{batch}.first(count));
 }

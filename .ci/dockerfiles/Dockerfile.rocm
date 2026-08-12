@@ -1,0 +1,610 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# syntax=docker/dockerfile:1
+#
+# Parallel multi-stage ROCm build for NIXL.
+#
+# This is a BuildKit-parallel refactor of the sequential .gitlab/build-rocm.sh flow.
+# Where that script builds ~12 source deps sequentially inside one giant RUN, this
+# fans each dep out into its own `FROM builder-base AS <dep>-build` stage so BuildKit's
+# DAG scheduler runs them concurrently, then COPY --from=<stage> merges each dep's
+# staged /out tree into a final deps+UCX ENVIRONMENT image.
+#
+# Usage (self-contained, local dev — single build, stages run in parallel):
+#   DOCKER_BUILDKIT=1 docker build -f .ci/dockerfiles/Dockerfile.rocm \
+#       --build-arg ROCM_BASE_IMAGE=<rocm_base_tag> -t nixl-rocm .
+#
+# Built on top of a public ROCm image (e.g. rocm/dev-ubuntu-24.04:7.14.0-full).
+#
+# ============================================================================
+# Dependency version refs (kept identical to build-rocm.sh; see mutability notes)
+# ----------------------------------------------------------------------------
+# Pinned to IMMUTABLE tags (safe to cache; only audit when deliberately bumping):
+#   abseil lts_2025_08_14, gRPC v1.73.0, AWS 1.11.760, Mooncake v0.3.10.post1,
+#   Azure azure-storage-blobs_12.15.0, libfabric v1.21.0
+# MUTABLE ref (WILL serve stale layer cache after upstream moves — audit before trust):
+#   UCX v1.21.x (moving branch), Node.js `nvm install --lts` (floating)
+# BARE HEAD, no ref at all — fill in the *_REF args below to make these cacheable:
+#   etcd-cpp-apiv3, gusli, gtest-parallel
+# ============================================================================
+
+# ---- Global build args (must be re-declared inside each stage that uses them) ----
+ARG ROCM_BASE_IMAGE=rocm/dev-ubuntu-24.04:7.14.0-full
+
+# Per-dep image indirection. Default = the in-graph stage name (self-contained mode).
+# Override to a published registry tag (e.g. reg/nixl-rocm-dep-grpc:v1.73.0) to consume
+# a prebuilt dep image instead of rebuilding it (prebuilt / multi-version CI mode).
+ARG BUILDER_BASE_IMAGE=builder-base
+ARG ABSEIL_IMAGE=abseil-build
+ARG GRPC_IMAGE=grpc-build
+ARG ETCD_IMAGE=etcd-build
+ARG LIBFABRIC_IMAGE=libfabric-build
+ARG AWS_IMAGE=aws-build
+ARG AZURE_IMAGE=azure-build
+ARG MOONCAKE_IMAGE=mooncake-build
+ARG GUSLI_IMAGE=gusli-build
+ARG GTEST_IMAGE=gtest-build
+ARG UCX_IMAGE=ucx-build
+ARG TOOLCHAIN_IMAGE=toolchain-build
+
+# ============================================================================
+# builder-base: Ubuntu+ROCm + the apt/pip toolchain every dep C++ build needs.
+# This is the shared parent of every *-build stage. Mirrors the top of the
+# PRE_INSTALLED_ENV block in build-rocm.sh, plus Mooncake's runtime apt packages.
+# ============================================================================
+FROM ${ROCM_BASE_IMAGE} AS builder-base
+
+ARG NIXL_INSTALL_DIR=/opt/nixl
+ENV INSTALL_DIR=${NIXL_INSTALL_DIR}
+
+# ---- Point every package manager at the system CA store ----
+# Many tools ship their own trust bundle and ignore the system store, which breaks TLS
+# behind a proxy that needs a corporate root cert (expected to be in the system store).
+# Inherited by every *-build stage and `final`.
+ENV SYSTEM_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+ENV PIP_CERT=${SYSTEM_CA_BUNDLE} \
+    REQUESTS_CA_BUNDLE=${SYSTEM_CA_BUNDLE} \
+    SSL_CERT_FILE=${SYSTEM_CA_BUNDLE} \
+    CURL_CA_BUNDLE=${SYSTEM_CA_BUNDLE} \
+    GIT_SSL_CAINFO=${SYSTEM_CA_BUNDLE} \
+    NODE_EXTRA_CA_CERTS=${SYSTEM_CA_BUNDLE} \
+    CARGO_HTTP_CAINFO=${SYSTEM_CA_BUNDLE}
+
+# Put the dep install prefixes on the loader search path, the same way build-rocm.sh
+# does. Needed so an INSTALLED tool linked against a dep .so resolves at build time —
+# e.g. etcd's build invokes /opt/nixl/bin/grpc_cpp_plugin, which needs
+# libgrpc_plugin_support.so from /opt/nixl/lib. Every stage inherits this ENV.
+ENV LD_LIBRARY_PATH="${NIXL_INSTALL_DIR}/lib:${NIXL_INSTALL_DIR}/lib64:/usr/local/lib:/usr/local/lib64"
+
+# Some ROCm base images ship broken cmake configs for these.
+RUN rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
+
+# Core build toolchain (build-rocm.sh apt list) + Mooncake dependencies.sh
+# SYSTEM_PACKAGES (Mooncake runtime deps: libunwind, libyaml-cpp, libhiredis,
+# libjemalloc, libmsgpack, libzstd, libasio, libxxhash, unzip). These live here so
+# both the mooncake-build stage AND the final image share them (build==runtime
+# parity for transfer_engine.so's DT_NEEDED links).
+# NOTE: bumping MOONCAKE_VERSION may change this apt set -> treat as invalidating
+# builder-base.
+RUN apt-get -qq update && \
+    apt-get -qq install -y \
+        automake \
+        autotools-dev \
+        build-essential \
+        clang \
+        cmake \
+        curl \
+        doxygen \
+        etcd-server \
+        flex \
+        git \
+        hwloc \
+        iproute2 \
+        libaio-dev \
+        libasio-dev \
+        libboost-all-dev \
+        libcpprest-dev \
+        libcurl4-openssl-dev \
+        libelf-dev \
+        libgflags-dev \
+        libgmock-dev \
+        libgoogle-glog-dev \
+        libgtest-dev \
+        libhiredis-dev \
+        libhwloc-dev \
+        libibmad-dev \
+        libiberty-dev \
+        libjemalloc-dev \
+        libjsoncpp-dev \
+        libmsgpack-dev \
+        libnuma-dev \
+        libpci-dev \
+        libprotobuf-dev \
+        libpython3-dev \
+        libssl-dev \
+        libtool \
+        libunwind-dev \
+        liburing-dev \
+        libxml2-dev \
+        libxxhash-dev \
+        libyaml-cpp-dev \
+        libz-dev \
+        libzstd-dev \
+        meson \
+        net-tools \
+        ninja-build \
+        numactl \
+        parallel \
+        patchelf \
+        pciutils \
+        pkg-config \
+        protobuf-compiler-grpc \
+        pybind11-dev \
+        python3-dev \
+        python3-pip \
+        sudo \
+        unzip \
+        uuid-dev \
+        wget \
+        zlib1g-dev && \
+    apt-mark hold liburing2 liburing-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Ubuntu 22.04: upgrade pip for --break-system-packages support. From build.sh
+RUN if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then \
+        pip3 install --upgrade pip; \
+    fi
+
+# Python build/runtime deps (build-rocm.sh pip list).
+RUN pip3 --no-cache-dir install --break-system-packages \
+        auditwheel \
+        click \
+        filelock \
+        fsspec \
+        jinja2 \
+        MarkupSafe \
+        meson \
+        meson-python \
+        mpmath \
+        nanobind \
+        networkx \
+        numpy \
+        patchelf \
+        pybind11 \
+        pytest \
+        pytest-timeout \
+        sympy \
+        tabulate \
+        tomlkit \
+        typing-extensions \
+        zmq
+
+# torch from the public ROCm wheel repo.
+# The wheel's local-version tag (+rocmX.Y.Z) is version-embedded, so we derive X.Y.Z from
+# the base image's ROCm install (/opt/rocm/core/.info/version, format "X.Y.Z-<build>").
+ARG TORCH_VERSION=2.11.0
+ARG TORCH_INDEX_URL=https://repo.amd.com/rocm/whl-multi-arch/
+RUN set -eux; \
+    ver_file=/opt/rocm/core/.info/version; \
+    [ -f "$ver_file" ] || { echo "ERROR: $ver_file not found; cannot derive ROCm version for torch" >&2; exit 1; }; \
+    rocm_ver="$(cut -d- -f1 "$ver_file")"; \
+    pip3 --no-cache-dir install --break-system-packages \
+        --cert /etc/ssl/certs/ca-certificates.crt \
+        --index-url "${TORCH_INDEX_URL}" \
+        "torch==${TORCH_VERSION}+rocm${rocm_ver}"
+
+# RDMA packages (ROCm has no DOCA; install the default verbs/rdma stack).
+RUN apt-get -qq update && \
+    apt-get -qq -y install --reinstall \
+        libibverbs-dev \
+        rdma-core \
+        ibverbs-utils \
+        libibumad-dev \
+        libnuma-dev \
+        librdmacm-dev \
+        ibverbs-providers && \
+    rm -rf /var/lib/apt/lists/*
+
+# ============================================================================
+# abseil-build  (head of the abseil->grpc->etcd critical path)
+# Staged install: DESTDIR=/out -> /out/opt/nixl/{lib,include,lib/cmake/absl}
+# DEPS_SANITIZE (e.g. "address") builds the ABI-shared Abseil instrumented so ASan
+# NIXL builds match (see build-rocm.sh:24-46).
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS abseil-build
+SHELL ["/bin/bash", "-c"]
+ARG NIXL_INSTALL_DIR=/opt/nixl
+ARG DEPS_SANITIZE=""
+ARG ABSL_TAG=lts_2025_08_14
+RUN set -eux; \
+    NPROC=$(nproc); \
+    SAN_ARGS=(); \
+    if [ -n "$DEPS_SANITIZE" ]; then \
+        cxxflags="-fsanitize=${DEPS_SANITIZE}"; \
+        case ",${DEPS_SANITIZE}," in \
+            *,undefined,*) cxxflags="${cxxflags} -fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute" ;; \
+        esac; \
+        SAN_ARGS=("-DCMAKE_C_FLAGS=-fsanitize=${DEPS_SANITIZE}" "-DCMAKE_CXX_FLAGS=${cxxflags}" "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}" "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"); \
+    fi; \
+    cd /tmp; \
+    git clone --depth 1 --branch "${ABSL_TAG}" https://github.com/abseil/abseil-cpp.git; \
+    cd abseil-cpp; mkdir -p build; cd build; \
+    cmake .. \
+        "${SAN_ARGS[@]}" \
+        -DCMAKE_INSTALL_PREFIX="${NIXL_INSTALL_DIR}" \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON \
+        -DCMAKE_CXX_STANDARD=20 \
+        -DABSL_PROPAGATE_CXX_STD=ON \
+        -DABSL_ENABLE_INSTALL=ON; \
+    make -j"$NPROC"; \
+    make install DESTDIR=/out
+
+# ---- Alias stages: FROM supports var expansion, COPY --from does not. These let a
+#      COPY --from=<name> use the static alias while the alias resolves ${*_IMAGE} to
+#      either the in-graph *-build stage (default) or a prebuilt registry tag. ----
+FROM ${ABSEIL_IMAGE} AS abseil-src
+
+# ============================================================================
+# grpc-build  (longest single compile, on the critical path)
+# Needs Abseil's cmake config at configure time -> COPY abseil's /out to the real
+# prefix first, then point -Dabsl_DIR at it.
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS grpc-build
+SHELL ["/bin/bash", "-c"]
+ARG NIXL_INSTALL_DIR=/opt/nixl
+ARG DEPS_SANITIZE=""
+ARG GRPC_TAG=v1.73.0
+# Clone before the COPY so it runs concurrently with abseil's compile.
+# gRPC's submodules make this clone particularly slow, so overlapping it helps.
+RUN set -eux; \
+    cd /tmp; \
+    git clone --recurse-submodules -b "${GRPC_TAG}" --depth 1 --shallow-submodules https://github.com/grpc/grpc
+COPY --from=abseil-src /out/ /
+RUN set -eux; \
+    NPROC=$(nproc); \
+    SAN_ARGS=(); \
+    if [ -n "$DEPS_SANITIZE" ]; then \
+        cxxflags="-fsanitize=${DEPS_SANITIZE}"; \
+        case ",${DEPS_SANITIZE}," in \
+            *,undefined,*) cxxflags="${cxxflags} -fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute" ;; \
+        esac; \
+        SAN_ARGS=("-DCMAKE_C_FLAGS=-fsanitize=${DEPS_SANITIZE}" "-DCMAKE_CXX_FLAGS=${cxxflags}" "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}" "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"); \
+    fi; \
+    cd /tmp/grpc; mkdir -p cmake/build; cd cmake/build; \
+    cmake ../.. \
+        "${SAN_ARGS[@]}" \
+        -DgRPC_INSTALL=ON \
+        -DgRPC_BUILD_TESTS=OFF \
+        -DBUILD_SHARED_LIBS=ON \
+        -DCMAKE_CXX_STANDARD=20 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="${NIXL_INSTALL_DIR}" \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_PREFIX_PATH="${NIXL_INSTALL_DIR}" \
+        -Dabsl_DIR="${NIXL_INSTALL_DIR}/lib/cmake/absl" \
+        -DgRPC_SSL_PROVIDER=package \
+        -DgRPC_ABSL_PROVIDER=package \
+        -DgRPC_PROTOBUF_PROVIDER=module \
+        -DgRPC_ZLIB_PROVIDER=package; \
+    make -j"$NPROC"; \
+    make install DESTDIR=/out
+
+FROM ${GRPC_IMAGE} AS grpc-src
+
+# ============================================================================
+# etcd-build  (small codebase; tail of the critical path)
+# Needs both abseil + grpc present at configure time (find_package(gRPC)).
+# BARE HEAD clone today -> set ETCD_REF to pin+cache.
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS etcd-build
+SHELL ["/bin/bash", "-c"]
+ARG NIXL_INSTALL_DIR=/opt/nixl
+ARG DEPS_SANITIZE=""
+ARG ETCD_REF=""
+COPY --from=abseil-src /out/ /
+COPY --from=grpc-src /out/ /
+RUN set -eux; \
+    NPROC=$(nproc); \
+    SAN_ARGS=(); \
+    if [ -n "$DEPS_SANITIZE" ]; then \
+        cxxflags="-fsanitize=${DEPS_SANITIZE}"; \
+        case ",${DEPS_SANITIZE}," in \
+            *,undefined,*) cxxflags="${cxxflags} -fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute" ;; \
+        esac; \
+        SAN_ARGS=("-DCMAKE_C_FLAGS=-fsanitize=${DEPS_SANITIZE}" "-DCMAKE_CXX_FLAGS=${cxxflags}" "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}" "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=${DEPS_SANITIZE}"); \
+    fi; \
+    cd /tmp; \
+    git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git; \
+    cd etcd-cpp-apiv3; \
+    if [ -n "$ETCD_REF" ]; then git fetch --depth 1 origin "$ETCD_REF" && git checkout FETCH_HEAD; fi; \
+    sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake; \
+    mkdir build; cd build; \
+    cmake .. \
+        "${SAN_ARGS[@]}" \
+        -DBUILD_ETCD_CORE_ONLY=ON \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DETCD_CMAKE_CXX_STANDARD=20 \
+        -DCMAKE_CXX_STANDARD=20 \
+        -DCMAKE_INSTALL_PREFIX="${NIXL_INSTALL_DIR}" \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_PREFIX_PATH="${NIXL_INSTALL_DIR}"; \
+    make -j"$NPROC"; \
+    make install DESTDIR=/out
+
+# ============================================================================
+# libfabric-build  (independent, parallel with the abseil chain)
+# Release tarball, not a clone. Installs to ${NIXL_INSTALL_DIR}.
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS libfabric-build
+ARG NIXL_INSTALL_DIR=/opt/nixl
+ARG LIBFABRIC_VERSION=v1.21.0
+RUN set -eux; \
+    NPROC=$(nproc); \
+    cd /tmp; \
+    ver="${LIBFABRIC_VERSION#v}"; \
+    wget --tries=3 --waitretry=5 -O "libfabric-${ver}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${ver}.tar.bz2"; \
+    tar xjf "libfabric-${ver}.tar.bz2"; \
+    cd libfabric-*; \
+    ./autogen.sh; \
+    ./configure \
+        --prefix="${NIXL_INSTALL_DIR}" \
+        --disable-verbs \
+        --disable-psm3 \
+        --disable-opx \
+        --disable-usnic \
+        --disable-rstream \
+        --enable-efa; \
+    make -j"$NPROC"; \
+    make install DESTDIR=/out
+
+# ============================================================================
+# aws-build  (s3 + s3-crt pulls the whole CRT stack)
+# Installs to /usr/local -> /out/usr/local.
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS aws-build
+ARG AWS_SDK_TAG=1.11.760
+RUN set -eux; \
+    NPROC=$(nproc); \
+    cd /tmp; \
+    git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch "${AWS_SDK_TAG}"; \
+    mkdir aws_sdk_build; cd aws_sdk_build; \
+    cmake ../aws-sdk-cpp/ \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_ONLY="s3;s3-crt" \
+        -DENABLE_TESTING=OFF \
+        -DCMAKE_CXX_STANDARD=20 \
+        -DCMAKE_INSTALL_PREFIX=/usr/local; \
+    make -j"$NPROC"; \
+    make install DESTDIR=/out
+
+# ============================================================================
+# azure-build
+# Installs to /usr/local -> /out/usr/local. Builds only the targets NIXL needs.
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS azure-build
+ARG AZURE_SDK_TAG=azure-storage-blobs_12.15.0
+RUN set -eux; \
+    NPROC=$(nproc); \
+    cd /tmp; \
+    git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch "${AZURE_SDK_TAG}"; \
+    cd azure-sdk-for-cpp; mkdir build; cd build; \
+    AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DDISABLE_AMQP=ON \
+        -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON \
+        -DCMAKE_CXX_STANDARD=20; \
+    cmake --build . --parallel "$NPROC" --target azure-storage-blobs azure-identity; \
+    cmake --install sdk/core --prefix /out/usr/local; \
+    cmake --install sdk/storage/azure-storage-common --prefix /out/usr/local; \
+    cmake --install sdk/storage/azure-storage-blobs --prefix /out/usr/local; \
+    cmake --install sdk/identity --prefix /out/usr/local
+
+# ============================================================================
+# mooncake-build
+# dependencies.sh does 3 things: (1) apt SYSTEM_PACKAGES — already in builder-base, so
+# this re-install is fast/redundant but harmless; the copies that matter for runtime
+# live in builder-base (and thus final) for build==runtime parity; (2) yalantinglibs,
+# header-only, built here for this compile only; (3) Go — installed by the script but
+# unused here (WITH_STORE=OFF) and not propagated to final.
+# Installs to /usr/local -> /out/usr/local.
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS mooncake-build
+ARG MOONCAKE_VERSION=v0.3.10.post1
+RUN set -eux; \
+    NPROC=$(nproc); \
+    cd /tmp; \
+    git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git; \
+    cd Mooncake; \
+    sed -i '/liburing-dev/d' dependencies.sh; \
+    bash dependencies.sh -y; \
+    mkdir build; cd build; \
+    cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja; \
+    ninja -j"$NPROC"; \
+    DESTDIR=/out ninja install
+
+# ============================================================================
+# gusli-build  (tiny build)
+# NOTE: build-rocm.sh runs `make all` which installs NOTHING (then rm -rf's it) — the
+# monolithic image ships no gusli libs. We run `make install INSTALL_DIR=/out/usr`
+# instead (its Makefile has a proper install target) so future GUSLI-plugin builds work.
+# BARE HEAD clone today -> set GUSLI_REF to pin+cache.
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS gusli-build
+ARG GUSLI_REF=""
+RUN set -eux; \
+    cd /tmp; \
+    git clone --depth 1 https://github.com/nvidia/gusli.git; \
+    cd gusli; \
+    if [ -n "$GUSLI_REF" ]; then git fetch --depth 1 origin "$GUSLI_REF" && git checkout FETCH_HEAD; fi; \
+    make all CXX="g++ -std=c++20" BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0; \
+    make install INSTALL_DIR=/out/usr
+
+# ============================================================================
+# gtest-build  (just copies scripts) -> /out/opt/nixl/bin
+# BARE HEAD clone today -> set GTEST_PARALLEL_REF to pin+cache.
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS gtest-build
+ARG NIXL_INSTALL_DIR=/opt/nixl
+ARG GTEST_PARALLEL_REF=""
+RUN set -eux; \
+    cd /tmp; \
+    git clone --depth 1 https://github.com/google/gtest-parallel.git; \
+    cd gtest-parallel; \
+    if [ -n "$GTEST_PARALLEL_REF" ]; then git fetch --depth 1 origin "$GTEST_PARALLEL_REF" && git checkout FETCH_HEAD; fi; \
+    mkdir -p "/out${NIXL_INSTALL_DIR}/bin"; \
+    cp /tmp/gtest-parallel/* "/out${NIXL_INSTALL_DIR}/bin/"
+
+# ============================================================================
+# ucx-build  (independent, parallel with everything)
+# MUTABLE ref v1.21.x -> layer cache may go stale; audit on refresh.
+# Installs to ${UCX_INSTALL_DIR} (defaults to ${NIXL_INSTALL_DIR}) -> /out/opt/nixl.
+# ROCm path: no CUDA/gdrcopy/UCCL.
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS ucx-build
+ARG NIXL_INSTALL_DIR=/opt/nixl
+ARG UCX_VERSION=v1.21.x
+RUN set -eux; \
+    NPROC=$(nproc); \
+    UCX_INSTALL_DIR="${NIXL_INSTALL_DIR}"; \
+    cd /tmp; \
+    git clone --depth 1 --branch "${UCX_VERSION}" https://github.com/openucx/ucx.git ucx; \
+    cd ucx; \
+    ./autogen.sh; \
+    ./contrib/configure-release-mt \
+        --prefix="${UCX_INSTALL_DIR}" \
+        --enable-shared \
+        --disable-static \
+        --disable-doxygen-doc \
+        --enable-optimizations \
+        --enable-cma \
+        --enable-devel-headers \
+        --with-rocm="${ROCM_PATH}/core" \
+        --with-verbs \
+        --with-dm \
+        --without-gdrcopy; \
+    make -j"$NPROC"; \
+    make -j install-strip DESTDIR=/out
+
+# ============================================================================
+# toolchain-build  (I/O-bound: installers to $HOME; run as root, copy tree in final)
+# Rust 1.86.0, uv, nvm+node(--lts)+azurite. Installs under /root; final stage
+# relocates into the svc-nixl home. Node.js --lts is a FLOATING ref.
+# ============================================================================
+FROM ${BUILDER_BASE_IMAGE} AS toolchain-build
+SHELL ["/bin/bash", "-c"]
+# Force HOME so rustup/uv/nvm land in a known tree the final stage can COPY from
+# (BuildKit RUN may leave HOME unset -> installers would scatter to /).
+ENV HOME=/root
+ARG ARCH=x86_64
+ARG AZURITE_VER=3.35.0
+RUN set -eux; \
+    cd /tmp; \
+    wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init" -O rustup-init; \
+    chmod +x rustup-init; \
+    ./rustup-init -y --default-toolchain 1.86.0; \
+    wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O install_uv.sh; \
+    chmod +x install_uv.sh; ./install_uv.sh; \
+    wget --tries=3 --waitretry=5 "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh" -O install_nvm.sh; \
+    chmod +x install_nvm.sh; ./install_nvm.sh; \
+    export NVM_DIR="${HOME}/.nvm"; \
+    . "$NVM_DIR/nvm.sh"; \
+    nvm install --lts; \
+    npm install -g "azurite@${AZURITE_VER}"
+
+# ---- Alias stages for the final COPY --from (var-expansion workaround, see above).
+#      abseil-src / grpc-src are already defined earlier and reused here. ----
+FROM ${ETCD_IMAGE} AS etcd-src
+FROM ${LIBFABRIC_IMAGE} AS libfabric-src
+FROM ${AWS_IMAGE} AS aws-src
+FROM ${AZURE_IMAGE} AS azure-src
+FROM ${MOONCAKE_IMAGE} AS mooncake-src
+FROM ${GUSLI_IMAGE} AS gusli-src
+FROM ${GTEST_IMAGE} AS gtest-src
+FROM ${UCX_IMAGE} AS ucx-src
+FROM ${TOOLCHAIN_IMAGE} AS toolchain-src
+
+# ============================================================================
+# final: deps + UCX ENVIRONMENT image. NIXL itself is NOT compiled here — this is an
+# environment base against which NIXL/nixlbench are built later (build-rocm.sh run with
+# PRE_INSTALLED_ENV=1 PRE_INSTALLED_UCX_ENV=1 from a mounted source tree).
+#
+# Reusing `builder-base` (a) keeps build==runtime parity for build-rocm.sh, which
+# expects the full apt/pip/torch toolchain present, (b) gives Mooncake's runtime apt
+# libs for free (no fragile hand-picked -lib package names), and (c) means a later
+# MOONCAKE/AZURE/GUSLI-enabled NIXL build finds the -dev headers.
+#
+# COPY every dep's /out (merge-copy: each /out holds only that dep's files, so
+# overlapping /opt/nixl/lib & /usr/local/lib merge, not clobber), relocate the
+# toolchain home, set the runtime ENV build-rocm.sh:68-73,396 would export, ldconfig.
+# ============================================================================
+FROM builder-base AS final
+
+ARG _UID=148069
+ARG _GID=30
+ARG _LOGIN=svc-nixl
+ARG _GROUP=hardware
+ARG _HOME=/home/$_LOGIN
+ARG ARCH=x86_64
+ARG NIXL_INSTALL_DIR=/opt/nixl
+
+# User/group + sudo setup for the non-root service account.
+RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \
+        groupadd -g "${_GID}" "${_GROUP}"; \
+    fi && \
+    useradd -l -u "${_UID}" -g "${_GID}" -m -s /bin/bash "${_LOGIN}" && \
+    mkdir -p "${_HOME}" && \
+    chown -R "${_UID}":"${_GID}" "${_HOME}" && \
+    mkdir -p /etc/sudoers.d && \
+    echo "${_LOGIN} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${_LOGIN} && \
+    chmod 440 /etc/sudoers.d/${_LOGIN} && \
+    chown root:root /etc/sudoers.d/${_LOGIN}
+
+RUN mkdir -p ${NIXL_INSTALL_DIR} && chown -R "${_UID}":"${_GID}" ${NIXL_INSTALL_DIR}
+
+# ---- merge-copy each dep's staged /out into the real filesystem ----
+COPY --from=abseil-src    /out/ /
+COPY --from=grpc-src      /out/ /
+COPY --from=etcd-src      /out/ /
+COPY --from=libfabric-src /out/ /
+COPY --from=aws-src       /out/ /
+COPY --from=azure-src     /out/ /
+COPY --from=mooncake-src  /out/ /
+COPY --from=gusli-src     /out/ /
+COPY --from=gtest-src     /out/ /
+COPY --from=ucx-src       /out/ /
+
+# ---- relocate the toolchain home (installed under /root in toolchain-build) ----
+COPY --from=toolchain-src --chown=${_UID}:${_GID} /root/.cargo   ${_HOME}/.cargo
+COPY --from=toolchain-src --chown=${_UID}:${_GID} /root/.rustup  ${_HOME}/.rustup
+COPY --from=toolchain-src --chown=${_UID}:${_GID} /root/.local   ${_HOME}/.local
+COPY --from=toolchain-src --chown=${_UID}:${_GID} /root/.nvm     ${_HOME}/.nvm
+
+RUN chown -R "${_UID}":"${_GID}" ${NIXL_INSTALL_DIR} && ldconfig
+
+# ---- runtime ENV (build-rocm.sh:68-73 exported these at build time; as an image we
+#      persist them so a later NIXL build against this base resolves the deps). ----
+ENV INSTALL_DIR=${NIXL_INSTALL_DIR}
+ENV LIBFABRIC_INSTALL_DIR=${NIXL_INSTALL_DIR}
+ENV UCX_INSTALL_DIR=${NIXL_INSTALL_DIR}
+ENV LD_LIBRARY_PATH="${NIXL_INSTALL_DIR}/lib:${NIXL_INSTALL_DIR}/lib/${ARCH}-linux-gnu:${NIXL_INSTALL_DIR}/lib64:/usr/local/lib:/usr/local/lib/${ARCH}-linux-gnu"
+ENV CPATH="${NIXL_INSTALL_DIR}/include:/usr/local/include"
+ENV PATH="${NIXL_INSTALL_DIR}/bin:${_HOME}/.local/bin:${_HOME}/.cargo/bin:/usr/local/bin:${PATH}"
+ENV PKG_CONFIG_PATH="${NIXL_INSTALL_DIR}/lib/pkgconfig:${NIXL_INSTALL_DIR}/lib64/pkgconfig:/usr/local/lib/pkgconfig"
+ENV NIXL_PLUGIN_DIR="${NIXL_INSTALL_DIR}/lib/${ARCH}-linux-gnu/plugins"
+ENV CMAKE_PREFIX_PATH="${NIXL_INSTALL_DIR}:/usr/local"
+ENV UCX_TLS=^cuda_ipc
+ENV NVM_DIR="${_HOME}/.nvm"
+
+USER ${_LOGIN}
+ENV HOME=${_HOME}
+ENV USER=${_LOGIN}
+WORKDIR ${_HOME}
+
+ENTRYPOINT ["/bin/bash", "-c", "exec \"$@\"", "--"]
+CMD ["/bin/bash"]

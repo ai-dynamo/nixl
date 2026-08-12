@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.4
+#
+# DDN Infinia closed-source libraries baked into a tiny "data" image. The
+# main CI base image (Dockerfile.base) pulls libs out of this with
+# `COPY --from=infinia`, so no per-PR GCS auth or download is needed.
+#
+# This Dockerfile is built and pushed manually by a maintainer who holds
+# the GCP service-account JSON key, NOT by CI. The service-account key is
+# mounted by BuildKit as a secret only for the gcloud auth+rsync RUN, so
+# it never ends up in any image layer.
+#
+# Build + push:
+#
+#   DOCKER_BUILDKIT=1 docker build \
+#       --secret id=gcs-key,src=/path/to/service-account.json \
+#       --build-arg INFINIA_VERSION=v2.4.0-beta.1 \
+#       -f .ci/dockerfiles/Dockerfile.infinia-libs \
+#       -t harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1 .
+#   docker push harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1
+#
+# To roll Infinia versions: rebuild with a new INFINIA_VERSION and matching
+# tag, then bump INFINIA_LIBS_IMAGE in Dockerfile.base.
+
+FROM gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
+
+ARG INFINIA_GCS_PROJECT=infinia-solutions-436513
+ARG INFINIA_GCS_BUCKET=gs://ddn-sdk
+ARG INFINIA_VERSION=v2.4.0-beta.1
+
+RUN --mount=type=secret,id=gcs-key \
+    gcloud auth activate-service-account --key-file=/run/secrets/gcs-key && \
+    gcloud config set project "${INFINIA_GCS_PROJECT}" && \
+    mkdir -p /infinia/x86_64 /infinia/aarch64 && \
+    gsutil -m rsync -r "${INFINIA_GCS_BUCKET}/${INFINIA_VERSION}/x86/"   /infinia/x86_64/ && \
+    gsutil -m rsync -r "${INFINIA_GCS_BUCKET}/${INFINIA_VERSION}/arm64/" /infinia/aarch64/ && \
+    gcloud auth revoke --all > /dev/null 2>&1 || true

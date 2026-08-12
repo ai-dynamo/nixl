@@ -141,6 +141,7 @@ def plan_command(model, model_config, model_configs, format, **kwargs):
             batch_size = get_batch_size(model_arch, model_configuration, io_size)
             isl_nixl_bench.set_io_size(io_size)
             isl_nixl_bench.set_batch_size(batch_size)
+            isl_nixl_bench.configure_buffer_size()
 
             isl_nixl_bench.configure_scheme(direction="isl")
             isl_nixl_bench.configure_segment_type(
