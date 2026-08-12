@@ -24,16 +24,19 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <iomanip>
+#include "kernels/nixlbench_device_launch.cuh"
 #include <memory>
 #include <numeric>
 #include <sstream>
 #include "utils/neuron.h"
+#include "utils/scope_guard.h"
 #include "utils/utils.h"
 #include <unistd.h>
 #include <utility>
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <thread>
 #include <utils/serdes/serdes.h>
 #include <omp.h>
 
@@ -70,6 +73,10 @@ resolveVramSegment() {
         }                                                                                   \
         _seg_type;                                                                          \
     })
+
+constexpr size_t kDeviceCounterDoneOffsetBytes = 0;
+constexpr size_t kDeviceCounterErrorOffsetBytes = sizeof(uint64_t);
+constexpr size_t kDeviceCounterBytes = 2 * sizeof(uint64_t);
 
 // Reuse parser from utils
 
@@ -686,6 +693,32 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
 #endif
 }
 
+/** Allocate @a nbytes of VRAM on @a devid with all bytes set to zero. */
+static std::optional<xferBenchIOV>
+allocVramValueZero(int devid, size_t nbytes) {
+#ifdef HAVE_UCX_GPU_DEVICE_API
+    if (neuronCoreCount() > 0) {
+        return getVramDescNeuron(devid, nbytes, 0);
+    }
+    CHECK_CUDA_ERROR(cudaSetDevice(devid), "Failed to set device");
+    if (xferBenchConfig::enable_vmm) {
+        return getVramDescCudaVmm(devid, nbytes, 0);
+    }
+    return getVramDescCuda(devid, nbytes, 0);
+#else
+    (void)devid;
+    (void)nbytes;
+    std::cerr << "NIXL Device API support is not enabled in this build" << std::endl;
+    return std::nullopt;
+#endif
+}
+
+std::optional<xferBenchIOV>
+xferBenchNixlWorker::initCompletionCounterVram() {
+    int counter_dev = rt->getRank() - xferBenchConfig::num_initiator_dev; // pairwise SG only
+    return allocVramValueZero(counter_dev, kDeviceCounterBytes);
+}
+
 std::optional<xferBenchIOV>
 xferBenchNixlWorker::initBasicDescVram(size_t buffer_size, int mem_dev_id) {
     if (IS_PAIRWISE_AND_SG()) {
@@ -1162,6 +1195,18 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         iov_lists.push_back(std::move(iov_list));
     }
 
+    if (xferBenchConfig::use_device_api && isTarget()) {
+        completion_counter_iov = initCompletionCounterVram();
+        if (!completion_counter_iov.has_value()) {
+            std::cerr << "NIXL: failed to allocate completion counter for Device API" << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+        std::vector<xferBenchIOV> cc_list{completion_counter_iov.value()};
+        nixl_reg_dlist_t cc_desc = iovListToNixlRegDlist(cc_list, VRAM_SEG);
+        CHECK_NIXL_ERROR(agent->registerMem(cc_desc, &opt_args),
+                         "registerMem failed for completion counter");
+    }
+
     return iov_lists;
 }
 
@@ -1173,6 +1218,20 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
     remote_regs_.clear();
     // xferFileState RAII closes backing fds after deregistrations complete.
     remote_fds.clear();
+
+    if (completion_counter_iov.has_value()) {
+        if (isTarget()) {
+            std::vector<xferBenchIOV> cc_list{completion_counter_iov.value()};
+            nixl_reg_dlist_t cc_desc = iovListToNixlRegDlist(cc_list, VRAM_SEG);
+            nixl_opt_args_t opt_args;
+            opt_args.backends.push_back(backend_engine);
+            CHECK_NIXL_ERROR(agent->deregisterMem(cc_desc, &opt_args),
+                             "deregisterMem failed for completion counter");
+            cleanupBasicDescVram(completion_counter_iov.value());
+        }
+        completion_counter_iov.reset();
+    }
+
     local_regs_.clear();
     iov_lists.clear();
 }
@@ -1206,7 +1265,6 @@ xferBenchNixlWorker::exchangeMetadata() {
         rt->sendInt(&meta_sz, destrank);
         rt->sendChar((char *)buffer, meta_sz, destrank);
     } else if (isInitiator()) {
-        std::string remote_agent;
         int srcrank;
 
         if (IS_PAIRWISE_AND_SG()) {
@@ -1230,7 +1288,7 @@ xferBenchNixlWorker::exchangeMetadata() {
             return ret;
         }
 
-        nixl_status_t status = agent->loadRemoteMD(remote_metadata, remote_agent);
+        nixl_status_t status = agent->loadRemoteMD(remote_metadata, remote_agent_name);
         if (status != NIXL_SUCCESS) {
             std::cerr << "NIXL: loadRemoteMD failed: " << nixlEnumStrings::statusStr(status)
                       << std::endl;
@@ -1347,6 +1405,65 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             }
         }
     }
+
+    if (xferBenchConfig::use_device_api) {
+        if (isTarget() && completion_counter_iov.has_value()) {
+            nixlSerDes cc_ser;
+            nixl_xfer_dlist_t cc_dlist(seg_type);
+            nixlBasicDesc cc_basic;
+            const xferBenchIOV &cc = completion_counter_iov.value();
+            cc_basic.addr = cc.addr;
+            cc_basic.len = cc.len;
+            cc_basic.devId = cc.devId;
+            cc_dlist.addDesc(cc_basic);
+            cc_dlist.serialize(&cc_ser);
+            std::string cc_export = cc_ser.exportStr();
+            int destrank;
+            if (IS_PAIRWISE_AND_SG()) {
+                destrank = rt->getRank() - xferBenchConfig::num_target_dev;
+            } else {
+                destrank = 0;
+            }
+            desc_str_sz = static_cast<int>(cc_export.size());
+            rt->sendInt(&desc_str_sz, destrank);
+            rt->sendChar(cc_export.data(), cc_export.size(), destrank);
+        } else if (isInitiator()) {
+            nixlSerDes cc_ser;
+            int srcrank;
+            if (IS_PAIRWISE_AND_SG()) {
+                srcrank = rt->getRank() + xferBenchConfig::num_initiator_dev;
+            } else {
+                srcrank = 1;
+            }
+            completion_counter_iov.reset();
+            if (rt->recvInt(&desc_str_sz, srcrank) != 0) {
+                std::cerr << "NIXL: failed to receive completion counter descriptor size"
+                          << std::endl;
+                std::exit(EXIT_FAILURE);
+            }
+            std::string cc_str;
+            cc_str.resize(static_cast<size_t>(desc_str_sz), '\0');
+            if (rt->recvChar(cc_str.data(), cc_str.size(), srcrank) != 0) {
+                std::cerr << "NIXL: failed to receive completion counter descriptor" << std::endl;
+                std::exit(EXIT_FAILURE);
+            }
+            cc_ser.importStr(cc_str);
+            nixl_xfer_dlist_t remote_cc(&cc_ser);
+            std::vector<xferBenchIOV> cc_iovs = nixlXferDlistToIOVList(remote_cc);
+            if (cc_iovs.size() != 1) {
+                std::cerr << "NIXL: expected 1 completion counter descriptor, got "
+                          << cc_iovs.size() << std::endl;
+                std::exit(EXIT_FAILURE);
+            }
+            completion_counter_iov = cc_iovs[0];
+            if (completion_counter_iov->len < kDeviceCounterBytes) {
+                std::cerr << "NIXL: completion counter descriptor too small: "
+                          << completion_counter_iov->len << " bytes" << std::endl;
+                std::exit(EXIT_FAILURE);
+            }
+        }
+    }
+
     // Ensure all processes have completed the exchange with a barrier/sync
     synchronize();
     return res;
@@ -1766,6 +1883,120 @@ execTransfer(nixlAgent *agent,
     return ret;
 }
 
+static int
+execDeviceTransfer(nixlMemViewH local_mvh,
+                   nixlMemViewH remote_mvh,
+                   const int num_iter,
+                   const int num_threads,
+                   size_t num_regions,
+                   size_t region_size,
+                   xferBenchStats &stats,
+                   const std::atomic<int> *terminate_ptr = nullptr) {
+#ifdef HAVE_UCX_GPU_DEVICE_API
+    stats.clear();
+    nixlbenchDeviceXferParams params;
+    params.localMvh = local_mvh;
+    params.remoteMvh = remote_mvh;
+    params.numRegions = num_regions;
+    params.regionSize = region_size;
+    params.completionCounterOffsetBytes = kDeviceCounterDoneOffsetBytes;
+    params.errorCounterOffsetBytes = kDeviceCounterErrorOffsetBytes;
+    xferBenchTimer total_timer;
+    stats.transfer_duration.reserve(num_iter);
+    xferBenchTimer timer;
+    for (int i = 0; i < num_iter; ++i) {
+        if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
+            stats.total_duration.add(total_timer.lap());
+            return -1;
+        }
+        nixl_status_t st = nixlbenchLaunchDevicePut(params, static_cast<unsigned>(num_threads));
+        if (__builtin_expect(st != NIXL_SUCCESS, 0)) {
+            std::cerr << "nixlbenchLaunchDevicePut failed: " << nixlEnumStrings::statusStr(st)
+                      << std::endl;
+            stats.total_duration.add(total_timer.lap());
+            return -1;
+        }
+        stats.transfer_duration.add(timer.lap());
+    }
+    stats.total_duration.add(total_timer.lap());
+    return 0;
+#else
+    (void)local_mvh;
+    (void)remote_mvh;
+    (void)num_iter;
+    (void)num_threads;
+    (void)num_regions;
+    (void)region_size;
+    (void)stats;
+    (void)terminate_ptr;
+    std::cerr << "NIXL Device API support is not enabled in this build" << std::endl;
+    return -1;
+#endif
+}
+
+bool
+xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
+                                                    uint64_t expected_value,
+                                                    const char *phase,
+                                                    const std::function<void()> &checkLiveness) {
+#ifdef HAVE_UCX_GPU_DEVICE_API
+    struct xferBenchDeviceCounters {
+        uint64_t done;
+        uint64_t error;
+    };
+
+    if (expected_value == 0) {
+        return true;
+    }
+    CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
+    while (!signaled()) {
+        xferBenchDeviceCounters counters{};
+        CHECK_CUDA_ERROR(cudaMemcpy(&counters,
+                                    reinterpret_cast<const void *>(counter_iov.addr),
+                                    sizeof(counters),
+                                    cudaMemcpyDeviceToHost),
+                         "Failed to read completion counters from VRAM");
+        if (counters.error > 0) {
+            std::cerr << "NIXL Device API: " << phase << " failed: remote error counter is "
+                      << counters.error << std::endl;
+            terminate.store(1);
+            return false;
+        }
+        if (counters.done >= expected_value) {
+            return true;
+        }
+        checkLiveness();
+        if (signaled()) {
+            std::cerr << "NIXL Device API: " << phase
+                      << " wait interrupted by signal/liveness failure" << std::endl;
+            return false;
+        }
+        std::this_thread::yield();
+    }
+    return false;
+#else
+    (void)counter_iov;
+    (void)expected_value;
+    (void)phase;
+    (void)checkLiveness;
+    std::cerr << "NIXL Device API support is not enabled in this build" << std::endl;
+    return false;
+#endif
+}
+
+static void
+resetDeviceCounters(const xferBenchIOV &counter_iov) {
+#ifdef HAVE_UCX_GPU_DEVICE_API
+    CHECK_CUDA_ERROR(cudaSetDevice(counter_iov.devId), "Failed to set completion counter device");
+    CHECK_CUDA_ERROR(cudaMemset(reinterpret_cast<void *>(counter_iov.addr), 0, kDeviceCounterBytes),
+                     "Failed to reset completion counters in VRAM");
+    CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize completion counter reset");
+#else
+    (void)counter_iov;
+    std::cerr << "NIXL Device API support is not enabled in this build" << std::endl;
+#endif
+}
+
 std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
@@ -1787,16 +2018,54 @@ xferBenchNixlWorker::transfer(size_t block_size,
         num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
+    nixlMemViewH local_mvh = nullptr;
+    nixlMemViewH remote_mvh = nullptr;
+    auto gpu_view_guard = make_scope_guard([this, &local_mvh, &remote_mvh] {
+        releaseMemView(remote_mvh);
+        releaseMemView(local_mvh);
+    });
+
+    size_t num_regions = 0;
+    if (xferBenchConfig::use_device_api) {
+        if (local_iovs.size() != 1 || remote_iovs.size() != 1) {
+            std::cerr << "NIXL Device API requires exactly one local and one remote IOV list: "
+                      << "local=" << local_iovs.size() << ", remote=" << remote_iovs.size()
+                      << std::endl;
+            return std::variant<xferBenchStats, int>(-1);
+        }
+        const size_t local_regions = local_iovs.front().size();
+        const size_t remote_regions = remote_iovs.front().size();
+        if (__builtin_expect(local_regions != remote_regions, 0)) {
+            std::cerr << "NIXL Device API requires equal local/remote region counts: "
+                      << "local=" << local_regions << ", remote=" << remote_regions << std::endl;
+            return std::variant<xferBenchStats, int>(-1);
+        }
+        num_regions = remote_regions;
+        local_mvh = prepareGPULocalView(local_iovs);
+        remote_mvh = prepareGPURemoteView(remote_iovs);
+    }
+
     if (skip > 0) {
-        ret = execTransfer(agent,
-                           backend_engine,
-                           local_iovs,
-                           remote_iovs,
-                           xfer_op,
-                           skip,
-                           xferBenchConfig::num_threads,
-                           stats,
-                           &terminate);
+        if (xferBenchConfig::use_device_api) {
+            ret = execDeviceTransfer(local_mvh,
+                                     remote_mvh,
+                                     skip,
+                                     xferBenchConfig::block_threads,
+                                     num_regions,
+                                     block_size,
+                                     stats,
+                                     &terminate);
+        } else {
+            ret = execTransfer(agent,
+                               backend_engine,
+                               local_iovs,
+                               remote_iovs,
+                               xfer_op,
+                               skip,
+                               xferBenchConfig::num_threads,
+                               stats,
+                               &terminate);
+        }
         if (ret < 0) {
             return std::variant<xferBenchStats, int>(ret);
         }
@@ -1805,17 +2074,26 @@ xferBenchNixlWorker::transfer(size_t block_size,
     // Synchronize to ensure all processes have completed the warmup (iter and polling)
     synchronize();
 
-    stats.clear();
-
-    ret = execTransfer(agent,
-                       backend_engine,
-                       local_iovs,
-                       remote_iovs,
-                       xfer_op,
-                       num_iter,
-                       xferBenchConfig::num_threads,
-                       stats,
-                       &terminate);
+    if (xferBenchConfig::use_device_api) {
+        ret = execDeviceTransfer(local_mvh,
+                                 remote_mvh,
+                                 num_iter,
+                                 xferBenchConfig::block_threads,
+                                 num_regions,
+                                 block_size,
+                                 stats,
+                                 &terminate);
+    } else {
+        ret = execTransfer(agent,
+                           backend_engine,
+                           local_iovs,
+                           remote_iovs,
+                           xfer_op,
+                           num_iter,
+                           xferBenchConfig::num_threads,
+                           stats,
+                           &terminate);
+    }
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
     }
@@ -1856,6 +2134,24 @@ xferBenchNixlWorker::poll(size_t block_size) {
         }
     };
 
+    const bool use_device_completion_counter =
+        xferBenchConfig::use_device_api && completion_counter_iov.has_value();
+    if (use_device_completion_counter) {
+        const xferBenchIOV &counter_iov = completion_counter_iov.value();
+        if (!waitForDeviceCompletionCounter(
+                counter_iov, static_cast<uint64_t>(skip), "warmup", checkLiveness)) {
+            return;
+        }
+        synchronize();
+        if (!waitForDeviceCompletionCounter(
+                counter_iov, static_cast<uint64_t>(total_iter), "transfer", checkLiveness)) {
+            return;
+        }
+        synchronize();
+        resetDeviceCounters(counter_iov);
+        return;
+    }
+
     /* Ensure warmup is done*/
     do {
         status = agent->getNotifs(notifs);
@@ -1893,4 +2189,54 @@ xferBenchNixlWorker::synchronizeStart() {
         return 0;
     }
     return -1;
+}
+
+nixlMemViewH
+xferBenchNixlWorker::prepareGPULocalView(
+    const std::vector<std::vector<xferBenchIOV>> &local_iov_lists) {
+    nixl_xfer_dlist_t local_list(VRAM_SEG);
+    for (const auto &local_iov_list : local_iov_lists) {
+        for (const auto &iov : local_iov_list) {
+            const nixlBasicDesc localDesc{iov.addr, iov.len, static_cast<uint64_t>(iov.devId)};
+            local_list.addDesc(localDesc);
+        }
+    }
+    nixlMemViewH local_mvh = nullptr;
+    CHECK_NIXL_ERROR(agent->prepMemView(local_list, local_mvh), "prepMemView on local view failed");
+    return local_mvh;
+}
+
+nixlMemViewH
+xferBenchNixlWorker::prepareGPURemoteView(
+    const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) {
+    if (remote_agent_name.empty()) {
+        std::cerr << "NIXL Device API: remote_agent_name is empty; "
+                  << "exchangeMetadata must be called before prepareGPURemoteView" << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+    nixl_remote_dlist_t remote_list(VRAM_SEG);
+    for (const auto &remote_iov_list : remote_iov_lists) {
+        for (const auto &iov : remote_iov_list) {
+            const nixlRemoteDesc remoteDesc{
+                iov.addr, iov.len, static_cast<uint64_t>(iov.devId), remote_agent_name};
+            remote_list.addDesc(remoteDesc);
+        }
+    }
+    const nixlRemoteDesc remoteDesc{completion_counter_iov.value().addr,
+                                    completion_counter_iov.value().len,
+                                    static_cast<uint64_t>(completion_counter_iov.value().devId),
+                                    remote_agent_name};
+    remote_list.addDesc(remoteDesc);
+    nixlMemViewH remote_mvh = nullptr;
+    CHECK_NIXL_ERROR(agent->prepMemView(remote_list, remote_mvh),
+                     "prepMemView on remote view failed");
+    return remote_mvh;
+}
+
+void
+xferBenchNixlWorker::releaseMemView(nixlMemViewH &mvh) {
+    if (mvh != nullptr) {
+        agent->releaseMemView(mvh);
+        mvh = nullptr;
+    }
 }

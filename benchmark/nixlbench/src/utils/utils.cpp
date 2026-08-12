@@ -241,6 +241,13 @@ NB_ARG_BOOL(gusli_try_use_uring,
             false,
             "Try to use io_uring engine in GUSLI backend (default: false)");
 
+// UCX GPU Device API options
+NB_ARG_BOOL(use_device_api,
+            false,
+            "Use UCX GPU Device API for GPU-kernel-initiated PUT transfers. "
+            "When enabled, --num_threads is repurposed as the CUDA kernel "
+            "block size (num_threads <= 32 -> THREAD level; > 32 -> WARP level, must be a "
+            "multiple of 32), and the internal CPU thread count is forced to 1.");
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
@@ -321,6 +328,47 @@ std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 bool xferBenchConfig::gusli_try_use_uring = false;
+bool xferBenchConfig::use_device_api = false;
+int xferBenchConfig::block_threads = 1;
+
+static bool
+validateDeviceAPIConfig() {
+    auto reject = [](const char *reason) {
+        std::cerr << "Invalid configuration for NIXL Device API: " << reason << std::endl;
+        return false;
+    };
+#ifdef HAVE_UCX_GPU_DEVICE_API
+    if (xferBenchConfig::worker_type != XFERBENCH_WORKER_NIXL) {
+        return reject("worker_type must be nixl");
+    }
+    if (xferBenchConfig::backend != XFERBENCH_BACKEND_UCX) {
+        return reject("backend must be UCX");
+    }
+    if (xferBenchConfig::op_type != XFERBENCH_OP_WRITE) {
+        return reject("op_type must be WRITE");
+    }
+    if (xferBenchConfig::initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM ||
+        xferBenchConfig::target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
+        return reject("initiator_seg_type and target_seg_type must be VRAM");
+    }
+    if (!xferBenchConfig::enable_pt) {
+        return reject("--enable_pt must be set");
+    }
+    if (xferBenchConfig::mode != XFERBENCH_MODE_SG) {
+        return reject("mode must be SG");
+    }
+    if (xferBenchConfig::scheme != XFERBENCH_SCHEME_PAIRWISE) {
+        return reject("scheme must be pairwise");
+    }
+    if (xferBenchConfig::pipeline_depth != 1) {
+        return reject("pipeline_depth must be 1");
+    }
+    return true;
+#else
+    return reject("UCX GPU Device API support is not enabled in this build. "
+                  "Set -Ducx_path=<path> with UCX GPU device headers available");
+#endif
+}
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -514,6 +562,33 @@ xferBenchConfig::loadParams(void) {
     large_blk_iter_ftr = NB_ARG(large_blk_iter_ftr);
     warmup_iter = NB_ARG(warmup_iter);
     num_threads = NB_ARG(num_threads);
+    pipeline_depth = NB_ARG(pipeline_depth);
+    if (pipeline_depth < 1) {
+        std::cerr << "pipeline_depth must be >= 1" << std::endl;
+        return -1;
+    }
+    use_device_api = NB_ARG(use_device_api);
+    if (use_device_api && !validateDeviceAPIConfig()) {
+        return -1;
+    }
+    if (use_device_api) {
+        if (num_threads < 1 || num_threads > 1024) {
+            std::cerr << "Invalid value for --num_threads: " << num_threads
+                      << ". Device API requires a GPU kernel block thread count in [1, 1024]"
+                      << std::endl;
+            return -1;
+        }
+        if (num_threads > 32 && num_threads % 32 != 0) {
+            std::cerr << "Invalid value for --num_threads: " << num_threads
+                      << ". Device API requires block_threads > 32 must be a multiple of 32"
+                      << std::endl;
+            return -1;
+        }
+        block_threads = num_threads;
+        num_threads = 1;
+        std::cout << "Device API mode: kernel block_threads=" << block_threads
+                  << ", num_threads forced to 1" << std::endl;
+    }
     etcd_endpoints = NB_ARG(etcd_endpoints);
     asio_address = NB_ARG(asio_address);
     asio_port = NB_ARG(asio_port);
@@ -527,11 +602,6 @@ xferBenchConfig::loadParams(void) {
     recreate_xfer = NB_ARG(recreate_xfer);
     reregister_mem = NB_ARG(reregister_mem);
     prepared_xfer = NB_ARG(prepared_xfer);
-    pipeline_depth = NB_ARG(pipeline_depth);
-    if (pipeline_depth < 1) {
-        std::cerr << "pipeline_depth must be >= 1" << std::endl;
-        return -1;
-    }
     use_hugepages = NB_ARG(use_hugepages);
     if (use_hugepages && (total_buffer_size % HUGEPAGE_SIZE) != 0) {
         size_t hugepage_aligned_size = ROUND_UP(total_buffer_size, HUGEPAGE_SIZE);
@@ -842,6 +912,11 @@ xferBenchConfig::printConfig() {
     printOption("Large block iter factor (--large_blk_iter_ftr=N)",
                 std::to_string(large_blk_iter_ftr));
     printOption("Num threads (--num_threads=N)", std::to_string(num_threads));
+    printOption("Use Device API (--use_device_api=[0,1])", std::to_string(use_device_api));
+    if (use_device_api) {
+        printOption("Device API Kernel block threads (--num_threads=N)",
+                    std::to_string(block_threads));
+    }
     printSeparator('-');
     std::cout << std::endl;
 }
