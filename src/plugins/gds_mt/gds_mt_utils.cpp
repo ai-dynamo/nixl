@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,19 +52,21 @@ gdsMtMemBuf::~gdsMtMemBuf() {
     }
 }
 
-gdsMtFileHandle::gdsMtFileHandle (int file_fd) : fd (file_fd) {
-
+gdsMtFileHandle::gdsMtFileHandle(nixl::FileFd &&fd) : file_fd(std::move(fd)) {
     CUfileDescr_t descr = {};
-    descr.handle.fd = fd;
+    descr.handle.fd = file_fd.fd();
     descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
 
-    const CUfileError_t status = cuFileHandleRegister (&cu_fhandle, &descr);
+    const CUfileError_t status = cuFileHandleRegister(&cu_fhandle, &descr);
     if (status.err != CU_FILE_SUCCESS) {
-        throw std::runtime_error ("GDS_MT: file register error: error=" +
-                                  std::to_string (status.err) + ", fd=" + std::to_string (fd));
+        // ~FileFd as the exception unwinds closes the owned fd if any.
+        throw std::runtime_error(
+            "GDS_MT: file register error: error=" + std::to_string(status.err) +
+            ", fd=" + std::to_string(file_fd.fd()));
     }
 }
 
 gdsMtFileHandle::~gdsMtFileHandle() {
-    cuFileHandleDeregister (cu_fhandle);
+    cuFileHandleDeregister(cu_fhandle);
+    // ~FileFd closes the fd if path-mode owned it.
 }

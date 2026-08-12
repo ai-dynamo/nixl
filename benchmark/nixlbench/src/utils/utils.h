@@ -15,18 +15,18 @@
  * limitations under the License.
  */
 
-#ifndef __UTILS_H
-#define __UTILS_H
+#ifndef NIXL_BENCHMARK_NIXLBENCH_SRC_UTILS_UTILS_H
+#define NIXL_BENCHMARK_NIXLBENCH_SRC_UTILS_UTILS_H
 
 #include "config.h"
 #include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 #include <optional>
-#include <cxxopts.hpp>
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
@@ -35,36 +35,54 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#define CHECK_CUDA_ERROR(result, message)                                           \
-    do {                                                                            \
-        if (result != cudaSuccess) {                                                \
-            std::cerr << "CUDA: " << message << " (Error code: " << result << " - " \
-                      << cudaGetErrorString(result) << ")" << std::endl;            \
-            exit(EXIT_FAILURE);                                                     \
-        }                                                                           \
+#define CHECK_CUDA_ERROR(result, message)                                       \
+    do {                                                                        \
+        const auto _r = (result);                                               \
+        if (_r != cudaSuccess) {                                                \
+            std::cerr << "CUDA: " << message << " (Error code: " << _r << " - " \
+                      << cudaGetErrorString(_r) << ")" << std::endl;            \
+            exit(EXIT_FAILURE);                                                 \
+        }                                                                       \
     } while (0)
 
-#define CHECK_CUDA_DRIVER_ERROR(result, message)                                           \
-    do {                                                                                   \
-        if (result != CUDA_SUCCESS) {                                                      \
-            const char *error_str;                                                         \
-            cuGetErrorString(result, &error_str);                                          \
-            std::cerr << "CUDA Driver: " << message << " (Error code: " << result << " - " \
-                      << error_str << ")" << std::endl;                                    \
-            exit(EXIT_FAILURE);                                                            \
-        }                                                                                  \
+#define CHECK_CUDA_DRIVER_ERROR(result, message)                                       \
+    do {                                                                               \
+        const auto _r = (result);                                                      \
+        if (_r != CUDA_SUCCESS) {                                                      \
+            const char *error_str;                                                     \
+            cuGetErrorString(_r, &error_str);                                          \
+            std::cerr << "CUDA Driver: " << message << " (Error code: " << _r << " - " \
+                      << error_str << ")" << std::endl;                                \
+            exit(EXIT_FAILURE);                                                        \
+        }                                                                              \
+    } while (0)
+#elif HAVE_ROCM
+#include <hip/hip_runtime.h>
+
+#define CHECK_CUDA_ERROR(result, message)                                      \
+    do {                                                                       \
+        const auto _r = (result);                                              \
+        if (_r != hipSuccess) {                                                \
+            std::cerr << "HIP: " << message << " (Error code: " << _r << " - " \
+                      << hipGetErrorString(_r) << ")" << std::endl;            \
+            exit(EXIT_FAILURE);                                                \
+        }                                                                      \
     } while (0)
 #endif
 
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
 #define MAXBW 50.0 // 400 Gbps or 50 GB/sec
 #define LARGE_BLOCK_SIZE (1LL * (1 << 20))
+#define HUGEPAGE_SIZE (2 * 1024 * 1024)
+#define ROUND_UP(value, granularity) \
+    ((((value) + (granularity) - 1) / (granularity)) * (granularity))
 
 #define XFERBENCH_INITIATOR_BUFFER_ELEMENT 0xbb
 #define XFERBENCH_TARGET_BUFFER_ELEMENT 0xaa
 
 // Runtime types
 #define XFERBENCH_RT_ETCD "ETCD"
+#define XFERBENCH_RT_ASIO "ASIO"
 
 // Backend types
 #define XFERBENCH_BACKEND_UCX "UCX"
@@ -78,6 +96,8 @@
 #define XFERBENCH_BACKEND_OBJ "OBJ"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
+#define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
+#define XFERBENCH_BACKEND_INFINIA "INFINIA"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -121,6 +141,11 @@
 #define XFERBENCH_WORKER_NIXL "nixl"
 #define XFERBENCH_WORKER_NVSHMEM "nvshmem"
 
+// Randomization location modes
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE "none"
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED "blockaligned"
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED "bytealigned"
+
 #define IS_PAIRWISE_AND_SG()                                 \
     (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_SG == xferBenchConfig::mode)
@@ -140,6 +165,7 @@ public:
     static std::string op_type;
     static bool check_consistency;
     static size_t total_buffer_size;
+    static bool recreate_xfer;
     static int num_initiator_dev;
     static int num_target_dev;
     static size_t start_block_size;
@@ -154,13 +180,23 @@ public:
     static size_t progress_threads;
     static std::string device_list;
     static std::string etcd_endpoints;
+    static std::string asio_address; // IPv4
+    static uint16_t asio_port;
+    static std::string randomize_location_mode;
+    static uint64_t randomize_location_mode_seed;
     static std::string benchmark_group;
     static std::string filepath;
     static std::string filenames;
     static bool enable_vmm;
+    static bool use_hugepages;
     static int num_files;
     static std::string posix_api_type;
+    static int posix_ios_pool_size;
+    static int posix_kernel_queue_size;
     static bool storage_enable_direct;
+    static bool reregister_mem;
+    static bool prepared_xfer;
+    static int pipeline_depth;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
     static int gds_mt_num_threads;
@@ -177,12 +213,22 @@ public:
     static std::string obj_endpoint_override;
     static std::string obj_req_checksum;
     static std::string obj_ca_bundle;
+    static size_t obj_crt_min_limit;
+    static bool obj_accelerated_enable;
+    static std::string obj_accelerated_type;
+    static std::string azure_blob_account_url;
+    static std::string azure_blob_container_name;
+    static std::string azure_blob_connection_string;
+    static std::string infinia_config_file;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
     static std::string gusli_config_file;
-    static uint64_t gusli_bdev_byte_offset;
+    static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
+    static bool gusli_try_use_uring;
+    static bool use_device_api;
+    static int block_threads;
 
     static int
     parseConfig(int argc, char *argv[]);
@@ -196,15 +242,12 @@ public:
     parseDeviceList();
     static bool
     isStorageBackend();
+    static bool
+    isObjStorageBackend();
 
 protected:
     static int
-    loadParams(cxxopts::ParseResult &results);
-    template<class T>
-    static T
-    getParamValue(const std::unique_ptr<toml::table> &tbl,
-                  const cxxopts::ParseResult &result,
-                  const std::string_view name);
+    loadParams(void);
 };
 
 // Shared GUSLI device config used by utils and nixl_worker
@@ -213,13 +256,15 @@ struct GusliDeviceConfig {
     char device_type; // 'F' for file, 'K' for kernel device, 'N' for networked server
     std::string device_path;
     std::string security_flags;
+    size_t dev_offset;
 };
 
-// Parser for GUSLI device list: "id:type:path,id:type:path,..."
+// Parser for GUSLI device list: "id:type:path,id:type:path,..." and byte-based device offset list
 // security_list: comma-separated security flags; num_devices: expected device count (validation)
 std::vector<GusliDeviceConfig>
 parseGusliDeviceList(const std::string &device_list,
                      const std::string &security_list,
+                     const std::string &dev_offset_list,
                      int num_devices);
 
 // Timer class for measuring durations at high resolution
@@ -316,6 +361,18 @@ class xferBenchUtils {
 private:
     static xferBenchRT *rt;
     static std::string dev_to_use;
+    static int
+    createFile(size_t buffer_size, const std::string &filename);
+    static void
+    cleanupFile(const int fd, const std::string &filename);
+    static bool
+    putObjAzure(size_t buffer_size, const std::string &name);
+    static bool
+    getObjAzure(const std::string &name);
+    static bool
+    rmObjAzure(const std::string &name);
+    static std::string
+    buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
     static void
@@ -327,18 +384,28 @@ public:
     static std::string
     buildAwsCredentials();
     static bool
+    putObj(size_t buffer_size, const std::string &name);
+    static bool
+    getObj(const std::string &name);
+    static bool
+    rmObj(const std::string &name);
+    static bool
     putObjS3(size_t buffer_size, const std::string &name);
     static bool
     getObjS3(const std::string &name);
     static bool
     rmObjS3(const std::string &name);
 
-    static void
+    static bool
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
+    static bool
+    validateTransfer(bool is_initiator,
+                     std::vector<std::vector<xferBenchIOV>> &local_lists,
+                     std::vector<std::vector<xferBenchIOV>> &remote_lists);
     static void
     printStatsHeader();
     static void
     printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
 };
 
-#endif // __UTILS_H
+#endif

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -20,11 +20,13 @@
 
 set -e
 set -x
+ulimit -c unlimited
 TEXT_YELLOW="\033[1;33m"
 TEXT_CLEAR="\033[0m"
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
+PREVDIR=$(dirname "$(readlink -f "$0")")
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir>"
@@ -71,17 +73,7 @@ else
     echo "/sys/module/nv_peer_mem/version not found"
 fi
 
-echo "==== Running ETCD server ===="
-etcd_port=$(get_next_tcp_port)
-etcd_peer_port=$(get_next_tcp_port)
-export NIXL_ETCD_ENDPOINTS="http://127.0.0.1:${etcd_port}"
-export NIXL_ETCD_PEER_URLS="http://127.0.0.1:${etcd_peer_port}"
-export NIXL_ETCD_NAMESPACE="/nixl/cpp_ci/${etcd_port}"
-etcd --listen-client-urls ${NIXL_ETCD_ENDPOINTS} --advertise-client-urls ${NIXL_ETCD_ENDPOINTS} \
-     --listen-peer-urls ${NIXL_ETCD_PEER_URLS} --initial-advertise-peer-urls ${NIXL_ETCD_PEER_URLS} \
-     --initial-cluster default=${NIXL_ETCD_PEER_URLS} &
-
-wait_for_etcd
+start_etcd_server "/nixl/cpp_ci"
 
 echo "==== Running C++ tests ===="
 cd ${INSTALL_DIR}
@@ -116,12 +108,15 @@ kill -s INT $telePID
 gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
+# DOCA telemetry exporter tests: present only when built with the DOCA SDK
+# (TELEMETRY_DOCA). Self-contained - each binds a free loopback port via
+# findFreePort(); the DOCA telemetry exporter libs resolve through ldconfig.
+if [ -x ./bin/doca_test ]; then ./bin/doca_test; fi
+if [ -x ./bin/doca_nixl_test ]; then ./bin/doca_nixl_test; fi
+
 # Run NIXL client-server test
 nixl_test_port=$(get_next_tcp_port)
-
-./bin/nixl_test target 127.0.0.1 "$nixl_test_port"&
-sleep 5
-./bin/nixl_test initiator 127.0.0.1 "$nixl_test_port"
+parallel --line-buffer --halt now,fail=1 ::: "./bin/nixl_test target" "sleep 3 ; ./bin/nixl_test initiator" ::: "127.0.0.1 $nixl_test_port"
 
 echo "${TEXT_YELLOW}==== Disabled tests==="
 echo "./bin/md_streamer disabled"
@@ -129,4 +124,10 @@ echo "./bin/p2p_test disabled"
 echo "./bin/ucx_worker_test disabled"
 echo "${TEXT_CLEAR}"
 
-pkill etcd
+kill -9 $ETCD_PID 2>/dev/null || true
+
+sleep 5
+
+# Sample test for Azure Blob Plugin - should be changed to their gtest
+cd $PREVDIR
+./test_azure.sh

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,7 +33,7 @@
 
 class nixlMetadataStream {
     protected:
-        int                 port;
+        uint16_t port;
         int                 socketFd;
         std::string         listenerAddress;
         struct sockaddr_in  listenerAddr;
@@ -42,7 +42,7 @@ class nixlMetadataStream {
         void closeStream();
 
     public:
-        nixlMetadataStream(int port);
+        explicit nixlMetadataStream(uint16_t port) noexcept;
         ~nixlMetadataStream();
 };
 
@@ -50,13 +50,13 @@ class nixlMetadataStream {
 class nixlMDStreamListener: public nixlMetadataStream {
     private:
         std::thread listenerThread;
-        int         csock;
+        int csock = -1;
 
         void            acceptClientsAsync();
         void            recvFromClients(int clientSocket);
 
     public:
-        nixlMDStreamListener(int port);
+        explicit nixlMDStreamListener(uint16_t port) noexcept;
         ~nixlMDStreamListener();
 
         int         acceptClient();
@@ -73,7 +73,7 @@ class nixlMDStreamClient: public nixlMetadataStream {
         bool setupClient();
 
     public:
-        nixlMDStreamClient(const std::string& listenerAddress, int port);
+        nixlMDStreamClient(const std::string &listenerAddress, uint16_t port);
         ~nixlMDStreamClient();
 
         bool connectListener();

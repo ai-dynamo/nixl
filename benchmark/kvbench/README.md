@@ -127,6 +127,7 @@ These arguments are used by both `plan` and `profile` commands:
 | `--op_type` | Operation type [READ, WRITE] (default: WRITE) |
 | `--check_consistency` | Enable consistency checking |
 | `--total_buffer_size` | Total buffer size in bytes (default: 8GiB) |
+| `--recreate_xfer` | Recreate xfer for every iteration (default: false for all backends, true for GUSLI) |
 | `--start_block_size` | Starting block size in bytes (default: 4KiB) |
 | `--max_block_size` | Maximum block size in bytes (default: 64MiB) |
 | `--start_batch_size` | Starting batch size (default: 1) |

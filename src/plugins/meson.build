@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,10 @@ endif
 
 if enabled_plugins.get('OBJ')
     subdir('obj')
+endif
+
+if enabled_plugins.get('AZURE_BLOB')
+    subdir('azure_blob')
 endif
 
 if enabled_plugins.get('LIBFABRIC')
@@ -98,6 +102,22 @@ if enabled_plugins.get('HF3FS')
     endif
 endif
 
+infinia_lib_path = get_option('infinia_path') + '/lib'
+infinia_lib_file = 'red_client'
+infinia_lib_found = cc.find_library(infinia_lib_file, dirs: [infinia_lib_path], required: false)
+disable_infinia_backend = get_option('disable_infinia_backend')
+if enabled_plugins.get('INFINIA')
+    if (disable_infinia_backend or not infinia_lib_found.found()) and is_explicit_enable
+        if disable_infinia_backend
+            error('INFINIA plugin requested but Infinia backend is disabled')
+        else
+            error('INFINIA plugin requested but red_client library not found')
+        endif
+    elif not disable_infinia_backend and infinia_lib_found.found()
+        subdir('infinia')
+    endif
+endif
+
 gusli_lib_file = 'gusli_clnt'
 gusli_lib_found = cc.find_library(gusli_lib_file, required: false)
 if enabled_plugins.get('GUSLI')
@@ -121,3 +141,7 @@ if enabled_plugins.get('GPUNETIO')
 endif
 
 subdir('telemetry')
+
+if nixl_trace_enabled
+    subdir('tracing')
+endif

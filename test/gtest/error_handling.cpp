@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,9 @@
 #include <nixl_types.h>
 #include "common.h"
 #include "nixl.h"
+#ifdef HAVE_UCX_BACKEND
+#include "ucx_utils.h"
+#endif
 
 namespace gtest {
 namespace nixl {
@@ -72,6 +75,10 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
 
             void init(nixlBackendH* backend) {
                 m_params = { .backends = {backend} };
+                // Each testXfer call reuses the fixture's Agent and may call
+                // init() multiple times. Reset m_dlist so a second init() does
+                // not register the same memory range twice.
+                m_dlist.clear();
                 nixl::fillRegList(m_dlist, m_desc, m_data);
             }
 
@@ -103,6 +110,8 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
                                     nixl_xfer_dlist_t& rReq_descs,
                                     nixlXferReqH*& req_handle) const;
         nixl_status_t postXferReq(nixlXferReqH* req_handle) const;
+        nixl_status_t
+        releaseXferReq(nixlXferReqH *req_handle) const;
         nixl_status_t waitForCompletion(nixlXferReqH* req_handle);
         nixl_status_t waitForNotif(const std::string& expectedNotif);
         void fillData();
@@ -158,11 +167,17 @@ TestErrorHandling::Agent::init(const std::string &name,
                                const std::string &backend_name,
                                size_t num_workers,
                                size_t num_threads) {
-    m_priv    = std::make_unique<nixlAgent>(name, nixlAgentConfig(true));
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    m_priv = std::make_unique<nixlAgent>(name, cfg);
     // At the moment, only UCX backend is tested for error handling support.
     m_backend = nixl::createUcxBackend(*m_priv, backend_name, num_workers, num_threads);
     m_mem.init(m_backend);
     m_mem.fillData();
+
+    // Ignore EFA hardware mismatch warning
+    const gtest::LogIgnoreGuard lig_efa_warn(
+        "Amazon EFA\\(s\\) were detected, but the UCX backend was configured");
 
     EXPECT_EQ(NIXL_SUCCESS, m_priv->registerMem(m_mem.m_dlist, &m_mem.m_params));
 }
@@ -197,8 +212,7 @@ TestErrorHandling::Agent::createXferReq(const nixl_xfer_op_t& op,
                                      nixl_xfer_dlist_t& rReq_descs,
                                      nixlXferReqH*& req_handle) const {
     nixl_opt_args_t extra_params = { .backends = {m_backend} };
-    extra_params.notifMsg        = "notification";
-    extra_params.hasNotif        = true;
+    extra_params.notif = "notification";
     return m_priv->createXferReq(op, sReq_descs, rReq_descs, m_MetaRemote,
                                  req_handle, &extra_params);
 }
@@ -206,6 +220,11 @@ TestErrorHandling::Agent::createXferReq(const nixl_xfer_op_t& op,
 nixl_status_t
 TestErrorHandling::Agent::postXferReq(nixlXferReqH *req_handle) const {
     return m_priv->postXferReq(req_handle);
+}
+
+nixl_status_t
+TestErrorHandling::Agent::releaseXferReq(nixlXferReqH *req_handle) const {
+    return m_priv->releaseXferReq(req_handle);
 }
 
 nixl_status_t
@@ -388,7 +407,11 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, size_t iter) {
     }
 
     if (isFailure<test_type>(iter) && (status == NIXL_ERR_REMOTE_DISCONNECT)) {
-        // failed handle destroyed on post
+        // postXferReq does not take ownership of the request on failure (it only
+        // invalidates the remote data), so release the handle here to avoid
+        // leaking it and its backend request handle. The caller only gets the
+        // status, so it cannot release it itself.
+        m_Initiator.releaseXferReq(req_handle);
         return status;
     }
 
@@ -396,6 +419,11 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, size_t iter) {
     return req_handle;
 }
 
+namespace {
+    const std::string expected_log =
+        "postXferReq: remote agent 'target' was disconnected after transfer request creation";
+
+} // namespace
 
 TEST_P(TestErrorHandling, BasicXfer) {
     testXfer<TestType::BASIC_XFER, NIXL_WRITE>();
@@ -403,16 +431,19 @@ TEST_P(TestErrorHandling, BasicXfer) {
 }
 
 TEST_P(TestErrorHandling, LoadRemoteThenFail) {
+    const LogIgnoreGuard lig(expected_log);
     testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_WRITE>();
     testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_READ>();
 }
 
 TEST_P(TestErrorHandling, XferThenFail) {
+    const LogIgnoreGuard lig(expected_log);
     testXfer<TestType::XFER_THEN_FAIL, NIXL_WRITE>();
     testXfer<TestType::XFER_THEN_FAIL, NIXL_READ>();
 }
 
 TEST_P(TestErrorHandling, XferFailRestore) {
+    const LogIgnoreGuard lig(expected_log);
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_WRITE>();
     testXfer<TestType::XFER_FAIL_RESTORE, NIXL_READ>();
 }
@@ -421,6 +452,29 @@ TEST_P(TestErrorHandling, XferPostThenFail) {
     testXfer<TestType::FAIL_AFTER_POST, NIXL_WRITE>();
     testXfer<TestType::FAIL_AFTER_POST, NIXL_READ>();
 }
+
+#ifdef HAVE_UCX_BACKEND
+TEST_P(TestErrorHandling, ErrorCallbackMarksEndpointFailedWithoutClosingIt) {
+    std::vector<std::string> devices;
+    const size_t num_workers = std::get<1>(GetParam());
+    const bool use_progress_thread = std::get<2>(GetParam()) > 0;
+    nixlUcxContext consumer_context(
+        devices, use_progress_thread, num_workers, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 1);
+    nixlUcxContext producer_context(
+        devices, use_progress_thread, num_workers, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 1);
+    nixlUcxWorker consumer(consumer_context, UCP_ERR_HANDLING_MODE_PEER);
+    nixlUcxWorker producer(producer_context, UCP_ERR_HANDLING_MODE_PEER);
+    std::string producer_address = producer.epAddr();
+    auto endpoint = consumer.connect(producer_address.data());
+    ASSERT_NE(endpoint, nullptr);
+
+    const ucp_ep_h native_endpoint = endpoint->getEp();
+    endpoint->err_cb(native_endpoint, UCS_ERR_CONNECTION_RESET);
+
+    EXPECT_EQ(endpoint->checkTxState(), NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(endpoint->getEp(), native_endpoint);
+}
+#endif
 
 INSTANTIATE_TEST_SUITE_P(ucx, TestErrorHandling, testing::Values(std::make_tuple("UCX", 1, 0)));
 INSTANTIATE_TEST_SUITE_P(ucx_threadpool,

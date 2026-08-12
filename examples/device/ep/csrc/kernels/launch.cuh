@@ -73,11 +73,36 @@ cfg.dynamicSmemBytes = smem_size;
 #endif
 #endif
 
+#define SWITCH_NVL_RANKS(case_macro)                           \
+    switch (num_nvl_ranks) {                                   \
+        case 2:                                                \
+            case_macro(2);                                     \
+        case 4:                                                \
+            case_macro(4);                                     \
+        case 8:                                                \
+            case_macro(8);                                     \
+        default:                                               \
+            EP_HOST_ASSERT(false and "Unsupported NVL ranks"); \
+    }                                                          \
+    while (false)
+
+#define SWITCH_RDMA_RANKS(case_macro) \
+    switch (num_ranks / NUM_MAX_NVL_PEERS) { \
+        case 2: case_macro(2); \
+        case 4: case_macro(4); \
+        case 8: case_macro(8); \
+        case 16: case_macro(16); \
+        case 18: case_macro(18); \
+        case 20: case_macro(20); \
+        default: EP_HOST_ASSERT(false and "Unsupported RDMA ranks"); \
+    } while (false)
+
 #define SWITCH_HIDDEN(case_macro) \
     switch (hidden) { \
         case 2048: case_macro(2048); \
         case 2560: case_macro(2560); \
         case 3072: case_macro(3072); /*for gpt-oss*/ \
+        case 3584: case_macro(3584); /* For kimi-k3 */ \
         case 4096: case_macro(4096); \
         case 5120: case_macro(5120); \
         case 6144: case_macro(6144); /* For qwen3 coder */ \

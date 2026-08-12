@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,17 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+obj_test_sources = ['obj.cpp']
+
+if cuobj_dep.found()
+    obj_test_sources += ['mock_dell_s3_client.cpp', 'obj_cuobj.cpp']
+endif
+
 obj_unit_test_dep = declare_dependency(
-    sources: [
-        'obj.cpp',
-    ],
+    sources: obj_test_sources,
     include_directories: [
-        nixl_inc_dirs,
+        nixl_inc_dirs, utils_inc_dirs,
         '../../../../src/plugins/obj',
     ],
     dependencies: [
-        aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true),
+        obj_backend_interface,
         dependency('asio', required: true),
     ],
-    link_with: obj_backend_lib,
 )

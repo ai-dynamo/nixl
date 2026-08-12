@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <stack>
@@ -27,6 +28,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <random>
+#include "absl/log/log_sink_registry.h"
 
 namespace gtest {
 
@@ -131,6 +133,75 @@ PortAllocator::next_tcp_port() {
 
     throw std::runtime_error("No port available in range: " + std::to_string(instance._min_port) +
                              " - " + std::to_string(instance._max_port));
+}
+
+namespace {
+    std::mutex log_problem_mutex;
+    size_t global_problem_count = 0;
+    std::list<log_ignore_entry_t> log_problem_ignore;
+
+} // namespace
+
+LogIgnoreGuard::LogIgnoreGuard(const std::regex &rx) {
+    const std::lock_guard lock(log_problem_mutex);
+    log_problem_ignore.emplace_front(rx, 0);
+    iter_ = log_problem_ignore.begin();
+}
+
+LogIgnoreGuard::LogIgnoreGuard(const std::string &rx)
+    : LogIgnoreGuard(std::regex(rx, std::regex_constants::extended)) {}
+
+LogIgnoreGuard::~LogIgnoreGuard() {
+    const std::lock_guard lock(log_problem_mutex);
+    log_problem_ignore.erase(iter_);
+}
+
+size_t
+LogIgnoreGuard::getIgnoredCount() const noexcept {
+    const std::lock_guard lock(log_problem_mutex);
+    return iter_->second;
+}
+
+LogProblemCounter::LogProblemCounter() {
+    absl::AddLogSink(static_cast<absl::LogSink *>(this));
+}
+
+LogProblemCounter::~LogProblemCounter() {
+    absl::RemoveLogSink(static_cast<absl::LogSink *>(this));
+}
+
+size_t
+LogProblemCounter::getProblemCount() noexcept {
+    const std::lock_guard lock(log_problem_mutex);
+    return global_problem_count;
+}
+
+void
+LogProblemCounter::Send(const absl::LogEntry &entry) {
+    if (entry.log_severity() == absl::LogSeverity::kInfo) {
+        return;
+    }
+
+    bool matched = false;
+    const std::string msg(entry.text_message());
+    {
+        const std::lock_guard lock(log_problem_mutex);
+        for (auto &[rx, count] : log_problem_ignore) {
+            if (std::regex_search(msg, rx)) {
+                matched = true;
+                ++count;
+            }
+        }
+
+        if (matched) {
+            return;
+        }
+
+        ++global_problem_count;
+    }
+
+    std::cerr << "ATTENTION: Unexpected NIXL warning or error detected!" << std::endl;
+    std::cerr << "ATTENTION: Message is '" << msg << '\'' << std::endl;
 }
 
 } // namespace gtest

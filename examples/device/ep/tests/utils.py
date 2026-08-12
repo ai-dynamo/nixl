@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # This file incorporates material from the DeepSeek project, licensed under the MIT License.
 # The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -47,15 +47,11 @@ def init_dist(local_rank: int, num_local_ranks: int):
     }
     if "device_id" in sig.parameters:
         # noinspection PyTypeChecker
-        params["device_id"] = torch.device(
-            "cuda:0"
-        )  # TODO: restore to local_rank once ucx fixes lane-selection
+        params["device_id"] = torch.device(f"cuda:{local_rank}")
     dist.init_process_group(**params)
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
-    torch.cuda.set_device(
-        0
-    )  # TODO: restore to local_rank once ucx fixes lane-selection
+    torch.cuda.set_device(local_rank)
 
     return (
         dist.get_rank(),
@@ -188,6 +184,44 @@ class suppress_stdout_stderr:
 
         self.outnull_file.close()
         self.errnull_file.close()
+
+
+def _has_cuda_profiler_events(key_averages) -> bool:
+    for event in key_averages:
+        if getattr(event, "is_legacy", False):
+            continue
+        for attr in (
+            "device_time_total",
+            "self_device_time_total",
+            "cuda_time_total",
+            "self_cuda_time_total",
+        ):
+            try:
+                if getattr(event, attr, 0) > 0:
+                    return True
+            except TypeError:
+                pass
+    return False
+
+
+def _run_cuda_profiler_sentinel():
+    sentinel = torch.empty((1024,), dtype=torch.float, device="cuda")
+    sentinel.fill_(1.0)
+
+
+def kineto_cuda_available(device_id: int) -> bool:
+    try:
+        torch.cuda.set_device(device_id)
+        with suppress_stdout_stderr():
+            with torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CUDA]
+            ) as prof:
+                _run_cuda_profiler_sentinel()
+                torch.cuda.synchronize()
+
+        return _has_cuda_profiler_events(prof.key_averages())
+    except RuntimeError:
+        return False
 
 
 def bench_kineto(

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,23 +16,46 @@
 obj_sources = [
     'obj_backend.cpp',
     'obj_backend.h',
+    'obj_engine_registry.cpp',
+    'obj_engine_registry.h',
     'obj_plugin.cpp',
-    'obj_s3_client.cpp',
-    'obj_s3_client.h',
+    '../../utils/object/engine_utils.h',
+    's3/client.cpp',
+    's3/client.h',
+    's3/engine_impl.cpp',
+    's3/engine_impl.h',
+    's3_crt/engine_impl.cpp',
+    's3_crt/engine_impl.h',
+    's3_crt/client.cpp',
+    's3_crt/client.h',
 ]
 
-aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
-aws_core = dependency('aws-cpp-sdk-core', required: false, static: false)
-if aws_s3.found() and aws_core.found()
-    # By default aws-cpp-sdk sets c++11 compile flag for the whole project
-    partial_aws_s3 = aws_s3.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
-    partial_aws_core = aws_core.partial_dependency(compile_args: false, includes: true, link_args: true, links: true)
-    plugin_deps += [partial_aws_s3, partial_aws_core]
-else
-    warning('AWS SDK dependencies not found, skipping OBJ plugin build')
+# Check if obj_utils library is available
+if not is_variable('obj_utils_interface')
+    warning('obj_utils library not available, skipping OBJ plugin build')
     subdir_done()
 endif
-plugin_deps += [dependency('asio', required: true)]
+
+plugin_deps = [nixl_infra, nixl_common_dep, obj_utils_interface, dependency('asio', required: true)]
+compile_defs = []
+compile_flags = []
+
+if cuobj_dep.found()
+    message('Found CUObjClient Library. Enabling S3 Accelerated engines')
+    obj_sources += [
+        's3_accel/client.cpp',
+        's3_accel/client.h',
+        's3_accel/engine_impl.cpp',
+        's3_accel/engine_impl.h',
+        's3_accel/dell/client.cpp',
+        's3_accel/dell/client.h',
+        's3_accel/dell/engine_impl.cpp',
+        's3_accel/dell/engine_impl.h',
+    ]
+    plugin_deps += [ cuobj_dep ]
+else
+    message('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
+endif
 
 if 'OBJ' in static_plugins
     obj_backend_lib = static_library(
@@ -48,7 +71,7 @@ else
         'OBJ',
         obj_sources,
         dependencies: plugin_deps,
-        cpp_args: compile_defs + ['-fPIC'],
+        cpp_args: compile_defs + compile_flags + ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
@@ -62,4 +85,8 @@ else
     endif
 endif
 
-obj_backend_interface = declare_dependency(link_with: obj_backend_lib)
+if 'OBJ' in static_plugins
+    obj_backend_interface = declare_dependency(link_whole: obj_backend_lib)
+else
+    obj_backend_interface = declare_dependency(link_with: obj_backend_lib)
+endif

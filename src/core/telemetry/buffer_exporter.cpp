@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +15,15 @@
  * limitations under the License.
  */
 #include "buffer_exporter.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 
 namespace {
-static std::filesystem::path
+[[nodiscard]] std::filesystem::path
 getFilePath(const nixlTelemetryExporterInitParams &init_params) {
     // if we reach here, we ensured env var is set
-    auto telemetry_dir = std::getenv(telemetryDirVar);
-    return std::filesystem::path(telemetry_dir) / init_params.agentName.data();
+    const auto dir = nixl::config::getValue<std::filesystem::path>(telemetryDirVar);
+    return dir / init_params.agentName.data();
 }
 } // namespace
 

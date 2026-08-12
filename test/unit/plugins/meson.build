@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -88,6 +88,22 @@ if enabled_plugins.get('HF3FS')
     endif
 endif
 
+infinia_lib_path = get_option('infinia_path') + '/lib'
+infinia_lib_file = 'red_client'
+infinia_lib_found = cc.find_library(infinia_lib_file, dirs: [infinia_lib_path], required: false)
+disable_infinia_backend = get_option('disable_infinia_backend')
+if enabled_plugins.get('INFINIA')
+    if (disable_infinia_backend or not infinia_lib_found.found()) and is_explicit_enable
+        if disable_infinia_backend
+            error('INFINIA plugin tests requested but Infinia backend is disabled')
+        else
+            error('INFINIA plugin tests requested but red_client library not found')
+        endif
+    elif not disable_infinia_backend and infinia_lib_found.found()
+        subdir('infinia')
+    endif
+endif
+
 gusli_lib_path = '/usr/lib/'
 gusli_lib_file = 'gusli_clnt'
 gusli_lib_found = cc.find_library(gusli_lib_file, dirs: [gusli_lib_path], required: false)
@@ -96,5 +112,18 @@ if enabled_plugins.get('GUSLI')
         error('GUSLI plugin tests requested but gusli_clnt library not found')
     elif gusli_lib_found.found()
         subdir('gusli')
+    endif
+endif
+
+# Check for AWS SDK dependencies for S3
+aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
+aws_s3_crt = dependency('aws-cpp-sdk-s3-crt', static: false, required: false)
+aws_core = dependency('aws-cpp-sdk-core', required: false, static: false)
+
+if enabled_plugins.get('OBJ')
+    if (not aws_s3.found() or not aws_s3_crt.found() or not aws_core.found()) and is_explicit_enable
+        error('OBJ plugin tests requested but AWS SDK dependencies not found')
+    elif aws_s3.found() and aws_s3_crt.found() and aws_core.found()
+        subdir('object')
     endif
 endif

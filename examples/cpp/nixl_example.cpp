@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -80,7 +80,8 @@ main(int argc, char **argv) {
     // Example: assuming two agents running on the same machine,
     // with separate memory regions in DRAM
 
-    nixlAgentConfig cfg(true);
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
     nixl_b_params_t init1, init2;
     nixl_mem_list_t mems1, mems2;
 
@@ -173,9 +174,6 @@ main(int argc, char **argv) {
     nixl_exit_on_failure(ret1, "Failed to get local MD", agent1);
     nixl_exit_on_failure(ret2, "Failed to get local MD", agent2);
 
-    std::cout << "Agent1's Metadata: " << meta1 << "\n";
-    std::cout << "Agent2's Metadata: " << meta2 << "\n";
-
     ret1 = A1.loadRemoteMD (meta2, ret_s1);
 
     nixl_exit_on_failure(ret1, "Failed to load remote MD", agent1);
@@ -200,8 +198,7 @@ main(int argc, char **argv) {
     std::cout << "Transfer request from " << addr1 << " to " << addr2 << "\n";
     nixlXferReqH *req_handle;
 
-    extra_params1.notifMsg = "notification";
-    extra_params1.hasNotif = true;
+    extra_params1.notif = "notification";
     ret1 = A1.createXferReq(NIXL_WRITE, req_src_descs, req_dst_descs, agent2, req_handle, &extra_params1);
     nixl_exit_on_failure(ret1, "Failed to create Xfer Req", agent1);
 

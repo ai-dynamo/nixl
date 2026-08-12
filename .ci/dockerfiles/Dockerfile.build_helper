@@ -1,0 +1,74 @@
+# NIXL Build Helper
+#
+# Jenkins CI helper container with SLURM client (scctl) and container tools.
+#
+# Usage:
+#   docker build -f .ci/dockerfiles/Dockerfile.build_helper -t nixl-build-helper .
+#
+
+ARG BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04
+
+FROM ${BASE_IMAGE}
+
+# Build arguments
+ARG ARCH=x86_64
+ARG _UID=148069
+ARG _GID=30
+ARG _LOGIN=svc-nixl
+ARG _GROUP=dip
+ARG _HOME=/home/$_LOGIN
+ARG WORKSPACE=/workspace/nixl
+
+# Labels for documentation
+LABEL maintainer="NVIDIA NIXL Team"
+LABEL description="NIXL development environment"
+LABEL version="1.0.0"
+
+# Use the internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
+RUN . /etc/os-release && \
+    printf '%s\n' \
+        'Types: deb' \
+        'URIs: https://urm.nvidia.com/artifactory/ubuntu-public' \
+        "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+        'Components: main restricted universe multiverse' \
+        'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
+    grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f && \
+    NOTLS='-o Acquire::https::urm.nvidia.com::Verify-Peer=false -o Acquire::https::urm.nvidia.com::Verify-Host=false' && \
+    apt-get $NOTLS update && apt-get $NOTLS install -y --no-install-recommends ca-certificates
+
+RUN apt update && \
+    apt install -y sudo podman curl jq openssh-client git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install scctl for slurm client management (x86_64 only, not available for ARM64)
+RUN if [ "$(uname -m)" = "x86_64" ]; then \
+        curl -s https://urm.nvidia.com/artifactory/sw-swx-lab-infra-generic/scctl/get-app.sh | bash -s -- --output-dir /usr/local/bin || echo "INFO: scctl installation failed, continuing..."; \
+    else \
+        echo "INFO: Skipping scctl installation on $(uname -m) architecture (not available)"; \
+    fi
+
+# Create group and user in one RUN command to reduce layers
+RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \
+    groupadd -g "${_GID}" "${_GROUP}"; \
+    fi && \
+    useradd -u "${_UID}" -g "${_GID}" -m -s /bin/bash "${_LOGIN}" && \
+    mkdir -p "${_HOME}" && \
+    chown -R "${_UID}":"${_GID}" "${_HOME}" && \
+    mkdir -p /etc/sudoers.d && \
+    echo "${_LOGIN} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${_LOGIN} && \
+    chmod 440 /etc/sudoers.d/${_LOGIN} && \
+    chown root:root /etc/sudoers.d/${_LOGIN}
+
+# Switch to non-root user
+USER ${_LOGIN}
+
+# Set environment variables
+ENV HOME=${_HOME}
+ENV USER=${_LOGIN}
+
+# Set working directory
+WORKDIR ${WORKSPACE}
+
+# Default command
+CMD ["/bin/bash"]

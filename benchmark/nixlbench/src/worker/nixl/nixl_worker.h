@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,25 +15,25 @@
  * limitations under the License.
  */
 
-#ifndef __NIXL_WORKER_H
-#define __NIXL_WORKER_H
+#ifndef NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H
+#define NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H
 
 #include "config.h"
 #include <iostream>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 #include <optional>
 #include <memory>
+#include <unistd.h>
+#include <functional>
 #include <nixl.h>
+#include <nixl_types.h>
 #include "utils/utils.h"
 #include "worker/worker.h"
-
-struct xferFileState {
-    int fd;
-    uint64_t file_size;
-    uint64_t offset;
-};
+#include <random>
+#include "worker/nixl/nixl_mem_region.h"
 
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
 
@@ -43,12 +43,15 @@ class xferBenchNixlWorker: public xferBenchWorker {
         nixlBackendH* backend_engine;
         nixl_mem_t seg_type;
         std::vector<xferFileState> remote_fds;
-        std::vector<std::vector<xferBenchIOV>> remote_iovs;
+        std::vector<NixlMemRegion> remote_regs_;
+        std::vector<NixlMemRegion> local_regs_;
         std::vector<GusliDeviceConfig> gusli_devices;
+        std::string remote_agent_name;
+        std::optional<xferBenchIOV> completion_counter_iov;
 
     public:
-        xferBenchNixlWorker(int *argc, char ***argv, std::vector<std::string> devices);
-        ~xferBenchNixlWorker();  // Custom destructor to clean up resources
+        explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
+        ~xferBenchNixlWorker() override;
 
         // Memory management
         std::vector<std::vector<xferBenchIOV>> allocateMemory(int num_threads) override;
@@ -73,22 +76,33 @@ class xferBenchNixlWorker: public xferBenchWorker {
     private:
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescDram(xferBenchIOV &basic_desc);
-#if HAVE_CUDA
-        std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescVram(xferBenchIOV &basic_desc);
-#endif
+        std::optional<xferBenchIOV>
+        initBasicDescVram(size_t buffer_size, int mem_dev_id);
         std::optional<xferBenchIOV>
         initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
-        void cleanupBasicDescFile(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
         initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
-        void
-        cleanupBasicDescObj(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
-        initBasicDescBlk(size_t buffer_size, int mem_dev_id);
+        initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
+        bool
+        ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
+        uint64_t
+        getFileOffset(size_t current_offset, size_t max_offset_in_blocks, size_t block_size);
         void
-        cleanupBasicDescBlk(xferBenchIOV &basic_desc);
+        releaseMemView(nixlMemViewH &mvh);
+        nixlMemViewH
+        prepareGPULocalView(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists);
+        nixlMemViewH
+        prepareGPURemoteView(const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists);
+        std::optional<xferBenchIOV>
+        initCompletionCounterVram();
+        bool
+        waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
+                                       uint64_t expected_value,
+                                       const char *phase,
+                                       const std::function<void()> &checkLiveness);
+
+        std::mt19937_64 default_rng_;
 };
 
-#endif // __NIXL_WORKER_H
+#endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H

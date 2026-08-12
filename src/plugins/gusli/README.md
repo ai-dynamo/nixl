@@ -15,7 +15,7 @@ GUSLI supports multiple connection modes:
 ## Usage Guide
 1. Build and install [Gusli](https://github.com/nvidia/gusli).
 2. Do it via: git clone git clone https://github.com/nvidia/gusli.git
-3. cd gusli; `make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0`
+3. cd gusli; `make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1`
 4. Ensure that libraries: `libgusli_clnt.so`, are installed under `/usr/lib/`.
 5. Ensure that headers are installed under `/usr/include/gusli_*.hpp`.
 6. Build NIXL. [!IMPORTANT] You must build gusli before building NIXL
@@ -23,7 +23,9 @@ GUSLI supports multiple connection modes:
 8. See example in nixl_gusli_test.cpp file. In short:
 
 ```cpp
-nixlAgent agent("your_client_name", nixlAgentConfig(true));
+nixlAgentConfig cfg;
+cfg.useProgThread = true;
+nixlAgent agent("your_client_name", cfg);
 nixl_b_params_t params = gen_gusli_plugin_params(agent);	// Insert list of your block devices here, grep this function to see how it is used
 nixlBackendH* gusli_ptr = nullptr;		// Backend gusli plugin (typically dont need to access this pointer)
 nixl_status_t status = agent.createBackend("GUSLI", params, n_backend);
@@ -173,6 +175,15 @@ Security flags can be specified per-device using `--gusli_device_security`:
            --gusli_device_security="sec=0x3,sec=0x7" \
            --num_initiator_dev=3 \
            --num_target_dev=3 \
+           --op_type=WRITE
+
+# Custom devices with per-device security and per-device byte offsets
+./nixlbench --backend=GUSLI \
+           --device_list="11:F:./mystore.bin,27:F:./store1.bin" \
+           --gusli_device_security="sec=0x3,sec=0x7" \
+           --gusli_device_byte_offsets="1048576,2097152" \
+           --num_initiator_dev=2 \
+           --num_target_dev=2 \
            --op_type=WRITE
 ```
 

@@ -13,21 +13,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ucx_utils_dep = declare_dependency(link_with: ucx_utils_lib, include_directories: utils_inc_dirs )
 asio_dep = [dependency('asio', required: true)]
+dl_dep = dependency('dl', required: true)
+
+ucx_backend_includes = include_directories('.')
+
+ucx_backend_sources = ['config.cpp',
+                       'mem_list.cpp',
+                       'rkey.cpp',
+                       'ucx_backend.cpp',
+                       'ucx_sgl.cpp',
+                       'ucx_enums.cpp',
+                       'ucx_plugin.cpp',
+                       'ucx_utils.cpp']
+
+ucx_backend_dependencies = [asio_dep,
+                            nixl_common_dep,
+                            nixl_infra,
+                            serdes_interface,
+                            dl_dep,
+                            thread_dep,
+                            ucx_dep]
+
+ucx_backend_include_directories = [nixl_inc_dirs,
+                                   utils_inc_dirs]
 
 if 'UCX' in static_plugins
     ucx_backend_lib = static_library('UCX',
-               'ucx_backend.cpp', 'ucx_backend.h', 'ucx_plugin.cpp',
-               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, ucx_dep, thread_dep, nixl_common_dep, asio_dep],
-               include_directories: nixl_inc_dirs,
+               ucx_backend_sources,
+               dependencies: ucx_backend_dependencies,
+               include_directories: ucx_backend_include_directories,
                install: false,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     ucx_backend_lib = shared_library('UCX',
-               'ucx_backend.cpp', 'ucx_backend.h', 'ucx_plugin.cpp',
-               dependencies: [nixl_infra, ucx_utils_dep, serdes_interface, ucx_dep, thread_dep, nixl_common_dep, asio_dep],
-               include_directories: nixl_inc_dirs,
+               ucx_backend_sources,
+               dependencies: ucx_backend_dependencies,
+               include_directories: ucx_backend_include_directories,
                install: true,
                cpp_args : ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
@@ -43,4 +65,4 @@ else
     endif
 endif
 
-ucx_backend_interface = declare_dependency(link_with: ucx_backend_lib)
+ucx_backend_interface = declare_dependency(link_with: ucx_backend_lib, include_directories: ucx_backend_includes)

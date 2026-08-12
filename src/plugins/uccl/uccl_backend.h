@@ -34,8 +34,6 @@
 
 #include "uccl_engine.h"
 
-#define FIFO_ITEM_SIZE 64
-
 class nixlUcclBackendMD;
 class nixlUcclReqH;
 
@@ -51,8 +49,7 @@ public:
 
     bool
     supportsLocal() const {
-        // TODO: Enable this when local transfers are supported
-        return false;
+        return true;
     }
 
     bool
@@ -127,26 +124,37 @@ private:
     void
     startListener();
 
+    nixl_status_t
+    prepareLocalConn() const;
+
     mutable std::mutex mem_mutex_; // mem_reg_info_ mutex
     mutable std::mutex conn_mutex_; // connected_agents_ mutex
     uccl_engine_t *engine_;
     std::string local_agent_name_;
+    mutable std::string pending_local_agent_; // deferred local connect
     std::unordered_map<uint64_t, nixlUcclBackendMD *> mem_reg_info_;
-    std::unordered_map<std::string, uint64_t> connected_agents_; // agent name -> conn_id
+    mutable std::unordered_map<std::string, uint64_t> connected_agents_; // agent name -> conn_id
     std::thread listener_thread_;
+    std::atomic<bool> stop_listener_;
 };
 
 // UCCL Backend Memory Descriptor
 class nixlUcclBackendMD : public nixlBackendMD {
 public:
-    nixlUcclBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {}
+    nixlUcclBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {
+        memset(fifo_item, 0, FIFO_SIZE);
+        memset(ipc_info, 0, IPC_INFO_SIZE);
+    }
 
     virtual ~nixlUcclBackendMD() {}
 
     void *addr;
     size_t length;
     int ref_cnt;
-    uint64_t mr_id; // UCCL memory region id
+    uccl_mr_t mr_id;
+    char fifo_item[FIFO_SIZE];
+    char ipc_info[IPC_INFO_SIZE];
+    bool has_ipc = false;
 };
 
 // UCCL Backend Request Handle
@@ -157,9 +165,11 @@ public:
     virtual ~nixlUcclReqH() {}
 
     uccl_conn_t *conn;
-    std::unordered_set<uint64_t> pending_transfer_ids;
+    uint64_t transfer_id;
     nixl_blob_t notif_msg;
-    std::vector<std::array<char, FIFO_ITEM_SIZE>> fifo_items;
+    std::vector<FifoItem> fifo_items;
+    std::vector<std::vector<char>> ipc_infos;
+    bool use_ipc = false;
 };
 
 #endif

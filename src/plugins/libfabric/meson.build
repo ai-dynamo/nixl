@@ -1,5 +1,5 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 Amazon.com, Inc. and affiliates.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@ libfabric_plugin_deps = [
     libfabric_dep,
     serdes_interface,
     libfabric_utils_dep,
+    dependency('dl', required: true)
 ]
 
 compile_flags = ['-DHAVE_LIBFABRIC']
@@ -39,6 +40,9 @@ if 'LIBFABRIC' in static_plugins
         'LIBFABRIC',
         'libfabric_backend.cpp',
         'libfabric_backend.h',
+        'libfabric_connection.cpp',
+        'libfabric_connection.h',
+        'libfabric_handshake.cpp',
         'libfabric_plugin.cpp',
         dependencies: libfabric_plugin_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
@@ -51,6 +55,9 @@ else
         'LIBFABRIC',
         'libfabric_backend.cpp',
         'libfabric_backend.h',
+        'libfabric_connection.cpp',
+        'libfabric_connection.h',
+        'libfabric_handshake.cpp',
         'libfabric_plugin.cpp',
         dependencies: libfabric_plugin_deps,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],

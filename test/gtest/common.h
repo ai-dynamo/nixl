@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,11 +21,18 @@
 #include <iomanip>
 #include <cassert>
 #include <cstdint>
+#include <list>
 #include <memory>
 #include <stack>
 #include <optional>
 #include <mutex>
+#include <regex>
+#include <utility>
+#include <vector>
+#include <string>
 #include "gtest/gtest.h"
+#include "absl/log/log_sink.h"
+#include "absl/log/log_entry.h"
 
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
@@ -117,6 +124,51 @@ private:
     uint16_t _port = MIN_PORT;
     uint16_t _min_port = MIN_PORT;
     uint16_t _max_port = MAX_PORT;
+};
+
+using log_ignore_entry_t = std::pair<std::regex, size_t>;
+
+class LogIgnoreGuard {
+public:
+    explicit LogIgnoreGuard(const std::regex &rx);
+    explicit LogIgnoreGuard(const std::string &rx);
+
+    ~LogIgnoreGuard();
+
+    LogIgnoreGuard(LogIgnoreGuard &&) = delete;
+    LogIgnoreGuard(const LogIgnoreGuard &) = delete;
+
+    void
+    operator=(LogIgnoreGuard &&) = delete;
+    void
+    operator=(const LogIgnoreGuard &) = delete;
+
+    [[nodiscard]] size_t
+    getIgnoredCount() const noexcept;
+
+private:
+    std::list<log_ignore_entry_t>::iterator iter_;
+};
+
+class LogProblemCounter : private absl::LogSink {
+public:
+    LogProblemCounter();
+    ~LogProblemCounter();
+
+    LogProblemCounter(LogProblemCounter &&) = delete;
+    LogProblemCounter(const LogProblemCounter &) = delete;
+
+    void
+    operator=(LogProblemCounter &&) = delete;
+    void
+    operator=(const LogProblemCounter &) = delete;
+
+    [[nodiscard]] static size_t
+    getProblemCount() noexcept;
+
+private:
+    void
+    Send(const absl::LogEntry &entry) override;
 };
 
 struct nixlTestParam {

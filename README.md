@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -10,28 +10,45 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GitHub Release](https://img.shields.io/github/v/release/ai-dynamo/nixl)](https://github.com/ai-dynamo/nixl/releases/latest)
 
+## Documentation and Resources
+
+* [NIXL overview](https://github.com/ai-dynamo/nixl/blob/main/docs/nixl.md) - Core concepts/architecture overview (`docs/nixl.md`)
+
+* [Python API](https://github.com/ai-dynamo/nixl/blob/main/docs/python_api.md) - Python API usage and examples (`docs/python_api.md`)
+
+* [Backend guide](https://github.com/ai-dynamo/nixl/blob/main/docs/BackendGuide.md) - Backend/plugin development guide (`docs/BackendGuide.md`)
+
+* [Telemetry](https://github.com/ai-dynamo/nixl/blob/main/docs/telemetry.md) - Observability and telemetry details (`docs/telemetry.md`)
+
+* [Doxygen guide](https://github.com/ai-dynamo/nixl/blob/main/docs/doxygen/nixl_doxygen.md) - API/class diagrams overview (`docs/doxygen/nixl_doxygen.md`)
+
+* [Doxygen images](https://github.com/ai-dynamo/nixl/tree/main/docs/doxygen) - Diagram assets (`docs/doxygen/`)
+
+* [NIXLBench docs](https://github.com/ai-dynamo/nixl/blob/main/benchmark/nixlbench/README.md) - Benchmark usage guide (`benchmark/nixlbench/README.md`)
+
+* [KVBench docs](https://github.com/ai-dynamo/nixl/tree/main/benchmark/kvbench/docs) - KVBench workflows and tutorials (`benchmark/kvbench/docs/`)
+
+## Supported Platforms
+NIXL is supported on a Linux environment only. It is tested on Ubuntu (22.04/24.04) and Fedora. macOS and Windows are not currently supported; use a Linux host or container/VM.
+
 ## Pre-build Distributions
 ### PyPI Wheel
 
 The nixl python API and libraries, including UCX, are available directly through PyPI.
+For example, if you have a GPU running on a Linux host, container, or VM, you can do the following install:
 
-It can be installed for CUDA 12 with:
+Install with:
 
-```
-pip install nixl[cu12]
-```
-
-For CUDA 13 with:
-
-```
-pip install nixl[cu13]
+```bash
+pip install nixl
 ```
 
-For backwards compatibility, `pip install nixl` installs automatically `nixl[cu12]`, continuing to work seamlessly for CUDA 12 users without requiring changes to downstream project dependencies.
+This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
-If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environment, `nixl-cu13` takes precedence.
+## Prerequisites for source build (Linux)
 
-## Prerequisites for source build
+NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
+
 ### Ubuntu:
 
 `$ sudo apt install build-essential cmake pkg-config`
@@ -46,14 +63,14 @@ If both `nixl-cu12` and `nixl-cu13` are installed at the same time in an environ
 
 ### UCX
 
-NIXL was tested with UCX version 1.20.x.
+NIXL was tested with UCX version 1.22.x.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
 $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
-$ git checkout v1.20.x
+$ git checkout v1.22.x
 $ ./autogen.sh
 $ ./contrib/configure-release-mt       \
     --enable-shared                    \
@@ -146,6 +163,29 @@ Common build options:
 - `static_plugins`: Comma-separated list of plugins to build statically
 - `enable_plugins`: Comma-separated list of plugins to build (e.g. `-Denable_plugins=UCX,POSIX`). Cannot be used with `disable_plugins`.
 - `disable_plugins`: Comma-separated list of plugins to exclude (e.g. `-Ddisable_plugins=GDS`). Cannot be used with `enable_plugins`.
+- `wheel_variant`: Override the Python wheel variant suffix (e.g. `-Dwheel_variant=rocm` yields `nixl_rocm`). Empty (default) = autodetect from the CUDA major version.
+
+#### Building for AMD ROCm
+
+NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support is available for nixlbench and UCX plugin unit tests. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+
+**Building with ROCm support:**
+```bash
+# For UCX unit tests with ROCm
+$ meson setup build -Drocm_path=/opt/rocm
+
+# Or specify a custom ROCm path
+$ meson setup build -Drocm_path=/custom/path/to/rocm
+```
+
+**Plugins on ROCm hosts (CUDA toolchain absent):**
+- `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
+- `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `MOONCAKE`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
+- `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — skip automatically because their CUDA / cuFile / DOCA dependencies are not found.
+
+**Known gaps (will be addressed in follow-up PRs):**
+- `LIBFABRIC` plugin disabled on ROCm pending header refactor.
+- No NVSHMEM-equivalent backend yet (rocSHMEM analog is a candidate for a future plugin).
 
 #### Environment Variables
 
@@ -173,37 +213,101 @@ NIXL provides Python bindings through pybind11. For detailed Python API document
 The preferred way to install the Python bindings is through pip from PyPI:
 
 ```bash
-pip install nixl[cu12]
+pip install nixl
 ```
 
-Or for CUDA 13 with:
+This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
-```bash
-pip install nixl[cu13]
+#### Installation from source
+
+Prerequisites:
+
+- `uv`: https://docs.astral.sh/uv/getting-started/installation/
+- `tomlkit`: https://pypi.org/project/tomlkit/
+- `PyTorch`: https://pytorch.org/get-started/locally/
+
+`uv` is always required *even if* you have another kind of Python virtual environment manager or if you are using a system-wide Python installation without using a virtual environment.
+
+Example with `uv` Python virtual environment:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+uv venv .venv --python 3.12
+source .venv/bin/activate
+uv pip install tomlkit
 ```
 
-To build and install the Python bindings from source, you have to build and install separately the platform-specific package and the `nixl` meta-package:
+Example with python-virtualenv:
 
-On CUDA 12:
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install tomlkit
+```
+
+Example with system-wide Python installation without using a virtual environment:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:${PATH}"
+
+pip install tomlkit
+```
+
+Then install PyTorch following the instructions on the PyTorch website: https://pytorch.org/get-started/locally/
+
+After installing the prerequisites, you can build and install the NIXL binaries and the Python bindings from source. You have to:
+
+1. Build NIXL binaries and install them
+2. Build and install the CUDA platform-specific package (`nixl-cu12` or `nixl-cu13`)
+3. Build and install the `nixl` meta-package
+
+**For CUDA 12:**
 
 ```
 pip install .
 meson setup build
-ninja -C build
+ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
 
-On CUDA 13:
+**For CUDA 13:**
 
 ```
 pip install .
 ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
 meson setup build
-ninja -C build
+ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
 ```
 
-For Python examples, see [examples/python/](examples/python/).
+To check if the installation is successful, you can run the following command:
+
+```
+python3 -c "import nixl; agent = nixl.nixl_agent('agent1')"
+```
+
+which should print:
+
+```
+2026-01-08 13:36:27 NIXL INFO    _api.py:363 Backend UCX was instantiated
+2026-01-08 13:36:27 NIXL INFO    _api.py:253 Initialized NIXL agent: agent1
+```
+
+You can also run a complete Python example to test the installation:
+
+```
+python3 examples/python/expanded_two_peers.py --mode=target --use_cuda=true --ip=127.0.0.1 --port=4242 &
+sleep 5
+python3 examples/python/expanded_two_peers.py --mode=initiator --use_cuda=true --ip=127.0.0.1 --port=4242
+```
+
+For more Python examples, see [examples/python/](examples/python/).
 
 ### Rust Bindings
 #### Build
@@ -253,7 +357,7 @@ To see all the options supported by the container use:
 $ ./contrib/build-container.sh -h
 ```
 
-The container also includes a prebuilt python wheel in /workspace/dist if required for installing/distributing. Also, the wheel can be built with a separate script (see below).
+The container has the NIXL python bindings preinstalled (built from source against the container's own PyTorch). For a redistributable python wheel, use the wheel build script below or install the published `nixl` package.
 
 ### Building the python wheel
 The contrib folder also includes a script to build the python wheel with the UCX dependencies. Note, that UCX and other NIXL dependencies are required to be installed.
@@ -302,12 +406,18 @@ meson setup build && cd build && ninja
 ./nixlbench --etcd-endpoints http://localhost:2379 --backend UCX --initiator_seg_type VRAM
 ```
 
-## Examples
+## Code Examples
 
 * [C++ examples](https://github.com/ai-dynamo/nixl/tree/main/examples/cpp)
 
 * [Python examples](https://github.com/ai-dynamo/nixl/tree/main/examples/python)
 
+## Contributing
+
+For contribution guidelines, see [CONTRIBUTING.md](https://github.com/ai-dynamo/nixl/blob/main/CONTRIBUTING.md) (`CONTRIBUTING.md`).
+
 ## Third-Party Components
 
 This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use.
+
+NIXL Python wheels bundle NVIDIA modules (`libuct_ib_mlx5_ext.so`, `libuct_ib_mlx5_gda.so`, `libuct_ib_mlx5_gdp.so`) licensed under the [NVIDIA Proprietary License](licenses/NVIDIA-proprietary-LICENSE.txt) (`LicenseRef-NvidiaProprietary`).

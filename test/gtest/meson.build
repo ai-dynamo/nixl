@@ -1,4 +1,5 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,8 +15,6 @@
 # limitations under the License.
 
 gtest_dep = dependency('gtest', version : '>=1.11.0', required : false)
-absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
-absl_time_dep = abseil_proj.get_variable('absl_time_dep')
 
 if not gtest_dep.found()
     message('GTest not found, skipping gtest build')
@@ -31,6 +30,25 @@ endif
 
 gtest_inc_dirs = include_directories('.')
 
+# Sanitizer runtime configuration. Built once and shared by every instrumented
+# test (tagged with the 'sanitizer' suite) so `meson test --suite sanitizer`
+# runs them with halt-on-error semantics and the third-party suppression lists.
+# When -Dsanitizer=none the environment stays empty, so tagging tests with the
+# suite is harmless for normal builds.
+sanitizer_opts = get_option('sanitizer').split(',')
+sanitizer_env = environment()
+sanitizer_supp_dir = meson.current_source_dir() / 'sanitizer'
+if sanitizer_opts.contains('address')
+    sanitizer_env.set('ASAN_OPTIONS', 'halt_on_error=1:abort_on_error=1:detect_leaks=1')
+    sanitizer_env.set('LSAN_OPTIONS', 'suppressions=' + sanitizer_supp_dir / 'lsan.supp')
+endif
+if sanitizer_opts.contains('undefined')
+    sanitizer_env.set('UBSAN_OPTIONS', 'halt_on_error=1:print_stacktrace=1:suppressions=' + sanitizer_supp_dir / 'ubsan.supp')
+endif
+if sanitizer_opts.contains('thread')
+    sanitizer_env.set('TSAN_OPTIONS', 'halt_on_error=1:suppressions=' + sanitizer_supp_dir / 'tsan.supp')
+endif
+
 subdir('mocks')
 subdir('unit')
 subdir('plugins')
@@ -41,13 +59,35 @@ endif
 
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
 
+# ROCm detection (mutually exclusive with CUDA; default off)
+rocm_path = get_option('rocm_path')
+if rocm_path != ''
+    if not fs.exists(rocm_path)
+        error('rocm_path set but ROCm install root not found at ' + rocm_path +
+              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
+    endif
+    rocm_lib_path = rocm_path + '/lib'
+    rocm_inc_path = rocm_path + '/include'
+    rocm_dep = declare_dependency(
+        link_args : ['-L' + rocm_lib_path, '-lamdhip64', '-lhiprtc'],
+        include_directories : include_directories(rocm_inc_path))
+else
+    rocm_dep = disabler()
+endif
+
 cpp_flags = []
 
-if cuda_dep.found()
-    cpp_flags += '-DHAVE_CUDA'
-    cuda_dependencies = [cuda_dep]
-else
-    cuda_dependencies = []
+gpu_dependencies = []
+if rocm_dep.found()
+    gpu_dependencies = [rocm_dep]
+    cpp_flags += ['-DHAVE_GPU', '-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
+elif cuda_dep.found()
+    gpu_dependencies = [cuda_dep]
+    cpp_flags += ['-DHAVE_GPU', '-DHAVE_CUDA']
+endif
+
+if libfabric_dep.found()
+    cpp_flags += '-DHAVE_LIBFABRIC'
 endif
 
 if get_option('test_all_plugins')
@@ -66,7 +106,13 @@ gtest_sources = [
     'metadata_exchange.cpp',
     'common.cpp',
     'query_mem.cpp',
-    'telemetry_test.cpp'
+    'telemetry_test.cpp',
+    'telemetry_prometheus_test.cpp',
+    'telemetry_mp_store_test.cpp',
+    'telemetry_histogram_test.cpp',
+    'telemetry_benchmark.cpp',
+    'nixl_duration_test.cpp',
+    'configuration.cpp'
     ]
 
 if ucx_gpu_device_api_available
@@ -78,16 +124,79 @@ else
     device_api_dep = []
 endif
 
+if ucx_dep.found() and is_variable('ucx_backend_interface')
+    gtest_sources += 'hw_warning_test.cpp'
+    cpp_flags += '-DHAVE_UCX_BACKEND'
+    ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
+else
+    ucx_hw_warning_dep = []
+endif
+
+# prometheus_mp collector/exporter unit tests ride the main gtest binary, but
+# only when prometheus-cpp (and thus those libraries) is available.
+if is_variable('nixl_telemetry_mp_collector_dep')
+    gtest_sources += 'telemetry_mp_collector_test.cpp'
+    telemetry_mp_collector_dep = [nixl_telemetry_mp_collector_dep]
+else
+    telemetry_mp_collector_dep = []
+endif
+
+if is_variable('nixl_telemetry_mp_exporter_dep')
+    gtest_sources += 'telemetry_mp_exporter_test.cpp'
+    gtest_sources += 'telemetry_mp_e2e_test.cpp'
+    telemetry_mp_exporter_dep = [nixl_telemetry_mp_exporter_dep]
+else
+    telemetry_mp_exporter_dep = []
+endif
+
 test_exe = executable('gtest',
     sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../doca-telemetry'), include_directories('../../src/plugins/telemetry/common')],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, cuda_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, file_utils_interface],
+    dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface, nixl_telemetry_mp_store_dep, telemetry_mp_collector_dep, telemetry_mp_exporter_dep],
     link_with: [nixl_build_lib],
     install : true
 )
 
-test('gtest', test_exe, args: [plugin_dirs_arg])
+# MetadataExchangeTestFixture rapidly creates and tears down comm-thread agents,
+# which trips the GCC 13.3 libsanitizer thread-registry crash (a flaky SIGSEGV in
+# the ASan/TSan runtime on thread create/destroy -- a toolchain bug, not a NIXL
+# issue). Exclude it from the sanitizer run until the CI toolchain is bumped; it
+# still runs in the normal (non-sanitizer) CI.
+gtest_args = [plugin_dirs_arg]
+if get_option('sanitizer') != 'none'
+    gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*'
+endif
+test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
+
+# Telemetry hot-path microbenchmark (NVBug 5876558). The cases are DISABLED_ so
+# they never run in the normal 'gtest' suite; this dedicated entry opts them in.
+# Run on demand: `ctest --test-dir build -R telemetry_benchmark -V`. Excluded
+# from the sanitizer suite (timing under ASan/TSan is meaningless).
+if get_option('sanitizer') == 'none'
+    test('telemetry_benchmark',
+         test_exe,
+         args: [plugin_dirs_arg,
+                '--gtest_also_run_disabled_tests',
+                '--gtest_filter=telemetryBenchmark.*'],
+         is_parallel: false,
+         timeout: 300)
+endif
+
+# Best-effort NVTX capture: when nsys is available, profile the tracing tests
+# and write a .nsys-rep that CI can publish as an artifact. Skips (exit 77) when
+# profiling is denied, so it never fails CI on its own.
+if nixl_trace_nvtx_enabled
+    nsys_prog = find_program('nsys', required: false)
+    if nsys_prog.found()
+        nsys_wrapper = find_program(meson.current_source_dir() / 'run_nsys_tracing.sh')
+        test('tracing_nsys',
+             nsys_wrapper,
+             args: [nsys_prog.full_path(), test_exe, meson.current_build_dir(), plugin_dirs_arg],
+             is_parallel: false,
+             timeout: 600)
+    endif
+endif
 
 if get_option('b_sanitize').split(',').contains('thread')
     test_env = environment()
@@ -98,7 +207,7 @@ if get_option('b_sanitize').split(',').contains('thread')
         sources : ['main.cpp', 'mocks/gmock_engine.cpp', 'multi_threading.cpp'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         cpp_args : cpp_flags,
-        dependencies : [nixl_dep, nixl_infra, cuda_dependencies, gtest_dep, gmock_dep],
+        dependencies : [nixl_dep, nixl_infra, gpu_dependencies, gtest_dep, gmock_dep],
         link_with: [nixl_build_lib],
     )
 

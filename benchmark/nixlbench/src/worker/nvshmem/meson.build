@@ -22,7 +22,7 @@ if nvshmem_available
 nvshmem_worker_lib = static_library('nvshmemWorker',
   nvshmem_worker_sources,
   include_directories: inc_dir,
-  dependencies: [cuda_dep, nvshmem_lib, cxxopts_dep, tomlplusplus_dep],
+  dependencies: [cuda_dep, nvshmem_lib, tomlplusplus_dep],
   install: true,
 )
 endif

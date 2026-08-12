@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,22 +17,44 @@ if enabled_plugins.get('UCCL')
     subdir('uccl')
 endif
 
+if enabled_plugins.get('AZURE_BLOB')
+    subdir('azure_blob')
+endif
+
 if not enabled_plugins.get('OBJ')
     message('OBJ plugin not enabled, skipping plugins_gtest build')
     subdir_done()
 endif
 
 aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
+aws_s3_crt = dependency('aws-cpp-sdk-s3-crt', static: false, required: false)
 if not aws_s3.found()
     message('aws-cpp-sdk-s3 not found, skipping plugins_gtest build')
     subdir_done()
 endif
+if not aws_s3_crt.found()
+    message('aws-cpp-sdk-s3-crt not found, skipping plugins_gtest build')
+    subdir_done()
+endif
+
+plugins_gtest_cpp_flags = []
+plugins_gtest_cuda_deps = []
+if cuda_dep.found()
+    plugins_gtest_cpp_flags += '-DHAVE_CUDA'
+    plugins_gtest_cuda_deps = [cuda_dep]
+endif
+
+plugins_gtest_sources = ['../main.cpp', '../common.cpp', 'obj_plugin.cpp']
+if cuobj_dep.found()
+    plugins_gtest_sources += 'obj_cuobj_plugin.cpp'
+endif
 
 plugins_test_exe = executable('plugins_gtest',
-    sources : ['../main.cpp', '../common.cpp', 'obj_plugin.cpp'],
+    sources : plugins_gtest_sources,
     include_directories: [nixl_inc_dirs, utils_inc_dirs, plugins_inc_dirs, '.'],
+    cpp_args : plugins_gtest_cpp_flags,
     dependencies : [nixl_dep, gtest_dep, absl_strings_dep, absl_time_dep, plugin_deps,
-                    obj_backend_interface],
+                    obj_backend_interface] + plugins_gtest_cuda_deps,
     link_with: [nixl_build_lib],
     install : true
 )
