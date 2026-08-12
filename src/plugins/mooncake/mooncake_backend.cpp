@@ -285,7 +285,6 @@ struct nixlMooncakeBackendMD : public nixlBackendMD {
     nixlMooncakeBackendMD(bool isPrivate) : nixlBackendMD(isPrivate) {}
 
     virtual ~nixlMooncakeBackendMD() {}
-
     void *addr;
     size_t length;
     int ref_cnt;
@@ -302,7 +301,6 @@ nixlMooncakeEngine::registerMem(const nixlBlobDesc &mem,
         out = priv;
         return NIXL_SUCCESS;
     }
-
     int err;
 #ifdef HAVE_MOONCAKE_TENT
     if (mode_ == Mode::Tent) {
@@ -329,7 +327,6 @@ nixlMooncakeEngine::registerMem(const nixlBlobDesc &mem,
         err = registerLocalMemory(engine_, (void *)mem.addr, mem.len, "*", 1);
     }
     if (err) return NIXL_ERR_BACKEND;
-
     auto priv = new nixlMooncakeBackendMD(true);
     priv->addr = (void *)mem.addr;
     priv->length = mem.len;
@@ -448,7 +445,6 @@ nixlMooncakeEngine::postXferClassic(const nixl_xfer_op_t &operation,
         priv->batch_id = batch_id;
         priv->request_count = 0;
     }
-
     size_t request_count = local.descCount();
     transfer_request_t *request = new transfer_request_t[request_count];
     for (size_t index = 0; index < request_count; ++index) {
@@ -496,7 +492,6 @@ nixlMooncakeEngine::postXferTent(const nixl_xfer_op_t &operation,
         priv->batch_id = batch_id;
         priv->request_count = 0;
     }
-
     size_t request_count = local.descCount();
     // Value-initialization zeroes every field, which the TENT C API requires:
     // transport_hint relies on UNSPEC == 0 (follow engine policy) and priority

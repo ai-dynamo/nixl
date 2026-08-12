@@ -20,17 +20,14 @@ mooncake_deps = [mooncake_lib]
 compile_flags = []
 link_flags = []
 
-# The optional "tent" mode drives Mooncake's next-generation engine through its
-# native C API. It is only available when Mooncake was built with
-# -DUSE_TENT=ON, which ships tent/transfer_engine.h and libtent_shared.so.
-# Without them the backend still builds and offers the classic mode only.
+# The optional "tent" mode needs Mooncake built with -DUSE_TENT=ON, which
+# ships tent/transfer_engine.h and libtent_shared.so; without them the
+# backend still builds and offers the classic mode only.
 mooncake_tent_lib = cpp.find_library('tent_shared', required: false)
 if mooncake_tent_lib.found() and cpp.has_header('tent/transfer_engine.h')
     compile_flags += ['-DHAVE_MOONCAKE_TENT']
-    # Keep the classic library in DT_NEEDED as well: libtent_shared.so of
-    # current Mooncake releases does not declare its own dependency on
-    # libmooncake_common.so, and --no-as-needed stops the linker from dropping
-    # the library that provides those symbols.
+    # --no-as-needed keeps libmooncake_common.so in DT_NEEDED: current
+    # libtent_shared.so does not declare that dependency itself.
     mooncake_deps += mooncake_tent_lib
     link_flags += ['-Wl,--no-as-needed']
     message('Mooncake backend: TENT mode enabled')
