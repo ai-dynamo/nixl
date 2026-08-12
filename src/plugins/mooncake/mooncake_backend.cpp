@@ -303,7 +303,9 @@ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     // reach the engine: getTransferStatus() and freeBatchID() cast the batch
     // id to a BatchDesc pointer and dereference it, so passing INVALID_BATCH
     // (UINT64_MAX) crashes. Report the already-reached terminal state instead.
-    if (priv->batch_id == INVALID_BATCH) return NIXL_SUCCESS;
+    if (priv->batch_id == INVALID_BATCH) {
+        return NIXL_SUCCESS;
+    }
     bool has_failed = false;
     for (size_t index = 0; index < priv->request_count; ++index) {
         transfer_status_t status;
