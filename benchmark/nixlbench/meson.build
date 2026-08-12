@@ -146,7 +146,7 @@ gflags_dep = dependency('gflags', required: true)
 # continue to use gflags unchanged when CLI11 is unavailable or raw is disabled.
 cli11_dep = disabler()
 if get_option('build_raw_cli')
-    cli11_dep = dependency('CLI11', required: false, fallback: ['cli11', 'CLI11_dep'])
+    cli11_dep = dependency('CLI11', required: false, fallback: ['cli11'])
     if not cli11_dep.found()
         warning('CLI11 not found. The raw command path will not be built.')
     endif
