@@ -755,8 +755,7 @@ nixlUcclEngine::getNotifs(notif_list_t &notif_list) {
             NIXL_ERROR << "Failed to deserialize notification message";
             continue;
         }
-        notif_list.push_back(
-            std::make_pair(notify_msg.name, ser_des.getStr("msg")));
+        notif_list.push_back(std::make_pair(notify_msg.name, ser_des.getStr("msg")));
     }
 
     return NIXL_SUCCESS;
