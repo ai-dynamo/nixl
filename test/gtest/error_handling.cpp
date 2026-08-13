@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <chrono>
 #include <gtest/gtest.h>
 #include <nixl_types.h>
 #include "common.h"
@@ -25,6 +26,9 @@
 #endif
 
 namespace gtest {
+
+constexpr std::chrono::seconds wait_timeout{100};
+
 namespace nixl {
     constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
     constexpr const char* ucx_err_handling_mode_peer = "peer";
@@ -67,8 +71,7 @@ namespace nixl {
     }
 } // namespace nixl
 
-// Tuple fields are: backend_name, num_workers, num_threads
-class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, size_t, size_t>> {
+class TestErrorHandling : public nixl_test_t {
     class Agent {
         struct MemDesc {
             MemDesc() : m_dlist(DRAM_SEG), m_desc() {}
@@ -97,6 +100,7 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
         void
         init(const std::string &name,
              const std::string &backend_name,
+             bool use_prog_thread,
              size_t num_workers,
              size_t num_threads);
 
@@ -112,13 +116,16 @@ class TestErrorHandling : public testing::TestWithParam<std::tuple<std::string, 
         nixl_status_t postXferReq(nixlXferReqH* req_handle) const;
         nixl_status_t
         releaseXferReq(nixlXferReqH *req_handle) const;
-        nixl_status_t waitForCompletion(nixlXferReqH* req_handle);
-        nixl_status_t waitForNotif(const std::string& expectedNotif);
+        nixl_status_t
+        waitForCompletion(nixlXferReqH *req_handle, Agent &peer, nixl_notifs_t &peer_notifs);
+        nixl_status_t
+        waitForNotif(const std::string &expectedNotif, nixl_notifs_t &notifs);
         void fillData();
         bool dataCmp(const Agent& other) const;
 
     private:
         std::string m_name;
+        bool m_progThread = false;
         nixlBackendH*              m_backend = nullptr;
         std::unique_ptr<nixlAgent> m_priv    = nullptr;
         std::string                m_MetaRemote;
@@ -136,6 +143,8 @@ protected:
 
     TestErrorHandling();
     template<TestType test_type, enum nixl_xfer_op_t op> void testXfer();
+    void
+    testNotifAfterFail();
 
 private:
     template<TestType test_type>
@@ -158,6 +167,7 @@ private:
     Agent        m_Initiator;
     Agent        m_Target;
     std::string  m_backend_name;
+    const bool progThread_;
     size_t numWorkers_;
     size_t numThreads_;
 };
@@ -165,10 +175,14 @@ private:
 void
 TestErrorHandling::Agent::init(const std::string &name,
                                const std::string &backend_name,
+                               bool use_prog_thread,
                                size_t num_workers,
                                size_t num_threads) {
     nixlAgentConfig cfg;
-    cfg.useProgThread = true;
+    m_progThread = use_prog_thread;
+    cfg.useProgThread = use_prog_thread;
+    // TODO: remove once access to dedicated workers is properly serialized.
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     m_priv = std::make_unique<nixlAgent>(name, cfg);
     // At the moment, only UCX backend is tested for error handling support.
     m_backend = nixl::createUcxBackend(*m_priv, backend_name, num_workers, num_threads);
@@ -228,13 +242,23 @@ TestErrorHandling::Agent::releaseXferReq(nixlXferReqH *req_handle) const {
 }
 
 nixl_status_t
-TestErrorHandling::Agent::waitForCompletion(nixlXferReqH *req_handle) {
+TestErrorHandling::Agent::waitForCompletion(nixlXferReqH *req_handle,
+                                            Agent &peer,
+                                            nixl_notifs_t &peer_notifs) {
+    const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
     nixl_status_t status;
 
     do {
         status = m_priv->getXferStatus(req_handle);
         EXPECT_NE(NIXL_ERR_NOT_POSTED, status);
-    } while (status == NIXL_IN_PROG);
+        if (!peer.m_progThread && peer.m_priv != nullptr) {
+            const nixl_status_t peer_status = peer.m_priv->getNotifs(peer_notifs);
+            EXPECT_EQ(NIXL_SUCCESS, peer_status);
+            if (peer_status != NIXL_SUCCESS) {
+                break;
+            }
+        }
+    } while ((status == NIXL_IN_PROG) && (std::chrono::steady_clock::now() < deadline));
 
     m_priv->releaseXferReq(req_handle);
 
@@ -242,16 +266,21 @@ TestErrorHandling::Agent::waitForCompletion(nixlXferReqH *req_handle) {
 }
 
 nixl_status_t
-TestErrorHandling::Agent::waitForNotif(const std::string& expectedNotif) {
-    nixl_notifs_t notif_map;
+TestErrorHandling::Agent::waitForNotif(const std::string &expectedNotif, nixl_notifs_t &notifs) {
+    const auto deadline = std::chrono::steady_clock::now() + wait_timeout;
 
-    do {
-        EXPECT_EQ(NIXL_SUCCESS, m_priv->getNotifs(notif_map));
-    } while (notif_map.empty());
+    while (notifs[m_MetaRemote].empty()) {
+        const nixl_status_t status = m_priv->getNotifs(notifs);
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return NIXL_IN_PROG;
+        }
+    }
 
-    std::vector<std::string> notifs = notif_map[m_MetaRemote];
-    EXPECT_EQ(1u, notifs.size());
-    EXPECT_EQ(expectedNotif, notifs.front());
+    EXPECT_EQ(1u, notifs[m_MetaRemote].size());
+    EXPECT_EQ(expectedNotif, notifs[m_MetaRemote].front());
     return NIXL_SUCCESS;
 }
 
@@ -264,9 +293,10 @@ bool TestErrorHandling::Agent::dataCmp(const TestErrorHandling::Agent& other) co
 }
 
 TestErrorHandling::TestErrorHandling()
-    : m_backend_name(std::get<0>(GetParam())),
-      numWorkers_(std::get<1>(GetParam())),
-      numThreads_(std::get<2>(GetParam())) {
+    : m_backend_name(GetParam().backendName),
+      progThread_(GetParam().progressThreadEnabled),
+      numWorkers_(GetParam().numWorkers),
+      numThreads_(GetParam().numThreads) {
     m_env.addVar("UCX_RC_TIMEOUT", "100us");
     m_env.addVar("UCX_RC_RETRY_COUNT", "4");
     m_env.addVar("UCX_UD_TIMEOUT", "3s");
@@ -277,13 +307,14 @@ template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
 void TestErrorHandling::testXfer() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    m_Initiator.init(initiator_name, m_backend_name, numWorkers_, numThreads_);
-    m_Target.init(target_name, m_backend_name, numWorkers_, numThreads_);
+    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
 
     exchangeMetaData();
 
     for (size_t i = 0; i < numIter<test_type>(); ++i) {
         nixl_status_t status;
+        nixl_notifs_t target_notifs;
         auto result = postXfer<test_type>(op, i);
         if (std::holds_alternative<nixl_status_t>(result)) {
             // Transfer completed immediately
@@ -291,7 +322,7 @@ void TestErrorHandling::testXfer() {
         } else {
             // Transfer was posted, wait for completion
             nixlXferReqH *req_handle = std::get<nixlXferReqH *>(result);
-            status = m_Initiator.waitForCompletion(req_handle);
+            status = m_Initiator.waitForCompletion(req_handle, m_Target, target_notifs);
         }
 
         if (isFailure<test_type>(i)) {
@@ -302,12 +333,12 @@ void TestErrorHandling::testXfer() {
             }
 
             if (test_type == TestType::XFER_FAIL_RESTORE) {
-                m_Target.init(target_name, m_backend_name, numWorkers_, numThreads_);
+                m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
                 exchangeMetaData();
             }
         } else {
             EXPECT_EQ(NIXL_SUCCESS, status);
-            EXPECT_EQ(NIXL_SUCCESS, m_Target.waitForNotif("notification"));
+            EXPECT_EQ(NIXL_SUCCESS, m_Target.waitForNotif("notification", target_notifs));
             EXPECT_TRUE(m_Target.dataCmp(m_Initiator));
 
             // Update the data for the next iteration
@@ -456,8 +487,8 @@ TEST_P(TestErrorHandling, XferPostThenFail) {
 #ifdef HAVE_UCX_BACKEND
 TEST_P(TestErrorHandling, ErrorCallbackMarksEndpointFailedWithoutClosingIt) {
     std::vector<std::string> devices;
-    const size_t num_workers = std::get<1>(GetParam());
-    const bool use_progress_thread = std::get<2>(GetParam()) > 0;
+    const size_t num_workers = GetParam().numWorkers;
+    const bool use_progress_thread = GetParam().progressThreadEnabled;
     nixlUcxContext consumer_context(
         devices, use_progress_thread, num_workers, nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT, 1);
     nixlUcxContext producer_context(
@@ -476,9 +507,9 @@ TEST_P(TestErrorHandling, ErrorCallbackMarksEndpointFailedWithoutClosingIt) {
 }
 #endif
 
-INSTANTIATE_TEST_SUITE_P(ucx, TestErrorHandling, testing::Values(std::make_tuple("UCX", 1, 0)));
-INSTANTIATE_TEST_SUITE_P(ucx_threadpool,
-                         TestErrorHandling,
-                         testing::Values(std::make_tuple("UCX", 2, 1)));
+NIXL_INSTANTIATE_TEST(ucx, TestErrorHandling, "UCX", true, 1, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_no_pt, TestErrorHandling, "UCX", false, 1, 0, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool, TestErrorHandling, "UCX", true, 2, 1, "");
+NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestErrorHandling, "UCX", false, 2, 1, "");
 
 } // namespace gtest
