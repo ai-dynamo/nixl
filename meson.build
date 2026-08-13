@@ -293,8 +293,11 @@ if cuda_dep.found()
     # Build all CUDA targets with C++20 to match the core's standard and ABI.
     add_project_arguments('-std=c++20', language: 'cuda')
 
-    if get_option('nvcc_device_debug')
-        add_project_arguments('-G', language: 'cuda')
+    # Debug builds get device debug (-G) from Meson's CUDA debug args; release
+    # builds define NDEBUG (matching the C/C++ flags) so device-debug-only code
+    # (e.g. the cg::this_grid().sync() __syncthreads() workaround) compiles out.
+    if get_option('buildtype') == 'release'
+        add_project_arguments('-DNDEBUG', language: 'cuda')
     endif
 
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')

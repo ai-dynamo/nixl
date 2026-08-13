@@ -290,7 +290,9 @@ DISPATCH_RECV:
 
     // For send-and-recv kernels, we need a grid sync for making `packed_recv_count` visible
     if (phases & EP_SEND_PHASE) {
-        NIXL_EP_GRID_SYNC_PRESYNC(); // Workaround for cg::this_grid().sync() hang under nvcc -G ( when -G is not used, this line is equivalent to NOP)
+#ifndef NDEBUG
+        __syncthreads();
+#endif
         cg::this_grid().sync();
     }
     // Receiving and packing
@@ -871,7 +873,9 @@ COMBINE_RECV:
             }
         }
     }
-    NIXL_EP_GRID_SYNC_PRESYNC(); // Workaround for cg::this_grid().sync() hang under nvcc -G ( when -G is not used, this line is equivalent to NOP)
+#ifndef NDEBUG
+    __syncthreads();
+#endif
     cg::this_grid().sync();
 
     // Reassign warp groups

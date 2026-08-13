@@ -128,21 +128,9 @@ nixl_ep_rpath += ':' + nixl_lib_dir
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'core')
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'plugins')
 
-# By default nixl ep is not built with -G due to register usage limits;
-# build the EP target as release even in a global debug build unless
-# nvcc_device_debug is explicitly requested. Override buildtype, optimization,
-# and debug so a global buildtype=debug cannot leak --device-debug (-G) onto
-# the EP nvcc line.
+# nixl_ep follows the global buildtype: a debug build gets device debug (-G)
+# and host -g from Meson's CUDA debug args, while a release build gets neither.
 nixl_ep_override_options = []
-if get_option('nvcc_device_debug')
-    nixl_ep_override_options = ['optimization=3']
-    nixl_ep_cuda_args += ['-G', '-DNIXL_EP_NVCC_DEVICE_DEBUG']
-    nixl_ep_cpp_args += ['-g']
-    nixl_ep_cuda_args += ['-Xcompiler', '-g']
-elif get_option('buildtype') == 'debug'
-    nixl_ep_override_options = ['buildtype=release', 'optimization=3', 'debug=false']
-    nixl_ep_cpp_args += ['-g']
-endif
 
 enable_fast_debug = get_option('buildtype') != 'release'
 
