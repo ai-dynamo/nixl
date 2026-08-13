@@ -48,11 +48,9 @@ nixlTelemetryStagingQueue::tryPushBatch(std::span<const nixlTelemetryEvent> even
 
 std::span<const nixlTelemetryEvent>
 nixlTelemetryStagingQueue::drainPending() {
-    {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        drained_.clear();
-        live_.swap(drained_);
-    }
+    const std::lock_guard<std::mutex> lock(mutex_);
+    drained_.clear();
+    live_.swap(drained_);
     return drained_;
 }
 
