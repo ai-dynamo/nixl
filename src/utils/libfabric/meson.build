@@ -15,10 +15,10 @@
 # limitations under the License.
 
 # AMD ROCm/HIP support (rocm_dep, hipify_src) is defined once in the root
-# meson.build and consumed here. On ROCm builds (-Dwheel_variant=rocm) the CUDA
+# meson.build and consumed here. On ROCm builds (-Drocm_path=<prefix>) the CUDA
 # sources are translated to HIP with hipify-perl; on CUDA-only builds they are
 # used verbatim.
-if wheel_variant == 'rocm'
+if rocm_dep.found()
     libfabric_rail_src = hipify_src.process('libfabric_rail.cpp', extra_args: ['-o'])
     libfabric_topology_src = hipify_src.process('libfabric_topology.cpp', extra_args: ['-o'])
     libfabric_rail_manager_src = hipify_src.process('libfabric_rail_manager.cpp', extra_args: ['-o'])
@@ -74,8 +74,8 @@ if libfabric_dep.found()
     endif
 endif
 
-# Add GPU support: CUDA normally, or HIP/ROCm when wheel_variant=rocm.
-if wheel_variant == 'rocm'
+# Add GPU support: HIP/ROCm when rocm_path is set, CUDA otherwise.
+if rocm_dep.found()
     libfabric_utils_deps += [rocm_dep]
     libfabric_utils_cpp_args += ['-DHAVE_CUDA']
 elif cuda_dep.found()
