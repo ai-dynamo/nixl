@@ -78,7 +78,7 @@ public:
     nixlUcxEp &
     operator=(const nixlUcxEp &) = delete;
 
-    using am_deleter_t = std::function<void(void *request, void *buffer)>;
+    using am_cleanup_t = std::function<void(void *request, void *buffer)>;
 
     /* Active message handling */
     nixl_status_t
@@ -89,7 +89,7 @@ public:
            size_t len,
            uint32_t flags,
            nixlUcxReq *req = nullptr,
-           const am_deleter_t &deleter = nullptr);
+           am_cleanup_t &&cleanup = nullptr) const;
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -113,6 +113,15 @@ public:
                  nixl_cost_t &method);
     nixl_status_t
     flushEp(nixlUcxReq &req);
+
+#ifdef HAVE_UCX_SGL_API
+    /* Scatter-gather list (SGL) operations */
+    [[nodiscard]] nixl_status_t
+    postSgl(const ucp_dt_local_sgl_t &local,
+            const ucp_dt_remote_sgl_t &remote,
+            size_t count,
+            nixlUcxReq &req);
+#endif
 
     [[nodiscard]] ucp_ep_h
     getEp() const noexcept {
