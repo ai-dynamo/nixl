@@ -150,7 +150,7 @@ protected:
     void
     testStaleXferHandle();
     void
-    testMetadataReloadKeepsHandlesValid();
+    testMetadataReloadRetiresHandles();
 
 private:
     template<TestType test_type>
@@ -480,8 +480,8 @@ TEST_P(TestErrorHandling, StaleXferHandleRejectedAfterReregistration) {
     testStaleXferHandle();
 }
 
-TEST_P(TestErrorHandling, MetadataReloadKeepsHandlesValid) {
-    testMetadataReloadKeepsHandlesValid();
+TEST_P(TestErrorHandling, MetadataReloadRetiresHandles) {
+    testMetadataReloadRetiresHandles();
 }
 
 // Transfer handles and prepped dlists bind to a remote registration generation: they
@@ -573,10 +573,11 @@ TestErrorHandling::testStaleXferHandle() {
     EXPECT_EQ(m_Initiator.waitForCompletion(req), NIXL_SUCCESS);
 }
 
-// Reloading byte-identical metadata is an intentional refresh: the registration
-// generation stays alive and handles created against it remain valid.
+// Reloading metadata always replaces the remote registration object, even when
+// the content is unchanged: handles created against the previous load must be
+// rejected, and fresh handles work against the reloaded registration.
 void
-TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
+TestErrorHandling::testMetadataReloadRetiresHandles() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
     m_Initiator.init(initiator_name, m_backend_name, numWorkers_, numThreads_);
@@ -597,9 +598,24 @@ TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
     ASSERT_EQ(initiator.makeXferReq(NIXL_WRITE, local_side, indices, remote_side, indices, req),
               NIXL_SUCCESS);
 
-    // Unchanged re-broadcast of the same metadata
+    // Even an unchanged re-broadcast replaces the registration
     m_Initiator.loadRemoteMD(m_Target.getLocalMD());
 
+    {
+        const LogIgnoreGuard lig("invalidated or re-registered after");
+        EXPECT_EQ(initiator.postXferReq(req), NIXL_ERR_NOT_FOUND);
+    }
+    EXPECT_EQ(initiator.releaseXferReq(req), NIXL_SUCCESS);
+    EXPECT_EQ(initiator.releasedDlistH(local_side), NIXL_SUCCESS);
+    EXPECT_EQ(initiator.releasedDlistH(remote_side), NIXL_SUCCESS);
+
+    // Fresh prep + request against the reloaded registration works
+    local_side = nullptr;
+    remote_side = nullptr;
+    ASSERT_EQ(initiator.prepXferDlist(l_descs, local_side), NIXL_SUCCESS);
+    ASSERT_EQ(initiator.prepXferDlist(target_name, r_descs, remote_side), NIXL_SUCCESS);
+    ASSERT_EQ(initiator.makeXferReq(NIXL_WRITE, local_side, indices, remote_side, indices, req),
+              NIXL_SUCCESS);
     const nixl_status_t status = initiator.postXferReq(req);
     ASSERT_TRUE(status == NIXL_SUCCESS || status == NIXL_IN_PROG);
     EXPECT_EQ(m_Initiator.waitForCompletion(req), NIXL_SUCCESS);

@@ -779,15 +779,19 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
 
 nixl_status_t
 nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
-    const auto [it, inserted] =
-        remoteSections_.try_emplace(remote_name, std::make_shared<nixlRemoteSection>(remote_name));
-    const nixl_status_t ret = it->second->loadRemoteData(&sd, backendEngines_);
+    // Never reuse an existing section object: load into a fresh object and swap
+    // it in on success, so the previous registration is retired and handles
+    // weakly bound to it expire. A failed load leaves the old registration intact.
+    auto section = std::make_shared<nixlRemoteSection>(remote_name);
+    const nixl_status_t ret = section->loadRemoteData(&sd, backendEngines_);
     // TODO: can be more graceful, if just the new MD blob was improper
     if (ret != NIXL_SUCCESS) {
-        remoteSections_.erase(it);
-        remoteBackends_.erase(remote_name);
+        if (remoteSections_.find(remote_name) == remoteSections_.end()) {
+            remoteBackends_.erase(remote_name);
+        }
         return ret;
     }
 
+    remoteSections_[remote_name] = std::move(section);
     return NIXL_SUCCESS;
 }
