@@ -191,12 +191,13 @@ TEST(telemetryStagingQueueTest, DrainViewCarriesOnlyTheCurrentDrain) {
     ASSERT_TRUE(queue.tryPush(makeEvent(2)));
     const auto first = queue.drainPending();
     ASSERT_EQ(first.size(), 2u);
+    const auto *const firstStorage = first.data();
 
     ASSERT_TRUE(queue.tryPush(makeEvent(3)));
     const auto second = queue.drainPending();
     ASSERT_EQ(second.size(), 1u);
     EXPECT_EQ(second[0].value_, 3u);
-    EXPECT_NE(second.data(), first.data());
+    EXPECT_NE(second.data(), firstStorage);
 }
 
 TEST(telemetryStagingQueueTest, TakeNumDroppedReturnsDeltaOnceThenZero) {
