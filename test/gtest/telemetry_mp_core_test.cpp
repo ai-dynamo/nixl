@@ -121,12 +121,12 @@ TEST_F(MpExporterTest, CoreUpdateDataOverflowConservation) {
     constexpr uint64_t kProduced = 100000; // far exceeds the 256-slot staging queue
 
     const gtest::LogIgnoreGuard lig(PLUGIN_PROBE_WARNING);
-    const auto scrape = gtest::scrapeCoreOverflow(port_,
-                                                  "prometheus_mp",
-                                                  agent_name,
-                                                  "agent_tx_requests_num_total",
-                                                  1,
-                                                  kProduced,
+    const auto scrape = gtest::scrapeCoreOverflow({.port = port_,
+                                                   .exporter = "prometheus_mp",
+                                                   .agent = agent_name,
+                                                   .accepted_metric = "agent_tx_requests_num_total",
+                                                   .accepted_event_weight = 1,
+                                                   .expected_total_events = kProduced},
                                                   [](nixlTelemetry &telemetry) {
                                                       for (uint64_t i = 0; i < kProduced; ++i) {
                                                           telemetry.updateTxRequestsNum(1);
@@ -145,12 +145,12 @@ TEST_F(MpExporterTest, CoreAddXferStatsOverflowConservation) {
 
     const gtest::LogIgnoreGuard lig(PLUGIN_PROBE_WARNING);
     const auto scrape = gtest::scrapeCoreOverflow(
-        port_,
-        "prometheus_mp",
-        agent_name,
-        "agent_tx_requests_num_total",
-        kEventsPerCall,
-        kCalls * kEventsPerCall,
+        {.port = port_,
+         .exporter = "prometheus_mp",
+         .agent = agent_name,
+         .accepted_metric = "agent_tx_requests_num_total",
+         .accepted_event_weight = kEventsPerCall,
+         .expected_total_events = kCalls * kEventsPerCall},
         [](nixlTelemetry &telemetry) {
             for (uint64_t i = 0; i < kCalls; ++i) {
                 telemetry.addXferStats(

@@ -37,7 +37,18 @@ struct overflowScrape {
     double dropped = 0;
 };
 
-// Drives `produce` against a fresh nixlTelemetry backed by the `exporter_name`
+struct coreOverflowSpec {
+    uint16_t port = 0;
+    std::string exporter;
+    std::string agent;
+    std::string accepted_metric;
+    uint64_t accepted_event_weight = 1;
+    uint64_t expected_total_events = 0;
+    std::chrono::milliseconds flush_interval = std::chrono::milliseconds(5);
+    std::chrono::seconds settle_timeout = std::chrono::seconds(5);
+};
+
+// Drives `produce` against a fresh nixlTelemetry backed by the `exporter`
 // exporter with a small (256-slot) staging buffer, then polls /metrics until every
 // produced event is accounted for -- accepted (`accepted_metric`, weighted by
 // `accepted_event_weight` events per sample) plus dropped
@@ -47,34 +58,29 @@ struct overflowScrape {
 // delta to be published, no matter how flushes interleave. The instance stays
 // alive through the scrape so the exporter keeps serving the port.
 [[nodiscard]] inline overflowScrape
-scrapeCoreOverflow(uint16_t port,
-                   const std::string &exporter_name,
-                   const std::string &agent_name,
-                   const std::string &accepted_metric,
-                   uint64_t accepted_event_weight,
-                   uint64_t expected_total_events,
+scrapeCoreOverflow(const coreOverflowSpec &spec,
                    const std::function<void(nixlTelemetry &)> &produce) {
     ScopedEnv telemetry_env;
     telemetry_env.addVar(TELEMETRY_BUFFER_SIZE_VAR, "256");
-    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, "5");
+    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, std::to_string(spec.flush_interval.count()));
 
-    nixlTelemetry telemetry(agent_name, exporter_name);
+    nixlTelemetry telemetry(spec.agent, spec.exporter);
     produce(telemetry);
 
-    const nixl::metrics_test::labelSet agent{{"agent_name", agent_name}};
+    const nixl::metrics_test::labelSet agent{{"agent_name", spec.agent}};
     overflowScrape result;
     static_cast<void>(nixl::metrics_test::scrapeUntil(
-        port, std::chrono::seconds(5), [&](const nixl::metrics_test::timeSeries &scrape) {
+        spec.port, spec.settle_timeout, [&](const nixl::metrics_test::timeSeries &scrape) {
             const auto dropped = scrape.latestValue("agent_telemetry_events_dropped_total", agent);
-            const auto accepted = scrape.latestValue(accepted_metric, agent);
+            const auto accepted = scrape.latestValue(spec.accepted_metric, agent);
             if (!dropped || !accepted) {
                 return false;
             }
             result.dropped = *dropped;
             result.accepted = *accepted;
-            result.ok =
-                result.accepted * static_cast<double>(accepted_event_weight) + result.dropped ==
-                static_cast<double>(expected_total_events);
+            result.ok = result.accepted * static_cast<double>(spec.accepted_event_weight) +
+                    result.dropped ==
+                static_cast<double>(spec.expected_total_events);
             return result.ok;
         }));
     return result;
