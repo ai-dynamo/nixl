@@ -20,14 +20,7 @@
 #include "libfabric/libfabric_common.h"
 #include "libfabric/libfabric_rail_manager.h"
 #include "common/nixl_log.h"
-
-#ifdef CUDA_FOUND
-#ifdef __HIP_PLATFORM_AMD__
-#include <hip/hip_runtime.h>
-#else
-#include <cuda_runtime.h>
-#endif
-#endif
+#include "gpu_utils.h"
 
 #include <cmath>
 #include <cassert>
@@ -321,23 +314,13 @@ testBasicTopology() {
             NIXL_INFO << "3. Testing GPU-specific queries (detected " << num_gpus << " GPUs)...";
             int test_gpus = std::min(num_gpus, 3); // Test up to 3 GPUs or all available
             for (int gpu_id = 0; gpu_id < test_gpus; ++gpu_id) {
-#ifdef CUDA_FOUND
+#ifdef HAVE_GPU
                 // Get PCI bus ID for this GPU
-                cudaDeviceProp prop;
-                cudaError_t err = cudaGetDeviceProperties(&prop, gpu_id);
-                if (err != cudaSuccess) {
-                    NIXL_WARN << "   Failed to get properties for GPU " << gpu_id << ": "
-                              << cudaGetErrorString(err);
+                char pci_bus_id[32];
+                if (!gpuGetPciBusId(gpu_id, pci_bus_id, sizeof(pci_bus_id))) {
+                    NIXL_WARN << "   Failed to get properties for GPU " << gpu_id;
                     continue;
                 }
-
-                char pci_bus_id[32];
-                snprintf(pci_bus_id,
-                         sizeof(pci_bus_id),
-                         "%04x:%02x:%02x.0",
-                         prop.pciDomainID,
-                         prop.pciBusID,
-                         prop.pciDeviceID);
 
                 auto gpu_devices = topology.getEfaDevicesForPci(pci_bus_id);
 
@@ -349,7 +332,7 @@ testBasicTopology() {
                 NIXL_INFO << "   GPU " << gpu_id << " (PCI: " << pci_bus_id << ") mapped to "
                           << gpu_devices.size() << " EFA devices: " << device_list;
 #else
-                NIXL_INFO << "   Skipping GPU " << gpu_id << " (CUDA not available)";
+                NIXL_INFO << "   Skipping GPU " << gpu_id << " (GPU support not available)";
 #endif
             }
         } else {

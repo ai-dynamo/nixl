@@ -16,15 +16,11 @@
 
 # LibFabric plugin configuration
 
-# On ROCm builds (-Dwheel_variant=rocm) the CUDA sources are translated to HIP
-# with hipify-perl, which ships only with the ROCm/HIP toolchain, so it is
-# required for that variant and unused (absent) on CUDA-only builds.
+# AMD ROCm/HIP support (rocm_dep, hipify_src) is defined once in the root
+# meson.build and consumed here. On ROCm builds (-Dwheel_variant=rocm) the CUDA
+# sources are translated to HIP with hipify-perl; on CUDA-only builds they are
+# used verbatim.
 if wheel_variant == 'rocm'
-    hipify_cmd = find_program('hipify-perl')
-    hipify_src = generator(hipify_cmd,
-                           output : ['@BASENAME@_hip.cpp'],
-                           arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
-
     libfabric_backend_src = hipify_src.process('libfabric_backend.cpp', extra_args: ['-o'])
 else
     libfabric_backend_src = files('libfabric_backend.cpp')

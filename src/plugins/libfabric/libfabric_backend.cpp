@@ -916,7 +916,8 @@ nixlLibfabricEngine::getSupportedMems() const {
     mems.push_back(DRAM_SEG);
 #ifdef HAVE_CUDA
     if (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR) {
-        NIXL_DEBUG << "CUDA runtime detected, adding VRAM support";
+        NIXL_DEBUG << (runtime_ == FI_HMEM_CUDA ? "CUDA" : "ROCr")
+                   << " runtime detected, adding VRAM support";
         mems.push_back(VRAM_SEG);
     } else
 #endif
@@ -1274,7 +1275,8 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
 #ifdef HAVE_CUDA
     // NOTE: when progress thread is enabled and the call is deferred via ring-buffer, this should
     // take place in the context of the progress thread
-    const bool is_cuda_vram = local.getType() == VRAM_SEG && runtime_ == FI_HMEM_CUDA;
+    const bool is_cuda_vram =
+        local.getType() == VRAM_SEG && (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR);
     bool use_cuda_addr_wa = false;
     int current_cuda_device = -1;
     if (!progress_thread_enabled_ && is_cuda_vram) {
