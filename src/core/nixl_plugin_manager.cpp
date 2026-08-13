@@ -332,7 +332,7 @@ shouldDeepBindPlugin(const std::string &plugin_name) {
 std::shared_ptr<const nixlPluginHandle>
 nixlPluginManager::loadPluginFromPath(const std::string &plugin_path,
                                       nixlPluginLoaderFunc loader,
-                                      bool deepbind) const {
+                                      bool deepbind) {
     // Open the plugin file with RTLD_NODELETE to prevent glibc from physically unloading
     // the library on dlclose. This is required because plugins link dynamically against Abseil,
     // which uses thread_local and static initialization that are unsafe to unload dynamically
@@ -460,7 +460,7 @@ nixlPluginManager::addPluginDirectory(const std::string &directory) {
 std::string
 nixlPluginManager::composePluginPath(const std::string &dir,
                                      const std::string &plugin_prefix,
-                                     const std::string &plugin_name) const {
+                                     const std::string &plugin_name) {
     std::string plugin_path;
     if (dir.empty()) {
         return "";

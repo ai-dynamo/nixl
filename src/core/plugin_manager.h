@@ -224,15 +224,15 @@ private:
     void
     discoverTracePlugin(const std::string &filename);
 
-    std::shared_ptr<const nixlPluginHandle>
+    [[nodiscard]] static std::shared_ptr<const nixlPluginHandle>
     loadPluginFromPath(const std::string &plugin_path,
                        nixlPluginLoaderFunc loader,
-                       bool deepbind = false) const;
+                       bool deepbind = false);
 
-    std::string
+    [[nodiscard]] static std::string
     composePluginPath(const std::string &dir,
                       const std::string &plugin_prefix,
-                      const std::string &plugin_name) const;
+                      const std::string &plugin_name);
 
     // Private constructor for singleton pattern
     nixlPluginManager();
