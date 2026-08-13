@@ -8,6 +8,7 @@
 
 #include <nixl_types.h>
 #include <stddef.h>
+#include <stdint.h>
 
 /**
  * @brief Parameters for @ref nixlbenchPutKernel (passed by value to the device).
@@ -22,13 +23,16 @@
  * - done counter at byte offset @a completionCounterOffsetBytes
  * - error counter at byte offset @a errorCounterOffsetBytes
  *
- * Kernel uses @c nixlAtomicAdd on @c { remoteMvh, numRegions, offset }.
+ * The kernel transfers every data region @a numIterations times, then uses @c nixlAtomicAdd on
+ * @c { remoteMvh, numRegions, offset } to add @a numIterations to the done counter.
  */
 struct nixlbenchDeviceXferParams {
     nixlMemViewH localMvh; ///< Local memory view from prepMemView
     nixlMemViewH remoteMvh; ///< Remote memory view from prepMemView
     size_t numRegions; ///< Data region count (puts); completion index when signaling
     size_t regionSize; ///< Bytes per region for this transfer pattern
+    uint64_t numIterations; ///< Number of complete region-list transfers
+    uint64_t *iterationDurationNs; ///< Per-iteration GPU duration output
     size_t completionCounterOffsetBytes; ///< Done counter offset in the counter region
     size_t errorCounterOffsetBytes; ///< Error counter offset in the counter region
 };
