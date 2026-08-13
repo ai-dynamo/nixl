@@ -546,6 +546,11 @@ xferBenchConfig::loadParams(void) {
     scheme = NB_ARG(scheme);
     mode = NB_ARG(mode);
     op_type = NB_ARG(op_type);
+    if (op_type != XFERBENCH_OP_READ && op_type != XFERBENCH_OP_WRITE) {
+        std::cerr << "Invalid op type: " << op_type << ". Must be one of [READ, WRITE]"
+                  << std::endl;
+        return -1;
+    }
     check_consistency = NB_ARG(check_consistency);
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
