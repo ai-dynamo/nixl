@@ -80,7 +80,7 @@ private:
     nixl_status_t
     discoverAccelWithHwloc();
     nixl_status_t
-    discoverEfaDevicesWithHwloc();
+    discoverRDMADevicesWithHwloc();
     nixl_status_t
     buildAccelToEfaMapping();
     void
@@ -145,8 +145,6 @@ private:
     isNvidiaAccel(hwloc_obj_t obj) const;
     bool
     isNeuronAccel(hwloc_obj_t obj) const;
-    bool
-    isEfaDevice(hwloc_obj_t obj) const;
 
     // retrieves line speed of NIC from map
     size_t
@@ -216,9 +214,9 @@ public:
         return all_devices;
     }
 
-    const std::string &
+    std::string
     getProviderName() const {
-        return provider_name;
+        return provider_name.empty() ? "libfabric" : provider_name;
     }
 
     // Validation

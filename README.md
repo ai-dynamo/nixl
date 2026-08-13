@@ -63,14 +63,14 @@ NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
 
 ### UCX
 
-NIXL was tested with UCX version 1.21.x.
+NIXL was tested with UCX version 1.22.x.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
 $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
-$ git checkout v1.21.x
+$ git checkout v1.22.x
 $ ./autogen.sh
 $ ./contrib/configure-release-mt       \
     --enable-shared                    \
@@ -167,7 +167,16 @@ Common build options:
 
 #### Building for AMD ROCm
 
-NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support for the benchmark suite lives in nixlbench — see PR #1647 for the `use_rocm` / `rocm_path` options there. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support is available for nixlbench and UCX plugin unit tests. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+
+**Building with ROCm support:**
+```bash
+# For UCX unit tests with ROCm
+$ meson setup build -Drocm_path=/opt/rocm
+
+# Or specify a custom ROCm path
+$ meson setup build -Drocm_path=/custom/path/to/rocm
+```
 
 **Plugins on ROCm hosts (CUDA toolchain absent):**
 - `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
@@ -175,7 +184,6 @@ NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAm
 - `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — skip automatically because their CUDA / cuFile / DOCA dependencies are not found.
 
 **Known gaps (will be addressed in follow-up PRs):**
-- `nixlbench` (the NIXL benchmark tool) needs CUDA-driver-API → HIP translation work before it builds on ROCm. Use `examples/cpp/nixl_etcd_example` for transfer validation in the meantime.
 - `LIBFABRIC` plugin disabled on ROCm pending header refactor.
 - No NVSHMEM-equivalent backend yet (rocSHMEM analog is a candidate for a future plugin).
 
@@ -349,7 +357,7 @@ To see all the options supported by the container use:
 $ ./contrib/build-container.sh -h
 ```
 
-The container also includes a prebuilt python wheel in /workspace/dist if required for installing/distributing. Also, the wheel can be built with a separate script (see below).
+The container has the NIXL python bindings preinstalled (built from source against the container's own PyTorch). For a redistributable python wheel, use the wheel build script below or install the published `nixl` package.
 
 ### Building the python wheel
 The contrib folder also includes a script to build the python wheel with the UCX dependencies. Note, that UCX and other NIXL dependencies are required to be installed.
@@ -411,3 +419,5 @@ For contribution guidelines, see [CONTRIBUTING.md](https://github.com/ai-dynamo/
 ## Third-Party Components
 
 This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use.
+
+NIXL Python wheels bundle NVIDIA modules (`libuct_ib_mlx5_ext.so`, `libuct_ib_mlx5_gda.so`, `libuct_ib_mlx5_gdp.so`) licensed under the [NVIDIA Proprietary License](licenses/NVIDIA-proprietary-LICENSE.txt) (`LicenseRef-NvidiaProprietary`).

@@ -20,7 +20,9 @@ job: nixl-ci-gpu
 # Fail job if one of the steps fails or continue
 failFast: false
 
-timeout_minutes: 240
+# Job cap. Axes run in parallel, so this bounds the longest single axis:
+# docker build (~11) + allocation wait (up to immediateTimeout 60) + run steps (110) + stop (~5).
+timeout_minutes: 200
 
 registry_host: artifactory.nvidia.com
 registry_auth: svc-nixl-new-artifactory-token
@@ -52,7 +54,11 @@ env:
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
-  CI_IMAGE_TAG: "20260625-1"
+  # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
+  # the "CI_MANAGED" placeholder must not be hand-edited.
+  CI_IMAGE_TAG: "CI_MANAGED"
+  ENROOT_MOUNT_PATH: "/enroot_images"  # NFS mount on mizu nodes; on failure the container is exported here as <containerName>.sqsh
+  ENROOT_DATA_PATH: "/enroot-data/enroot-data-148069/user-148069"  # svc-nixl user on mizu nodes
 
 empty_volumes:
   - {mountPath: /root, memory: false}
@@ -65,9 +71,9 @@ pvc_volumes:
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
-     name: 'nixl-ci-gpu-base-25.10-cuda13.0-ubuntu24.04',
+     name: 'nixl-ci-gpu-base-pytorch26.06-cuda13.3-ubuntu24.04',
      tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.10-cuda13.0-devel-ubuntu24.04 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
@@ -80,11 +86,8 @@ matrix:
   axes:
     arch:
       - x86_64
-    ucx_version:
-      - master
-      - v1.21.x
 
-taskName: "${name}/${arch}/ucx-${ucx_version}/${axis_index}"
+taskName: "${name}/${arch}/${axis_index}"
 
 
 steps:
@@ -94,16 +97,21 @@ steps:
     parallel: false
     run: |
       set -x
-      export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}
+      # Pass UCX_VERSION only when UCX_VER is set (e.g. nightly master);
+      # empty falls back to the Dockerfile ARG UCX_VERSION default so the
+      # per-branch default lives in one place.
+      UCX_ARG=""
+      if [ -n "${UCX_VER}" ]; then UCX_ARG="--build-arg UCX_VERSION=${UCX_VER}"; fi
+      export PR_IMAGE=${registry_host}${registry_path}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}
       rm -rf /etc/containers/storage.conf && rm -f /usr/share/containers/storage.conf
       echo "$REPO_PASS" | podman login "https://${registry_host}" -u "$REPO_USER" --password-stdin
       podman build --network host \
-      --build-arg UCX_VERSION=${ucx_version} \
+      ${UCX_ARG} \
       --build-arg PRE_INSTALLED_ENV="true" \
       --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
-      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-gpu-base-25.10-cuda13.0-ubuntu24.04:${CI_IMAGE_TAG} \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-gpu-base-pytorch26.06-cuda13.3-ubuntu24.04:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       podman push ${PR_IMAGE}
@@ -120,8 +128,8 @@ steps:
       nodes: "${SLURM_NODES}"
       jobTimeout: "${SLURM_JOB_TIMEOUT}"
       immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
-      jobName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      jobName: "${JOB_BASE_NAME}-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
       extraArgs: [
         "--gres=${SLURM_GRES}",
@@ -131,63 +139,67 @@ steps:
 
   - name: Run CPP tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: 120
+    timeout: 60
     parallel: false
     shell: action
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
+      exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run Python tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: 10
+    timeout: 20
     parallel: false
     shell: action
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_python.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
+      exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run Rust tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: 10
+    timeout: 15
     parallel: false
     shell: action
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_rust.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
+      exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
   - name: Run Nixlbench tests
     containerSelector: "{name: 'build_helper'}"
-    timeout: 50
+    timeout: 25
     parallel: false
     shell: action
     module: slurmCI
     run: run
     args:
-      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${ucx_version}_${BUILD_NUMBER}.txt"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       testScript: ".gitlab/test_nixlbench.sh ${NIXL_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
-      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test-${ucx_version}:${BUILD_NUMBER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-gpu-test:${BUILD_NUMBER}"
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
-      containerName: "nixl-ci-${ucx_version}-${BUILD_NUMBER}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
+      exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
 
 pipeline_stop:
   containerSelector: "{name: 'build_helper'}"

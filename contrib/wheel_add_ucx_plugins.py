@@ -17,16 +17,27 @@
 
 import argparse
 import base64
+import collections
 import csv
 import hashlib
 import logging
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import zipfile
 
 logger = logging.getLogger(__name__)
+
+# Matches shared-library names such as ``libfoo.so``, ``libfoo.so.0`` and
+# ``libfoo.so.0.0.0`` while rejecting unrelated names like ``foo.sol``.
+_SHARED_LIB_RE = re.compile(r"\.so(\.\d+)*$")
+
+
+def _is_shared_lib(name):
+    """Return True if @name looks like a shared library file name."""
+    return bool(_SHARED_LIB_RE.search(name))
 
 
 def extract_wheel(wheel_path):
@@ -163,39 +174,76 @@ def get_lib_deps(lib_path):
     return ret
 
 
-def copytree(src, dst, skip_symlinks=False, symlink_keep_suffix=None):
+def copytree(src, dst):
     """
     Copy a tree of files from @src directory to @dst directory.
-    Similar to shutil.copytree, but returns a list of all files copied.
+    Deduplicates shared-library files (``.so``) that share the same inode
+    (symlinks/hardlinks to the same underlying file). For each group of
+    duplicate names only the real (non-symlink) file is kept -- typically the
+    fully-versioned name such as ``libuct_ib.so.0.0.0``. This prevents the
+    dynamic linker from treating what used to be symlinks as separate
+    libraries (different inodes), which would cause components to be
+    initialised multiple times. Non-``.so`` files are always copied as-is.
+
     Returns:
-        List of files copied.
+        Tuple of (copied_files, dedup_map):
+        - copied_files: list of absolute destination paths that were copied.
+        - dedup_map: dict mapping removed filenames to the kept filename,
+          e.g. ``{"libuct_ib.so": "libuct_ib.so.0.0.0",
+                  "libuct_ib.so.0": "libuct_ib.so.0.0.0"}``.
     """
     copied_files = []
-    for root, dirs, files in os.walk(src):
+    dedup_map = {}
+    for root, _dirs, files in os.walk(src):
         rel_path = os.path.relpath(root, src)
         dst_dir = os.path.join(dst, rel_path)
         os.makedirs(dst_dir, exist_ok=True)
+
+        # Group shared libraries by the underlying file they point at.
+        # os.stat() follows symlinks, so a symlink and its target return the
+        # same (st_dev, st_ino) pair and therefore land in the same group;
+        # files with no symlinks form a group of one. Non-so files (and any
+        # .so we cannot stat, e.g. a broken symlink) are copied right away so
+        # nothing is silently dropped.
+        # First decide what to copy: (dst_name, src_path) pairs. Shared libs
+        # are resolved per inode group below; everything else is copied as-is.
+        to_copy = []
+        inode_groups = collections.defaultdict(list)
         for file in files:
             src_file = os.path.join(root, file)
-            if skip_symlinks and os.path.islink(src_file):
-                if symlink_keep_suffix and f"-{symlink_keep_suffix}" in file:
-                    logger.debug("Keeping suffixed plugin symlink %s", src_file)
-                else:
-                    logger.debug("Skipping symlinked plugin alias %s", src_file)
+
+            if _is_shared_lib(file):
+                try:
+                    stat_info = os.stat(src_file)
+                    key = (stat_info.st_dev, stat_info.st_ino)
+                    inode_groups[key].append(file)
                     continue
-            dst_file = os.path.join(dst_dir, file)
-            shutil.copy2(src_file, dst_file)
+                except OSError:
+                    pass
+
+            to_copy.append((file, src_file))
+
+        for group in inode_groups.values():
+            # Prefer the real (non-symlink) file; among equals keep the
+            # longest name (the fully-versioned .so.X.Y.Z form that UCX's
+            # module loader dlopens).
+            group.sort(key=lambda f: (os.path.islink(os.path.join(root, f)), -len(f)))
+            kept = group[0]
+            to_copy.append((kept, os.path.realpath(os.path.join(root, kept))))
+            for removed in group[1:]:
+                dedup_map[removed] = kept
+                logger.info("Deduplicated symlink: %s -> %s", removed, kept)
+
+        # Single copy site for both plain files and deduplicated libraries.
+        for dst_name, src_path in to_copy:
+            dst_file = os.path.join(dst_dir, dst_name)
+            shutil.copy2(src_path, dst_file)
             copied_files.append(dst_file)
-    return copied_files
+
+    return copied_files, dedup_map
 
 
-def add_plugins(
-    wheel_path,
-    sys_plugins_dir,
-    install_dirname,
-    skip_symlinks=False,
-    symlink_keep_suffix=None,
-):
+def add_plugins(wheel_path, sys_plugins_dir, install_dirname):
     """
     Adds the plugins from @sys_dir to the wheel.
     The plugins are copied to a subdirectory @install_dir relative to the wheel's nixl.libs.
@@ -231,12 +279,7 @@ def add_plugins(
 
     pkg_plugins_dir = os.path.join(pkg_libs_dir, install_dirname)
     logger.debug("Copying plugins from %s to %s", sys_plugins_dir, pkg_plugins_dir)
-    copied_files = copytree(
-        sys_plugins_dir,
-        pkg_plugins_dir,
-        skip_symlinks,
-        symlink_keep_suffix,
-    )
+    copied_files, dedup_map = copytree(sys_plugins_dir, pkg_plugins_dir)
     if not copied_files:
         raise RuntimeError(f"No plugins found in {sys_plugins_dir}")
 
@@ -244,42 +287,68 @@ def add_plugins(
     for fname in copied_files:
         logger.debug("Patching %s", fname)
         fpath = os.path.join(pkg_plugins_dir, fname)
-        if os.path.isfile(fpath) and ".so" in fname:
-            rpath = os.popen(f"patchelf --print-rpath {fpath}").read().strip()
-            if not rpath:
-                rpath = "$ORIGIN/..:$ORIGIN"
-            else:
-                rpath = "$ORIGIN/..:$ORIGIN:" + rpath
-            logger.debug("Setting rpath for %s to %s", fpath, rpath)
-            ret = os.system(f"patchelf --set-rpath '{rpath}' {fpath}")
-            if ret != 0:
-                raise RuntimeError(f"Failed to set rpath for {fpath}")
-            # Replace the original libs with the patched one
-            for libname, _ in get_lib_deps(fpath).items():
-                # "libuct.so.0" -> "libuct"
-                base_name = libname.split(".")[0]
-                if base_name in name_map:
-                    packaged_name = name_map[base_name]
-                    logger.debug(
-                        "Replacing %s with %s in %s", libname, packaged_name, fpath
+        if not os.path.isfile(fpath) or not _is_shared_lib(fname):
+            continue
+        rpath = os.popen(f"patchelf --print-rpath {fpath}").read().strip()
+        if not rpath:
+            rpath = "$ORIGIN/..:$ORIGIN"
+        else:
+            rpath = "$ORIGIN/..:$ORIGIN:" + rpath
+        logger.debug("Setting rpath for %s to %s", fpath, rpath)
+        ret = os.system(f"patchelf --set-rpath '{rpath}' {fpath}")
+        if ret != 0:
+            raise RuntimeError(f"Failed to set rpath for {fpath}")
+        # Replace the original libs with the patched one
+        for libname, _ in get_lib_deps(fpath).items():
+            # "libuct.so.0" -> "libuct"
+            base_name = libname.split(".")[0]
+            if base_name in name_map:
+                packaged_name = name_map[base_name]
+                logger.debug(
+                    "Replacing %s with %s in %s", libname, packaged_name, fpath
+                )
+                ret = os.system(
+                    f"patchelf --replace-needed {libname} {packaged_name} {fpath}"
+                )
+                if ret != 0:
+                    raise RuntimeError(
+                        f"Failed to replace {libname} with {packaged_name} in {fpath}"
                     )
-                    ret = os.system(
-                        f"patchelf --replace-needed {libname} {packaged_name} {fpath}"
+        # Check that there is no breakage introduced in the patched lib
+        logger.debug("Checking that %s loads", fpath)
+        original_deps = get_lib_deps(os.path.join(sys_plugins_dir, fname))
+        for libname, libpath in get_lib_deps(fpath).items():
+            if libpath is None:
+                if libname not in original_deps or original_deps[libname] is not None:
+                    raise RuntimeError(f"Library {libname} not loaded by {fpath}")
+
+    # Replace inter-plugin DT_NEEDED entries that reference removed symlink
+    # names (e.g. libuct_ib.so.0) with the kept real file name
+    # (e.g. libuct_ib.so.0.0.0).
+    if dedup_map:
+        for fname in copied_files:
+            if not os.path.isfile(fname) or not _is_shared_lib(os.path.basename(fname)):
+                continue
+            for old_name, new_name in dedup_map.items():
+                result = subprocess.run(
+                    ["patchelf", "--replace-needed", old_name, new_name, fname],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    logger.error(
+                        "patchelf --replace-needed %s %s %s failed (exit %d)\n"
+                        "stdout: %s\nstderr: %s",
+                        old_name,
+                        new_name,
+                        fname,
+                        result.returncode,
+                        result.stdout.strip(),
+                        result.stderr.strip(),
                     )
-                    if ret != 0:
-                        raise RuntimeError(
-                            f"Failed to replace {libname} with {packaged_name} in {fpath}"
-                        )
-            # Check that there is no breakage introduced in the patched lib
-            logger.debug("Checking that %s loads", fpath)
-            original_deps = get_lib_deps(os.path.join(sys_plugins_dir, fname))
-            for libname, libpath in get_lib_deps(fpath).items():
-                if libpath is None:
-                    if (
-                        libname not in original_deps
-                        or original_deps[libname] is not None
-                    ):
-                        raise RuntimeError(f"Library {libname} not loaded by {fpath}")
+                    raise RuntimeError(
+                        f"Failed to replace {old_name} with {new_name} in {fname}"
+                    )
 
     create_wheel(wheel_path, temp_dir)
     shutil.rmtree(temp_dir)
@@ -306,23 +375,6 @@ def main():
         help="Only add UCX modules. Useful when the NIXL plugin is already in the wheel.",
     )
     parser.add_argument(
-        "--skip-plugin-symlinks",
-        action="store_true",
-        help=(
-            "Do not copy symlinked plugin aliases. If --plugin-soname-suffix is set, "
-            "suffixed SONAME symlinks are still copied."
-        ),
-    )
-    parser.add_argument(
-        "--plugin-soname-suffix",
-        type=str,
-        default=None,
-        help=(
-            "Private SONAME suffix to keep when --skip-plugin-symlinks is used, "
-            "for example 'nixl' keeps libuct_ib-nixl.so.0."
-        ),
-    )
-    parser.add_argument(
         "wheel", type=str, nargs="+", help="Path to one or more wheel files"
     )
     args = parser.parse_args()
@@ -331,13 +383,7 @@ def main():
         args.nixl_plugins_dir = args.nixl_plugins_dir.replace("$ARCH", arch)
 
     for wheel_path in args.wheel:
-        add_plugins(
-            wheel_path,
-            args.ucx_plugins_dir,
-            "ucx",
-            skip_symlinks=args.skip_plugin_symlinks,
-            symlink_keep_suffix=args.plugin_soname_suffix,
-        )
+        add_plugins(wheel_path, args.ucx_plugins_dir, "ucx")
         if not args.skip_nixl_plugins:
             add_plugins(wheel_path, args.nixl_plugins_dir, "nixl")
 

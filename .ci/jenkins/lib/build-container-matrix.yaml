@@ -33,9 +33,10 @@ env:
   REGISTRY_REPO_NAME: "sw-nbu-swx-nixl-docker-local"
   REGISTRY_REPO_PATH: "verification"
   ARTIFACTORY_REGISTRY_URL: "${REGISTRY_HOST_NAME}/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}"
-  ARTIFACTORY_CLEANUP_AGE: "3m" # 3 months
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
+  # Internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
+  APT_MIRROR: "https://urm.nvidia.com/artifactory/ubuntu-public"
 
 taskName: "${BUILD_TARGET}/${arch}"
 
@@ -99,6 +100,7 @@ steps:
         --tag "${LOCAL_TAG_BASE}${arch}" \
         --arch "${arch}" \
         --no-cache \
+        --apt-mirror "${APT_MIRROR}" \
         --nixl "$WORKSPACE" \
         --ucx "$WORKSPACE/ucx-src"
 
@@ -120,6 +122,7 @@ steps:
         --arch "${arch}" \
         --build-type debug \
         --no-cache \
+        --apt-mirror "${APT_MIRROR}" \
         ${NIXL_EP_FLAG}
 
   - name: Add Version Info
@@ -162,7 +165,9 @@ steps:
 
   - name: Push
     containerSelector: "{name: 'podman'}"
+    credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
+      set -eo pipefail
       source version-info
       ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY_URL}/${BUILD_TARGET}"
       ARTIFACTORY_API="https://${REGISTRY_HOST_NAME}/artifactory/api/storage/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}/${BUILD_TARGET}"
@@ -178,7 +183,7 @@ steps:
         echo "Creating tag: ${target_tag}"
         docker tag "${LOCAL_TAG_BASE}${arch}" "${ARTIFACTORY_REGISTRY}:${target_tag}"
         docker push "${ARTIFACTORY_REGISTRY}:${target_tag}"
-        curl -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
+        curl --fail -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
           "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
       }
 
@@ -243,7 +248,4 @@ pipeline_stop:
                 ${params.BUILD_NIXL_EP ? "<p>Build NIXL EP: <b>Yes</b></p>" : ''}
             """
         )
-    }
-    withCredentials([usernamePassword(credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN')]) {
-      sh "yum install -y jq > /dev/null && .ci/scripts/artifactory-cleanup-by-time.sh --path ${REGISTRY_REPO_PATH}/${BUILD_TARGET} ${REGISTRY_REPO_NAME} ${ARTIFACTORY_CLEANUP_AGE}"
     }

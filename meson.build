@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.3.1',
+project('nixl', 'CPP', version: '1.4.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -420,6 +420,16 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     'nvcc available'        : nvcc_prog.found(),
     'DOCA GPUNETIO found'   : doca_gpunetio_dep.found(),
   }, section: 'UCX GPU Device API', bool_yn: true)
+endif
+
+# UCX SGL (scatter-gather list) API detection
+if ucx_dep.found()
+    have_ucx_sgl = cpp.has_type('ucp_dt_local_sgl_t',
+        prefix: '#include <ucp/api/ucp.h>',
+        dependencies: ucx_dep)
+    if have_ucx_sgl
+        add_project_arguments('-DHAVE_UCX_SGL_API', language: 'cpp')
+    endif
 endif
 
 if get_option('disable_gds_backend')

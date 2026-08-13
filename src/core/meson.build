@@ -72,6 +72,7 @@ nixl_lib_sources = [
     'nixl_tcpstore_client.cpp',
     'nixl_plugin_manager.cpp',
     'telemetry/telemetry.cpp',
+    'telemetry/telemetry_staging_queue.cpp',
     'telemetry/buffer_exporter.cpp',
     'telemetry/buffer_plugin.cpp',
     'telemetry/nop_plugin.cpp',
