@@ -207,7 +207,7 @@ nixlMemSection::populate(const nixl_stride_dlist_t &query,
     size_t start_idx = 0;
     for (int i = 0; i < n; ++i) {
         const nixlStrideDesc &run = query[i];
-        if (run.count == 0) [[unlikely]] {
+        if (run.count == 0 || run.len == 0 || run.stride < run.len) [[unlikely]] {
             resp.clear();
             return NIXL_ERR_INVALID_PARAM;
         }

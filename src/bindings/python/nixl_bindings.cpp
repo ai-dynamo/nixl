@@ -138,6 +138,8 @@ throw_nixl_exception(const nixl_status_t &status) {
     }
 }
 
+namespace {
+
 // Builds a compressed (strided) descriptor list from an Nx5 numpy array, where each row is a run
 // of `count` blocks of `len` bytes with consecutive block starts spaced `stride` bytes apart:
 // (addr, len, dev_id, stride, count). A dense run has stride == len.
@@ -165,6 +167,8 @@ to_stride_dlist(nixl_mem_t mem, const py::array &descs) {
 
     return new_list;
 }
+
+} // namespace
 
 PYBIND11_MODULE(_bindings, m) {
 
