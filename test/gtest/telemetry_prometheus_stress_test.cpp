@@ -31,8 +31,7 @@
 #include "telemetry.h"
 #include "telemetry_event.h"
 
-#include "loopback_connection.h"
-#include "open_metrics_text_parser.h"
+#include "scrape_util.h"
 #include "timeseries.h"
 
 #include <chrono>
@@ -47,9 +46,9 @@
 
 #include <gtest/gtest.h>
 
-using nixl::doca_test::labelSet;
-using nixl::doca_test::loopbackConnection;
-using nixl::doca_test::timeSeries;
+using nixl::metrics_test::labelSet;
+using nixl::metrics_test::scrapeMetrics;
+using nixl::metrics_test::timeSeries;
 
 namespace {
 
@@ -66,12 +65,6 @@ constexpr bool kSanitizerBuild = false;
 #else
 constexpr bool kSanitizerBuild = false;
 #endif
-
-timeSeries
-scrapeMetrics(uint16_t port) {
-    return timeSeries(
-        nixl::doca_test::open_metrics_text::parse(loopbackConnection::httpGet(port, "/metrics")));
-}
 
 struct OverflowScrape {
     bool ok = false; // all produced events were accounted for before the timeout
@@ -271,7 +264,7 @@ TEST_F(prometheusTelemetryTest, ConcurrentMixedWorkloadAggregation) {
     // Poll until every deterministic cumulative counter has reached its exact
     // total; with no drops the periodic flush drains all events, so the end state
     // is reached regardless of how flushes interleave (timing independent).
-    timeSeries metrics{nixl::doca_test::seriesMap{}};
+    timeSeries metrics{nixl::metrics_test::seriesMap{}};
     bool converged = false;
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(kSanitizerBuild ? 30 : 10);
