@@ -31,6 +31,10 @@ import torch
 import torch.distributed as dist
 
 
+class KinetoUnavailableError(RuntimeError):
+    """Raised when the profiler records no CUDA timing activities."""
+
+
 def init_dist(local_rank: int, num_local_ranks: int):
     # NOTES: you may rewrite this function with your own cluster settings
     ip = os.getenv("MASTER_ADDR", "127.0.0.1")
@@ -221,17 +225,23 @@ def bench_kineto(
     # Parse the profiling table
     assert isinstance(kernel_names, str) or isinstance(kernel_names, tuple)
     is_tuple = isinstance(kernel_names, tuple)
-    prof_lines = (
-        prof.key_averages()
-        .table(sort_by="cuda_time_total", max_name_column_width=100)
-        .split("\n")
+    prof_table = prof.key_averages().table(
+        sort_by="cuda_time_total", max_name_column_width=100
     )
+
+    if "CUDA" not in prof_table:
+        raise KinetoUnavailableError(
+            "Kineto recorded no CUDA timing activities; "
+            "per-kernel profiling is unavailable"
+        )
+
+    prof_lines = prof_table.split("\n")
     kernel_names = (kernel_names,) if isinstance(kernel_names, str) else kernel_names
     assert all([isinstance(name, str) for name in kernel_names])
     for name in kernel_names:
         assert (
             sum([name in line for line in prof_lines]) == 1
-        ), f"Errors of the kernel {name} in the profiling table"
+        ), f"Errors of the kernel {name} in the profiling table:\n{prof_table}"
 
     # Save chrome traces
     if trace_path is not None:
