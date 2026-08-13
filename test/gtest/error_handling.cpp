@@ -117,10 +117,12 @@ class TestErrorHandling : public nixl_test_t {
         postXferReq(nixlXferReqH *req_handle) const;
         nixl_status_t
         releaseXferReq(nixlXferReqH *req_handle) const;
+
         nixlAgent *
         getAgent() const {
             return m_priv.get();
         }
+
         nixl_status_t
         waitForCompletion(nixlXferReqH *req_handle, Agent &peer, nixl_notifs_t &peer_notifs);
         nixl_status_t
