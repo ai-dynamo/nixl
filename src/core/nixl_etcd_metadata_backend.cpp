@@ -135,6 +135,12 @@ public:
 
     nixl_status_t
     removeMetadataFromEtcd(const std::string &agent_name) {
+        // Nothing published means nothing to remove, and rmdir on a prefix with
+        // no keys is a client-side error rather than a no-op, so invalidating
+        // twice (an explicit call, then teardown) would report a failure.
+        if (agent_name == agentName_ && !agentPrefixStored_) {
+            return NIXL_SUCCESS;
+        }
         try {
             const std::string agent_prefix = makeKey(agent_name, "");
             const etcd::Response response = etcd_->rmdir(agent_prefix, true);
@@ -147,7 +153,7 @@ public:
                            << " etcd keys for agent: " << agent_name;
                 return NIXL_SUCCESS;
             }
-            NIXL_ERROR << "Warning: Failed to remove etcd keys for agent: " << agent_name << " : "
+            NIXL_ERROR << "Failed to remove etcd keys for agent: " << agent_name << " : "
                        << response.error_message();
             return NIXL_ERR_BACKEND;
         }
