@@ -35,6 +35,19 @@ if has_posix_plugin
                                 install: true)
     test('posix_plugin_test', nixl_posix_app)
 
+    if has_linux_aio
+        nixl_posix_aio_app = executable(
+            'nixl_posix_aio_test', 'nixl_posix_aio_test.cpp',
+            dependencies: [nixl_dep, nixl_infra, file_utils_interface, absl_log_dep,
+                           posix_backend_interface, linux_aio_dep],
+            include_directories: [nixl_inc_dirs, utils_inc_dirs,
+                                  include_directories('..'),
+                                  include_directories('../../../../src/plugins/posix')],
+            link_args: ['-Wl,--export-dynamic'],
+            install: true)
+        test('posix_aio_backend_test', nixl_posix_aio_app)
+    endif
+
     if has_io_uring
         nixl_posix_uring_app = executable(
             'nixl_posix_uring_test', 'nixl_posix_uring_test.cpp',
