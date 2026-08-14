@@ -25,6 +25,9 @@
  *
  * The kernel transfers every data region @a numIterations times, then uses @c nixlAtomicAdd on
  * @c { remoteMvh, numRegions, offset } to add @a numIterations to the done counter.
+ * Duration outputs contain @c numIterations * activeGroupNum entries in iteration-major order,
+ * where @c activeGroupNum is the smaller of @a numRegions and the number of thread- or warp-level
+ * execution groups in the launched block.
  */
 struct nixlbenchDeviceXferParams {
     nixlMemViewH localMvh; ///< Local memory view from prepMemView
@@ -32,7 +35,9 @@ struct nixlbenchDeviceXferParams {
     size_t numRegions; ///< Data region count (puts); completion index when signaling
     size_t regionSize; ///< Bytes per region for this transfer pattern
     uint64_t numIterations; ///< Number of complete region-list transfers
-    uint64_t *iterationDurationNs; ///< Per-iteration GPU duration output
+    size_t activeGroupNum; ///< Execution groups that own at least one data region
+    uint64_t *postDurationNs; ///< Per-iteration, per-group PUT posting duration output
+    uint64_t *xferDurationNs; ///< Per-iteration, per-group completion polling duration output
     size_t completionCounterOffsetBytes; ///< Done counter offset in the counter region
     size_t errorCounterOffsetBytes; ///< Error counter offset in the counter region
 };
