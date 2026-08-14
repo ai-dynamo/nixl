@@ -18,21 +18,42 @@
 #include "backend/backend_plugin.h"
 #include "redis_backend.h"
 
+#include <string>
+
 using redis_plugin_t = nixlBackendPluginCreator<nixlRedisKVEngine>;
 
 static const nixl_mem_list_t supported_segments = {DRAM_SEG, OBJ_SEG};
 
+namespace {
+[[nodiscard]] nixl_b_params_t
+get_redis_backend_options() {
+    const RedisConfig defaults;
+    return {{"host", defaults.host},
+            {"port", std::to_string(defaults.port)},
+            {"username", defaults.username},
+            {"password", defaults.password},
+            {"db", std::to_string(defaults.db)},
+            {"pool_size", std::to_string(defaults.pool_size)}};
+}
+} // namespace
+
 #ifdef STATIC_PLUGIN_REDIS
 nixlBackendPlugin *
 createStaticREDISPlugin() {
-    return redis_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, REDIS_PLUGIN_NAME, REDIS_PLUGIN_VERSION, {}, supported_segments);
+    return redis_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                  REDIS_PLUGIN_NAME,
+                                  REDIS_PLUGIN_VERSION,
+                                  get_redis_backend_options(),
+                                  supported_segments);
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return redis_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, REDIS_PLUGIN_NAME, REDIS_PLUGIN_VERSION, {}, supported_segments);
+    return redis_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                  REDIS_PLUGIN_NAME,
+                                  REDIS_PLUGIN_VERSION,
+                                  get_redis_backend_options(),
+                                  supported_segments);
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void
