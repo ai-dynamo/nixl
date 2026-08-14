@@ -27,7 +27,7 @@
 #           (the `gitlab_ci_runners` group — same one nixl's other GitLab triggers use).
 #   Secrets (in the `automated-release` environment of this repo):
 #     GITLAB_TRIGGER_TOKEN  - pipeline trigger token for the release-automation project
-#     GITLAB_PROJECT_ID     - numeric GitLab project id for release-automation
+#     (GITLAB_PROJECT_ID is hardcoded below to 191080 — no secret needed)
 #     GITLAB_API_TOKEN      - PAT with read_api scope (for polling)
 #   release-automation projects/nixl.yml + configs/projects.yml onboard nixl as
 #   wheel+crate (MR nmailhot/nixl-wheel-crate-onboarding).
@@ -88,7 +88,7 @@ jobs:
         id: trigger
         env:
           GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
-          GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
+          GITLAB_PROJECT_ID: "191080"   # dl/ai-dynamo/release-automation (project id, not sensitive)
           RC_TAG: ${{ needs.prep.outputs.rc_tag }}
           WHEEL_VERSION: ${{ needs.prep.outputs.wheel_version }}
           SONAR_BRANCH: ${{ needs.prep.outputs.sonar_branch }}
@@ -129,7 +129,7 @@ jobs:
       - name: Poll pipeline status
         env:
           GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
-          GITLAB_PROJECT_ID: ${{ secrets.GITLAB_PROJECT_ID }}
+          GITLAB_PROJECT_ID: "191080"   # dl/ai-dynamo/release-automation (project id, not sensitive)
         run: |
           set -euo pipefail
           PIPELINE_ID="${{ steps.trigger.outputs.pipeline_id }}"
