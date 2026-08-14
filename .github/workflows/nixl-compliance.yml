@@ -44,7 +44,7 @@ on:
         required: false
         default: ""
       wheel_version:
-        description: "PEP 440 wheel version, e.g. 1.4.0rc0 (default: derived from the tag)."
+        description: "Wheel version staged in sw-nbu-swx, e.g. 1.4.0 (default: base version from the tag, no rc suffix)."
         required: false
         default: ""
 
@@ -69,7 +69,9 @@ jobs:
           BASE="${T%%-rc*}"                        # 1.4.0
           RC="${T##*-rc}"; [ "$RC" = "$T" ] && RC=""
           WV="${{ github.event.inputs.wheel_version }}"
-          [ -n "$WV" ] || WV="${BASE}${RC:+rc$RC}"  # PEP 440: 1.4.0rc0
+          # blossom stages the release wheels in sw-nbu-swx as the PLAIN base version
+          # (nixl_cu12/cu13 == 1.4.0), not rc-suffixed — so the scan/promote can find them.
+          [ -n "$WV" ] || WV="${BASE}"  # e.g. v1.4.0-rc0 -> 1.4.0
           echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
           echo "wheel_version=$WV" >> "$GITHUB_OUTPUT"
           echo "sonar_branch=release/${BASE}" >> "$GITHUB_OUTPUT"
