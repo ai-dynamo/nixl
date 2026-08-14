@@ -82,8 +82,8 @@ template<typename Entry> class nixlPosixIOQueueImpl : public nixlPosixIOQueue {
 public:
     nixlPosixIOQueueImpl(uint32_t ios_pool_size, uint32_t kernel_queue_size)
         : nixlPosixIOQueue(ios_pool_size, kernel_queue_size),
-          ios_(ios_pool_size) {
-        for (uint32_t i = 0; i < ios_pool_size; i++) {
+          ios_(ios_pool_size_) {
+        for (uint32_t i = 0; i < ios_pool_size_; i++) {
             free_ios_.push_back(&ios_[i]);
         }
     }
