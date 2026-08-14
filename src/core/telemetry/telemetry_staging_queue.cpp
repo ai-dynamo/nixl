@@ -17,17 +17,18 @@
 #include "telemetry_staging_queue.h"
 
 nixlTelemetryStagingQueue::nixlTelemetryStagingQueue(size_t capacity) : capacity_(capacity) {
-    events_.reserve(capacity_);
+    live_.reserve(capacity_);
+    drained_.reserve(capacity_);
 }
 
 bool
 nixlTelemetryStagingQueue::tryPush(const nixlTelemetryEvent &event) {
     const std::lock_guard<std::mutex> lock(mutex_);
-    if (events_.size() >= capacity_) {
+    if (live_.size() >= capacity_) {
         numDroppedEvents_.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    events_.push_back(event);
+    live_.push_back(event);
     return true;
 }
 
@@ -37,23 +38,20 @@ nixlTelemetryStagingQueue::tryPushBatch(std::span<const nixlTelemetryEvent> even
         return true;
     }
     const std::lock_guard<std::mutex> lock(mutex_);
-    if (events.size() > capacity_ - events_.size()) {
+    if (events.size() > capacity_ - live_.size()) {
         numDroppedEvents_.fetch_add(events.size(), std::memory_order_relaxed);
         return false;
     }
-    events_.insert(events_.end(), events.begin(), events.end());
+    live_.insert(live_.end(), events.begin(), events.end());
     return true;
 }
 
-std::vector<nixlTelemetryEvent>
-nixlTelemetryStagingQueue::takePending() {
-    std::vector<nixlTelemetryEvent> pending;
-    pending.reserve(capacity_);
-    {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        events_.swap(pending);
-    }
-    return pending;
+std::span<const nixlTelemetryEvent>
+nixlTelemetryStagingQueue::drainPending() {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    drained_.clear();
+    live_.swap(drained_);
+    return drained_;
 }
 
 uint64_t

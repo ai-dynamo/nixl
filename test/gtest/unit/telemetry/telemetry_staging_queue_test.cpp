@@ -23,6 +23,7 @@
 #include <span>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "telemetry/telemetry_staging_queue.h"
@@ -39,14 +40,14 @@ makeEvent(uint64_t value) {
 TEST(telemetryStagingQueueTest, ConstructorRetainsCapacityEmptyNoDrops) {
     nixlTelemetryStagingQueue queue(8);
     EXPECT_EQ(queue.capacity(), 8u);
-    EXPECT_TRUE(queue.takePending().empty());
+    EXPECT_TRUE(queue.drainPending().empty());
     EXPECT_EQ(queue.takeNumDropped(), 0u);
 }
 
 TEST(telemetryStagingQueueTest, SinglePushPreservesTypeAndValue) {
     nixlTelemetryStagingQueue queue(4);
     ASSERT_TRUE(queue.tryPush({nixl_telemetry_event_type_t::AGENT_XFER_TIME, 42}));
-    auto pending = queue.takePending();
+    auto pending = queue.drainPending();
     ASSERT_EQ(pending.size(), 1u);
     EXPECT_EQ(pending[0].eventType_, nixl_telemetry_event_type_t::AGENT_XFER_TIME);
     EXPECT_EQ(pending[0].value_, 42u);
@@ -72,7 +73,7 @@ TEST(telemetryStagingQueueTest, FittingBatchAppendedCompletelyInOrder) {
     nixlTelemetryStagingQueue queue(8);
     const std::vector<nixlTelemetryEvent> batch = {makeEvent(10), makeEvent(20), makeEvent(30)};
     ASSERT_TRUE(queue.tryPushBatch(batch));
-    auto pending = queue.takePending();
+    auto pending = queue.drainPending();
     ASSERT_EQ(pending.size(), 3u);
     EXPECT_EQ(pending[0].value_, 10u);
     EXPECT_EQ(pending[1].value_, 20u);
@@ -86,7 +87,7 @@ TEST(telemetryStagingQueueTest, NonFittingBatchRejectedWithoutPartialInsertion) 
     ASSERT_TRUE(queue.tryPush(makeEvent(2)));
     const std::vector<nixlTelemetryEvent> batch = {makeEvent(3), makeEvent(4), makeEvent(5)};
     EXPECT_FALSE(queue.tryPushBatch(batch));
-    auto pending = queue.takePending();
+    auto pending = queue.drainPending();
     ASSERT_EQ(pending.size(), 2u);
     EXPECT_EQ(pending[0].value_, 1u);
     EXPECT_EQ(pending[1].value_, 2u);
@@ -106,42 +107,97 @@ TEST(telemetryStagingQueueTest, EmptyBatchSucceedsWithoutChangingState) {
     ASSERT_TRUE(queue.tryPush(makeEvent(7)));
     EXPECT_TRUE(queue.tryPushBatch({}));
     EXPECT_EQ(queue.takeNumDropped(), 0u);
-    auto pending = queue.takePending();
+    auto pending = queue.drainPending();
     ASSERT_EQ(pending.size(), 1u);
     EXPECT_EQ(pending[0].value_, 7u);
 }
 
-TEST(telemetryStagingQueueTest, TakePendingReturnsAllInOrderAndEmpties) {
+TEST(telemetryStagingQueueTest, DrainPendingReturnsAllInOrderAndEmpties) {
     nixlTelemetryStagingQueue queue(4);
     for (uint64_t i = 0; i < 3; ++i) {
         ASSERT_TRUE(queue.tryPush(makeEvent(i)));
     }
-    auto pending = queue.takePending();
+    auto pending = queue.drainPending();
     ASSERT_EQ(pending.size(), 3u);
     for (uint64_t i = 0; i < 3; ++i) {
         EXPECT_EQ(pending[i].value_, i);
     }
-    EXPECT_TRUE(queue.takePending().empty());
+    EXPECT_TRUE(queue.drainPending().empty());
 }
 
 TEST(telemetryStagingQueueTest, SecondDrainIsEmpty) {
     nixlTelemetryStagingQueue queue(4);
     ASSERT_TRUE(queue.tryPush(makeEvent(1)));
-    EXPECT_EQ(queue.takePending().size(), 1u);
-    EXPECT_TRUE(queue.takePending().empty());
+    EXPECT_EQ(queue.drainPending().size(), 1u);
+    EXPECT_TRUE(queue.drainPending().empty());
 }
 
 TEST(telemetryStagingQueueTest, AcceptsEventsAfterDrain) {
     nixlTelemetryStagingQueue queue(2);
     ASSERT_TRUE(queue.tryPush(makeEvent(1)));
     ASSERT_TRUE(queue.tryPush(makeEvent(2)));
-    (void)queue.takePending();
+    (void)queue.drainPending();
     ASSERT_TRUE(queue.tryPush(makeEvent(3)));
     ASSERT_TRUE(queue.tryPush(makeEvent(4)));
-    auto pending = queue.takePending();
+    auto pending = queue.drainPending();
     ASSERT_EQ(pending.size(), 2u);
     EXPECT_EQ(pending[0].value_, 3u);
     EXPECT_EQ(pending[1].value_, 4u);
+}
+
+TEST(telemetryStagingQueueTest, DrainAlternatesBetweenTwoBuffersWithoutReallocating) {
+    constexpr size_t kCapacity = 32;
+    constexpr size_t kCycles = 200;
+    nixlTelemetryStagingQueue queue(kCapacity);
+
+    std::unordered_set<const nixlTelemetryEvent *> storages;
+    const nixlTelemetryEvent *previous = nullptr;
+    for (size_t cycle = 0; cycle < kCycles; ++cycle) {
+        const size_t count = 1 + cycle % kCapacity;
+        for (uint64_t i = 0; i < count; ++i) {
+            ASSERT_TRUE(queue.tryPush(makeEvent(i)));
+        }
+
+        const auto pending = queue.drainPending();
+        ASSERT_EQ(pending.size(), count);
+        EXPECT_NE(pending.data(), previous);
+        storages.insert(pending.data());
+        previous = pending.data();
+    }
+
+    EXPECT_EQ(storages.size(), 2u);
+    EXPECT_EQ(queue.takeNumDropped(), 0u);
+}
+
+TEST(telemetryStagingQueueTest, CapacitySurvivesAlternatingDrains) {
+    constexpr size_t kCapacity = 4;
+    nixlTelemetryStagingQueue queue(kCapacity);
+    for (uint64_t cycle = 0; cycle < 5; ++cycle) {
+        ASSERT_TRUE(queue.tryPush(makeEvent(cycle)));
+        ASSERT_EQ(queue.drainPending().size(), 1u);
+    }
+
+    for (uint64_t i = 0; i < kCapacity; ++i) {
+        EXPECT_TRUE(queue.tryPush(makeEvent(i)));
+    }
+    EXPECT_FALSE(queue.tryPush(makeEvent(kCapacity)));
+    EXPECT_EQ(queue.takeNumDropped(), 1u);
+    EXPECT_EQ(queue.drainPending().size(), kCapacity);
+}
+
+TEST(telemetryStagingQueueTest, DrainViewCarriesOnlyTheCurrentDrain) {
+    nixlTelemetryStagingQueue queue(4);
+    ASSERT_TRUE(queue.tryPush(makeEvent(1)));
+    ASSERT_TRUE(queue.tryPush(makeEvent(2)));
+    const auto first = queue.drainPending();
+    ASSERT_EQ(first.size(), 2u);
+    const auto *const firstStorage = first.data();
+
+    ASSERT_TRUE(queue.tryPush(makeEvent(3)));
+    const auto second = queue.drainPending();
+    ASSERT_EQ(second.size(), 1u);
+    EXPECT_EQ(second[0].value_, 3u);
+    EXPECT_NE(second.data(), firstStorage);
 }
 
 TEST(telemetryStagingQueueTest, TakeNumDroppedReturnsDeltaOnceThenZero) {
@@ -166,11 +222,11 @@ TEST(telemetryStagingQueueTest, ConcurrentProducersConserveEventSlots) {
     std::vector<nixlTelemetryEvent> drained;
     std::thread consumer([&]() {
         while (!done.load(std::memory_order_acquire)) {
-            auto pending = queue.takePending();
+            auto pending = queue.drainPending();
             drained.insert(drained.end(), pending.begin(), pending.end());
             std::this_thread::yield();
         }
-        auto pending = queue.takePending();
+        auto pending = queue.drainPending();
         drained.insert(drained.end(), pending.begin(), pending.end());
     });
 
