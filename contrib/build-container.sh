@@ -30,6 +30,8 @@ VERSION=v$latest_tag.dev.$commit_id
 
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
 BASE_IMAGE_TAG=25.10-cuda13.0-devel-ubuntu24.04
+MANYLINUX_IMAGE=quay.io/pypa/manylinux_2_28
+MANYLINUX_IMAGE_TAG=2026.06.06-1
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
@@ -44,10 +46,9 @@ OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
-# CUDA MAJOR.MINOR for the manylinux (Option B) wheel build — drives the torch
-# cuXXX index and the cu12/cu13 meta-wheel split. Default 13.0 matches the default
-# ubi8 BASE_IMAGE_TAG; override with --cuda-version (e.g. 12.9).
-CUDA_VERSION=${CUDA_VERSION:-13.0}
+# CUDA MAJOR.MINOR for the manylinux wheel build — drives the torch cuXXX index
+# and the cu12/cu13 meta-wheel split. Default 13.2 matches the Dockerfile default.
+CUDA_VERSION=${CUDA_VERSION:-13.2}
 BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
 APT_MIRROR=""
@@ -147,6 +148,22 @@ get_options() {
         --cuda-version)
             if [ "$2" ]; then
                 CUDA_VERSION=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --manylinux-image)
+            if [ "$2" ]; then
+                MANYLINUX_IMAGE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --manylinux-image-tag)
+            if [ "$2" ]; then
+                MANYLINUX_IMAGE_TAG=$2
                 shift
             else
                 missing_requirement $1
@@ -306,7 +323,9 @@ show_help() {
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
-    echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: ${CUDA_VERSION})]"
+    echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: ${CUDA_VERSION})]
+  [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
+  [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
     echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; harbor.mellanox.com must be reachable)]"
     echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
@@ -331,6 +350,7 @@ if [ -d "$NIXL_DIR/build" ]; then
 fi
 
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX_IMAGE_TAG=$MANYLINUX_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
 BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
