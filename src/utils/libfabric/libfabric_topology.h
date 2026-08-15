@@ -148,8 +148,6 @@ private:
     isNeuronAccel(hwloc_obj_t obj) const;
     bool
     isAmdAccel(hwloc_obj_t obj) const;
-    bool
-    isEfaDevice(hwloc_obj_t obj) const;
 
     // retrieves line speed of NIC from map
     size_t
