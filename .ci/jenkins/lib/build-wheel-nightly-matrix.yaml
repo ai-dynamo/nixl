@@ -58,7 +58,9 @@ env:
   MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
   MANYLINUX_IMAGE_TAG: "2026.06.06-1"
   WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-cu${CUDA_VARIANT}-manylinux_2_28"
-  TORCH_VERSIONS: "2.12,2.13"
+  # TORCH_VERSIONS comes from the JJB job parameter (default 2.12,2.13 for cu13;
+  # the cu12 cron overrides it to 2.11,2.12,2.13). Not set here to avoid the
+  # matrix env overriding the per-run parameter value.
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
@@ -91,6 +93,12 @@ steps:
       fi
       [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot resolve UCX_VERSION=${UCX_VERSION}"; exit 1; }
       printf 'NIXL_SHA=%s\nUCX_SHA=%s\n' "${NIXL_SHA}" "${UCX_SHA}" > wheel_build_ids.env
+      # torch 2.11 is not published on the cu13 index; derive the correct set
+      # from CUDA_VARIANT so manual runs can't accidentally drop 2.11 for cu12.
+      if [ -z "${TORCH_VERSIONS:-}" ]; then
+        if [ "${CUDA_VARIANT}" = "12" ]; then TORCH_VERSIONS="2.11,2.12,2.13"
+        else TORCH_VERSIONS="2.12,2.13"; fi
+      fi
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
