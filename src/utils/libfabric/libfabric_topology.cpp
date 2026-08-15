@@ -450,7 +450,7 @@ nixlLibfabricTopology::discoverAccelWithHwloc() {
 
     // If we found more than 8 NVIDIA accelerators on P5en, investigate further
     if (num_nvidia_accel > 8) {
-        NIXL_WARN << "Found " << num_aws_accel
+        NIXL_WARN << "Found " << num_nvidia_accel
                   << " NVIDIA accelerators, but P5en should have 8. Investigating...";
 
         // List all NVIDIA devices to understand what we're seeing
