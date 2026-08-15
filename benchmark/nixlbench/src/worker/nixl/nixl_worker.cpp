@@ -962,7 +962,37 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     opt_args.backends.push_back(backend_engine);
 
-    if (xferBenchConfig::isObjStorageBackend()) {
+    // REDIS stays an independent backend (putRedis seeding), but remote values
+    // use OBJ_SEG addressing semantics. Handle it before isObjStorageBackend()
+    // so REDIS does not enter the S3/Azure putObj registration path.
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
+
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                std::string unique_name = "nixlbench_redis" + std::to_string(list_idx) + "_" +
+                    std::to_string(i) + "_" + std::to_string(timestamp);
+
+                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+                    const size_t seed_size = xferBenchConfig::max_block_size;
+                    if (!xferBenchUtils::putRedis(seed_size, unique_name)) {
+                        std::cerr << "Failed to seed Redis key: " << unique_name << std::endl;
+                        exit(EXIT_FAILURE);
+                    }
+                }
+
+                xferBenchIOV redis_desc(0, buffer_size, i, unique_name);
+                std::cout << "Creating Redis key: " << unique_name << std::endl;
+                iov_list.push_back(redis_desc);
+            }
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
+        }
+    } else if (xferBenchConfig::isObjStorageBackend()) {
         buffer_size = xferBenchConfig::max_block_size;
 
         struct timeval tv;
@@ -1024,33 +1054,6 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, BLK_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
-        }
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
-        struct timeval tv;
-        gettimeofday(&tv, nullptr);
-        uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
-
-        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
-            std::vector<xferBenchIOV> iov_list;
-            for (i = 0; i < num_devices; i++) {
-                std::string unique_name = "nixlbench_redis" + std::to_string(list_idx) + "_" +
-                    std::to_string(i) + "_" + std::to_string(timestamp);
-
-                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
-                    const size_t seed_size = xferBenchConfig::max_block_size;
-                    if (!xferBenchUtils::putRedis(seed_size, unique_name)) {
-                        std::cerr << "Failed to seed Redis key: " << unique_name << std::endl;
-                        exit(EXIT_FAILURE);
-                    }
-                }
-
-                xferBenchIOV redis_desc(0, buffer_size, i, unique_name);
-                std::cout << "Creating Redis key: " << unique_name << std::endl;
-                iov_list.push_back(redis_desc);
-            }
-            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, DRAM_SEG);
-            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_regs_.emplace_back(*agent, backend_engine, DRAM_SEG, std::move(iov_list));
         }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
@@ -1251,18 +1254,18 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             size_t num_devices = iov_list.size();
             for (size_t devidx = 0; devidx < num_devices; devidx++) {
                 const auto &iov = iov_list[devidx];
-                if (xferBenchConfig::isObjStorageBackend()) {
+                if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {
+                    xferBenchIOV redis_remote(iov);
+                    redis_remote.addr = 0;
+                    redis_remote.len = block_size;
+                    remote_iov_list.push_back(redis_remote);
+                } else if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
                     int obj_dev_id = list_idx * num_devices + devidx;
                     basic_desc = initBasicDescObj(iov.len, obj_dev_id, iov.metaInfo);
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }
-                } else if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {
-                    xferBenchIOV redis_remote(iov);
-                    redis_remote.addr = 0;
-                    redis_remote.len = block_size;
-                    remote_iov_list.push_back(redis_remote);
                 } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = gusli_devices[devidx].dev_offset + file_offset;
@@ -1352,8 +1355,6 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
     // Set remote descriptor type based on backend
     if (xferBenchConfig::isObjStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
-    } else if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {
-        remote_desc = nixl_xfer_dlist_t(DRAM_SEG);
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
@@ -1368,8 +1369,6 @@ static nixl_mem_t
 getRemoteSegType() {
     if (xferBenchConfig::isObjStorageBackend()) {
         return OBJ_SEG;
-    } else if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {
-        return DRAM_SEG;
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         return BLK_SEG;
     } else if (xferBenchConfig::isStorageBackend()) {

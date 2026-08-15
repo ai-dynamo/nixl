@@ -952,6 +952,7 @@ xferBenchConfig::isStorageBackend() {
 bool
 xferBenchConfig::isObjStorageBackend() {
     return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 };
@@ -1148,7 +1149,12 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                         exit(EXIT_FAILURE);
                     }
                     is_allocated = true;
-                    if (xferBenchConfig::isObjStorageBackend()) {
+                    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+                        if (!getRedisBench(len, iov.metaInfo, addr)) {
+                            std::cerr << "Failed to get Redis key: " << iov.metaInfo << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                    } else if (xferBenchConfig::isObjStorageBackend()) {
                         if (!xferBenchUtils::getObj(iov.metaInfo)) {
                             std::cerr << "Failed to get object: " << iov.metaInfo << std::endl;
                             exit(EXIT_FAILURE);
@@ -1199,11 +1205,6 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                             exit(EXIT_FAILURE);
                         }
                         close(fd);
-                    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
-                        if (!getRedisBench(len, iov.metaInfo, addr)) {
-                            std::cerr << "Failed to get Redis key: " << iov.metaInfo << std::endl;
-                            exit(EXIT_FAILURE);
-                        }
                     } else {
                         ssize_t rc = pread(iov.devId, addr, len, iov.addr);
                         if (rc < 0) {
@@ -1514,6 +1515,11 @@ xferBenchUtils::getObj(const std::string &name) {
 bool
 xferBenchUtils::rmObj(const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        return true;
+    }
+    // REDIS uses OBJ_SEG for remote addressing, but cleanup is not S3/Azure CLI-based.
+    // Bench keys are ephemeral; skip explicit delete (same as prior DRAM_SEG teardown).
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
