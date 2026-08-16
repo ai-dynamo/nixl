@@ -85,7 +85,10 @@ Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int tim
         }()),
         rank(rank),
         explicitly_destroy(explicitly_destroy),
-        comm_stream(at::cuda::getStreamFromPool(true)) {}
+        comm_stream(at::cuda::getStreamFromPool(true)) {
+    const char* env = std::getenv("NIXL_EP_HT_AVOID_RECORD_STREAM");
+    ht_avoid_record_stream = env != nullptr and env[0] == '1';
+}
 
 bool Buffer::_is_rank_connected(int rank_id) const {
     return rank_id == rank or std::find(remote_ranks.begin(), remote_ranks.end(), rank_id) != remote_ranks.end();
@@ -731,6 +734,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     auto compute_stream = at::cuda::getCurrentCUDAStream();
     if (allocate_on_comm_stream) {
         EP_HOST_ASSERT(previous_event.has_value() and async);
+        EP_HOST_ASSERT(not ht_avoid_record_stream and "NIXL_EP_HT_AVOID_RECORD_STREAM does not support allocate_on_comm_stream");
         at::cuda::setCurrentCUDAStream(comm_stream);
     }
 
@@ -880,6 +884,10 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     if (async) {
         event = EventHandle(comm_stream);
         auto keep = [&](const torch::Tensor& t) {
+            if (ht_avoid_record_stream) {
+                event->extra_tensors.push_back(t);
+                return;
+            }
             t.record_stream(comm_stream);
             if (allocate_on_comm_stream)
                 t.record_stream(compute_stream);
@@ -951,6 +959,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
     auto compute_stream = at::cuda::getCurrentCUDAStream();
     if (allocate_on_comm_stream) {
         EP_HOST_ASSERT(previous_event.has_value() and async);
+        EP_HOST_ASSERT(not ht_avoid_record_stream and "NIXL_EP_HT_AVOID_RECORD_STREAM does not support allocate_on_comm_stream");
         at::cuda::setCurrentCUDAStream(comm_stream);
     }
 
@@ -1019,6 +1028,10 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
     if (async) {
         event = EventHandle(comm_stream);
         auto keep = [&](const torch::Tensor& t) {
+            if (ht_avoid_record_stream) {
+                event->extra_tensors.push_back(t);
+                return;
+            }
             t.record_stream(comm_stream);
             if (allocate_on_comm_stream)
                 t.record_stream(compute_stream);

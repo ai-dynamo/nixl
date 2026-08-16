@@ -126,6 +126,9 @@ private:
     // Stream for communication
     at::cuda::CUDAStream comm_stream;
 
+    // Hold HT tensors in the EventHandle instead of record_stream(), for CUDA-graph capture
+    bool ht_avoid_record_stream = false;
+
     // After synchronization, this flag will be true
     bool available = false;
 

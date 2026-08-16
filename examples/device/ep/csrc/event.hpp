@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * This file incorporates material from the DeepSeek project, licensed under the MIT License.
  * The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
@@ -29,6 +29,9 @@ namespace nixl_ep {
 
 struct EventHandle {
     std::shared_ptr<torch::Event> event;
+
+    // Held instead of record_stream(), which a captured graph never reclaims; freed with the handle
+    std::vector<torch::Tensor> extra_tensors;
 
     EventHandle() {
         event = std::make_shared<torch::Event>(torch::kCUDA);
