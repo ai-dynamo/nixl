@@ -355,9 +355,9 @@ class Buffer:
                 are supported. `-1` indices (not selecting any expert) are supported.
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
                 `num_ranks * num_max_dispatch_tokens_per_rank` must be a multiple of 4 for TMA alignment.
-            num_experts: deprecated optional parameter. This value is ignored by low-latency
-                dispatch; the number of experts is determined from the `num_experts_per_rank`
-                passed to `update_memory_buffers()` and the currently active ranks.
+            num_experts: total physical expert capacity used for the dispatch
+                layout. It must cover all active experts and defaults to the
+                active expert count.
             cumulative_local_expert_recv_stats: a cumulative expert count tensor for statistics, which should have shape
                 `[num_local_experts]` and be typed as `torch.int`. This is useful for online service EP load balance
                 monitoring.
@@ -405,6 +405,7 @@ class Buffer:
             cumulative_local_expert_recv_stats,
             dispatch_wait_recv_cost_stats,
             num_max_dispatch_tokens_per_rank,
+            num_experts,
             use_fp8,
             round_scale,
             use_ue8m0,
@@ -760,7 +761,7 @@ class Buffer:
             hidden,
         ) = handle
         return self.runtime.get_next_combine_buffer(
-            num_max_dispatch_tokens_per_rank, hidden
+            num_max_dispatch_tokens_per_rank, hidden, layout_range.size(1)
         )
 
     def update_memory_buffers(
