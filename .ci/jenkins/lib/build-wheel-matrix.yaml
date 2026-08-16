@@ -331,7 +331,11 @@ steps:
       # 2. Copy the whole workspace in (test script + helpers), like the other pipelines.
       printf 'FROM %s\nCOPY . /workspace/nixl\nWORKDIR /workspace/nixl\n' "${IMG}" \
         | docker build --platform linux/${arch} -t "${IMG}" -f - .
-      docker push "${IMG}"
+      for i in {1..6}; do
+          docker push "${IMG}" && break
+          [ "$i" = 6 ] && exit 1
+          sleep $((2 ** (i - 1)))
+      done
 
   - name: Allocate Environment
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"

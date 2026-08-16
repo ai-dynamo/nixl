@@ -182,7 +182,7 @@ steps:
         local target_tag="$1"
         echo "Creating tag: ${target_tag}"
         docker tag "${LOCAL_TAG_BASE}${arch}" "${ARTIFACTORY_REGISTRY}:${target_tag}"
-        docker push "${ARTIFACTORY_REGISTRY}:${target_tag}"
+        docker push --retry 5 "${ARTIFACTORY_REGISTRY}:${target_tag}"
         curl --fail -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
           "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
       }

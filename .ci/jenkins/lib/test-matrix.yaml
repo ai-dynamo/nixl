@@ -114,7 +114,11 @@ steps:
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-gpu-base-pytorch26.06-cuda13.3-ubuntu24.04:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
-      podman push ${PR_IMAGE}
+      for i in {1..6}; do
+          podman push ${PR_IMAGE} && break
+          [ "$i" = 6 ] && exit 1
+          sleep $((2 ** (i - 1)))
+      done
 
   - name: Allocate Environment
     containerSelector: "{name: 'build_helper'}"

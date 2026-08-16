@@ -264,6 +264,39 @@ new tag and triggers a rebuild automatically.
 **You never need to manually update `CI_IMAGE_TAG`.** The `CI_MANAGED`
 placeholder signals this clearly.
 
+## Registry push retries
+
+Transient `HTTP 503 Service Unavailable` responses from Artifactory were failing
+otherwise-green builds at the push step, after the image had already built
+successfully. Every image push now retries, but the mechanism differs because
+`--retry` was only added in podman 5.0 and most push steps run on an older one.
+
+**`build-container-matrix.yaml`** runs on `quay.io/podman/stable:v5.7.1` and uses
+the native `--retry 5`. podman already retries this class of error —
+`go.podman.io/common/pkg/retry` treats HTTP 502-504 and network errors as
+retryable, while failing fast on unauthorized, denied and unknown
+name/manifest, so a larger budget never delays a genuine failure. `--retry N`
+counts retries *after* the initial push, and the backoff is `2^attempt` seconds
+plus 10% jitter. The default of 3 retries therefore spans 1+2+4 = 7 seconds,
+which the outages above outlasted; `--retry 5` extends it to 1+2+4+8+16 = 31
+seconds over 6 attempts. `--retry-delay` is left unset on purpose: passing it
+replaces the exponential backoff with a fixed delay.
+
+**`test-matrix.yaml`, `test-dl-matrix.yaml`, `test-dl-ep-matrix.yaml` and
+`build-wheel-matrix.yaml`** push from a `Dockerfile.build_helper` container,
+which installs podman from Ubuntu 24.04 apt (4.9.x). podman 5 is not available
+for 24.04 — not in `noble`, `noble-updates` or `noble-backports` — so these use
+a shell retry loop deliberately matched to the flag: 6 attempts with 1, 2, 4, 8
+and 16 second delays. The one behavioural difference is that the loop retries on
+any failure, so an auth error waits out the backoff instead of failing
+immediately.
+
+`build-wheel-matrix.yaml` is the easy one to get wrong: its `Prepare` step
+symlinks `docker` to `podman` in two different containers, and the push in
+`Build sanity image` runs in the `build_helper_(vllm|sglang)` one, not the
+`manylinux` runner. Check the step's `containerSelector` against
+`runs_on_dockers`, not just whether `docker` is podman.
+
 ## Related docs
 
 - [Build Wheel Matrix CI Job Documentation](build-wheel-matrix-ci.md) — deep dive into `nixl-ci-build-wheel`.
