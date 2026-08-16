@@ -747,10 +747,10 @@ class nixl_agent:
         self,
         dlist: Union[nixlBind.nixlXferDList, nixlBind.nixlRemoteDList],
         *,
-        backends: list[str] = [],
+        backends: Optional[list[str]] = None,
     ) -> int:
         handle_list = []
-        for backend_string in backends:
+        for backend_string in backends or []:
             handle_list.append(self.backends[backend_string])
         return self.agent.prepMemView(dlist, handle_list)
 
