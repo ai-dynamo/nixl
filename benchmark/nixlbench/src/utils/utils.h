@@ -80,6 +80,9 @@
 #define XFERBENCH_INITIATOR_BUFFER_ELEMENT 0xbb
 #define XFERBENCH_TARGET_BUFFER_ELEMENT 0xaa
 
+// CUDA warp size, to derive Device API group number from block_threads
+#define XFERBENCH_DEVICE_WARP_SIZE 32
+
 // Runtime types
 #define XFERBENCH_RT_ETCD "ETCD"
 #define XFERBENCH_RT_ASIO "ASIO"
@@ -229,6 +232,14 @@ public:
     static bool gusli_try_use_uring;
     static bool use_device_api;
     static int block_threads;
+
+    /* Number of independent groups Device API kernel runs with. */
+    static int
+    deviceGroupNum();
+
+    /* Parallel workers split iterations across both CPU and Device API. */
+    static int
+    workerNum();
 
     static int
     parseConfig(int argc, char *argv[]);

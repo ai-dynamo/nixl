@@ -583,16 +583,24 @@ xferBenchConfig::loadParams(void) {
                       << std::endl;
             return -1;
         }
-        if (num_threads > 32 && num_threads % 32 != 0) {
+        if (num_threads > XFERBENCH_DEVICE_WARP_SIZE &&
+            num_threads % XFERBENCH_DEVICE_WARP_SIZE != 0) {
             std::cerr << "Invalid value for --num_threads: " << num_threads
                       << ". Device API requires block_threads > 32 must be a multiple of 32"
                       << std::endl;
             return -1;
         }
         block_threads = num_threads;
+        int group_num = deviceGroupNum();
+        if (num_iter < group_num) {
+            std::cerr << "Invalid value for --num_iter: " << num_iter
+                      << " , must not be smaller than Device API group number: " << group_num
+                      << std::endl;
+            return -1;
+        }
         num_threads = 1;
         std::cout << "Device API mode: kernel block_threads=" << block_threads
-                  << ", num_threads forced to 1" << std::endl;
+                  << ", groups_num = " << group_num << ", num_threads forced to 1" << std::endl;
     }
     etcd_endpoints = NB_ARG(etcd_endpoints);
     asio_address = NB_ARG(asio_address);
@@ -730,12 +738,15 @@ xferBenchConfig::loadParams(void) {
             << std::endl;
         return -1;
     }
-    if ((max_block_size * max_batch_size) > (total_buffer_size / num_threads)) {
+    const int workers = workerNum();
+    const char *worker_kind = use_device_api ? "groups" : "threads";
+
+    if ((max_block_size * max_batch_size) > (total_buffer_size / workers)) {
         std::cerr << "Incorrect buffer size configuration "
                   << "(max_block_size * max_batch_size) "
                   << "(" << (max_block_size * max_batch_size) << ")"
-                  << " is > (total_buffer_size / num_threads) ("
-                  << (total_buffer_size / num_threads) << ")" << std::endl;
+                  << " is > (total_buffer_size / " << workers << " " << worker_kind << ") ("
+                  << (total_buffer_size / workers) << ")" << std::endl;
         return -1;
     }
 
@@ -744,29 +755,31 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
 
-    int partition = (num_threads * large_blk_iter_ftr);
+    int partition = (workers * large_blk_iter_ftr);
     if (num_iter % partition) {
         num_iter += partition - (num_iter % partition);
         std::cout << "WARNING: Adjusting num_iter to " << num_iter
-                  << " to allow equal distribution to " << num_threads << " threads" << std::endl;
+                  << " to allow equal distribution to " << workers << " " << worker_kind
+                  << std::endl;
     }
     if (warmup_iter % partition) {
         warmup_iter += partition - (warmup_iter % partition);
         std::cout << "WARNING: Adjusting warmup_iter to " << warmup_iter
-                  << " to allow equal distribution to " << num_threads << " threads" << std::endl;
+                  << " to allow equal distribution to " << workers << " " << worker_kind
+                  << std::endl;
     }
-    partition = (num_initiator_dev * num_threads);
+    partition = (num_initiator_dev * workers);
     if (total_buffer_size % partition) {
-        std::cerr << "Total_buffer_size must be divisible by the product of num_threads and "
-                     "num_initiator_dev"
+        std::cerr << "Total_buffer_size must be divisible by the product of " << workers << " "
+                  << worker_kind << " and num_initiator_dev"
                   << ", next such value is "
                   << total_buffer_size + partition - (total_buffer_size % partition) << std::endl;
         return -1;
     }
-    partition = (num_target_dev * num_threads);
+    partition = (num_target_dev * workers);
     if (total_buffer_size % partition) {
-        std::cerr << "Total_buffer_size must be divisible by the product of num_threads and "
-                     "num_target_dev"
+        std::cerr << "Total_buffer_size must be divisible by the product of " << workers << " "
+                  << worker_kind << " and num_target_dev"
                   << ", next such value is "
                   << total_buffer_size + partition - (total_buffer_size % partition) << std::endl;
         return -1;
@@ -951,6 +964,19 @@ xferBenchConfig::parseDeviceList() {
     }
 
     return devices;
+}
+
+int
+xferBenchConfig::deviceGroupNum() {
+    return xferBenchConfig::block_threads <= XFERBENCH_DEVICE_WARP_SIZE ?
+        xferBenchConfig::block_threads :
+        xferBenchConfig::block_threads / XFERBENCH_DEVICE_WARP_SIZE;
+}
+
+int
+xferBenchConfig::workerNum() {
+    return xferBenchConfig::use_device_api ? xferBenchConfig::deviceGroupNum() :
+                                             xferBenchConfig::num_threads;
 }
 
 bool
@@ -1342,7 +1368,7 @@ xferBenchUtils::printStats(bool is_target,
     double totalbw = 0;
 
     int total_iter = xferBenchConfig::num_iter;
-    int per_thread_iter = total_iter / xferBenchConfig::num_threads;
+    int per_thread_iter = total_iter / xferBenchConfig::workerNum();
 
     if (block_size > LARGE_BLOCK_SIZE) {
         total_iter /= xferBenchConfig::large_blk_iter_ftr;

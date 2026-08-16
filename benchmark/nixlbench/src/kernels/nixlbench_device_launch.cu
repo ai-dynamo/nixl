@@ -55,10 +55,11 @@ __device__ nixl_status_t
 nixlbenchSignalCounter(const nixlbenchDeviceXferParams &params,
                        size_t counter_offset,
                        uint64_t value,
+                       unsigned channel_id,
+                       nixlGpuXferStatusH &xfer_status,
                        const char *counter_name) {
-    const nixlMemViewElem counter{params.remoteMvh, params.numRegions, counter_offset};
-    nixlGpuXferStatusH xfer_status;
-    nixl_status_t status = nixlAtomicAdd<Level>(value, counter, 0, 0, &xfer_status);
+    const nixlMemViewElem counter{params.remoteMvh, params.counterIndex, counter_offset};
+    nixl_status_t status = nixlAtomicAdd<Level>(value, counter, channel_id, 0, &xfer_status);
     status = nixlbenchPollXferStatus<Level>(status, xfer_status);
 
     if (status != NIXL_SUCCESS) {
@@ -71,20 +72,35 @@ nixlbenchSignalCounter(const nixlbenchDeviceXferParams &params,
 
 template<nixl_gpu_level_t Level>
 __device__ nixl_status_t
-nixlbenchSignalCompletion(nixlbenchDeviceXferParams params, uint64_t num_iterations) {
-    return nixlbenchSignalCounter<Level>(
-        params, params.completionCounterOffsetBytes, num_iterations, "completion");
+nixlbenchSignalCompletion(const nixlbenchDeviceXferParams &params,
+                          uint64_t num_iterations,
+                          unsigned channel_id,
+                          nixlGpuXferStatusH &xfer_status) {
+    return nixlbenchSignalCounter<Level>(params,
+                                         params.completionCounterOffsetBytes,
+                                         num_iterations,
+                                         channel_id,
+                                         xfer_status,
+                                         "completion");
 }
 
 template<nixl_gpu_level_t Level>
 __device__ nixl_status_t
-nixlbenchSignalError(nixlbenchDeviceXferParams params) {
-    return nixlbenchSignalCounter<Level>(params, params.errorCounterOffsetBytes, 1ull, "error");
+nixlbenchSignalError(const nixlbenchDeviceXferParams &params,
+                     unsigned channel_id,
+                     nixlGpuXferStatusH &xfer_status) {
+    return nixlbenchSignalCounter<Level>(
+        params, params.errorCounterOffsetBytes, 1ull, channel_id, xfer_status, "error");
 }
 
 /**
  * Performs device-initiated NIXL PUT transfers and reports completion or errors
  * through remote counters.
+ *
+ * Every group runs @c numIterations iterations of the complete region list,
+ * so the block as a whole performs @c numIterations * num_groups transfers of the list.
+ * Groups are fully independent - each one owns a UCX channel, keeps its own timing samples
+ * and signals its own share of the completion counter - so no need synchronization at all.
  */
 template<nixl_gpu_level_t Level>
 __global__ void
@@ -99,72 +115,61 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
         num_groups = (blockDim.x + warpSize - 1) / warpSize;
     }
     nixlGpuXferStatusH &xfer_status = xfer_statuses[group_id];
-    const bool active_group = group_id < params.activeGroupNum;
     const bool group_leader = Level == nixl_gpu_level_t::THREAD || threadIdx.x % warpSize == 0;
-    for (uint64_t iter = 0; iter < params.numIterations; ++iter) {
-        uint64_t post_start_ns = 0;
-        uint64_t post_end_ns = 0;
-        uint64_t xfer_end_ns = 0;
-        if (active_group) {
-            if constexpr (Level == nixl_gpu_level_t::WARP) {
-                __syncwarp();
-            }
-            post_start_ns = nixlbenchGetTimeNs();
+    const size_t region_base = group_id * params.numRegions;
+    bool group_failed = false;
+
+    for (uint64_t iter = 0; iter < params.numIterations && !group_failed; ++iter) {
+        if constexpr (Level == nixl_gpu_level_t::WARP) {
+            __syncwarp();
         }
+        const uint64_t post_start_ns = nixlbenchGetTimeNs();
 
         nixl_status_t put_status = NIXL_SUCCESS;
-        // Each group uses a UCX channel; the host configures at least num_groups channels.
-        for (size_t region_idx = group_id; region_idx < params.numRegions;
-             region_idx += num_groups) {
-            put_status = nixlbenchPostPut<Level>(params, region_idx, group_id, xfer_status);
+        for (size_t region_idx = 0; region_idx < params.numRegions; ++region_idx) {
+            put_status =
+                nixlbenchPostPut<Level>(params, region_base + region_idx, group_id, xfer_status);
             if (put_status != NIXL_IN_PROG) {
                 break;
             }
         }
-        if (active_group) {
-            if constexpr (Level == nixl_gpu_level_t::WARP) {
-                __syncwarp();
-            }
-            post_end_ns = nixlbenchGetTimeNs();
+        if constexpr (Level == nixl_gpu_level_t::WARP) {
+            __syncwarp();
         }
+        const uint64_t post_end_ns = nixlbenchGetTimeNs();
+
         if (put_status == NIXL_IN_PROG) {
             put_status = nixlbenchPollXferStatus<Level>(put_status, xfer_status);
         }
-        if (active_group) {
-            if constexpr (Level == nixl_gpu_level_t::WARP) {
-                __syncwarp();
-            }
-            xfer_end_ns = nixlbenchGetTimeNs();
+        if constexpr (Level == nixl_gpu_level_t::WARP) {
+            __syncwarp();
+        }
+        const uint64_t xfer_end_ns = nixlbenchGetTimeNs();
+
+        if (group_leader) {
+            const size_t sample_idx = iter * num_groups + group_id;
+            params.postDurationNs[sample_idx] = post_end_ns - post_start_ns;
+            params.xferDurationNs[sample_idx] = xfer_end_ns - post_end_ns;
+        }
+
+        if (put_status != NIXL_SUCCESS) {
             if (group_leader) {
-                const size_t sample_idx = iter * params.activeGroupNum + group_id;
-                params.postDurationNs[sample_idx] = post_end_ns - post_start_ns;
-                params.xferDurationNs[sample_idx] = xfer_end_ns - post_end_ns;
+                printf("[nixlbenchPutKernel] transfer did not complete: "
+                       "threadIdx.x=%u blockIdx.x=%u blockDim.x=%u final_status=%d\n",
+                       threadIdx.x,
+                       blockIdx.x,
+                       blockDim.x,
+                       static_cast<int>(put_status));
             }
-        }
-        if (put_status != NIXL_SUCCESS && group_leader) {
-            printf("[nixlbenchPutKernel] transfer did not complete: "
-                   "threadIdx.x=%u blockIdx.x=%u blockDim.x=%u final_status=%d\n",
-                   threadIdx.x,
-                   blockIdx.x,
-                   blockDim.x,
-                   static_cast<int>(put_status));
-        }
-        const bool any_put_failed = __syncthreads_or(put_status != NIXL_SUCCESS);
-        if (any_put_failed) {
-            // Signaling is issued by a single thread, hence THREAD level.
-            if (threadIdx.x == 0) {
-                (void)nixlbenchSignalError<nixl_gpu_level_t::THREAD>(params);
-            }
-            return;
+            group_failed = true;
         }
     }
 
-    // Signaling is issued by a single thread, hence THREAD level.
-    if (threadIdx.x == 0) {
-        if (nixlbenchSignalCompletion<nixl_gpu_level_t::THREAD>(params, params.numIterations) !=
-            NIXL_SUCCESS) {
-            (void)nixlbenchSignalError<nixl_gpu_level_t::THREAD>(params);
-        }
+    if (group_failed) {
+        (void)nixlbenchSignalError<Level>(params, group_id, xfer_status);
+    } else if (nixlbenchSignalCompletion<Level>(
+                   params, params.numIterations, group_id, xfer_status) != NIXL_SUCCESS) {
+        (void)nixlbenchSignalError<Level>(params, group_id, xfer_status);
     }
 }
 
@@ -178,6 +183,13 @@ nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    if (params.postDurationNs == nullptr || params.xferDurationNs == nullptr) {
+        std::cerr << "nixlbench: nixlbenchLaunchDevicePut: duration output buffers are required "
+                     "(postDurationNs and xferDurationNs must hold numIterations * num_groups "
+                     "entries)\n";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     if (block_threads == 0 || block_threads > 1024u) {
         std::cerr << "nixlbench: nixlbenchLaunchDevicePut: invalid block_threads=" << block_threads
                   << " (must be 1..1024)\n";
@@ -187,15 +199,6 @@ nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block
         std::cerr << "nixlbench: nixlbenchLaunchDevicePut: block_threads (" << block_threads
                   << ") must be a multiple of " << kWarpSize
                   << " (WARP-level nixlPut requires full warps)\n";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    const size_t group_num = block_threads <= kWarpSize ? block_threads : block_threads / kWarpSize;
-    const size_t expected_active_group_num =
-        group_num < params.numRegions ? group_num : params.numRegions;
-    if (params.activeGroupNum != expected_active_group_num) {
-        std::cerr << "nixlbench: nixlbenchLaunchDevicePut: activeGroupNum=" << params.activeGroupNum
-                  << " does not match expected value " << expected_active_group_num << '\n';
         return NIXL_ERR_INVALID_PARAM;
     }
 

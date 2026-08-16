@@ -79,7 +79,6 @@ constexpr size_t kDeviceCounterDoneOffsetBytes = 0;
 constexpr size_t kDeviceCounterErrorOffsetBytes = sizeof(uint64_t);
 constexpr size_t kDeviceCounterBytes = 2 * sizeof(uint64_t);
 constexpr uint64_t kUnwrittenDeviceDurationNs = std::numeric_limits<uint64_t>::max();
-constexpr int kDeviceWarpSize = 32;
 constexpr int kDefaultDeviceChannels = 4;
 
 // Reuse parser from utils
@@ -160,10 +159,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
         if (xferBenchConfig::use_device_api) {
-            const int num_device_groups = xferBenchConfig::block_threads <= kDeviceWarpSize ?
-                xferBenchConfig::block_threads :
-                xferBenchConfig::block_threads / kDeviceWarpSize;
-            const int num_device_channels = std::max(kDefaultDeviceChannels, num_device_groups);
+            const int num_device_channels =
+                std::max(kDefaultDeviceChannels, xferBenchConfig::deviceGroupNum());
             backend_params["ucx_num_device_channels"] = std::to_string(num_device_channels);
             std::cout << "Device API mode: configuring " << num_device_channels
                       << " UCX device channels for execution groups" << std::endl;
@@ -1896,10 +1893,11 @@ execTransfer(nixlAgent *agent,
     return ret;
 }
 
+// Runs per_group_iter iterations of the full region list on every kernel group
 static int
 execDeviceTransfer(nixlMemViewH local_mvh,
                    nixlMemViewH remote_mvh,
-                   const int num_iter,
+                   const int per_group_iter,
                    const int block_threads,
                    size_t num_regions,
                    size_t region_size,
@@ -1908,19 +1906,17 @@ execDeviceTransfer(nixlMemViewH local_mvh,
                    const std::atomic<int> *terminate_ptr = nullptr) {
 #ifdef HAVE_UCX_GPU_DEVICE_API
     stats.clear();
-    if (num_iter < 1) {
-        std::cerr << "NIXL Device API requires at least one transfer iteration" << std::endl;
+    if (per_group_iter < 1) {
+        std::cerr << "NIXL Device API requires at least one transfer iteration per group"
+                  << std::endl;
         return -1;
     }
     if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
         return -1;
     }
 
-    const size_t num_groups = block_threads <= kDeviceWarpSize ?
-        static_cast<size_t>(block_threads) :
-        static_cast<size_t>(block_threads / kDeviceWarpSize);
-    const size_t active_group_num = std::min(num_groups, num_regions);
-    const size_t sample_count = static_cast<size_t>(num_iter) * active_group_num;
+    const size_t num_groups = static_cast<size_t>(xferBenchConfig::deviceGroupNum());
+    const size_t sample_count = static_cast<size_t>(per_group_iter) * num_groups;
     const size_t duration_bytes = sample_count * sizeof(uint64_t);
     uint64_t *device_post_duration_ns = nullptr;
     uint64_t *device_xfer_duration_ns = nullptr;
@@ -1954,9 +1950,11 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     params.localMvh = local_mvh;
     params.remoteMvh = remote_mvh;
     params.numRegions = num_regions;
+    // prepareGPURemoteView() flattens num_groups lists of num_regions descriptors and appends the
+    // counter buffer, so the counter sits right after the last data descriptor.
+    params.counterIndex = num_regions * num_groups;
     params.regionSize = region_size;
-    params.numIterations = static_cast<uint64_t>(num_iter);
-    params.activeGroupNum = active_group_num;
+    params.numIterations = static_cast<uint64_t>(per_group_iter);
     params.postDurationNs = device_post_duration_ns;
     params.xferDurationNs = device_xfer_duration_ns;
     params.completionCounterOffsetBytes = kDeviceCounterDoneOffsetBytes;
@@ -1988,9 +1986,9 @@ execDeviceTransfer(nixlMemViewH local_mvh,
                          "Failed to copy Device API transfer duration samples");
         stats.post_duration.reserve(sample_count);
         stats.transfer_duration.reserve(sample_count);
-        for (size_t iter = 0; iter < static_cast<size_t>(num_iter); ++iter) {
-            for (size_t group_id = 0; group_id < active_group_num; ++group_id) {
-                const size_t sample_idx = iter * active_group_num + group_id;
+        for (size_t iter = 0; iter < static_cast<size_t>(per_group_iter); ++iter) {
+            for (size_t group_id = 0; group_id < num_groups; ++group_id) {
+                const size_t sample_idx = iter * num_groups + group_id;
                 if (post_duration_ns[sample_idx] == kUnwrittenDeviceDurationNs ||
                     xfer_duration_ns[sample_idx] == kUnwrittenDeviceDurationNs) {
                     std::cerr << "NIXL Device API produced an incomplete duration sample"
@@ -2007,7 +2005,7 @@ execDeviceTransfer(nixlMemViewH local_mvh,
 #else
     (void)local_mvh;
     (void)remote_mvh;
-    (void)num_iter;
+    (void)per_group_iter;
     (void)block_threads;
     (void)num_regions;
     (void)region_size;
@@ -2086,8 +2084,9 @@ std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
                               const std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
-    int num_iter = xferBenchConfig::num_iter / xferBenchConfig::num_threads;
-    int skip = xferBenchConfig::warmup_iter / xferBenchConfig::num_threads;
+    const int workers = xferBenchConfig::workerNum();
+    int num_iter = xferBenchConfig::num_iter / workers;
+    int skip = xferBenchConfig::warmup_iter / workers;
     xferBenchStats stats;
     int ret = 0;
     nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == xferBenchConfig::op_type ? NIXL_READ : NIXL_WRITE;
@@ -2110,12 +2109,15 @@ xferBenchNixlWorker::transfer(size_t block_size,
         releaseMemView(local_mvh);
     });
 
+    // Regions owned by a single execution group. The memory views flatten one IOV list per group
+    // in order, so group g owns indices [g * num_regions, (g + 1) * num_regions).
     size_t num_regions = 0;
     if (xferBenchConfig::use_device_api) {
-        if (local_iovs.size() != 1 || remote_iovs.size() != 1) {
-            std::cerr << "NIXL Device API requires exactly one local and one remote IOV list: "
-                      << "local=" << local_iovs.size() << ", remote=" << remote_iovs.size()
-                      << std::endl;
+        const size_t num_groups = static_cast<size_t>(xferBenchConfig::deviceGroupNum());
+        if (local_iovs.size() != num_groups || remote_iovs.size() != num_groups) {
+            std::cerr << "NIXL Device API requires one local and one remote IOV list per group "
+                      << "(" << num_groups << "): local=" << local_iovs.size()
+                      << ", remote=" << remote_iovs.size() << std::endl;
             return std::variant<xferBenchStats, int>(-1);
         }
         const size_t local_regions = local_iovs.front().size();
