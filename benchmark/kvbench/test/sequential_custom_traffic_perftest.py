@@ -24,7 +24,15 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from itertools import chain
 from pathlib import Path
-from test.custom_traffic_perftest import CTPerftest, NixlBuffer, StorageXferHandle
+from test.custom_traffic_perftest import (
+    ROUND_ISOLATED,
+    ROUND_WARMUP,
+    CTPerftest,
+    NixlBuffer,
+    StorageXferHandle,
+    notif_tag,
+    workload_round,
+)
 from test.storage_backend import FilesystemBackend, StorageBackend, StorageHandle
 from test.traffic_pattern import TrafficPattern
 from typing import Any, Dict, List, Optional
@@ -445,6 +453,7 @@ class SequentialCTPerftest(CTPerftest):
         self,
         tp: TrafficPattern,
         expected_senders: list[int],
+        round_tag: str,
         timeout_sec: float = 60.0,
         poll_interval_sec: float = 0.0001,
     ) -> dict[int, float]:
@@ -452,11 +461,15 @@ class SequentialCTPerftest(CTPerftest):
 
         Receivers call this to wait for notifications sent by senders when their
         RDMA WRITE transfers complete. The notification message format is:
-        "{tp.id}_{sender_rank}_{receiver_rank}"
+        "{tp.id}_{sender_rank}_{receiver_rank}_{round_tag}"
 
         Args:
             tp: The traffic pattern
             expected_senders: List of sender ranks we expect notifications from
+            round_tag: Round name the senders stamped on this transfer. Only
+                notifications from this round match, so a leftover notification
+                from warmup or from the isolated benchmark is never mistaken
+                for the one this round is waiting for.
             timeout_sec: Maximum time to wait for all notifications
             poll_interval_sec: Time between notification polls
 
@@ -472,7 +485,8 @@ class SequentialCTPerftest(CTPerftest):
 
         # Pre-compute tags and agent names to avoid per-poll allocation
         sender_tags = {
-            rank: f"{tp.id}_{rank}_{self.my_rank}".encode() for rank in expected_senders
+            rank: notif_tag(tp.id, rank, self.my_rank, round_tag)
+            for rank in expected_senders
         }
         sender_agent_names = {rank: f"{rank}" for rank in expected_senders}
 
@@ -527,8 +541,13 @@ class SequentialCTPerftest(CTPerftest):
         """Clear any stale notifications from the queue.
 
         This should be called before the workload benchmark to drain notifications
-        left over from the isolated RDMA benchmark. The isolated benchmark runs
-        RDMA transfers but receivers don't consume notifications during it.
+        left over from warmup and from the isolated RDMA benchmark. Both run RDMA
+        transfers but receivers don't consume notifications during them.
+
+        Each round stamps its own tag suffix, so a leftover notification can no
+        longer be mistaken for a workload one. This drain is still worth doing:
+        it stops those notifications from piling up in the agent queue for the
+        whole run.
 
         Returns:
             Number of notifications cleared
@@ -540,14 +559,19 @@ class SequentialCTPerftest(CTPerftest):
         for tp in self.traffic_patterns:
             expected_senders = self._get_expected_rdma_senders(tp)
             for sender_rank in expected_senders:
-                notif_tag = f"{tp.id}_{sender_rank}_{self.my_rank}".encode()
-                # Keep checking until no more notifications with this tag
-                while self.nixl_agent.check_remote_xfer_done(
-                    remote_agent_name=f"{sender_rank}",
-                    lookup_tag=notif_tag,
-                    tag_is_prefix=False,
-                ):
-                    cleared_count += 1
+                for round_tag in (ROUND_WARMUP, ROUND_ISOLATED):
+                    tag = notif_tag(tp.id, sender_rank, self.my_rank, round_tag)
+                    # tag_is_prefix=False is required now that the tag carries a
+                    # round suffix: the base tag is a prefix of every round's
+                    # tag, so prefix matching here would also drain the workload
+                    # notifications this drain is meant to leave alone.
+                    # Keep checking until no more notifications with this tag.
+                    while self.nixl_agent.check_remote_xfer_done(
+                        remote_agent_name=f"{sender_rank}",
+                        lookup_tag=tag,
+                        tag_is_prefix=False,
+                    ):
+                        cleared_count += 1
 
         if cleared_count > 0:
             logger.info(
@@ -700,7 +724,7 @@ class SequentialCTPerftest(CTPerftest):
                 # All the dsts have been warmed up
                 continue
             for _ in range(self.warmup_iters):
-                self._run_tp(handles, blocking=True)
+                self._run_tp(handles, blocking=True, round_tag=ROUND_WARMUP)
             warm_dsts.update(dsts)
 
         # Storage warmup
@@ -758,7 +782,7 @@ class SequentialCTPerftest(CTPerftest):
             iter_latencies = []
             for iter_idx in range(self.n_isolation_iters):
                 t = time.time()
-                self._run_tp(handles, blocking=True)
+                self._run_tp(handles, blocking=True, round_tag=ROUND_ISOLATED)
                 iter_latency = time.time() - t
                 iter_latencies.append(iter_latency)
                 self._barrier_tp(tp, include_storage=False)
@@ -828,9 +852,15 @@ class SequentialCTPerftest(CTPerftest):
     # WORKLOAD EXECUTION HELPERS
     # =========================================================================
 
-    def _execute_workload_tp(self, tp_ix, tp, handles, read_h, write_h):
+    def _execute_workload_tp(self, iter_ix, tp_ix, tp, handles, read_h, write_h):
         """Execute one TP's phases: Storage READ, prefill COMPUTE, RDMA,
-        Notifications, decode COMPUTE, Storage WRITE."""
+        Notifications, decode COMPUTE, Storage WRITE.
+
+        Every RDMA notification in this call is tagged with this iteration's
+        round name, so a receiver only ever matches the notification sent by
+        this iteration.
+        """
+        round_tag = workload_round(iter_ix)
         result = {
             "rdma_start": None,
             "rdma_end": None,
@@ -873,7 +903,7 @@ class SequentialCTPerftest(CTPerftest):
                 "[Rank %d] Sender: Starting RDMA send (TP %d)", self.my_rank, tp_ix
             )
             tp_start_ts = time.time()
-            self._run_tp(handles, blocking=True)
+            self._run_tp(handles, blocking=True, round_tag=round_tag)
             tp_end_ts = time.time()
             result["rdma_start"] = tp_start_ts
             result["rdma_end"] = tp_end_ts
@@ -895,7 +925,9 @@ class SequentialCTPerftest(CTPerftest):
                     tp_ix,
                 )
                 recv_start_ts = time.time()
-                notif_times = self._wait_for_rdma_notifications(tp, expected_senders)
+                notif_times = self._wait_for_rdma_notifications(
+                    tp, expected_senders, round_tag
+                )
                 recv_end_ts = time.time()
                 logger.debug(
                     "[Rank %d] Receiver: Got all %d notifications in %.3f ms (TP %d)",
@@ -1367,6 +1399,7 @@ class SequentialCTPerftest(CTPerftest):
                 # Both compute sleeps now run inside _execute_workload_tp, so
                 # they land between the right I/O phases.
                 tp_result = self._execute_workload_tp(
+                    iter_ix,
                     tp_ix,
                     tp,
                     handles,

@@ -31,6 +31,27 @@ logger = get_logger(__name__)
 
 BUFFER_ALIGNMENT = 4096  # 4K alignment for O_DIRECT
 
+# Round names used as the notification-tag suffix. Warmup and the isolated
+# benchmark send notifications that no receiver consumes, so without a suffix
+# they are indistinguishable from workload notifications and a receiver can
+# consume one of them instead of the notification it is actually waiting for.
+ROUND_WARMUP = "warmup"
+ROUND_ISOLATED = "isolated"
+
+
+def workload_round(iter_ix: int) -> str:
+    """Round name for one workload iteration."""
+    return f"wl{iter_ix}"
+
+
+def notif_tag(tp_id: int, src_rank: int, dst_rank: int, round_tag: str) -> bytes:
+    """Build the notification tag for one transfer in one round.
+
+    Sender and receiver must build this the same way, so both sides call this
+    helper rather than formatting the string themselves.
+    """
+    return f"{tp_id}_{src_rank}_{dst_rank}_{round_tag}".encode()
+
 
 def allocate_aligned_buffer(
     size: int,
@@ -507,6 +528,9 @@ class CTPerftest:
                 xfer_desc,
                 dst_bufs_descs[other],
             )
+            # Default notification tag, with no round suffix. _run_tp() replaces
+            # it per transfer when a round_tag is given; ct-perftest does not
+            # pass one and keeps this tag.
             handle = self.nixl_agent.initialize_xfer(
                 "WRITE",
                 xfer_desc,
@@ -518,11 +542,32 @@ class CTPerftest:
 
         return handles, send_bufs, recv_bufs
 
-    def _run_tp(self, handles: list[NixlHandle], blocking=False) -> list:
+    def _run_tp(
+        self,
+        handles: list[NixlHandle],
+        blocking=False,
+        round_tag: Optional[str] = None,
+    ) -> list:
+        """Post every handle, optionally stamping a per-round notification tag.
+
+        Args:
+            handles: Handles to post.
+            blocking: If True, wait for all of them to complete.
+            round_tag: Round name (warmup, isolated, one workload iteration).
+                When given, RDMA transfers carry "<base>_<round_tag>" instead of
+                the tag baked in at initialize_xfer(), so a receiver can tell
+                rounds apart and never consumes a leftover notification from an
+                earlier round. Storage handles send no notification and ignore
+                it. nixl_agent.transfer() accepts a per-call notification
+                message, so this needs no change to handle setup.
+        """
         pending = []
         for h in handles:
             logger.debug("[Rank %d] Transfer: %s", self.my_rank, h)
-            status = self.nixl_agent.transfer(h.handle)
+            notif_msg = b""
+            if round_tag is not None and isinstance(h, RDMAHandle):
+                notif_msg = notif_tag(h.tp.id, self.my_rank, h.remote_rank, round_tag)
+            status = self.nixl_agent.transfer(h.handle, notif_msg)
             assert status != "ERR", "Transfer failed"
             if status != "DONE":
                 pending.append(h)

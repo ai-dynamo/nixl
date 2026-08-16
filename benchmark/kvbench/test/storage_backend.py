@@ -143,6 +143,47 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
+    def get_read_handles(
+        self,
+        handle: StorageHandle,
+        buffer: Any,
+        num_handles: int = 8,
+    ) -> list:
+        """Get several concurrent NIXL transfer handles for reading from storage.
+
+        Splitting one read across several handles raises the queue depth, which
+        matters on backends that need concurrency to reach full bandwidth.
+
+        Args:
+            handle: StorageHandle from prepare()
+            buffer: GPU/CPU buffer to read into
+            num_handles: Number of concurrent handles to create
+
+        Returns:
+            List of NIXL transfer handles (ready for nixl_agent.transfer())
+        """
+        pass
+
+    @abstractmethod
+    def get_write_handles(
+        self,
+        handle: StorageHandle,
+        buffer: Any,
+        num_handles: int = 8,
+    ) -> list:
+        """Get several concurrent NIXL transfer handles for writing to storage.
+
+        Args:
+            handle: StorageHandle from prepare()
+            buffer: GPU/CPU buffer to write from
+            num_handles: Number of concurrent handles to create
+
+        Returns:
+            List of NIXL transfer handles (ready for nixl_agent.transfer())
+        """
+        pass
+
+    @abstractmethod
     def close(self):
         """Close all storage handles and release resources."""
         pass
