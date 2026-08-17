@@ -46,6 +46,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<NixlMemRegion> remote_regs_;
         std::vector<NixlMemRegion> local_regs_;
         std::vector<GusliDeviceConfig> gusli_devices;
+        std::vector<LibblkioDeviceConfig> libblkio_devices;
         std::string remote_agent_name;
         std::optional<xferBenchIOV> completion_counter_iov;
 
