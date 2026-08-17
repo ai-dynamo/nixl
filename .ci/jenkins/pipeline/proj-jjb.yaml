@@ -636,7 +636,7 @@
       • Builds 4 inference container variants per release: <b>vllm-cu12-nixl</b>, <b>vllm-cu13-nixl</b>, <b>sglang-cu12-nixl</b>, <b>sglang-cu13-nixl</b><br/>
       • Builds for x86_64 and aarch64 (aarch64 via podman with QEMU)<br/>
       • Publishes multi-arch manifests after both arches succeed<br/>
-      • Wheels pulled from <code>sw-dynamo-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/&lt;arch&gt;/</code><br/>
+      • Wheels pulled from <code>sw-nbu-swx-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/</code><br/>
       • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>verification/llm/{{vllm-cu12-nixl,vllm-cu13-nixl,sglang-cu12-nixl,sglang-cu13-nixl}}</code><br/>
       • For <b>rc0</b> leave the <code>BASE_IMAGE_*</code> params empty to use upstream defaults<br/>
       • For <b>rcN, N&gt;0</b> set each <code>BASE_IMAGE_*</code> to the matching rc0 image to isolate the verification to the NIXL change<br/>
@@ -671,8 +671,10 @@
           name: "WHEEL_BUILD_ID"
           default: ""
           description: >
-            Artifactory build id for the wheel set (e.g. <code>48633863</code>).<br/>
-            Full wheel URL: <code>sw-dynamo-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/&lt;arch&gt;/nixl*.whl</code>
+            First 8 chars of the NIXL commit sha the wheels were built from, which
+            is the folder name the release wheel pipeline publishes under
+            (e.g. <code>51a42f86</code>).<br/>
+            Full wheel URL: <code>sw-nbu-swx-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/nixl*.whl</code>
       - string:
           name: "PYTHON_TAG"
           default: "cp312"
