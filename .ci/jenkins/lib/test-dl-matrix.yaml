@@ -210,7 +210,7 @@ steps:
 
 pipeline_stop:
   containerSelector: "{name: 'build_helper_dl'}"
-  parallel: false
+  parallel: true
   shell: action
   module: slurmCI
   run: stopAllForBuild
@@ -219,3 +219,14 @@ pipeline_stop:
     headNode: "${SLURM_HEAD_NODE}"
     headUser: "${SLURM_HEAD_USER}"
     jobIdDir: "${JOB_ID_FILE_ROOT}"
+
+pipeline_stop:
+  containerSelector: "{name: 'build_helper_dl'}"
+  parallel: true
+  run: echo "Pipeline completed for build ${BUILD_NUMBER}"
+
+
+pipeline_stop:
+  containerSelector: "{name: 'build_helper_dl'}"
+  parallel: false
+  run: echo "Pipeline completed for build ${BUILD_NUMBER}"

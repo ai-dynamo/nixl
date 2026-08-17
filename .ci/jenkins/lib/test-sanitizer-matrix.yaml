@@ -100,3 +100,8 @@ steps:
     archiveArtifacts: "sanitizer-logs-*.tar.gz"
     run: |
       .gitlab/test_sanitizer.sh ${NIXL_INSTALL_DIR} ${sanitizer}
+
+pipeline_stop:
+  containerSelector: "{name: 'nixl-base-pytorch26.06-cuda13.3-ubuntu24.04-asan'}"
+  parallel: false
+  run: echo "Pipeline completed for build ${BUILD_NUMBER}"
