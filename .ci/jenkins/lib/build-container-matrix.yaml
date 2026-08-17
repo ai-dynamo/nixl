@@ -64,10 +64,18 @@ pipeline_start:
     if (params.UCX_VERSION ==~ /^[a-f0-9]{8,40}$/) {
       env.UCX_SHA = params.UCX_VERSION.take(8)
     } else {
+      // Single-quoted, so UCX_VERSION reaches git as an argument via the
+      // environment rather than as shell source.
       env.UCX_SHA = sh(
         returnStdout: true,
-        label: "Resolve UCX ${params.UCX_VERSION}",
-        script: "git ls-remote https://github.com/openucx/ucx.git '${params.UCX_VERSION}' | head -n1 | cut -c1-8"
+        label: 'Resolve UCX ref',
+        script: '''
+          REFS=$(git ls-remote https://github.com/openucx/ucx.git "$UCX_VERSION" "$UCX_VERSION^{}")
+          # An annotated tag lists both the tag object and the peeled commit; take the commit.
+          SHA=$(echo "$REFS" | awk 'index($2,"^"){print $1; exit}')
+          [ -n "$SHA" ] || SHA=$(echo "$REFS" | awk 'NR==1{print $1}')
+          echo "$SHA" | cut -c1-8
+        '''
       ).trim()
     }
     if (!env.UCX_SHA) {
