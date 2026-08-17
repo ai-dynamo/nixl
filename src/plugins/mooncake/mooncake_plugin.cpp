@@ -22,6 +22,7 @@ namespace {
 nixl_b_params_t
 get_mooncake_options() {
     nixl_b_params_t params;
+    params["mooncake_devices"] = "";
     // "classic" (default) drives the original Mooncake Transfer Engine,
     // "tent" its next-generation engine; the latter requires Mooncake built
     // with -DUSE_TENT=ON and can also be selected via NIXL_MOONCAKE_MODE.
