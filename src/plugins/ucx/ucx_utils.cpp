@@ -160,6 +160,60 @@ nixlUcxEp::closeImpl() {
     std::terminate();
 }
 
+nixl_status_t
+nixlUcxEp::closeSync(ucp_worker_h worker) {
+    ucs_status_ptr_t request = nullptr;
+    const nixl::ucx::ep_state_t current_state = state_;
+    const ucp_request_param_t req_param = {.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+                                           .flags = closeFlags_};
+
+    switch (current_state) {
+    case nixl::ucx::ep_state_t::UNINITIALIZED:
+        // The EP has not been connected.
+        // Nothing to do.
+        NIXL_ASSERT(eph == nullptr);
+        return NIXL_SUCCESS;
+    case nixl::ucx::ep_state_t::FAILED: {
+        const ucp_request_param_t force_req_param = {
+            .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+            .flags = UCP_EP_CLOSE_FLAG_FORCE,
+        };
+        request = ucp_ep_close_nbx(eph, &force_req_param);
+        if (UCS_PTR_IS_PTR(request)) {
+            ucp_request_free(request);
+        }
+        eph = nullptr;
+        return NIXL_ERR_REMOTE_DISCONNECT;
+    }
+    case nixl::ucx::ep_state_t::CONNECTED:
+        request = ucp_ep_close_nbx(eph, &req_param);
+        if (request == nullptr) {
+            eph = nullptr;
+            setState(nixl::ucx::ep_state_t::UNINITIALIZED);
+            return NIXL_SUCCESS;
+        }
+
+        if (UCS_PTR_IS_ERR(request)) {
+            eph = nullptr;
+            setState(nixl::ucx::ep_state_t::UNINITIALIZED);
+            return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+        }
+
+        ucs_status_t status;
+        do {
+            ucp_worker_progress(worker);
+            status = ucp_request_check_status(request);
+        } while (status == UCS_INPROGRESS);
+        ucp_request_free(request);
+
+        eph = nullptr;
+        setState(nixl::ucx::ep_state_t::UNINITIALIZED);
+        return nixl::ucx::ucsToNixlStatus(status);
+    }
+    NIXL_FATAL << "Invalid endpoint state: " << current_state;
+    std::terminate();
+}
+
 nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
                      void *addr,
                      ucp_err_handling_mode_t err_handling_mode,

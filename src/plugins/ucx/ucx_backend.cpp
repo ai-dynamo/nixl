@@ -868,6 +868,16 @@ nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
         return NIXL_ERR_NOT_FOUND;
     }
 
+    // Close and wait before erasing, to avoid racing add_remote_agent().
+    auto &conn = it->second;
+    for (size_t wid = 0; wid < workers_.size(); wid++) {
+        nixl_status_t status = conn->getEp(wid)->closeSync(workers_[wid]->get());
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to close endpoint for " << remote_agent << " (worker " << wid
+                       << "): " << status;
+        }
+    }
+
     // thread safety?
     remoteConnMap.erase(it);
     return NIXL_SUCCESS;
