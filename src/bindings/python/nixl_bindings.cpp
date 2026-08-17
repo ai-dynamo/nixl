@@ -138,6 +138,38 @@ throw_nixl_exception(const nixl_status_t &status) {
     }
 }
 
+namespace {
+
+// Builds a compressed (strided) descriptor list from an Nx5 numpy array, where each row is a run
+// of `count` blocks of `len` bytes with consecutive block starts spaced `stride` bytes apart:
+// (addr, len, dev_id, stride, count). A dense run has stride == len.
+nixl_stride_dlist_t
+to_stride_dlist(nixl_mem_t mem, const py::array &descs) {
+    static_assert(sizeof(nixlStrideDesc) == 5 * sizeof(uint64_t), "nixlStrideDesc size mismatch");
+
+    if (descs.ndim() != 2 || descs.shape(1) != 5) {
+        throw std::invalid_argument("descs must be a Nx5 numpy array");
+    }
+    if (!py::dtype::of<uint64_t>().equal(descs.dtype()) &&
+        !py::dtype::of<int64_t>().equal(descs.dtype())) {
+        throw std::invalid_argument("descs must be a Nx5 numpy array of uint64 or int64");
+    }
+    if (!(descs.flags() & py::array::c_style)) {
+        throw std::invalid_argument("descs must be a C-contiguous numpy array");
+    }
+
+    size_t n = descs.shape(0);
+    nixl_stride_dlist_t new_list(mem, n);
+    if (n > 0) {
+        // The Nx5 array matches the nixlStrideDesc layout so we can simply memcpy
+        std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+    }
+
+    return new_list;
+}
+
+} // namespace
+
 PYBIND11_MODULE(_bindings, m) {
 
     // TODO: each nixl class and/or function can be documented in place
@@ -567,21 +599,30 @@ PYBIND11_MODULE(_bindings, m) {
         .def(
             "prepXferDlist",
             [](nixlAgent &agent,
-               const nixl_xfer_dlist_t &descs,
+               std::string &agent_name,
+               nixl_mem_t mem,
+               const py::array &descs,
                const std::vector<uintptr_t> &backends) -> uintptr_t {
                 nixlDlistH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
-                for (uintptr_t backend : backends)
+                for (uintptr_t backend : backends) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
+                }
 
-                throw_nixl_exception(agent.prepXferDlist(descs, handle, &extra_params));
+                const nixl_stride_dlist_t stride_descs = to_stride_dlist(mem, descs);
+                {
+                    py::gil_scoped_release release;
+                    throw_nixl_exception(
+                        agent.prepXferDlist(agent_name, stride_descs, handle, &extra_params));
+                }
 
                 return (uintptr_t)handle;
             },
-            py::arg("descs"),
-            py::arg("backend") = std::vector<uintptr_t>({}),
-            py::call_guard<py::gil_scoped_release>())
+            py::arg("agent_name"),
+            py::arg("mem_type"),
+            py::arg("descs").noconvert(),
+            py::arg("backend") = std::vector<uintptr_t>({}))
         .def(
             "makeXferReq",
             [](nixlAgent &agent,
