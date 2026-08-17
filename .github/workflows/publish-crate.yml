@@ -13,19 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Publish the nixl-sys Rust crate to Artifactory.
+# Publish the nixl-sys Rust crate to Artifactory (sw-dynamo-nixl-cargo-local).
 #
-# Validates the nixl-sys Rust crate on PRs, and can publish it manually.
+# This mirrors dynamo's split: GitHub stages the .crate to Artifactory, and the
+# release-automation GitLab pipeline consumes it (register-nspect scans the
+# Artifactory .crate URL; promote:crates does the final crates.io publish on GA).
+# GitLab never pushes to Artifactory — that's this workflow's job.
 #
-# RC crate publishing on a tag lives in the release-automation GitLab pipeline
-# (publish-crate:artifactory, PROJECT=nixl), which runs on a GitLab `builder` runner:
-# the GitHub nixl-builder (velonix) runners reject tag/push events at admission, so a
-# tag-triggered publish here always failed. This workflow therefore fires only on PRs
-# (dry-run package validation) and workflow_dispatch (manual publish).
+# Runs on GitHub-hosted ubuntu-latest (NOT the self-hosted nixl-builder/velonix
+# runners): a --no-verify cargo publish only needs cargo + a token + network, no
+# builder image, and velonix's admission hook rejects tag/push events anyway.
 #
-# When run manually it publishes the workspace crate (nixl-sys) to
-# sw-dynamo-nixl-cargo-local. --no-verify: the source is already built + tested by the
-# wheel/CI path, so we package + upload without a full build.
+# Fires on a release/RC tag (v*) or a manual run. Publishes the workspace crate
+# (nixl-sys). --no-verify: the source is already built + tested by the wheel/CI
+# path, so we package + upload without a full build.
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
 #   ARTIFACTORY_URL          - e.g. https://artifactory.nvidia.com/artifactory
@@ -33,10 +34,9 @@
 name: Publish nixl-sys crate
 
 on:
-  # NOTE: no tag trigger. The RC crate is staged to Artifactory by the release-automation
-  # GitLab pipeline (publish-crate:artifactory, PROJECT=nixl) — the GitHub velonix runner
-  # rejects tag/push events, so publishing here on a tag always failed admission. This
-  # workflow now only validates on PRs and can be run manually.
+  push:
+    tags:
+      - 'v*'
   # PRs that touch the crate/workflow run this as a DRY RUN (validate; never publish).
   pull_request:
     branches:
@@ -61,9 +61,9 @@ on:
 
 jobs:
   publish-crate:
-    # PRs validate on a GitHub-hosted runner (the nixl-builder velonix runners reject
-    # pull_request events at admission); tag/manual runs publish on the nixl-builder runner.
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || format('{0}-nixl-builder-amd-v1', vars.NIXL_RUNNER_PREFIX || 'prod') }}
+    # Always GitHub-hosted. A --no-verify cargo publish needs no builder image, and
+    # the self-hosted velonix runners reject tag/push events at admission anyway.
+    runs-on: ubuntu-latest
     env:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
       ARTIFACTORY_CARGO_TOKEN: ${{ secrets.ARTIFACTORY_CARGO_TOKEN }}
@@ -107,7 +107,7 @@ jobs:
       - name: Package (PR) or publish (tag/manual)
         run: |
           set -e
-          # The nixl-builder runner ships cargo; ubuntu-latest does too. Fall back to rustup.
+          # ubuntu-latest ships cargo; fall back to rustup just in case.
           if ! command -v cargo >/dev/null 2>&1; then
             echo "cargo not found; installing via rustup"
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
