@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+instances:
+  - url: nvidia-nixl.docs.buildwithfern.com/nixl
+    custom-domain: docs.nvidia.com/nixl
+    multi-source: true
+
+title: NIXL Documentation
+
+check:
+  rules:
+    broken-links: error
+
+navbar-links:
+  - type: github
+    value: https://github.com/ai-dynamo/nixl
+
+layout:
+  searchbar-placement: header
+  page-width: 1376px
+  sidebar-width: 248px
+  content-width: 812px
+  tabs-placement: header
+  hide-feedback: true
+
+css:
+  - ./main.css
+js:
+  - url: https://assets.adobedtm.com/5d4962a43b79/c1061d2c5e7b/launch-191c2462b890.min.js
+    strategy: beforeInteractive
+    disable-sri: true
+
+colors:
+  accentPrimary:
+    dark: '#76B900'
+  background:
+    light: '#FFFFFF'
+    dark: '#000000'
+
+theme:
+  page-actions: toolbar
+  footer-nav: minimal
+
+page-actions:
+  default: ask-ai
+  options:
+    copy-page: true
+    view-as-markdown: true
+    ask-ai: true
+    claude: true
+    chatgpt: true
+    cursor: false
+    vscode: false
+
+
+navigation:
+  - section: NIXL
+    contents:
+      - page: Overview
+        slug: nixl
+        path: ./docs/pages/empty.md
+      - page: Second Page
+        slug: second-page
+        path: ./docs/pages/second-page.md
+
+logo:
+  dark: ./docs/assets/NVIDIA_dark.svg
+  light: ./docs/assets/NVIDIA_light.svg
+  height: 20
+  href: https://nvidia.com
+
+redirects: []

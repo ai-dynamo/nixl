@@ -1,0 +1,306 @@
+/*!
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+:root {
+  --nv-color-green: #76B900;
+  --nv-color-green-2: #004b31;
+  --nv-color-black: #000000;
+  --nv-color-white: #ffffff;
+
+  --nv-light-grey-1: #f7f7f7;
+  --nv-light-grey-2: #eeeeee;
+  --nv-light-grey-3: #dddddd;
+  --nv-light-grey-4: #cccccc;
+  --nv-light-grey-5: #999999;
+
+  --nv-dark-grey-1: #111111;
+  --nv-dark-grey-2: #1a1a1a;
+  --nv-dark-grey-3: #222222;
+  --nv-dark-grey-4: #333333;
+  --nv-dark-grey-5: #666666;
+
+  --nv-color-text: #000000;
+  --nv-color-bg-default: #ffffff;
+  --nv-color-bg-alt: #f7f7f7;
+  --nv-color-success: #76b900;
+  --nv-color-error: #f44336;
+
+  --rounded: 999px;
+}
+main {
+  min-height: calc(100vh - 200px);
+}
+
+h1 {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.25em;
+}
+
+h2 {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.25em;
+}
+
+h3 {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.25em;
+}
+
+h4 {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25em;
+}
+
+.prose {
+  color: var(--nv-dark-grey-2) !important;
+}
+.dark .prose {
+  color: var(--nv-light-grey-2) !important;
+}
+.fern-mdx-link {
+  color: var(--tw-prose-body);
+  text-decoration-color: var(--accent);
+  font-weight: var(--font-weight-normal);
+}
+
+html:not([data-theme]),
+html[data-theme="light"] {
+  --pst-color-background: #fff;
+  --pst-color-on-background: #fff;
+  --pst-color-shadow: #ccc;
+  --pst-color-heading: #000;
+  --pst-color-text-base: #1a1a1a;
+  --pst-color-text-muted: #666;
+  --pst-color-surface: #f7f7f7;
+  --pst-color-on-surface: #333;
+  --pst-color-primary: var(--nv-color-green-2);
+  --pst-color-table-row-hover-bg: var(--nv-color-green);
+  --pst-color-link: var(--pst-color-text-base);
+  --pst-color-link-hover: var(--pst-color-text-base);
+  --pst-color-inline-code: var(--pst-color-primary);
+  --pst-color-inline-code-links: var(--pst-color-primary);
+  --pst-color-secondary: var(--pst-color-primary);
+  --pst-color-secondary-bg: var(--nv-color-green);
+  --pst-color-accent: var(--nv-color-green);
+}
+
+html[data-theme="dark"] {
+  --pst-color-background: #111;
+  --pst-color-on-background: #000;
+  --pst-color-shadow: #000;
+  --pst-color-heading: #fff;
+  --pst-color-text-base: #eee;
+  --pst-color-text-muted: #999;
+  --pst-color-surface: #1a1a1a;
+  --pst-color-on-surface: #ddd;
+  --pst-color-primary: var(--nv-color-green);
+  --pst-color-table-row-hover-bg: var(--nv-color-green-2);
+  --pst-color-link: var(--pst-color-text-base);
+  --pst-color-link-hover: var(--pst-color-text-base);
+  --pst-color-inline-code: var(--pst-color-primary);
+  --pst-color-inline-code-links: var(--pst-color-primary);
+  --pst-color-secondary: var(--pst-color-primary);
+  --pst-color-secondary-bg: var(--nv-color-green-2);
+  --pst-color-accent: var(--nv-color-green);
+}
+
+.fern-sidebar-link:not(:hover) {
+  background-color: transparent !important;
+}
+.fern-sidebar-link {
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.5rem !important;
+  border-radius: 0px !important;
+  &.nested {
+    padding-left: 1rem !important;
+  }
+}
+
+.fern-sidebar-group > li > .fern-sidebar-link:has(+ .fern-sidebar-group) {
+  padding-left: 0.25rem !important;
+}
+.fern-sidebar-group {
+  padding: 0 !important;
+}
+
+.fern-header-content {
+  padding-left: 18.5px;
+  margin-top: -5px;
+  margin-bottom: -5px;
+}
+#fern-header {
+  border-color: var(--border, var(--grayscale-a5)) !important;
+}
+
+#fern-search-button {
+  background-color: transparent !important;
+  border-radius: var(--rounded);
+  transition:
+    box-shadow 0.3s ease,
+    outline 0.3s ease;
+}
+#fern-search-button:hover {
+  box-shadow: 0 0 0 1px var(--nv-color-green) !important;
+}
+
+.fern-footer-nav {
+  border-radius: var(--rounded);
+  background-color: transparent !important;
+  transition:
+    box-shadow 0.3s ease,
+    outline 0.3s ease;
+}
+
+.fig-caption {
+  --callout-border: transparent !important;
+  --callout-icon-color: var(--grayscale-a8) !important;
+
+  background-color: var(--nv-light-grey-1) !important;
+  font-size: 0.875rem;
+}
+.dark .fig-caption {
+  background-color: var(--nv-dark-grey-2) !important;
+}
+.fig-caption p {
+  font-style: italic;
+  color: var(--tw-prose-body) !important;
+}
+
+.code-block-line-gutter {
+  display: none !important;
+}
+.fern-footer-prev h4,
+.fern-footer-next h4 {
+  font-size: inherit !important;
+}
+
+.fern-button {
+  border-radius: var(--rounded);
+  font-weight: bold;
+}
+.fern-button.filled.primary {
+  color: var(--nv-color-black);
+}
+.dark .fern-button.filled.primary {
+  background-color: var(--nv-color-white);
+}
+.dark .fern-button.filled.primary:hover {
+  background-color: var(--nv-light-grey-2);
+}
+.fern-button.outlined.normal {
+  background-color: transparent;
+  --tw-ring-color: transparent;
+
+  color: var(--nv-color-black);
+}
+.fern-button.outlined.normal:hover {
+  color: var(--nv-color-green);
+}
+.dark .fern-button.outlined.normal {
+  color: var(--nv-color-white);
+}
+.dark .fern-button.outlined.normal:hover {
+  color: var(--nv-color-green);
+}
+
+.fern-card {
+  transition:
+    box-shadow 0.3s ease,
+    outline 0.3s ease;
+}
+svg.card-icon {
+  height: 24px !important;
+  width: 24px !important;
+}
+.card-icon {
+  background-color: transparent !important;
+}
+.fern-card:hover {
+  box-shadow: 0 0 0 1px var(--nv-color-green) !important;
+}
+
+#builtwithfern,
+#builtwithfern * {
+  display: none !important;
+}
+
+.fern-scroll-area:has(.fern-table)
+  .fern-scroll-area-scrollbar[data-orientation="horizontal"] {
+  display: none !important;
+}
+
+div:has(> .code-block-root) {
+  width: fit-content !important;
+  max-width: 100%;
+  min-width: 250px;
+}
+
+.code-block-root .code-block-inner {
+  padding-right: 56px;
+}
+
+.code-block-root [data-radix-scroll-area-viewport] {
+  overflow: auto !important;
+  max-height: 1000px !important;
+}
+
+.code-block-root [data-radix-scroll-area-viewport] > div {
+  min-width: unset !important;
+}
+
+.code-block-root .fern-scroll-area-scrollbar[data-orientation="horizontal"] {
+  display: none !important;
+}
+
+.code-block-root {
+  min-height: unset;
+}
+.prose pre {
+  min-height: unset;
+}
+
+.fern-layout-content:has([role="tabpanel"]) ~ .fern-layout-right-sidebar {
+  display: none !important;
+}
+
+.fern-layout-content:has([role="tabpanel"]) {
+  max-width: 100%;
+}
+
+p {
+  text-decoration-thickness: auto;
+}
+
+.prose h1 {
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+.prose h2 {
+  margin-top: 1.75rem;
+  margin-bottom: 0.75rem;
+}
+.prose h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+.prose h4 {
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose > h1:first-child,
+.prose > h2:first-child {
+  margin-top: 0;
+}
+
+.prose code:not(pre code) {
+  font-size: 0.875em;
+}
