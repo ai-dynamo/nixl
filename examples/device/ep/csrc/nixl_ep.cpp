@@ -107,6 +107,17 @@ void Buffer::_refresh_active_rank_bound() {
     set_active_rank_bound(bound);
 }
 
+int Buffer::get_rank_bound(const std::optional<int>& num_experts) const {
+    if (!num_experts)
+        return active_rank_bound;
+
+    EP_HOST_ASSERT(*num_experts % num_experts_per_rank == 0);
+    const int active_expert_bound = active_rank_bound * num_experts_per_rank;
+    const int max_num_experts = max_num_ranks * num_experts_per_rank;
+    EP_HOST_ASSERT(*num_experts >= active_expert_bound and *num_experts <= max_num_experts);
+    return *num_experts / num_experts_per_rank;
+}
+
 void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes, int64_t num_rdma_bytes)
 {
     EP_HOST_ASSERT(num_ranks > 0);
@@ -1046,11 +1057,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
     EP_HOST_ASSERT(topk_idx.dim() == 2 and topk_idx.is_contiguous());
     EP_HOST_ASSERT(x.size(0) == topk_idx.size(0) and x.size(0) <= num_max_dispatch_tokens_per_rank);
     EP_HOST_ASSERT(topk_idx.scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
-    const int active_expert_bound = active_rank_bound * num_experts_per_rank;
-    const int expert_bound = num_experts.value_or(active_expert_bound);
-    EP_HOST_ASSERT(expert_bound >= active_expert_bound and expert_bound <= max_num_ranks * num_experts_per_rank);
-    EP_HOST_ASSERT(expert_bound % num_experts_per_rank == 0);
-    const int rank_bound = expert_bound / num_experts_per_rank;
+    const int rank_bound = get_rank_bound(num_experts);
     const int num_max_recv_tokens = rank_bound * num_max_dispatch_tokens_per_rank;
     EP_HOST_ASSERT(num_max_recv_tokens % 4 == 0 and "TMA requires the number of tokens to be multiple of 4");
 
