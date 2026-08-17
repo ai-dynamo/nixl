@@ -24,7 +24,6 @@ namespace {
         TemporaryDirectory() {
             const auto base = std::filesystem::temp_directory_path() / "nixlbench-pr1-XXXXXX";
             std::string pattern = base.string();
-            pattern.push_back('\0');
             char *created = mkdtemp(pattern.data());
             if (created != nullptr) {
                 path_ = created;

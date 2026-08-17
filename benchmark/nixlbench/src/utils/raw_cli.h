@@ -64,9 +64,6 @@ isRawCommand(int argc, char *argv[]);
 std::optional<PluginMetadata>
 discoverPluginMetadata(const std::string &name, std::string &error);
 
-std::optional<std::vector<PluginMetadata>>
-discoverPluginsWithMemoryType(nixl_mem_t memory_type, std::string &error);
-
 int
 parseRawPosixCommand(int argc,
                      char *argv[],
@@ -75,15 +72,6 @@ parseRawPosixCommand(int argc,
                      bool &help_requested,
                      std::ostream &out,
                      std::ostream &err);
-
-int
-parseRawCommand(int argc,
-                char *argv[],
-                const std::vector<PluginMetadata> &file_plugins,
-                RawCommandRequest &request,
-                bool &help_requested,
-                std::ostream &out,
-                std::ostream &err);
 
 std::vector<std::string>
 benchmarkFileArguments(const RawCommandRequest &request, const std::string &program_name);

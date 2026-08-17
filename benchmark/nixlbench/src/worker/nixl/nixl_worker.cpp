@@ -209,15 +209,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             // Preserve the existing flags-only POSIX parameter assembly.
             if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
                 backend_params["use_aio"] = "true";
-                backend_params["use_uring"] = "false";
-                backend_params["use_posix_aio"] = "false";
             } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
-                backend_params["use_aio"] = "false";
                 backend_params["use_uring"] = "true";
-                backend_params["use_posix_aio"] = "false";
             } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_POSIXAIO) {
-                backend_params["use_aio"] = "false";
-                backend_params["use_uring"] = "false";
                 backend_params["use_posix_aio"] = "true";
             }
             std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type

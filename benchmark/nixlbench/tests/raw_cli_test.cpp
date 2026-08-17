@@ -89,44 +89,6 @@ namespace {
         EXPECT_TRUE(found_selection_toggle);
     }
 
-    TEST(PluginMetadataDiscoveryTest, InstalledFilePluginsAdvertiseFileMemory) {
-        std::string error;
-        const auto plugins = discoverPluginsWithMemoryType(FILE_SEG, error);
-        ASSERT_TRUE(plugins) << error;
-        EXPECT_NE(std::find_if(plugins->begin(),
-                               plugins->end(),
-                               [](const PluginMetadata &plugin) { return plugin.name == "POSIX"; }),
-                  plugins->end());
-        for (const auto &plugin : *plugins) {
-            EXPECT_NE(std::find(plugin.memory_types.begin(), plugin.memory_types.end(), FILE_SEG),
-                      plugin.memory_types.end())
-                << plugin.name;
-        }
-    }
-
-    TEST(RawCommandParserTest, SelectsPosixFromAvailableFilePlugins) {
-        auto other = posixMetadata();
-        other.name = "GDS";
-        other.parameters = {{"gds_parameter", "default"}};
-        Arguments arguments{"nixlbench", "raw", "posix", "--dry-run"};
-        RawCommandRequest request;
-        bool help = false;
-        std::ostringstream out;
-        std::ostringstream err;
-
-        ASSERT_EQ(parseRawCommand(arguments.argc(),
-                                  arguments.argv(),
-                                  {other, posixMetadata()},
-                                  request,
-                                  help,
-                                  out,
-                                  err),
-                  0)
-            << err.str();
-        EXPECT_EQ(request.plugin_parameters, posixMetadata().parameters);
-        EXPECT_EQ(request.plugin_parameters.find("gds_parameter"), request.plugin_parameters.end());
-    }
-
     TEST(RawPosixParserTest, UsesCli11ForBinarySizeParsingAndValidation) {
         Arguments valid{"nixlbench",
                         "raw",

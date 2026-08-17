@@ -323,27 +323,6 @@ discoverPluginMetadata(const std::string &name, std::string &error) {
     return queryPluginMetadata(agent, name, error);
 }
 
-std::optional<std::vector<PluginMetadata>>
-discoverPluginsWithMemoryType(nixl_mem_t memory_type, std::string &error) {
-    nixlAgent agent("nixlbench-cli", nixlAgentConfig{});
-    std::vector<nixl_backend_t> plugins;
-    if (!listAvailablePlugins(agent, plugins, error)) {
-        return std::nullopt;
-    }
-
-    std::vector<PluginMetadata> matches;
-    for (const auto &name : plugins) {
-        auto metadata = queryPluginMetadata(agent, name, error);
-        if (!metadata) {
-            return std::nullopt;
-        }
-        if (hasMemoryType(*metadata, memory_type)) {
-            matches.push_back(std::move(*metadata));
-        }
-    }
-    return matches;
-}
-
 int
 parseRawPosixCommand(int argc,
                      char *argv[],
@@ -408,26 +387,6 @@ parseRawPosixCommand(int argc,
     return EXIT_SUCCESS;
 }
 
-int
-parseRawCommand(int argc,
-                char *argv[],
-                const std::vector<PluginMetadata> &file_plugins,
-                RawCommandRequest &request,
-                bool &help_requested,
-                std::ostream &out,
-                std::ostream &err) {
-    const auto metadata =
-        std::find_if(file_plugins.begin(), file_plugins.end(), [](const PluginMetadata &candidate) {
-            return candidate.name == XFERBENCH_BACKEND_POSIX;
-        });
-    if (metadata == file_plugins.end()) {
-        err << "Error: " << XFERBENCH_BACKEND_POSIX
-            << " plugin is not installed or does not advertise FILE_SEG\n";
-        return EXIT_FAILURE;
-    }
-    return parseRawPosixCommand(argc, argv, *metadata, request, help_requested, out, err);
-}
-
 std::vector<std::string>
 benchmarkFileArguments(const RawCommandRequest &request, const std::string &program_name) {
     const auto boolean = [](bool value) { return value ? "true" : "false"; };
@@ -461,16 +420,16 @@ benchmarkFileArguments(const RawCommandRequest &request, const std::string &prog
 RawCommandResult
 prepareRawCommand(int argc, char *argv[], std::ostream &out, std::ostream &err) {
     std::string discovery_error;
-    const auto file_plugins = discoverPluginsWithMemoryType(FILE_SEG, discovery_error);
-    if (!file_plugins) {
+    const auto metadata = discoverPluginMetadata(XFERBENCH_BACKEND_POSIX, discovery_error);
+    if (!metadata) {
         err << "Error: " << discovery_error << '\n';
         return {EXIT_FAILURE, false};
     }
 
     RawCommandRequest request;
     bool help_requested = false;
-    const int parse_status =
-        parseRawCommand(argc, argv, *file_plugins, request, help_requested, out, err);
+    const int parse_status = parseRawPosixCommand(
+        argc, argv, *metadata, request, help_requested, out, err);
     if (parse_status != EXIT_SUCCESS || help_requested) {
         return {parse_status, false};
     }
@@ -487,10 +446,6 @@ prepareRawCommand(int argc, char *argv[], std::ostream &out, std::ostream &err) 
         return {EXIT_FAILURE, false};
     }
 
-    const auto metadata = std::find_if(
-        file_plugins->begin(), file_plugins->end(), [](const PluginMetadata &candidate) {
-            return candidate.name == XFERBENCH_BACKEND_POSIX;
-        });
     printRawPlan(request, *metadata, xferBenchConfig::num_iter, xferBenchConfig::warmup_iter, out);
     if (!request.raw.dry_run) {
         xferBenchConfig::plugin_parameters = std::move(request.plugin_parameters);
