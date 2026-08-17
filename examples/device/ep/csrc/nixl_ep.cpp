@@ -107,7 +107,7 @@ void Buffer::_refresh_active_rank_bound() {
     set_active_rank_bound(bound);
 }
 
-int Buffer::get_rank_bound(const std::optional<int>& num_experts) const {
+int Buffer::get_rank_bound(std::optional<int> num_experts) const {
     if (!num_experts)
         return active_rank_bound;
 

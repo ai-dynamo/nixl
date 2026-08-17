@@ -175,7 +175,7 @@ private:
     bool _is_rank_connected(int rank_id) const;
     void set_active_rank_bound(int bound);
     void _refresh_active_rank_bound();
-    int get_rank_bound(const std::optional<int>& num_experts) const;
+    int get_rank_bound(std::optional<int> num_experts) const;
 
     /* high-throughput mode private funcs */
     void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
