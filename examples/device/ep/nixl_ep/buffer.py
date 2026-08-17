@@ -354,7 +354,8 @@ class Buffer:
             topk_idx: `torch.Tensor` with `nixl_ep.topk_idx_t`, shaped as `[num_tokens, num_topk]`, only several top-k shapes
                 are supported. `-1` indices (not selecting any expert) are supported.
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
-                `num_ranks * num_max_dispatch_tokens_per_rank` must be a multiple of 4 for TMA alignment.
+                The number of ranks represented in the dispatch layout multiplied by
+                `num_max_dispatch_tokens_per_rank` must be a multiple of 4 for TMA alignment.
             num_experts: total physical expert capacity used for the dispatch layout.
                 It must cover all active experts and defaults to the active expert count.
             cumulative_local_expert_recv_stats: a cumulative expert count tensor for statistics, which should have shape
