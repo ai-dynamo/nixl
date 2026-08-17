@@ -428,8 +428,8 @@ prepareRawCommand(int argc, char *argv[], std::ostream &out, std::ostream &err) 
 
     RawCommandRequest request;
     bool help_requested = false;
-    const int parse_status = parseRawPosixCommand(
-        argc, argv, *metadata, request, help_requested, out, err);
+    const int parse_status =
+        parseRawPosixCommand(argc, argv, *metadata, request, help_requested, out, err);
     if (parse_status != EXIT_SUCCESS || help_requested) {
         return {parse_status, false};
     }
