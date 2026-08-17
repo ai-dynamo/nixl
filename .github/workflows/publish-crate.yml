@@ -15,14 +15,17 @@
 
 # Publish the nixl-sys Rust crate to Artifactory.
 #
-# Crate publishing lives here (GitHub), not in the nixl-ci GitLab pipeline: the
-# source is native to the checkout (no mirror clone / build-id pinning), and the
-# Artifactory cargo token is already scoped to this repo's Actions secrets. Wheels
-# are built on blossom; nSpect register + scan happen GitLab-side; this owns crates.
+# Validates the nixl-sys Rust crate on PRs, and can publish it manually.
 #
-# Fires on a release/RC tag (v*), or run manually. Publishes the workspace crate
-# (nixl-sys) to sw-dynamo-nixl-cargo-local. --no-verify: the source is already
-# built + tested by the wheel/CI path, so we package + upload without a full build.
+# RC crate publishing on a tag lives in the release-automation GitLab pipeline
+# (publish-crate:artifactory, PROJECT=nixl), which runs on a GitLab `builder` runner:
+# the GitHub nixl-builder (velonix) runners reject tag/push events at admission, so a
+# tag-triggered publish here always failed. This workflow therefore fires only on PRs
+# (dry-run package validation) and workflow_dispatch (manual publish).
+#
+# When run manually it publishes the workspace crate (nixl-sys) to
+# sw-dynamo-nixl-cargo-local. --no-verify: the source is already built + tested by the
+# wheel/CI path, so we package + upload without a full build.
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
 #   ARTIFACTORY_URL          - e.g. https://artifactory.nvidia.com/artifactory
@@ -30,9 +33,10 @@
 name: Publish nixl-sys crate
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # NOTE: no tag trigger. The RC crate is staged to Artifactory by the release-automation
+  # GitLab pipeline (publish-crate:artifactory, PROJECT=nixl) — the GitHub velonix runner
+  # rejects tag/push events, so publishing here on a tag always failed admission. This
+  # workflow now only validates on PRs and can be run manually.
   # PRs that touch the crate/workflow run this as a DRY RUN (validate; never publish).
   pull_request:
     branches:
