@@ -42,11 +42,13 @@ git clone --recurse-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1
 
 ### Optional Dependencies
 
-**S3 Accelerated Engines** (`cuobjclient-13.1`): Required for GPU-direct and accelerated object storage operations. When available, enables:
+**S3 Accelerated Engines** (`cuobjclient`, CUDA Toolkit 13.1 or later): Required for GPU-direct and accelerated object storage operations. When available, enables:
 - `S3AccelObjEngineImpl` - Base accelerated S3 engine
 - Vendor-specific accelerated implementations under `s3_accel/`
 
-If `cuobjclient-13.1` is not found during build, the S3 Accelerated engines will be automatically disabled, and the plugin will fall back to standard S3 and S3 CRT engines.
+The CUObject Client library ships with the CUDA Toolkit and its pkg-config module is named after the toolkit release (for example `cuobjclient-13.1` or `cuobjclient-13.3`). The build picks the newest installed module that is at least version 13.1, so later CUDA Toolkit releases are used automatically.
+
+If no suitable `cuobjclient` module is found during build, the S3 Accelerated engines will be automatically disabled, and the plugin will fall back to standard S3 and S3 CRT engines.
 
 ## Configuration
 
@@ -333,7 +335,7 @@ Each engine implementation defines its own supported memory segment types via `g
 
 > **⚠️ Important: Conditional Compilation for S3 Accelerated Engines**
 >
-> The S3 Accelerated path (`s3_accel`) and any vendor implementations under it require the `cuobjclient-13.1` library. When adding new extensions to `s3_accel`:
+> The S3 Accelerated path (`s3_accel`) and any vendor implementations under it require the `cuobjclient` library (CUDA Toolkit 13.1 or later). When adding new extensions to `s3_accel`:
 >
 >
 > Vendor engines self-register via `objAccelEngineRegistrar`

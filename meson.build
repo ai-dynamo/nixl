@@ -147,8 +147,40 @@ has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', depen
 # Check whether the POSIX plugin is enabled
 has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
-# Check for CUObject Client library
-cuobj_dep = dependency('cuobjclient-13.1', required: false)
+# Check for CUObject Client library.
+# The library ships with the CUDA Toolkit and its pkg-config file is named after
+# the toolkit release it belongs to (cuobjclient-13.1.pc, cuobjclient-13.3.pc, ...),
+# so a single module name cannot be used. Probe the pkg-config modules that are
+# installed and pick the newest one that satisfies the minimum supported version.
+cuobj_min_version = '13.1'
+cuobj_dep = dependency('cuobjclient', required: false)
+
+if not cuobj_dep.found()
+    pkgconfig_prog = find_program('pkg-config', 'pkgconf', required: false)
+    cuobj_module = ''
+    cuobj_version = ''
+    if pkgconfig_prog.found()
+        pkgconfig_modules = run_command(pkgconfig_prog, '--list-all', check: false)
+        if pkgconfig_modules.returncode() == 0
+            foreach line : pkgconfig_modules.stdout().strip().split('\n')
+                module = line.strip().split(' ')[0]
+                if module.startswith('cuobjclient-')
+                    version = module.split('cuobjclient-')[1]
+                    if version.version_compare('>=' + cuobj_min_version)
+                        if cuobj_version == '' or version.version_compare('>' + cuobj_version)
+                            cuobj_module = module
+                            cuobj_version = version
+                        endif
+                    endif
+                endif
+            endforeach
+        endif
+    endif
+    if cuobj_module != ''
+        cuobj_dep = dependency(cuobj_module, required: false)
+    endif
+endif
+
 if cuobj_dep.found()
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
 endif
