@@ -355,9 +355,8 @@ class Buffer:
                 are supported. `-1` indices (not selecting any expert) are supported.
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
                 `num_ranks * num_max_dispatch_tokens_per_rank` must be a multiple of 4 for TMA alignment.
-            num_experts: total physical expert capacity used for the dispatch
-                layout. It must cover all active experts and defaults to the
-                active expert count.
+            num_experts: total physical expert capacity used for the dispatch layout.
+                It must cover all active experts and defaults to the active expert count.
             cumulative_local_expert_recv_stats: a cumulative expert count tensor for statistics, which should have shape
                 `[num_local_experts]` and be typed as `torch.int`. This is useful for online service EP load balance
                 monitoring.
@@ -750,9 +749,8 @@ class Buffer:
             handle: the communication handle given by the `dispatch` function.
 
         Returns:
-            buffer: the raw RDMA buffer as a BF16 PyTorch tensor with shape
-                `[num_local_experts, num_ranks * num_max_dispatch_tokens_per_rank, hidden]`, you should fill this buffer
-                by yourself.
+            buffer: the raw RDMA buffer as a BF16 PyTorch tensor with the same shape as the `recv_x` token tensor
+                returned by `dispatch()`. You should fill this buffer yourself.
         """
         (
             src_info,
