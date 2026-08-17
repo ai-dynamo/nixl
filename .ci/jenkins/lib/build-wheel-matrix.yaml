@@ -119,7 +119,7 @@ runs_on_dockers:
       file: 'contrib/Dockerfile.manylinux',
       name: "${WHEEL_BASE_IMAGE_NAME}",
       tag: "${CI_IMAGE_TAG}",
-      build_args: '--build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${BASE_TAG} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --build-arg CUDA_VERSION=${CUDA_VERSION} --build-arg MANYLINUX_VERSION=${MANYLINUX_VERSION} --target wheel_base'
+      build_args: '--build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${BASE_TAG} --build-arg MANYLINUX_IMAGE=${MANYLINUX_IMAGE} --build-arg MANYLINUX_IMAGE_TAG=${MANYLINUX_IMAGE_TAG} --build-arg CUDA_VERSION=${CUDA_VERSION} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
     }
   # The custom 'fw' key is injected as an env var into every step of the branch
   # (ci-demo merges the docker entry into the branch axis), so the shared sanity
@@ -182,23 +182,24 @@ matrix:
 env:
   NPROC: 32
   GRPC_NPROC: 10
-  # Option B base: wheel_base builds on the public PyPA manylinux_2_28 image and
-  # copies CUDA from an el8/ubi8 NGC CUDA *devel* image (BASE_IMAGE:BASE_TAG).
-  # REACHABILITY: the blossom runner must be able to pull nvcr.io (and quay.io for
-  # the manylinux base). If it cannot, repoint BASE_IMAGE at the Artifactory ubi8
-  # mirror that svc-nixl-new-artifactory-token can pull, keeping the same ubi8 tag.
+  # wheel_base builds on the public PyPA manylinux_2_28 image and copies CUDA
+  # from an el8/ubi8 NGC CUDA *devel* image (BASE_IMAGE:BASE_TAG). 13.2 is the
+  # minimum for cuObject S3-RDMA support (cuobjclient-13.2.pc).
+  # REACHABILITY: the blossom runner must be able to pull nvcr.io and quay.io.
   BASE_IMAGE: "nvcr.io/nvidia/cuda"
-  BASE_TAG: '13.0.1-devel-ubi8'
+  BASE_TAG: "13.2.1-devel-ubi8"
   # CUDA MAJOR.MINOR — drives the torch cuXXX index + cu12/cu13 meta-wheel split.
-  CUDA_VERSION: "13.0"
-  # Pin the PyPA manylinux release so the toolchain is reproducible.
-  MANYLINUX_VERSION: "2026.06.06-1"
+  CUDA_VERSION: "13.2"
+  # Pinned PyPA manylinux release — separate image prefix and tag so either can
+  # be overridden independently (e.g. to mirror to Artifactory).
+  MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
+  MANYLINUX_IMAGE_TAG: "2026.06.06-1"
   # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
   # the "CI_MANAGED" placeholder must not be hand-edited.
   CI_IMAGE_TAG: "CI_MANAGED"
   WHL_BASE: "manylinux_2_28"
   TORCH_VERSIONS: "2.13"
-  WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-manylinux_2_28"
+  WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-cu13-manylinux_2_28"
   # Per-PR sanity images: <registry_host><registry_path>/pr/<arch>/<fw>-nixl:<BUILD_NUMBER>
   PR_REGISTRY: "${registry_host}${registry_path}"
   # Test model: pulled at runtime by the sanity script (not baked) and the gsm8k accuracy floor model.
@@ -287,6 +288,8 @@ steps:
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
         --cuda-version "${CUDA_VERSION}" \
+        --manylinux-image "${MANYLINUX_IMAGE}" \
+        --manylinux-image-tag "${MANYLINUX_IMAGE_TAG}" \
         --wheel-base "${WHL_BASE}" \
         --python-versions "${python_version}" \
         --arch ${arch} \

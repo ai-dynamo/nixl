@@ -14,44 +14,53 @@
 # limitations under the License.
 
 
-# === Manylinux wheel build (public PyPA base + NGC CUDA) — "Option B" =========
-# Build the wheel_base deps stage on the PUBLIC PyPA manylinux_2_28 image and
-# bring CUDA in from a public NGC CUDA *devel* image (el8/ubi8), instead of a
-# combined internal manylinux+CUDA base. el8/ubi8 matches the AlmaLinux-8
-# manylinux base. ARCH / MANYLINUX_VERSION / BASE_IMAGE must be declared before
-# the FROM lines that interpolate them.
+# Two-stage build: wheel_base uses the public PyPA manylinux_2_28 image; the
+# CUDA toolkit + cuObject client pkg-config files are copied in from a public
+# NGC CUDA *devel* image (el8/ubi8, which matches the AlmaLinux-8 manylinux
+# base). All four ARGs must be declared before the FROM lines that use them.
 ARG ARCH="x86_64"
-# Pin the PyPA manylinux release so the toolchain (gcc, CMake, CPython) is
-# reproducible; the implicit :latest would drift between builds.
-ARG MANYLINUX_VERSION="2026.06.06-1"
-# CUDA toolkit provider: a public NGC CUDA *devel* image, el8/ubi8 to match the
-# AlmaLinux-8 manylinux base (e.g. nvcr.io/nvidia/cuda:13.0.1-devel-ubi8).
+# Pinned PyPA manylinux release — fully-qualified image name prefix + tag.
+ARG MANYLINUX_IMAGE="quay.io/pypa/manylinux_2_28"
+ARG MANYLINUX_IMAGE_TAG="2026.06.06-1"
+# CUDA toolkit provider: a public NGC CUDA *devel* image, el8/ubi8 to match
+# the AlmaLinux-8 manylinux base. 13.2 is the minimum for cuObject support.
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda"
-ARG BASE_IMAGE_TAG
+ARG BASE_IMAGE_TAG="13.2.1-devel-ubi8"
 # When overridden to an Artifactory URL, the wheel stage pulls the pre-built deps
 # image instead of building wheel_base locally (CI caching). Default builds wheel_base here.
 ARG wheel_base=wheel_base
 
-# CUDA donor stage — the toolkit is copied onto the manylinux base below.
+# CUDA donor stage — copies the toolkit and cuObject client pkg-config files
+# onto the manylinux base. The cuobjclient*.pc files are staged in a separate
+# directory so they survive the copy even if /usr/lib64/pkgconfig has noise.
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS cuda
+RUN mkdir -p /opt/nixl-cuda-pkgconfig && \
+    (cp -a /usr/lib64/pkgconfig/cuobjclient*.pc /opt/nixl-cuda-pkgconfig/ 2>/dev/null || true)
 
 # Manylinux build base — official PyPA image (public on quay.io; ECR pull-through
 # available). AlmaLinux 8 / glibc 2.28 => manylinux_2_28 wheels.
-FROM quay.io/pypa/manylinux_2_28_${ARCH}:${MANYLINUX_VERSION} AS wheel_base
+FROM ${MANYLINUX_IMAGE}_${ARCH}:${MANYLINUX_IMAGE_TAG} AS wheel_base
 
 # Re-declare args needed inside this stage (pre-FROM args are only visible to FROM lines).
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.14"
 
-# CUDA version (e.g. 12.9 / 13.0) — passed explicitly (was an ENV from the old
+# CUDA version (e.g. 12.9 / 13.2) — passed explicitly (was an ENV from the old
 # combined base). Drives the torch cuXXX index and the cu12/cu13 wheel split.
-# Default matches build-container.sh's CUDA_VERSION fallback so a direct
-# `docker build` (bypassing build-container.sh / the CI yaml) still works.
-ARG CUDA_VERSION="13.0"
+# Default matches the BASE_IMAGE_TAG default above so a direct `docker build`
+# (bypassing build-container.sh / the CI yaml) still works.
+ARG CUDA_VERSION="13.2"
 ENV CUDA_VERSION=${CUDA_VERSION}
 
 # Bring the CUDA toolkit onto the manylinux base (dynamo wheel_builder pattern).
 COPY --from=cuda /usr/local/cuda /usr/local/cuda
+# cuobjclient-13.x.pc uses cudaroot=/usr/local/cuda-<version> for its includedir/libdir.
+# Create the versioned symlink so those paths resolve in the manylinux environment.
+RUN ln -sfn /usr/local/cuda /usr/local/cuda-${CUDA_VERSION}
+# cuObject client pkg-config files (cuobjclient-13.x.pc) — lets meson find and
+# link the OBJ plugin against libcuobjclient at build time. The library itself
+# is excluded from the final wheel by auditwheel (build-wheel.sh AUDITWHEEL_EXCLUDES).
+COPY --from=cuda /opt/nixl-cuda-pkgconfig/ /usr/lib64/pkgconfig/
 ENV CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH:-}
@@ -217,7 +226,7 @@ RUN mkdir aws_sdk_build && cd aws_sdk_build && \
         -DOPENSSL_USE_STATIC_LIBS=OFF && \
     make -j${NPROC:-$(nproc)} && make install
 
-ENV PKG_CONFIG_PATH=/usr/lib/pkgconfig:$PKG_CONFIG_PATH
+ENV PKG_CONFIG_PATH=/usr/lib64/pkgconfig:/usr/lib/pkgconfig:$PKG_CONFIG_PATH
 
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
@@ -342,9 +351,12 @@ RUN rm -rf $VIRTUAL_ENV && uv venv $VIRTUAL_ENV --python $DEFAULT_PYTHON_VERSION
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install python dependencies
 RUN uv pip install --upgrade meson meson-python pybind11 patchelf pyYAML click setuptools tabulate auditwheel tomlkit
-# Install PyTorch
+# Install the default PyTorch used by the outer NIXL build. Per-version NIXL EP
+# extensions are built later in isolated environments by build-wheel.sh.
+# torch 2.11 is not available on the cu132 index; 2.13 is the current default.
+ARG DEFAULT_TORCH_VERSION="2.13"
 RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
-    uv pip install 'torch==2.11.*'
+    uv pip install "torch==${DEFAULT_TORCH_VERSION}.*"
 # Upgrade setuptools to latest version for compatibility with PEP 639 (license format)
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
@@ -402,7 +414,7 @@ FROM $wheel_base AS wheel
 # With the --wheel-base-image caching path, wheel_base is a pre-built external
 # image; without this ARG the wheel stage would silently use the CUDA_VERSION
 # baked into that cache instead of the value passed to this build (line 509).
-ARG CUDA_VERSION="13.0"
+ARG CUDA_VERSION="13.2"
 ENV CUDA_VERSION=${CUDA_VERSION}
 
 ARG ARCH="x86_64"
@@ -494,11 +506,18 @@ ENV NIXL_PLUGIN_DIR=/usr/local/nixl/lib64/plugins
 
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
-    ldconfig
+    ldconfig && \
+    if [ "${CUDA_VERSION%%.*}" = "13" ]; then \
+        OBJ_PLUGIN="$(find /usr/local/nixl -name libplugin_OBJ.so -print -quit)"; \
+        test -n "$OBJ_PLUGIN" || { echo "ERROR: libplugin_OBJ.so not found" >&2; exit 1; }; \
+        readelf -d "$OBJ_PLUGIN" | grep 'libcuobjclient'; \
+    fi
 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
+# Default includes 2.11 for CUDA 12 builds; CUDA 13 CI passes
+# --build-arg WHL_TORCH_VERSIONS=2.12,2.13 since 2.11 is not on the cu13 index.
 ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
