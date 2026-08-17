@@ -187,6 +187,24 @@ public:
     void
     progressLoop();
 
+    /**
+     * CUDA context management for the progress threads.
+     *
+     * Progress threads are created by NIXL, so no CUDA context is current on them. UCX transports
+     * reached from progressLoop()/arm() call into the CUDA driver regardless -- cuda_copy's
+     * uct_cuda_base_iface_event_fd_arm() calls cuEventQuery() -- and the driver faults when there
+     * is no current context. Capture a context on a thread that has one and re-apply it on the
+     * progress threads. Same fix as the libfabric plugin's vramApplyCtx() (see issue #1157).
+     *
+     * All three are no-ops when built without CUDA.
+     */
+    void
+    vramCaptureCurrentCtx();
+    void
+    vramUpdateCtx(const void *address);
+    void
+    vramApplyCtx() const;
+
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;
     nixl_status_t
@@ -302,6 +320,11 @@ private:
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
     const bool sglEnabled_;
+
+    /* CUcontext the progress threads make current, kept as void* so that cuda.h stays out of this
+     * header. Written at engine construction and on the first VRAM registration, read by the
+     * progress threads on every iteration. */
+    std::atomic<void *> cudaCtx_{nullptr};
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;

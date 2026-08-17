@@ -38,12 +38,22 @@ ucx_backend_dependencies = [asio_dep,
 ucx_backend_include_directories = [nixl_inc_dirs,
                                    utils_inc_dirs]
 
+ucx_backend_compile_flags = []
+
+# The progress threads must re-apply a CUDA context before driving UCX transports that call into
+# the CUDA driver (see nixlUcxEngine::vramApplyCtx).
+if cuda_dep.found()
+    ucx_backend_dependencies += [cuda_dep]
+    ucx_backend_compile_flags += ['-DHAVE_CUDA']
+endif
+
 if 'UCX' in static_plugins
     ucx_backend_lib = static_library('UCX',
                ucx_backend_sources,
                dependencies: ucx_backend_dependencies,
                include_directories: ucx_backend_include_directories,
                install: false,
+               cpp_args : ucx_backend_compile_flags,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     ucx_backend_lib = shared_library('UCX',
@@ -51,7 +61,7 @@ else
                dependencies: ucx_backend_dependencies,
                include_directories: ucx_backend_include_directories,
                install: true,
-               cpp_args : ['-fPIC'],
+               cpp_args : ['-fPIC'] + ucx_backend_compile_flags,
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir,
                build_rpath: get_option('ucx_path') != '' ? get_option('ucx_path') + '/lib' : '',
