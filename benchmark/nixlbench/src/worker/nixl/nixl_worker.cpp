@@ -79,7 +79,6 @@ constexpr size_t kDeviceCounterDoneOffsetBytes = 0;
 constexpr size_t kDeviceCounterErrorOffsetBytes = sizeof(uint64_t);
 constexpr size_t kDeviceCounterBytes = 2 * sizeof(uint64_t);
 constexpr uint64_t kUnwrittenDeviceDurationNs = std::numeric_limits<uint64_t>::max();
-constexpr int kDefaultDeviceChannels = 4;
 
 // Reuse parser from utils
 
@@ -159,11 +158,11 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
         if (xferBenchConfig::use_device_api) {
-            const int num_device_channels =
-                std::max(kDefaultDeviceChannels, xferBenchConfig::deviceGroupNum());
-            backend_params["ucx_num_device_channels"] = std::to_string(num_device_channels);
-            std::cout << "Device API mode: configuring " << num_device_channels
-                      << " UCX device channels for execution groups" << std::endl;
+            backend_params["ucx_num_device_channels"] =
+                std::to_string(xferBenchConfig::device_channel_num);
+            std::cout << "Device API mode: configuring " << xferBenchConfig::device_channel_num
+                      << " UCX device channels for " << xferBenchConfig::deviceGroupNum()
+                      << " execution groups" << std::endl;
         }
 
         // No need to set device_list if all is specified
@@ -1955,6 +1954,7 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     params.counterIndex = num_regions * num_groups;
     params.regionSize = region_size;
     params.numIterations = static_cast<uint64_t>(per_group_iter);
+    params.channelNum = static_cast<unsigned>(xferBenchConfig::device_channel_num);
     params.postDurationNs = device_post_duration_ns;
     params.xferDurationNs = device_xfer_duration_ns;
     params.completionCounterOffsetBytes = kDeviceCounterDoneOffsetBytes;

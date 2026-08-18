@@ -232,6 +232,7 @@ public:
     static bool gusli_try_use_uring;
     static bool use_device_api;
     static int block_threads;
+    static int device_channel_num;
 
     /* Number of independent groups Device API kernel runs with. */
     static int

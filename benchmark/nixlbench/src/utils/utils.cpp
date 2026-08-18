@@ -249,6 +249,11 @@ NB_ARG_BOOL(use_device_api,
             "When enabled, --num_threads is repurposed as the CUDA kernel "
             "block size (num_threads <= 32 -> THREAD level; > 32 -> WARP level, must be a "
             "multiple of 32), and the internal CPU thread count is forced to 1.");
+NB_ARG_INT32(device_channel_num,
+             0,
+             "Number of logical UCX Device API channels. "
+             "0 uses one channel per execution group. "
+             "Only used when --use_device_api is enabled.");
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
@@ -331,6 +336,7 @@ std::string xferBenchConfig::gusli_device_security = "";
 bool xferBenchConfig::gusli_try_use_uring = false;
 bool xferBenchConfig::use_device_api = false;
 int xferBenchConfig::block_threads = 1;
+int xferBenchConfig::device_channel_num = 0;
 
 static bool
 validateDeviceAPIConfig() {
@@ -366,7 +372,7 @@ validateDeviceAPIConfig() {
     }
     if (std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr) {
         return reject("UCX_RC_GDA_NUM_CHANNELS must not be set; "
-                      "NIXLBench configures Device API channels automatically");
+                      "use --device_channel_num to configure Device API channels");
     }
     return true;
 #else
@@ -591,7 +597,20 @@ xferBenchConfig::loadParams(void) {
             return -1;
         }
         block_threads = num_threads;
+        device_channel_num = NB_ARG(device_channel_num);
+        if (device_channel_num < 0) {
+            std::cerr << "Invalid value for --device_channel_num: " << device_channel_num
+                      << ". Device API channel number must be >= 0" << std::endl;
+            return -1;
+        }
         int group_num = deviceGroupNum();
+        if (device_channel_num == 0) {
+            device_channel_num = group_num;
+        } else if (device_channel_num > group_num) {
+            std::cout << "WARNING: Adjusting --device_channel_num from " << device_channel_num
+                      << " to Device API group number " << group_num << std::endl;
+            device_channel_num = group_num;
+        }
         if (num_iter < group_num) {
             std::cerr << "Invalid value for --num_iter: " << num_iter
                       << " , must not be smaller than Device API group number: " << group_num
@@ -599,8 +618,9 @@ xferBenchConfig::loadParams(void) {
             return -1;
         }
         num_threads = 1;
-        std::cout << "Device API mode: kernel block_threads=" << block_threads
-                  << ", groups_num = " << group_num << ", num_threads forced to 1" << std::endl;
+        std::cout << "Device API mode: kernel block_threads = " << block_threads
+                  << ", group_num = " << group_num << ", channel_num = " << device_channel_num
+                  << ", num_threads forced to 1" << std::endl;
     }
     etcd_endpoints = NB_ARG(etcd_endpoints);
     asio_address = NB_ARG(asio_address);
@@ -934,6 +954,8 @@ xferBenchConfig::printConfig() {
     if (use_device_api) {
         printOption("Device API Kernel block threads (--num_threads=N)",
                     std::to_string(block_threads));
+        printOption("Device API channels (--device_channel_num=N)",
+                    std::to_string(device_channel_num));
     }
     printSeparator('-');
     std::cout << std::endl;

@@ -27,7 +27,7 @@
  * The block as a whole performs @c numIterations * num_groups list transfers.
  *
  * Each group signals independently using @c nixlAtomicAdd on @c { remoteMvh, counterIndex, offset }
- * over its own channel to add @a numIterations to the done counter.
+ * over channel @c group_id%channelNum to add @a numIterations to the done counter.
  * Duration outputs contain @c numIterations * num_groups entries in iteration-major order.
  */
 struct nixlbenchDeviceXferParams {
@@ -37,6 +37,7 @@ struct nixlbenchDeviceXferParams {
     size_t counterIndex; ///< Index of counter buffer (= numRegions * num_groups)
     size_t regionSize; ///< Bytes per region for this transfer pattern
     uint64_t numIterations; ///< Per-group number of complete region-list transfers
+    unsigned channelNum; ///< Logical channels shared by groups using group_id % channelNum
     uint64_t *postDurationNs; ///< Per-iteration, per-group PUT posting duration output
     uint64_t *xferDurationNs; ///< Per-iteration, per-group completion polling duration output
     size_t completionCounterOffsetBytes; ///< Done counter offset in the counter region

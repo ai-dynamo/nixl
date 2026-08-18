@@ -99,8 +99,8 @@ nixlbenchSignalError(const nixlbenchDeviceXferParams &params,
  *
  * Every group runs @c numIterations iterations of the complete region list,
  * so the block as a whole performs @c numIterations * num_groups transfers of the list.
- * Groups are fully independent - each one owns a UCX channel, keeps its own timing samples
- * and signals its own share of the completion counter - so no need synchronization at all.
+ * Groups keep independent transfer status and timing samples,
+ * signal its own share of the completion counter, so no group synchronization is needed.
  */
 template<nixl_gpu_level_t Level>
 __global__ void
@@ -115,6 +115,7 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
         num_groups = (blockDim.x + warpSize - 1) / warpSize;
     }
     nixlGpuXferStatusH &xfer_status = xfer_statuses[group_id];
+    const unsigned channel_id = group_id % params.channelNum;
     const bool group_leader = Level == nixl_gpu_level_t::THREAD || threadIdx.x % warpSize == 0;
     const size_t region_base = group_id * params.numRegions;
     bool group_failed = false;
@@ -128,7 +129,7 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
         nixl_status_t put_status = NIXL_SUCCESS;
         for (size_t region_idx = 0; region_idx < params.numRegions; ++region_idx) {
             put_status =
-                nixlbenchPostPut<Level>(params, region_base + region_idx, group_id, xfer_status);
+                nixlbenchPostPut<Level>(params, region_base + region_idx, channel_id, xfer_status);
             if (put_status != NIXL_IN_PROG) {
                 break;
             }
@@ -166,10 +167,10 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
     }
 
     if (group_failed) {
-        (void)nixlbenchSignalError<Level>(params, group_id, xfer_status);
+        (void)nixlbenchSignalError<Level>(params, channel_id, xfer_status);
     } else if (nixlbenchSignalCompletion<Level>(
-                   params, params.numIterations, group_id, xfer_status) != NIXL_SUCCESS) {
-        (void)nixlbenchSignalError<Level>(params, group_id, xfer_status);
+                   params, params.numIterations, channel_id, xfer_status) != NIXL_SUCCESS) {
+        (void)nixlbenchSignalError<Level>(params, channel_id, xfer_status);
     }
 }
 
@@ -187,6 +188,10 @@ nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block
         std::cerr << "nixlbench: nixlbenchLaunchDevicePut: duration output buffers are required "
                      "(postDurationNs and xferDurationNs must hold numIterations * num_groups "
                      "entries)\n";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    if (params.channelNum == 0) {
+        std::cerr << "nixlbench: nixlbenchLaunchDevicePut: channelNum must be greater than zero\n";
         return NIXL_ERR_INVALID_PARAM;
     }
 
