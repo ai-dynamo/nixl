@@ -241,6 +241,7 @@ TEST_F(MpExporterTest, LoadsThroughPluginManager) {
 
 TEST_F(MpExporterTest, CreatedTelemetryDirIsPrivate) {
     const auto sub = dir_ / "created";
+    ASSERT_FALSE(std::filesystem::exists(sub));
     env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", sub.string());
 
     nixlTelemetryPrometheusMpExporter exporter(initParams("agent-private"));
