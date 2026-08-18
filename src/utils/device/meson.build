@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,16 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
-subdir('stream')
-subdir('file')
-subdir('object')
+device_buffer_lib = library('nixl_device_buffer',
+           ['device_buffer.cpp', 'device_buffer.h'],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
+           dependencies: [cuda_dep, nixl_common_dep],
+           install: true)
 
-if cuda_dep.found()
-    subdir('device')
-endif
-
-if libfabric_dep.found()
-    subdir('libfabric')
-endif
+device_buffer_interface = declare_dependency(link_with: device_buffer_lib)
