@@ -2,9 +2,9 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-#ifndef NIXL_GPU_DEVICE_CONFIG_H
-#define NIXL_GPU_DEVICE_CONFIG_H
+#ifndef NIXL_SRC_API_GPU_NIXL_DEVICE_CONFIG_H
+#define NIXL_SRC_API_GPU_NIXL_DEVICE_CONFIG_H
 
 #mesondefine NIXL_HAVE_UCX_GPU_DEVICE_API
 
-#endif // NIXL_GPU_DEVICE_CONFIG_H
+#endif // NIXL_SRC_API_GPU_NIXL_DEVICE_CONFIG_H
