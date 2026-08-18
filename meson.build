@@ -79,6 +79,16 @@ dl_dep = cpp.find_library('dl', required: true)
 rt_dep = cpp.find_library('rt', required: true)
 thread_dep = dependency('threads')
 
+gdrcopy_lib = cpp.find_library('gdrapi', required: false)
+have_gdrcopy = gdrcopy_lib.found() and cpp.has_header('gdrapi.h')
+if have_gdrcopy
+    gdrcopy_dep = declare_dependency(dependencies: gdrcopy_lib)
+    add_project_arguments('-DHAVE_GDRCOPY', language: 'cpp')
+else
+    gdrcopy_dep = []
+    message('GDRCopy not found; device proxy will use host-mapped control-memory fallback')
+endif
+
 # Forced to ignore this error due to:
 # https://github.com/abseil/abseil-cpp/issues/1779
 # This must be global since subprojects cannot be assigned with arguments.
@@ -242,6 +252,9 @@ if cuda_dep.found()
     add_languages('CUDA')
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
+    if have_gdrcopy
+        add_project_arguments('-DHAVE_GDRCOPY', language: 'cuda')
+    endif
 
     cuda_arch_list = get_option('nixl_cuda_arch_list').strip()
     if cuda_arch_list == 'auto'
