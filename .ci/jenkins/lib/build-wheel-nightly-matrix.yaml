@@ -10,7 +10,6 @@ failFast: false
 timeout_minutes: 240
 
 registry_host: artifactory.nvidia.com
-registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
@@ -25,16 +24,9 @@ kubernetes:
   requests: '{memory: 24Gi, cpu: 16000m}'
 
 # podman-in-container runner; build-container.sh runs docker/podman inside it.
-# wheel_base is a cached deps image (no step runs in it) — ci-demo builds it
-# when Dockerfile.manylinux changes and it is reused via --wheel-base-image.
+# The nightly builds wheel_base from scratch on every run — no caching.
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
-  - {
-      file: 'contrib/Dockerfile.manylinux',
-      name: "${WHEEL_BASE_IMAGE_NAME}",
-      tag: "${CI_IMAGE_TAG}",
-      build_args: '--build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${BASE_TAG} --build-arg MANYLINUX_IMAGE=${MANYLINUX_IMAGE} --build-arg MANYLINUX_IMAGE_TAG=${MANYLINUX_IMAGE_TAG} --build-arg CUDA_VERSION=${CUDA_VERSION} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
-    }
 
 matrix:
   axes:
@@ -54,10 +46,8 @@ matrix:
 env:
   NPROC: 16
   GRPC_NPROC: 10
-  CI_IMAGE_TAG: "CI_MANAGED"
   MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
   MANYLINUX_IMAGE_TAG: "2026.06.06-1"
-  WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-cu${CUDA_VARIANT}-manylinux_2_28"
   # TORCH_VERSIONS comes from the JJB job parameter (default 2.12,2.13 for cu13;
   # the cu12 cron overrides it to 2.11,2.12,2.13). Not set here to avoid the
   # matrix env overriding the per-run parameter value.
@@ -93,16 +83,18 @@ steps:
       fi
       [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot resolve UCX_VERSION=${UCX_VERSION}"; exit 1; }
       printf 'NIXL_SHA=%s\nUCX_SHA=%s\n' "${NIXL_SHA}" "${UCX_SHA}" > wheel_build_ids.env
-      # torch 2.11 is not published on the cu13 index; derive the correct set
-      # from CUDA_VARIANT so manual runs can't accidentally drop 2.11 for cu12.
+      # Derive CUDA major from BASE_TAG for torch version selection.
+      # BASE_TAG format: <major>.<minor>.<patch>-devel-ubi8; CUDA_VERSION is
+      # derived automatically inside build-container.sh.
+      CUDA_MAJOR="$(echo "${BASE_TAG}" | cut -d. -f1)"
+      # torch 2.11 is not published on the cu13 index; auto-select unless overridden.
       if [ -z "${TORCH_VERSIONS:-}" ]; then
-        if [ "${CUDA_VARIANT}" = "12" ]; then TORCH_VERSIONS="2.11,2.12,2.13"
+        if [ "${CUDA_MAJOR}" = "12" ]; then TORCH_VERSIONS="2.11,2.12,2.13"
         else TORCH_VERSIONS="2.12,2.13"; fi
       fi
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
-        --cuda-version "${CUDA_VERSION}" \
         --manylinux-image "${MANYLINUX_IMAGE}" \
         --manylinux-image-tag "${MANYLINUX_IMAGE_TAG}" \
         --wheel-base "manylinux_${manylinux}" \
@@ -111,8 +103,7 @@ steps:
         --ucx-ref "${UCX_SHA}" \
         --torch-versions "${TORCH_VERSIONS}" \
         --tag "${WHEEL_IMAGE_TAG}" \
-        --dockerfile contrib/Dockerfile.manylinux \
-        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}"
+        --dockerfile contrib/Dockerfile.manylinux
 
   - name: Publish
     credentialsId: 'svc-nixl-new-artifactory-token'

@@ -353,6 +353,13 @@ BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BAS
 BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX_IMAGE_TAG=$MANYLINUX_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
+# For Dockerfile.manylinux, derive CUDA_VERSION from BASE_IMAGE_TAG if not
+# set explicitly (BASE_IMAGE_TAG format: <major>.<minor>.<patch>-devel-ubi8).
+case "$DOCKER_FILE" in
+    *Dockerfile.manylinux)
+        CUDA_VERSION="${CUDA_VERSION:-$(echo "$BASE_IMAGE_TAG" | grep -oE '^[0-9]+\.[0-9]+')}"
+        ;;
+esac
 BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
