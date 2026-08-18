@@ -16,6 +16,7 @@
  */
 #include "mp_collector.h"
 #include "mp_store.h"
+#include "mp_telemetry_fixture.h"
 
 #include <gtest/gtest.h>
 
@@ -51,11 +52,6 @@ constexpr auto ERR_BACKEND = nixl_telemetry_event_type_t::AGENT_ERR_BACKEND;
 constexpr auto XFER_TIME = nixl_telemetry_event_type_t::AGENT_XFER_TIME;
 
 const std::vector<double> kBuckets = {10, 100, 1000};
-
-[[nodiscard]] std::size_t
-idx(nixl_telemetry_event_type_t t) {
-    return static_cast<std::size_t>(t);
-}
 
 [[nodiscard]] storeSnapshot
 makeSnap(const std::string &agent, const std::string &rank) {
@@ -283,24 +279,7 @@ TEST(MpCollectorTest, SnapshotLivenessByWriterThenTtl) {
     EXPECT_FALSE(isSnapshotLive(gone_stale, std::chrono::seconds(0), /*writer_alive=*/false));
 }
 
-class MpCollectorFileTest : public ::testing::Test {
-protected:
-    void
-    SetUp() override {
-        const auto *info = ::testing::UnitTest::GetInstance()->current_test_info();
-        dir_ = std::filesystem::path(::testing::TempDir()) /
-            ("nixl_mp_collector_" + std::to_string(::getpid()) + "_" + info->name());
-        std::filesystem::create_directories(dir_);
-    }
-
-    void
-    TearDown() override {
-        std::error_code ec;
-        std::filesystem::remove_all(dir_, ec);
-    }
-
-    std::filesystem::path dir_;
-};
+class MpCollectorFileTest : public mpTempDirTest {};
 
 TEST_F(MpCollectorFileTest, CollectReadsLiveStoresAndIgnoresOthers) {
     // Two distinct store files; both headers stamp this (live) process.

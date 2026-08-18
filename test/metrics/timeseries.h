@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_TEST_DOCA_TELEMETRY_TIMESERIES_H
-#define NIXL_TEST_DOCA_TELEMETRY_TIMESERIES_H
+#ifndef NIXL_TEST_METRICS_TIMESERIES_H
+#define NIXL_TEST_METRICS_TIMESERIES_H
 
 // -----------------------------------------------------------------------------
 // Test-only helper -- NOT a production-grade time-series implementation.
@@ -40,7 +40,7 @@
 #include <utility>
 #include <vector>
 
-namespace nixl::doca_test {
+namespace nixl::metrics_test {
 
 using labelSet = std::map<std::string, std::string>;
 
@@ -138,6 +138,6 @@ private:
     seriesMap series_;
 };
 
-} // namespace nixl::doca_test
+} // namespace nixl::metrics_test
 
-#endif // NIXL_TEST_DOCA_TELEMETRY_TIMESERIES_H
+#endif // NIXL_TEST_METRICS_TIMESERIES_H

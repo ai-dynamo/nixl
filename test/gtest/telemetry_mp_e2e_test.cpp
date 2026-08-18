@@ -17,127 +17,49 @@
 #include "prometheus_mp_exporter.h"
 
 #include "common.h"
+#include "mp_telemetry_fixture.h"
+
+#include "common/scoped_fd.h"
+
+#include "scrape_util.h"
+#include "timeseries.h"
+
+#include <absl/strings/str_join.h>
 
 #include <gtest/gtest.h>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <poll.h>
-#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <cerrno>
-#include <chrono>
 #include <csignal>
 #include <cstring>
 #include <filesystem>
 #include <map>
-#include <sstream>
+#include <optional>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
 
+using nixl::scopedFd;
+using nixl::metrics_test::labelSet;
+using nixl::metrics_test::scrapeMetrics;
+using nixl::metrics_test::timeSeries;
+
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
 constexpr auto XFER_TIME = nixl_telemetry_event_type_t::AGENT_XFER_TIME;
 
-[[nodiscard]] nixlTelemetryExporterInitParams
-initParams(const std::string &agent) {
-    return nixlTelemetryExporterInitParams{agent, 4096};
-}
-
-// Minimal HTTP/1.1 GET over 127.0.0.1:<port>; returns the response body (empty on
-// failure). Self-contained to keep the test free of an HTTP client dependency.
-[[nodiscard]] std::string
-httpGet(uint16_t port, const std::string &path) {
-    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        return {};
-    }
-    const struct timeval tv{3, 0};
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = ::inet_addr("127.0.0.1");
-    if (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
-        ::close(fd);
-        return {};
-    }
-
-    const std::string req =
-        "GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
-    for (std::size_t sent = 0; sent < req.size();) {
-        const ssize_t n = ::send(fd, req.data() + sent, req.size() - sent, 0);
-        if (n < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            ::close(fd);
-            return {};
-        }
-        sent += static_cast<std::size_t>(n);
-    }
-
-    std::string response;
-    char buf[4096];
-    while (true) {
-        const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
-        if (n <= 0) {
-            break;
-        }
-        response.append(buf, static_cast<std::size_t>(n));
-    }
-    ::close(fd);
-
-    const auto pos = response.find("\r\n\r\n");
-    return pos == std::string::npos ? std::string{} : response.substr(pos + 4);
-}
-
-[[nodiscard]] std::string
-scrapeMetrics(uint16_t port) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    do {
-        const std::string body = httpGet(port, "/metrics");
-        if (!body.empty()) {
-            return body;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    } while (std::chrono::steady_clock::now() < deadline);
-    return {};
-}
-
-// Parses "<metric>{...agent_name="X"...} <value>" lines into agent_name -> value.
+// The `metric` series of every agent in the scrape, keyed by agent_name.
 [[nodiscard]] std::map<std::string, double>
-parseSeriesByAgent(const std::string &body, const std::string &metric) {
+seriesByAgent(const timeSeries &metrics, const std::string &metric) {
     std::map<std::string, double> out;
-    const std::string prefix = metric + "{";
-    const std::string key = "agent_name=\"";
-    std::istringstream iss(body);
-    std::string line;
-    while (std::getline(iss, line)) {
-        if (line.rfind(prefix, 0) != 0) {
+    for (const auto &[id, samples] : metrics.series()) {
+        const auto agent = id.labels.find("agent_name");
+        if (id.name != metric || agent == id.labels.end() || samples.empty()) {
             continue;
         }
-        const auto ap = line.find(key);
-        const auto brace = line.rfind('}');
-        if (ap == std::string::npos || brace == std::string::npos) {
-            continue;
-        }
-        const auto vstart = ap + key.size();
-        const auto vend = line.find('"', vstart);
-        if (vend == std::string::npos) {
-            continue;
-        }
-        try {
-            out[line.substr(vstart, vend - vstart)] = std::stod(line.substr(brace + 1));
-        }
-        catch (const std::exception &) {
-        }
+        out[agent->second] = samples.back().value;
     }
     return out;
 }
@@ -164,22 +86,11 @@ runWriterChild(int go_fd, int ready_fd, int quit_fd, const std::string &agent, u
     ::_exit(rc);
 }
 
-class MpE2ETest : public ::testing::Test {
+class MpE2ETest : public MpExporterTest {
 protected:
     void
     SetUp() override {
-        const auto *info = ::testing::UnitTest::GetInstance()->current_test_info();
-        dir_ = std::filesystem::path(::testing::TempDir()) /
-            ("nixl_mp_e2e_" + std::to_string(::getpid()) + "_" + info->name());
-        std::filesystem::create_directories(dir_);
-        // What the exporter asks operators for; without it a permissive umask
-        // makes it warn about the directory and the gtest main counts that.
-        std::filesystem::permissions(
-            dir_, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
-        port_ = gtest::PortAllocator::next_tcp_port();
-        env_.addVar("NIXL_TELEMETRY_PROMETHEUS_LOCAL", "y");
-        env_.addVar("NIXL_TELEMETRY_PROMETHEUS_PORT", std::to_string(port_));
-        env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", dir_.string());
+        MpExporterTest::SetUp();
         // Dead processes become stale immediately so the reaping check is prompt.
         env_.addVar("NIXL_TELEMETRY_MP_STALE_TTL", "0");
     }
@@ -187,15 +98,11 @@ protected:
     // Runs even when a fatal assertion aborts the test body mid-fork.
     void
     TearDown() override {
-        for (int *fd : {&goWrite_, &readyRead_, &quitWrite_}) {
-            closeFd(*fd);
-        }
         for (const pid_t pid : children_) {
             ::kill(pid, SIGKILL);
             ::waitpid(pid, nullptr, 0);
         }
-        std::error_code ec;
-        std::filesystem::remove_all(dir_, ec);
+        MpExporterTest::TearDown();
     }
 
     [[nodiscard]] std::size_t
@@ -207,21 +114,7 @@ protected:
         return n;
     }
 
-    static void
-    closeFd(int &fd) {
-        if (fd >= 0) {
-            ::close(fd);
-            fd = -1;
-        }
-    }
-
-    gtest::ScopedEnv env_;
-    uint16_t port_ = 0;
-    std::filesystem::path dir_;
     std::vector<pid_t> children_;
-    int goWrite_ = -1;
-    int readyRead_ = -1;
-    int quitWrite_ = -1;
 };
 
 TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) {
@@ -231,12 +124,14 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     int ready_pipe[2];
     int quit_pipe[2];
     ASSERT_EQ(::pipe(go_pipe), 0);
+    scopedFd go_read(go_pipe[0]);
+    scopedFd go_write(go_pipe[1]);
     ASSERT_EQ(::pipe(ready_pipe), 0);
+    scopedFd ready_read(ready_pipe[0]);
+    scopedFd ready_write(ready_pipe[1]);
     ASSERT_EQ(::pipe(quit_pipe), 0);
-
-    goWrite_ = go_pipe[1];
-    readyRead_ = ready_pipe[0];
-    quitWrite_ = quit_pipe[1];
+    scopedFd quit_read(quit_pipe[0]);
+    scopedFd quit_write(quit_pipe[1]);
 
     // Fork children while the parent is still single-threaded (before it builds
     // the owner exporter, which starts civetweb threads).
@@ -244,21 +139,21 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
         const pid_t pid = ::fork();
         ASSERT_GE(pid, 0);
         if (pid == 0) {
-            ::close(go_pipe[1]);
-            ::close(ready_pipe[0]);
-            ::close(quit_pipe[1]);
-            runWriterChild(go_pipe[0],
-                           ready_pipe[1],
-                           quit_pipe[0],
+            go_write.reset();
+            ready_read.reset();
+            quit_write.reset();
+            runWriterChild(go_read.get(),
+                           ready_write.get(),
+                           quit_read.get(),
                            "agent-" + std::to_string(i),
                            static_cast<uint64_t>((i + 1) * 100));
         }
         children_.push_back(pid);
     }
 
-    ::close(go_pipe[0]);
-    ::close(ready_pipe[1]);
-    ::close(quit_pipe[0]);
+    go_read.reset();
+    ready_write.reset();
+    quit_read.reset();
 
     // Parent wins the election and serves the endpoint.
     nixlTelemetryPrometheusMpExporter owner(initParams("agent-parent"));
@@ -267,45 +162,65 @@ TEST_F(MpE2ETest, AllRankProcessesAggregateBehindOneEndpointAndStaleAreDropped) 
     owner.exportEvent({XFER_TIME, 1234});
 
     // Release the children (they now become writers) and wait for readiness.
-    closeFd(goWrite_);
+    go_write.reset();
     for (int i = 0; i < kChildren; ++i) {
-        pollfd pfd{readyRead_, POLLIN, 0};
+        pollfd pfd{ready_read.get(), POLLIN, 0};
         ASSERT_GT(::poll(&pfd, 1, 30000), 0) << "writer " << i << " never signalled readiness";
         char c = 0;
-        ASSERT_EQ(::read(readyRead_, &c, 1), 1);
+        ASSERT_EQ(::read(ready_read.get(), &c, 1), 1);
     }
 
     // Phase 1: every process must appear behind the single owner endpoint.
-    const auto body = scrapeMetrics(port_);
-    const auto phase1 = parseSeriesByAgent(body, "agent_tx_bytes_total");
-    ASSERT_EQ(phase1.size(), static_cast<std::size_t>(kChildren + 1)) << body;
+    const auto metrics = scrapeMetrics(port_);
+    const auto phase1 = seriesByAgent(metrics, "agent_tx_bytes_total");
+    ASSERT_EQ(phase1.size(), static_cast<std::size_t>(kChildren + 1))
+        << absl::StrJoin(phase1, ", ", absl::PairFormatter("="));
     EXPECT_DOUBLE_EQ(phase1.at("agent-parent"), 999.0);
     EXPECT_DOUBLE_EQ(phase1.at("agent-0"), 100.0);
     EXPECT_DOUBLE_EQ(phase1.at("agent-1"), 200.0);
     EXPECT_DOUBLE_EQ(phase1.at("agent-2"), 300.0);
 
-    EXPECT_NE(body.find("# TYPE agent_xfer_time_us histogram"), std::string::npos);
-    EXPECT_NE(body.find("agent_xfer_time_us_bucket"), std::string::npos);
-    const auto hist_count = parseSeriesByAgent(body, "agent_xfer_time_us_count");
-    const auto hist_sum = parseSeriesByAgent(body, "agent_xfer_time_us_sum");
-    ASSERT_EQ(hist_count.size(), static_cast<std::size_t>(kChildren + 1)) << body;
-    ASSERT_EQ(hist_sum.size(), static_cast<std::size_t>(kChildren + 1)) << body;
+    const auto hist_count = seriesByAgent(metrics, "agent_xfer_time_us_count");
+    const auto hist_sum = seriesByAgent(metrics, "agent_xfer_time_us_sum");
+    ASSERT_EQ(hist_count.size(), static_cast<std::size_t>(kChildren + 1))
+        << absl::StrJoin(hist_count, ", ", absl::PairFormatter("="));
+    ASSERT_EQ(hist_sum.size(), static_cast<std::size_t>(kChildren + 1))
+        << absl::StrJoin(hist_sum, ", ", absl::PairFormatter("="));
     EXPECT_DOUBLE_EQ(hist_count.at("agent-parent"), 1.0);
     EXPECT_DOUBLE_EQ(hist_sum.at("agent-parent"), 1234.0);
+
+    // Buckets are cumulative and carry one series per bound, so where the
+    // parent's single 1234us sample landed is only visible per `le`.
+    const auto bucket = [&](const std::string &agent, const std::string &le) {
+        return metrics.latestValue("agent_xfer_time_us_bucket",
+                                   labelSet{{"agent_name", agent}, {"le", le}});
+    };
+    EXPECT_EQ(bucket("agent-parent", "1000"), std::optional<double>(0.0));
+    EXPECT_EQ(bucket("agent-parent", "2500"), std::optional<double>(1.0));
+    EXPECT_EQ(bucket("agent-parent", "+Inf"), std::optional<double>(1.0));
+
     // Writers that observed nothing still expose the family, at zero.
-    EXPECT_DOUBLE_EQ(hist_count.at("agent-0"), 0.0);
+    for (int i = 0; i < kChildren; ++i) {
+        const std::string agent = "agent-" + std::to_string(i);
+        EXPECT_DOUBLE_EQ(hist_count.at(agent), 0.0) << agent;
+        EXPECT_DOUBLE_EQ(hist_sum.at(agent), 0.0) << agent;
+        EXPECT_EQ(bucket(agent, "+Inf"), std::optional<double>(0.0)) << agent;
+    }
 
     // Kill one child and reap it so its pid is truly gone before the next scrape.
+    // It stays in children_ until reaped, so TearDown() finishes the job if an
+    // assertion below leaves the test body first, and stops tracking it once
+    // reaped, so a recycled pid is never signalled.
     const pid_t dead = children_.front();
-    children_.erase(children_.begin());
     const std::string dead_prefix =
         std::string(nixl::telemetry::mp::MP_STORE_FILE_PREFIX) + std::to_string(dead) + ".";
     ASSERT_EQ(countStores(dead_prefix), 1u);
     ASSERT_EQ(::kill(dead, SIGKILL), 0);
     ASSERT_EQ(::waitpid(dead, nullptr, 0), dead);
+    children_.erase(children_.begin());
 
     // Phase 2: the dead child's series is dropped (and its store reaped).
-    const auto phase2 = parseSeriesByAgent(scrapeMetrics(port_), "agent_tx_bytes_total");
+    const auto phase2 = seriesByAgent(scrapeMetrics(port_), "agent_tx_bytes_total");
     EXPECT_EQ(phase2.count("agent-0"), 0u);
     EXPECT_EQ(phase2.count("agent-1"), 1u);
     EXPECT_EQ(phase2.count("agent-2"), 1u);
