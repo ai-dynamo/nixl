@@ -39,6 +39,8 @@ resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under
 
 namespace {
 
+constexpr const char *kUnloadableBackend = "definitely-not-a-backend";
+
 // Records the calls a single backend receives, so tests can assert that one
 // call site fanned out to every backend.
 struct CallLog {
@@ -317,7 +319,7 @@ TEST(Tracing, MakeTracerUnknownBackendReturnsNull) {
     {
         // No plugin exists for this backend, so it resolves to null with a warning.
         const gtest::LogIgnoreGuard ignore("requested but plugin");
-        const auto tracer = nixl::trace::makeTracer({"agent", {"definitely-not-a-backend"}});
+        const auto tracer = nixl::trace::makeTracer({"agent", {kUnloadableBackend}});
         EXPECT_EQ(tracer, nullptr);
     }
 
@@ -325,16 +327,15 @@ TEST(Tracing, MakeTracerUnknownBackendReturnsNull) {
     EXPECT_EQ(none, nullptr);
 }
 
-// The no-backend runtime path: a backend is requested but its plugin is not
-// available (no libtrace_backend_*.so is registered in this unit binary), so
-// makeTracer yields a null tracer. Call sites then fall back to a
-// default-constructed Span -- the stub path that does essentially nothing -- and
-// it must stay safe. NVTX's functional coverage lives in the e2e transfer tests,
-// which load the real plugin.
+// The no-backend runtime path: a backend is requested but no plugin provides
+// it, so makeTracer yields a null tracer. Call sites then fall back to a
+// default-constructed Span -- the stub path that does essentially nothing --
+// and it must stay safe. NVTX's functional coverage lives in the e2e transfer
+// tests, which load the real plugin.
 TEST(Tracing, RequestedBackendWithoutPluginIsInert) {
     {
         const gtest::LogIgnoreGuard ignore("requested but plugin");
-        const auto tracer = nixl::trace::makeTracer({"stub_agent", {"nvtx"}});
+        const auto tracer = nixl::trace::makeTracer({"stub_agent", {kUnloadableBackend}});
         EXPECT_EQ(tracer, nullptr);
     }
 
