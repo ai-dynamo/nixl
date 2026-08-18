@@ -43,6 +43,16 @@ buffer.disconnect_ranks(ranks)
 - `connect_ranks(remote_ranks, activate=True)`: Establish NIXL connections to new peers (can be called multiple times); in low-latency mode, use `activate=False` to keep new peers masked until explicitly unmasked.
 - `disconnect_ranks(remote_ranks)`: Clean up connections to departing peers
 
+## CPU Proxy Configuration
+
+NIXL EP supports both GPU Device API paths. Select the path when the agent starts:
+
+- `NIXL_EP_DEVICE_MODE=proxy` enables the CPU proxy.
+- `NIXL_EP_DEVICE_MODE=direct` selects the direct UCX GPU Device API path (the EP
+  default when the variable is unset).
+
+Existing kernels and Device API calls do not change between modes.
+
 ## Testing
 
 The elastic test suite in `tests/elastic/` validates dynamic scaling capabilities:
@@ -92,7 +102,6 @@ meson setup build \
 cd build
 ninja install
 ```
-
 
 Finally, configure PYTHONPATH to use NIXL EP:
 ```bash
