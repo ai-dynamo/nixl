@@ -387,6 +387,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     uint16_t agent_idx,
     uint16_t xfer_id,
     std::function<void()> completion_callback,
+    std::function<void()> error_callback,
     size_t &submitted_count_out,
     int desc_idx,
     size_t base_offset,
@@ -427,6 +428,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         }
         // Set completion callback and populate request
         req->completion_callback = completion_callback;
+        req->error_callback = error_callback;
         req->chunk_offset = 0;
         req->chunk_size = transfer_size;
         req->local_addr = local_addr;
@@ -521,6 +523,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             }
 
             req->completion_callback = completion_callback;
+            req->error_callback = error_callback;
 
             // Calculate and populate chunk info
             size_t chunk_offset = i * chunk_size;
@@ -1016,6 +1019,9 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
         break;
     case ControlMessageType::HANDSHAKE:
         msg_type_value = NIXL_LIBFABRIC_MSG_HANDSHAKE;
+        break;
+    case ControlMessageType::XFER_ERROR:
+        msg_type_value = NIXL_LIBFABRIC_MSG_XFER_ERROR;
         break;
     default:
         NIXL_ERROR << "Unknown message type";

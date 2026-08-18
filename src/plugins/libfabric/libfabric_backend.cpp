@@ -388,6 +388,9 @@ nixlLibfabricEngine::vramApplyCtxEx(bool &use_cuda_addr_wa) const {
 nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent)
     : completed_requests_(0),
       submitted_requests_(0),
+      failed_requests_(0),
+      xfer_error_sent_(false),
+      xfer_error_attempts_(0),
       operation_(op),
       remote_agent_(remote_agent),
       total_notif_msg_len(0) {
@@ -432,6 +435,33 @@ void
 nixlLibfabricBackendH::adjust_total_submitted_requests(size_t actual_count) {
     submitted_requests_.store(actual_count);
     NIXL_DEBUG << "Adjusted total requests to actual count: " << actual_count;
+}
+
+void
+nixlLibfabricBackendH::increment_failed_requests() {
+    failed_requests_.fetch_add(1);
+    NIXL_DEBUG << "Request could not be posted, total failed: " << failed_requests_.load() << "/"
+               << submitted_requests_.load();
+}
+
+size_t
+nixlLibfabricBackendH::get_failed_requests_count() const {
+    return failed_requests_.load();
+}
+
+bool
+nixlLibfabricBackendH::claim_xfer_error_send() {
+    return !xfer_error_sent_.exchange(true);
+}
+
+void
+nixlLibfabricBackendH::release_xfer_error_claim() {
+    xfer_error_sent_.store(false);
+}
+
+uint32_t
+nixlLibfabricBackendH::record_xfer_error_attempt() {
+    return xfer_error_attempts_.fetch_add(1) + 1;
 }
 
 bool
@@ -515,6 +545,12 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                 });
         rail_manager_.getRail(0).setHandshakeCallback(
             [this](const std::string &payload) { handleHandshake(payload); });
+        rail_manager_.getRail(notification_rail_id)
+            .setXferErrorCallback([this](uint16_t notif_xfer_id,
+                                         uint16_t sender_peer_idx,
+                                         uint32_t failed_completions) {
+                handleXferError(notif_xfer_id, sender_peer_idx, failed_completions);
+            });
 
         // Set up XFER_ID tracking callbacks for all rails
         NIXL_DEBUG << "Setting up XFER_ID tracking callbacks for " << rail_manager_.getNumRails()
@@ -1354,6 +1390,7 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             imm_agent_idx,
             backend_handle->post_xfer_id,
             [backend_handle]() { backend_handle->increment_completed_requests(); },
+            [backend_handle]() { backend_handle->increment_failed_requests(); },
             desc_submitted_count,
             desc_idx,
             xfer_base_offset,
@@ -1628,6 +1665,11 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
         }
     }
 
+    // If a request is never posted, fail it, and tell the target to stop waiting.
+    if (backend_handle->get_failed_requests_count() > 0) {
+        return reportXferFailure(backend_handle);
+    }
+
     // Then check for completions after processing any pending completions
     if (backend_handle->is_completed()) {
         NIXL_DEBUG << "Data transfer completed successfully";
@@ -1846,6 +1888,103 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
 }
 
 nixl_status_t
+nixlLibfabricEngine::notifXferErrorPriv(const std::string &remote_agent,
+                                        uint16_t notif_xfer_id,
+                                        uint32_t failed_completions) const {
+    std::shared_ptr<nixlLibfabricConnection> connection;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+        auto it = connections_.find(remote_agent);
+        if (it == connections_.end()) {
+            NIXL_ERROR << "No connection found for agent: " << remote_agent
+                       << ", cannot report transfer error for XFER_ID=" << notif_xfer_id;
+            return NIXL_ERR_NOT_FOUND;
+        }
+        connection = it->second;
+    }
+
+    const size_t rail_id = 0; // Control messages always travel on rail 0
+    nixlLibfabricReq *control_request =
+        rail_manager_.getRail(rail_id).allocateControlRequest(sizeof(XferErrorPayload),
+                                                             notif_xfer_id);
+    if (!control_request) {
+        NIXL_ERROR << "Failed to allocate control request for transfer error, XFER_ID="
+                   << notif_xfer_id;
+        return NIXL_ERR_BACKEND;
+    }
+
+    XferErrorPayload payload{};
+    payload.failed_completions = failed_completions;
+    memcpy(control_request->buffer, &payload, sizeof(payload));
+    control_request->buffer_size = sizeof(payload);
+
+    const uint16_t imm_agent_idx =
+        senderImmDataAgentIdx(const_cast<nixlLibfabricConnection &>(*connection));
+    nixl_status_t status = rail_manager_.postControlMessage(
+        nixlLibfabricRailManager::ControlMessageType::XFER_ERROR,
+        control_request,
+        connection->rail_remote_addr_list_[rail_id][0],
+        imm_agent_idx);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to send transfer-error message for XFER_ID=" << notif_xfer_id;
+        return NIXL_ERR_BACKEND;
+    }
+
+    // Without a progress thread, progress rail 0 to ensure the message is sent
+    if (!progress_thread_enabled_) {
+        status = rail_manager_.getRail(rail_id).progressCompletionQueue();
+        if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
+            NIXL_ERROR << "Failed to progress rail 0 in notifXferErrorPriv";
+            return status;
+        }
+    }
+
+    NIXL_DEBUG << "Sent transfer-error message to " << remote_agent
+               << " XFER_ID=" << notif_xfer_id << " failed_completions=" << failed_completions;
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlLibfabricEngine::reportXferFailure(nixlLibfabricBackendH *backend_handle) const {
+    const size_t failed = backend_handle->get_failed_requests_count();
+    if (failed == 0) {
+        return NIXL_SUCCESS;
+    }
+
+    // checkXfer is polled repeatedly, so only one poll at a time attempts the send. The claim is
+    // handed back if the send fails, so a later poll retries: until the message gets through, the
+    // target is still waiting for writes that will never arrive.
+    if (backend_handle->claim_xfer_error_send()) {
+        const uint32_t attempt = backend_handle->record_xfer_error_attempt();
+        if (attempt == 1) {
+            NIXL_ERROR << "Transfer XFER_ID=" << backend_handle->post_xfer_id << " to "
+                       << backend_handle->remote_agent_ << " failed to post " << failed << " of "
+                       << backend_handle->get_submitted_requests_count()
+                       << " requests; notifying target so it does not wait for them";
+        }
+
+        if (backend_handle->has_notif &&
+            backend_handle->operation_ == nixl_xfer_op_t::NIXL_WRITE &&
+            backend_handle->remote_agent_ != localAgent) {
+            nixl_status_t status = notifXferErrorPriv(backend_handle->remote_agent_,
+                                                      backend_handle->post_xfer_id,
+                                                      static_cast<uint32_t>(failed));
+            if (status != NIXL_SUCCESS) {
+                backend_handle->release_xfer_error_claim();
+                NIXL_WARN << "Attempt " << attempt << " to notify target of transfer error for"
+                          << " XFER_ID=" << backend_handle->post_xfer_id << " failed with status "
+                          << status << "; retrying on the next checkXfer";
+            } else if (attempt > 1) {
+                NIXL_INFO << "Notified target of transfer error for XFER_ID="
+                          << backend_handle->post_xfer_id << " on attempt " << attempt;
+            }
+        }
+    }
+
+    return NIXL_ERR_BACKEND;
+}
+
+nixl_status_t
 nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
     // Use common fragmentation helper function
     uint32_t total_msg_len = 0;
@@ -2013,6 +2152,31 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
     checkPendingNotifications();
 }
 
+void
+nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
+                                     uint16_t sender_peer_idx,
+                                     uint32_t failed_completions) {
+    {
+        std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
+
+        const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
+        auto [it, inserted] = pending_notifications_.try_emplace(key, notif_xfer_id);
+        it->second.xfer_failed = true;
+        it->second.failed_completions = failed_completions;
+
+        NIXL_ERROR << "Initiator reported a failed transfer: sender_peer_idx=" << sender_peer_idx
+                   << " notif_xfer_id=" << notif_xfer_id
+                   << " writes_never_posted=" << failed_completions << " received_completions="
+                   << it->second.received_completions
+                   << " expected_completions=" << it->second.expected_completions
+                   << (inserted ? " (error arrived before the notification)" : "")
+                   << "; data for this transfer is incomplete";
+    }
+
+    // Check if any notifications can now be completed
+    checkPendingNotifications();
+}
+
 /****************************************
  * Receiver Side XFER_ID Tracking Helper Methods
  *****************************************/
@@ -2058,7 +2222,11 @@ nixlLibfabricEngine::checkPendingNotifications() {
         // Check BOTH conditions: fragments complete AND writes complete
         bool fragments_complete =
             (it->second.received_msg_fragments >= it->second.expected_msg_fragments);
-        bool writes_complete = (it->second.received_completions >= it->second.expected_completions);
+        // A failed transfer can never reach expected_completions, so the flag stands in for it:
+        // the notification is released with whatever arrived instead of waiting forever.
+        bool writes_complete =
+            it->second.xfer_failed ||
+            (it->second.received_completions >= it->second.expected_completions);
 
         if (fragments_complete && writes_complete) {
             NIXL_TRACE << "Notification complete: fragments=" << it->second.received_msg_fragments

@@ -207,6 +207,8 @@ public:
      * @param agent_idx Remote agent index for immediate data
      * @param xfer_id Transfer ID for tracking
      * @param completion_callback Callback for completion notification
+     * @param error_callback Callback invoked, in addition to completion_callback, for a request
+     *        that could not be posted at all — its write never reaches the target
      * @param submitted_count_out Number of requests successfully submitted
      * @param desc_idx Index of current descriptor within the transfer
      * @param base_offset Pre-reserved round-robin offset from reserveBaseOffset()
@@ -232,6 +234,7 @@ public:
                              uint16_t agent_idx,
                              uint16_t xfer_id,
                              std::function<void()> completion_callback,
+                             std::function<void()> error_callback,
                              size_t &submitted_count_out,
                              int desc_idx,
                              size_t base_offset,
@@ -270,6 +273,7 @@ public:
     enum class ControlMessageType : int {
         NOTIFICATION, ///< User notification message
         HANDSHAKE, ///< Peer-idx assignment (NIXL_LIBFABRIC_MSG_HANDSHAKE)
+        XFER_ERROR, ///< Batch had unpostable writes (NIXL_LIBFABRIC_MSG_XFER_ERROR)
     };
     /** Send control message via control rail
      * @param msg_type Type of control message
