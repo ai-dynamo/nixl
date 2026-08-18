@@ -353,9 +353,8 @@ class Buffer:
             topk_idx: `torch.Tensor` with `nixl_ep.topk_idx_t`, shaped as `[num_tokens, num_topk]`, only several top-k shapes
                 are supported. `-1` indices (not selecting any expert) are supported.
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
-            num_experts: deprecated optional parameter. This value is ignored by low-latency
-                dispatch; the number of experts is determined from the `num_experts_per_rank`
-                passed to `update_memory_buffers()` and the currently active ranks.
+            num_experts: total physical expert capacity used for the dispatch layout.
+                It must cover all active experts and defaults to the active expert count.
             cumulative_local_expert_recv_stats: a cumulative expert count tensor for statistics, which should have shape
                 `[num_local_experts]` and be typed as `torch.int`. This is useful for online service EP load balance
                 monitoring.
@@ -403,6 +402,7 @@ class Buffer:
             cumulative_local_expert_recv_stats,
             dispatch_wait_recv_cost_stats,
             num_max_dispatch_tokens_per_rank,
+            num_experts,
             use_fp8,
             round_scale,
             use_ue8m0,
@@ -747,9 +747,8 @@ class Buffer:
             handle: the communication handle given by the `dispatch` function.
 
         Returns:
-            buffer: the raw RDMA buffer as a BF16 PyTorch tensor with shape
-                `[num_local_experts, num_ranks * num_max_dispatch_tokens_per_rank, hidden]`, you should fill this buffer
-                by yourself.
+            buffer: the raw RDMA buffer as a BF16 PyTorch tensor with the same shape as the `recv_x` token tensor
+                returned by `dispatch()`. You should fill this buffer yourself.
         """
         (
             src_info,
@@ -758,7 +757,7 @@ class Buffer:
             hidden,
         ) = handle
         return self.runtime.get_next_combine_buffer(
-            num_max_dispatch_tokens_per_rank, hidden
+            num_max_dispatch_tokens_per_rank, hidden, layout_range.size(1)
         )
 
     def update_memory_buffers(
