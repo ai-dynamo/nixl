@@ -529,7 +529,7 @@ if get_option('buildtype') == 'debug'
 endif
 
 nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry')
-nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
+nixl_gpu_device_api_inc_dirs = include_directories('src/api/gpu', 'src/api')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
@@ -560,8 +560,17 @@ if get_option('install_headers')
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
 
-  if ucx_gpu_device_api_available
-    install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')
+  if cuda_dep.found()
+    install_headers('src/api/gpu/nixl_device.cuh', install_dir: prefix_inc + '/gpu')
+    install_headers(
+      'src/api/gpu/common/nixl_device_api.cuh',
+      'src/api/gpu/common/nixl_device_types.cuh',
+      'src/api/gpu/common/nixl_device_wrappers.cuh',
+      install_dir: prefix_inc + '/gpu/common')
+    if ucx_gpu_device_api_available
+      install_headers('src/api/gpu/ucx/nixl_device_impl.cuh',
+                      install_dir: prefix_inc + '/gpu/ucx')
+    endif
   endif
 endif
 
