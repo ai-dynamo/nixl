@@ -212,6 +212,11 @@ impl MemView {
     }
 }
 
+// SAFETY: a view is only released in Drop, and nixlAgent serializes prepMemView
+// and releaseMemView under its own lock, so releasing from a different thread
+// than prepared it is safe. AgentInner is already Send + Sync.
+unsafe impl Send for MemView {}
+
 impl Drop for MemView {
     fn drop(&mut self) {
         tracing::trace!(view = ?self.inner, "Dropping memory view");
