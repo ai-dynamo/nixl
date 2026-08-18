@@ -34,6 +34,7 @@
 #include "common/operators.h"
 #include "common/hw_info.h"
 #include "common/str_util.h"
+#include "device_api/device_memview.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "tracing/trace.h"
@@ -1907,6 +1908,7 @@ nixl_status_t
 nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
                        nixlMemViewH &mvh,
                        const nixl_opt_args_t *extra_params) const {
+    mvh = nullptr;
     const auto desc_count = static_cast<size_t>(dlist.descCount());
     const auto mem_type = dlist.getType();
     NIXL_TRACE_SCOPE(
@@ -1969,18 +1971,27 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    const auto status = engine->prepMemView(remote_meta_dlist, mvh, &opt_args);
-    if (status == NIXL_SUCCESS) {
-        data->mvhToEngine.emplace(mvh, *engine);
+    nixlMemViewH backend_memview = nullptr;
+    nixl_status_t status = engine->prepMemView(remote_meta_dlist, backend_memview, &opt_args);
+    if (status != NIXL_SUCCESS) {
+        return status;
     }
 
-    return status;
+    status = nixlDeviceMemViewAllocate(false, backend_memview, mvh);
+    if (status != NIXL_SUCCESS) {
+        engine->releaseMemView(backend_memview);
+        return status;
+    }
+
+    data->mvhToEngine.emplace(mvh, *engine);
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
                        nixlMemViewH &mvh,
                        const nixl_opt_args_t *extra_params) const {
+    mvh = nullptr;
     const auto mem_type = dlist.getType();
     NIXL_TRACE_SCOPE(
         trace_span, data->tracer_.get(), "nixl::prepMemView", nixl::trace::Kind::MemoryR);
@@ -2011,12 +2022,20 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    const auto status = engine->prepMemView(meta_dlist, mvh, &opt_args);
-    if (status == NIXL_SUCCESS) {
-        data->mvhToEngine.emplace(mvh, *engine);
+    nixlMemViewH backend_memview = nullptr;
+    nixl_status_t status = engine->prepMemView(meta_dlist, backend_memview, &opt_args);
+    if (status != NIXL_SUCCESS) {
+        return status;
     }
 
-    return status;
+    status = nixlDeviceMemViewAllocate(false, backend_memview, mvh);
+    if (status != NIXL_SUCCESS) {
+        engine->releaseMemView(backend_memview);
+        return status;
+    }
+
+    data->mvhToEngine.emplace(mvh, *engine);
+    return NIXL_SUCCESS;
 }
 
 void
@@ -2031,6 +2050,17 @@ nixlAgent::releaseMemView(nixlMemViewH mvh) const {
         return;
     }
 
-    it->second.releaseMemView(mvh);
+    nixlBackendEngine &engine = it->second;
+    nixlMemViewH backend_memview = nullptr;
+    const auto backend_status = nixlDeviceMemViewGetBackend(mvh, backend_memview);
+    if (backend_status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to read device memview wrapper for handle " << mvh;
+        nixlDeviceMemViewFree(mvh);
+        data->mvhToEngine.erase(it);
+        return;
+    }
+
+    engine.releaseMemView(backend_memview);
+    nixlDeviceMemViewFree(mvh);
     data->mvhToEngine.erase(it);
 }
