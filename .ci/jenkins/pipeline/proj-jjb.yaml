@@ -57,10 +57,6 @@
             name: "sha1"
             default: "{jjb_branch}"    # Default to 'main' branch for manual runs
             description: "Ref to check out the dispatcher pipeline from. Set to refs/pull/<n>/merge by the webhook; manual runs may pass a branch name, commit SHA, or any ref"
-        - string:
-            name: "LEAF_JOBS"
-            default: "non-gpu,gpu,dl-gpu,dl-gpu-ep,wheel,sanitizers,build-container"
-            description: "Comma-separated list of leaf jobs to dispatch. Edit the default here (via job config) to temporarily disable a leaf job for all runs without a code change; JJB redeploy restores the full list"
     # SCM configuration - checks out whatever ref sha1 holds: the PR merge ref
     # (set by the webhook) so a PR into a release branch runs that branch's
     # dispatcher, or a branch/commit for manual runs.
@@ -292,6 +288,10 @@
             name: "conf_file"
             default: ".ci/jenkins/lib/test-matrix.yaml"  # Test matrix configuration
             description: "Job config file"
+        - string:
+            name: "UCX_VER"
+            default: ""
+            description: "UCX ref (branch/tag/commit) to build against. Empty uses the Dockerfile ARG UCX_VERSION default (kept per branch in one place); the nixl-ci-nightly job sets it to master."
         - bool:
             name: "build_dockers"
             default: false
@@ -353,6 +353,10 @@
             name: "conf_file"
             default: ".ci/jenkins/lib/test-dl-ep-matrix.yaml"  # DLCluster EP test matrix configuration
             description: "Job config file"
+        - string:
+            name: "UCX_VER"
+            default: ""
+            description: "UCX ref (branch/tag/commit) to build against. Empty uses the Dockerfile ARG UCX_VERSION default (kept per branch in one place); the nixl-ci-nightly job sets it to master."
         - bool:
             name: "build_dockers"
             default: false
@@ -414,6 +418,10 @@
             name: "conf_file"
             default: ".ci/jenkins/lib/test-dl-matrix.yaml"  # DLCluster test matrix configuration
             description: "Job config file"
+        - string:
+            name: "UCX_VER"
+            default: ""
+            description: "UCX ref (branch/tag/commit) to build against. Empty uses the Dockerfile ARG UCX_VERSION default (kept per branch in one place); the nixl-ci-nightly job sets it to master."
         - bool:
             name: "build_dockers"
             default: false
@@ -628,7 +636,7 @@
       • Builds 4 inference container variants per release: <b>vllm-cu12-nixl</b>, <b>vllm-cu13-nixl</b>, <b>sglang-cu12-nixl</b>, <b>sglang-cu13-nixl</b><br/>
       • Builds for x86_64 and aarch64 (aarch64 via podman with QEMU)<br/>
       • Publishes multi-arch manifests after both arches succeed<br/>
-      • Wheels pulled from <code>sw-dynamo-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/&lt;arch&gt;/</code><br/>
+      • Wheels pulled from <code>sw-nbu-swx-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/</code><br/>
       • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>verification/llm/{{vllm-cu12-nixl,vllm-cu13-nixl,sglang-cu12-nixl,sglang-cu13-nixl}}</code><br/>
       • For <b>rc0</b> leave the <code>BASE_IMAGE_*</code> params empty to use upstream defaults<br/>
       • For <b>rcN, N&gt;0</b> set each <code>BASE_IMAGE_*</code> to the matching rc0 image to isolate the verification to the NIXL change<br/>
@@ -663,8 +671,10 @@
           name: "WHEEL_BUILD_ID"
           default: ""
           description: >
-            Artifactory build id for the wheel set (e.g. <code>48633863</code>).<br/>
-            Full wheel URL: <code>sw-dynamo-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/&lt;arch&gt;/nixl*.whl</code>
+            First 8 chars of the NIXL commit sha the wheels were built from, which
+            is the folder name the release wheel pipeline publishes under
+            (e.g. <code>51a42f86</code>).<br/>
+            Full wheel URL: <code>sw-nbu-swx-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/nixl*.whl</code>
       - string:
           name: "PYTHON_TAG"
           default: "cp312"
@@ -895,8 +905,8 @@
           cron: |
             # Build NIXL wheels nightly ~10 AM for CUDA 13 and CUDA 12 (the cu12
             # run also produces the nixl meta wheel). Both publish to the repo.
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_TAG=13.0-devel-manylinux--25.09
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_TAG=12.9-devel-manylinux--25.06
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;CUDA_VARIANT=13;BASE_IMAGE=nvcr.io/nvidia/cuda;BASE_TAG=13.2.1-devel-ubi8;CUDA_VERSION=13.2;TORCH_VERSIONS=2.12,2.13
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;CUDA_VARIANT=12;BASE_IMAGE=nvcr.io/nvidia/cuda;BASE_TAG=12.9.1-devel-ubi8;CUDA_VERSION=12.9;TORCH_VERSIONS=2.11,2.12,2.13
     # Manual build parameters
     parameters:
       - string:
@@ -908,13 +918,25 @@
           default: "v1.22.x"
           description: "UCX version to build against (tag like v1.22.x, branch name, or commit hash)"
       - string:
+          name: "CUDA_VARIANT"
+          default: "13"
+          description: "CUDA major version for the wheel build (13 or 12)"
+      - string:
           name: "BASE_IMAGE"
-          default: "artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda"
-          description: "Manylinux base image for the wheel build"
+          default: "nvcr.io/nvidia/cuda"
+          description: "NGC CUDA source image for the manylinux wheel build"
       - string:
           name: "BASE_TAG"
-          default: "13.0-devel-manylinux--25.09"
-          description: "Base image tag = CUDA version (e.g. 13.0-devel-manylinux--25.09 or 12.9-devel-manylinux--25.06). Mirrored into base/cuda from the dl/dgx/cuda registry."
+          default: "13.2.1-devel-ubi8"
+          description: "NGC CUDA image tag (e.g. 13.2.1-devel-ubi8 for CUDA 13 cuObject support, or 12.9.1-devel-ubi8 for CUDA 12)"
+      - string:
+          name: "CUDA_VERSION"
+          default: "13.2"
+          description: "CUDA toolkit major.minor directory copied from the source image (e.g. 13.2 or 12.9)"
+      - string:
+          name: "TORCH_VERSIONS"
+          default: "2.12,2.13"
+          description: "Comma-separated PyTorch versions to build EP extensions for (torch 2.11 is not on the cu13 index; use 2.11,2.12,2.13 for CUDA 12 runs)"
       - string:
           name: "DEBUG"
           default: 0
@@ -989,6 +1011,60 @@
                     parent-credentials: true
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
+# Nightly UCX-master validation orchestrator.
+# Single scheduled job that fans out to the three GPU test jobs against UCX
+# master and emails one consolidated report (the one place nightly results are
+# collected and sent from).
+- job-template:
+    name: "{jjb_proj}-nightly"      # Will be expanded to 'nixl-ci-nightly'
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 30
+          num-to-keep: 100
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj={jjb_proj}-nightly
+            conf_file=.ci/jenkins/lib/nightly-matrix.yaml
+    description: >
+      <b>NIXL nightly UCX-master validation</b><br/>
+      Runs <code>nixl-ci-gpu</code>, <code>nixl-ci-dl-gpu</code> and
+      <code>nixl-ci-dl-gpu-ep</code> against UCX <code>master</code> nightly and
+      emails one consolidated pass/fail report.<br/>
+      <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: false
+    sandbox: true
+    # Single nightly schedule for the UCX-master validation of the GPU test jobs.
+    triggers:
+      - timed: "H 0 * * *"
+    parameters:
+      - string:
+          name: "UCX_REF"
+          default: "master"
+          description: "UCX ref to validate nightly (branch, tag, or commit). Passed to the GPU jobs as UCX_VER."
+      - string:
+          name: "MAIL_TO"
+          default: "nixl-ci-alerts@exchange.nvidia.com"
+          description: "Recipient(s) for the nightly failure report. Mail is sent only when a leg fails."
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            branches: ['{jjb_branch}']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/*"
+            browser: githubweb
+            browser-url: "{jjb_git}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"  # Main pipeline runs the nightly-matrix.yaml orchestrator
+
 # Project definition that instantiates the job templates
 # This section defines the actual jobs that will be created
 - project:
@@ -1014,3 +1090,4 @@
         - "{jjb_proj}-build-wheel"  # Create build wheel job
         - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
         - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job
+        - "{jjb_proj}-nightly"  # Create nightly UCX-master validation orchestrator

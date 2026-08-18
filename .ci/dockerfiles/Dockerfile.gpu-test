@@ -31,7 +31,16 @@ COPY --chown="${_UID}":"${_GID}" . .
 # build.sh installs many packages without cleaning up, so the cleanup must run after it and in the
 # same layer to actually shrink the image. gdb is installed before build.sh so its apt-get runs
 # against a clean apt state.
-RUN sudo apt-get update && \
+# Use the internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
+RUN . /etc/os-release && \
+    printf '%s\n' \
+        'Types: deb' \
+        'URIs: https://urm.nvidia.com/artifactory/ubuntu-public' \
+        "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+        'Components: main restricted universe multiverse' \
+        'Trusted: yes' | sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null && \
+    grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f && \
+    sudo apt-get update && \
     sudo apt-get install -y --no-install-recommends gdb gdb-multiarch && \
     .gitlab/build.sh ${NIXL_INSTALL_DIR} && \
     sudo apt-get clean && \
