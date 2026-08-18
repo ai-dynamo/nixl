@@ -439,6 +439,7 @@ if ucx_dep.found()
     endif
 endif
 
+gpu_device_api_supported = cuda_dep.found()
 gpu_device_api_deps = []
 if cuda_dep.found()
     gpu_device_api_deps = [cuda_dep]
@@ -446,6 +447,11 @@ endif
 if ucx_gpu_device_api_available
     gpu_device_api_deps += [ucx_dep, doca_gpunetio_dep]
 endif
+
+summary({
+    'UCX backend available'   : ucx_gpu_device_api_available,
+    'Proxy backend available' : cuda_dep.found(),
+}, section: 'GPU Device API', bool_yn: true)
 
 summary({
     'UCX GPU Device API'  : ucx_gpu_device_api_available,
@@ -580,6 +586,10 @@ if get_option('install_headers')
       'src/api/gpu/common/nixl_device_types.cuh',
       'src/api/gpu/common/nixl_device_wrappers.cuh',
       install_dir: prefix_inc + '/gpu/common')
+    install_headers(
+      'src/api/gpu/proxy/nixl_device_impl.cuh',
+      'src/api/gpu/proxy/nixl_device_proxy.cuh',
+      install_dir: prefix_inc + '/gpu/proxy')
     install_headers('src/core/device_proxy/proxy_protocol.h',
                     install_dir: prefix_inc + '/device_proxy')
     if ucx_gpu_device_api_available

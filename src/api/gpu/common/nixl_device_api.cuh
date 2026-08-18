@@ -23,44 +23,7 @@
 
 #include "nixl_device_types.cuh"
 
-// The CPU proxy implementation is not part of this layer yet. The dispatcher
-// below already routes PROXY-tagged handles to this namespace, so that arm
-// reports NIXL_ERR_NOT_SUPPORTED until the GPU-side proxy producer lands.
-namespace nixl::gpu::proxy_impl {
-
-template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
-__device__ inline nixl_status_t
-get_xfer_status(nixlGpuXferStatusH &) {
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-
-template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
-__device__ inline nixl_status_t
-put(const nixlMemViewElem &,
-    const nixlMemViewElem &,
-    size_t,
-    unsigned = 0,
-    uint64_t = 0,
-    nixlGpuXferStatusH * = nullptr) {
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-
-template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
-__device__ inline nixl_status_t
-atomic_add(uint64_t,
-           const nixlMemViewElem &,
-           unsigned = 0,
-           uint64_t = 0,
-           nixlGpuXferStatusH * = nullptr) {
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-
-__device__ inline void *
-get_ptr(nixlMemViewH, size_t) {
-    return nullptr;
-}
-
-} // namespace nixl::gpu::proxy_impl
+#include "../proxy/nixl_device_impl.cuh"
 
 #if defined(NIXL_HAVE_UCX_GPU_DEVICE_API)
 #include "../ucx/nixl_device_impl.cuh"
