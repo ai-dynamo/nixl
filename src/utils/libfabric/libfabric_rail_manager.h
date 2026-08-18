@@ -270,6 +270,7 @@ public:
     enum class ControlMessageType : int {
         NOTIFICATION, ///< User notification message
         HANDSHAKE, ///< Peer-idx assignment (NIXL_LIBFABRIC_MSG_HANDSHAKE)
+        XFER_ERROR, ///< Batch had unpostable writes (NIXL_LIBFABRIC_MSG_XFER_ERROR)
     };
     /** Send control message via control rail
      * @param msg_type Type of control message
