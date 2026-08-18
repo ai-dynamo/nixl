@@ -26,6 +26,9 @@ use std::collections::HashMap;
 
 mod env_guard;
 use env_guard::EnvGuard;
+
+mod common;
+use common::*;
 // Helper function to create an agent with error handling
 fn create_test_agent(name: &str) -> Result<Agent, NixlError> {
     Agent::new(name)
@@ -62,18 +65,6 @@ fn enable_telemetry_with_temp_dir(env_guard: &EnvGuard, test_name: &str) -> temp
     telemetry_dir
 }
 
-fn create_agent_with_backend(name: &str) -> Result<(Agent, OptArgs), NixlError> {
-    let agent = Agent::new(name).expect("Failed to create agent");
-    let plugins = agent.get_available_plugins().expect("Failed to get available plugins");
-    let plugin_name = find_plugin(&plugins, "UCX").expect("Failed to find plugin");
-    let (_mems, params) = agent.get_plugin_params(&plugin_name).expect("Failed to get plugin params");
-    agent.create_backend(&plugin_name, &params).expect("Failed to create backend");
-
-    let mut opt_args = OptArgs::new().expect("Failed to create opt args");
-    let _ = opt_args.add_backend(&agent.get_backend("UCX").unwrap());
-
-    Ok((agent, opt_args))
-}
 
 // Trait for testing common descriptor list operations
 trait DescListTestTrait: PartialEq + std::fmt::Debug {
@@ -131,24 +122,6 @@ fn create_dlist<'a>(storage_list: &'a mut Vec<SystemStorage>) -> Result<XferDesc
     Ok(dlist)
 }
 
-fn exchange_metadata(agent1: &Agent, agent2: &Agent) -> Result<(), NixlError> {
-    let metadata1 = agent1.get_local_md().expect("Failed to get local metadata");
-    let metadata2 = agent2.get_local_md().expect("Failed to get local metadata");
-    agent1.load_remote_md(&metadata2).expect("Failed to load remote metadata");
-    agent2.load_remote_md(&metadata1).expect("Failed to load remote metadata");
-    Ok(())
-}
-
-// Helper function to find a plugin by name
-fn find_plugin(plugins: &StringList, name: &str) -> Result<String, NixlError> {
-    plugins
-        .iter()
-        .filter_map(Result::ok)
-        .find(|&plugin| plugin == name)
-        .map(ToString::to_string)
-        .or_else(|| plugins.get(0).ok().map(ToString::to_string))
-        .ok_or(NixlError::InvalidParam)
-}
 
 /// Helper function to create and initialize a POSIX backend with optional arguments
 /// Returns (backend, opt_args) if POSIX is available, or None if not available
@@ -1309,6 +1282,7 @@ fn test_prep_xfer_dlist_invalid_agent() {
         );
     }
 }
+
 
 // Tests for make_xfer_req API
 #[test]
