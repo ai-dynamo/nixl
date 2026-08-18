@@ -57,10 +57,36 @@ pipeline_start:
     currentBuild.displayName += "-${buildName}-${params.NIXL_VERSION}-${params.UCX_VERSION}${suffix}"
     env.ENABLE_NIXL_BUILD = params.BUILD_TARGET == 'nixl' ? 'true' : 'false'
     env.ENABLE_NIXLBENCH_BUILD = params.BUILD_TARGET == 'nixlbench' ? 'true' : 'false'
+
+    // Resolve the NIXL/UCX commits once, here, so both arches build and tag the
+    // exact same sources and pipeline_stop can name the images in the mail.
+    env.NIXL_SHA = env.GIT_COMMIT.take(8)
+    if (params.UCX_VERSION ==~ /^[a-f0-9]{8,40}$/) {
+      env.UCX_SHA = params.UCX_VERSION.take(8)
+    } else {
+      // Single-quoted, so UCX_VERSION reaches git as an argument via the
+      // environment rather than as shell source.
+      env.UCX_SHA = sh(
+        returnStdout: true,
+        label: 'Resolve UCX ref',
+        script: '''
+          REFS=$(git ls-remote https://github.com/openucx/ucx.git "$UCX_VERSION" "$UCX_VERSION^{}")
+          # An annotated tag lists both the tag object and the peeled commit; take the commit.
+          SHA=$(echo "$REFS" | awk 'index($2,"^"){print $1; exit}')
+          [ -n "$SHA" ] || SHA=$(echo "$REFS" | awk 'NR==1{print $1}')
+          echo "$SHA" | cut -c1-8
+        '''
+      ).trim()
+    }
+    if (!env.UCX_SHA) {
+      error("Failed to resolve UCX_VERSION=${params.UCX_VERSION}")
+    }
+    env.IMAGE_TAG_BASE = "${params.BASE_IMAGE_TAG}-nixl-${env.NIXL_SHA}-ucx-${env.UCX_SHA}"
     echo "ENABLE_NIXL_BUILD: ${env.ENABLE_NIXL_BUILD}"
     echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
     echo "BUILD_TARGET: ${params.BUILD_TARGET}"
     echo "BUILD_NIXL_EP: ${params.BUILD_NIXL_EP}"
+    echo "IMAGE_TAG_BASE: ${env.IMAGE_TAG_BASE}"
 
 # Build pipeline
 steps:
@@ -92,7 +118,7 @@ steps:
     run: |
       # Clone UCX source for nixlbench
       git clone https://github.com/openucx/ucx.git ucx-src
-      git -C ucx-src checkout "${UCX_VERSION}"
+      git -C ucx-src checkout "${UCX_SHA}"
 
       "benchmark/nixlbench/contrib/build.sh" \
         --base-image "${BASE_IMAGE}" \
@@ -108,7 +134,7 @@ steps:
     enable: ${ENABLE_NIXL_BUILD}
     containerSelector: "{name: 'podman'}"
     run: |
-      export UCX_REF="${UCX_VERSION}"
+      export UCX_REF="${UCX_SHA}"
 
       NIXL_EP_FLAG=""
       if [[ "${BUILD_NIXL_EP}" == "true" ]]; then
@@ -128,33 +154,15 @@ steps:
   - name: Add Version Info
     containerSelector: "{name: 'podman'}"
     run: |
-      git config --global --add safe.directory '*'
-      # Extract standardized 8-char commit hash for UCX version info:
-      if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
-        CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
-      else
-        UCX_REF="$UCX_VERSION"
-
-        # Hash? if yes truncate, else ls-remote then truncate
-        if [[ "$UCX_REF" =~ ^[a-f0-9]{8,40}$ ]]; then
-          CLEAN_UCX="${UCX_REF:0:8}"
-        else
-          CLEAN_UCX=$(git ls-remote https://github.com/openucx/ucx.git "$UCX_REF" | head -n1 | cut -c1-8)
-        fi
-
-        # Verify
-        [[ -n "$CLEAN_UCX" ]] || { echo "ERROR: failed to resolve UCX_REF=$UCX_REF"; exit 1; }
-      fi
-
-      # Calculate tag name
-      NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
-      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+      # NIXL_SHA/UCX_SHA/IMAGE_TAG_BASE are resolved once in pipeline_start, so the
+      # tag here matches the one pipeline_stop reports in the completion mail.
+      TAG_NAME="${IMAGE_TAG_BASE}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
 
       # Generate version info file from template
       export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
              BUILD_TARGET BASE_IMAGE BASE_IMAGE_TAG arch \
              BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE \
-             NIXL_VERSION UCX_VERSION="${CLEAN_UCX}" TAG_NAME
+             NIXL_VERSION="${NIXL_SHA}" UCX_VERSION="${UCX_SHA}" TAG_NAME
       envsubst < .ci/assets/nixl-version-info.template > version-info
 
       # Add version info to the image
@@ -228,6 +236,23 @@ pipeline_stop:
 
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
 
+        // Only list the images on SUCCESS - a failed run may not have pushed them,
+        // and a link to a missing image is worse than no link.
+        def imagesSection = ''
+        if (jobStatus == 'SUCCESS') {
+            def suffix = params.TAG_SUFFIX ? "-${params.TAG_SUFFIX}" : ""
+            def repo = "${env.ARTIFACTORY_REGISTRY_URL}/${params.BUILD_TARGET}"
+            def images = []
+            for (arch in ['x86_64', 'aarch64']) {
+                images << "${repo}:${env.IMAGE_TAG_BASE}-${arch}${suffix}"
+                if (params.UPDATE_LATEST) {
+                    images << "${repo}:${params.BASE_IMAGE_TAG}-${arch}-latest"
+                }
+            }
+            def imageList = images.collect { "<li>${it}</li>" }.join('')
+            imagesSection = "<p>Images:</p><ul>${imageList}</ul>"
+        }
+
         mail(
             from: env.MAIL_FROM,
             to: params.MAIL_TO,
@@ -246,6 +271,7 @@ pipeline_stop:
                 <p>Architectures: <b>x86_64, aarch64</b></p>
                 ${params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
                 ${params.BUILD_NIXL_EP ? "<p>Build NIXL EP: <b>Yes</b></p>" : ''}
+                ${imagesSection}
             """
         )
     }
