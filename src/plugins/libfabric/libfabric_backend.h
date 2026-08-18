@@ -27,7 +27,6 @@
 #include <atomic>
 #include <chrono>
 #include <unordered_map>
-#include <unordered_set>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -114,6 +113,7 @@ class nixlLibfabricBackendH : public nixlBackendReqH {
 private:
     std::atomic<size_t> completed_requests_; // Atomic count of completed requests
     std::atomic<size_t> submitted_requests_; // Total number of submitted requests
+    std::atomic<nixl_status_t> error_status_; // Error status from CQ failures
 
 public:
     uint16_t post_xfer_id;
@@ -135,9 +135,11 @@ public:
     void
     init_request_tracking(size_t num_requests);
 
-    /** Atomically increment completed request count */
+    /** Record completion of one request (with status).
+     *  Stores error before incrementing the counter so that is_completed()
+     *  observers always see the error_status_ that caused the transition. */
     void
-    increment_completed_requests();
+    complete_request(nixl_status_t status);
 
     /** Get current count of requests completed as part of this transfer */
     size_t
@@ -150,6 +152,10 @@ public:
     /** Adjust total submitted request count to actual value after submissions complete */
     void
     adjust_total_submitted_requests(size_t actual_count);
+
+    /** Get error status */
+    nixl_status_t
+    get_error_status() const;
 };
 
 class nixlLibfabricEngine : public nixlBackendEngine {
@@ -206,7 +212,6 @@ private:
 
     // Receiver Side XFER_ID Tracking
     std::mutex receiver_tracking_mutex_;
-    std::unordered_set<uint32_t> received_remote_writes_; // All received XFER_IDs (global)
 
     // Notification Queuing
     struct PendingNotification {

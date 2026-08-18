@@ -388,6 +388,7 @@ nixlLibfabricEngine::vramApplyCtxEx(bool &use_cuda_addr_wa) const {
 nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent)
     : completed_requests_(0),
       submitted_requests_(0),
+      error_status_(NIXL_SUCCESS),
       operation_(op),
       remote_agent_(remote_agent),
       total_notif_msg_len(0) {
@@ -408,14 +409,23 @@ void
 nixlLibfabricBackendH::init_request_tracking(size_t num_requests) {
     submitted_requests_.store(num_requests);
     completed_requests_.store(0);
+    error_status_.store(NIXL_SUCCESS);
     NIXL_DEBUG << "Initialized request tracking for " << num_requests << " requests";
 }
 
 void
-nixlLibfabricBackendH::increment_completed_requests() {
-    completed_requests_.fetch_add(1);
-    NIXL_DEBUG << "Request completed, total completed: " << completed_requests_.load() << "/"
-               << submitted_requests_.load();
+nixlLibfabricBackendH::complete_request(nixl_status_t status) {
+    if (status != NIXL_SUCCESS) {
+        nixl_status_t expected = NIXL_SUCCESS;
+        error_status_.compare_exchange_strong(
+            expected, status, std::memory_order_relaxed, std::memory_order_relaxed);
+    }
+    // Release ensures the error store above is visible to any thread that
+    // observes the incremented count via an acquire load in is_completed().
+    completed_requests_.fetch_add(1, std::memory_order_release);
+    NIXL_DEBUG << "Request completed (status=" << status
+               << "), total completed: " << completed_requests_.load(std::memory_order_relaxed)
+               << "/" << submitted_requests_.load(std::memory_order_relaxed);
 }
 
 size_t
@@ -434,10 +444,17 @@ nixlLibfabricBackendH::adjust_total_submitted_requests(size_t actual_count) {
     NIXL_DEBUG << "Adjusted total requests to actual count: " << actual_count;
 }
 
+nixl_status_t
+nixlLibfabricBackendH::get_error_status() const {
+    return error_status_.load(std::memory_order_acquire);
+}
+
 bool
 nixlLibfabricBackendH::is_completed() const {
-    // Transfer is completed when all requests have local completions
-    return completed_requests_.load() == submitted_requests_.load();
+    // Acquire pairs with release in complete_request() — guarantees we see
+    // any error_status_ written before the final increment.
+    return completed_requests_.load(std::memory_order_acquire) ==
+        submitted_requests_.load(std::memory_order_relaxed);
 }
 
 /****************************************
@@ -1353,7 +1370,9 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             conn->rail_remote_addr_list_,
             imm_agent_idx,
             backend_handle->post_xfer_id,
-            [backend_handle]() { backend_handle->increment_completed_requests(); },
+            [backend_handle](nixl_status_t status) {
+                backend_handle->complete_request(status);
+            }, // Completion callback
             desc_submitted_count,
             desc_idx,
             xfer_base_offset,
@@ -1630,6 +1649,13 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
 
     // Then check for completions after processing any pending completions
     if (backend_handle->is_completed()) {
+        // Check if any request completed with error
+        nixl_status_t err = backend_handle->get_error_status();
+        if (err != NIXL_SUCCESS) {
+            NIXL_ERROR << "Transfer completed with CQ error";
+            return err;
+        }
+
         NIXL_DEBUG << "Data transfer completed successfully";
         if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
             nixl_status_t notif_status = notifSendPriv(backend_handle->remote_agent_,
@@ -1649,17 +1675,11 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlLibfabricEngine::releaseReqH(nixlBackendReqH *handle) const {
-    // Add any necessary cleanup for libfabric specific request handling
-    // For example, if we're using a custom request structure:
-    // nixlLibfabricReqH* req = static_cast<nixlLibfabricReqH*>(handle);
-    // // Perform any necessary cleanup
-    // delete req;
-
     if (!handle) {
         return NIXL_SUCCESS;
     }
 
-    // Let NIXL framework handle the deletion
+    delete static_cast<nixlLibfabricBackendH *>(handle);
     NIXL_DEBUG << "releaseReqH completed successfully";
     return NIXL_SUCCESS;
 }
