@@ -567,6 +567,8 @@ if get_option('install_headers')
       'src/api/gpu/common/nixl_device_types.cuh',
       'src/api/gpu/common/nixl_device_wrappers.cuh',
       install_dir: prefix_inc + '/gpu/common')
+    install_headers('src/core/device_proxy/proxy_protocol.h',
+                    install_dir: prefix_inc + '/device_proxy')
     if ucx_gpu_device_api_available
       install_headers('src/api/gpu/ucx/nixl_device_impl.cuh',
                       install_dir: prefix_inc + '/gpu/ucx')
