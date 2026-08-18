@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,7 +68,9 @@ use bindings::{
     nixl_capi_make_xfer_req, nixl_capi_get_local_partial_md,
     nixl_capi_send_local_partial_md, nixl_capi_query_xfer_backend, nixl_capi_opt_args_set_ip_addr,
     nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry,
-    nixl_capi_create_params, nixl_capi_params_add, nixl_capi_is_stub
+    nixl_capi_create_params, nixl_capi_params_add, nixl_capi_is_stub,
+    nixl_capi_prep_mem_view_local, nixl_capi_prep_mem_view_remote, nixl_capi_release_mem_view,
+    nixl_capi_create_remote_dlist, nixl_capi_destroy_remote_dlist, nixl_capi_remote_dlist_add_desc
 };
 
 // Re-export status codes
@@ -185,6 +187,45 @@ impl Drop for RegistrationHandle {
         );
         if let Err(e) = self.deregister() {
             tracing::debug!(error = ?e, "Failed to deregister memory");
+        }
+    }
+}
+
+/// A prepared memory view, released on drop
+#[derive(Debug)]
+pub struct MemView {
+    agent: Arc<RwLock<AgentInner>>,
+    inner: NonNull<bindings::nixl_capi_mem_view_s>,
+}
+
+impl MemView {
+    pub(crate) fn new(
+        agent: Arc<RwLock<AgentInner>>,
+        inner: NonNull<bindings::nixl_capi_mem_view_s>,
+    ) -> Self {
+        Self { agent, inner }
+    }
+
+    /// The underlying `nixlMemViewH`, for passing to device-side transfer code
+    pub fn as_ptr(&self) -> *mut std::ffi::c_void {
+        self.inner.as_ptr().cast()
+    }
+}
+
+// SAFETY: a view is only released in Drop, and nixlAgent serializes prepMemView
+// and releaseMemView under its own lock, so releasing from a different thread
+// than prepared it is safe. AgentInner is already Send + Sync.
+unsafe impl Send for MemView {}
+
+impl Drop for MemView {
+    fn drop(&mut self) {
+        tracing::trace!(view = ?self.inner, "Dropping memory view");
+        let agent_guard = self.agent.write().unwrap_or_else(|e| e.into_inner());
+        let status = unsafe {
+            nixl_capi_release_mem_view(agent_guard.handle.as_ptr(), self.inner.as_ptr())
+        };
+        if status != NIXL_CAPI_SUCCESS {
+            tracing::debug!(status, "Failed to release memory view");
         }
     }
 }
