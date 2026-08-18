@@ -16,6 +16,12 @@
 # Add dependency on the common utility library which brings in logging deps
 
 nixl_lib_deps = [nixl_infra, serdes_interface, stream_interface, dl_dep, nixl_common_dep, thread_dep]
+nixl_lib_inc_dirs = [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ]
+
+if cuda_dep.found()
+    nixl_lib_deps += [ cuda_dep, device_buffer_interface ]
+    nixl_lib_inc_dirs += [ nixl_gpu_device_api_inc_dirs ]
+endif
 
 if etcd_dep.found()
     nixl_lib_deps += [ etcd_dep ]
@@ -79,9 +85,13 @@ nixl_lib_sources = [
     'tracing/tracer.cpp',
 ]
 
+if cuda_dep.found()
+    nixl_lib_sources += ['device_api/device_memview.cpp']
+endif
+
 nixl_lib = library('nixl',
                    nixl_lib_sources,
-                   include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
+                   include_directories: nixl_lib_inc_dirs,
                    link_args: ['-lstdc++fs'],
                    dependencies: nixl_lib_deps,
                    install: true,
