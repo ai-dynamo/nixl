@@ -53,7 +53,7 @@ subdir('mocks')
 subdir('unit')
 subdir('plugins')
 
-if ucx_gpu_device_api_available
+if cuda_dep.found()
     subdir('device_api')
 endif
 
@@ -127,7 +127,7 @@ gtest_sources = [
     'configuration.cpp'
     ]
 
-if ucx_gpu_device_api_available
+if gpu_device_api_supported
     gtest_sources += device_api_test_sources
     device_api_inc = [nixl_gpu_device_api_inc_dirs, include_directories('device_api')]
     device_api_link_deps = []
