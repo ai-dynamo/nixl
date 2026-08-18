@@ -88,6 +88,8 @@ nixl_lib_sources = [
     'telemetry/nop_plugin.cpp',
     'tracing/tracer.cpp',
     'device_proxy/proxy_control_buffer.cpp',
+    'device_proxy/proxy_runtime.cpp',
+    'device_proxy/proxy_worker.cpp',
 ]
 
 if cuda_dep.found()
