@@ -54,6 +54,7 @@ struct nixlLibfabricReq {
     size_t chunk_offset; ///< Chunk offset for DATA requests
     size_t chunk_size; ///< Chunk size for DATA requests
     std::function<void()> completion_callback; ///< Completion callback function
+    std::function<void()> error_callback; ///< Invoked when the operation could not be posted
     void *local_addr; ///< Local memory address for transfers
     uint64_t remote_addr; ///< Remote memory address for transfers
     struct fid_mr *local_mr; ///< Local memory registration for transfers
@@ -545,6 +546,13 @@ public:
     void
     setXferIdCallback(std::function<void(uint64_t, uint16_t)> callback);
 
+    /** Set callback for transfer-error messages from an initiator.
+     *  Signature: (xfer_id, sender_agent_idx_in_our_table, failed_completions).
+     *  Called on receipt of a NIXL_LIBFABRIC_MSG_XFER_ERROR control message, which tells us that
+     *  failed_completions writes of that transfer were never posted and will never arrive. */
+    void
+    setXferErrorCallback(std::function<void(uint16_t, uint16_t, uint32_t)> callback);
+
     // Optimized resource management methods
     /** Allocate control request with size validation */
     [[nodiscard]] nixlLibfabricReq *
@@ -593,6 +601,7 @@ private:
     std::function<void(const std::string &, uint16_t)> notificationCallback;
     std::function<void(uint64_t, uint16_t)> xferIdCallback;
     std::function<void(const std::string &)> handshakeCallback;
+    std::function<void(uint16_t, uint16_t, uint32_t)> xferErrorCallback;
 
     // Separate request pools for optimal performance
     ControlRequestPool control_request_pool_;

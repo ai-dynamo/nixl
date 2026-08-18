@@ -114,6 +114,9 @@ class nixlLibfabricBackendH : public nixlBackendReqH {
 private:
     std::atomic<size_t> completed_requests_; // Atomic count of completed requests
     std::atomic<size_t> submitted_requests_; // Total number of submitted requests
+    std::atomic<size_t> failed_requests_; // Requests that could never be posted
+    std::atomic<bool> xfer_error_sent_; // Target already told about the failures
+    std::atomic<uint32_t> xfer_error_attempts_; // Sends of the transfer-error message tried
 
 public:
     uint16_t post_xfer_id;
@@ -150,6 +153,31 @@ public:
     /** Adjust total submitted request count to actual value after submissions complete */
     void
     adjust_total_submitted_requests(size_t actual_count);
+
+    /** Atomically record a request whose write could not be posted */
+    void
+    increment_failed_requests();
+
+    /** Get the number of requests of this transfer that were never posted */
+    size_t
+    get_failed_requests_count() const;
+
+    /** Claim the right to send the transfer-error message to the target.
+     * @return true for one caller at a time, so the message is sent once however many times
+     *         checkXfer is polled. A claim that fails to send should be given back with
+     *         release_xfer_error_claim() so a later poll retries. */
+    bool
+    claim_xfer_error_send();
+
+    /** Give the claim back after a failed send, so the next checkXfer poll tries again. */
+    void
+    release_xfer_error_claim();
+
+    /** Count this send attempt.
+     * @return the attempt number, 1 for the first, so the caller can log the failure summary
+     *         once and label each retry. */
+    uint32_t
+    record_xfer_error_attempt();
 };
 
 class nixlLibfabricEngine : public nixlBackendEngine {
@@ -220,6 +248,8 @@ private:
         uint16_t received_msg_fragments; // Fragments received so far
         uint32_t total_message_length; // Total length of complete message (all fragments)
         uint16_t agent_name_length; // Length of agent_name in combined payload
+        bool xfer_failed; // Initiator reported unpostable writes; stop waiting for them
+        uint32_t failed_completions; // How many writes the initiator could not post
 
         PendingNotification(uint16_t xfer_id)
             : notif_xfer_id(xfer_id),
@@ -228,7 +258,9 @@ private:
               expected_msg_fragments(0),
               received_msg_fragments(0),
               total_message_length(0),
-              agent_name_length(0) {}
+              agent_name_length(0),
+              xfer_failed(false),
+              failed_completions(0) {}
     };
 
     // O(1) lookup with composite key = (sender_peer_idx << 16) | notif_xfer_id.
@@ -265,6 +297,22 @@ private:
                   uint32_t total_message_length,
                   uint16_t notif_xfer_id,
                   uint32_t expected_completions) const;
+
+    // Tell the target that failed_completions writes of notif_xfer_id were never posted, so it
+    // stops waiting for them.
+    nixl_status_t
+    notifXferErrorPriv(const std::string &remote_agent,
+                       uint16_t notif_xfer_id,
+                       uint32_t failed_completions) const;
+
+    // Receiver-side handler for NIXL_LIBFABRIC_MSG_XFER_ERROR
+    void
+    handleXferError(uint16_t notif_xfer_id, uint16_t sender_peer_idx, uint32_t failed_completions);
+
+    // Reports the failure to the target once and returns the status checkXfer should give the
+    // caller.
+    nixl_status_t
+    reportXferFailure(nixlLibfabricBackendH *backend_handle) const;
 
     // Private function to fragment notification messages to binary notifications
     void
