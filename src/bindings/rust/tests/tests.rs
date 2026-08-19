@@ -1360,7 +1360,7 @@ fn test_make_xfer_req_invalid_indices() {
             &invalid_indices,    // Out-of-bounds remote index
             None
         );
-        assert!(result.is_err_and(|e| matches!(e, NixlError::BackendError)), "Expected InvalidParam for out-of-bounds indices");
+        assert!(result.is_err_and(|e| matches!(e, NixlError::InvalidParam)), "Expected InvalidParam for out-of-bounds indices");
     }
 }
 

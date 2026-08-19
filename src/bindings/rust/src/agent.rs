@@ -443,16 +443,15 @@ impl Agent {
 
         let data = data as *const u8;
 
-        if data.is_null() {
-            tracing::trace!(
-                error = "invalid_data_pointer",
-                "Failed to get local metadata"
-            );
-            return Err(NixlError::InvalidDataPointer);
-        }
-
         match status {
             NIXL_CAPI_SUCCESS => {
+                if data.is_null() {
+                    tracing::trace!(
+                        error = "invalid_data_pointer",
+                        "Failed to get local metadata"
+                    );
+                    return Err(NixlError::InvalidDataPointer);
+                }
                 let bytes = unsafe {
                     let slice = std::slice::from_raw_parts(data, len);
                     let vec = slice.to_vec();
@@ -1237,18 +1236,20 @@ impl AgentInner {
     }
 
     fn invalidate_remote_md(&mut self, remote_agent: &str) -> Result<(), NixlError> {
+        if !self.remotes.contains(remote_agent) {
+            return Err(NixlError::InvalidParam);
+        }
         let status = unsafe {
-            if self.remotes.remove(remote_agent) {
-                nixl_capi_invalidate_remote_md(
-                    self.handle.as_ptr(),
-                    CString::new(remote_agent)?.as_ptr().cast(),
-                )
-            } else {
-                return Err(NixlError::InvalidParam);
-            }
+            nixl_capi_invalidate_remote_md(
+                self.handle.as_ptr(),
+                CString::new(remote_agent)?.as_ptr().cast(),
+            )
         };
         match status {
-            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_SUCCESS => {
+                self.remotes.remove(remote_agent);
+                Ok(())
+            }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
@@ -1256,19 +1257,8 @@ impl AgentInner {
     }
 
     fn invalidate_all_remotes(&mut self) -> Result<(), NixlError> {
-        for remote in self.remotes.drain() {
-            let status = unsafe {
-                nixl_capi_invalidate_remote_md(
-                    self.handle.as_ptr(),
-                    CString::new(remote.as_str())?.as_ptr().cast(),
-                )
-            };
-            match status {
-                NIXL_CAPI_SUCCESS => {}
-                NIXL_CAPI_ERROR_INVALID_PARAM => return Err(NixlError::InvalidParam),
-                NIXL_CAPI_ERROR_NOT_FOUND => return Err(NixlError::NotFound),
-                _ => return Err(NixlError::BackendError),
-            }
+        for remote in self.remotes.iter().cloned().collect::<Vec<_>>() {
+            self.invalidate_remote_md(&remote)?;
         }
         Ok(())
     }

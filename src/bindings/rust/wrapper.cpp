@@ -186,7 +186,7 @@ nixl_capi_get_local_md(nixl_capi_agent_t agent, void** data, size_t* len)
     nixl_blob_t blob;
     nixl_status_t ret = agent->inner->getLocalMD(blob);
     if (ret != NIXL_SUCCESS) {
-      return NIXL_CAPI_ERROR_BACKEND;
+      return nixl_capi_status_from_nixl_status(ret);
     }
 
     // Allocate memory for the blob data
@@ -254,7 +254,7 @@ nixl_capi_load_remote_md(nixl_capi_agent_t agent, const void* data, size_t len, 
     // Load the metadata
     nixl_status_t ret = agent->inner->loadRemoteMD(blob, name);
     if (ret != NIXL_SUCCESS) {
-      return NIXL_CAPI_ERROR_BACKEND;
+      return nixl_capi_status_from_nixl_status(ret);
     }
 
     // Allocate and copy the agent name
@@ -1416,12 +1416,16 @@ nixl_capi_prep_xfer_dlist(nixl_capi_agent_t agent,
     }
 
     try {
-        *dlist_handle = new nixl_capi_xfer_dlist_handle_s;
+        auto handle = std::make_unique<nixl_capi_xfer_dlist_handle_s>();
         nixl_status_t ret = agent->inner->prepXferDlist(std::string(agent_name),
                                                         *descs->dlist,
-                                                        (*dlist_handle)->handle,
+                                                        handle->handle,
                                                         opt_args ? &opt_args->args : nullptr);
-        return nixl_capi_status_from_nixl_status(ret);
+        if (ret != NIXL_SUCCESS) {
+            return nixl_capi_status_from_nixl_status(ret);
+        }
+        *dlist_handle = handle.release();
+        return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
         return NIXL_CAPI_ERROR_BACKEND;
@@ -1473,7 +1477,7 @@ nixl_capi_make_xfer_req(nixl_capi_agent_t agent,
 
         if (ret != NIXL_SUCCESS) {
             delete req;
-            return NIXL_CAPI_ERROR_BACKEND;
+            return nixl_capi_status_from_nixl_status(ret);
         }
 
         *req_hndl = req;
@@ -1641,7 +1645,7 @@ nixl_capi_get_notifs(nixl_capi_agent_t agent, nixl_capi_notif_map_t notif_map, n
   try {
     nixl_status_t ret = agent->inner->getNotifs(notif_map->notif_map, opt_args ? &opt_args->args : nullptr);
     if (ret != NIXL_SUCCESS) {
-      return NIXL_CAPI_ERROR_BACKEND;
+      return nixl_capi_status_from_nixl_status(ret);
     }
     return NIXL_CAPI_SUCCESS;
   }
