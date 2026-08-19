@@ -118,6 +118,16 @@ if [ ! -x "${VLLM_PYTHON}" ]; then
     exit 1
 fi
 
+SYSTEM_TORCH="$(python3 -c 'import torch; print(torch.__version__, torch.version.cuda, sep="|")')"
+VLLM_TORCH="$("${VLLM_PYTHON}" -c 'import torch; print(torch.__version__, torch.version.cuda, sep="|")')"
+echo "System Torch/CUDA: ${SYSTEM_TORCH}"
+echo "vLLM Torch/CUDA: ${VLLM_TORCH}"
+
+if [ "${SYSTEM_TORCH}" != "${VLLM_TORCH}" ]; then
+    echo "ERROR: NIXL EP and vLLM use different Torch builds" >&2
+    exit 1
+fi
+
 # Verify that the vLLM environment can use the NIXL and NIXL EP artifacts that
 # were built in this PR image. This makes an unavailable backend fail before
 # pytest can report the test as skipped.

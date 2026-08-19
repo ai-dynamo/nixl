@@ -96,6 +96,10 @@ RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
         sudo apt-get update && \
         sudo apt-get install -y --no-install-recommends git && \
         python3 -m pip install --user --break-system-packages uv && \
+        echo "=== HPC-X UCC library resolution ===" && \
+        ldd /opt/hpcx/ucc/lib/libucc.so.1 && \
+        echo "=== UCX version ===" && \
+        ucx_info -v && \
         git clone --depth 1 --branch "${VLLM_REF}" \
             https://github.com/vllm-project/vllm.git "${VLLM_ELASTIC_TEST_DIR}" && \
         git -C "${VLLM_ELASTIC_TEST_DIR}" apply --check \
