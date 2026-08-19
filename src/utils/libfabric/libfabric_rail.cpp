@@ -674,6 +674,30 @@ nixlLibfabricRail::cleanup() {
     // This ensures all memory registrations (MRs) are properly deregistered before domain closure
     NIXL_TRACE << "Cleaning up request pools for rail " << rail_id;
     control_request_pool_.cleanup();
+
+    // STEP 3b: Close any remaining cached memory registrations before the
+    // domain goes away. Entries can survive to this point when a consumer
+    // never deregistered (ref_count > 0) or when an earlier eviction's
+    // fi_close failed. Closing the domain with MRs still open violates
+    // libfabric's resource lifetime rules and leaks pinned (GDR) memory.
+    {
+        const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
+        for (auto &entry : mr_cache_) {
+            const uint32_t ref_count = entry.second.ref_count.load(std::memory_order_acquire);
+            if (ref_count != 0) {
+                NIXL_WARN << "MRRC: cached MR still referenced at cleanup on rail " << rail_id
+                          << " buffer=" << (void *)entry.first << " ref_count=" << ref_count;
+            }
+            const int ret = fi_close(&entry.second.mr->fid);
+            if (ret) {
+                NIXL_WARN << "MRRC: fi_close failed at cleanup on rail " << rail_id << ": "
+                          << fi_strerror(-ret);
+            }
+        }
+        mr_cache_.clear();
+        mr_cache_by_mr_.clear();
+    }
+
     // STEP 4: Close domain AFTER all MRs, endpoint, CQ, AV are closed
     if (domain) {
         NIXL_TRACE << "Closing domain for rail " << rail_id;
@@ -1528,6 +1552,7 @@ nixlLibfabricRail::registerMemory(void *buffer,
                 }
                 NIXL_WARN << "MRRC: evicted stale entry on rail " << rail_id << " buffer=" << buffer
                           << " cached_len=" << entry.length << " requested_len=" << length;
+                mr_cache_by_mr_.erase(entry.mr);
                 mr_cache_.erase(it);
             } else {
                 NIXL_ERROR << "MRRC: cache entry mismatch with active ref on rail " << rail_id
@@ -1701,6 +1726,7 @@ nixlLibfabricRail::registerMemory(void *buffer,
                     }
                     NIXL_DEBUG << "MRRC: Evicted entry with key " << it->first
                                << " to make room for new registration";
+                    mr_cache_by_mr_.erase(it->second.mr);
                     mr_cache_.erase(it);
                     evicted = true;
                     break;
@@ -1708,14 +1734,19 @@ nixlLibfabricRail::registerMemory(void *buffer,
                 ++it;
             }
 
-            // If couldn't evict (all entries in use or all close calls failed),
-            // return error so the caller knows registration didn't take effect.
+            // If couldn't evict (all entries in use or all close calls
+            // failed), hand the caller the freshly registered MR uncached.
+            // The registration itself succeeded — a full cache is a cache
+            // limitation, not a registration failure. deregisterMemory()
+            // closes uncached MRs directly on its not-found path.
             if (!evicted) {
-                NIXL_ERROR << "MRRC: Cache full (" << mr_cache_.size()
-                           << " entries) and no entry could be evicted. "
-                           << "Consider increasing NIXL_MR_CACHE_MAX_ENTRIES.";
-                fi_close(&mr->fid);
-                return NIXL_ERR_BACKEND;
+                NIXL_WARN << "MRRC: Cache full (" << mr_cache_.size()
+                          << " entries) and no entry could be evicted; "
+                          << "returning MR uncached. Consider increasing "
+                          << "NIXL_MR_CACHE_MAX_ENTRIES.";
+                *mr_out = mr;
+                *key_out = actual_key;
+                return NIXL_SUCCESS;
             }
         }
 
@@ -1745,6 +1776,7 @@ nixlLibfabricRail::registerMemory(void *buffer,
                        << " buffer=" << buffer << " key=" << cache_it->second.key;
             return NIXL_SUCCESS;
         }
+        mr_cache_by_mr_[mr] = buf_addr;
         NIXL_DEBUG << "MRRC cache insert: rail=" << rail_id << " buffer=" << buffer
                    << " key=" << actual_key << " cache_size=" << mr_cache_.size();
     }
@@ -1767,13 +1799,16 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // MRRC: Find cache entry and decrement reference count
+    // MRRC: Resolve the cache entry via the reverse index (O(1)) and
+    // decrement its reference count.
     bool found_in_cache = false;
     bool should_close = false;
     {
         const std::lock_guard<std::mutex> lock(mr_cache_mutex_);
-        for (auto it = mr_cache_.begin(); it != mr_cache_.end(); ++it) {
-            if (it->second.mr == mr) {
+        auto rev_it = mr_cache_by_mr_.find(mr);
+        if (rev_it != mr_cache_by_mr_.end()) {
+            auto it = mr_cache_.find(rev_it->second);
+            if (it != mr_cache_.end() && it->second.mr == mr) {
                 found_in_cache = true;
                 uint32_t prev_count = it->second.ref_count.fetch_sub(1, std::memory_order_acq_rel);
                 if (prev_count == 1) {
@@ -1781,8 +1816,8 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
                     NIXL_DEBUG << "MRRC cache evict: rail=" << rail_id
                                << " buffer=" << (void *)it->first << " key=" << it->second.key;
                     mr_cache_.erase(it);
+                    mr_cache_by_mr_.erase(rev_it);
                     should_close = true;
-                    break;
                 } else {
                     // Still has references - don't deregister
                     NIXL_DEBUG << "MRRC ref decrement: rail=" << rail_id
@@ -1795,13 +1830,17 @@ nixlLibfabricRail::deregisterMemory(struct fid_mr *mr) const {
     }
 
     if (!found_in_cache) {
-        // MR not in cache - this is expected for cross-rail MRs and edge-case
-        // cleanup paths (the rail manager calls deregisterMemory on every
-        // selected rail and tolerates per-rail NOT_FOUND). Log at debug level
-        // so legitimate cross-rail/cleanup cases don't pollute production logs.
-        NIXL_DEBUG << "MRRC: deregister on rail " << rail_id
-                   << " skipped (MR not registered on this rail)";
-        return NIXL_ERR_NOT_FOUND;
+        // MR not in cache: either an uncached registration handed out by
+        // registerMemory() when the cache was full, or an MR that predates
+        // the cache. The caller is releasing its handle either way, so close
+        // it here — the cache no longer knows about it and nothing else can.
+        NIXL_DEBUG << "MRRC: deregistering uncached MR on rail " << rail_id;
+        const int ret = fi_close(&mr->fid);
+        if (ret) {
+            NIXL_ERROR << "fi_close failed on rail " << rail_id << ": " << fi_strerror(-ret);
+            return NIXL_ERR_BACKEND;
+        }
+        return NIXL_SUCCESS;
     }
 
     // Actually close the MR (last reference from cache)

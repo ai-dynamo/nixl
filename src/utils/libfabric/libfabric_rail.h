@@ -662,6 +662,10 @@ private:
     // Memory Registration Resource Cache (MRRC)
     // Based on He et al. "An efficient design for fast memory registration in RDMA" (JNCA 2009)
     mutable std::unordered_map<uintptr_t, MRCacheEntry> mr_cache_;
+    // Reverse index (fid_mr* -> buffer address) so deregisterMemory can
+    // resolve its cache entry in O(1) instead of scanning the cache under
+    // the lock. Maintained in lockstep with mr_cache_ under mr_cache_mutex_.
+    mutable std::unordered_map<struct fid_mr *, uintptr_t> mr_cache_by_mr_;
     mutable std::mutex mr_cache_mutex_;
     mutable std::atomic<uint64_t> mr_cache_hits_{0};
     mutable std::atomic<uint64_t> mr_cache_misses_{0};
