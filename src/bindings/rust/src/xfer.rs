@@ -103,6 +103,10 @@ impl XferRequest {
                 tracing::error!(error = "telemetry_not_enabled", "Telemetry not enabled");
                 Err(NixlError::NoTelemetry)
             },
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to get transfer telemetry from request");
+                Err(NixlError::NotFound)
+            },
             _ => {
                 tracing::error!(error = "backend_error", "Failed to get transfer telemetry from request");
                 Err(NixlError::BackendError)

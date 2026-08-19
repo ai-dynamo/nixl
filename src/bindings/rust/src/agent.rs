@@ -738,6 +738,10 @@ impl Agent {
                 );
                 Err(NixlError::InvalidParam)
             }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to send local metadata to etcd");
+                Err(NixlError::NotFound)
+            }
             _ => {
                 tracing::error!(
                     error = "backend_error",
@@ -815,6 +819,10 @@ impl Agent {
                 tracing::trace!(remote_agent = %remote_name, "Successfully fetched remote metadata from etcd");
                 Ok(())
             }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", remote_agent = %remote_name, "Failed to fetch remote metadata from etcd");
+                Err(NixlError::NotFound)
+            }
             NIXL_CAPI_ERROR_INVALID_PARAM => {
                 tracing::error!(error = "invalid_param", remote_agent = %remote_name, "Failed to fetch remote metadata from etcd");
                 Err(NixlError::InvalidParam)
@@ -853,6 +861,10 @@ impl Agent {
                     "Failed to invalidate local metadata in etcd"
                 );
                 Err(NixlError::InvalidParam)
+            }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", "Failed to invalidate local metadata in etcd");
+                Err(NixlError::NotFound)
             }
             _ => {
                 tracing::error!(
@@ -914,6 +926,10 @@ impl Agent {
             NIXL_CAPI_ERROR_INVALID_PARAM => {
                 tracing::error!(error = "invalid_param", remote_agent = %remote_agent, "Failed to send notification");
                 Err(NixlError::InvalidParam)
+            }
+            NIXL_CAPI_ERROR_NOT_FOUND => {
+                tracing::error!(error = "not_found", remote_agent = %remote_agent, "Failed to send notification");
+                Err(NixlError::NotFound)
             }
             _ => {
                 tracing::error!(error = "backend_error", remote_agent = %remote_agent, "Failed to send notification");
@@ -1221,26 +1237,37 @@ impl AgentInner {
     }
 
     fn invalidate_remote_md(&mut self, remote_agent: &str) -> Result<(), NixlError> {
-        unsafe {
+        let status = unsafe {
             if self.remotes.remove(remote_agent) {
                 nixl_capi_invalidate_remote_md(
                     self.handle.as_ptr(),
                     CString::new(remote_agent)?.as_ptr().cast(),
-                );
+                )
             } else {
                 return Err(NixlError::InvalidParam);
             }
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
+            _ => Err(NixlError::BackendError),
         }
-        Ok(())
     }
 
     fn invalidate_all_remotes(&mut self) -> Result<(), NixlError> {
-        unsafe {
-            for remote in self.remotes.drain() {
+        for remote in self.remotes.drain() {
+            let status = unsafe {
                 nixl_capi_invalidate_remote_md(
                     self.handle.as_ptr(),
                     CString::new(remote.as_str())?.as_ptr().cast(),
-                );
+                )
+            };
+            match status {
+                NIXL_CAPI_SUCCESS => {}
+                NIXL_CAPI_ERROR_INVALID_PARAM => return Err(NixlError::InvalidParam),
+                NIXL_CAPI_ERROR_NOT_FOUND => return Err(NixlError::NotFound),
+                _ => return Err(NixlError::BackendError),
             }
         }
         Ok(())

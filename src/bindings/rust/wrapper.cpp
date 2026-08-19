@@ -221,7 +221,7 @@ nixl_capi_get_local_partial_md(nixl_capi_agent_t agent,
         nixl_opt_args_t *args = opt_args ? &opt_args->args : nullptr;
         nixl_status_t ret = agent->inner->getLocalPartialMD(*descs->dlist, blob, args);
         if (ret != NIXL_SUCCESS) {
-            return NIXL_CAPI_ERROR_BACKEND;
+            return nixl_capi_status_from_nixl_status(ret);
         }
         // Allocate memory for the blob data
         *data = malloc(blob.size());
@@ -1547,7 +1547,7 @@ nixl_capi_post_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl, 
   try {
     nixl_status_t ret = agent->inner->postXferReq(req_hndl->req, opt_args ? &opt_args->args : nullptr);
 
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : ret == NIXL_IN_PROG ? NIXL_CAPI_IN_PROG : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -1563,7 +1563,7 @@ nixl_capi_get_xfer_status(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl
 
   try {
     nixl_status_t ret = agent->inner->getXferStatus(req_hndl->req);
-    return ret == NIXL_SUCCESS ? NIXL_CAPI_SUCCESS : ret == NIXL_IN_PROG ? NIXL_CAPI_IN_PROG : NIXL_CAPI_ERROR_BACKEND;
+    return nixl_capi_status_from_nixl_status(ret);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
@@ -1582,7 +1582,7 @@ nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
         nixl_status_t ret = agent->inner->queryXferBackend(req_hndl->req, backend_handle->backend);
         if (ret != NIXL_SUCCESS) {
             delete backend_handle;
-            return NIXL_CAPI_ERROR_BACKEND;
+            return nixl_capi_status_from_nixl_status(ret);
         }
         *backend = backend_handle;
         return nixl_capi_status_from_nixl_status(ret);
@@ -2040,9 +2040,18 @@ nixl_capi_status_from_nixl_status(nixl_status_t status) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     case NIXL_ERR_NOT_FOUND:
         return NIXL_CAPI_ERROR_NOT_FOUND;
-    default:
+    case NIXL_ERR_NOT_POSTED:
+    case NIXL_ERR_BACKEND:
+    case NIXL_ERR_MISMATCH:
+    case NIXL_ERR_NOT_ALLOWED:
+    case NIXL_ERR_REPOST_ACTIVE:
+    case NIXL_ERR_UNKNOWN:
+    case NIXL_ERR_NOT_SUPPORTED:
+    case NIXL_ERR_REMOTE_DISCONNECT:
+    case NIXL_ERR_CANCELED:
         return NIXL_CAPI_ERROR_BACKEND;
     }
+    return NIXL_CAPI_ERROR_BACKEND;
 }
 
 nixl_capi_status_t

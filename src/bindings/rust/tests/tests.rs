@@ -1383,10 +1383,9 @@ fn test_get_local_partial_md_success() {
             println!("Partial metadata size: {}", metadata.len());
         }
         Err(e) => {
-            // May fail if no partial metadata exists yet, which is acceptable
             assert!(
-                matches!(e, NixlError::BackendError) || matches!(e, NixlError::InvalidParam),
-                "Expected BackendError or InvalidParam, got: {:?}", e
+                matches!(e, NixlError::NotFound),
+                "Expected NotFound, got: {:?}", e
             );
         }
     }
