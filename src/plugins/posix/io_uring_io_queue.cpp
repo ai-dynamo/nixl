@@ -91,6 +91,7 @@ private:
     releaseIOIfIdle(nixlPosixIoUringIO *io);
 
     struct io_uring uring; // The io_uring instance for async I/O operations
+    bool terminal_error_ = false;
     std::list<nixlPosixIoUringIO *> cancels_to_submit_;
     std::vector<nixlPosixIoUringCancel> cancels_;
 };
@@ -178,6 +179,10 @@ nixlPosixIOQueueUring::post(void) {
 // Prepare I/O SQEs and submit every ring-ready SQE.
 nixl_status_t
 nixlPosixIOQueueUring::driveSubmissions(void) {
+    if (terminal_error_) {
+        return NIXL_IN_PROG;
+    }
+
     prepareSQEs();
 
     int ret = io_uring_submit(&uring);
@@ -185,8 +190,9 @@ nixlPosixIOQueueUring::driveSubmissions(void) {
         return NIXL_IN_PROG;
     }
 
-    NIXL_FATAL << "io_uring_submit failed: " << nixl_strerror(-ret);
-    return NIXL_ERR_BACKEND;
+    NIXL_ERROR << "io_uring_submit failed: " << nixl_strerror(-ret);
+    terminal_error_ = true;
+    return NIXL_IN_PROG;
 }
 
 inline nixl_status_t
@@ -269,10 +275,15 @@ nixlPosixIOQueueUring::enqueue(int fd,
 
 nixl_status_t
 nixlPosixIOQueueUring::poll(void) {
-    nixl_status_t submit_status = driveSubmissions();
     nixl_status_t completion_status = doCheckCompleted();
+    if (completion_status == NIXL_SUCCESS) {
+        return NIXL_SUCCESS;
+    }
+    if (terminal_error_) {
+        return NIXL_ERR_BACKEND;
+    }
 
-    return submit_status < 0 ? submit_status : completion_status;
+    return driveSubmissions();
 }
 
 unsigned

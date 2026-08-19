@@ -197,7 +197,11 @@ nixlPosixBackendReqH::queueResult(nixl_status_t queue_result) {
 
 nixl_status_t
 nixlPosixBackendReqH::checkXfer() {
-    return queueResult(isComplete() ? NIXL_SUCCESS : io_queue_->poll());
+    nixl_status_t queue_result = isComplete() ? NIXL_SUCCESS : io_queue_->poll();
+    if (queue_result < 0 && !isComplete()) {
+        return queue_result;
+    }
+    return queueResult(isComplete() ? NIXL_SUCCESS : queue_result);
 }
 
 nixl_status_t
