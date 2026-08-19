@@ -391,6 +391,7 @@ else
             --disable-static \
             --disable-doxygen-doc \
             --enable-optimizations \
+            --without-avx \
             --enable-cma \
             --enable-devel-headers \
             --with-verbs \

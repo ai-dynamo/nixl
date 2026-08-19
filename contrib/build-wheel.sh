@@ -274,6 +274,37 @@ repair_wheel() {
     mkdir -p "$OUT_DIR"
     auditwheel repair $AUDITWHEEL_EXCLUDES "$IN_DIR"/nixl*.whl --plat "$WHL_PLATFORM" --wheel-dir "$OUT_DIR"
     ./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir "$UCX_PLUGINS_DIR" --nixl-plugins-dir "$NIXL_PLUGINS_DIR" "$OUT_DIR"/*.whl
+    check_wheel_ucx_no_avx "$(get_wheel_path "$OUT_DIR")"
+}
+
+# Fail the build if the bundled UCX contains AVX instructions. UCX aborts the
+# whole process at library load time when the running CPU lacks an ISA it was
+# compiled for (issue #2119), so the wheel's UCX must stay at SSE4.2
+# (x86-64-v2), the baseline of the AlmaLinux-8 build environment. gcc/clang
+# emit vzeroupper whenever they emit AVX code, and 256/512-bit operands show
+# up as %ymm/%zmm, so those patterns together detect AVX and AVX-512. On
+# non-x86 architectures the patterns simply never match.
+check_wheel_ucx_no_avx() {
+    local WHEEL=$1
+    local TMP_CHECK
+    TMP_CHECK=$(mktemp -d)
+    python3 -m zipfile -e "$WHEEL" "$TMP_CHECK"
+    local rc=0 lib found=0
+    while IFS= read -r -d '' lib; do
+        found=1
+        if objdump -d "$lib" | grep -qE 'vzeroupper|%ymm|%zmm'; then
+            echo "ERROR: $(basename "$lib") in $(basename "$WHEEL") contains AVX instructions." >&2
+            echo "       Bundled UCX must be built with --without-avx (issue #2119)." >&2
+            rc=1
+        fi
+    done < <(find "$TMP_CHECK" -type f -regextype posix-extended \
+                 -regex '.*\.libs/(ucx/)?libuc[^/]*\.so[0-9.]*' -print0)
+    if [ "$found" -ne 1 ]; then
+        echo "ERROR: no bundled UCX libraries found in $(basename "$WHEEL"); AVX gate cannot run." >&2
+        rc=1
+    fi
+    rm -rf "$TMP_CHECK"
+    return $rc
 }
 
 # Echo the path of the single .whl in $1, or exit if the count is not 1.

@@ -363,6 +363,12 @@ RUN uv pip install --upgrade 'setuptools>=80.9.0'
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
 ARG UCX_REF="v1.22.x"
 ARG UCX_SONAME_SUFFIX=""
+# UCX's --enable-optimizations probes the *build* host CPU and bakes the
+# detected ISA into a load-time CPU_FLAGS check, so an AVX-enabled builder
+# produces wheels that abort ("FATAL: UCX library was compiled with avx...")
+# on AVX-less CPUs. --without-avx keeps the bundled UCX at SSE4.2 (x86-64-v2),
+# the baseline of the AlmaLinux-8/manylinux_2_28 build environment itself.
+# See issue #2119.
 RUN cd /usr/local/src && \
      git clone "$UCX_REPO" ucx && \
      cd ucx &&                       \
@@ -392,6 +398,7 @@ RUN cd /usr/local/src && \
          --disable-doxygen-doc       \
          --enable-experimental-api   \
          --enable-optimizations      \
+         --without-avx               \
          --enable-cma                \
          --enable-devel-headers      \
          --with-cuda=/usr/local/cuda \

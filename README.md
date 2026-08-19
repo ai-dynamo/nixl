@@ -45,6 +45,11 @@ pip install nixl
 
 This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
+On x86-64, the bundled UCX libraries are built for the x86-64-v2 baseline
+(SSE4.2) and do not require AVX, so the wheels also run on CPUs/VMs whose flag
+set stops below AVX (see issue
+[#2119](https://github.com/ai-dynamo/nixl/issues/2119)).
+
 ## Prerequisites for source build (Linux)
 
 NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
@@ -77,6 +82,7 @@ $ ./contrib/configure-release-mt       \
     --disable-static                   \
     --disable-doxygen-doc              \
     --enable-optimizations             \
+    --without-avx                      \
     --enable-cma                       \
     --enable-devel-headers             \
     --with-cuda=<cuda install>         \
