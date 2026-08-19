@@ -1246,12 +1246,12 @@ impl AgentInner {
             )
         };
         match status {
-            NIXL_CAPI_SUCCESS => {
+            // NOT_FOUND means the agent already dropped it, which is the goal state
+            NIXL_CAPI_SUCCESS | NIXL_CAPI_ERROR_NOT_FOUND => {
                 self.remotes.remove(remote_agent);
                 Ok(())
             }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
-            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
             _ => Err(NixlError::BackendError),
         }
     }
