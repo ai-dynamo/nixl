@@ -1881,6 +1881,13 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
         return ret;
     }
 
+    if (hasProxyRuntime() && (proxyTransportEngine == eng)) {
+        const nixl_status_t proxy_ret = proxyRuntime->loadRemoteConnInfo(remote_name, conn_info);
+        if ((proxy_ret != NIXL_SUCCESS) && (proxy_ret != NIXL_ERR_NOT_SUPPORTED)) {
+            return proxy_ret;
+        }
+    }
+
     // Only now, so a failed load leaves no empty entry behind for this remote.
     if (r_it == remoteBackends_.end()) {
         r_it = remoteBackends_.try_emplace(remote_name).first;
