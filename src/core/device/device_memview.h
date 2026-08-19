@@ -14,23 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_UTILS_DEVICE_DEVICE_BUFFER_H
-#define NIXL_SRC_UTILS_DEVICE_DEVICE_BUFFER_H
-
-#include <cstddef>
+#ifndef NIXL_SRC_CORE_DEVICE_DEVICE_MEMVIEW_H
+#define NIXL_SRC_CORE_DEVICE_DEVICE_MEMVIEW_H
 
 #include <nixl_types.h>
 
 [[nodiscard]] nixl_status_t
-nixlDeviceBufferAllocate(void **ptr, size_t size) noexcept;
+nixlDeviceMemViewAllocate(bool use_proxy,
+                          nixlMemViewH backend_memview,
+                          nixlMemViewH &wrapper_out) noexcept;
 
 [[nodiscard]] nixl_status_t
-nixlDeviceBufferCopyHostToDevice(void *dst, const void *src, size_t size) noexcept;
-
-[[nodiscard]] nixl_status_t
-nixlDeviceBufferCopyDeviceToHost(void *dst, const void *src, size_t size) noexcept;
+nixlDeviceMemViewGetBackend(nixlMemViewH wrapper, nixlMemViewH &backend_out) noexcept;
 
 void
-nixlDeviceBufferFree(void *ptr) noexcept;
+nixlDeviceMemViewFree(nixlMemViewH wrapper) noexcept;
 
-#endif // NIXL_SRC_UTILS_DEVICE_DEVICE_BUFFER_H
+#endif // NIXL_SRC_CORE_DEVICE_DEVICE_MEMVIEW_H

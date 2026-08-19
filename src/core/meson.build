@@ -86,7 +86,7 @@ nixl_lib_sources = [
 ]
 
 if cuda_dep.found()
-    nixl_lib_sources += ['device_api/device_memview.cpp']
+    nixl_lib_sources += ['device/device_memview.cpp']
 endif
 
 nixl_lib = library('nixl',

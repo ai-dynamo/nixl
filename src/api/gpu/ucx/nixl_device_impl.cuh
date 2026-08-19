@@ -45,7 +45,7 @@ template<> struct UcpDeviceLevel<nixl_gpu_level_t::GRID> {
 };
 
 __device__ inline uint64_t
-to_ucp_flags(uint64_t nixl_flags) noexcept {
+toUcpFlags(uint64_t nixl_flags) noexcept {
     constexpr uint64_t all_known_nixl_flags{nixl_gpu_flags::defer};
     assert((nixl_flags & ~all_known_nixl_flags) == 0);
 
@@ -57,7 +57,7 @@ to_ucp_flags(uint64_t nixl_flags) noexcept {
 }
 
 __device__ inline nixl_status_t
-convert_status(ucs_status_t status) {
+convertStatus(ucs_status_t status) {
     if (!UCS_STATUS_IS_ERR(status)) {
         return NIXL_IN_PROG;
     }
@@ -66,27 +66,27 @@ convert_status(ucs_status_t status) {
 }
 
 __device__ inline ucp_device_request_t *
-request_ptr(nixlGpuXferStatusH *xfer_status) {
-    static_assert(sizeof(ucp_device_request_t) <= NIXL_GPU_XFER_STATUS_PAYLOAD_SIZE,
+requestPtr(nixlGpuXferStatusH *xfer_status) {
+    static_assert(sizeof(ucp_device_request_t) <= nixl_gpu_xfer_status_payload_size,
                   "transfer-status payload is too small for UCX device request");
     return xfer_status ? reinterpret_cast<ucp_device_request_t *>(xfer_status->storage) : nullptr;
 }
 
 __device__ inline ucp_device_local_mem_list_h
-local_mem_list(nixlMemViewH mvh) {
+localMemList(nixlMemViewH mvh) {
     return static_cast<ucp_device_local_mem_list_h>(mvh);
 }
 
 __device__ inline ucp_device_remote_mem_list_h
-remote_mem_list(nixlMemViewH mvh) {
+remoteMemList(nixlMemViewH mvh) {
     return static_cast<ucp_device_remote_mem_list_h>(mvh);
 }
 
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ inline nixl_status_t
-get_xfer_status(nixlGpuXferStatusH &xfer_status) {
+getXferStatus(nixlGpuXferStatusH &xfer_status) {
     const auto status =
-        ucp_device_progress_req<UcpDeviceLevel<level>::value>(request_ptr(&xfer_status));
+        ucp_device_progress_req<UcpDeviceLevel<level>::value>(requestPtr(&xfer_status));
 
     switch (status) {
     case UCS_OK:
@@ -106,8 +106,8 @@ put(const nixlMemViewElem &src,
     unsigned channel_id = 0,
     uint64_t flags = 0,
     nixlGpuXferStatusH *xfer_status = nullptr) {
-    auto src_mem_list = local_mem_list(src.mvh);
-    auto dst_mem_list = remote_mem_list(dst.mvh);
+    auto src_mem_list = localMemList(src.mvh);
+    auto dst_mem_list = remoteMemList(dst.mvh);
     const auto status = ucp_device_put<UcpDeviceLevel<level>::value>(src_mem_list,
                                                                      src.index,
                                                                      src.offset,
@@ -116,33 +116,33 @@ put(const nixlMemViewElem &src,
                                                                      dst.offset,
                                                                      size,
                                                                      channel_id,
-                                                                     to_ucp_flags(flags),
-                                                                     request_ptr(xfer_status));
-    return convert_status(status);
+                                                                     toUcpFlags(flags),
+                                                                     requestPtr(xfer_status));
+    return convertStatus(status);
 }
 
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ inline nixl_status_t
-atomic_add(uint64_t value,
-           const nixlMemViewElem &counter,
-           unsigned channel_id = 0,
-           uint64_t flags = 0,
-           nixlGpuXferStatusH *xfer_status = nullptr) {
-    auto mem_list = remote_mem_list(counter.mvh);
+atomicAdd(uint64_t value,
+          const nixlMemViewElem &counter,
+          unsigned channel_id = 0,
+          uint64_t flags = 0,
+          nixlGpuXferStatusH *xfer_status = nullptr) {
+    auto mem_list = remoteMemList(counter.mvh);
     const auto status =
         ucp_device_counter_inc<UcpDeviceLevel<level>::value>(value,
                                                              mem_list,
                                                              counter.index,
                                                              counter.offset,
                                                              channel_id,
-                                                             to_ucp_flags(flags),
-                                                             request_ptr(xfer_status));
-    return convert_status(status);
+                                                             toUcpFlags(flags),
+                                                             requestPtr(xfer_status));
+    return convertStatus(status);
 }
 
 __device__ inline void *
-get_ptr(nixlMemViewH mvh, size_t index) {
-    auto mem_list = remote_mem_list(mvh);
+getPtr(nixlMemViewH mvh, size_t index) {
+    auto mem_list = remoteMemList(mvh);
     void *ptr = nullptr;
     ucp_device_get_ptr(mem_list, index, &ptr);
     return ptr;

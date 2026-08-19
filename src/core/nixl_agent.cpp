@@ -34,7 +34,7 @@
 #include "common/operators.h"
 #include "common/hw_info.h"
 #include "common/str_util.h"
-#include "device_api/device_memview.h"
+#include "device/device_memview.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "tracing/trace.h"
