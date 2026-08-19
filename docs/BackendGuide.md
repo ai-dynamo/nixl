@@ -166,6 +166,33 @@ When user asks for a specific backend for its name, alongside a list of paramete
 
 In this step, if the plugin supports talking to remote agents, the required connection data for other agents to talk to it is acquired through **getConnInfo** in SB API. And/or if it supports within node transfers, a **connection** call to itself is called, as some backends might require that.
 
+#### UCX backend initialization options
+
+The UCX plugin exposes its initialization options through `getPluginParams("UCX", ...)` in C++
+or `get_plugin_params("UCX")` in Python. The returned map contains the defaults, which can be
+overridden before passing it to `createBackend` in C++ or `create_backend` in Python.
+
+| Option key | Default | Description |
+| ---------- | ------- | ----------- |
+| `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy. `peer` requests peer failure reporting; `none` disables it. |
+
+`ucx_error_handling_mode` affects UCP transport lane selection, not only error reporting.
+NIXL creates endpoints with `err_mode` set from this option, and UCP only selects lanes whose
+transport advertises peer failure support. A transport that does not advertise it is therefore
+excluded from `peer` endpoints even when it is otherwise available and faster.
+
+Setting `none` makes such lanes eligible, but removes the failure guarantees NIXL depends on.
+Under `none`, UCX does not invoke the endpoint error handler and does not guarantee error
+notification or clean completion of pending operations after a peer failure. NIXL installs an
+error handler on every endpoint and uses it to move the endpoint to its failed state, which is
+what produces `NIXL_ERR_REMOTE_DISCONNECT`. Without that callback the endpoint stays in its
+connected state and pending transfers may remain incomplete and unreported, so a remote failure
+can go undetected instead of surfacing as an error.
+
+`none` therefore trades remote failure visibility for transport availability. Prefer fixing lane
+eligibility in the transport over changing this option in deployments that need remote failure
+reporting.
+
 ### Make connections (optional):
 
 When a connection is requested to an remote agent, which is possible if the remote agent’s metadata is already loaded, the local Agent would look for common backend plugins between itself and the remote agent, and for each of them initiate a connect by using the **connect** API in SB API of such backends.

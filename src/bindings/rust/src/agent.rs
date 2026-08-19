@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use super::*;
-use crate::descriptors::{QueryResponseList, RegDescList};
+use crate::descriptors::{QueryResponseList, RegDescList, RemoteDescList};
 use crate::bindings::{
     nixl_capi_agent_config_s as nixl_capi_agent_config_t,
     nixl_capi_thread_sync_t, nixl_capi_create_configured_agent};
@@ -347,6 +347,77 @@ impl Agent {
 
         match status {
             NIXL_CAPI_SUCCESS => Ok(resp),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Prepares a memory view for local buffers
+    ///
+    /// # Arguments
+    /// * `descs` - Descriptor list for the local buffers
+    /// * `opt_args` - Optional arguments, carrying the backend hint
+    ///
+    /// # Safety
+    /// The buffers must stay allocated and registered until the view is dropped.
+    pub unsafe fn prep_mem_view_local(
+        &self,
+        descs: &XferDescList,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<MemView, NixlError> {
+        let mut view = std::ptr::null_mut();
+        let inner_guard = self.inner.write().unwrap();
+
+        let status = unsafe {
+            nixl_capi_prep_mem_view_local(
+                inner_guard.handle.as_ptr(),
+                descs.handle(),
+                &mut view,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(MemView::new(
+                self.inner.clone(),
+                NonNull::new(view).ok_or(NixlError::InvalidDataPointer)?,
+            )),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Prepares a memory view for remote buffers
+    ///
+    /// # Arguments
+    /// * `descs` - Descriptor list for the remote buffers, each naming its
+    ///   owning agent
+    /// * `opt_args` - Optional arguments, carrying the backend hint
+    ///
+    /// # Safety
+    /// The buffers must stay allocated and registered until the view is dropped.
+    pub unsafe fn prep_mem_view_remote(
+        &self,
+        descs: &RemoteDescList,
+        opt_args: Option<&OptArgs>,
+    ) -> Result<MemView, NixlError> {
+        let mut view = std::ptr::null_mut();
+        let inner_guard = self.inner.write().unwrap();
+
+        let status = unsafe {
+            nixl_capi_prep_mem_view_remote(
+                inner_guard.handle.as_ptr(),
+                descs.handle(),
+                &mut view,
+                opt_args.map_or(std::ptr::null_mut(), |args| args.inner.as_ptr()),
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(MemView::new(
+                self.inner.clone(),
+                NonNull::new(view).ok_or(NixlError::InvalidDataPointer)?,
+            )),
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }
