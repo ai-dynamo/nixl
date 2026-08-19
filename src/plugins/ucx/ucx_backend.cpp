@@ -17,6 +17,7 @@
 
 #include "ucx_backend.h"
 #include "ucx_sgl.h"
+#include "device_proxy/ucx_proxy_backend.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/backend.h"
@@ -34,6 +35,11 @@
 #include <asio.hpp>
 
 namespace {
+nixl_status_t
+worker_fence(ucp_worker_h worker) {
+    return nixl::ucx::ucsToNixlStatus(ucp_worker_fence(worker));
+}
+
 [[nodiscard]] uint32_t
 epCloseFlags(const nixl_b_params_t *custom_params) {
     return nixl::getBackendParamDefaulted(custom_params, "ucx_ep_close_force", false) ?
@@ -847,6 +853,25 @@ nixlUcxEngine::~nixlUcxEngine() {
  * Connection management
 *****************************************/
 
+nixl_status_t
+nixlUcxEngine::checkConn(const std::string &remote_agent) {
+    return remoteConnMap.count(remote_agent) ? NIXL_SUCCESS : NIXL_ERR_NOT_FOUND;
+}
+
+nixl_status_t
+nixlUcxEngine::createDeviceProxyBackendAdapter(
+    const nixlBackendInitParams &init_params,
+    std::unique_ptr<nixlDeviceProxyBackendAdapter> &adapter) {
+    if (init_params.enableProgTh) {
+        NIXL_ERROR << "UCX device proxy requires ProxyWorker-driven progress; "
+                   << "disable the UCX progress thread";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    adapter = std::make_unique<nixlUcxProxyBackendAdapter>(this);
+    return NIXL_SUCCESS;
+}
+
 nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
     str = workerAddr;
     return NIXL_SUCCESS;
@@ -1081,6 +1106,88 @@ nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
 #endif
 
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::submitProxyRmaWrite(const nixlMetaDesc &local,
+                                   const nixlMetaDesc &remote,
+                                   size_t size,
+                                   size_t worker_id,
+                                   nixlUcxReq &req) const {
+    req = nullptr;
+
+    if (local.len != size || remote.len != size) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (worker_id >= getSharedWorkersSize()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    auto *lmd = static_cast<nixlUcxPrivateMetadata *>(local.metadataP);
+    auto *rmd = static_cast<nixlUcxPublicMetadata *>(remote.metadataP);
+    if (lmd == nullptr || rmd == nullptr || rmd->conn == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    auto &ep = rmd->conn->getEp(worker_id);
+    return ep->write(reinterpret_cast<void *>(local.addr),
+                     lmd->mem,
+                     static_cast<uint64_t>(remote.addr),
+                     rmd->getRkey(worker_id),
+                     size,
+                     req);
+}
+
+nixl_status_t
+nixlUcxEngine::submitProxyAtomicAdd(const nixlMetaDesc &remote,
+                                    uint64_t value,
+                                    size_t worker_id,
+                                    nixlUcxReq &req) const {
+    req = nullptr;
+
+    if (remote.len != sizeof(uint64_t)) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (worker_id >= getSharedWorkersSize()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    auto *rmd = static_cast<nixlUcxPublicMetadata *>(remote.metadataP);
+    if (rmd == nullptr || rmd->conn == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    const auto status = worker_fence(getSharedWorker(worker_id)->get());
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
+    auto &ep = rmd->conn->getEp(worker_id);
+    return ep->atomicAdd(value, static_cast<uint64_t>(remote.addr), rmd->getRkey(worker_id), req);
+}
+
+nixl_status_t
+nixlUcxEngine::checkProxyRequest(nixlUcxReq req) const {
+    return nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
+}
+
+void
+nixlUcxEngine::releaseProxyRequest(size_t worker_id, nixlUcxReq req, bool cancel) const {
+    if (req == nullptr) {
+        return;
+    }
+    if (worker_id >= getSharedWorkersSize()) {
+        NIXL_WARN << "nixlUcxEngine::releaseProxyRequest: invalid worker_id=" << worker_id;
+        return;
+    }
+
+    auto *worker = getSharedWorker(worker_id).get();
+    if (cancel && checkProxyRequest(req) == NIXL_IN_PROG) {
+        worker->reqCancel(req);
+    }
+    worker->reqRelease(req);
 }
 
 nixl_status_t nixlUcxEngine::estimateXferCost (const nixl_xfer_op_t &operation,
@@ -1360,6 +1467,11 @@ nixlUcxEngine::progress() {
         ret += uw->progress();
     }
     return ret;
+}
+
+unsigned
+nixlUcxEngine::progress(size_t worker_id) {
+    return getSharedWorker(worker_id)->progress();
 }
 
 void
