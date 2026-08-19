@@ -186,7 +186,7 @@ nixl_capi_get_local_md(nixl_capi_agent_t agent, void** data, size_t* len)
     nixl_blob_t blob;
     nixl_status_t ret = agent->inner->getLocalMD(blob);
     if (ret != NIXL_SUCCESS) {
-      return nixl_capi_status_from_nixl_status(ret);
+        return nixl_capi_status_from_nixl_status(ret);
     }
 
     // Allocate memory for the blob data
@@ -254,7 +254,7 @@ nixl_capi_load_remote_md(nixl_capi_agent_t agent, const void* data, size_t len, 
     // Load the metadata
     nixl_status_t ret = agent->inner->loadRemoteMD(blob, name);
     if (ret != NIXL_SUCCESS) {
-      return nixl_capi_status_from_nixl_status(ret);
+        return nixl_capi_status_from_nixl_status(ret);
     }
 
     // Allocate and copy the agent name
@@ -1645,7 +1645,7 @@ nixl_capi_get_notifs(nixl_capi_agent_t agent, nixl_capi_notif_map_t notif_map, n
   try {
     nixl_status_t ret = agent->inner->getNotifs(notif_map->notif_map, opt_args ? &opt_args->args : nullptr);
     if (ret != NIXL_SUCCESS) {
-      return nixl_capi_status_from_nixl_status(ret);
+        return nixl_capi_status_from_nixl_status(ret);
     }
     return NIXL_CAPI_SUCCESS;
   }
