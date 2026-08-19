@@ -318,7 +318,7 @@ show_help() {
     echo "  [--ucx-soname-suffix suffix to pass to UCX --with-soname-suffix]"
     echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
-    echo "  [--build-ucx-spcx-plugin build and bundle the UCX spcx external plugin (requires NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL in the environment) (requires --dockerfile contrib/Dockerfile.manylinux)]"
+    echo "  [--build-ucx-spcx-plugin build the UCX spcx external plugin (requires NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL in the environment) (requires --dockerfile contrib/Dockerfile or contrib/Dockerfile.manylinux; bundled into the wheel only on the manylinux path)]"
     echo "  [--ucx-spcx-plugin-ref git ref of ucx-spcx-plugin to build (default: ${UCX_SPCX_PLUGIN_REF})]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
@@ -384,10 +384,11 @@ BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
 SPCX_SRC_DIR="$BUILD_CONTEXT/ucx-spcx-plugin-src"
 rm -rf "$SPCX_SRC_DIR"
 if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
-    case "$DOCKER_FILE" in
-        *Dockerfile.manylinux) ;;
-        *) error "ERROR:" "--build-ucx-spcx-plugin requires --dockerfile contrib/Dockerfile.manylinux (the default Dockerfile does not consume it)" ;;
-    esac
+    # Ask the dockerfile itself rather than matching paths: only the ones with
+    # the plugin build block declare the ARG, so this cannot drift.
+    if ! grep -q '^ARG BUILD_UCX_SPCX_PLUGIN' "$DOCKER_FILE"; then
+        error "ERROR:" "--build-ucx-spcx-plugin requires a dockerfile that consumes it (contrib/Dockerfile or contrib/Dockerfile.manylinux); $DOCKER_FILE does not"
+    fi
     if [ -z "${NIXL_GITLAB_TOKEN:-}" ]; then
         error "ERROR:" "--build-ucx-spcx-plugin requires the NIXL_GITLAB_TOKEN environment variable"
     fi
@@ -424,10 +425,10 @@ fi
 # block is guarded so external docker build runs are unaffected when
 # BUILD_INFINIA=false (default): no filesystem writes and no EXIT trap installed.
 if [ "$BUILD_INFINIA" = "true" ]; then
-    case "$DOCKER_FILE" in
-        *Dockerfile.manylinux) ;;
-        *) error "ERROR:" "--build-infinia requires --dockerfile contrib/Dockerfile.manylinux" ;;
-    esac
+    # Ask the dockerfile itself rather than matching paths, as for the spcx flag.
+    if ! grep -q '^ARG BUILD_INFINIA' "$DOCKER_FILE"; then
+        error "ERROR:" "--build-infinia requires a dockerfile that consumes it (contrib/Dockerfile or contrib/Dockerfile.manylinux); $DOCKER_FILE does not"
+    fi
     INFINIA_LIBS_DIR="$BUILD_CONTEXT/infinia-libs"
     rm -rf "$INFINIA_LIBS_DIR"
     mkdir -p "$INFINIA_LIBS_DIR"

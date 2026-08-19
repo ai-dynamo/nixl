@@ -47,6 +47,13 @@ credentials:
   - credentialsId: 'nixl-gitlab-registry-token'
     type: 'string'
     variable: 'GITLAB_REGISTRY_TOKEN'
+  - credentialsId: 'svc-nixl-gitlab-token'
+    usernameVariable: 'NIXL_GITLAB_USER'
+    passwordVariable: 'NIXL_GITLAB_TOKEN'
+  # Paired with NIXL_GITLAB_TOKEN; only read on the spcx path.
+  - credentialsId: 'ucx-plugin-gitlab-url'
+    type: 'string'
+    variable: 'NIXL_SPCX_PLUGIN_REPO_URL'
 
 pipeline_start:
   shell: action
@@ -86,6 +93,8 @@ pipeline_start:
     echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
     echo "BUILD_TARGET: ${params.BUILD_TARGET}"
     echo "BUILD_NIXL_EP: ${params.BUILD_NIXL_EP}"
+    echo "BUILD_UCX_SPCX_PLUGIN: ${params.BUILD_UCX_SPCX_PLUGIN}"
+    echo "BUILD_INFINIA: ${params.BUILD_INFINIA}"
     echo "IMAGE_TAG_BASE: ${env.IMAGE_TAG_BASE}"
 
 # Build pipeline
@@ -133,12 +142,30 @@ steps:
   - name: Build NIXL
     enable: ${ENABLE_NIXL_BUILD}
     containerSelector: "{name: 'podman'}"
+    credentialsId:
+      - 'svc-nixl-gitlab-token'
+      - 'ucx-plugin-gitlab-url'
     run: |
       export UCX_REF="${UCX_SHA}"
 
       NIXL_EP_FLAG=""
       if [[ "${BUILD_NIXL_EP}" == "true" ]]; then
           NIXL_EP_FLAG="--build-nixl-ep"
+      fi
+
+      # The plugin ref is pinned by build-container.sh; the source is fetched
+      # from the gitlab repo bound above.
+      SPCX_FLAG=""
+      if [[ "${BUILD_UCX_SPCX_PLUGIN}" == "true" ]]; then
+          SPCX_FLAG="--build-ucx-spcx-plugin"
+      fi
+
+      # Off by default: build-container.sh only consumes --build-infinia on the
+      # manylinux (wheel) path, so enabling it here fails until the Infinia
+      # block is ported into contrib/Dockerfile.
+      INFINIA_FLAG=""
+      if [[ "${BUILD_INFINIA}" == "true" ]]; then
+          INFINIA_FLAG="--build-infinia"
       fi
 
       "contrib/build-container.sh" \
@@ -149,7 +176,9 @@ steps:
         --build-type debug \
         --no-cache \
         --apt-mirror "${APT_MIRROR}" \
-        ${NIXL_EP_FLAG}
+        ${NIXL_EP_FLAG} \
+        ${SPCX_FLAG} \
+        ${INFINIA_FLAG}
 
   - name: Add Version Info
     containerSelector: "{name: 'podman'}"
@@ -221,8 +250,18 @@ steps:
         if [[ "${BUILD_NIXL_EP}" == "true" ]]; then
             NIXL_EP_FLAG="--build-nixl-ep"
         fi
+        SPCX_FLAG=""
+        if [[ "${BUILD_UCX_SPCX_PLUGIN}" == "true" ]]; then
+            SPCX_FLAG="--build-ucx-spcx-plugin"
+            echo "# --build-ucx-spcx-plugin needs NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL exported"
+        fi
+        INFINIA_FLAG=""
+        if [[ "${BUILD_INFINIA}" == "true" ]]; then
+            INFINIA_FLAG="--build-infinia"
+            echo "# --build-infinia needs harbor.mellanox.com reachable"
+        fi
         echo "export UCX_REF=${UCX_VERSION}"
-        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache ${NIXL_EP_FLAG}"
+        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache ${NIXL_EP_FLAG} ${SPCX_FLAG} ${INFINIA_FLAG}"
       fi
 
 pipeline_stop:
@@ -271,6 +310,8 @@ pipeline_stop:
                 <p>Architectures: <b>x86_64, aarch64</b></p>
                 ${params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
                 ${params.BUILD_NIXL_EP ? "<p>Build NIXL EP: <b>Yes</b></p>" : ''}
+                ${params.BUILD_UCX_SPCX_PLUGIN ? "<p>UCX spcx plugin: <b>Yes</b></p>" : ''}
+                ${params.BUILD_INFINIA ? "<p>Infinia DDN plugin: <b>Yes</b></p>" : ''}
                 ${imagesSection}
             """
         )

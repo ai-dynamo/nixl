@@ -531,8 +531,28 @@
             Example: <code>25.10-cuda13.0-devel-ubuntu24.04-aarch64-latest</code><br/>
       - bool:
           name: "BUILD_NIXL_EP"
+          default: true
+          description: >
+            Build NIXL with EP example support (pass <code>--build-nixl-ep</code>).<br/>
+            Note: <code>build-container.sh</code> enables EP by default and has no
+            off-switch, so unchecking this does not disable EP.
+      - bool:
+          name: "BUILD_UCX_SPCX_PLUGIN"
+          default: true
+          description: >
+            Build the internal UCX spcx external plugin and install it into the
+            image's UCX plugin dir (pass <code>--build-ucx-spcx-plugin</code>).<br/>
+            Applies to the <b>nixl</b> target only; nixlbench builds ignore it.
+      - bool:
+          name: "BUILD_INFINIA"
           default: false
-          description: "Build NIXL with EP example support (pass --build-nixl-ep)"
+          description: >
+            Build the Infinia DDN plugin into the image (pass
+            <code>--build-infinia</code>; harbor.mellanox.com must be reachable to
+            pull the DDN libs).<br/>
+            Applies to the <b>nixl</b> target only; nixlbench builds ignore it.<br/>
+            Off by default — the DDN libs come from an external registry, so the
+            build gains a dependency the other targets do not have.
       - string:
           name: "MAIL_TO"
           default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
