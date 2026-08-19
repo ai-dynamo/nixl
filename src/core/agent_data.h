@@ -22,12 +22,17 @@
 #include "nixl_metadata_context.h"
 #include "telemetry.h"
 #include "tracing/trace.h"
+#include "device_proxy/proxy_runtime.h"
 #include "sync.h"
 
 #include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
+
+class nixlBackendEngine;
+class nixlBackendInitParams;
+class nixlProxyRuntime;
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
@@ -84,6 +89,8 @@ class nixlAgentData final : public nixlMetadataContext {
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
         backend_map_t backendEngines_;
+        std::unique_ptr<nixlProxyRuntime> proxyRuntime;
+        nixlBackendEngine *proxyTransportEngine = nullptr;
         std::unordered_map<std::string, nixlRemoteSection> remoteSections_;
         std::unique_ptr<nixlTelemetry> telemetry_;
         // Composite tracer (fans out to every enabled backend); null when no
@@ -120,8 +127,16 @@ class nixlAgentData final : public nixlMetadataContext {
                     nixl_mem_t mem_type);
         [[nodiscard]] bool
         proxyModeEnabled() const;
+        [[nodiscard]] bool
+        hasProxyRuntime() const;
         [[nodiscard]] const char *
         proxyModeSource() const;
+        nixl_status_t
+        createProxyRuntime(nixlBackendEngine *engine,
+                           const nixl_backend_t &backend,
+                           const nixlBackendInitParams &init_params);
+        void
+        shutdownProxyRuntime();
         void
         warnAboutEfaHardwareMismatch();
 
@@ -144,9 +159,6 @@ class nixlAgentData final : public nixlMetadataContext {
 };
 
 // clang-format on
-
-class nixlBackendEngine;
-
 // This class hides away the nixlBackendEngine from user of the Agent API
 class nixlBackendH {
     private:
@@ -176,6 +188,11 @@ class nixlBackendH {
         bool
         supportsNotif() const {
             return engine->supportsNotif();
+        }
+
+        bool
+        supportsProxy() const {
+            return engine->supportsProxy();
         }
 
     friend class nixlAgentData;

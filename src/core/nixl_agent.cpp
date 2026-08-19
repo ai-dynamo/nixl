@@ -255,7 +255,9 @@ nixlAgentData::~nixlAgentData() {
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
     : data(std::make_unique<nixlAgentData>(name, cfg)) {}
 
-nixlAgent::~nixlAgent() = default;
+nixlAgent::~nixlAgent() {
+    data->shutdownProxyRuntime();
+}
 
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
@@ -344,6 +346,63 @@ const char *
 nixlAgentData::proxyModeSource() const {
     return proxyMode_.from_environment ? "NIXL_DEVICE_MODE environment override" :
                                          "nixlAgentConfig";
+}
+
+bool
+nixlAgentData::hasProxyRuntime() const {
+    return proxyRuntime != nullptr;
+}
+
+nixl_status_t
+nixlAgentData::createProxyRuntime(nixlBackendEngine *engine,
+                                  const nixl_backend_t &backend,
+                                  const nixlBackendInitParams &init_params) {
+    if (hasProxyRuntime()) {
+        return NIXL_SUCCESS;
+    }
+
+    std::unique_ptr<nixlDeviceProxyBackendAdapter> proxy_adapter;
+    nixl_status_t status = engine->createDeviceProxyBackendAdapter(init_params, proxy_adapter);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+    if (!proxy_adapter) {
+        return NIXL_ERR_BACKEND;
+    }
+
+    proxyRuntime = std::make_unique<nixlProxyRuntime>();
+
+    status = proxyRuntime->init(std::move(proxy_adapter),
+                                config_.proxyMaxPeers,
+                                config_.proxyChannelCount,
+                                config_.proxyWorkerCount,
+                                config_.pthrDelay);
+    if (status != NIXL_SUCCESS) {
+        proxyRuntime.reset();
+        return status;
+    }
+
+    status = proxyRuntime->startWorkers();
+    if (status != NIXL_SUCCESS) {
+        proxyRuntime->shutdown();
+        proxyRuntime.reset();
+        return status;
+    }
+
+    proxyTransportEngine = engine;
+    NIXL_INFO << "Enabled device proxy runtime for backend '" << backend << "' with "
+              << config_.proxyWorkerCount << " worker(s), max_peers=" << config_.proxyMaxPeers
+              << ", and " << config_.proxyChannelCount << " channel(s) per peer";
+    return NIXL_SUCCESS;
+}
+
+void
+nixlAgentData::shutdownProxyRuntime() {
+    if (proxyRuntime) {
+        proxyRuntime->shutdown();
+        proxyRuntime.reset();
+    }
+    proxyTransportEngine = nullptr;
 }
 
 nixl_status_t
@@ -439,6 +498,20 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     if (backend->supportsRemote()) {
         data->notifEngines.push_back(backend.get());
         data->connMd_[type] = conn_info;
+    }
+
+    if (data->proxyModeEnabled()) {
+        if (backend->supportsProxy()) {
+            const nixl_status_t ret = data->createProxyRuntime(backend.get(), type, init_params);
+            if (ret != NIXL_SUCCESS) {
+                NIXL_ERROR_FUNC << "Failed to initialize proxy runtime on backend '" << type
+                                << "' with status " << ret;
+                return ret;
+            }
+        } else {
+            NIXL_WARN << "Proxy runtime is enabled by " << data->proxyModeSource()
+                      << " but backend '" << type << "' does not support it";
+        }
     }
 
     // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
