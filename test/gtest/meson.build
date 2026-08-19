@@ -57,7 +57,11 @@ if cuda_dep.found()
     subdir('device_api')
 endif
 
-plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
+test_plugin_dirs = [mocks_dep.get_variable('path')]
+if ucx_dep.found() and is_variable('ucx_backend_interface')
+    test_plugin_dirs += meson.project_build_root() / 'src/plugins/ucx'
+endif
+plugin_dirs_arg = '--tests_plugin_dirs=' + ','.join(test_plugin_dirs)
 
 # ROCm detection (mutually exclusive with CUDA; default off)
 rocm_path = get_option('rocm_path')
