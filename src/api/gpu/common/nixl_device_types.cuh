@@ -26,10 +26,10 @@ struct nixlGpuXferStatusH {
     alignas(16) unsigned char storage[64] = {};
 };
 
-constexpr size_t NIXL_GPU_XFER_STATUS_PAYLOAD_SIZE = 60;
+constexpr size_t nixl_gpu_xfer_status_payload_size = 60;
 
-static_assert(NIXL_GPU_XFER_STATUS_PAYLOAD_SIZE < sizeof(nixlGpuXferStatusH));
-static_assert(sizeof(nixlGpuXferStatusH) - NIXL_GPU_XFER_STATUS_PAYLOAD_SIZE == 4);
+static_assert(nixl_gpu_xfer_status_payload_size < sizeof(nixlGpuXferStatusH));
+static_assert(sizeof(nixlGpuXferStatusH) - nixl_gpu_xfer_status_payload_size == 4);
 
 enum class nixl_gpu_level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
 

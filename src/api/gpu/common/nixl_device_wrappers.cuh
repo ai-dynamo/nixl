@@ -28,7 +28,7 @@
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
 __device__ inline nixl_status_t
 nixlGpuGetXferStatus(nixlGpuXferStatusH &xfer_status) {
-    return nixl::gpu::api::get_xfer_status<level>(xfer_status);
+    return nixl::gpu::api::getXferStatus<level>(xfer_status);
 }
 
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
@@ -49,12 +49,12 @@ nixlAtomicAdd(uint64_t value,
               unsigned channel_id = 0,
               uint64_t flags = 0,
               nixlGpuXferStatusH *xfer_status = nullptr) {
-    return nixl::gpu::api::atomic_add<level>(value, counter, channel_id, flags, xfer_status);
+    return nixl::gpu::api::atomicAdd<level>(value, counter, channel_id, flags, xfer_status);
 }
 
 __device__ inline void *
 nixlGetPtr(nixlMemViewH mvh, size_t index) {
-    return nixl::gpu::api::get_ptr(mvh, index);
+    return nixl::gpu::api::getPtr(mvh, index);
 }
 
 #endif // NIXL_SRC_API_GPU_COMMON_NIXL_DEVICE_WRAPPERS_CUH
