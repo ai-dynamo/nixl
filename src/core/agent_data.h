@@ -78,7 +78,7 @@ class nixlAgentData final : public nixlMetadataContext {
         backend_list_t                         notifEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
-        // Bookkeeping from memory view handles to backend engines
+        // Bookkeeping from public memory view handles to backend engines
         std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
 
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
