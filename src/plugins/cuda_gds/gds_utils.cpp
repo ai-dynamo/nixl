@@ -23,13 +23,14 @@ namespace {
 
 void
 logCuFileError(std::string_view api, CUfileOpError err) {
-    NIXL_ERROR << api << " failed: " << CUFILE_ERRSTR(err) << " (err=" << err << ")";
+    NIXL_ERROR << api << " failed: " << CUFILE_ERRSTR(err)
+               << " (err=" << err << ")";
 }
 
 void
 logCuFileWarn(std::string_view api, CUfileOpError err) {
-    NIXL_WARN << api << " failed - will use compat mode: " << CUFILE_ERRSTR(err) << " (err=" << err
-              << ")";
+    NIXL_WARN << api << " failed - will use compat mode: " << CUFILE_ERRSTR(err)
+              << " (err=" << err << ")";
 }
 
 } // namespace
