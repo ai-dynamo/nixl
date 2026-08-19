@@ -25,10 +25,28 @@
 #include "sync.h"
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
+
+struct nixlDeviceProxyModeSelection {
+    bool enabled;
+    bool from_environment;
+};
+
+[[nodiscard]] nixlDeviceProxyModeSelection
+nixlResolveDeviceProxyMode(bool configured);
+
+enum class ProxyOrchestrationPhase : uint8_t {
+    Disabled = 0,
+    Registered,
+    MetadataPending,
+    ReadyToBootstrap,
+    Active,
+    ShuttingDown,
+};
 
 // Implements nixlMetadataContext, which is the whole surface a metadata backend
 // sees of the agent: serialization, cache load and invalidation, nothing else.
@@ -38,6 +56,7 @@ class nixlAgentData final : public nixlMetadataContext {
     private:
         const std::string name_;
         const nixlAgentConfig config_;
+        const nixlDeviceProxyModeSelection proxyMode_;
         // Agent-owned metadata manager; always built (single metadata path).
         // It owns the pluggable backends, which own their own transport state
         // (sockets/listener for P2P, client for ETCD) and their own threads.
@@ -99,6 +118,10 @@ class nixlAgentData final : public nixlMetadataContext {
         getBackends(const nixl_opt_args_t *opt_args,
                     const nixlMemSection &section,
                     nixl_mem_t mem_type);
+        [[nodiscard]] bool
+        proxyModeEnabled() const;
+        [[nodiscard]] const char *
+        proxyModeSource() const;
         void
         warnAboutEfaHardwareMismatch();
 

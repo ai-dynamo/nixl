@@ -18,6 +18,9 @@
 #include <iostream>
 #include <chrono>
 #include <iostream>
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <numeric>
 #include <optional>
 #include <set>
@@ -189,9 +192,26 @@ makeMDConfig(const nixlAgentConfig &config) {
 
 } // namespace
 
+nixlDeviceProxyModeSelection
+nixlResolveDeviceProxyMode(bool configured) {
+    const char *mode_override = std::getenv("NIXL_DEVICE_MODE");
+    if (mode_override == nullptr) {
+        return {configured, false};
+    }
+    if (std::strcmp(mode_override, "direct") == 0) {
+        return {false, true};
+    }
+    if (std::strcmp(mode_override, "proxy") == 0) {
+        return {true, true};
+    }
+    throw std::invalid_argument("NIXL_DEVICE_MODE must be exactly 'direct' or 'proxy'; got '" +
+                                std::string(mode_override) + "'");
+}
+
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
     : name_(name),
       config_(config),
+      proxyMode_(nixlResolveDeviceProxyMode(config.enableDeviceProxy)),
       // The manager is the single metadata path, built unconditionally so the
       // public methods can delegate without a fallback. It selects its backends
       // from the environment (P2P plus an optional name-addressed backend).
@@ -313,6 +333,17 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
                    " For best performance, it's recommended to use the LIBFABRIC backend instead.";
         }
     }
+}
+
+bool
+nixlAgentData::proxyModeEnabled() const {
+    return proxyMode_.enabled;
+}
+
+const char *
+nixlAgentData::proxyModeSource() const {
+    return proxyMode_.from_environment ? "NIXL_DEVICE_MODE environment override" :
+                                         "nixlAgentConfig";
 }
 
 nixl_status_t
