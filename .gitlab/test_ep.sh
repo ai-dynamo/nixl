@@ -14,13 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# nixl_ep elastic CI: run only EP tests (invoked from nixl-ci-dl-gpu-ep flow).
+# NIXL EP CI: run native elastic tests and vLLM Elastic EP on one allocation.
 
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../.ci/scripts/common.sh"
 
 set -e
 set -x
+set -o pipefail
 
 INSTALL_DIR=$1
 
@@ -103,3 +104,64 @@ else
 fi
 
 echo "==== nixl_ep elastic tests done ===="
+
+echo "==== Running vLLM Elastic EP test ===="
+: "${VLLM_ELASTIC_TEST_DIR:?vLLM Elastic EP test environment is not installed}"
+VLLM_PYTHON="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"
+VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
+VLLM_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)"
+
+echo "vLLM source: VLLM_REF=${VLLM_REF:-unknown} VLLM_COMMIT=${VLLM_COMMIT}"
+
+if [ ! -x "${VLLM_PYTHON}" ]; then
+    echo "ERROR: vLLM Python environment is missing: ${VLLM_PYTHON}" >&2
+    exit 1
+fi
+
+# Verify that the vLLM environment can use the NIXL and NIXL EP artifacts that
+# were built in this PR image. This makes an unavailable backend fail before
+# pytest can report the test as skipped.
+"${VLLM_PYTHON}" - <<'PY'
+from importlib.metadata import PackageNotFoundError, version
+
+import nixl
+import nixl_ep
+import torch
+import vllm
+from vllm.distributed.nixl_utils import is_nixl_available
+
+try:
+    nixl_version = version("nixl")
+except PackageNotFoundError:
+    nixl_version = "source tree"
+
+assert torch.cuda.is_available(), "CUDA is unavailable"
+assert torch.cuda.device_count() >= 4, "vLLM Elastic EP requires four GPUs"
+assert is_nixl_available(), "vLLM cannot discover the NIXL package"
+
+print("vLLM:", vllm.__version__)
+print("NIXL:", nixl_version, nixl.__file__)
+print("NIXL EP:", nixl_ep.__file__)
+print("Torch/CUDA:", torch.__version__, torch.version.cuda)
+print("GPU:", torch.cuda.get_device_name())
+print("Visible GPUs:", torch.cuda.device_count())
+PY
+
+# Run vLLM's 2 -> 4 -> 2 Elastic EP scaling test with NIXL EP.
+(
+    cd "${VLLM_ELASTIC_TEST_DIR}"
+    VLLM_NIXL_EP_MAX_NUM_RANKS=4 \
+    VLLM_TEST_ELASTIC_EP_ALL2ALL_BACKEND=nixl_ep \
+    VLLM_TEST_ELASTIC_EP_INITIAL_DP=2 \
+    VLLM_TEST_ELASTIC_EP_TARGET_DP=4 \
+    timeout 7200 "${VLLM_PYTHON}" -m pytest \
+        tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling \
+        -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
+)
+
+if grep -Eiq '(^|[[:space:]])[0-9]+ skipped|SKIPPED' "${VLLM_LOG}"; then
+    echo "ERROR: vLLM Elastic EP test was skipped" >&2
+    exit 1
+fi
+
+echo "==== vLLM Elastic EP test done ===="
