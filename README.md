@@ -10,6 +10,13 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GitHub Release](https://img.shields.io/github/v/release/ai-dynamo/nixl)](https://github.com/ai-dynamo/nixl/releases/latest)
 
+# Early Access: NIXL Compression Support with nvCOMP
+
+This branch contains an experimental service utility agent built on top of `nixlAgent`.
+It adds pluggable marshal-based services, including compression support, on top of the native NIXL agent API.
+
+Please refer to `src/services/README.md` for further details.
+
 ## Documentation and Resources
 
 * [NIXL overview](https://github.com/ai-dynamo/nixl/blob/main/docs/nixl.md) - Core concepts/architecture overview (`docs/nixl.md`)
