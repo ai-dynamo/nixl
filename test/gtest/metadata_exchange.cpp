@@ -19,6 +19,8 @@
 #include <random>
 #include "nixl.h"
 #include "common.h"
+#include "common/configuration.h"
+#include "nixl_md_manager.h"
 
 // Used to avoid failures when etcd is not available
 #if HAVE_ETCD
@@ -138,9 +140,16 @@ protected:
 
     void TearDown() override
     {
-        for (auto &agent : agents_) {
-            if (agent.agent) {
-                agent.agent->invalidateLocalMD(nullptr);
+        // No-address invalidation requires a centralized metadata backend. Most
+        // tests in this fixture use direct serialization or P2P metadata, so
+        // attempting centralized cleanup without a configured store only emits
+        // a noTransport error that the test log checker correctly rejects.
+        if (nixlMDManager::etcdConfigured() ||
+            nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINT")) {
+            for (auto &agent : agents_) {
+                if (agent.agent) {
+                    agent.agent->invalidateLocalMD(nullptr);
+                }
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
