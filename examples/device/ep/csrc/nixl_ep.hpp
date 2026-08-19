@@ -175,6 +175,7 @@ private:
     bool _is_rank_connected(int rank_id) const;
     void set_active_rank_bound(int bound);
     void _refresh_active_rank_bound();
+    int get_rank_bound(std::optional<int> num_experts) const;
 
     /* high-throughput mode private funcs */
     void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
@@ -239,7 +240,7 @@ public:
     dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
                          const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
                          const std::optional<torch::Tensor>& dispatch_wait_recv_cost_stats,
-                         int num_max_dispatch_tokens_per_rank,
+                         int num_max_dispatch_tokens_per_rank, std::optional<int> num_experts,
                          bool use_fp8, bool round_scale, bool use_ue8m0,
                          bool async, bool return_recv_hook);
 
@@ -254,7 +255,8 @@ public:
     void barrier();
 
     torch::Tensor
-    get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden) const;
+    get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden,
+                            int rank_bound) const;
 
     void update_mask_buffer(int rank_to_mask, bool mask);
 

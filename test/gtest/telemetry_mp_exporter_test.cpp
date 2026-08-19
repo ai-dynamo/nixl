@@ -17,8 +17,8 @@
 #include "prometheus_mp_exporter.h"
 #include "histogram_buckets.h"
 #include "mp_store.h"
+#include "mp_telemetry_fixture.h"
 #include "owner_election.h"
-#include "plugin_manager.h"
 #include "scrape_endpoint.h"
 #include "telemetry.h"
 
@@ -48,76 +48,6 @@ using nixl::telemetry::mp::readStoreSnapshot;
 constexpr auto TX_BYTES = nixl_telemetry_event_type_t::AGENT_TX_BYTES;
 constexpr auto RX_BYTES = nixl_telemetry_event_type_t::AGENT_RX_BYTES;
 constexpr auto XFER_TIME = nixl_telemetry_event_type_t::AGENT_XFER_TIME;
-
-[[nodiscard]] std::size_t
-idx(nixl_telemetry_event_type_t t) {
-    return static_cast<std::size_t>(t);
-}
-
-[[nodiscard]] nixlTelemetryExporterInitParams
-initParams(const std::string &agent) {
-    return nixlTelemetryExporterInitParams{agent, 4096};
-}
-
-class MpExporterTest : public ::testing::Test {
-protected:
-    // A build tree has no <libnixl.so dir>/plugins, so LoadsThroughPluginManager
-    // finds the plugin only if the build path is registered. Registered once per
-    // process (--gtest_repeat re-enters this hook), and only when it exists:
-    // re-registering, or registering a missing directory, logs a warning/error
-    // that the gtest main counts as a failure. When it is absent (a binary run
-    // from an install tree) NIXL_PLUGIN_DIR is what supplies the plugin.
-    static void
-    SetUpTestSuite() {
-        [[maybe_unused]] static const bool registered = [] {
-            const std::string build_plugin_dir =
-                std::string(BUILD_DIR) + "/src/plugins/telemetry/prometheus_mp";
-            if (std::filesystem::is_directory(build_plugin_dir)) {
-                nixlPluginManager::getInstance().addPluginDirectory(build_plugin_dir);
-            }
-            return true;
-        }();
-    }
-
-    void
-    SetUp() override {
-        const auto *info = ::testing::UnitTest::GetInstance()->current_test_info();
-        dir_ = std::filesystem::path(::testing::TempDir()) /
-            ("nixl_mp_exporter_" + std::to_string(::getpid()) + "_" + info->name());
-        std::filesystem::create_directories(dir_);
-        // What the exporter asks operators for; without it a permissive umask
-        // makes it warn about the directory and the gtest main counts that.
-        std::filesystem::permissions(
-            dir_, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
-        port_ = gtest::PortAllocator::next_tcp_port();
-        env_.addVar("NIXL_TELEMETRY_PROMETHEUS_LOCAL", "y");
-        env_.addVar("NIXL_TELEMETRY_PROMETHEUS_PORT", std::to_string(port_));
-        env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", dir_.string());
-    }
-
-    void
-    TearDown() override {
-        std::error_code ec;
-        std::filesystem::remove_all(dir_, ec);
-    }
-
-    [[nodiscard]] std::filesystem::path
-    singleStoreFile() const {
-        std::error_code ec;
-        for (const auto &entry : std::filesystem::directory_iterator(dir_, ec)) {
-            const auto name = entry.path().filename().string();
-            if (name.rfind("nixl.", 0) == 0 && name.size() > 5 &&
-                name.substr(name.size() - 5) == ".mmap") {
-                return entry.path();
-            }
-        }
-        return {};
-    }
-
-    gtest::ScopedEnv env_;
-    uint16_t port_ = 0;
-    std::filesystem::path dir_;
-};
 
 TEST_F(MpExporterTest, OwnerBindsAndRecordsToStore) {
     nixlTelemetryPrometheusMpExporter exporter(initParams("agent-owner"));
