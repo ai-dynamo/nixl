@@ -691,7 +691,7 @@ nixlLibfabricRailManager::progressAllControlRails() {
         } else if (status != NIXL_IN_PROG && status != NIXL_SUCCESS) {
             any_completions = true;
             NIXL_ERROR << "Failed to process completion on control rail " << rail_id;
-            return NIXL_ERR_BACKEND;
+            return status;
         }
     }
     return any_completions ? NIXL_SUCCESS : NIXL_IN_PROG;

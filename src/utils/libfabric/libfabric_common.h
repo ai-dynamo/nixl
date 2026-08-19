@@ -274,6 +274,11 @@ getAvailableNetworkDevices();
 // String utilities
 std::string
 hexdump(const void *data, size_t size);
+
+inline nixl_status_t
+cqErrorToNixlStatus(int error) {
+    return error == FI_ENOTCONN ? NIXL_ERR_REMOTE_DISCONNECT : NIXL_ERR_BACKEND;
+}
 } // namespace LibfabricUtils
 
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_COMMON_H

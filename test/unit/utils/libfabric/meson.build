@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -31,5 +31,15 @@ if get_option('buildtype') != 'release'
                link_with: libfabric_utils_lib,
                cpp_args: libfabric_test_cpp_args,
                install: true)
+
+    libfabric_error_status_test_bin = executable('libfabric_error_status_test',
+               'libfabric_error_status_test.cpp',
+               dependencies: libfabric_utils_dep,
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with: libfabric_utils_lib,
+               cpp_args: libfabric_test_cpp_args,
+               install: true)
+
+    test('libfabric_error_status_test', libfabric_error_status_test_bin)
 
 endif

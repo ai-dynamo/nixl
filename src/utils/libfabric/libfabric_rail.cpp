@@ -732,6 +732,11 @@ nixlLibfabricRail::progressCompletionQueue() const {
                 NIXL_ERROR << "CQ read failed on rail " << rail_id
                            << " with error: " << fi_strerror(err_entry.err)
                            << " prov_errno: " << err_entry.prov_errno << " len: " << err_entry.len;
+                nixl_status_t status = LibfabricUtils::cqErrorToNixlStatus(err_entry.err);
+                if (status == NIXL_ERR_REMOTE_DISCONNECT) {
+                    NIXL_WARN << "CQ read detected a disconnected remote endpoint on rail " << rail_id;
+                }
+                return status;
             } else {
                 NIXL_ERROR << "fi_cq_readerr failed with " << err_ret;
             }
