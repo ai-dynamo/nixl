@@ -78,6 +78,14 @@ ENV PIP_CERT=${SYSTEM_CA_BUNDLE} \
 # libgrpc_plugin_support.so from /opt/nixl/lib. Every stage inherits this ENV.
 ENV LD_LIBRARY_PATH="${NIXL_INSTALL_DIR}/lib:${NIXL_INSTALL_DIR}/lib64:/usr/local/lib:/usr/local/lib64"
 
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+# Inherited by every *-build stage and `final`.
+ENV CMAKE_INSTALL_ALWAYS=1
+
 # Some ROCm base images ship broken cmake configs for these.
 RUN rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
 
