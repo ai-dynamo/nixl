@@ -217,8 +217,10 @@ fn test_prep_mem_view_remote_unknown_agent() {
     let desc = vram_remote_desc(&storage, Some("no_such_agent"));
     let result =
         unsafe { agent.prep_mem_view_remote(&vram_remote_dlist(&desc), Some(&opt_args)) };
-    // NIXL_ERR_NOT_FOUND; change to NotFound once the C API maps it.
-    assert!(result.is_err(), "Expected an error for an unknown remote agent");
+    assert!(
+        matches!(result, Err(NixlError::NotFound)),
+        "Expected NotFound for an unknown remote agent"
+    );
 }
 
 /// A null-agent descriptor is a placeholder, not an addressed peer, so a list
@@ -239,6 +241,8 @@ fn test_prep_mem_view_remote_null_agent_only() {
     let desc = vram_remote_desc(&storage, None);
     let result =
         unsafe { agent.prep_mem_view_remote(&vram_remote_dlist(&desc), Some(&opt_args)) };
-    // NIXL_ERR_NOT_FOUND; change to NotFound once the C API maps it.
-    assert!(result.is_err(), "Expected an error for a list of only null agents");
+    assert!(
+        matches!(result, Err(NixlError::NotFound)),
+        "Expected NotFound for a list of only null agents"
+    );
 }
