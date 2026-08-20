@@ -108,9 +108,16 @@ RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
         "${HOME}/.local/bin/uv" pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
             "torch==2.13.0" --torch-backend=cu130 && \
+        "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" -c \
+            'import torch; print(torch.__version__, torch.version.cuda)' && \
+        "${HOME}/.local/bin/uv" pip install \
+            --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
+            --torch-backend=cu130 \
+            -r "${VLLM_ELASTIC_TEST_DIR}/requirements/build/cuda.txt" && \
         VLLM_USE_PRECOMPILED=1 "${HOME}/.local/bin/uv" pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
-            --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=auto && \
+            --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=cu130 \
+            --no-build-isolation && \
         "${HOME}/.local/bin/uv" pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
             pytest "ray[default]>=2.48.0" && \
