@@ -446,10 +446,10 @@ else
     fi
     # shellcheck disable=SC2086
     meson setup "${NIXL_PYTHON_ARGS[@]}" ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
+    ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
     if [ -n "${NIXL_PYTHON_NATIVE_FILE}" ]; then
         rm -f "${NIXL_PYTHON_NATIVE_FILE}"
     fi
-    ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
     mkdir -p dist && cp ${NIXL_BUILD_DIR}/src/bindings/python/nixl-meta/nixl-*.whl dist/
 
     # TODO(kapila): Copy the nixl.pc file to the install directory if needed.
