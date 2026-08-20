@@ -97,21 +97,20 @@ RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
         sudo apt-get update && \
         sudo apt-get install -y --no-install-recommends git && \
         python3 -m pip install --user --break-system-packages uv && \
-        echo "=== HPC-X UCC library resolution ===" && \
-        ldd /opt/hpcx/ucc/lib/libucc.so.1 && \
-        echo "=== UCX version ===" && \
-        ucx_info -v && \
         git clone --depth 1 --branch "${VLLM_REF}" \
             https://github.com/vllm-project/vllm.git "${VLLM_ELASTIC_TEST_DIR}" && \
         git -C "${VLLM_ELASTIC_TEST_DIR}" apply --check \
             /tmp/nixl_ep_vllm_release_test.patch && \
         git -C "${VLLM_ELASTIC_TEST_DIR}" apply \
             /tmp/nixl_ep_vllm_release_test.patch && \
-        "${HOME}/.local/bin/uv" venv --system-site-packages \
+        "${HOME}/.local/bin/uv" venv \
             "${VLLM_ELASTIC_TEST_DIR}/.venv" && \
+        "${HOME}/.local/bin/uv" pip install \
+            --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
+            "torch==2.13.0" --torch-backend=cu130 && \
         VLLM_USE_PRECOMPILED=1 "${HOME}/.local/bin/uv" pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
-            --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=auto --no-build-isolation && \
+            --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=auto && \
         "${HOME}/.local/bin/uv" pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
             pytest "ray[default]>=2.48.0" && \

@@ -30,6 +30,14 @@ if [ -z "$INSTALL_DIR" ]; then
     exit 1
 fi
 
+: "${VLLM_ELASTIC_TEST_DIR:?vLLM Elastic EP test environment is not installed}"
+VLLM_PYTHON="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"
+
+if [ ! -x "${VLLM_PYTHON}" ]; then
+    echo "ERROR: vLLM Python environment is missing: ${VLLM_PYTHON}" >&2
+    exit 1
+fi
+
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
@@ -42,8 +50,8 @@ export NIXL_PREFIX=${INSTALL_DIR}
 export NIXL_DEBUG_LOGGING=yes
 
 # Make `import nixl_ep` resolve the source-tree dispatcher, which loads the
-# CUDA-versioned backend (nixl_ep_cu*) from the source install under ${INSTALL_DIR}.
-export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta:${INSTALL_DIR}/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
+# CUDA-versioned backend (nixl_ep_cu*) installed in the shared venv.
+export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPATH}"
 
 echo "==== Show system info ===="
 env
@@ -68,7 +76,7 @@ run_elastic_test() {
             export UCX_TLS=^rc_gda
         fi
         PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
-        timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
+        timeout 300 "${VLLM_PYTHON}" ${EP_SRC_DIR}/tests/elastic/elastic.py \
             --plan "$plan_file" \
             --num-processes 4 \
             --num-experts-per-rank 32 \
@@ -106,28 +114,14 @@ fi
 echo "==== nixl_ep elastic tests done ===="
 
 echo "==== Running vLLM Elastic EP test ===="
-: "${VLLM_ELASTIC_TEST_DIR:?vLLM Elastic EP test environment is not installed}"
 export LD_LIBRARY_PATH="/opt/hpcx/ucx/lib:/opt/hpcx/ucc/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-VLLM_PYTHON="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"
 VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
 VLLM_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)"
 
 echo "vLLM source: VLLM_REF=${VLLM_REF:-unknown} VLLM_COMMIT=${VLLM_COMMIT}"
 
-if [ ! -x "${VLLM_PYTHON}" ]; then
-    echo "ERROR: vLLM Python environment is missing: ${VLLM_PYTHON}" >&2
-    exit 1
-fi
-
-SYSTEM_TORCH="$(python3 -c 'import torch; print(torch.__version__, torch.version.cuda, sep="|")')"
-VLLM_TORCH="$("${VLLM_PYTHON}" -c 'import torch; print(torch.__version__, torch.version.cuda, sep="|")')"
-echo "System Torch/CUDA: ${SYSTEM_TORCH}"
-echo "vLLM Torch/CUDA: ${VLLM_TORCH}"
-
-if [ "${SYSTEM_TORCH}" != "${VLLM_TORCH}" ]; then
-    echo "ERROR: NIXL EP and vLLM use different Torch builds" >&2
-    exit 1
-fi
+SHARED_TORCH="$("${VLLM_PYTHON}" -c 'import torch; print(torch.__version__, torch.version.cuda, sep="|")')"
+echo "Shared NIXL EP/vLLM Torch/CUDA: ${SHARED_TORCH}"
 
 # Verify that the vLLM environment can use the NIXL and NIXL EP artifacts that
 # were built in this PR image. This makes an unavailable backend fail before

@@ -42,6 +42,7 @@ RUN . /etc/os-release && \
     grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f && \
     sudo apt-get update && \
     sudo apt-get install -y --no-install-recommends gdb gdb-multiarch && \
+    export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}" && \
     .gitlab/build.sh ${NIXL_INSTALL_DIR} && \
     sudo apt-get clean && \
     sudo rm -rf /var/lib/apt/lists/*

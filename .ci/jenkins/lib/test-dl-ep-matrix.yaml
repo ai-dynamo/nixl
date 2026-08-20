@@ -49,6 +49,7 @@ credentials:
 env:
   ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
   NIXL_INSTALL_DIR: /opt/nixl
+  NIXL_EP_INSTALL_DIR: /home/svc-nixl/vllm/.venv
   NIXL_BUILD_DIR: nixl_build
   SLURM_NODES: 1
   SLURM_PARTITION: gb200nvl72_cx8
@@ -72,8 +73,8 @@ empty_volumes:
 pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
-# Docker images for DL EP testing. The dedicated EP base also contains vLLM;
-# the PR image builds NIXL EP on top of it.
+# Docker images for DL EP testing. The dedicated EP base contains vLLM and its
+# Torch environment; the PR image builds NIXL EP into that same environment.
 # Both test suites therefore use the same image on the same allocation.
 runs_on_dockers:
   - {
@@ -116,7 +117,7 @@ steps:
       podman build --network host --creds ${REPO_USER}:${REPO_PASS} \
       ${UCX_ARG} \
       --build-arg PRE_INSTALLED_ENV="true" \
-      --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} \
+      --build-arg NIXL_INSTALL_DIR=${NIXL_EP_INSTALL_DIR} \
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
       --build-arg BUILD_NIXL_EP=true \
@@ -158,7 +159,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_ep_${BUILD_NUMBER}.txt"
-      testScript: "HF_ENDPOINT=${VLLM_HF_ENDPOINT} .gitlab/test_ep.sh ${NIXL_INSTALL_DIR}"
+      testScript: "HF_ENDPOINT=${VLLM_HF_ENDPOINT} .gitlab/test_ep.sh ${NIXL_EP_INSTALL_DIR}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-ep-test:${BUILD_NUMBER}"
