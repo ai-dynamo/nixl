@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,7 +111,10 @@ nixlGdsIOBatch::~nixlGdsIOBatch()
         current_status == NIXL_ERR_NOT_POSTED) {
             delete[] io_batch_events;
             delete[] io_batch_params;
-            cuFileBatchIODestroy(batch_handle);
+            // The batch handle is only valid if cuFileBatchIOSetUp succeeded
+            if (init_err.err == CU_FILE_SUCCESS) {
+                cuFileBatchIODestroy(batch_handle);
+            }
     } else {
             NIXL_ERROR << "Attempting to delete a batch before completion";
     }

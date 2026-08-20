@@ -62,9 +62,22 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams* init_params)
         return;
     }
 
-    // Initialize the batch pool
+    // Initialize the batch pool. Validate each batch so that an invalid
+    // batch_limit (e.g. above cuFile's maximum batch size, 128 by default)
+    // fails backend creation with a single clear error instead of flooding
+    // the log with a setup error per pool entry and then failing every
+    // transfer at submission time.
     for (unsigned int i = 0; i < batch_pool_size; i++) {
-        batch_pool.push_back(new nixlGdsIOBatch(batch_limit));
+        auto *batch = new nixlGdsIOBatch(batch_limit);
+        if (batch->initStatus() != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to create GDS IO batch of size " << batch_limit
+                       << "; batch_limit must not exceed cuFile's maximum batch size"
+                       << " (properties.io_batchsize in cufile.json, 128 by default)";
+            delete batch;
+            this->initErr = true;
+            return;
+        }
+        batch_pool.push_back(batch);
     }
 
 }
