@@ -47,8 +47,10 @@ NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
 # CUDA MAJOR.MINOR for the manylinux wheel build — drives the torch cuXXX index
-# and the cu12/cu13 meta-wheel split. Default 13.2 matches the Dockerfile default.
-CUDA_VERSION=${CUDA_VERSION:-13.2}
+# and the cu12/cu13 meta-wheel split. Left empty here so the BASE_IMAGE_TAG
+# derivation below can fill it; CUDA_VERSION_DEFAULT applies if neither does.
+CUDA_VERSION_DEFAULT="13.2"
+CUDA_VERSION=${CUDA_VERSION:-}
 BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
 APT_MIRROR=""
@@ -323,7 +325,7 @@ show_help() {
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
-    echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: ${CUDA_VERSION})]
+    echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: derived from --base-image-tag, else ${CUDA_VERSION_DEFAULT})]
   [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
   [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
@@ -358,8 +360,16 @@ BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VE
 case "$DOCKER_FILE" in
     *Dockerfile.manylinux)
         CUDA_VERSION="${CUDA_VERSION:-$(echo "$BASE_IMAGE_TAG" | grep -oE '^[0-9]+\.[0-9]+')}"
+        # A CUDA major that disagrees with the base image is always a bug: the
+        # cuda-<ver> symlink and the cuobjclient .pc paths are built from it, and
+        # a mismatch silently mislabels the wheel and skips the meta-wheel copy.
+        base_major="$(echo "$BASE_IMAGE_TAG" | grep -oE '^[0-9]+')"
+        if [ -n "$base_major" ] && [ "${CUDA_VERSION%%.*}" != "$base_major" ]; then
+            error "ERROR:" "CUDA_VERSION=$CUDA_VERSION disagrees with --base-image-tag $BASE_IMAGE_TAG (CUDA $base_major)"
+        fi
         ;;
 esac
+CUDA_VERSION="${CUDA_VERSION:-$CUDA_VERSION_DEFAULT}"
 BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
