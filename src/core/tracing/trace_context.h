@@ -14,7 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#pragma once
+#ifndef NIXL_SRC_CORE_TRACING_TRACE_CONTEXT_H
+#define NIXL_SRC_CORE_TRACING_TRACE_CONTEXT_H
 
 #include <array>
 #include <cstdint>
@@ -55,3 +56,5 @@ namespace nixl::trace {
 [[nodiscard]] TraceContext
 generateTraceContext();
 }
+
+#endif

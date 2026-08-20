@@ -20,6 +20,8 @@
 
 #include "common/uuid_v4.h"
 
+constexpr std::uint8_t supported_trace_flags = 0x03;
+
 template<std::size_t Size>
 [[nodiscard]] static bool
 allZero(const std::array<std::uint8_t, Size> &bytes) noexcept {
@@ -33,9 +35,6 @@ hexValue(char value) noexcept {
     }
     if (value >= 'a' && value <= 'f') {
         return value - 'a' + 10;
-    }
-    if (value >= 'A' && value <= 'F') {
-        return value - 'A' + 10;
     }
     return -1;
 }
@@ -103,6 +102,7 @@ nixl::trace::parseTraceparent(std::string_view value) {
         !parseByte(value, 53, context.flags) || !context.valid()) {
         return std::nullopt;
     }
+    context.flags &= supported_trace_flags;
     return context;
 }
 
@@ -123,7 +123,7 @@ nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
         appendByte(result, byte);
     }
     result.push_back('-');
-    appendByte(result, context.flags);
+    appendByte(result, context.flags & supported_trace_flags);
     return result;
 }
 
@@ -133,6 +133,7 @@ nixl::trace::generateTraceContext() {
     do {
         context.traceId = nixl::UUIDv4{}.get_data();
     } while (allZero(context.traceId));
+    context.flags = 0x02;
 
     do {
         const auto span_source = nixl::UUIDv4{}.get_data();
