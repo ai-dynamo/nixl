@@ -19,8 +19,6 @@
 #include <random>
 #include "nixl.h"
 #include "common.h"
-#include "common/configuration.h"
-#include "nixl_md_manager.h"
 
 // Used to avoid failures when etcd is not available
 #if HAVE_ETCD
@@ -140,18 +138,9 @@ protected:
 
     void TearDown() override
     {
-        // No-address invalidation requires a centralized metadata backend. Most
-        // tests in this fixture use direct serialization or P2P metadata, so
-        // attempting centralized cleanup without a configured store only emits
-        // a noTransport error that the test log checker correctly rejects.
-        if (nixlMDManager::etcdConfigured() ||
-            nixl::config::checkExistence("NIXL_TCPSTORE_ENDPOINT")) {
-            for (auto &agent : agents_) {
-                if (agent.agent) {
-                    agent.agent->invalidateLocalMD(nullptr);
-                }
-            }
-        }
+        // Destroying an agent does not require invalidating its metadata, so the
+        // fixture does not do it: a test that publishes metadata invalidates it
+        // through the same route it published on.
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
     }
@@ -506,6 +495,12 @@ TEST_F(MetadataExchangeTestFixture, SocketSendPartialLocal) {
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, valid_descs.trim()), NIXL_SUCCESS);
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, invalid_descs.trim()), NIXL_ERR_NOT_FOUND);
+
+    ASSERT_EQ(src.agent->invalidateLocalMD(&send_args), NIXL_SUCCESS);
+
+    std::this_thread::sleep_for(sleep_time);
+
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
@@ -641,10 +636,6 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
         EXPECT_EQ(lig2.getIgnoredCount(), 1);
     }
-
-    // Prevent invalidateLocalMD() from begin called again in TearDown()
-    // (which would generate more undesired warning/error log messages).
-    src.agent.reset();
 }
 
 TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemote) {
@@ -734,10 +725,6 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemote) {
     std::this_thread::sleep_for(sleep_time);
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, valid_descs.trim()), NIXL_ERR_NOT_FOUND);
-
-    // Prevent invalidateLocalMD() from begin called again in TearDown()
-    // (which would generate more undesired warning/error log messages).
-    src.agent.reset();
 }
 
 TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors) {
@@ -798,6 +785,9 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
         EXPECT_EQ(lig2.getIgnoredCount(), 1);
     }
+
+    // Remove the label published in case 2, so the agent name is reusable.
+    ASSERT_EQ(src.agent->invalidateLocalMD(), NIXL_SUCCESS);
 }
 
 } // namespace metadata_exchange
