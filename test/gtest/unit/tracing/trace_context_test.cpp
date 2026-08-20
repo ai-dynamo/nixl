@@ -31,13 +31,18 @@ TEST(TraceContext, ParsesAndFormatsCanonicalTraceparent) {
     EXPECT_EQ(nixl::trace::formatTraceparent(*context), kCanonicalTraceparent);
 }
 
-TEST(TraceContext, CanonicalizesMixedCaseInput) {
-    const auto context =
-        nixl::trace::parseTraceparent("00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-0A");
+TEST(TraceContext, RejectsUppercaseHex) {
+    std::string value = kCanonicalTraceparent;
+    value[4] = 'B';
+    EXPECT_FALSE(nixl::trace::parseTraceparent(value).has_value());
 
-    ASSERT_TRUE(context.has_value());
-    EXPECT_EQ(nixl::trace::formatTraceparent(*context),
-              "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-0a");
+    value = kCanonicalTraceparent;
+    value[38] = 'F';
+    EXPECT_FALSE(nixl::trace::parseTraceparent(value).has_value());
+
+    value = kCanonicalTraceparent;
+    value[53] = 'A';
+    EXPECT_FALSE(nixl::trace::parseTraceparent(value).has_value());
 }
 
 TEST(TraceContext, RejectsInvalidLengths) {
@@ -88,7 +93,7 @@ TEST(TraceContext, RejectsZeroSpanId) {
             .has_value());
 }
 
-TEST(TraceContext, PreservesFlagsAndReportsSampledBit) {
+TEST(TraceContext, NormalizesFlagsAndReportsSampledBit) {
     const auto sampled =
         nixl::trace::parseTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-ff");
     const auto unsampled =
@@ -96,10 +101,19 @@ TEST(TraceContext, PreservesFlagsAndReportsSampledBit) {
 
     ASSERT_TRUE(sampled.has_value());
     ASSERT_TRUE(unsampled.has_value());
-    EXPECT_EQ(sampled->flags, 0xff);
+    EXPECT_EQ(sampled->flags, 0x03);
     EXPECT_TRUE(sampled->sampled());
-    EXPECT_EQ(unsampled->flags, 0xfe);
+    EXPECT_EQ(unsampled->flags, 0x02);
     EXPECT_FALSE(unsampled->sampled());
+    EXPECT_EQ(nixl::trace::formatTraceparent(*sampled),
+              "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-03");
+    EXPECT_EQ(nixl::trace::formatTraceparent(*unsampled),
+              "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-02");
+
+    auto with_reserved_flags = *sampled;
+    with_reserved_flags.flags = 0xff;
+    EXPECT_EQ(nixl::trace::formatTraceparent(with_reserved_flags),
+              "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-03");
 }
 
 TEST(TraceContext, RoundTripsFixedContextWithoutFieldDrift) {
@@ -120,7 +134,7 @@ TEST(TraceContext, RoundTripsFixedContextWithoutFieldDrift) {
                                               0x47,
                                               0x36},
                                              {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7},
-                                             0xa5};
+                                             0x03};
 
     const auto parsed = nixl::trace::parseTraceparent(nixl::trace::formatTraceparent(expected));
 
@@ -148,6 +162,7 @@ TEST(TraceContext, GeneratesDistinctValidContexts) {
     for (std::size_t index = 0; index < count; ++index) {
         const auto context = nixl::trace::generateTraceContext();
         EXPECT_TRUE(context.valid());
+        EXPECT_EQ(context.flags, 0x02);
         EXPECT_FALSE(context.sampled());
         generated.insert(nixl::trace::formatTraceparent(context));
     }
