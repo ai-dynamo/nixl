@@ -297,7 +297,7 @@ else
         if have_gpu_side
             have_nixl_device_api = cuda.compiles(
                 '''
-                #include <gpu/ucx/nixl_device.cuh>
+                #include <gpu/nixl_device.cuh>
                 int main() { return 0; }
                 ''',
                 dependencies: [ucx_dep, doca_gpunetio_dep],
