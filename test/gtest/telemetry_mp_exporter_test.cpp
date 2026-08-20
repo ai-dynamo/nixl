@@ -239,6 +239,48 @@ TEST_F(MpExporterTest, LoadsThroughPluginManager) {
     EXPECT_FALSE(singleStoreFile().empty());
 }
 
+TEST_F(MpExporterTest, CreatedTelemetryDirIsPrivate) {
+    const auto sub = dir_ / "created";
+    ASSERT_FALSE(std::filesystem::exists(sub));
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", sub.string());
+
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-private"));
+
+    ASSERT_TRUE(std::filesystem::is_directory(sub));
+    EXPECT_EQ(std::filesystem::status(sub).permissions() & std::filesystem::perms::mask,
+              std::filesystem::perms::owner_all);
+}
+
+TEST_F(MpExporterTest, GroupWritableTelemetryDirWarns) {
+    const auto sub = dir_ / "group-loose";
+    std::filesystem::create_directory(sub);
+    std::filesystem::permissions(sub,
+                                 std::filesystem::perms::owner_all |
+                                     std::filesystem::perms::group_write,
+                                 std::filesystem::perm_options::replace);
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", sub.string());
+
+    const gtest::LogIgnoreGuard lig("is writable by group or other");
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-group-loose"));
+    EXPECT_TRUE(exporter.isExporter());
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
+}
+
+TEST_F(MpExporterTest, WorldWritableTelemetryDirWarns) {
+    const auto sub = dir_ / "world-loose";
+    std::filesystem::create_directory(sub);
+    std::filesystem::permissions(sub,
+                                 std::filesystem::perms::owner_all |
+                                     std::filesystem::perms::others_write,
+                                 std::filesystem::perm_options::replace);
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", sub.string());
+
+    const gtest::LogIgnoreGuard lig("is writable by group or other");
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-world-loose"));
+    EXPECT_TRUE(exporter.isExporter());
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
+}
+
 TEST(MpExporterStandaloneTest, MissingMultiprocDirThrows) {
     gtest::ScopedEnv env;
     env.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", "");
