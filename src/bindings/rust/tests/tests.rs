@@ -1277,8 +1277,8 @@ fn test_prep_xfer_dlist_invalid_agent() {
         let result = agent.prepare_xfer_dlist("invalid_agent", &dlist, None);
 
         assert!(
-            result.is_err_and(|e| matches!(e, NixlError::BackendError)),
-            "Expected InvalidParam for invalid agent name"
+            result.is_err_and(|e| matches!(e, NixlError::NotFound)),
+            "Expected NotFound for invalid agent name"
         );
     }
 }
@@ -1360,7 +1360,7 @@ fn test_make_xfer_req_invalid_indices() {
             &invalid_indices,    // Out-of-bounds remote index
             None
         );
-        assert!(result.is_err_and(|e| matches!(e, NixlError::BackendError)), "Expected InvalidParam for out-of-bounds indices");
+        assert!(result.is_err_and(|e| matches!(e, NixlError::InvalidParam)), "Expected InvalidParam for out-of-bounds indices");
     }
 }
 
@@ -1383,10 +1383,9 @@ fn test_get_local_partial_md_success() {
             println!("Partial metadata size: {}", metadata.len());
         }
         Err(e) => {
-            // May fail if no partial metadata exists yet, which is acceptable
             assert!(
-                matches!(e, NixlError::BackendError) || matches!(e, NixlError::InvalidParam),
-                "Expected BackendError or InvalidParam, got: {:?}", e
+                matches!(e, NixlError::NotFound),
+                "Expected NotFound, got: {:?}", e
             );
         }
     }
