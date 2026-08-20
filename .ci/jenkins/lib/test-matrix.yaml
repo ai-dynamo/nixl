@@ -156,6 +156,9 @@ steps:
       credentialsId: "${SCCTL_CREDENTIALS_ID}"
       containerName: "nixl-ci-${BUILD_NUMBER}"
       exportEnroot: "true"  # on failure, export the container to ${ENROOT_MOUNT_PATH} for crash debugging
+      slurmEnv: [
+        'UCX_RESOLVE_REMOTE_EP_ID=n'
+      ]
 
   - name: Run Python tests
     containerSelector: "{name: 'build_helper'}"

@@ -186,7 +186,8 @@ steps:
       credentialsId: "${SSH_CREDENTIALS_ID}"
       containerName: "nixl-ci-${BUILD_NUMBER}"
       slurmEnv: [
-        'UCX_IB_REG_METHODS=rcache'
+        'UCX_IB_REG_METHODS=rcache',
+        'UCX_RESOLVE_REMOTE_EP_ID=n'
       ]
 
   - name: Run DL Nixlbench tests
