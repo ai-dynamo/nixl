@@ -107,6 +107,7 @@ echo "==== nixl_ep elastic tests done ===="
 
 echo "==== Running vLLM Elastic EP test ===="
 : "${VLLM_ELASTIC_TEST_DIR:?vLLM Elastic EP test environment is not installed}"
+export LD_LIBRARY_PATH="/opt/hpcx/ucx/lib:/opt/hpcx/ucc/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 VLLM_PYTHON="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"
 VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
 VLLM_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)"
