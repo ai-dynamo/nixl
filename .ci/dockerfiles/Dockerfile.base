@@ -111,7 +111,7 @@ RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
             "${VLLM_ELASTIC_TEST_DIR}/.venv" && \
         VLLM_USE_PRECOMPILED=1 "${HOME}/.local/bin/uv" pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
-            --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=auto && \
+            --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=auto --no-build-isolation && \
         "${HOME}/.local/bin/uv" pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
             pytest "ray[default]>=2.48.0" && \
