@@ -14,32 +14,45 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_API_DEVICE_GPU_COMMON_NIXL_DEVICE_TYPES_CUH
-#define NIXL_SRC_API_DEVICE_GPU_COMMON_NIXL_DEVICE_TYPES_CUH
+#ifndef NIXL_SRC_API_DEVICE_GPU_DEVICE_TYPES_CUH
+#define NIXL_SRC_API_DEVICE_GPU_DEVICE_TYPES_CUH
 
 #include <cstddef>
 #include <cstdint>
 
 #include <nixl_types.h>
 
-struct nixlGpuXferStatusH {
+namespace nixl::gpu {
+
+struct xferStatusH {
     alignas(16) unsigned char storage[64] = {};
 };
 
-constexpr size_t nixl_gpu_xfer_status_payload_size = 64;
+constexpr size_t xfer_status_payload_size = 64;
 
-static_assert(nixl_gpu_xfer_status_payload_size == sizeof(nixlGpuXferStatusH));
+static_assert(xfer_status_payload_size == sizeof(xferStatusH));
 
-enum class nixl_gpu_level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
+enum class level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
 
-namespace nixl_gpu_flags {
-constexpr uint64_t defer = 1;
-} // namespace nixl_gpu_flags
+namespace flags {
+    constexpr uint64_t defer = 1;
+} // namespace flags
 
-struct nixlMemViewElem {
+struct memViewElem {
     nixlMemViewH mvh;
     size_t index; /**< Index in the memory view */
     size_t offset; /**< Offset within the buffer */
 };
 
-#endif // NIXL_SRC_API_DEVICE_GPU_COMMON_NIXL_DEVICE_TYPES_CUH
+} // namespace nixl::gpu
+
+using nixlGpuXferStatusH = nixl::gpu::xferStatusH;
+using nixl_gpu_level_t = nixl::gpu::level_t;
+using nixlMemViewElem = nixl::gpu::memViewElem;
+constexpr size_t nixl_gpu_xfer_status_payload_size = nixl::gpu::xfer_status_payload_size;
+
+namespace nixl_gpu_flags {
+constexpr uint64_t defer = nixl::gpu::flags::defer;
+} // namespace nixl_gpu_flags
+
+#endif // NIXL_SRC_API_DEVICE_GPU_DEVICE_TYPES_CUH
