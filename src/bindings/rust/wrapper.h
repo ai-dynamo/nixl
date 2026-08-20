@@ -33,6 +33,7 @@ typedef enum {
     NIXL_CAPI_ERROR_EXCEPTION = -4,
     NIXL_CAPI_IN_PROG = 1,
     NIXL_CAPI_ERROR_NO_TELEMETRY = -5,
+    NIXL_CAPI_ERROR_NOT_FOUND = -6, ///< Agent metadata not loaded, or no backend serves the request
 } nixl_capi_status_t;
 
 // Memory types enum (matching nixl's memory types)

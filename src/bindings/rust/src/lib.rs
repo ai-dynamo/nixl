@@ -79,7 +79,8 @@ pub use bindings::{
     nixl_capi_status_t_NIXL_CAPI_ERROR_INVALID_PARAM as NIXL_CAPI_ERROR_INVALID_PARAM,
     nixl_capi_status_t_NIXL_CAPI_IN_PROG as NIXL_CAPI_IN_PROG,
     nixl_capi_status_t_NIXL_CAPI_SUCCESS as NIXL_CAPI_SUCCESS,
-    nixl_capi_status_t_NIXL_CAPI_ERROR_NO_TELEMETRY as NIXL_CAPI_ERROR_NO_TELEMETRY
+    nixl_capi_status_t_NIXL_CAPI_ERROR_NO_TELEMETRY as NIXL_CAPI_ERROR_NO_TELEMETRY,
+    nixl_capi_status_t_NIXL_CAPI_ERROR_NOT_FOUND as NIXL_CAPI_ERROR_NOT_FOUND
 };
 
 mod agent;
@@ -119,6 +120,8 @@ pub enum NixlError {
     FailedToCreateBackend,
     #[error("Telemetry is not enabled or transfer is not complete")]
     NoTelemetry,
+    #[error("Not found")]
+    NotFound,
 }
 
 /// A safe wrapper around NIXL memory list
