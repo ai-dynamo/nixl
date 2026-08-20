@@ -430,8 +430,25 @@ else
     if [ "${BUILD_NIXL_EP}" = "true" ]; then
         EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
     fi
+    # Select the venv only for NIXL's Meson build; dependency builds keep system Python.
+    NIXL_PYTHON_ARGS=()
+    NIXL_PYTHON_NATIVE_FILE=""
+    if [ -n "${NIXL_PYTHON:-}" ]; then
+        if [ ! -x "${NIXL_PYTHON}" ]; then
+            echo "ERROR: NIXL_PYTHON is not executable: ${NIXL_PYTHON}" >&2
+            exit 1
+        fi
+        NIXL_PYTHON_NATIVE_FILE=$(mktemp)
+        printf "[binaries]\npython = '%s'\n" "${NIXL_PYTHON}" > "${NIXL_PYTHON_NATIVE_FILE}"
+        NIXL_PYTHON_ARGS=(--native-file "${NIXL_PYTHON_NATIVE_FILE}" -Dpython.install_env=venv)
+        "${NIXL_PYTHON}" -c \
+            'import sys, torch; print("NIXL Python/Torch:", sys.executable, torch.__version__, torch.version.cuda)'
+    fi
     # shellcheck disable=SC2086
-    meson setup ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
+    meson setup "${NIXL_PYTHON_ARGS[@]}" ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
+    if [ -n "${NIXL_PYTHON_NATIVE_FILE}" ]; then
+        rm -f "${NIXL_PYTHON_NATIVE_FILE}"
+    fi
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
     mkdir -p dist && cp ${NIXL_BUILD_DIR}/src/bindings/python/nixl-meta/nixl-*.whl dist/
 
