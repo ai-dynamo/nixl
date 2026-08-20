@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <thread>
 #include <random>
 #include "nixl.h"
@@ -554,10 +555,20 @@ TEST_F(MetadataExchangeTestFixture, LocalNonLocalMDExchange) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
+    std::vector<nixl_backend_t> plugins;
+    ASSERT_EQ(src.agent->getAvailPlugins(plugins), NIXL_SUCCESS);
+
     nixl_status_t status = NIXL_ERR_NOT_FOUND;
     nixlBackendH *backend;
     std::string backend_name;
     for (const auto& name : std::set<std::string>{"GDS", "POSIX"}) {
+        // Requesting a backend the plugin manager does not list warns once per
+        // plugin directory and then reports an unsupported backend, so only ask
+        // for the local-only plugins it actually found.
+        if (std::find(plugins.begin(), plugins.end(), name) == plugins.end()) {
+            continue;
+        }
+
         const LogIgnoreGuard lig1("cuFileDriverOpen failed");
         const LogIgnoreGuard lig2("createBackend: backend initialization error for 'GDS'");
         status = src.agent->createBackend(name, {}, backend);
