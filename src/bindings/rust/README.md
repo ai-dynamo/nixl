@@ -63,3 +63,17 @@ cargo test -- --test-threads=1
 ```
 
 **Note**: Tests cannot be run with the `stub-api` feature as they require actual NIXL functionality.
+
+The memory view tests allocate VRAM, so they are compiled only where the build
+script finds a CUDA toolkit, searched for under `CUDA_PATH`, `CUDA_HOME`, then
+`/usr/local/cuda`. Without one they are absent from the suite and nothing links
+against CUDA. With a toolkit but no device they skip at run time.
+
+`test_prep_mem_view_remote` additionally needs a device-capable RDMA lane, which
+UCX only offers over accelerated IB, so it is opt-in:
+
+```bash
+NIXL_TEST_DEVICE_LANE=1 cargo test --test mem_view -- --test-threads=1
+```
+
+It is not skipped on failure, so where it runs, a failure is a real one.

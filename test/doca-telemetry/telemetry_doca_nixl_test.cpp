@@ -33,8 +33,8 @@
 
 #include <gtest/gtest.h>
 
-using nixl::doca_test::loopbackConnection;
-using nixl::doca_test::scrapeUntilValue;
+using nixl::metrics_test::loopbackConnection;
+using nixl::metrics_test::scrapeUntilValue;
 
 namespace {
 
@@ -89,7 +89,7 @@ TEST_F(docaNixlExporterTest, CounterAccumulatesAllPushedValues) {
             .counterName;
     // The exporter tags every sample with the agent_name label, so look the
     // series up by name + that label rather than by name alone.
-    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
 
     constexpr std::array<uint64_t, 5> deltas{1000, 250, 4096, 1, 75000};
     uint64_t expected_total = 0;
@@ -124,7 +124,7 @@ TEST_F(docaNixlExporterTest, GaugeReflectsLastPushedValue) {
     // The memory gauge is served under its last-operation series name, which is
     // distinct from the AGENT_MEMORY_REGISTERED event string.
     const std::string metric = "agent_memory_registered_last_bytes";
-    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
 
     constexpr std::array<uint64_t, 4> values{4096, 65536, 1024, 8192};
     for (const uint64_t v : values) {
@@ -187,7 +187,7 @@ TEST_F(docaNixlExporterTest, ByteEventsEmitCumulativeCountersAndLastGauges) {
     const nixlTelemetryExporterInitParams params{agentName, 4096};
     nixlTelemetryDocaExporter exporter(params);
 
-    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
     const std::string txCounter =
         nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES)
             .counterName;
@@ -239,9 +239,10 @@ TEST_F(docaNixlExporterTest, ErrorCountersUseBoundedStatusLabel) {
     ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
 
     const std::string metric = "agent_errors_total";
-    const nixl::doca_test::labelSet invalidParamLabels{{"agent_name", agentName},
-                                                       {"status", "invalid_param"}};
-    const nixl::doca_test::labelSet backendLabels{{"agent_name", agentName}, {"status", "backend"}};
+    const nixl::metrics_test::labelSet invalidParamLabels{{"agent_name", agentName},
+                                                          {"status", "invalid_param"}};
+    const nixl::metrics_test::labelSet backendLabels{{"agent_name", agentName},
+                                                     {"status", "backend"}};
 
     const auto metrics =
         scrapeUntilValue(port_, metric, 2.0, std::chrono::seconds(12), invalidParamLabels);
@@ -286,7 +287,7 @@ TEST_F(docaNixlExporterTest, ScrapeEmitsExactlyTheDescriptorSeries) {
 
     // Anchor on a histogram series (flushed with everything else in one metrics
     // flush): once it is served, every other descriptor series is present too.
-    const nixl::doca_test::labelSet histogramLabels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet histogramLabels{{"agent_name", agentName}};
     const auto metrics = scrapeUntilValue(
         port_, "agent_xfer_time_us_count", 1.0, std::chrono::seconds(12), histogramLabels);
 
@@ -315,7 +316,7 @@ TEST_F(docaNixlExporterTest, DroppedEventsCounterAccumulates) {
     const std::string metric = nixlEnumStrings::telemetryMetricDescriptor(
                                    nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED)
                                    .counterName;
-    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
 
     constexpr std::array<uint64_t, 3> deltas{7, 4, 13};
     uint64_t expected_total = 0;
@@ -346,7 +347,7 @@ TEST_F(docaNixlExporterTest, XferTimeHistogramRecordsObservations) {
     const nixlTelemetryExporterInitParams params{agentName, 4096};
     nixlTelemetryDocaExporter exporter(params);
 
-    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
 
     constexpr std::array<uint64_t, 4> values{5, 30, 200, 700}; // sum 935
     for (const uint64_t v : values) {
@@ -442,7 +443,7 @@ TEST_F(docaNixlExporterTest, MultipleBackendsScrapeServesWhenIpcHasNoDts) {
     const std::string metric =
         nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES)
             .counterName;
-    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
 
     ASSERT_EQ(exporter.exportEvent({nixl_telemetry_event_type_t::AGENT_TX_BYTES, 909}),
               NIXL_SUCCESS);
@@ -478,7 +479,7 @@ TEST_F(docaNixlExporterTest, DISABLED_IpcDeliversToLiveDts) {
     const std::string metric =
         nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES)
             .counterName;
-    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
 
     constexpr std::array<uint64_t, 3> deltas{1000, 2000, 4000};
     uint64_t expected_total = 0;
@@ -522,8 +523,8 @@ TEST_F(docaNixlExporterTest, BatchSharesOneTimestampAcrossEvents) {
     });
     ASSERT_EQ(exporter.flush(), NIXL_SUCCESS);
 
-    const nixl::doca_test::labelSet errLabels{{"agent_name", agentName},
-                                              {"status", "invalid_param"}};
+    const nixl::metrics_test::labelSet errLabels{{"agent_name", agentName},
+                                                 {"status", "invalid_param"}};
     const auto metrics =
         scrapeUntilValue(port_, "agent_errors_total", 100.0, std::chrono::seconds(12), errLabels);
 
@@ -569,7 +570,7 @@ TEST_F(docaNixlExporterTest, StandaloneExportStampsEachEventFreshly) {
     const std::string rxCounter =
         nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_RX_BYTES)
             .counterName;
-    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
 
     ASSERT_EQ(
         exporter.exportEvent(nixlTelemetryEvent(nixl_telemetry_event_type_t::AGENT_TX_BYTES, 42)),
@@ -585,7 +586,7 @@ TEST_F(docaNixlExporterTest, StandaloneExportStampsEachEventFreshly) {
     EXPECT_EQ(metrics.latestValue(rxCounter, labels), std::optional<double>(7.0));
 
     const auto seriesTimestamp = [&metrics](const std::string &name,
-                                            const nixl::doca_test::labelSet &where) {
+                                            const nixl::metrics_test::labelSet &where) {
         std::optional<uint64_t> ts;
         for (const auto &[id, seriesSamples] : metrics.series()) {
             if (id.name != name || seriesSamples.empty()) {
