@@ -52,6 +52,7 @@
 
 // Local includes
 #include "common/nixl_time.h"
+#include "gpunetio_oob_endpoint.h"
 
 constexpr uint32_t DOCA_EIGHT_RANK_MAX_INFLIGHT = 7 * 36 + 7;
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 512;
@@ -63,7 +64,6 @@ constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
 constexpr uint32_t DOCA_XFER_REQ_MAX = 512;
 constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
 constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
-constexpr uint32_t DOCA_RDMA_CM_LOCAL_PORT_SERVER = 6544;
 constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
 
 static_assert((DOCA_MAX_COMPLETION_INFLIGHT & DOCA_MAX_COMPLETION_INFLIGHT_MASK) == 0);
@@ -194,7 +194,9 @@ nixlDocaEngineCheckCudaError(cudaError_t result, const char *message);
 void
 nixlDocaEngineCheckCuError(CUresult result, const char *message);
 int
-oob_connection_client_setup(const char *server_ip, int *oob_sock_fd);
+oob_connection_client_setup(const char *server_ip,
+                            int *oob_sock_fd,
+                            uint16_t server_port = GPUNETIO_DEFAULT_OOB_PORT);
 void
 oob_connection_client_close(int oob_sock_fd);
 void

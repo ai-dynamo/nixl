@@ -48,7 +48,7 @@ nixlDocaEngineCheckCuError(CUresult result, const char *message) {
 }
 
 int
-oob_connection_client_setup(const char *server_ip, int *oob_sock_fd) {
+oob_connection_client_setup(const char *server_ip, int *oob_sock_fd, uint16_t server_port) {
     struct sockaddr_in server_addr = {0};
     int oob_sock_fd_;
 
@@ -62,13 +62,17 @@ oob_connection_client_setup(const char *server_ip, int *oob_sock_fd) {
 
     /* Set port and IP the same as server-side: */
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
-    server_addr.sin_addr.s_addr = inet_addr(server_ip);
+    server_addr.sin_port = htons(server_port);
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) != 1) {
+        close(oob_sock_fd_);
+        NIXL_ERROR << "Invalid server IPv4 address " << server_ip;
+        return -1;
+    }
 
     /* Send connection request to server: */
     if (connect(oob_sock_fd_, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         close(oob_sock_fd_);
-        NIXL_ERROR << "Unable to connect to server at " << server_ip;
+        NIXL_ERROR << "Unable to connect to server at " << server_ip << ":" << server_port;
         return -1;
     }
     NIXL_INFO << "Connected with server successfully";

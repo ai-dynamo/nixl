@@ -16,7 +16,6 @@
  */
 
 #include "gpunetio_backend.h"
-#include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <cassert>
 #include <iterator>
@@ -147,6 +146,8 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     gid_index = parseGidIndex((*custom_params)["gid_index"]);
     NIXL_INFO << "RoCE GID index: " << gid_index;
 
+    local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
+    NIXL_INFO << "OOB listen port: " << local_port;
     /* Open DOCA device */
     verbs_context = open_ib_device((char *)(ndevs[0].c_str()));
     if (verbs_context == nullptr) {
@@ -566,21 +567,21 @@ nixlDocaEngine::progressThreadStart() {
     if (oobdev.size() > 0 && oobdev[0] != "") {
         struct sockaddr_in *addr_in = (struct sockaddr_in *)&oob_saddr;
         /* Bind to the set port and IP: */
-        addr_in->sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
+        addr_in->sin_port = htons(local_port);
         if (bind(oob_sock_server, (struct sockaddr *)addr_in, sizeof(struct sockaddr_in)) < 0) {
-            NIXL_ERROR << "Couldn't bind to the port " << DOCA_RDMA_CM_LOCAL_PORT_SERVER;
+            NIXL_ERROR << "Couldn't bind to the port " << local_port;
             close(oob_sock_server);
             return NIXL_ERR_NOT_SUPPORTED;
         }
     } else {
         /* Set port and IP: */
         server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
+        server_addr.sin_port = htons(local_port);
         server_addr.sin_addr.s_addr = INADDR_ANY; /* listen on any interface */
 
         /* Bind to the set port and IP: */
         if (bind(oob_sock_server, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-            NIXL_ERROR << "Couldn't bind to the port " << DOCA_RDMA_CM_LOCAL_PORT_SERVER;
+            NIXL_ERROR << "Couldn't bind to the port " << local_port;
             close(oob_sock_server);
             return NIXL_ERR_NOT_SUPPORTED;
         }
@@ -620,7 +621,7 @@ nixlDocaEngine::progressThreadStop() {
     ss << (int)ipv4_addr[0] << "." << (int)ipv4_addr[1] << "." << (int)ipv4_addr[2] << "."
        << (int)ipv4_addr[3];
     std::atomic_thread_fence(std::memory_order_seq_cst);
-    oob_connection_client_setup(ss.str().c_str(), &fake_sock_fd);
+    oob_connection_client_setup(ss.str().c_str(), &fake_sock_fd, local_port);
     // pthr.join();
     pthread_join(server_thread_id, nullptr);
     close(oob_sock_server);
@@ -1004,7 +1005,7 @@ nixlDocaEngine::getConnInfo(std::string &str) const {
     std::stringstream ss;
     ss << (int)ipv4_addr[0] << "." << (int)ipv4_addr[1] << "." << (int)ipv4_addr[2] << "."
        << (int)ipv4_addr[3];
-    str = ss.str();
+    str = formatGpunetioOobEndpoint(ss.str(), local_port);
     return NIXL_SUCCESS;
 }
 
@@ -1029,17 +1030,20 @@ nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
     // TODO: Connect part should be moved into connect() method
     nixlDocaConnection conn;
-    size_t size = remote_conn_info.size();
-    // TODO: eventually std::byte?
-    char *addr = new char[size];
-
     if (remoteConnMap.find(remote_agent) != remoteConnMap.end()) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlSerDes::_stringToBytes((void *)addr, remote_conn_info, size);
+    GpunetioOobEndpoint endpoint;
+    try {
+        endpoint = parseGpunetioOobEndpoint(remote_conn_info);
+    }
+    catch (const std::invalid_argument &error) {
+        NIXL_ERROR << error.what();
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
-    int ret = oob_connection_client_setup(addr, &oob_sock_client);
+    int ret = oob_connection_client_setup(endpoint.ipv4.c_str(), &oob_sock_client, endpoint.port);
     if (ret < 0) {
         NIXL_ERROR << "Can't connect to server " << ret;
         return NIXL_ERR_BACKEND;
@@ -1062,8 +1066,6 @@ nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
     NIXL_INFO << "DOCA loadRemoteConnInfo connected agent " << remote_agent;
 
     close(oob_sock_client);
-
-    delete[] addr;
 
     return NIXL_SUCCESS;
 }
