@@ -560,6 +560,8 @@ TestErrorHandling::testStalePreppedDlist() {
     EXPECT_EQ(make_xfer(), NIXL_SUCCESS);
     EXPECT_EQ(initiator.releasedDlistH(local_side), NIXL_SUCCESS);
     EXPECT_EQ(initiator.releasedDlistH(remote_side), NIXL_SUCCESS);
+    m_Target.destroy();
+    m_Initiator.destroy();
 }
 
 void
@@ -601,6 +603,8 @@ TestErrorHandling::testStaleXferHandle() {
     ASSERT_TRUE(status == NIXL_SUCCESS || status == NIXL_IN_PROG);
     nixl_notifs_t target_notifs;
     EXPECT_EQ(m_Initiator.waitForCompletion(req, m_Target, target_notifs), NIXL_SUCCESS);
+    m_Target.destroy();
+    m_Initiator.destroy();
 }
 
 // Reloading byte-identical metadata is an intentional refresh: the registration
@@ -636,6 +640,8 @@ TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
     EXPECT_EQ(m_Initiator.waitForCompletion(req, m_Target, target_notifs), NIXL_SUCCESS);
     EXPECT_EQ(initiator.releasedDlistH(local_side), NIXL_SUCCESS);
     EXPECT_EQ(initiator.releasedDlistH(remote_side), NIXL_SUCCESS);
+    m_Target.destroy();
+    m_Initiator.destroy();
 }
 
 #ifdef HAVE_UCX_BACKEND
