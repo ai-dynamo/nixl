@@ -970,6 +970,42 @@ nvidia-smi topo -m
 cat /proc/driver/nvidia/version
 ```
 
+#### GDS Compat Mode Hangs
+
+When running the GDS backend in cuFile compatible mode (e.g. `CUFILE_FORCE_COMPAT_MODE=true`
+for comparing GDS on/off), benchmarks with large batch sizes can hang indefinitely with
+no output and no error:
+
+```bash
+# Completes fine up to batch 64, hangs forever at batch 128 with the default cufile.json
+CUFILE_ALLOW_COMPAT_MODE=true CUFILE_FORCE_COMPAT_MODE=true \
+nixlbench --backend GDS --initiator_seg_type VRAM --filepath /mnt/storage/testdir \
+  --storage_enable_direct --start_batch_size 1 --max_batch_size 128
+```
+
+In compat mode every in-flight batch entry takes a CPU bounce buffer from the cuFile
+POSIX pool (`posix_pool_slab_count`, default 64 buffers for the 1MiB slab class). When
+the number of concurrent batch entries exceeds the pool size, `cuFileBatchIOSubmit`
+blocks forever waiting for a free buffer. To confirm, set `"logging": {"level": "DEBUG"}`
+in cufile.json and look for:
+
+```
+Waiting for free buffer pool_is_full: 0 gpuid: 0 available slots 0 wait 1
+```
+
+Fix: increase the slab count for the slab class matching your block size so it covers
+the maximum number of concurrent batch entries, e.g. in cufile.json:
+
+```json
+"properties": {
+    "posix_pool_slab_size_kb": [4, 1024, 16384],
+    "posix_pool_slab_count": [128, 256, 64]
+}
+```
+
+See the [GDS plugin README](../../src/plugins/cuda_gds/README.md#cufilejson-configuration)
+for the full recommended compat mode configuration.
+
 #### Network Backend Issues
 ```bash
 # List available devices
