@@ -879,6 +879,13 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
     size_t size = remote_conn_info.size();
     std::vector<char> addr(size);
 
+    if (remote_agent.size() >= UCP_ENTITY_NAME_MAX) {
+        NIXL_ERROR << "Remote agent name is " << remote_agent.size()
+                   << " bytes, but UCX endpoint names are limited to " << UCP_ENTITY_NAME_MAX - 1
+                   << " bytes";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     if(remoteConnMap.count(remote_agent)) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -886,7 +893,7 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
     nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
     std::shared_ptr<nixlUcxConnection> conn = std::make_shared<nixlUcxConnection>();
     for (const auto &uw : workers_) {
-        std::unique_ptr<nixlUcxEp> ep = uw->connect(addr.data());
+        std::unique_ptr<nixlUcxEp> ep = uw->connect(addr.data(), remote_agent);
         if (!ep) {
             return NIXL_ERR_BACKEND;
         }
