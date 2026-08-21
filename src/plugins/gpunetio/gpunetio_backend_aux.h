@@ -53,17 +53,23 @@
 // Local includes
 #include "common/nixl_time.h"
 
-constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
+constexpr uint32_t DOCA_EIGHT_RANK_MAX_INFLIGHT = 7 * 36 + 7;
+constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 512;
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
 constexpr uint32_t RDMA_SEND_QUEUE_SIZE = 2048;
 constexpr uint32_t RDMA_RECV_QUEUE_SIZE = (RDMA_SEND_QUEUE_SIZE * 2);
 constexpr uint32_t DOCA_POST_STREAM_NUM = 4;
 constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
-constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
+constexpr uint32_t DOCA_XFER_REQ_MAX = 512;
 constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
 constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
 constexpr uint32_t DOCA_RDMA_CM_LOCAL_PORT_SERVER = 6544;
 constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
+
+static_assert((DOCA_MAX_COMPLETION_INFLIGHT & DOCA_MAX_COMPLETION_INFLIGHT_MASK) == 0);
+static_assert((DOCA_XFER_REQ_MAX & DOCA_XFER_REQ_MASK) == 0);
+static_assert(DOCA_MAX_COMPLETION_INFLIGHT >= DOCA_EIGHT_RANK_MAX_INFLIGHT);
+static_assert(DOCA_XFER_REQ_MAX >= DOCA_EIGHT_RANK_MAX_INFLIGHT);
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define DOCA_RDMA_SERVER_ADDR_LEN \
