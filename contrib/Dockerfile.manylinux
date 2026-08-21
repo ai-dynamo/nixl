@@ -75,6 +75,15 @@ ENV PATH=/opt/rh/gcc-toolset-14/root/usr/bin:${PATH} \
 # cmake_minimum_required(VERSION < 3.5). Some bundled deps (e.g. gRPC's c-ares)
 # still declare ancient minimums. This tells CMake 4.x to accept them.
 ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
+
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+# Inherited by the wheel stage below via FROM $wheel_base.
+ENV CMAKE_INSTALL_ALWAYS=1
+
 # === end Option B header ======================================================
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"

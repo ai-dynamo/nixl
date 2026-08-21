@@ -21,6 +21,13 @@ set -e
 set -x
 set -o pipefail
 
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+export CMAKE_INSTALL_ALWAYS=1
+
 # Parse commandline arguments with first argument being the install directory
 # and second argument being the UCX installation directory.
 INSTALL_DIR=$1
