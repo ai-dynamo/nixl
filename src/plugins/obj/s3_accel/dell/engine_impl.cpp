@@ -371,8 +371,8 @@ S3DellObsObjEngineImpl::S3DellObsObjEngineImpl(const nixlBackendInitParams *init
  * @param mem Memory blob descriptor containing address, length, device ID, and metadata
  * @param nixl_mem Memory type (OBJ_SEG, DRAM_SEG, or VRAM_SEG)
  * @param out Output backend metadata handle
- * @return NIXL_SUCCESS on success, NIXL_ERR_BACKEND on cuObject failure, NIXL_ERR_NOT_SUPPORTED for
- * unsupported memory types
+ * @return NIXL_SUCCESS on success, NIXL_ERR_INVALID_PARAM if the OBJ devId is already registered,
+ * NIXL_ERR_BACKEND on cuObject failure, or NIXL_ERR_NOT_SUPPORTED for unsupported memory types
  */
 nixl_status_t
 S3DellObsObjEngineImpl::registerMem(const nixlBlobDesc &mem,
