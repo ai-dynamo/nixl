@@ -78,6 +78,10 @@ public:
     nixlUcxEp &
     operator=(const nixlUcxEp &) = delete;
 
+    // Like closeImpl(), but waits for the close to complete.
+    nixl_status_t
+    closeSync(ucp_worker_h worker);
+
     using am_cleanup_t = std::function<void(void *request, void *buffer)>;
 
     /* Active message handling */
