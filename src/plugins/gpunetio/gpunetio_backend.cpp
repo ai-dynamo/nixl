@@ -26,6 +26,30 @@
 
 const char info_delimiter = '-';
 
+namespace {
+int
+parseGidIndex(const std::string &value) {
+    if (value.empty()) {
+        return 0;
+    }
+
+    size_t parsed_chars = 0;
+    int parsed_value = 0;
+    try {
+        parsed_value = std::stoi(value, &parsed_chars);
+    }
+    catch (const std::exception &) {
+        throw std::invalid_argument("gid_index must be an integer in the range [0, 255]");
+    }
+
+    if (parsed_chars != value.size() || parsed_value < 0 || parsed_value > 255) {
+        throw std::invalid_argument("gid_index must be an integer in the range [0, 255]");
+    }
+
+    return parsed_value;
+}
+} // namespace
+
 /****************************************
  * Constructor/Destructor
  *****************************************/
@@ -98,6 +122,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
+    gid_index = parseGidIndex((*custom_params)["gid_index"]);
+    NIXL_INFO << "RoCE GID index: " << gid_index;
+
     /* Open DOCA device */
     verbs_context = open_ib_device((char *)(ndevs[0].c_str()));
     if (verbs_context == nullptr) {
@@ -124,8 +151,6 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     if (ret) {
         throw std::invalid_argument("Failed to query ibv port attributes");
     }
-
-    gid_index = 0;
 
     ret = ibv_query_gid(pd->context, 1, gid_index, &rgid);
     if (ret) {
@@ -169,7 +194,10 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
 
     if (oobdev.size() > 0 && oobdev[0] != "") {
-        netif_get_addr(oobdev[0].c_str(), AF_INET, &oob_saddr, &oob_netmask);
+        if (netif_get_addr(oobdev[0].c_str(), AF_INET, &oob_saddr, &oob_netmask) != 0) {
+            throw std::invalid_argument("Failed to get IPv4 address for GPUNETIO OOB interface '" +
+                                        oobdev[0] + "'");
+        }
         struct sockaddr_in *addr_in = (struct sockaddr_in *)&oob_saddr;
         memcpy(ipv4_addr, (uint8_t *)&(addr_in->sin_addr.s_addr), 4);
         NIXL_DEBUG << "Eth IP address " << static_cast<unsigned>(ipv4_addr[0]) << " "
@@ -177,8 +205,13 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
                    << static_cast<unsigned>(ipv4_addr[2]) << " "
                    << static_cast<unsigned>(ipv4_addr[3]) << " " << "ifface " << oobdev[0].c_str();
     } else {
-        doca_devinfo_get_ipv4_addr(
+        result = doca_devinfo_get_ipv4_addr(
             doca_dev_as_devinfo(ddev), (uint8_t *)ipv4_addr, DOCA_DEVINFO_IPV4_ADDR_SIZE);
+        if (result != DOCA_SUCCESS) {
+            throw std::invalid_argument(
+                "Failed to determine the GPUNETIO IPv4 address; set oob_interface explicitly "
+                "when using a bonded network device");
+        }
         NIXL_DEBUG << "DOCA IP address " << static_cast<unsigned>(ipv4_addr[0]) << " "
                    << static_cast<unsigned>(ipv4_addr[1]) << " "
                    << static_cast<unsigned>(ipv4_addr[2]) << " "
