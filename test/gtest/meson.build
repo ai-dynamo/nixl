@@ -53,7 +53,7 @@ subdir('mocks')
 subdir('unit')
 subdir('plugins')
 
-if ucx_gpu_device_api_available
+if cuda_dep.found()
     subdir('device_api')
 endif
 
@@ -76,6 +76,7 @@ else
 endif
 
 cpp_flags = []
+cuda_flags = []
 
 gpu_dependencies = []
 if rocm_dep.found()
@@ -84,6 +85,13 @@ if rocm_dep.found()
 elif cuda_dep.found()
     gpu_dependencies = [cuda_dep]
     cpp_flags += ['-DHAVE_GPU', '-DHAVE_CUDA']
+endif
+
+if cuda_dep.found()
+    cuda_flags += '-DHAVE_CUDA'
+    cuda_dependencies = [cuda_dep]
+else
+    cuda_dependencies = []
 endif
 
 if libfabric_dep.found()
@@ -119,13 +127,13 @@ gtest_sources = [
     'configuration.cpp'
     ]
 
-if ucx_gpu_device_api_available
+if gpu_device_api_supported
     gtest_sources += device_api_test_sources
-    device_api_inc = [nixl_gpu_inc_dirs, include_directories('device_api')]
-    device_api_dep = [ucx_dep, doca_gpunetio_dep]
+    device_api_inc = [nixl_gpu_device_api_inc_dirs, include_directories('device_api')]
+    device_api_link_deps = []
 else
     device_api_inc = []
-    device_api_dep = []
+    device_api_link_deps = []
 endif
 
 if ucx_dep.found() and is_variable('ucx_backend_interface')
@@ -158,7 +166,8 @@ test_exe = executable('gtest',
     sources : gtest_sources,
     include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../metrics'), include_directories('../../src/plugins/telemetry/common')],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface, nixl_telemetry_mp_store_dep, telemetry_mp_collector_dep, telemetry_mp_exporter_dep],
+    cuda_args : cuda_flags,
+    dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, gpu_device_api_deps, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface, device_api_link_deps, nixl_telemetry_mp_store_dep, telemetry_mp_collector_dep, telemetry_mp_exporter_dep],
     link_with: [nixl_build_lib],
     install : true
 )
