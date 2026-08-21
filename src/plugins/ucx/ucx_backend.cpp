@@ -790,7 +790,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
     numSharedWorkers_ = num_workers - num_dedicated_workers;
 
     const size_t num_device_channels =
-        nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
+        nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 16u);
 
 
     ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
