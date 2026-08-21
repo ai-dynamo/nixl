@@ -61,10 +61,14 @@ if libfabric_dep.found()
     endif
 endif
 
-# Add CUDA support if available
+# Add CUDA or ROCm support if available
 if cuda_dep.found()
     libfabric_utils_deps += [cuda_dep]
-    libfabric_utils_cpp_args += ['-DHAVE_CUDA']
+    if get_option('use_rocm')
+        libfabric_utils_cpp_args += ['-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
+    else
+        libfabric_utils_cpp_args += ['-DHAVE_CUDA']
+    endif
 endif
 
 # Create static library
