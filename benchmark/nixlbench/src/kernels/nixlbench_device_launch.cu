@@ -13,7 +13,7 @@
 
 #include "nixlbench_device_launch.cuh"
 
-#include <gpu/ucx/nixl_device.cuh>
+#include <gpu/nixl_device.cuh>
 
 #include <cstdio>
 #include <iostream>

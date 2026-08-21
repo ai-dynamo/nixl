@@ -49,6 +49,6 @@ void barrier(int** barrier_signal_ptrs, int rank, int num_nvl_ranks, uint64_t ti
 #undef BARRIER_LAUNCH_CASE
 }
 
-}  // namespace intranode
+}
 
 } // namespace nixl_ep

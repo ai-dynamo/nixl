@@ -18,6 +18,9 @@
 #include <iostream>
 #include <chrono>
 #include <iostream>
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <numeric>
 #include <optional>
 #include <set>
@@ -34,6 +37,7 @@
 #include "common/operators.h"
 #include "common/hw_info.h"
 #include "common/str_util.h"
+#include "device_api/device_memview.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 #include "tracing/trace.h"
@@ -188,9 +192,26 @@ makeMDConfig(const nixlAgentConfig &config) {
 
 } // namespace
 
+nixlDeviceProxyModeSelection
+nixlResolveDeviceProxyMode(bool configured) {
+    const char *mode_override = std::getenv("NIXL_DEVICE_MODE");
+    if (mode_override == nullptr) {
+        return {configured, false};
+    }
+    if (std::strcmp(mode_override, "direct") == 0) {
+        return {false, true};
+    }
+    if (std::strcmp(mode_override, "proxy") == 0) {
+        return {true, true};
+    }
+    throw std::invalid_argument("NIXL_DEVICE_MODE must be exactly 'direct' or 'proxy'; got '" +
+                                std::string(mode_override) + "'");
+}
+
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
     : name_(name),
       config_(config),
+      proxyMode_(nixlResolveDeviceProxyMode(config.enableDeviceProxy)),
       // The manager is the single metadata path, built unconditionally so the
       // public methods can delegate without a fallback. It selects its backends
       // from the environment (P2P plus an optional name-addressed backend).
@@ -234,7 +255,9 @@ nixlAgentData::~nixlAgentData() {
 nixlAgent::nixlAgent(const std::string &name, const nixlAgentConfig &cfg)
     : data(std::make_unique<nixlAgentData>(name, cfg)) {}
 
-nixlAgent::~nixlAgent() = default;
+nixlAgent::~nixlAgent() {
+    data->shutdownProxyRuntime();
+}
 
 nixl_status_t
 nixlAgent::getAvailPlugins (std::vector<nixl_backend_t> &plugins) {
@@ -312,6 +335,74 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
                    " For best performance, it's recommended to use the LIBFABRIC backend instead.";
         }
     }
+}
+
+bool
+nixlAgentData::proxyModeEnabled() const {
+    return proxyMode_.enabled;
+}
+
+const char *
+nixlAgentData::proxyModeSource() const {
+    return proxyMode_.from_environment ? "NIXL_DEVICE_MODE environment override" :
+                                         "nixlAgentConfig";
+}
+
+bool
+nixlAgentData::hasProxyRuntime() const {
+    return proxyRuntime != nullptr;
+}
+
+nixl_status_t
+nixlAgentData::createProxyRuntime(nixlBackendEngine *engine,
+                                  const nixl_backend_t &backend,
+                                  const nixlBackendInitParams &init_params) {
+    if (hasProxyRuntime()) {
+        return NIXL_SUCCESS;
+    }
+
+    std::unique_ptr<nixlDeviceProxyBackendAdapter> proxy_adapter;
+    nixl_status_t status = engine->createDeviceProxyBackendAdapter(init_params, proxy_adapter);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+    if (!proxy_adapter) {
+        return NIXL_ERR_BACKEND;
+    }
+
+    proxyRuntime = std::make_unique<nixlProxyRuntime>();
+
+    status = proxyRuntime->init(std::move(proxy_adapter),
+                                config_.proxyMaxPeers,
+                                config_.proxyChannelCount,
+                                config_.proxyWorkerCount,
+                                config_.pthrDelay);
+    if (status != NIXL_SUCCESS) {
+        proxyRuntime.reset();
+        return status;
+    }
+
+    status = proxyRuntime->startWorkers();
+    if (status != NIXL_SUCCESS) {
+        proxyRuntime->shutdown();
+        proxyRuntime.reset();
+        return status;
+    }
+
+    proxyTransportEngine = engine;
+    NIXL_INFO << "Enabled device proxy runtime for backend '" << backend << "' with "
+              << config_.proxyWorkerCount << " worker(s), max_peers=" << config_.proxyMaxPeers
+              << ", and " << config_.proxyChannelCount << " channel(s) per peer";
+    return NIXL_SUCCESS;
+}
+
+void
+nixlAgentData::shutdownProxyRuntime() {
+    if (proxyRuntime) {
+        proxyRuntime->shutdown();
+        proxyRuntime.reset();
+    }
+    proxyTransportEngine = nullptr;
 }
 
 nixl_status_t
@@ -407,6 +498,20 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     if (backend->supportsRemote()) {
         data->notifEngines.push_back(backend.get());
         data->connMd_[type] = conn_info;
+    }
+
+    if (data->proxyModeEnabled()) {
+        if (backend->supportsProxy()) {
+            const nixl_status_t ret = data->createProxyRuntime(backend.get(), type, init_params);
+            if (ret != NIXL_SUCCESS) {
+                NIXL_ERROR_FUNC << "Failed to initialize proxy runtime on backend '" << type
+                                << "' with status " << ret;
+                return ret;
+            }
+        } else {
+            NIXL_WARN << "Proxy runtime is enabled by " << data->proxyModeSource()
+                      << " but backend '" << type << "' does not support it";
+        }
     }
 
     // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
@@ -1776,6 +1881,13 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
         return ret;
     }
 
+    if (hasProxyRuntime() && (proxyTransportEngine == eng)) {
+        const nixl_status_t proxy_ret = proxyRuntime->loadRemoteConnInfo(remote_name, conn_info);
+        if ((proxy_ret != NIXL_SUCCESS) && (proxy_ret != NIXL_ERR_NOT_SUPPORTED)) {
+            return proxy_ret;
+        }
+    }
+
     // Only now, so a failed load leaves no empty entry behind for this remote.
     if (r_it == remoteBackends_.end()) {
         r_it = remoteBackends_.try_emplace(remote_name).first;
@@ -1907,6 +2019,7 @@ nixl_status_t
 nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
                        nixlMemViewH &mvh,
                        const nixl_opt_args_t *extra_params) const {
+    mvh = nullptr;
     const auto desc_count = static_cast<size_t>(dlist.descCount());
     const auto mem_type = dlist.getType();
     NIXL_TRACE_SCOPE(
@@ -1969,18 +2082,41 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    const auto status = engine->prepMemView(remote_meta_dlist, mvh, &opt_args);
-    if (status == NIXL_SUCCESS) {
-        data->mvhToEngine.emplace(mvh, *engine);
+    const bool use_proxy = data->hasProxyRuntime() && (data->proxyTransportEngine == engine);
+    nixlMemViewH backend_memview = nullptr;
+    nixl_status_t status;
+    if (use_proxy) {
+        status = data->proxyRuntime->prepMemView(remote_meta_dlist, &backend_memview);
+    } else {
+        status = engine->prepMemView(remote_meta_dlist, backend_memview, &opt_args);
+    }
+    if (status != NIXL_SUCCESS) {
+        return status;
     }
 
-    return status;
+    auto cleanup_backend = [&]() {
+        if (use_proxy) {
+            data->proxyRuntime->unregisterProxyMemView(backend_memview);
+        } else {
+            engine->releaseMemView(backend_memview);
+        }
+    };
+
+    status = nixlDeviceMemViewAllocate(use_proxy, backend_memview, mvh);
+    if (status != NIXL_SUCCESS) {
+        cleanup_backend();
+        return status;
+    }
+
+    data->mvhToEngine.emplace(mvh, *engine);
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
                        nixlMemViewH &mvh,
                        const nixl_opt_args_t *extra_params) const {
+    mvh = nullptr;
     const auto mem_type = dlist.getType();
     NIXL_TRACE_SCOPE(
         trace_span, data->tracer_.get(), "nixl::prepMemView", nixl::trace::Kind::MemoryR);
@@ -2011,12 +2147,34 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    const auto status = engine->prepMemView(meta_dlist, mvh, &opt_args);
-    if (status == NIXL_SUCCESS) {
-        data->mvhToEngine.emplace(mvh, *engine);
+    const bool use_proxy = data->hasProxyRuntime() && (data->proxyTransportEngine == engine);
+    nixlMemViewH backend_memview = nullptr;
+    nixl_status_t status;
+    if (use_proxy) {
+        status = data->proxyRuntime->prepMemView(meta_dlist, &backend_memview);
+    } else {
+        status = engine->prepMemView(meta_dlist, backend_memview, &opt_args);
+    }
+    if (status != NIXL_SUCCESS) {
+        return status;
     }
 
-    return status;
+    auto cleanup_backend = [&]() {
+        if (use_proxy) {
+            data->proxyRuntime->unregisterProxyMemView(backend_memview);
+        } else {
+            engine->releaseMemView(backend_memview);
+        }
+    };
+
+    status = nixlDeviceMemViewAllocate(use_proxy, backend_memview, mvh);
+    if (status != NIXL_SUCCESS) {
+        cleanup_backend();
+        return status;
+    }
+
+    data->mvhToEngine.emplace(mvh, *engine);
+    return NIXL_SUCCESS;
 }
 
 void
@@ -2031,6 +2189,31 @@ nixlAgent::releaseMemView(nixlMemViewH mvh) const {
         return;
     }
 
-    it->second.releaseMemView(mvh);
+    nixlBackendEngine &engine = it->second;
+    nixlMemViewH backend_memview = nullptr;
+    const auto backend_status = nixlDeviceMemViewGetBackend(mvh, backend_memview);
+    if (backend_status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to read device memview wrapper for handle " << mvh;
+        nixlDeviceMemViewFree(mvh);
+        data->mvhToEngine.erase(it);
+        return;
+    }
+
+    const bool use_proxy = data->hasProxyRuntime() && (data->proxyTransportEngine == &engine);
+    if (use_proxy) {
+        nixlMemViewH resolved = nullptr;
+        data->proxyRuntime->resolveProxyMemView(backend_memview, resolved);
+        const auto status = data->proxyRuntime->unregisterProxyMemView(backend_memview);
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to release proxy memory view " << mvh << " with status "
+                       << status;
+        }
+        if (resolved != nullptr) {
+            engine.releaseMemView(resolved);
+        }
+    } else {
+        engine.releaseMemView(backend_memview);
+    }
+    nixlDeviceMemViewFree(mvh);
     data->mvhToEngine.erase(it);
 }
