@@ -26,6 +26,7 @@
 #include "backend_engine.h"
 #include "telemetry.h"
 #include "common/nixl_duration.h"
+#include "tracing/trace_context.h"
 
 enum nixl_telemetry_stat_status_t {
     NIXL_TELEMETRY_POST = 0,
@@ -42,7 +43,8 @@ public:
                  const nixl_mem_t local_type,
                  const nixl_mem_t remote_type,
                  const uint64_t remote_generation,
-                 const size_t desc_count);
+                 const size_t desc_count,
+                 nixl::trace::TraceContext trace_context);
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
@@ -61,6 +63,11 @@ public:
     void
     updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
 
+    [[nodiscard]] std::uint64_t
+    traceCorrelationId() const noexcept {
+        return traceContext_.correlationId64();
+    }
+
     friend class nixlAgent;
 
 private:
@@ -73,6 +80,7 @@ private:
     const std::string remoteAgent;
     // Generation of the remote-connection
     const uint64_t remoteGeneration_;
+    const nixl::trace::TraceContext traceContext_;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 

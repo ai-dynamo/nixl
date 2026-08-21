@@ -64,11 +64,13 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
                            const uint64_t remote_generation,
-                           const size_t desc_count)
+                           const size_t desc_count,
+                           nixl::trace::TraceContext trace_context)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
       remoteGeneration_(remote_generation),
+      traceContext_(trace_context),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -789,12 +791,14 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    auto handle = std::make_unique<nixlXferReqH>(remote_side->remoteAgent,
-                                                 operation,
-                                                 local_descs.getType(),
-                                                 remote_descs.getType(),
-                                                 rem_sec_it->second.getGeneration(),
-                                                 desc_count);
+    auto handle = std::make_unique<nixlXferReqH>(
+        remote_side->remoteAgent,
+        operation,
+        local_descs.getType(),
+        remote_descs.getType(),
+        rem_sec_it->second.getGeneration(),
+        desc_count,
+        data->tracer_ ? nixl::trace::generateTraceContext() : nixl::trace::TraceContext{});
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -957,12 +961,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO: merge descriptors back to back in memory (like makeXferReq).
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    auto handle = std::make_unique<nixlXferReqH>(remote_agent,
-                                                 operation,
-                                                 local_descs.getType(),
-                                                 remote_descs.getType(),
-                                                 rem_sec_it->second.getGeneration(),
-                                                 local_descs.descCount());
+    auto handle = std::make_unique<nixlXferReqH>(
+        remote_agent,
+        operation,
+        local_descs.getType(),
+        remote_descs.getType(),
+        rem_sec_it->second.getGeneration(),
+        local_descs.descCount(),
+        data->tracer_ ? nixl::trace::generateTraceContext() : nixl::trace::TraceContext{});
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1089,9 +1095,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Request-handle address is a stable id shared with the completion below,
-    // so the two link even when posted and polled from different threads.
-    NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), reinterpret_cast<std::uint64_t>(req_hndl));
+    NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), req_hndl->traceCorrelationId());
     NIXL_TRACE_SCOPE(trace_span,
                      data->tracer_.get(),
                      req_hndl->backendOp == NIXL_WRITE ? "nixl::postXferReq.write" :
@@ -1240,8 +1244,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
             }
         }
         if (req_hndl->status == NIXL_SUCCESS) {
-            NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(),
-                                         reinterpret_cast<std::uint64_t>(req_hndl));
+            NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), req_hndl->traceCorrelationId());
             NIXL_TRACE_MARK(
                 data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
         }
