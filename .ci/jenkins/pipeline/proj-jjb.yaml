@@ -948,7 +948,7 @@
       - string:
           name: "TORCH_VERSIONS"
           default: ""
-          description: "Comma-separated PyTorch versions to build EP extensions for. Leave empty to auto-derive from CUDA major version (cu13: 2.12,2.13; cu12: 2.11,2.12,2.13)."
+          description: "Comma-separated PyTorch versions to build EP extensions for. Leave empty to auto-derive from CUDA major version."
       - string:
           name: "DEBUG"
           default: 0
