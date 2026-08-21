@@ -60,6 +60,10 @@ sglEnabledFromConfig() {
 // one data request, one flush request, and one notification request.
 constexpr size_t single_ep_request_count = 3;
 
+constexpr uint32_t status_calls_per_dump_check = 1024;
+
+constexpr std::chrono::seconds ep_state_dump_interval{60};
+
 /****************************************
  * Backend request management
 *****************************************/
@@ -69,12 +73,36 @@ private:
     ucx_connection_ptr_t conn_;
     std::vector<nixlUcxReq> requests_;
     nixlUcxWorker *worker_ = nullptr;
+    uint32_t dumpCountdown_ = status_calls_per_dump_check;
+    std::chrono::steady_clock::time_point lastDump_ = std::chrono::steady_clock::now();
 
     [[nodiscard]] nixl_status_t
     checkConnection(const nixl_status_t status = NIXL_SUCCESS) const {
         NIXL_ASSERT(conn_ != nullptr);
         const nixl_status_t conn_status = conn_->getEp(getWorkerId())->checkTxState();
         return (conn_status != NIXL_SUCCESS) ? conn_status : status;
+    }
+
+    /* Dump the endpoint of a request which is pending since the last dump */
+    void
+    dumpStalledEp() {
+        if (--dumpCountdown_ != 0) [[likely]] {
+            return;
+        }
+        dumpCountdown_ = status_calls_per_dump_check;
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now < (lastDump_ + ep_state_dump_interval)) {
+            return;
+        }
+
+        const auto pending =
+            std::chrono::duration_cast<std::chrono::seconds>(now - lastDump_).count();
+        lastDump_ = now;
+
+        NIXL_WARN << "request handle " << this << " is pending for " << pending
+                  << " sec {worker id: " << getWorkerId()
+                  << ", pending requests: " << requests_.size() << "}, " << *conn_;
     }
 
 protected:
@@ -162,6 +190,7 @@ public:
         nixlUcxReq req = requests_.back();
         const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
         if (ret == NIXL_IN_PROG) {
+            dumpStalledEp();
             return NIXL_IN_PROG;
         } else if (ret != NIXL_SUCCESS) {
             return checkConnection(ret);
@@ -884,7 +913,7 @@ nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent
     }
 
     nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
-    std::shared_ptr<nixlUcxConnection> conn = std::make_shared<nixlUcxConnection>();
+    std::shared_ptr<nixlUcxConnection> conn = std::make_shared<nixlUcxConnection>(remote_agent);
     for (const auto &uw : workers_) {
         std::unique_ptr<nixlUcxEp> ep = uw->connect(addr.data());
         if (!ep) {
