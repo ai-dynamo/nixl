@@ -55,10 +55,11 @@ enum class nixl_telemetry_event_type_t : uint32_t {
     AGENT_ERR_CANCELED = 18,
     AGENT_ERR_NO_TELEMETRY = 19,
     AGENT_TELEMETRY_EVENTS_DROPPED = 20,
+    AGENT_ERR_XFER_STALLED = 21,
 };
 
 inline constexpr std::size_t nixl_telemetry_event_type_count =
-    static_cast<std::size_t>(nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED) + 1;
+    static_cast<std::size_t>(nixl_telemetry_event_type_t::AGENT_ERR_XFER_STALLED) + 1;
 
 // Per-event-type flag mask indexed by nixl_telemetry_event_type_t.
 using nixl_telemetry_metric_mask_t = std::array<bool, nixl_telemetry_event_type_count>;
@@ -79,6 +80,7 @@ inline constexpr std::array telemetry_error_event_types = {
     nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT,
     nixl_telemetry_event_type_t::AGENT_ERR_CANCELED,
     nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY,
+    nixl_telemetry_event_type_t::AGENT_ERR_XFER_STALLED,
 };
 
 inline constexpr std::array telemetry_metric_event_types = {
@@ -95,7 +97,7 @@ inline constexpr std::array telemetry_metric_event_types = {
 
 static_assert(nixl_telemetry_event_type_count ==
                   telemetry_metric_event_types.size() + telemetry_error_event_types.size(),
-              "AGENT_TELEMETRY_EVENTS_DROPPED must remain the last enumerator; "
+              "AGENT_ERR_XFER_STALLED must remain the last enumerator; "
               "nixl_telemetry_event_type_count is out of sync with the event-type enum");
 
 // The error events share one family, so they have no per-type descriptor row.
@@ -157,6 +159,8 @@ telemetryEventTypeStr(const nixl_telemetry_event_type_t type) noexcept {
         return "agent_err_no_telemetry";
     case nixl_telemetry_event_type_t::AGENT_TELEMETRY_EVENTS_DROPPED:
         return "agent_telemetry_events_dropped";
+    case nixl_telemetry_event_type_t::AGENT_ERR_XFER_STALLED:
+        return "agent_err_xfer_stalled";
     }
     return "unknown_event";
 }
@@ -188,6 +192,8 @@ telemetryErrorStatusLabel(const nixl_telemetry_event_type_t type) noexcept {
         return "canceled";
     case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
         return "no_telemetry";
+    case nixl_telemetry_event_type_t::AGENT_ERR_XFER_STALLED:
+        return "xfer_stalled";
     case nixl_telemetry_event_type_t::AGENT_TX_BYTES:
     case nixl_telemetry_event_type_t::AGENT_RX_BYTES:
     case nixl_telemetry_event_type_t::AGENT_TX_REQUESTS_NUM:
@@ -293,6 +299,7 @@ telemetryMetricDescriptor(const nixl_telemetry_event_type_t type) noexcept {
     case nixl_telemetry_event_type_t::AGENT_ERR_REMOTE_DISCONNECT:
     case nixl_telemetry_event_type_t::AGENT_ERR_CANCELED:
     case nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY:
+    case nixl_telemetry_event_type_t::AGENT_ERR_XFER_STALLED:
         break;
     }
     return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};

@@ -90,6 +90,11 @@ public:
     nixlNoTelemetryError(const char *what) : runtime_error(what) {}
 };
 
+class nixlXferStalledError : public std::runtime_error {
+public:
+    nixlXferStalledError(const char *what) : runtime_error(what) {}
+};
+
 void
 throw_nixl_exception(const nixl_status_t &status) {
     switch (status) {
@@ -132,6 +137,9 @@ throw_nixl_exception(const nixl_status_t &status) {
         break;
     case NIXL_ERR_NO_TELEMETRY:
         throw nixlNoTelemetryError(nixlEnumStrings::statusStr(status).c_str());
+        break;
+    case NIXL_ERR_XFER_STALLED:
+        throw nixlXferStalledError(nixlEnumStrings::statusStr(status).c_str());
         break;
     default:
         throw std::runtime_error("BAD_STATUS");
@@ -244,6 +252,7 @@ PYBIND11_MODULE(_bindings, m) {
     py::register_exception<nixlRemoteDisconnectError>(m, "nixlRemoteDisconnectError");
     py::register_exception<nixlCancelledError>(m, "nixlCancelledError");
     py::register_exception<nixlNoTelemetryError>(m, "nixlNoTelemetryError");
+    py::register_exception<nixlXferStalledError>(m, "nixlXferStalledError");
 
     py::class_<nixl_xfer_dlist_t>(m, "nixlXferDList")
         .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
@@ -519,7 +528,8 @@ PYBIND11_MODULE(_bindings, m) {
         .def_readwrite("captureTelemetry", &nixlAgentConfig::captureTelemetry)
         .def_readwrite("pthrDelay", &nixlAgentConfig::pthrDelay)
         .def_readwrite("lthrDelay", &nixlAgentConfig::lthrDelay)
-        .def_readwrite("etcdWatchTimeout", &nixlAgentConfig::etcdWatchTimeout);
+        .def_readwrite("etcdWatchTimeout", &nixlAgentConfig::etcdWatchTimeout)
+        .def_readwrite("xferStallTimeout", &nixlAgentConfig::xferStallTimeout);
 
     // note: pybind will automatically convert notif_map to python types:
     // so, a Dictionary of string: List<string>

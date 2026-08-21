@@ -80,6 +80,8 @@ statusStr(const nixl_status_t &status) {
         return "NIXL_ERR_CANCELED";
     case NIXL_ERR_NO_TELEMETRY:
         return "NIXL_ERR_NO_TELEMETRY";
+    case NIXL_ERR_XFER_STALLED:
+        return "NIXL_ERR_XFER_STALLED";
     }
     return "BAD_STATUS";
 }
