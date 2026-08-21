@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "common.h"
+#include "transfer_request.h"
 #include "tracing/trace.h"
 
 namespace nixl::trace {
@@ -387,4 +388,32 @@ TEST(Tracing, CorrelationScopeNullTracerIsInert) {
     nixl::trace::Tracer *tracer = nullptr;
     { const nixl::trace::CorrelationScope scope(tracer, 0x1u); }
     SUCCEED();
+}
+
+TEST(Tracing, RequestStoresFixedCorrelationContext) {
+    nixl::trace::TraceContext context;
+    context.traceId = {0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6};
+    context.spanId = {1};
+
+    const nixlXferReqH request("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 1, 0, context);
+
+    EXPECT_EQ(request.traceCorrelationId(), 0x4bf92f3577b34da6ULL);
+}
+
+TEST(Tracing, RequestContextsAreDistinctAndStable) {
+    const nixlXferReqH first(
+        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 1, 0, nixl::trace::generateTraceContext());
+    const nixlXferReqH second(
+        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 1, 0, nixl::trace::generateTraceContext());
+    const auto first_id = first.traceCorrelationId();
+
+    EXPECT_NE(first_id, second.traceCorrelationId());
+    EXPECT_EQ(first.traceCorrelationId(), first_id);
+}
+
+TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
+    const nixlXferReqH request(
+        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 1, 0, nixl::trace::TraceContext{});
+
+    EXPECT_EQ(request.traceCorrelationId(), 0u);
 }
