@@ -44,7 +44,7 @@ Not all Neuron instance sizes meet this requirement. In particular:
 | Instance type | Neuron devices | EFA interfaces | `FI_HMEM_NEURON` supported |
 |--|--|--|--|
 | `trn2.48xlarge` | 16 | 16 (one per Neuron device) | Yes, when launched with all 16 EFA NICs attached |
-| `trn2.3xlarge` | 4 | 1 (host-level EFA only) | **No** -- single host EFA cannot be routed to individual Neuron devices |
+| `trn2.3xlarge` | 1 | 1 (host-level EFA only) | **No** -- single host EFA cannot be routed to individual Neuron devices |
 | `trn3.*` | varies | varies | Match Neuron device count to EFA interface count |
 
 **Launching trn2.48xlarge with all EFA NICs:** the default `aws ec2 run-instances` invocation only attaches a single ENA (non-EFA) interface, even on instance types that support 16 EFA NICs. You must explicitly attach 16 EFA-typed network interfaces at launch time -- one per `NetworkCardIndex` (0-15). The launch spec's `NetworkInterfaces` array should contain 16 entries in this shape (values shown are illustrative; substitute real subnet and security-group IDs):
