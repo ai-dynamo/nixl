@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,14 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Device API test utilities and sources
-device_api_inc_dirs = include_directories('.')
-
-device_api_sources = [
-    'proxy_write_test.cu',
-    'single_write_test.cu',
-    'utils.cu',
-]
-
-# Export for parent meson.build
-device_api_test_sources = files(device_api_sources)
+gpu_device_config = configuration_data()
+gpu_device_config.set('NIXL_HAVE_UCX_GPU_DEVICE_API', ucx_gpu_device_api_available)
+configure_file(
+    input: 'nixl_device_config.h.in',
+    output: 'nixl_device_config.h',
+    configuration: gpu_device_config,
+    install: get_option('install_headers'),
+    install_dir: prefix_inc + '/gpu',
+)

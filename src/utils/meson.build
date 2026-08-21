@@ -19,6 +19,10 @@ subdir('stream')
 subdir('file')
 subdir('object')
 
+if cuda_dep.found()
+    subdir('device')
+endif
+
 if libfabric_dep.found()
     subdir('libfabric')
 endif

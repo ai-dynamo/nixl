@@ -27,6 +27,8 @@
 #include "backend_aux.h"
 #include "telemetry_event.h"
 
+class nixlDeviceProxyBackendAdapter;
+
 constexpr size_t MAX_TELEMETRY_QUEUE_SIZE = 1000;
 
 // Base backend engine class for different backend implementations
@@ -111,6 +113,12 @@ class nixlBackendEngine {
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
         virtual bool supportsNotif() const = 0;
 
+        // Determines if a backend supports device proxy runtime creation.
+        virtual bool
+        supportsProxy() const {
+            return false;
+        }
+
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 
 
@@ -174,6 +182,12 @@ class nixlBackendEngine {
         // Release memory view handle
         virtual void
         releaseMemView(nixlMemViewH) const {}
+
+        virtual nixl_status_t
+        createDeviceProxyBackendAdapter(const nixlBackendInitParams &,
+                                        std::unique_ptr<nixlDeviceProxyBackendAdapter> &) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
 
         // *** Needs to be implemented if supportsRemote() is true *** //
 
