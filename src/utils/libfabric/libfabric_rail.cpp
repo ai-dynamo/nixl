@@ -20,6 +20,8 @@
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "libfabric_common.h"
+#include "tracing/trace.h"
+#include "tracing/trace_macros.h"
 
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
@@ -75,6 +77,7 @@ RequestPool::release(nixlLibfabricReq *req) const {
 
     req->in_use = false;
     req->xfer_id = 0;
+    req->device_id = -1;
     req->chunk_offset = 0;
     req->chunk_size = 0;
     req->completion_callback = nullptr;
@@ -391,10 +394,12 @@ DataRequestPool::allocate(nixlLibfabricReq::OpType op_type, uint32_t req_id) {
 
 nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                                      const std::string &provider,
-                                     uint16_t id)
+                                     uint16_t id,
+                                     nixl::trace::Tracer *tracer)
     : rail_id(id),
       device_name(device),
       provider_name(provider),
+      tracer_(tracer),
       control_request_pool_(NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL, id),
       data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id),
       provider_supports_hmem_(false) {
@@ -921,6 +926,13 @@ nixlLibfabricRail::processLocalTransferCompletion(struct fi_cq_data_entry *comp,
     // Find the request from context to access the completion callback
     nixlLibfabricReq *req = findRequestFromContext(comp->op_context);
     if (req && req->in_use) { // Only process if request is still valid and in use
+        NIXL_TRACE_CORRELATION_SCOPE(tracer_, static_cast<std::uint64_t>(req->xfer_id));
+        NIXL_TRACE_MARK(tracer_,
+                        req->operation_type == nixlLibfabricReq::WRITE ?
+                            "nixl::libfabric.local_completion.write" :
+                            "nixl::libfabric.local_completion.read",
+                        nixl::trace::Kind::Metadata);
+
         // Call completion callback if it exists
         if (req->completion_callback) {
             NIXL_TRACE << "Calling completion callback for " << operation_type << " request "
@@ -954,6 +966,9 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
     uint64_t msg_type = NIXL_GET_MSG_TYPE_FROM_IMM(comp->data);
     uint16_t agent_idx = NIXL_GET_AGENT_INDEX_FROM_IMM(comp->data);
     uint32_t xfer_id = NIXL_GET_XFER_ID_FROM_IMM(comp->data);
+
+    NIXL_TRACE_CORRELATION_SCOPE(tracer_, static_cast<std::uint64_t>(xfer_id));
+    NIXL_TRACE_MARK(tracer_, "nixl::libfabric.recv_completion", nixl::trace::Kind::CommRecv);
     NIXL_TRACE << "Received control message type " << msg_type << " agent_idx=" << agent_idx
                << " XFER_ID=" << xfer_id << " imm_data=" << std::hex << comp->data << std::dec;
 
@@ -1024,6 +1039,11 @@ nixlLibfabricRail::processRemoteWriteCompletion(struct fi_cq_data_entry *comp) c
     // For remote write completions, we don't need to post a new receive
     // The write operation doesn't consume a receive buffer
     if (msg_type == NIXL_LIBFABRIC_MSG_TRANSFER) {
+        // Tracing: remote write completion (target side). Correlate on xfer_id to
+        // link with the initiator's write span.
+        NIXL_TRACE_CORRELATION_SCOPE(tracer_, static_cast<std::uint64_t>(xfer_id));
+        NIXL_TRACE_MARK(
+            tracer_, "nixl::libfabric.remote_write_completion", nixl::trace::Kind::CommRecv);
         NIXL_TRACE << "Remote write completion on rail " << rail_id << " - received " << comp->len
                    << " bytes" << " agent_idx=" << agent_idx << " XFER_ID=" << xfer_id
                    << " imm_data=" << std::hex << comp->data << std::dec;
@@ -1098,6 +1118,15 @@ nixlLibfabricRail::postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLi
                << " XFER_ID=" << NIXL_GET_XFER_ID_FROM_IMM(immediate_data)
                << " dest_addr=" << dest_addr << std::dec << " context=" << &req->ctx;
 
+    // Tracing: span covers the (possibly retried) control-message send. xfer_id
+    // is carried in the immediate data on this path; correlate on it.
+    const std::uint64_t send_xfer_id = NIXL_GET_XFER_ID_FROM_IMM(immediate_data);
+    NIXL_TRACE_CORRELATION_SCOPE(tracer_, send_xfer_id);
+    NIXL_TRACE_SCOPE(trace_span, tracer_, "nixl::libfabric.post_send", nixl::trace::Kind::CommSend);
+    NIXL_TRACE_ATTR(trace_span, "rail_id", static_cast<std::int64_t>(rail_id));
+    NIXL_TRACE_ATTR(trace_span, "length", static_cast<std::int64_t>(req->buffer_size));
+    NIXL_TRACE_ATTR(trace_span, "xfer_id", static_cast<std::int64_t>(send_xfer_id));
+
     // Retry indefinitely until senddata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
     int attempt = 0;
@@ -1120,6 +1149,7 @@ nixlLibfabricRail::postSend(uint64_t immediate_data, fi_addr_t dest_addr, nixlLi
             NIXL_TRACE << "Send posted successfully"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
+            NIXL_TRACE_ATTR(trace_span, "retries", static_cast<std::int64_t>(attempt));
             return NIXL_SUCCESS;
         }
 
@@ -1325,6 +1355,16 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                << " dest_addr=" << dest_addr << " remote_addr=" << (void *)remote_addr
                << " remote_key=" << remote_key << " context=" << &req->ctx;
 
+    // Tracing: span covers the (possibly retried) post; correlate on xfer_id to
+    // link with the enclosing transfer span and the completion marker.
+    NIXL_TRACE_CORRELATION_SCOPE(tracer_, static_cast<std::uint64_t>(req->xfer_id));
+    NIXL_TRACE_SCOPE(
+        trace_span, tracer_, "nixl::libfabric.post_write", nixl::trace::Kind::CommSend);
+    NIXL_TRACE_ATTR(trace_span, "device_id", static_cast<std::int64_t>(req->device_id));
+    NIXL_TRACE_ATTR(trace_span, "rail_id", static_cast<std::int64_t>(rail_id));
+    NIXL_TRACE_ATTR(trace_span, "length", static_cast<std::int64_t>(length));
+    NIXL_TRACE_ATTR(trace_span, "xfer_id", static_cast<std::int64_t>(req->xfer_id));
+
     // Retry indefinitely until writedata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
     int attempt = 0;
@@ -1361,6 +1401,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
             NIXL_TRACE << "RDMA write posted successfully"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
+            NIXL_TRACE_ATTR(trace_span, "retries", static_cast<std::int64_t>(attempt));
             return NIXL_SUCCESS;
         }
 
@@ -1421,6 +1462,15 @@ nixlLibfabricRail::postRead(void *local_buffer,
                << " dest_addr=" << dest_addr << " remote_addr=" << (void *)remote_addr
                << " remote_key=" << remote_key << " context=" << &req->ctx;
 
+    // Tracing: span covers the (possibly retried) post; correlate on xfer_id to
+    // link with the enclosing transfer span and the completion marker.
+    NIXL_TRACE_CORRELATION_SCOPE(tracer_, static_cast<std::uint64_t>(req->xfer_id));
+    NIXL_TRACE_SCOPE(trace_span, tracer_, "nixl::libfabric.post_read", nixl::trace::Kind::CommRecv);
+    NIXL_TRACE_ATTR(trace_span, "device_id", static_cast<std::int64_t>(req->device_id));
+    NIXL_TRACE_ATTR(trace_span, "rail_id", static_cast<std::int64_t>(rail_id));
+    NIXL_TRACE_ATTR(trace_span, "length", static_cast<std::int64_t>(length));
+    NIXL_TRACE_ATTR(trace_span, "xfer_id", static_cast<std::int64_t>(req->xfer_id));
+
     // Retry indefinitely until readdata succeeds or fails for all providers
     int ret = -FI_EAGAIN;
     int attempt = 0;
@@ -1444,6 +1494,7 @@ nixlLibfabricRail::postRead(void *local_buffer,
             NIXL_TRACE << "RDMA read posted successfully"
                        << (attempt > 0 ? " after " + std::to_string(attempt + 1) + " attempts" :
                                          "");
+            NIXL_TRACE_ATTR(trace_span, "retries", static_cast<std::int64_t>(attempt));
             return NIXL_SUCCESS;
         }
 

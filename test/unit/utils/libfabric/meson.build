@@ -22,6 +22,8 @@ if cuda_dep.found()
     libfabric_test_cpp_args += [ '-DCUDA_FOUND' ]
 endif
 
+nixl_trace_facade_src = files('../../../../src/core/tracing/tracer.cpp')
+
 if get_option('buildtype') != 'release'
 
     # mock function calls for testing
@@ -35,6 +37,7 @@ if get_option('buildtype') != 'release'
 
     libfabric_topology_test_bin = executable('libfabric_topology_test',
                'libfabric_topology_test.cpp',
+               nixl_trace_facade_src,
                dependencies: libfabric_utils_dep,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                link_with: libfabric_utils_lib,
@@ -53,6 +56,7 @@ if get_option('buildtype') != 'release'
 
     rail_active_refcount_test_bin = executable('rail_active_refcount_test',
                'rail_active_refcount_test.cpp',
+               nixl_trace_facade_src,
                dependencies: libfabric_utils_dep,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                link_with: libfabric_utils_lib,
