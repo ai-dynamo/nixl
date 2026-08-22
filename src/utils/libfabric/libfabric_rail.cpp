@@ -391,13 +391,15 @@ DataRequestPool::allocate(nixlLibfabricReq::OpType op_type, uint32_t req_id) {
 
 nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                                      const std::string &provider,
-                                     uint16_t id)
+                                     uint16_t id,
+                                     enum fi_hmem_iface runtime)
     : rail_id(id),
       device_name(device),
       provider_name(provider),
       control_request_pool_(NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL, id),
       data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id),
-      provider_supports_hmem_(false) {
+      provider_supports_hmem_(false),
+      runtime_(runtime) {
     // Initialize all pointers to nullptr
     info = nullptr;
     fabric = nullptr;
@@ -527,6 +529,30 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         if (ret) {
             NIXL_ERROR << "fi_ep_bind av failed for rail " << rail_id << ": " << fi_strerror(-ret);
             throw std::runtime_error("fi_ep_bind av failed for rail " + std::to_string(rail_id));
+        }
+
+        // The libfabric shm provider has no Neuron HMEM support. Thus, on Neuron hosts,
+        // we disable libfabric's shared memory provider so that intra-node transfers
+        // stay on the EFA path.
+        if (runtime_ == FI_HMEM_NEURON) {
+            const bool shared_memory_permitted = false;
+            ret = fi_setopt(&endpoint->fid,
+                            FI_OPT_ENDPOINT,
+                            FI_OPT_SHARED_MEMORY_PERMITTED,
+                            &shared_memory_permitted,
+                            sizeof(shared_memory_permitted));
+            if (ret && ret != -FI_ENOSYS && ret != -FI_ENOPROTOOPT) {
+                NIXL_WARN << "fi_setopt FI_OPT_SHARED_MEMORY_PERMITTED failed for rail " << rail_id
+                          << ": " << fi_strerror(-ret) << " - continuing anyway";
+            } else if (ret == 0) {
+                NIXL_INFO << "Disabled shared memory provider for rail " << rail_id
+                          << " (Neuron runtime)";
+            } else if (ret == -FI_ENOSYS || ret == -FI_ENOPROTOOPT) {
+                NIXL_WARN << "FI_OPT_SHARED_MEMORY_PERMITTED not supported for rail " << rail_id
+                          << " (provider: " << provider_name
+                          << ") - intra-node transfers may use the shm provider, which has no "
+                             "Neuron HMEM support";
+            }
         }
 
         if (provider_name == "efa") {
