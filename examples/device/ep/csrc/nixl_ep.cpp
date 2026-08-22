@@ -1413,6 +1413,7 @@ void Buffer::_nixl_agent_init() {
     init_params["ucx_num_device_channels"] = num_channels_env ? num_channels_env : "4";
     init_params["ucx_error_handling_mode"] = "none";
     init_params["num_workers"] = std::to_string(1);
+    init_params["engine_config"] = "CUDA_IPC_CACHE=n";
 
     nixlBackendH* ucx_backend = nullptr;
     status = agent->createBackend("UCX", init_params, ucx_backend);
