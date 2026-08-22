@@ -27,6 +27,10 @@ ARG PRE_INSTALLED_ENV
 ARG PRE_INSTALLED_NIXL_ENV
 ARG PRE_INSTALLED_UCX_ENV
 ARG UCX_VERSION=v1.22.x
+# Build the vLLM Elastic EP test environment only in the dedicated EP base
+# image. Other Dockerfile.base users do not download or install vLLM.
+ARG BUILD_VLLM_ELASTIC_TEST=false
+ARG VLLM_REF=releases/v0.27.1
 # When set (e.g. "address"), build the Abseil/gRPC/etcd dependency stack with the
 # matching -fsanitize flags so AddressSanitizer NIXL builds have an ABI-compatible
 # (instrumented) Abseil. Empty for normal images.
@@ -66,6 +70,7 @@ RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \
 RUN mkdir -p ${NIXL_INSTALL_DIR} && chown -R "${_UID}":"${_GID}" ${NIXL_INSTALL_DIR}
 COPY --chown="${_UID}":"${_GID}" .ci/scripts/ /.ci/scripts/
 COPY --chown="${_UID}":"${_GID}" .gitlab/build.sh /.gitlab/build.sh
+COPY --chown="${_UID}":"${_GID}" .ci/patches/nixl_ep_vllm_release_test.patch /tmp/
 
 # Configure sudo access
 RUN mkdir -p /etc/sudoers.d && \
@@ -79,9 +84,50 @@ USER ${_LOGIN}
 # Set environment variables
 ENV HOME=${_HOME}
 ENV USER=${_LOGIN}
+ENV VLLM_ELASTIC_TEST_DIR=${_HOME}/vllm
+ENV VLLM_REF=${VLLM_REF}
 
 RUN /.gitlab/build.sh ${NIXL_INSTALL_DIR}
 RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
+
+# Prepare vLLM Elastic EP tests in the dedicated EP base image.
+# The PR image builds NIXL once for both native and vLLM tests.
+RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
+        export LD_LIBRARY_PATH="/opt/hpcx/ucx/lib:/opt/hpcx/ucc/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" && \
+        sudo apt-get update && \
+        sudo apt-get install -y --no-install-recommends git && \
+        python3 -m pip install --user --break-system-packages uv && \
+        git clone --depth 1 --branch "${VLLM_REF}" \
+            https://github.com/vllm-project/vllm.git "${VLLM_ELASTIC_TEST_DIR}" && \
+        git -C "${VLLM_ELASTIC_TEST_DIR}" apply --check \
+            /tmp/nixl_ep_vllm_release_test.patch && \
+        git -C "${VLLM_ELASTIC_TEST_DIR}" apply \
+            /tmp/nixl_ep_vllm_release_test.patch && \
+        "${HOME}/.local/bin/uv" venv \
+            "${VLLM_ELASTIC_TEST_DIR}/.venv" && \
+        "${HOME}/.local/bin/uv" pip install \
+            --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
+            "torch==2.13.0" --torch-backend=cu130 && \
+        "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" -c \
+            'import torch; print(torch.__version__, torch.version.cuda)' && \
+        "${HOME}/.local/bin/uv" pip install \
+            --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
+            --torch-backend=cu130 \
+            -r "${VLLM_ELASTIC_TEST_DIR}/requirements/build/cuda.txt" && \
+        VLLM_USE_PRECOMPILED=1 "${HOME}/.local/bin/uv" pip install \
+            --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
+            --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=cu130 \
+            --no-build-isolation && \
+        "${HOME}/.local/bin/uv" pip install \
+            --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
+            pytest tblib "ray[default]>=2.48.0" && \
+        (cd "${VLLM_ELASTIC_TEST_DIR}" && \
+            "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" -m pytest \
+                --collect-only -q \
+                tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling) && \
+        sudo apt-get clean && \
+        sudo rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Set working directory
 WORKDIR ${_HOME}
