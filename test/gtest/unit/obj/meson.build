@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-obj_test_sources = ['obj.cpp']
+obj_test_sources = ['obj.cpp', 'rdma_protocol.cpp']
 
 if cuobj_dep.found()
     obj_test_sources += ['mock_dell_s3_client.cpp', 'obj_cuobj.cpp']
