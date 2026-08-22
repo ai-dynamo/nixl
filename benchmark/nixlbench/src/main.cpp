@@ -186,7 +186,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    int num_threads = xferBenchConfig::num_threads;
+    int num_workers = xferBenchConfig::workerNum();
 
     // Create the appropriate worker based on worker configuration
     std::unique_ptr<xferBenchWorker> worker_ptr = createWorker();
@@ -204,7 +204,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    std::vector<std::vector<xferBenchIOV>> iov_lists = worker_ptr->allocateMemory(num_threads);
+    std::vector<std::vector<xferBenchIOV>> iov_lists = worker_ptr->allocateMemory(num_workers);
     auto mem_guard = make_scope_guard ([&] {
         worker_ptr->deallocateMemory(iov_lists);
     });
@@ -223,7 +223,7 @@ int main(int argc, char *argv[]) {
          !worker_ptr->signaled() &&
          block_size <= xferBenchConfig::max_block_size;
          block_size *= 2) {
-        ret = processBatchSizes(*worker_ptr, iov_lists, block_size, num_threads);
+        ret = processBatchSizes(*worker_ptr, iov_lists, block_size, num_workers);
         if (0 != ret) {
             return EXIT_FAILURE;
         }
