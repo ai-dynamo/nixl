@@ -18,15 +18,14 @@
 #define NIXL_SRC_CORE_TRACING_TRACE_H
 
 /*
- * nixl::trace -- internal NIXL core tracing API.
+ * nixl::trace -- internal NIXL core tracing facade.
  *
  * A single set of call sites fans out to every enabled tracing backend at
- * runtime (NVTX today; Chakra and others later). This is an internal core API
- * (compiled into libnixl, not installed as a public header). It is kept
- * deliberately self-contained -- depending only on standard headers and on no
- * other NIXL type -- so it stays easy to reason about and could be promoted to
- * a public header later without churn if an external consumer appears.
+ * runtime (NVTX today; Chakra and others later). Backend interfaces live in
+ * the public tracing/trace_backend.h header; the facade remains internal.
  */
+
+#include "tracing/trace_backend.h"
 
 #include <cstdint>
 #include <memory>
@@ -35,73 +34,6 @@
 #include <vector>
 
 namespace nixl::trace {
-
-/**
- * @brief Operation kind. Aligns 1:1 with the Chakra NodeType vocabulary and is
- *        used as a color/label hint by NVTX.
- */
-enum class Kind : std::uint8_t {
-    Generic = 0,
-    Compute,
-    MemoryR,
-    MemoryW,
-    CommSend,
-    CommRecv,
-    CommColl,
-    Metadata,
-};
-
-/**
- * @brief Opaque span identifier. Meaningful on backends that build a DAG
- *        (Chakra Node.id); returned as {0} by backends that do not (NVTX).
- */
-struct SpanId {
-    std::uint64_t value{0};
-};
-
-/**
- * @brief A single active span within one backend. Its destructor ends the
- *        range / fixes the duration for that backend.
- */
-class SpanBackend {
-public:
-    virtual ~SpanBackend() = default;
-
-    virtual void
-    addAttribute(std::string_view key, std::string_view value) = 0;
-    virtual void
-    addAttribute(std::string_view key, std::int64_t value) = 0;
-    virtual void
-    addAttribute(std::string_view key, double value) = 0;
-
-    virtual void
-    addCtrlDep(SpanId parent) = 0;
-    virtual void
-    addDataDep(SpanId parent) = 0;
-
-    [[nodiscard]] virtual SpanId
-    id() const noexcept = 0;
-};
-
-/** @brief One enabled backend type (NVTX, Chakra, ...). */
-class TraceBackend {
-public:
-    virtual ~TraceBackend() = default;
-
-    [[nodiscard]] virtual std::unique_ptr<SpanBackend>
-    beginSpan(std::string_view name, Kind kind) = 0;
-
-    virtual void
-    mark(std::string_view name, Kind kind) = 0;
-
-    virtual void
-    pushCorrelationId(std::uint64_t id) = 0;
-    virtual void
-    popCorrelationId() = 0;
-
-    [[nodiscard]] virtual std::string_view
-    name() const noexcept = 0;
-};
 
 class Tracer;
 

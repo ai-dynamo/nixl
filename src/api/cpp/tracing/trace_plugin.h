@@ -14,22 +14,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_CORE_TRACING_TRACE_PLUGIN_H
-#define NIXL_SRC_CORE_TRACING_TRACE_PLUGIN_H
+#ifndef NIXL_SRC_API_CPP_TRACING_TRACE_PLUGIN_H
+#define NIXL_SRC_API_CPP_TRACING_TRACE_PLUGIN_H
 
 /*
- * Trace-backend plugin interface (internal core API).
+ * Public trace-backend plugin interface.
  *
  * A tracing backend (NVTX, Chakra, ...) is shipped as a separately built, on-demand
  * loaded `.so` plugin, exactly like NIXL's data backends and telemetry exporters. This
  * header is the contract a trace plugin implements; it is loaded by nixlPluginManager
- * (prefix `libtrace_backend_`, init symbol `nixl_trace_plugin_init`). The facade types
- * (`nixl::trace::TraceBackend`) live in `trace.h`.
+ * (prefix `libtrace_backend_`, init symbol `nixl_trace_plugin_init`). The backend types
+ * (`nixl::trace::TraceBackend`) live in `trace_backend.h`.
  */
 
-#include "tracing/trace.h"
-#include "common/nixl_log.h"
+#include "tracing/trace_backend.h"
 
+#include <exception>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -99,8 +99,7 @@ private:
         try {
             return std::make_unique<BackendType>(init_params);
         }
-        catch (const std::exception &e) {
-            NIXL_ERROR << "Failed to create trace backend: " << e.what();
+        catch (const std::exception &) {
             return nullptr;
         }
     }
@@ -115,4 +114,4 @@ NIXL_TRACE_PLUGIN_EXPORT void
 nixl_trace_plugin_fini();
 }
 
-#endif // NIXL_SRC_CORE_TRACING_TRACE_PLUGIN_H
+#endif // NIXL_SRC_API_CPP_TRACING_TRACE_PLUGIN_H
