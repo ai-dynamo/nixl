@@ -405,6 +405,8 @@ endif
 # UCX GPU device API detection
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
+have_gpu_side = false
+have_host_side = false
 if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     cuda = meson.get_compiler('cuda')
     # TODO: Expose doca_gpunetio_dep through UCX
@@ -421,14 +423,6 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
         ucx_gpu_device_api_available = true
         add_project_arguments('-DHAVE_UCX_GPU_DEVICE_API', language: ['cpp', 'cuda'])
     endif
-
-    summary({
-    'UCX GPU Device API'    : ucx_gpu_device_api_available,
-    'GPU-side compile'      : have_gpu_side,
-    'Host-side compile'     : have_host_side,
-    'nvcc available'        : nvcc_prog.found(),
-    'DOCA GPUNETIO found'   : doca_gpunetio_dep.found(),
-  }, section: 'UCX GPU Device API', bool_yn: true)
 endif
 
 # UCX SGL (scatter-gather list) API detection
@@ -440,6 +434,22 @@ if ucx_dep.found()
         add_project_arguments('-DHAVE_UCX_SGL_API', language: 'cpp')
     endif
 endif
+
+gpu_device_api_deps = []
+if cuda_dep.found()
+    gpu_device_api_deps = [cuda_dep]
+endif
+if ucx_gpu_device_api_available
+    gpu_device_api_deps += [ucx_dep, doca_gpunetio_dep]
+endif
+
+summary({
+    'UCX GPU Device API'  : ucx_gpu_device_api_available,
+    'GPU-side compile'    : have_gpu_side,
+    'Host-side compile'   : have_host_side,
+    'nvcc available'      : nvcc_prog.found(),
+    'DOCA GPUNETIO found' : doca_gpunetio_dep.found(),
+}, section: 'UCX GPU Device API', bool_yn: true)
 
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
@@ -528,7 +538,7 @@ if get_option('buildtype') == 'debug'
 endif
 
 nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry')
-nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
+nixl_gpu_device_api_inc_dirs = include_directories('src/api/gpu', 'src/api')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
@@ -559,8 +569,17 @@ if get_option('install_headers')
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
 
-  if ucx_gpu_device_api_available
-    install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')
+  if cuda_dep.found()
+    install_headers('src/api/gpu/nixl_device.cuh', install_dir: prefix_inc + '/gpu')
+    install_headers(
+      'src/api/gpu/common/nixl_device_api.cuh',
+      'src/api/gpu/common/nixl_device_types.cuh',
+      'src/api/gpu/common/nixl_device_wrappers.cuh',
+      install_dir: prefix_inc + '/gpu/common')
+    if ucx_gpu_device_api_available
+      install_headers('src/api/gpu/ucx/nixl_device_impl.cuh',
+                      install_dir: prefix_inc + '/gpu/ucx')
+    endif
   endif
 endif
 
