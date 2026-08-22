@@ -27,6 +27,7 @@
 
 #include <cmath>
 #include <cassert>
+#include <optional>
 #include <thread>
 #include <bitset>
 
@@ -206,6 +207,77 @@ static TopologyInfo topologies[] = {
 };
 static const size_t topology_count = sizeof(topologies) / sizeof(topologies[0]);
 
+// Neuron topologies (tested separately from the NUMA-aware rail selection tests, which are
+// GPU-specific). These only need to load the XML and verify the discovered accelerator count.
+// Used to exercise the Neuron/EFA preflight in nixlLibfabricTopology::discoverTopology().
+struct NeuronTopologyInfo {
+    bool enable;
+    const char *instance_type;
+    const char *topo_file;
+    int expected_num_aws_accel; // number of Neuron devices discovered via hwloc
+    int expected_nic_count; // number of EFA NICs discovered via hwloc + fi_getinfo
+};
+
+static const NeuronTopologyInfo neuron_topologies[] = {
+    // trn2.48xlarge with all 16 EFA NICs attached at launch (the AWS-tested DI config).
+    // Captured on a live instance via `lstopo-no-graphics --whole-io --of xml`, then
+    // sanitized. Exercises the INFO summary branch of the Neuron/EFA preflight
+    // ("N NIC(s) per Neuron device").
+    {.enable = true,
+     .instance_type = "trn2.48xl",
+     .topo_file = "trn2.48xl-topo.xml",
+     .expected_num_aws_accel = 16,
+     .expected_nic_count = 16},
+
+    // trn2.48xlarge launched WITHOUT any EFA network interfaces attached (the AWS
+    // default `run-instances` behavior only attaches a single ENA NIC). Exercises the
+    // "0 EFA NIC(s)" WARN branch of the Neuron/EFA preflight -- the plugin should
+    // emit an actionable diagnostic prompting the user to relaunch with
+    // `--network-interfaces InterfaceType=efa` per NetworkCardIndex.
+    {.enable = true,
+     .instance_type = "trn2.48xl-no-efa",
+     .topo_file = "trn2.48xl-no-efa-topo.xml",
+     .expected_num_aws_accel = 16,
+     .expected_nic_count = 0},
+
+    // trn2.3xlarge in the AWS-default launch config (no EFA NIC attached). Even
+    // trn2.3xlarge supports one EFA NIC via `--network-interfaces InterfaceType=efa`,
+    // but the AWS default doesn't attach it. Exercises the same "0 EFA NIC(s)" WARN
+    // branch as the trn2.48xl-no-efa case but with a single Neuron device present.
+    {.enable = true,
+     .instance_type = "trn2.3xl",
+     .topo_file = "trn2.3xl-topo.xml",
+     .expected_num_aws_accel = 1,
+     .expected_nic_count = 0},
+
+    // trn1.32xlarge (Trainium1 previous-generation instance) with all 8 EFA NICs
+    // attached at launch. Has 16 TRN1 devices sharing 8 EFA NICs (2:1 ratio by
+    // hardware design). Exercises the "fewer EFA than Neuron" WARN branch of the
+    // preflight, which the message text specifically calls out as an expected /
+    // supported topology on trn1.32xlarge -- the plugin works correctly with this
+    // 2:1 sharing.
+    {.enable = true,
+     .instance_type = "trn1.32xl",
+     .topo_file = "trn1.32xl-topo.xml",
+     .expected_num_aws_accel = 16,
+     .expected_nic_count = 8},
+
+    // trn1.2xlarge (smallest Trainium1 instance) in the AWS-default launch config.
+    // trn1.2xlarge does not support EFA at all (per describe-instance-types:
+    // EfaSupported=False), so this always presents 0 EFA NICs. Exercises the
+    // "0 EFA NIC(s)" WARN branch analogously to trn2.48xl-no-efa / trn2.3xl,
+    // documenting that trn1.2xlarge is not usable for FI_HMEM_NEURON transfers.
+    {.enable = true,
+     .instance_type = "trn1.2xl",
+     .topo_file = "trn1.2xl-topo.xml",
+     .expected_num_aws_accel = 1,
+     .expected_nic_count = 0},
+
+    // end of list
+};
+static const size_t neuron_topology_count =
+    sizeof(neuron_topologies) / sizeof(neuron_topologies[0]);
+
 // current topology pointer - used for mocking/injection
 static const TopologyInfo *curr_topology = nullptr;
 
@@ -266,23 +338,51 @@ testNumaDramRailSelectionPolicy(const TopologyInfo &topology_info,
 static int
 testNumaDramRailSelectionPolicy(const char *instance_type);
 
+// test Neuron topology loading (verifies the Neuron/EFA preflight in
+// nixlLibfabricTopology::discoverTopology()). Loads the given lstopo XML and
+// verifies the discovered Neuron accelerator count and EFA NIC count match
+// the expected values. This exercises the preflight code path; log output can
+// be verified by a wrapper script grepping the process's stderr for the
+// expected NIXL_INFO / NIXL_WARN message.
+static int
+testNeuronTopology(const NeuronTopologyInfo &topology_info);
+
+// test Neuron topology loading for all enabled Neuron topologies
+static int
+testNeuronTopologies();
+
+// test Neuron topology loading for a single topology by instance type
+static int
+testNeuronTopology(const char *instance_type);
+
 int
 main(int argc, char *argv[]) {
     if (argc > 1) {
-        // testing for NUMA-aware rail selection for DRAM_SEG
-        // the only parameter is the instance type
-        // this is required because hwloc caches cannot be flushed, and once it is loaded once, it
-        // retains info, and we cannot test for other instance types
-        char *instance_type = argv[1];
-        int res = testNumaDramTopology(instance_type);
+        // testing for a single instance type: either NUMA-aware DRAM_SEG rail selection
+        // (default, GPU-oriented) or Neuron preflight (`neuron:<instance>` prefix). Hwloc
+        // caches cannot be flushed once loaded, so only one topology can be tested per
+        // process invocation.
+        char *arg = argv[1];
+        static const char neuron_prefix[] = "neuron:";
+        if (strncmp(arg, neuron_prefix, sizeof(neuron_prefix) - 1) == 0) {
+            const char *instance_type = arg + sizeof(neuron_prefix) - 1;
+            return testNeuronTopology(instance_type);
+        }
+        int res = testNumaDramTopology(arg);
         if (res != 0) {
             return res;
         }
-        return testNumaDramRailSelectionPolicy(instance_type);
+        return testNumaDramRailSelectionPolicy(arg);
     }
 
     // test basic topology
     int res = testBasicTopology();
+    if (res != 0) {
+        return res;
+    }
+
+    // test Neuron topologies (exercises preflight for AWS Trainium instances)
+    res = testNeuronTopologies();
     if (res != 0) {
         return res;
     }
@@ -785,6 +885,177 @@ testNumaDramTopology(const TopologyInfo &topology_info) {
     NIXL_INFO << "   SUCCESS: Topology calculated correct rail count " << rail_count
               << " for DRAM_SEG NUMA-aware rail selection policy";
     return 0;
+}
+
+// Neuron topology test: exercises nixlLibfabricTopology::discoverTopology() with a saved
+// AWS Trainium lstopo XML, verifying that Neuron accelerators and EFA NICs are discovered
+// with the expected counts. The construction of nixlLibfabricTopology also exercises the
+// Neuron/EFA preflight code path; the log output can be verified externally by a wrapper
+// script grepping stderr for the expected NIXL_INFO/NIXL_WARN message.
+//
+// For topologies with 0 EFA NICs (e.g. a Neuron instance launched without any
+// `InterfaceType=efa` network interfaces), the plugin's constructor throws because no
+// libfabric provider can be selected. The test captures this expected failure mode and
+// records that the fatal error surfaces at plugin init -- which is precisely when the
+// preflight WARN would fire in production (before construction throws). Note: for these
+// zero-NIC cases, the `expected_num_aws_accel` field of the NeuronTopologyInfo is not
+// verified (the constructor throws before accelerator-count getters can be called);
+// it is retained purely as documentation of the underlying hardware topology.
+int
+testNeuronTopology(const NeuronTopologyInfo &topology_info) {
+    // pretend an EFA-only topology (curr_topology is unused for accelerator counts, but
+    // the fi_getinfo mock reads curr_topology->nic_line_speed; provide a compatible
+    // dummy).
+    TopologyInfo dummy = {.enable = true,
+                          .instance_type = topology_info.instance_type,
+                          .topo_file = topology_info.topo_file,
+                          .numa_node_count = 0,
+                          .nic_count = static_cast<size_t>(topology_info.expected_nic_count),
+                          .nic_line_speed = 200, // arbitrary; not asserted here
+                          .nic_upstream_link_speed = 0,
+                          .switch_count = 0,
+                          .numa_capacity = 0,
+                          .numa_rail_count = 0,
+                          .test_scenarios = {},
+                          .rail_partition = {}};
+    curr_topology = &dummy;
+    NIXL_TRACE << "Testing Neuron topology: " << topology_info.instance_type;
+
+    // enable topology injection in runtime code
+    setTesting();
+
+    // tell hwloc to load topology from XML file
+    setenv("HWLOC_XMLFILE", topology_info.topo_file, 1);
+
+    // RAII guard: unconditionally undo the env changes above (clear the runtime
+    // testing flag, unset HWLOC_XMLFILE) and drop the dangling `curr_topology`
+    // pointer on every exit path, including any exception thrown from
+    // nixlLibfabricTopology's constructor. Without this, a regression that caused an
+    // unexpected throw in the positive-case branch below would leave
+    // NIXL_LIBFABRIC_TESTING set and HWLOC_XMLFILE pointing at the Trainium fixture,
+    // corrupting the subsequent DRAM_SEG tests in main(). Also nulls curr_topology
+    // to avoid dangling to the stack-local `dummy` below.
+    struct TestEnvGuard {
+        ~TestEnvGuard() {
+            clearTesting();
+            unsetenv("HWLOC_XMLFILE");
+            curr_topology = nullptr;
+        }
+    } env_guard;
+
+    int rc = 0;
+
+    // If the expected EFA NIC count is 0, the plugin's constructor throws because no
+    // libfabric provider can be discovered. This is the expected failure mode for
+    // Neuron instances launched without EFA NICs; the preflight WARN branch would
+    // fire in production before the throw.
+    if (topology_info.expected_nic_count == 0) {
+        bool did_throw = false;
+        try {
+            nixlLibfabricTopology topology;
+        }
+        catch (const std::runtime_error &) {
+            did_throw = true;
+        }
+        if (!did_throw) {
+            NIXL_ERROR << "Expected " << topology_info.instance_type
+                       << " with 0 EFA NICs to throw at topology-discovery time, but no "
+                          "exception was raised; the plugin silently accepted an unusable "
+                          "topology, which contradicts the preflight design.";
+            rc = 1;
+        } else {
+            NIXL_INFO << "   SUCCESS: Neuron topology " << topology_info.instance_type
+                      << " correctly threw at topology-discovery time (0 EFA NICs); "
+                         "in production the preflight WARN would fire before the throw.";
+        }
+    } else {
+        // Load topology and let discoverTopology() run its preflight checks. Catch any
+        // unexpected throw (which would indicate a regression in the "happy path"
+        // Neuron topology) and report it as a test failure rather than aborting the
+        // binary and leaving env vars set.
+        std::optional<nixlLibfabricTopology> topology_holder;
+        try {
+            topology_holder.emplace();
+        }
+        catch (const std::runtime_error &e) {
+            NIXL_ERROR << "Unexpected topology-discovery failure for "
+                       << topology_info.instance_type << ": " << e.what()
+                       << "; expected the topology to load successfully with "
+                       << topology_info.expected_nic_count << " EFA NIC(s).";
+            return 4;
+        }
+        const nixlLibfabricTopology &topology = *topology_holder;
+
+        // verify discovered Neuron accelerator count
+        if (topology.getNumAwsAccel() != topology_info.expected_num_aws_accel) {
+            NIXL_ERROR << "Invalid Neuron accelerator count for " << topology_info.instance_type
+                       << ", expected " << topology_info.expected_num_aws_accel << ", got "
+                       << topology.getNumAwsAccel();
+            rc = 1;
+        }
+
+        // verify discovered NIC count
+        if (static_cast<int>(topology.getTotalNicCount()) != topology_info.expected_nic_count) {
+            NIXL_ERROR << "Invalid EFA NIC count for " << topology_info.instance_type
+                       << ", expected " << topology_info.expected_nic_count << ", got "
+                       << topology.getTotalNicCount();
+            rc = 2;
+        }
+
+        // verify no unexpected NVIDIA accelerators appeared
+        if (topology.getNumNvidiaAccel() != 0) {
+            NIXL_ERROR << "Unexpected NVIDIA accelerator count for " << topology_info.instance_type
+                       << ", expected 0, got " << topology.getNumNvidiaAccel();
+            rc = 3;
+        }
+
+        if (rc == 0) {
+            NIXL_INFO << "   SUCCESS: Neuron topology " << topology_info.instance_type
+                      << " loaded (" << topology.getNumAwsAccel() << " Neuron device(s), "
+                      << topology.getTotalNicCount() << " EFA NIC(s))";
+        }
+    }
+
+    return rc;
+}
+
+int
+testNeuronTopologies() {
+    NIXL_INFO << "=== Testing Libfabric Neuron topology discovery ===";
+    int test_id = 1;
+    for (size_t i = 0; i < neuron_topology_count; ++i) {
+        if (neuron_topologies[i].enable) {
+            const char *instance_type = neuron_topologies[i].instance_type;
+            NIXL_INFO << test_id++ << ". Testing Neuron topology for instance type "
+                      << instance_type;
+            int res = testNeuronTopology(neuron_topologies[i]);
+            if (res != 0) {
+                NIXL_ERROR << "Test failed with return code: " << res;
+                return res;
+            }
+        }
+    }
+    NIXL_INFO << "=== Test completed successfully! ===";
+    return 0;
+}
+
+int
+testNeuronTopology(const char *instance_type) {
+    NIXL_INFO << "Testing Neuron topology loading on instance type " << instance_type;
+    for (size_t i = 0; i < neuron_topology_count; ++i) {
+        if (neuron_topologies[i].enable &&
+            strcmp(instance_type, neuron_topologies[i].instance_type) == 0) {
+            int res = testNeuronTopology(neuron_topologies[i]);
+            if (res == 0) {
+                NIXL_INFO << "=== Test completed successfully! ===";
+                return 0;
+            }
+            NIXL_ERROR << "Test failed with return code: " << res;
+            return res;
+        }
+    }
+    NIXL_ERROR << "Could not find Neuron topology spec for instance type " << instance_type;
+    return 2;
 }
 
 int

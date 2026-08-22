@@ -88,6 +88,15 @@ private:
     void
     cleanupHwlocTopology();
 
+    // Neuron/EFA preflight helpers -- log an actionable NIXL_INFO/NIXL_WARN at plugin
+    // init time when the discovered Neuron accelerator count doesn't match the EFA NIC
+    // count. Called from discoverTopology() after accelerator + NIC discovery are done.
+    // See ai-dynamo/nixl#1994 for background.
+    void
+    neuronEfaPreflightForEfaProvider();
+    void
+    neuronEfaPreflightForNonEfaProvider();
+
     // Data structures for NIXL topology-aware grouping algorithm
     struct NicInfo {
         std::string libfabric_name;
