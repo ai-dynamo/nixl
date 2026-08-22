@@ -60,6 +60,21 @@ public:
     nixl_status_t
     checkXfer();
 
+    /**
+     * @brief Whether every submitted I/O of this request has been confirmed.
+     *
+     * Every queue entry stores this request as its completion callback context, so the
+     * request may only be freed once this returns true; until then it must stay alive.
+     * releaseReqH() uses this to decide between freeing a released request immediately
+     * and parking it until its outstanding I/Os complete.
+     *
+     * @return true when no I/Os are outstanding and the request may be freed.
+     */
+    bool
+    allConfirmed() const {
+        return num_confirmed_ios_ == queue_depth_;
+    }
+
     // Exception classes
     class exception : public std::exception {
     private:
@@ -81,10 +96,17 @@ private:
     mutable std::unique_ptr<nixlPosixIOQueue> io_queue_;
     mutable nixlLock io_queue_lock_;
     nixl::PathModeDevIdRegistry path_mode_devids_;
+    // Requests released by the caller while their I/Os were still outstanding. Each is
+    // freed by reapReleasedReqs() once its last completion has been confirmed, or by the
+    // destructor if the queue is never polled again. Guarded by io_queue_lock_.
+    mutable std::vector<nixlPosixBackendReqH *> released_reqs_;
+
+    void
+    reapReleasedReqs() const;
 
 public:
     nixlPosixEngine(const nixlBackendInitParams *init_params);
-    virtual ~nixlPosixEngine() = default;
+    virtual ~nixlPosixEngine();
 
     bool
     supportsRemote() const override {
