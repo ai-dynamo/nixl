@@ -490,6 +490,7 @@ RUN set -eux; \
         --disable-static \
         --disable-doxygen-doc \
         --enable-optimizations \
+        --without-avx \
         --enable-cma \
         --enable-devel-headers \
         --with-rocm="${ROCM_PATH}/core" \

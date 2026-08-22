@@ -274,6 +274,43 @@ repair_wheel() {
     mkdir -p "$OUT_DIR"
     auditwheel repair $AUDITWHEEL_EXCLUDES "$IN_DIR"/nixl*.whl --plat "$WHL_PLATFORM" --wheel-dir "$OUT_DIR"
     ./contrib/wheel_add_ucx_plugins.py --ucx-plugins-dir "$UCX_PLUGINS_DIR" --nixl-plugins-dir "$NIXL_PLUGINS_DIR" "$OUT_DIR"/*.whl
+    check_wheel_no_avx "$(get_wheel_path "$OUT_DIR")"
+}
+
+# Make sure no bundled library contains AVX instructions: bundled code has to
+# stay at the x86-64-v2 (SSE4.2) baseline. objdump instruction lines are
+# "<addr>:\t<opcode bytes>\t<mnemonic>...", so the mnemonic is the first word
+# of the third tab-separated field; every VEX/EVEX arithmetic or move mnemonic
+# starts with 'v' over its SSE name (vmovdqa, vaddss, vzeroupper) and AVX-512
+# opmask instructions start with 'k' (kmovb, kaddw), while no baseline x86-64
+# mnemonic shares either prefix (verr/verw are ring0-only). AWS SDK libraries
+# are skipped: they select their code paths at run time from the CPU feature
+# bits, so their AVX code never executes on CPUs without it. Non-x86-64
+# objects are skipped (objdump -f reports the architecture).
+check_wheel_no_avx() {
+    local WHEEL=$1 tmp
+    tmp=$(mktemp)
+    local rc=0 entry found=0
+    while IFS= read -r entry; do
+        case "$entry" in
+            *libaws-*) continue ;;
+        esac
+        found=1
+        unzip -p "$WHEEL" "$entry" > "$tmp"
+        if objdump -f "$tmp" | grep -q 'x86-64' && \
+           objdump -d "$tmp" | awk -F'\t' \
+               'NF>=3 && $3 ~ /^[vk]/ && $3 !~ /^ver[rm]/ {found=1}
+                END {exit !found}'; then
+            echo "ERROR: $entry in $(basename "$WHEEL") contains AVX instructions." >&2
+            rc=1
+        fi
+    done < <(unzip -Z1 "$WHEEL" | grep -E '\.so(\.[0-9]+)*$')
+    rm -f "$tmp"
+    if [ "$found" -ne 1 ]; then
+        echo "ERROR: no bundled libraries found in $(basename "$WHEEL"); AVX check cannot run." >&2
+        rc=1
+    fi
+    return $rc
 }
 
 # Echo the path of the single .whl in $1, or exit if the count is not 1.
