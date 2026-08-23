@@ -507,6 +507,7 @@ void Buffer::connect_ranks(const std::vector<int>& remote_ranks_list, const std:
     }
 
     if (!new_ranks.empty()) {
+        pybind11::gil_scoped_release release;
         _nixl_agents_connect(new_ranks, new_ranks_mds);
 
         _nixl_agents_peer_info_gather(new_ranks);
