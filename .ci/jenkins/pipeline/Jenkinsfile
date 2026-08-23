@@ -50,22 +50,6 @@ try {
 } catch (Exception ex) {
     currentBuild.result = 'FAILURE'
     println ex
-    // On failure, kick off an automated CI triage investigation.
-    if (params.githubData) {
-        try {
-            // ciTriage (swx-jenkins-lib) POSTs to the agent on the flyweight executor.
-            withCredentials([string(credentialsId: 'ci-triage-nixl-url', variable: 'CI_TRIAGE_URL')]) {
-                ciTriage(
-                    url:       env.CI_TRIAGE_URL,
-                    commitSha: githubHelper.getMergedSHA(),
-                    prNumber:  githubHelper.getPRNumber(),
-                    insecure:  true,   // the ingress wildcard CA isn't in the controller trust store
-                )
-            }
-        } catch (Exception triageEx) {
-            echo "CI triage trigger failed (non-fatal): ${triageEx}"
-        }
-    }
     throw ex
 } finally {
     if (params.githubData) {
