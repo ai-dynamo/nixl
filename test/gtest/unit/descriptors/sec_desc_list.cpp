@@ -241,6 +241,28 @@ TEST_F(secDescListTest, ZeroLenObjSegQuery) {
     EXPECT_EQ(list.getIndex(query), 0);
 }
 
+TEST_F(secDescListTest, UnboundedFileSegCoversFiniteRangeFromNonzeroOffset) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 0, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(4096, 64, 0)), 0);
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(8192, 64, 0)), 0);
+}
+
+TEST_F(secDescListTest, UnboundedFileSegDoesNotCoverEarlierRange) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 0, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(0, 64, 0)), -1);
+}
+
+TEST_F(secDescListTest, FiniteFileSegDoesNotCoverOverflowingRange) {
+    nixlSecDescList list(FILE_SEG);
+    list.addDesc(nixlSectionDesc(4096, 4096, 0));
+
+    EXPECT_EQ(list.getCoveringIndex(nixlBasicDesc(4160, SIZE_MAX, 0)), -1);
+}
+
 TEST_F(secDescListTest, ZeroLenQueryNotFound) {
     nixlSecDescList list(FILE_SEG);
     nixlSectionDesc desc(0, SIZE_MAX, 0);
