@@ -120,9 +120,6 @@ VLLM_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)"
 
 echo "vLLM source: VLLM_REF=${VLLM_REF:-unknown} VLLM_COMMIT=${VLLM_COMMIT}"
 
-SHARED_TORCH="$("${VLLM_PYTHON}" -c 'import torch; print(torch.__version__, torch.version.cuda, sep="|")')"
-echo "Shared NIXL EP/vLLM Torch/CUDA: ${SHARED_TORCH}"
-
 # Verify that the vLLM environment can use the NIXL and NIXL EP artifacts that
 # were built in this PR image. This makes an unavailable backend fail before
 # pytest can report the test as skipped.
@@ -133,7 +130,7 @@ import nixl
 import nixl_ep
 import torch
 import vllm
-from vllm.distributed.nixl_utils import is_nixl_available
+from vllm.distributed.eplb.eplb_communicator import has_nixl
 
 try:
     nixl_version = version("nixl")
@@ -142,7 +139,7 @@ except PackageNotFoundError:
 
 assert torch.cuda.is_available(), "CUDA is unavailable"
 assert torch.cuda.device_count() >= 4, "vLLM Elastic EP requires four GPUs"
-assert is_nixl_available(), "vLLM cannot discover the NIXL package"
+assert has_nixl(), "vLLM cannot load NIXL"
 
 print("vLLM:", vllm.__version__)
 print("NIXL:", nixl_version, nixl.__file__)

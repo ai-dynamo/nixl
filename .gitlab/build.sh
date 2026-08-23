@@ -441,8 +441,6 @@ else
         NIXL_PYTHON_NATIVE_FILE=$(mktemp)
         printf "[binaries]\npython = '%s'\n" "${NIXL_PYTHON}" > "${NIXL_PYTHON_NATIVE_FILE}"
         NIXL_PYTHON_ARGS=(--native-file "${NIXL_PYTHON_NATIVE_FILE}" -Dpython.install_env=venv)
-        "${NIXL_PYTHON}" -c \
-            'import sys, torch; print("NIXL Python/Torch:", sys.executable, torch.__version__, torch.version.cuda)'
     fi
     # shellcheck disable=SC2086
     meson setup "${NIXL_PYTHON_ARGS[@]}" ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
