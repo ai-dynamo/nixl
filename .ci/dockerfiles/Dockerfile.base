@@ -114,7 +114,7 @@ RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
             --torch-backend=cu130 \
             -r "${VLLM_ELASTIC_TEST_DIR}/requirements/build/cuda.txt" && \
-        VLLM_USE_PRECOMPILED=1 "${HOME}/.local/bin/uv" pip install \
+        MAX_JOBS=2 "${HOME}/.local/bin/uv" pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
             --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=cu130 \
             --no-build-isolation && \
