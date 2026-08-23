@@ -14,8 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_TEST_DOCA_TELEMETRY_LOOPBACK_CONNECTION_H
-#define NIXL_TEST_DOCA_TELEMETRY_LOOPBACK_CONNECTION_H
+#ifndef NIXL_TEST_METRICS_LOOPBACK_CONNECTION_H
+#define NIXL_TEST_METRICS_LOOPBACK_CONNECTION_H
+
+#include "common/scoped_fd.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -28,36 +30,28 @@
 #include <string>
 #include <thread>
 
-namespace nixl::doca_test {
+namespace nixl::metrics_test {
 
 // RAII blocking TCP client to 127.0.0.1:<port>: connects (with send/recv
 // timeouts) on construction and closes the socket on destruction. Single-use
 // and scope-bound, so it is neither copyable nor movable.
 class loopbackConnection {
 public:
-    explicit loopbackConnection(uint16_t port) {
-        fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (fd_ < 0) {
+    explicit loopbackConnection(uint16_t port) : fd_(::socket(AF_INET, SOCK_STREAM, 0)) {
+        if (!fd_.valid()) {
             return;
         }
 
         const struct timeval tv{3, 0};
-        ::setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        ::setsockopt(fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        ::setsockopt(fd_.get(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        ::setsockopt(fd_.get(), SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
         addr.sin_addr.s_addr = ::inet_addr(loopbackAddr);
-        if (::connect(fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
-            ::close(fd_);
-            fd_ = -1;
-        }
-    }
-
-    ~loopbackConnection() {
-        if (fd_ >= 0) {
-            ::close(fd_);
+        if (::connect(fd_.get(), reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
+            fd_.reset();
         }
     }
 
@@ -65,9 +59,9 @@ public:
     loopbackConnection &
     operator=(const loopbackConnection &) = delete;
 
-    bool
+    [[nodiscard]] bool
     connected() const {
-        return fd_ >= 0;
+        return fd_.valid();
     }
 
     // Write the whole buffer, retrying short writes and transient errors
@@ -79,7 +73,7 @@ public:
         const auto write_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         size_t off = 0;
         while (off < data.size() && std::chrono::steady_clock::now() < write_deadline) {
-            const ssize_t n = ::send(fd_, data.data() + off, data.size() - off, MSG_NOSIGNAL);
+            const ssize_t n = ::send(fd_.get(), data.data() + off, data.size() - off, MSG_NOSIGNAL);
             if (n > 0) {
                 off += static_cast<size_t>(n);
                 continue;
@@ -98,13 +92,13 @@ public:
     // EAGAIN/EWOULDBLOCK (or EINTR on a signal); treat those as transient and
     // retry after a short sleep instead of bailing out with a truncated body.
     // A read deadline bounds the retries so the loop can never hang.
-    std::string
+    [[nodiscard]] std::string
     recvUntilClosed() const {
         std::string response;
         char buf[4096];
         const auto read_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (std::chrono::steady_clock::now() < read_deadline) {
-            const ssize_t n = ::recv(fd_, buf, sizeof(buf), 0);
+            const ssize_t n = ::recv(fd_.get(), buf, sizeof(buf), 0);
             if (n > 0) {
                 response.append(buf, n);
                 continue;
@@ -122,10 +116,10 @@ public:
     }
 
     // Ask the OS for a free TCP port on the loopback interface.
-    static uint16_t
+    [[nodiscard]] static uint16_t
     findFreePort() {
-        const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (fd < 0) {
+        const nixl::scopedFd fd(::socket(AF_INET, SOCK_STREAM, 0));
+        if (!fd.valid()) {
             return 0;
         }
         sockaddr_in addr{};
@@ -133,19 +127,18 @@ public:
         addr.sin_addr.s_addr = ::inet_addr(loopbackAddr);
         addr.sin_port = 0;
         uint16_t port = 0;
-        if (::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0) {
+        if (::bind(fd.get(), reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0) {
             socklen_t len = sizeof(addr);
-            if (::getsockname(fd, reinterpret_cast<sockaddr *>(&addr), &len) == 0) {
+            if (::getsockname(fd.get(), reinterpret_cast<sockaddr *>(&addr), &len) == 0) {
                 port = ntohs(addr.sin_port);
             }
         }
-        ::close(fd);
         return port;
     }
 
     // Minimal HTTP/1.1 GET over 127.0.0.1:<port>; returns the response body
     // (empty on failure). One-shot: opens, sends, reads, and closes.
-    static std::string
+    [[nodiscard]] static std::string
     httpGet(uint16_t port, const std::string &path) {
         const loopbackConnection conn(port);
         if (!conn.connected()) {
@@ -165,9 +158,9 @@ public:
 private:
     static constexpr const char *loopbackAddr = "127.0.0.1";
 
-    int fd_ = -1;
+    nixl::scopedFd fd_;
 };
 
-} // namespace nixl::doca_test
+} // namespace nixl::metrics_test
 
-#endif // NIXL_TEST_DOCA_TELEMETRY_LOOPBACK_CONNECTION_H
+#endif // NIXL_TEST_METRICS_LOOPBACK_CONNECTION_H
