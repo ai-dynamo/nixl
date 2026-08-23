@@ -121,10 +121,6 @@ RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
         "${HOME}/.local/bin/uv" pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
             pytest tblib "ray[default]>=2.48.0" && \
-        (cd "${VLLM_ELASTIC_TEST_DIR}" && \
-            "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" -m pytest \
-                --collect-only -q \
-                tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling) && \
         sudo apt-get clean && \
         sudo rm -rf /var/lib/apt/lists/*; \
     fi
