@@ -18,8 +18,12 @@
 #include "ucx_utils.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -113,6 +117,32 @@ nixlUcxEp::setState(nixl::ucx::ep_state_t new_state) {
     NIXL_ASSERT(new_state != old_state);
     NIXL_DEBUG << "ep " << eph << ": state " << old_state << " -> " << new_state;
     state_ = new_state;
+}
+
+std::string
+nixlUcxEp::getStateDesc() const {
+    std::stringstream desc;
+    desc << "nixlUcxEp " << this << " {ucp_ep: " << eph << ", nixl ep state: " << state_.load()
+         << "}";
+    if (eph == nullptr) {
+        return desc.str();
+    }
+
+    char *data = nullptr;
+    size_t size = 0;
+    FILE *stream = open_memstream(&data, &size);
+    if (stream == nullptr) {
+        desc << ", ucp_ep_print_info unavailable: " << nixl_strerror(errno);
+        return desc.str();
+    }
+
+    ucp_ep_print_info(eph, stream);
+    fclose(stream);
+    const std::unique_ptr<char, decltype(&std::free)> buffer(data, &std::free);
+
+    desc << ", ucp_ep_print_info:\n";
+    desc.write(data, size);
+    return desc.str();
 }
 
 nixl_status_t

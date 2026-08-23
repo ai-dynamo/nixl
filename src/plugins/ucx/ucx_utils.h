@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <memory>
+#include <string>
 #include <type_traits>
 
 extern "C" {
@@ -127,6 +128,13 @@ public:
     getEp() const noexcept {
         return eph;
     }
+
+    /**
+     * Describe the endpoint: its identifiers, the NIXL endpoint state and the UCX endpoint
+     * information reported by ucp_ep_print_info().
+     */
+    [[nodiscard]] std::string
+    getStateDesc() const;
 };
 
 class nixlUcxMem {

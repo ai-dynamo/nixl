@@ -42,11 +42,29 @@
 
 class nixlUcxConnection : public nixlBackendConnMD {
     private:
+        const std::string remoteAgent_;
         std::vector<std::unique_ptr<nixlUcxEp>> eps;
 
     public:
+        explicit nixlUcxConnection(std::string remote_agent)
+            : remoteAgent_(std::move(remote_agent)) {}
+
         [[nodiscard]] const std::unique_ptr<nixlUcxEp>& getEp(size_t ep_id) const noexcept {
             return eps[ep_id];
+        }
+
+        [[nodiscard]] const std::string &
+        getRemoteAgent() const noexcept {
+            return remoteAgent_;
+        }
+
+        friend std::ostream &
+        operator<<(std::ostream &os, const nixlUcxConnection &conn) {
+            os << "connection to " << conn.remoteAgent_ << " {eps: " << conn.eps.size() << "}";
+            for (size_t i = 0; i < conn.eps.size(); i++) {
+                os << "\nep[" << i << "]: " << conn.eps[i]->getStateDesc();
+            }
+            return os;
         }
 
     friend class nixlUcxEngine;
