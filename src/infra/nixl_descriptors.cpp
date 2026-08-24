@@ -358,6 +358,9 @@ template class nixlDescList<nixlMetaStrideDesc>;
 
 template bool operator==<nixlBasicDesc> (const nixlDescList<nixlBasicDesc> &lhs,
                                          const nixlDescList<nixlBasicDesc> &rhs);
+template bool
+operator== <nixlStrideDesc>(const nixlDescList<nixlStrideDesc> &lhs,
+                            const nixlDescList<nixlStrideDesc> &rhs);
 template bool operator==<nixlMetaDesc>  (const nixlDescList<nixlMetaDesc> &lhs,
                                          const nixlDescList<nixlMetaDesc> &rhs);
 template bool operator==<nixlBlobDesc>(const nixlDescList<nixlBlobDesc> &lhs,

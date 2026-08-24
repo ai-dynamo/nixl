@@ -172,6 +172,23 @@ struct nixlStrideDesc : public nixlBasicDesc {
         : nixlBasicDesc(addr, len, dev_id),
           stride(stride),
           count(count) {}
+
+    /**
+     * @brief Compare all nixlStrideDesc fields for equality
+     */
+    friend bool
+    operator==(const nixlStrideDesc &lhs, const nixlStrideDesc &rhs) {
+        return static_cast<const nixlBasicDesc &>(lhs) == static_cast<const nixlBasicDesc &>(rhs) &&
+            lhs.stride == rhs.stride && lhs.count == rhs.count;
+    }
+
+    /**
+     * @brief Compare all nixlStrideDesc fields for inequality
+     */
+    friend bool
+    operator!=(const nixlStrideDesc &lhs, const nixlStrideDesc &rhs) {
+        return !(lhs == rhs);
+    }
 };
 
 /**
