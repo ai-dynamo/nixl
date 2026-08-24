@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,12 +17,14 @@ use super::*;
 
 mod query;
 mod reg;
+mod remote;
 mod sync_manager;
 mod xfer;
 mod xfer_dlist_handle;
 
 pub use query::{QueryResponse, QueryResponseIterator, QueryResponseList};
 pub use reg::{RegDescList, RegDescriptor};
+pub use remote::{RemoteDescList, RemoteDescriptor};
 pub use sync_manager::{BackendSyncable, SyncManager};
 pub use xfer::{XferDescList, XferDescriptor};
 pub use xfer_dlist_handle::XferDlistHandle;
