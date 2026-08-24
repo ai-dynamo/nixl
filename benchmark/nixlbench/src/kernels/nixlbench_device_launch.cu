@@ -121,9 +121,6 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
     bool group_failed = false;
 
     for (uint64_t iter = 0; iter < params.numIterations && !group_failed; ++iter) {
-        if constexpr (Level == nixl_gpu_level_t::WARP) {
-            __syncwarp();
-        }
         const uint64_t post_start_ns = nixlbenchGetTimeNs();
 
         nixl_status_t put_status = NIXL_SUCCESS;
@@ -133,9 +130,6 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
             if (put_status != NIXL_IN_PROG) {
                 break;
             }
-        }
-        if constexpr (Level == nixl_gpu_level_t::WARP) {
-            __syncwarp();
         }
         const uint64_t post_end_ns = nixlbenchGetTimeNs();
 

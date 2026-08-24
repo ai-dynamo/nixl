@@ -250,9 +250,9 @@ NB_ARG_BOOL(use_device_api,
             "block size (num_threads <= 32 -> THREAD level; > 32 -> WARP level, must be a "
             "multiple of 32), and the internal CPU thread count is forced to 1.");
 NB_ARG_INT32(device_channel_num,
-             0,
-             "Number of logical UCX Device API channels. "
-             "0 uses one channel per execution group. "
+             1,
+             "Number of logical UCX Device API channels, default to 1. "
+             "0 means one channel per execution group. "
              "Only used when --use_device_api is enabled.");
 
 #undef NB_ARG_INT32
@@ -385,13 +385,14 @@ static bool
 setupDeviceAPIConfig() {
     const int num_threads = xferBenchConfig::num_threads;
 
-    if (num_threads < 1 || num_threads > 1024) {
+    if ((num_threads < 1) || (num_threads > 1024)) {
         std::cerr << "Invalid value for --num_threads: " << num_threads
                   << ". Device API requires a GPU kernel block thread count in [1, 1024]"
                   << std::endl;
         return false;
     }
-    if (num_threads > XFERBENCH_DEVICE_WARP_SIZE && num_threads % XFERBENCH_DEVICE_WARP_SIZE != 0) {
+    if ((num_threads > XFERBENCH_DEVICE_WARP_SIZE) &&
+        (num_threads % XFERBENCH_DEVICE_WARP_SIZE != 0)) {
         std::cerr << "Invalid value for --num_threads: " << num_threads
                   << ". Device API requires block_threads > 32 must be a multiple of 32"
                   << std::endl;
