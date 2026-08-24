@@ -65,6 +65,9 @@ echo "==== Running vLLM Elastic EP test ===="
 # failure aborts the job early. Scope its PATH change to this subshell so it
 # does not affect the native elastic tests that follow.
 (
+    # SPCx loads HPC-X SHARP and its UCX 1.21 into Ray workers, conflicting
+    # with the UCX >=1.22 that NIXL EP was built against.
+    unset NCCL_NET_PLUGIN
     # Put the vLLM venv on PATH so the test's `ray`/`vllm` CLIs and any `python`
     # subprocess (Ray workers, `vllm serve`) resolve to this environment.
     export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
