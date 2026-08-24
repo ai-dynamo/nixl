@@ -146,8 +146,6 @@ fn test_prep_mem_view_local() {
     assert!(!view.as_ptr().is_null());
 }
 
-/// The custom parameter is forwarded to the backend, mirroring
-/// `extra_params.customParam` in test/gtest/device_api/single_write_test.cu.
 #[test]
 fn test_prep_mem_view_local_with_custom_param() {
     if !has_cuda_gpu() {

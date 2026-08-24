@@ -493,8 +493,7 @@ fn test_make_connection_success() {
     );
 }
 
-/// The custom parameter is a blob, not a C string: the gpunetio backend stores
-/// a raw cudaStream_t in it, so embedded zero bytes must survive.
+/// The payload is a blob, not a C string, so embedded zero bytes must survive.
 #[test]
 fn test_opt_args_custom_param_round_trip() {
     let mut opt_args = OptArgs::new().expect("Failed to create opt args");
