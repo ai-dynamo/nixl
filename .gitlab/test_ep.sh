@@ -62,14 +62,9 @@ cat /sys/devices/virtual/dmi/id/product_name || true
 
 echo "==== Running vLLM Elastic EP test ===="
 # Run the vLLM Elastic EP test before the native elastic tests so a fast setup
-# failure aborts the job early. Scope its LD_LIBRARY_PATH/PATH changes to this
-# subshell so they do not affect the native elastic tests that follow.
+# failure aborts the job early. Scope its PATH change to this subshell so it
+# does not affect the native elastic tests that follow.
 (
-    # Do NOT prepend HPC-X UCX (1.21.0): it shadows the newer UCX (>=1.22) that
-    # NIXL EP was built against and corrupts connect_ranks (CUDA illegal memory
-    # access). Keep the inherited NIXL UCX first, matching the native elastic
-    # tests; append only HPC-X UCC (libucc) after it, in case it is needed.
-    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/opt/hpcx/ucc/lib"
     # Put the vLLM venv on PATH so the test's `ray`/`vllm` CLIs and any `python`
     # subprocess (Ray workers, `vllm serve`) resolve to this environment.
     export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
