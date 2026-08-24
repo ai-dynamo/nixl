@@ -35,7 +35,6 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <gflags/gflags.h>
-#include <hiredis/hiredis.h>
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
@@ -43,72 +42,48 @@
 
 namespace {
 
-bool
-parseRedisBenchPort(int &port) {
-    port = 6379;
-    const char *port_env = getenv("REDIS_PORT");
-    if (!port_env) {
-        return true;
-    }
-
-    try {
-        size_t parsed = 0;
-        int parsed_port = std::stoi(port_env, &parsed);
-        if (parsed != std::string(port_env).size() || parsed_port <= 0 || parsed_port > 65535) {
-            std::cerr << "Invalid REDIS_PORT value: " << port_env << std::endl;
-            return false;
+std::string
+shellQuote(const std::string &value) {
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += c;
         }
-        port = parsed_port;
-        return true;
     }
-    catch (const std::exception &) {
-        std::cerr << "Invalid REDIS_PORT value: " << port_env << std::endl;
-        return false;
-    }
+    quoted += "'";
+    return quoted;
 }
 
-redisContext *
-connectRedisBench(const char *operation) {
-    const char *host = getenv("REDIS_HOST");
-    if (!host) {
-        host = "127.0.0.1";
-    }
-
-    int port = 6379;
-    if (!parseRedisBenchPort(port)) {
-        return nullptr;
-    }
-
-    struct timeval timeout = {5, 0};
-    redisContext *ctx = redisConnectWithTimeout(host, port, timeout);
-    if (!ctx || ctx->err) {
-        std::cerr << "Redis connect failed for " << operation << ": "
-                  << (ctx ? ctx->errstr : "null context") << std::endl;
-        if (ctx) {
-            redisFree(ctx);
-        }
-        return nullptr;
-    }
-
-    return ctx;
-}
-
-bool
-authRedisBench(redisContext *ctx, const char *operation) {
+std::string
+buildRedisCliPrefix() {
+    std::string prefix;
     const char *password = getenv("REDIS_PASSWORD");
-    if (!password || password[0] == '\0') {
-        return true;
+    if (password && password[0] != '\0') {
+        prefix += "REDISCLI_AUTH=" + shellQuote(password) + " ";
     }
 
-    redisReply *auth_reply = (redisReply *)redisCommand(ctx, "AUTH %s", password);
-    if (!auth_reply || auth_reply->type == REDIS_REPLY_ERROR) {
-        std::cerr << "Redis AUTH failed during " << operation << std::endl;
-        if (auth_reply) {
-            freeReplyObject(auth_reply);
-        }
+    prefix += "redis-cli";
+    const char *host = getenv("REDIS_HOST");
+    if (host && host[0] != '\0') {
+        prefix += " -h " + shellQuote(host);
+    }
+    const char *port = getenv("REDIS_PORT");
+    if (port && port[0] != '\0') {
+        prefix += " -p " + shellQuote(port);
+    }
+    return prefix;
+}
+
+bool
+runRedisCli(const std::string &cmd, const std::string &operation) {
+    std::cout << operation << std::endl;
+    int result = system(cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Failed to " << operation << " (exit code: " << result << ")" << std::endl;
         return false;
     }
-    freeReplyObject(auth_reply);
     return true;
 }
 
@@ -119,42 +94,31 @@ getRedisBench(size_t buffer_size, const std::string &key, void *buffer) {
         return false;
     }
 
-    redisContext *ctx = connectRedisBench("consistency GET");
-    if (!ctx) {
+    const std::string filename = "/tmp/" + key + ".get";
+    const std::string cmd =
+        buildRedisCliPrefix() + " --raw GET " + shellQuote(key) + " > " + shellQuote(filename);
+    if (!runRedisCli(cmd, "Getting Redis key: " + key)) {
+        unlink(filename.c_str());
         return false;
     }
 
-    if (!authRedisBench(ctx, "consistency GET")) {
-        redisFree(ctx);
+    int fd = open(filename.c_str(), O_RDONLY);
+    if (fd < 0) {
+        std::cerr << "Failed to open Redis GET output: " << filename
+                  << " with error: " << strerror(errno) << std::endl;
+        unlink(filename.c_str());
         return false;
     }
 
-    redisReply *reply = (redisReply *)redisCommand(ctx, "GET %b", key.data(), key.size());
-    bool success = false;
-    if (reply && reply->type == REDIS_REPLY_STRING) {
-        const size_t reply_len = static_cast<size_t>(reply->len);
-        if (reply_len == buffer_size) {
-            if (buffer_size > 0) {
-                memcpy(buffer, reply->str, buffer_size);
-            }
-            success = true;
-        } else {
-            std::cerr << "Redis GET size mismatch for key " << key << ": expected " << buffer_size
-                      << " bytes, got " << reply_len << " bytes" << std::endl;
-        }
-    } else if (reply && reply->type == REDIS_REPLY_NIL) {
-        std::cerr << "Redis GET failed, key not found: " << key << std::endl;
-    } else if (reply && reply->type == REDIS_REPLY_ERROR) {
-        std::cerr << "Redis GET error for key " << key << ": " << reply->str << std::endl;
-    } else {
-        std::cerr << "Redis GET failed for key " << key << std::endl;
+    ssize_t rc = pread(fd, buffer, buffer_size, 0);
+    close(fd);
+    unlink(filename.c_str());
+    if (rc < 0 || static_cast<size_t>(rc) != buffer_size) {
+        std::cerr << "Redis GET size mismatch for key " << key << ": expected " << buffer_size
+                  << " bytes, got " << (rc < 0 ? 0 : rc) << " bytes" << std::endl;
+        return false;
     }
-
-    if (reply) {
-        freeReplyObject(reply);
-    }
-    redisFree(ctx);
-    return success;
+    return true;
 }
 
 } // namespace
@@ -1437,44 +1401,16 @@ xferBenchUtils::putRedis(size_t buffer_size, const std::string &key) {
         return false;
     }
 
-    void *buf = nullptr;
-    const size_t align = xferBenchConfig::page_size > 0 ? xferBenchConfig::page_size : 4096;
-    if (posix_memalign(&buf, align, buffer_size) != 0) {
-        std::cerr << "Failed to allocate buffer for Redis seed data" << std::endl;
-        return false;
-    }
-    memset(buf, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
-
-    redisContext *ctx = connectRedisBench("seed SET");
-    if (!ctx) {
-        free(buf);
+    const std::string filename = "/tmp/" + key;
+    int fd = createFile(buffer_size, filename);
+    if (fd < 0) {
         return false;
     }
 
-    if (!authRedisBench(ctx, "seed SET")) {
-        redisFree(ctx);
-        free(buf);
-        return false;
-    }
-
-    redisReply *reply = (redisReply *)redisCommand(
-        ctx, "SET %b %b", key.data(), (size_t)key.size(), buf, (size_t)buffer_size);
-    free(buf);
-
-    bool ok = false;
-    if (reply && (reply->type == REDIS_REPLY_STATUS || reply->type == REDIS_REPLY_STRING)) {
-        ok = true;
-        std::cout << "Seeded Redis key for READ: " << key << std::endl;
-    } else if (reply && reply->type == REDIS_REPLY_ERROR) {
-        std::cerr << "Redis SET failed for key " << key << ": " << reply->str << std::endl;
-    } else {
-        std::cerr << "Redis SET failed for key " << key << std::endl;
-    }
-
-    if (reply) {
-        freeReplyObject(reply);
-    }
-    redisFree(ctx);
+    const std::string cmd =
+        buildRedisCliPrefix() + " -x SET " + shellQuote(key) + " < " + shellQuote(filename);
+    bool ok = runRedisCli(cmd, "Seeding Redis key for READ: " + key);
+    cleanupFile(fd, filename);
     return ok;
 }
 

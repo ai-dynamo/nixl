@@ -26,7 +26,6 @@ utils_deps = [
   gflags_dep,
   tomlplusplus_dep,
   dependency('dl', required: true),
-  dependency('hiredis', required: true),
 ]
 
 if cuda_available

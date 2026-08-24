@@ -129,9 +129,6 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
-        --redis-only)
-            BUILD_ARGS+=" --build-arg NIXL_ENABLE_PLUGINS=REDIS --build-arg NIXL_STATIC_PLUGINS=REDIS"
-            ;;
         --)
             shift
             break
@@ -188,7 +185,6 @@ show_help() {
     echo "  [--python-versions python versions to build for, comma separated]"
     echo "  [--tag tag for image]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
-    echo "  [--redis-only build NIXL with REDIS plugin only (static)]"
     exit 0
 }
 
