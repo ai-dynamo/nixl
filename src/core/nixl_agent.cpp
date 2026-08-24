@@ -1272,6 +1272,8 @@ nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &tel
     }
 
     telemetry = req_hndl->telemetry;
+    telemetry.backendName = req_hndl->engine->getType();
+    req_hndl->engine->getXferPathInfo(req_hndl->backendHandle, telemetry.transportPaths);
     return NIXL_SUCCESS;
 }
 

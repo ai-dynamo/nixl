@@ -378,7 +378,9 @@ def test_incorrect_plugin_env(monkeypatch):
         nixl_agent("bad env agent")
 
 
-def _run_xfer_telemetry_check(agent1, agent2, expect_telemetry: bool = True) -> None:
+def _run_xfer_telemetry_check(
+    agent1, agent2, backend_name: str, expect_telemetry: bool = True
+) -> None:
     mem_size = 128
     addr1 = utils.malloc_passthru(mem_size)
     addr2 = utils.malloc_passthru(mem_size)
@@ -425,6 +427,8 @@ def _run_xfer_telemetry_check(agent1, agent2, expect_telemetry: bool = True) -> 
         assert telem.postDuration > 0
         assert telem.xferDuration > 0
         assert telem.xferDuration >= telem.postDuration
+        assert telem.backendName == backend_name
+        assert isinstance(telem.transportPaths, list)
 
         agent1.release_xfer_handle(handle)
     finally:
@@ -447,7 +451,7 @@ def test_get_xfer_telemetry_without_sink(backend_name):
         agent2 = nixl_agent(
             str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
         )
-        _run_xfer_telemetry_check(agent1, agent2, expect_telemetry=True)
+        _run_xfer_telemetry_check(agent1, agent2, backend_name, expect_telemetry=True)
     finally:
         os.environ.pop("NIXL_TELEMETRY_ENABLE", None)
         if prev_enable is not None:
@@ -469,7 +473,7 @@ def test_get_xfer_telemetry_with_buffer(backend_name):
             agent2 = nixl_agent(
                 str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
             )
-            _run_xfer_telemetry_check(agent1, agent2)
+            _run_xfer_telemetry_check(agent1, agent2, backend_name)
         finally:
             os.environ.pop("NIXL_TELEMETRY_ENABLE")
             os.environ.pop("NIXL_TELEMETRY_DIR")
@@ -488,7 +492,7 @@ def test_get_xfer_telemetry_cfg(backend_name):
         agent2 = nixl_agent(
             str(uuid.uuid4()), nixl_conf=nixl_agent_config(backends=[backend_name])
         )
-        _run_xfer_telemetry_check(agent1, agent2, expect_telemetry=False)
+        _run_xfer_telemetry_check(agent1, agent2, backend_name, expect_telemetry=False)
     finally:
         os.environ.pop("NIXL_TELEMETRY_ENABLE")
         os.environ.pop("NIXL_TELEMETRY_DIR")

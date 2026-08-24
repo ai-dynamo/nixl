@@ -994,6 +994,26 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
     return real(agent, req_hndl, telemetry);
 }
 
+nixl_capi_status_t
+nixl_capi_get_xfer_backend_name(nixl_capi_agent_t agent,
+                                nixl_capi_xfer_req_t req_hndl,
+                                char **backend_name) {
+    using fn_t =
+        nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t, char **);
+    static fn_t real = (fn_t)resolve("nixl_capi_get_xfer_backend_name");
+    return real(agent, req_hndl, backend_name);
+}
+
+nixl_capi_status_t
+nixl_capi_get_xfer_transport_paths(nixl_capi_agent_t agent,
+                                   nixl_capi_xfer_req_t req_hndl,
+                                   nixl_capi_string_list_t *transport_paths) {
+    using fn_t = nixl_capi_status_t (*)(
+        nixl_capi_agent_t, nixl_capi_xfer_req_t, nixl_capi_string_list_t *);
+    static fn_t real = (fn_t)resolve("nixl_capi_get_xfer_transport_paths");
+    return real(agent, req_hndl, transport_paths);
+}
+
 // ---- Stub detection ----
 // Returns true if the real nixl library is NOT available at runtime.
 // Unlike other functions, this does NOT abort when the library is missing.

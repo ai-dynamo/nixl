@@ -453,6 +453,18 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_xfer_telemetry_t telemetry);
 
+// Get the selected backend name. The caller must free the returned string.
+nixl_capi_status_t
+nixl_capi_get_xfer_backend_name(nixl_capi_agent_t agent,
+                                nixl_capi_xfer_req_t req_hndl,
+                                char **backend_name);
+
+// Get the transport paths. The caller must destroy the returned string list.
+nixl_capi_status_t
+nixl_capi_get_xfer_transport_paths(nixl_capi_agent_t agent,
+                                   nixl_capi_xfer_req_t req_hndl,
+                                   nixl_capi_string_list_t *transport_paths);
+
 bool
 nixl_capi_is_stub();
 

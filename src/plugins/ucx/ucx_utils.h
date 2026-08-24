@@ -247,6 +247,9 @@ public:
     void
     reqCancel(nixlUcxReq req);
 
+    [[nodiscard]] std::string
+    getTransportInfo(nixlUcxReq req) const;
+
     [[nodiscard]] nixl_status_t
     arm() const noexcept;
 

@@ -285,6 +285,16 @@ struct nixlXferTelemetry {
      *      If any merging of descriptors were performed, it will be reflected here.
      */
     size_t descCount;
+
+    /**
+     * @var backendName Name of the backend selected for this transfer.
+     */
+    std::string backendName;
+
+    /**
+     * @var transportPaths Transport paths used by this transfer, as reported by the backend.
+     */
+    std::vector<std::string> transportPaths;
 };
 
 /**

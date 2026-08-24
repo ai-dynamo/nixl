@@ -453,6 +453,10 @@ protected:
                         EXPECT_TRUE(telemetry.postDuration > chrono_period_us_t(0));
                         EXPECT_TRUE(telemetry.xferDuration > chrono_period_us_t(0));
                         EXPECT_TRUE(telemetry.xferDuration >= telemetry.postDuration);
+                        EXPECT_EQ(telemetry.backendName, getBackendName());
+                        for (const auto &path : telemetry.transportPaths) {
+                            EXPECT_FALSE(path.empty());
+                        }
                     }
                 }
 

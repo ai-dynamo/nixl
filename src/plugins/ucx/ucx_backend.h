@@ -181,6 +181,10 @@ public:
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
+    void
+    getXferPathInfo(const nixlBackendReqH *handle,
+                    std::vector<std::string> &paths) const override;
+
     unsigned
     progress();
 

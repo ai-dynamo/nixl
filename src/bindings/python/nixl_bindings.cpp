@@ -229,7 +229,9 @@ PYBIND11_MODULE(_bindings, m) {
         .def_property_readonly("xferDuration",
                                [](const nixl_xfer_telem_t &t) { return t.xferDuration.count(); })
         .def_readonly("totalBytes", &nixl_xfer_telem_t::totalBytes)
-        .def_readonly("descCount", &nixl_xfer_telem_t::descCount);
+        .def_readonly("descCount", &nixl_xfer_telem_t::descCount)
+        .def_readonly("backendName", &nixl_xfer_telem_t::backendName)
+        .def_readonly("transportPaths", &nixl_xfer_telem_t::transportPaths);
 
 
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");

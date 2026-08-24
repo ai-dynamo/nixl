@@ -155,6 +155,10 @@ class nixlBackendEngine {
         //Backend aborts the transfer if necessary, and destructs the relevant objects
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
+        // Return the transport paths used by this request, if available.
+        virtual void
+        getXferPathInfo(const nixlBackendReqH *, std::vector<std::string> &) const {}
+
         // Prepare a memory view for remote buffers
         virtual nixl_status_t
         prepMemView(const nixl_remote_meta_dlist_t &,
