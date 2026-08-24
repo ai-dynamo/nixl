@@ -716,7 +716,7 @@
           default: ""
           description: >
             Optional override for the vllm-cu13 base image build-arg.<br/>
-            Leave empty for <b>rc0</b> (uses the CUDA 13 default <code>docker.io/vllm/vllm-openai:latest-cu130</code>).<br/>
+            Leave empty for <b>rc0</b> (uses the CUDA 13 default <code>docker.io/vllm/vllm-openai:latest</code>).<br/>
             For <b>rcN, N&gt;0</b> set to the corresponding rc0 image, e.g.<br/>
             <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>
       - string:
