@@ -116,16 +116,18 @@ getThreadCount(const nixlBackendInitParams *init_params) {
     return (count > 0) ? count : default_thread_count;
 }
 
-// cuFileRead/cuFileWrite return -1 with errno set for filesystem errors, and
-// a negative CUfileOpError enum value for all other errors, where errno is
-// not meaningful.
+// cuFileRead/cuFileWrite report filesystem errors as -1 with errno set, and
+// cuFile-level errors either as a negative CUfileOpError return value (as
+// documented) or, as observed in practice, as -1 with the CUfileOpError code
+// stored in errno. strerror is only meaningful for the first case.
 void
 logCuFileIOError(const char *api, ssize_t nbytes) {
-    if (nbytes == -1) {
+    if (nbytes == -1 && !IS_CUFILE_ERR(errno)) {
         NIXL_ERROR << "GDS_MT: " << api << " failed: " << strerror(errno);
     } else {
-        NIXL_ERROR << "GDS_MT: " << api << " failed: " << CUFILE_ERRSTR(nbytes)
-                   << " (err=" << -nbytes << ")";
+        const int err = (nbytes == -1) ? errno : (int)-nbytes;
+        NIXL_ERROR << "GDS_MT: " << api << " failed: " << CUFILE_ERRSTR(err) << " (err=" << err
+                   << ")";
     }
 }
 
