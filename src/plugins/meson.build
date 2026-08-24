@@ -118,6 +118,14 @@ if enabled_plugins.get('INFINIA')
     endif
 endif
 
+if enabled_plugins.get('IBM_SCALE')
+    if not has_io_uring and is_explicit_enable
+        error('IBM_SCALE plugin requested but liburing not found')
+    elif has_io_uring
+        subdir('ibm_scale')
+    endif
+endif
+
 gusli_lib_file = 'gusli_clnt'
 gusli_lib_found = cc.find_library(gusli_lib_file, required: false)
 if enabled_plugins.get('GUSLI')
