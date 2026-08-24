@@ -92,7 +92,8 @@ RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
 
 # Prepare vLLM Elastic EP tests in the dedicated EP base image.
 # The PR image builds NIXL once for both native and vLLM tests.
-# DL EP CI runs on GB200, so build only vLLM SM100 kernels.
+# DL EP CI runs on GB200, so build only vLLM SM100 kernels. MAX_JOBS is bounded
+# by the builder memory limit in .ci/jenkins/lib/test-dl-ep-matrix.yaml.
 RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
         export LD_LIBRARY_PATH="/opt/hpcx/ucx/lib:/opt/hpcx/ucc/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" && \
         git clone --depth 1 --branch "${VLLM_REF}" \
@@ -107,7 +108,7 @@ RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
             -r "${VLLM_ELASTIC_TEST_DIR}/requirements/build/cuda.txt" && \
         "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" -c \
             'import torch; print(torch.__version__, torch.version.cuda)' && \
-        TORCH_CUDA_ARCH_LIST=10.0 MAX_JOBS=2 VERBOSE=1 \
+        TORCH_CUDA_ARCH_LIST=10.0 MAX_JOBS=6 VERBOSE=1 \
             "${HOME}/.local/bin/uv" --verbose pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
             --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=cu130 \

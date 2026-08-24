@@ -29,7 +29,7 @@ job: nixl-ci-dl-gpu-ep
 # Fail job if one of the steps fails or continue
 failFast: false
 
-timeout_minutes: 360
+timeout_minutes: 600
 
 registry_host: artifactory.nvidia.com
 registry_auth: svc-nixl-new-artifactory-token
@@ -39,8 +39,9 @@ kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
   imagePullSecrets: "['artifactory-pull-secret']"
-  limits: "{memory: 16Gi, cpu: 16000m}"
-  requests: "{memory: 8Gi, cpu: 8000m}"
+  # The EP base image compiles vLLM from source, so this job needs the memory budget of the build jobs rather than the test jobs.
+  limits: "{memory: 32Gi, cpu: 16000m}"
+  requests: "{memory: 32Gi, cpu: 16000m}"
   privileged: true
 
 credentials:
