@@ -155,9 +155,19 @@ class nixlBackendEngine {
         //Backend aborts the transfer if necessary, and destructs the relevant objects
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
-        // Return the transport paths used by this request, if available.
+        /**
+         * @brief Append transport paths used by a completed transfer request.
+         *
+         * The request handle must remain valid and must not have been released.
+         * Implementations append paths not already present in @p paths without
+         * clearing existing entries. If path information is unavailable, @p paths
+         * is left unchanged.
+         *
+         * @param handle Handle of the completed transfer request.
+         * @param paths Output list to which distinct transport paths are appended.
+         */
         virtual void
-        getXferPathInfo(const nixlBackendReqH *, std::vector<std::string> &) const {}
+        getXferPathInfo(const nixlBackendReqH *handle, std::vector<std::string> &paths) const {}
 
         // Prepare a memory view for remote buffers
         virtual nixl_status_t
