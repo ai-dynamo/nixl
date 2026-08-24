@@ -119,21 +119,16 @@ public:
         }
 
         constexpr uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
-        if (query.len > max_addr - query.addr) {
-            return false;
-        }
-
         // File-like section lists normalize len=0 to SIZE_MAX to represent an
         // unbounded registration. Avoid adding that sentinel to a nonzero address.
         if (len == SIZE_MAX) {
-            return true;
-        }
-        if (len > max_addr - addr) {
-            return false;
+            return query.len <= max_addr - query.addr;
         }
 
-        const size_t offset = query.addr - addr;
-        return offset <= len && query.len <= len - offset;
+        // If this finite range wraps, end is below addr and therefore below
+        // query.addr. The first comparison also keeps the subtraction safe.
+        const uintptr_t end = addr + len;
+        return query.addr <= end && query.len <= end - query.addr;
     }
 
     /**
