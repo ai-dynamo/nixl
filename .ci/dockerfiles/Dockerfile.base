@@ -27,8 +27,7 @@ ARG PRE_INSTALLED_ENV
 ARG PRE_INSTALLED_NIXL_ENV
 ARG PRE_INSTALLED_UCX_ENV
 ARG UCX_VERSION=v1.22.x
-# Install the vLLM Elastic EP test environment only in the dedicated EP base
-# image. Other Dockerfile.base users do not download or install vLLM.
+# Prepare the vLLM Elastic EP test environment when requested.
 ARG BUILD_VLLM_ELASTIC_TEST=false
 ARG VLLM_REF=releases/v0.27.1
 # When set (e.g. "address"), build the Abseil/gRPC/etcd dependency stack with the
@@ -90,10 +89,7 @@ ENV VLLM_REF=${VLLM_REF}
 RUN /.gitlab/build.sh ${NIXL_INSTALL_DIR}
 RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
 
-# Prepare the vLLM Elastic EP test only in the dedicated EP base image. Install
-# the precompiled vLLM wheel (no source compilation); the source tree is cloned
-# only for the test file and the backend-selection patch. NIXL EP is built later
-# in the PR image against this venv's Torch.
+# Install the vLLM wheel and prepare its patched Elastic EP test.
 RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
         UV="${HOME}/.local/bin/uv"; \
         VENV_PY="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"; \
