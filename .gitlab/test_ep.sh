@@ -60,6 +60,69 @@ ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
 
+echo "==== Running vLLM Elastic EP test ===="
+# Run the vLLM Elastic EP test before the native elastic tests so a fast setup
+# failure aborts the job early. Scope its LD_LIBRARY_PATH/PATH changes to this
+# subshell so they do not affect the native elastic tests that follow.
+(
+    export LD_LIBRARY_PATH="/opt/hpcx/ucx/lib:/opt/hpcx/ucc/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    # Put the vLLM venv on PATH so the test's `ray`/`vllm` CLIs and any `python`
+    # subprocess (Ray workers, `vllm serve`) resolve to this environment.
+    export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
+    VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
+    VLLM_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)"
+
+    echo "vLLM source: VLLM_REF=${VLLM_REF:-unknown} VLLM_COMMIT=${VLLM_COMMIT}"
+
+    # Verify that the vLLM environment can use the NIXL and NIXL EP artifacts that
+    # were built in this PR image. This makes an unavailable backend fail before
+    # pytest can report the test as skipped.
+    "${VLLM_PYTHON}" - <<'PY'
+from importlib.metadata import PackageNotFoundError, version
+
+import nixl
+import nixl_ep
+import torch
+import vllm
+from vllm.distributed.eplb.eplb_communicator import has_nixl
+
+try:
+    nixl_version = version("nixl")
+except PackageNotFoundError:
+    nixl_version = "source tree"
+
+assert torch.cuda.is_available(), "CUDA is unavailable"
+assert torch.cuda.device_count() >= 4, "vLLM Elastic EP requires four GPUs"
+assert has_nixl(), "vLLM cannot load NIXL"
+
+print("vLLM:", vllm.__version__)
+print("NIXL:", nixl_version, nixl.__file__)
+print("NIXL EP:", nixl_ep.__file__)
+print("Torch/CUDA:", torch.__version__, torch.version.cuda)
+print("GPU:", torch.cuda.get_device_name())
+print("Visible GPUs:", torch.cuda.device_count())
+PY
+
+    # Run vLLM's 2 -> 4 -> 2 Elastic EP scaling test with NIXL EP.
+    (
+        cd "${VLLM_ELASTIC_TEST_DIR}"
+        VLLM_NIXL_EP_MAX_NUM_RANKS=4 \
+        VLLM_TEST_ELASTIC_EP_ALL2ALL_BACKEND=nixl_ep \
+        VLLM_TEST_ELASTIC_EP_INITIAL_DP=2 \
+        VLLM_TEST_ELASTIC_EP_TARGET_DP=4 \
+        timeout 7200 "${VLLM_PYTHON}" -m pytest \
+            tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling \
+            -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
+    )
+
+    if grep -Eiq '(^|[[:space:]])[0-9]+ skipped|SKIPPED' "${VLLM_LOG}"; then
+        echo "ERROR: vLLM Elastic EP test was skipped" >&2
+        exit 1
+    fi
+
+    echo "==== vLLM Elastic EP test done ===="
+)
+
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
@@ -112,58 +175,3 @@ else
 fi
 
 echo "==== nixl_ep elastic tests done ===="
-
-echo "==== Running vLLM Elastic EP test ===="
-export LD_LIBRARY_PATH="/opt/hpcx/ucx/lib:/opt/hpcx/ucc/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
-VLLM_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)"
-
-echo "vLLM source: VLLM_REF=${VLLM_REF:-unknown} VLLM_COMMIT=${VLLM_COMMIT}"
-
-# Verify that the vLLM environment can use the NIXL and NIXL EP artifacts that
-# were built in this PR image. This makes an unavailable backend fail before
-# pytest can report the test as skipped.
-"${VLLM_PYTHON}" - <<'PY'
-from importlib.metadata import PackageNotFoundError, version
-
-import nixl
-import nixl_ep
-import torch
-import vllm
-from vllm.distributed.eplb.eplb_communicator import has_nixl
-
-try:
-    nixl_version = version("nixl")
-except PackageNotFoundError:
-    nixl_version = "source tree"
-
-assert torch.cuda.is_available(), "CUDA is unavailable"
-assert torch.cuda.device_count() >= 4, "vLLM Elastic EP requires four GPUs"
-assert has_nixl(), "vLLM cannot load NIXL"
-
-print("vLLM:", vllm.__version__)
-print("NIXL:", nixl_version, nixl.__file__)
-print("NIXL EP:", nixl_ep.__file__)
-print("Torch/CUDA:", torch.__version__, torch.version.cuda)
-print("GPU:", torch.cuda.get_device_name())
-print("Visible GPUs:", torch.cuda.device_count())
-PY
-
-# Run vLLM's 2 -> 4 -> 2 Elastic EP scaling test with NIXL EP.
-(
-    cd "${VLLM_ELASTIC_TEST_DIR}"
-    VLLM_NIXL_EP_MAX_NUM_RANKS=4 \
-    VLLM_TEST_ELASTIC_EP_ALL2ALL_BACKEND=nixl_ep \
-    VLLM_TEST_ELASTIC_EP_INITIAL_DP=2 \
-    VLLM_TEST_ELASTIC_EP_TARGET_DP=4 \
-    timeout 7200 "${VLLM_PYTHON}" -m pytest \
-        tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling \
-        -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
-)
-
-if grep -Eiq '(^|[[:space:]])[0-9]+ skipped|SKIPPED' "${VLLM_LOG}"; then
-    echo "ERROR: vLLM Elastic EP test was skipped" >&2
-    exit 1
-fi
-
-echo "==== vLLM Elastic EP test done ===="
