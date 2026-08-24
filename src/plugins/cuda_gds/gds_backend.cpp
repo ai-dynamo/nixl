@@ -258,6 +258,9 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
 
 nixlGdsIOBatch* nixlGdsEngine::getBatchFromPool(unsigned int size) const {
     const std::lock_guard<std::mutex> lock(batch_pool_lock);
+    if (batch_pool.empty()) {
+        sweepQuarantineLocked();
+    }
     // Use a pre-allocated batch if available
     if (!batch_pool.empty()) {
         nixlGdsIOBatch* batch = batch_pool.back();
@@ -273,6 +276,33 @@ void nixlGdsEngine::returnBatchToPool(nixlGdsIOBatch* batch) const {
     const std::lock_guard<std::mutex> lock(batch_pool_lock);
     // Only keep up to batch_pool_size batches
         batch_pool.push_back(batch);
+}
+
+void
+nixlGdsEngine::quarantineBatch(nixlGdsIOBatch *batch) const {
+    const std::lock_guard<std::mutex> lock(batch_pool_lock);
+    batch_quarantine.push_back(batch);
+}
+
+// Return the held batches whose entries have all reported to the pool. Called
+// with batch_pool_lock held
+void
+nixlGdsEngine::sweepQuarantineLocked() const {
+    for (auto it = batch_quarantine.begin(); it != batch_quarantine.end();) {
+        if ((*it)->drain()) {
+            (*it)->reset();
+            batch_pool.push_back(*it);
+            it = batch_quarantine.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void
+nixlGdsEngine::sweepQuarantine() const {
+    const std::lock_guard<std::mutex> lock(batch_pool_lock);
+    sweepQuarantineLocked();
 }
 
 nixl_status_t nixlGdsEngine::postXfer(const nixl_xfer_op_t &operation,
@@ -301,10 +331,10 @@ nixl_status_t nixlGdsEngine::postXfer(const nixl_xfer_op_t &operation,
                                                     batch_size, gds_handle->batch_io_list);
 
         if (status != NIXL_SUCCESS) {
-            // Clean up on error
+            // The batches already submitted are still in flight: hold them
+            // until they drain instead of handing an active batch to the pool
             for (auto* batch : gds_handle->batch_io_list) {
-                batch->cancelBatch();
-                returnBatchToPool(batch);
+                quarantineBatch(batch);
             }
             gds_handle->batch_io_list.clear();
             return status;
@@ -355,34 +385,67 @@ nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle) const
 {
     nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *)handle;
 
+    sweepQuarantine();
+
     if (gds_handle->batch_io_list.empty()) {
         gds_handle->needs_prep = true;
         return NIXL_SUCCESS;
     }
 
-    nixl_status_t status = NIXL_SUCCESS;
-    for (auto* batch : gds_handle->batch_io_list) {
-        status = batch->checkStatus();
+    auto &batches = gds_handle->batch_io_list;
+    nixl_status_t failure = NIXL_SUCCESS;
+    size_t in_flight = 0;
+
+    // Reap completed batches, packing the in-flight ones to the front. A batch
+    // left in the list goes back to the pool twice
+    for (auto *batch : batches) {
+        nixl_status_t status = batch->checkStatus();
 
         if (status == NIXL_IN_PROG) {
-            return status;
+            batches[in_flight++] = batch;
+            continue;
         }
 
         if (status < 0) {
-            batch->cancelBatch();
+            failure = status;
+            quarantineBatch(batch); // may still have entries in flight
+        } else {
+            returnBatchToPool(batch);
         }
-        returnBatchToPool(batch);
+    }
+    batches.resize(in_flight);
+
+    // A batch failure fails the transfer. The batches still in flight are held
+    // until they drain: cuFileBatchIOCancel does not stop the I/O, and a
+    // canceled batch never reports again, so it could never be reused
+    if (failure != NIXL_SUCCESS) {
+        for (size_t i = 0; i < in_flight; i++) {
+            quarantineBatch(batches[i]);
+        }
+        batches.clear();
+        gds_handle->needs_prep = true;
+        return failure;
     }
 
-    gds_handle->batch_io_list.clear();
-    gds_handle->needs_prep = true;
-    return status;
+    if (batches.empty()) {
+        gds_handle->needs_prep = true;
+        return NIXL_SUCCESS;
+    }
+    return NIXL_IN_PROG;
 }
 
 nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle) const
 {
 
     nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *) handle;
+
+    // A request released before it completed still has batches in flight. Hold
+    // them until they drain, or the request handle deletes them and the pool
+    // loses them
+    for (auto *batch : gds_handle->batch_io_list) {
+        quarantineBatch(batch);
+    }
+    gds_handle->batch_io_list.clear();
 
     delete gds_handle;
     gds_handle = nullptr;
@@ -391,13 +454,23 @@ nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle) const
 }
 
 nixlGdsEngine::~nixlGdsEngine() {
-    // Clean up the batch pool
+    // Clean up the batch pool and the held batches. Reset first: a batch that
+    // last failed would keep that status and not release its arrays, and
+    // nothing uses it after this
     for (auto* batch : batch_pool) {
         if (batch) {
+            batch->reset();
             delete batch;
         }
     }
     batch_pool.clear();
+    for (auto *batch : batch_quarantine) {
+        if (batch) {
+            batch->reset();
+            delete batch;
+        }
+    }
+    batch_quarantine.clear();
 
     if (gds_utils) {
         gds_utils->closeGdsDriver();

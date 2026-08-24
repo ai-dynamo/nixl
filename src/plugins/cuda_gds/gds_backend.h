@@ -96,12 +96,21 @@ class nixlGdsEngine : public nixlBackendEngine {
 
         mutable std::mutex batch_pool_lock;
         mutable std::list<nixlGdsIOBatch*> batch_pool;
+        // Batches taken from a failed or released request while entries were
+        // still in flight, held here until they drain
+        mutable std::list<nixlGdsIOBatch *> batch_quarantine;
         unsigned int batch_pool_size;  // Renamed from pool_size
         unsigned int batch_limit;      // Added for configurable batch limit
         unsigned int max_request_size; // Added for configurable request size
 
         nixlGdsIOBatch* getBatchFromPool(unsigned int size) const;
         void returnBatchToPool(nixlGdsIOBatch* batch) const;
+        void
+        quarantineBatch(nixlGdsIOBatch *batch) const;
+        void
+        sweepQuarantine() const;
+        void
+        sweepQuarantineLocked() const;
         nixl_status_t
         createAndSubmitBatch(const std::vector<GdsTransferRequestH> &requests,
                              size_t start_idx,
