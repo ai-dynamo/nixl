@@ -656,6 +656,50 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t*
 }
 
 nixl_capi_status_t
+nixl_capi_opt_args_set_custom_param(nixl_capi_opt_args_t args, const void *data, size_t len) {
+    if (!args || (!data && len > 0)) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        args->args.customParam.assign((const char *)data, len);
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_opt_args_get_custom_param(nixl_capi_opt_args_t args, void **data, size_t *len) {
+    if (!args || !data || !len) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        const nixl_blob_t &param = args->args.customParam;
+        if (param.empty()) {
+            *data = nullptr;
+            *len = 0;
+            return NIXL_CAPI_SUCCESS;
+        }
+
+        void *param_data = malloc(param.size());
+        if (!param_data) {
+            return NIXL_CAPI_ERROR_BACKEND;
+        }
+
+        memcpy(param_data, param.data(), param.size());
+        *data = param_data;
+        *len = param.size();
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
 nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif)
 {
   if (!args) {

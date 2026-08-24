@@ -56,6 +56,7 @@ use bindings::{
     nixl_capi_opt_args_get_has_notif, nixl_capi_opt_args_get_notif_msg,
     nixl_capi_opt_args_get_skip_desc_merge, nixl_capi_opt_args_set_has_notif,
     nixl_capi_opt_args_set_notif_msg, nixl_capi_opt_args_set_skip_desc_merge,
+    nixl_capi_opt_args_set_custom_param, nixl_capi_opt_args_get_custom_param,
     nixl_capi_params_create_iterator, nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty,
     nixl_capi_params_iterator_next, nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc,
     nixl_capi_reg_dlist_clear, nixl_capi_register_mem, nixl_capi_string_list_get,
@@ -333,6 +334,49 @@ impl OptArgs {
         };
         match status {
             NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Sets the backend custom parameter, which `prep_mem_view_local` and
+    /// `_remote` forward to the backend. UCX reads `worker_id=<n>` from it to
+    /// pick the worker a memory view is bound to.
+    pub fn set_custom_param(&mut self, param: &[u8]) -> Result<(), NixlError> {
+        let status = unsafe {
+            nixl_capi_opt_args_set_custom_param(
+                self.inner.as_ptr(),
+                param.as_ptr() as *const _,
+                param.len(),
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
+    /// Gets the backend custom parameter
+    pub fn get_custom_param(&self) -> Result<Vec<u8>, NixlError> {
+        let mut data = ptr::null_mut();
+        let mut len = 0;
+        let status = unsafe {
+            nixl_capi_opt_args_get_custom_param(self.inner.as_ptr(), &mut data, &mut len)
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                if data.is_null() {
+                    return Ok(Vec::new());
+                }
+                // SAFETY: the C API allocated len bytes at data, which we own
+                let bytes = unsafe {
+                    let vec = std::slice::from_raw_parts(data as *const u8, len).to_vec();
+                    libc::free(data);
+                    vec
+                };
+                Ok(bytes)
+            }
             NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
             _ => Err(NixlError::BackendError),
         }

@@ -191,6 +191,10 @@ nixl_capi_status_t nixl_capi_opt_args_add_backend(nixl_capi_opt_args_t args, nix
 // OptArgs notification and merge control
 nixl_capi_status_t nixl_capi_opt_args_set_notif_msg(nixl_capi_opt_args_t args, const void* data, size_t len);
 nixl_capi_status_t nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t* len);
+nixl_capi_status_t
+nixl_capi_opt_args_set_custom_param(nixl_capi_opt_args_t args, const void *data, size_t len);
+nixl_capi_status_t
+nixl_capi_opt_args_get_custom_param(nixl_capi_opt_args_t args, void **data, size_t *len);
 nixl_capi_status_t nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif);
 nixl_capi_status_t nixl_capi_opt_args_get_has_notif(nixl_capi_opt_args_t args, bool* has_notif);
 nixl_capi_status_t nixl_capi_opt_args_set_skip_desc_merge(nixl_capi_opt_args_t args, bool skip_merge);
