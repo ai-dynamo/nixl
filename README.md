@@ -45,8 +45,6 @@ pip install nixl
 
 This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
-On x86-64, the wheels require SSE4.2 (the x86-64-v2 baseline) but do not require AVX.
-
 ## Prerequisites for source build (Linux)
 
 NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
