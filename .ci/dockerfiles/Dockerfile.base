@@ -96,6 +96,7 @@ RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
 # by the builder memory limit in .ci/jenkins/lib/test-dl-ep-matrix.yaml.
 RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
         export LD_LIBRARY_PATH="/opt/hpcx/ucx/lib:/opt/hpcx/ucc/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" && \
+        echo "builder cgroup memory.max: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unreadable) nproc: $(nproc)" && \
         git clone --depth 1 --branch "${VLLM_REF}" \
             https://github.com/vllm-project/vllm.git "${VLLM_ELASTIC_TEST_DIR}" && \
         git -C "${VLLM_ELASTIC_TEST_DIR}" apply \
@@ -108,7 +109,7 @@ RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
             -r "${VLLM_ELASTIC_TEST_DIR}/requirements/build/cuda.txt" && \
         "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" -c \
             'import torch; print(torch.__version__, torch.version.cuda)' && \
-        TORCH_CUDA_ARCH_LIST=10.0 MAX_JOBS=6 VERBOSE=1 \
+        TORCH_CUDA_ARCH_LIST=10.0 MAX_JOBS=4 VERBOSE=1 \
             "${HOME}/.local/bin/uv" --verbose pip install \
             --python "${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python" \
             --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=cu130 \
