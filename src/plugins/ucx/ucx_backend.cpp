@@ -34,13 +34,6 @@
 #include <asio.hpp>
 
 namespace {
-[[nodiscard]] uint32_t
-epCloseFlags(const nixl_b_params_t *custom_params) {
-    return nixl::getBackendParamDefaulted(custom_params, "ucx_ep_close_force", false) ?
-        UCP_EP_CLOSE_FLAG_FORCE :
-        0;
-}
-
 [[nodiscard]] bool
 sglEnabledFromConfig() {
     const bool enabled = nixl::config::getValueDefaulted("NIXL_UCX_SGL_ENABLE", false);
@@ -799,8 +792,6 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
         err_handling_mode = ucx_err_mode_from_string(*opt);
     }
 
-    const uint32_t ep_close_flags = epCloseFlags(custom_params);
-
     const auto engine_config =
         nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
@@ -816,8 +807,7 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
 
     workers_.reserve(num_workers);
     for (size_t i = 0; i < num_workers; i++) {
-        workers_.emplace_back(
-            std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, ep_close_flags, i));
+        workers_.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, i));
     }
 
     auto &worker = workers_.front();

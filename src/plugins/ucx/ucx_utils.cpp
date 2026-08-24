@@ -115,12 +115,17 @@ nixlUcxEp::setState(nixl::ucx::ep_state_t new_state) {
     state_ = new_state;
 }
 
+namespace {
+[[nodiscard]] ucs_status_ptr_t
+ucpEpClose(ucp_ep_h ep, uint32_t flags) {
+    const ucp_request_param_t req_param = {.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS, .flags = flags};
+    return ucp_ep_close_nbx(ep, &req_param);
+}
+} // namespace
+
 nixl_status_t
 nixlUcxEp::closeImpl() {
-    ucs_status_ptr_t request = nullptr;
     const nixl::ucx::ep_state_t current_state = state_;
-    const ucp_request_param_t req_param = {.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
-                                           .flags = closeFlags_};
 
     switch (current_state) {
     case nixl::ucx::ep_state_t::UNINITIALIZED:
@@ -129,19 +134,15 @@ nixlUcxEp::closeImpl() {
         NIXL_ASSERT(eph == nullptr);
         return NIXL_SUCCESS;
     case nixl::ucx::ep_state_t::FAILED: {
-        const ucp_request_param_t force_req_param = {
-            .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
-            .flags = UCP_EP_CLOSE_FLAG_FORCE,
-        };
-        request = ucp_ep_close_nbx(eph, &force_req_param);
+        ucs_status_ptr_t request = ucpEpClose(eph, UCP_EP_CLOSE_FLAG_FORCE);
         if (UCS_PTR_IS_PTR(request)) {
             ucp_request_free(request);
         }
         eph = nullptr;
         return NIXL_ERR_REMOTE_DISCONNECT;
     }
-    case nixl::ucx::ep_state_t::CONNECTED:
-        request = ucp_ep_close_nbx(eph, &req_param);
+    case nixl::ucx::ep_state_t::CONNECTED: {
+        ucs_status_ptr_t request = ucpEpClose(eph, 0);
         if (request == nullptr) {
             eph = nullptr;
             return NIXL_SUCCESS;
@@ -156,15 +157,12 @@ nixlUcxEp::closeImpl() {
         eph = nullptr;
         return NIXL_SUCCESS;
     }
+    }
     NIXL_FATAL << "Invalid endpoint state: " << current_state;
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
-                     void *addr,
-                     ucp_err_handling_mode_t err_handling_mode,
-                     uint32_t close_flags)
-    : closeFlags_{close_flags} {
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode) {
     ucp_ep_params_t ep_params;
     nixl_status_t status;
 
@@ -583,12 +581,10 @@ operator<<(std::ostream &os, const nixlUcxWorker &worker) {
 
 nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
                              ucp_err_handling_mode_t err_handling_mode,
-                             uint32_t ep_close_flags,
                              size_t id)
     : name_(ctx.getName() + ":" + std::to_string(id)),
       worker(createUcpWorker(ctx), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode),
-      epCloseFlags_(ep_close_flags),
       id_(id) {
     NIXL_DEBUG << *this << ": created ucp worker " << worker.get();
 }
@@ -612,8 +608,7 @@ nixlUcxWorker::epAddr() {
 std::unique_ptr<nixlUcxEp>
 nixlUcxWorker::connect(void *addr) {
     try {
-        auto ep =
-            std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, epCloseFlags_);
+        auto ep = std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_);
         NIXL_DEBUG << *this << ": created ep " << ep->getEp();
         return ep;
     }
