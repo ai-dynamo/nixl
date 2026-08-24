@@ -53,10 +53,10 @@ use bindings::{
     nixl_capi_mem_type_t, nixl_capi_mem_type_to_string, nixl_capi_notif_map_clear,
     nixl_capi_notif_map_get_agent_at, nixl_capi_notif_map_get_notif,
     nixl_capi_notif_map_get_notifs_size, nixl_capi_notif_map_size, nixl_capi_opt_args_add_backend,
-    nixl_capi_opt_args_get_has_notif, nixl_capi_opt_args_get_notif_msg,
-    nixl_capi_opt_args_get_skip_desc_merge, nixl_capi_opt_args_set_has_notif,
+    nixl_capi_opt_args_get_custom_param, nixl_capi_opt_args_get_has_notif,
+    nixl_capi_opt_args_get_notif_msg, nixl_capi_opt_args_get_skip_desc_merge,
+    nixl_capi_opt_args_set_custom_param, nixl_capi_opt_args_set_has_notif,
     nixl_capi_opt_args_set_notif_msg, nixl_capi_opt_args_set_skip_desc_merge,
-    nixl_capi_opt_args_set_custom_param, nixl_capi_opt_args_get_custom_param,
     nixl_capi_params_create_iterator, nixl_capi_params_destroy_iterator, nixl_capi_params_is_empty,
     nixl_capi_params_iterator_next, nixl_capi_post_xfer_req, nixl_capi_reg_dlist_add_desc,
     nixl_capi_reg_dlist_clear, nixl_capi_register_mem, nixl_capi_string_list_get,
@@ -361,7 +361,17 @@ impl OptArgs {
         }
     }
 
-    /// UCX reads `worker_id=<n>` from this to pick the worker a memory view binds to.
+    /// Get the notification message
+    pub fn get_notification_message(&self) -> Result<Vec<u8>, NixlError> {
+        let mut data = ptr::null_mut();
+        let mut len = 0;
+        let status =
+            unsafe { nixl_capi_opt_args_get_notif_msg(self.inner.as_ptr(), &mut data, &mut len) };
+
+        take_capi_blob(status, data, len)
+    }
+
+    /// Opaque blob forwarded to the backend; its contents are backend-defined.
     pub fn set_custom_param(&mut self, param: &[u8]) -> Result<(), NixlError> {
         let status = unsafe {
             nixl_capi_opt_args_set_custom_param(
@@ -383,16 +393,6 @@ impl OptArgs {
         let status = unsafe {
             nixl_capi_opt_args_get_custom_param(self.inner.as_ptr(), &mut data, &mut len)
         };
-        take_capi_blob(status, data, len)
-    }
-
-    /// Get the notification message
-    pub fn get_notification_message(&self) -> Result<Vec<u8>, NixlError> {
-        let mut data = ptr::null_mut();
-        let mut len = 0;
-        let status =
-            unsafe { nixl_capi_opt_args_get_notif_msg(self.inner.as_ptr(), &mut data, &mut len) };
-
         take_capi_blob(status, data, len)
     }
 

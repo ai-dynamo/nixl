@@ -650,8 +650,9 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t*
   }
 
   try {
-      return nixl_capi_blob_to_buffer(
-          args->args.notif.has_value() ? args->args.notif.value() : args->args.notifMsg, data, len);
+        const nixl_blob_t &msg =
+            args->args.notif.has_value() ? args->args.notif.value() : args->args.notifMsg;
+        return nixl_capi_blob_to_buffer(msg, data, len);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
