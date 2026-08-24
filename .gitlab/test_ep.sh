@@ -68,6 +68,10 @@ echo "==== Running vLLM Elastic EP test ===="
     # SPCx loads HPC-X SHARP and its UCX 1.21 into Ray workers, conflicting
     # with the UCX >=1.22 that NIXL EP was built against.
     unset NCCL_NET_PLUGIN
+    # This is a single-node CUDA IPC/NVLink test. Do not inherit the CI
+    # network-device restriction or select the RDMA-only rc_gda transport.
+    unset UCX_NET_DEVICES
+    export UCX_TLS=^rc_gda
     # Put the vLLM venv on PATH so the test's `ray`/`vllm` CLIs and any `python`
     # subprocess (Ray workers, `vllm serve`) resolve to this environment.
     export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
