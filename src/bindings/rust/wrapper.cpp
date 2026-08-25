@@ -604,6 +604,25 @@ nixl_capi_opt_args_add_backend(nixl_capi_opt_args_t args, nixl_capi_backend_t ba
   }
 }
 
+static nixl_capi_status_t
+nixl_capi_blob_to_buffer(const nixl_blob_t &blob, void **data, size_t *len) {
+    if (blob.empty()) {
+        *data = nullptr;
+        *len = 0;
+        return NIXL_CAPI_SUCCESS;
+    }
+
+    void *buf = malloc(blob.size());
+    if (!buf) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+
+    memcpy(buf, blob.data(), blob.size());
+    *data = buf;
+    *len = blob.size();
+    return NIXL_CAPI_SUCCESS;
+}
+
 nixl_capi_status_t
 nixl_capi_opt_args_set_notif_msg(nixl_capi_opt_args_t args, const void* data, size_t len)
 {
@@ -633,26 +652,40 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t*
   try {
       const nixl_blob_t &msg =
           args->args.notif.has_value() ? args->args.notif.value() : args->args.notifMsg;
-      size_t msg_size = msg.size();
-      if (msg_size == 0) {
-          *data = nullptr;
-          *len = 0;
-          return NIXL_CAPI_SUCCESS;
-      }
-
-      void *msg_data = malloc(msg_size);
-      if (!msg_data) {
-          return NIXL_CAPI_ERROR_BACKEND;
-      }
-
-      memcpy(msg_data, msg.data(), msg_size);
-      *data = msg_data;
-      *len = msg_size;
-      return NIXL_CAPI_SUCCESS;
+      return nixl_capi_blob_to_buffer(msg, data, len);
   }
   catch (...) {
     return NIXL_CAPI_ERROR_BACKEND;
   }
+}
+
+nixl_capi_status_t
+nixl_capi_opt_args_set_custom_param(nixl_capi_opt_args_t args, const void *data, size_t len) {
+    if (!args || (!data && len > 0)) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        args->args.customParam.assign((const char *)data, len);
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_opt_args_get_custom_param(nixl_capi_opt_args_t args, void **data, size_t *len) {
+    if (!args || !data || !len) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    try {
+        return nixl_capi_blob_to_buffer(args->args.customParam, data, len);
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
 }
 
 nixl_capi_status_t

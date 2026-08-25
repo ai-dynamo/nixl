@@ -493,6 +493,20 @@ fn test_make_connection_success() {
     );
 }
 
+/// The payload is a blob, not a C string, so embedded zero bytes must survive.
+#[test]
+fn test_opt_args_custom_param_round_trip() {
+    let mut opt_args = OptArgs::new().expect("Failed to create opt args");
+    assert!(opt_args.get_custom_param().expect("Failed to get custom param").is_empty());
+
+    let param = [0x01u8, 0x00, 0x02, 0x00, 0x03];
+    opt_args.set_custom_param(&param).expect("Failed to set custom param");
+    assert_eq!(
+        opt_args.get_custom_param().expect("Failed to get custom param"),
+        param
+    );
+}
+
 #[test]
 fn test_make_connection_invalid_param() {
     let agent = Agent::new("test_agent").expect("Failed to create agent");
