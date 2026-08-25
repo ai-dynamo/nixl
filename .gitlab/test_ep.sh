@@ -72,6 +72,9 @@ echo "==== Running vLLM Elastic EP test ===="
     # network-device restriction or select the RDMA-only rc_gda transport.
     unset UCX_NET_DEVICES
     export UCX_TLS=^rc_gda
+    # Use the backend bundled with the matching precompiled vLLM artifact.
+    # FlashInfer otherwise JIT-compiles against incompatible CUDA headers.
+    export VLLM_ATTENTION_BACKEND=CUTLASS_MLA
     # Put the vLLM venv on PATH so the test's `ray`/`vllm` CLIs and any `python`
     # subprocess (Ray workers, `vllm serve`) resolve to this environment.
     export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
