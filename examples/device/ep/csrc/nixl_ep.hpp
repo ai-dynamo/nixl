@@ -177,6 +177,12 @@ private:
     void _nixl_ep_memory_views_destroy(void);
     void _nixl_ep_destroy(void);
     bool _is_rank_connected(int rank_id) const;
+
+    // Records a tensor on the streams that consume it, so the caching allocator
+    // does not hand the block out again while the comm kernels are still running
+    void _record_tensor(const torch::Tensor& tensor,
+                        const at::cuda::CUDAStream& compute_stream,
+                        bool allocate_on_comm_stream) const;
     void set_active_rank_bound(int bound);
     void _refresh_active_rank_bound();
     int get_rank_bound(std::optional<int> num_experts) const;

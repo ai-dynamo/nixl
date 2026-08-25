@@ -79,6 +79,14 @@ bool Buffer::_is_rank_connected(int rank_id) const {
     return rank_id == rank or std::find(remote_ranks.begin(), remote_ranks.end(), rank_id) != remote_ranks.end();
 }
 
+void Buffer::_record_tensor(const torch::Tensor& tensor,
+                            const at::cuda::CUDAStream& compute_stream,
+                            bool allocate_on_comm_stream) const {
+    tensor.record_stream(comm_stream);
+    if (allocate_on_comm_stream)
+        tensor.record_stream(compute_stream);
+}
+
 void Buffer::set_active_rank_bound(int bound) {
     EP_HOST_ASSERT(bound > 0 && "active_rank_bound must be positive");
     active_rank_bound = bound;
@@ -591,16 +599,11 @@ Buffer::get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts,
     std::optional<EventHandle> event;
     if (async) {
         event = EventHandle(comm_stream);
-        for (auto& t: {topk_idx, num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank}) {
-            t.record_stream(comm_stream);
-            if (allocate_on_comm_stream)
-                t.record_stream(compute_stream);
-        }
-        for (auto& to: {num_tokens_per_rdma_rank}) {
-            to.has_value() ? to->record_stream(comm_stream) : void();
-            if (allocate_on_comm_stream)
-                to.has_value() ? to->record_stream(compute_stream) : void();
-        }
+        for (auto& t: {topk_idx, num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank})
+            _record_tensor(t, compute_stream, allocate_on_comm_stream);
+        for (auto& to: {num_tokens_per_rdma_rank})
+            if (to.has_value())
+                _record_tensor(to.value(), compute_stream, allocate_on_comm_stream);
     } else {
         stream_wait(compute_stream, comm_stream);
     }
@@ -865,22 +868,17 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     if (async) {
         event = EventHandle(comm_stream);
         for (auto& t: {x, is_token_in_rank, recv_x,
-                       rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum, gbl_channel_prefix_matrix, recv_gbl_rank_prefix_sum}) {
-            t.record_stream(comm_stream);
-            if (allocate_on_comm_stream)
-                t.record_stream(compute_stream);
-        }
+                       rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum, gbl_channel_prefix_matrix, recv_gbl_rank_prefix_sum})
+            _record_tensor(t, compute_stream, allocate_on_comm_stream);
         for (auto& to: {x_scales, topk_idx, topk_weights,
                         num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert,
                         cached_rdma_channel_prefix_matrix, cached_recv_rdma_rank_prefix_sum,
                         cached_gbl_channel_prefix_matrix, cached_recv_gbl_rank_prefix_sum,
                         recv_topk_idx, recv_topk_weights, recv_x_scales,
                         recv_rdma_channel_prefix_matrix, recv_gbl_channel_prefix_matrix, send_rdma_head, send_nvl_head,
-                        recv_src_meta}) {
-            to.has_value() ? to->record_stream(comm_stream) : void();
-            if (allocate_on_comm_stream)
-                to.has_value() ? to->record_stream(compute_stream) : void();
-        }
+                        recv_src_meta})
+            if (to.has_value())
+                _record_tensor(to.value(), compute_stream, allocate_on_comm_stream);
     } else {
         stream_wait(compute_stream, comm_stream);
     }
@@ -1005,16 +1003,11 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
         event = EventHandle(comm_stream);
         for (auto& t: {x, src_meta,
                        is_combined_token_in_rank, rdma_channel_prefix_matrix, rdma_rank_prefix_sum, gbl_channel_prefix_matrix,
-                       combined_x, combined_rdma_head, combined_nvl_head}) {
-            t.record_stream(comm_stream);
-            if (allocate_on_comm_stream)
-                t.record_stream(compute_stream);
-        }
-        for (auto& to: {topk_weights, combined_topk_weights, bias_0, bias_1}) {
-            to.has_value() ? to->record_stream(comm_stream) : void();
-            if (allocate_on_comm_stream)
-                to.has_value() ? to->record_stream(compute_stream) : void();
-        }
+                       combined_x, combined_rdma_head, combined_nvl_head})
+            _record_tensor(t, compute_stream, allocate_on_comm_stream);
+        for (auto& to: {topk_weights, combined_topk_weights, bias_0, bias_1})
+            if (to.has_value())
+                _record_tensor(to.value(), compute_stream, allocate_on_comm_stream);
     } else {
         stream_wait(compute_stream, comm_stream);
     }
