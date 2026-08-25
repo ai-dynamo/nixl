@@ -440,7 +440,7 @@ protected:
                              << "(" << bandwidth << " GB/s)";
                 }
 
-                nixl_xfer_telem_t telemetry;
+                nixl_xfer_telem_details_t telemetry;
                 if (expected_telem_status == NIXL_ERR_NO_TELEMETRY) {
                     const LogIgnoreGuard lig("cannot return values when telemetry is not enabled");
                     status = from.getXferTelemetry(xfer_req, telemetry);

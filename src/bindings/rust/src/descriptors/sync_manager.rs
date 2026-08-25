@@ -54,4 +54,3 @@ impl<T: BackendSyncable> SyncManager<T> {
         Ok(())
     }
 }
-

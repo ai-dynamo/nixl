@@ -138,11 +138,13 @@ The **Shared Memory Buffer** plug-in, contains the data per transaction event, w
 
 ### Per-transfer backend and transport paths
 
-`getXferTelemetry()` (C++) and `get_xfer_telemetry()` (Python) return the selected
-backend in `backendName` and a `transportPaths` vector/list in addition to the
-transfer timing and size fields. Rust exposes the same data as
-`XferTelemetry::backend_name` and `XferTelemetry::transport_paths`; their ABI-safe
-C wrapper accessors are `nixl_capi_get_xfer_backend_name()` and
+The `getXferTelemetry()` C++ overload taking `nixl_xfer_telem_details_t` returns the
+selected backend in `backendName` and a `transportPaths` vector in addition to
+the base transfer telemetry. The original `nixl_xfer_telem_t` overload and
+structure remain unchanged for binary compatibility. Python's
+`get_xfer_telemetry()` and Rust's `XferRequest::get_telemetry()` expose the same
+combined result; the Rust binding uses the ABI-safe C wrapper accessors
+`nixl_capi_get_xfer_backend_name()` and
 `nixl_capi_get_xfer_transport_paths()`.
 Each entry is a distinct backend-specific description captured from a request that
 carried the data. The UCX backend uses `ucp_request_query()`, so its entries include UCX's

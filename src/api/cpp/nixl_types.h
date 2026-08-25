@@ -285,7 +285,22 @@ struct nixlXferTelemetry {
      *      If any merging of descriptors were performed, it will be reflected here.
      */
     size_t descCount;
+};
 
+/**
+ * @brief A typedef for a nixlXferTelemetry
+ *        for telemetry output.
+ */
+using nixl_xfer_telem_t = nixlXferTelemetry;
+
+/**
+ * @struct nixlXferTelemetryDetails
+ * @brief Detailed telemetry output including backend and transport path information.
+ *
+ * This extends nixlXferTelemetry instead of changing its layout, preserving binary
+ * compatibility for applications built against the original telemetry structure.
+ */
+struct nixlXferTelemetryDetails : public nixlXferTelemetry {
     /**
      * @var backendName Name of the backend selected for this transfer.
      */
@@ -298,10 +313,9 @@ struct nixlXferTelemetry {
 };
 
 /**
- * @brief A typedef for a nixlXferTelemetry
- *        for telemetry output.
+ * @brief A typedef for detailed transfer telemetry output.
  */
-using nixl_xfer_telem_t = nixlXferTelemetry;
+using nixl_xfer_telem_details_t = nixlXferTelemetryDetails;
 
 /**
  * @brief A define for an empty string, that indicates the descriptor list is being

@@ -1272,8 +1272,24 @@ nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &tel
     }
 
     telemetry = req_hndl->telemetry;
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl,
+                            nixl_xfer_telem_details_t &telemetry) const {
+    nixl_status_t status = getXferTelemetry(
+        req_hndl, static_cast<nixl_xfer_telem_t &>(telemetry));
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
     telemetry.backendName = req_hndl->engine->getType();
-    req_hndl->engine->getXferPathInfo(req_hndl->backendHandle, telemetry.transportPaths);
+    telemetry.transportPaths.clear();
+    if (const auto *provider =
+            dynamic_cast<const nixlBackendXferPathProvider *>(req_hndl->engine)) {
+        provider->getXferPathInfo(req_hndl->backendHandle, telemetry.transportPaths);
+    }
     return NIXL_SUCCESS;
 }
 

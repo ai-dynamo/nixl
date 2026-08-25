@@ -216,22 +216,28 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_ERR_NOT_SUPPORTED", NIXL_ERR_NOT_SUPPORTED)
         .export_values();
 
-    py::class_<nixl_xfer_telem_t>(m, "nixlXferTelemetry")
+    py::class_<nixl_xfer_telem_details_t>(m, "nixlXferTelemetry")
         .def(py::init<>())
         .def_property_readonly("startTime",
-                               [](const nixl_xfer_telem_t &t) {
+                               [](const nixl_xfer_telem_details_t &t) {
                                    return std::chrono::duration_cast<chrono_period_us_t>(
                                               t.startTime.time_since_epoch())
                                        .count();
                                })
         .def_property_readonly("postDuration",
-                               [](const nixl_xfer_telem_t &t) { return t.postDuration.count(); })
+                               [](const nixl_xfer_telem_details_t &t) {
+                                   return t.postDuration.count();
+                               })
         .def_property_readonly("xferDuration",
-                               [](const nixl_xfer_telem_t &t) { return t.xferDuration.count(); })
-        .def_readonly("totalBytes", &nixl_xfer_telem_t::totalBytes)
-        .def_readonly("descCount", &nixl_xfer_telem_t::descCount)
-        .def_readonly("backendName", &nixl_xfer_telem_t::backendName)
-        .def_readonly("transportPaths", &nixl_xfer_telem_t::transportPaths);
+                               [](const nixl_xfer_telem_details_t &t) {
+                                   return t.xferDuration.count();
+                               })
+        .def_property_readonly("totalBytes",
+                               [](const nixl_xfer_telem_details_t &t) { return t.totalBytes; })
+        .def_property_readonly("descCount",
+                               [](const nixl_xfer_telem_details_t &t) { return t.descCount; })
+        .def_readonly("backendName", &nixl_xfer_telem_details_t::backendName)
+        .def_readonly("transportPaths", &nixl_xfer_telem_details_t::transportPaths);
 
 
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
@@ -812,8 +818,8 @@ PYBIND11_MODULE(_bindings, m) {
             py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferTelemetry",
-            [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_telem_t {
-                nixl_xfer_telem_t telemetry;
+            [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_telem_details_t {
+                nixl_xfer_telem_details_t telemetry;
                 nixl_status_t ret = agent.getXferTelemetry((nixlXferReqH *)reqh, telemetry);
                 throw_nixl_exception(ret);
                 return telemetry;

@@ -93,7 +93,7 @@ private:
     const std::vector<nixl::ucx::rkey> rkeys_;
 };
 
-class nixlUcxEngine : public nixlBackendEngine {
+class nixlUcxEngine : public nixlBackendEngine, public nixlBackendXferPathProvider {
 public:
     static std::unique_ptr<nixlUcxEngine>
     create(const nixlBackendInitParams &init_params);
