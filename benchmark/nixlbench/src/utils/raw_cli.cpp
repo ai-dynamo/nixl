@@ -21,7 +21,7 @@
 namespace nixlbench {
 namespace {
 
-    constexpr int kInvalidArgumentsExitCode = 2;
+    constexpr int inval_args_exit_code = 2;
 
     std::string
     upper(std::string value) {
@@ -366,11 +366,11 @@ parseRawPosixCommand(int argc,
 
     if (!hasMemoryType(metadata, DRAM_SEG)) {
         err << "Error: " << metadata.name << " plugin must advertise DRAM_SEG for local memory\n";
-        return kInvalidArgumentsExitCode;
+        return inval_args_exit_code;
     }
     if (!hasMemoryType(metadata, FILE_SEG)) {
         err << "Error: " << metadata.name << " plugin must advertise FILE_SEG for backing files\n";
-        return kInvalidArgumentsExitCode;
+        return inval_args_exit_code;
     }
 
     for (const auto &[key, value] : plugin_parameter_overrides) {
@@ -379,10 +379,10 @@ parseRawPosixCommand(int argc,
 
     request.raw.operation = upper(request.raw.operation);
     if (!validateRawOptions(request.raw, err)) {
-        return kInvalidArgumentsExitCode;
+        return inval_args_exit_code;
     }
     if (request.has_file_options && !validateFileOptions(request.file, request.raw, err)) {
-        return kInvalidArgumentsExitCode;
+        return inval_args_exit_code;
     }
     return EXIT_SUCCESS;
 }
