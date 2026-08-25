@@ -255,11 +255,13 @@
                     parent-credentials: true
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
-# Template for the main cmx test job that performs the actual cmx test process
+# Template for the main cmx test job that performs the actual cmx test process.
+# Disabled until HPCINFRA-4418 is ready to run in PR CI; the dispatcher also
+# omits this leaf so PRs do not trigger it before JJB is redeployed.
 - job-template:
     name: "{jjb_proj}-cmx"      # Will be expanded to 'nixl-ci-cmx'
     project-type: pipeline
-    disabled: false
+    disabled: true
     properties:
         # Similar properties as dispatcher job
         - github:
