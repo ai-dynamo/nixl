@@ -147,8 +147,17 @@ has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', depen
 # Check whether the POSIX plugin is enabled
 has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
-# Check for CUObject Client library
-cuobj_dep = dependency('cuobjclient-13.1', required: false)
+# Check for CUObject Client library — try newest first so CUDA 13.2+ wheels
+# pick up the versioned pkg-config module that matches the build environment.
+cuobj_dep = dependency('', required: false)
+foreach _cuobj_pkg : ['cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1']
+    _candidate = dependency(_cuobj_pkg, required: false)
+    if _candidate.found()
+        cuobj_dep = _candidate
+        message('Found CUObjClient pkg-config module: ' + _cuobj_pkg)
+        break
+    endif
+endforeach
 if cuobj_dep.found()
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
 endif
@@ -420,6 +429,16 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     'nvcc available'        : nvcc_prog.found(),
     'DOCA GPUNETIO found'   : doca_gpunetio_dep.found(),
   }, section: 'UCX GPU Device API', bool_yn: true)
+endif
+
+# UCX SGL (scatter-gather list) API detection
+if ucx_dep.found()
+    have_ucx_sgl = cpp.has_type('ucp_dt_local_sgl_t',
+        prefix: '#include <ucp/api/ucp.h>',
+        dependencies: ucx_dep)
+    if have_ucx_sgl
+        add_project_arguments('-DHAVE_UCX_SGL_API', language: 'cpp')
+    endif
 endif
 
 if get_option('disable_gds_backend')
