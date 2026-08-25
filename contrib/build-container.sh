@@ -36,7 +36,8 @@ WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
-UCX_REF=${UCX_REF:-v1.22.x}
+# Pinned to a SHA, not the v1.22.x branch -- see contrib/Dockerfile.manylinux.
+UCX_REF=${UCX_REF:-5288e74cd40be622e109489de7bb80d821341bd5}
 UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-}
 PRIVATE_UCX_SONAME_SUFFIX="nixl"
 BUILD_NIXL_EP="true"

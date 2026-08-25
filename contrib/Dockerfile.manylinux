@@ -349,7 +349,13 @@ RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | c
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
-ARG UCX_REF="v1.22.x"
+# Pinned to a SHA, not the v1.22.x branch. The out-of-tree ucx-spcx-plugin built
+# below consumes UCX-internal D2P/GDAKI headers, so the two must move together;
+# with both sides on floating branches they drifted and broke the build twice in
+# opposite directions. This SHA carries the post-e5e4168a6 D2P API
+# (uct_ib_d2p_desc_t::ep_id, the split gpu_iface/gpu_channel structs) that the
+# current plugin v0.2.x expects.
+ARG UCX_REF="5288e74cd40be622e109489de7bb80d821341bd5"
 ARG UCX_SONAME_SUFFIX=""
 RUN cd /usr/local/src && \
      git clone "$UCX_REPO" ucx && \
