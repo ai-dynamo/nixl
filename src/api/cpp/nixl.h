@@ -322,8 +322,7 @@ class nixlAgent {
          * @return nixl_status_t Error code if call was not successful
          */
         nixl_status_t
-        getXferTelemetry(const nixlXferReqH *req_hndl,
-                         nixl_xfer_telem_details_t &telemetry) const;
+        getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_details_t &telemetry) const;
 
         /**
          * @brief  Query the backend associated with `req_hndl`. E.g., if for genNotif

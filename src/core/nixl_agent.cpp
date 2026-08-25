@@ -1278,8 +1278,7 @@ nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &tel
 nixl_status_t
 nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl,
                             nixl_xfer_telem_details_t &telemetry) const {
-    nixl_status_t status = getXferTelemetry(
-        req_hndl, static_cast<nixl_xfer_telem_t &>(telemetry));
+    nixl_status_t status = getXferTelemetry(req_hndl, static_cast<nixl_xfer_telem_t &>(telemetry));
     if (status != NIXL_SUCCESS) {
         return status;
     }

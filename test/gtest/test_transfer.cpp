@@ -454,6 +454,7 @@ protected:
                         EXPECT_TRUE(telemetry.xferDuration > chrono_period_us_t(0));
                         EXPECT_TRUE(telemetry.xferDuration >= telemetry.postDuration);
                         EXPECT_EQ(telemetry.backendName, getBackendName());
+                        ASSERT_FALSE(telemetry.transportPaths.empty());
                         for (const auto &path : telemetry.transportPaths) {
                             EXPECT_FALSE(path.empty());
                         }
@@ -502,6 +503,9 @@ private:
 
 class TestTransferTelemetry : public TestTransfer {
 protected:
+    // Ensure UCX creates a request that exposes transport-path information.
+    static constexpr size_t NON_INLINE_TRANSFER_SIZE_ = 1024 * 1024;
+
     void
     SetUp() override {
         // Do not create agents here, the test will create them with custom parameters
@@ -655,7 +659,7 @@ NIXL_INSTANTIATE_TEST(ucx, TestListener, "UCX", true, 1, 0, "");
 TEST_P(TestTransferTelemetry, GetXferTelemetryFile) {
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
     env.addVar("NIXL_TELEMETRY_DIR", "/tmp/");
-    runTelemetryTransferTest(1024, NIXL_SUCCESS, false);
+    runTelemetryTransferTest(NON_INLINE_TRANSFER_SIZE_, NIXL_SUCCESS, false);
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPI) {
@@ -663,14 +667,14 @@ TEST_P(TestTransferTelemetry, GetXferTelemetryAPI) {
     // (no NIXL_TELEMETRY_DIR/EXPORTER) collects in-process via the collect-only
     // NOP fallback, so getXferTelemetry() still works.
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
-    runTelemetryTransferTest(1024, NIXL_SUCCESS, false);
+    runTelemetryTransferTest(NON_INLINE_TRANSFER_SIZE_, NIXL_SUCCESS, false);
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryCaptureNoSink) {
     // Telemetry requested only via capture_telemetry=true (no
     // NIXL_TELEMETRY_ENABLE, no sink): the in-process NOP fallback keeps
     // getXferTelemetry() working.
-    runTelemetryTransferTest(1024, NIXL_SUCCESS, true);
+    runTelemetryTransferTest(NON_INLINE_TRANSFER_SIZE_, NIXL_SUCCESS, true);
 }
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryAPICfg) {

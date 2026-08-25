@@ -1011,8 +1011,7 @@ nixl_capi_status_t
 nixl_capi_get_xfer_backend_name(nixl_capi_agent_t agent,
                                 nixl_capi_xfer_req_t req_hndl,
                                 char **backend_name) {
-    using fn_t =
-        nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t, char **);
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t, char **);
     static fn_t real = (fn_t)resolve_optional("nixl_capi_get_xfer_backend_name");
     if (!real) {
         if (backend_name) {
@@ -1027,8 +1026,8 @@ nixl_capi_status_t
 nixl_capi_get_xfer_transport_paths(nixl_capi_agent_t agent,
                                    nixl_capi_xfer_req_t req_hndl,
                                    nixl_capi_string_list_t *transport_paths) {
-    using fn_t = nixl_capi_status_t (*)(
-        nixl_capi_agent_t, nixl_capi_xfer_req_t, nixl_capi_string_list_t *);
+    using fn_t =
+        nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t, nixl_capi_string_list_t *);
     static fn_t real = (fn_t)resolve_optional("nixl_capi_get_xfer_transport_paths");
     if (!real) {
         if (transport_paths) {

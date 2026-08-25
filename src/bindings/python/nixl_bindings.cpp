@@ -224,14 +224,12 @@ PYBIND11_MODULE(_bindings, m) {
                                               t.startTime.time_since_epoch())
                                        .count();
                                })
-        .def_property_readonly("postDuration",
-                               [](const nixl_xfer_telem_details_t &t) {
-                                   return t.postDuration.count();
-                               })
-        .def_property_readonly("xferDuration",
-                               [](const nixl_xfer_telem_details_t &t) {
-                                   return t.xferDuration.count();
-                               })
+        .def_property_readonly(
+            "postDuration",
+            [](const nixl_xfer_telem_details_t &t) { return t.postDuration.count(); })
+        .def_property_readonly(
+            "xferDuration",
+            [](const nixl_xfer_telem_details_t &t) { return t.xferDuration.count(); })
         .def_property_readonly("totalBytes",
                                [](const nixl_xfer_telem_details_t &t) { return t.totalBytes; })
         .def_property_readonly("descCount",
