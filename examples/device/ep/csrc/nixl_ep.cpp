@@ -1374,16 +1374,19 @@ void Buffer::_nixl_ep_memory_views_destroy(NixlMemoryViews& memory_views) {
 void Buffer::_nixl_ep_memory_views_commit(void) {
     if (!staged_memory_views.local)
         return;
+    // Wait for all kernels using the active memory views to finish.
     CUDA_CHECK(cudaDeviceSynchronize());
     std::swap(active_memory_views, staged_memory_views);
     gpu_ctx.local_mvh = active_memory_views.local;
     gpu_ctx.remote_mvh = active_memory_views.remote;
     gpu_ctx.barrier_mvh = active_memory_views.barrier;
     gpu_ctx.ht_barrier_mvh = active_memory_views.ht_barrier;
-    CUDA_CHECK(cudaMemcpy(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpyAsync(gpu_ctx_ptr, &gpu_ctx, sizeof(gpu_ctx),
+                               cudaMemcpyHostToDevice, comm_stream));
     for (int remote_rank : remote_ranks)
         ep_kernels::cache_p2p_ptr(gpu_ctx_ptr, remote_rank, comm_stream);
-    CUDA_CHECK(cudaDeviceSynchronize());
+    // Wait for the new GPU context and cached P2P pointers to be ready.
+    CUDA_CHECK(cudaStreamSynchronize(comm_stream));
     _nixl_ep_memory_views_destroy(staged_memory_views);
 }
 
