@@ -121,7 +121,11 @@ steps:
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base-pytorch26.06-cuda13.3-ubuntu24.04:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
-      podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE}
+      for i in {1..6}; do
+          podman push --creds ${REPO_USER}:${REPO_PASS} ${PR_IMAGE} && break
+          [ "$i" = 6 ] && exit 1
+          sleep $((2 ** (i - 1)))
+      done
 
   - name: Allocate DL EP Environment
     containerSelector: "{name: 'build_helper_dl_ep'}"

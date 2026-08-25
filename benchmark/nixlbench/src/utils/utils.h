@@ -227,6 +227,8 @@ public:
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
     static bool gusli_try_use_uring;
+    static bool use_device_api;
+    static int block_threads;
 
     static int
     parseConfig(int argc, char *argv[]);

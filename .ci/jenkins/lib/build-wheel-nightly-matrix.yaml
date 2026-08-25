@@ -23,7 +23,8 @@ kubernetes:
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
 
-# podman-in-container runner; build-container.sh runs docker/podman inside it
+# podman-in-container runner; build-container.sh runs docker/podman inside it.
+# The nightly builds wheel_base from scratch on every run — no caching.
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
 
@@ -45,6 +46,11 @@ matrix:
 env:
   NPROC: 16
   GRPC_NPROC: 10
+  MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
+  MANYLINUX_IMAGE_TAG: "2026.06.06-1"
+  # TORCH_VERSIONS comes from the JJB job parameter, which is empty by default so
+  # the Build Wheel step below derives it from the CUDA major. Not set here to
+  # avoid the matrix env overriding the per-run parameter value.
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
@@ -77,13 +83,27 @@ steps:
       fi
       [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot resolve UCX_VERSION=${UCX_VERSION}"; exit 1; }
       printf 'NIXL_SHA=%s\nUCX_SHA=%s\n' "${NIXL_SHA}" "${UCX_SHA}" > wheel_build_ids.env
+      # Derive CUDA major from BASE_TAG for torch version selection.
+      # BASE_TAG format: <major>.<minor>.<patch>-devel-ubi8; CUDA_VERSION is
+      # derived automatically inside build-container.sh.
+      CUDA_MAJOR="$(echo "${BASE_TAG}" | cut -d. -f1)"
+      # The two CUDA majors have different torch coverage: 2.11 is not available
+      # on the cu13 index, and 2.14 is not available on the cu12 one.
+      # Auto-select unless overridden.
+      if [ -z "${TORCH_VERSIONS:-}" ]; then
+        if [ "${CUDA_MAJOR}" = "12" ]; then TORCH_VERSIONS="2.11,2.12,2.13"
+        else TORCH_VERSIONS="2.12,2.13,2.14"; fi
+      fi
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
         --base-image-tag "${BASE_TAG}" \
+        --manylinux-image "${MANYLINUX_IMAGE}" \
+        --manylinux-image-tag "${MANYLINUX_IMAGE_TAG}" \
         --wheel-base "manylinux_${manylinux}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
         --ucx-ref "${UCX_SHA}" \
+        --torch-versions "${TORCH_VERSIONS}" \
         --tag "${WHEEL_IMAGE_TAG}" \
         --dockerfile contrib/Dockerfile.manylinux
 
@@ -140,7 +160,8 @@ pipeline_stop:
                 <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
                 <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
                 <p>UCX Version: <b>${params.UCX_VERSION}</b></p>
-                <p>Base Image: <b>${params.BASE_IMAGE}:${params.BASE_TAG}</b></p>
+                <p>CUDA Source Image: <b>${params.BASE_IMAGE}:${params.BASE_TAG}</b></p>
+                <p>CUDA Version: <b>${params.CUDA_VERSION}</b></p>
             """
         )
     }
