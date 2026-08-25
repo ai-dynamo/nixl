@@ -27,22 +27,26 @@
 #undef NDEBUG
 #endif
 
-#include <pybind11/pybind11.h>
-#include <pybind11/pytypes.h>
-#include <torch/types.h>
-#include <optional>
-#include <tuple>
-#include <vector>
-#include <string>
-
-#include <memory>
 #include "config.hpp"
-#include "event.hpp"
+#include "event_handle.hpp"
 #include "kernels/configs.cuh"
 #include "kernels/exception.cuh"
 #include "vmm.hpp"
 
-#include "nixl.h"
+#include <nixl.h>
+
+#include <cuda_runtime.h>
+
+#include <torch/types.h>
+
+#include <pybind11/pytypes.h>
+
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <tuple>
+#include <vector>
 
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME nixl_ep_cpp

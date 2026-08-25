@@ -75,6 +75,15 @@ ENV PATH=/opt/rh/gcc-toolset-14/root/usr/bin:${PATH} \
 # cmake_minimum_required(VERSION < 3.5). Some bundled deps (e.g. gRPC's c-ares)
 # still declare ancient minimums. This tells CMake 4.x to accept them.
 ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
+
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+# Inherited by the wheel stage below via FROM $wheel_base.
+ENV CMAKE_INSTALL_ALWAYS=1
+
 # === end Option B header ======================================================
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
@@ -516,9 +525,10 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
-# Default includes 2.11 for CUDA 12 builds; CUDA 13 CI passes
-# --build-arg WHL_TORCH_VERSIONS=2.12,2.13 since 2.11 is not on the cu13 index.
-ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
+# Default is the union of what both CUDA majors can build: 2.11 is only on the
+# cu12 index, 2.14 only on the cu13 (nightly) one. build-wheel.sh skips the
+# versions it cannot resolve, so the same list works for either.
+ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13,2.14"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \

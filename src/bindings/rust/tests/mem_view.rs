@@ -146,6 +146,31 @@ fn test_prep_mem_view_local() {
     assert!(!view.as_ptr().is_null());
 }
 
+#[test]
+fn test_prep_mem_view_local_with_custom_param() {
+    if !has_cuda_gpu() {
+        eprintln!("skipping test_prep_mem_view_local_with_custom_param: no CUDA-capable GPU");
+        return;
+    }
+    select_gpu();
+
+    let (agent, mut opt_args) = create_agent_with_backend("mem_view_custom_param").expect("Failed to create agent");
+    let (storage, _handle) = vram_buffer(&agent, &opt_args).expect("Failed to allocate VRAM");
+
+    opt_args
+        .set_custom_param(b"worker_id=0")
+        .expect("Failed to set custom param");
+    assert_eq!(
+        opt_args.get_custom_param().expect("Failed to get custom param"),
+        b"worker_id=0"
+    );
+
+    // SAFETY: storage outlives the view
+    let view = unsafe { agent.prep_mem_view_local(&vram_dlist(&storage), Some(&opt_args)) }
+        .expect("prep_mem_view_local failed");
+    assert!(!view.as_ptr().is_null());
+}
+
 /// A remote memory view has no device lane until the endpoint is wired up.
 /// Mirrors `DeviceApiTestBase::completeWireup`.
 fn complete_wireup(from: &Agent, to: &Agent, to_name: &str) {
@@ -217,8 +242,10 @@ fn test_prep_mem_view_remote_unknown_agent() {
     let desc = vram_remote_desc(&storage, Some("no_such_agent"));
     let result =
         unsafe { agent.prep_mem_view_remote(&vram_remote_dlist(&desc), Some(&opt_args)) };
-    // NIXL_ERR_NOT_FOUND; change to NotFound once the C API maps it.
-    assert!(result.is_err(), "Expected an error for an unknown remote agent");
+    assert!(
+        matches!(result, Err(NixlError::NotFound)),
+        "Expected NotFound for an unknown remote agent"
+    );
 }
 
 /// A null-agent descriptor is a placeholder, not an addressed peer, so a list
@@ -239,6 +266,8 @@ fn test_prep_mem_view_remote_null_agent_only() {
     let desc = vram_remote_desc(&storage, None);
     let result =
         unsafe { agent.prep_mem_view_remote(&vram_remote_dlist(&desc), Some(&opt_args)) };
-    // NIXL_ERR_NOT_FOUND; change to NotFound once the C API maps it.
-    assert!(result.is_err(), "Expected an error for a list of only null agents");
+    assert!(
+        matches!(result, Err(NixlError::NotFound)),
+        "Expected NotFound for a list of only null agents"
+    );
 }

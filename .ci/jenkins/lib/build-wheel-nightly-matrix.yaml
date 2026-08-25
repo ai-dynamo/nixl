@@ -48,9 +48,9 @@ env:
   GRPC_NPROC: 10
   MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
   MANYLINUX_IMAGE_TAG: "2026.06.06-1"
-  # TORCH_VERSIONS comes from the JJB job parameter (default 2.12,2.13 for cu13;
-  # the cu12 cron overrides it to 2.11,2.12,2.13). Not set here to avoid the
-  # matrix env overriding the per-run parameter value.
+  # TORCH_VERSIONS comes from the JJB job parameter, which is empty by default so
+  # the Build Wheel step below derives it from the CUDA major. Not set here to
+  # avoid the matrix env overriding the per-run parameter value.
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
@@ -87,10 +87,12 @@ steps:
       # BASE_TAG format: <major>.<minor>.<patch>-devel-ubi8; CUDA_VERSION is
       # derived automatically inside build-container.sh.
       CUDA_MAJOR="$(echo "${BASE_TAG}" | cut -d. -f1)"
-      # torch 2.11 is not published on the cu13 index; auto-select unless overridden.
+      # The two CUDA majors have different torch coverage: 2.11 is not available
+      # on the cu13 index, and 2.14 is not available on the cu12 one.
+      # Auto-select unless overridden.
       if [ -z "${TORCH_VERSIONS:-}" ]; then
         if [ "${CUDA_MAJOR}" = "12" ]; then TORCH_VERSIONS="2.11,2.12,2.13"
-        else TORCH_VERSIONS="2.12,2.13"; fi
+        else TORCH_VERSIONS="2.12,2.13,2.14"; fi
       fi
       ./contrib/build-container.sh \
         --base-image "${BASE_IMAGE}" \
