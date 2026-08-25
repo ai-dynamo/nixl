@@ -525,9 +525,10 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
-# Default includes 2.11 for CUDA 12 builds; CUDA 13 CI passes
-# --build-arg WHL_TORCH_VERSIONS=2.12,2.13 since 2.11 is not on the cu13 index.
-ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
+# Default is the union of what both CUDA majors can build: 2.11 is only on the
+# cu12 index, 2.14 only on the cu13 (nightly) one. build-wheel.sh skips the
+# versions it cannot resolve, so the same list works for either.
+ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13,2.14"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \

@@ -191,6 +191,35 @@ nixl_capi_status_t nixl_capi_opt_args_add_backend(nixl_capi_opt_args_t args, nix
 // OptArgs notification and merge control
 nixl_capi_status_t nixl_capi_opt_args_set_notif_msg(nixl_capi_opt_args_t args, const void* data, size_t len);
 nixl_capi_status_t nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void** data, size_t* len);
+
+/**
+ * @brief Set the backend custom parameter, a blob whose contents are backend-defined.
+ *
+ * Copies @a len bytes out of @a data, which may be freed once this returns. @a data
+ * may be NULL only when @a len is 0.
+ *
+ * @param  args  [in]  Optional arguments
+ * @param  data  [in]  Parameter bytes
+ * @param  len   [in]  Byte count
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_opt_args_set_custom_param(nixl_capi_opt_args_t args, const void *data, size_t len);
+
+/**
+ * @brief Get the backend custom parameter.
+ *
+ * On success the caller owns @a data and must release it with free(). An unset
+ * parameter yields NULL and a length of 0.
+ *
+ * @param  args  [in]  Optional arguments
+ * @param  data  [out] Newly allocated copy of the parameter bytes
+ * @param  len   [out] Byte count
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
+nixl_capi_status_t
+nixl_capi_opt_args_get_custom_param(nixl_capi_opt_args_t args, void **data, size_t *len);
+
 nixl_capi_status_t nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif);
 nixl_capi_status_t nixl_capi_opt_args_get_has_notif(nixl_capi_opt_args_t args, bool* has_notif);
 nixl_capi_status_t nixl_capi_opt_args_set_skip_desc_merge(nixl_capi_opt_args_t args, bool skip_merge);
