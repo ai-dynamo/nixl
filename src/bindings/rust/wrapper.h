@@ -453,13 +453,30 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_xfer_telemetry_t telemetry);
 
-// Get the selected backend name. The caller must free the returned string.
+/**
+ * @brief Get the name of the backend selected for a transfer request.
+ *
+ * @param  agent         [in]  Agent that owns the transfer request
+ * @param  req_hndl      [in]  Transfer request handle
+ * @param  backend_name  [out] Newly allocated backend name. The caller must
+ *                             release it with free()
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
 nixl_capi_status_t
 nixl_capi_get_xfer_backend_name(nixl_capi_agent_t agent,
                                 nixl_capi_xfer_req_t req_hndl,
                                 char **backend_name);
 
-// Get the transport paths. The caller must destroy the returned string list.
+/**
+ * @brief Get the transport paths selected for a transfer request.
+ *
+ * @param  agent            [in]  Agent that owns the transfer request
+ * @param  req_hndl         [in]  Transfer request handle
+ * @param  transport_paths  [out] Newly created string list containing the
+ *                                transport paths. The caller must destroy it
+ *                                with nixl_capi_destroy_string_list()
+ * @return nixl_capi_status_t Error code if call was not successful
+ */
 nixl_capi_status_t
 nixl_capi_get_xfer_transport_paths(nixl_capi_agent_t agent,
                                    nixl_capi_xfer_req_t req_hndl,
