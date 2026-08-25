@@ -130,6 +130,10 @@ private:
     // Stream for communication
     at::cuda::CUDAStream comm_stream;
 
+    // Hold the HT tensors in the EventHandle instead of record_stream(), so a
+    // captured graph can reclaim them. Latched at construction.
+    const bool ht_avoid_record_stream;
+
     // After synchronization, this flag will be true
     bool available = false;
 
@@ -183,6 +187,13 @@ private:
     void _record_tensor(const torch::Tensor& tensor,
                         const at::cuda::CUDAStream& compute_stream,
                         bool allocate_on_comm_stream) const;
+
+    // As _record_tensor, but holds the tensor in the handle when
+    // ht_avoid_record_stream is set. Only the HT paths take this route.
+    void _keep_ht_tensor(std::optional<EventHandle>& event,
+                         const torch::Tensor& tensor,
+                         const at::cuda::CUDAStream& compute_stream,
+                         bool allocate_on_comm_stream) const;
     void set_active_rank_bound(int bound);
     void _refresh_active_rank_bound();
     int get_rank_bound(std::optional<int> num_experts) const;

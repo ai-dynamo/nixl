@@ -62,6 +62,7 @@ endif
 
 
 nixl_ep_sources = [
+    'csrc/ep_config.cpp',
     'csrc/nixl_ep.cpp',
     'csrc/vmm.cpp',
     'csrc/kernels/nixl_ep_ll.cu',
@@ -160,6 +161,8 @@ nixl_ep_ext = py.extension_module(nixl_ep_ext_name,
         pybind_dep,
         cuda_dep,
         torch_dep,
+        # configuration.h and the absl/toml it needs, for csrc/ep_config.cpp
+        nixl_common_dep,
     ] + ucx_build_deps,
     include_directories: nixl_ep_inc_dirs,
     cpp_args: nixl_ep_cpp_args,
