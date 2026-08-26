@@ -103,7 +103,6 @@ nixl::trace::parseTraceparent(std::string_view value) {
         !parseByte(value, 53, context.flags) || !context.valid()) {
         return std::nullopt;
     }
-    context.flags &= supported_trace_flags;
     return context;
 }
 

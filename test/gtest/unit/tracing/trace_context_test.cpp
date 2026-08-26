@@ -93,7 +93,7 @@ TEST(TraceContext, RejectsZeroSpanId) {
             .has_value());
 }
 
-TEST(TraceContext, NormalizesFlagsAndReportsSampledBit) {
+TEST(TraceContext, PreservesFlagsAndNormalizesOutput) {
     const auto sampled =
         nixl::trace::parseTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-ff");
     const auto unsampled =
@@ -101,9 +101,9 @@ TEST(TraceContext, NormalizesFlagsAndReportsSampledBit) {
 
     ASSERT_TRUE(sampled.has_value());
     ASSERT_TRUE(unsampled.has_value());
-    EXPECT_EQ(sampled->flags, 0x03);
+    EXPECT_EQ(sampled->flags, 0xff);
     EXPECT_TRUE(sampled->sampled());
-    EXPECT_EQ(unsampled->flags, 0x02);
+    EXPECT_EQ(unsampled->flags, 0xfe);
     EXPECT_FALSE(unsampled->sampled());
     EXPECT_EQ(nixl::trace::formatTraceparent(*sampled),
               "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-03");
