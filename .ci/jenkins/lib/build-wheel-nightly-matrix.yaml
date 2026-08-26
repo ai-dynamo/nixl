@@ -63,6 +63,8 @@ env:
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
+  # Properties API (same repo, different endpoint) for tagging published wheels.
+  WHEEL_REPO_API: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
   # Source repo cloned in Build Wheel.
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
   MAIL_FROM: "jenkins@nvidia.com"
@@ -165,6 +167,23 @@ steps:
       # `pip install --find-links <path> "nixl[cuXX]"` resolves a matched set.
       . ./wheel_build_ids.env
       DEST="${WHEEL_REPO_URL}/${PUBLISH_DIR}/${NIXL_SHA}"
+      PROPS_DEST="${WHEEL_REPO_API}/${PUBLISH_DIR}/${NIXL_SHA}"
+
+      # Provenance recorded by Build Wheel (contrib/build-container.sh
+      # --build-options-file). Only set properties for values that exist,
+      # so an older built ref without this flag just skips them.
+      PROPERTIES=""
+      if [ -f build_options.env ]; then
+        . ./build_options.env
+        [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
+        [ -n "${UCX_SHA:-}" ] && PROPERTIES+=";UCX_SHA=${UCX_SHA}"
+        [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
+        [ "${BUILD_UCX_SPCX_PLUGIN:-}" = "true" ] && [ -n "${UCX_SPCX_PLUGIN_REF:-}" ] \
+          && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
+        [ "${BUILD_INFINIA:-}" = "true" ] && [ -n "${INFINIA_LIBS_IMAGE:-}" ] \
+          && PROPERTIES+=";INFINIA_LIBS_IMAGE=${INFINIA_LIBS_IMAGE}"
+        PROPERTIES="${PROPERTIES#;}"
+      fi
 
       # curl-PUT (no python on the runner for twine); Artifactory indexes it as a
       # pip repo. rc fails the step on any upload error; set +x hides the token.
@@ -173,6 +192,10 @@ steps:
       for whl in dist/nixl*.whl; do
         curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
           -T "${whl}" "${DEST}/$(basename "${whl}")" || rc=1
+        if [ -n "${PROPERTIES}" ]; then
+          curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -X PUT \
+            "${PROPS_DEST}/$(basename "${whl}")?properties=${PROPERTIES}" || rc=1
+        fi
       done
       exit $rc
 
