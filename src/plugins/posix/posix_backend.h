@@ -40,6 +40,8 @@ public:
                          std::unique_ptr<nixlPosixIOQueue> &io_queue);
     ~nixlPosixBackendReqH() {};
 
+    void
+    release();
     nixl_status_t
     postXfer();
     nixl_status_t
@@ -70,6 +72,8 @@ private:
     unsigned
     requestCancellation();
     void
+    deleteIfReleasedAndComplete();
+    void
     ioDone(uint32_t data_size, int error);
     static void
     ioDoneClb(void *ctx, uint32_t data_size, int error);
@@ -89,6 +93,7 @@ private:
     bool cancellation_requested_ = false; // Set when cancellation begins for this transfer
     unsigned cancels_expected_ = 0; // Cancellations expected for this request
     unsigned cancels_seen_ = 0; // Cancellations completed for this request
+    bool released_ = false; // The owning transfer handle was released while I/O was pending
     std::unique_ptr<nixlPosixIOQueue> &io_queue_; // Async I/O queue instance
 };
 

@@ -136,6 +136,25 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
 }
 
 void
+nixlPosixBackendReqH::release() {
+    if (isComplete()) {
+        delete this;
+        return;
+    }
+
+    NIXL_ERROR << "DANGER: A pending POSIX transfer handle was released while outstanding I/O may "
+                  "still access user buffers";
+    released_ = true;
+}
+
+void
+nixlPosixBackendReqH::deleteIfReleasedAndComplete() {
+    if (released_ && isComplete()) {
+        delete this;
+    }
+}
+
+void
 nixlPosixBackendReqH::ioDone(uint32_t data_size, int error) {
     num_confirmed_ios_++;
     if (error && !transfer_failed_) {
@@ -143,6 +162,7 @@ nixlPosixBackendReqH::ioDone(uint32_t data_size, int error) {
         transfer_failed_ = true;
     }
     logOnPercentStep(num_confirmed_ios_, queue_depth_);
+    deleteIfReleasedAndComplete();
 }
 
 void
@@ -154,6 +174,7 @@ nixlPosixBackendReqH::ioDoneClb(void *ctx, uint32_t data_size, int error) {
 void
 nixlPosixBackendReqH::cancelDone() {
     cancels_seen_++;
+    deleteIfReleasedAndComplete();
 }
 
 void
@@ -381,7 +402,9 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
 nixl_status_t
 nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
     NIXL_ASSERT(handle != nullptr);
-    delete handle;
+    auto &posix_handle = castPosixHandle(handle);
+    NIXL_LOCK_GUARD(io_queue_lock_);
+    posix_handle.release();
     return NIXL_SUCCESS;
 }
 
