@@ -24,10 +24,8 @@
 #include <string_view>
 
 namespace nixl::trace {
-struct TraceContext;
-}
 
-struct nixl::trace::TraceContext {
+struct TraceContext {
     std::array<std::uint8_t, 16> traceId{};
     std::array<std::uint8_t, 8> spanId{};
     std::uint8_t flags{};
@@ -42,19 +40,15 @@ struct nixl::trace::TraceContext {
     correlationId64() const noexcept;
 };
 
-namespace nixl::trace {
 [[nodiscard]] std::optional<TraceContext>
 parseTraceparent(std::string_view value);
-}
 
-namespace nixl::trace {
 [[nodiscard]] std::string
 formatTraceparent(const TraceContext &context);
-}
 
-namespace nixl::trace {
 [[nodiscard]] TraceContext
 generateTraceContext();
-}
+
+} // namespace nixl::trace
 
 #endif

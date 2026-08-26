@@ -14,21 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "trace_context.h"
-
 #include <algorithm>
 
 #include "common/uuid_v4.h"
+#include "trace_context.h"
 
+namespace {
 constexpr std::uint8_t supported_trace_flags = 0x03;
 
 template<std::size_t Size>
-[[nodiscard]] static bool
-allZero(const std::array<std::uint8_t, Size> &bytes) noexcept {
+[[nodiscard]] bool
+isAllZero(const std::array<std::uint8_t, Size> &bytes) noexcept {
     return std::all_of(bytes.begin(), bytes.end(), [](std::uint8_t byte) { return byte == 0; });
 }
 
-[[nodiscard]] static int
+[[nodiscard]] int
 hexValue(char value) noexcept {
     if (value >= '0' && value <= '9') {
         return value - '0';
@@ -39,7 +39,7 @@ hexValue(char value) noexcept {
     return -1;
 }
 
-[[nodiscard]] static bool
+[[nodiscard]] bool
 parseByte(std::string_view value, std::size_t offset, std::uint8_t &result) noexcept {
     const int high = hexValue(value[offset]);
     const int low = hexValue(value[offset + 1]);
@@ -51,7 +51,7 @@ parseByte(std::string_view value, std::size_t offset, std::uint8_t &result) noex
 }
 
 template<std::size_t Size>
-[[nodiscard]] static bool
+[[nodiscard]] bool
 parseBytes(std::string_view value,
            std::size_t offset,
            std::array<std::uint8_t, Size> &result) noexcept {
@@ -63,17 +63,18 @@ parseBytes(std::string_view value,
     return true;
 }
 
-static void
+void
 appendByte(std::string &result, std::uint8_t value) {
     constexpr std::array<char, 16> hex{
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     result.push_back(hex[value >> 4]);
     result.push_back(hex[value & 0x0f]);
 }
+} // namespace
 
 bool
 nixl::trace::TraceContext::valid() const noexcept {
-    return !allZero(traceId) && !allZero(spanId);
+    return !isAllZero(traceId) && !isAllZero(spanId);
 }
 
 bool
@@ -132,12 +133,12 @@ nixl::trace::generateTraceContext() {
     nixl::trace::TraceContext context;
     do {
         context.traceId = nixl::UUIDv4{}.get_data();
-    } while (allZero(context.traceId));
+    } while (isAllZero(context.traceId));
     context.flags = 0x02;
 
     do {
         const auto span_source = nixl::UUIDv4{}.get_data();
         std::copy_n(span_source.begin(), context.spanId.size(), context.spanId.begin());
-    } while (allZero(context.spanId));
+    } while (isAllZero(context.spanId));
     return context;
 }
