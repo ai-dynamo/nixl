@@ -16,6 +16,8 @@
  */
 #include "config.h"
 
+#include <algorithm>
+#include <array>
 #include <stdexcept>
 #include <string>
 
@@ -34,10 +36,9 @@ namespace {
         }
 
         const std::string tokens = "," + std::string(tls) + ",";
-        const bool has_cuda_support = (tls == "all") ||
-            (tokens.find(",cuda,") != std::string::npos) ||
-            (tokens.find(",cuda_copy,") != std::string::npos) ||
-            (tokens.find(",\\cuda_copy,") != std::string::npos);
+        const auto has_cuda_support = std::ranges::any_of(
+            std::array{",all,", ",cuda,", ",cuda_copy,", ",\\cuda_copy,"},
+            [&](auto token) { return tokens.find(token) != std::string::npos; });
         return deny_list ? !has_cuda_support : has_cuda_support;
     }
 
@@ -71,7 +72,7 @@ config::modifyAlways(std::string_view key, std::string_view value) const {
 void
 config::validateTlsCudaSupport() const {
     const auto tls = nixl::config::getValueOptional<std::string>("UCX_TLS");
-    if (!tls || tlsEnablesCudaSupport(*tls) || nixl::hwInfo::instance().numNvidiaGpus == 0) {
+    if (nixl::hwInfo::instance().numNvidiaGpus == 0 || !tls || tlsEnablesCudaSupport(*tls)) {
         return;
     }
 
