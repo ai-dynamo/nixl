@@ -286,11 +286,9 @@ show_build_options() {
     echo "Building NIXL Image"
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
-    if [ -n "$BASE_IMAGE" ] || [ -n "$BASE_IMAGE_TAG" ]; then
-        echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
-    else
-        echo "Base Image: (Dockerfile's own ARG default; not overridden)"
-    fi
+    # Each component is overridden independently; whichever is unset comes
+    # from the Dockerfile's own ARG default.
+    echo "Base Image: ${BASE_IMAGE:-<Dockerfile default>}:${BASE_IMAGE_TAG:-<Dockerfile default>}"
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
