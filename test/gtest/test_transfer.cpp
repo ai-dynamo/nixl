@@ -155,6 +155,10 @@ protected:
         // Disabling Telemetry until the corresponding test
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
 
+        if (isSglEnabled()) {
+            env.addVar("NIXL_UCX_SGL_ENABLE", "y");
+        }
+
         // Create two agents
         for (size_t i = 0; i < 2; i++) {
             addAgent(i);
@@ -184,6 +188,11 @@ protected:
     size_t
     getNumThreads() const {
         return GetParam().numThreads;
+    }
+
+    bool
+    isSglEnabled() const {
+        return GetParam().sglEnabled;
     }
 
     nixl_opt_args_t
@@ -691,6 +700,14 @@ NIXL_INSTANTIATE_TEST(ucx, TestTransfer, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransfer, "UCX", false, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
+
+#ifdef HAVE_UCX_SGL_API
+
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl, TestTransfer, "UCX", true, 2, 0, "");
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl_no_pt, TestTransfer, "UCX", false, 2, 0, "");
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl_threadpool, TestTransfer, "UCX", true, 6, 4, "");
+NIXL_INSTANTIATE_TEST_SGL(ucx_sgl_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
+#endif
 
 NIXL_INSTANTIATE_TEST(ucx_telemetry, TestTransferTelemetry, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_telemetry_no_pt, TestTransferTelemetry, "UCX", false, 2, 0, "");
