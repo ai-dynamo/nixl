@@ -53,8 +53,6 @@ matrix:
 env:
   NPROC: 16
   GRPC_NPROC: 10
-  MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
-  MANYLINUX_IMAGE_TAG: "2026.06.06-1"
   # CUDA 12 base image is pinned here (unlikely to change); CUDA 13 passes
   # nothing and relies on build-container.sh's own default.
   CU12_BASE_IMAGE: "nvcr.io/nvidia/cuda"
@@ -132,8 +130,6 @@ steps:
       cd nixl-src
       ./contrib/build-container.sh \
         ${BASE_IMAGE_FLAGS} \
-        --manylinux-image "${MANYLINUX_IMAGE}" \
-        --manylinux-image-tag "${MANYLINUX_IMAGE_TAG}" \
         --wheel-base "manylinux_${manylinux}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
