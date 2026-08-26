@@ -401,6 +401,7 @@ RUN cd /usr/local/src && \
          --disable-doxygen-doc       \
          --enable-experimental-api   \
          --enable-optimizations      \
+         --without-avx               \
          --enable-cma                \
          --enable-devel-headers      \
          --with-cuda=/usr/local/cuda \

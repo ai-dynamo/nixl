@@ -234,6 +234,7 @@ RUN cd /usr/local/src && \
          --disable-static            \
          --disable-doxygen-doc       \
          --enable-optimizations      \
+         --without-avx               \
          --enable-cma                \
          --enable-devel-headers      \
          $EXPERIMENTAL_API_PARAM      \
