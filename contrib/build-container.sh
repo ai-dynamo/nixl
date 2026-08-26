@@ -28,8 +28,12 @@ if [[ -z ${latest_tag} ]]; then
 fi
 VERSION=v$latest_tag.dev.$commit_id
 
-BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
-BASE_IMAGE_TAG=25.10-cuda13.0-devel-ubuntu24.04
+# Unset by default (not a generic fallback): different Dockerfiles declare
+# their own BASE_IMAGE/BASE_IMAGE_TAG ARG defaults (e.g. Dockerfile.manylinux
+# needs an el8/ubi8 image for cuObject support), and those must win when the
+# caller doesn't override them with --base-image/--base-image-tag.
+BASE_IMAGE=${BASE_IMAGE:-}
+BASE_IMAGE_TAG=${BASE_IMAGE_TAG:-}
 MANYLINUX_IMAGE=quay.io/pypa/manylinux_2_28
 MANYLINUX_IMAGE_TAG=2026.06.06-1
 ARCH=$(uname -m)
@@ -282,7 +286,11 @@ show_build_options() {
     echo "Building NIXL Image"
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
-    echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+    if [ -n "$BASE_IMAGE" ] || [ -n "$BASE_IMAGE_TAG" ]; then
+        echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+    else
+        echo "Base Image: (Dockerfile's own ARG default; not overridden)"
+    fi
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
@@ -404,7 +412,8 @@ if [ -d "$NIXL_DIR/build" ]; then
     exit 1
 fi
 
-BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+BUILD_ARGS+="${BASE_IMAGE:+ --build-arg BASE_IMAGE=$BASE_IMAGE}"
+BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
 BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX_IMAGE_TAG=$MANYLINUX_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
