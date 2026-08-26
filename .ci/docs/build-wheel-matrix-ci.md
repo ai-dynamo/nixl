@@ -124,7 +124,7 @@ Users can build the complete image locally without specifying a target:
 This builds both stages from scratch without the `--wheel-base-image` override.
 
 #### Nightly Build
-The nightly job (`nixl-ci-build-wheel-nightly`) omits `--wheel-base-image`, so it runs the full two-stage build. It derives `--torch-versions` from the CUDA major of `BASE_TAG`, since torch package availability differs between cu12 and cu13, unless the `TORCH_VERSIONS` job parameter overrides it.
+The nightly job (`nixl-ci-build-wheel-nightly`) omits `--wheel-base-image`, so it runs the full two-stage build. It selects `--torch-versions` from its `CUDA_MAJOR` parameter (`13` default or `12`), since torch package availability differs between the two.
 
 #### Optional: UCX spcx external plugin
 `build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir. It works with `contrib/Dockerfile.manylinux` (the wheel build, where `wheel_add_ucx_plugins.py` then bundles the plugin into the wheel like any other UCX module) and with the default `contrib/Dockerfile` (the container build, where the plugin is only installed into the image). It requires two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:
