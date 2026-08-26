@@ -190,9 +190,9 @@ their own nightly/manual trigger. They split into two groups:
 - **Automatic on every PR:** No — standalone/nightly + manual only.
 
 ### `nixl-ci-build-wheel-nightly` (standalone)
-- **Trigger:** Nightly cron (two runs, CUDA 13 and CUDA 12 base images, from `main`), or manual run from any branch/tag/PR ref/SHA.
-- **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`), adds UCX wiring, and publishes verification wheels to Artifactory.
-- **Automatic on every PR:** No — standalone/nightly + manual only.
+- **Trigger:** Nightly cron (two runs, CUDA 13 and CUDA 12 `BASE_TAG`), or manual run. The pipeline and matrix config run from `ci_refspec` (default `main`; pass `refs/pull/<n>/head` to test CI changes end to end before merge); the NIXL source is cloned inside the build from the `NIXL_VERSION` parameter (branch/tag/PR ref/sha), so any ref is buildable without CI files on it.
+- **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`), adds UCX wiring, and publishes wheels to `sw-nbu-swx-nixl-pypi-local` under `<PUBLISH_DIR|verification>/<nixl-sha8>/`. With `PUBLISH_DIR` empty (the default, and what the nightly cron uses) wheels land under `verification/`; manual release runs can pass `release/<ver>`. `BUILD_UCX_SPCX_PLUGIN` and `BUILD_INFINIA` bundle the UCX spcx / Infinia DDN plugins and default to on; each needs a source ref whose `contrib/build-container.sh` carries the flag and pins the plugin version, so turn them off to build a ref that predates them.
+- **Automatic on every PR:** No — standalone nightly + manual only.
 
 ### `nixl-ci-build-llm-container` (standalone)
 - **Trigger:** Manual only (no cron, no webhook).

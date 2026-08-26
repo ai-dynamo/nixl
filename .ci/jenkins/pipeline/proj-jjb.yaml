@@ -923,16 +923,17 @@
     triggers:
       - parameterized-timer:
           cron: |
-            # Build NIXL wheels nightly ~10 AM for CUDA 13 and CUDA 12 (the cu12
-            # run also produces the nixl meta wheel). Both publish to the repo.
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_IMAGE=nvcr.io/nvidia/cuda;BASE_TAG=13.2.1-devel-ubi8
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_IMAGE=nvcr.io/nvidia/cuda;BASE_TAG=12.9.1-devel-ubi8
+            # Build NIXL wheels nightly around midnight for CUDA 13 and CUDA 12
+            # (the cu12 run also produces the nixl meta wheel). Both publish to
+            # the repo.
+            H 0 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_IMAGE=nvcr.io/nvidia/cuda;BASE_TAG=13.2.1-devel-ubi8
+            H 0 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_IMAGE=nvcr.io/nvidia/cuda;BASE_TAG=12.9.1-devel-ubi8
     # Manual build parameters
     parameters:
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
-          description: "NIXL version to build wheels from (tag like 1.2.0, branch name, PR ref, or commit hash)"
+          description: "NIXL source ref to build wheels from (tag like 1.2.0, branch name, PR ref, or commit hash) - cloned inside the build, not the pipeline checkout ref"
       - string:
           name: "UCX_VERSION"
           default: "v1.22.x"
@@ -950,22 +951,42 @@
           default: ""
           description: "Comma-separated PyTorch versions to build EP extensions for. Leave empty to auto-derive from CUDA major version."
       - string:
+          name: "PUBLISH_DIR"
+          default: ""
+          description: "Artifactory publish subdir; empty = verification (nightly default). Manual release runs can pass release/&lt;ver&gt;."
+      - bool:
+          name: "BUILD_UCX_SPCX_PLUGIN"
+          default: true
+          description: "Build and bundle the UCX spcx external plugin (the built source ref pins the plugin version in contrib/build-container.sh)"
+      - bool:
+          name: "BUILD_INFINIA"
+          default: true
+          description: "Build and bundle the Infinia DDN plugin (the built source ref pins the plugin version in contrib/build-container.sh; harbor.mellanox.com must be reachable)"
+      - string:
           name: "DEBUG"
           default: 0
           description: "Enable debug prints and traces, valid values are 0-9"
       - string:
           name: "MAIL_TO"
-          default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
-          description: "Email address to send build results to (optional)"
-    # SCM configuration - resolves branch/tag/PR/SHA from NIXL_VERSION
+          default: "nixl-ci-alerts@exchange.nvidia.com"
+          description: "Recipient(s) for the failure report. Mail is sent only when the build fails."
+      - string:
+          name: "ci_refspec"
+          default: "{jjb_branch}"
+          description: >
+            Git ref to check out the pipeline + matrix config from (separate from
+            NIXL_VERSION, the source being built). Default main; pass e.g.
+            <code>refs/pull/1234/head</code> to test CI changes end to end before merge.
+    # SCM = ci_refspec (default main): supplies the pipeline + matrix config
+    # only; the build clones the source from NIXL_VERSION itself
     pipeline-scm:
       scm:
         - git:
             url: "{jjb_git}"
-            branches: ['$NIXL_VERSION']
+            branches: ['${{ci_refspec}}']
             shallow-clone: false
             do-not-fetch-tags: false
-            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/remotes/origin/tags/* +$NIXL_VERSION:refs/remotes/origin/$NIXL_VERSION"
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +refs/pull/*/head:refs/pull/*/head"
             browser: githubweb
             browser-url: "{jjb_git}"
             submodule:
