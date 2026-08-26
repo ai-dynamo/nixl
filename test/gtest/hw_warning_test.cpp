@@ -100,12 +100,8 @@ TEST_F(HardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
     // Configure TLS directly so this test reaches the hardware warning path instead of the
     // UCX_TLS environment validation path.
     std::vector<std::string> devs;
-    nixlUcxContext ctx(devs,
-                       false,
-                       1,
-                       nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE,
-                       0,
-                       "TLS=^cuda,rc_gda");
+    nixlUcxContext ctx(
+        devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0, "TLS=^cuda,rc_gda");
 
     const gtest::LogIgnoreGuard lig(
         "NVIDIA GPU\\(s\\) were detected, but UCX CUDA support was not found");
