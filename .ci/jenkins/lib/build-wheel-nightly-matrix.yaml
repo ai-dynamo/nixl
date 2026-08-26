@@ -1,7 +1,8 @@
 # Nightly NIXL wheel verification build. Pipeline and this config run from
 # main; the source ref (NIXL_VERSION) is cloned into nixl-src, so built refs
 # carry no CI config. Wheels publish to
-# WHEEL_REPO_URL/<PUBLISH_DIR or verification>/<nixl-sha>.
+# WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default) or
+# WHEEL_REPO_URL/<PUBLISH_DIR>/<nixl-sha> for manual release runs.
 
 ---
 job: nixl-ci-build-wheel-nightly
@@ -159,11 +160,7 @@ steps:
       PUBLISH_DIR="${PUBLISH_DIR:-verification}"
       [[ "${PUBLISH_DIR}" =~ ^(verification|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
         || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
-      # Per-commit folder: cu12/cu13 builds of the same commit co-locate, so
-      # `pip install --find-links <path> "nixl[cuXX]"` resolves a matched set.
       . ./wheel_build_ids.env
-      DEST="${WHEEL_REPO_URL}/${PUBLISH_DIR}/${NIXL_SHA}"
-      PROPS_DEST="${WHEEL_REPO_API}/${PUBLISH_DIR}/${NIXL_SHA}"
 
       # Provenance recorded by Build Wheel (contrib/build-container.sh
       # --build-options-file). Only set properties for values that exist,
@@ -180,6 +177,18 @@ steps:
           && PROPERTIES+=";INFINIA_LIBS_IMAGE=${INFINIA_LIBS_IMAGE}"
         PROPERTIES="${PROPERTIES#;}"
       fi
+
+      # verification/ keeps its long-standing g<nixl-sha>.ucx<ucx-sha> folder
+      # schema (consumed by the build-llm-container verification pipeline);
+      # release/<ver> co-locates cu12/cu13 by nixl-sha alone, unkeyed to UCX.
+      if [ "${PUBLISH_DIR}" = "verification" ]; then
+        [ -n "${UCX_SHA:-}" ] || { echo "ERROR: verification publish needs UCX_SHA from build_options.env"; exit 1; }
+        FOLDER="g${NIXL_SHA}.ucx${UCX_SHA}"
+      else
+        FOLDER="${NIXL_SHA}"
+      fi
+      DEST="${WHEEL_REPO_URL}/${PUBLISH_DIR}/${FOLDER}"
+      PROPS_DEST="${WHEEL_REPO_API}/${PUBLISH_DIR}/${FOLDER}"
 
       # curl-PUT (no python on the runner for twine); Artifactory indexes it as a
       # pip repo. rc fails the step on any upload error; set +x hides the token.
