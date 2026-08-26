@@ -27,6 +27,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Generate example snippets
+        run: python3 fern/scripts/generate_example_snippets.py
+
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
