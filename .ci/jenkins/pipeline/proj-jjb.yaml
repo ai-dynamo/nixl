@@ -531,8 +531,28 @@
             Example: <code>25.10-cuda13.0-devel-ubuntu24.04-aarch64-latest</code><br/>
       - bool:
           name: "BUILD_NIXL_EP"
+          default: true
+          description: >
+            Build NIXL with EP example support (pass <code>--build-nixl-ep</code>).<br/>
+            Note: <code>build-container.sh</code> enables EP by default and has no
+            off-switch, so unchecking this does not disable EP.
+      - bool:
+          name: "BUILD_UCX_SPCX_PLUGIN"
+          default: true
+          description: >
+            Build the internal UCX spcx external plugin and install it into the
+            image's UCX plugin dir (pass <code>--build-ucx-spcx-plugin</code>).<br/>
+            Applies to the <b>nixl</b> target only; nixlbench builds ignore it.
+      - bool:
+          name: "BUILD_INFINIA"
           default: false
-          description: "Build NIXL with EP example support (pass --build-nixl-ep)"
+          description: >
+            Build the Infinia DDN plugin into the image (pass
+            <code>--build-infinia</code>; harbor.mellanox.com must be reachable to
+            pull the DDN libs).<br/>
+            Applies to the <b>nixl</b> target only; nixlbench builds ignore it.<br/>
+            Off by default — the DDN libs come from an external registry, so the
+            build gains a dependency the other targets do not have.
       - string:
           name: "MAIL_TO"
           default: "25f58ae0.NVIDIA.onmicrosoft.com@amer.teams.ms"
@@ -696,7 +716,7 @@
           default: ""
           description: >
             Optional override for the vllm-cu13 base image build-arg.<br/>
-            Leave empty for <b>rc0</b> (uses the CUDA 13 default <code>docker.io/vllm/vllm-openai:latest-cu130</code>).<br/>
+            Leave empty for <b>rc0</b> (uses the CUDA 13 default <code>docker.io/vllm/vllm-openai:latest</code>).<br/>
             For <b>rcN, N&gt;0</b> set to the corresponding rc0 image, e.g.<br/>
             <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>
       - string:
@@ -905,8 +925,8 @@
           cron: |
             # Build NIXL wheels nightly ~10 AM for CUDA 13 and CUDA 12 (the cu12
             # run also produces the nixl meta wheel). Both publish to the repo.
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_TAG=13.0-devel-manylinux--25.09
-            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_TAG=12.9-devel-manylinux--25.06
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_IMAGE=nvcr.io/nvidia/cuda;BASE_TAG=13.2.1-devel-ubi8
+            H 10 * * * %NIXL_VERSION=main;UCX_VERSION=v1.22.x;BASE_IMAGE=nvcr.io/nvidia/cuda;BASE_TAG=12.9.1-devel-ubi8
     # Manual build parameters
     parameters:
       - string:
@@ -919,12 +939,16 @@
           description: "UCX version to build against (tag like v1.22.x, branch name, or commit hash)"
       - string:
           name: "BASE_IMAGE"
-          default: "artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda"
-          description: "Manylinux base image for the wheel build"
+          default: "nvcr.io/nvidia/cuda"
+          description: "NGC CUDA source image for the manylinux wheel build"
       - string:
           name: "BASE_TAG"
-          default: "13.0-devel-manylinux--25.09"
-          description: "Base image tag = CUDA version (e.g. 13.0-devel-manylinux--25.09 or 12.9-devel-manylinux--25.06). Mirrored into base/cuda from the dl/dgx/cuda registry."
+          default: "13.2.1-devel-ubi8"
+          description: "NGC CUDA image tag (e.g. 13.2.1-devel-ubi8 for CUDA 13 cuObject support, or 12.9.1-devel-ubi8 for CUDA 12). CUDA_VERSION is derived from this automatically."
+      - string:
+          name: "TORCH_VERSIONS"
+          default: ""
+          description: "Comma-separated PyTorch versions to build EP extensions for. Leave empty to auto-derive from CUDA major version."
       - string:
           name: "DEBUG"
           default: 0
