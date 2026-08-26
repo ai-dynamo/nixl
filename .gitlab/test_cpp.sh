@@ -93,9 +93,15 @@ telePID=$!
 sleep 15
 kill -s INT $telePID
 
-# POSIX test disabled until we solve io_uring and Docker compatibility
-
+# Run the default POSIX queue, then add the io_uring mode when requested by CI.
 ./bin/nixl_posix_test -n 128 -s 1048576
+for test_arg in "${@:2}"; do
+    if [ "$test_arg" = "run_uring" ]; then
+        ./bin/nixl_posix_test -n 128 -s 1048576 -U
+        ./bin/nixl_posix_uring_test
+        break
+    fi
+done
 ./bin/nixl_gusli_test -n 4 -s 16
 ./bin/ucx_backend_multi
 ./bin/serdes_test

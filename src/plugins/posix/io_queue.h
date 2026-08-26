@@ -26,6 +26,7 @@
 #include "backend_aux.h"
 
 using nixlPosixIOQueueDoneCb = std::function<void(void *ctx, uint32_t data_size, int error)>;
+using nixlPosixIOQueueCancelDoneCb = std::function<void(void *ctx)>;
 
 class nixlPosixIOQueue {
 public:
@@ -51,6 +52,13 @@ public:
     post(void) = 0;
     virtual nixl_status_t
     poll(void) = 0;
+
+    /** Cancel I/Os owned by @p ctx synchronously when possible; return the number of async
+     * cancellations that will invoke @p clb. */
+    virtual unsigned
+    cancel(void *ctx, nixlPosixIOQueueCancelDoneCb clb) {
+        return 0;
+    }
 
     static std::unique_ptr<nixlPosixIOQueue>
     instantiate(std::string_view io_queue_type, uint32_t ios_pool_size, uint32_t kernel_queue_size);
