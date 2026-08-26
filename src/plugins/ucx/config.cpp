@@ -36,7 +36,8 @@ namespace {
         const std::string tokens = "," + std::string(tls) + ",";
         const bool has_cuda_support = (tls == "all") ||
             (tokens.find(",cuda,") != std::string::npos) ||
-            (tokens.find(",cuda_copy,") != std::string::npos);
+            (tokens.find(",cuda_copy,") != std::string::npos) ||
+            (tokens.find(",\\cuda_copy,") != std::string::npos);
         return deny_list ? !has_cuda_support : has_cuda_support;
     }
 

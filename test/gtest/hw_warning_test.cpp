@@ -61,11 +61,9 @@ protected:
     expectCudaTlsValidationFailure(const std::string &tls) {
         envHelper_.addVar("UCX_TLS", tls);
 
-        const std::string tls_regex = tls.starts_with('^') ? "\\" + tls : tls;
-
         const gtest::LogIgnoreGuard lig_tls(
-            "Invalid UCX_TLS=" + tls_regex +
-            ".*Add cuda_copy for basic GPU support, or cuda to also include NVLink support");
+            "Invalid UCX_TLS=.*Add cuda_copy for basic GPU support, or cuda to also include "
+            "NVLink support");
         const gtest::LogIgnoreGuard lig_backend("backend creation failed for 'UCX'");
 
         nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
@@ -99,19 +97,21 @@ TEST_F(HardwareWarningTest, WarnWhenGpuPresentButCudaNotSupported) {
         GTEST_SKIP() << "No NVIDIA GPUs detected, skipping test";
     }
 
-    // Disable CUDA transport in UCX
-    envHelper_.addVar("UCX_TLS", "^cuda,rc_gda");
-
+    // Configure TLS directly so this test reaches the hardware warning path instead of the
+    // UCX_TLS environment validation path.
     std::vector<std::string> devs;
-    nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
+    nixlUcxContext ctx(devs,
+                       false,
+                       1,
+                       nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE,
+                       0,
+                       "TLS=^cuda,rc_gda");
 
     const gtest::LogIgnoreGuard lig(
         "NVIDIA GPU\\(s\\) were detected, but UCX CUDA support was not found");
     ctx.warnAboutHardwareSupportMismatch();
 
     EXPECT_EQ(lig.getIgnoredCount(), 1);
-
-    envHelper_.popVar();
 }
 
 /**
@@ -175,6 +175,8 @@ TEST_F(UcxTlsValidationTest, CudaDenyListFailsWhenCudaIsAvailable) {
 TEST_F(UcxTlsValidationTest, CudaCopyDenyListFailsWhenCudaIsAvailable) {
     expectCudaTlsValidationFailure("^cuda_copy");
     expectCudaTlsValidationFailure("^tcp,cuda_copy");
+    expectCudaTlsValidationFailure("^\\cuda_copy");
+    expectCudaTlsValidationFailure("^tcp,\\cuda_copy");
 }
 
 TEST_F(UcxTlsValidationTest, CudaIpcDenyListSucceedsWhenCudaIsAvailable) {
@@ -183,6 +185,10 @@ TEST_F(UcxTlsValidationTest, CudaIpcDenyListSucceedsWhenCudaIsAvailable) {
 
 TEST_F(UcxTlsValidationTest, AllTlsSucceedsWhenCudaIsAvailable) {
     expectCudaTlsValidationSuccess("all");
+}
+
+TEST_F(UcxTlsValidationTest, EscapedCudaCopyTlsSucceedsWhenCudaIsAvailable) {
+    expectCudaTlsValidationSuccess("tcp,\\cuda_copy");
 }
 
 /**
