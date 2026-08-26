@@ -1116,7 +1116,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     if (req_hndl->remoteSectionRef.expired()) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated or re-registered after transfer request creation; "
-                           "refusing to post a stale-generation handle";
+                           "not posting stale handle";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
@@ -1774,7 +1774,7 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
 nixl_status_t
 nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
     // Reloads merge into the existing section so that partial metadata updates
-    // accumulate and handles weakly bound to the registration stay valid across
+    // accumulate. The handles weakly bound to the registration stay valid across
     // refreshes; handles retire only when the registration is explicitly
     // invalidated and this entry is erased.
     const auto [it, inserted] =

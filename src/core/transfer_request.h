@@ -77,7 +77,7 @@ private:
     nixl_meta_dlist_t targetDescs;
 
     const std::string remoteAgent;
-    const nixl_remote_section_weak_t remoteSectionRef;
+    const nixl_remote_section_weak_t remoteSection;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 
