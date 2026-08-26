@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL ETCD Metadata Exchange — Phase 3: Fetch & Discover
+
+shape: sequence_diagram
+
+agent_a: "NIXL Agent\n(\"EtcdAgent1\")" {
+  class: agent
+}
+etcd: "etcd Server\n(localhost:2379)" {
+  class: external
+}
+agent_b: "NIXL Agent\n(\"EtcdAgent2\")" {
+  class: agent
+}
+
+agent_a -> etcd: "3.1 fetchRemoteMD(\"EtcdAgent2\")\n— GET key" {
+  class: call
+}
+etcd -> agent_a: "3.2 return EtcdAgent2\nmetadata blob" {
+  class: reply
+}
+agent_a -> agent_a: "3.3 load metadata into\nremote sections" {
+  class: internal
+}
+agent_a -> etcd: "3.4 create Watcher on\n/nixl/agents/EtcdAgent2/" {
+  class: watch
+}
+agent_b -> etcd: "3.5 fetchRemoteMD(\"EtcdAgent1\")\n— GET key" {
+  class: call
+}
+etcd -> agent_b: "3.6 return EtcdAgent1\nmetadata blob" {
+  class: reply
+}
+agent_b -> agent_b: "3.7 load metadata into\nremote sections" {
+  class: internal
+}
+agent_b -> etcd: "3.8 create Watcher on\n/nixl/agents/EtcdAgent1/" {
+  class: watch
+}

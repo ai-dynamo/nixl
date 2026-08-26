@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL Basic Two Peers Transfer — Phase 1: Initialization
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  class: controller
+}
+target: "Target Agent\n(Port 5555)" {
+  class: agent
+}
+initiator: "Initiator Agent\n(Auto Port)" {
+  class: agent
+}
+
+conductor -> target: "1.1 nixl_agent(\"target\", config)" {
+  class: call
+}
+conductor -> initiator: "1.2 nixl_agent(\"initiator\", config)" {
+  class: call
+}
+target -> target: "1.3 create_backend(\"UCX\")" {
+  class: internal
+}
+initiator -> initiator: "1.4 create_backend(\"UCX\")" {
+  class: internal
+}
+conductor -> target: "1.5 allocate tensor (ones, 10x16 float32)" {
+  class: call
+}
+conductor -> initiator: "1.6 allocate tensor (zeros, 10x16 float32)" {
+  class: call
+}
+target -> target: "1.7 register_memory(target_tensor)" {
+  class: call
+}
+initiator -> initiator: "1.8 register_memory(initiator_tensor)" {
+  class: call
+}

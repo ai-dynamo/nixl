@@ -1,0 +1,136 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+vars: {
+  font-size: 22
+  colors: {
+    primary: "#74B900"
+    notification: "#F5A623"
+    cleanup: "#CC0000"
+  }
+}
+
+classes: {
+  controller: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.controller-stroke}
+      fill: ${colors.supporting-fill}
+      font-color: ${colors.text}
+    }
+  }
+  agent: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.primary}
+      stroke-width: 2
+      fill: ${colors.agent-fill}
+      font-color: ${colors.text}
+    }
+  }
+  external: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.external-stroke}
+      fill: ${colors.supporting-fill}
+      font-color: ${colors.text}
+    }
+  }
+  call: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.primary}
+      stroke-width: 2
+    }
+  }
+  transfer: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.primary}
+      stroke-width: 3
+    }
+  }
+  transfer-repeat: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.primary}
+      stroke-width: 3
+      stroke-dash: 5
+    }
+  }
+  reply: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.primary}
+      stroke-width: 2
+      stroke-dash: 3
+    }
+  }
+  internal: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.secondary}
+      stroke-width: 2
+    }
+  }
+  repeat: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.secondary}
+      stroke-width: 2
+      stroke-dash: 5
+    }
+  }
+  watch: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.watch}
+      stroke-width: 2
+      stroke-dash: 5
+    }
+  }
+  notification: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.notification}
+      stroke-width: 2
+    }
+  }
+  notification-contrast: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.notification-contrast}
+      stroke-width: 2
+    }
+  }
+  cleanup: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.cleanup}
+      stroke-width: 2
+    }
+  }
+  cleanup-reply: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.cleanup}
+      stroke-width: 2
+      stroke-dash: 3
+    }
+  }
+  network-transfer: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.network}
+      stroke-width: 3
+    }
+  }
+  network-repeat: {
+    style: {
+      font-size: ${font-size}
+      stroke: ${colors.network}
+      stroke-width: 3
+      stroke-dash: 5
+    }
+  }
+}

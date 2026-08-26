@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL GDS Direct Storage — Phase 2: Write Transfer
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  class: controller
+}
+agent: "NIXL Agent\n(\"GDSTester\")" {
+  class: agent
+}
+storage: "Local Storage\n(NVMe / File)" {
+  class: external
+}
+
+conductor -> agent: "2.1 initialize_xfer(WRITE, DRAM buf1, FILE)" {
+  class: call
+}
+agent -> agent: "2.2 resolve backend (GDS auto-select)" {
+  class: internal
+}
+conductor -> agent: "2.3 transfer(xfer_handle_write)" {
+  class: call
+}
+agent -> storage: "2.4 GDS direct write — DRAM buf1 to file" {
+  class: transfer
+}
+conductor -> agent: "2.5 check_xfer_state(handle) [poll]" {
+  class: internal
+}
+agent -> conductor: "2.6 state: DONE" {
+  class: reply
+}
