@@ -25,7 +25,7 @@
 #   abseil lts_2025_08_14, gRPC v1.73.0, AWS 1.11.760, Mooncake v0.3.10.post1,
 #   Azure azure-storage-blobs_12.15.0, libfabric v1.21.0
 # MUTABLE ref (WILL serve stale layer cache after upstream moves — audit before trust):
-#   UCX v1.21.x (moving branch), Node.js `nvm install --lts` (floating)
+#   UCX v1.23.x (moving branch), Node.js `nvm install --lts` (floating)
 # BARE HEAD, no ref at all — fill in the *_REF args below to make these cacheable:
 #   etcd-cpp-apiv3, gusli, gtest-parallel
 # ============================================================================
@@ -470,13 +470,13 @@ RUN set -eux; \
 
 # ============================================================================
 # ucx-build  (independent, parallel with everything)
-# MUTABLE ref v1.21.x -> layer cache may go stale; audit on refresh.
+# MUTABLE ref v1.23.x -> layer cache may go stale; audit on refresh.
 # Installs to ${UCX_INSTALL_DIR} (defaults to ${NIXL_INSTALL_DIR}) -> /out/opt/nixl.
 # ROCm path: no CUDA/gdrcopy/UCCL.
 # ============================================================================
 FROM ${BUILDER_BASE_IMAGE} AS ucx-build
 ARG NIXL_INSTALL_DIR=/opt/nixl
-ARG UCX_VERSION=v1.21.x
+ARG UCX_VERSION=v1.23.x
 RUN set -eux; \
     NPROC=$(nproc); \
     UCX_INSTALL_DIR="${NIXL_INSTALL_DIR}"; \
