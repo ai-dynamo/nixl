@@ -112,12 +112,14 @@ steps:
       podman info
       ln -sfT $(type -p podman) /usr/bin/docker
       # Login to Artifactory
+      set +x -v
       echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
       # Login to the GitLab registry so DLFW base images hosted there can be pulled.
       # GitLab accepts any username with a read_registry token, so the username is a placeholder.
       if [ -n "${GITLAB_REGISTRY_TOKEN:-}" ]; then
         echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 -u nixl-ci --password-stdin
       fi
+      set +v -x
 
       yum install -y gettext
 
