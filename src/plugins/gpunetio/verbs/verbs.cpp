@@ -478,8 +478,12 @@ mr::mr(void *addr_, size_t tot_size_, uint32_t rkey_)
 }
 
 mr::~mr() {
-    int ret = ibv_dereg_mr(ibmr);
-    if (ret != 0) NIXL_ERROR << "ibv_dereg_mr failed with error " << ret;
+    if (ibmr != nullptr) {
+        int ret = ibv_dereg_mr(ibmr);
+        if (ret != 0) {
+            NIXL_ERROR << "ibv_dereg_mr failed with error " << ret;
+        }
+    }
 }
 
 } // namespace nixl::doca::verbs
