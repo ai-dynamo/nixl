@@ -25,24 +25,25 @@
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 
-namespace nixl::ucx {
 namespace {
 
-    bool
-    tlsEnablesCudaSupport(std::string_view tls) {
-        const bool deny_list = !tls.empty() && tls.front() == '^';
-        if (deny_list) {
-            tls.remove_prefix(1);
-        }
-
-        const std::string tokens = "," + std::string(tls) + ",";
-        const auto has_cuda_support = std::ranges::any_of(
-            std::array{",all,", ",cuda,", ",cuda_copy,", ",\\cuda_copy,"},
-            [&](auto token) { return tokens.find(token) != std::string::npos; });
-        return deny_list ? !has_cuda_support : has_cuda_support;
+bool
+tlsEnablesCudaSupport(std::string_view tls) {
+    const bool deny_list = !tls.empty() && tls.front() == '^';
+    if (deny_list) {
+        tls.remove_prefix(1);
     }
 
+    const std::string tokens = "," + std::string(tls) + ",";
+    const bool has_cuda_support =
+        std::ranges::any_of(std::array{",all,", ",cuda,", ",cuda_copy,", ",\\cuda_copy,"},
+                            [&](auto token) { return tokens.find(token) != std::string::npos; });
+    return deny_list ? !has_cuda_support : has_cuda_support;
+}
+
 } // namespace
+
+namespace nixl::ucx {
 
 void
 config::modify(std::string_view key, std::string_view value) const {

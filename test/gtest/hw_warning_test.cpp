@@ -47,8 +47,6 @@ protected:
 
 class UcxTlsValidationTest : public ::testing::Test {
 protected:
-    gtest::ScopedEnv envHelper_;
-
     void
     SetUp() override {
         if (std::getenv("NIXL_CI_NON_GPU") != nullptr ||
@@ -59,7 +57,8 @@ protected:
 
     void
     expectCudaTlsValidationFailure(const std::string &tls) {
-        envHelper_.addVar("UCX_TLS", tls);
+        gtest::ScopedEnv env_helper;
+        env_helper.addVar("UCX_TLS", tls);
 
         const gtest::LogIgnoreGuard lig_tls(
             "Invalid UCX_TLS=.*Add cuda_copy for basic GPU support, or cuda to also include "
@@ -71,19 +70,16 @@ protected:
         EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_ERR_BACKEND);
         EXPECT_GE(lig_tls.getIgnoredCount(), 1);
         EXPECT_EQ(lig_backend.getIgnoredCount(), 1);
-
-        envHelper_.popVar();
     }
 
     void
     expectCudaTlsValidationSuccess(const std::string &tls) {
-        envHelper_.addVar("UCX_TLS", tls);
+        gtest::ScopedEnv env_helper;
+        env_helper.addVar("UCX_TLS", tls);
 
         nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
         nixlBackendH *backend = nullptr;
         EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
-
-        envHelper_.popVar();
     }
 };
 
