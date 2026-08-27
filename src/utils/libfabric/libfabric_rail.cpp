@@ -29,6 +29,21 @@
 #include <stdexcept>
 #include <stack>
 
+namespace {
+
+// Whether libfabric's shared memory (shm) provider can move data for an HMEM runtime.
+//
+// shm has no Neuron HMEM support. Every other runtime keeps shm, so that intra-node
+// transfers retain its acceleration.
+//
+// Update this when a runtime's shm support changes.
+bool
+shmProviderSupportsRuntime(enum fi_hmem_iface runtime) {
+    return runtime != FI_HMEM_NEURON;
+}
+
+} // namespace
+
 // RequestPool Base Class Implementation
 
 RequestPool::RequestPool(size_t pool_size, size_t rail_id)
@@ -391,13 +406,15 @@ DataRequestPool::allocate(nixlLibfabricReq::OpType op_type, uint32_t req_id) {
 
 nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                                      const std::string &provider,
-                                     uint16_t id)
+                                     uint16_t id,
+                                     enum fi_hmem_iface runtime)
     : rail_id(id),
       device_name(device),
       provider_name(provider),
       control_request_pool_(NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL, id),
       data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id),
-      provider_supports_hmem_(false) {
+      provider_supports_hmem_(false),
+      runtime_(runtime) {
     // Initialize all pointers to nullptr
     info = nullptr;
     fabric = nullptr;
@@ -527,6 +544,26 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         if (ret) {
             NIXL_ERROR << "fi_ep_bind av failed for rail " << rail_id << ": " << fi_strerror(-ret);
             throw std::runtime_error("fi_ep_bind av failed for rail " + std::to_string(rail_id));
+        }
+
+        // On runtimes the shm provider cannot serve, disable it so that intra-node
+        // transfers stay on the EFA path.
+        if (!shmProviderSupportsRuntime(runtime_)) {
+            const bool shared_memory_permitted = false;
+            ret = fi_setopt(&endpoint->fid,
+                            FI_OPT_ENDPOINT,
+                            FI_OPT_SHARED_MEMORY_PERMITTED,
+                            &shared_memory_permitted,
+                            sizeof(shared_memory_permitted));
+            if (ret) {
+                NIXL_ERROR << "fi_setopt FI_OPT_SHARED_MEMORY_PERMITTED failed for rail " << rail_id
+                           << " (provider: " << provider_name << "): " << fi_strerror(-ret);
+                throw std::runtime_error(
+                    "fi_setopt FI_OPT_SHARED_MEMORY_PERMITTED failed for rail " +
+                    std::to_string(rail_id));
+            }
+            NIXL_INFO << "Disabled shared memory provider for rail " << rail_id
+                      << " (runtime has no shm support)";
         }
 
         if (provider_name == "efa") {
