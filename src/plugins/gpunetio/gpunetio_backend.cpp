@@ -27,6 +27,27 @@
 const char info_delimiter = '-';
 
 namespace {
+class ScopedCudaDevice {
+public:
+    explicit ScopedCudaDevice(int device) : previousDevice(0), restore(false) {
+        nixlDocaEngineCheckCudaError(cudaGetDevice(&previousDevice), "Failed to get CUDA device");
+        if (previousDevice != device) {
+            nixlDocaEngineCheckCudaError(cudaSetDevice(device), "Failed to set CUDA device");
+            restore = true;
+        }
+    }
+
+    ~ScopedCudaDevice() {
+        if (restore && cudaSetDevice(previousDevice) != cudaSuccess) {
+            NIXL_ERROR << "Failed to restore CUDA device";
+        }
+    }
+
+private:
+    int previousDevice;
+    bool restore;
+};
+
 int
 parseGidIndex(const std::string &value) {
     if (value.empty()) {
@@ -192,6 +213,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         if (result != DOCA_SUCCESS)
             NIXL_ERROR << "Failed to create DOCA GPU device " << doca_error_get_descr(result);
     }
+
+    // The first configured GPU owns the QPs, streams, and progress kernels.
+    nixlDocaEngineCheckCudaError(cudaSetDevice(gdevs[0].first), "Failed to set QP owner device");
 
     if (oobdev.size() > 0 && oobdev[0] != "") {
         if (netif_get_addr(oobdev[0].c_str(), AF_INET, &oob_saddr, &oob_netmask) != 0) {
@@ -383,6 +407,7 @@ nixlDocaEngine::getSupportedMems() const {
 
 nixlDocaEngine::~nixlDocaEngine() {
     doca_error_t result;
+    ScopedCudaDevice deviceGuard(gdevs[0].first);
 
     NIXL_DEBUG << "Before progressThreadStop ";
     progressThreadStop();
@@ -419,9 +444,12 @@ nixlDocaEngine::~nixlDocaEngine() {
     if (result != DOCA_SUCCESS)
         NIXL_ERROR << "Failed to close DOCA device " << doca_error_get_descr(result);
 
-    result = doca_gpu_destroy(gdevs[0].second);
-    if (result != DOCA_SUCCESS)
-        NIXL_ERROR << "Failed to close DOCA GPU device " << doca_error_get_descr(result);
+    for (auto &item : gdevs) {
+        result = doca_gpu_destroy(item.second);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to close DOCA GPU device " << doca_error_get_descr(result);
+        }
+    }
 }
 
 /****************************************
@@ -431,6 +459,7 @@ nixlDocaEngine::~nixlDocaEngine() {
 nixl_status_t
 nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev, doca_gpu *gpu) {
     struct nixlDocaNotif *notif;
+    ScopedCudaDevice deviceGuard(gdevs[0].first);
 
     std::lock_guard<std::mutex> lock(notifLock);
     // Same peer can be server or client
@@ -605,6 +634,7 @@ nixlDocaEngine::getGpuCudaId() {
 nixl_status_t
 nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     struct nixlDocaRdmaQp *rdma_qp;
+    ScopedCudaDevice deviceGuard(gdevs[0].first);
 
     std::lock_guard<std::mutex> lock(qpLock);
 
@@ -1038,15 +1068,19 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
     auto it = std::find_if(gdevs.begin(), gdevs.end(), [&mem](std::pair<uint32_t, doca_gpu *> &x) {
         return x.first == mem.devId;
     });
-
     if (it == gdevs.end()) {
-        NIXL_ERROR << "Can't register memory for unknown device " << mem.devId;
-        return NIXL_ERR_INVALID_PARAM;
+        int device_count = 0;
+        if (nixl_mem != VRAM_SEG || cudaGetDeviceCount(&device_count) != cudaSuccess ||
+            mem.devId >= static_cast<uint64_t>(device_count)) {
+            NIXL_ERROR << "Can't register memory for unknown device " << mem.devId;
+            return NIXL_ERR_INVALID_PARAM;
+        }
     }
+    doca_gpu *memory_gpu = it == gdevs.end() ? nullptr : it->second;
 
     try {
         priv->mr = std::make_unique<nixl::doca::verbs::mr>(
-            it->second, (void *)mem.addr, 1, (size_t)mem.len, pd);
+            memory_gpu, (void *)mem.addr, 1, (size_t)mem.len, pd);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
@@ -1147,12 +1181,15 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     uint32_t stream_id;
     struct nixlDocaRdmaQp *rdma_qp;
     uintptr_t notif_addr;
+    bool peer_memory = false;
 
-    // TODO: check device id from local dlist mr that should be all the same and same of
-    // the engine
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
-        if (lmd->devId != gdevs[0].first) return NIXL_ERR_INVALID_PARAM;
+        peer_memory |= lmd->devId != gdevs[0].first;
+    }
+    if (peer_memory && opt_args && !opt_args->customParam.empty()) {
+        NIXL_ERROR << "Attached CUDA streams are not supported for peer-GPU payload memory";
+        return NIXL_ERR_NOT_SUPPORTED;
     }
 
     auto search = qpMap.find(remote_agent);
@@ -1262,6 +1299,7 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
+    ScopedCudaDevice deviceGuard(gdevs[0].first);
 
     for (uint32_t idx = treq->start_pos; idx < treq->end_pos; idx++) {
         xferReqRingCpu[idx].id = (lastPostedReq.fetch_add(1) & (DOCA_MAX_COMPLETION_INFLIGHT_MASK));
