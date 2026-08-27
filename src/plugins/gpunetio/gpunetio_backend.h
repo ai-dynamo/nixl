@@ -184,6 +184,8 @@ private:
     std::unordered_map<std::string, struct nixlDocaRdmaQp *> qpMap;
     std::unordered_map<std::string, int> connMap;
     std::unordered_map<std::string, struct nixlDocaNotif *> notifMap;
+    std::string notifProgressPeer;
+    size_t notifProgressCursor = 0;
 
     pthread_t server_thread_id;
 

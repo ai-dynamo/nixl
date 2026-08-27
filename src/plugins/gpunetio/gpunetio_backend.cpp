@@ -19,6 +19,7 @@
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <cassert>
+#include <iterator>
 #include <stdexcept>
 #include <unistd.h>
 #include "common/nixl_log.h"
@@ -1380,58 +1381,76 @@ nixl_status_t
 nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
     uint32_t recv_idx;
     std::string msg_src;
-    uint32_t num_msg = 0;
     char *addr;
     size_t position;
 
     // Lock required to prevent inconsistency if another notifyQp (new peer) is added
     // while getNotifs is running
     std::lock_guard<std::mutex> lock(notifLock);
-    for (auto &notif : notifMap) {
-        ((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu =
-            qpMap[notif.first]->qp_notif->get_qp_gpu_dev();
-        std::atomic_thread_fence(std::memory_order_seq_cst);
-        while (((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu != nullptr)
-            ;
-        num_msg = ((volatile struct docaNotif *)notif_progress_cpu)->msg_num;
-        while (num_msg > 0) {
-            recv_idx = notif.second->recv_pi.load() & (DOCA_MAX_NOTIF_INFLIGHT - 1);
-            addr = (char *)(notif.second->recv_addr + (recv_idx * notif.second->elems_size));
-            msg_src = addr;
+    auto *progress = (volatile struct docaNotif *)notif_progress_cpu;
+    if (progress->qp_gpu != nullptr) {
+        return NIXL_SUCCESS;
+    }
 
-            NIXL_DEBUG << "CPU num_msg " << num_msg << " at " << recv_idx << " addr "
-                       << (void *)addr << " msg " << msg_src << std::endl;
-
+    if (!notifProgressPeer.empty()) {
+        auto notif = notifMap.find(notifProgressPeer);
+        if (notif != notifMap.end() && progress->msg_num > 0) {
+            recv_idx = notif->second->recv_pi.load() & (DOCA_MAX_NOTIF_INFLIGHT - 1);
+            addr = (char *)(notif->second->recv_addr + (recv_idx * notif->second->elems_size));
+            msg_src.assign(addr, notif->second->elems_size);
             position = msg_src.find(msg_tag_start);
-
-            NIXL_DEBUG << "getNotifs idx " << recv_idx << " addr "
-                       << (void *)((notif.second->recv_addr +
-                                    (recv_idx * notif.second->elems_size)))
-                       << " msg " << msg_src << " position " << (int)position << std::endl;
-
-            if (position != std::string::npos && position == 0) {
-                unsigned last = msg_src.find(msg_tag_end);
+            size_t last = msg_src.find(msg_tag_end, msg_tag_start.size());
+            size_t parsed = 0;
+            unsigned long long msg_size = 0;
+            bool valid = position == 0 && last != std::string::npos;
+            if (valid) {
                 std::string msg_sz =
-                    msg_src.substr(position + msg_tag_start.size(), last - position);
-                int sz = std::stoi(msg_sz);
-
-                std::string msg(addr + last + msg_tag_end.size(),
-                                addr + last + msg_tag_end.size() + sz);
-
-                NIXL_DEBUG << "getNotifs propagating notif from " << notif.first << " msg " << msg
-                           << " size " << sz << " num " << num_msg << std::endl;
-
-                notif_list.push_back(std::pair(notif.first, msg));
-                // Tag cleanup
-                memset(addr, 0, msg_tag_start.size());
-                recv_idx = notif.second->recv_pi.fetch_add(1);
-                num_msg--;
-            } else {
-                NIXL_ERROR << "getNotifs error message at " << num_msg << " size " << msg_src.size()
-                           << " msg " << msg_src;
-                break;
+                    msg_src.substr(msg_tag_start.size(), last - msg_tag_start.size());
+                try {
+                    msg_size = std::stoull(msg_sz, &parsed);
+                }
+                catch (const std::exception &) {
+                    valid = false;
+                }
+                size_t payload_offset = last + msg_tag_end.size();
+                valid = valid && parsed == msg_sz.size() && payload_offset <= msg_src.size() &&
+                    msg_size <= msg_src.size() - payload_offset;
+                if (valid) {
+                    notif_list.emplace_back(
+                        notif->first,
+                        std::string(addr + payload_offset, addr + payload_offset + msg_size));
+                }
             }
+            memset(addr, 0, msg_tag_start.size());
+            notif->second->recv_pi.fetch_add(1);
+            notifProgressPeer.clear();
+            if (!valid) {
+                NIXL_ERROR << "getNotifs received malformed notification from " << notif->first;
+                return NIXL_ERR_BACKEND;
+            }
+            return NIXL_SUCCESS;
         }
+        notifProgressPeer.clear();
+        return NIXL_SUCCESS;
+    }
+
+    const size_t peer_count = notifMap.size();
+    for (size_t offset = 0; offset < peer_count; ++offset) {
+        const size_t peer_index = (notifProgressCursor + offset) % peer_count;
+        auto notif_iter = notifMap.begin();
+        std::advance(notif_iter, peer_index);
+        auto &notif = *notif_iter;
+        recv_idx = notif.second->recv_pi.load() & (DOCA_MAX_NOTIF_INFLIGHT - 1);
+        addr = (char *)(notif.second->recv_addr + (recv_idx * notif.second->elems_size));
+        if (memcmp(addr, msg_tag_start.data(), msg_tag_start.size()) != 0) {
+            continue;
+        }
+        progress->msg_num = 0;
+        notifProgressPeer = notif.first;
+        notifProgressCursor = (peer_index + 1) % peer_count;
+        progress->qp_gpu = qpMap[notif.first]->qp_notif->get_qp_gpu_dev();
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        break;
     }
 
     return NIXL_SUCCESS;
