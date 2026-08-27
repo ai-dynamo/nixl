@@ -387,7 +387,7 @@ if [ -n "$PRE_INSTALLED_UCX_ENV" ]; then
 else
     # UCCL is skipped if no Nvidia GPU is present.
     # Skipping steps entirely for ROCm.
-    UCX_VERSION=${UCX_VERSION:-v1.21.x}
+    UCX_VERSION=${UCX_VERSION:-v1.23.x}
     git clone --depth 1 --branch "${UCX_VERSION}" https://github.com/openucx/ucx.git ${TMPDIR}/ucx
     ( \
         cd ${TMPDIR}/ucx && \
