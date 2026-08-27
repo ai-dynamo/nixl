@@ -1008,6 +1008,34 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
     return real(agent, req_hndl, telemetry);
 }
 
+void
+nixl_capi_get_version(int *major, int *minor, int *patch) {
+    using fn_t = void (*)(int *, int *, int *);
+    static fn_t real = (fn_t)resolve("nixl_capi_get_version");
+    real(major, minor, patch);
+}
+
+const char *
+nixl_capi_status_string(nixl_capi_status_t status) {
+    using fn_t = const char *(*)(nixl_capi_status_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_status_string");
+    return real(status);
+}
+
+const char *
+nixl_capi_last_error_message(void) {
+    using fn_t = const char *(*)(void);
+    static fn_t real = (fn_t)resolve("nixl_capi_last_error_message");
+    return real();
+}
+
+void
+nixl_capi_mem_free(void *ptr) {
+    using fn_t = void (*)(void *);
+    static fn_t real = (fn_t)resolve("nixl_capi_mem_free");
+    real(ptr);
+}
+
 // ---- Stub detection ----
 // Returns true if the real nixl library is NOT available at runtime.
 // Unlike other functions, this does NOT abort when the library is missing.

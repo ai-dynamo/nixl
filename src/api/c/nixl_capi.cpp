@@ -19,6 +19,7 @@
 #include "nixl.h"
 #include "nixl_types.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -29,7 +30,9 @@
 #include <vector>
 #include <chrono>
 
-static nixl_thread_sync_t
+namespace {
+
+nixl_thread_sync_t
 nixl_capi_thread_sync_to_nixl(nixl_capi_thread_sync_t sync) {
     switch (sync) {
     case NIXL_CAPI_THREAD_SYNC_NONE:
@@ -38,10 +41,12 @@ nixl_capi_thread_sync_to_nixl(nixl_capi_thread_sync_t sync) {
         return nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
     case NIXL_CAPI_THREAD_SYNC_RW:
         return nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
-    default:
-        return nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
     }
+    // A C caller can pass any integer value; fall back for out-of-range input.
+    return nixl_thread_sync_t::NIXL_THREAD_SYNC_DEFAULT;
 }
+
+} // namespace
 
 extern "C" {
 // Internal struct definitions to match our opaque types
@@ -109,6 +114,91 @@ struct nixl_capi_remote_dlist_s {
 static nixl_capi_status_t
 nixl_capi_status_from_nixl_status(nixl_status_t status);
 
+static nixl_capi_status_t
+nixl_capi_blob_to_buffer(const nixl_blob_t &blob, void **data, size_t *len);
+
+// Message of the last exception that failed a call on this thread, "" when
+// none. Valid until the next failing call on the same thread.
+static thread_local std::string nixl_capi_last_error;
+
+// Exception barrier shared by every API entry point: called from a catch
+// handler, it records the message and reports NIXL_CAPI_ERROR_EXCEPTION.
+static nixl_capi_status_t
+nixl_capi_handle_exception() {
+    try {
+        throw;
+    }
+    catch (const std::exception &e) {
+        nixl_capi_last_error = e.what();
+    }
+    catch (...) {
+        nixl_capi_last_error = "unknown exception";
+    }
+    return NIXL_CAPI_ERROR_EXCEPTION;
+}
+
+void
+nixl_capi_get_version(int *major, int *minor, int *patch) {
+    if (major) {
+        *major = NIXL_CAPI_API_VERSION_MAJOR;
+    }
+    if (minor) {
+        *minor = NIXL_CAPI_API_VERSION_MINOR;
+    }
+    if (patch) {
+        *patch = NIXL_CAPI_API_VERSION_PATCH;
+    }
+}
+
+const char *
+nixl_capi_status_string(nixl_capi_status_t status) {
+    switch (status) {
+    case NIXL_CAPI_SUCCESS:
+        return "NIXL_CAPI_SUCCESS";
+    case NIXL_CAPI_IN_PROG:
+        return "NIXL_CAPI_IN_PROG";
+    case NIXL_CAPI_ERROR_INVALID_PARAM:
+        return "NIXL_CAPI_ERROR_INVALID_PARAM";
+    case NIXL_CAPI_ERROR_BACKEND:
+        return "NIXL_CAPI_ERROR_BACKEND";
+    case NIXL_CAPI_ERROR_INVALID_STATE:
+        return "NIXL_CAPI_ERROR_INVALID_STATE";
+    case NIXL_CAPI_ERROR_EXCEPTION:
+        return "NIXL_CAPI_ERROR_EXCEPTION";
+    case NIXL_CAPI_ERROR_NO_TELEMETRY:
+        return "NIXL_CAPI_ERROR_NO_TELEMETRY";
+    case NIXL_CAPI_ERROR_NOT_FOUND:
+        return "NIXL_CAPI_ERROR_NOT_FOUND";
+    case NIXL_CAPI_ERROR_NOT_POSTED:
+        return "NIXL_CAPI_ERROR_NOT_POSTED";
+    case NIXL_CAPI_ERROR_MISMATCH:
+        return "NIXL_CAPI_ERROR_MISMATCH";
+    case NIXL_CAPI_ERROR_NOT_ALLOWED:
+        return "NIXL_CAPI_ERROR_NOT_ALLOWED";
+    case NIXL_CAPI_ERROR_REPOST_ACTIVE:
+        return "NIXL_CAPI_ERROR_REPOST_ACTIVE";
+    case NIXL_CAPI_ERROR_UNKNOWN:
+        return "NIXL_CAPI_ERROR_UNKNOWN";
+    case NIXL_CAPI_ERROR_NOT_SUPPORTED:
+        return "NIXL_CAPI_ERROR_NOT_SUPPORTED";
+    case NIXL_CAPI_ERROR_REMOTE_DISCONNECT:
+        return "NIXL_CAPI_ERROR_REMOTE_DISCONNECT";
+    case NIXL_CAPI_ERROR_CANCELED:
+        return "NIXL_CAPI_ERROR_CANCELED";
+    }
+    return "NIXL_CAPI_ERROR_UNKNOWN";
+}
+
+const char *
+nixl_capi_last_error_message(void) {
+    return nixl_capi_last_error.c_str();
+}
+
+void
+nixl_capi_mem_free(void *ptr) {
+    free(ptr);
+}
+
 nixl_capi_status_t
 nixl_capi_create_agent(const char *name, nixl_capi_agent_t *agent) {
     if (!name || !agent) {
@@ -127,7 +217,7 @@ nixl_capi_create_agent(const char *name, nixl_capi_agent_t *agent) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -140,14 +230,14 @@ nixl_capi_create_configured_agent(const char *name,
     }
 
     try {
-        nixlAgentConfig nixl_config;
-        nixl_config.useProgThread = cfg->enable_prog_thread;
-        nixl_config.useListenThread = cfg->enable_listen_thread;
-        nixl_config.listenPort = static_cast<uint16_t>(cfg->listen_port);
-        nixl_config.syncMode = nixl_capi_thread_sync_to_nixl(cfg->thread_sync);
-        nixl_config.pthrDelay = cfg->pthr_delay_us;
-        nixl_config.lthrDelay = cfg->lthr_delay_us;
-        nixl_config.captureTelemetry = cfg->capture_telemetry;
+        nixlAgentConfig nixl_config(cfg->enable_prog_thread,
+                                    cfg->enable_listen_thread,
+                                    cfg->listen_port,
+                                    nixl_capi_thread_sync_to_nixl(cfg->thread_sync),
+                                    cfg->num_workers,
+                                    cfg->pthr_delay_us,
+                                    cfg->lthr_delay_us,
+                                    cfg->capture_telemetry);
 
         auto agent_handle = new nixl_capi_agent_s;
         agent_handle->inner = new nixlAgent(name, nixl_config);
@@ -155,14 +245,14 @@ nixl_capi_create_configured_agent(const char *name,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_agent(nixl_capi_agent_t agent) {
     if (!agent) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -171,7 +261,7 @@ nixl_capi_destroy_agent(nixl_capi_agent_t agent) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -187,22 +277,10 @@ nixl_capi_get_local_md(nixl_capi_agent_t agent, void **data, size_t *len) {
         if (ret != NIXL_SUCCESS) {
             return nixl_capi_status_from_nixl_status(ret);
         }
-
-        // Allocate memory for the blob data
-        void *blob_data = malloc(blob.size());
-        if (!blob_data) {
-            return NIXL_CAPI_ERROR_BACKEND;
-        }
-
-        // Copy the data
-        memcpy(blob_data, blob.data(), blob.size());
-        *data = blob_data;
-        *len = blob.size();
-
-        return NIXL_CAPI_SUCCESS;
+        return nixl_capi_blob_to_buffer(blob, data, len);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -222,18 +300,10 @@ nixl_capi_get_local_partial_md(nixl_capi_agent_t agent,
         if (ret != NIXL_SUCCESS) {
             return nixl_capi_status_from_nixl_status(ret);
         }
-        // Allocate memory for the blob data
-        *data = malloc(blob.size());
-        if (!*data) {
-            return NIXL_CAPI_ERROR_BACKEND;
-        }
-        // Copy the data
-        memcpy(*data, blob.data(), blob.size());
-        *len = blob.size();
-        return nixl_capi_status_from_nixl_status(ret);
+        return nixl_capi_blob_to_buffer(blob, data, len);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -265,7 +335,7 @@ nixl_capi_load_remote_md(nixl_capi_agent_t agent, const void *data, size_t len, 
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -280,7 +350,7 @@ nixl_capi_invalidate_remote_md(nixl_capi_agent_t agent, const char *remote_agent
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -296,7 +366,7 @@ nixl_capi_send_local_md(nixl_capi_agent_t agent, nixl_capi_opt_args_t opt_args) 
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -313,7 +383,7 @@ nixl_capi_send_local_partial_md(nixl_capi_agent_t agent,
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -331,7 +401,7 @@ nixl_capi_fetch_remote_md(nixl_capi_agent_t agent,
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -347,7 +417,7 @@ nixl_capi_invalidate_local_md(nixl_capi_agent_t agent, nixl_capi_opt_args_t opt_
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -371,7 +441,7 @@ nixl_capi_check_remote_md(nixl_capi_agent_t agent,
         }
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -386,7 +456,7 @@ nixl_capi_get_available_plugins(nixl_capi_agent_t agent, nixl_capi_string_list_t
         nixl_status_t ret = agent->inner->getAvailPlugins(backend_plugins);
 
         if (ret != NIXL_SUCCESS) {
-            return NIXL_CAPI_ERROR_BACKEND;
+            return nixl_capi_status_from_nixl_status(ret);
         }
 
         auto list = new nixl_capi_string_list_s;
@@ -396,14 +466,14 @@ nixl_capi_get_available_plugins(nixl_capi_agent_t agent, nixl_capi_string_list_t
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_string_list(nixl_capi_string_list_t list) {
     if (!list) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -411,7 +481,7 @@ nixl_capi_destroy_string_list(nixl_capi_string_list_t list) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -426,7 +496,7 @@ nixl_capi_string_list_size(nixl_capi_string_list_t list, size_t *size) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -441,7 +511,7 @@ nixl_capi_string_list_get(nixl_capi_string_list_t list, size_t index, const char
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -464,7 +534,7 @@ nixl_capi_get_plugin_params(nixl_capi_agent_t agent,
         if (ret != NIXL_SUCCESS) {
             delete mem_list;
             delete param_list;
-            return NIXL_CAPI_ERROR_BACKEND;
+            return nixl_capi_status_from_nixl_status(ret);
         }
 
         *mems = mem_list;
@@ -473,14 +543,14 @@ nixl_capi_get_plugin_params(nixl_capi_agent_t agent,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_mem_list(nixl_capi_mem_list_t list) {
     if (!list) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -488,14 +558,14 @@ nixl_capi_destroy_mem_list(nixl_capi_mem_list_t list) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_params(nixl_capi_params_t params) {
     if (!params) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -503,7 +573,7 @@ nixl_capi_destroy_params(nixl_capi_params_t params) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -523,21 +593,21 @@ nixl_capi_create_backend(nixl_capi_agent_t agent,
 
         if (ret != NIXL_SUCCESS) {
             delete backend_handle;
-            return NIXL_CAPI_ERROR_BACKEND;
+            return nixl_capi_status_from_nixl_status(ret);
         }
 
         *backend = backend_handle;
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_backend(nixl_capi_backend_t backend) {
     if (!backend) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -545,7 +615,7 @@ nixl_capi_destroy_backend(nixl_capi_backend_t backend) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -561,14 +631,14 @@ nixl_capi_create_opt_args(nixl_capi_opt_args_t *args) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_opt_args(nixl_capi_opt_args_t args) {
     if (!args) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -576,7 +646,7 @@ nixl_capi_destroy_opt_args(nixl_capi_opt_args_t args) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -591,7 +661,7 @@ nixl_capi_opt_args_add_backend(nixl_capi_opt_args_t args, nixl_capi_backend_t ba
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -621,14 +691,14 @@ nixl_capi_opt_args_set_notif_msg(nixl_capi_opt_args_t args, const void *data, si
     }
 
     try {
-        args->args.notifMsg.assign((const char *)data, len);
+        args->args.notifMsg.assign(data ? (const char *)data : "", len);
         if (args->args.hasNotif || args->args.notif.has_value()) {
             args->args.notif = args->args.notifMsg;
         }
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -644,7 +714,7 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void **data, size_t 
         return nixl_capi_blob_to_buffer(msg, data, len);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -655,11 +725,11 @@ nixl_capi_opt_args_set_custom_param(nixl_capi_opt_args_t args, const void *data,
     }
 
     try {
-        args->args.customParam.assign((const char *)data, len);
+        args->args.customParam.assign(data ? (const char *)data : "", len);
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -673,7 +743,7 @@ nixl_capi_opt_args_get_custom_param(nixl_capi_opt_args_t args, void **data, size
         return nixl_capi_blob_to_buffer(args->args.customParam, data, len);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -693,7 +763,7 @@ nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -708,7 +778,7 @@ nixl_capi_opt_args_get_has_notif(nixl_capi_opt_args_t args, bool *has_notif) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -723,7 +793,7 @@ nixl_capi_opt_args_set_skip_desc_merge(nixl_capi_opt_args_t args, bool skip_merg
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -738,7 +808,7 @@ nixl_capi_opt_args_get_skip_desc_merge(nixl_capi_opt_args_t args, bool *skip_mer
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -753,7 +823,7 @@ nixl_capi_opt_args_set_ip_addr(nixl_capi_opt_args_t args, const char *ip_addr) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -779,7 +849,7 @@ nixl_capi_create_params(nixl_capi_params_t *params) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -794,7 +864,7 @@ nixl_capi_params_add(nixl_capi_params_t params, const char *key, const char *val
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -809,7 +879,7 @@ nixl_capi_params_is_empty(nixl_capi_params_t params, bool *is_empty) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -827,7 +897,7 @@ nixl_capi_params_create_iterator(nixl_capi_params_t params, nixl_capi_param_iter
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -859,14 +929,14 @@ nixl_capi_params_iterator_next(nixl_capi_param_iter_t iter,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_params_destroy_iterator(nixl_capi_param_iter_t iter) {
     if (!iter) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -874,7 +944,7 @@ nixl_capi_params_destroy_iterator(nixl_capi_param_iter_t iter) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -889,7 +959,7 @@ nixl_capi_mem_list_is_empty(nixl_capi_mem_list_t list, bool *is_empty) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -904,7 +974,7 @@ nixl_capi_mem_list_size(nixl_capi_mem_list_t list, size_t *size) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -919,7 +989,7 @@ nixl_capi_mem_list_get(nixl_capi_mem_list_t list, size_t index, nixl_capi_mem_ty
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -929,20 +999,28 @@ nixl_capi_mem_type_to_string(nixl_capi_mem_type_t mem_type, const char **str) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
 
-    try {
-        static const char *mem_type_strings[] = {
-            "DRAM", "VRAM", "BLOCK", "OBJECT", "FILE", "UNKNOWN"};
-
-        if (mem_type < 0 || mem_type >= sizeof(mem_type_strings) / sizeof(mem_type_strings[0])) {
-            return NIXL_CAPI_ERROR_INVALID_PARAM;
-        }
-
-        *str = mem_type_strings[mem_type];
+    switch (mem_type) {
+    case NIXL_CAPI_MEM_DRAM:
+        *str = "DRAM";
+        return NIXL_CAPI_SUCCESS;
+    case NIXL_CAPI_MEM_VRAM:
+        *str = "VRAM";
+        return NIXL_CAPI_SUCCESS;
+    case NIXL_CAPI_MEM_BLOCK:
+        *str = "BLOCK";
+        return NIXL_CAPI_SUCCESS;
+    case NIXL_CAPI_MEM_OBJECT:
+        *str = "OBJECT";
+        return NIXL_CAPI_SUCCESS;
+    case NIXL_CAPI_MEM_FILE:
+        *str = "FILE";
+        return NIXL_CAPI_SUCCESS;
+    case NIXL_CAPI_MEM_UNKNOWN:
+        *str = "UNKNOWN";
         return NIXL_CAPI_SUCCESS;
     }
-    catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
-    }
+    // A C caller can pass any integer value.
+    return NIXL_CAPI_ERROR_INVALID_PARAM;
 }
 
 nixl_capi_status_t
@@ -964,7 +1042,7 @@ nixl_capi_get_backend_params(nixl_capi_agent_t agent,
         if (ret != NIXL_SUCCESS) {
             delete mem_list;
             delete param_list;
-            return NIXL_CAPI_ERROR_BACKEND;
+            return nixl_capi_status_from_nixl_status(ret);
         }
 
         *mems = mem_list;
@@ -973,7 +1051,7 @@ nixl_capi_get_backend_params(nixl_capi_agent_t agent,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -991,14 +1069,14 @@ nixl_capi_create_xfer_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_xfer_dlist_
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_xfer_dlist(nixl_capi_xfer_dlist_t dlist) {
     if (!dlist) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -1007,7 +1085,7 @@ nixl_capi_destroy_xfer_dlist(nixl_capi_xfer_dlist_t dlist) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1022,7 +1100,7 @@ nixl_capi_xfer_dlist_get_type(nixl_capi_xfer_dlist_t dlist, nixl_capi_mem_type_t
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1041,7 +1119,7 @@ nixl_capi_xfer_dlist_add_desc(nixl_capi_xfer_dlist_t dlist,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1056,7 +1134,7 @@ nixl_capi_xfer_dlist_desc_count(nixl_capi_xfer_dlist_t dlist, size_t *count) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1077,7 +1155,7 @@ nixl_capi_xfer_dlist_is_empty(nixl_capi_xfer_dlist_t dlist, bool *is_empty) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1092,7 +1170,7 @@ nixl_capi_xfer_dlist_trim(nixl_capi_xfer_dlist_t dlist) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1107,7 +1185,7 @@ nixl_capi_xfer_dlist_rem_desc(nixl_capi_xfer_dlist_t dlist, int index) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1122,7 +1200,7 @@ nixl_capi_xfer_dlist_clear(nixl_capi_xfer_dlist_t dlist) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1137,7 +1215,7 @@ nixl_capi_xfer_dlist_print(nixl_capi_xfer_dlist_t dlist) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1152,7 +1230,7 @@ nixl_capi_xfer_dlist_resize(nixl_capi_xfer_dlist_t dlist, size_t new_size) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1170,14 +1248,14 @@ nixl_capi_create_reg_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_reg_dlist_t 
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_reg_dlist(nixl_capi_reg_dlist_t dlist) {
     if (!dlist) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -1186,7 +1264,7 @@ nixl_capi_destroy_reg_dlist(nixl_capi_reg_dlist_t dlist) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1201,7 +1279,7 @@ nixl_capi_reg_dlist_get_type(nixl_capi_reg_dlist_t dlist, nixl_capi_mem_type_t *
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1231,7 +1309,7 @@ nixl_capi_reg_dlist_add_desc(nixl_capi_reg_dlist_t dlist,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1246,7 +1324,7 @@ nixl_capi_reg_dlist_desc_count(nixl_capi_reg_dlist_t dlist, size_t *count) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1261,7 +1339,7 @@ nixl_capi_reg_dlist_is_empty(nixl_capi_reg_dlist_t dlist, bool *is_empty) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1276,7 +1354,7 @@ nixl_capi_reg_dlist_trim(nixl_capi_reg_dlist_t dlist) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1291,7 +1369,7 @@ nixl_capi_reg_dlist_rem_desc(nixl_capi_reg_dlist_t dlist, int index) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1306,7 +1384,7 @@ nixl_capi_reg_dlist_clear(nixl_capi_reg_dlist_t dlist) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1321,7 +1399,7 @@ nixl_capi_reg_dlist_resize(nixl_capi_reg_dlist_t dlist, size_t new_size) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1336,7 +1414,7 @@ nixl_capi_reg_dlist_print(nixl_capi_reg_dlist_t dlist) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1352,7 +1430,8 @@ nixl_capi_register_mem(nixl_capi_agent_t agent,
     try {
 #ifdef NIXL_DEBUG
         printf("** Registering memory\n");
-        printf("** Backend Count: %ld\n", opt_args ? opt_args->args.backends.size() : 0);
+        printf("** Backend Count: %zu\n",
+               opt_args ? opt_args->args.backends.size() : static_cast<size_t>(0));
         printf("** Descriptor list:\n");
         dlist->dlist->print();
         printf("** Registered memory\n");
@@ -1362,7 +1441,7 @@ nixl_capi_register_mem(nixl_capi_agent_t agent,
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1385,7 +1464,7 @@ nixl_capi_deregister_mem(nixl_capi_agent_t agent,
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1403,7 +1482,7 @@ nixl_capi_agent_make_connection(nixl_capi_agent_t agent,
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1413,7 +1492,7 @@ nixl_capi_prep_xfer_dlist(nixl_capi_agent_t agent,
                           nixl_capi_xfer_dlist_t descs,
                           nixl_capi_xfer_dlist_handle_t *dlist_handle,
                           nixl_capi_opt_args_t opt_args) {
-    if (!agent || !agent_name || !descs) {
+    if (!agent || !agent_name || !descs || !dlist_handle) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
 
@@ -1430,7 +1509,7 @@ nixl_capi_prep_xfer_dlist(nixl_capi_agent_t agent,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1443,11 +1522,15 @@ nixl_capi_release_xfer_dlist_handle(nixl_capi_agent_t agent,
 
     try {
         nixl_status_t ret = agent->inner->releasedDlistH(dlist_handle->handle);
+        if (ret != NIXL_SUCCESS) {
+            // Leave the wrapper intact so the caller can retry the release.
+            return nixl_capi_status_from_nixl_status(ret);
+        }
         delete dlist_handle;
-        return nixl_capi_status_from_nixl_status(ret);
+        return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1463,7 +1546,8 @@ nixl_capi_make_xfer_req(nixl_capi_agent_t agent,
                         nixl_capi_xfer_req_t *req_hndl,
                         nixl_capi_opt_args_t opt_args) {
     if (!agent || !local_descs || !local_descs->handle || !remote_descs || !remote_descs->handle ||
-        !req_hndl) {
+        !req_hndl || (!local_indices && local_indices_count > 0) ||
+        (!remote_indices && remote_indices_count > 0)) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
 
@@ -1487,7 +1571,7 @@ nixl_capi_make_xfer_req(nixl_capi_agent_t agent,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1514,14 +1598,14 @@ nixl_capi_create_xfer_req(nixl_capi_agent_t agent,
 
         if (ret != NIXL_SUCCESS) {
             delete req;
-            return NIXL_CAPI_ERROR_BACKEND;
+            return nixl_capi_status_from_nixl_status(ret);
         }
 
         *req_hndl = req;
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1545,13 +1629,16 @@ nixl_capi_estimate_xfer_cost(nixl_capi_agent_t agent,
                                                            err_margin_us_ref,
                                                            method_ref,
                                                            opt_args ? &opt_args->args : nullptr);
+        if (ret != NIXL_SUCCESS) {
+            return nixl_capi_status_from_nixl_status(ret);
+        }
         *duration_us = duration_us_ref.count();
         *err_margin_us = err_margin_us_ref.count();
         *method = static_cast<nixl_capi_cost_t>(method_ref);
-        return nixl_capi_status_from_nixl_status(ret);
+        return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1570,7 +1657,7 @@ nixl_capi_post_xfer_req(nixl_capi_agent_t agent,
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1585,7 +1672,7 @@ nixl_capi_get_xfer_status(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1607,14 +1694,14 @@ nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req) {
     if (!req) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     if (req->req) {
@@ -1626,7 +1713,7 @@ nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1644,7 +1731,7 @@ nixl_capi_release_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req) {
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1664,8 +1751,8 @@ nixl_capi_get_notifs(nixl_capi_agent_t agent,
         }
         return NIXL_CAPI_SUCCESS;
     }
-    catch (const std::exception &e) {
-        return NIXL_CAPI_ERROR_BACKEND;
+    catch (...) {
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1675,14 +1762,14 @@ nixl_capi_gen_notif(nixl_capi_agent_t agent,
                     const void *data,
                     size_t len,
                     nixl_capi_opt_args_t opt_args) {
-    if (!agent || !remote_agent) {
+    if (!agent || !remote_agent || (!data && len > 0)) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
 
     try {
         // Create a blob from the data
         nixl_blob_t msg;
-        msg.assign((const char *)data, len);
+        msg.assign(data ? (const char *)data : "", len);
 
         // Call the C++ function with the correct signature
         nixl_status_t ret = agent->inner->genNotif(
@@ -1690,7 +1777,7 @@ nixl_capi_gen_notif(nixl_capi_agent_t agent,
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1705,23 +1792,23 @@ nixl_capi_create_notif_map(nixl_capi_notif_map_t *notif_map) {
         *notif_map = map;
         return NIXL_CAPI_SUCCESS;
     }
-    catch (const std::exception &e) {
-        return NIXL_CAPI_ERROR_BACKEND;
+    catch (...) {
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_notif_map(nixl_capi_notif_map_t notif_map) {
     if (!notif_map) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
         delete notif_map;
         return NIXL_CAPI_SUCCESS;
     }
-    catch (const std::exception &e) {
-        return NIXL_CAPI_ERROR_BACKEND;
+    catch (...) {
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1735,8 +1822,8 @@ nixl_capi_notif_map_size(nixl_capi_notif_map_t map, size_t *size) {
         *size = map->notif_map.size();
         return NIXL_CAPI_SUCCESS;
     }
-    catch (const std::exception &e) {
-        return NIXL_CAPI_ERROR_BACKEND;
+    catch (...) {
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1747,16 +1834,16 @@ nixl_capi_notif_map_get_agent_at(nixl_capi_notif_map_t map, size_t index, const 
     }
 
     try {
-        auto it = map->notif_map.begin();
-        std::advance(it, index);
-        if (it == map->notif_map.end()) {
+        if (index >= map->notif_map.size()) {
             return NIXL_CAPI_ERROR_INVALID_PARAM;
         }
+        auto it = map->notif_map.begin();
+        std::advance(it, index);
         *agent_name = it->first.c_str();
         return NIXL_CAPI_SUCCESS;
     }
-    catch (const std::exception &e) {
-        return NIXL_CAPI_ERROR_BACKEND;
+    catch (...) {
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1776,8 +1863,8 @@ nixl_capi_notif_map_get_notifs_size(nixl_capi_notif_map_t map,
         *size = it->second.size();
         return NIXL_CAPI_SUCCESS;
     }
-    catch (const std::exception &e) {
-        return NIXL_CAPI_ERROR_BACKEND;
+    catch (...) {
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1801,8 +1888,8 @@ nixl_capi_notif_map_get_notif(nixl_capi_notif_map_t map,
         *len = notif.size();
         return NIXL_CAPI_SUCCESS;
     }
-    catch (const std::exception &e) {
-        return NIXL_CAPI_ERROR_BACKEND;
+    catch (...) {
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1816,8 +1903,8 @@ nixl_capi_notif_map_clear(nixl_capi_notif_map_t map) {
         map->notif_map.clear();
         return NIXL_CAPI_SUCCESS;
     }
-    catch (const std::exception &e) {
-        return NIXL_CAPI_ERROR_BACKEND;
+    catch (...) {
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1834,14 +1921,14 @@ nixl_capi_create_query_resp_list(nixl_capi_query_resp_list_t *list) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_query_resp_list(nixl_capi_query_resp_list_t list) {
     if (!list) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -1849,7 +1936,7 @@ nixl_capi_destroy_query_resp_list(nixl_capi_query_resp_list_t list) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1864,7 +1951,7 @@ nixl_capi_query_resp_list_size(nixl_capi_query_resp_list_t list, size_t *size) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1881,7 +1968,7 @@ nixl_capi_query_resp_list_has_value(nixl_capi_query_resp_list_t list,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1904,7 +1991,7 @@ nixl_capi_query_resp_list_get_params(nixl_capi_query_resp_list_t list,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1924,7 +2011,7 @@ nixl_capi_query_mem(nixl_capi_agent_t agent,
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1949,7 +2036,7 @@ nixl_capi_prep_mem_view_local(nixl_capi_agent_t agent,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1973,7 +2060,7 @@ nixl_capi_prep_mem_view_remote(nixl_capi_agent_t agent,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -1991,14 +2078,14 @@ nixl_capi_create_remote_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_remote_dl
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
 nixl_capi_status_t
 nixl_capi_destroy_remote_dlist(nixl_capi_remote_dlist_t dlist) {
     if (!dlist) {
-        return NIXL_CAPI_ERROR_INVALID_PARAM;
+        return NIXL_CAPI_SUCCESS;
     }
 
     try {
@@ -2007,7 +2094,7 @@ nixl_capi_destroy_remote_dlist(nixl_capi_remote_dlist_t dlist) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -2027,7 +2114,7 @@ nixl_capi_remote_dlist_add_desc(nixl_capi_remote_dlist_t dlist,
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -2042,7 +2129,7 @@ nixl_capi_release_mem_view(nixl_capi_agent_t agent, nixl_capi_mem_view_t mvh) {
         return NIXL_CAPI_SUCCESS;
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 
@@ -2060,17 +2147,25 @@ nixl_capi_status_from_nixl_status(nixl_status_t status) {
     case NIXL_ERR_NOT_FOUND:
         return NIXL_CAPI_ERROR_NOT_FOUND;
     case NIXL_ERR_NOT_POSTED:
+        return NIXL_CAPI_ERROR_NOT_POSTED;
     case NIXL_ERR_BACKEND:
-    case NIXL_ERR_MISMATCH:
-    case NIXL_ERR_NOT_ALLOWED:
-    case NIXL_ERR_REPOST_ACTIVE:
-    case NIXL_ERR_UNKNOWN:
-    case NIXL_ERR_NOT_SUPPORTED:
-    case NIXL_ERR_REMOTE_DISCONNECT:
-    case NIXL_ERR_CANCELED:
         return NIXL_CAPI_ERROR_BACKEND;
+    case NIXL_ERR_MISMATCH:
+        return NIXL_CAPI_ERROR_MISMATCH;
+    case NIXL_ERR_NOT_ALLOWED:
+        return NIXL_CAPI_ERROR_NOT_ALLOWED;
+    case NIXL_ERR_REPOST_ACTIVE:
+        return NIXL_CAPI_ERROR_REPOST_ACTIVE;
+    case NIXL_ERR_UNKNOWN:
+        return NIXL_CAPI_ERROR_UNKNOWN;
+    case NIXL_ERR_NOT_SUPPORTED:
+        return NIXL_CAPI_ERROR_NOT_SUPPORTED;
+    case NIXL_ERR_REMOTE_DISCONNECT:
+        return NIXL_CAPI_ERROR_REMOTE_DISCONNECT;
+    case NIXL_ERR_CANCELED:
+        return NIXL_CAPI_ERROR_CANCELED;
     }
-    return NIXL_CAPI_ERROR_BACKEND;
+    return NIXL_CAPI_ERROR_UNKNOWN;
 }
 
 nixl_capi_status_t
@@ -2101,7 +2196,7 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
         return nixl_capi_status_from_nixl_status(ret);
     }
     catch (...) {
-        return NIXL_CAPI_ERROR_BACKEND;
+        return nixl_capi_handle_exception();
     }
 }
 

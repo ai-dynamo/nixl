@@ -1189,13 +1189,13 @@ pub enum ThreadSync {
 }
 
 // Must match `default_comm_port` in nixl_types.h
-pub const DEFAULT_COMM_PORT: i32 = 8888;
+pub const DEFAULT_COMM_PORT: u16 = 8888;
 
 #[derive(Clone, Debug)]
 pub struct AgentConfig {
     pub enable_prog_thread: bool,
     pub enable_listen_thread: bool,
-    pub listen_port: i32,
+    pub listen_port: u16,
     pub thread_sync: ThreadSync,
     pub num_workers: u32,
     pub pthr_delay_us: u64,
