@@ -129,7 +129,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     }
 
     // Verify that nixl shared libraries actually exist before proceeding.
-    // Without this check, wrapper.cpp may compile (headers found in source tree)
+    // Without this check, nixl_capi.cpp may compile (headers found in source tree)
     // but linking will fail later when the .so files are missing.
     let nixl_so_found = lib_search_paths.iter().any(|dir| {
         std::path::Path::new(&format!("{}/libnixl.so", dir)).exists()
@@ -146,7 +146,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     }
 
     cc_builder
-        .file("wrapper.cpp")
+        .file("../../api/c/nixl_capi.cpp")
         .includes(nixl_include_paths);
 
     let etcd_enabled = env::var("HAVE_ETCD").map(|v| v != "0").unwrap_or(false);
@@ -163,7 +163,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
 
     // Generate bindings with minimal configuration
     let mut builder = bindgen::Builder::default()
-        .header("wrapper.h")
+        .header("../../api/c/nixl_capi.h")
         .clang_arg("-std=c++20")
         .clang_arg(format!("-I{}", nixl_include_path))
         .clang_arg("-I../../api/cpp")
@@ -192,8 +192,8 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     }
 
     // Tell cargo to invalidate the built crate whenever the wrapper changes
-    println!("cargo:rerun-if-changed=wrapper.h");
-    println!("cargo:rerun-if-changed=wrapper.cpp");
+    println!("cargo:rerun-if-changed=../../api/c/nixl_capi.h");
+    println!("cargo:rerun-if-changed=../../api/c/nixl_capi.cpp");
     println!("cargo:rerun-if-env-changed=HAVE_ETCD");
 
     builder
@@ -218,14 +218,14 @@ fn build_stubs(cc_builder: &mut cc::Build) {
 
     // Tell cargo to invalidate the built crate whenever the stubs change
     println!("cargo:rerun-if-changed=stubs.cpp");
-    println!("cargo:rerun-if-changed=wrapper.h");
+    println!("cargo:rerun-if-changed=../../api/c/nixl_capi.h");
 
     // Get the output path for bindings
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     // Generate bindings with minimal configuration
     bindgen::Builder::default()
-        .header("wrapper.h")
+        .header("../../api/c/nixl_capi.h")
         .clang_arg("-std=c++20")
         .clang_arg("-x")
         .clang_arg("c++")
@@ -241,6 +241,7 @@ fn create_builder() -> cc::Build {
     builder
         .cpp(true)
         .compiler("g++")
+        .include("../../api/c")
         .flag("-std=c++20")
         .flag("-fPIC")
         .flag("-Wno-unused-parameter")

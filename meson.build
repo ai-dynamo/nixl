@@ -544,6 +544,7 @@ if get_option('build_examples') or get_option('build_nixl_ep')
 endif
 
 if get_option('install_headers')
+  install_headers('src/api/c/nixl_capi.h', install_dir: prefix_inc)
   install_headers('src/api/cpp/nixl.h', install_dir: prefix_inc)
   install_headers('src/api/cpp/nixl_types.h', install_dir: prefix_inc)
   install_headers('src/api/cpp/nixl_params.h', install_dir: prefix_inc)

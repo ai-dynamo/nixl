@@ -25,7 +25,7 @@
 // This allows building without nixl present while still using nixl at
 // runtime when the shared library is installed.
 
-#include "wrapper.h"
+#include "nixl_capi.h"
 
 #include <cstdlib>
 #include <dlfcn.h>
