@@ -1217,9 +1217,12 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     uint32_t desc_offset = 0;
     do {
-        auto &request = xferReqRingCpu[pos];
-        while (desc_offset < lcnt && request.num < DOCA_XFER_REQ_SIZE) {
-            const uint32_t idx = request.num;
+        // Build in cacheable CPU memory, then publish the request with one
+        // sequential copy to the GPU-mapped ring.
+        docaXferReqGpu staged_req{};
+        staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
+        while (desc_offset < lcnt && staged_req.num < DOCA_XFER_REQ_SIZE) {
+            const uint32_t idx = staged_req.num;
             const uint32_t desc_idx = desc_offset;
             const size_t lsize = local[desc_idx].len;
             const size_t rsize = remote[desc_idx].len;
@@ -1228,13 +1231,13 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             lmd = (nixlDocaPrivateMetadata *)local[desc_idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[desc_idx].metadataP;
 
-            request.lbuf[idx] = local[desc_idx].addr;
-            request.lkey[idx] = lmd->mr->get_lkey();
-            request.rbuf[idx] = remote[desc_idx].addr;
-            request.rkey[idx] = rmd->mr->get_rkey();
-            request.size[idx] = lsize;
-            request.num_sge[idx] = 1;
-            request.num++;
+            staged_req.lbuf[idx] = local[desc_idx].addr;
+            staged_req.lkey[idx] = lmd->mr->get_lkey();
+            staged_req.rbuf[idx] = remote[desc_idx].addr;
+            staged_req.rkey[idx] = rmd->mr->get_rkey();
+            staged_req.size[idx] = lsize;
+            staged_req.num_sge[idx] = 1;
+            staged_req.num++;
 
             // Keep sparse local rows direct: adjacent remote ranges can share
             // one two-SGE RDMA WRITE WQE without a gather buffer. Preserve the
@@ -1251,21 +1254,22 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                 const bool contiguous_remote =
                     next_remote >= current_remote && next_remote - current_remote == rsize;
                 if (next_lsize == next_rsize && contiguous_remote &&
-                    next_rmd->mr->get_rkey() == request.rkey[idx]) {
-                    request.lbuf2[idx] = local[desc_idx + 1].addr;
-                    request.lkey2[idx] = next_lmd->mr->get_lkey();
-                    request.size2[idx] = next_lsize;
-                    request.num_sge[idx] = 2;
+                    next_rmd->mr->get_rkey() == staged_req.rkey[idx]) {
+                    staged_req.lbuf2[idx] = local[desc_idx + 1].addr;
+                    staged_req.lkey2[idx] = next_lmd->mr->get_lkey();
+                    staged_req.size2[idx] = next_lsize;
+                    staged_req.num_sge[idx] = 2;
                     ++desc_offset;
                 }
             }
             ++desc_offset;
         }
 
-        request.last_rsvd = last_rsvd_flags;
-        request.last_posted = last_posted_flags;
-        request.qp_data = rdma_qp->qp_data->get_qp_gpu_dev();
-        request.qp_notif = rdma_qp->qp_notif->get_qp_gpu_dev();
+        staged_req.last_rsvd = last_rsvd_flags;
+        staged_req.last_posted = last_posted_flags;
+        staged_req.qp_data = rdma_qp->qp_data->get_qp_gpu_dev();
+        staged_req.qp_notif = rdma_qp->qp_notif->get_qp_gpu_dev();
+        memcpy(&xferReqRingCpu[pos], &staged_req, sizeof(staged_req));
 
         if (desc_offset < lcnt) {
             pos = (xferRingPos.fetch_add(1) & (DOCA_XFER_REQ_MAX - 1));
