@@ -741,13 +741,13 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
         return NIXL_ERR_BACKEND;
     }
 
-    if (recv(oob_sock_client, &remote_gid.raw, sizeof(gid.raw), 0) < 0) {
+    if (recv(oob_sock_client, &rdma_qp->remote_gid.raw, sizeof(gid.raw), 0) < 0) {
         NIXL_ERROR << "Failed to receive remote GID raw address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
-    if (recv(oob_sock_client, &dlid, sizeof(uint32_t), 0) < 0) {
+    if (recv(oob_sock_client, &rdma_qp->remote_lid, sizeof(uint32_t), 0) < 0) {
         NIXL_ERROR << "Failed to receive remote GID address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -765,8 +765,11 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- data";
-    result = connect_verbs_qp(
-        this, rdma_qp->qp_data->get_qp(), rdma_qp->rqpn_data, rdma_qp->remote_gid_data);
+    result = connect_verbs_qp(this,
+                              rdma_qp->qp_data->get_qp(),
+                              rdma_qp->rqpn_data,
+                              rdma_qp->remote_gid,
+                              rdma_qp->remote_lid);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
         connectLock.unlock();
@@ -775,8 +778,11 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- notif";
-    result = connect_verbs_qp(
-        this, rdma_qp->qp_notif->get_qp(), rdma_qp->rqpn_notif, rdma_qp->remote_gid_data);
+    result = connect_verbs_qp(this,
+                              rdma_qp->qp_notif->get_qp(),
+                              rdma_qp->rqpn_notif,
+                              rdma_qp->remote_gid,
+                              rdma_qp->remote_lid);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
         connectLock.unlock();
@@ -882,13 +888,13 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
         return NIXL_ERR_BACKEND;
     }
 
-    if (recv(oob_sock_client, &remote_gid.raw, sizeof(gid.raw), 0) < 0) {
+    if (recv(oob_sock_client, &rdma_qp->remote_gid.raw, sizeof(gid.raw), 0) < 0) {
         NIXL_ERROR << "Failed to receive remote GID raw address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
-    if (recv(oob_sock_client, &dlid, sizeof(uint32_t), 0) < 0) {
+    if (recv(oob_sock_client, &rdma_qp->remote_lid, sizeof(uint32_t), 0) < 0) {
         NIXL_ERROR << "Failed to receive remote GID address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -935,8 +941,11 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- data";
-    result = connect_verbs_qp(
-        this, rdma_qp->qp_data->get_qp(), rdma_qp->rqpn_data, rdma_qp->remote_gid_data);
+    result = connect_verbs_qp(this,
+                              rdma_qp->qp_data->get_qp(),
+                              rdma_qp->rqpn_data,
+                              rdma_qp->remote_gid,
+                              rdma_qp->remote_lid);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
         connectLock.unlock();
@@ -945,8 +954,11 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- notif";
-    result = connect_verbs_qp(
-        this, rdma_qp->qp_notif->get_qp(), rdma_qp->rqpn_notif, rdma_qp->remote_gid_data);
+    result = connect_verbs_qp(this,
+                              rdma_qp->qp_notif->get_qp(),
+                              rdma_qp->rqpn_notif,
+                              rdma_qp->remote_gid,
+                              rdma_qp->remote_lid);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
         connectLock.unlock();
@@ -1080,8 +1092,14 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
     doca_gpu *memory_gpu = it == gdevs.end() ? nullptr : it->second;
 
     try {
-        priv->mr = std::make_unique<nixl::doca::verbs::mr>(
-            memory_gpu, (void *)mem.addr, 1, (size_t)mem.len, pd);
+        if (nixl_mem == VRAM_SEG) {
+            ScopedCudaDevice deviceGuard(static_cast<int>(mem.devId));
+            priv->mr = std::make_unique<nixl::doca::verbs::mr>(
+                memory_gpu, (void *)mem.addr, 1, (size_t)mem.len, pd);
+        } else {
+            priv->mr = std::make_unique<nixl::doca::verbs::mr>(
+                memory_gpu, (void *)mem.addr, 1, (size_t)mem.len, pd);
+        }
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();

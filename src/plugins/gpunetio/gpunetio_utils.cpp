@@ -181,11 +181,15 @@ destroy_verbs_ah:
 }
 
 doca_error_t
-connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t remote_gid) {
+connect_verbs_qp(nixlDocaEngine *eng,
+                 doca_verbs_qp *qp,
+                 uint32_t rqpn,
+                 const doca_verbs_gid &remote_gid,
+                 uint32_t remote_lid) {
     doca_error_t status = DOCA_SUCCESS, tmp_status = DOCA_SUCCESS;
     doca_verbs_qp_attr *verbs_qp_attr = NULL;
 
-    status = doca_verbs_ah_attr_set_gid(eng->verbs_ah_attr, eng->remote_gid);
+    status = doca_verbs_ah_attr_set_gid(eng->verbs_ah_attr, remote_gid);
     if (status != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to set remote gid " << doca_error_get_descr(status);
         return status;
@@ -193,7 +197,7 @@ connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t
 
     // IB
     if (eng->port_attr.link_layer == IBV_LINK_LAYER_INFINIBAND) {
-        status = doca_verbs_ah_attr_set_dlid(eng->verbs_ah_attr, eng->dlid);
+        status = doca_verbs_ah_attr_set_dlid(eng->verbs_ah_attr, remote_lid);
         if (status != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to set dlid";
             return status;
