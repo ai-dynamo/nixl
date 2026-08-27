@@ -334,7 +334,7 @@ kernel_progress(struct docaXferCompletion *completion_list,
                     nixl_gpunetio_dev_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                                      DOCA_GPUNETIO_VERBS_QP_RQ>(
                         doca_gpu_dev_verbs_qp_get_cq_rq(notif_progress->qp_gpu), msg_last);
-                if (ret != EBUSY) {
+                if (ret == 0) {
 #if ENABLE_DEBUG == 1
                     printf("kernel received notification at %d ret %d\n", msg_last, ret);
 #endif
@@ -362,6 +362,7 @@ kernel_progress(struct docaXferCompletion *completion_list,
                     printf("kernel received notification EBUSY at %d ret %d\n", msg_last, ret);
 #endif
                     DOCA_GPUNETIO_VOLATILE(notif_progress->msg_num) = 0;
+                    if (ret < 0) DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
                     doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
                     DOCA_GPUNETIO_VOLATILE(notif_progress->qp_gpu) = nullptr;
                 }
