@@ -253,7 +253,7 @@ NEW_TAG=$(git log -1 --format=%h -- "${CI_FILES[@]}")
 
 This returns the short git commit hash of the most recent commit that touched
 any of the CI source files (`Dockerfile.base`, `Dockerfile.gpu-test`,
-`Dockerfile.build_helper`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
+`Dockerfile.build_helper`, `nixl_ep_vllm_release_test.patch`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
 then patches all six YAML files in the Jenkins workspace with `sed` before the
 matrix library reads them. No commit or push is made — the patch exists only in
 the workspace.

@@ -128,13 +128,14 @@ echo "==== Running vLLM Elastic EP test ===="
 
     echo "vLLM source: VLLM_REF=${VLLM_REF} VLLM_COMMIT=${VLLM_COMMIT}"
 
-    # Run vLLM's 2 -> 4 -> 2 Elastic EP scaling test with NIXL EP.
+    # Run vLLM's 2 -> 4 -> 2 Elastic EP scaling test with NIXL EP (Cover eager heavy traffic and CUDA graphs testing).
     (
         cd "${VLLM_ELASTIC_TEST_DIR}"
         VLLM_NIXL_EP_MAX_NUM_RANKS=4 \
         VLLM_TEST_ELASTIC_EP_ALL2ALL_BACKEND=nixl_ep \
-        timeout 7200 "${VLLM_PYTHON}" -m pytest \
-            tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling \
+        timeout 4500 "${VLLM_PYTHON}" -m pytest \
+            "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[enforce_eager_heavy]" \
+            "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[cuda_graphs_heavy]" \
             -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
     )
 
