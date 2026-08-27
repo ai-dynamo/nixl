@@ -124,4 +124,26 @@ MockBackendEngine::genNotif(const std::string &remote_agent, const std::string &
     return gmock_backend_engine->genNotif(remote_agent, msg);
 }
 
+nixl_status_t
+MockBackendEngine::queryMem(const nixl_reg_dlist_t &descs,
+                            std::vector<nixl_query_resp_t> &resp) const {
+    assert(sharedState > 0);
+    return gmock_backend_engine->queryMem(descs, resp);
+}
+
+nixl_status_t
+MockBackendEngine::estimateXferCost(const nixl_xfer_op_t &operation,
+                                    const nixl_meta_dlist_t &local,
+                                    const nixl_meta_dlist_t &remote,
+                                    const std::string &remote_agent,
+                                    nixlBackendReqH *const &handle,
+                                    std::chrono::microseconds &duration,
+                                    std::chrono::microseconds &err_margin,
+                                    nixl_cost_t &method,
+                                    const nixl_opt_args_t *extra_params) const {
+    assert(sharedState > 0);
+    return gmock_backend_engine->estimateXferCost(
+        operation, local, remote, remote_agent, handle, duration, err_margin, method, extra_params);
+}
+
 } // namespace mocks
