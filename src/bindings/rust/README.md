@@ -37,12 +37,30 @@ You can compile the bindings using stub implementations that don't require the a
 cargo build --features stub-api
 ```
 
-**Important**: When using stubs, any attempt to actually call NIXL functions at runtime will print an error message and abort the program.
-- The stubs are only meant for compilation, not execution.
+When built with stubs, the bindings resolve the nixl C API at runtime by
+`dlopen`-ing `libnixl_capi.so.0` (falling back to the `libnixl_capi.so` dev
+symlink). The loaded library's major version must match the
+`NIXL_CAPI_API_VERSION_MAJOR` the stubs were compiled against. If no usable
+library is found, calls fail with `NIXL_CAPI_ERROR_INVALID_STATE` (mapped to a
+Rust error) instead of aborting; `nixl_capi_is_stub()` reports stub mode and
+`nixl_capi_last_error_message()` reports why the load failed.
 
 ### Environment Variables
 
 - `NIXL_PREFIX`: Path to the NIXL installation (default: `/opt/nvidia/nvda_nixl`)
+- `NIXL_CAPI_SRC_DIR`: Directory containing the nixl C API sources
+  (`nixl_capi.h`, `nixl_capi.cpp`). By default the build uses a vendored
+  `capi/` directory inside the crate if present, else the in-repo
+  `../../api/c` layout.
+
+### Packaging
+
+This crate currently builds only from the nixl source tree: `build.rs`
+compiles `src/api/c/nixl_capi.{h,cpp}`, which live outside the crate root and
+therefore are not included by `cargo package`. Publishing to crates.io would
+require vendoring those two files into `capi/` inside the crate (or setting
+`NIXL_CAPI_SRC_DIR` at build time); until that is automated, treat the crate
+as repo-build-only.
 
 ## Documentation
 

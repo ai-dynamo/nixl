@@ -455,7 +455,7 @@ impl Agent {
                 let bytes = unsafe {
                     let slice = std::slice::from_raw_parts(data, len);
                     let vec = slice.to_vec();
-                    libc::free(data as *mut libc::c_void);
+                    crate::bindings::nixl_capi_mem_free(data as *mut std::ffi::c_void);
                     vec
                 };
                 tracing::trace!(metadata.size = len, "Successfully retrieved local metadata");
@@ -505,7 +505,7 @@ impl Agent {
                 let bytes = unsafe {
                     let slice = std::slice::from_raw_parts(data as *const u8, len);
                     let vec = slice.to_vec();
-                    libc::free(data as *mut libc::c_void);
+                    crate::bindings::nixl_capi_mem_free(data as *mut std::ffi::c_void);
                     vec
                 };
                 tracing::trace!(metadata.size = len, "Successfully retrieved local partial metadata");
@@ -545,7 +545,7 @@ impl Agent {
                 let name = unsafe {
                     let c_str = std::ffi::CStr::from_ptr(agent_name);
                     let s = c_str.to_str().unwrap().to_string();
-                    libc::free(agent_name as *mut libc::c_void);
+                    crate::bindings::nixl_capi_mem_free(agent_name as *mut std::ffi::c_void);
                     s
                 };
                 self.inner.write().unwrap().remotes.insert(name.clone());
