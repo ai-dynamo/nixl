@@ -201,17 +201,34 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
                xferReqRing[pos].lkey[idx],
                (uint64_t)xferReqRing[pos].size[idx]);
 #endif
-        doca_gpu_dev_verbs_wqe_prepare_write(qp,
-                                             wqe_ptr,
-                                             wqe_idx,
-                                             MLX5_OPCODE_RDMA_WRITE,
-                                             cflag,
-                                             0,
-                                             (uint64_t)(xferReqRing[pos].rbuf[idx]),
-                                             xferReqRing[pos].rkey[idx],
-                                             (uint64_t)(xferReqRing[pos].lbuf[idx]),
-                                             xferReqRing[pos].lkey[idx],
-                                             xferReqRing[pos].size[idx]);
+        if (xferReqRing[pos].num_sge[idx] == 2) {
+            doca_gpu_dev_verbs_wqe_prepare_write(qp,
+                                                 wqe_ptr,
+                                                 wqe_idx,
+                                                 MLX5_OPCODE_RDMA_WRITE,
+                                                 cflag,
+                                                 0,
+                                                 (uint64_t)(xferReqRing[pos].rbuf[idx]),
+                                                 xferReqRing[pos].rkey[idx],
+                                                 (uint64_t)(xferReqRing[pos].lbuf[idx]),
+                                                 xferReqRing[pos].lkey[idx],
+                                                 xferReqRing[pos].size[idx],
+                                                 (uint64_t)(xferReqRing[pos].lbuf2[idx]),
+                                                 xferReqRing[pos].lkey2[idx],
+                                                 xferReqRing[pos].size2[idx]);
+        } else {
+            doca_gpu_dev_verbs_wqe_prepare_write(qp,
+                                                 wqe_ptr,
+                                                 wqe_idx,
+                                                 MLX5_OPCODE_RDMA_WRITE,
+                                                 cflag,
+                                                 0,
+                                                 (uint64_t)(xferReqRing[pos].rbuf[idx]),
+                                                 xferReqRing[pos].rkey[idx],
+                                                 (uint64_t)(xferReqRing[pos].lbuf[idx]),
+                                                 xferReqRing[pos].lkey[idx],
+                                                 xferReqRing[pos].size[idx]);
+        }
     }
     __syncthreads();
 

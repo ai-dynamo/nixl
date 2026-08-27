@@ -1214,36 +1214,62 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     treq->start_pos = (xferRingPos.fetch_add(1) & (DOCA_XFER_REQ_MAX - 1));
     pos = treq->start_pos;
 
+    uint32_t desc_offset = 0;
     do {
-        for (uint32_t idx = 0; idx < lcnt && idx < DOCA_XFER_REQ_SIZE; idx++) {
-            size_t lsize = local[idx].len;
-            size_t rsize = remote[idx].len;
+        auto &request = xferReqRingCpu[pos];
+        while (desc_offset < lcnt && request.num < DOCA_XFER_REQ_SIZE) {
+            const uint32_t idx = request.num;
+            const uint32_t desc_idx = desc_offset;
+            const size_t lsize = local[desc_idx].len;
+            const size_t rsize = remote[desc_idx].len;
             if (lsize != rsize) return NIXL_ERR_INVALID_PARAM;
 
-            lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
-            rmd = (nixlDocaPublicMetadata *)remote[idx].metadataP;
+            lmd = (nixlDocaPrivateMetadata *)local[desc_idx].metadataP;
+            rmd = (nixlDocaPublicMetadata *)remote[desc_idx].metadataP;
 
-            xferReqRingCpu[pos].lbuf[idx] = (uintptr_t)lmd->mr->get_addr();
-            xferReqRingCpu[pos].lkey[idx] = (uintptr_t)lmd->mr->get_lkey();
-            xferReqRingCpu[pos].rbuf[idx] = (uintptr_t)rmd->mr->get_addr();
-            xferReqRingCpu[pos].rkey[idx] = (uintptr_t)rmd->mr->get_rkey();
-            xferReqRingCpu[pos].size[idx] = lsize;
-            xferReqRingCpu[pos].num++;
+            request.lbuf[idx] = local[desc_idx].addr;
+            request.lkey[idx] = lmd->mr->get_lkey();
+            request.rbuf[idx] = remote[desc_idx].addr;
+            request.rkey[idx] = rmd->mr->get_rkey();
+            request.size[idx] = lsize;
+            request.num_sge[idx] = 1;
+            request.num++;
+
+            // Keep sparse local rows direct: adjacent remote ranges can share
+            // one two-SGE RDMA WRITE WQE without a gather buffer. Preserve the
+            // final descriptor as the protocol ordering boundary.
+            if (operation == NIXL_WRITE && desc_idx + 1 < lcnt - 1) {
+                auto *next_lmd =
+                    static_cast<nixlDocaPrivateMetadata *>(local[desc_idx + 1].metadataP);
+                auto *next_rmd =
+                    static_cast<nixlDocaPublicMetadata *>(remote[desc_idx + 1].metadataP);
+                const size_t next_lsize = local[desc_idx + 1].len;
+                const size_t next_rsize = remote[desc_idx + 1].len;
+                const uintptr_t current_remote = remote[desc_idx].addr;
+                const uintptr_t next_remote = remote[desc_idx + 1].addr;
+                const bool contiguous_remote =
+                    next_remote >= current_remote && next_remote - current_remote == rsize;
+                if (next_lsize == next_rsize && contiguous_remote &&
+                    next_rmd->mr->get_rkey() == request.rkey[idx]) {
+                    request.lbuf2[idx] = local[desc_idx + 1].addr;
+                    request.lkey2[idx] = next_lmd->mr->get_lkey();
+                    request.size2[idx] = next_lsize;
+                    request.num_sge[idx] = 2;
+                    ++desc_offset;
+                }
+            }
+            ++desc_offset;
         }
 
-        xferReqRingCpu[pos].last_rsvd = last_rsvd_flags;
-        xferReqRingCpu[pos].last_posted = last_posted_flags;
+        request.last_rsvd = last_rsvd_flags;
+        request.last_posted = last_posted_flags;
+        request.qp_data = rdma_qp->qp_data->get_qp_gpu_dev();
+        request.qp_notif = rdma_qp->qp_notif->get_qp_gpu_dev();
 
-        xferReqRingCpu[pos].qp_data = rdma_qp->qp_data->get_qp_gpu_dev();
-        xferReqRingCpu[pos].qp_notif = rdma_qp->qp_notif->get_qp_gpu_dev();
-
-        if (lcnt > DOCA_XFER_REQ_SIZE) {
-            lcnt -= DOCA_XFER_REQ_SIZE;
+        if (desc_offset < lcnt) {
             pos = (xferRingPos.fetch_add(1) & (DOCA_XFER_REQ_MAX - 1));
-        } else {
-            lcnt = 0;
         }
-    } while (lcnt > 0);
+    } while (desc_offset < lcnt);
 
     treq->end_pos = xferRingPos;
 

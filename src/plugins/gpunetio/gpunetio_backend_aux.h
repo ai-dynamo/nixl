@@ -80,10 +80,14 @@ constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 struct docaXferReqGpu {
     uint32_t id;
     uintptr_t lbuf[DOCA_XFER_REQ_SIZE];
+    uintptr_t lbuf2[DOCA_XFER_REQ_SIZE];
     uintptr_t rbuf[DOCA_XFER_REQ_SIZE];
     size_t size[DOCA_XFER_REQ_SIZE];
+    size_t size2[DOCA_XFER_REQ_SIZE];
     uint32_t lkey[DOCA_XFER_REQ_SIZE];
+    uint32_t lkey2[DOCA_XFER_REQ_SIZE];
     uint32_t rkey[DOCA_XFER_REQ_SIZE];
+    uint8_t num_sge[DOCA_XFER_REQ_SIZE];
     uint16_t num;
     uint8_t in_use;
     uint32_t conn_idx;

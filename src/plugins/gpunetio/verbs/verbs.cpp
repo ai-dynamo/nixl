@@ -20,7 +20,7 @@
 #include "verbs.h"
 #include "gpunetio_backend_aux.h"
 
-#define VERBS_TEST_MAX_SEND_SEGS (1)
+#define VERBS_TEST_MAX_SEND_SEGS (2)
 #define VERBS_TEST_MAX_RECEIVE_SEGS (1)
 #define VERBS_TEST_DBR_SIZE (8)
 #define ROUND_UP(unaligned_mapping_size, align_val) \
