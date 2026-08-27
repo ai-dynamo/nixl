@@ -19,9 +19,11 @@ ARG PRE_INSTALLED_ENV
 ARG PRE_INSTALLED_NIXL_ENV
 ARG PRE_INSTALLED_UCX_ENV
 ARG UCX_VERSION=v1.22.x
+ARG DOCA_KV_ENV
 ARG HAS_GPU=true
 ARG BUILD_NIXL_EP=false
 ARG WORKSPACE=/workspace/nixl
+ENV GIT_SSH_COMMAND="ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes"
 
 
 WORKDIR ${WORKSPACE}
@@ -41,9 +43,11 @@ RUN . /etc/os-release && \
         'Trusted: yes' | sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null && \
     grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f && \
     sudo apt-get update && \
-    sudo apt-get install -y --no-install-recommends gdb gdb-multiarch && \
-    .gitlab/build.sh ${NIXL_INSTALL_DIR} && \
-    sudo apt-get clean && \
+    sudo apt-get install -y --no-install-recommends gdb gdb-multiarch
+RUN --mount=type=secret,id=ssh_key,target=/tmp/ssh_key,mode=0400,uid=${_UID},gid=${_GID} \
+    --mount=type=secret,id=git_user,uid=${_UID},gid=${_GID} \
+    --mount=type=secret,id=git_pass,uid=${_UID},gid=${_GID} \
+    .gitlab/build.sh ${NIXL_INSTALL_DIR} && sudo apt-get clean && \
     sudo rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["/bin/bash", "-c", "exec \"$@\"", "--"]

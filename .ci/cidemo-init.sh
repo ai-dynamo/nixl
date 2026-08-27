@@ -19,6 +19,7 @@ CI_FILES=(
 YAML_FILES=(
     ".ci/jenkins/lib/build-matrix.yaml"
     ".ci/jenkins/lib/test-matrix.yaml"
+    ".ci/jenkins/lib/test-cmx-matrix.yaml"
     ".ci/jenkins/lib/test-dl-matrix.yaml"
     ".ci/jenkins/lib/test-dl-ep-matrix.yaml"
     ".ci/jenkins/lib/test-sanitizer-matrix.yaml"
