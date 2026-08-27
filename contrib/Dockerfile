@@ -24,7 +24,7 @@ ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
-ARG UCX_REF="v1.22.x"
+ARG UCX_REF="v1.23.x"
 ARG UCX_SONAME_SUFFIX=""
 ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
@@ -40,6 +40,20 @@ ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG APT_MIRROR=""
+
+# Optional apt mirror override, e.g. for CI environments with an internal
+# Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
+RUN if [ -n "$APT_MIRROR" ]; then \
+        . /etc/os-release && \
+        printf '%s\n' \
+            'Types: deb' \
+            "URIs: $APT_MIRROR" \
+            "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+            'Components: main restricted universe multiverse' \
+            'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
+        grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
+    fi
 
 # Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
@@ -93,6 +107,13 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     libnuma-dev librdmacm-dev ibverbs-providers
 
 WORKDIR /workspace
+
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+ENV CMAKE_INSTALL_ALWAYS=1
 
 # Build Abseil from source (required for absl/log).
 RUN git clone https://github.com/abseil/abseil-cpp.git && \
@@ -149,7 +170,7 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
 
 RUN git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
-     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 CXX="g++ -std=c++20" && \
+     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
      cd ..
 
 RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
@@ -213,6 +234,7 @@ RUN cd /usr/local/src && \
          --disable-static            \
          --disable-doxygen-doc       \
          --enable-optimizations      \
+         --without-avx               \
          --enable-cma                \
          --enable-devel-headers      \
          $EXPERIMENTAL_API_PARAM      \
@@ -283,6 +305,58 @@ WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$RDMA_CORE_PREFIX/lib:$LD_LIBRARY_PATH
+
+# Opt-in: build the internal ucx-spcx-plugin against the UCX built above and
+# install it into the UCX plugins dir, where UCX loads it like any other module.
+# The plugin source is cloned into the build context (ucx-spcx-plugin-src/) by
+# build-container.sh --build-ucx-spcx-plugin, so this must come after the
+# `COPY . /workspace/nixl` above.
+# FlexIO SDK + dpacc (build-time dependencies of the plugin's DPA transport) come
+# from the doca-host repo added above; libflexio is compile-against only — at
+# runtime it comes from the target machine's DOCA/FlexIO installation.
+# ac_cv_prog_cc_c23=no: on toolchains defaulting to C23, AC_PROG_CC resolves CC to
+# "gcc -std=gnu23". The plugin's src/gdp/Makefile.am passes the compiler through
+# unsplit as -hostcc=$(CC), so dpacc receives a bare -std=gnu23 and rejects it.
+# Drop this once the plugin splits the compiler from its flags.
+ARG BUILD_UCX_SPCX_PLUGIN=false
+RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
+        apt-get update -y && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            flexio-sdk dpacc && \
+        ldconfig && \
+        cd ucx-spcx-plugin-src && \
+        export ACLOCAL_PATH="/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}" && \
+        export ac_cv_prog_cc_c23=no && \
+        ./autogen.sh /usr/local/src/ucx && \
+        ./configure --prefix=$UCX_PREFIX --libdir=$UCX_PREFIX/lib \
+            --enable-shared --disable-static \
+            --with-ucx-src=/usr/local/src/ucx \
+            --with-ucx-build=/usr/local/src/ucx \
+            --with-cuda=/usr/local/cuda \
+            --with-flexio=/opt/mellanox/flexio \
+            --with-dpacc=$DOCA_PREFIX/tools/dpacc \
+            LDFLAGS="-L$UCX_PLUGIN_DIR -L$UCX_PREFIX/lib" && \
+        make -j${NPROC:-$(nproc)} && \
+        make install && \
+        ldconfig && \
+        cd /workspace/nixl && rm -rf ucx-spcx-plugin-src; \
+    fi
+
+# Opt-in: place the pre-staged DDN Infinia libs (from infinia-libs/ in the build
+# context, populated by build-container.sh --build-infinia) into /opt/ddn/red, the
+# infinia_path meson default, so meson auto-detects red_client and builds
+# libplugin_INFINIA.so. No registry pull here: the libs arrive via the COPY above.
+# uuid/uuid.h, included by the DDN red_client headers, comes from the uuid-dev
+# installed with the aws-sdk-cpp deps above.
+ARG BUILD_INFINIA=false
+RUN if [ "$BUILD_INFINIA" = "true" ]; then \
+        if [ -z "$(ls -A /workspace/nixl/infinia-libs 2>/dev/null)" ]; then \
+            echo "ERROR: BUILD_INFINIA=true but /workspace/nixl/infinia-libs is empty (staging failed?)" >&2; \
+            exit 1; \
+        fi; \
+        mkdir -p /opt/ddn/red && \
+        cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
+    fi
 
 # Install pybind11 via apt
 RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev

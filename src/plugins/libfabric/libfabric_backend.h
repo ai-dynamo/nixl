@@ -27,7 +27,6 @@
 #include <atomic>
 #include <chrono>
 #include <unordered_map>
-#include <unordered_set>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -36,6 +35,7 @@
 
 #include "libfabric/libfabric_rail_manager.h"
 #include "libfabric/libfabric_common.h"
+#include "libfabric_connection.h"
 
 #ifdef HAVE_CUDA
 #include <cuda.h>
@@ -108,30 +108,12 @@ public:
     friend class nixlLibfabricEngine;
 };
 
-/** Multi-rail connection metadata for remote agents */
-class nixlLibfabricConnection : public nixlBackendConnMD {
-private:
-    size_t agent_index_; // Unique agent identifier in agent_names vector
-    std::string remoteAgent_; // Remote agent name
-    std::unordered_map<size_t, std::vector<fi_addr_t>>
-        rail_remote_addr_list_; // Rail libfabric addresses. key=rail id.
-    std::vector<char *> src_ep_names_; // Rail endpoint names
-    ConnectionState overall_state_; // Current connection state
-    std::mutex conn_state_mutex_; // Protects connection state
-    std::condition_variable cv_; // For blocking connection establishment
-    size_t num_connected_rails_; // Number of successfully connected rails
-    std::string initiator_addr_; // Local endpoint address
-    std::string remote_addr_; // Remote endpoint address
-public:
-    friend class nixlLibfabricEngine;
-    friend class nixlLibfabricRail;
-};
-
 /** Request handle for multi-rail transfer operations */
 class nixlLibfabricBackendH : public nixlBackendReqH {
 private:
     std::atomic<size_t> completed_requests_; // Atomic count of completed requests
     std::atomic<size_t> submitted_requests_; // Total number of submitted requests
+    std::atomic<nixl_status_t> error_status_; // Error status from CQ failures
 
 public:
     uint16_t post_xfer_id;
@@ -153,9 +135,11 @@ public:
     void
     init_request_tracking(size_t num_requests);
 
-    /** Atomically increment completed request count */
+    /** Record completion of one request (with status).
+     *  Stores error before incrementing the counter so that is_completed()
+     *  observers always see the error_status_ that caused the transition. */
     void
-    increment_completed_requests();
+    complete_request(nixl_status_t status);
 
     /** Get current count of requests completed as part of this transfer */
     size_t
@@ -168,6 +152,10 @@ public:
     /** Adjust total submitted request count to actual value after submissions complete */
     void
     adjust_total_submitted_requests(size_t actual_count);
+
+    /** Get error status */
+    nixl_status_t
+    get_error_status() const;
 };
 
 class nixlLibfabricEngine : public nixlBackendEngine {
@@ -224,7 +212,6 @@ private:
 
     // Receiver Side XFER_ID Tracking
     std::mutex receiver_tracking_mutex_;
-    std::unordered_set<uint32_t> received_remote_writes_; // All received XFER_IDs (global)
 
     // Notification Queuing
     struct PendingNotification {
@@ -249,8 +236,23 @@ private:
               agent_name_length(0) {}
     };
 
-    // O(1) lookup with postXferID key
-    std::unordered_map<uint16_t, PendingNotification> pending_notifications_;
+    // O(1) lookup with composite key = (sender_peer_idx << 16) | notif_xfer_id.
+    // The peer_idx half of the key is the SENDER's local index in OUR
+    // agent_names_ table, which the sender learned via the handshake protocol
+    // (NIXL_LIBFABRIC_MSG_HANDSHAKE). The sender embeds that value as the
+    // agent_idx field of every imm_data.
+    static inline uint64_t
+    makePendingKey(uint16_t sender_peer_idx, uint16_t notif_xfer_id) {
+        return (static_cast<uint64_t>(sender_peer_idx) << 16) | notif_xfer_id;
+    }
+
+    std::unordered_map<uint64_t, PendingNotification> pending_notifications_;
+
+    // Handshake messagess that arrived before the local createAgentConnection had
+    // registered the originator in connections_. Drained inside
+    // createAgentConnection.
+    std::unordered_map<std::string, uint16_t> pending_inbound_handshakes_;
+    std::mutex pending_handshake_mutex_;
 
     // Connection management helpers
     nixl_status_t
@@ -290,9 +292,32 @@ private:
     progressThread();
 
 
-    // Engine message processing methods
+    // Engine message processing methods.
+    // sender_peer_idx is the SENDER's index in OUR agent_names_ table,
+    // decoded from the imm_data.
     void
-    processNotification(const std::string &serialized_notif);
+    processNotification(const std::string &serialized_notif, uint16_t sender_peer_idx);
+
+    // Send the per-peer handshake message to a peer we just created a connection
+    // with, telling them what index we have assigned them in our agent_names_.
+    // When we decide the peer may not have seen us, i.e. have never sent us a handshake,
+    // embed our own connection info in the message.
+    nixl_status_t
+    sendHandshakeTo(const nixlLibfabricConnection &conn) const;
+
+    // Resolve the agent_idx the sender should ship to a given remote peer in
+    // every imm_data field. Returns the handshake-supplied value.
+    // establishConnection() guarantees the handshake is received before
+    // marking the connection as CONNECTED; this function should never be
+    // called without a valid handshake. Sending to ourselves (same-process
+    // self-connection) returns 0 immediately.
+    uint16_t
+    senderImmDataAgentIdx(nixlLibfabricConnection &conn) const;
+
+    // Looks up the peer by agent_name and stores the assigned index on its connection
+    // record. Will load peer's connection info from the handshake payload, if it's a new peer.
+    void
+    handleHandshake(const std::string &raw_payload);
     nixl_status_t
     loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
                        void *buffer,
@@ -308,9 +333,23 @@ private:
                         nixlLibfabricBackendH *backend_handle,
                         int start_idx,
                         int end_idx,
-                        int desc_count,
                         size_t xfer_base_offset,
+                        bool allow_fi_more,
                         size_t &submitted_count) const;
+
+    /** Rail a WRITE descriptor posts on, or -1 if it does not participate in FI_MORE batching
+     *  (no metadata, no selected rails, or striped across multiple rails). */
+    int
+    batchingRail(const nixl_meta_dlist_t &local, int desc_idx, size_t xfer_base_offset) const;
+
+    /** Whether descriptor desc_idx should carry FI_MORE: false (flush) for a rail's last post
+     *  in [start,end) and when the rail's batch reaches NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE.
+     *  Updates posts_since_flush. */
+    bool
+    useFiMore(int desc_idx,
+              int rail_id,
+              const std::vector<int> &last_desc_idx_per_rail,
+              std::vector<int> &posts_since_flush) const;
 
 #ifdef HAVE_CUDA
     // CUDA context management methods
@@ -322,6 +361,11 @@ private:
     vramApplyCtx();
     void
     vramFiniCtx();
+
+    // same as vramApplyCtx, but with additional output parameter
+    nixl_status_t
+    vramApplyCtxEx(bool &use_cuda_addr_wa) const;
+    friend class nixlLibfaricCudaCtxEngineMediator;
 #endif
 
 public:
@@ -601,9 +645,12 @@ public:
      * Thread-safe method to track received data transfers.
      *
      * @param[in] xfer_id 16-bit transfer ID that was received
+     * @param[in] sender_peer_idx The SENDER's index in our agent_names_ table,
+     *            extracted from the imm_data the sender shipped. Combined with
+     *            xfer_id to form the pending_notifications_ joint key.
      */
     void
-    addReceivedXferId(uint16_t xfer_id);
+    addReceivedXferId(uint16_t xfer_id, uint16_t sender_peer_idx);
 
     // Notification Queuing Helper Methods
     /**

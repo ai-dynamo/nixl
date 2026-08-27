@@ -27,22 +27,26 @@
 #undef NDEBUG
 #endif
 
-#include <pybind11/pybind11.h>
-#include <pybind11/pytypes.h>
-#include <torch/types.h>
-#include <optional>
-#include <tuple>
-#include <vector>
-#include <string>
-
-#include <memory>
 #include "config.hpp"
-#include "event.hpp"
+#include "event_handle.hpp"
 #include "kernels/configs.cuh"
 #include "kernels/exception.cuh"
 #include "vmm.hpp"
 
-#include "nixl.h"
+#include <nixl.h>
+
+#include <cuda_runtime.h>
+
+#include <torch/types.h>
+
+#include <pybind11/pytypes.h>
+
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <tuple>
+#include <vector>
 
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME nixl_ep_cpp
@@ -75,6 +79,13 @@ struct NixlAgentInfo
     nixl_reg_dlist_t sync_count_reg_descs{VRAM_SEG};
     nixl_reg_dlist_t ht_barrier_reg_descs{VRAM_SEG};
     std::vector<bool> wire_up_done; // [num_peers]
+};
+
+struct NixlMemoryViews {
+    nixlMemViewH local = nullptr;
+    nixlMemViewH remote = nullptr;
+    nixlMemViewH barrier = nullptr;
+    nixlMemViewH ht_barrier = nullptr;
 };
 
 struct Buffer {
@@ -157,6 +168,8 @@ private:
     std::vector<NixlPeerInfo> nixl_peer_info;
     NixlPeerInfo my_peer_info;
     nixl_ep::gpu_nixl_ctx gpu_ctx;
+    NixlMemoryViews active_memory_views;
+    NixlMemoryViews staged_memory_views;
     nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
     uint64_t* last_ht_barrier_counter = nullptr;
     uint64_t* local_ht_barrier_counter = nullptr;
@@ -169,12 +182,14 @@ private:
     void _nixl_agents_peer_info_cleanup(const std::vector<int>& ranks);
 
     void _nixl_ep_init(void);
-    void _nixl_ep_memory_views_create(void);
-    void _nixl_ep_memory_views_destroy(void);
+    void _nixl_ep_memory_views_destroy(NixlMemoryViews& memory_views);
+    void _nixl_ep_memory_views_stage(void);
+    void _nixl_ep_memory_views_commit(void);
     void _nixl_ep_destroy(void);
     bool _is_rank_connected(int rank_id) const;
     void set_active_rank_bound(int bound);
     void _refresh_active_rank_bound();
+    int get_rank_bound(std::optional<int> num_experts) const;
 
     /* high-throughput mode private funcs */
     void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
@@ -239,7 +254,7 @@ public:
     dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
                          const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
                          const std::optional<torch::Tensor>& dispatch_wait_recv_cost_stats,
-                         int num_max_dispatch_tokens_per_rank,
+                         int num_max_dispatch_tokens_per_rank, std::optional<int> num_experts,
                          bool use_fp8, bool round_scale, bool use_ue8m0,
                          bool async, bool return_recv_hook);
 
@@ -254,11 +269,13 @@ public:
     void barrier();
 
     torch::Tensor
-    get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden) const;
+    get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden,
+                            int rank_bound) const;
 
     void update_mask_buffer(int rank_to_mask, bool mask);
 
-    void query_mask_buffer(const torch::Tensor& mask_status);
+    void
+    query_mask_buffer(const torch::Tensor &mask_status) const;
 
     void clean_mask_buffer();
 
