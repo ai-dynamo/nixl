@@ -12,7 +12,7 @@
 #                  build_helper_dl_ep)
 # - Matrix Axes: aarch64 (UCX version from the UCX_VER job parameter)
 # - Run Steps: build PR image with BUILD_NIXL_EP=true, allocate Slurm, run
-#              .gitlab/test_ep.sh (elastic.py NVLink + RDMA on 4 GPUs)
+#              .gitlab/test_ep.sh (native and vLLM elastic tests on 4 GPUs)
 #
 # When Modified:
 # - Adding/removing Docker images: Affects available test environments

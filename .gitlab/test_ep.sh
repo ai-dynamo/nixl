@@ -49,8 +49,7 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 export NIXL_DEBUG_LOGGING=yes
 
-# Make `import nixl_ep` resolve the source-tree dispatcher, which loads the
-# CUDA-versioned backend (nixl_ep_cu*) installed in the shared venv.
+# Load the source dispatcher and the backend installed in the shared venv.
 export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPATH}"
 
 echo "==== Show system info ===="
@@ -59,78 +58,6 @@ nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
-
-echo "==== Running vLLM Elastic EP test ===="
-# Run the vLLM Elastic EP test before the native elastic tests so a fast setup
-# failure aborts the job early. Scope its PATH change to this subshell so it
-# does not affect the native elastic tests that follow.
-(
-    # SPCx loads HPC-X SHARP and its UCX 1.21 into Ray workers, conflicting
-    # with the UCX >=1.22 that NIXL EP was built against.
-    unset NCCL_NET_PLUGIN
-    # This is a single-node CUDA IPC/NVLink test. Do not inherit the CI
-    # network-device restriction or select the RDMA-only rc_gda transport.
-    unset UCX_NET_DEVICES
-    export UCX_TLS=^rc_gda
-    # Use the backend bundled with the matching precompiled vLLM artifact.
-    # FlashInfer otherwise JIT-compiles against incompatible CUDA headers.
-    export VLLM_ATTENTION_BACKEND=CUTLASS_MLA
-    # Put the vLLM venv on PATH so the test's `ray`/`vllm` CLIs and any `python`
-    # subprocess (Ray workers, `vllm serve`) resolve to this environment.
-    export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
-    VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
-    VLLM_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)"
-
-    echo "vLLM source: VLLM_REF=${VLLM_REF:-unknown} VLLM_COMMIT=${VLLM_COMMIT}"
-
-    # Verify that the vLLM environment can use the NIXL and NIXL EP artifacts that
-    # were built in this PR image. This makes an unavailable backend fail before
-    # pytest can report the test as skipped.
-    "${VLLM_PYTHON}" - <<'PY'
-from importlib.metadata import PackageNotFoundError, version
-
-import nixl
-import nixl_ep
-import torch
-import vllm
-from vllm.distributed.eplb.eplb_communicator import has_nixl
-
-try:
-    nixl_version = version("nixl")
-except PackageNotFoundError:
-    nixl_version = "source tree"
-
-assert torch.cuda.is_available(), "CUDA is unavailable"
-assert torch.cuda.device_count() >= 4, "vLLM Elastic EP requires four GPUs"
-assert has_nixl(), "vLLM cannot load NIXL"
-
-print("vLLM:", vllm.__version__)
-print("NIXL:", nixl_version, nixl.__file__)
-print("NIXL EP:", nixl_ep.__file__)
-print("Torch/CUDA:", torch.__version__, torch.version.cuda)
-print("GPU:", torch.cuda.get_device_name())
-print("Visible GPUs:", torch.cuda.device_count())
-PY
-
-    # Run vLLM's 2 -> 4 -> 2 Elastic EP scaling test with NIXL EP.
-    (
-        cd "${VLLM_ELASTIC_TEST_DIR}"
-        VLLM_NIXL_EP_MAX_NUM_RANKS=4 \
-        VLLM_TEST_ELASTIC_EP_ALL2ALL_BACKEND=nixl_ep \
-        VLLM_TEST_ELASTIC_EP_INITIAL_DP=2 \
-        VLLM_TEST_ELASTIC_EP_TARGET_DP=4 \
-        timeout 7200 "${VLLM_PYTHON}" -m pytest \
-            tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling \
-            -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
-    )
-
-    if grep -Eiq '(^|[[:space:]])[0-9]+ skipped|SKIPPED' "${VLLM_LOG}"; then
-        echo "ERROR: vLLM Elastic EP test was skipped" >&2
-        exit 1
-    fi
-
-    echo "==== vLLM Elastic EP test done ===="
-)
 
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
@@ -184,3 +111,36 @@ else
 fi
 
 echo "==== nixl_ep elastic tests done ===="
+
+echo "==== Running vLLM Elastic EP test ===="
+(
+    # Avoid SPCx loading HPC-X UCX 1.21; NIXL EP requires UCX >=1.22.
+    unset NCCL_NET_PLUGIN
+    # Auto-select local transports and exclude RDMA-only rc_gda.
+    unset UCX_NET_DEVICES
+    export UCX_TLS=^rc_gda
+    # Avoid FlashInfer JIT against incompatible CUDA headers.
+    export VLLM_ATTENTION_BACKEND=CUTLASS_MLA
+    export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
+    VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
+    VLLM_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)"
+
+    echo "vLLM source: VLLM_REF=${VLLM_REF:-unknown} VLLM_COMMIT=${VLLM_COMMIT}"
+
+    # Run vLLM's 2 -> 4 -> 2 Elastic EP scaling test with NIXL EP.
+    (
+        cd "${VLLM_ELASTIC_TEST_DIR}"
+        VLLM_NIXL_EP_MAX_NUM_RANKS=4 \
+        VLLM_TEST_ELASTIC_EP_ALL2ALL_BACKEND=nixl_ep \
+        timeout 7200 "${VLLM_PYTHON}" -m pytest \
+            tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling \
+            -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
+    )
+
+    if grep -Eiq '(^|[[:space:]])[0-9]+ skipped|SKIPPED' "${VLLM_LOG}"; then
+        echo "ERROR: vLLM Elastic EP test was skipped" >&2
+        exit 1
+    fi
+
+    echo "==== vLLM Elastic EP test done ===="
+)

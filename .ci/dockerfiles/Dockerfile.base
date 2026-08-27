@@ -27,9 +27,9 @@ ARG PRE_INSTALLED_ENV
 ARG PRE_INSTALLED_NIXL_ENV
 ARG PRE_INSTALLED_UCX_ENV
 ARG UCX_VERSION=v1.23.x
-# Prepare the vLLM Elastic EP test environment when requested. VLLM_REF is a tag
-# so its commit has matching prebuilt wheels on wheels.vllm.ai.
+# Optional vLLM Elastic EP environment.
 ARG BUILD_VLLM_ELASTIC_TEST=false
+# Pinned for reproducible CI; update this tag when advancing vLLM.
 ARG VLLM_REF=v0.27.1
 # When set (e.g. "address"), build the Abseil/gRPC/etcd dependency stack with the
 # matching -fsanitize flags so AddressSanitizer NIXL builds have an ABI-compatible
@@ -90,12 +90,7 @@ ENV VLLM_REF=${VLLM_REF}
 RUN /.gitlab/build.sh ${NIXL_INSTALL_DIR}
 RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
 
-# Install vLLM from its published precompiled binaries (no source compilation):
-# the editable source tree provides the Python code and the matching commit's
-# prebuilt native extensions are downloaded from wheels.vllm.ai. Pin the wheel
-# commit to the cloned tag's commit so the merge-base lookup is skipped and the
-# binaries match the source. NIXL EP is built later in the PR image against this
-# venv's Torch.
+# Install editable vLLM source with matching CUDA 13 precompiled binaries.
 RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
         UV="${HOME}/.local/bin/uv"; \
         VENV_PY="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"; \
