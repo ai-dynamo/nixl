@@ -509,11 +509,13 @@ class nixl_agent:
             agent_name: Name of the agent. It can be "NIXL_INIT_AGENT", local agent name, or remote agent name
             xfer_list: List of transfer descriptors, can be list of memory region tuples, tensors,
                 Nx3 numpy array, or nixlXferDList. See get_xfer_descs for more details on the structure.
-                An Nx5 numpy array is taken as a compressed (strided) list, where each row is
-                (address, len, device ID, stride, count): `count` blocks of `len` bytes spaced
-                `stride` bytes apart (stride == len is dense). This avoids materializing every
-                block of a large regular pattern such as a KV cache. The resulting handle is
-                indexed by flattened block index, same as if the blocks were listed one by one.
+                Nx5 numpy array is taken as a compressed (strided) list, where `count` blocks of `len`
+                bytes are spaced `stride` bytes apart (stride == len is dense), and each row is:
+                  (address:   start of the first block,
+                   len:       length of each block,
+                   device ID: device/block/file ID,
+                   stride:    byte distance between consecutive block starts,
+                   count:     number of blocks in the run)
             mem_type: Optional memory type necessary for list of memory regions, mandatory for Nx5 arrays.
             backends: Optional list of backend names to limit which backends are used during preparation
 
