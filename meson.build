@@ -532,6 +532,10 @@ nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
+# The C API consumer test and example are plain C; the rest of the tree is
+# C++. Skip them (rather than failing) when no C compiler is available.
+have_c = add_languages('c', required: false)
+
 subdir('src')
 if get_option('build_tests') and get_option('buildtype') != 'release'
   subdir('test')

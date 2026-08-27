@@ -310,6 +310,19 @@ python3 examples/python/expanded_two_peers.py --mode=initiator --use_cuda=true -
 
 For more Python examples, see [examples/python/](examples/python/).
 
+### C API
+
+A C API (`nixl_capi_*`) is built and installed by default as `libnixl_capi`,
+with the header installed alongside the C++ headers and pkg-config metadata:
+
+```bash
+cc my_app.c $(pkg-config --cflags --libs nixl_capi)
+```
+
+The API is experimental (SONAME major version 0) and may change between releases; see the
+documentation in [src/api/c/nixl_capi.h](src/api/c/nixl_capi.h) and a complete
+example under [examples/c/](examples/c/).
+
 ### Rust Bindings
 #### Build
 - Use `-Drust=true` meson option to build rust bindings.
