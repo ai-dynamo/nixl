@@ -84,7 +84,7 @@ void *
 resolve_optional(const char *name) {
     const auto &h = get_nixl_handle();
     if (!h.handle) {
-        return resolve(name);
+        return nullptr;
     }
 
     dlerror(); // clear any stale error
