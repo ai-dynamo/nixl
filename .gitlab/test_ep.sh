@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# NIXL EP CI: run native elastic tests and vLLM Elastic EP on one allocation.
+# NIXL EP CI: run nixl_ep native elastic.py and vLLM+nixl_ep tests.
 
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../.ci/scripts/common.sh"
@@ -123,9 +123,10 @@ echo "==== Running vLLM Elastic EP test ===="
     export VLLM_ATTENTION_BACKEND=CUTLASS_MLA
     export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
     VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
+    VLLM_REF="$(git -C "${VLLM_ELASTIC_TEST_DIR}" describe --tags --exact-match HEAD)"
     VLLM_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)"
 
-    echo "vLLM source: VLLM_REF=${VLLM_REF:-unknown} VLLM_COMMIT=${VLLM_COMMIT}"
+    echo "vLLM source: VLLM_REF=${VLLM_REF} VLLM_COMMIT=${VLLM_COMMIT}"
 
     # Run vLLM's 2 -> 4 -> 2 Elastic EP scaling test with NIXL EP.
     (

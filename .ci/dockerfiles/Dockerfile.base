@@ -29,8 +29,8 @@ ARG PRE_INSTALLED_UCX_ENV
 ARG UCX_VERSION=v1.23.x
 # Optional vLLM Elastic EP environment.
 ARG BUILD_VLLM_ELASTIC_TEST=false
-# Pinned for reproducible CI; update this tag when advancing vLLM.
-ARG VLLM_REF=v0.27.1
+# Empty selects the latest stable release when the base image is built.
+ARG VLLM_REF
 # When set (e.g. "address"), build the Abseil/gRPC/etcd dependency stack with the
 # matching -fsanitize flags so AddressSanitizer NIXL builds have an ABI-compatible
 # (instrumented) Abseil. Empty for normal images.
@@ -85,15 +85,19 @@ USER ${_LOGIN}
 ENV HOME=${_HOME}
 ENV USER=${_LOGIN}
 ENV VLLM_ELASTIC_TEST_DIR=${_HOME}/vllm
-ENV VLLM_REF=${VLLM_REF}
 
 RUN /.gitlab/build.sh ${NIXL_INSTALL_DIR}
 RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
 
 # Install editable vLLM source with matching CUDA 13 precompiled binaries.
+# Resolve the latest stable release unless explicitly overridden.
 RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
         UV="${HOME}/.local/bin/uv"; \
         VENV_PY="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"; \
+        if [ -z "${VLLM_REF}" ]; then \
+            VLLM_REF="$(python3 -c 'import json, urllib.request; r = urllib.request.Request("https://api.github.com/repos/vllm-project/vllm/releases/latest", headers={"Accept": "application/vnd.github+json", "User-Agent": "nixl-ci"}); print(json.load(urllib.request.urlopen(r, timeout=30))["tag_name"])')"; \
+        fi && \
+        echo "Using vLLM release ${VLLM_REF}" && \
         git clone --depth 1 --branch "${VLLM_REF}" \
             https://github.com/vllm-project/vllm.git "${VLLM_ELASTIC_TEST_DIR}" && \
         git -C "${VLLM_ELASTIC_TEST_DIR}" apply \
