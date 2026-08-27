@@ -1212,8 +1212,19 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         treq->stream = (cudaStream_t) * ((uintptr_t *)opt_args->customParam.data());
     }
 
-    treq->start_pos = (xferRingPos.fetch_add(1) & (DOCA_XFER_REQ_MAX - 1));
-    pos = treq->start_pos;
+    auto reserve_position = [&]() -> bool {
+        pos = xferRingPos.fetch_add(1) & DOCA_XFER_REQ_MASK;
+        if (xferReqRingCpu[pos].in_use != 0) {
+            NIXL_ERROR << "GPUNETIO transfer ring exhausted at position " << pos;
+            return false;
+        }
+        treq->positions.push_back(pos);
+        return true;
+    };
+    treq->positions.reserve((lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
+    if (!reserve_position()) {
+        return NIXL_ERR_BACKEND;
+    }
 
     uint32_t desc_offset = 0;
     do {
@@ -1272,11 +1283,13 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         memcpy(&xferReqRingCpu[pos], &staged_req, sizeof(staged_req));
 
         if (desc_offset < lcnt) {
-            pos = (xferRingPos.fetch_add(1) & (DOCA_XFER_REQ_MAX - 1));
+            if (!reserve_position()) {
+                return NIXL_ERR_BACKEND;
+            }
         }
     } while (desc_offset < lcnt);
 
-    treq->end_pos = xferRingPos;
+    const uint32_t final_pos = treq->positions.back();
 
     if (opt_args && opt_args->hasNotif) {
         struct nixlDocaNotif *notif;
@@ -1293,7 +1306,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         std::string newMsg = msg_tag_start + std::to_string(opt_args->notifMsg.size()) +
             msg_tag_end + opt_args->notifMsg;
 
-        auto &final_request = xferReqRingCpu[treq->end_pos - 1];
+        auto &final_request = xferReqRingCpu[final_pos];
         final_request.has_notif_msg_idx = (notif->send_pi.fetch_add(1) & (notif->elems_num - 1));
         notif_addr =
             (uintptr_t)(notif->send_addr + (final_request.has_notif_msg_idx * notif->elems_size));
@@ -1307,11 +1320,12 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                   << final_request.has_notif_msg_idx << " msg " << newMsg << " to " << remote_agent;
 
     } else {
-        xferReqRingCpu[treq->end_pos - 1].has_notif_msg_idx = DOCA_NOTIF_NULL;
+        xferReqRingCpu[final_pos].has_notif_msg_idx = DOCA_NOTIF_NULL;
     }
 
-    NIXL_INFO << "DOCA REQUEST from " << treq->start_pos << " to " << treq->end_pos - 1
-              << " stream " << stream_id << std::endl;
+    NIXL_INFO << "DOCA REQUEST with " << treq->positions.size() << " ring positions, first "
+              << treq->positions.front() << ", last " << final_pos << ", stream " << stream_id
+              << std::endl;
 
     treq->backendHandleGpu = 0;
 
@@ -1330,7 +1344,7 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
     ScopedCudaDevice deviceGuard(gdevs[0].first);
 
-    for (uint32_t idx = treq->start_pos; idx < treq->end_pos; idx++) {
+    for (uint32_t idx : treq->positions) {
         xferReqRingCpu[idx].id = (lastPostedReq.fetch_add(1) & (DOCA_MAX_COMPLETION_INFLIGHT_MASK));
         completion_list_cpu[xferReqRingCpu[idx].id].xferReqRingGpu = xferReqRingGpu + idx;
         completion_list_cpu[xferReqRingCpu[idx].id].completed = 0;
@@ -1355,16 +1369,16 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
     uint32_t completion_index;
 
-    for (uint32_t idx = treq->start_pos; idx < treq->end_pos; idx++) {
+    for (uint32_t idx : treq->positions) {
         completion_index = xferReqRingCpu[idx].id & (DOCA_MAX_COMPLETION_INFLIGHT_MASK);
 
-        if (((volatile docaXferCompletion *)completion_list_cpu)[completion_index].completed == 1) {
-            *((volatile uint8_t *)&xferReqRingCpu[idx].in_use) = 0;
-            NIXL_INFO << "DOCA checkXfer pos " << idx << " compl_idx " << completion_index
-                      << " COMPLETED!\n";
-            return NIXL_SUCCESS;
-        } else
+        if (((volatile docaXferCompletion *)completion_list_cpu)[completion_index].completed != 1) {
             return NIXL_IN_PROG;
+        }
+    }
+    for (uint32_t idx : treq->positions) {
+        *((volatile uint8_t *)&xferReqRingCpu[idx].in_use) = 0;
+        NIXL_INFO << "DOCA checkXfer pos " << idx << " COMPLETED!\n";
     }
 
     return NIXL_SUCCESS;
@@ -1372,11 +1386,12 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
-    uint32_t tmp = xferRingPos.load() & (DOCA_XFER_REQ_MAX - 1);
-    if (((volatile docaXferCompletion *)completion_list_cpu)[tmp].completed > 0)
-        return NIXL_SUCCESS;
-    else
-        return NIXL_IN_PROG;
+    nixl_status_t status = checkXfer(handle);
+    if (status == NIXL_IN_PROG) {
+        return status;
+    }
+    delete static_cast<nixlDocaBckndReq *>(handle);
+    return status;
 }
 
 nixl_status_t

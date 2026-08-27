@@ -194,8 +194,7 @@ private:
     public:
         cudaStream_t stream;
         uint32_t devId;
-        uint32_t start_pos;
-        uint32_t end_pos;
+        std::vector<uint32_t> positions;
         uintptr_t backendHandleGpu;
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
