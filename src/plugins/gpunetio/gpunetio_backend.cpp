@@ -118,6 +118,10 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     int ret;
     union ibv_gid rgid;
 
+    for (auto &reserved : xferReqReserved) {
+        reserved.store(false, std::memory_order_relaxed);
+    }
+
     result = doca_log_backend_create_standard();
     if (result != DOCA_SUCCESS) throw std::invalid_argument("Can't initialize doca log");
 
@@ -1229,7 +1233,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
     uint32_t pos;
-    nixlDocaBckndReq *treq = new nixlDocaBckndReq;
+    nixlDocaBckndReq *treq;
     nixlDocaPrivateMetadata *lmd;
     nixlDocaPublicMetadata *rmd;
     uint32_t lcnt = (uint32_t)local.descCount();
@@ -1238,6 +1242,20 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     struct nixlDocaRdmaQp *rdma_qp;
     uintptr_t notif_addr;
     bool peer_memory = false;
+
+    if (operation != NIXL_READ && operation != NIXL_WRITE) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (lcnt != rcnt || lcnt == 0) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    for (uint32_t idx = 0; idx < lcnt; ++idx) {
+        if (local[idx].len != remote[idx].len) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
 
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
@@ -1256,9 +1274,13 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     rdma_qp = search->second;
 
-    if (lcnt != rcnt) return NIXL_ERR_INVALID_PARAM;
-
-    if (lcnt == 0) return NIXL_ERR_INVALID_PARAM;
+    treq = new nixlDocaBckndReq;
+    auto abandon_request = [&]() {
+        for (uint32_t reserved_pos : treq->positions) {
+            xferReqReserved[reserved_pos].store(false, std::memory_order_release);
+        }
+        delete treq;
+    };
 
     if (opt_args->customParam.empty()) {
         stream_id = (xferStream.fetch_add(1) & (nstreams - 1));
@@ -1269,7 +1291,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     auto reserve_position = [&]() -> bool {
         pos = xferRingPos.fetch_add(1) & DOCA_XFER_REQ_MASK;
-        if (xferReqRingCpu[pos].in_use != 0) {
+        bool expected = false;
+        if (!xferReqReserved[pos].compare_exchange_strong(
+                expected, true, std::memory_order_acq_rel)) {
             NIXL_ERROR << "GPUNETIO transfer ring exhausted at position " << pos;
             return false;
         }
@@ -1278,6 +1302,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     };
     treq->positions.reserve((lcnt + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
     if (!reserve_position()) {
+        abandon_request();
         return NIXL_ERR_BACKEND;
     }
 
@@ -1292,8 +1317,6 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             const uint32_t desc_idx = desc_offset;
             const size_t lsize = local[desc_idx].len;
             const size_t rsize = remote[desc_idx].len;
-            if (lsize != rsize) return NIXL_ERR_INVALID_PARAM;
-
             lmd = (nixlDocaPrivateMetadata *)local[desc_idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[desc_idx].metadataP;
 
@@ -1339,6 +1362,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
         if (desc_offset < lcnt) {
             if (!reserve_position()) {
+                abandon_request();
                 return NIXL_ERR_BACKEND;
             }
         }
@@ -1352,6 +1376,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         auto search = notifMap.find(remote_agent);
         if (search == notifMap.end()) {
             NIXL_ERROR << "Can't find notif for remote_agent " << remote_agent;
+            abandon_request();
             return NIXL_ERR_INVALID_PARAM;
         }
 
@@ -1448,7 +1473,11 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
     if (status == NIXL_IN_PROG) {
         return status;
     }
-    delete static_cast<nixlDocaBckndReq *>(handle);
+    auto *treq = static_cast<nixlDocaBckndReq *>(handle);
+    for (uint32_t idx : treq->positions) {
+        xferReqReserved[idx].store(false, std::memory_order_release);
+    }
+    delete treq;
     return status;
 }
 

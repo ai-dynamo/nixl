@@ -166,6 +166,7 @@ private:
     struct docaXferReqGpu *xferReqRingGpu;
     struct docaXferReqGpu *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
+    mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved;
 
     struct docaXferCompletion *completion_list_gpu;
     struct docaXferCompletion *completion_list_cpu;
