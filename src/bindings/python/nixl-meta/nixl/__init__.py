@@ -47,7 +47,7 @@ def _load_cuda_backend() -> str:
 
 _pkg = sys.modules[_load_cuda_backend()]
 
-submodules = ["_api", "_bindings", "_utils", "logging"]
+submodules = ["_bindings", "_utils", "logging", "_api"]
 for sub_name in submodules:
     # Import submodule from actual wheel
     module = importlib.import_module(f"{_pkg.__name__}.{sub_name}")
