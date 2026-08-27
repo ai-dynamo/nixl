@@ -15,12 +15,12 @@
  * limitations under the License.
  */
 
-#include <unordered_set>
-
+// Span/Tracer method bodies for the nixl::trace facade.
+// They depend only on trace.h interfaces, so backend plugins that instrument
+// can compile them directly into their .so.
+// Note that makeTracer() factory lives in tracer_factory.cpp, and is not needed
+// by backend plugins.
 #include "tracing/trace.h"
-
-#include "common/nixl_log.h"
-#include "plugin_manager.h"
 
 namespace nixl::trace {
 
@@ -114,49 +114,6 @@ Tracer::popCorrelationId() {
     for (auto &backend : backends_) {
         backend->popCorrelationId();
     }
-}
-
-/*** Factory ***/
-
-std::unique_ptr<Tracer>
-makeTracer(const TracerConfig &config) {
-    std::vector<std::unique_ptr<TraceBackend>> backends;
-    std::unordered_set<std::string> seen;
-
-    auto &plugin_manager = nixlPluginManager::getInstance();
-    const nixlTraceBackendInitParams init_params{config.agentName};
-
-    for (const auto &requested : config.backends) {
-        // Skip blanks and duplicates so e.g. "nvtx,nvtx" activates one backend.
-        if (requested.empty() || !seen.insert(requested).second) {
-            continue;
-        }
-
-        // Each backend is an on-demand .so plugin (libtrace_backend_<name>.so).
-        // A missing plugin is not fatal: warn and skip so the rest still apply.
-        auto handle = plugin_manager.loadTracePlugin(requested);
-        if (!handle) {
-            NIXL_WARN << "nixl::trace: backend '" << requested
-                      << "' requested but plugin libtrace_backend_" << requested
-                      << ".so was not found";
-            continue;
-        }
-
-        auto backend = handle->createBackend(init_params);
-        if (!backend) {
-            NIXL_WARN << "nixl::trace: backend '" << requested << "' failed to initialize";
-            continue;
-        }
-
-        NIXL_DEBUG << "nixl::trace: activated '" << requested << "' backend for agent '"
-                   << config.agentName << "'";
-        backends.push_back(std::move(backend));
-    }
-
-    if (backends.empty()) {
-        return nullptr;
-    }
-    return std::make_unique<Tracer>(std::move(backends));
 }
 
 } // namespace nixl::trace

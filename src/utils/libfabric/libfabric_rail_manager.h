@@ -72,9 +72,10 @@ public:
     /** Initialize rail manager with topology discovery and create rails based on available
      * network devices
      * @param striping_threshold Size threshold for enabling multi-rail striping
+     * @param tracer Agent-owned composite tracer. Null when tracing is inactive.
      * @throws std::runtime_error if initialization fails
      */
-    nixlLibfabricRailManager(size_t striping_threshold);
+    nixlLibfabricRailManager(size_t striping_threshold, nixl::trace::Tracer *tracer = nullptr);
     /** Destroy rail manager and cleanup all resources */
     ~nixlLibfabricRailManager();
 
@@ -383,6 +384,8 @@ public:
 
 private:
     size_t striping_threshold_;
+
+    nixl::trace::Tracer *const tracer_;
 
     // System runtime type (determined once at initialization)
     fi_hmem_iface runtime_;
