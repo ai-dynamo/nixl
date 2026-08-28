@@ -24,9 +24,10 @@ class nixlDocaEngine : public nixlBackendEngine {
 public:
     CUcontext main_cuda_ctx;
     int oob_sock_server;
-    std::mutex notifLock;
-    std::mutex qpLock;
+    mutable std::mutex notifLock;
+    mutable std::mutex qpLock;
     std::mutex connectLock;
+    mutable std::mutex remoteConnLock;
     std::vector<std::pair<uint32_t, doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
     doca_dev *ddev; /* DOCA device handler associated to queues */
     doca_verbs_context *verbs_context; /* DOCA Verbs Context */
@@ -186,6 +187,7 @@ private:
     std::unordered_map<std::string, struct nixlDocaNotif *> notifMap;
 
     pthread_t server_thread_id;
+    bool serverThreadStarted = false;
 
     class nixlDocaBckndReq : public nixlBackendReqH {
     private:
