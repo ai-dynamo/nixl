@@ -16,6 +16,7 @@
  */
 
 #include "gpunetio_backend.h"
+#include "gpunetio_coalescing.h"
 #include "serdes/serdes.h"
 #include <algorithm>
 #include <arpa/inet.h>
@@ -27,6 +28,14 @@
 #include <absl/strings/str_split.h>
 
 const char info_delimiter = '-';
+
+#ifndef NIXL_GPUNETIO_MAX_READ_WQE_SIZE
+#define NIXL_GPUNETIO_MAX_READ_WQE_SIZE (8ULL * 1024 * 1024)
+#endif
+
+constexpr size_t MAX_READ_WQE_SIZE = NIXL_GPUNETIO_MAX_READ_WQE_SIZE;
+static_assert(MAX_READ_WQE_SIZE <= DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
+static_assert(MAX_READ_WQE_SIZE <= std::numeric_limits<uint32_t>::max());
 
 /****************************************
  * Constructor/Destructor
@@ -1200,31 +1209,40 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
 
         uint32_t chunk_desc_count = 0;
-        while (desc_offset < lcnt && chunk_desc_count < DOCA_XFER_REQ_SIZE) {
-            const uint32_t desc_idx = desc_offset++;
-            ++chunk_desc_count;
+        while (desc_offset < lcnt && staged_req.num < DOCA_XFER_REQ_SIZE &&
+               (operation == NIXL_READ || chunk_desc_count < DOCA_XFER_REQ_SIZE)) {
+            const uint32_t desc_idx = desc_offset;
 
             lmd = (nixlDocaPrivateMetadata *)local[desc_idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[desc_idx].metadataP;
 
+            bool mergeable = false;
             if (operation == NIXL_READ && staged_req.num > 0) {
                 const uint32_t prev = staged_req.num - 1;
-                constexpr size_t max_read_size = std::min<size_t>(
-                    std::numeric_limits<uint32_t>::max(), DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
-                const bool size_fits = staged_req.size[prev] <= max_read_size &&
-                    local[desc_idx].len <= max_read_size - staged_req.size[prev];
-                const bool local_adjacent = staged_req.lbuf[prev] <=
-                        std::numeric_limits<uintptr_t>::max() - staged_req.size[prev] &&
-                    staged_req.lbuf[prev] + staged_req.size[prev] == local[desc_idx].addr;
-                const bool remote_adjacent = staged_req.rbuf[prev] <=
-                        std::numeric_limits<uintptr_t>::max() - staged_req.size[prev] &&
-                    staged_req.rbuf[prev] + staged_req.size[prev] == remote[desc_idx].addr;
-                if (size_fits && local_adjacent && remote_adjacent &&
-                    staged_req.lkey[prev] == lmd->mr->get_lkey() &&
-                    staged_req.rkey[prev] == rmd->mr->get_rkey()) {
+                mergeable = nixl::gpunetio::canCoalesceRead({staged_req.lbuf[prev],
+                                                             staged_req.rbuf[prev],
+                                                             staged_req.size[prev],
+                                                             staged_req.lkey[prev],
+                                                             staged_req.rkey[prev]},
+                                                            {local[desc_idx].addr,
+                                                             remote[desc_idx].addr,
+                                                             local[desc_idx].len,
+                                                             lmd->mr->get_lkey(),
+                                                             rmd->mr->get_rkey()},
+                                                            MAX_READ_WQE_SIZE);
+                if (mergeable) {
                     staged_req.size[prev] += local[desc_idx].len;
-                    continue;
                 }
+            }
+
+            if (chunk_desc_count >= DOCA_XFER_REQ_SIZE && !mergeable) {
+                break;
+            }
+
+            ++desc_offset;
+            ++chunk_desc_count;
+            if (mergeable) {
+                continue;
             }
 
             const uint32_t idx = staged_req.num;

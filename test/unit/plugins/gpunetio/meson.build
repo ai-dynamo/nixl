@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,12 @@
 # limitations under the License.
 
 compile_flags = []
+
+coalescing_test = executable(
+    'gpunetio_coalescing_test',
+    'gpunetio_coalescing_test.cpp',
+    include_directories: include_directories('../../../../src/plugins/gpunetio'))
+test('gpunetio_coalescing_test', coalescing_test)
 
 if cuda_dep.found()
         cuda_dependencies = [cuda_dep]
