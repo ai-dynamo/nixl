@@ -108,6 +108,10 @@ struct docaXferReqGpu {
     nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
     doca_gpu_dev_verbs_qp *qp_data;
     doca_gpu_dev_verbs_qp *qp_notif;
+    struct docaXferCompletion *completion_list;
+    uint32_t *wait_exit;
+    uint16_t wait_completion_count;
+    uint16_t wait_completion_ids[DOCA_XFER_REQ_MAX];
 };
 
 struct nixlDocaNotif {
@@ -177,9 +181,11 @@ public:
 };
 
 struct nixlDocaRdmaQp {
-    std::unique_ptr<nixl::doca::verbs::qp> qp_data;
-    uint32_t qpn_data;
-    uint32_t rqpn_data;
+    std::vector<std::unique_ptr<nixl::doca::verbs::qp>> qp_data;
+    std::vector<uint32_t> qpn_data;
+    std::vector<uint32_t> rqpn_data;
+    uint16_t last_striped_tail_completion = 0;
+    bool has_striped_tail_completion = false;
 
     std::unique_ptr<nixl::doca::verbs::qp> qp_notif;
     uint32_t qpn_notif;

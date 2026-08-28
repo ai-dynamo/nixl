@@ -180,14 +180,32 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
     enum doca_gpu_dev_verbs_wqe_ctrl_flags cflag = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
     uint32_t tot_wqe, idx = 0;
     __shared__ uint64_t base_wqe_idx;
+    __shared__ bool abort_write;
 
     // Warmup
     if (xferReqRing == nullptr) return;
 
     tot_wqe = xferReqRing[pos].num;
 
-    if (threadIdx.x == 0) base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+    if (threadIdx.x == 0) {
+        abort_write = false;
+        for (uint32_t dependency = 0;
+             dependency < DOCA_GPUNETIO_VOLATILE(xferReqRing[pos].wait_completion_count);
+             ++dependency) {
+            const uint32_t completion_id = xferReqRing[pos].wait_completion_ids[dependency];
+            while (DOCA_GPUNETIO_VOLATILE(
+                       xferReqRing[pos].completion_list[completion_id].completed) == 0) {
+                if (DOCA_GPUNETIO_VOLATILE(*xferReqRing[pos].wait_exit) != 0) {
+                    abort_write = true;
+                    break;
+                }
+            }
+            if (abort_write) break;
+        }
+        if (!abort_write) base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+    }
     __syncthreads();
+    if (abort_write) return;
 
     for (idx = threadIdx.x; idx < tot_wqe; idx += blockDim.x) {
         wqe_idx = base_wqe_idx + idx;

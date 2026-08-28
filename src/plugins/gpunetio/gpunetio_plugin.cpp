@@ -59,6 +59,7 @@ get_backend_options() {
     params["gpu_devices"] = "";
     params["cuda_streams"] = "";
     params["gid_index"] = "";
+    params["data_qp_count"] = "";
     return params;
 }
 
