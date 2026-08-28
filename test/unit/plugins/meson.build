@@ -99,6 +99,19 @@ if enabled_plugins.get('GUSLI')
     endif
 endif
 
+disable_odm_backend = get_option('disable_odm_backend')
+if enabled_plugins.get('ODM')
+    if (disable_odm_backend or not cuda_dep.found()) and is_explicit_enable
+        if disable_odm_backend
+            error('ODM plugin tests requested but ODM backend is disabled')
+        else
+            error('ODM plugin tests requested but CUDA dependency not found')
+        endif
+    elif not disable_odm_backend and cuda_dep.found()
+        subdir('odm')
+    endif
+endif
+
 # Check for AWS SDK dependencies for S3
 aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
 aws_s3_crt = dependency('aws-cpp-sdk-s3-crt', static: false, required: false)
