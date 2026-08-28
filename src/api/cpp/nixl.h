@@ -204,6 +204,8 @@ class nixlAgent {
          *         (via extra_params), the selection is limited to the specified backends.
          *         Optionally, a notification message can also be provided through extra_params.
          *
+         * @deprecated Use the overload taking nixlDlistH references and std::span indices.
+         *
          * @param  operation        Operation for transfer (e.g., NIXL_WRITE)
          * @param  local_side       Local prepared descriptor list handle
          * @param  local_indices    Indices list to the local prepared descriptor list handle
