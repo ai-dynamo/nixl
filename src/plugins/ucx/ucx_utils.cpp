@@ -517,20 +517,35 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         }
     }
 
-    const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &ctx);
+    config.validateTlsCudaSupport();
+
+    ucp_context_h new_ctx = nullptr;
+    const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &new_ctx);
     if (status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create UCX context ") + name_ + ": " +
                                  std::string(ucs_status_string(status)));
     }
-}
 
-nixlUcxContext::~nixlUcxContext() {
-    ucp_cleanup(ctx);
+    ctx.reset(new_ctx);
 }
 
 std::ostream &
 operator<<(std::ostream &os, const nixlUcxContext &ctx) {
     return os << "nixlUcxContext " << ctx.getName();
+}
+
+bool
+nixlUcxContext::supportsMemoryType(ucs_memory_type_t mem_type) const {
+    ucp_context_attr_t attr = {
+        .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
+    };
+    const auto status = ucp_context_query(ctx.get(), &attr);
+    if (status != UCS_OK) {
+        throw std::runtime_error(std::string("Failed to query UCX context ") + name_ + ": " +
+                                 std::string(ucs_status_string(status)));
+    }
+
+    return UCS_BIT_GET(attr.memory_types, mem_type) != 0;
 }
 
 namespace {
@@ -565,7 +580,7 @@ ucp_worker *
 nixlUcxWorker::createUcpWorker(const nixlUcxContext &ctx) const {
     ucp_worker *worker = nullptr;
     const nixlUcpWorkerParams params(ctx.mtType_, name_);
-    const ucs_status_t status = ucp_worker_create(ctx.ctx, &params, &worker);
+    const ucs_status_t status = ucp_worker_create(ctx.ctx.get(), &params, &worker);
     if (status != UCS_OK) {
         throw std::runtime_error(std::string("Failed to create UCX worker ") + name_ + ": " +
                                  ucs_status_string(status));
@@ -635,7 +650,7 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         .length = mem.size,
     };
 
-    ucs_status_t status = ucp_mem_map(ctx, &mem_params, &mem.memh);
+    ucs_status_t status = ucp_mem_map(ctx.get(), &mem_params, &mem.memh);
     if (status != UCS_OK) {
         NIXL_ERROR << *this << ": failed to ucp_mem_map: " << ucs_status_string(status);
         return -1;
@@ -647,7 +662,7 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
         status = ucp_mem_query(mem.memh, &attr);
         if (status != UCS_OK) {
             NIXL_ERROR << *this << ": failed to ucp_mem_query: " << ucs_status_string(status);
-            ucp_mem_unmap(ctx, mem.memh);
+            ucp_mem_unmap(ctx.get(), mem.memh);
             return -1;
         }
 
@@ -656,7 +671,7 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
                        << ": VRAM memory is detected as host by UCX. "
                           "UCX is likely not configured with CUDA/ROCm support. "
                           "VRAM registration cannot proceed.";
-            ucp_mem_unmap(ctx, mem.memh);
+            ucp_mem_unmap(ctx.get(), mem.memh);
             return -1;
         }
     }
@@ -671,7 +686,7 @@ nixlUcxContext::packRkey(nixlUcxMem &mem) {
     void *rkey_buf;
     std::size_t size;
 
-    const ucs_status_t status = ucp_rkey_pack(ctx, mem.memh, &rkey_buf, &size);
+    const ucs_status_t status = ucp_rkey_pack(ctx.get(), mem.memh, &rkey_buf, &size);
     if (status != UCS_OK) {
         NIXL_ERROR << *this << ": failed to ucp_rkey_pack: " << ucs_status_string(status);
         return {};
@@ -686,31 +701,25 @@ void
 nixlUcxContext::memDereg(nixlUcxMem &mem) {
     NIXL_DEBUG << *this << ": deregistering " << mem.size << " bytes at " << mem.base << ", memh "
                << mem.memh;
-    ucp_mem_unmap(ctx, mem.memh);
+    ucp_mem_unmap(ctx.get(), mem.memh);
 }
 
 void
 nixlUcxContext::warnAboutHardwareSupportMismatch() const {
-    ucp_context_attr_t attr = {
-        .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
-    };
-    const auto status = ucp_context_query(ctx, &attr);
-    if (status != UCS_OK) {
-        NIXL_WARN << *this << ": failed to query UCX context: " << ucs_status_string(status) << ", "
-                  << "hardware support mismatch check will be skipped";
-        return;
-    }
+    const bool cuda_supported = supportsMemoryType(UCS_MEMORY_TYPE_CUDA);
 
     const auto &hw_info = nixl::hwInfo::instance();
 
-    if (hw_info.numNvidiaGpus > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA)) {
+    if (hw_info.numNvidiaGpus > 0 && !cuda_supported) {
         NIXL_WARN << *this << ": " << hw_info.numNvidiaGpus
                   << " NVIDIA GPU(s) were detected, but UCX CUDA support was not found! "
                   << "GPU memory is not supported.";
     }
 
     if (ucpVersion_ >= ucp_version_mem_type_rdma) {
-        if (hw_info.numIbDevices > 0 && !UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_RDMA)) {
+        const bool rdma_supported = supportsMemoryType(UCS_MEMORY_TYPE_RDMA);
+
+        if (hw_info.numIbDevices > 0 && !rdma_supported) {
             NIXL_WARN << *this << ": " << hw_info.numIbDevices
                       << " IB device(s) were detected, but accelerated IB support was not found! "
                          "Performance may be degraded.";
