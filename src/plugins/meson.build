@@ -124,4 +124,17 @@ if enabled_plugins.get('GPUNETIO')
     endif
 endif
 
+disable_odm_backend = get_option('disable_odm_backend')
+if enabled_plugins.get('ODM')
+    if (disable_odm_backend or not cuda_dep.found()) and is_explicit_enable
+        if disable_odm_backend
+            error('ODM plugin requested but ODM backend is disabled')
+        else
+            error('ODM plugin requested but CUDA dependency not found')
+        endif
+    elif not disable_odm_backend and cuda_dep.found()
+        subdir('odm')
+    endif
+endif
+
 subdir('telemetry')

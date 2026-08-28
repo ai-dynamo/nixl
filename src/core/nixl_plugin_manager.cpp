@@ -19,6 +19,7 @@
 #include "nixl.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
+#include <algorithm>
 #include <dlfcn.h>
 #include <filesystem>
 #include <dirent.h>
@@ -279,14 +280,27 @@ getPluginDir() {
         return *plugin_dir;
     }
 
-    // By default, use the plugin directory relative to the binary
     Dl_info info;
     int ok = dladdr(reinterpret_cast<void *>(&getPluginDir), &info);
     if (!ok) {
         NIXL_ERROR << "Failed to get plugin directory from dladdr";
         return "";
     }
-    return (std::filesystem::path(info.dli_fname).parent_path() / "plugins").string();
+
+    std::filesystem::path lib_dir = std::filesystem::path(info.dli_fname).parent_path();
+    std::filesystem::path plugins_next_to_lib = lib_dir / "plugins";
+    if (std::filesystem::exists(plugins_next_to_lib) && std::filesystem::is_directory(plugins_next_to_lib)) {
+        return plugins_next_to_lib.string();
+    }
+    // In-tree: lib may be under src/core; use sibling src/plugins when present
+    std::filesystem::path lib_parent = lib_dir.parent_path();
+    if (lib_parent.filename() == "core") {
+        std::filesystem::path src_plugins = lib_parent / "plugins";
+        if (std::filesystem::exists(src_plugins) && std::filesystem::is_directory(src_plugins)) {
+            return src_plugins.string();
+        }
+    }
+    return plugins_next_to_lib.string();
 }
 } // namespace
 
@@ -303,9 +317,11 @@ nixlPluginManager::nixlPluginManager() {
 
     std::string plugin_dir = getPluginDir();
     if (!plugin_dir.empty()) {
-        NIXL_DEBUG << "Loading plugins from: " << plugin_dir;
-        plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);
-        discoverPluginsFromDir(plugin_dir);
+        if (std::filesystem::exists(plugin_dir) && std::filesystem::is_directory(plugin_dir)) {
+            NIXL_DEBUG << "Loading plugins from: " << plugin_dir;
+            plugin_dirs_.insert(plugin_dirs_.begin(), plugin_dir);
+            discoverPluginsFromDir(plugin_dir);
+        }
     }
 
     registerBuiltinPlugins();
@@ -384,8 +400,23 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
         }
 
         if (!std::filesystem::exists(plugin_path)) {
-            NIXL_WARN << "Plugin file does not exist: " << plugin_path;
-            continue;
+            // Also try <dir>/<plugin>/libplugin_<plugin>.so (Meson subdir layout)
+            std::string sep = (dir.back() == '/') ? "" : "/";
+            std::string subdir_path = dir + sep + plugin_name + "/" +
+                                     backendPluginPrefix + plugin_name + kPluginSuffix;
+            if (!std::filesystem::exists(subdir_path)) {
+                std::string plugin_name_lower = plugin_name;
+                std::transform(plugin_name_lower.begin(), plugin_name_lower.end(),
+                               plugin_name_lower.begin(), ::tolower);
+                subdir_path = dir + sep + plugin_name_lower + "/" +
+                              backendPluginPrefix + plugin_name + kPluginSuffix;
+            }
+            if (std::filesystem::exists(subdir_path)) {
+                plugin_path = subdir_path;
+            } else {
+                NIXL_WARN << "Plugin file does not exist: " << plugin_path;
+                continue;
+            }
         }
 
         auto plugin_handle = loadPluginFromPath(plugin_path, backendLoader);
@@ -673,6 +704,12 @@ void nixlPluginManager::registerBuiltinPlugins() {
 
 #ifdef STATIC_PLUGIN_HF3FS
     NIXL_REGISTER_STATIC_PLUGIN(Backend, HF3FS)
+#endif
+
+#ifdef STATIC_PLUGIN_ODM
+#ifndef DISABLE_ODM_BACKEND
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, ODM)
+#endif
 #endif
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
 }

@@ -160,6 +160,7 @@ PYBIND11_MODULE(_bindings, m) {
         .value("VRAM_SEG", VRAM_SEG)
         .value("BLK_SEG", BLK_SEG)
         .value("OBJ_SEG", OBJ_SEG)
+        .value("ODM_MEM_SEG", ODM_MEM_SEG)
         .value("FILE_SEG", FILE_SEG)
         .export_values();
 

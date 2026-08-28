@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'ODM']
 
 enabled_plugins = {}
 
@@ -332,6 +332,10 @@ endif
 
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
+endif
+
+if get_option('disable_odm_backend')
+    add_project_arguments('-DDISABLE_ODM_BACKEND', language: 'cpp')
 endif
 
 # Configure NDEBUG for release builds

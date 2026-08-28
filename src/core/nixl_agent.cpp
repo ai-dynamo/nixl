@@ -41,7 +41,7 @@ static const std::vector<std::vector<std::string>> illegal_plugin_combinations =
 /*** nixlEnumStrings namespace implementation in API ***/
 std::string nixlEnumStrings::memTypeStr(const nixl_mem_t &mem) {
     static std::array<std::string, FILE_SEG+1> nixl_mem_str = {
-           "DRAM_SEG", "VRAM_SEG", "BLK_SEG", "OBJ_SEG", "FILE_SEG"};
+           "DRAM_SEG", "VRAM_SEG", "BLK_SEG", "OBJ_SEG", "ODM_MEM_SEG", "FILE_SEG"};
     if (mem<DRAM_SEG || mem>FILE_SEG)
         return "BAD_SEG";
     return nixl_mem_str[mem];

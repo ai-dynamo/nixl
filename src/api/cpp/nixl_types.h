@@ -38,7 +38,7 @@ class nixlAgentData;
  * @brief  An enumeration of segment types for NIXL
  *         FILE_SEG must be last
  */
-enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
+enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, ODM_MEM_SEG, FILE_SEG};
 
 /**
  * @enum   nixl_xfer_op_t
