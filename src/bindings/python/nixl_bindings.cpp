@@ -179,6 +179,18 @@ make_opt_args(const std::vector<uintptr_t> &backends) {
 
 template<typename DlistT>
 uintptr_t
+prep_xfer_dlist(const nixlAgent &agent,
+                const std::string &agent_name,
+                const DlistT &descs,
+                const std::vector<uintptr_t> &backends) {
+    const nixl_opt_args_t extra_params = make_opt_args(backends);
+    nixlDlistH *handle = nullptr;
+    throw_nixl_exception(agent.prepXferDlist(agent_name, descs, handle, &extra_params));
+    return reinterpret_cast<uintptr_t>(handle);
+}
+
+template<typename DlistT>
+uintptr_t
 prep_mem_view(const nixlAgent &agent, const DlistT &dlist, const std::vector<uintptr_t> &backends) {
     const nixl_opt_args_t extra_params = make_opt_args(backends);
     nixlMemViewH mvh;
@@ -666,15 +678,7 @@ PYBIND11_MODULE(_bindings, m) {
                std::string &agent_name,
                const nixl_xfer_dlist_t &descs,
                const std::vector<uintptr_t> &backends) -> uintptr_t {
-                nixlDlistH *handle = nullptr;
-                nixl_opt_args_t extra_params;
-
-                for (uintptr_t backend : backends)
-                    extra_params.backends.push_back((nixlBackendH *)backend);
-
-                throw_nixl_exception(agent.prepXferDlist(agent_name, descs, handle, &extra_params));
-
-                return (uintptr_t)handle;
+                return prep_xfer_dlist(agent, agent_name, descs, backends);
             },
             py::arg("agent_name"),
             py::arg("descs"),
@@ -685,15 +689,7 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                const nixl_xfer_dlist_t &descs,
                const std::vector<uintptr_t> &backends) -> uintptr_t {
-                nixlDlistH *handle = nullptr;
-                nixl_opt_args_t extra_params;
-
-                for (uintptr_t backend : backends)
-                    extra_params.backends.push_back((nixlBackendH *)backend);
-
-                throw_nixl_exception(agent.prepXferDlist(descs, handle, &extra_params));
-
-                return (uintptr_t)handle;
+                return prep_xfer_dlist(agent, NIXL_INIT_AGENT, descs, backends);
             },
             py::arg("descs"),
             py::arg("backend") = std::vector<uintptr_t>({}),
@@ -705,21 +701,10 @@ PYBIND11_MODULE(_bindings, m) {
                nixl_mem_t mem,
                const py::array &descs,
                const std::vector<uintptr_t> &backends) -> uintptr_t {
-                nixlDlistH *handle = nullptr;
-                nixl_opt_args_t extra_params;
-
-                for (uintptr_t backend : backends) {
-                    extra_params.backends.push_back((nixlBackendH *)backend);
-                }
-
                 const nixl_stride_dlist_t stride_descs = to_stride_dlist(mem, descs);
-                {
-                    py::gil_scoped_release release;
-                    throw_nixl_exception(
-                        agent.prepXferDlist(agent_name, stride_descs, handle, &extra_params));
-                }
 
-                return (uintptr_t)handle;
+                py::gil_scoped_release release;
+                return prep_xfer_dlist(agent, agent_name, stride_descs, backends);
             },
             py::arg("agent_name"),
             py::arg("mem_type"),
