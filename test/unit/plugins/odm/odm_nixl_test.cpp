@@ -15,6 +15,11 @@
  * limitations under the License.
  */
 
+/*
+ * ODM plugin round-trip test: VRAM -> ODM (write), then ODM -> VRAM (read).
+ * Consistency is validated from the GPU read-back only; no DAX/BAR2 seeding.
+ */
+
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <fcntl.h>
@@ -28,7 +33,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <iomanip>
 #include <iostream>
 #include <string>
 
@@ -135,9 +139,10 @@ void printUsage(const char* prog) {
         << "  --odm-addr ADDR     ODM target IOVA (default: CXL IDENTIFY / ODM_ADDR)\n"
         << "  --size BYTES        Transfer size (default: " << kDefaultTransferSize
         << ")\n"
-        << "  --no-read           Skip read test\n"
-        << "  --no-write          Skip write test\n"
-        << "  --help              Show this help\n";
+        << "  --help              Show this help\n"
+        << "\n"
+        << "Runs a VRAM -> ODM write followed by an ODM -> VRAM read and validates\n"
+        << "the round-trip from GPU memory. No DAX/BAR2 seeding is used.\n";
 }
 
 nixl_status_t waitForXfer(nixlAgent& agent, nixlXferReqH* req) {
@@ -155,8 +160,6 @@ nixl_status_t waitForXfer(nixlAgent& agent, nixlXferReqH* req) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    bool skip_read = false;
-    bool skip_write = false;
     bool odm_addr_set = false;
     std::string dev_name = "odm0";
     std::string qid_str = "0";
@@ -172,14 +175,12 @@ int main(int argc, char** argv) {
         {"qid-end", required_argument, nullptr, 'R'},
         {"odm-addr", required_argument, nullptr, 'a'},
         {"size", required_argument, nullptr, 's'},
-        {"no-read", no_argument, nullptr, 'r'},
-        {"no-write", no_argument, nullptr, 'w'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0},
     };
 
     int opt = 0;
-    while ((opt = getopt_long(argc, argv, "D:q:Q:R:a:s:rwh", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "D:q:Q:R:a:s:h", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'D':
             dev_name = optarg;
@@ -216,12 +217,6 @@ int main(int argc, char** argv) {
             transfer_size = static_cast<size_t>(parsed);
             break;
         }
-        case 'r':
-            skip_read = true;
-            break;
-        case 'w':
-            skip_write = true;
-            break;
         case 'h':
             printUsage(argv[0]);
             return 0;
@@ -229,15 +224,6 @@ int main(int argc, char** argv) {
             printUsage(argv[0]);
             return 1;
         }
-    }
-
-    if (skip_read && skip_write) {
-        std::cerr << "Error: Cannot skip both read and write tests\n";
-        return 1;
-    }
-    if (skip_write && !skip_read) {
-        std::cerr << "Error: --no-write requires pre-seeded ODM device memory\n";
-        return 1;
     }
 
     if (qid_start_str.empty()) {
@@ -356,8 +342,8 @@ int main(int argc, char** argv) {
     ret = agent.registerMem(odm_list, &extra);
     nixl_exit_on_failure(ret, "registerMem ODM", kAgentName);
 
-    if (!skip_write) {
-        std::cout << "Phase 3: VRAM -> ODM write" << std::endl;
+    std::cout << "Phase 3: VRAM -> ODM write (seed device memory)" << std::endl;
+    {
         nixl_xfer_dlist_t src_list = vram_list.trim();
         nixl_xfer_dlist_t dst_list = odm_list.trim();
         ret = agent.createXferReq(NIXL_WRITE, src_list, dst_list, kAgentName, write_req, &extra);
@@ -368,15 +354,15 @@ int main(int argc, char** argv) {
         write_req = nullptr;
     }
 
-    if (!skip_read) {
-        std::cout << "Phase 4: ODM -> VRAM read and validate" << std::endl;
-        cuerr = cudaMemset(gpu_buf, 0, transfer_size);
-        if (cuerr != cudaSuccess) {
-            std::cerr << "cudaMemset failed: " << cudaGetErrorString(cuerr) << std::endl;
-            result = 1;
-            goto cleanup;
-        }
+    std::cout << "Phase 4: ODM -> VRAM read and validate round-trip" << std::endl;
+    cuerr = cudaMemset(gpu_buf, 0, transfer_size);
+    if (cuerr != cudaSuccess) {
+        std::cerr << "cudaMemset failed: " << cudaGetErrorString(cuerr) << std::endl;
+        result = 1;
+        goto cleanup;
+    }
 
+    {
         nixl_xfer_dlist_t src_list = vram_list.trim();
         nixl_xfer_dlist_t dst_list = odm_list.trim();
         ret = agent.createXferReq(NIXL_READ, src_list, dst_list, kAgentName, read_req, &extra);
@@ -385,20 +371,20 @@ int main(int argc, char** argv) {
         nixl_exit_on_failure(ret >= NIXL_SUCCESS, "ODM->VRAM transfer", kAgentName);
         agent.releaseXferReq(read_req);
         read_req = nullptr;
+    }
 
-        std::memset(host_buf, 0, transfer_size);
-        cuerr = cudaMemcpy(host_buf, gpu_buf, transfer_size, cudaMemcpyDeviceToHost);
-        if (cuerr != cudaSuccess) {
-            std::cerr << "cudaMemcpy D2H failed: " << cudaGetErrorString(cuerr) << std::endl;
-            result = 1;
-            goto cleanup;
-        }
-        if (!validatePattern(host_buf, transfer_size, kTestPattern)) {
-            std::cerr << "ODM VRAM round-trip validation FAILED" << std::endl;
-            result = 1;
-        } else {
-            std::cout << "ODM VRAM round-trip validation PASSED" << std::endl;
-        }
+    std::memset(host_buf, 0, transfer_size);
+    cuerr = cudaMemcpy(host_buf, gpu_buf, transfer_size, cudaMemcpyDeviceToHost);
+    if (cuerr != cudaSuccess) {
+        std::cerr << "cudaMemcpy D2H failed: " << cudaGetErrorString(cuerr) << std::endl;
+        result = 1;
+        goto cleanup;
+    }
+    if (!validatePattern(host_buf, transfer_size, kTestPattern)) {
+        std::cerr << "ODM VRAM round-trip validation FAILED" << std::endl;
+        result = 1;
+    } else {
+        std::cout << "ODM VRAM round-trip validation PASSED" << std::endl;
     }
 
 cleanup:
