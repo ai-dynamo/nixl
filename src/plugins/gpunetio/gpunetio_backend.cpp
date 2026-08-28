@@ -372,6 +372,7 @@ nixlDocaEngine::~nixlDocaEngine() {
     NIXL_DEBUG << "Before nixlDocaDestroyNotif ";
     for (auto notif : notifMap)
         nixlDocaDestroyNotif(gdevs[0].second, notif.second);
+    notifMap.clear();
 
     doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
@@ -380,6 +381,8 @@ nixlDocaEngine::~nixlDocaEngine() {
 
     NIXL_DEBUG << "Before qpMap.clear ";
 
+    for (auto &qp : qpMap)
+        delete qp.second;
     qpMap.clear();
 
     result = doca_dev_close(ddev);
@@ -397,8 +400,6 @@ nixlDocaEngine::~nixlDocaEngine() {
 
 nixl_status_t
 nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev, doca_gpu *gpu) {
-    struct nixlDocaNotif *notif;
-
     std::lock_guard<std::mutex> lock(notifLock);
     // Same peer can be server or client
     if (notifMap.find(remote_agent) != notifMap.end()) {
@@ -406,7 +407,7 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
         return NIXL_SUCCESS;
     }
 
-    notif = new struct nixlDocaNotif;
+    auto notif = std::make_unique<nixlDocaNotif>();
 
     notif->elems_num = DOCA_MAX_NOTIF_INFLIGHT;
     notif->elems_size = DOCA_MAX_NOTIF_MESSAGE_SIZE;
@@ -423,12 +424,15 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
+        free(notif->send_addr);
         return NIXL_ERR_BACKEND;
     }
 
     notif->recv_addr = (uint8_t *)calloc(notif->elems_size * notif->elems_num, sizeof(uint8_t));
     if (notif->recv_addr == nullptr) {
         NIXL_ERROR << "Can't alloc memory for send notif";
+        notif->send_mr.reset();
+        free(notif->send_addr);
         return NIXL_ERR_BACKEND;
     }
     memset(notif->recv_addr, 0, notif->elems_size * notif->elems_num);
@@ -439,6 +443,9 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
+        notif->send_mr.reset();
+        free(notif->send_addr);
+        free(notif->recv_addr);
         return NIXL_ERR_BACKEND;
     }
 
@@ -446,10 +453,11 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     notif->recv_pi = 0;
 
     // Ensure notif list is not added twice for the same peer
-    notifMap[remote_agent] = notif;
-    ((volatile struct docaNotif *)notif_fill_cpu)->msg_buf = (uintptr_t)notif->recv_addr;
-    ((volatile struct docaNotif *)notif_fill_cpu)->msg_lkey = notif->recv_mr->get_lkey();
-    ((volatile struct docaNotif *)notif_fill_cpu)->msg_size = notif->elems_size;
+    auto *notif_ptr = notif.get();
+    notifMap[remote_agent] = notif.release();
+    ((volatile struct docaNotif *)notif_fill_cpu)->msg_buf = (uintptr_t)notif_ptr->recv_addr;
+    ((volatile struct docaNotif *)notif_fill_cpu)->msg_lkey = notif_ptr->recv_mr->get_lkey();
+    ((volatile struct docaNotif *)notif_fill_cpu)->msg_size = notif_ptr->elems_size;
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu =
         qpMap[remote_agent]->qp_notif->get_qp_gpu_dev();
@@ -463,6 +471,12 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
 
 nixl_status_t
 nixlDocaEngine::nixlDocaDestroyNotif(doca_gpu *gpu, struct nixlDocaNotif *notif) {
+    if (notif == nullptr) return NIXL_SUCCESS;
+
+    notif->send_mr.reset();
+    notif->recv_mr.reset();
+    free(notif->send_addr);
+    free(notif->recv_addr);
     delete notif;
 
     return NIXL_SUCCESS;
@@ -571,8 +585,6 @@ nixlDocaEngine::getGpuCudaId() {
 
 nixl_status_t
 nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
-    struct nixlDocaRdmaQp *rdma_qp;
-
     std::lock_guard<std::mutex> lock(qpLock);
 
     NIXL_DEBUG << "addRdmaQp for " << remote_agent << std::endl;
@@ -584,7 +596,7 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
 
     NIXL_DEBUG << "DOCA addRdmaQp for remote " << remote_agent << std::endl;
 
-    rdma_qp = new struct nixlDocaRdmaQp;
+    auto rdma_qp = std::make_unique<nixlDocaRdmaQp>();
 
     try {
         rdma_qp->qp_data =
@@ -621,7 +633,7 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
 
     rdma_qp->qpn_notif = doca_verbs_qp_get_qpn(rdma_qp->qp_notif->get_qp());
 
-    qpMap[remote_agent] = rdma_qp;
+    qpMap[remote_agent] = rdma_qp.release();
 
     NIXL_DEBUG << "DOCA addRdmaQp new QP added for " << remote_agent;
 
@@ -999,7 +1011,7 @@ nixl_status_t
 nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
                             const nixl_mem_t &nixl_mem,
                             nixlBackendMD *&out) {
-    nixlDocaPrivateMetadata *priv = new nixlDocaPrivateMetadata;
+    auto priv = std::make_unique<nixlDocaPrivateMetadata>();
     std::stringstream ss;
 
     auto it = std::find_if(gdevs.begin(), gdevs.end(), [&mem](std::pair<uint32_t, doca_gpu *> &x) {
@@ -1025,7 +1037,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
        << info_delimiter << ((size_t)priv->mr->get_tot_size());
     priv->remoteMrStr = ss.str();
 
-    out = (nixlBackendMD *)priv;
+    out = priv.release();
 
     return NIXL_SUCCESS;
 }
@@ -1055,7 +1067,7 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     nixlDocaConnection conn;
     std::vector<std::string> tokens;
     std::string token;
-    nixlDocaPublicMetadata *md = new nixlDocaPublicMetadata;
+    auto md = std::make_unique<nixlDocaPublicMetadata>();
     auto search = remoteConnMap.find(remote_agent);
 
     if (search == remoteConnMap.end()) {
@@ -1085,13 +1097,14 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
         return NIXL_ERR_BACKEND;
     }
 
-    output = (nixlBackendMD *)md;
+    output = md.release();
 
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlDocaEngine::unloadMD(nixlBackendMD *input) {
+    delete static_cast<nixlDocaPublicMetadata *>(input);
     return NIXL_SUCCESS;
 }
 

@@ -68,6 +68,26 @@ mlx5_init_cqes(struct mlx5_cqe64 *cqes, uint32_t nb_cqes) {
             (MLX5_CQE_INVALID << DOCA_GPUNETIO_VERBS_MLX5_CQE_OPCODE_SHIFT) | MLX5_CQE_OWNER_MASK;
 }
 
+class CqAttrGuard {
+public:
+    doca_verbs_cq_attr *value = nullptr;
+
+    ~CqAttrGuard() {
+        if (value != nullptr && doca_verbs_cq_attr_destroy(value) != DOCA_SUCCESS)
+            NIXL_ERROR << "Failed to destroy doca verbs cq attributes";
+    }
+};
+
+class QpAttrGuard {
+public:
+    doca_verbs_qp_init_attr *value = nullptr;
+
+    ~QpAttrGuard() {
+        if (value != nullptr && doca_verbs_qp_init_attr_destroy(value) != DOCA_SUCCESS)
+            NIXL_ERROR << "Failed to destroy doca verbs qp attributes";
+    }
+};
+
 namespace nixl::doca::verbs {
 
 cq::cq(doca_gpu *gpu_dev_,
@@ -91,27 +111,22 @@ doca_verbs_cq *
 cq::createCq() {
     doca_error_t status = DOCA_SUCCESS;
     cudaError_t status_cuda = cudaSuccess;
-    doca_verbs_cq_attr *verbs_cq_attr = nullptr;
+    CqAttrGuard verbs_cq_attr;
     doca_verbs_cq *new_cq = nullptr;
     struct mlx5_cqe64 *cq_ring_haddr = nullptr;
     uint32_t external_umem_size = 0;
     external_uar = nullptr;
 
-    status = doca_verbs_cq_attr_create(&verbs_cq_attr);
+    status = doca_verbs_cq_attr_create(&verbs_cq_attr.value);
     if (status != DOCA_SUCCESS)
         throw std::runtime_error("Failed to create doca verbs cq attributes");
 
-    status = doca_verbs_cq_attr_set_external_datapath_en(verbs_cq_attr, 1);
+    status = doca_verbs_cq_attr_set_external_datapath_en(verbs_cq_attr.value, 1);
     if (status != DOCA_SUCCESS) {
-        doca_verbs_cq_attr_destroy(verbs_cq_attr);
         throw std::runtime_error("Failed to set doca verbs cq external datapath en");
     }
 
     external_umem_size = calc_cq_external_umem_size(ncqe);
-    if (status != DOCA_SUCCESS) {
-        doca_verbs_cq_attr_destroy(verbs_cq_attr);
-        throw std::runtime_error("Failed to calc external umem size");
-    }
 
     status = doca_gpu_mem_alloc(gpu_dev,
                                 external_umem_size,
@@ -136,6 +151,8 @@ cq::createCq() {
     status_cuda =
         cudaMemcpy(cq_umem_gpu_ptr, (void *)(cq_ring_haddr), external_umem_size, cudaMemcpyDefault);
     if (status_cuda != cudaSuccess) {
+        free(cq_ring_haddr);
+        cq_ring_haddr = nullptr;
         destroyCq();
         throw std::runtime_error("Failed to cudaMempy gpu cq cq ring buffer");
     }
@@ -155,19 +172,19 @@ cq::createCq() {
         throw std::runtime_error("Failed to create gpu umem");
     }
 
-    status = doca_verbs_cq_attr_set_external_umem(verbs_cq_attr, cq_umem, 0);
+    status = doca_verbs_cq_attr_set_external_umem(verbs_cq_attr.value, cq_umem, 0);
     if (status != DOCA_SUCCESS) {
         destroyCq();
         throw std::runtime_error("Failed to set doca verbs cq external umem");
     }
 
-    status = doca_verbs_cq_attr_set_cq_size(verbs_cq_attr, ncqe);
+    status = doca_verbs_cq_attr_set_cq_size(verbs_cq_attr.value, ncqe);
     if (status != DOCA_SUCCESS) {
         destroyCq();
         throw std::runtime_error("Failed to set doca verbs cq size");
     }
 
-    status = doca_verbs_cq_attr_set_cq_overrun(verbs_cq_attr, 1);
+    status = doca_verbs_cq_attr_set_cq_overrun(verbs_cq_attr.value, 1);
     if (status != DOCA_SUCCESS) {
         destroyCq();
         throw std::runtime_error("Failed to set doca verbs cq size");
@@ -179,23 +196,25 @@ cq::createCq() {
         throw std::runtime_error("Failed to doca_uar_create NC DEDICATED");
     }
 
-    status = doca_verbs_cq_attr_set_external_uar(verbs_cq_attr, external_uar);
+    status = doca_verbs_cq_attr_set_external_uar(verbs_cq_attr.value, external_uar);
     if (status != DOCA_SUCCESS) {
         destroyCq();
         throw std::runtime_error("Failed to set doca verbs cq external uar");
     }
 
-    status = doca_verbs_cq_create(verbs_ctx, verbs_cq_attr, &new_cq);
+    status = doca_verbs_cq_create(verbs_ctx, verbs_cq_attr.value, &new_cq);
     if (status != DOCA_SUCCESS) {
         destroyCq();
         throw std::runtime_error("Failed to create doca verbs cq");
     }
+    cq_verbs = new_cq;
 
-    status = doca_verbs_cq_attr_destroy(verbs_cq_attr);
+    status = doca_verbs_cq_attr_destroy(verbs_cq_attr.value);
     if (status != DOCA_SUCCESS) {
         destroyCq();
         throw std::runtime_error("Failed to destroy doca verbs cq attributes");
     }
+    verbs_cq_attr.value = nullptr;
 
     return new_cq;
 }
@@ -204,32 +223,40 @@ void
 cq::destroyCq() {
     doca_error_t status;
 
-    status = doca_verbs_cq_destroy(cq_verbs);
-    if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy doca verbs CQ";
+    if (cq_verbs != nullptr) {
+        status = doca_verbs_cq_destroy(cq_verbs);
+        if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy doca verbs CQ";
+        cq_verbs = nullptr;
+    }
 
     if (external_uar != nullptr) {
         status = doca_uar_destroy(external_uar);
         if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy gpu external_uar";
+        external_uar = nullptr;
     }
 
     if (cq_umem != nullptr) {
         status = doca_umem_destroy(cq_umem);
         if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy gpu cq_umem";
+        cq_umem = nullptr;
     }
 
-    if (cq_umem_gpu_ptr != 0) {
+    if (cq_umem_gpu_ptr != nullptr) {
         status = doca_gpu_mem_free(gpu_dev, cq_umem_gpu_ptr);
         if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy gpu memory of cq_umem_gpu_ptr";
+        cq_umem_gpu_ptr = nullptr;
     }
 
     if (cq_umem_dbr != nullptr) {
         status = doca_umem_destroy(cq_umem_dbr);
         if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy gpu cq_umem_dbr";
+        cq_umem_dbr = nullptr;
     }
 
-    if (cq_umem_dbr_gpu_ptr != 0) {
+    if (cq_umem_dbr_gpu_ptr != nullptr) {
         status = doca_gpu_mem_free(gpu_dev, cq_umem_dbr_gpu_ptr);
         if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy gpu cq_umem_dbr_gpu_ptr";
+        cq_umem_dbr_gpu_ptr = nullptr;
     }
 }
 
@@ -249,30 +276,43 @@ qp::qp(doca_gpu *gpu_dev_,
       nic_handler(nic_handler_) {
     doca_error_t status;
 
-    cq_rq = std::make_unique<nixl::doca::verbs::cq>(gpu_dev, dev, verbs_ctx, verbs_pd, rq_nwqe);
-    cq_sq = std::make_unique<nixl::doca::verbs::cq>(gpu_dev, dev, verbs_ctx, verbs_pd, sq_nwqe);
-    qp_verbs = createQp();
+    try {
+        cq_rq = std::make_unique<nixl::doca::verbs::cq>(gpu_dev, dev, verbs_ctx, verbs_pd, rq_nwqe);
+        cq_sq = std::make_unique<nixl::doca::verbs::cq>(gpu_dev, dev, verbs_ctx, verbs_pd, sq_nwqe);
+        qp_verbs = createQp();
 
-    status = doca_gpu_verbs_export_qp(gpu_dev,
-                                      dev,
-                                      qp_verbs,
-                                      nic_handler,
-                                      qp_umem_gpu_ptr,
-                                      cq_sq->get_cq(),
-                                      cq_rq->get_cq(),
-                                      &qp_gverbs);
-    if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to create GPU verbs QP");
+        status = doca_gpu_verbs_export_qp(gpu_dev,
+                                          dev,
+                                          qp_verbs,
+                                          nic_handler,
+                                          qp_umem_gpu_ptr,
+                                          cq_sq->get_cq(),
+                                          cq_rq->get_cq(),
+                                          &qp_gverbs);
+        if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to create GPU verbs QP");
 
-    status = doca_gpu_verbs_get_qp_dev(qp_gverbs, &qp_gdev_verbs);
-    if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to create GPU verbs QP");
+        status = doca_gpu_verbs_get_qp_dev(qp_gverbs, &qp_gdev_verbs);
+        if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to create GPU verbs QP");
+    }
+    catch (...) {
+        if (qp_gverbs != nullptr) {
+            doca_gpu_verbs_unexport_qp(gpu_dev, qp_gverbs);
+            qp_gverbs = nullptr;
+        }
+        destroyQp();
+        throw;
+    }
 }
 
 qp::~qp() {
     doca_error_t status;
 
-    status = doca_gpu_verbs_unexport_qp(gpu_dev, qp_gverbs);
-    if (status != DOCA_SUCCESS)
-        NIXL_ERROR << "Failed to destroy doca gpu thread argument cq memory";
+    if (qp_gverbs != nullptr) {
+        status = doca_gpu_verbs_unexport_qp(gpu_dev, qp_gverbs);
+        if (status != DOCA_SUCCESS)
+            NIXL_ERROR << "Failed to destroy doca gpu thread argument cq memory";
+        qp_gverbs = nullptr;
+    }
 
     destroyQp();
 }
@@ -280,23 +320,23 @@ qp::~qp() {
 doca_verbs_qp *
 qp::createQp() {
     doca_error_t status = DOCA_SUCCESS;
-    doca_verbs_qp_init_attr *verbs_qp_init_attr = nullptr;
+    QpAttrGuard verbs_qp_init_attr;
     doca_verbs_qp *new_qp = nullptr;
     uint32_t external_umem_size = 0;
     size_t dbr_umem_align_sz = ROUND_UP(VERBS_TEST_DBR_SIZE, get_page_size());
 
-    status = doca_verbs_qp_init_attr_create(&verbs_qp_init_attr);
+    status = doca_verbs_qp_init_attr_create(&verbs_qp_init_attr.value);
     if (status != DOCA_SUCCESS)
         throw std::runtime_error("Failed to create doca verbs qp attributes");
 
-    status = doca_verbs_qp_init_attr_set_external_datapath_en(verbs_qp_init_attr, 1);
+    status = doca_verbs_qp_init_attr_set_external_datapath_en(verbs_qp_init_attr.value, 1);
     if (status != DOCA_SUCCESS)
         throw std::runtime_error("Failed to set doca verbs external datapath en");
 
     status = doca_uar_create(dev, DOCA_UAR_ALLOCATION_TYPE_NONCACHE_DEDICATED, &external_uar);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to doca_uar_create NC DEDICATED");
 
-    status = doca_verbs_qp_init_attr_set_external_uar(verbs_qp_init_attr, external_uar);
+    status = doca_verbs_qp_init_attr_set_external_uar(verbs_qp_init_attr.value, external_uar);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to set external_uar");
 
     external_umem_size = calc_qp_external_umem_size(rq_nwqe, sq_nwqe);
@@ -319,7 +359,7 @@ qp::createQp() {
                                   &qp_umem);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to create gpu umem");
 
-    status = doca_verbs_qp_init_attr_set_external_umem(verbs_qp_init_attr, qp_umem, 0);
+    status = doca_verbs_qp_init_attr_set_external_umem(verbs_qp_init_attr.value, qp_umem, 0);
     if (status != DOCA_SUCCESS)
         throw std::runtime_error("Failed to set doca verbs qp external umem");
 
@@ -341,71 +381,86 @@ qp::createQp() {
                                   &qp_umem_dbr);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to create gpu umem");
 
-    status = doca_verbs_qp_init_attr_set_external_dbr_umem(verbs_qp_init_attr, qp_umem_dbr, 0);
+    status = doca_verbs_qp_init_attr_set_external_dbr_umem(verbs_qp_init_attr.value, qp_umem_dbr, 0);
     if (status != DOCA_SUCCESS)
         throw std::runtime_error("Failed to set doca verbs qp external dbr umem");
 
-    status = doca_verbs_qp_init_attr_set_pd(verbs_qp_init_attr, verbs_pd);
+    status = doca_verbs_qp_init_attr_set_pd(verbs_qp_init_attr.value, verbs_pd);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to set doca verbs PD");
 
-    status = doca_verbs_qp_init_attr_set_sq_wr(verbs_qp_init_attr, sq_nwqe);
+    status = doca_verbs_qp_init_attr_set_sq_wr(verbs_qp_init_attr.value, sq_nwqe);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to set SQ size");
 
-    status = doca_verbs_qp_init_attr_set_rq_wr(verbs_qp_init_attr, rq_nwqe);
+    status = doca_verbs_qp_init_attr_set_rq_wr(verbs_qp_init_attr.value, rq_nwqe);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to set RQ size");
 
-    status = doca_verbs_qp_init_attr_set_qp_type(verbs_qp_init_attr, DOCA_VERBS_QP_TYPE_RC);
+    status = doca_verbs_qp_init_attr_set_qp_type(verbs_qp_init_attr.value, DOCA_VERBS_QP_TYPE_RC);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to set QP type");
 
-    status = doca_verbs_qp_init_attr_set_send_cq(verbs_qp_init_attr, cq_sq->get_cq());
+    status = doca_verbs_qp_init_attr_set_send_cq(verbs_qp_init_attr.value, cq_sq->get_cq());
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to set doca verbs CQ");
 
     status =
-        doca_verbs_qp_init_attr_set_send_max_sges(verbs_qp_init_attr, VERBS_TEST_MAX_SEND_SEGS);
+        doca_verbs_qp_init_attr_set_send_max_sges(verbs_qp_init_attr.value, VERBS_TEST_MAX_SEND_SEGS);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to set send_max_sges");
 
-    status = doca_verbs_qp_init_attr_set_receive_max_sges(verbs_qp_init_attr,
+    status = doca_verbs_qp_init_attr_set_receive_max_sges(verbs_qp_init_attr.value,
                                                           VERBS_TEST_MAX_RECEIVE_SEGS);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to set receive_max_sges");
 
-    status = doca_verbs_qp_init_attr_set_receive_cq(verbs_qp_init_attr, cq_rq->get_cq());
+    status = doca_verbs_qp_init_attr_set_receive_cq(verbs_qp_init_attr.value, cq_rq->get_cq());
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to set doca verbs CQ");
 
-    status = doca_verbs_qp_create(verbs_ctx, verbs_qp_init_attr, &new_qp);
+    status = doca_verbs_qp_create(verbs_ctx, verbs_qp_init_attr.value, &new_qp);
     if (status != DOCA_SUCCESS) throw std::runtime_error("Failed to create doca verbs QP");
+    qp_verbs = new_qp;
 
-    status = doca_verbs_qp_init_attr_destroy(verbs_qp_init_attr);
+    status = doca_verbs_qp_init_attr_destroy(verbs_qp_init_attr.value);
     if (status != DOCA_SUCCESS)
         throw std::runtime_error("Failed to destroy doca verbs QP attributes");
+    verbs_qp_init_attr.value = nullptr;
 
-    return new_qp;
+    return qp_verbs;
 }
 
 void
 qp::destroyQp() {
     doca_error_t status;
 
-    status = doca_verbs_qp_destroy(qp_verbs);
-    if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy doca verbs QP";
+    if (qp_verbs != nullptr) {
+        status = doca_verbs_qp_destroy(qp_verbs);
+        if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy doca verbs QP";
+        qp_verbs = nullptr;
+    }
+
+    if (external_uar != nullptr) {
+        status = doca_uar_destroy(external_uar);
+        if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy gpu external_uar";
+        external_uar = nullptr;
+    }
 
     if (qp_umem != nullptr) {
         status = doca_umem_destroy(qp_umem);
         if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy gpu qp umem";
+        qp_umem = nullptr;
     }
 
-    if (qp_umem_gpu_ptr != 0) {
+    if (qp_umem_gpu_ptr != nullptr) {
         status = doca_gpu_mem_free(gpu_dev, qp_umem_gpu_ptr);
         if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy gpu memory of qp ring buffer";
+        qp_umem_gpu_ptr = nullptr;
     }
 
     if (qp_umem_dbr != nullptr) {
         status = doca_umem_destroy(qp_umem_dbr);
         if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy gpu qp umem dbr";
+        qp_umem_dbr = nullptr;
     }
 
-    if (qp_umem_dbr_gpu_ptr != 0) {
+    if (qp_umem_dbr_gpu_ptr != nullptr) {
         status = doca_gpu_mem_free(gpu_dev, qp_umem_dbr_gpu_ptr);
         if (status != DOCA_SUCCESS) NIXL_ERROR << "Failed to destroy gpu memory of qp dbr";
+        qp_umem_dbr_gpu_ptr = nullptr;
     }
 }
 
@@ -476,8 +531,10 @@ mr::mr(void *addr_, size_t tot_size_, uint32_t rkey_)
 }
 
 mr::~mr() {
-    int ret = ibv_dereg_mr(ibmr);
-    if (ret != 0) NIXL_ERROR << "ibv_dereg_mr failed with error " << ret;
+    if (ibmr != nullptr) {
+        int ret = ibv_dereg_mr(ibmr);
+        if (ret != 0) NIXL_ERROR << "ibv_dereg_mr failed with error " << ret;
+    }
 }
 
 } // namespace nixl::doca::verbs
