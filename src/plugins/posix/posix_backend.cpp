@@ -229,8 +229,18 @@ nixlPosixBackendReqH::postXfer() {
                                                   this);
 
         if (status != NIXL_SUCCESS) {
-            // Currently we do not support partial submissions, so it's all or nothing
+            // Submission is all or nothing per request: return the entries already
+            // queued for this request to the free pool. Left in the shared submission
+            // list, a later post or poll, possibly driven by another request, would
+            // submit them after the caller was told this post failed, performing I/O
+            // the caller no longer expects with this request as the entries' completion
+            // callback context (issue #1957).
             NIXL_ERROR << absl::StrFormat("Error preparing I/O operation: %d", status);
+            io_queue_->discardQueued(this);
+            // Nothing from this batch is queued or in flight anymore and the cancel
+            // counters are still at their reset values, so restore the pre-post
+            // invariant: the request is complete and immediately releasable.
+            num_confirmed_ios_ = queue_depth_;
             return status;
         }
     }

@@ -60,6 +60,21 @@ public:
         return 0;
     }
 
+    /**
+     * @brief Discard queued-but-unsubmitted entries whose completion context is @a ctx.
+     *
+     * Returns every entry that is still awaiting submission and stores @a ctx as its
+     * completion callback context to the free pool, so no later post() or poll() can
+     * submit it. Entries already submitted to the kernel are not affected. Unlike
+     * cancel(), no completion callbacks are invoked; the caller unwinds its own
+     * accounting. Used to roll back a request whose enqueue() sequence failed partway,
+     * keeping submission all-or-nothing per request.
+     *
+     * @param ctx The completion callback context identifying the request to roll back.
+     */
+    virtual void
+    discardQueued(void *ctx) = 0;
+
     static std::unique_ptr<nixlPosixIOQueue>
     instantiate(std::string_view io_queue_type, uint32_t ios_pool_size, uint32_t kernel_queue_size);
     static std::string_view
@@ -93,6 +108,18 @@ public:
           ios_(ios_pool_size_) {
         for (uint32_t i = 0; i < ios_pool_size_; i++) {
             free_ios_.push_back(&ios_[i]);
+        }
+    }
+
+    void
+    discardQueued(void *ctx) override {
+        for (auto it = ios_to_submit_.begin(); it != ios_to_submit_.end();) {
+            if ((*it)->ctx_ == ctx) {
+                free_ios_.push_back(*it);
+                it = ios_to_submit_.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
 

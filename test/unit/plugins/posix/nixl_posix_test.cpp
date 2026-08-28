@@ -1128,6 +1128,253 @@ test_posix_release_teardown(const std::string &test_files_dir_path_abs_path, boo
     return 0;
 }
 
+// Regression test for issue #1957: a post that fails partway through enqueueing must not
+// leave its already-queued entries in the shared submission list. Left there, a later
+// poll driven by an unrelated request submits them, performing I/O the caller was told
+// had failed, with a request handle the caller has since released as their completion
+// callback context.
+//
+// Determinism: the I/O pool is capped at its 64-entry minimum and the agent runs without
+// a progress thread, so nothing is reaped between explicit calls. A first write occupying
+// 63 entries stays in flight, so the second write's first descriptor takes the last free
+// entry and its second descriptor deterministically fails the enqueue. After the first
+// write is driven to completion, whose polls would submit anything left in the
+// submission list, the failed write's files must still be empty: any byte in them means
+// the entry that should have been rolled back was submitted anyway.
+int
+test_posix_partial_enqueue(const std::string &test_files_dir_path_abs_path, bool use_uring) {
+    constexpr int pool_size = 64; // MIN_IOS_POOL_SIZE, the smallest pool the queues allow
+    constexpr int num_blocker_transfers = pool_size - 1;
+    constexpr int num_failed_transfers = 2;
+    constexpr size_t transfer_size = 128 * 1024; // 128KB
+
+    nixl_b_params_t params;
+    params["ios_pool_size"] = std::to_string(pool_size);
+    if (use_uring) {
+        params["use_uring"] = "true";
+        params["use_aio"] = "false";
+    } else {
+        params["use_uring"] = "false";
+    }
+
+    print_segment_title("NIXL STORAGE PARTIAL-ENQUEUE TEST STARTING (POSIX PLUGIN)");
+
+    print_segment_title(phase_title("Allocating and registering buffers"));
+
+    releaseTestBuffers blocker_bufs; // Occupies all but one pool entry
+    releaseTestBuffers failed_bufs; // Two descriptors; only one pool entry left
+    if (setup_release_test_buffers(test_files_dir_path_abs_path,
+                                   "_pe_blk_",
+                                   num_blocker_transfers,
+                                   transfer_size,
+                                   blocker_bufs) != 0) {
+        return 1;
+    }
+    if (setup_release_test_buffers(test_files_dir_path_abs_path,
+                                   "_pe_fail_",
+                                   num_failed_transfers,
+                                   transfer_size,
+                                   failed_bufs) != 0) {
+        return 1;
+    }
+
+    // No progress thread: queue entries are only submitted/reaped by explicit polls.
+    nixlAgentConfig cfg;
+    nixlAgent agent("POSIXPartialEnqueueTester", cfg);
+    nixlBackendH *posix = nullptr;
+    if (agent.createBackend("POSIX", params, posix) != NIXL_SUCCESS) {
+        std::cerr << "Failed to create POSIX backend" << std::endl;
+        return 1;
+    }
+
+    if (agent.registerMem(blocker_bufs.dram_for_posix) != NIXL_SUCCESS ||
+        agent.registerMem(blocker_bufs.file_for_posix) != NIXL_SUCCESS ||
+        agent.registerMem(failed_bufs.dram_for_posix) != NIXL_SUCCESS ||
+        agent.registerMem(failed_bufs.file_for_posix) != NIXL_SUCCESS) {
+        std::cerr << "Failed to register memory with NIXL" << std::endl;
+        return 1;
+    }
+
+    print_segment_title(phase_title("Posting a write that fills all but one pool entry"));
+
+    nixlXferReqH *treq_blocker = nullptr;
+    nixl_status_t status = agent.createXferReq(NIXL_WRITE,
+                                               blocker_bufs.dram_for_posix_xfer,
+                                               blocker_bufs.file_for_posix_xfer,
+                                               "POSIXPartialEnqueueTester",
+                                               treq_blocker);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Failed to create blocker transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        return 1;
+    }
+
+    status = agent.postXferReq(treq_blocker);
+    if (status != NIXL_IN_PROG) {
+        std::cerr << "Expected blocker transfer to be NIXL_IN_PROG, got: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        agent.releaseXferReq(treq_blocker);
+        return 1;
+    }
+
+    print_segment_title(phase_title("Failing a write partway through enqueue"));
+
+    nixlXferReqH *treq_failed = nullptr;
+    status = agent.createXferReq(NIXL_WRITE,
+                                 failed_bufs.dram_for_posix_xfer,
+                                 failed_bufs.file_for_posix_xfer,
+                                 "POSIXPartialEnqueueTester",
+                                 treq_failed);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Failed to create partial-enqueue transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        agent.releaseXferReq(treq_blocker);
+        return 1;
+    }
+
+    status = agent.postXferReq(treq_failed);
+    if (status >= 0) {
+        std::cerr << "Expected partial-enqueue post to fail, got: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        agent.releaseXferReq(treq_failed);
+        agent.releaseXferReq(treq_blocker);
+        return 1;
+    }
+    std::cout << "Post failed as expected with: " << nixlEnumStrings::statusStr(status)
+              << std::endl;
+
+    // The failed post rolled its queued entries back, so the request has nothing
+    // outstanding and the release frees it on the spot.
+    status = agent.releaseXferReq(treq_failed);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Failed to release the failed request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        agent.releaseXferReq(treq_blocker);
+        return 1;
+    }
+
+    print_segment_title(phase_title("Draining the blocker write"));
+
+    do {
+        status = agent.getXferStatus(treq_blocker);
+        if (status < 0) {
+            std::cerr << "Error during blocker transfer - status: "
+                      << nixlEnumStrings::statusStr(status) << std::endl;
+            agent.releaseXferReq(treq_blocker);
+            return 1;
+        }
+    } while (status == NIXL_IN_PROG);
+
+    status = agent.releaseXferReq(treq_blocker);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Failed to release completed blocker request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        return 1;
+    }
+
+    print_segment_title(phase_title("Verifying the failed request did no I/O"));
+
+    for (int i = 0; i < num_failed_transfers; ++i) {
+        struct stat st;
+        if (fstat(failed_bufs.fd[i].fd, &st) != 0) {
+            std::cerr << "fstat failed for failed-request file " << i << std::endl;
+            return 1;
+        }
+        if (st.st_size != 0) {
+            std::cerr << "Failed-request file " << i << " has " << st.st_size
+                      << " bytes; a rolled-back entry was submitted anyway" << std::endl;
+            return 1;
+        }
+    }
+    std::cout << "Files of the failed request are still empty" << std::endl;
+
+    print_segment_title(phase_title("Reposting on the freed pool entries"));
+
+    // The rolled-back entries must be reusable: the same descriptors now post cleanly.
+    nixlXferReqH *treq_retry = nullptr;
+    status = agent.createXferReq(NIXL_WRITE,
+                                 failed_bufs.dram_for_posix_xfer,
+                                 failed_bufs.file_for_posix_xfer,
+                                 "POSIXPartialEnqueueTester",
+                                 treq_retry);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Failed to create retry transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        return 1;
+    }
+
+    status = agent.postXferReq(treq_retry);
+    if (status < 0) {
+        std::cerr << "Failed to post retry transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        agent.releaseXferReq(treq_retry);
+        return 1;
+    }
+
+    do {
+        status = agent.getXferStatus(treq_retry);
+        if (status < 0) {
+            std::cerr << "Error during retry transfer - status: "
+                      << nixlEnumStrings::statusStr(status) << std::endl;
+            agent.releaseXferReq(treq_retry);
+            return 1;
+        }
+    } while (status == NIXL_IN_PROG);
+    agent.releaseXferReq(treq_retry);
+
+    for (int i = 0; i < num_failed_transfers; ++i) {
+        clear_buffer(failed_bufs.dram_addr[i].get(), transfer_size);
+    }
+
+    nixlXferReqH *treq_read = nullptr;
+    status = agent.createXferReq(NIXL_READ,
+                                 failed_bufs.dram_for_posix_xfer,
+                                 failed_bufs.file_for_posix_xfer,
+                                 "POSIXPartialEnqueueTester",
+                                 treq_read);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Failed to create read transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        return 1;
+    }
+
+    status = agent.postXferReq(treq_read);
+    if (status < 0) {
+        std::cerr << "Failed to post read transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        agent.releaseXferReq(treq_read);
+        return 1;
+    }
+
+    do {
+        status = agent.getXferStatus(treq_read);
+        if (status < 0) {
+            std::cerr << "Error during read transfer - status: "
+                      << nixlEnumStrings::statusStr(status) << std::endl;
+            agent.releaseXferReq(treq_read);
+            return 1;
+        }
+    } while (status == NIXL_IN_PROG);
+    agent.releaseXferReq(treq_read);
+
+    std::unique_ptr<char[]> expected_buffer = std::make_unique<char[]>(transfer_size);
+    fill_test_pattern(expected_buffer.get(), read_write_test_phrase, transfer_size);
+    for (int i = 0; i < num_failed_transfers; ++i) {
+        if (memcmp(failed_bufs.dram_addr[i].get(), expected_buffer.get(), transfer_size) != 0) {
+            std::cerr << "Retry read-back validation failed for buffer " << i << std::endl;
+            return 1;
+        }
+    }
+    std::cout << "Retry on the rolled-back entries completed and validated" << std::endl;
+
+    agent.deregisterMem(failed_bufs.file_for_posix);
+    agent.deregisterMem(failed_bufs.dram_for_posix);
+    agent.deregisterMem(blocker_bufs.file_for_posix);
+    agent.deregisterMem(blocker_bufs.dram_for_posix);
+
+    return 0;
+}
+
 // Path-mode parser unit checks (POSIX-only since it owns parsePathMeta tests).
 static void
 checkPathModeParser() {
@@ -1468,6 +1715,16 @@ main (int argc, char *argv[]) {
         std::cerr << "Release-Teardown Test failed" << std::endl;
         return 1;
     }
+
+    // Reset phase number for partial-enqueue test
+    phase_num = 1;
+
+    ret = test_posix_partial_enqueue(test_files_dir_path_abs_path, use_uring);
+    if (ret != 0) {
+        std::cerr << "Partial-Enqueue Test failed" << std::endl;
+        return 1;
+    }
+
 
     return 0;
 }
