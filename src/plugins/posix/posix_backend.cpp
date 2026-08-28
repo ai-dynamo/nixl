@@ -265,6 +265,17 @@ nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
                                  io_queue_type_);
 }
 
+// Free requests still parked at teardown; nothing can poll the queue anymore.
+nixlPosixEngine::~nixlPosixEngine() {
+    if (!released_reqs_.empty()) {
+        NIXL_ERROR << "POSIX engine destroyed with " << released_reqs_.size()
+                   << " released requests still awaiting completions";
+    }
+    for (auto *req : released_reqs_) {
+        delete req;
+    }
+}
+
 nixl_status_t
 nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
                              const nixl_mem_t &nixl_mem,
@@ -369,7 +380,9 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
     try {
         auto &posix_handle = castPosixHandle(handle);
         NIXL_LOCK_GUARD(io_queue_lock_);
-        return posix_handle.checkXfer();
+        nixl_status_t status = posix_handle.checkXfer();
+        reapReleasedReqs();
+        return status;
     }
     catch (const nixlPosixBackendReqH::exception &e) {
         NIXL_ERROR << e.what();
@@ -378,10 +391,37 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
     return NIXL_ERR_BACKEND;
 }
 
+// Free parked requests that have since completed; must be called with io_queue_lock_ held.
+void
+nixlPosixEngine::reapReleasedReqs() const {
+    auto it = released_reqs_.begin();
+    while (it != released_reqs_.end()) {
+        if ((*it)->isComplete()) {
+            delete *it;
+            it = released_reqs_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+// An incomplete request is parked instead of freed: queue entries reference it as their
+// completion callback context until reaped, and no queue can abort submitted operations.
 nixl_status_t
 nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
-    NIXL_ASSERT(handle != nullptr);
-    delete handle;
+    if (!handle) {
+        NIXL_ERROR << "releaseReqH called with a null handle";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    auto &posix_handle = static_cast<nixlPosixBackendReqH &>(*handle);
+    NIXL_LOCK_GUARD(io_queue_lock_);
+    if (posix_handle.isComplete()) {
+        delete handle;
+    } else {
+        NIXL_DEBUG << "POSIX request released while in progress; deferring free until its "
+                      "outstanding completions drain";
+        released_reqs_.push_back(&posix_handle);
+    }
     return NIXL_SUCCESS;
 }
 
