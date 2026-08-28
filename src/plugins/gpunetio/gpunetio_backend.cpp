@@ -16,6 +16,7 @@
  */
 
 #include "gpunetio_backend.h"
+#include "gpunetio_completion_status.h"
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <cassert>
@@ -285,7 +286,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         }
     }
 
-    ((volatile uint8_t *)wait_exit_cpu)[0] = 0;
+    *reinterpret_cast<volatile uint32_t *>(wait_exit_cpu) = 0;
 
     result = doca_gpu_mem_alloc(gdevs[0].second,
                                 sizeof(struct docaNotif),
@@ -354,7 +355,7 @@ nixlDocaEngine::~nixlDocaEngine() {
     NIXL_DEBUG << "Before progressThreadStop ";
     progressThreadStop();
 
-    ((volatile uint8_t *)wait_exit_cpu)[0] = 1;
+    *reinterpret_cast<volatile uint32_t *>(wait_exit_cpu) = 1;
     NIXL_DEBUG << "Before cudaStreamSynchronize ";
     nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
     nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
@@ -1192,20 +1193,21 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         std::string newMsg = msg_tag_start + std::to_string(opt_args->notifMsg.size()) +
             msg_tag_end + opt_args->notifMsg;
 
+        auto &final_request = xferReqRingCpu[treq->end_pos - 1];
         notif_addr =
-            (uintptr_t)(notif->send_addr +
-                        (xferReqRingCpu[treq->end_pos - 1].has_notif_msg_idx * notif->elems_size));
-        xferReqRingCpu[treq->end_pos - 1].has_notif_msg_idx =
-            (notif->send_pi.fetch_add(1) & (notif->elems_num - 1));
-        xferReqRingCpu[treq->end_pos - 1].msg_sz = newMsg.size();
-        xferReqRingCpu[treq->end_pos - 1].lbuf_notif = notif_addr;
-        xferReqRingCpu[treq->end_pos - 1].lkey_notif = notif->send_mr->get_lkey();
+            (uintptr_t)nixl::gpunetio::reserveNotificationSlot(notif->send_pi,
+                                                               notif->elems_num,
+                                                               notif->send_addr,
+                                                               notif->elems_size,
+                                                               final_request.has_notif_msg_idx);
+        final_request.msg_sz = newMsg.size();
+        final_request.lbuf_notif = notif_addr;
+        final_request.lkey_notif = notif->send_mr->get_lkey();
 
         memcpy((void *)notif_addr, newMsg.c_str(), newMsg.size());
 
         NIXL_INFO << "DOCA prepXfer with notif to " << remote_agent << " at "
-                  << xferReqRingCpu[treq->end_pos - 1].has_notif_msg_idx << " msg " << newMsg
-                  << " to " << remote_agent;
+                  << final_request.has_notif_msg_idx << " msg " << newMsg << " to " << remote_agent;
 
     } else {
         xferReqRingCpu[treq->end_pos - 1].has_notif_msg_idx = DOCA_NOTIF_NULL;
@@ -1252,6 +1254,10 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
 
 nixl_status_t
 nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
+    const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+    if (completion_status != NIXL_SUCCESS) {
+        return completion_status;
+    }
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
     uint32_t completion_index;
 
@@ -1281,6 +1287,10 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
+    const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+    if (completion_status != NIXL_SUCCESS) {
+        return completion_status;
+    }
     uint32_t recv_idx;
     std::string msg_src;
     uint32_t num_msg = 0;
