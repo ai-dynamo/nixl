@@ -15,10 +15,14 @@
  * limitations under the License.
  */
 
+#include <cuda.h>
 #include <cuda_runtime.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
+
+#include <linux/cxl_mem.h>
 
 #include <cerrno>
 #include <cstdint>
@@ -38,11 +42,70 @@ constexpr const char* kAgentName = "ODMNixlTestAgent";
 constexpr uint64_t kDefaultOdmAddr = 0x800000000ULL;
 constexpr size_t kDefaultTransferSize = 65536;
 constexpr unsigned char kTestPattern = 0x33;
+constexpr uint64_t kCxlCapUnitBytes = 256ULL * 1024 * 1024;
+constexpr size_t kCxlIdentifyPayloadSize = 0x43;
+constexpr size_t kCxlIdentifyTotalCapOffset = 0x10;
+constexpr size_t kCxlIdentifyPersistentCapOffset = 0x20;
 
-bool deviceAccessible(const std::string& dev_name) {
-    const std::string path =
-        (!dev_name.empty() && dev_name[0] == '/') ? dev_name : ("/dev/" + dev_name);
-    return access(path.c_str(), R_OK | W_OK) == 0;
+std::string devicePath(const std::string& dev_name) {
+    return (!dev_name.empty() && dev_name[0] == '/') ? dev_name : ("/dev/" + dev_name);
+}
+
+uint64_t readCxlCapacityFieldBytes(const unsigned char* id, size_t offset) {
+    uint64_t units = 0;
+    for (int i = 7; i >= 0; --i) {
+        units = (units << 8) | id[offset + i];
+    }
+    return units * kCxlCapUnitBytes;
+}
+
+uint64_t discoverOdmBaseAddr(const std::string& dev_name) {
+    if (const char* env = std::getenv("ODM_ADDR")) {
+        const uint64_t v = std::strtoull(env, nullptr, 0);
+        if (v != 0) {
+            std::cout << "ODM: using base 0x" << std::hex << v << std::dec
+                      << " from ODM_ADDR" << std::endl;
+            return v;
+        }
+    }
+
+    const std::string path = devicePath(dev_name);
+    const int fd = open(path.c_str(), O_RDWR);
+    if (fd < 0) {
+        std::cerr << "ODM: open(" << path << ") failed: " << std::strerror(errno)
+                  << std::endl;
+        return kDefaultOdmAddr;
+    }
+
+    unsigned char id[kCxlIdentifyPayloadSize];
+    std::memset(id, 0, sizeof(id));
+    struct cxl_send_command sc;
+    std::memset(&sc, 0, sizeof(sc));
+    sc.id = CXL_MEM_COMMAND_ID_IDENTIFY;
+    sc.out.size = sizeof(id);
+    sc.out.payload = reinterpret_cast<uint64_t>(id);
+
+    const int rc = ioctl(fd, CXL_MEM_SEND_COMMAND, &sc);
+    close(fd);
+    if (rc < 0 || sc.retval != 0) {
+        std::cerr << "ODM: CXL IDENTIFY on " << path << " failed; using default base 0x"
+                  << std::hex << kDefaultOdmAddr << std::dec << std::endl;
+        return kDefaultOdmAddr;
+    }
+
+    const uint64_t total = readCxlCapacityFieldBytes(id, kCxlIdentifyTotalCapOffset);
+    const uint64_t persistent =
+        readCxlCapacityFieldBytes(id, kCxlIdentifyPersistentCapOffset);
+    const uint64_t base = (persistent > 0) ? persistent : total;
+    if (base == 0) {
+        std::cerr << "ODM: CXL IDENTIFY returned zero capacity; using default base 0x"
+                  << std::hex << kDefaultOdmAddr << std::dec << std::endl;
+        return kDefaultOdmAddr;
+    }
+
+    std::cout << "ODM: discovered base 0x" << std::hex << base << std::dec << " from "
+              << path << " IDENTIFY" << std::endl;
+    return base;
 }
 
 void fillPattern(void* buf, size_t len, unsigned char pattern) {
@@ -65,22 +128,16 @@ bool validatePattern(const void* buf, size_t len, unsigned char expected) {
 void printUsage(const char* prog) {
     std::cerr
         << "Usage: " << prog << " [options]\n"
-        << "  -D, --device NAME       ODM device name (default: odm0)\n"
-        << "  -q, --qid ID            ODM queue id (default: 0)\n"
-        << "  -Q, --qid-start ID      ODM queue range start (default: --qid)\n"
-        << "  -R, --qid-end ID        ODM queue range end (default: --qid)\n"
-        << "  -a, --odm-addr ADDR     ODM target IOVA (default: 0x" << std::hex
-        << kDefaultOdmAddr << std::dec << ")\n"
-        << "  -s, --size BYTES        Transfer size (default: " << kDefaultTransferSize
+        << "  --device NAME       ODM device name (default: odm0)\n"
+        << "  --qid ID            ODM queue id (default: 0)\n"
+        << "  --qid-start ID      ODM queue range start (default: --qid)\n"
+        << "  --qid-end ID        ODM queue range end (default: --qid)\n"
+        << "  --odm-addr ADDR     ODM target IOVA (default: CXL IDENTIFY / ODM_ADDR)\n"
+        << "  --size BYTES        Transfer size (default: " << kDefaultTransferSize
         << ")\n"
-        << "  -r, --no-read           Skip read test\n"
-        << "  -w, --no-write          Skip write test\n"
-        << "  -h, --help              Show this help\n";
-}
-
-int skipTest(const std::string& reason) {
-    std::cout << "ODM test SKIPPED: " << reason << std::endl;
-    return 0;
+        << "  --no-read           Skip read test\n"
+        << "  --no-write          Skip write test\n"
+        << "  --help              Show this help\n";
 }
 
 nixl_status_t waitForXfer(nixlAgent& agent, nixlXferReqH* req) {
@@ -91,6 +148,7 @@ nixl_status_t waitForXfer(nixlAgent& agent, nixlXferReqH* req) {
     while (status == NIXL_IN_PROG) {
         status = agent.getXferStatus(req);
     }
+    cudaDeviceSynchronize();
     return status;
 }
 
@@ -99,11 +157,12 @@ nixl_status_t waitForXfer(nixlAgent& agent, nixlXferReqH* req) {
 int main(int argc, char** argv) {
     bool skip_read = false;
     bool skip_write = false;
+    bool odm_addr_set = false;
     std::string dev_name = "odm0";
     std::string qid_str = "0";
     std::string qid_start_str;
     std::string qid_end_str;
-    uint64_t odm_addr = kDefaultOdmAddr;
+    uint64_t odm_addr = 0;
     size_t transfer_size = kDefaultTransferSize;
 
     static struct option long_opts[] = {
@@ -140,9 +199,10 @@ int main(int argc, char** argv) {
             const unsigned long long parsed = std::strtoull(optarg, &end, 0);
             if (errno != 0 || end == optarg || *end != '\0') {
                 std::cerr << "Invalid --odm-addr value: " << optarg << std::endl;
-                return -1;
+                return 1;
             }
             odm_addr = static_cast<uint64_t>(parsed);
+            odm_addr_set = true;
             break;
         }
         case 's': {
@@ -151,7 +211,7 @@ int main(int argc, char** argv) {
             const unsigned long long parsed = std::strtoull(optarg, &end, 0);
             if (errno != 0 || end == optarg || *end != '\0' || parsed == 0) {
                 std::cerr << "Invalid --size value: " << optarg << std::endl;
-                return -1;
+                return 1;
             }
             transfer_size = static_cast<size_t>(parsed);
             break;
@@ -167,17 +227,17 @@ int main(int argc, char** argv) {
             return 0;
         default:
             printUsage(argv[0]);
-            return -1;
+            return 1;
         }
     }
 
     if (skip_read && skip_write) {
         std::cerr << "Error: Cannot skip both read and write tests\n";
-        return -1;
+        return 1;
     }
     if (skip_write && !skip_read) {
         std::cerr << "Error: --no-write requires pre-seeded ODM device memory\n";
-        return -1;
+        return 1;
     }
 
     if (qid_start_str.empty()) {
@@ -190,10 +250,26 @@ int main(int argc, char** argv) {
     int device_count = 0;
     const cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
     if (cuda_err != cudaSuccess || device_count == 0) {
-        return skipTest("CUDA GPU not available");
+        std::cerr << "Error: CUDA GPU not available: "
+                  << cudaGetErrorString(cuda_err) << std::endl;
+        return 1;
     }
-    if (!deviceAccessible(dev_name)) {
-        return skipTest("ODM device is not accessible (kernel module /dev node missing)");
+
+    const std::string path = devicePath(dev_name);
+    if (access(path.c_str(), R_OK | W_OK) != 0) {
+        std::cerr << "Error: ODM device not accessible: " << path << ": "
+                  << std::strerror(errno) << std::endl;
+        return 1;
+    }
+
+    if (!odm_addr_set) {
+        odm_addr = discoverOdmBaseAddr(dev_name);
+    }
+
+    CUresult cu_res = cuInit(0);
+    if (cu_res != CUDA_SUCCESS) {
+        std::cerr << "Error: cuInit failed" << std::endl;
+        return 1;
     }
 
     std::cout << "Phase 1: Initialize NIXL agent and ODM backend" << std::endl;
@@ -205,7 +281,9 @@ int main(int argc, char** argv) {
     nixl_b_params_t params;
     nixl_status_t ret = agent.getPluginParams("ODM", mems, params);
     if (ret != NIXL_SUCCESS) {
-        return skipTest("ODM plugin not built (use -Denable_plugins=ODM)");
+        std::cerr << "Error: ODM plugin not available (build with -Denable_plugins=ODM)"
+                  << std::endl;
+        return 1;
     }
 
     params["dmadev_param"] = dev_name;
@@ -216,7 +294,8 @@ int main(int argc, char** argv) {
     nixlBackendH* backend = nullptr;
     ret = agent.createBackend("ODM", params, backend);
     if (ret != NIXL_SUCCESS || backend == nullptr) {
-        return skipTest("failed to create ODM backend");
+        std::cerr << "Error: failed to create ODM backend for " << path << std::endl;
+        return 1;
     }
 
     void* host_buf = nullptr;
@@ -228,7 +307,7 @@ int main(int argc, char** argv) {
     const size_t page_size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
     if (posix_memalign(&host_buf, page_size, transfer_size) != 0) {
         std::cerr << "Host allocation failed" << std::endl;
-        return -1;
+        return 1;
     }
     fillPattern(host_buf, transfer_size, kTestPattern);
 
@@ -236,20 +315,29 @@ int main(int argc, char** argv) {
     if (cuerr != cudaSuccess) {
         std::cerr << "cudaMalloc failed: " << cudaGetErrorString(cuerr) << std::endl;
         free(host_buf);
-        return -1;
+        return 1;
     }
+
+    unsigned int sync_memops = 1;
+    cu_res = cuPointerSetAttribute(&sync_memops, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS,
+                                   reinterpret_cast<CUdeviceptr>(gpu_buf));
+    if (cu_res != CUDA_SUCCESS) {
+        std::cerr << "Warning: cuPointerSetAttribute(SYNC_MEMOPS) failed" << std::endl;
+    }
+
     cuerr = cudaMemcpy(gpu_buf, host_buf, transfer_size, cudaMemcpyHostToDevice);
     if (cuerr != cudaSuccess) {
         std::cerr << "cudaMemcpy H2D failed: " << cudaGetErrorString(cuerr) << std::endl;
         cudaFree(gpu_buf);
         free(host_buf);
-        return -1;
+        return 1;
     }
 
     nixl_opt_args_t extra;
     extra.backends.push_back(backend);
 
-    std::cout << "Phase 2: Register VRAM and ODM memory" << std::endl;
+    std::cout << "Phase 2: Register VRAM and ODM memory at 0x" << std::hex << odm_addr
+              << std::dec << std::endl;
     nixl_reg_dlist_t vram_list(VRAM_SEG);
     nixl_reg_dlist_t odm_list(ODM_MEM_SEG);
     nixlBlobDesc blob_vram;
@@ -285,7 +373,7 @@ int main(int argc, char** argv) {
         cuerr = cudaMemset(gpu_buf, 0, transfer_size);
         if (cuerr != cudaSuccess) {
             std::cerr << "cudaMemset failed: " << cudaGetErrorString(cuerr) << std::endl;
-            result = -1;
+            result = 1;
             goto cleanup;
         }
 
@@ -302,12 +390,12 @@ int main(int argc, char** argv) {
         cuerr = cudaMemcpy(host_buf, gpu_buf, transfer_size, cudaMemcpyDeviceToHost);
         if (cuerr != cudaSuccess) {
             std::cerr << "cudaMemcpy D2H failed: " << cudaGetErrorString(cuerr) << std::endl;
-            result = -1;
+            result = 1;
             goto cleanup;
         }
         if (!validatePattern(host_buf, transfer_size, kTestPattern)) {
             std::cerr << "ODM VRAM round-trip validation FAILED" << std::endl;
-            result = -1;
+            result = 1;
         } else {
             std::cout << "ODM VRAM round-trip validation PASSED" << std::endl;
         }
