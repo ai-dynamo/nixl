@@ -113,9 +113,16 @@ class TestErrorHandling : public nixl_test_t {
                                     nixl_xfer_dlist_t& sReq_descs,
                                     nixl_xfer_dlist_t& rReq_descs,
                                     nixlXferReqH*& req_handle) const;
-        nixl_status_t postXferReq(nixlXferReqH* req_handle) const;
+        nixl_status_t
+        postXferReq(nixlXferReqH *req_handle) const;
         nixl_status_t
         releaseXferReq(nixlXferReqH *req_handle) const;
+
+        nixlAgent *
+        getAgent() const {
+            return m_priv.get();
+        }
+
         nixl_status_t
         waitForCompletion(nixlXferReqH *req_handle, Agent &peer, nixl_notifs_t &peer_notifs);
         nixl_status_t
@@ -145,6 +152,12 @@ protected:
     template<TestType test_type, enum nixl_xfer_op_t op> void testXfer();
     void
     testNotifAfterFail();
+    void
+    testStalePreppedDlist();
+    void
+    testStaleXferHandle();
+    void
+    testMetadataReloadKeepsHandlesValid();
 
 private:
     template<TestType test_type>
@@ -333,6 +346,10 @@ void TestErrorHandling::testXfer() {
             }
 
             if (test_type == TestType::XFER_FAIL_RESTORE) {
+                // postXferReq/getXferStatus no longer invalidate remote metadata
+                // on disconnect: the consumer must do it explicitly before
+                // re-registering the failed agent.
+                EXPECT_EQ(m_Initiator.getAgent()->invalidateRemoteMD(target_name), NIXL_SUCCESS);
                 m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
                 exchangeMetaData();
             }
@@ -482,6 +499,149 @@ TEST_P(TestErrorHandling, XferFailRestore) {
 TEST_P(TestErrorHandling, XferPostThenFail) {
     testXfer<TestType::FAIL_AFTER_POST, NIXL_WRITE>();
     testXfer<TestType::FAIL_AFTER_POST, NIXL_READ>();
+}
+
+TEST_P(TestErrorHandling, StalePreppedDlistRejectedAfterReregistration) {
+    testStalePreppedDlist();
+}
+
+TEST_P(TestErrorHandling, StaleXferHandleRejectedAfterReregistration) {
+    testStaleXferHandle();
+}
+
+TEST_P(TestErrorHandling, MetadataReloadKeepsHandlesValid) {
+    testMetadataReloadKeepsHandlesValid();
+}
+
+// Transfer handles and prepped dlists bind to a remote registration generation: they
+// must be rejected after that generation is invalidated and the agent re-registers.
+void
+TestErrorHandling::testStalePreppedDlist() {
+    const std::string initiator_name = "initiator";
+    const std::string target_name = "target";
+    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    exchangeMetaData();
+
+    nixl_xfer_dlist_t l_descs(DRAM_SEG), r_descs(DRAM_SEG);
+    nixlBasicDesc l_desc, r_desc;
+    m_Initiator.fillRegList(l_descs, l_desc);
+    m_Target.fillRegList(r_descs, r_desc);
+
+    nixlAgent &initiator = *m_Initiator.getAgent();
+    nixlDlistH *local_side = nullptr, *remote_side = nullptr;
+    ASSERT_EQ(initiator.prepXferDlist(l_descs, local_side), NIXL_SUCCESS);
+    ASSERT_EQ(initiator.prepXferDlist(target_name, r_descs, remote_side), NIXL_SUCCESS);
+
+    const std::vector<int> indices = {0};
+    const auto make_xfer = [&]() {
+        nixlXferReqH *req = nullptr;
+        const nixl_status_t ret =
+            initiator.makeXferReq(NIXL_WRITE, local_side, indices, remote_side, indices, req);
+        if (req) {
+            EXPECT_EQ(initiator.releaseXferReq(req), NIXL_SUCCESS);
+        }
+        return ret;
+    };
+    ASSERT_EQ(make_xfer(), NIXL_SUCCESS);
+
+    ASSERT_EQ(initiator.invalidateRemoteMD(target_name), NIXL_SUCCESS);
+    m_Initiator.loadRemoteMD(m_Target.getLocalMD());
+
+    {
+        const LogIgnoreGuard lig("invalidated or re-registered after prepped xfer request");
+        EXPECT_EQ(make_xfer(), NIXL_ERR_NOT_FOUND);
+    }
+
+    // Release the stale dlist before replacing it, then re-prep must recover
+    EXPECT_EQ(initiator.releasedDlistH(remote_side), NIXL_SUCCESS);
+    remote_side = nullptr;
+    ASSERT_EQ(initiator.prepXferDlist(target_name, r_descs, remote_side), NIXL_SUCCESS);
+    EXPECT_EQ(make_xfer(), NIXL_SUCCESS);
+    EXPECT_EQ(initiator.releasedDlistH(local_side), NIXL_SUCCESS);
+    EXPECT_EQ(initiator.releasedDlistH(remote_side), NIXL_SUCCESS);
+    m_Target.destroy();
+    m_Initiator.destroy();
+}
+
+void
+TestErrorHandling::testStaleXferHandle() {
+    const std::string initiator_name = "initiator";
+    const std::string target_name = "target";
+    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    exchangeMetaData();
+
+    nixl_xfer_dlist_t l_descs(DRAM_SEG), r_descs(DRAM_SEG);
+    nixlBasicDesc l_desc, r_desc;
+    m_Initiator.fillRegList(l_descs, l_desc);
+    m_Target.fillRegList(r_descs, r_desc);
+
+    nixlAgent &initiator = *m_Initiator.getAgent();
+    nixlXferReqH *req = nullptr;
+    ASSERT_EQ(initiator.createXferReq(NIXL_WRITE, l_descs, r_descs, target_name, req),
+              NIXL_SUCCESS);
+
+    ASSERT_EQ(initiator.invalidateRemoteMD(target_name), NIXL_SUCCESS);
+    m_Initiator.loadRemoteMD(m_Target.getLocalMD());
+
+    {
+        const LogIgnoreGuard lig("invalidated or re-registered after transfer request creation");
+        std::chrono::microseconds duration, err_margin;
+        nixl_cost_t method;
+        EXPECT_EQ(initiator.estimateXferCost(req, duration, err_margin, method),
+                  NIXL_ERR_NOT_FOUND);
+        EXPECT_EQ(initiator.postXferReq(req), NIXL_ERR_NOT_FOUND);
+    }
+    // Releasing the rejected handle must keep working so callers can reclaim it
+    EXPECT_EQ(initiator.releaseXferReq(req), NIXL_SUCCESS);
+
+    // A fresh request against the new registration posts and completes
+    ASSERT_EQ(initiator.createXferReq(NIXL_WRITE, l_descs, r_descs, target_name, req),
+              NIXL_SUCCESS);
+    const nixl_status_t status = initiator.postXferReq(req);
+    ASSERT_TRUE(status == NIXL_SUCCESS || status == NIXL_IN_PROG);
+    nixl_notifs_t target_notifs;
+    EXPECT_EQ(m_Initiator.waitForCompletion(req, m_Target, target_notifs), NIXL_SUCCESS);
+    m_Target.destroy();
+    m_Initiator.destroy();
+}
+
+// Reloading byte-identical metadata is an intentional refresh: the registration
+// stays alive and handles created against it remain valid.
+void
+TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
+    const std::string initiator_name = "initiator";
+    const std::string target_name = "target";
+    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    exchangeMetaData();
+
+    nixl_xfer_dlist_t l_descs(DRAM_SEG), r_descs(DRAM_SEG);
+    nixlBasicDesc l_desc, r_desc;
+    m_Initiator.fillRegList(l_descs, l_desc);
+    m_Target.fillRegList(r_descs, r_desc);
+
+    nixlAgent &initiator = *m_Initiator.getAgent();
+    nixlDlistH *local_side = nullptr, *remote_side = nullptr;
+    ASSERT_EQ(initiator.prepXferDlist(l_descs, local_side), NIXL_SUCCESS);
+    ASSERT_EQ(initiator.prepXferDlist(target_name, r_descs, remote_side), NIXL_SUCCESS);
+    nixlXferReqH *req = nullptr;
+    const std::vector<int> indices = {0};
+    ASSERT_EQ(initiator.makeXferReq(NIXL_WRITE, local_side, indices, remote_side, indices, req),
+              NIXL_SUCCESS);
+
+    // Unchanged re-broadcast of the same metadata
+    m_Initiator.loadRemoteMD(m_Target.getLocalMD());
+
+    const nixl_status_t status = initiator.postXferReq(req);
+    ASSERT_TRUE(status == NIXL_SUCCESS || status == NIXL_IN_PROG);
+    nixl_notifs_t target_notifs;
+    EXPECT_EQ(m_Initiator.waitForCompletion(req, m_Target, target_notifs), NIXL_SUCCESS);
+    EXPECT_EQ(initiator.releasedDlistH(local_side), NIXL_SUCCESS);
+    EXPECT_EQ(initiator.releasedDlistH(remote_side), NIXL_SUCCESS);
+    m_Target.destroy();
+    m_Initiator.destroy();
 }
 
 #ifdef HAVE_UCX_BACKEND
