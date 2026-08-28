@@ -251,7 +251,6 @@ nixl_status_t nixlGdsEngine::prepXfer (const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    gds_handle->needs_prep = false;  // Just prepared, no need for prep
     handle = gds_handle;
     return NIXL_SUCCESS;
 }
@@ -356,7 +355,6 @@ nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle) const
     nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *)handle;
 
     if (gds_handle->batch_io_list.empty()) {
-        gds_handle->needs_prep = true;
         return NIXL_SUCCESS;
     }
 
@@ -375,7 +373,6 @@ nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle) const
     }
 
     gds_handle->batch_io_list.clear();
-    gds_handle->needs_prep = true;
     return status;
 }
 
