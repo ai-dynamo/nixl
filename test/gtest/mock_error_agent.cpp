@@ -216,56 +216,67 @@ siteName(injection_site_t site) {
     return "(unknown)";
 }
 
-/* A later ON_CALL wins over the defaults set in the GMockBackendEngine c'tor. */
+/*
+ * A later ON_CALL wins over the defaults set in the GMockBackendEngine c'tor.
+ * Every injected action bumps `calls` so the caller can tell an error the agent
+ * swallowed apart from a site the northbound path never reached at all, which
+ * would otherwise look identical for the cleanup scenarios.
+ */
 void
-applyInjection(mockErrorBackendEngine &gmock, injection_site_t site, nixl_status_t status) {
+applyInjection(mockErrorBackendEngine &gmock,
+               injection_site_t site,
+               nixl_status_t status,
+               unsigned &calls) {
     using testing::_;
-    using testing::Return;
+
+    /* Polymorphic, so the one action fits every mocked signature below. */
+    const auto injected =
+        testing::DoAll(testing::InvokeWithoutArgs([&calls] { ++calls; }), testing::Return(status));
 
     switch (site) {
     case injection_site_t::NONE:
         break;
     case injection_site_t::REGISTER_MEM:
-        ON_CALL(gmock, registerMem(_, _, _)).WillByDefault(Return(status));
+        ON_CALL(gmock, registerMem(_, _, _)).WillByDefault(injected);
         break;
     case injection_site_t::DEREGISTER_MEM:
-        ON_CALL(gmock, deregisterMem(_)).WillByDefault(Return(status));
+        ON_CALL(gmock, deregisterMem(_)).WillByDefault(injected);
         break;
     case injection_site_t::LOAD_LOCAL_MD:
-        ON_CALL(gmock, loadLocalMD(_, _)).WillByDefault(Return(status));
+        ON_CALL(gmock, loadLocalMD(_, _)).WillByDefault(injected);
         break;
     case injection_site_t::GET_PUBLIC_DATA:
-        ON_CALL(gmock, getPublicData(_, _)).WillByDefault(Return(status));
+        ON_CALL(gmock, getPublicData(_, _)).WillByDefault(injected);
         break;
     case injection_site_t::GET_CONN_INFO:
-        ON_CALL(gmock, getConnInfo(_)).WillByDefault(Return(status));
+        ON_CALL(gmock, getConnInfo(_)).WillByDefault(injected);
         break;
     case injection_site_t::LOAD_REMOTE_CONN_INFO:
-        ON_CALL(gmock, loadRemoteConnInfo(_, _)).WillByDefault(Return(status));
+        ON_CALL(gmock, loadRemoteConnInfo(_, _)).WillByDefault(injected);
         break;
     case injection_site_t::LOAD_REMOTE_MD:
-        ON_CALL(gmock, loadRemoteMD(_, _, _, _)).WillByDefault(Return(status));
+        ON_CALL(gmock, loadRemoteMD(_, _, _, _)).WillByDefault(injected);
         break;
     case injection_site_t::CONNECT:
-        ON_CALL(gmock, connect(_)).WillByDefault(Return(status));
+        ON_CALL(gmock, connect(_)).WillByDefault(injected);
         break;
     case injection_site_t::DISCONNECT:
-        ON_CALL(gmock, disconnect(_)).WillByDefault(Return(status));
+        ON_CALL(gmock, disconnect(_)).WillByDefault(injected);
         break;
     case injection_site_t::UNLOAD_MD:
-        ON_CALL(gmock, unloadMD(_)).WillByDefault(Return(status));
+        ON_CALL(gmock, unloadMD(_)).WillByDefault(injected);
         break;
     case injection_site_t::PREP_XFER:
-        ON_CALL(gmock, prepXfer(_, _, _, _, _, _)).WillByDefault(Return(status));
+        ON_CALL(gmock, prepXfer(_, _, _, _, _, _)).WillByDefault(injected);
         break;
     case injection_site_t::POST_XFER:
-        ON_CALL(gmock, postXfer(_, _, _, _, _, _)).WillByDefault(Return(status));
+        ON_CALL(gmock, postXfer(_, _, _, _, _, _)).WillByDefault(injected);
         break;
     case injection_site_t::CHECK_XFER:
-        ON_CALL(gmock, checkXfer(_)).WillByDefault(Return(status));
+        ON_CALL(gmock, checkXfer(_)).WillByDefault(injected);
         break;
     case injection_site_t::RELEASE_REQ:
-        ON_CALL(gmock, releaseReqH(_)).WillByDefault(Return(status));
+        ON_CALL(gmock, releaseReqH(_)).WillByDefault(injected);
         break;
     case injection_site_t::PREP_REMOTE_MEM_VIEW:
         /*
@@ -274,23 +285,23 @@ applyInjection(mockErrorBackendEngine &gmock, injection_site_t site, nixl_status
          * to reach the remote overload.
          */
         ON_CALL(static_cast<mocks::GMockBackendEngine &>(gmock), prepMemView(_, _, _))
-            .WillByDefault(Return(status));
+            .WillByDefault(injected);
         break;
     case injection_site_t::PREP_LOCAL_MEM_VIEW:
         ON_CALL(gmock, prepMemView(testing::A<const nixl_meta_dlist_t &>(), _, _))
-            .WillByDefault(Return(status));
+            .WillByDefault(injected);
         break;
     case injection_site_t::GET_NOTIFS:
-        ON_CALL(gmock, getNotifs(_)).WillByDefault(Return(status));
+        ON_CALL(gmock, getNotifs(_)).WillByDefault(injected);
         break;
     case injection_site_t::GEN_NOTIF:
-        ON_CALL(gmock, genNotif(_, _)).WillByDefault(Return(status));
+        ON_CALL(gmock, genNotif(_, _)).WillByDefault(injected);
         break;
     case injection_site_t::QUERY_MEM:
-        ON_CALL(gmock, queryMem(_, _)).WillByDefault(Return(status));
+        ON_CALL(gmock, queryMem(_, _)).WillByDefault(injected);
         break;
     case injection_site_t::ESTIMATE_XFER_COST:
-        ON_CALL(gmock, estimateXferCost(_, _, _, _, _, _, _, _, _)).WillByDefault(Return(status));
+        ON_CALL(gmock, estimateXferCost(_, _, _, _, _, _, _, _, _)).WillByDefault(injected);
         break;
     }
 }
@@ -334,8 +345,9 @@ private:
 struct observation {
     std::string stage;
     nixl_status_t status;
-    /* Set when the scenario's documented side effect did not actually happen. */
-    std::string sideEffectError;
+    /* Set when the scenario held up its end but the run did not, e.g. the
+     * documented side effect was missing or the injected call never happened. */
+    std::string failure;
 };
 
 struct scenario {
@@ -374,7 +386,7 @@ checkSideEffect(const scenario &s,
  * Each scenario gets fresh agents so one injected failure cannot affect another.
  */
 observation
-runScenario(const scenario &s) {
+runScenarioBody(const scenario &s, unsigned &calls) {
     using testing::_;
     using testing::Return;
 
@@ -386,7 +398,7 @@ runScenario(const scenario &s) {
     nixlBackendH *remote_backend = nullptr;
 
     if (s.action == action_t::CREATE_BACKEND) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
     }
 
     nixl_status_t status = local.createBackend(local_params, local_backend);
@@ -413,7 +425,7 @@ runScenario(const scenario &s) {
     remote_extra.backends.push_back(remote_backend);
 
     if (s.action == action_t::REGISTER_MEM) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
     }
 
     status = local.agent().registerMem(local_reg, &local_extra);
@@ -426,7 +438,7 @@ runScenario(const scenario &s) {
     }
 
     if (s.action == action_t::DEREGISTER_MEM) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
         return {"deregisterMem", local.agent().deregisterMem(local_reg, &local_extra)};
     }
 
@@ -438,7 +450,7 @@ runScenario(const scenario &s) {
 
     std::string remote_name;
     if (s.action == action_t::LOAD_REMOTE_MD) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
     }
     status = local.agent().loadRemoteMD(remote_md, remote_name);
     if (status != NIXL_SUCCESS || s.action == action_t::LOAD_REMOTE_MD) {
@@ -446,34 +458,34 @@ runScenario(const scenario &s) {
     }
 
     if (s.action == action_t::MAKE_CONNECTION) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
         return {"makeConnection", local.agent().makeConnection(remote_name, &local_extra)};
     }
 
     if (s.action == action_t::INVALIDATE_REMOTE_MD) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
         return {"invalidateRemoteMD", local.agent().invalidateRemoteMD(remote_name)};
     }
 
     if (s.action == action_t::GET_NOTIFS) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
         nixl_notifs_t notifs;
         return {"getNotifs", local.agent().getNotifs(notifs, &local_extra)};
     }
 
     if (s.action == action_t::GEN_NOTIF) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
         return {"genNotif", local.agent().genNotif(remote_name, "mock notification", &local_extra)};
     }
 
     if (s.action == action_t::QUERY_MEM) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
         std::vector<nixl_query_resp_t> responses;
         return {"queryMem", local.agent().queryMem(local_reg, responses, &local_extra)};
     }
 
     if (s.action == action_t::PREP_REMOTE_MEM_VIEW) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
         nixl_remote_dlist_t remote_view(DRAM_SEG);
         remote_view.addDesc(
             nixlRemoteDesc(remote_desc.addr, remote_desc.len, remote_desc.devId, remote_name));
@@ -486,7 +498,7 @@ runScenario(const scenario &s) {
     }
 
     if (s.action == action_t::PREP_LOCAL_MEM_VIEW) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
         nixl_local_dlist_t local_view(DRAM_SEG);
         local_view.addDesc(nixlBasicDesc(local_desc.addr, local_desc.len, local_desc.devId));
         nixlMemViewH view = nullptr;
@@ -503,7 +515,7 @@ runScenario(const scenario &s) {
 
     nixlXferReqH *req = nullptr;
     if (s.action == action_t::CREATE_XFER) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
     }
     status = local.agent().createXferReq(
         NIXL_WRITE, src_dlist, dst_dlist, remote_name, req, &local_extra);
@@ -518,7 +530,7 @@ runScenario(const scenario &s) {
     }
 
     if (s.action == action_t::ESTIMATE_XFER_COST) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
         std::chrono::microseconds duration;
         std::chrono::microseconds error_margin;
         nixl_cost_t method;
@@ -528,18 +540,20 @@ runScenario(const scenario &s) {
     }
 
     if (s.action == action_t::POST_XFER) {
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
     } else if (s.action == action_t::CHECK_XFER) {
         ON_CALL(local.gmock(), postXfer(_, _, _, _, _, _)).WillByDefault(Return(NIXL_IN_PROG));
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
     } else if (s.action == action_t::RELEASE_XFER) {
         ON_CALL(local.gmock(), postXfer(_, _, _, _, _, _)).WillByDefault(Return(NIXL_IN_PROG));
         ON_CALL(local.gmock(), checkXfer(_)).WillByDefault(Return(NIXL_IN_PROG));
-        applyInjection(local.gmock(), s.site, s.injected);
+        applyInjection(local.gmock(), s.site, s.injected, calls);
     } else if (s.action == action_t::POLL_TO_COMPLETION) {
-        ON_CALL(local.gmock(), postXfer(_, _, _, _, _, _)).WillByDefault(Return(NIXL_IN_PROG));
+        /* Both of these declare POST_XFER/NIXL_IN_PROG, so inject it the usual
+         * way rather than stubbing postXfer directly, and stay counted. */
+        applyInjection(local.gmock(), s.site, s.injected, calls);
     } else if (s.action == action_t::REPOST_ACTIVE) {
-        ON_CALL(local.gmock(), postXfer(_, _, _, _, _, _)).WillByDefault(Return(NIXL_IN_PROG));
+        applyInjection(local.gmock(), s.site, s.injected, calls);
         ON_CALL(local.gmock(), checkXfer(_)).WillByDefault(Return(NIXL_IN_PROG));
     }
 
@@ -600,9 +614,26 @@ runScenario(const scenario &s) {
     return {"completed", NIXL_SUCCESS};
 }
 
+/*
+ * An injected error that is never actually returned to the agent produces the
+ * same clean result as one the agent deliberately discarded, so a scenario whose
+ * site was not reached is reported as a failure rather than silently passing.
+ * The counter outlives the agents, which call back into the engine on teardown.
+ */
+observation
+runScenario(const scenario &s) {
+    unsigned calls = 0;
+    observation obs = runScenarioBody(s, calls);
+
+    if (s.site != injection_site_t::NONE && calls == 0 && obs.failure.empty()) {
+        obs.failure = "injected call was never reached";
+    }
+    return obs;
+}
+
 bool
 passed(const scenario &s, const observation &obs) {
-    return obs.status == s.expected && obs.sideEffectError.empty();
+    return obs.status == s.expected && obs.failure.empty();
 }
 
 /*
@@ -618,8 +649,8 @@ verdictText(const scenario &s, const observation &obs) {
     if (obs.status != s.expected) {
         return "FAIL: expected " + std::string(nixlEnumStrings::statusStr(s.expected));
     }
-    if (!obs.sideEffectError.empty()) {
-        return "FAIL: " + obs.sideEffectError;
+    if (!obs.failure.empty()) {
+        return "FAIL: " + obs.failure;
     }
 
     switch (s.behavior) {
