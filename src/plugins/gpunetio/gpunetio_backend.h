@@ -150,7 +150,7 @@ private:
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
 
-    uint32_t local_port;
+    uint16_t local_port;
     int noSyncIters;
     uint8_t ipv4_addr[4];
     struct sockaddr oob_saddr;

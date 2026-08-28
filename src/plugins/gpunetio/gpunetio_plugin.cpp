@@ -55,6 +55,7 @@ get_backend_options() {
     nixl_b_params_t params;
     params["network_devices"] = "";
     params["oob_interface"] = "";
+    params["oob_port"] = "";
     params["gpu_devices"] = "";
     params["cuda_streams"] = "";
     return params;
