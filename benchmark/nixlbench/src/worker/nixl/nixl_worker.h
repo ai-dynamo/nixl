@@ -45,6 +45,11 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<xferFileState> remote_fds;
         std::vector<std::vector<xferBenchIOV>> remote_iovs;
         std::vector<GusliDeviceConfig> gusli_devices;
+        /* ODM/ODM: char device path (e.g. /dev/odm0) and the device-physical base
+         * for ODM_MEM_SEG, discovered at runtime from the CXL IDENTIFY capacity
+         * (no hardcoded --odm_addr). */
+        std::string odm_device_path_;
+        uint64_t odm_base_addr_ = 0;
 
     public:
         explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
@@ -91,6 +96,16 @@ class xferBenchNixlWorker: public xferBenchWorker {
         cleanupBasicDescBlk(xferBenchIOV &basic_desc);
         bool
         ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
+        /* Read the ODM_MEM_SEG base address from the device's CXL IDENTIFY
+         * capacity (replaces the hardcoded --odm_addr). Falls back to a
+         * known-good base if it cannot be read. */
+        uint64_t
+        discoverOdmBaseAddr();
+        /* Consistency-check helper: seed the Iliad device memory the ODM READ
+         * will pull from with XFERBENCH_TARGET_BUFFER_ELEMENT, written through
+         * the BAR2 DAX window (DAX offset 0 aliases the ODM DPA base). */
+        void
+        seedOdmDramForRead(size_t total_size);
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H

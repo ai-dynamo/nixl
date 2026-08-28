@@ -33,8 +33,31 @@
 #include <utility>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <linux/cxl_mem.h>
 #include <utils/serdes/serdes.h>
 #include <omp.h>
+
+/* The ODM base address (ODM_MEM_SEG / target_iova_addr) is the device-local
+ * DPA where the ODM DMA engine sees Iliad volatile DRAM. On volatile-only
+ * devices (32 GiB BAR firmware) that base is total_capacity and BAR2/DAX
+ * offset 0 is the host alias. On split persistent+volatile devices volatile
+ * DRAM starts after the persistent partition (read from CXL IDENTIFY).
+ * NOTE: this is NOT the PCI BAR2 host-physical address from lspci — that is the
+ * host's window into the same DRAM and fails ODM data verification. */
+static constexpr uint64_t CXL_CAP_UNIT_BYTES = 256ULL * 1024 * 1024;
+static constexpr size_t CXL_IDENTIFY_PAYLOAD_SIZE = 0x43;
+static constexpr size_t CXL_IDENTIFY_TOTAL_CAP_OFFSET = 0x10;
+static constexpr size_t CXL_IDENTIFY_PERSISTENT_CAP_OFFSET = 0x20;
+/* Fallback ODM DPA base if CXL IDENTIFY is unavailable; the known-good value
+ * used by the example apps / round-trip tests on this card (32 GiB). */
+static constexpr uint64_t ODM_ODM_FALLBACK_ADDR = 0x800000000ULL;
+
+/* ODM always sprays the ODM/dma-buf READ path across this fixed ODM queue range
+ * so a single caller thread saturates PCIe (see plugins/odm/README.md). */
+static constexpr int ODM_ODM_QID_START = 0;
+static constexpr int ODM_ODM_QID_END = 7;
 
 #define ROUND_UP(value, granularity) \
     ((((value) + (granularity) - 1) / (granularity)) * (granularity))
@@ -122,6 +145,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_ODM) ||
         xferBenchConfig::isStorageBackend()) {
         backend_name = xferBenchConfig::backend;
     } else {
@@ -303,6 +327,30 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["container_name"] = xferBenchConfig::azure_blob_container_name;
         backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_ODM)) {
+        // ODM: VRAM<->ODM_MEM via dma-buf (ODM controller) for BOTH directions.
+        //   READ  (Iliad->VRAM): ODM writes into GPU VRAM (PCIe write).
+        //   WRITE (VRAM->Iliad): ODM reads GPU VRAM (PCIe read, pipelined).
+        // The BAR2 DAX window is used only for consistency seeding/read-back.
+        std::string odm_device = (devices.empty() || devices[0] == "all") ? "odm0" : devices[0];
+        backend_params["dmadev_param"] = odm_device;
+        odm_device_path_ = (odm_device[0] == '/') ? odm_device : ("/dev/" + odm_device);
+        /* Multi-queue spraying is hardcoded to queues 0..7: the plugin splits
+         * each transfer across all of them so a single caller thread saturates
+         * PCIe. No command-line flags. */
+        backend_params["odm_qid"] = std::to_string(ODM_ODM_QID_START);
+        backend_params["odm_qid_start"] = std::to_string(ODM_ODM_QID_START);
+        backend_params["odm_qid_end"] = std::to_string(ODM_ODM_QID_END);
+        backend_params["num_threads"] = std::to_string(xferBenchConfig::num_threads);
+        backend_params["dax_device"] = xferBenchConfig::dax_device;
+        std::cout << "ODM backend: dma_device=" << odm_device
+                  << " qid=" << ODM_ODM_QID_START
+                  << " qid_range=" << ODM_ODM_QID_START
+                  << ".." << ODM_ODM_QID_END
+                  << " threads=" << xferBenchConfig::num_threads
+                  << " dax_device=" << xferBenchConfig::dax_device
+                  << " engine=ODM/dma-buf (both directions)"
+                  << " addr=auto(CXL IDENTIFY)" << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -320,6 +368,129 @@ xferBenchNixlWorker::~xferBenchNixlWorker() {
         delete agent;
         agent = nullptr;
     }
+}
+
+static uint64_t
+readCxlCapacityFieldBytes(const unsigned char *id, size_t offset) {
+    uint64_t units = 0;
+
+    for (int i = 7; i >= 0; i--)
+        units = (units << 8) | id[offset + i];
+    return units * CXL_CAP_UNIT_BYTES;
+}
+
+/* Read CXL IDENTIFY and derive the ODM volatile-DRAM DPA base. Returns 0 on
+ * failure (caller may fall back). */
+static uint64_t
+readCxlOdmBaseBytes(const std::string &dev_path, uint64_t *total_bytes_out) {
+    int fd = open(dev_path.c_str(), O_RDWR);
+    if (fd < 0)
+        return 0;
+
+    unsigned char id[CXL_IDENTIFY_PAYLOAD_SIZE];
+    memset(id, 0, sizeof(id));
+    struct cxl_send_command sc;
+    memset(&sc, 0, sizeof(sc));
+    sc.id = CXL_MEM_COMMAND_ID_IDENTIFY;
+    sc.out.size = sizeof(id);
+    sc.out.payload = reinterpret_cast<uint64_t>(id);
+
+    int rc = ioctl(fd, CXL_MEM_SEND_COMMAND, &sc);
+    close(fd);
+    if (rc < 0 || sc.retval != 0)
+        return 0;
+
+    const uint64_t total_bytes =
+        readCxlCapacityFieldBytes(id, CXL_IDENTIFY_TOTAL_CAP_OFFSET);
+    const uint64_t persistent_bytes =
+        readCxlCapacityFieldBytes(id, CXL_IDENTIFY_PERSISTENT_CAP_OFFSET);
+
+    if (total_bytes_out)
+        *total_bytes_out = total_bytes;
+
+  /* Volatile DRAM DPA base from CXL IDENTIFY. Split persistent+volatile
+   * devices place volatile after the persistent partition. Volatile-only
+   * firmware (32 GiB BAR) still uses total_capacity as the ODM DPA base on
+   * this hardware (BAR2/DAX offset 0 aliases that region). */
+    if (persistent_bytes > 0)
+        return persistent_bytes;
+    if (total_bytes > 0)
+        return total_bytes;
+    return 0;
+}
+
+uint64_t
+xferBenchNixlWorker::discoverOdmBaseAddr() {
+    /* Already discovered for this worker; reuse it. */
+    if (odm_base_addr_ != 0)
+        return odm_base_addr_;
+
+    /* Explicit override (hex or decimal) takes precedence over auto-discovery. */
+    if (const char *e = getenv("ODM_ADDR")) {
+        uint64_t v = strtoull(e, nullptr, 0);
+        if (v != 0) {
+            odm_base_addr_ = v;
+            std::cout << "ODM: base 0x" << std::hex << odm_base_addr_ << std::dec
+                      << " (from ODM_ADDR env)" << std::endl;
+            return odm_base_addr_;
+        }
+    }
+
+    const std::string &odm_dev =
+        odm_device_path_.empty() ? "/dev/odm0" : odm_device_path_;
+    uint64_t total_bytes = 0;
+    uint64_t base = readCxlOdmBaseBytes(odm_dev, &total_bytes);
+    if (total_bytes != 0) {
+        odm_base_addr_ = base;
+        std::cout << "ODM: base 0x" << std::hex << odm_base_addr_ << std::dec
+                  << " (CXL IDENTIFY volatile DPA base), total_capacity "
+                  << (total_bytes >> 30) << " GiB, from " << odm_dev
+                  << " IDENTIFY" << std::endl;
+        return odm_base_addr_;
+    }
+
+    odm_base_addr_ = ODM_ODM_FALLBACK_ADDR;
+    std::cerr << "ODM: could not read CXL capacity from " << odm_dev
+              << "; falling back to base 0x" << std::hex << odm_base_addr_
+              << std::dec << std::endl;
+    return odm_base_addr_;
+}
+
+void
+xferBenchNixlWorker::seedOdmDramForRead(size_t total_size) {
+    /* The ODM READ pulls from Iliad device DRAM at the ODM DPA base. That same
+     * DRAM is visible to the host through the BAR2 DAX window at offset 0, so we
+     * seed it with XFERBENCH_TARGET_BUFFER_ELEMENT there; the read-back then
+     * byte-verifies against that pattern. */
+    const std::string &dax = xferBenchConfig::dax_device;
+    if (dax.empty()) {
+        std::cerr << "ODM: consistency seed: --dax_device not set, skipping seed"
+                  << std::endl;
+        return;
+    }
+    int fd = open(dax.c_str(), O_RDWR | O_SYNC);
+    if (fd < 0) {
+        std::cerr << "ODM: consistency seed: open(" << dax << ") failed: "
+                  << strerror(errno) << " (run as root for the DAX window)"
+                  << std::endl;
+        return;
+    }
+    /* devdax mappings must be alignment-sized; round up to 2 MiB to be safe. */
+    size_t map_size = (total_size + (2 << 20) - 1) & ~static_cast<size_t>((2 << 20) - 1);
+    void *p = mmap(nullptr, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (p == MAP_FAILED) {
+        std::cerr << "ODM: consistency seed: mmap(" << dax << ", " << map_size
+                  << ") failed: " << strerror(errno) << std::endl;
+        close(fd);
+        return;
+    }
+    memset(p, XFERBENCH_TARGET_BUFFER_ELEMENT, total_size);
+    __sync_synchronize();  /* publish the BAR2 writes before the ODM read */
+    munmap(p, map_size);
+    close(fd);
+    std::cout << "ODM: seeded " << total_size << " bytes of Iliad DRAM with 0x"
+              << std::hex << (int)XFERBENCH_TARGET_BUFFER_ELEMENT << std::dec
+              << " via " << dax << " for READ consistency" << std::endl;
 }
 
 // Convert vector of xferBenchIOV to nixl_reg_dlist_t
@@ -473,6 +644,9 @@ static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
     uint8_t memset_value =
         isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
+    // Override the initiator fill byte for memory-probing/round-trip tests.
+    if (isInit && xferBenchConfig::fill_value >= 0)
+        memset_value = static_cast<uint8_t>(xferBenchConfig::fill_value);
 
     // Assume no CUDA cores exist if Neuron cores are found.
     // There are no AWS instance types with both NVIDIA GPUs and Neuron accelerators.
@@ -868,6 +1042,34 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_iovs.push_back(iov_list);
         }
+    } else if (XFERBENCH_BACKEND_ODM == xferBenchConfig::backend) {
+        // ODM backend: register ODM_MEM_SEG for device address range (remote side).
+        // The ODM base address (device DPA) is discovered at runtime from the
+        // CXL IDENTIFY capacity (no hardcoded --odm_addr).
+        uint64_t odm_base = discoverOdmBaseAddr();
+        // For READ consistency, pre-seed the Iliad device memory (via the BAR2
+        // DAX alias) with XFERBENCH_TARGET_BUFFER_ELEMENT so the read-back has a
+        // known pattern to verify against. EXCEPTION: when an explicit
+        // --check_value is given the caller is verifying data a *prior* transfer
+        // left in Iliad DRAM (a write-then-read-back round trip), so seeding here
+        // would destroy that data — skip it and read back what is already there.
+        if (xferBenchConfig::check_consistency &&
+            xferBenchConfig::op_type == XFERBENCH_OP_READ &&
+            xferBenchConfig::check_value < 0) {
+            seedOdmDramForRead(xferBenchConfig::total_buffer_size);
+        }
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                uint64_t dev_addr = odm_base + (list_idx * num_devices + i) * buffer_size;
+                xferBenchIOV odm_iov(dev_addr, buffer_size, 0);
+                iov_list.push_back(odm_iov);
+            }
+            nixl_reg_dlist_t desc_list(ODM_MEM_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem ODM failed");
+            remote_iovs.push_back(iov_list);
+        }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
         int num_files = xferBenchConfig::num_files;
@@ -937,6 +1139,10 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
 #if HAVE_CUDA
             case VRAM_SEG:
+                /*
+                 * Allocate one VRAM buffer per thread/device pair at setup and
+                 * reuse it for the entire benchmark run.
+                 */
                 basic_desc = initBasicDescVram(buffer_size, i);
                 break;
 #endif
@@ -1023,6 +1229,12 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_ODM) {
+        for (auto &iov_list : remote_iovs) {
+            nixl_reg_dlist_t desc_list(ODM_MEM_SEG);
+            iovListToNixlRegDlist(iov_list, desc_list);
+            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem ODM failed");
+        }
     } else if (xferBenchConfig::isStorageBackend()) {
         for (auto &iov_list : remote_iovs) {
             for (auto &iov : iov_list) {
@@ -1108,8 +1320,15 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
+        size_t list_idx = 0;
+        size_t num_devices = xferBenchConfig::num_initiator_dev;
+        size_t buffer_size = xferBenchConfig::total_buffer_size /
+            (num_devices * xferBenchConfig::num_threads);
         for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
+            size_t entries_per_device = (num_devices > 0 && !iov_list.empty()) ?
+                iov_list.size() / num_devices : 1;
+            size_t entry_idx = 0;
             int devidx = 0;
             for (auto &iov : iov_list) {
                 if (xferBenchConfig::isObjStorageBackend()) {
@@ -1124,6 +1343,15 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
+                } else if (XFERBENCH_BACKEND_ODM == xferBenchConfig::backend) {
+                    size_t odm_dev = entry_idx / entries_per_device;
+                    size_t block_in_dev = entry_idx % entries_per_device;
+                    size_t block_offset = (block_in_dev * block_size) % buffer_size;
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = remote_iovs[list_idx][odm_dev].addr + block_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = remote_iovs[list_idx][odm_dev].devId;
+                    remote_iov_list.push_back(iov_remote);
                 } else {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
@@ -1136,11 +1364,13 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                         fd_idx = 0;
                     }
                 }
+                entry_idx++;
             }
             res.push_back(remote_iov_list);
             if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
                 file_offset += block_size;
             }
+            list_idx++;
         }
     } else {
         for (const auto &local_iov : local_iovs) {
@@ -1223,6 +1453,9 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
+    } else if (XFERBENCH_BACKEND_ODM == xferBenchConfig::backend) {
+        // ODM targets Iliad device memory via the ODM controller (both directions).
+        remote_desc = nixl_xfer_dlist_t(ODM_MEM_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
     }
@@ -1342,8 +1575,9 @@ execTransfer(nixlAgent *agent,
 
         // Setup transfer parameters
         nixl_opt_args_t params;
-        std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
-        if (!xferBenchConfig::isStorageBackend()) {
+        bool is_local_backend = xferBenchConfig::isStorageBackend();
+        std::string target = is_local_backend ? "initiator" : "target";
+        if (!is_local_backend) {
             params.notif = "0xBEEF";
         }
 
@@ -1444,7 +1678,7 @@ int
 xferBenchNixlWorker::synchronizeStart() {
     // For storage backends without ETCD, no synchronization needed
     if (xferBenchConfig::isStorageBackend() && xferBenchConfig::etcd_endpoints.empty()) {
-        std::cout << "Single instance storage backend - no synchronization needed" << std::endl;
+        std::cout << "Single instance local backend - no synchronization needed" << std::endl;
         return 0;
     }
 

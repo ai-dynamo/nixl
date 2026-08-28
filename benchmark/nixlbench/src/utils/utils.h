@@ -78,6 +78,9 @@
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
+#define XFERBENCH_BACKEND_ODM "ODM"
+#define XFERBENCH_BACKEND_LIST \
+    "UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI, AZURE_BLOB, ODM"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -139,6 +142,8 @@ public:
     static std::string mode;
     static std::string op_type;
     static bool check_consistency;
+    static int check_value;
+    static int fill_value;
     static size_t total_buffer_size;
     static bool recreate_xfer;
     static int num_initiator_dev;
@@ -192,6 +197,7 @@ public:
     static std::string gusli_config_file;
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
+    static std::string dax_device;
 
     static int
     parseConfig(int argc, char *argv[]);

@@ -435,7 +435,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --config_file PATH         # Configuraion file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI, ODM] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
@@ -714,6 +714,36 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 **Notes**:
 - Number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`
 - Direct I/O is automatically enabled for GUSLI (no need to specify `--storage_enable_direct`)
+
+**ODM Backend (Marvell ODM DMA controller):**
+
+ODM moves data between GPU VRAM and Marvell Iliad/Structera device memory using
+the ODM DMA controller with GPU VRAM exported as a dma-buf. Build NIXL with
+`-Denable_plugins=ODM` and ensure the ODM kernel character device (for example
+`/dev/odm0`) is present. CUDA with dma-buf export support is required.
+
+```bash
+# VRAM <-> ODM device memory (single instance, no ETCD required)
+./nixlbench --backend ODM \
+           --initiator_seg_type VRAM \
+           --target_seg_type VRAM \
+           --device_list odm0 \
+           --op_type WRITE
+
+# Consistency checking seeds device DRAM through the BAR2 DAX window
+./nixlbench --backend ODM \
+           --initiator_seg_type VRAM \
+           --target_seg_type VRAM \
+           --device_list odm0 \
+           --check_consistency \
+           --dax_device /dev/dax0.0
+```
+
+**ODM-specific notes:**
+
+- The ODM device base address is discovered from CXL IDENTIFY or `$ODM_ADDR`.
+- Queue range defaults to `0..7` in nixlbench (configurable via backend params).
+- `--dax_device` is used only for consistency seeding/read-back, not the data path.
 
 ### Worker Types
 
