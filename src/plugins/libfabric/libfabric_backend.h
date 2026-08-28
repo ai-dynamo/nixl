@@ -161,6 +161,9 @@ public:
 class nixlLibfabricEngine : public nixlBackendEngine {
     friend class nixlLibfabricRail; // Allow nixlLibfabricRail to access private members
 
+    // Needed for unit test createAgentConnection().
+    friend class nixlLibfabricAgentIndexTest;
+
 private:
     // Store user's original progress thread preference
     bool progress_thread_enabled_;
@@ -184,7 +187,9 @@ private:
     // Map of agent name to connection info
     // <remoteAgent, <connection>>
     mutable std::unordered_map<std::string, std::shared_ptr<nixlLibfabricConnection>> connections_;
-    mutable std::vector<std::string> agent_names_; // List of agent names for easy access
+    // Agent names, indexed by the agent index handed to each peer in the handshake. The index of an
+    // entry is its identity on the wire.
+    mutable std::vector<std::string> agent_names_;
 
     // Threading infrastructure - remaining members
     // Connection Management (CM) thread
@@ -306,13 +311,14 @@ private:
     sendHandshakeTo(const nixlLibfabricConnection &conn) const;
 
     // Resolve the agent_idx the sender should ship to a given remote peer in
-    // every imm_data field. Returns the handshake-supplied value.
+    // every imm_data field, into agent_idx. Yields the handshake-supplied value.
     // establishConnection() guarantees the handshake is received before
     // marking the connection as CONNECTED; this function should never be
-    // called without a valid handshake. Sending to ourselves (same-process
-    // self-connection) returns 0 immediately.
-    uint16_t
-    senderImmDataAgentIdx(nixlLibfabricConnection &conn) const;
+    // called without a valid handshake, and fails with NIXL_ERR_BACKEND if it
+    // is, since there is no safe index to substitute. Sending to ourselves
+    // (same-process self-connection) yields 0 immediately.
+    nixl_status_t
+    senderImmDataAgentIdx(const nixlLibfabricConnection &conn, uint16_t &agent_idx) const;
 
     // Looks up the peer by agent_name and stores the assigned index on its connection
     // record. Will load peer's connection info from the handshake payload, if it's a new peer.

@@ -61,7 +61,32 @@ static struct fi_ops fi_av_fid_ops_stub{
     .close = fi_av_close_stub,
 };
 
-static fi_ops_av av_ops_stub = {};
+// Hands out a fresh fi_addr_t per insert, starting at 1 so no address collides with
+// FI_ADDR_UNSPEC (removeAddress() rejects that value).
+static fi_addr_t next_fi_addr_stub = 1;
+
+static int
+fi_av_insert_stub(struct fid_av *av,
+                  const void *addr,
+                  size_t count,
+                  fi_addr_t *fi_addr,
+                  uint64_t flags,
+                  void *context) {
+    for (size_t i = 0; i < count; ++i) {
+        fi_addr[i] = next_fi_addr_stub++;
+    }
+    return static_cast<int>(count);
+}
+
+static int
+fi_av_remove_stub(struct fid_av *av, fi_addr_t *fi_addr, size_t count, uint64_t flags) {
+    return 0;
+}
+
+static fi_ops_av av_ops_stub = {
+    .insert = fi_av_insert_stub,
+    .remove = fi_av_remove_stub,
+};
 
 static int
 fi_av_open_stub(struct fid_domain *domain,

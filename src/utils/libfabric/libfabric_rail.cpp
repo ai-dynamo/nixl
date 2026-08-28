@@ -467,6 +467,22 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             NIXL_INFO << "Using provider with FI_HMEM support for rail " << rail_id;
         }
 
+        // Check the provider offering enough bytes for immediate data.
+        constexpr size_t kRequiredCqDataBytes = NIXL_IMM_DATA_BITS / 8;
+        const size_t cq_data_size = info->domain_attr->cq_data_size;
+        if (cq_data_size < kRequiredCqDataBytes) {
+            const char *prov = (info->fabric_attr && info->fabric_attr->prov_name) ?
+                info->fabric_attr->prov_name :
+                "unknown";
+            NIXL_ERROR << "Provider '" << prov << "' on rail " << rail_id << " supports only "
+                       << cq_data_size
+                       << " bytes of remote CQ data; the libfabric backend needs at least "
+                       << kRequiredCqDataBytes << " to carry the immediate data fields";
+            throw std::runtime_error("Provider CQ data size too small for rail " +
+                                     std::to_string(rail_id));
+        }
+        NIXL_DEBUG << "Rail " << rail_id << " provider cq_data_size=" << cq_data_size << " bytes";
+
         // Create fabric for this rail
         ret = fi_fabric(info->fabric_attr, &fabric, NULL);
         if (ret) {
@@ -621,6 +637,12 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         NIXL_TRACE << "Successfully initialized rail " << rail_id;
     }
     catch (...) {
+        // The destructor does not run for a failed constructor, so cleanup() never gets the chance
+        // to release info. Free it here to cover every throw site above.
+        if (info) {
+            fi_freeinfo(info);
+            info = nullptr;
+        }
         fi_freeinfo(hints);
         throw;
     }

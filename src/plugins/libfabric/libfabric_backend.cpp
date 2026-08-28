@@ -774,8 +774,17 @@ nixlLibfabricEngine::disconnect(const std::string &remote_agent) {
         return NIXL_ERR_NOT_FOUND;
     }
 
+    const size_t agent_index = it->second->agent_index_;
     nixl_status_t status = it->second->disconnect();
     connections_.erase(it);
+
+    if (agent_index < agent_names_.size()) {
+        agent_names_[agent_index].clear();
+    } else {
+        NIXL_WARN << "Agent '" << remote_agent << "' carries out-of-range agent index "
+                  << agent_index << " (table holds " << agent_names_.size()
+                  << " entries); leaving the name table untouched";
+    }
     return status;
 }
 
@@ -796,9 +805,11 @@ nixlLibfabricEngine::createAgentConnection(
                   << ", remote: " << data_rail_endpoints.size() << ")";
     }
 
-    if (agent_names_.size() > NIXL_AGENT_INDEX_MASK) {
+    if (agent_names_.size() >= NIXL_LIBFABRIC_MAX_AGENTS) {
         NIXL_ERROR << "Cannot add agent '" << agent_name << "': agent index " << agent_names_.size()
-                   << " exceeds 8-bit wire limit (" << NIXL_AGENT_INDEX_MASK << ")";
+                   << " does not fit the " << NIXL_AGENT_INDEX_BITS
+                   << "-bit agent index carried in the immediate data (max "
+                   << NIXL_LIBFABRIC_MAX_AGENTS << " over this agent's lifetime)";
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -827,7 +838,8 @@ nixlLibfabricEngine::createAgentConnection(
 
     agent_names_.push_back(agent_name);
     for (size_t i = 0; i < agent_names_.size(); ++i) {
-        NIXL_DEBUG << "Index " << i << ": " << agent_names_[i];
+        NIXL_DEBUG << "Index " << i << ": "
+                   << (agent_names_[i].empty() ? "<retired>" : agent_names_[i].c_str());
     }
 
     connections_[agent_name] = conn;
@@ -1356,7 +1368,13 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         size_t desc_submitted_count = 0;
         // imm_data.agent_idx = the value the receiver expects (our index in
         // THEIR agent_names_), supplied by the handshake.
-        const uint16_t imm_agent_idx = senderImmDataAgentIdx(*conn);
+        uint16_t imm_agent_idx = 0;
+        nixl_status_t idx_status = senderImmDataAgentIdx(*conn, imm_agent_idx);
+        if (idx_status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Cannot resolve the agent index to stamp for remote agent '"
+                       << conn->remoteAgent_ << "'; aborting transfer";
+            return idx_status;
+        }
         nixl_status_t status = rail_manager_.prepareAndSubmitTransfer(
             op_type,
             transfer_addr,
@@ -1836,8 +1854,13 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
                    << " payload_chunk_size=" << header.payload_length << "B"
                    << " notif_xfer_id=" << header.notif_xfer_id;
 
-        const uint16_t imm_agent_idx =
-            senderImmDataAgentIdx(const_cast<nixlLibfabricConnection &>(*connection));
+        uint16_t imm_agent_idx = 0;
+        nixl_status_t idx_status = senderImmDataAgentIdx(*connection, imm_agent_idx);
+        if (idx_status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Cannot resolve the agent index to stamp for remote agent '"
+                       << connection->remoteAgent_ << "'; dropping notification";
+            return idx_status;
+        }
         nixl_status_t status = rail_manager_.postControlMessage(
             nixlLibfabricRailManager::ControlMessageType::NOTIFICATION,
             control_request,

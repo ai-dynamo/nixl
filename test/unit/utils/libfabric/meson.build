@@ -22,6 +22,17 @@ if cuda_dep.found()
     libfabric_test_cpp_args += [ '-DCUDA_FOUND' ]
 endif
 
+# Header-only check of the immediate data bit layout: no rails, no mocks, so it runs in every
+# buildtype.
+libfabric_imm_data_test_bin = executable('libfabric_imm_data_test',
+           'libfabric_imm_data_test.cpp',
+           dependencies: libfabric_utils_dep,
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
+           cpp_args: libfabric_test_cpp_args,
+           install: true)
+
+test('libfabric_imm_data_test', libfabric_imm_data_test_bin)
+
 if get_option('buildtype') != 'release'
 
     # mock function calls for testing
