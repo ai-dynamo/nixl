@@ -156,7 +156,7 @@ nixlPosixIOQueueAIO::doCheckCompleted(void) {
                 // returned to free_ios_) and caused every subsequent
                 // poll() to re-check the same failed request forever.
                 if (io->clb_) {
-                    io->clb_(io->ctx_, ret, -1);
+                    io->clb_(io->ctx_, 0, -1);
                 }
                 it = ios_in_flight_.erase(it);
                 free_ios_.push_back(io);
@@ -178,6 +178,11 @@ nixlPosixIOQueueAIO::doCheckCompleted(void) {
             // thousands of repeated EBADF errors. Instead, call the
             // callback with an error, remove the io from in-flight, and
             // return it to the free pool.
+            // POSIX requires aio_return() to be called exactly once after
+            // aio_error() reports a non-EINPROGRESS status, to release the
+            // aiocb's internal state.  The return value is discarded since
+            // the operation already failed.
+            aio_return(&io->aio_);
             if (io->clb_) {
                 io->clb_(io->ctx_, 0, -1);
             }
