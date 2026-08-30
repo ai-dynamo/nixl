@@ -116,10 +116,10 @@ echo "==== Running vLLM Elastic EP test ===="
 (
     # Avoid SPCx loading HPC-X UCX 1.21; NIXL EP requires UCX >=1.22.
     unset NCCL_NET_PLUGIN
-    # Auto-select local transports and exclude RDMA-only rc_gda.
     unset UCX_NET_DEVICES
-    export UCX_TLS=^rc_gda
-    # Avoid FlashInfer JIT against incompatible CUDA headers.
+    # TODO: remove this override when vLLM updates FlashInfer with
+    # https://github.com/flashinfer-ai/flashinfer/pull/4377.
+    # FlashInfer 0.6.16.post3's default MLA backend fails to JIT on CUDA 13.3.
     export VLLM_ATTENTION_BACKEND=CUTLASS_MLA
     export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
     VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
