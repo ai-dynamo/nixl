@@ -31,6 +31,7 @@
 #include <cuda_runtime.h>
 #endif
 #include <fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <filesystem>
 #include <gflags/gflags.h>
@@ -284,6 +285,9 @@ std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 std::string xferBenchConfig::dax_device = "";
+bool xferBenchConfig::odm_use_get_iova = false;
+uint64_t xferBenchConfig::odm_dpa_base = 0;
+std::string xferBenchConfig::odm_device_path = "/dev/odm0";
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -891,6 +895,15 @@ parseGusliDeviceList(const std::string &device_list,
     return devices;
 }
 
+struct mrvl_dma_xfer_commands {
+    uint64_t host_va_addr;
+    uint64_t target_iova_addr;
+    uint32_t tranfer_size;
+    uint32_t tranfer_type;
+    uint16_t qid;
+};
+#define MRVL_CXL_DMA_READ_COMMAND _IOWR(0xCE, 3, struct mrvl_dma_xfer_commands)
+
 bool
 xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     int i = 0, j = 0;
@@ -916,8 +929,8 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
     void *odm_dax_map = nullptr;
     size_t odm_dax_map_size = 0;
     int odm_dax_fd = -1;
-    uint64_t odm_dpa_base = ~0ULL;
-    if (odm_write) {
+    uint64_t odm_dpa_base = xferBenchConfig::odm_dpa_base;
+    if (odm_write && !xferBenchConfig::odm_use_get_iova) {
         for (const auto &l : iov_lists)
             for (const auto &v : l)
                 odm_dpa_base = std::min<uint64_t>(odm_dpa_base, v.addr);
@@ -955,12 +968,37 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 
             len = iov.len;
 
-            // ODM odm-engine WRITE: point at the BAR2 DAX alias of this DPA range.
+            // ODM odm-engine WRITE: point at the BAR2 DAX alias of this DPA range,
+            // or read back via host ioctl when using GET_IOVA allocations.
             if (odm_write) {
-                if (odm_dax_map)
+                if (odm_dax_map) {
                     addr = static_cast<char *>(odm_dax_map) + (iov.addr - odm_dpa_base);
-                else
-                    addr = nullptr;  // mapping unavailable -> reported as failure below
+                } else if (xferBenchConfig::odm_use_get_iova) {
+                    if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
+                        std::cerr << "ODM: consistency: host buffer alloc failed" << std::endl;
+                        exit(EXIT_FAILURE);
+                    }
+                    is_allocated = true;
+                    struct mrvl_dma_xfer_commands cmd {};
+                    cmd.host_va_addr = reinterpret_cast<uint64_t>(addr);
+                    cmd.target_iova_addr = iov.addr;
+                    cmd.tranfer_size = static_cast<uint32_t>(len);
+                    cmd.tranfer_type = 0; /* ODM_XTYPE_OUTBOUND */
+                    cmd.qid = 0;
+                    int odm_fd = open(xferBenchConfig::odm_device_path.c_str(), O_RDWR);
+                    if (odm_fd < 0 || ioctl(odm_fd, MRVL_CXL_DMA_READ_COMMAND, &cmd) < 0) {
+                        std::cerr << "ODM: consistency: host READ ioctl from IOVA 0x"
+                                  << std::hex << iov.addr << std::dec << " failed"
+                                  << std::endl;
+                        if (odm_fd >= 0)
+                            close(odm_fd);
+                        addr = nullptr;
+                    } else if (odm_fd >= 0) {
+                        close(odm_fd);
+                    }
+                } else {
+                    addr = nullptr;
+                }
             } else
             // ODM is grouped under isStorageBackend() for transport setup, but
             // its consistency target is memory (VRAM for reads, the host-mmap'd
@@ -1146,9 +1184,8 @@ xferBenchUtils::validateTransfer(bool is_initiator,
         if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
             return checkConsistency(local_lists);
         } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
-            if (xferBenchConfig::isStorageBackend()) {
-                // ODM WRITE targets Iliad device memory (ODM_MEM_SEG / remote
-                // side); checkConsistency reads it back via the BAR2 DAX alias.
+            if (xferBenchConfig::isStorageBackend() ||
+                xferBenchConfig::backend == XFERBENCH_BACKEND_ODM) {
                 return checkConsistency(remote_lists);
             }
         }

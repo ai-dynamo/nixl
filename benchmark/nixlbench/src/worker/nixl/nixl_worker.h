@@ -50,6 +50,13 @@ class xferBenchNixlWorker: public xferBenchWorker {
          * (no hardcoded --odm_addr). */
         std::string odm_device_path_;
         uint64_t odm_base_addr_ = 0;
+        int odm_iova_fd_ = -1;
+        uint32_t odm_iova_size_ = 0;
+        bool odm_use_get_iova_ = false;
+        uint64_t odm_dpa_base_ = 0;
+
+        void freeOdmIova();
+        void seedOdmViaHostWrite(size_t total_size, uint8_t pattern);
 
     public:
         explicit xferBenchNixlWorker(const std::vector<std::string> &devices);

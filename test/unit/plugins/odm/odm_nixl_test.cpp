@@ -27,8 +27,6 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#include <linux/cxl_mem.h>
-
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -40,76 +38,80 @@
 #include "nixl_descriptors.h"
 #include "test_utils.h"
 
+/* Mailbox-allocated device IOVA (see mrvl_cxl_core_char_dev.h). CXL IDENTIFY
+ * reports the volatile DPA base (e.g. 0x800000000) for BAR2/DAX paths; DMA via
+ * /dev/odm0 requires an address from GET_IOVA, not the IDENTIFY capacity field. */
+struct mrvl_dma_iova_commands {
+    uint64_t target_iova_addr;
+    uint32_t target_iova_size;
+};
+#define MRVL_CXL_GET_IOVA_COMMAND _IOWR(0xCE, 5, struct mrvl_dma_iova_commands)
+#define MRVL_CXL_FREE_IOVA_COMMAND _IOWR(0xCE, 6, struct mrvl_dma_iova_commands)
+
 namespace {
 
 constexpr const char* kAgentName = "ODMNixlTestAgent";
-constexpr uint64_t kDefaultOdmAddr = 0x800000000ULL;
 constexpr size_t kDefaultTransferSize = 65536;
 constexpr unsigned char kTestPattern = 0x33;
-constexpr uint64_t kCxlCapUnitBytes = 256ULL * 1024 * 1024;
-constexpr size_t kCxlIdentifyPayloadSize = 0x43;
-constexpr size_t kCxlIdentifyTotalCapOffset = 0x10;
-constexpr size_t kCxlIdentifyPersistentCapOffset = 0x20;
-
 std::string devicePath(const std::string& dev_name) {
     return (!dev_name.empty() && dev_name[0] == '/') ? dev_name : ("/dev/" + dev_name);
 }
 
-uint64_t readCxlCapacityFieldBytes(const unsigned char* id, size_t offset) {
-    uint64_t units = 0;
-    for (int i = 7; i >= 0; --i) {
-        units = (units << 8) | id[offset + i];
-    }
-    return units * kCxlCapUnitBytes;
-}
+struct OdmIovaAlloc {
+    int device_fd = -1;
+    uint64_t addr = 0;
+    uint32_t size = 0;
+};
 
-uint64_t discoverOdmBaseAddr(const std::string& dev_name) {
+bool allocOdmIova(const std::string& dev_name, size_t transfer_size, OdmIovaAlloc& out) {
+    out = {};
     if (const char* env = std::getenv("ODM_ADDR")) {
         const uint64_t v = std::strtoull(env, nullptr, 0);
         if (v != 0) {
-            std::cout << "ODM: using base 0x" << std::hex << v << std::dec
-                      << " from ODM_ADDR" << std::endl;
-            return v;
+            out.addr = v;
+            out.size = static_cast<uint32_t>(transfer_size);
+            std::cout << "ODM: using IOVA 0x" << std::hex << out.addr << std::dec
+                      << " from ODM_ADDR (no GET_IOVA alloc)" << std::endl;
+            return true;
         }
     }
 
     const std::string path = devicePath(dev_name);
-    const int fd = open(path.c_str(), O_RDWR);
-    if (fd < 0) {
+    out.device_fd = open(path.c_str(), O_RDWR);
+    if (out.device_fd < 0) {
         std::cerr << "ODM: open(" << path << ") failed: " << std::strerror(errno)
                   << std::endl;
-        return kDefaultOdmAddr;
+        return false;
     }
 
-    unsigned char id[kCxlIdentifyPayloadSize];
-    std::memset(id, 0, sizeof(id));
-    struct cxl_send_command sc;
-    std::memset(&sc, 0, sizeof(sc));
-    sc.id = CXL_MEM_COMMAND_ID_IDENTIFY;
-    sc.out.size = sizeof(id);
-    sc.out.payload = reinterpret_cast<uint64_t>(id);
-
-    const int rc = ioctl(fd, CXL_MEM_SEND_COMMAND, &sc);
-    close(fd);
-    if (rc < 0 || sc.retval != 0) {
-        std::cerr << "ODM: CXL IDENTIFY on " << path << " failed; using default base 0x"
-                  << std::hex << kDefaultOdmAddr << std::dec << std::endl;
-        return kDefaultOdmAddr;
+    struct mrvl_dma_iova_commands cmd {};
+    cmd.target_iova_size = static_cast<uint32_t>(transfer_size);
+    if (ioctl(out.device_fd, MRVL_CXL_GET_IOVA_COMMAND, &cmd) < 0) {
+        std::cerr << "ODM: GET_IOVA on " << path << " failed: " << std::strerror(errno)
+                  << std::endl;
+        close(out.device_fd);
+        out.device_fd = -1;
+        return false;
     }
 
-    const uint64_t total = readCxlCapacityFieldBytes(id, kCxlIdentifyTotalCapOffset);
-    const uint64_t persistent =
-        readCxlCapacityFieldBytes(id, kCxlIdentifyPersistentCapOffset);
-    const uint64_t base = (persistent > 0) ? persistent : total;
-    if (base == 0) {
-        std::cerr << "ODM: CXL IDENTIFY returned zero capacity; using default base 0x"
-                  << std::hex << kDefaultOdmAddr << std::dec << std::endl;
-        return kDefaultOdmAddr;
-    }
+    out.addr = cmd.target_iova_addr;
+    out.size = cmd.target_iova_size;
+    std::cout << "ODM: allocated IOVA 0x" << std::hex << out.addr << std::dec << " (size "
+              << out.size << ") via GET_IOVA on " << path << std::endl;
+    return true;
+}
 
-    std::cout << "ODM: discovered base 0x" << std::hex << base << std::dec << " from "
-              << path << " IDENTIFY" << std::endl;
-    return base;
+void freeOdmIova(OdmIovaAlloc& alloc) {
+    if (alloc.device_fd < 0 || alloc.addr == 0)
+        return;
+    struct mrvl_dma_iova_commands cmd {};
+    cmd.target_iova_addr = alloc.addr;
+    cmd.target_iova_size = alloc.size;
+    if (ioctl(alloc.device_fd, MRVL_CXL_FREE_IOVA_COMMAND, &cmd) < 0) {
+        std::cerr << "ODM: FREE_IOVA failed: " << std::strerror(errno) << std::endl;
+    }
+    close(alloc.device_fd);
+    alloc = {};
 }
 
 void fillPattern(void* buf, size_t len, unsigned char pattern) {
@@ -136,9 +138,10 @@ void printUsage(const char* prog) {
         << "  --qid ID            ODM queue id (default: 0)\n"
         << "  --qid-start ID      ODM queue range start (default: --qid)\n"
         << "  --qid-end ID        ODM queue range end (default: --qid)\n"
-        << "  --odm-addr ADDR     ODM target IOVA (default: CXL IDENTIFY / ODM_ADDR)\n"
+        << "  --odm-addr ADDR     ODM target IOVA (default: GET_IOVA / ODM_ADDR)\n"
         << "  --size BYTES        Transfer size (default: " << kDefaultTransferSize
         << ")\n"
+        << "  --pattern BYTE      Fill/verify byte pattern (default: 0x33)\n"
         << "  --help              Show this help\n"
         << "\n"
         << "Runs a VRAM -> ODM write followed by an ODM -> VRAM read and validates\n"
@@ -161,12 +164,14 @@ nixl_status_t waitForXfer(nixlAgent& agent, nixlXferReqH* req) {
 
 int main(int argc, char** argv) {
     bool odm_addr_set = false;
+    OdmIovaAlloc odm_iova {};
     std::string dev_name = "odm0";
     std::string qid_str = "0";
     std::string qid_start_str;
     std::string qid_end_str;
     uint64_t odm_addr = 0;
     size_t transfer_size = kDefaultTransferSize;
+    unsigned char test_pattern = kTestPattern;
 
     static struct option long_opts[] = {
         {"device", required_argument, nullptr, 'D'},
@@ -175,12 +180,13 @@ int main(int argc, char** argv) {
         {"qid-end", required_argument, nullptr, 'R'},
         {"odm-addr", required_argument, nullptr, 'a'},
         {"size", required_argument, nullptr, 's'},
+        {"pattern", required_argument, nullptr, 'p'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0},
     };
 
     int opt = 0;
-    while ((opt = getopt_long(argc, argv, "D:q:Q:R:a:s:h", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "D:q:Q:R:a:s:p:h", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'D':
             dev_name = optarg;
@@ -217,6 +223,17 @@ int main(int argc, char** argv) {
             transfer_size = static_cast<size_t>(parsed);
             break;
         }
+        case 'p': {
+            char* end = nullptr;
+            errno = 0;
+            const unsigned long long parsed = std::strtoull(optarg, &end, 0);
+            if (errno != 0 || end == optarg || *end != '\0' || parsed > 0xFF) {
+                std::cerr << "Invalid --pattern value: " << optarg << std::endl;
+                return 1;
+            }
+            test_pattern = static_cast<unsigned char>(parsed);
+            break;
+        }
         case 'h':
             printUsage(argv[0]);
             return 0;
@@ -249,7 +266,10 @@ int main(int argc, char** argv) {
     }
 
     if (!odm_addr_set) {
-        odm_addr = discoverOdmBaseAddr(dev_name);
+        if (!allocOdmIova(dev_name, transfer_size, odm_iova)) {
+            return 1;
+        }
+        odm_addr = odm_iova.addr;
     }
 
     CUresult cu_res = cuInit(0);
@@ -295,7 +315,9 @@ int main(int argc, char** argv) {
         std::cerr << "Host allocation failed" << std::endl;
         return 1;
     }
-    fillPattern(host_buf, transfer_size, kTestPattern);
+    std::cout << "Using test pattern 0x" << std::hex
+              << static_cast<unsigned>(test_pattern) << std::dec << std::endl;
+    fillPattern(host_buf, transfer_size, test_pattern);
 
     cudaError_t cuerr = cudaMalloc(&gpu_buf, transfer_size);
     if (cuerr != cudaSuccess) {
@@ -380,7 +402,7 @@ int main(int argc, char** argv) {
         result = 1;
         goto cleanup;
     }
-    if (!validatePattern(host_buf, transfer_size, kTestPattern)) {
+    if (!validatePattern(host_buf, transfer_size, test_pattern)) {
         std::cerr << "ODM VRAM round-trip validation FAILED" << std::endl;
         result = 1;
     } else {
@@ -388,6 +410,7 @@ int main(int argc, char** argv) {
     }
 
 cleanup:
+    freeOdmIova(odm_iova);
     if (write_req != nullptr) {
         agent.releaseXferReq(write_req);
     }

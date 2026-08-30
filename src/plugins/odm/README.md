@@ -201,25 +201,21 @@ nixlbench built, `NIXL_PLUGIN_DIR` / `LD_LIBRARY_PATH` / `B` exported).
 Two things that previously had to be passed on the command line are now handled
 automatically for the `ODM` backend:
 
-- **ODM base address (device DPA).** nixlbench reads the device's **CXL
-  capacity** via the standard `IDENTIFY` mailbox command and uses it as the ODM
-  base: on this hardware the Iliad volatile DRAM window starts at DPA
-  `= total_capacity` (e.g. 32 GiB → `0x800000000`). Discovery tries
-  `/dev/odm0` first; in **shared_cxl** mode (PCI bound to `cxl_pci`) the ODM
-  char device defers mailbox ioctls to the kernel, so nixlbench automatically
-  retries on `/dev/cxl/mem0`. This is the address the ODM DMA engine uses as
-  `target_iova_addr` — **not** the PCI BAR2 host-physical address from `lspci`
-  (that is the host/DAX window into the same DRAM and fails ODM data
-  verification). The old `--odm_addr` flag has been **removed**; override with
-  the `ODM_ADDR` env var if needed.
+- **ODM DMA target (IOVA).** nixlbench allocates a mailbox IOVA via
+  `MRVL_CXL_GET_IOVA_COMMAND` on `/dev/odm0` and uses that as
+  `target_iova_addr` for DMA. CXL **IDENTIFY** still reports the volatile DPA
+  base (e.g. 32 GiB → `0x800000000`) for the BAR2/DAX host alias only — it is
+  **not** a valid DMA target on `/dev/odm0`. Override with the `ODM_ADDR` env
+  var if needed. The old `--odm_addr` flag has been **removed**.
 - **ODM queue range.** Both directions are hardcoded to spray across queues
   **0..7**, so `--odm_qid_start/--odm_qid_end` are not needed.
 
 The startup banner shows what was detected, e.g.:
 
 ```
-ODM backend: dma_device=odm0 qid=0 qid_range=0..7 ... addr=auto(CXL IDENTIFY)
-ODM: base 0x800000000 (= CXL total_capacity 32 GiB, from /dev/cxl/mem0 IDENTIFY)
+ODM backend: dma_device=odm0 qid=0 qid_range=0..7 ... addr=auto(GET_IOVA)
+ODM: allocated IOVA 0xfffe0000 size 4096 via GET_IOVA on /dev/odm0
+     (IDENTIFY DPA base 0x800000000 used for DAX alias only)
 ```
 
 The kernel driver also logs the same value at load (`dmesg | grep odm_addr`):
@@ -243,8 +239,8 @@ $B --backend ODM --initiator_seg_type VRAM --op_type READ \
    --num_iter 100 --warmup_iter 20 --num_threads 1
 ```
 
-- The ODM device base address (device DPA) is read automatically from the CXL
-  `IDENTIFY` capacity (see above); there is no `--odm_addr` flag.
+- The ODM DMA IOVA is allocated automatically via `GET_IOVA` (see above); there
+  is no `--odm_addr` flag.
 - Both directions automatically spray across ODM queues **0..7** (the
   plugin splits each transfer across all of them), so a single caller thread
   saturates PCIe (for READ; WRITE is GPU-read-completion bound). There is no need
@@ -446,10 +442,10 @@ Measured large-block WRITE with ACS redirect disabled (same sweep, batch 64):
 | `--op_type [READ,WRITE]` | `READ` | `READ` = Iliad → VRAM (ODM writes VRAM, ~50.9 GB/s); `WRITE` = VRAM → Iliad (ODM reads VRAM, ~20 GB/s). Both over ODM/dma-buf. | Pick the direction to measure. |
 | `--dax_device /dev/daxX.Y` | `/dev/dax0.0` | BAR2 devdax window, used **only** by `--check_consistency` (seed/read-back of Iliad DRAM via the alias). | Consistency runs only. |
 | `--device_list odm0` | `all`→`odm0` | ODM char device (bare name resolves under `/dev`, or absolute path). | Non-default ODM device node. |
-| `ODM_ADDR=0x...` (env) | auto (CXL IDENTIFY) | Override the auto-discovered ODM device DPA base. | Only if auto-discovery is wrong or for a specific region. |
+| `ODM_ADDR=0x...` (env) | auto (`GET_IOVA`) | Override the mailbox-allocated DMA IOVA (skips `GET_IOVA`). | Only for fixed-address testing. |
 
-> **Removed from nixlbench CLI:** `--odm_addr`. The ODM base is auto-discovered
-> from CXL capacity and the spray is fixed at queues **0..7**.
+> **Removed from nixlbench CLI:** `--odm_addr`. The DMA IOVA comes from
+> `GET_IOVA` on `/dev/odm0` and the spray is fixed at queues **0..7**.
 
 #### Kernel module parameters (dma-buf FD path)
 
@@ -468,7 +464,7 @@ Measured large-block WRITE with ACS redirect disabled (same sweep, batch 64):
 | `--total_buffer_size N` | `8589934592` (8 GiB) | Size of the registered working set (VRAM + ODM/BAR2). Does **not** by itself set how much is moved per transfer. | Match to the region under test (e.g. `64 GiB` for a full-BAR2 sweep); must be ≤ BAR2 size. |
 | `--num_iter N` / `--warmup_iter N` | `1008` / `112` | Measured / warmup iterations (auto-reduced for large blocks via `--large_blk_iter_ftr`). | Lower (e.g. `--num_iter 4`) for quick correctness runs; default for stable bandwidth. |
 | `--num_threads N` | `1` | Caller threads. ODM already saturates PCIe from **one** thread via the internal 8-queue pool, so this is usually `1`. | Leave `1`; raise only to test multi-thread submission. |
-| `--check_consistency [0,1]` | `0` | Byte-verify the transfer. READ auto-seeds the ODM source (via BAR2 DAX) with `0xaa` then verifies VRAM; WRITE verifies the target (`0xbb`) via the BAR2 DAX alias. **Needs `sudo`** (mmaps root-only `/dev/dax0.0`). | Data-correctness tests (see "Single-command consistency check"). |
+| `--check_consistency [0,1]` | `0` | Byte-verify the transfer. With `GET_IOVA`, READ seeds via host WRITE ioctl and WRITE verifies via host READ ioctl; without GET_IOVA, BAR2 DAX is used instead (**needs `sudo`** for `/dev/dax0.0`). | Data-correctness tests (see "Single-command consistency check"). |
 | `--check_value BYTE` | `0` (use default) | Override the expected byte; also makes the READ path **skip its re-seed** so it reads back pre-existing data. | Round trips, e.g. `--check_value 0xbb` to read back data a prior ODM write left in Iliad. |
 
 `NIXL_LOG_LEVEL=DEBUG` (env) prints per-transfer routing and dma-buf export;

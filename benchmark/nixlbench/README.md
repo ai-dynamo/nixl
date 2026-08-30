@@ -730,7 +730,7 @@ the ODM DMA controller with GPU VRAM exported as a dma-buf. Build NIXL with
            --device_list odm0 \
            --op_type WRITE
 
-# Consistency checking seeds device DRAM through the BAR2 DAX window
+# Consistency checking (seeds/verifies device memory via host ODM ioctls on GET_IOVA)
 ./nixlbench --backend ODM \
            --initiator_seg_type VRAM \
            --target_seg_type VRAM \
@@ -741,9 +741,12 @@ the ODM DMA controller with GPU VRAM exported as a dma-buf. Build NIXL with
 
 **ODM-specific notes:**
 
-- The ODM device base address is discovered from CXL IDENTIFY or `$ODM_ADDR`.
+- DMA target addresses come from the driver's `GET_IOVA` mailbox allocation on
+  `/dev/odm0` (override with `$ODM_ADDR` if needed). CXL IDENTIFY reports the
+  volatile DPA base used by the BAR2 DAX window (`--dax_device`), not the DMA IOVA.
 - Queue range defaults to `0..7` in nixlbench (configurable via backend params).
-- `--dax_device` is used only for consistency seeding/read-back, not the data path.
+- With GET_IOVA, `--check_consistency` seeds and verifies through host WRITE/READ
+  ioctls; `--dax_device` is optional and only applies when not using GET_IOVA.
 
 ### Worker Types
 

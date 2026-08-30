@@ -198,6 +198,11 @@ public:
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
     static std::string dax_device;
+    /* ODM: true when device IOVA comes from GET_IOVA (mailbox alloc) rather than
+     * the CXL IDENTIFY DPA base used with the BAR2 DAX consistency window. */
+    static bool odm_use_get_iova;
+    static uint64_t odm_dpa_base;
+    static std::string odm_device_path;
 
     static int
     parseConfig(int argc, char *argv[]);
