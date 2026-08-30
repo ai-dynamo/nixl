@@ -116,9 +116,7 @@ echo "==== Running vLLM Elastic EP test ===="
 (
     # Avoid SPCx loading HPC-X UCX 1.21; NIXL EP requires UCX >=1.22.
     unset NCCL_NET_PLUGIN
-    # Auto-select local transports and exclude RDMA-only rc_gda.
     unset UCX_NET_DEVICES
-    export UCX_TLS=^rc_gda
     # Avoid FlashInfer JIT against incompatible CUDA headers.
     export VLLM_ATTENTION_BACKEND=CUTLASS_MLA
     export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
