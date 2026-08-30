@@ -37,7 +37,9 @@ endif
 
 if 'Mooncake' in static_plugins
     mooncake_backend_lib = static_library('Mooncake',
-               'mooncake_backend.cpp', 'mooncake_backend.h', 'mooncake_plugin.cpp',
+               'mooncake_backend.cpp', 'mooncake_backend_tent.cpp',
+               'mooncake_backend.h', 'mooncake_backend_internal.h',
+               'mooncake_plugin.cpp',
                dependencies: [nixl_infra, nixl_common_dep, serdes_interface, cuda_dep] + mooncake_deps,
                include_directories: nixl_inc_dirs,
                install: false,
@@ -45,7 +47,9 @@ if 'Mooncake' in static_plugins
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
     mooncake_backend_lib = shared_library('Mooncake',
-               'mooncake_backend.cpp', 'mooncake_backend.h', 'mooncake_plugin.cpp',
+               'mooncake_backend.cpp', 'mooncake_backend_tent.cpp',
+               'mooncake_backend.h', 'mooncake_backend_internal.h',
+               'mooncake_plugin.cpp',
                dependencies: [nixl_infra, nixl_common_dep, serdes_interface, cuda_dep] + mooncake_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
@@ -63,4 +67,8 @@ else
     endif
 endif
 
-mooncake_backend_interface = declare_dependency(link_with: mooncake_backend_lib)
+# A static plugin carries no link_args of its own, so --no-as-needed has to ride
+# the exported dependency to reach the libnixl link line. Meson emits dependency
+# link_args ahead of the libraries they apply to, which is where it has to sit.
+mooncake_backend_interface = declare_dependency(link_with: mooncake_backend_lib,
+                                                link_args: link_flags)

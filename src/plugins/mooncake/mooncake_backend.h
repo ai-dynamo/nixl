@@ -123,7 +123,7 @@ private:
     // Which Mooncake engine the backend drives. Classic is the default and
     // keeps the original code path unchanged; Tent selects the next-gen
     // engine through its native C API (tent_*).
-    enum class Mode { Classic, Tent };
+    enum class mode { CLASSIC, TENT };
 
     struct AgentInfo {
         // Classic segment ids are int32_t, TENT segment handles are uint64_t;
@@ -155,7 +155,7 @@ private:
     nixl_status_t
     releaseReqHTent(nixlMooncakeBackendReqH *priv) const;
 
-    Mode mode_ = Mode::Classic;
+    mode mode_ = mode::CLASSIC;
     // Sentinel for "no batch allocated": the classic engine reports failure as
     // INVALID_BATCH (UINT64_MAX), TENT as 0.
     uint64_t invalid_batch_ = INVALID_BATCH;
