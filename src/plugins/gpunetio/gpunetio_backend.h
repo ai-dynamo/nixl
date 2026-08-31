@@ -192,7 +192,7 @@ private:
     class nixlDocaBckndReq : public nixlBackendReqH {
     private:
     public:
-        enum class CompletionState : uint8_t { IN_PROGRESS, COMPLETING, COMPLETE };
+        enum class completion_state : uint8_t { IN_PROGRESS, COMPLETING, COMPLETE };
 
         cudaStream_t stream;
         uint32_t devId;
@@ -200,12 +200,15 @@ private:
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;
-        std::atomic<CompletionState> completionState{CompletionState::IN_PROGRESS};
+        std::atomic<completion_state> completionState{completion_state::IN_PROGRESS};
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
         ~nixlDocaBckndReq() {}
     };
+
+    void
+    retireRequest(nixlDocaBckndReq *request) const;
 
     nixl_status_t
     progressThreadStart();
