@@ -382,10 +382,21 @@ nixlDocaEngine::~nixlDocaEngine() {
         nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
     }
 
-    doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
-    doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
-    doca_gpu_mem_free(gdevs[0].second, last_rsvd_flags);
-    doca_gpu_mem_free(gdevs[0].second, last_posted_flags);
+    bool qps_closed = true;
+    for (auto &qp : qpMap) {
+        const bool data_closed = qp.second->qp_data->close();
+        const bool notif_closed = qp.second->qp_notif->close();
+        qps_closed = data_closed && notif_closed && qps_closed;
+    }
+    if (!qps_closed) {
+        NIXL_ERROR << "GPUNETIO QP unexport failed; retaining dependent resources";
+        return;
+    }
+
+    for (auto &qp : qpMap) {
+        delete qp.second;
+    }
+    qpMap.clear();
 
     NIXL_DEBUG << "Before nixlDocaDestroyNotif ";
     for (auto notif : notifMap) {
@@ -393,17 +404,14 @@ nixlDocaEngine::~nixlDocaEngine() {
     }
     notifMap.clear();
 
+    doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
+    doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
+    doca_gpu_mem_free(gdevs[0].second, last_rsvd_flags);
+    doca_gpu_mem_free(gdevs[0].second, last_posted_flags);
     doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
     doca_gpu_mem_free(gdevs[0].second, completion_list_gpu);
-
-    NIXL_DEBUG << "Before qpMap.clear ";
-
-    for (auto &qp : qpMap) {
-        delete qp.second;
-    }
-    qpMap.clear();
 
     result = doca_gpu_destroy(gdevs[0].second);
     if (result != DOCA_SUCCESS) {

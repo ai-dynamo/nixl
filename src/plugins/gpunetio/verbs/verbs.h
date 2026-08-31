@@ -94,6 +94,13 @@ public:
 
     ~qp();
 
+    /**
+     * @brief Unexport the GPU QP and release its backing resources.
+     * @return true when teardown completed; false when the exported QP must remain alive.
+     */
+    bool
+    close() noexcept;
+
     [[nodiscard]] doca_verbs_qp *
     get_qp() const {
         return qp_verbs;

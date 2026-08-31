@@ -347,17 +347,29 @@ qp::qp(doca_gpu *gpu_dev_,
 }
 
 qp::~qp() {
-    doca_error_t status;
+    if (!close()) {
+        // Keep CQ dependencies alive when DOCA still owns the exported QP.
+        cq_rq.release();
+        cq_sq.release();
+    }
+}
 
+bool
+qp::close() noexcept {
     if (qp_gverbs != nullptr) {
-        status = doca_gpu_verbs_unexport_qp(gpu_dev, qp_gverbs);
+        const doca_error_t status = doca_gpu_verbs_unexport_qp(gpu_dev, qp_gverbs);
         if (status != DOCA_SUCCESS) {
-            NIXL_ERROR << "Failed to destroy doca gpu thread argument cq memory";
+            NIXL_ERROR << "Failed to unexport DOCA GPU verbs QP";
+            return false;
         }
         qp_gverbs = nullptr;
+        qp_gdev_verbs = nullptr;
     }
 
     destroyQp();
+    cq_rq.reset();
+    cq_sq.reset();
+    return true;
 }
 
 doca_verbs_qp *
