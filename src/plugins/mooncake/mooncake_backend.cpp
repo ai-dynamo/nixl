@@ -178,6 +178,7 @@ nixlMooncakeEngine::~nixlMooncakeEngine() {
 #ifdef HAVE_MOONCAKE_TENT
     if (mode_ == mode::TENT) {
         if (tent_engine_) {
+            reclaimParkedBatches();
             tent_destroy_engine(tent_engine_);
         }
         return;
@@ -517,6 +518,7 @@ nixlMooncakeEngine::getNotifs(notif_list_t &notif_list) {
     if (notif_list.size() != 0) return NIXL_ERR_INVALID_PARAM;
 #ifdef HAVE_MOONCAKE_TENT
     if (mode_ == mode::TENT) {
+        reclaimParkedBatches();
         tent_notifi_info info;
         info.num_records = 0;
         info.records = nullptr;

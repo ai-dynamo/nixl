@@ -26,9 +26,8 @@
 #include <tent/transfer_engine.h>
 #endif
 
-#include <chrono>
-#include <cstdio>
-#include <thread>
+#include <mutex>
+#include <vector>
 
 #ifdef HAVE_MOONCAKE_TENT
 nixl_status_t
@@ -98,6 +97,7 @@ nixlMooncakeEngine::postXferTent(const nixl_xfer_op_t &,
 #ifdef HAVE_MOONCAKE_TENT
 nixl_status_t
 nixlMooncakeEngine::checkXferTent(nixlMooncakeBackendReqH *priv) const {
+    reclaimParkedBatches();
     tent_status_t status;
     // One aggregated poll instead of a per-task loop: COMPLETED only when every
     // task succeeded, the worst terminal state when all tasks are terminal,
@@ -134,21 +134,24 @@ nixlMooncakeEngine::checkXferTent(nixlMooncakeBackendReqH *) const {
 #ifdef HAVE_MOONCAKE_TENT
 nixl_status_t
 nixlMooncakeEngine::releaseReqHTent(nixlMooncakeBackendReqH *priv) const {
+    reclaimParkedBatches();
     // Idle handle: never posted, or the batch was already reclaimed on
     // completion.
     if (priv->batch_id == kTentInvalidBatch) {
         delete priv;
         return NIXL_SUCCESS;
     }
+    // A failed status query is not evidence that the batch is gone: the C API
+    // folds every getTransferStatus() error into -1, and that call also fails
+    // when the dispatch window cannot be refilled or a transport's own status
+    // query fails - both of which happen to batches that are still running.
+    // Treat it as "not terminal" and let the paths below decide, so an
+    // unreadable status can never free a live batch.
     tent_status_t status;
-    if (tent_overall_status(tent_engine_, priv->batch_id, &status)) {
-        // The engine no longer tracks this batch, so nothing can still be in
-        // flight. Best-effort free and reclaim the handle.
-        tent_free_batch(tent_engine_, priv->batch_id);
-        delete priv;
-        return NIXL_SUCCESS;
+    bool terminal = false;
+    if (tent_overall_status(tent_engine_, priv->batch_id, &status) == 0) {
+        terminal = (status.status != STATUS_WAITING) && (status.status != STATUS_PENDING);
     }
-    bool terminal = (status.status != STATUS_WAITING) && (status.status != STATUS_PENDING);
     if (!terminal && !priv->abort_requested) {
         priv->abort_requested = true;
         // Best-effort cancellation, as the BackendGuide requires: release must
@@ -175,33 +178,71 @@ nixlMooncakeEngine::releaseReqHTent(nixlMooncakeBackendReqH *priv) const {
         // Second release of the same handle. nixlAgent::releaseXferReq() stored
         // the first refusal in the request status, so this call no longer sees
         // NIXL_IN_PROG: it skips the cancellation path and deletes the handle,
-        // and ~nixlXferReqH() discards whatever releaseReqH() returns. Refusing
-        // again would strand the batch in the engine for good. Wait a bounded
-        // time for the cancellation to land, then reclaim it either way -
-        // leaking the batch is the worse of the two outcomes.
-        const auto deadline = std::chrono::steady_clock::now() + kReleaseDrainTimeout;
-        while (!terminal && std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            if (tent_overall_status(tent_engine_, priv->batch_id, &status)) {
-                break;
+        // and ~nixlXferReqH() discards whatever releaseReqH() returns. So this
+        // is the last word on the batch, and neither obvious answer is safe:
+        // freeing it now lets a running transfer write into memory the caller
+        // is about to reuse, and waiting for it here can park the caller for as
+        // long as the fabric takes to exhaust its retries - seconds, not
+        // milliseconds, so no timeout short enough to be acceptable in a
+        // release call is long enough to cover the cases that need it.
+        // Park the batch instead. The handle goes away now, so the caller never
+        // blocks, and reclaimParkedBatches() frees the batch on a later call
+        // once the engine reports it terminal.
+        {
+            std::lock_guard<std::mutex> lock(parked_mutex_);
+            parked_batches_.push_back(priv->batch_id);
+            if (parked_batches_.size() >= kParkedBatchWarnAt) {
+                NIXL_WARN << "Mooncake TENT is holding " << parked_batches_.size()
+                          << " batches that have not settled after cancellation";
             }
-            terminal = (status.status != STATUS_WAITING) && (status.status != STATUS_PENDING);
         }
-        if (!terminal) {
-            NIXL_ERROR << "Mooncake TENT batch " << priv->batch_id
-                       << " did not reach a terminal state within " << kReleaseDrainTimeout.count()
-                       << " ms of cancellation; reclaiming it anyway. Transfers "
-                          "may still be writing into the released buffers.";
-        }
+        priv->batch_id = kTentInvalidBatch;
+        delete priv;
+        return NIXL_SUCCESS;
     }
     tent_free_batch(tent_engine_, priv->batch_id);
     priv->batch_id = kTentInvalidBatch;
     delete priv;
     return NIXL_SUCCESS;
 }
+
+void
+nixlMooncakeEngine::reclaimParkedBatches() const {
+    std::vector<uint64_t> parked;
+    {
+        std::lock_guard<std::mutex> lock(parked_mutex_);
+        if (parked_batches_.empty()) {
+            return;
+        }
+        parked.swap(parked_batches_);
+    }
+    std::vector<uint64_t> unsettled;
+    for (uint64_t batch_id : parked) {
+        tent_status_t status;
+        // Only a status that reads back terminal releases the batch. A query
+        // that fails says nothing (see releaseReqHTent), so the batch stays
+        // parked and is retried on the next sweep; if the status never becomes
+        // readable, tent_destroy_engine() reclaims it at teardown. Querying a
+        // batch the engine has already dropped is safe - it fails the liveness
+        // check and returns an error rather than dereferencing anything.
+        if (tent_overall_status(tent_engine_, batch_id, &status) != 0 ||
+            status.status == STATUS_WAITING || status.status == STATUS_PENDING) {
+            unsettled.push_back(batch_id);
+            continue;
+        }
+        tent_free_batch(tent_engine_, batch_id);
+    }
+    if (!unsettled.empty()) {
+        std::lock_guard<std::mutex> lock(parked_mutex_);
+        parked_batches_.insert(parked_batches_.end(), unsettled.begin(), unsettled.end());
+    }
+}
 #else
 nixl_status_t
 nixlMooncakeEngine::releaseReqHTent(nixlMooncakeBackendReqH *) const {
     return NIXL_ERR_NOT_SUPPORTED;
 }
+
+void
+nixlMooncakeEngine::reclaimParkedBatches() const {}
 #endif

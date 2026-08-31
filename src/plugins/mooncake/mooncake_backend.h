@@ -155,6 +155,12 @@ private:
     nixl_status_t
     releaseReqHTent(nixlMooncakeBackendReqH *priv) const;
 
+    // Frees the batches parked by releaseReqHTent() as soon as the engine
+    // reports them terminal. A no-op while nothing is parked, which is the
+    // common case.
+    void
+    reclaimParkedBatches() const;
+
     mode mode_ = mode::CLASSIC;
     // Sentinel for "no batch allocated": the classic engine reports failure as
     // INVALID_BATCH (UINT64_MAX), TENT as 0.
@@ -165,6 +171,11 @@ private:
     // tent_engine_t, kept as void * so this header stays independent of the
     // TENT headers and of HAVE_MOONCAKE_TENT (see the note above).
     void *tent_engine_ = nullptr;
+    // Batches whose release was asked for while transfers were still running.
+    // Kept under their own lock so the sweep never holds mutex_ across an
+    // engine call.
+    mutable std::mutex parked_mutex_;
+    mutable std::vector<uint64_t> parked_batches_;
     const std::string local_agent_name_;
     std::unordered_map<uint64_t, nixlMooncakeBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, AgentInfo> connected_agents_;

@@ -19,7 +19,6 @@
 
 #include "mooncake_backend.h"
 
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 
@@ -31,10 +30,12 @@ constexpr size_t kMaxRequestCount = 1024;
 // TENT reports batch allocation failure as 0; the classic engine uses
 // INVALID_BATCH (UINT64_MAX).
 constexpr uint64_t kTentInvalidBatch = 0;
-// How long a second releaseReqH() waits for a cancelled batch to reach a
-// terminal state before reclaiming it regardless. The core does not come back
-// a third time, so this is the last chance to free it.
-constexpr std::chrono::milliseconds kReleaseDrainTimeout{100};
+// A parked batch is one whose cancellation has not landed yet, so the queue is
+// short while the fabric is healthy and grows while it is not: a few tens of
+// entries through a bad patch is normal, and the sweep stays a linear pass over
+// that. This threshold is for a queue that is not draining at all, which means
+// cancellation is broken rather than slow.
+constexpr size_t kParkedBatchWarnAt = 256;
 // The TENT C notification record is {char name[256]; char msg[4096]} and the
 // receive path copies with strncpy, silently truncating anything longer. A
 // truncated notification is worse than a rejected one.
