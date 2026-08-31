@@ -94,6 +94,8 @@ public:
           const nixl::ucx::rkey &rkey,
           size_t size,
           nixlUcxReq &req);
+    [[nodiscard]] nixl_status_t
+    atomicAdd(uint64_t value, uint64_t raddr, const nixl::ucx::rkey &rkey, nixlUcxReq &req) const;
     nixl_status_t
     estimateCost(size_t size,
                  std::chrono::microseconds &duration,
