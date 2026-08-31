@@ -1286,6 +1286,9 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     if (operation != NIXL_READ && operation != NIXL_WRITE) {
         return NIXL_ERR_INVALID_PARAM;
     }
+    if (treq->postStatus != NIXL_SUCCESS) {
+        return treq->postStatus;
+    }
 
     treq->postedCount = 0;
     treq->postStatus = NIXL_SUCCESS;
