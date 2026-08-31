@@ -25,8 +25,13 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
+#include "backend_aux.h"
 #include "device/device_ops.h"
+#include "device/proxy/proxy_transport.h"
 
 namespace gtest {
 namespace proxy_mocks {
@@ -202,6 +207,34 @@ namespace proxy_mocks {
         /** Host base to size of every live mapped allocation. */
         std::map<uintptr_t, size_t> mapped_;
     };
+
+    /** The registry stores backend metadata by pointer and never looks inside. */
+    class DummyBackendMD : public nixlBackendMD {
+    public:
+        DummyBackendMD() : nixlBackendMD(false) {}
+    };
+
+    inline nixl_meta_dlist_t
+    makeLocalDlist(uintptr_t addr, size_t len, uint64_t dev_id, nixlBackendMD *md) {
+        nixl_meta_dlist_t dlist(DRAM_SEG);
+        dlist.addDesc(nixlMetaDesc(addr, len, dev_id, md));
+        return dlist;
+    }
+
+    inline nixlRemoteMetaDesc
+    makeRemoteDesc(const std::string &agent,
+                   uintptr_t addr,
+                   size_t len,
+                   uint64_t dev_id,
+                   nixlBackendMD *md) {
+        nixlRemoteMetaDesc desc(agent);
+        desc.addr = addr;
+        desc.len = len;
+        desc.devId = dev_id;
+        desc.metadataP = md;
+        return desc;
+    }
+
 
 } // namespace proxy_mocks
 } // namespace gtest
