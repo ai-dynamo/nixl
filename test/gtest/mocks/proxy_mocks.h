@@ -22,7 +22,9 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -235,6 +237,182 @@ namespace proxy_mocks {
         return desc;
     }
 
+    class MockTransport;
+
+    /**
+     * Records submissions and holds requests until the test completes them. It outlives the
+     * runtimes a test creates; each runtime gets a fresh transport() that reports here.
+     */
+    class MockBackend {
+    public:
+        /** Optional per-test overrides; a set hook replaces the recording behavior. */
+        struct Hooks {
+            std::function<nixl_status_t(const nixl::proxyConfig &)> init;
+            std::function<nixl_status_t(const nixl::proxyBackendSubmission &,
+                                        nixl::proxyBackendRequest &)>
+                submit;
+            std::function<nixl_status_t(uint32_t, uint32_t)> quiesce;
+            std::function<nixl_status_t(const nixl_remote_meta_dlist_t &, std::vector<void *> &)>
+                resolve_direct_ptrs;
+        };
+
+        /** A transport bound to this recorder; set hooks on it before create(). */
+        std::unique_ptr<MockTransport>
+        transport();
+
+        void
+        complete(uint64_t token, nixl_status_t status = NIXL_SUCCESS) {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            entries_.at(token - 1).status = status;
+        }
+
+        /** Also completes requests submitted later, for teardown. */
+        void
+        completeEverything() {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            complete_on_check_ = true;
+        }
+
+        void
+        failNextSubmit(nixl_status_t status) {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            next_submit_status_ = status;
+        }
+
+        size_t
+        submissionCount() const {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            return entries_.size();
+        }
+
+        std::vector<nixl::proxyBackendSubmission>
+        submissions() const {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            std::vector<nixl::proxyBackendSubmission> result;
+            for (const auto &entry : entries_) {
+                result.push_back(entry.submission);
+            }
+            return result;
+        }
+
+        static uint64_t
+        token(size_t index) {
+            return index + 1;
+        }
+
+        size_t
+        quiesceCalls() const {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            return quiesce_calls_;
+        }
+
+        size_t
+        shutdownCalls() const {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            return shutdown_calls_;
+        }
+
+        // The recording behavior behind MockTransport.
+
+        nixl_status_t
+        recordSubmit(const nixl::proxyBackendSubmission &submission,
+                     nixl::proxyBackendRequest &request) {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            entries_.push_back({submission});
+            const auto status = std::exchange(next_submit_status_, NIXL_IN_PROG);
+            request = status == NIXL_IN_PROG ? nixl::proxyBackendRequest{entries_.size()} :
+                                               nixl::proxyBackendRequest{};
+            return status;
+        }
+
+        nixl_status_t
+        check(const nixl::proxyBackendRequest &request) const {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            return complete_on_check_ ? NIXL_SUCCESS : entries_.at(request.token - 1).status;
+        }
+
+        nixl_status_t
+        recordQuiesce() {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            ++quiesce_calls_;
+            return NIXL_SUCCESS;
+        }
+
+        nixl_status_t
+        recordShutdown() {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            ++shutdown_calls_;
+            return NIXL_SUCCESS;
+        }
+
+    private:
+        struct Entry {
+            nixl::proxyBackendSubmission submission;
+            nixl_status_t status = NIXL_IN_PROG;
+        };
+
+        mutable std::mutex mutex_;
+        std::vector<Entry> entries_;
+        nixl_status_t next_submit_status_ = NIXL_IN_PROG;
+        bool complete_on_check_ = false;
+        size_t quiesce_calls_ = 0;
+        size_t shutdown_calls_ = 0;
+    };
+
+    /** Each operation runs its hook when set, else MockBackend's recording behavior. */
+    class MockTransport final : public nixl::proxyTransport {
+    public:
+        explicit MockTransport(MockBackend &backend) : backend_(backend) {}
+
+        MockBackend::Hooks hooks;
+
+        nixl_status_t
+        init(const nixl::proxyConfig &config) override {
+            return hooks.init ? hooks.init(config) : NIXL_SUCCESS;
+        }
+
+        nixl_status_t
+        submit(const nixl::proxyBackendSubmission &submission,
+               nixl::proxyBackendRequest &request) override {
+            return hooks.submit ? hooks.submit(submission, request) :
+                                  backend_.recordSubmit(submission, request);
+        }
+
+        nixl_status_t
+        checkCompletion(uint32_t, uint32_t, const nixl::proxyBackendRequest &request) override {
+            return backend_.check(request);
+        }
+
+        void
+        progress(uint32_t, uint32_t) noexcept override {}
+
+        /** An overriding hook bypasses quiesceCalls(). */
+        nixl_status_t
+        quiesce(uint32_t channel, uint32_t peer) override {
+            return hooks.quiesce ? hooks.quiesce(channel, peer) : backend_.recordQuiesce();
+        }
+
+        nixl_status_t
+        shutdown() override {
+            return backend_.recordShutdown();
+        }
+
+        nixl_status_t
+        resolveDirectPtrs(const nixl_remote_meta_dlist_t &dlist,
+                          std::vector<void *> &direct_ptrs) override {
+            return hooks.resolve_direct_ptrs ?
+                hooks.resolve_direct_ptrs(dlist, direct_ptrs) :
+                nixl::proxyTransport::resolveDirectPtrs(dlist, direct_ptrs);
+        }
+
+    private:
+        MockBackend &backend_;
+    };
+
+    inline std::unique_ptr<MockTransport>
+    MockBackend::transport() {
+        return std::make_unique<MockTransport>(*this);
+    }
 
 } // namespace proxy_mocks
 } // namespace gtest
