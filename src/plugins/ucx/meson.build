@@ -37,7 +37,8 @@ ucx_backend_dependencies = [nixl_common_dep,
                             dl_dep,
                             thread_dep,
                             ucx_dep,
-                            device_utils_interface]
+                            device_utils_interface,
+                            device_proxy_interface]
 
 ucx_backend_include_directories = [nixl_inc_dirs,
                                    utils_inc_dirs]
