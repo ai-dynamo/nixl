@@ -192,16 +192,30 @@ steps:
       # Provenance recorded by Build Wheel (contrib/build-container.sh
       # --build-options-file). Only set properties for values that exist,
       # so an older built ref without this flag just skips them.
+      # Values go into a URL query, where ';' and '|' separate properties and
+      # ',' splits one into a multi-value -- and an image ref carries '/' and
+      # ':'. Percent-encode each value so a property is stored verbatim.
+      urlenc() {
+        local s="$1" out="" c
+        while [ -n "$s" ]; do
+          c="${s%"${s#?}"}"; s="${s#?}"
+          case "$c" in
+            [a-zA-Z0-9.~_-]) out="${out}${c}" ;;
+            *) out="${out}$(printf '%%%02X' "'${c}")" ;;
+          esac
+        done
+        printf '%s' "$out"
+      }
       PROPERTIES=""
       if [ -f build_options.env ]; then
         . ./build_options.env
-        [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
-        [ -n "${UCX_SHA:-}" ] && PROPERTIES+=";UCX_SHA=${UCX_SHA}"
-        [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
+        [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=$(urlenc "${UCX_REF}")"
+        [ -n "${UCX_SHA:-}" ] && PROPERTIES+=";UCX_SHA=$(urlenc "${UCX_SHA}")"
+        [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=$(urlenc "${CUDA_VERSION}")"
         [ "${BUILD_UCX_SPCX_PLUGIN:-}" = "true" ] && [ -n "${UCX_SPCX_PLUGIN_REF:-}" ] \
-          && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
+          && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=$(urlenc "${UCX_SPCX_PLUGIN_REF}")"
         [ "${BUILD_INFINIA:-}" = "true" ] && [ -n "${INFINIA_LIBS_IMAGE:-}" ] \
-          && PROPERTIES+=";INFINIA_LIBS_IMAGE=${INFINIA_LIBS_IMAGE}"
+          && PROPERTIES+=";INFINIA_LIBS_IMAGE=$(urlenc "${INFINIA_LIBS_IMAGE}")"
         PROPERTIES="${PROPERTIES#;}"
       fi
 
