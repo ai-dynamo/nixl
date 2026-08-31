@@ -23,10 +23,9 @@
 #pragma once
 
 #include "cuda_event.hpp"
+#include "cuda_stream.hpp"
 #include "cuda_warn.hpp"
 #include "kernels/exception.cuh"
-
-#include <ATen/cuda/CUDAContext.h>
 
 #include <memory>
 
@@ -35,10 +34,10 @@ namespace nixl_ep {
 class EventHandle {
 public:
     EventHandle() : event{std::make_shared<cuda::Event>()} {
-        event->record(at::cuda::getCurrentCUDAStream());
+        event->record(cuda_stream::get_current());
     }
 
-    explicit EventHandle(const at::cuda::CUDAStream &stream)
+    explicit EventHandle(cudaStream_t stream)
         : event{std::make_shared<cuda::Event>()} {
         event->record(stream);
     }
@@ -47,12 +46,12 @@ public:
 
     void
     current_stream_wait() const {
-        stream_wait(at::cuda::getCurrentCUDAStream());
+        stream_wait(cuda_stream::get_current());
     }
 
     void
-    stream_wait(const at::cuda::CUDAStream &stream) const {
-        CUDA_CHECK(cudaStreamWaitEvent(stream.stream(), event->get(), 0));
+    stream_wait(cudaStream_t stream) const {
+        CUDA_CHECK(cudaStreamWaitEvent(stream, event->get(), 0));
     }
 
 private:
@@ -60,8 +59,8 @@ private:
 };
 
 inline void
-stream_wait(const at::cuda::CUDAStream &stream_0, const at::cuda::CUDAStream &stream_1) {
-    EP_HOST_ASSERT(stream_0.id() != stream_1.id());
+stream_wait(cudaStream_t stream_0, cudaStream_t stream_1) {
+    EP_HOST_ASSERT(stream_0 != stream_1);
     cuda::Event event;
     event.record(stream_1);
     CUDA_CHECK(cudaStreamWaitEvent(stream_0, event.get(), 0));
