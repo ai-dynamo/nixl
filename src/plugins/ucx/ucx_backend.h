@@ -197,6 +197,11 @@ public:
 
     void releaseMemView(nixlMemViewH) const override;
 
+private:
+#ifdef HAVE_NIXL_DEVICE_API
+    /** The device proxy's transport over the shared workers; see ucx_proxy_transport.cpp. */
+    class proxyTransportImpl;
+
     /** Shared by the local and remote prepMemView overloads; kind names which. */
     template<typename DlistT>
     nixl_status_t
@@ -204,6 +209,7 @@ public:
                     nixlMemViewH &mvh,
                     const nixl_opt_b_args_t *opt_args,
                     const char *kind) const;
+#endif
 
 protected:
     using worker_span_t = std::span<const std::unique_ptr<nixlUcxWorker>>;
