@@ -85,6 +85,11 @@ private:
     const std::vector<nixl::ucx::rkey> rkeys_;
 };
 
+namespace nixl {
+class proxyRuntime;
+struct proxyConfig;
+} // namespace nixl
+
 class nixlUcxEngine : public nixlBackendEngine {
 public:
     static std::unique_ptr<nixlUcxEngine>
@@ -201,6 +206,18 @@ private:
     /** The device proxy's transport over the shared workers; see ucx_proxy_transport.cpp. */
     class proxyTransportImpl;
 
+    /**
+     * Create and start the engine-owned proxy runtime. Called as the last
+     * step of create(); worker threads drive the engine's UCX workers, so it
+     * must be fully constructed first.
+     */
+    [[nodiscard]] nixl_status_t
+    setupProxyRuntime(const nixl::proxyConfig &config);
+
+    /** Wrap a backend memview into the device-dispatch handle; cleans up on failure. */
+    [[nodiscard]] nixl_status_t
+    wrapMemView(nixlMemViewH backend_mvh, nixlMemViewH &mvh) const;
+
     /** Shared by the local and remote prepMemView overloads; kind names which. */
     template<typename DlistT>
     nixl_status_t
@@ -311,6 +328,11 @@ private:
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
+
+#ifdef HAVE_NIXL_DEVICE_API
+    /* Engine-owned device proxy (enabled via the device_proxy backend param). */
+    std::unique_ptr<nixl::proxyRuntime> proxyRuntime_;
+#endif
 };
 
 #endif

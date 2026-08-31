@@ -189,6 +189,12 @@ proxyRuntime::unregisterProxyMemView(proxyViewHandle proxy_memview) {
     return memview_registry_->unregister(proxy_memview);
 }
 
+nixl_status_t
+proxyRuntime::discardUnpublishedMemView(proxyViewHandle proxy_memview) {
+    const std::lock_guard lock(control_mutex_);
+    return memview_registry_->unregister(proxy_memview);
+}
+
 void
 proxyRuntime::drainChannels() noexcept {
     if (state_ != state::running) {
