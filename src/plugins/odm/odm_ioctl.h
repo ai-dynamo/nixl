@@ -49,6 +49,28 @@ struct mrvl_dma_xfer_commands_fd {
 #define ODM_XTYPE_OUTBOUND 0 /* device -> host/GPU */
 #define ODM_XTYPE_INBOUND 1 /* host/GPU -> device */
 
+/*
+ * Host-VA and IOVA mailbox ioctls (same layout as kernel
+ * mrvl_cxl_core_char_dev.h). Used by nixlbench consistency checks and tests.
+ */
+struct mrvl_dma_xfer_commands {
+    uint64_t host_va_addr;
+    uint64_t target_iova_addr;
+    uint32_t tranfer_size;
+    uint32_t tranfer_type;
+    uint16_t qid;
+};
+
+struct mrvl_dma_iova_commands {
+    uint64_t target_iova_addr;
+    uint32_t target_iova_size;
+};
+
+#define MRVL_CXL_DMA_READ_COMMAND _IOWR(ODM_IOCTL_MAGIC, 3, struct mrvl_dma_xfer_commands)
+#define MRVL_CXL_DMA_WRITE_COMMAND _IOWR(ODM_IOCTL_MAGIC, 4, struct mrvl_dma_xfer_commands)
+#define MRVL_CXL_GET_IOVA_COMMAND _IOWR(ODM_IOCTL_MAGIC, 5, struct mrvl_dma_iova_commands)
+#define MRVL_CXL_FREE_IOVA_COMMAND _IOWR(ODM_IOCTL_MAGIC, 6, struct mrvl_dma_iova_commands)
+
 /* ODM transfer direction (relative to the GPU). */
 #define ODM_DIR_TO_GPU 0 /* Iliad device -> GPU VRAM (READ_FD)  */
 #define ODM_DIR_FROM_GPU 1 /* GPU VRAM -> Iliad device (WRITE_FD) */

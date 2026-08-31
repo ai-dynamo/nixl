@@ -25,10 +25,12 @@
 #include <linux/cxl_mem.h>
 
 #include <cerrno>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 
+#include "odm_ioctl.h"
 #include "utils/utils.h"
 
 namespace {
@@ -39,23 +41,14 @@ constexpr size_t kCxlIdentifyTotalCapOffset = 0x10;
 constexpr size_t kCxlIdentifyPersistentCapOffset = 0x20;
 constexpr uint64_t kOdmFallbackAddr = 0x800000000ULL;
 
-struct mrvl_dma_xfer_commands {
-    uint64_t host_va_addr;
-    uint64_t target_iova_addr;
-    uint32_t tranfer_size;
-    uint32_t tranfer_type;
-    uint16_t qid;
-};
-
-struct mrvl_dma_iova_commands {
-    uint64_t target_iova_addr;
-    uint32_t target_iova_size;
-};
-
-#define MRVL_CXL_GET_IOVA_COMMAND _IOWR(0xCE, 5, struct mrvl_dma_iova_commands)
-#define MRVL_CXL_FREE_IOVA_COMMAND _IOWR(0xCE, 6, struct mrvl_dma_iova_commands)
-#define MRVL_CXL_DMA_WRITE_COMMAND _IOWR(0xCE, 4, struct mrvl_dma_xfer_commands)
-#define ODM_XTYPE_INBOUND 1
+bool
+odmIoctlSizeOk(size_t size) {
+    if (size > UINT32_MAX) {
+        std::cerr << "ODM: size " << size << " exceeds 32-bit ioctl field limit" << std::endl;
+        return false;
+    }
+    return true;
+}
 
 uint64_t
 readCxlCapacityFieldBytes(const unsigned char *id, size_t offset) {
@@ -146,6 +139,9 @@ State::freeIova() {
 
 void
 State::seedViaHostWrite(size_t total_size, uint8_t pattern) {
+    if (!odmIoctlSizeOk(total_size)) {
+        return;
+    }
     const std::string &dev = device_path_.empty() ? xferBenchConfig::odm_device_path : device_path_;
     void *host = nullptr;
     if (posix_memalign(&host, xferBenchConfig::page_size, total_size) != 0) {
@@ -209,6 +205,13 @@ State::discoverBaseAddr() {
     if (iova_fd_ < 0) {
         std::cerr << "ODM: open(" << odm_dev << ") for GET_IOVA failed: " << strerror(errno)
                   << std::endl;
+        base_addr_ = dpa_base_;
+        xferBenchConfig::odm_use_get_iova = false;
+        return base_addr_;
+    }
+    if (!odmIoctlSizeOk(xferBenchConfig::total_buffer_size)) {
+        close(iova_fd_);
+        iova_fd_ = -1;
         base_addr_ = dpa_base_;
         xferBenchConfig::odm_use_get_iova = false;
         return base_addr_;

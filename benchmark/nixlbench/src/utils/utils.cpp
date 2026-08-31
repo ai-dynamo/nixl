@@ -35,6 +35,7 @@
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
+#include "utils/odm_consistency.h"
 #include "utils/utils.h"
 
 // Define command line parameters
@@ -587,9 +588,13 @@ xferBenchConfig::loadParams(void) {
     }
     check_consistency = NB_ARG(check_consistency);
     check_value = NB_ARG(check_value);
-    if (check_value > 255) check_value = check_value & 0xff;
+    if (check_value > 255) {
+        check_value = check_value & 0xff;
+    }
     fill_value = NB_ARG(fill_value);
-    if (fill_value > 255) fill_value = fill_value & 0xff;
+    if (fill_value > 255) {
+        fill_value = fill_value & 0xff;
+    }
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
     num_target_dev = NB_ARG(num_target_dev);
@@ -671,7 +676,8 @@ xferBenchConfig::loadParams(void) {
     if (!recreate_xfer && XFERBENCH_BACKEND_ODM == backend) {
         std::cout << backend
                   << " backend requires per-iteration request creation (request cannot be "
-                     "re-posted). Setting recreate_xfer to true." << std::endl;
+                     "re-posted). Setting recreate_xfer to true."
+                  << std::endl;
         recreate_xfer = true;
     }
 
@@ -922,7 +928,7 @@ xferBenchConfig::printConfig() {
         }
         if (backend == XFERBENCH_BACKEND_ODM) {
             printOption("ODM base addr", "auto (CXL IDENTIFY) / $ODM_ADDR");
-            printOption("ODM queues", "0..15 (fixed)");
+            printOption("ODM queues", "0..7 (default in nixlbench)");
             printOption("ODM engine", "ODM controller + dma-buf (both directions)");
             printOption("DAX device (--dax_device=/dev/daxX.Y, consistency only)", dax_device);
         }
@@ -956,8 +962,9 @@ xferBenchConfig::printConfig() {
     printOption("Mode (--mode=[SG,MG])", mode);
     printOption("Op type (--op_type=[READ,WRITE])", op_type);
     printOption("Check consistency (--check_consistency=[0,1])", std::to_string(check_consistency));
-    if (check_value >= 0)
+    if (check_value >= 0) {
         printOption("Check value (--check_value=byte)", std::to_string(check_value));
+    }
     printOption("Total buffer size (--total_buffer_size=N)", std::to_string(total_buffer_size));
     printOption("Num initiator dev (--num_initiator_dev=N)", std::to_string(num_initiator_dev));
     printOption("Num target dev (--num_target_dev=N)", std::to_string(num_target_dev));
@@ -1025,7 +1032,6 @@ xferBenchConfig::isObjStorageBackend() {
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 };
-
 
 /**********
  * xferBench Utils
@@ -1174,15 +1180,6 @@ parseGusliDeviceList(const std::string &device_list,
     return devices;
 }
 
-struct mrvl_dma_xfer_commands {
-    uint64_t host_va_addr;
-    uint64_t target_iova_addr;
-    uint32_t tranfer_size;
-    uint32_t tranfer_type;
-    uint16_t qid;
-};
-#define MRVL_CXL_DMA_READ_COMMAND _IOWR(0xCE, 3, struct mrvl_dma_xfer_commands)
-
 bool
 xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     int i = 0, j = 0;
@@ -1197,45 +1194,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
     }
     bool pass_check_consistency = true;
 
-    // ODM odm-engine WRITE: the target is Iliad device memory addressed by ODM
-    // DPA (e.g. 0x800000000), NOT a host pointer — dereferencing it directly
-    // would segfault. The same DRAM is visible to the host through the BAR2 DAX
-    // window (DAX offset 0 aliases the ODM DPA base), so read the target back
-    // there. (Like the GDS/storage path, which reads the device back into host
-    // memory rather than dereferencing a device address.)
-    const bool odm_write = (xferBenchConfig::backend == XFERBENCH_BACKEND_ODM &&
-                                xferBenchConfig::op_type == XFERBENCH_OP_WRITE);
-    void *odm_dax_map = nullptr;
-    size_t odm_dax_map_size = 0;
-    int odm_dax_fd = -1;
-    uint64_t odm_dpa_base = xferBenchConfig::odm_dpa_base;
-    if (odm_write && !xferBenchConfig::odm_use_get_iova) {
-        for (const auto &l : iov_lists)
-            for (const auto &v : l)
-                odm_dpa_base = std::min<uint64_t>(odm_dpa_base, v.addr);
-        uint64_t hi = 0;
-        for (const auto &l : iov_lists)
-            for (const auto &v : l)
-                hi = std::max<uint64_t>(hi, v.addr + v.len);
-        odm_dax_map_size = (hi - odm_dpa_base + (2 << 20) - 1) &
-                           ~static_cast<size_t>((2 << 20) - 1);
-        odm_dax_fd = open(xferBenchConfig::dax_device.c_str(), O_RDWR | O_SYNC);
-        if (odm_dax_fd >= 0) {
-            odm_dax_map = mmap(nullptr, odm_dax_map_size, PROT_READ | PROT_WRITE,
-                               MAP_SHARED, odm_dax_fd, 0);
-            if (odm_dax_map == MAP_FAILED) {
-                std::cerr << "ODM: consistency: mmap(" << xferBenchConfig::dax_device
-                          << ") failed: " << strerror(errno) << std::endl;
-                odm_dax_map = nullptr;
-                close(odm_dax_fd);
-                odm_dax_fd = -1;
-            }
-        } else {
-            std::cerr << "ODM: consistency: open(" << xferBenchConfig::dax_device
-                      << ") failed: " << strerror(errno)
-                      << " (run as root for the DAX window)" << std::endl;
-        }
-    }
+    OdmConsistencyContext odm_ctx(iov_lists);
 
     for (const auto &iov_list : iov_lists) {
         for (const auto &iov : iov_list) {
@@ -1247,45 +1206,11 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 
             len = iov.len;
 
-            // ODM odm-engine WRITE: point at the BAR2 DAX alias of this DPA range,
-            // or read back via host ioctl when using GET_IOVA allocations.
-            if (odm_write) {
-                if (odm_dax_map) {
-                    addr = static_cast<char *>(odm_dax_map) + (iov.addr - odm_dpa_base);
-                } else if (xferBenchConfig::odm_use_get_iova) {
-                    if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
-                        std::cerr << "ODM: consistency: host buffer alloc failed" << std::endl;
-                        exit(EXIT_FAILURE);
-                    }
-                    is_allocated = true;
-                    struct mrvl_dma_xfer_commands cmd {};
-                    cmd.host_va_addr = reinterpret_cast<uint64_t>(addr);
-                    cmd.target_iova_addr = iov.addr;
-                    cmd.tranfer_size = static_cast<uint32_t>(len);
-                    cmd.tranfer_type = 0; /* ODM_XTYPE_OUTBOUND */
-                    cmd.qid = 0;
-                    int odm_fd = open(xferBenchConfig::odm_device_path.c_str(), O_RDWR);
-                    if (odm_fd < 0 || ioctl(odm_fd, MRVL_CXL_DMA_READ_COMMAND, &cmd) < 0) {
-                        std::cerr << "ODM: consistency: host READ ioctl from IOVA 0x"
-                                  << std::hex << iov.addr << std::dec << " failed"
-                                  << std::endl;
-                        if (odm_fd >= 0)
-                            close(odm_fd);
-                        addr = nullptr;
-                    } else if (odm_fd >= 0) {
-                        close(odm_fd);
-                    }
-                } else {
-                    addr = nullptr;
-                }
-            } else
-            // ODM is grouped under isStorageBackend() for transport setup, but
-            // its consistency target is memory (VRAM for reads, the host-mmap'd
-            // BAR2 DAX window for writes), not a seekable storage fd. Route it
-            // through the memory branch below so we read the BAR/VRAM directly.
-            if ((xferBenchConfig::isStorageBackend() &&
-                 xferBenchConfig::backend != XFERBENCH_BACKEND_ODM) ||
-                xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO) {
+            if (odm_ctx.fetchWriteBuffer(iov, &addr, &is_allocated)) {
+                // ODM WRITE consistency buffer prepared (DAX alias or host READ ioctl).
+            } else if ((xferBenchConfig::isStorageBackend() &&
+                        xferBenchConfig::backend != XFERBENCH_BACKEND_ODM) ||
+                       xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO) {
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
                         if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
@@ -1392,8 +1317,9 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
             }
             // Round-trip override: verify against an explicit byte (e.g. an ODM
             // READ of memory a prior CUDA-copy-engine WRITE filled with 0xbb).
-            if (xferBenchConfig::check_value >= 0)
+            if (xferBenchConfig::check_value >= 0) {
                 check_val = static_cast<uint8_t>(xferBenchConfig::check_value);
+            }
             rc = (addr != nullptr) && allBytesAre(addr, len, check_val);
             if (true != rc) {
                 std::cerr << "Consistency check failed for iov " << i << ":" << j << std::endl;
@@ -1406,10 +1332,6 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
             j++;
         }
         i++;
-    }
-    if (odm_dax_map) {
-        munmap(odm_dax_map, odm_dax_map_size);
-        close(odm_dax_fd);
     }
     if (!pass_check_consistency) {
         std::cerr << "Consistency check failed" << std::endl;

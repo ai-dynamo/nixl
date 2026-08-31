@@ -36,18 +36,8 @@
 
 #include "nixl.h"
 #include "nixl_descriptors.h"
+#include "odm_ioctl.h"
 #include "test_utils.h"
-
-/* Mailbox-allocated device IOVA (see mrvl_cxl_core_char_dev.h). CXL IDENTIFY
- * reports the volatile DPA base (e.g. 0x800000000) for BAR2/DAX paths; DMA via
- * /dev/odm0 requires an address from GET_IOVA, not the IDENTIFY capacity field. */
-struct mrvl_dma_iova_commands {
-    uint64_t target_iova_addr;
-    uint32_t target_iova_size;
-};
-
-#define MRVL_CXL_GET_IOVA_COMMAND _IOWR(0xCE, 5, struct mrvl_dma_iova_commands)
-#define MRVL_CXL_FREE_IOVA_COMMAND _IOWR(0xCE, 6, struct mrvl_dma_iova_commands)
 
 namespace {
 
@@ -417,7 +407,6 @@ main(int argc, char **argv) {
     }
 
 cleanup:
-    freeOdmIova(odm_iova);
     if (write_req != nullptr) {
         agent.releaseXferReq(write_req);
     }
@@ -426,6 +415,7 @@ cleanup:
     }
     agent.deregisterMem(vram_list, &extra);
     agent.deregisterMem(odm_list, &extra);
+    freeOdmIova(odm_iova);
     if (gpu_buf != nullptr) {
         cudaFree(gpu_buf);
     }

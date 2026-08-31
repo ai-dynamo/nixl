@@ -160,7 +160,7 @@ etcd_inc = etcd_inc_path
 nixl_inc = nixl_path + '/include'
 nvshmem_inc = nvshmem_inc_path
 
-inc_dir = include_directories('.', './src/', nixl_inc)
+inc_dir = include_directories('.', './src/', nixl_inc, include_directories('../../src/plugins/odm'))
 
 nvshmem_available = false
 if nvshmem_lib_path != ''
@@ -169,7 +169,8 @@ if nvshmem_lib_path != ''
         nvshmem_host_lib = cpp.find_library('nvshmem_host', dirs: [nvshmem_lib_path])
         if nvshmem_lib.found()
             nvshmem_available = true
-            inc_dir = include_directories('.', './src/', nixl_inc, nvshmem_inc)
+            inc_dir = include_directories('.', './src/', nixl_inc, nvshmem_inc,
+                                         include_directories('../../src/plugins/odm'))
             add_project_arguments('-DHAVE_NVSHMEM', language: 'cpp')
             add_project_arguments('-Wno-unused-variable', language: 'cpp')
         endif
