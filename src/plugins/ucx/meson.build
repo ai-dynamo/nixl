@@ -26,6 +26,7 @@ ucx_backend_sources = ['config.cpp',
                        'ucx_sgl.cpp',
                        'ucx_enums.cpp',
                        'ucx_plugin.cpp',
+                       'ucx_proxy_transport.cpp',
                        'ucx_utils.cpp']
 
 # The engine hands out tagged device memory-view handles, which needs the
