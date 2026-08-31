@@ -465,9 +465,8 @@ nixlGdsBatchEngine::checkXfer(nixlBackendReqH *handle) const {
 nixl_status_t
 nixlGdsBatchEngine::releaseReqH(nixlBackendReqH *handle) const {
     auto *gds_handle = static_cast<nixlGdsBatchReqH *>(handle);
-    if (cancelAndReclaimBatches(gds_handle->batch_io_list) != NIXL_SUCCESS) {
-        return NIXL_ERR_BACKEND;
-    }
+    // Preserve the pre-consolidation abort behavior: checked-out batches are
+    // not returned to the pool for reuse. They remain owned by batch_storage_.
     delete gds_handle;
     return NIXL_SUCCESS;
 }
