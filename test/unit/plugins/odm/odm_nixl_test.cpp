@@ -28,6 +28,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <climits>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -59,6 +60,11 @@ struct OdmIovaAlloc {
 bool
 allocOdmIova(const std::string &dev_name, size_t transfer_size, OdmIovaAlloc &out) {
     out = {};
+    if (transfer_size > UINT32_MAX) {
+        std::cerr << "ODM: transfer size " << transfer_size << " exceeds 32-bit ioctl limit"
+                  << std::endl;
+        return false;
+    }
     if (const char *env = std::getenv("ODM_ADDR")) {
         const uint64_t v = std::strtoull(env, nullptr, 0);
         if (v != 0) {
@@ -150,7 +156,14 @@ waitForXfer(nixlAgent &agent, nixlXferReqH *req) {
     if (status < NIXL_SUCCESS) {
         return status;
     }
+    constexpr int kMaxPolls = 1000000;
+    int polls = 0;
     while (status == NIXL_IN_PROG) {
+        if (++polls > kMaxPolls) {
+            std::cerr << "ODM: transfer timed out after " << kMaxPolls << " status polls"
+                      << std::endl;
+            return NIXL_ERR_BACKEND;
+        }
         status = agent.getXferStatus(req);
     }
     cudaDeviceSynchronize();

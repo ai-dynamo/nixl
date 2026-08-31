@@ -28,14 +28,15 @@ OdmConsistencyContext::OdmConsistencyContext(
     if (xferBenchConfig::odm_use_get_iova) {
         return;
     }
-    for (const auto &l : iov_lists) {
-        for (const auto &v : l) {
-            dpa_base = std::min<uint64_t>(dpa_base, v.addr);
-        }
-    }
     uint64_t hi = 0;
     for (const auto &l : iov_lists) {
         for (const auto &v : l) {
+            if (v.addr < dpa_base) {
+                std::cerr << "ODM: consistency: IOV address 0x" << std::hex << v.addr
+                          << " is below configured DPA base 0x" << dpa_base << std::dec
+                          << std::endl;
+                exit(EXIT_FAILURE);
+            }
             hi = std::max<uint64_t>(hi, v.addr + v.len);
         }
     }

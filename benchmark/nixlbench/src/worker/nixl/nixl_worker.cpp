@@ -2286,4 +2286,3 @@ xferBenchNixlWorker::releaseMemView(nixlMemViewH &mvh) {
         mvh = nullptr;
     }
 }
-}

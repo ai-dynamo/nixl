@@ -51,7 +51,7 @@ else
         install_rpath: '$ORIGIN/..')
     if get_option('buildtype') == 'debug'
         run_command('sh', '-c',
-            'echo "ODM=' + odm_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+            'echo "ODM=' + odm_backend_lib.full_path() + '" >> "' + plugin_build_dir + '/pluginlist"',
             check: true
         )
     endif

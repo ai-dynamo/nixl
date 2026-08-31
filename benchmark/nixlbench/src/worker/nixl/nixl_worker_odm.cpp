@@ -61,7 +61,7 @@ readCxlCapacityFieldBytes(const unsigned char *id, size_t offset) {
 }
 
 uint64_t
-readCxlOdmBaseBytes(const std::string &dev_path, uint64_t *total_bytes_out) {
+readCxlOdmCapacityBytes(const std::string &dev_path, uint64_t *total_bytes_out) {
     int fd = open(dev_path.c_str(), O_RDWR);
     if (fd < 0) {
         return 0;
@@ -183,11 +183,21 @@ State::discoverBaseAddr() {
     xferBenchConfig::odm_device_path = odm_dev;
 
     uint64_t total_bytes = 0;
-    dpa_base_ = readCxlOdmBaseBytes(odm_dev, &total_bytes);
+    const uint64_t identify_capacity = readCxlOdmCapacityBytes(odm_dev, &total_bytes);
+    if (const char *dpa_env = getenv("ODM_DPA_BASE")) {
+        const uint64_t v = strtoull(dpa_env, nullptr, 0);
+        if (v != 0) {
+            dpa_base_ = v;
+        }
+    }
     if (dpa_base_ == 0) {
         dpa_base_ = kOdmFallbackAddr;
     }
     xferBenchConfig::odm_dpa_base = dpa_base_;
+    if (identify_capacity > 0 && xferBenchConfig::total_buffer_size > identify_capacity) {
+        std::cerr << "ODM: buffer size " << xferBenchConfig::total_buffer_size
+                  << " exceeds CXL IDENTIFY capacity " << identify_capacity << std::endl;
+    }
 
     if (const char *e = getenv("ODM_ADDR")) {
         const uint64_t v = strtoull(e, nullptr, 0);
@@ -219,9 +229,8 @@ State::discoverBaseAddr() {
     struct mrvl_dma_iova_commands iova_cmd{};
     iova_cmd.target_iova_size = static_cast<uint32_t>(xferBenchConfig::total_buffer_size);
     if (ioctl(iova_fd_, MRVL_CXL_GET_IOVA_COMMAND, &iova_cmd) < 0) {
-        std::cerr << "ODM: GET_IOVA failed: " << strerror(errno)
-                  << "; falling back to IDENTIFY base 0x" << std::hex << dpa_base_ << std::dec
-                  << std::endl;
+        std::cerr << "ODM: GET_IOVA failed: " << strerror(errno) << "; falling back to DPA base 0x"
+                  << std::hex << dpa_base_ << std::dec << std::endl;
         close(iova_fd_);
         iova_fd_ = -1;
         base_addr_ = dpa_base_;
@@ -234,8 +243,8 @@ State::discoverBaseAddr() {
     use_get_iova_ = true;
     xferBenchConfig::odm_use_get_iova = true;
     std::cout << "ODM: allocated IOVA 0x" << std::hex << base_addr_ << std::dec << " size "
-              << iova_size_ << " via GET_IOVA on " << odm_dev << " (IDENTIFY DPA base 0x"
-              << std::hex << dpa_base_ << std::dec << " used for DAX alias only)" << std::endl;
+              << iova_size_ << " via GET_IOVA on " << odm_dev << " (DPA base 0x" << std::hex
+              << dpa_base_ << std::dec << " used for DAX alias only)" << std::endl;
     return base_addr_;
 }
 
@@ -256,8 +265,18 @@ State::seedDramForRead(size_t total_size) {
                   << " (run as root for the DAX window)" << std::endl;
         return;
     }
-    size_t map_size = (total_size + (2 << 20) - 1) & ~static_cast<size_t>((2 << 20) - 1);
-    void *p = mmap(nullptr, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (base_addr_ < dpa_base_) {
+        std::cerr << "ODM: consistency seed: base 0x" << std::hex << base_addr_
+                  << " is below DPA base 0x" << dpa_base_ << std::dec << ", skipping seed"
+                  << std::endl;
+        close(fd);
+        return;
+    }
+    const uint64_t dax_offset = base_addr_ - dpa_base_;
+    size_t map_size = (static_cast<size_t>(dax_offset) + total_size + (2 << 20) - 1) &
+        ~static_cast<size_t>((2 << 20) - 1);
+    void *p = mmap(
+        nullptr, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, static_cast<off_t>(dax_offset));
     if (p == MAP_FAILED) {
         std::cerr << "ODM: consistency seed: mmap(" << dax << ", " << map_size
                   << ") failed: " << strerror(errno) << std::endl;

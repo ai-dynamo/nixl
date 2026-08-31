@@ -175,8 +175,8 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
 }
 
 nixlOdmEngine::~nixlOdmEngine() {
-    odmPoolStop();
 #ifdef HAVE_CUDA
+    odmPoolStop();
     closeDmabufCache();
 #endif
     closeDevice();
