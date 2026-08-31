@@ -39,18 +39,25 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     union ibv_gid rgid;
 
     result = doca_log_backend_create_standard();
-    if (result != DOCA_SUCCESS) throw std::invalid_argument("Can't initialize doca log");
+    if (result != DOCA_SUCCESS) {
+        throw std::invalid_argument("Can't initialize doca log");
+    }
 
     result = doca_log_backend_create_with_file_sdk(stderr, &sdk_log);
-    if (result != DOCA_SUCCESS) throw std::invalid_argument("Can't initialize doca log");
+    if (result != DOCA_SUCCESS) {
+        throw std::invalid_argument("Can't initialize doca log");
+    }
 
     result = doca_log_backend_set_sdk_level(sdk_log, DOCA_LOG_LEVEL_ERROR);
-    if (result != DOCA_SUCCESS) throw std::invalid_argument("Can't initialize doca log");
+    if (result != DOCA_SUCCESS) {
+        throw std::invalid_argument("Can't initialize doca log");
+    }
 
     NIXL_INFO << "DOCA network devices ";
     // Temporary: will extend to more GPUs in a dedicated PR
-    if (custom_params->count("network_devices") > 1)
+    if (custom_params->count("network_devices") > 1) {
         throw std::invalid_argument("Only 1 network device is allowed");
+    }
 
     if (custom_params->count("network_devices") == 0 || (*custom_params)["network_devices"] == "" ||
         (*custom_params)["network_devices"] == "all") {
@@ -65,8 +72,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     if (custom_params->count("oob_interface") > 0) {
         NIXL_INFO << "DOCA network devices ";
         // Temporary: will extend to more GPUs in a dedicated PR
-        if (custom_params->count("oob_interface") > 1)
+        if (custom_params->count("oob_interface") > 1) {
             throw std::invalid_argument("Only 1 oob interface is allowed");
+        }
 
         oobdev = absl::StrSplit((*custom_params)["oob_interface"], " ");
         NIXL_INFO << "Using oob interface" << oobdev[0];
@@ -75,8 +83,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     NIXL_INFO << "DOCA GPU devices: ";
     // Temporary: will extend to more GPUs in a dedicated PR
-    if (custom_params->count("gpu_devices") > 1)
+    if (custom_params->count("gpu_devices") > 1) {
         throw std::invalid_argument("Only 1 GPU device is allowed");
+    }
 
     if (custom_params->count("gpu_devices") == 0 || (*custom_params)["gpu_devices"] == "" ||
         (*custom_params)["gpu_devices"] == "all") {
@@ -92,9 +101,12 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     NIXL_INFO << std::endl;
 
     nstreams = 0;
-    if (custom_params->count("cuda_streams") != 0 && (*custom_params)["cuda_streams"] != "")
+    if (custom_params->count("cuda_streams") != 0 && (*custom_params)["cuda_streams"] != "") {
         nstreams = std::stoi((*custom_params)["cuda_streams"]);
-    if (nstreams == 0) nstreams = DOCA_POST_STREAM_NUM;
+    }
+    if (nstreams == 0) {
+        nstreams = DOCA_POST_STREAM_NUM;
+    }
 
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
@@ -112,7 +124,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
 
     pd = doca_verbs_bridge_verbs_pd_get_ibv_pd(verbs_pd);
-    if (pd == NULL) throw std::invalid_argument("Failed to get ibv_pd");
+    if (pd == NULL) {
+        throw std::invalid_argument("Failed to get ibv_pd");
+    }
 
     result = doca_rdma_bridge_open_dev_from_pd(pd, &ddev);
     if (result != DOCA_SUCCESS) {
@@ -137,8 +151,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     if (port_attr.link_layer == IBV_LINK_LAYER_INFINIBAND) {
         result = create_verbs_ah_attr(
             verbs_context, gid_index, DOCA_VERBS_ADDR_TYPE_IB_NO_GRH, &verbs_ah_attr);
-        if (result != DOCA_SUCCESS)
+        if (result != DOCA_SUCCESS) {
             throw std::invalid_argument("Failed to create doca verbs ah attributes");
+        }
 
         lid = port_attr.lid;
     } else {
@@ -164,8 +179,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         cudaFree(0);
 
         result = doca_gpu_create(pciBusId, &item.second);
-        if (result != DOCA_SUCCESS)
+        if (result != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to create DOCA GPU device " << doca_error_get_descr(result);
+        }
     }
 
     if (oobdev.size() > 0 && oobdev[0] != "") {
@@ -241,10 +257,11 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     nixlDocaEngineCheckCudaError(cudaStreamCreateWithFlags(&wait_stream, cudaStreamNonBlocking),
                                  "Failed to create CUDA stream");
-    for (int i = 0; i < nstreams; i++)
+    for (int i = 0; i < nstreams; i++) {
         nixlDocaEngineCheckCudaError(
             cudaStreamCreateWithFlags(&post_stream[i], cudaStreamNonBlocking),
             "Failed to create CUDA stream");
+    }
     xferStream = 0;
 
     result = doca_gpu_mem_alloc(gdevs[0].second,
@@ -370,8 +387,9 @@ nixlDocaEngine::~nixlDocaEngine() {
     }
 
     NIXL_DEBUG << "Before nixlDocaDestroyNotif ";
-    for (auto notif : notifMap)
+    for (auto notif : notifMap) {
         nixlDocaDestroyNotif(gdevs[0].second, notif.second);
+    }
     notifMap.clear();
 
     doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
@@ -381,17 +399,20 @@ nixlDocaEngine::~nixlDocaEngine() {
 
     NIXL_DEBUG << "Before qpMap.clear ";
 
-    for (auto &qp : qpMap)
+    for (auto &qp : qpMap) {
         delete qp.second;
+    }
     qpMap.clear();
 
     result = doca_dev_close(ddev);
-    if (result != DOCA_SUCCESS)
+    if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to close DOCA device " << doca_error_get_descr(result);
+    }
 
     result = doca_gpu_destroy(gdevs[0].second);
-    if (result != DOCA_SUCCESS)
+    if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to close DOCA GPU device " << doca_error_get_descr(result);
+    }
 }
 
 /****************************************
@@ -471,7 +492,9 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
 
 nixl_status_t
 nixlDocaEngine::nixlDocaDestroyNotif(doca_gpu *gpu, struct nixlDocaNotif *notif) {
-    if (notif == nullptr) return NIXL_SUCCESS;
+    if (notif == nullptr) {
+        return NIXL_SUCCESS;
+    }
 
     notif->send_mr.reset();
     notif->recv_mr.reset();
@@ -1081,8 +1104,9 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     md->conn = conn;
 
     std::stringstream ss(input.metaInfo.data());
-    while (std::getline(ss, token, info_delimiter))
+    while (std::getline(ss, token, info_delimiter)) {
         tokens.push_back(token);
+    }
 
     uint32_t rkey = static_cast<uint32_t>(atoi(tokens[0].c_str()));
     uintptr_t addr = static_cast<uintptr_t>(atol(tokens[1].c_str()));
@@ -1132,7 +1156,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     // the engine
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
-        if (lmd->devId != gdevs[0].first) return NIXL_ERR_INVALID_PARAM;
+        if (lmd->devId != gdevs[0].first) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
     }
 
     auto search = qpMap.find(remote_agent);
@@ -1143,9 +1169,13 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     rdma_qp = search->second;
 
-    if (lcnt != rcnt) return NIXL_ERR_INVALID_PARAM;
+    if (lcnt != rcnt) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
-    if (lcnt == 0) return NIXL_ERR_INVALID_PARAM;
+    if (lcnt == 0) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
     if (opt_args->customParam.empty()) {
         stream_id = (xferStream.fetch_add(1) & (nstreams - 1));
@@ -1161,7 +1191,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         for (uint32_t idx = 0; idx < lcnt && idx < DOCA_XFER_REQ_SIZE; idx++) {
             size_t lsize = local[idx].len;
             size_t rsize = remote[idx].len;
-            if (lsize != rsize) return NIXL_ERR_INVALID_PARAM;
+            if (lsize != rsize) {
+                return NIXL_ERR_INVALID_PARAM;
+            }
 
             lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[idx].metadataP;
@@ -1276,8 +1308,9 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
             NIXL_INFO << "DOCA checkXfer pos " << idx << " compl_idx " << completion_index
                       << " COMPLETED!\n";
             return NIXL_SUCCESS;
-        } else
+        } else {
             return NIXL_IN_PROG;
+        }
     }
 
     return NIXL_SUCCESS;
@@ -1286,10 +1319,11 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
 nixl_status_t
 nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
     uint32_t tmp = xferRingPos.load() & (DOCA_XFER_REQ_MAX - 1);
-    if (((volatile docaXferCompletion *)completion_list_cpu)[tmp].completed > 0)
+    if (((volatile docaXferCompletion *)completion_list_cpu)[tmp].completed > 0) {
         return NIXL_SUCCESS;
-    else
+    } else {
         return NIXL_IN_PROG;
+    }
 }
 
 nixl_status_t
