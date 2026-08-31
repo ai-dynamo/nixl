@@ -13,19 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-device_allocator_lib = shared_library('nixl_device_allocator',
-           ['device_allocator.cpp', 'device_allocator.h'],
+device_proxy_lib = library('nixl_device_proxy',
+           ['proxy_config.cpp', 'proxy_config.h'],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           dependencies: [dl_dep],
+           dependencies: [nixl_common_dep, device_allocator_interface],
            install: true)
 
-device_allocator_interface = declare_dependency(link_with: device_allocator_lib)
-
-if cuda_dep.found()
-    shared_library('nixl_device_allocator_cuda',
-               'device_allocator_cuda.cpp',
-               include_directories: [nixl_inc_dirs, utils_inc_dirs],
-               dependencies: [cuda_dep, nixl_common_dep],
-               install: true)
-    subdir('proxy')
+if get_option('install_headers')
+    # Device code includes the wire contract as <device/proxy/proxy_protocol.h>.
+    install_headers('proxy_protocol.h', install_dir: prefix_inc + '/device/proxy')
 endif
+
+# The proxy headers hand out nixlDeviceAllocator, so consumers link it too.
+device_proxy_interface = declare_dependency(link_with: device_proxy_lib,
+                                            dependencies: [device_allocator_interface])
