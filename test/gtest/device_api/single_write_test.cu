@@ -533,9 +533,11 @@ TEST_P(SingleWriteTest, SingleWorkerPutGap) {
     status = dispatchLaunchPutKernel(GetParam(), put_params, num_iters, &gpu_timer);
     ASSERT_EQ(status, NIXL_SUCCESS);
 
-    void *ptr;
-    getPtrKernel<<<1, 1>>>(dst_mvh, 0, &ptr);
-    ASSERT_NE(ptr, nullptr);
+    gpuVar<void *> ptr;
+    getPtrKernel<<<1, 1>>>(dst_mvh, 0, ptr.get());
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    ASSERT_EQ(cudaGetLastError(), cudaSuccess);
+    ASSERT_NE(*ptr, nullptr);
 
     logResultsPublic(size, count, num_iters, *gpu_timer.start_, *gpu_timer.end_);
 
