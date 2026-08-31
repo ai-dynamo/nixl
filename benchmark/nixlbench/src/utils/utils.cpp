@@ -908,7 +908,8 @@ xferBenchConfig::printConfig() {
             printOption("OOB network interface name for control path (--oob_list=ifface)",
                         gpunetio_oob_list);
             printOption("RoCE GID table index (--gpunetio_gid_index=N)", gpunetio_gid_index);
-            printOption("OOB TCP port (--gpunetio_oob_port=N)", gpunetio_oob_port);
+            printOption("OOB TCP port (--gpunetio_oob_port=N)",
+                        gpunetio_oob_port.empty() ? "6544" : gpunetio_oob_port);
         }
     }
     printOption("Initiator seg type (--initiator_seg_type=[DRAM,VRAM])", initiator_seg_type);
