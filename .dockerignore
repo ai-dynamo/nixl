@@ -1,0 +1,25 @@
+# Local build artifacts and caches (must not shadow meson.build in COPY context)
+build/
+build-*/
+local-install/
+graphify-out/
+ci-local/
+
+# Git and editor noise
+.git/
+.gitignore
+.cursor/
+
+# Large or unrelated local outputs
+*.o
+*.a
+*.so
+*.dylib
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# Staging dirs used by build-container.sh (recreated per run)
+ucx-spcx-plugin-src/
+infinia-libs/
