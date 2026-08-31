@@ -162,11 +162,12 @@ private:
     cudaStream_t wait_stream;
     mutable std::atomic<uint32_t> xferStream;
     mutable std::atomic<uint32_t> lastPostedReq;
+    mutable std::mutex postLock_;
 
     struct docaXferReqGpu *xferReqRingGpu;
     struct docaXferReqGpu *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
-    mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved;
+    mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved_;
 
     struct docaXferCompletion *completion_list_gpu;
     struct docaXferCompletion *completion_list_cpu;
@@ -195,6 +196,8 @@ private:
         uint32_t devId;
         std::vector<uint32_t> positions;
         uintptr_t backendHandleGpu;
+        size_t postedCount = 0;
+        nixl_status_t postStatus = NIXL_SUCCESS;
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
