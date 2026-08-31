@@ -14,7 +14,8 @@
 # limitations under the License.
 
 device_proxy_lib = library('nixl_device_proxy',
-           ['proxy_config.cpp', 'proxy_config.h'],
+           ['proxy_config.cpp', 'proxy_config.h',
+            'proxy_protocol.h', 'proxy_backend_ops.h'],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            dependencies: [nixl_common_dep, nixl_infra, device_allocator_interface],
            install: true)
