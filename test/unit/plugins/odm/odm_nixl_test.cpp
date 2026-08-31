@@ -45,15 +45,18 @@ struct mrvl_dma_iova_commands {
     uint64_t target_iova_addr;
     uint32_t target_iova_size;
 };
+
 #define MRVL_CXL_GET_IOVA_COMMAND _IOWR(0xCE, 5, struct mrvl_dma_iova_commands)
 #define MRVL_CXL_FREE_IOVA_COMMAND _IOWR(0xCE, 6, struct mrvl_dma_iova_commands)
 
 namespace {
 
-constexpr const char* kAgentName = "ODMNixlTestAgent";
+constexpr const char *kAgentName = "ODMNixlTestAgent";
 constexpr size_t kDefaultTransferSize = 65536;
 constexpr unsigned char kTestPattern = 0x33;
-std::string devicePath(const std::string& dev_name) {
+
+std::string
+devicePath(const std::string &dev_name) {
     return (!dev_name.empty() && dev_name[0] == '/') ? dev_name : ("/dev/" + dev_name);
 }
 
@@ -63,9 +66,10 @@ struct OdmIovaAlloc {
     uint32_t size = 0;
 };
 
-bool allocOdmIova(const std::string& dev_name, size_t transfer_size, OdmIovaAlloc& out) {
+bool
+allocOdmIova(const std::string &dev_name, size_t transfer_size, OdmIovaAlloc &out) {
     out = {};
-    if (const char* env = std::getenv("ODM_ADDR")) {
+    if (const char *env = std::getenv("ODM_ADDR")) {
         const uint64_t v = std::strtoull(env, nullptr, 0);
         if (v != 0) {
             out.addr = v;
@@ -79,12 +83,11 @@ bool allocOdmIova(const std::string& dev_name, size_t transfer_size, OdmIovaAllo
     const std::string path = devicePath(dev_name);
     out.device_fd = open(path.c_str(), O_RDWR);
     if (out.device_fd < 0) {
-        std::cerr << "ODM: open(" << path << ") failed: " << std::strerror(errno)
-                  << std::endl;
+        std::cerr << "ODM: open(" << path << ") failed: " << std::strerror(errno) << std::endl;
         return false;
     }
 
-    struct mrvl_dma_iova_commands cmd {};
+    struct mrvl_dma_iova_commands cmd{};
     cmd.target_iova_size = static_cast<uint32_t>(transfer_size);
     if (ioctl(out.device_fd, MRVL_CXL_GET_IOVA_COMMAND, &cmd) < 0) {
         std::cerr << "ODM: GET_IOVA on " << path << " failed: " << std::strerror(errno)
@@ -101,10 +104,12 @@ bool allocOdmIova(const std::string& dev_name, size_t transfer_size, OdmIovaAllo
     return true;
 }
 
-void freeOdmIova(OdmIovaAlloc& alloc) {
-    if (alloc.device_fd < 0 || alloc.addr == 0)
+void
+freeOdmIova(OdmIovaAlloc &alloc) {
+    if (alloc.device_fd < 0 || alloc.addr == 0) {
         return;
-    struct mrvl_dma_iova_commands cmd {};
+    }
+    struct mrvl_dma_iova_commands cmd{};
     cmd.target_iova_addr = alloc.addr;
     cmd.target_iova_size = alloc.size;
     if (ioctl(alloc.device_fd, MRVL_CXL_FREE_IOVA_COMMAND, &cmd) < 0) {
@@ -114,12 +119,14 @@ void freeOdmIova(OdmIovaAlloc& alloc) {
     alloc = {};
 }
 
-void fillPattern(void* buf, size_t len, unsigned char pattern) {
+void
+fillPattern(void *buf, size_t len, unsigned char pattern) {
     std::memset(buf, pattern, len);
 }
 
-bool validatePattern(const void* buf, size_t len, unsigned char expected) {
-    const auto* bytes = static_cast<const unsigned char*>(buf);
+bool
+validatePattern(const void *buf, size_t len, unsigned char expected) {
+    const auto *bytes = static_cast<const unsigned char *>(buf);
     for (size_t i = 0; i < len; ++i) {
         if (bytes[i] != expected) {
             std::cerr << "Validation failed at offset " << i << ": got 0x" << std::hex
@@ -131,24 +138,24 @@ bool validatePattern(const void* buf, size_t len, unsigned char expected) {
     return true;
 }
 
-void printUsage(const char* prog) {
-    std::cerr
-        << "Usage: " << prog << " [options]\n"
-        << "  --device NAME       ODM device name (default: odm0)\n"
-        << "  --qid ID            ODM queue id (default: 0)\n"
-        << "  --qid-start ID      ODM queue range start (default: --qid)\n"
-        << "  --qid-end ID        ODM queue range end (default: --qid)\n"
-        << "  --odm-addr ADDR     ODM target IOVA (default: GET_IOVA / ODM_ADDR)\n"
-        << "  --size BYTES        Transfer size (default: " << kDefaultTransferSize
-        << ")\n"
-        << "  --pattern BYTE      Fill/verify byte pattern (default: 0x33)\n"
-        << "  --help              Show this help\n"
-        << "\n"
-        << "Runs a VRAM -> ODM write followed by an ODM -> VRAM read and validates\n"
-        << "the round-trip from GPU memory. No DAX/BAR2 seeding is used.\n";
+void
+printUsage(const char *prog) {
+    std::cerr << "Usage: " << prog << " [options]\n"
+              << "  --device NAME       ODM device name (default: odm0)\n"
+              << "  --qid ID            ODM queue id (default: 0)\n"
+              << "  --qid-start ID      ODM queue range start (default: --qid)\n"
+              << "  --qid-end ID        ODM queue range end (default: --qid)\n"
+              << "  --odm-addr ADDR     ODM target IOVA (default: GET_IOVA / ODM_ADDR)\n"
+              << "  --size BYTES        Transfer size (default: " << kDefaultTransferSize << ")\n"
+              << "  --pattern BYTE      Fill/verify byte pattern (default: 0x33)\n"
+              << "  --help              Show this help\n"
+              << "\n"
+              << "Runs a VRAM -> ODM write followed by an ODM -> VRAM read and validates\n"
+              << "the round-trip from GPU memory. No DAX/BAR2 seeding is used.\n";
 }
 
-nixl_status_t waitForXfer(nixlAgent& agent, nixlXferReqH* req) {
+nixl_status_t
+waitForXfer(nixlAgent &agent, nixlXferReqH *req) {
     nixl_status_t status = agent.postXferReq(req);
     if (status < NIXL_SUCCESS) {
         return status;
@@ -160,11 +167,12 @@ nixl_status_t waitForXfer(nixlAgent& agent, nixlXferReqH* req) {
     return status;
 }
 
-}  // namespace
+} // namespace
 
-int main(int argc, char** argv) {
+int
+main(int argc, char **argv) {
     bool odm_addr_set = false;
-    OdmIovaAlloc odm_iova {};
+    OdmIovaAlloc odm_iova{};
     std::string dev_name = "odm0";
     std::string qid_str = "0";
     std::string qid_start_str;
@@ -201,7 +209,7 @@ int main(int argc, char** argv) {
             qid_end_str = optarg;
             break;
         case 'a': {
-            char* end = nullptr;
+            char *end = nullptr;
             errno = 0;
             const unsigned long long parsed = std::strtoull(optarg, &end, 0);
             if (errno != 0 || end == optarg || *end != '\0') {
@@ -213,7 +221,7 @@ int main(int argc, char** argv) {
             break;
         }
         case 's': {
-            char* end = nullptr;
+            char *end = nullptr;
             errno = 0;
             const unsigned long long parsed = std::strtoull(optarg, &end, 0);
             if (errno != 0 || end == optarg || *end != '\0' || parsed == 0) {
@@ -224,7 +232,7 @@ int main(int argc, char** argv) {
             break;
         }
         case 'p': {
-            char* end = nullptr;
+            char *end = nullptr;
             errno = 0;
             const unsigned long long parsed = std::strtoull(optarg, &end, 0);
             if (errno != 0 || end == optarg || *end != '\0' || parsed > 0xFF) {
@@ -253,15 +261,14 @@ int main(int argc, char** argv) {
     int device_count = 0;
     const cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
     if (cuda_err != cudaSuccess || device_count == 0) {
-        std::cerr << "Error: CUDA GPU not available: "
-                  << cudaGetErrorString(cuda_err) << std::endl;
+        std::cerr << "Error: CUDA GPU not available: " << cudaGetErrorString(cuda_err) << std::endl;
         return 1;
     }
 
     const std::string path = devicePath(dev_name);
     if (access(path.c_str(), R_OK | W_OK) != 0) {
-        std::cerr << "Error: ODM device not accessible: " << path << ": "
-                  << std::strerror(errno) << std::endl;
+        std::cerr << "Error: ODM device not accessible: " << path << ": " << std::strerror(errno)
+                  << std::endl;
         return 1;
     }
 
@@ -297,17 +304,17 @@ int main(int argc, char** argv) {
     params["odm_qid_start"] = qid_start_str;
     params["odm_qid_end"] = qid_end_str;
 
-    nixlBackendH* backend = nullptr;
+    nixlBackendH *backend = nullptr;
     ret = agent.createBackend("ODM", params, backend);
     if (ret != NIXL_SUCCESS || backend == nullptr) {
         std::cerr << "Error: failed to create ODM backend for " << path << std::endl;
         return 1;
     }
 
-    void* host_buf = nullptr;
-    void* gpu_buf = nullptr;
-    nixlXferReqH* write_req = nullptr;
-    nixlXferReqH* read_req = nullptr;
+    void *host_buf = nullptr;
+    void *gpu_buf = nullptr;
+    nixlXferReqH *write_req = nullptr;
+    nixlXferReqH *read_req = nullptr;
     int result = 0;
 
     const size_t page_size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
@@ -315,8 +322,8 @@ int main(int argc, char** argv) {
         std::cerr << "Host allocation failed" << std::endl;
         return 1;
     }
-    std::cout << "Using test pattern 0x" << std::hex
-              << static_cast<unsigned>(test_pattern) << std::dec << std::endl;
+    std::cout << "Using test pattern 0x" << std::hex << static_cast<unsigned>(test_pattern)
+              << std::dec << std::endl;
     fillPattern(host_buf, transfer_size, test_pattern);
 
     cudaError_t cuerr = cudaMalloc(&gpu_buf, transfer_size);
@@ -327,8 +334,8 @@ int main(int argc, char** argv) {
     }
 
     unsigned int sync_memops = 1;
-    cu_res = cuPointerSetAttribute(&sync_memops, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS,
-                                   reinterpret_cast<CUdeviceptr>(gpu_buf));
+    cu_res = cuPointerSetAttribute(
+        &sync_memops, CU_POINTER_ATTRIBUTE_SYNC_MEMOPS, reinterpret_cast<CUdeviceptr>(gpu_buf));
     if (cu_res != CUDA_SUCCESS) {
         std::cerr << "Warning: cuPointerSetAttribute(SYNC_MEMOPS) failed" << std::endl;
     }
@@ -344,8 +351,8 @@ int main(int argc, char** argv) {
     nixl_opt_args_t extra;
     extra.backends.push_back(backend);
 
-    std::cout << "Phase 2: Register VRAM and ODM memory at 0x" << std::hex << odm_addr
-              << std::dec << std::endl;
+    std::cout << "Phase 2: Register VRAM and ODM memory at 0x" << std::hex << odm_addr << std::dec
+              << std::endl;
     nixl_reg_dlist_t vram_list(VRAM_SEG);
     nixl_reg_dlist_t odm_list(ODM_MEM_SEG);
     nixlBlobDesc blob_vram;

@@ -387,7 +387,7 @@ table. It needs the runtime env from `tests/common.sh` (or set `NIXL_PLUGIN_DIR`
 source tests/common.sh           # sets $B, NIXL_PLUGIN_DIR, LD_LIBRARY_PATH, ODM_ADDR
 
 TBUF=$((8*1024*1024*1024))       # 8 GiB registered working set
-SBLK=4096                        # 4 KiB ... 
+SBLK=4096                        # 4 KiB ...
 MBLK=$((64*1024*1024))           # ... 64 MiB (nixlbench doubles in between)
 
 printf '%-6s %-12s %-6s %-12s\n' dir block batch GB/s

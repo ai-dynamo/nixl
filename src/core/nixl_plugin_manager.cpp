@@ -24,7 +24,7 @@
 #include <exception>
 #include <filesystem>
 #include <dirent.h>
-#include <unistd.h>  // For access() and F_OK
+#include <unistd.h> // For access() and F_OK
 #include <fstream>
 #include <string>
 #include <map>
@@ -47,7 +47,7 @@ nixlBackendPluginHandle::~nixlBackendPluginHandle() {
     if (handle_) {
         // Call the plugin's cleanup function
         typedef void (*fini_func_t)();
-        fini_func_t fini = (fini_func_t) dlsym(handle_, "nixl_plugin_fini");
+        fini_func_t fini = (fini_func_t)dlsym(handle_, "nixl_plugin_fini");
         if (fini) {
             fini();
         }
@@ -298,7 +298,7 @@ loadPluginList(const std::string &filename) {
             std::string name = line.substr(0, pos);
             std::string path = line.substr(pos + 1);
 
-            auto trim = [](std::string& s) {
+            auto trim = [](std::string &s) {
                 s.erase(0, s.find_first_not_of(" \t"));
                 s.erase(s.find_last_not_of(" \t") + 1);
             };
@@ -365,9 +365,9 @@ nixlPluginManager::discoverPluginsFromList(const std::string &filename) {
 
     const lock_guard lg(lock);
 
-    for (const auto& pair : plugins) {
-        const std::string& name = pair.first;
-        const std::string& path = pair.second;
+    for (const auto &pair : plugins) {
+        const std::string &name = pair.first;
+        const std::string &path = pair.second;
 
         if (loaded_backend_plugins_.find(name) == loaded_backend_plugins_.end()) {
             discovered_backend_plugins_.insert(name);
@@ -398,7 +398,8 @@ getPluginDir() {
 
     std::filesystem::path lib_dir = std::filesystem::path(info.dli_fname).parent_path();
     std::filesystem::path plugins_next_to_lib = lib_dir / "plugins";
-    if (std::filesystem::exists(plugins_next_to_lib) && std::filesystem::is_directory(plugins_next_to_lib)) {
+    if (std::filesystem::exists(plugins_next_to_lib) &&
+        std::filesystem::is_directory(plugins_next_to_lib)) {
         return plugins_next_to_lib.string();
     }
     // In-tree: lib may be under src/core; use sibling src/plugins when present
@@ -436,7 +437,8 @@ nixlPluginManager::nixlPluginManager() {
     registerBuiltinPlugins();
 }
 
-nixlPluginManager& nixlPluginManager::getInstance() {
+nixlPluginManager &
+nixlPluginManager::getInstance() {
     // Meyers singleton initialization is safe in multi-threaded environment.
     // Consult standard [stmt.dcl] chapter for details.
     static nixlPluginManager instance;
@@ -461,7 +463,7 @@ nixlPluginManager::addPluginDirectory(const std::string &directory) {
         lock_guard lg(lock);
 
         // Check if directory is already in the list
-        for (const auto& dir : plugin_dirs_) {
+        for (const auto &dir : plugin_dirs_) {
             if (dir == directory) {
                 NIXL_WARN << "Plugin directory already registered: " << directory;
                 return;
@@ -518,7 +520,7 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
     }
 
     // Try to load the plugin from all registered directories
-    for (const auto& dir : plugin_dirs_) {
+    for (const auto &dir : plugin_dirs_) {
         std::string plugin_path = composePluginPath(dir, backendPluginPrefix, plugin_name);
         if (plugin_path.empty()) {
             continue;
@@ -527,14 +529,16 @@ nixlPluginManager::loadBackendPlugin(const std::string &plugin_name) {
         if (!std::filesystem::exists(plugin_path)) {
             // Also try <dir>/<plugin>/libplugin_<plugin>.so (Meson subdir layout)
             std::string sep = (dir.back() == '/') ? "" : "/";
-            std::string subdir_path = dir + sep + plugin_name + "/" +
-                                     backendPluginPrefix + plugin_name + kPluginSuffix;
+            std::string subdir_path =
+                dir + sep + plugin_name + "/" + backendPluginPrefix + plugin_name + kPluginSuffix;
             if (!std::filesystem::exists(subdir_path)) {
                 std::string plugin_name_lower = plugin_name;
-                std::transform(plugin_name_lower.begin(), plugin_name_lower.end(),
-                               plugin_name_lower.begin(), ::tolower);
-                subdir_path = dir + sep + plugin_name_lower + "/" +
-                              backendPluginPrefix + plugin_name + kPluginSuffix;
+                std::transform(plugin_name_lower.begin(),
+                               plugin_name_lower.end(),
+                               plugin_name_lower.begin(),
+                               ::tolower);
+                subdir_path = dir + sep + plugin_name_lower + "/" + backendPluginPrefix +
+                    plugin_name + kPluginSuffix;
             }
             if (std::filesystem::exists(subdir_path)) {
                 plugin_path = subdir_path;
@@ -679,7 +683,7 @@ nixlPluginManager::discoverPluginsFromDir(const std::filesystem::path &dirpath) 
         return;
     }
 
-    for (const auto& entry : dir_iter) {
+    for (const auto &entry : dir_iter) {
         std::string filename = entry.path().filename().string();
         discoverBackendPlugin(filename);
         discoverTelemetryPlugin(filename);
@@ -803,8 +807,8 @@ nixlPluginManager::registerBackendStaticPlugin(const std::string &name,
     info.createFunc = creator;
     backend_static_plugins_.push_back(info);
 
-    //Static Plugins are considered pre-loaded
-    nixlBackendPlugin* plugin = info.createFunc();
+    // Static Plugins are considered pre-loaded
+    nixlBackendPlugin *plugin = info.createFunc();
     NIXL_INFO << "Loading static plugin: " << name;
     if (plugin) {
         // Register the loaded plugin
@@ -847,7 +851,8 @@ nixlPluginManager::getTelemetryStaticPlugins() {
     extern nixl##plugin_type##Plugin *createStatic##name##Plugin(); \
     register##plugin_type##StaticPlugin(#name, createStatic##name##Plugin);
 
-void nixlPluginManager::registerBuiltinPlugins() {
+void
+nixlPluginManager::registerBuiltinPlugins() {
 #ifdef STATIC_PLUGIN_LIBFABRIC
     NIXL_REGISTER_STATIC_PLUGIN(Backend, LIBFABRIC)
 #endif
