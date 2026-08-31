@@ -793,40 +793,9 @@ EOF
   --num_iter 16
 ```
 
-**ODM Backend (Marvell ODM DMA controller):**
-
-ODM moves data between GPU VRAM and Marvell Iliad/Structera device memory using
-the ODM DMA controller with GPU VRAM exported as a dma-buf. Build NIXL with
-`-Denable_plugins=ODM` and ensure the ODM kernel character device (for example
-`/dev/odm0`) is present. CUDA with dma-buf export support is required.
-
-```bash
-# VRAM <-> ODM device memory (single instance, no ETCD required)
-./nixlbench --backend ODM \
-           --initiator_seg_type VRAM \
-           --target_seg_type VRAM \
-           --device_list odm0 \
-           --op_type WRITE
-
-# Consistency checking (seeds/verifies device memory via host ODM ioctls on GET_IOVA)
-./nixlbench --backend ODM \
-           --initiator_seg_type VRAM \
-           --target_seg_type VRAM \
-           --device_list odm0 \
-           --check_consistency \
-           --dax_device /dev/dax0.0
-```
-
-**ODM-specific notes:**
-
-- DMA target addresses come from the driver's `GET_IOVA` mailbox allocation on
-  `/dev/odm0` (override with `$ODM_ADDR` if needed). CXL IDENTIFY reports the
-  volatile DPA base used by the BAR2 DAX window (`--dax_device`), not the DMA IOVA.
-- Queue range defaults to `0..7` in nixlbench (configurable via backend params).
-- With GET_IOVA, `--check_consistency` seeds and verifies through host WRITE/READ
-  ioctls; `--dax_device` is optional and only applies when not using GET_IOVA.
-
-### Worker Types
+**ODM backend:** build with `-Denable_plugins=ODM`, use `--backend ODM` with
+`--initiator_seg_type VRAM`, `--device_list odm0`. DMA IOVA comes from `GET_IOVA`
+on `/dev/odm0`. See `src/plugins/odm/README.md`.
 
 ### Worker Types
 
