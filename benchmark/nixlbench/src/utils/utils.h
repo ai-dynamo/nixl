@@ -78,9 +78,8 @@
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
+#define XFERBENCH_BACKEND_INFINIA "INFINIA"
 #define XFERBENCH_BACKEND_ODM "ODM"
-#define XFERBENCH_BACKEND_LIST \
-    "UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, GUSLI, AZURE_BLOB, ODM"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -191,12 +190,16 @@ public:
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
+    static std::string infinia_config_file;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
     static std::string gusli_config_file;
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
+    static bool gusli_try_use_uring;
+    static bool use_device_api;
+    static int block_threads;
     static std::string dax_device;
     /* ODM: true when device IOVA comes from GET_IOVA (mailbox alloc) rather than
      * the CXL IDENTIFY DPA base used with the BAR2 DAX consistency window. */

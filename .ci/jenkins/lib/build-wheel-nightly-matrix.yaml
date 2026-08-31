@@ -1,0 +1,231 @@
+# Nightly NIXL wheel verification build. Pipeline and this config run from
+# main; the source ref (NIXL_VERSION) is cloned into nixl-src, so built refs
+# carry no CI config. Wheels publish to
+# WHEEL_REPO_URL/<PUBLISH_DIR or verification>/<nixl-sha>.
+
+---
+job: nixl-ci-build-wheel-nightly
+
+failFast: false
+timeout_minutes: 180
+
+registry_host: artifactory.nvidia.com
+
+credentials:
+  - credentialsId: 'svc-nixl-new-artifactory-token'
+    usernameVariable: 'ARTIFACTORY_USER'
+    passwordVariable: 'ARTIFACTORY_TOKEN'
+  - credentialsId: 'svc-nixl-gitlab-token'
+    usernameVariable: 'NIXL_GITLAB_USER'
+    passwordVariable: 'NIXL_GITLAB_TOKEN'
+  # Paired with NIXL_GITLAB_TOKEN; only read on the spcx path.
+  - credentialsId: 'ucx-plugin-gitlab-url'
+    type: 'string'
+    variable: 'NIXL_SPCX_PLUGIN_REPO_URL'
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  imagePullSecrets: "['artifactory-pull-secret']"
+  limits: '{memory: 24Gi, cpu: 16000m}'
+  requests: '{memory: 24Gi, cpu: 16000m}'
+
+# podman-in-container runner; build-container.sh runs docker/podman inside it.
+# The nightly builds wheel_base from scratch on every run — no caching.
+runs_on_dockers:
+  - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+
+matrix:
+  axes:
+    manylinux:
+      - "2_28"
+    # All Python versions NIXL supports (pyproject requires-python >=3.10).
+    python_version:
+      - "3.10"
+      - "3.11"
+      - "3.12"
+      - "3.13"
+      - "3.14"
+    arch:
+      - x86_64
+      - aarch64
+
+env:
+  NPROC: 16
+  GRPC_NPROC: 10
+  MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
+  MANYLINUX_IMAGE_TAG: "2026.06.06-1"
+  # TORCH_VERSIONS comes from the JJB job parameter, which is empty by default so
+  # the Build Wheel step below derives it from the CUDA major. Not set here to
+  # avoid the matrix env overriding the per-run parameter value.
+  WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
+  # SWX team's NIXL pypi repo (publish target).
+  WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
+  # Source repo cloned in Build Wheel.
+  NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
+  MAIL_FROM: "jenkins@nvidia.com"
+
+steps:
+  - name: Prepare
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    parallel: false
+    run: |
+      # Set up podman and log in to Artifactory (base image pull)
+      rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
+      podman system reset -f || true
+      ln -sfT $(type -p podman) /usr/bin/docker
+      echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
+
+  - name: Checkout Source
+    parallel: false
+    run: |
+      # Clone the built source (contrib scripts + Dockerfile come from this
+      # ref; CI config stays on main). Split from Build Wheel so a checkout
+      # failure is triaged separately from a build failure.
+      set -x
+      # The Jenkins checkout is owned by a different uid; trust only it.
+      git config --global --add safe.directory "${PWD}"
+      # Full clone: build-container.sh derives a version label via
+      # `git describe --tags`, which needs history + tags, not just the tree.
+      rm -rf nixl-src
+      git clone "${NIXL_REPO_URL}" nixl-src
+      # fetch covers branch/tag/PR refs; the fallback covers raw shas. Fail
+      # loud if neither resolves, so we never silently build the clone default.
+      if git -C nixl-src fetch origin "${NIXL_VERSION}" 2>/dev/null; then
+        git -C nixl-src checkout --detach FETCH_HEAD
+      else
+        git -C nixl-src checkout --detach "${NIXL_VERSION}" \
+          || { echo "ERROR: cannot resolve NIXL_VERSION=${NIXL_VERSION}"; exit 1; }
+      fi
+      # Exact first 8 hex for the publish folder key (--short=8 is a minimum
+      # and can extend on ambiguity).
+      NIXL_SHA="$(git -C nixl-src rev-parse HEAD | cut -c1-8)"
+      # Build against the exact UCX commit; ^{} (last line) peels annotated tags.
+      if [[ "${UCX_VERSION}" =~ ^[a-f0-9]{8,40}$ ]]; then
+        UCX_SHA="${UCX_VERSION:0:8}"
+      else
+        UCX_SHA="$(timeout 30 git ls-remote https://github.com/openucx/ucx.git "${UCX_VERSION}" "${UCX_VERSION}^{}" | tail -n1 | cut -c1-8)"
+      fi
+      [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot resolve UCX_VERSION=${UCX_VERSION}"; exit 1; }
+      # Shas carried to Build Wheel (--ucx-ref) and Publish (folder key).
+      printf 'NIXL_SHA=%s\nUCX_SHA=%s\n' "${NIXL_SHA}" "${UCX_SHA}" > wheel_build_ids.env
+
+  - name: Build Wheel
+    credentialsId:
+      - 'svc-nixl-gitlab-token'
+      - 'ucx-plugin-gitlab-url'
+    parallel: false
+    run: |
+      # Build the wheel image from the checked-out nixl-src. --tag pins the
+      # image so Publish extracts dist/. Plugin creds bind only here.
+      set -x
+      . ./wheel_build_ids.env   # UCX_SHA (+ NIXL_SHA) from Checkout Source
+      # Each plugin is opt-in; the built source ref's build-container.sh must
+      # carry the flag and pins the plugin ref/image.
+      SPCX_FLAGS=""
+      [ "${BUILD_UCX_SPCX_PLUGIN}" = "true" ] && SPCX_FLAGS="--build-ucx-spcx-plugin"
+      INFINIA_FLAGS=""
+      [ "${BUILD_INFINIA}" = "true" ] && INFINIA_FLAGS="--build-infinia"
+      # CUDA MAJOR.MINOR from BASE_TAG (12.9.1-devel-ubi8 -> 12.9): drives the
+      # torch cuXXX index and the cu12/cu13 wheel split.
+      CUDA_VERSION="$(echo "${BASE_TAG}" | grep -oE '^[0-9]+\.[0-9]+')"
+      [ -n "${CUDA_VERSION}" ] || { echo "ERROR: cannot derive CUDA version from BASE_TAG=${BASE_TAG}"; exit 1; }
+      # The two CUDA majors have different torch coverage: 2.11 is not available
+      # on the cu13 index, and 2.14 is not available on the cu12 one.
+      # Auto-select unless overridden.
+      if [ -z "${TORCH_VERSIONS:-}" ]; then
+        if [ "${CUDA_VERSION%%.*}" = "12" ]; then TORCH_VERSIONS="2.11,2.12,2.13"
+        else TORCH_VERSIONS="2.12,2.13,2.14"; fi
+      fi
+      cd nixl-src
+      ./contrib/build-container.sh \
+        --base-image "${BASE_IMAGE}" \
+        --base-image-tag "${BASE_TAG}" \
+        --cuda-version "${CUDA_VERSION}" \
+        --manylinux-image "${MANYLINUX_IMAGE}" \
+        --manylinux-image-tag "${MANYLINUX_IMAGE_TAG}" \
+        --wheel-base "manylinux_${manylinux}" \
+        --python-versions "${python_version}" \
+        --arch ${arch} \
+        --ucx-ref "${UCX_SHA}" \
+        --torch-versions "${TORCH_VERSIONS}" \
+        --tag "${WHEEL_IMAGE_TAG}" \
+        --dockerfile contrib/Dockerfile.manylinux \
+        ${SPCX_FLAGS} \
+        ${INFINIA_FLAGS}
+
+  - name: Publish
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    parallel: false
+    run: |
+      set -x
+      # Extract the wheels from the built image, then upload.
+      rm -rf dist && mkdir -p dist
+      cid=$(docker create "${WHEEL_IMAGE_TAG}")
+      docker cp "${cid}:/workspace/nixl/dist/." ./dist/
+      docker rm -f "${cid}" || true
+      ls -l dist/
+
+      # Nightly runs leave PUBLISH_DIR empty and publish to verification/;
+      # manual release runs can pass release/<ver>. Allowlist it - the URL is
+      # PUT with the service token, and a path like ../<other-repo> would
+      # normalize into a different Artifactory repo.
+      PUBLISH_DIR="${PUBLISH_DIR:-verification}"
+      [[ "${PUBLISH_DIR}" =~ ^(verification|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
+        || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
+      # Per-commit folder: cu12/cu13 builds of the same commit co-locate, so
+      # `pip install --find-links <path> "nixl[cuXX]"` resolves a matched set.
+      . ./wheel_build_ids.env
+      DEST="${WHEEL_REPO_URL}/${PUBLISH_DIR}/${NIXL_SHA}"
+
+      # curl-PUT (no python on the runner for twine); Artifactory indexes it as a
+      # pip repo. rc fails the step on any upload error; set +x hides the token.
+      set +x
+      rc=0
+      for whl in dist/nixl*.whl; do
+        curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+          -T "${whl}" "${DEST}/$(basename "${whl}")" || rc=1
+      done
+      exit $rc
+
+taskName: '${name}_${manylinux}/${arch}/python_${python_version}'
+
+# Display name distinguishes builds in the history list:
+# #N-<source>-cuXX[+spcx][+infinia], mirroring nixl-ci-build-container.
+pipeline_start:
+  shell: action
+  module: groovy
+  containerSelector: "{name: 'manylinux'}"
+  run: |
+    def src = params.NIXL_VERSION ==~ /[0-9a-f]{40}/ ? params.NIXL_VERSION.take(8) : params.NIXL_VERSION
+    def cu = "cu${params.BASE_TAG.tokenize('.')[0]}"
+    def plugins = (params.BUILD_UCX_SPCX_PLUGIN ? '+spcx' : '') + (params.BUILD_INFINIA ? '+infinia' : '')
+    currentBuild.displayName += "-${src}-${cu}${plugins}"
+
+# Mail the unattended nightly only when it fails; a green night stays quiet.
+pipeline_stop:
+  shell: action
+  module: groovy
+  containerSelector: "{name: 'manylinux'}"
+  run: |
+    def jobStatus = currentBuild.result ?: 'SUCCESS'
+    if (jobStatus != 'SUCCESS' && params.MAIL_TO) {
+        def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
+        mail(
+            from: env.MAIL_FROM,
+            to: params.MAIL_TO,
+            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
+            mimeType: 'text/html',
+            body: """
+                <p>Started by: <b>${userName}</b></p>
+                <p>Status: <span style="color: red;"><b>${jobStatus}</b></span></p>
+                <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
+                <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+                <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
+                <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
+                <p>UCX Version: <b>${params.UCX_VERSION}</b></p>
+                <p>CUDA Source Image: <b>${params.BASE_IMAGE}:${params.BASE_TAG}</b></p>
+                <p>CUDA Version: <b>${params.CUDA_VERSION}</b></p>
+            """
+        )
+    }

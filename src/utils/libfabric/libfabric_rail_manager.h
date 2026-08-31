@@ -132,6 +132,17 @@ public:
         return rails_.size();
     }
 
+    /** Round-robin index of a descriptor into a selection array of `count` entries.
+     * batch_write groups NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE consecutive descriptors per entry.
+     * The FI_MORE flush precompute and the rail selection must agree, so both call this. */
+    static size_t
+    railSelectionIndex(size_t base_offset, int desc_idx, bool batch_write, size_t count) {
+        const size_t rr_idx = batch_write ?
+            (base_offset + static_cast<size_t>(desc_idx) / NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE) :
+            (base_offset + static_cast<size_t>(desc_idx));
+        return rr_idx % count;
+    }
+
     // Memory registration management
     /** Register memory with topology-aware rail selection based on memory type and location
      * @param buffer Memory buffer to register
@@ -197,6 +208,14 @@ public:
      * @param xfer_id Transfer ID for tracking
      * @param completion_callback Callback for completion notification
      * @param submitted_count_out Number of requests successfully submitted
+     * @param desc_idx Index of current descriptor within the transfer
+     * @param base_offset Pre-reserved round-robin offset from reserveBaseOffset()
+     * @param apply_fi_more Precomputed by the caller: true keeps a non-striped WRITE batched
+     *        (posted with FI_MORE); false flushes the rail's batch. The caller passes false for
+     *        a rail's last post and when a batch reaches NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE.
+     *        Defaults to false so an unmarked descriptor flushes safely.
+     * @param device_id Device id when multi-GPU is enabled.
+     * @param is_cuda_device Specifies whether this is CUDA-VRAM transfer.
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
@@ -212,19 +231,45 @@ public:
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t agent_idx,
                              uint16_t xfer_id,
-                             std::function<void()> completion_callback,
-                             size_t &submitted_count_out);
-    /** Determine if striping should be used for given transfer size
+                             std::function<void(nixl_status_t)> completion_callback,
+                             size_t &submitted_count_out,
+                             int desc_idx,
+                             size_t base_offset,
+                             bool apply_fi_more = false,
+                             int device_id = -1,
+                             bool is_cuda_vram = false);
+
+    void
+    deferTransferRequest(nixlLibfabricReq::OpType op_type,
+                         uint16_t agent_idx,
+                         uint16_t xfer_id,
+                         uint64_t fi_flags,
+                         fi_addr_t dest_addr,
+                         int device_id,
+                         bool is_cuda_vram,
+                         size_t rail_id,
+                         nixlLibfabricReq *req);
+
+    /** Reserve a base offset for a transfer to ensure stable rail assignment
+     *  across all descriptors in the transfer. Call once per postXfer. */
+    size_t
+    reserveBaseOffset();
+
+    /** True when a transfer of this size across this many rails is striped (split across the
+     *  rails) rather than posted on a single rail.
      * @param transfer_size Size of the transfer in bytes
-     * @return true if striping should be used, false for round-robin
+     * @param rail_count Number of rails selected for the transfer
      */
     bool
-    shouldUseStriping(size_t transfer_size) const;
+    usesStriping(size_t transfer_size, size_t rail_count) const {
+        return transfer_size >= striping_threshold_ && rail_count > 1;
+    }
 
     // Control Message APIs
     /** Control message types for rail communication */
     enum class ControlMessageType : int {
         NOTIFICATION, ///< User notification message
+        HANDSHAKE, ///< Peer-idx assignment (NIXL_LIBFABRIC_MSG_HANDSHAKE)
     };
     /** Send control message via control rail
      * @param msg_type Type of control message
@@ -239,13 +284,14 @@ public:
                        nixlLibfabricReq *req,
                        fi_addr_t dest_addr,
                        uint16_t agent_idx = 0,
-                       std::function<void()> completion_callback = nullptr);
+                       std::function<void(nixl_status_t)> completion_callback = nullptr);
     // Progress APIs
     /** Process completions on active rails only (optimized for CPU overhead)
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
     progressActiveRails();
+
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
      */
@@ -253,13 +299,13 @@ public:
     validateAllRailsInitialized();
 
     // Active Rail Management APIs
-    /** Mark rail as active for progress tracking optimization */
+    /** Increment active reference count on a rail */
     void
-    markRailActive(size_t rail_id);
+    incRailActive(size_t rail_id);
 
-    /** Mark rail as inactive for progress tracking optimization */
+    /** Decrement active reference count on a rail; rail becomes inactive when count reaches zero */
     void
-    markRailInactive(size_t rail_id);
+    decRailActive(size_t rail_id);
 
     /** Clear all active rail markings */
     void
@@ -351,8 +397,8 @@ private:
     // EFA device to rail mapping
     std::unordered_map<std::string, size_t> efa_device_to_rail_map;
 
-    // Active Rail Tracking System
-    std::unordered_set<size_t> active_rails_;
+    // active rails with reference counting (always positive)
+    std::unordered_map<size_t, size_t> active_rails_;
     mutable std::mutex active_rails_mutex_;
 
     // rail selection policy for DRAM memory type
@@ -360,7 +406,10 @@ private:
 
     // get rail count limit for DRAM memory type, either computed or from user
     bool
-    getDramRailLimit(const nixl_b_params_t &custom_params, size_t &max_bw, size_t &max_rails);
+    getDramRailLimit(const nixl_b_params_t &custom_params,
+                     size_t &max_bw,
+                     size_t &max_rails,
+                     size_t &recommended_rails);
 
     // Internal rail selection method
     std::vector<size_t>

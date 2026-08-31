@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,7 @@ limitations under the License.
 
 # Contribution Guidelines
 
-Welcome to NIXL! This document provides guidelines for contributing to our modern C++17 project. Please read through these guidelines carefully before submitting your contribution.
+Welcome to NIXL! This document provides guidelines for contributing to our modern C++20 project. Please read through these guidelines carefully before submitting your contribution.
 
 ## Table of Contents
 
@@ -46,7 +46,7 @@ Before contributing, please:
 
 ### Required Tools
 
-- C++17 compatible compiler
+- C++20 compatible compiler (GCC >= 11, Clang >= 14)
 - Meson build system
 - Ninja build tool
 - clang-format
@@ -100,9 +100,9 @@ pre-commit install
 
 ## Code Standards
 
-### C++17 Guidelines
+### C++20 Guidelines
 
-NIXL is a modern C++17 project. We adhere to the [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) where appropriate. Key principles:
+NIXL is a modern C++20 project. We adhere to the [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) where appropriate. Key principles:
 
 1. **Use modern C++ features**: Prefer `auto`, range-based loops, structured bindings, `std::optional`, etc.
 2. **RAII everywhere**: Resource management through constructors/destructors
@@ -361,6 +361,35 @@ Document public APIs and complex implementations:
  * @param param1 Description of parameter
  * @return Description of return value
  */
+```
+
+### Python Docstrings
+
+Document public Python modules, classes, methods, and functions according to
+[PEP 257](https://peps.python.org/pep-0257/) and use
+[Google-style docstrings](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings)
+for structured sections. The docstring must be the first statement in the documented object.
+
+Start with a concise summary and add the standard `Args:`, `Returns:`, `Raises:`,
+`Examples:`, and `Notes:` sections when applicable. Keep types and defaults in the
+Python signature rather than duplicating them in parameter descriptions. This format is
+readable through Python's built-in help system and can be consumed by API documentation
+generators.
+
+```python
+def connect(host: str, timeout_s: float = 10.0) -> Connection:
+    """Connect to a remote agent.
+
+    Args:
+        host: Hostname or address of the remote agent.
+        timeout_s: Maximum time to wait for the connection.
+
+    Returns:
+        The established connection.
+
+    Raises:
+        ConnectionError: If the remote agent cannot be reached.
+    """
 ```
 
 ### PR Documentation

@@ -30,20 +30,32 @@ VERSION=v$latest_tag.dev.$commit_id
 
 BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
 BASE_IMAGE_TAG=25.10-cuda13.0-devel-ubuntu24.04
+MANYLINUX_IMAGE=quay.io/pypa/manylinux_2_28
+MANYLINUX_IMAGE_TAG=2026.06.06-1
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
-UCX_REF=${UCX_REF:-v1.21.x}
+UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
+UCX_REF=${UCX_REF:-v1.23.x}
+UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-}
+PRIVATE_UCX_SONAME_SUFFIX="nixl"
 BUILD_NIXL_EP="true"
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
-if [ "$CI" = "true" ]; then
-    BUILD_TYPE="debug"
-else
-    BUILD_TYPE="release"
-fi
+GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
+BUILD_TYPE="release"
+# CUDA MAJOR.MINOR for the manylinux wheel build — drives the torch cuXXX index
+# and the cu12/cu13 meta-wheel split. Left empty here so the BASE_IMAGE_TAG
+# derivation below can fill it; CUDA_VERSION_DEFAULT applies if neither does.
+CUDA_VERSION_DEFAULT="13.2"
+CUDA_VERSION=${CUDA_VERSION:-}
+BUILD_INFINIA="false"
+INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
+APT_MIRROR=""
+BUILD_UCX_SPCX_PLUGIN="false"
+UCX_SPCX_PLUGIN_REF="v0.2.x"
 
 get_options() {
     while :; do
@@ -84,6 +96,14 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --apt-mirror)
+            if [ "$2" ]; then
+                APT_MIRROR=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --no-cache)
             NO_CACHE=" --no-cache"
             ;;
@@ -119,16 +139,101 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
-        --ucx-upstream)
-            # Master branch (v1.20) also containing EFA SRD support
-            UCX_REF=9d2b88a1f67faf9876f267658bd077b379b8bb76
+        --torch-versions)
+            if [ "$2" ]; then
+                WHL_TORCH_VERSIONS=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --cuda-version)
+            if [ "$2" ]; then
+                CUDA_VERSION=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --manylinux-image)
+            if [ "$2" ]; then
+                MANYLINUX_IMAGE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --manylinux-image-tag)
+            if [ "$2" ]; then
+                MANYLINUX_IMAGE_TAG=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --ucx-repo)
+            if [ "$2" ]; then
+                UCX_REPO=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --ucx-ref)
+            if [ "$2" ]; then
+                UCX_REF=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --ucx-soname-suffix)
+            if [ "$2" ]; then
+                UCX_SONAME_SUFFIX=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --private-ucx)
+            UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-$PRIVATE_UCX_SONAME_SUFFIX}
             ;;
         --build-nixl-ep)
             BUILD_NIXL_EP=true
             ;;
+        --build-ucx-spcx-plugin)
+            BUILD_UCX_SPCX_PLUGIN="true"
+            ;;
+        --ucx-spcx-plugin-ref)
+            if [ "$2" ]; then
+                UCX_SPCX_PLUGIN_REF=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --arch)
             if [ "$2" ]; then
                 ARCH=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --wheel-base-image)
+            if [ "$2" ]; then
+                WHEEL_BASE_IMAGE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --build-infinia)
+            BUILD_INFINIA="true"
+            ;;
+        --infinia-image)
+            if [ "$2" ]; then
+                INFINIA_LIBS_IMAGE=$2
                 shift
             else
                 missing_requirement $1
@@ -173,11 +278,29 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
+    echo "UCX Repo: ${UCX_REPO}"
     echo "UCX Ref: ${UCX_REF}"
+    if [ -n "$UCX_SONAME_SUFFIX" ]; then
+        echo "UCX SONAME suffix: ${UCX_SONAME_SUFFIX}"
+        echo "UCX module deepbind: Enabled"
+    else
+        echo "UCX SONAME suffix: Disabled"
+        echo "UCX module deepbind: Disabled"
+    fi
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         echo "NIXL EP: Enabled"
     else
         echo "NIXL EP: Disabled"
+    fi
+    if [ "$BUILD_INFINIA" = "true" ]; then
+        echo "Infinia DDN plugin: Enabled (image: ${INFINIA_LIBS_IMAGE})"
+    else
+        echo "Infinia DDN plugin: Disabled"
+    fi
+    if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
+        echo "UCX spcx plugin: Enabled (ref: ${UCX_SPCX_PLUGIN_REF})"
+    else
+        echo "UCX spcx plugin: Disabled"
     fi
     echo "Build Type: ${BUILD_TYPE}"
 }
@@ -192,10 +315,23 @@ show_help() {
     echo "  [--build-type [debug|release] to select build type (default: release)]"
     echo "  [--tag tag for image]"
     echo "  [--python-versions python versions to build for, comma separated]"
-    echo "  [--ucx-upstream use ucx master branch]"
-    echo "  [--build-nixl-ep build NIXL with NIXL EP support (uses latest UCX master)]"
+    echo "  [--ucx-repo ucx git repository URL]"
+    echo "  [--ucx-ref ucx git reference (branch, tag, or sha)]"
+    echo "  [--ucx-soname-suffix suffix to pass to UCX --with-soname-suffix]"
+    echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
+    echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
+    echo "  [--build-ucx-spcx-plugin build the UCX spcx external plugin (requires NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL in the environment) (requires --dockerfile contrib/Dockerfile or contrib/Dockerfile.manylinux; bundled into the wheel only on the manylinux path)]"
+    echo "  [--ucx-spcx-plugin-ref git ref of ucx-spcx-plugin to build (default: ${UCX_SPCX_PLUGIN_REF})]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
+    echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
+    echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: derived from --base-image-tag, else ${CUDA_VERSION_DEFAULT})]
+  [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
+  [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
+    echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
+    echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; harbor.mellanox.com must be reachable)]"
+    echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
+    echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
     exit 0
 }
 
@@ -216,15 +352,112 @@ if [ -d "$NIXL_DIR/build" ]; then
 fi
 
 BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX_IMAGE_TAG=$MANYLINUX_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
+BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
+# For Dockerfile.manylinux, derive CUDA_VERSION from BASE_IMAGE_TAG if not
+# set explicitly (BASE_IMAGE_TAG format: <major>.<minor>.<patch>-devel-ubi8).
+case "$DOCKER_FILE" in
+    *Dockerfile.manylinux)
+        CUDA_VERSION="${CUDA_VERSION:-$(echo "$BASE_IMAGE_TAG" | grep -oE '^[0-9]+\.[0-9]+')}"
+        # A CUDA major that disagrees with the base image is always a bug: the
+        # cuda-<ver> symlink and the cuobjclient .pc paths are built from it, and
+        # a mismatch silently mislabels the wheel and skips the meta-wheel copy.
+        base_major="$(echo "$BASE_IMAGE_TAG" | grep -oE '^[0-9]+')"
+        if [ -n "$base_major" ] && [ "${CUDA_VERSION%%.*}" != "$base_major" ]; then
+            error "ERROR:" "CUDA_VERSION=$CUDA_VERSION disagrees with --base-image-tag $BASE_IMAGE_TAG (CUDA $base_major)"
+        fi
+        ;;
+esac
+CUDA_VERSION="${CUDA_VERSION:-$CUDA_VERSION_DEFAULT}"
+BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
+BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
+BUILD_ARGS+=" --build-arg UCX_SONAME_SUFFIX=$UCX_SONAME_SUFFIX"
 BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
+BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
+BUILD_ARGS+=" --build-arg BUILD_INFINIA=$BUILD_INFINIA"
+BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
+BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
+
+# The plugin source is fetched on the host and placed inside the build
+# context (ucx-spcx-plugin-src/), where the Dockerfile's plugin RUN builds
+# it from the copied context. This keeps credentials and BuildKit-specific
+# syntax out of the Dockerfile entirely, so the default build works with
+# any docker builder. The token stays out of URLs and argv (git credential
+# helper reading the environment) so git errors cannot leak it.
+SPCX_SRC_DIR="$BUILD_CONTEXT/ucx-spcx-plugin-src"
+rm -rf "$SPCX_SRC_DIR"
+if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
+    # Ask the dockerfile itself rather than matching paths: only the ones with
+    # the plugin build block declare the ARG, so this cannot drift.
+    if ! grep -q '^ARG BUILD_UCX_SPCX_PLUGIN' "$DOCKER_FILE"; then
+        error "ERROR:" "--build-ucx-spcx-plugin requires a dockerfile that consumes it (contrib/Dockerfile or contrib/Dockerfile.manylinux); $DOCKER_FILE does not"
+    fi
+    if [ -z "${NIXL_GITLAB_TOKEN:-}" ]; then
+        error "ERROR:" "--build-ucx-spcx-plugin requires the NIXL_GITLAB_TOKEN environment variable"
+    fi
+    if [ -z "${NIXL_SPCX_PLUGIN_REPO_URL:-}" ]; then
+        error "ERROR:" "--build-ucx-spcx-plugin requires the NIXL_SPCX_PLUGIN_REPO_URL environment variable"
+    fi
+    trap 'rm -rf "$SPCX_SRC_DIR"' EXIT
+    mkdir -p "$SPCX_SRC_DIR"
+    (
+        set -e
+        cd "$SPCX_SRC_DIR"
+        git init -q
+        git remote add origin "$NIXL_SPCX_PLUGIN_REPO_URL"
+        # shellcheck disable=SC2016
+        GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+            -c credential.helper='!f() { echo "username=oauth2"; echo "password=${NIXL_GITLAB_TOKEN}"; }; f' \
+            fetch -q --depth 1 origin "$UCX_SPCX_PLUGIN_REF"
+        git checkout -q FETCH_HEAD
+        echo "ucx-spcx-plugin ref ${UCX_SPCX_PLUGIN_REF} -> commit $(git rev-parse HEAD)"
+        rm -rf .git
+    ) || error "ERROR:" "failed to fetch ucx-spcx-plugin at ref ${UCX_SPCX_PLUGIN_REF}"
+fi
+
+if [ -n "$WHEEL_BASE_IMAGE" ]; then
+    BUILD_ARGS+=" --build-arg wheel_base=$WHEEL_BASE_IMAGE"
+    # Not named BUILD_TARGET: Jenkins exports a BUILD_TARGET job parameter
+    # (nixl/nixlbench) that would leak into the docker command line.
+    DOCKER_BUILD_TARGET="--target wheel"
+fi
+
+# Infinia DDN libs: pre-pulled from harbor on the host and placed flat into
+# infinia-libs/ in the build context. The Dockerfile's BUILD_INFINIA RUN block
+# copies them to /opt/ddn/red/ — no harbor reference in the Dockerfile. The whole
+# block is guarded so external docker build runs are unaffected when
+# BUILD_INFINIA=false (default): no filesystem writes and no EXIT trap installed.
+if [ "$BUILD_INFINIA" = "true" ]; then
+    # Ask the dockerfile itself rather than matching paths, as for the spcx flag.
+    if ! grep -q '^ARG BUILD_INFINIA' "$DOCKER_FILE"; then
+        error "ERROR:" "--build-infinia requires a dockerfile that consumes it (contrib/Dockerfile or contrib/Dockerfile.manylinux); $DOCKER_FILE does not"
+    fi
+    INFINIA_LIBS_DIR="$BUILD_CONTEXT/infinia-libs"
+    rm -rf "$INFINIA_LIBS_DIR"
+    mkdir -p "$INFINIA_LIBS_DIR"
+    trap 'rm -rf "$INFINIA_LIBS_DIR"' EXIT
+    (
+        set -e
+        echo "Pulling Infinia libs image: ${INFINIA_LIBS_IMAGE}"
+        docker pull "$INFINIA_LIBS_IMAGE"
+        cid=$(docker create "$INFINIA_LIBS_IMAGE")
+        trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+        docker cp "$cid:/infinia/$ARCH/." "$INFINIA_LIBS_DIR/"
+        echo "Infinia libs staged from ${INFINIA_LIBS_IMAGE} (arch: ${ARCH})"
+    ) || error "ERROR:" "failed to stage Infinia libs from ${INFINIA_LIBS_IMAGE}"
+    # Fail fast on an empty extraction (wrong $ARCH, misconfigured image): otherwise
+    # the wheel would silently build without libplugin_INFINIA.so.
+    [ -n "$(ls -A "$INFINIA_LIBS_DIR")" ] || \
+        error "ERROR:" "no Infinia libs found for arch $ARCH in ${INFINIA_LIBS_IMAGE}"
+fi
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT

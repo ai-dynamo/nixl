@@ -21,19 +21,19 @@
 #include "config.h"
 #include <iostream>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 #include <optional>
 #include <memory>
+#include <unistd.h>
+#include <functional>
 #include <nixl.h>
+#include <nixl_types.h>
 #include "utils/utils.h"
 #include "worker/worker.h"
-
-struct xferFileState {
-    int fd;
-    uint64_t file_size;
-    uint64_t offset;
-};
+#include <random>
+#include "worker/nixl/nixl_mem_region.h"
 
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
 
@@ -43,11 +43,11 @@ class xferBenchNixlWorker: public xferBenchWorker {
         nixlBackendH* backend_engine;
         nixl_mem_t seg_type;
         std::vector<xferFileState> remote_fds;
-        std::vector<std::vector<xferBenchIOV>> remote_iovs;
+        std::vector<NixlMemRegion> remote_regs_;
+        std::vector<NixlMemRegion> local_regs_;
         std::vector<GusliDeviceConfig> gusli_devices;
-        /* ODM/ODM: char device path (e.g. /dev/odm0) and the device-physical base
-         * for ODM_MEM_SEG, discovered at runtime from the CXL IDENTIFY capacity
-         * (no hardcoded --odm_addr). */
+        std::string remote_agent_name;
+        std::optional<xferBenchIOV> completion_counter_iov;
         std::string odm_device_path_;
         uint64_t odm_base_addr_ = 0;
         int odm_iova_fd_ = -1;
@@ -85,34 +85,37 @@ class xferBenchNixlWorker: public xferBenchWorker {
     private:
         std::optional<xferBenchIOV>
         initBasicDescDram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescDram(xferBenchIOV &basic_desc);
-#if HAVE_CUDA
-        std::optional<xferBenchIOV> initBasicDescVram(size_t buffer_size, int mem_dev_id);
-        void cleanupBasicDescVram(xferBenchIOV &basic_desc);
-#endif
+        std::optional<xferBenchIOV>
+        initBasicDescVram(size_t buffer_size, int mem_dev_id);
         std::optional<xferBenchIOV>
         initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
-        void cleanupBasicDescFile(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
         initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
-        void
-        cleanupBasicDescObj(xferBenchIOV &basic_desc);
         std::optional<xferBenchIOV>
         initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
-        void
-        cleanupBasicDescBlk(xferBenchIOV &basic_desc);
         bool
         ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
-        /* Read the ODM_MEM_SEG base address from the device's CXL IDENTIFY
-         * capacity (replaces the hardcoded --odm_addr). Falls back to a
-         * known-good base if it cannot be read. */
         uint64_t
         discoverOdmBaseAddr();
-        /* Consistency-check helper: seed the Iliad device memory the ODM READ
-         * will pull from with XFERBENCH_TARGET_BUFFER_ELEMENT, written through
-         * the BAR2 DAX window (DAX offset 0 aliases the ODM DPA base). */
         void
         seedOdmDramForRead(size_t total_size);
+        uint64_t
+        getFileOffset(size_t current_offset, size_t max_offset_in_blocks, size_t block_size);
+        void
+        releaseMemView(nixlMemViewH &mvh);
+        nixlMemViewH
+        prepareGPULocalView(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists);
+        nixlMemViewH
+        prepareGPURemoteView(const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists);
+        std::optional<xferBenchIOV>
+        initCompletionCounterVram();
+        bool
+        waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
+                                       uint64_t expected_value,
+                                       const char *phase,
+                                       const std::function<void()> &checkLiveness);
+
+        std::mt19937_64 default_rng_;
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H

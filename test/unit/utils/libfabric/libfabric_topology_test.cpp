@@ -182,6 +182,24 @@ static TopologyInfo topologies[] = {
      .numa_capacity = 32, // topmost switch on g6 report link speed 32 GB/s
      .numa_rail_count = 1, // should default to all rails, which is 1
      .test_scenarios = {{false, 0}, {true, 50}, {true, 100}, {true, 200}},
+     .rail_partition = {{{0}}, {{0}}}}, // pretending single switch in each node, both using rail 0
+
+    //
+    // C-series
+    //
+
+    // c5.18xl instance type (EFA connected directly to host bridge, no PCIe switch involved)
+    {.enable = true,
+     .instance_type = "c5n.18xl",
+     .topo_file = "c5n.18xl-topo.xml",
+     .numa_node_count = 0, // no NIC is attached to NUMA node, the only NIC is attached to machine
+     .nic_count = 1,
+     .nic_line_speed = 0, // neither fi-info nor hwloc report speed for the NIC
+     .nic_upstream_link_speed = 0, // c5 reports upstream link speed 0
+     .switch_count = 0, // no bridge/switch spec other than host bridge with link speed 0
+     .numa_capacity = 0, // topmost switch/bridge on c5 report link speed 0
+     .numa_rail_count = 1, // should default to all rails, which is 1
+     .test_scenarios = {{false, 0}, {true, 50}, {true, 100}, {true, 200}},
      .rail_partition = {{{0}}, {{0}}}} // pretending single switch in each node, both using rail 0
 
     // end of list
@@ -548,19 +566,8 @@ __wrap_get_mempolicy(int *mode,
     return 0;
 }
 
-// helper template function for allocating flat type zeroed memory with malloc but keeping new
-// operator semantics of throwing bad_alloc when allocation fails
-template<typename T>
-T *
-malloc_zero() {
-    T *res = (T *)calloc(1, sizeof(T));
-    if (res == nullptr) {
-        std::stringstream ss;
-        ss << "Failed to allocate " << sizeof(T) << " bytes";
-        throw std::runtime_error(ss.str());
-    }
-    return res;
-}
+// shared stub ops for mocking libfabric objects
+#include "libfabric_mock_stubs.h"
 
 // mock fi_getinfo by current topology in use
 extern "C" int
@@ -631,195 +638,6 @@ __wrap_fi_getinfo(uint32_t version,
     return 0; // or FI_SUCCESS
 }
 
-// stubs
-static int
-fi_av_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-struct fi_ops fi_av_fid_ops_stub{
-    .close = fi_av_close_stub,
-};
-
-static fi_ops_av av_ops_stub = {};
-
-static int
-fi_av_open_stub(struct fid_domain *domain,
-                struct fi_av_attr *attr,
-                struct fid_av **av,
-                void *context) {
-    *av = malloc_zero<fid_av>();
-    (*av)->fid.ops = &fi_av_fid_ops_stub;
-    (*av)->ops = &av_ops_stub;
-    return 0;
-}
-
-static int
-fi_cq_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-struct fi_ops fi_cq_fid_ops_stub{
-    .close = fi_cq_close_stub,
-};
-
-static fi_ops_cq cq_ops_stub = {};
-
-static int
-fi_cq_open_stub(struct fid_domain *domain,
-                struct fi_cq_attr *attr,
-                struct fid_cq **cq,
-                void *context) {
-    *cq = malloc_zero<fid_cq>();
-    (*cq)->fid.ops = &fi_cq_fid_ops_stub;
-    (*cq)->ops = &cq_ops_stub;
-    return 0;
-}
-
-static int
-fi_ep_setopt_stub(fid_t fid, int level, int optname, const void *optval, size_t optlen) {
-    return 0;
-}
-
-static fi_ops_ep fi_ep_ops_stub = {
-    .setopt = fi_ep_setopt_stub,
-};
-
-static int
-fi_ep_bind_stub(struct fid *fid, struct fid *bfid, uint64_t flags) {
-    return 0;
-}
-
-static int
-fi_ep_control_stub(struct fid *fid, int command, void *arg) {
-    return 0;
-}
-
-static int
-fi_ep_cm_getname_stub(fid_t fid, void *addr, size_t *addrlen) {
-    return 0;
-}
-
-static int
-fi_ep_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-struct fi_ops fi_ep_fid_ops_stub{
-    .close = fi_ep_close_stub,
-    .bind = fi_ep_bind_stub,
-    .control = fi_ep_control_stub,
-};
-
-struct fi_ops_cm fi_ep_cm_ops_stub{
-    .getname = fi_ep_cm_getname_stub,
-};
-
-static ssize_t
-fi_ep_recvmsg_stub(struct fid_ep *ep, const struct fi_msg *msg, uint64_t flags) {
-    return 0;
-}
-
-static fi_ops_msg fi_ep_msg_ops_stub{
-    .recvmsg = fi_ep_recvmsg_stub,
-};
-
-static int
-fi_endpoint_stub(struct fid_domain *domain,
-                 struct fi_info *info,
-                 struct fid_ep **ep,
-                 void *context) {
-    *ep = malloc_zero<fid_ep>();
-    (*ep)->ops = &fi_ep_ops_stub;
-    (*ep)->fid.ops = &fi_ep_fid_ops_stub;
-    (*ep)->cm = &fi_ep_cm_ops_stub;
-    (*ep)->msg = &fi_ep_msg_ops_stub;
-    return 0;
-}
-
-static fi_ops_domain domain_ops_stub = {.av_open = fi_av_open_stub,
-                                        .cq_open = fi_cq_open_stub,
-                                        .endpoint = fi_endpoint_stub,
-                                        .scalable_ep = nullptr,
-                                        .cntr_open = nullptr,
-                                        .poll_open = nullptr,
-                                        .stx_ctx = nullptr,
-                                        .srx_ctx = nullptr,
-                                        .query_atomic = nullptr,
-                                        .query_collective = nullptr,
-                                        .endpoint2 = nullptr};
-
-static int
-fi_mr_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-static fi_ops fi_mr_self_ops_stub = {
-    .close = fi_mr_close_stub,
-};
-
-static int
-fi_mr_reg_stub(struct fid *fid,
-               const void *buf,
-               size_t len,
-               uint64_t access,
-               uint64_t offset,
-               uint64_t requested_key,
-               uint64_t flags,
-               struct fid_mr **mr,
-               void *context) {
-    *mr = malloc_zero<fid_mr>();
-    (*mr)->fid.ops = &fi_mr_self_ops_stub;
-    return 0;
-}
-
-static fi_ops_mr fi_mr_ops_stub{
-    .reg = fi_mr_reg_stub,
-};
-
-static int
-fi_domain_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-struct fi_ops fi_domain_ops_stub{
-    .close = fi_domain_close_stub,
-};
-
-static int
-fi_domain_stub(struct fid_fabric *fabric,
-               struct fi_info *info,
-               struct fid_domain **domain,
-               void *context) {
-    *domain = malloc_zero<fid_domain>();
-    (*domain)->fid.ops = &fi_domain_ops_stub;
-    (*domain)->ops = &domain_ops_stub;
-    (*domain)->mr = &fi_mr_ops_stub;
-    return 0;
-}
-
-static fi_ops_fabric fabric_ops_stub{.domain = fi_domain_stub,
-                                     .passive_ep = nullptr,
-                                     .eq_open = nullptr,
-                                     .wait_open = nullptr,
-                                     .trywait = nullptr,
-                                     .domain2 = nullptr};
-
-static int
-fi_fabric_close_stub(struct fid *fid) {
-    free(fid);
-    return 0;
-}
-
-struct fi_ops fi_fabric_ops_stub{
-    .close = fi_fabric_close_stub,
-};
-
 // mock fi_fabric to get past rail manager constructor
 extern "C" int
 __wrap_fi_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric, void *context) {
@@ -829,9 +647,7 @@ __wrap_fi_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric, void *
         return __real_fi_fabric(attr, fabric, context);
     }
 
-    *fabric = malloc_zero<fid_fabric>();
-    (*fabric)->fid.ops = &fi_fabric_ops_stub;
-    (*fabric)->ops = &fabric_ops_stub;
+    *fabric = mock_fabric_create();
     return 0;
 }
 
@@ -1153,7 +969,9 @@ validateRailSelection(const std::vector<size_t> &selected_rails,
     size_t bandwidth = override_bandwidth ?
         bandwidth_limit :
         curr_topology->numa_rail_count * curr_topology->nic_line_speed;
-    size_t expected_rail_count = bandwidth / curr_topology->nic_line_speed;
+    // on C series the nic line speed is reported as zero, so be careful here
+    size_t expected_rail_count =
+        curr_topology->nic_line_speed ? bandwidth / curr_topology->nic_line_speed : 1;
     expected_rail_count = std::max(1ul, expected_rail_count);
     expected_rail_count = std::min(curr_topology->nic_count, expected_rail_count);
     if (curr_topology->numa_capacity == 0) {

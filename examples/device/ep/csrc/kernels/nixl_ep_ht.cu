@@ -103,7 +103,6 @@ __host__ __device__ __forceinline__ std::pair<int, int> get_nvl_clean_meta(int h
     };
 }
 
-template <bool kLowLatencyMode>
 __forceinline__ __device__ int translate_dst_rdma_rank(const int dst_rdma_rank, const int nvl_rank) {
     return dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
 }
@@ -131,7 +130,7 @@ __forceinline__ __device__ void nixl_barrier_wait(nixl_ep::gpu_nixl_ctx nixl_ctx
     st_release_sys_global(nixl_ctx.last_ht_barrier_counter, epoch + num_channels);
 }
 
-template <bool kLowLatencyMode, int kNumRDMARanks>
+template <int kNumRDMARanks>
 __global__ void notify_dispatch(const int* num_tokens_per_rank,
                                 int* moe_recv_counter_mapped,
                                 int num_ranks,
@@ -156,6 +155,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
                                 void** buffer_ptrs,
                                 int** barrier_signal_ptrs,
                                 int rank,
+                                uint64_t timeout_cycles,
                                 nixl_ep::gpu_nixl_ctx nixl_ctx) {
     auto sm_id = static_cast<int>(blockIdx.x);
     auto thread_id = static_cast<int>(threadIdx.x), warp_id = thread_id / 32, lane_id = get_lane_id();
@@ -177,7 +177,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
             if (lane_id == 0)
                 nixl_barrier_wait(nixl_ctx, num_channels);
         }
-        barrier_block<NUM_MAX_NVL_PEERS, true>(barrier_signal_ptrs, nvl_rank);
+        barrier_block<NUM_MAX_NVL_PEERS, true>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
 
         // Send numbers of tokens per rank/expert to RDMA ranks
         auto rdma_buffer_ptr_int = static_cast<int*>(rdma_buffer_ptr);
@@ -209,7 +209,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
                 size_t src_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_recv_num_tokens_mixed.send_buffer(i)));
                 size_t dst_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_recv_num_tokens_mixed.recv_buffer(rdma_rank)));
                 size_t msg_size = (NUM_MAX_NVL_PEERS + num_rdma_experts + 1) * sizeof(int);
-                int translated_dst = translate_dst_rdma_rank<kLowLatencyMode>(i, nvl_rank);
+                int translated_dst = translate_dst_rdma_rank(i, nvl_rank);
                 nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, src_offset};
                 nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst, dst_offset};
                 nixl_status_t status = nixlPut<nixl_gpu_level_t::WARP>(
@@ -288,7 +288,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
             for (int i = 0; i < num_nvl_experts; ++i)
                 nvl_send_num_tokens_per_expert.buffer(nvl_rank)[i] = nvl_reduced_num_tokens_per_expert[thread_id * num_nvl_experts + i];
         }
-        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank);
+        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
 
         // Reduce the number of tokens per rank/expert
         EP_DEVICE_ASSERT(num_nvl_experts <= num_threads);
@@ -319,7 +319,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank,
             if (lane_id == 0)
                 nixl_barrier_wait(nixl_ctx, num_channels);
         }
-        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank);
+        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
     } else {
         // Calculate meta data
         int dst_rdma_rank = sm_id - 1;
@@ -402,40 +402,41 @@ void notify_dispatch(const int* num_tokens_per_rank,
                      cudaStream_t stream,
                      int64_t num_rdma_bytes,
                      int64_t num_nvl_bytes,
-                     bool low_latency_mode,
+                     uint64_t timeout_cycles,
                      nixl_ep::gpu_nixl_ctx nixl_ctx) {
-#define NOTIFY_DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                                    \
-    {                                                                                                                                  \
-        auto notify_dispatch_func = low_latency_mode ? notify_dispatch<true, num_rdma_ranks> : notify_dispatch<false, num_rdma_ranks>; \
-        LAUNCH_KERNEL(&cfg,                                                                                                            \
-                      notify_dispatch_func,                                                                                            \
-                      num_tokens_per_rank,                                                                                             \
-                      moe_recv_counter_mapped,                                                                                         \
-                      num_ranks,                                                                                                       \
-                      num_tokens_per_rdma_rank,                                                                                        \
-                      moe_recv_rdma_counter_mapped,                                                                                    \
-                      num_tokens_per_expert,                                                                                           \
-                      moe_recv_expert_counter_mapped,                                                                                  \
-                      num_experts,                                                                                                     \
-                      is_token_in_rank,                                                                                                \
-                      num_tokens,                                                                                                      \
-                      num_channels,                                                                                                    \
-                      expert_alignment,                                                                                                \
-                      rdma_clean_meta.first,                                                                                           \
-                      rdma_clean_meta.second,                                                                                          \
-                      nvl_clean_meta.first,                                                                                            \
-                      nvl_clean_meta.second,                                                                                           \
-                      rdma_channel_prefix_matrix,                                                                                      \
-                      recv_rdma_rank_prefix_sum,                                                                                       \
-                      gbl_channel_prefix_matrix,                                                                                       \
-                      recv_gbl_rank_prefix_sum,                                                                                        \
-                      rdma_buffer_ptr,                                                                                                 \
-                      buffer_ptrs,                                                                                                     \
-                      barrier_signal_ptrs,                                                                                             \
-                      rank,                                                                                                            \
-                      nixl_ctx);                                                                                                       \
-    }                                                                                                                                  \
-    break
+#define NOTIFY_DISPATCH_LAUNCH_CASE(num_rdma_ranks)              \
+{                                                                \
+    auto notify_dispatch_func = notify_dispatch<num_rdma_ranks>; \
+    LAUNCH_KERNEL(&cfg,                                          \
+                  notify_dispatch_func,                          \
+                  num_tokens_per_rank,                           \
+                  moe_recv_counter_mapped,                       \
+                  num_ranks,                                     \
+                  num_tokens_per_rdma_rank,                      \
+                  moe_recv_rdma_counter_mapped,                  \
+                  num_tokens_per_expert,                         \
+                  moe_recv_expert_counter_mapped,                \
+                  num_experts,                                   \
+                  is_token_in_rank,                              \
+                  num_tokens,                                    \
+                  num_channels,                                  \
+                  expert_alignment,                              \
+                  rdma_clean_meta.first,                         \
+                  rdma_clean_meta.second,                        \
+                  nvl_clean_meta.first,                          \
+                  nvl_clean_meta.second,                         \
+                  rdma_channel_prefix_matrix,                    \
+                  recv_rdma_rank_prefix_sum,                     \
+                  gbl_channel_prefix_matrix,                     \
+                  recv_gbl_rank_prefix_sum,                      \
+                  rdma_buffer_ptr,                               \
+                  buffer_ptrs,                                   \
+                  barrier_signal_ptrs,                           \
+                  rank,                                          \
+                  timeout_cycles,                                \
+                  nixl_ctx);                                     \
+}                                                                \
+break
 
     constexpr int kNumThreads = 512;
     const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
@@ -468,8 +469,7 @@ constexpr int get_num_topk_rdma_ranks(int num_rdma_ranks) {
     return num_rdma_ranks < 8 ? num_rdma_ranks : 8;
 }
 
-template <bool kLowLatencyMode,
-          int kNumRDMARanks,
+template <int kNumRDMARanks,
           bool kCachedMode,
           int kNumTMABytesPerWarp,
           int kNumDispatchRDMASenderWarps,
@@ -508,6 +508,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
              int num_max_nvl_chunked_recv_tokens,
              int rank,
              int num_ranks,
+             uint64_t timeout_cycles,
              nixl_ep::gpu_nixl_ctx nixl_ctx) {
     enum class WarpRole { kRDMASender, kRDMASenderCoordinator, kRDMAAndNVLForwarder, kForwarderCoordinator, kNVLReceivers };
 
@@ -589,7 +590,6 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     __shared__ int rdma_send_channel_lock[kNumRDMARanks];
     __shared__ int rdma_send_channel_tail[kNumRDMARanks];
     __shared__ uint32_t rdma_send_channel_window[kNumRDMARanks];
-    __shared__ nixlGpuXferStatusH rdma_put_xfer_status;
     auto sync_rdma_sender_smem = []() { asm volatile("barrier.sync 0, %0;" ::"r"((kNumDispatchRDMASenderWarps + 1) * 32)); };
 
     // TMA stuffs
@@ -642,7 +642,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 size_t src_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_meta.send_buffer(dst_rdma_rank)));
                 size_t dst_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_meta.recv_buffer(rdma_rank)));
                 size_t msg_size = sizeof(int) * (NUM_MAX_NVL_PEERS * 2 + 2);
-                int translated_rank = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                int translated_rank = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
                 nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, src_offset};
                 nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t)translated_rank, dst_offset};
                 EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(
@@ -677,7 +677,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 cached_rdma_channel_head = static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(lane_id)));
 
                 // Timeout check
-                if (clock64() - start_time >= NUM_TIMEOUT_CYCLES) {
+                if (clock64() - start_time >= timeout_cycles) {
                     printf("NixlEP dispatch RDMA sender timeout, channel: %d, RDMA: %d, nvl: %d, dst RDMA lane: %d, head: %d, tail: %d\n",
                            channel_id,
                            rdma_rank,
@@ -808,7 +808,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         auto start_time = clock64();
         while (__any_sync(0xffffffff, num_tokens_to_send > 0)) {
             // Timeout check
-            if (clock64() - start_time > NUM_TIMEOUT_CYCLES and lane_id < kNumRDMARanks) {
+            if (clock64() - start_time > timeout_cycles and lane_id < kNumRDMARanks) {
                 printf("NixlEP RDMA sender coordinator timeout, channel: %d, IB: %d, nvl %d, dst IB: %d, tail: %d, remaining: %d\n",
                        channel_id,
                        rdma_rank,
@@ -850,7 +850,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                     size_t src_offset = nixl_ctx.offset_get(src_ptr);
                     size_t dst_offset = nixl_ctx.offset_get(dst_ptr);
 
-                    int translated_dst = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                    int translated_dst = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
                     nixlMemViewElem src_mdesc{nixl_ctx.local_mvh, 0, src_offset};
                     nixlMemViewElem dst_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst, dst_offset};
                     EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(
@@ -870,7 +870,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                         atomicAdd(reinterpret_cast<unsigned long long*>(rdma_channel_tail.buffer(dst_rdma_rank)), static_cast<unsigned long long>(num_tokens_to_issue));
                     } else {
                         size_t tail_counter_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_tail.buffer(rdma_rank)));
-                        int translated_dst_tail = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                        int translated_dst_tail = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
 
                         nixlMemViewElem tail_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst_tail, tail_counter_offset};
                         EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
@@ -914,7 +914,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 }
 
                 // Timeout check
-                if (clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+                if (clock64() - start_time > timeout_cycles) {
                     printf(
                         "NixlEP dispatch forwarder timeout (RDMA meta), channel: %d, RDMA: %d, nvl: %d, src RDMA lane: %d, dst NVL: %d, meta: %d, %d, %d, %d\n",
                         channel_id,
@@ -953,7 +953,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 cached_nvl_channel_head = __shfl_sync(0xffffffffu, ld_volatile_global(nvl_channel_head.buffer()), 0);
 
                 // Timeout check
-                if (elect_one_sync() and clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+                if (elect_one_sync() and clock64() - start_time > timeout_cycles) {
                     printf(
                         "NixlEP dispatch forwarder timeout (NVL check), channel: %d, RDMA: %d, nvl: %d, dst NVL: %d, head: %d, tail: %d\n",
                         channel_id,
@@ -982,7 +982,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 }
 
                 // Timeout check
-                if (clock64() - start_time > NUM_TIMEOUT_CYCLES and lane_id < kNumRDMARanks) {
+                if (clock64() - start_time > timeout_cycles and lane_id < kNumRDMARanks) {
                     printf(
                         "NixlEP dispatch forwarder timeout (RDMA check), channel: %d, RDMA: %d, nvl: %d, dst NVL: %d, src RDMA lane: %d, "
                         "head: %d, tail: %d, expected: %d\n",
@@ -1094,7 +1094,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                     atomicAdd(reinterpret_cast<unsigned long long*>(rdma_channel_head.buffer(rdma_rank)), static_cast<unsigned long long>(min_head - last_head));
                 } else {
                     size_t head_counter_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_head.buffer(rdma_rank)));
-                    int translated_dst_head = translate_dst_rdma_rank<kLowLatencyMode>(lane_id, nvl_rank);
+                    int translated_dst_head = translate_dst_rdma_rank(lane_id, nvl_rank);
                     nixlMemViewElem head_mdesc{nixl_ctx.remote_mvh, (size_t)translated_dst_head, head_counter_offset};
                     EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
                         min_head - last_head, head_mdesc, channel_id, 0) == NIXL_IN_PROG);
@@ -1129,7 +1129,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             }
 
             // Timeout check
-            if (clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+            if (clock64() - start_time > timeout_cycles) {
                 printf(
                     "NixlEP dispatch NVL receiver timeout, channel: %d, RDMA: %d, nvl: %d, src RDMA: %d, src nvl: %d, start: %d, end: %d\n",
                     channel_id,
@@ -1160,7 +1160,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 cached_channel_tail_idx = __shfl_sync(0xffffffff, ld_acquire_sys_global(nvl_channel_tail.buffer()), 0);
 
                 // Timeout check
-                if (elect_one_sync() and clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+                if (elect_one_sync() and clock64() - start_time > timeout_cycles) {
                     printf("NixlEP dispatch NVL receiver timeout, channel: %d, RDMA: %d, nvl: %d, src NVL: %d, head: %d, tail: %d\n",
                            channel_id,
                            rdma_rank,
@@ -1279,7 +1279,7 @@ void dispatch(void* recv_x,
               bool is_cached_dispatch,
               cudaStream_t stream,
               int num_channels,
-              bool low_latency_mode,
+              uint64_t timeout_cycles,
               gpu_nixl_ctx nixl_ctx) {
     constexpr int kNumDispatchRDMASenderWarps = 7;
     constexpr int kNumTMABytesPerWarp = 16384;
@@ -1288,52 +1288,51 @@ void dispatch(void* recv_x,
     // Make sure never OOB
     EP_HOST_ASSERT(static_cast<int64_t>(num_scales) * scale_hidden_stride < std::numeric_limits<int>::max());
 
-#define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                                   \
-    {                                                                                                                          \
-        auto dispatch_func = low_latency_mode                                                                                  \
-            ? (is_cached_dispatch ? dispatch<true, num_rdma_ranks, true, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps>     \
-                                  : dispatch<true, num_rdma_ranks, false, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps>)   \
-            : (is_cached_dispatch ? dispatch<false, num_rdma_ranks, true, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps>    \
-                                  : dispatch<false, num_rdma_ranks, false, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps>); \
-        SET_SHARED_MEMORY_FOR_TMA(dispatch_func);                                                                              \
-        LAUNCH_KERNEL(&cfg,                                                                                                    \
-                      dispatch_func,                                                                                           \
-                      reinterpret_cast<int4*>(recv_x),                                                                         \
-                      recv_x_scales,                                                                                           \
-                      recv_topk_idx,                                                                                           \
-                      recv_topk_weights,                                                                                       \
-                      reinterpret_cast<SourceMeta*>(recv_src_meta),                                                            \
-                      reinterpret_cast<const int4*>(x),                                                                        \
-                      x_scales,                                                                                                \
-                      topk_idx,                                                                                                \
-                      topk_weights,                                                                                            \
-                      send_rdma_head,                                                                                          \
-                      send_nvl_head,                                                                                           \
-                      recv_rdma_channel_prefix_matrix,                                                                         \
-                      recv_gbl_channel_prefix_matrix,                                                                          \
-                      rdma_channel_prefix_matrix,                                                                              \
-                      recv_rdma_rank_prefix_sum,                                                                               \
-                      gbl_channel_prefix_matrix,                                                                               \
-                      recv_gbl_rank_prefix_sum,                                                                                \
-                      is_token_in_rank,                                                                                        \
-                      num_tokens,                                                                                              \
-                      hidden_int4,                                                                                             \
-                      num_scales,                                                                                              \
-                      num_topk,                                                                                                \
-                      num_experts,                                                                                             \
-                      scale_token_stride,                                                                                      \
-                      scale_hidden_stride,                                                                                     \
-                      rdma_buffer_ptr,                                                                                         \
-                      num_max_rdma_chunked_send_tokens,                                                                        \
-                      num_max_rdma_chunked_recv_tokens,                                                                        \
-                      buffer_ptrs,                                                                                             \
-                      num_max_nvl_chunked_send_tokens,                                                                         \
-                      num_max_nvl_chunked_recv_tokens,                                                                         \
-                      rank,                                                                                                    \
-                      num_ranks,                                                                                               \
-                      nixl_ctx);                                                                                               \
-    }                                                                                                                          \
-    break
+#define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                               \
+{                                                                                          \
+    auto dispatch_func = is_cached_dispatch ?                                              \
+        dispatch<num_rdma_ranks, true, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps> : \
+        dispatch<num_rdma_ranks, false, kNumTMABytesPerWarp, kNumDispatchRDMASenderWarps>; \
+    SET_SHARED_MEMORY_FOR_TMA(dispatch_func);                                              \
+    LAUNCH_KERNEL(&cfg,                                                                    \
+                  dispatch_func,                                                           \
+                  reinterpret_cast<int4 *>(recv_x),                                        \
+                  recv_x_scales,                                                           \
+                  recv_topk_idx,                                                           \
+                  recv_topk_weights,                                                       \
+                  reinterpret_cast<SourceMeta *>(recv_src_meta),                           \
+                  reinterpret_cast<const int4 *>(x),                                       \
+                  x_scales,                                                                \
+                  topk_idx,                                                                \
+                  topk_weights,                                                            \
+                  send_rdma_head,                                                          \
+                  send_nvl_head,                                                           \
+                  recv_rdma_channel_prefix_matrix,                                         \
+                  recv_gbl_channel_prefix_matrix,                                          \
+                  rdma_channel_prefix_matrix,                                              \
+                  recv_rdma_rank_prefix_sum,                                               \
+                  gbl_channel_prefix_matrix,                                               \
+                  recv_gbl_rank_prefix_sum,                                                \
+                  is_token_in_rank,                                                        \
+                  num_tokens,                                                              \
+                  hidden_int4,                                                             \
+                  num_scales,                                                              \
+                  num_topk,                                                                \
+                  num_experts,                                                             \
+                  scale_token_stride,                                                      \
+                  scale_hidden_stride,                                                     \
+                  rdma_buffer_ptr,                                                         \
+                  num_max_rdma_chunked_send_tokens,                                        \
+                  num_max_rdma_chunked_recv_tokens,                                        \
+                  buffer_ptrs,                                                             \
+                  num_max_nvl_chunked_send_tokens,                                         \
+                  num_max_nvl_chunked_recv_tokens,                                         \
+                  rank,                                                                    \
+                  num_ranks,                                                               \
+                  timeout_cycles,                                                          \
+                  nixl_ctx);                                                               \
+}                                                                                          \
+break
 
     EP_HOST_ASSERT((topk_idx == nullptr) == (topk_weights == nullptr));
     EP_HOST_ASSERT((recv_topk_idx == nullptr) == (recv_topk_weights == nullptr));
@@ -1343,7 +1342,7 @@ void dispatch(void* recv_x,
 #undef DISPATCH_LAUNCH_CASE
 }
 
-template <bool kLowLatencyMode, int kNumTMABytesPerWarp>
+template <int kNumTMABytesPerWarp>
 __global__ void cached_notify(const int rdma_clean_offset,
                               const int rdma_num_int_clean,
                               const int nvl_clean_offset,
@@ -1359,6 +1358,7 @@ __global__ void cached_notify(const int rdma_clean_offset,
                               int** barrier_signal_ptrs,
                               int rank,
                               int num_ranks,
+                              uint64_t timeout_cycles,
                               bool is_cached_dispatch,
                               gpu_nixl_ctx nixl_ctx) {
     auto sm_id = static_cast<int>(blockIdx.x);
@@ -1383,7 +1383,7 @@ __global__ void cached_notify(const int rdma_clean_offset,
         }
 
         // Barrier for NVL
-        barrier_block<NUM_MAX_NVL_PEERS, true>(barrier_signal_ptrs, nvl_rank);
+        barrier_block<NUM_MAX_NVL_PEERS, true>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
 
         // Clean RDMA buffer
         auto rdma_buffer_ptr_int = static_cast<int*>(rdma_buffer_ptr);
@@ -1404,7 +1404,7 @@ __global__ void cached_notify(const int rdma_clean_offset,
             if (lane_id == 0)
                 nixl_barrier_wait(nixl_ctx, num_channels);
         }
-        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank);
+        barrier_block<NUM_MAX_NVL_PEERS>(barrier_signal_ptrs, nvl_rank, timeout_cycles);
     } else if (sm_id == 1) {
         if (is_cached_dispatch)
             return;
@@ -1522,8 +1522,8 @@ void cached_notify(int hidden_int4,
                    cudaStream_t stream,
                    int64_t num_rdma_bytes,
                    int64_t num_nvl_bytes,
+                   uint64_t timeout_cycles,
                    bool is_cached_dispatch,
-                   bool low_latency_mode,
                    gpu_nixl_ctx nixl_ctx) {
     const int num_threads = std::max(128, 32 * num_channels);
     const int num_warps = num_threads / 32;
@@ -1550,7 +1550,7 @@ void cached_notify(int hidden_int4,
     EP_HOST_ASSERT(num_channels * 2 > 3);
 
     // Launch kernel
-    auto cached_notify_func = low_latency_mode ? cached_notify<true, kNumTMABytesPerWarp> : cached_notify<false, kNumTMABytesPerWarp>;
+    auto cached_notify_func = cached_notify<kNumTMABytesPerWarp>;
     SETUP_LAUNCH_CONFIG(num_channels * 2, num_threads, stream);
     SET_SHARED_MEMORY_FOR_TMA(cached_notify_func);
     LAUNCH_KERNEL(&cfg,
@@ -1570,6 +1570,7 @@ void cached_notify(int hidden_int4,
                   barrier_signal_ptrs,
                   rank,
                   num_ranks,
+                  timeout_cycles,
                   is_cached_dispatch,
                   nixl_ctx);
 }
@@ -1739,8 +1740,7 @@ __device__ int combine_token(bool is_token_in_rank,
     return topk_ranks[0];
 }
 
-template <bool kLowLatencyMode,
-          int kNumRDMARanks,
+template <int kNumRDMARanks,
           typename dtype_t,
           int kNumCombineForwarderWarps,
           int kNumTMABytesPerSenderWarp,
@@ -1774,6 +1774,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                                                                         int num_max_nvl_chunked_recv_tokens,
                                                                         int rank,
                                                                         int num_ranks,
+                                                                        uint64_t timeout_cycles,
                                                                         gpu_nixl_ctx nixl_ctx) {
     enum class WarpRole { kNVLSender, kNVLAndRDMAForwarder, kRDMAReceiver, kCoordinator };
 
@@ -1884,7 +1885,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                     cached_channel_head_idx = ld_volatile_global(nvl_channel_head.buffer() + lane_id);
 
                 // Timeout check
-                if (clock64() - start_time > NUM_TIMEOUT_CYCLES and lane_id < kNumRDMARanks) {
+                if (clock64() - start_time > timeout_cycles and lane_id < kNumRDMARanks) {
                     printf(
                         "NixlEP combine NVL sender timeout, channel: %d, RDMA: %d, nvl: %d, dst NVL: %d, RDMA lane: %d, head: %d, tail: "
                         "%d, start: %d, end: %d\n",
@@ -2056,7 +2057,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                         break;
 
                     // Timeout check
-                    if (clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+                    if (clock64() - start_time > timeout_cycles) {
                         printf(
                             "NixlEP combine forwarder (RDMA check) timeout, channel: %d, RDMA: %d, nvl: %d, dst RDMA: %d, head: %ld, tail: "
                             "%d, chunked: %d\n",
@@ -2089,7 +2090,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                         cached_nvl_channel_tail_idx = ld_acquire_sys_global(nvl_channel_tail.buffer(lane_id));
 
                         // Timeout check
-                        if (clock64() - start_time > NUM_TIMEOUT_CYCLES and lane_id < NUM_MAX_NVL_PEERS) {
+                        if (clock64() - start_time > timeout_cycles and lane_id < NUM_MAX_NVL_PEERS) {
                             printf(
                                 "NixlEP combine forwarder (NVL check) timeout, channel: %d, RDMA: %d, nvl: %d, src NVL: %d, dst RDMA: %d, "
                                 "tail: %d, waiting: %d, total: %d, sub: %d, large: %d, expected: %d\n",
@@ -2152,7 +2153,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                             reinterpret_cast<uint64_t>(rdma_channel_data.recv_buffer(rdma_rank) + rdma_slot_idx * num_bytes_per_token);
                         const auto src_ptr =
                             reinterpret_cast<uint64_t>(rdma_channel_data.send_buffer(dst_rdma_rank) + rdma_slot_idx * num_bytes_per_token);
-                        int translated_dst_comb = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                        int translated_dst_comb = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
                         nixlMemViewElem src_mdesc_comb{nixl_ctx.local_mvh, 0, nixl_ctx.offset_get(src_ptr)};
                         nixlMemViewElem dst_mdesc_comb{nixl_ctx.remote_mvh, (size_t)translated_dst_comb, nixl_ctx.offset_get(dst_ptr)};
                         EP_DEVICE_ASSERT(nixlPut<nixl_gpu_level_t::WARP>(
@@ -2169,7 +2170,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                         if(dst_rdma_rank == rdma_rank){
                             atomicAdd(reinterpret_cast<unsigned long long*>(tail_ptr), static_cast<unsigned long long>(num_chunked_tokens));
                         } else {
-                            int translated_dst_ct = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                            int translated_dst_ct = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
                             nixlMemViewElem tail_mdesc_ct{nixl_ctx.remote_mvh, (size_t)translated_dst_ct, nixl_ctx.offset_get(tail_ptr)};
                             EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(
                                                  num_chunked_tokens, tail_mdesc_ct, channel_id, 0) ==
@@ -2213,7 +2214,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                     cached_channel_tail_idx = static_cast<int>(ld_acquire_sys_global(rdma_channel_tail.buffer(lane_id)));
 
                     // Timeout check
-                    if (clock64() - start_time > NUM_TIMEOUT_CYCLES) {
+                    if (clock64() - start_time > timeout_cycles) {
                         printf(
                             "NixlEP combine RDMA receiver timeout, channel: %d, RDMA: %d, nvl: %d, src RDMA: %d, tail: %d, waiting: %ld, "
                             "expect: %d\n",
@@ -2292,7 +2293,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
                             atomicAdd(reinterpret_cast<unsigned long long*>(rdma_channel_head.buffer(rdma_rank)), static_cast<unsigned long long>(min_head - last_rdma_head));
                         } else {
                             size_t head_counter_offset = nixl_ctx.offset_get(reinterpret_cast<uint64_t>(rdma_channel_head.buffer(rdma_rank)));
-                            int translated_dst_ch = translate_dst_rdma_rank<kLowLatencyMode>(dst_rdma_rank, nvl_rank);
+                            int translated_dst_ch = translate_dst_rdma_rank(dst_rdma_rank, nvl_rank);
                             nixlMemViewElem head_mdesc_ch{nixl_ctx.remote_mvh, (size_t)translated_dst_ch, head_counter_offset};
                             EP_DEVICE_ASSERT(nixlAtomicAdd<nixl_gpu_level_t::THREAD>(min_head - last_rdma_head, head_mdesc_ch, channel_id, 0) == NIXL_IN_PROG);
                         }
@@ -2319,8 +2320,7 @@ __global__ void __launch_bounds__((kNumForwarders + 1) * 32, 1) combine(int4* co
     }
 }
 
-void combine(cudaDataType_t type,
-             void* combined_x,
+void combine(void* combined_x,
              float* combined_topk_weights,
              const bool* is_combined_token_in_rank,
              const void* x,
@@ -2347,7 +2347,7 @@ void combine(cudaDataType_t type,
              int num_ranks,
              cudaStream_t stream,
              int num_channels,
-             bool low_latency_mode,
+             uint64_t timeout_cycles,
              gpu_nixl_ctx nixl_ctx) {
     constexpr int kNumCombineForwarderWarps = 24;
     constexpr int kNumTMABytesPerSenderWarp = 16384;
@@ -2355,51 +2355,45 @@ void combine(cudaDataType_t type,
     constexpr int smem_size =
         std::max(kNumTMABytesPerSenderWarp * NUM_MAX_NVL_PEERS, kNumTMABytesPerForwarderWarp * kNumCombineForwarderWarps);
 
-#define COMBINE_LAUNCH_CASE(num_rdma_ranks)                                           \
-    {                                                                                 \
-        auto combine_func = low_latency_mode ? combine<true,                          \
-                                                       num_rdma_ranks,                \
-                                                       nv_bfloat16,                   \
-                                                       kNumCombineForwarderWarps,     \
-                                                       kNumTMABytesPerSenderWarp,     \
-                                                       kNumTMABytesPerForwarderWarp>  \
-                                             : combine<false,                         \
-                                                       num_rdma_ranks,                \
-                                                       nv_bfloat16,                   \
-                                                       kNumCombineForwarderWarps,     \
-                                                       kNumTMABytesPerSenderWarp,     \
-                                                       kNumTMABytesPerForwarderWarp>; \
-        SET_SHARED_MEMORY_FOR_TMA(combine_func);                                      \
-        LAUNCH_KERNEL(&cfg,                                                           \
-                      combine_func,                                                   \
-                      reinterpret_cast<int4*>(combined_x),                            \
-                      combined_topk_weights,                                          \
-                      is_combined_token_in_rank,                                      \
-                      reinterpret_cast<const int4*>(x),                               \
-                      topk_weights,                                                   \
-                      reinterpret_cast<const int4*>(bias_0),                          \
-                      reinterpret_cast<const int4*>(bias_1),                          \
-                      combined_rdma_head,                                             \
-                      combined_nvl_head,                                              \
-                      reinterpret_cast<const SourceMeta*>(src_meta),                  \
-                      rdma_channel_prefix_matrix,                                     \
-                      rdma_rank_prefix_sum,                                           \
-                      gbl_channel_prefix_matrix,                                      \
-                      num_tokens,                                                     \
-                      num_combined_tokens,                                            \
-                      hidden,                                                         \
-                      num_topk,                                                       \
-                      rdma_buffer_ptr,                                                \
-                      num_max_rdma_chunked_send_tokens,                               \
-                      num_max_rdma_chunked_recv_tokens,                               \
-                      buffer_ptrs,                                                    \
-                      num_max_nvl_chunked_send_tokens,                                \
-                      num_max_nvl_chunked_recv_tokens,                                \
-                      rank,                                                           \
-                      num_ranks,                                                      \
-                      nixl_ctx);                                                      \
-    }                                                                                 \
-    break
+#define COMBINE_LAUNCH_CASE(num_rdma_ranks)                       \
+{                                                                 \
+    auto combine_func = combine<num_rdma_ranks,                   \
+                                nv_bfloat16,                      \
+                                kNumCombineForwarderWarps,        \
+                                kNumTMABytesPerSenderWarp,        \
+                                kNumTMABytesPerForwarderWarp>;    \
+    SET_SHARED_MEMORY_FOR_TMA(combine_func);                      \
+    LAUNCH_KERNEL(&cfg,                                           \
+                  combine_func,                                   \
+                  reinterpret_cast<int4 *>(combined_x),           \
+                  combined_topk_weights,                          \
+                  is_combined_token_in_rank,                      \
+                  reinterpret_cast<const int4 *>(x),              \
+                  topk_weights,                                   \
+                  reinterpret_cast<const int4 *>(bias_0),         \
+                  reinterpret_cast<const int4 *>(bias_1),         \
+                  combined_rdma_head,                             \
+                  combined_nvl_head,                              \
+                  reinterpret_cast<const SourceMeta *>(src_meta), \
+                  rdma_channel_prefix_matrix,                     \
+                  rdma_rank_prefix_sum,                           \
+                  gbl_channel_prefix_matrix,                      \
+                  num_tokens,                                     \
+                  num_combined_tokens,                            \
+                  hidden,                                         \
+                  num_topk,                                       \
+                  rdma_buffer_ptr,                                \
+                  num_max_rdma_chunked_send_tokens,               \
+                  num_max_rdma_chunked_recv_tokens,               \
+                  buffer_ptrs,                                    \
+                  num_max_nvl_chunked_send_tokens,                \
+                  num_max_nvl_chunked_recv_tokens,                \
+                  rank,                                           \
+                  num_ranks,                                      \
+                  timeout_cycles,                                 \
+                  nixl_ctx);                                      \
+}                                                                 \
+break
 
     int num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
     auto num_warps_per_forwarder = std::max(kNumCombineForwarderWarps / num_rdma_ranks, 1);
@@ -2411,7 +2405,6 @@ void combine(cudaDataType_t type,
                    std::max(num_max_rdma_chunked_send_tokens, num_max_nvl_chunked_send_tokens));
     EP_HOST_ASSERT(num_max_nvl_chunked_recv_tokens / num_rdma_ranks - num_warps_per_forwarder >= num_max_nvl_chunked_send_tokens);
     EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens >= num_warps_per_forwarder);
-    EP_HOST_ASSERT(type == CUDA_R_16BF);
 
     SETUP_LAUNCH_CONFIG(num_channels * 2, (num_forwarder_warps + 1) * 32, stream);
     SWITCH_RDMA_RANKS(COMBINE_LAUNCH_CASE);

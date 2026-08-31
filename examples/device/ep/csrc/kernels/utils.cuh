@@ -179,7 +179,7 @@ __device__  __forceinline__ int64_t ld_volatile_global(const uint64_t *ptr) {
 #ifndef DISABLE_AGGRESSIVE_PTX_INSTRS
 #define LD_NC_FUNC "ld.global.nc.L1::no_allocate.L2::256B"
 #else
-#define LD_NC_FUNC "ld.volatile.global"
+#define LD_NC_FUNC "ld.volatile.global.L2::256B"
 #endif
 
 // `ld.global.nc.L1::no_allocate` will be translated into `LDG.E.NA.[width].CONSTANT` in SASS
@@ -377,7 +377,7 @@ __device__ __forceinline__ void tma_store_1d(const void* smem_ptr, const void* g
 
 template <int N = 0>
 __device__ __forceinline__ void tma_store_wait() {
-    asm volatile("cp.async.bulk.wait_group.read %0;" :: "n"(N) : "memory");
+    asm volatile("cp.async.bulk.wait_group %0;" :: "n"(N) : "memory");
 }
 
 #endif
@@ -466,7 +466,7 @@ __forceinline__ __device__ out_dtype_t extract_required_scale_format(float value
 
 template <int kNumRanks, bool kSyncOnly = false>
 __forceinline__ __device__ void
-barrier_block(int** barrier_signal_ptrs, int rank) {
+barrier_block(int** barrier_signal_ptrs, int rank, uint64_t timeout_cycles) {
     auto thread_id = static_cast<int>(threadIdx.x);
 
     // For non-sync-only cases, the memory operations by other threads in the block must be visible to the `sys` scope
@@ -489,7 +489,7 @@ barrier_block(int** barrier_signal_ptrs, int rank) {
         if (__all_sync(0xffffffff, value <= 0))
             break;
 
-        if (clock64() - start_time > NUM_TIMEOUT_CYCLES and thread_id < kNumRanks) {
+        if (clock64() - start_time > timeout_cycles and thread_id < kNumRanks) {
             printf("NixlEP timeout check failed: rank = %d, thread = %d, value = %d)\n", rank, thread_id, value);
             trap();
         }

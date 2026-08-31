@@ -108,7 +108,7 @@ getAvailableNetworkDevices() {
         return {"sockets", {provider_device_map["sockets"][0]}};
     }
 
-    NIXL_WARN << "No network devices found with any provider";
+    NIXL_ERROR << "No network devices found with any provider";
     return {"none", {}};
 }
 
@@ -274,15 +274,15 @@ getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, 
         std::size_t pos = 0;
         uint64_t parsed_value = std::stoull(value_str, &pos, 10);
         if (pos != value_str.size()) {
-            NIXL_ERROR << "Invalid " << key << " configuration value '" << value_str
-                       << "': excess non-digit characters from position " << pos << "('"
-                       << value_str.substr(pos) << "'), using default: " << value;
+            NIXL_WARN << "Invalid " << key << " configuration value '" << value_str
+                      << "': excess non-digit characters from position " << pos << "('"
+                      << value_str.substr(pos) << "'), using default: " << value;
             return NIXL_ERR_INVALID_PARAM;
         }
-        if (parsed_value >= SIZE_MAX) {
-            NIXL_ERROR << "Invalid " << key << " configuration value '" << parsed_value
-                       << "': exceeding maximum allowed " << SIZE_MAX
-                       << ", using default: " << value;
+        if (parsed_value > SIZE_MAX) {
+            NIXL_WARN << "Invalid " << key << " configuration value '" << parsed_value
+                      << "': exceeding maximum allowed " << SIZE_MAX
+                      << ", using default: " << value;
             return NIXL_ERR_INVALID_PARAM;
         }
 
@@ -296,6 +296,26 @@ getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, 
         return NIXL_ERR_INVALID_PARAM;
     }
     return NIXL_SUCCESS;
+}
+
+static std::unique_ptr<nixlLibfaricCudaCtxMediator> cuda_ctx_mediator;
+
+void
+setCudaCtxMediator(std::unique_ptr<nixlLibfaricCudaCtxMediator> &&mediator) {
+    cuda_ctx_mediator = std::move(mediator);
+}
+
+void
+clearCudaCtxMediator() {
+    cuda_ctx_mediator.reset(nullptr);
+}
+
+nixl_status_t
+cudaSetCtx(bool &use_cuda_addr_wa) {
+    if (cuda_ctx_mediator.get() == nullptr) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    return cuda_ctx_mediator->cudaSetCtx(use_cuda_addr_wa);
 }
 
 } // namespace LibfabricUtils

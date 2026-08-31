@@ -31,12 +31,6 @@ This engine requires the CUDA Toolkit version 13.1.1 or later to be installed.
 
 The CUDA toolkit provides the CUObject Client library, which is required for this engine to function.  The library is included in the CUDA Toolkit installation.
 
-This engine requires the CUDA Toolkit version 13.1.1 or later to be installed.
-
-[CUDA GDS Install and Setup](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)
-
-The CUDA toolkit provides the CUObject Client library, which is required for this engine to function.  The library is included in the CUDA Toolkit installation.
-
 ## Configuration
 
 The Dell ObjectScale engine supports configuration through two mechanisms: backend parameter maps passed during backend creation, and environment variables for system-wide settings. Backend parameters take precedence over environment variables.  The backend parameters described below are required to enable the Dell ObjectScale engine.
@@ -48,10 +42,20 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | Parameter | Description | Default | Required |
 |-----------|-------------|---------|----------|
 | `req_checksum` | Request checksum validation (`required`/`supported`) | - | No |
+| `resp_checksum` | Response checksum validation (`required`/`supported`) | `required` | No |
 | `accelerated` | Enable accelerated engine (`true`/`false`) | `false` | No |
 | `type` | Vendor Type for accelerated engine | - | No |
 
-To enable the Dell ObjectScale engine, the `accelerated` parameter must be set to `true` and the `type` parameter must be set to `dell`.  It is recomended that the `req_checksum` parameter be set to `required` to ensure data integrity.
+To enable the Dell ObjectScale engine, the `accelerated` parameter must be set to `true` and the `type` parameter must be set to `dell`.  It is recommended that the `req_checksum` parameter be set to `required` to disable the AWS SDK's proactive request body checksum validation.  Setting the value to `supported` will allow the AWS SDK to perform request body checksum validation, but this is not recommended for Dell ObjectScale.
+
+> **Note:** The Dell engine defaults `resp_checksum` to `required` (i.e.,
+> `ResponseChecksumValidation::WHEN_REQUIRED`). This disables the AWS SDK's
+> response body checksum validation, which is incompatible with RDMA transfers.
+> RDMA GET responses have an empty HTTP body (`Content-Length: 0`) because data
+> is delivered out-of-band via RDMA. If the server returns `x-amz-checksum-*`
+> headers, the SDK would validate them against the empty body and fail. Transport
+> integrity is ensured by RoCEv2 iCRC. This default can be overridden by
+> explicitly setting `resp_checksum` in the backend parameters.
 
 ### Configuration Examples
 

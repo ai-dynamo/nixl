@@ -21,11 +21,13 @@
 #include <filesystem>
 #include <string>
 #include <map>
+#include <set>
 #include <memory>
 #include <vector>
 #include <mutex>
 #include "backend/backend_plugin.h"
 #include "telemetry/telemetry_plugin.h"
+#include "tracing/trace_plugin.h"
 
 // Forward declarations
 class nixlBackendEngine;
@@ -97,6 +99,22 @@ private:
     nixlTelemetryPlugin *plugin_;
 };
 
+class nixlTracePluginHandle : public nixlPluginHandle {
+public:
+    nixlTracePluginHandle(void *handle, nixlTracePlugin *plugin);
+    ~nixlTracePluginHandle();
+
+    std::unique_ptr<nixl::trace::TraceBackend>
+    createBackend(const nixlTraceBackendInitParams &init_params) const;
+    const char *
+    getName() const override;
+    const char *
+    getVersion() const override;
+
+private:
+    nixlTracePlugin *plugin_;
+};
+
 typedef std::shared_ptr<const nixlPluginHandle> (
     *nixlPluginLoaderFunc)(void *handle, const std::string &plugin_path);
 
@@ -110,7 +128,7 @@ public:
     nixlPluginManager& operator=(const nixlPluginManager&) = delete;
 
     void
-    loadPluginsFromList(const std::string &filename);
+    discoverPluginsFromList(const std::string &filename);
 
     // Load a specific backend plugin
     std::shared_ptr<const nixlBackendPluginHandle>
@@ -119,6 +137,10 @@ public:
     // Load a specific telemetry plugin
     std::shared_ptr<const nixlTelemetryPluginHandle>
     loadTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name);
+
+    // Load a specific trace-backend plugin
+    std::shared_ptr<const nixlTracePluginHandle>
+    loadTracePlugin(const std::string &plugin_name);
 
     // Unload a telemetry plugin
     void
@@ -140,6 +162,10 @@ public:
     std::vector<nixl_backend_t>
     getLoadedBackendPluginNames();
 
+    // Get all available backend plugin names (loaded + discovered on disk)
+    std::vector<nixl_backend_t>
+    getAvailBackendPluginNames();
+
     // Get all loaded telemetry plugin names
     std::vector<nixl_telemetry_plugin_t>
     getLoadedTelemetryPluginNames();
@@ -160,6 +186,11 @@ private:
         loaded_backend_plugins_;
     std::map<nixl_telemetry_plugin_t, std::shared_ptr<const nixlTelemetryPluginHandle>>
         loaded_telemetry_plugins_;
+    std::map<std::string, std::shared_ptr<const nixlTracePluginHandle>> loaded_trace_plugins_;
+    // Plugins discovered on disk but not yet dlopen'd
+    std::set<nixl_backend_t> discovered_backend_plugins_;
+    // Explicit paths from the plugin list file (name -> .so path)
+    std::map<nixl_backend_t, std::string> explicit_plugin_paths_;
     std::vector<std::string> plugin_dirs_;
     std::vector<nixlBackendStaticPluginInfo> backend_static_plugins_;
     std::vector<nixlTelemetryStaticPluginInfo> telemetry_static_plugins_;
@@ -184,8 +215,13 @@ private:
     void
     discoverTelemetryPlugin(const std::string &filename);
 
+    void
+    discoverTracePlugin(const std::string &filename);
+
     std::shared_ptr<const nixlPluginHandle>
-    loadPluginFromPath(const std::string &plugin_path, nixlPluginLoaderFunc loader);
+    loadPluginFromPath(const std::string &plugin_path,
+                       nixlPluginLoaderFunc loader,
+                       bool deepbind = false);
 
     std::string
     composePluginPath(const std::string &dir,

@@ -17,6 +17,8 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <algorithm>
+#include <chrono>
 #include <random>
 
 #include "common.h"
@@ -139,6 +141,47 @@ namespace agent {
             local_agent_ = local_agent_helper_->getAgent();
             remote_agent_ = remote_agent_helper_->getAgent();
         }
+
+        struct DualAgentSetup {
+            nixlBackendH *local_backend = nullptr;
+            nixlBackendH *remote_backend = nullptr;
+            blob local_blob;
+            blob remote_blob;
+            nixl_reg_dlist_t local_reg_dlist;
+            nixl_reg_dlist_t remote_reg_dlist;
+            nixl_opt_args_t local_extra_params;
+            nixl_opt_args_t remote_extra_params;
+            nixl_b_params_t local_params;
+            nixl_b_params_t remote_params;
+            std::string remote_agent_name;
+
+            explicit DualAgentSetup(nixl_mem_t mem_type)
+                : local_reg_dlist(mem_type),
+                  remote_reg_dlist(mem_type) {}
+        };
+
+        void
+        setupDualAgent(DualAgentSetup &s, bool register_local = true, bool register_remote = true) {
+            EXPECT_EQ(local_agent_helper_->createBackendWithGMock(s.local_params, s.local_backend),
+                      NIXL_SUCCESS);
+            EXPECT_EQ(
+                remote_agent_helper_->createBackendWithGMock(s.remote_params, s.remote_backend),
+                NIXL_SUCCESS);
+            if (register_local) {
+                EXPECT_EQ(
+                    local_agent_helper_->initAndRegisterMemory(
+                        s.local_blob, s.local_reg_dlist, s.local_extra_params, s.local_backend),
+                    NIXL_SUCCESS);
+            }
+            if (register_remote) {
+                EXPECT_EQ(
+                    remote_agent_helper_->initAndRegisterMemory(
+                        s.remote_blob, s.remote_reg_dlist, s.remote_extra_params, s.remote_backend),
+                    NIXL_SUCCESS);
+            }
+            EXPECT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, s.remote_agent_name),
+                      NIXL_SUCCESS);
+        }
     };
 
     class singleAgentWithMemParamFixture : public testing::TestWithParam<nixl_mem_t> {
@@ -225,6 +268,70 @@ namespace agent {
         EXPECT_EQ(agent_helper_->initAndRegisterMemory(blob, reg_dlist, extra_params, backend),
                   NIXL_SUCCESS);
         EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+    }
+
+    TEST_F(singleAgentSessionFixture, RegisterDeregisterMemRepeatedTest) {
+        constexpr int kWarmupIters = 3;
+        constexpr int kTimedIters = 64;
+        constexpr size_t kPoolSize = 128;
+
+        using clock = std::chrono::steady_clock;
+        using time_span = std::chrono::nanoseconds;
+
+        nixl_opt_args_t extra_params;
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+
+        EXPECT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+        extra_params.backends.push_back(backend);
+
+        std::vector<std::unique_ptr<blob>> pool;
+        pool.resize(kPoolSize);
+        for (auto &p : pool) {
+            p = std::make_unique<blob>();
+        }
+
+        // Each round: registerMem once per pool entry, then deregisterMem once per entry.
+        auto run_batch = [&](int rounds = 1) {
+            for (int r = 0; r < rounds; ++r) {
+                for (auto &bp : pool) {
+                    nixl_reg_dlist_t reg_dlist{DRAM_SEG};
+                    reg_dlist.addDesc(bp->getDesc());
+                    EXPECT_EQ(agent_->registerMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+                }
+                for (auto &bp : pool) {
+                    nixl_reg_dlist_t reg_dlist{DRAM_SEG};
+                    reg_dlist.addDesc(bp->getDesc());
+                    EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+                }
+            }
+        };
+
+        // Warmup
+        run_batch(kWarmupIters);
+
+        // First measurement
+        auto start = clock::now();
+        run_batch();
+        const int64_t timed1_ns =
+            std::chrono::duration_cast<time_span>(clock::now() - start).count();
+
+        // Many cycles
+        run_batch(kTimedIters);
+
+        // Second measurement
+        start = clock::now();
+        run_batch();
+        const int64_t timed2_ns =
+            std::chrono::duration_cast<time_span>(clock::now() - start).count();
+
+        ASSERT_GT(timed1_ns, 0);
+        ASSERT_GT(timed2_ns, 0);
+        const double ratio = static_cast<double>(std::max(timed1_ns, timed2_ns)) /
+            static_cast<double>(std::min(timed1_ns, timed2_ns));
+        EXPECT_LE(ratio, 2.) << "timed batches differ by more than 100% "
+                                "(ns1="
+                             << timed1_ns << " ns2=" << timed2_ns << " ratio=" << ratio << ")";
     }
 
     INSTANTIATE_TEST_SUITE_P(DramRegisterMemoryInstantiation,
@@ -324,6 +431,20 @@ namespace agent {
         EXPECT_EQ(notif_map[local_agent_name].front(), msg);
 
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
+    TEST_F(dualAgentBridgeFixture, PrepMemViewRemoteDRAM) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s, /*register_local=*/false);
+
+        nixl_remote_dlist_t remote_dlist(DRAM_SEG);
+        remote_dlist.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+
+        nixlMemViewH mvh = nullptr;
+        EXPECT_EQ(local_agent_->prepMemView(remote_dlist, mvh), NIXL_SUCCESS);
+        EXPECT_NE(mvh, nullptr);
+
+        local_agent_->releaseMemView(mvh);
     }
 
     TEST_F(dualAgentBridgeFixture, XferReqSubFunctionsTest) {
