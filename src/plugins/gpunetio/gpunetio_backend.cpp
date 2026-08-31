@@ -1289,6 +1289,7 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
 
     treq->postedCount = 0;
     treq->postStatus = NIXL_SUCCESS;
+    treq->completed = false;
     for (uint32_t idx : treq->positions) {
         std::lock_guard<std::mutex> lock(postLock_);
         const uint32_t completion_index =
@@ -1317,6 +1318,10 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
     uint32_t completion_index;
 
+    if (treq->completed) {
+        return treq->postStatus;
+    }
+
     for (size_t i = 0; i < treq->postedCount; ++i) {
         const uint32_t idx = treq->positions[i];
         completion_index = xferReqRingCpu[idx].id & (DOCA_MAX_COMPLETION_INFLIGHT_MASK);
@@ -1332,6 +1337,7 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
         NIXL_INFO << "DOCA checkXfer pos " << idx << " COMPLETED!";
     }
 
+    treq->completed = true;
     return treq->postStatus;
 }
 
@@ -1346,9 +1352,11 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
         return NIXL_SUCCESS;
     }
 
-    nixl_status_t status = checkXfer(handle);
-    if (status == NIXL_IN_PROG) {
-        return NIXL_ERR_BACKEND;
+    if (!treq->completed) {
+        nixl_status_t status = checkXfer(handle);
+        if (status == NIXL_IN_PROG) {
+            return NIXL_ERR_BACKEND;
+        }
     }
 
     for (uint32_t idx : treq->positions) {

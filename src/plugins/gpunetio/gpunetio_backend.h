@@ -198,6 +198,7 @@ private:
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;
+        bool completed = false;
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
