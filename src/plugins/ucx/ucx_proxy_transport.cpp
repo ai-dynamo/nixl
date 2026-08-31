@@ -18,9 +18,13 @@
 #include "ucx_backend.h"
 
 #include <cstdint>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "common/nixl_log.h"
+#include "device/device_ops.h"
+#include "device/proxy/proxy_runtime.h"
 #include "device/proxy/proxy_transport.h"
 
 static_assert(sizeof(nixlUcxReq) <= sizeof(uint64_t),
@@ -272,3 +276,33 @@ private:
     /** Set by init(), before any worker thread exists. */
     uint32_t max_peers_ = 0;
 };
+
+nixl_status_t
+nixlUcxEngine::setupProxyRuntime(const nixl::proxyConfig &config) {
+    nixl::deviceOps *ops = nixl::getDeviceOps();
+    if (ops == nullptr) {
+        NIXL_ERROR << "Device proxy needs a device operations implementation; none is loaded";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    std::unique_ptr<nixl::proxyRuntime> runtime;
+    nixl_status_t status = nixl::proxyRuntime::create(
+        std::make_unique<proxyTransportImpl>(getSharedWorkers()), config, runtime, *ops);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Device proxy runtime creation failed: " << status;
+        return status;
+    }
+
+    status = runtime->startWorkers();
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Device proxy runtime failed to start workers: " << status;
+        return status;
+    }
+
+    proxyRuntime_ = std::move(runtime);
+    deviceOps_ = ops;
+    NIXL_INFO << "Engine-owned device proxy enabled: " << config.channel_count << " channel(s), "
+              << config.effectiveThreadCount() << " thread(s), max_peers=" << config.max_peers
+              << ", ring_depth=" << config.ring_depth;
+    return NIXL_SUCCESS;
+}
