@@ -15,10 +15,13 @@
 
 subdir('api')
 
+# Build the shared foundations before utilities that depend on infra.
+subdir('utils/common')
+subdir('utils/serdes')
+subdir('infra')
 subdir('utils')
 
 #subdir('arch')
-subdir('infra')
 subdir('plugins')
 subdir('core')
 
