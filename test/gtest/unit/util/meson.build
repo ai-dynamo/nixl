@@ -18,6 +18,6 @@ util_unit_test_dep = declare_dependency(
         'str_util_test.cpp',
         'uuid_v4_test.cpp',
     ],
-    include_directories: [nixl_inc_dirs, gtest_inc_dirs],
+    include_directories: [nixl_inc_dirs, gtest_inc_dirs, utils_inc_dirs],
     dependencies: [nixl_common_dep],
 )
