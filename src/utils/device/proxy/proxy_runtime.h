@@ -70,6 +70,10 @@ public:
     [[nodiscard]] nixl_status_t
     releaseMemView(proxy_view_handle_t proxy_memview);
 
+    /** Roll back preparation before the handle becomes visible to producers. */
+    nixl_status_t
+    discardUnpublishedMemView(proxy_view_handle_t proxy_memview);
+
     [[nodiscard]] nixl_status_t
     startWorkers();
 

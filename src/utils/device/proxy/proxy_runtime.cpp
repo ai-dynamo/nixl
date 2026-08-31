@@ -198,6 +198,12 @@ proxyRuntime::releaseMemView(proxy_view_handle_t proxy_memview) {
     return memview_manager_->release(proxy_memview);
 }
 
+nixl_status_t
+proxyRuntime::discardUnpublishedMemView(proxy_view_handle_t proxy_memview) {
+    const std::lock_guard lock(control_mutex_);
+    return memview_manager_->release(proxy_memview);
+}
+
 void
 proxyRuntime::drainChannels() noexcept {
     if (state_ != state_t::RUNNING) {
