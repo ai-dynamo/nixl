@@ -48,6 +48,9 @@ unit_test_deps += [telemetry_unit_test_dep]
 if is_variable('device_proxy_interface')
     subdir('proxy_config')
     unit_test_deps += [proxy_config_unit_test_dep]
+
+    subdir('proxy_memview_registry')
+    unit_test_deps += [proxy_memview_registry_unit_test_dep]
 endif
 
 cpp = meson.get_compiler('cpp')
