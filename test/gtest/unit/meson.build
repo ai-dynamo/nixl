@@ -18,6 +18,10 @@ unit_test_deps = [
     gtest_dep,
 ]
 
+if is_variable('device_proxy_interface')
+    unit_test_deps += [device_proxy_interface]
+endif
+
 if is_variable('obj_backend_interface')
     subdir('obj')
     unit_test_deps += [obj_unit_test_dep]
@@ -40,6 +44,11 @@ unit_test_deps += [tracing_unit_test_dep]
 
 subdir('telemetry')
 unit_test_deps += [telemetry_unit_test_dep]
+
+if is_variable('device_proxy_interface')
+    subdir('proxy_config')
+    unit_test_deps += [proxy_config_unit_test_dep]
+endif
 
 cpp = meson.get_compiler('cpp')
 azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)

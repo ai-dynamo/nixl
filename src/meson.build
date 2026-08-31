@@ -19,6 +19,11 @@ subdir('utils')
 
 #subdir('arch')
 subdir('infra')
+# Entered here rather than from src/utils because the proxy runtime links
+# nixl_infra, which subdir('infra') above has only just declared.
+if cuda_dep.found()
+    subdir('utils/device/proxy')
+endif
 subdir('plugins')
 subdir('core')
 
