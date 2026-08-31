@@ -537,7 +537,7 @@ TestErrorHandling::testStalePreppedDlist() {
     const auto make_xfer = [&]() {
         nixlXferReqH *req = nullptr;
         const nixl_status_t ret =
-            initiator.makeXferReq(NIXL_WRITE, local_side, indices, remote_side, indices, req);
+            initiator.makeXferReq(NIXL_WRITE, *local_side, indices, *remote_side, indices, req);
         if (req) {
             EXPECT_EQ(initiator.releaseXferReq(req), NIXL_SUCCESS);
         }
@@ -628,7 +628,7 @@ TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
     ASSERT_EQ(initiator.prepXferDlist(target_name, r_descs, remote_side), NIXL_SUCCESS);
     nixlXferReqH *req = nullptr;
     const std::vector<int> indices = {0};
-    ASSERT_EQ(initiator.makeXferReq(NIXL_WRITE, local_side, indices, remote_side, indices, req),
+    ASSERT_EQ(initiator.makeXferReq(NIXL_WRITE, *local_side, indices, *remote_side, indices, req),
               NIXL_SUCCESS);
 
     // Unchanged re-broadcast of the same metadata

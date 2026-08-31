@@ -14,18 +14,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# nixl_ep elastic CI: run only EP tests (invoked from nixl-ci-dl-gpu-ep flow).
+# NIXL EP CI: run nixl_ep native elastic.py and vLLM+nixl_ep tests.
 
 # shellcheck disable=SC1091
 . "$(dirname "$0")/../.ci/scripts/common.sh"
 
 set -e
 set -x
+set -o pipefail
 
 INSTALL_DIR=$1
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir>"
+    exit 1
+fi
+
+: "${VLLM_ELASTIC_TEST_DIR:?vLLM Elastic EP test environment is not installed}"
+VLLM_PYTHON="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"
+
+if [ ! -x "${VLLM_PYTHON}" ]; then
+    echo "ERROR: vLLM Python environment is missing: ${VLLM_PYTHON}" >&2
     exit 1
 fi
 
@@ -40,9 +49,8 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 export NIXL_PREFIX=${INSTALL_DIR}
 export NIXL_DEBUG_LOGGING=yes
 
-# Make `import nixl_ep` resolve the source-tree dispatcher, which loads the
-# CUDA-versioned backend (nixl_ep_cu*) from the source install under ${INSTALL_DIR}.
-export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta:${INSTALL_DIR}/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
+# Load the source dispatcher and the backend installed in the shared venv.
+export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPATH}"
 
 echo "==== Show system info ===="
 env
@@ -67,7 +75,7 @@ run_elastic_test() {
             export UCX_TLS=^rc_gda
         fi
         PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_SRC_DIR}/tests/elastic${PYTHONPATH:+:$PYTHONPATH}" \
-        timeout 300 python3 ${EP_SRC_DIR}/tests/elastic/elastic.py \
+        timeout 300 "${VLLM_PYTHON}" ${EP_SRC_DIR}/tests/elastic/elastic.py \
             --plan "$plan_file" \
             --num-processes 4 \
             --num-experts-per-rank 32 \
@@ -103,3 +111,38 @@ else
 fi
 
 echo "==== nixl_ep elastic tests done ===="
+
+echo "==== Running vLLM Elastic EP test ===="
+(
+    # Avoid SPCx loading HPC-X UCX 1.21; NIXL EP requires UCX >=1.22.
+    unset NCCL_NET_PLUGIN
+    unset UCX_NET_DEVICES
+    # TODO: remove this override when vLLM updates FlashInfer with
+    # https://github.com/flashinfer-ai/flashinfer/pull/4377.
+    # FlashInfer 0.6.16.post3's default MLA backend fails to JIT on CUDA 13.3.
+    export VLLM_ATTENTION_BACKEND=CUTLASS_MLA
+    export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
+    VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
+    VLLM_REF="$(git -C "${VLLM_ELASTIC_TEST_DIR}" describe --tags --exact-match HEAD)"
+    VLLM_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)"
+
+    echo "vLLM source: VLLM_REF=${VLLM_REF} VLLM_COMMIT=${VLLM_COMMIT}"
+
+    # Run vLLM's 2 -> 4 -> 2 Elastic EP scaling test with NIXL EP (Cover eager heavy traffic and CUDA graphs testing).
+    (
+        cd "${VLLM_ELASTIC_TEST_DIR}"
+        VLLM_NIXL_EP_MAX_NUM_RANKS=4 \
+        VLLM_TEST_ELASTIC_EP_ALL2ALL_BACKEND=nixl_ep \
+        timeout 4500 "${VLLM_PYTHON}" -m pytest \
+            "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[enforce_eager_heavy]" \
+            "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[cuda_graphs_heavy]" \
+            -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
+    )
+
+    if grep -Eiq '(^|[[:space:]])[0-9]+ skipped|SKIPPED' "${VLLM_LOG}"; then
+        echo "ERROR: vLLM Elastic EP test was skipped" >&2
+        exit 1
+    fi
+
+    echo "==== vLLM Elastic EP test done ===="
+)
