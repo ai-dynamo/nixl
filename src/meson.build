@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,13 @@
 
 subdir('api')
 
+# Build the shared foundations before utilities that depend on infra.
+subdir('utils/common')
+subdir('utils/serdes')
+subdir('infra')
 subdir('utils')
 
 #subdir('arch')
-subdir('infra')
 subdir('plugins')
 subdir('core')
 
