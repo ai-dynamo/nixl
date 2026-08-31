@@ -235,6 +235,105 @@ namespace proxy_mocks {
         return desc;
     }
 
+    /** Records submissions and holds requests until the test completes them. */
+    class MockBackend {
+    public:
+        nixl::proxyBackendOps
+        ops() {
+            nixl::proxyBackendOps ops;
+            ops.init = [](const nixl::proxyConfig &) { return NIXL_SUCCESS; };
+            ops.submit = [this](const auto &submission, auto &request) {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                entries_.push_back({submission});
+                const auto status = std::exchange(next_submit_status_, NIXL_IN_PROG);
+                request = status == NIXL_IN_PROG ?
+                    nixl::proxyBackendRequest{entries_.size(), submission.channel_id} :
+                    nixl::proxyBackendRequest{};
+                return status;
+            };
+            ops.check_completion = [this](const auto &request) {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                return complete_on_check_ ? NIXL_SUCCESS : entries_.at(request.token - 1).status;
+            };
+            ops.quiesce = [this](uint32_t, uint32_t) {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                ++quiesce_calls_;
+                return NIXL_SUCCESS;
+            };
+            ops.progress = [](uint32_t, uint32_t) { return NIXL_SUCCESS; };
+            ops.shutdown = [this]() {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                ++shutdown_calls_;
+                return NIXL_SUCCESS;
+            };
+            return ops;
+        }
+
+        void
+        complete(uint64_t token, nixl_status_t status = NIXL_SUCCESS) {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            entries_.at(token - 1).status = status;
+        }
+
+        /** Also completes requests submitted later, for teardown. */
+        void
+        completeEverything() {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            complete_on_check_ = true;
+        }
+
+        void
+        failNextSubmit(nixl_status_t status) {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            next_submit_status_ = status;
+        }
+
+        size_t
+        submissionCount() const {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            return entries_.size();
+        }
+
+        std::vector<nixl::proxyBackendSubmission>
+        submissions() const {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            std::vector<nixl::proxyBackendSubmission> result;
+            for (const auto &entry : entries_) {
+                result.push_back(entry.submission);
+            }
+            return result;
+        }
+
+        static uint64_t
+        token(size_t index) {
+            return index + 1;
+        }
+
+        size_t
+        quiesceCalls() const {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            return quiesce_calls_;
+        }
+
+        size_t
+        shutdownCalls() const {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            return shutdown_calls_;
+        }
+
+    private:
+        struct Entry {
+            nixl::proxyBackendSubmission submission;
+            nixl_status_t status = NIXL_IN_PROG;
+        };
+
+        mutable std::mutex mutex_;
+        std::vector<Entry> entries_;
+        nixl_status_t next_submit_status_ = NIXL_IN_PROG;
+        bool complete_on_check_ = false;
+        size_t quiesce_calls_ = 0;
+        size_t shutdown_calls_ = 0;
+    };
 
 } // namespace proxy_mocks
 } // namespace gtest
