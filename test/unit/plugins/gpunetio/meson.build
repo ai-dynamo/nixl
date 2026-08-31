@@ -18,7 +18,8 @@ compile_flags = []
 coalescing_test = executable(
     'gpunetio_coalescing_test',
     'gpunetio_coalescing_test.cpp',
-    include_directories: include_directories('../../../../src/plugins/gpunetio'))
+    include_directories: include_directories('../../../../src/plugins/gpunetio'),
+    install: true)
 test('gpunetio_coalescing_test', coalescing_test)
 
 if cuda_dep.found()

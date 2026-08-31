@@ -5,7 +5,9 @@
 
 #include "gpunetio_coalescing.h"
 
+#include <cstdint>
 #include <iostream>
+#include <limits>
 
 using nixl::gpunetio::ReadSegment;
 using nixl::gpunetio::canCoalesceRead;
