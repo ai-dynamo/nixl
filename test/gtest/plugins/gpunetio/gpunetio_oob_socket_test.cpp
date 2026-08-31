@@ -20,10 +20,8 @@ main() {
     timeval send_timeout{};
     socklen_t recv_size = sizeof(recv_timeout);
     socklen_t send_size = sizeof(send_timeout);
-    assert(getsockopt(
-               sockets[0], SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, &recv_size) == 0);
-    assert(getsockopt(
-               sockets[0], SOL_SOCKET, SO_SNDTIMEO, &send_timeout, &send_size) == 0);
+    assert(getsockopt(sockets[0], SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, &recv_size) == 0);
+    assert(getsockopt(sockets[0], SOL_SOCKET, SO_SNDTIMEO, &send_timeout, &send_size) == 0);
     assert(recv_timeout.tv_sec == DOCA_OOB_SOCKET_TIMEOUT_SEC);
     assert(recv_timeout.tv_usec == 0);
     assert(send_timeout.tv_sec == DOCA_OOB_SOCKET_TIMEOUT_SEC);
