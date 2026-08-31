@@ -1250,12 +1250,11 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         final_request.has_notif_msg_idx = (notif->send_pi.fetch_add(1) & (notif->elems_num - 1));
         notif_addr =
             (uintptr_t)(notif->send_addr + (final_request.has_notif_msg_idx * notif->elems_size));
-        final_request.msg_sz = newMsg.size();
+        final_request.msg_sz = newMsg.size() + 1;
         final_request.lbuf_notif = notif_addr;
         final_request.lkey_notif = notif->send_mr->get_lkey();
 
-        memcpy((void *)notif_addr, newMsg.c_str(), newMsg.size());
-        reinterpret_cast<char *>(notif_addr)[newMsg.size()] = '\0';
+        memcpy((void *)notif_addr, newMsg.c_str(), final_request.msg_sz);
 
         NIXL_INFO << "DOCA prepXfer with notif to " << remote_agent << " at "
                   << final_request.has_notif_msg_idx << " msg " << newMsg << " to " << remote_agent;
