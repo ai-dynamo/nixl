@@ -336,16 +336,25 @@ resolve_ucx_sha() {
     echo "$sha"
 }
 
+# The base image is provenance, so when the caller left it to the Dockerfile
+# the truth is that Dockerfile's own ARG default -- read it back rather than
+# recording an empty string.
+dockerfile_arg_default() {
+    sed -n "s/^ARG $1=\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*$/\1/p" "$DOCKER_FILE" | head -n1
+}
+
 # Machine-readable counterpart to show_build_options(), written only when
 # --build-options-file is passed. Consumed by CI to attach the resolved
 # build config (base image, UCX ref, plugin flags, ...) as Artifactory
 # properties on the published wheels.
 write_build_options_file() {
-    local ucx_sha
+    local ucx_sha base_image base_image_tag
     ucx_sha="$(resolve_ucx_sha)" || exit 1
+    base_image="${BASE_IMAGE:-$(dockerfile_arg_default BASE_IMAGE)}"
+    base_image_tag="${BASE_IMAGE_TAG:-$(dockerfile_arg_default BASE_IMAGE_TAG)}"
     cat > "$BUILD_OPTIONS_FILE" <<EOF
-BASE_IMAGE="${BASE_IMAGE}"
-BASE_IMAGE_TAG="${BASE_IMAGE_TAG}"
+BASE_IMAGE="${base_image}"
+BASE_IMAGE_TAG="${base_image_tag}"
 ARCH="${ARCH}"
 CUDA_VERSION="${CUDA_VERSION}"
 UCX_REPO="${UCX_REPO}"
