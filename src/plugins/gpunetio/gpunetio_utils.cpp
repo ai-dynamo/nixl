@@ -19,6 +19,7 @@
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <stdexcept>
+#include <sys/time.h>
 #include <unistd.h>
 #include "common/nixl_log.h"
 #include <chrono>
@@ -48,6 +49,17 @@ nixlDocaEngineCheckCuError(CUresult result, const char *message) {
 }
 
 int
+setOobSocketTimeouts(int oob_sock_fd) {
+    const timeval timeout{DOCA_OOB_SOCKET_TIMEOUT_SEC, 0};
+    if (setsockopt(oob_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+        setsockopt(oob_sock_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0) {
+        NIXL_ERROR << "Unable to set OOB socket timeout";
+        return -1;
+    }
+    return 0;
+}
+
+int
 oob_connection_client_setup(const char *server_ip, int *oob_sock_fd, uint16_t server_port) {
     struct sockaddr_in server_addr = {0};
     int oob_sock_fd_;
@@ -59,6 +71,11 @@ oob_connection_client_setup(const char *server_ip, int *oob_sock_fd, uint16_t se
         return -1;
     }
     NIXL_INFO << "Socket created successfully";
+
+    if (setOobSocketTimeouts(oob_sock_fd_) != 0) {
+        close(oob_sock_fd_);
+        return -1;
+    }
 
     /* Set port and IP the same as server-side: */
     server_addr.sin_family = AF_INET;
@@ -384,10 +401,19 @@ threadProgressFunc(void *arg) {
             return nullptr;
         }
 
+        eng->activeOobSocket.store(oob_sock_client);
+
         if (ACCESS_ONCE(*eng->pthrStop) == 1) {
             NIXL_DEBUG << "Stopping thread " << oob_sock_client;
+            eng->activeOobSocket.store(-1);
             close(oob_sock_client);
             return nullptr;
+        }
+
+        if (setOobSocketTimeouts(oob_sock_client) != 0) {
+            eng->activeOobSocket.store(-1);
+            close(oob_sock_client);
+            continue;
         }
 
         NIXL_INFO << "Server: client connected at IP: " << inet_ntoa(client_addr.sin_addr)
@@ -412,6 +438,7 @@ threadProgressFunc(void *arg) {
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to set up GPUNETIO connection for " << remote_agent;
         }
+        eng->activeOobSocket.store(-1);
         close(oob_sock_client);
 
         /* Wait for predefined number of */

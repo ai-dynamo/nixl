@@ -6,6 +6,7 @@
 #include "gpunetio_oob_endpoint.h"
 
 #include <cassert>
+#include <limits>
 #include <stdexcept>
 
 template<typename Fn>
@@ -23,6 +24,12 @@ assertInvalid(Fn &&fn) {
 
 int
 main() {
+    assert(!isValidGpunetioAgentNameSize(0));
+    assert(isValidGpunetioAgentNameSize(1));
+    assert(isValidGpunetioAgentNameSize(GPUNETIO_MAX_AGENT_NAME_SIZE));
+    assert(!isValidGpunetioAgentNameSize(GPUNETIO_MAX_AGENT_NAME_SIZE + 1));
+    assert(!isValidGpunetioAgentNameSize(std::numeric_limits<std::size_t>::max()));
+
     assert(parseGpunetioOobPort("") == GPUNETIO_DEFAULT_OOB_PORT);
     assert(parseGpunetioOobPort("1") == 1);
     assert(parseGpunetioOobPort("65535") == 65535);

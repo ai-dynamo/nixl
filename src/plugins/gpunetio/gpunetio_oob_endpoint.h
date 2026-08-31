@@ -3,24 +3,38 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef GPUNETIO_OOB_ENDPOINT_H
-#define GPUNETIO_OOB_ENDPOINT_H
+#ifndef NIXL_SRC_PLUGINS_GPUNETIO_GPUNETIO_OOB_ENDPOINT_H
+#define NIXL_SRC_PLUGINS_GPUNETIO_GPUNETIO_OOB_ENDPOINT_H
 
 #include <arpa/inet.h>
 
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 
 constexpr uint16_t GPUNETIO_DEFAULT_OOB_PORT = 6544;
+constexpr std::size_t GPUNETIO_MAX_AGENT_NAME_SIZE = 4096;
 
+/** Return whether an OOB agent-name payload length is safe to allocate. */
+inline bool
+isValidGpunetioAgentNameSize(std::size_t size) noexcept {
+    return size > 0 && size <= GPUNETIO_MAX_AGENT_NAME_SIZE;
+}
+
+/** Parsed GPUNETIO IPv4 endpoint and TCP port. */
 struct GpunetioOobEndpoint {
     std::string ipv4;
     uint16_t port;
 };
 
+/**
+ * Parse a decimal TCP port in [1, 65535]. An empty value selects the default port.
+ *
+ * @throws std::invalid_argument if the value is not a valid TCP port.
+ */
 inline uint16_t
 parseGpunetioOobPort(std::string_view value) {
     if (value.empty()) {
@@ -35,6 +49,12 @@ parseGpunetioOobPort(std::string_view value) {
     return static_cast<uint16_t>(port);
 }
 
+/**
+ * Parse connection metadata encoded as IPv4 or IPv4:port.
+ *
+ * IPv4-only metadata selects the default port for backward compatibility.
+ * @throws std::invalid_argument if the metadata or port is malformed.
+ */
 inline GpunetioOobEndpoint
 parseGpunetioOobEndpoint(std::string_view metadata) {
     if (metadata.empty() || metadata.find('\0') != std::string_view::npos) {
@@ -61,6 +81,7 @@ parseGpunetioOobEndpoint(std::string_view metadata) {
     return {ipv4, port};
 }
 
+/** Format an IPv4 endpoint, omitting the port when it is the default. */
 inline std::string
 formatGpunetioOobEndpoint(std::string_view ipv4, uint16_t port) {
     if (port == GPUNETIO_DEFAULT_OOB_PORT) {
@@ -69,4 +90,4 @@ formatGpunetioOobEndpoint(std::string_view ipv4, uint16_t port) {
     return std::string(ipv4) + ":" + std::to_string(port);
 }
 
-#endif
+#endif // NIXL_SRC_PLUGINS_GPUNETIO_GPUNETIO_OOB_ENDPOINT_H

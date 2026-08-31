@@ -19,6 +19,7 @@
 #define GPUNETIO_BACKEND_AUX_H
 
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -71,6 +72,7 @@ constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
 // Pre-fill the whole recv queue with notif once
 constexpr uint32_t DOCA_MAX_NOTIF_INFLIGHT = RDMA_RECV_QUEUE_SIZE;
 constexpr uint32_t DOCA_MAX_NOTIF_MESSAGE_SIZE = 8192;
+constexpr time_t DOCA_OOB_SOCKET_TIMEOUT_SEC = 10;
 constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 
 #ifndef ACCESS_ONCE
@@ -100,14 +102,21 @@ struct docaXferReqGpu {
 };
 
 struct nixlDocaNotif {
-    uint32_t elems_num;
-    uint32_t elems_size;
-    uint8_t *send_addr;
-    std::atomic<uint32_t> send_pi;
+    uint32_t elems_num = 0;
+    uint32_t elems_size = 0;
+    uint8_t *send_addr = nullptr;
+    std::atomic<uint32_t> send_pi{0};
     std::unique_ptr<nixl::doca::verbs::mr> send_mr;
-    uint8_t *recv_addr;
-    std::atomic<uint32_t> recv_pi;
+    uint8_t *recv_addr = nullptr;
+    std::atomic<uint32_t> recv_pi{0};
     std::unique_ptr<nixl::doca::verbs::mr> recv_mr;
+
+    ~nixlDocaNotif() {
+        send_mr.reset();
+        recv_mr.reset();
+        free(send_addr);
+        free(recv_addr);
+    }
 };
 
 struct docaXferCompletion {
@@ -187,6 +196,8 @@ int
 oob_connection_client_setup(const char *server_ip,
                             int *oob_sock_fd,
                             uint16_t server_port = GPUNETIO_DEFAULT_OOB_PORT);
+int
+setOobSocketTimeouts(int oob_sock_fd);
 void
 oob_connection_client_close(int oob_sock_fd);
 void

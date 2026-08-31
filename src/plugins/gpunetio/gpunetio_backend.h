@@ -24,6 +24,7 @@ class nixlDocaEngine : public nixlBackendEngine {
 public:
     CUcontext main_cuda_ctx;
     int oob_sock_server;
+    std::atomic<int> activeOobSocket{-1};
     mutable std::mutex notifLock;
     mutable std::mutex qpLock;
     std::mutex connectLock;
@@ -36,7 +37,7 @@ public:
     struct ibv_pd *pd; /* local protection domain */
     doca_verbs_gid gid; /* local gid address */
     doca_verbs_gid remote_gid; /* remote gid address */
-    int lid; /* IB: local ID */
+    int lid = 0; /* IB: local ID */
     int dlid; /* IB: destination ID */
     int gid_index;
     struct ibv_port_attr port_attr;
