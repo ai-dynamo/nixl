@@ -160,7 +160,7 @@ using section_map_t = std::map<section_key_t, nixlSecDescList>;
 
 class nixlMemSection {
     protected:
-        std::array<backend_set_t, ODM_MEM_SEG + 1>    memToBackend;
+        std::array<backend_set_t, ODM_MEM_SEG + 1> memToBackend;
         section_map_t                                 sectionMap;
 
         ~nixlMemSection() = default;

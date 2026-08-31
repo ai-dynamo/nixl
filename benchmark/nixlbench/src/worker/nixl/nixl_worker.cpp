@@ -676,8 +676,7 @@ cleanupVramRocm(xferBenchIOV &iov) {
 
 static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
-    uint8_t memset_value =
-        isInit ? xferBenchInitiatorFillByte() : XFERBENCH_TARGET_BUFFER_ELEMENT;
+    uint8_t memset_value = isInit ? xferBenchInitiatorFillByte() : XFERBENCH_TARGET_BUFFER_ELEMENT;
 
     if (neuronCoreCount() > 0) {
         return getVramDescNeuron(devid, buffer_size, memset_value);
