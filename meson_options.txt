@@ -51,3 +51,4 @@ option('build_tests', type: 'boolean', value: true, description: 'Build all test
 option('build_examples', type: 'boolean', value: true, description: 'Build all examples')
 option('build_nixl_ep', type: 'boolean', value: false, description: 'Build nixl_ep example (requires sm_90 or newer)')
 option('test_all_plugins', type: 'boolean', value: false, description: 'Testing all plugins in addition to the mocks..')
+option('enable_odm_hw_tests', type: 'boolean', value: false, description: 'Register ODM hardware test in meson test (requires /dev/odm0)')

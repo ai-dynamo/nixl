@@ -81,6 +81,7 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
             catch (...) { /* keep */
             }
         }
+#ifdef HAVE_CUDA
         /* Max dma-buf exports kept open (LRU cap); bounds open-fd growth. */
         it = init_params->customParams->find("dmabuf_cache_max");
         if (it != init_params->customParams->end()) {
@@ -91,6 +92,7 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
             catch (...) { /* keep default */
             }
         }
+#endif
         /* Clamp to the ODM driver's 0..15 queue range and normalize order. */
         if (qid_start_ > 15) {
             qid_start_ = 15;
@@ -164,9 +166,11 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
     qid_locks_ = std::vector<std::mutex>(static_cast<size_t>(odm_num_queues_));
     /* With more than one queue, start the internal worker pool so a single
      * caller thread fans each transfer across all queues in parallel. */
+#ifdef HAVE_CUDA
     if (odm_num_queues_ > 1) {
         odmPoolStart();
     }
+#endif
 
     NIXL_INFO << "ODM backend initialized: dma_device=" << device_path_ << " qid=" << qid_
               << " qid_range=[" << qid_start_ << "," << qid_end_ << "]"
@@ -501,8 +505,16 @@ void
 nixlOdmEngine::releaseVramDmabuf(uint64_t gpu_va, uint64_t len) const {
     std::lock_guard<std::mutex> lk(dmabuf_cache_mtx_);
     auto it = dmabuf_cache_.find(DmabufKey(gpu_va, len));
-    if (it != dmabuf_cache_.end() && it->second.pin > 0) {
-        it->second.pin--;
+    if (it == dmabuf_cache_.end() || it->second.pin == 0) {
+        return;
+    }
+    it->second.pin--;
+    if (it->second.pin == 0) {
+        if (it->second.fd >= 0) {
+            close(it->second.fd);
+        }
+        dmabuf_lru_.erase(it->second.lru_it);
+        dmabuf_cache_.erase(it);
     }
 }
 

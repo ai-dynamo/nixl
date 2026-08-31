@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef __UTILS_H
-#define __UTILS_H
+#ifndef NIXL_BENCHMARK_UTILS_H
+#define NIXL_BENCHMARK_UTILS_H
 
 #include "config.h"
 #include <chrono>
@@ -34,24 +34,26 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#define CHECK_CUDA_ERROR(result, message)                                           \
-    do {                                                                            \
-        if (result != cudaSuccess) {                                                \
-            std::cerr << "CUDA: " << message << " (Error code: " << result << " - " \
-                      << cudaGetErrorString(result) << ")" << std::endl;            \
-            exit(EXIT_FAILURE);                                                     \
-        }                                                                           \
+#define CHECK_CUDA_ERROR(result, message)                                              \
+    do {                                                                               \
+        const cudaError_t _cuda_err = (result);                                        \
+        if (_cuda_err != cudaSuccess) {                                                \
+            std::cerr << "CUDA: " << message << " (Error code: " << _cuda_err << " - " \
+                      << cudaGetErrorString(_cuda_err) << ")" << std::endl;            \
+            exit(EXIT_FAILURE);                                                        \
+        }                                                                              \
     } while (0)
 
-#define CHECK_CUDA_DRIVER_ERROR(result, message)                                           \
-    do {                                                                                   \
-        if (result != CUDA_SUCCESS) {                                                      \
-            const char *error_str;                                                         \
-            cuGetErrorString(result, &error_str);                                          \
-            std::cerr << "CUDA Driver: " << message << " (Error code: " << result << " - " \
-                      << error_str << ")" << std::endl;                                    \
-            exit(EXIT_FAILURE);                                                            \
-        }                                                                                  \
+#define CHECK_CUDA_DRIVER_ERROR(result, message)                                                  \
+    do {                                                                                          \
+        const CUresult _cuda_drv_err = (result);                                                  \
+        if (_cuda_drv_err != CUDA_SUCCESS) {                                                      \
+            const char *error_str;                                                                \
+            cuGetErrorString(_cuda_drv_err, &error_str);                                          \
+            std::cerr << "CUDA Driver: " << message << " (Error code: " << _cuda_drv_err << " - " \
+                      << error_str << ")" << std::endl;                                           \
+            exit(EXIT_FAILURE);                                                                   \
+        }                                                                                         \
     } while (0)
 #endif
 
@@ -385,4 +387,11 @@ public:
     printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
 };
 
-#endif // __UTILS_H
+inline uint8_t
+xferBenchInitiatorFillByte() {
+    return (xferBenchConfig::fill_value >= 0) ?
+        static_cast<uint8_t>(xferBenchConfig::fill_value) :
+        static_cast<uint8_t>(XFERBENCH_INITIATOR_BUFFER_ELEMENT);
+}
+
+#endif // NIXL_BENCHMARK_UTILS_H

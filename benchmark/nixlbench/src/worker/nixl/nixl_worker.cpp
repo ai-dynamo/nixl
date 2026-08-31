@@ -677,7 +677,7 @@ cleanupVramRocm(xferBenchIOV &iov) {
 static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
     uint8_t memset_value =
-        isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
+        isInit ? xferBenchInitiatorFillByte() : XFERBENCH_TARGET_BUFFER_ELEMENT;
 
     if (neuronCoreCount() > 0) {
         return getVramDescNeuron(devid, buffer_size, memset_value);
@@ -1207,7 +1207,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
             for (auto &iov : local_regs_.back().iovs()) {
                 if (isInitiator()) {
-                    memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, iov.len);
+                    memset((void *)iov.addr, xferBenchInitiatorFillByte(), iov.len);
                 } else if (isTarget()) {
                     memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, iov.len);
                 }
@@ -1352,7 +1352,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                 } else if (XFERBENCH_BACKEND_ODM == xferBenchConfig::backend) {
                     const size_t cfg_num_devices = xferBenchConfig::num_initiator_dev;
                     const size_t entries_per_device = (cfg_num_devices > 0 && !iov_list.empty()) ?
-                        iov_list.size() / cfg_num_devices :
+                        std::max<size_t>(1, iov_list.size() / cfg_num_devices) :
                         1;
                     const size_t odm_dev = devidx / entries_per_device;
                     const size_t block_in_dev = devidx % entries_per_device;

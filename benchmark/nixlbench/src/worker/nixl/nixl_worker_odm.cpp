@@ -215,28 +215,22 @@ State::discoverBaseAddr() {
     if (iova_fd_ < 0) {
         std::cerr << "ODM: open(" << odm_dev << ") for GET_IOVA failed: " << strerror(errno)
                   << std::endl;
-        base_addr_ = dpa_base_;
-        xferBenchConfig::odm_use_get_iova = false;
-        return base_addr_;
+        exit(EXIT_FAILURE);
     }
     if (!odmIoctlSizeOk(xferBenchConfig::total_buffer_size)) {
         close(iova_fd_);
         iova_fd_ = -1;
-        base_addr_ = dpa_base_;
-        xferBenchConfig::odm_use_get_iova = false;
-        return base_addr_;
+        std::cerr << "ODM: buffer size " << xferBenchConfig::total_buffer_size
+                  << " exceeds GET_IOVA ioctl limit" << std::endl;
+        exit(EXIT_FAILURE);
     }
     struct mrvl_dma_iova_commands iova_cmd{};
     iova_cmd.target_iova_size = static_cast<uint32_t>(xferBenchConfig::total_buffer_size);
     if (ioctl(iova_fd_, MRVL_CXL_GET_IOVA_COMMAND, &iova_cmd) < 0) {
-        std::cerr << "ODM: GET_IOVA failed: " << strerror(errno) << "; falling back to DPA base 0x"
-                  << std::hex << dpa_base_ << std::dec << std::endl;
+        std::cerr << "ODM: GET_IOVA failed: " << strerror(errno) << std::endl;
         close(iova_fd_);
         iova_fd_ = -1;
-        base_addr_ = dpa_base_;
-        use_get_iova_ = false;
-        xferBenchConfig::odm_use_get_iova = false;
-        return base_addr_;
+        exit(EXIT_FAILURE);
     }
     base_addr_ = iova_cmd.target_iova_addr;
     iova_size_ = iova_cmd.target_iova_size;

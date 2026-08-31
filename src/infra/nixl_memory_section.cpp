@@ -39,7 +39,7 @@ nixlMemSection::emplace(const nixl_mem_t nixl_mem, nixlBackendEngine *backend) {
 
 backend_set_t *
 nixlMemSection::queryBackends(const nixl_mem_t mem) noexcept {
-    if ((mem < DRAM_SEG) || (mem > FILE_SEG)) {
+    if ((mem < DRAM_SEG) || (mem > ODM_MEM_SEG)) {
         return nullptr;
     }
     return &memToBackend[mem];
@@ -47,7 +47,7 @@ nixlMemSection::queryBackends(const nixl_mem_t mem) noexcept {
 
 const backend_set_t *
 nixlMemSection::queryBackends(const nixl_mem_t mem) const noexcept {
-    if ((mem < DRAM_SEG) || (mem > FILE_SEG)) {
+    if ((mem < DRAM_SEG) || (mem > ODM_MEM_SEG)) {
         return nullptr;
     }
     return &memToBackend[mem];

@@ -403,9 +403,8 @@ getPluginDir() {
         return plugins_next_to_lib.string();
     }
     // In-tree: lib may be under src/core; use sibling src/plugins when present
-    std::filesystem::path lib_parent = lib_dir.parent_path();
-    if (lib_parent.filename() == "core") {
-        std::filesystem::path src_plugins = lib_parent / "plugins";
+    if (lib_dir.filename() == "core") {
+        std::filesystem::path src_plugins = lib_dir.parent_path() / "plugins";
         if (std::filesystem::exists(src_plugins) && std::filesystem::is_directory(src_plugins)) {
             return src_plugins.string();
         }

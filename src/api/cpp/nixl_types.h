@@ -35,9 +35,9 @@ class nixlAgentData;
 /**
  * @enum   nixl_mem_t
  * @brief  An enumeration of segment types for NIXL
- *         FILE_SEG must be last
+ *         FILE_SEG ordinal is fixed at 4; new segment types are appended after it.
  */
-enum nixl_mem_t { DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, ODM_MEM_SEG, FILE_SEG };
+enum nixl_mem_t { DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG, ODM_MEM_SEG };
 
 /**
  * @enum   nixl_xfer_op_t

@@ -20,25 +20,32 @@
 
 using odm_plugin_t = nixlBackendPluginCreator<nixlOdmEngine>;
 
-[[nodiscard]] static nixl_b_params_t
-get_odm_backend_options() {
+namespace {
+
+[[nodiscard]] nixl_b_params_t
+getOdmBackendOptions() {
     nixl_b_params_t params;
     params["dmadev_param"] = "odm0";
     params["odm_qid"] = "0";
+    params["odm_qid_start"] = "0";
+    params["odm_qid_end"] = "0";
+    params["dmabuf_cache_max"] = "512";
     return params;
 }
+
+} // namespace
 
 #ifdef STATIC_PLUGIN_ODM
 nixlBackendPlugin *
 createStaticODMPlugin() {
     return odm_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "ODM", "0.1.0", get_odm_backend_options(), odmSupportedMems());
+        NIXL_PLUGIN_API_VERSION, "ODM", "0.1.0", getOdmBackendOptions(), odmSupportedMems());
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
     return odm_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "ODM", "0.1.0", get_odm_backend_options(), odmSupportedMems());
+        NIXL_PLUGIN_API_VERSION, "ODM", "0.1.0", getOdmBackendOptions(), odmSupportedMems());
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

@@ -26,4 +26,6 @@ odm_nixl_test = executable('odm_nixl_test',
     install: true)
 
 # Hardware-only: run manually with `meson test --suite odm-hw` when /dev/odm0 is present.
-test('odm_plugin_test', odm_nixl_test, suite: 'odm-hw')
+if get_option('enable_odm_hw_tests')
+    test('odm_plugin_test', odm_nixl_test, suite: 'odm-hw')
+endif

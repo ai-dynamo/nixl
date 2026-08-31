@@ -60,7 +60,7 @@ std::optional<xferBenchIOV> xferBenchNvshmemWorker::initBasicDescNvshmem(size_t 
     }
 
     if (isInitiator()) {
-        cudaMemset(addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, buffer_size);
+        cudaMemset(addr, xferBenchInitiatorFillByte(), buffer_size);
     } else if (isTarget()) {
         cudaMemset(addr, XFERBENCH_TARGET_BUFFER_ELEMENT, buffer_size);
     }

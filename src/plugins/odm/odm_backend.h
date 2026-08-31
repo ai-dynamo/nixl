@@ -217,6 +217,7 @@ private:
     nixl_status_t
     postOdmDmabuf(nixlOdmBackendReqH *req) const;
 
+#ifdef HAVE_CUDA
     /*
      * Internal multi-queue worker pool: splits each transfer across queues so a
      * single caller thread can saturate PCIe.
@@ -255,10 +256,12 @@ private:
     void
     odmPoolStop();
 
-    int odm_num_queues_{1};
     mutable std::vector<std::unique_ptr<OdmQueueWorker>> odm_workers_;
     mutable std::atomic<bool> odm_stop_{false};
     bool odm_pool_started_{false};
+#endif
+
+    int odm_num_queues_{1};
 
     /*
      * Per-hardware-queue submit gate. A single ODM hardware queue's driver-side

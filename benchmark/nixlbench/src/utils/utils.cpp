@@ -522,8 +522,8 @@ xferBenchConfig::loadParams(void) {
             gusli_try_use_uring = NB_ARG(gusli_try_use_uring);
         }
 
-        // ODM has no ODM-specific command-line options: the device base address
-        // is auto-discovered (CXL IDENTIFY) and the queue range is fixed (0..7).
+        // ODM DMA targets are allocated via GET_IOVA on the ODM device; CXL
+        // IDENTIFY is used only for capacity checks and DAX alias seeding.
 
         // ODM uses the BAR2 devdax window only for consistency seeding/read-back
         // (the data path is always ODM controller + dma-buf, both directions).
@@ -927,7 +927,7 @@ xferBenchConfig::printConfig() {
                         azure_blob_connection_string);
         }
         if (backend == XFERBENCH_BACKEND_ODM) {
-            printOption("ODM base addr", "auto (CXL IDENTIFY) / $ODM_ADDR");
+            printOption("ODM base addr", "auto (GET_IOVA) / $ODM_ADDR");
             printOption("ODM queues", "0..7 (default in nixlbench)");
             printOption("ODM engine", "ODM controller + dma-buf (both directions)");
             printOption("DAX device (--dax_device=/dev/daxX.Y, consistency only)", dax_device);
@@ -1311,7 +1311,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
             }
 
             if ("WRITE" == xferBenchConfig::op_type) {
-                check_val = XFERBENCH_INITIATOR_BUFFER_ELEMENT;
+                check_val = xferBenchInitiatorFillByte();
             } else if ("READ" == xferBenchConfig::op_type) {
                 check_val = XFERBENCH_TARGET_BUFFER_ELEMENT;
             }

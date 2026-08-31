@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 Marvell
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Local approximations of NVIDIA Jenkins / AWS CI jobs that external PRs
@@ -34,7 +34,7 @@ need_docker() {
 run_github_checks() {
     log "GitHub Actions checks (clang-format, pr-size, python, copyright)"
     if [[ -x "$ROOT/ci-local/check" ]]; then
-        "$ROOT/ci-local/check" || true
+        "$ROOT/ci-local/check"
     else
         log "ci-local/check not found; running clang-format diff manually"
         git fetch upstream main 2>/dev/null || true
