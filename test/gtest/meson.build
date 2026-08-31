@@ -209,8 +209,16 @@ endif
 # the status it expects and the driver exits non-zero on any mismatch, so it can
 # serve as a check on the agent's error mapping as well as a readable table. Run
 # by hand: --csv for a spreadsheet, --list for the scenario names.
+mock_error_agent_sources = [
+    'mocks/error_injection/mock_error_agent.cpp',
+    'mocks/error_injection/mock_error_engine.cpp',
+    'mocks/error_injection/error_scenarios.cpp',
+    'mocks/error_injection/scenario_report.cpp',
+    'mocks/gmock_engine.cpp',
+    ]
+
 mock_error_agent = executable('mock_error_agent',
-    sources : ['mock_error_agent.cpp', 'mocks/gmock_engine.cpp'],
+    sources : mock_error_agent_sources,
     include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
     cpp_args : ['-DMOCK_PLUGIN_DIR="' + meson.current_build_dir() / 'mocks' + '"'],
     dependencies : [nixl_dep, nixl_common_dep, gtest_dep, gmock_dep],
