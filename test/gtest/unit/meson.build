@@ -51,6 +51,9 @@ if is_variable('device_proxy_interface')
 
     subdir('proxy_memview_registry')
     unit_test_deps += [proxy_memview_registry_unit_test_dep]
+
+    subdir('proxy_runtime')
+    unit_test_deps += [proxy_runtime_unit_test_dep]
 endif
 
 cpp = meson.get_compiler('cpp')
