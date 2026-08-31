@@ -1107,18 +1107,27 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
     uint32_t pos;
-    nixlDocaBckndReq *treq = new nixlDocaBckndReq;
+    nixlDocaBckndReq *treq;
     nixlDocaPrivateMetadata *lmd;
     nixlDocaPublicMetadata *rmd;
     uint32_t lcnt = (uint32_t)local.descCount();
     uint32_t rcnt = (uint32_t)remote.descCount();
     uint32_t stream_id;
     struct nixlDocaRdmaQp *rdma_qp;
+    struct nixlDocaNotif *notif = nullptr;
+    std::string newMsg;
     uintptr_t notif_addr;
+
+    if (lcnt != rcnt || lcnt == 0) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
     // TODO: check device id from local dlist mr that should be all the same and same of
     // the engine
     for (uint32_t idx = 0; idx < lcnt; idx++) {
+        if (local[idx].len != remote[idx].len) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
         lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
         if (lmd->devId != gdevs[0].first) return NIXL_ERR_INVALID_PARAM;
     }
@@ -1131,10 +1140,21 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     rdma_qp = search->second;
 
-    if (lcnt != rcnt) return NIXL_ERR_INVALID_PARAM;
+    if (opt_args && opt_args->hasNotif) {
+        auto notif_search = notifMap.find(remote_agent);
+        if (notif_search == notifMap.end()) {
+            NIXL_ERROR << "Can't find notif for remote_agent " << remote_agent;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        notif = notif_search->second;
+        newMsg = msg_tag_start + std::to_string(opt_args->notifMsg.size()) + msg_tag_end +
+            opt_args->notifMsg;
+        if (newMsg.size() + 1 > notif->elems_size) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
 
-    if (lcnt == 0) return NIXL_ERR_INVALID_PARAM;
-
+    treq = new nixlDocaBckndReq;
     if (opt_args->customParam.empty()) {
         stream_id = (xferStream.fetch_add(1) & (nstreams - 1));
         treq->stream = post_stream[stream_id];
@@ -1148,8 +1168,6 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     do {
         for (uint32_t idx = 0; idx < lcnt && idx < DOCA_XFER_REQ_SIZE; idx++) {
             size_t lsize = local[idx].len;
-            size_t rsize = remote[idx].len;
-            if (lsize != rsize) return NIXL_ERR_INVALID_PARAM;
 
             lmd = (nixlDocaPrivateMetadata *)local[idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[idx].metadataP;
@@ -1179,20 +1197,6 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     treq->end_pos = xferRingPos;
 
     if (opt_args && opt_args->hasNotif) {
-        struct nixlDocaNotif *notif;
-
-        auto search = notifMap.find(remote_agent);
-        if (search == notifMap.end()) {
-            NIXL_ERROR << "Can't find notif for remote_agent " << remote_agent;
-            return NIXL_ERR_INVALID_PARAM;
-        }
-
-        notif = search->second;
-
-        // Check notifMsg size
-        std::string newMsg = msg_tag_start + std::to_string(opt_args->notifMsg.size()) +
-            msg_tag_end + opt_args->notifMsg;
-
         auto &final_request = xferReqRingCpu[treq->end_pos - 1];
         notif_addr =
             (uintptr_t)nixl::gpunetio::reserveNotificationSlot(notif->send_pi,
@@ -1200,11 +1204,11 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                                                                notif->send_addr,
                                                                notif->elems_size,
                                                                final_request.has_notif_msg_idx);
-        final_request.msg_sz = newMsg.size();
+        final_request.msg_sz = newMsg.size() + 1;
         final_request.lbuf_notif = notif_addr;
         final_request.lkey_notif = notif->send_mr->get_lkey();
 
-        memcpy((void *)notif_addr, newMsg.c_str(), newMsg.size());
+        memcpy((void *)notif_addr, newMsg.c_str(), final_request.msg_sz);
 
         NIXL_INFO << "DOCA prepXfer with notif to " << remote_agent << " at "
                   << final_request.has_notif_msg_idx << " msg " << newMsg << " to " << remote_agent;

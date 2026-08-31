@@ -332,7 +332,11 @@ kernel_progress(struct docaXferCompletion *completion_list,
                     DOCA_GPUNETIO_VOLATILE(notif_progress->qp_gpu) = nullptr;
                 } else {
 #if ENABLE_DEBUG == 1
-                    printf("kernel received notification EBUSY at %d ret %d\n", msg_last, ret);
+                    if (ret == EBUSY) {
+                        printf("kernel received notification EBUSY at %d ret %d\n", msg_last, ret);
+                    } else {
+                        printf("kernel notification CQ poll failed at %d ret %d\n", msg_last, ret);
+                    }
 #endif
                     DOCA_GPUNETIO_VOLATILE(notif_progress->msg_num) = 0;
                     if (ret < 0) {
