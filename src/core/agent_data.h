@@ -65,7 +65,9 @@ class nixlAgentData final : public nixlMetadataContext {
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
         backend_map_t backendEngines_;
-        std::unordered_map<std::string, nixlRemoteSection> remoteSections_;
+        // Owning shared_ptr per registration generation; weak refs in handles expire on
+        // invalidation or re-registration.
+        std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
         std::unique_ptr<nixlTelemetry> telemetry_;
         // Composite tracer (fans out to every enabled backend); null when no
         // backend is active.
@@ -93,8 +95,6 @@ class nixlAgentData final : public nixlMetadataContext {
                      const nixl_blob_t &conn_info);
         nixl_status_t
         loadRemoteSections(const std::string &remote_name, nixlSerDes &sd);
-        nixl_status_t
-        invalidateRemoteData(const std::string &remote_name, uint64_t generation);
         [[nodiscard]] static backend_set_t
         getBackends(const nixl_opt_args_t *opt_args,
                     const nixlMemSection &section,
