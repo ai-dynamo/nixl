@@ -27,6 +27,10 @@ ARG PRE_INSTALLED_ENV
 ARG PRE_INSTALLED_NIXL_ENV
 ARG PRE_INSTALLED_UCX_ENV
 ARG UCX_VERSION=v1.23.x
+# Optional vLLM Elastic EP environment.
+ARG BUILD_VLLM_ELASTIC_TEST=false
+# Empty selects the latest stable release when the base image is built.
+ARG VLLM_REF
 # When set (e.g. "address"), build the Abseil/gRPC/etcd dependency stack with the
 # matching -fsanitize flags so AddressSanitizer NIXL builds have an ABI-compatible
 # (instrumented) Abseil. Empty for normal images.
@@ -66,6 +70,7 @@ RUN if ! getent group "${_GID}" > /dev/null 2>&1; then \
 RUN mkdir -p ${NIXL_INSTALL_DIR} && chown -R "${_UID}":"${_GID}" ${NIXL_INSTALL_DIR}
 COPY --chown="${_UID}":"${_GID}" .ci/scripts/ /.ci/scripts/
 COPY --chown="${_UID}":"${_GID}" .gitlab/build.sh /.gitlab/build.sh
+COPY --chown="${_UID}":"${_GID}" .ci/patches/nixl_ep_vllm_release_test.patch /tmp/
 
 # Configure sudo access
 RUN mkdir -p /etc/sudoers.d && \
@@ -79,9 +84,37 @@ USER ${_LOGIN}
 # Set environment variables
 ENV HOME=${_HOME}
 ENV USER=${_LOGIN}
+ENV VLLM_ELASTIC_TEST_DIR=${_HOME}/vllm
 
 RUN /.gitlab/build.sh ${NIXL_INSTALL_DIR}
 RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
+
+# Install editable vLLM source with matching CUDA 13 precompiled binaries.
+# Resolve the latest stable release unless explicitly overridden.
+RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
+        UV="${HOME}/.local/bin/uv"; \
+        VENV_PY="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"; \
+        if [ -z "${VLLM_REF}" ]; then \
+            VLLM_REF="$(python3 -c 'import json, urllib.request; r = urllib.request.Request("https://api.github.com/repos/vllm-project/vllm/releases/latest", headers={"Accept": "application/vnd.github+json", "User-Agent": "nixl-ci"}); print(json.load(urllib.request.urlopen(r, timeout=30))["tag_name"])')"; \
+        fi && \
+        echo "Using vLLM release ${VLLM_REF}" && \
+        git clone --depth 1 --branch "${VLLM_REF}" \
+            https://github.com/vllm-project/vllm.git "${VLLM_ELASTIC_TEST_DIR}" && \
+        git -C "${VLLM_ELASTIC_TEST_DIR}" apply \
+            /tmp/nixl_ep_vllm_release_test.patch && \
+        "${UV}" venv "${VLLM_ELASTIC_TEST_DIR}/.venv" && \
+        VLLM_USE_PRECOMPILED=1 \
+        VLLM_PRECOMPILED_WHEEL_VARIANT=cu130 \
+        VLLM_PRECOMPILED_WHEEL_COMMIT="$(git -C "${VLLM_ELASTIC_TEST_DIR}" rev-parse HEAD)" \
+        "${UV}" pip install --python "${VENV_PY}" \
+            --editable "${VLLM_ELASTIC_TEST_DIR}" --torch-backend=cu130 && \
+        "${UV}" pip install --python "${VENV_PY}" \
+            pytest tblib "ray[default]>=2.48.0" && \
+        "${VENV_PY}" -c 'import glob, os, sys, torch, vllm; \
+so = glob.glob(os.path.join(os.path.dirname(vllm.__file__), "_C*.so")); \
+print("vLLM", vllm.__version__, "torch", torch.__version__, torch.version.cuda, so); \
+sys.exit(0 if so else 1)'; \
+    fi
 
 # Set working directory
 WORKDIR ${_HOME}
