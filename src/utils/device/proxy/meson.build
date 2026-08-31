@@ -13,20 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-device_utils_lib = shared_library('device_utils',
-           ['device_ops.cpp', 'device_ops.h'],
+device_proxy_lib = library('nixl_device_proxy',
+           ['proxy_config.cpp', 'proxy_config.h'],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           dependencies: [nixl_common_dep, dl_dep],
+           dependencies: [nixl_common_dep, device_utils_interface],
            install: true)
 
-device_utils_interface = declare_dependency(link_with: device_utils_lib)
-
-if cuda_dep.found()
-    shared_library('nixl_device_ops_cuda',
-               'device_ops_cuda.cpp',
-               include_directories: [nixl_inc_dirs, utils_inc_dirs],
-               dependencies: [cuda_dep, nixl_common_dep],
-               install: true)
+if get_option('install_headers')
+    # Device code includes the wire contract as <device/proxy/proxy_protocol.h>.
+    install_headers('proxy_protocol.h', install_dir: prefix_inc + '/device/proxy')
 endif
 
-subdir('proxy')
+# The proxy headers hand out nixl::deviceOps, so consumers link it too.
+device_proxy_interface = declare_dependency(link_with: device_proxy_lib,
+                                            dependencies: [device_utils_interface])
