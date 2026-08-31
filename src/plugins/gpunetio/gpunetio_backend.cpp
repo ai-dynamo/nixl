@@ -1342,9 +1342,7 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
 
     auto expected = nixlDocaBckndReq::CompletionState::IN_PROGRESS;
     if (treq->completionState.compare_exchange_strong(
-            expected,
-            nixlDocaBckndReq::CompletionState::COMPLETING,
-            std::memory_order_acq_rel)) {
+            expected, nixlDocaBckndReq::CompletionState::COMPLETING, std::memory_order_acq_rel)) {
         for (size_t i = 0; i < treq->postedCount; ++i) {
             const uint32_t idx = treq->positions[i];
             *((volatile uint8_t *)&xferReqRingCpu[idx].in_use) = 0;
