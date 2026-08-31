@@ -497,6 +497,10 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         config.modify("RNDV_PIPELINE_ERROR_HANDLING", "y");
     }
 
+    if (ucpVersion_ >= UCP_VERSION(1, 23)) {
+        config.modify("IB_AH_CACHE_TTL", "0");
+    }
+
     const auto &hw_info = nixl::hwInfo::instance();
     if (hw_info.numEfaDevices != 0) {
         config.modify("ADDRESS_VERSION", "v2");
