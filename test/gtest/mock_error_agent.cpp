@@ -43,8 +43,8 @@ constexpr size_t buf_len = 256;
 /* Fits NIXL_ERR_REMOTE_DISCONNECT, the widest status name at 26 characters. */
 constexpr size_t column_width = 30;
 constexpr size_t column_gap = 4;
-/* "pass-through + remote invalidated", only used to size the header rule. */
-constexpr size_t longest_verdict = 33;
+/* "transformed to NIXL_ERR_REPOST_ACTIVE", only used to size the header rule. */
+constexpr size_t longest_verdict = 37;
 
 /*
  * Stands in for a backend memory view. The agent only maps the handle back to
@@ -110,7 +110,7 @@ enum class action_t {
 enum class behavior_t {
     COMPLETED, /* nothing injected, the whole sequence succeeds */
     PASS_THROUGH, /* agent reports the plugin status unchanged */
-    PASS_THROUGH_INVALIDATED, /* pass-through, and the peer's metadata is dropped */
+    PASS_THROUGH_RECOVERABLE, /* pass-through, and the peer's metadata survives for retry */
     COLLAPSED, /* agent discards the plugin status in favor of NIXL_ERR_BACKEND */
     TRANSFORMED, /* agent replaces the plugin status with a different specific one */
     IGNORED, /* agent discards the plugin status and reports success */
@@ -360,25 +360,29 @@ struct scenario {
 };
 
 /*
- * PASS_THROUGH_INVALIDATED claims the agent also dropped the peer's metadata,
- * which the returned status alone cannot show, so probe for it. Returns an empty
- * string when the scenario claims no side effect or when the side effect held.
+ * PASS_THROUGH_RECOVERABLE claims the agent left the peer's metadata in place,
+ * which the returned status alone cannot show, so probe for it. Survival is the
+ * contract rather than an oversight: the handle that saw the disconnect is
+ * refused on repost from its own cached status, while the surviving registration
+ * and connection info keep makeConnection callable, so a caller can rebuild
+ * fresh handles without another metadata exchange.
  */
 std::string
 checkSideEffect(const scenario &s,
                 nixlAgent &agent,
                 const std::string &remote_name,
                 const nixl_xfer_dlist_t &remote_descs) {
-    if (s.behavior != behavior_t::PASS_THROUGH_INVALIDATED) {
+    if (s.behavior != behavior_t::PASS_THROUGH_RECOVERABLE) {
         return {};
     }
 
     const nixl_status_t status = agent.checkRemoteMD(remote_name, remote_descs);
-    if (status == NIXL_ERR_NOT_FOUND) {
+    if (status == NIXL_SUCCESS) {
         return {};
     }
     /* Kept free of commas so that --csv output stays parsable. */
-    return "remote metadata still resolvable: " + std::string(nixlEnumStrings::statusStr(status));
+    return "remote metadata no longer resolvable: " +
+        std::string(nixlEnumStrings::statusStr(status));
 }
 
 /*
@@ -658,8 +662,8 @@ verdictText(const scenario &s, const observation &obs) {
         return "-";
     case behavior_t::PASS_THROUGH:
         return "pass-through";
-    case behavior_t::PASS_THROUGH_INVALIDATED:
-        return "pass-through + remote invalidated";
+    case behavior_t::PASS_THROUGH_RECOVERABLE:
+        return "pass-through + remote retained";
     case behavior_t::COLLAPSED:
         return "collapsed to " + observed_status;
     case behavior_t::TRANSFORMED:
@@ -858,7 +862,7 @@ main(int argc, char **argv) {
          injection_site_t::POST_XFER,
          NIXL_ERR_REMOTE_DISCONNECT,
          NIXL_ERR_REMOTE_DISCONNECT,
-         behavior_t::PASS_THROUGH_INVALIDATED},
+         behavior_t::PASS_THROUGH_RECOVERABLE},
         {"transfer.checkXfer.backend",
          action_t::CHECK_XFER,
          injection_site_t::CHECK_XFER,
@@ -870,7 +874,7 @@ main(int argc, char **argv) {
          injection_site_t::CHECK_XFER,
          NIXL_ERR_REMOTE_DISCONNECT,
          NIXL_ERR_REMOTE_DISCONNECT,
-         behavior_t::PASS_THROUGH_INVALIDATED},
+         behavior_t::PASS_THROUGH_RECOVERABLE},
         {"transfer.checkXfer.canceled",
          action_t::CHECK_XFER,
          injection_site_t::CHECK_XFER,
