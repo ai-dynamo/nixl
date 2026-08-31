@@ -1292,7 +1292,8 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
 
     treq->postedCount = 0;
     treq->postStatus = NIXL_SUCCESS;
-    treq->completed = false;
+    treq->completionState.store(nixlDocaBckndReq::CompletionState::IN_PROGRESS,
+                                std::memory_order_release);
     for (uint32_t idx : treq->positions) {
         std::lock_guard<std::mutex> lock(postLock_);
         const uint32_t completion_index =
@@ -1321,7 +1322,12 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
     uint32_t completion_index;
 
-    if (treq->completed) {
+    auto state = treq->completionState.load(std::memory_order_acquire);
+    if (state == nixlDocaBckndReq::CompletionState::COMPLETE) {
+        return treq->postStatus;
+    }
+    if (state == nixlDocaBckndReq::CompletionState::COMPLETING) {
+        treq->completionState.wait(state, std::memory_order_acquire);
         return treq->postStatus;
     }
 
@@ -1334,13 +1340,23 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
         }
     }
 
-    for (size_t i = 0; i < treq->postedCount; ++i) {
-        const uint32_t idx = treq->positions[i];
-        *((volatile uint8_t *)&xferReqRingCpu[idx].in_use) = 0;
-        NIXL_INFO << "DOCA checkXfer pos " << idx << " COMPLETED!";
+    auto expected = nixlDocaBckndReq::CompletionState::IN_PROGRESS;
+    if (treq->completionState.compare_exchange_strong(
+            expected,
+            nixlDocaBckndReq::CompletionState::COMPLETING,
+            std::memory_order_acq_rel)) {
+        for (size_t i = 0; i < treq->postedCount; ++i) {
+            const uint32_t idx = treq->positions[i];
+            *((volatile uint8_t *)&xferReqRingCpu[idx].in_use) = 0;
+            NIXL_INFO << "DOCA checkXfer pos " << idx << " COMPLETED!";
+        }
+        treq->completionState.store(nixlDocaBckndReq::CompletionState::COMPLETE,
+                                    std::memory_order_release);
+        treq->completionState.notify_all();
+    } else if (expected == nixlDocaBckndReq::CompletionState::COMPLETING) {
+        treq->completionState.wait(expected, std::memory_order_acquire);
     }
 
-    treq->completed = true;
     return treq->postStatus;
 }
 
@@ -1355,7 +1371,8 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
         return NIXL_SUCCESS;
     }
 
-    if (!treq->completed) {
+    if (treq->completionState.load(std::memory_order_acquire) !=
+        nixlDocaBckndReq::CompletionState::COMPLETE) {
         nixl_status_t status = checkXfer(handle);
         if (status == NIXL_IN_PROG) {
             return NIXL_ERR_BACKEND;
