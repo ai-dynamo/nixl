@@ -128,7 +128,23 @@ steps:
       else
         TORCH_VERSIONS="2.12,2.13,2.14"
       fi
+      # Stale file from a reused workspace would be read as this build's
+      # provenance, so clear it before the build can write a fresh one.
+      rm -f build_options.env
       cd nixl-src
+      # These three flags are unconditional here rather than job parameters,
+      # but build-container.sh errors out on options it does not know
+      # ("ERROR: Unknown option"), so passing them blindly makes every source
+      # ref older than the flag unbuildable. Detect support from the built
+      # ref's own option parser instead of putting the knob back.
+      OPT_FLAGS=""
+      for flag in --build-ucx-spcx-plugin --build-infinia; do
+        grep -qE "^[[:space:]]*${flag}\)" contrib/build-container.sh \
+          && OPT_FLAGS="${OPT_FLAGS} ${flag}"
+      done
+      if grep -qE '^[[:space:]]*--build-options-file\)' contrib/build-container.sh; then
+        OPT_FLAGS="${OPT_FLAGS} --build-options-file ../build_options.env"
+      fi
       ./contrib/build-container.sh \
         ${BASE_IMAGE_FLAGS} \
         --wheel-base "manylinux_${manylinux}" \
@@ -137,9 +153,20 @@ steps:
         --torch-versions "${TORCH_VERSIONS}" \
         --tag "${WHEEL_IMAGE_TAG}" \
         --dockerfile contrib/Dockerfile.manylinux \
-        --build-ucx-spcx-plugin \
-        --build-infinia \
-        --build-options-file ../build_options.env
+        ${OPT_FLAGS}
+      # A ref that predates --build-options-file still needs UCX_SHA for the
+      # verification folder key, so resolve it from that ref's own defaults --
+      # the way this pipeline resolved UCX before the flag existed.
+      if [ ! -f ../build_options.env ]; then
+        REF_UCX_REPO="$(sed -n 's/^UCX_REPO=${UCX_REPO:-\(.*\)}$/\1/p' contrib/build-container.sh)"
+        REF_UCX_REF="$(sed -n 's/^UCX_REF=${UCX_REF:-\(.*\)}$/\1/p' contrib/build-container.sh)"
+        if [ -n "${REF_UCX_REPO}" ] && [ -n "${REF_UCX_REF}" ]; then
+          # ^{} (last line) peels annotated tags down to the commit.
+          REF_UCX_SHA="$(timeout 30 git ls-remote "${REF_UCX_REPO}" "${REF_UCX_REF}" "${REF_UCX_REF}^{}" | tail -n1 | cut -c1-8)"
+          [ -n "${REF_UCX_SHA}" ] && printf 'UCX_REPO="%s"\nUCX_REF="%s"\nUCX_SHA="%s"\n' \
+            "${REF_UCX_REPO}" "${REF_UCX_REF}" "${REF_UCX_SHA}" > ../build_options.env
+        fi
+      fi
 
   - name: Publish
     credentialsId: 'svc-nixl-new-artifactory-token'
