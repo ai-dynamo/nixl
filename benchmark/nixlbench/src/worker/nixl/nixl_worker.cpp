@@ -1610,9 +1610,9 @@ prepareSlot(nixlAgent *agent,
                 std::iota(slot.indices.begin(), slot.indices.end(), 0);
             }
             rc = agent->makeXferReq(op,
-                                    slot.prep_local_dlist,
+                                    *slot.prep_local_dlist,
                                     slot.indices,
-                                    slot.prep_remote_dlist,
+                                    *slot.prep_remote_dlist,
                                     slot.indices,
                                     slot.req,
                                     &params);

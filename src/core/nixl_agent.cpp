@@ -707,6 +707,30 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
                         const std::vector<int> &remote_indices,
                         nixlXferReqH* &req_hndl,
                         const nixl_opt_args_t* extra_params) const {
+    if (!local_side || !remote_side) {
+        NIXL_ERROR_FUNC << "local or remote side handle is null";
+        data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
+        req_hndl = nullptr;
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    return makeXferReq(operation,
+                       *local_side,
+                       local_indices,
+                       *remote_side,
+                       remote_indices,
+                       req_hndl,
+                       extra_params);
+}
+
+nixl_status_t
+nixlAgent::makeXferReq(nixl_xfer_op_t operation,
+                       const nixlDlistH &local_side,
+                       std::span<const int> local_indices,
+                       const nixlDlistH &remote_side,
+                       std::span<const int> remote_indices,
+                       nixlXferReqH *&req_hndl,
+                       const nixl_opt_args_t *extra_params) const {
     NIXL_TRACE_SCOPE(
         trace_span, data->tracer_.get(), "nixl::makeXferReq", nixl::trace::Kind::Generic);
     NIXL_TRACE_ATTR(trace_span, "desc_count", static_cast<std::int64_t>(local_indices.size()));
@@ -718,13 +742,7 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     req_hndl = nullptr;
 
-    if (!local_side || !remote_side) {
-        NIXL_ERROR_FUNC << "local or remote side handle is null";
-        data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
-    if ((!local_side->remoteAgent.empty()) || remote_side->remoteAgent.empty()) {
+    if ((!local_side.remoteAgent.empty()) || remote_side.remoteAgent.empty()) {
         NIXL_ERROR_FUNC << "invalid sides (local must be local, remote must be remote)";
         data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
         return NIXL_ERR_INVALID_PARAM;
@@ -739,15 +757,15 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
 
     if (extra_params && extra_params->backends.size() > 0) {
         for (auto & elm : extra_params->backends) {
-            if ((local_side->descs.count(elm->engine) > 0) &&
-                (remote_side->descs.count(elm->engine) > 0)) {
+            if ((local_side.descs.count(elm->engine) > 0) &&
+                (remote_side.descs.count(elm->engine) > 0)) {
                 backend = elm->engine;
                 break;
             }
         }
     } else {
-        for (auto & loc_bknd : local_side->descs) {
-            for (auto & rem_bknd : remote_side->descs) {
+        for (auto &loc_bknd : local_side.descs) {
+            for (auto &rem_bknd : remote_side.descs) {
                 if (loc_bknd.first == rem_bknd.first) {
                     backend = loc_bknd.first;
                     break;
@@ -783,26 +801,26 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // The prepped remote dlist snapshot is only valid for the remote registration generation
     // it was prepared from: reject if that generation was invalidated or replaced since.
-    const auto remote_sec_ref = remote_side->remoteSectionRef.lock();
+    const auto remote_sec_ref = remote_side.remoteSectionRef.lock();
     if (!remote_sec_ref) {
-        NIXL_ERROR_FUNC << "remote agent '" << remote_side->remoteAgent
+        NIXL_ERROR_FUNC << "remote agent '" << remote_side.remoteAgent
                         << "' was invalidated or re-registered after prepped xfer request "
                            "creation; prepped descriptor lists must be re-created";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
         return NIXL_ERR_NOT_FOUND;
     }
 
-    const nixl_stride_dlist_t &local_descs = *local_side->descs.at(backend);
-    const nixl_stride_dlist_t &remote_descs = *remote_side->descs.at(backend);
+    const nixl_stride_dlist_t &local_descs = *local_side.descs.at(backend);
+    const nixl_stride_dlist_t &remote_descs = *remote_side.descs.at(backend);
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    auto handle = std::make_unique<nixlXferReqH>(remote_side->remoteAgent,
+    auto handle = std::make_unique<nixlXferReqH>(remote_side.remoteAgent,
                                                  operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
                                                  desc_count,
-                                                 remote_side->remoteSectionRef);
+                                                 remote_side.remoteSectionRef);
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;

@@ -26,6 +26,7 @@
 #include "nixl_descriptors.h"
 #include <chrono>
 #include <memory>
+#include <span>
 
 /**
  * @class nixlAgent
@@ -203,6 +204,8 @@ class nixlAgent {
          *         (via extra_params), the selection is limited to the specified backends.
          *         Optionally, a notification message can also be provided through extra_params.
          *
+         * @deprecated Use the overload taking nixlDlistH references and std::span indices.
+         *
          * @param  operation        Operation for transfer (e.g., NIXL_WRITE)
          * @param  local_side       Local prepared descriptor list handle
          * @param  local_indices    Indices list to the local prepared descriptor list handle
@@ -220,6 +223,20 @@ class nixlAgent {
                      const std::vector<int> &remote_indices,
                      nixlXferReqH* &req_hndl,
                      const nixl_opt_args_t* extra_params = nullptr) const;
+
+        /**
+         * @overload
+         * @brief Span-based overload of makeXferReq.
+         */
+        nixl_status_t
+        makeXferReq(nixl_xfer_op_t operation,
+                    const nixlDlistH &local_side,
+                    std::span<const int> local_indices,
+                    const nixlDlistH &remote_side,
+                    std::span<const int> remote_indices,
+                    nixlXferReqH *&req_hndl,
+                    const nixl_opt_args_t *extra_params = nullptr) const;
+
         /**
          * @brief  A combined API, to create a transfer request from two descriptor lists.
          *         NIXL will prepare each side and create a transfer handle `req_hndl`.
