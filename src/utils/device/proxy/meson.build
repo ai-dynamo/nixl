@@ -15,10 +15,12 @@
 
 device_proxy_lib = library('nixl_device_proxy',
            ['proxy_config.cpp', 'proxy_config.h',
+            'proxy_registry.cpp', 'proxy_registry.h', 'proxy_registry_entry.h',
+            'proxy_submission.cpp', 'proxy_submission.h',
             'proxy_control_buffer.cpp', 'proxy_control_buffer.h',
             'proxy_protocol.h', 'proxy_transport.h'],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           dependencies: [nixl_common_dep, device_utils_interface],
+           dependencies: [nixl_common_dep, nixl_infra, device_utils_interface],
            install: true)
 
 if get_option('install_headers')
