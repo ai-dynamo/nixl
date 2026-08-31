@@ -219,6 +219,10 @@ public:
 
     void releaseMemView(nixlMemViewH) const override;
 
+private:
+    /** The device proxy's transport over the shared workers; see ucx_proxy_transport.cpp. */
+    class proxyTransportImpl;
+
 protected:
     using worker_span_t = std::span<const std::unique_ptr<nixlUcxWorker>>;
 
