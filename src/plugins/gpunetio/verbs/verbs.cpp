@@ -83,8 +83,15 @@ class CqAttrGuard {
 public:
     doca_verbs_cq_attr *value = nullptr;
 
+    doca_error_t
+    destroy() noexcept {
+        auto *attr = value;
+        value = nullptr;
+        return attr == nullptr ? DOCA_SUCCESS : doca_verbs_cq_attr_destroy(attr);
+    }
+
     ~CqAttrGuard() {
-        if (value != nullptr && doca_verbs_cq_attr_destroy(value) != DOCA_SUCCESS) {
+        if (destroy() != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to destroy doca verbs cq attributes";
         }
     }
@@ -94,8 +101,15 @@ class QpAttrGuard {
 public:
     doca_verbs_qp_init_attr *value = nullptr;
 
+    doca_error_t
+    destroy() noexcept {
+        auto *attr = value;
+        value = nullptr;
+        return attr == nullptr ? DOCA_SUCCESS : doca_verbs_qp_init_attr_destroy(attr);
+    }
+
     ~QpAttrGuard() {
-        if (value != nullptr && doca_verbs_qp_init_attr_destroy(value) != DOCA_SUCCESS) {
+        if (destroy() != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to destroy doca verbs qp attributes";
         }
     }
@@ -223,13 +237,11 @@ cq::createCq() {
     }
     cq_verbs = new_cq;
 
-    status = doca_verbs_cq_attr_destroy(verbs_cq_attr.value);
+    status = verbs_cq_attr.destroy();
     if (status != DOCA_SUCCESS) {
         destroyCq();
         throw std::runtime_error("Failed to destroy doca verbs cq attributes");
     }
-    verbs_cq_attr.value = nullptr;
-
     return new_cq;
 }
 
@@ -479,12 +491,10 @@ qp::createQp() {
     }
     qp_verbs = new_qp;
 
-    status = doca_verbs_qp_init_attr_destroy(verbs_qp_init_attr.value);
+    status = verbs_qp_init_attr.destroy();
     if (status != DOCA_SUCCESS) {
         throw std::runtime_error("Failed to destroy doca verbs QP attributes");
     }
-    verbs_qp_init_attr.value = nullptr;
-
     return qp_verbs;
 }
 

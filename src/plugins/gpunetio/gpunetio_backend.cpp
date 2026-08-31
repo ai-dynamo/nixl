@@ -375,16 +375,17 @@ nixlDocaEngine::~nixlDocaEngine() {
     NIXL_DEBUG << "Before cudaStreamSynchronize ";
     nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
     nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
-    doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
-    doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
-    doca_gpu_mem_free(gdevs[0].second, last_rsvd_flags);
-    doca_gpu_mem_free(gdevs[0].second, last_posted_flags);
 
     for (int i = 0; i < nstreams; i++) {
         NIXL_DEBUG << "Before cudaStreamSynchronize post_stream " << i;
         nixlDocaEngineCheckCudaError(cudaStreamSynchronize(post_stream[i]), "stream synchronize");
         nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
     }
+
+    doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
+    doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
+    doca_gpu_mem_free(gdevs[0].second, last_rsvd_flags);
+    doca_gpu_mem_free(gdevs[0].second, last_posted_flags);
 
     NIXL_DEBUG << "Before nixlDocaDestroyNotif ";
     for (auto notif : notifMap) {
@@ -404,15 +405,36 @@ nixlDocaEngine::~nixlDocaEngine() {
     }
     qpMap.clear();
 
-    result = doca_dev_close(ddev);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to close DOCA device " << doca_error_get_descr(result);
-    }
-
     result = doca_gpu_destroy(gdevs[0].second);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to close DOCA GPU device " << doca_error_get_descr(result);
     }
+    gdevs[0].second = nullptr;
+
+    result = doca_verbs_ah_attr_destroy(verbs_ah_attr);
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to destroy DOCA verbs AH " << doca_error_get_descr(result);
+    }
+    verbs_ah_attr = nullptr;
+
+    result = doca_dev_close(ddev);
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to close DOCA device " << doca_error_get_descr(result);
+    }
+    ddev = nullptr;
+
+    result = doca_verbs_pd_destroy(verbs_pd);
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to destroy DOCA verbs PD " << doca_error_get_descr(result);
+    }
+    verbs_pd = nullptr;
+    pd = nullptr;
+
+    result = doca_verbs_context_destroy(verbs_context);
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to destroy DOCA verbs context " << doca_error_get_descr(result);
+    }
+    verbs_context = nullptr;
 }
 
 /****************************************
@@ -474,8 +496,12 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     notif->recv_pi = 0;
 
     // Ensure notif list is not added twice for the same peer
-    auto *notif_ptr = notif.get();
-    notifMap[remote_agent] = notif.release();
+    const auto [notif_it, inserted] = notifMap.emplace(remote_agent, notif.get());
+    if (!inserted) {
+        return NIXL_SUCCESS;
+    }
+    notif.release();
+    auto *notif_ptr = notif_it->second;
     ((volatile struct docaNotif *)notif_fill_cpu)->msg_buf = (uintptr_t)notif_ptr->recv_addr;
     ((volatile struct docaNotif *)notif_fill_cpu)->msg_lkey = notif_ptr->recv_mr->get_lkey();
     ((volatile struct docaNotif *)notif_fill_cpu)->msg_size = notif_ptr->elems_size;
@@ -656,7 +682,11 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
 
     rdma_qp->qpn_notif = doca_verbs_qp_get_qpn(rdma_qp->qp_notif->get_qp());
 
-    qpMap[remote_agent] = rdma_qp.release();
+    const auto [qp_it, inserted] = qpMap.emplace(remote_agent, rdma_qp.get());
+    if (!inserted) {
+        return NIXL_IN_PROG;
+    }
+    rdma_qp.release();
 
     NIXL_DEBUG << "DOCA addRdmaQp new QP added for " << remote_agent;
 

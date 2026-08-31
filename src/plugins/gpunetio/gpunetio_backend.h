@@ -28,11 +28,11 @@ public:
     std::mutex qpLock;
     std::mutex connectLock;
     std::vector<std::pair<uint32_t, doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
-    doca_dev *ddev; /* DOCA device handler associated to queues */
-    doca_verbs_context *verbs_context; /* DOCA Verbs Context */
-    doca_verbs_pd *verbs_pd; /* DOCA Verbs Protection Domain */
-    doca_verbs_ah_attr *verbs_ah_attr; /* DOCA Verbs address handle */
-    struct ibv_pd *pd; /* local protection domain */
+    doca_dev *ddev = nullptr; /* DOCA device handler associated to queues */
+    doca_verbs_context *verbs_context = nullptr; /* DOCA Verbs Context */
+    doca_verbs_pd *verbs_pd = nullptr; /* DOCA Verbs Protection Domain */
+    doca_verbs_ah_attr *verbs_ah_attr = nullptr; /* DOCA Verbs address handle */
+    struct ibv_pd *pd = nullptr; /* local protection domain */
     doca_verbs_gid gid; /* local gid address */
     doca_verbs_gid remote_gid; /* remote gid address */
     int lid; /* IB: local ID */
@@ -158,7 +158,7 @@ private:
     std::thread pthr;
     uint64_t *last_rsvd_flags;
     uint64_t *last_posted_flags;
-    cudaStream_t post_stream[DOCA_POST_STREAM_NUM];
+    cudaStream_t post_stream[DOCA_POST_STREAM_NUM]{};
     cudaStream_t wait_stream;
     mutable std::atomic<uint32_t> xferStream;
     mutable std::atomic<uint32_t> lastPostedReq;
