@@ -15,6 +15,7 @@
 
 device_proxy_lib = library('nixl_device_proxy',
            ['proxy_config.cpp', 'proxy_config.h',
+            'proxy_runtime.cpp', 'proxy_runtime.h',
             'proxy_memview_manager.cpp', 'proxy_memview_manager.h', 'proxy_host_view.h',
             'proxy_submission.cpp', 'proxy_submission.h',
             'proxy_ring.cpp', 'proxy_ring.h',
