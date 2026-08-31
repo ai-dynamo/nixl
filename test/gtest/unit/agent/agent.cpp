@@ -88,6 +88,12 @@ namespace agent {
             return agent_.get();
         }
 
+        /** @brief Return the GMock engine so tests can set `EXPECT_CALL` on it. */
+        mocks::GMockBackendEngine &
+        getGMockEngine() {
+            return gmock_engine_;
+        }
+
         const mocks::GMockBackendEngine &
         getGMockEngine() const {
             return gmock_engine_;
@@ -196,6 +202,10 @@ namespace agent {
         }
     };
 
+    /** @brief Parameterized fixture that injects a southbound `registerMem` error. */
+    class registerMemErrorMappingFixture : public singleAgentSessionFixture,
+                                           public testing::WithParamInterface<nixl_status_t> {};
+
     TEST_F(singleAgentSessionFixture, GetNonExistingPluginTest) {
         nixl_mem_list_t mem;
         nixl_b_params_t params;
@@ -269,6 +279,37 @@ namespace agent {
                   NIXL_SUCCESS);
         EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
     }
+
+    /** Distinct plugin `registerMem` errors surface as one northbound `NIXL_ERR_BACKEND`. */
+    TEST_P(registerMemErrorMappingFixture, CollapsesSouthboundErrorToBackendError) {
+        nixl_b_params_t params;
+        nixlBackendH *backend = nullptr;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        EXPECT_CALL(agent_helper_->getGMockEngine(),
+                    registerMem(testing::_, testing::_, testing::_))
+            .WillOnce(testing::Return(GetParam()));
+
+        blob test_blob;
+        nixl_opt_args_t extra_params;
+        nixl_reg_dlist_t reg_dlist(DRAM_SEG);
+        const nixl_status_t status =
+            agent_helper_->initAndRegisterMemory(test_blob, reg_dlist, extra_params, backend);
+
+        EXPECT_EQ(status, NIXL_ERR_BACKEND)
+            << "injected southbound status: " << nixlEnumStrings::statusStr(GetParam());
+    }
+
+    INSTANTIATE_TEST_SUITE_P(RepresentativeSouthboundErrors,
+                             registerMemErrorMappingFixture,
+                             testing::Values(NIXL_ERR_INVALID_PARAM,
+                                             NIXL_ERR_NOT_FOUND,
+                                             NIXL_ERR_MISMATCH,
+                                             NIXL_ERR_NOT_SUPPORTED,
+                                             NIXL_ERR_CANCELED),
+                             [](const testing::TestParamInfo<nixl_status_t> &info) {
+                                 return nixlEnumStrings::statusStr(info.param);
+                             });
 
     TEST_F(singleAgentSessionFixture, RegisterDeregisterMemRepeatedTest) {
         constexpr int kWarmupIters = 3;
