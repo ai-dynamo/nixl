@@ -34,88 +34,80 @@
 #include "worker/worker.h"
 #include <random>
 #include "worker/nixl/nixl_mem_region.h"
+#include "worker/nixl/nixl_worker_odm.h"
 
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
 
-class xferBenchNixlWorker: public xferBenchWorker {
-    private:
-        nixlAgent* agent;
-        nixlBackendH* backend_engine;
-        nixl_mem_t seg_type;
-        std::vector<xferFileState> remote_fds;
-        std::vector<NixlMemRegion> remote_regs_;
-        std::vector<NixlMemRegion> local_regs_;
-        std::vector<GusliDeviceConfig> gusli_devices;
-        std::string remote_agent_name;
-        std::optional<xferBenchIOV> completion_counter_iov;
-        std::string odm_device_path_;
-        uint64_t odm_base_addr_ = 0;
-        int odm_iova_fd_ = -1;
-        uint32_t odm_iova_size_ = 0;
-        bool odm_use_get_iova_ = false;
-        uint64_t odm_dpa_base_ = 0;
+class xferBenchNixlWorker : public xferBenchWorker {
+private:
+    nixlAgent *agent;
+    nixlBackendH *backend_engine;
+    nixl_mem_t seg_type;
+    std::vector<xferFileState> remote_fds;
+    std::vector<NixlMemRegion> remote_regs_;
+    std::vector<NixlMemRegion> local_regs_;
+    std::vector<GusliDeviceConfig> gusli_devices;
+    std::string remote_agent_name;
+    std::optional<xferBenchIOV> completion_counter_iov;
+    xferBenchOdm::State odm_;
 
-        void freeOdmIova();
-        void seedOdmViaHostWrite(size_t total_size, uint8_t pattern);
+public:
+    explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
+    ~xferBenchNixlWorker() override;
 
-    public:
-        explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
-        ~xferBenchNixlWorker() override;
+    // Memory management
+    std::vector<std::vector<xferBenchIOV>>
+    allocateMemory(int num_threads) override;
+    void
+    deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) override;
 
-        // Memory management
-        std::vector<std::vector<xferBenchIOV>> allocateMemory(int num_threads) override;
-        void deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) override;
+    // Communication and synchronization
+    int
+    exchangeMetadata() override;
+    std::vector<std::vector<xferBenchIOV>>
+    exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                size_t block_size) override;
+    void
+    poll(size_t block_size) override;
+    int
+    synchronizeStart();
 
-        // Communication and synchronization
-        int exchangeMetadata() override;
-        std::vector<std::vector<xferBenchIOV>>
-        exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
-                    size_t block_size) override;
-        void
-        poll(size_t block_size) override;
-        int
-        synchronizeStart();
+    // Data operations
+    std::variant<xferBenchStats, int>
+    transfer(size_t block_size,
+             const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+             const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
-        // Data operations
-        std::variant<xferBenchStats, int>
-        transfer(size_t block_size,
-                 const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
-                 const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+private:
+    std::optional<xferBenchIOV>
+    initBasicDescDram(size_t buffer_size, int mem_dev_id);
+    std::optional<xferBenchIOV>
+    initBasicDescVram(size_t buffer_size, int mem_dev_id);
+    std::optional<xferBenchIOV>
+    initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
+    std::optional<xferBenchIOV>
+    initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
+    std::optional<xferBenchIOV>
+    initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
+    bool
+    ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
+    uint64_t
+    getFileOffset(size_t current_offset, size_t max_offset_in_blocks, size_t block_size);
+    void
+    releaseMemView(nixlMemViewH &mvh);
+    nixlMemViewH
+    prepareGPULocalView(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists);
+    nixlMemViewH
+    prepareGPURemoteView(const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists);
+    std::optional<xferBenchIOV>
+    initCompletionCounterVram();
+    bool
+    waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
+                                   uint64_t expected_value,
+                                   const char *phase,
+                                   const std::function<void()> &checkLiveness);
 
-    private:
-        std::optional<xferBenchIOV>
-        initBasicDescDram(size_t buffer_size, int mem_dev_id);
-        std::optional<xferBenchIOV>
-        initBasicDescVram(size_t buffer_size, int mem_dev_id);
-        std::optional<xferBenchIOV>
-        initBasicDescFile(size_t buffer_size, xferFileState &fstate, int mem_dev_id);
-        std::optional<xferBenchIOV>
-        initBasicDescObj(size_t buffer_size, int mem_dev_id, std::string name);
-        std::optional<xferBenchIOV>
-        initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t dev_offset);
-        bool
-        ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size);
-        uint64_t
-        discoverOdmBaseAddr();
-        void
-        seedOdmDramForRead(size_t total_size);
-        uint64_t
-        getFileOffset(size_t current_offset, size_t max_offset_in_blocks, size_t block_size);
-        void
-        releaseMemView(nixlMemViewH &mvh);
-        nixlMemViewH
-        prepareGPULocalView(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists);
-        nixlMemViewH
-        prepareGPURemoteView(const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists);
-        std::optional<xferBenchIOV>
-        initCompletionCounterVram();
-        bool
-        waitForDeviceCompletionCounter(const xferBenchIOV &counter_iov,
-                                       uint64_t expected_value,
-                                       const char *phase,
-                                       const std::function<void()> &checkLiveness);
-
-        std::mt19937_64 default_rng_;
+    std::mt19937_64 default_rng_;
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H

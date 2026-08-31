@@ -35,29 +35,8 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <linux/cxl_mem.h>
 #include <utils/serdes/serdes.h>
 #include <omp.h>
-
-/* The ODM base address (ODM_MEM_SEG / target_iova_addr) is the device-local
- * DPA where the ODM DMA engine sees Iliad volatile DRAM. On volatile-only
- * devices (32 GiB BAR firmware) that base is total_capacity and BAR2/DAX
- * offset 0 is the host alias. On split persistent+volatile devices volatile
- * DRAM starts after the persistent partition (read from CXL IDENTIFY).
- * NOTE: this is NOT the PCI BAR2 host-physical address from lspci — that is the
- * host's window into the same DRAM and fails ODM data verification. */
-static constexpr uint64_t CXL_CAP_UNIT_BYTES = 256ULL * 1024 * 1024;
-static constexpr size_t CXL_IDENTIFY_PAYLOAD_SIZE = 0x43;
-static constexpr size_t CXL_IDENTIFY_TOTAL_CAP_OFFSET = 0x10;
-static constexpr size_t CXL_IDENTIFY_PERSISTENT_CAP_OFFSET = 0x20;
-/* Fallback ODM DPA base if CXL IDENTIFY is unavailable; the known-good value
- * used by the example apps / round-trip tests on this card (32 GiB). */
-static constexpr uint64_t ODM_ODM_FALLBACK_ADDR = 0x800000000ULL;
-
-/* ODM always sprays the ODM/dma-buf READ path across this fixed ODM queue range
- * so a single caller thread saturates PCIe (see plugins/odm/README.md). */
-static constexpr int ODM_ODM_QID_START = 0;
-static constexpr int ODM_ODM_QID_END = 7;
 
 #define ROUND_UP(value, granularity) \
     ((((value) + (granularity) - 1) / (granularity)) * (granularity))
@@ -339,29 +318,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
         }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_ODM)) {
-        // ODM: VRAM<->ODM_MEM via dma-buf (ODM controller) for BOTH directions.
-        //   READ  (Iliad->VRAM): ODM writes into GPU VRAM (PCIe write).
-        //   WRITE (VRAM->Iliad): ODM reads GPU VRAM (PCIe read, pipelined).
-        // The BAR2 DAX window is used only for consistency seeding/read-back.
-        std::string odm_device = (devices.empty() || devices[0] == "all") ? "odm0" : devices[0];
-        backend_params["dmadev_param"] = odm_device;
-        odm_device_path_ = (odm_device[0] == '/') ? odm_device : ("/dev/" + odm_device);
-        /* Multi-queue spraying is hardcoded to queues 0..7: the plugin splits
-         * each transfer across all of them so a single caller thread saturates
-         * PCIe. No command-line flags. */
-        backend_params["odm_qid"] = std::to_string(ODM_ODM_QID_START);
-        backend_params["odm_qid_start"] = std::to_string(ODM_ODM_QID_START);
-        backend_params["odm_qid_end"] = std::to_string(ODM_ODM_QID_END);
-        backend_params["num_threads"] = std::to_string(xferBenchConfig::num_threads);
-        backend_params["dax_device"] = xferBenchConfig::dax_device;
-        std::cout << "ODM backend: dma_device=" << odm_device
-                  << " qid=" << ODM_ODM_QID_START
-                  << " qid_range=" << ODM_ODM_QID_START
-                  << ".." << ODM_ODM_QID_END
-                  << " threads=" << xferBenchConfig::num_threads
-                  << " dax_device=" << xferBenchConfig::dax_device
-                  << " engine=ODM/dma-buf (both directions)"
-                  << " addr=auto(CXL IDENTIFY)" << std::endl;
+        xferBenchOdm::configureBackend(devices, odm_, backend_params);
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -372,7 +329,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
-    freeOdmIova();
+    odm_.freeIova();
     delete rt;
     rt = nullptr;
 
@@ -380,224 +337,6 @@ xferBenchNixlWorker::~xferBenchNixlWorker() {
         delete agent;
         agent = nullptr;
     }
-}
-
-/* ODM driver ioctls (must match mrvl_cxl_core_char_dev.h). */
-struct mrvl_dma_xfer_commands {
-    uint64_t host_va_addr;
-    uint64_t target_iova_addr;
-    uint32_t tranfer_size;
-    uint32_t tranfer_type;
-    uint16_t qid;
-};
-struct mrvl_dma_iova_commands {
-    uint64_t target_iova_addr;
-    uint32_t target_iova_size;
-};
-#define MRVL_CXL_GET_IOVA_COMMAND _IOWR(0xCE, 5, struct mrvl_dma_iova_commands)
-#define MRVL_CXL_FREE_IOVA_COMMAND _IOWR(0xCE, 6, struct mrvl_dma_iova_commands)
-#define MRVL_CXL_DMA_READ_COMMAND _IOWR(0xCE, 3, struct mrvl_dma_xfer_commands)
-#define MRVL_CXL_DMA_WRITE_COMMAND _IOWR(0xCE, 4, struct mrvl_dma_xfer_commands)
-#define ODM_XTYPE_OUTBOUND 0
-#define ODM_XTYPE_INBOUND 1
-
-void
-xferBenchNixlWorker::freeOdmIova() {
-    if (odm_iova_fd_ < 0 || odm_base_addr_ == 0 || !odm_use_get_iova_)
-        return;
-    struct mrvl_dma_iova_commands cmd {};
-    cmd.target_iova_addr = odm_base_addr_;
-    cmd.target_iova_size = odm_iova_size_;
-    ioctl(odm_iova_fd_, MRVL_CXL_FREE_IOVA_COMMAND, &cmd);
-    close(odm_iova_fd_);
-    odm_iova_fd_ = -1;
-    odm_iova_size_ = 0;
-    odm_use_get_iova_ = false;
-}
-
-void
-xferBenchNixlWorker::seedOdmViaHostWrite(size_t total_size, uint8_t pattern) {
-    const std::string &dev =
-        odm_device_path_.empty() ? xferBenchConfig::odm_device_path : odm_device_path_;
-    void *host = nullptr;
-    if (posix_memalign(&host, xferBenchConfig::page_size, total_size) != 0) {
-        std::cerr << "ODM: host seed: allocation failed" << std::endl;
-        return;
-    }
-    memset(host, pattern, total_size);
-
-    int fd = open(dev.c_str(), O_RDWR);
-    if (fd < 0) {
-        std::cerr << "ODM: host seed: open(" << dev << ") failed: " << strerror(errno)
-                  << std::endl;
-        free(host);
-        return;
-    }
-    struct mrvl_dma_xfer_commands cmd {};
-    cmd.host_va_addr = reinterpret_cast<uint64_t>(host);
-    cmd.target_iova_addr = odm_base_addr_;
-    cmd.tranfer_size = static_cast<uint32_t>(total_size);
-    cmd.tranfer_type = ODM_XTYPE_INBOUND;
-    cmd.qid = 0;
-    if (ioctl(fd, MRVL_CXL_DMA_WRITE_COMMAND, &cmd) < 0) {
-        std::cerr << "ODM: host seed: WRITE ioctl failed: " << strerror(errno) << std::endl;
-    } else {
-        std::cout << "ODM: seeded " << total_size << " bytes at IOVA 0x" << std::hex
-                  << odm_base_addr_ << std::dec << " with 0x" << std::hex
-                  << static_cast<unsigned>(pattern) << std::dec << " (host WRITE)"
-                  << std::endl;
-    }
-    close(fd);
-    free(host);
-}
-
-static uint64_t
-readCxlCapacityFieldBytes(const unsigned char *id, size_t offset) {
-    uint64_t units = 0;
-
-    for (int i = 7; i >= 0; i--)
-        units = (units << 8) | id[offset + i];
-    return units * CXL_CAP_UNIT_BYTES;
-}
-
-/* Read CXL IDENTIFY and derive the ODM volatile-DRAM DPA base. Returns 0 on
- * failure (caller may fall back). */
-static uint64_t
-readCxlOdmBaseBytes(const std::string &dev_path, uint64_t *total_bytes_out) {
-    int fd = open(dev_path.c_str(), O_RDWR);
-    if (fd < 0)
-        return 0;
-
-    unsigned char id[CXL_IDENTIFY_PAYLOAD_SIZE];
-    memset(id, 0, sizeof(id));
-    struct cxl_send_command sc;
-    memset(&sc, 0, sizeof(sc));
-    sc.id = CXL_MEM_COMMAND_ID_IDENTIFY;
-    sc.out.size = sizeof(id);
-    sc.out.payload = reinterpret_cast<uint64_t>(id);
-
-    int rc = ioctl(fd, CXL_MEM_SEND_COMMAND, &sc);
-    close(fd);
-    if (rc < 0 || sc.retval != 0)
-        return 0;
-
-    const uint64_t total_bytes =
-        readCxlCapacityFieldBytes(id, CXL_IDENTIFY_TOTAL_CAP_OFFSET);
-    const uint64_t persistent_bytes =
-        readCxlCapacityFieldBytes(id, CXL_IDENTIFY_PERSISTENT_CAP_OFFSET);
-
-    if (total_bytes_out)
-        *total_bytes_out = total_bytes;
-
-  /* Volatile DRAM DPA base from CXL IDENTIFY. Split persistent+volatile
-   * devices place volatile after the persistent partition. Volatile-only
-   * firmware (32 GiB BAR) still uses total_capacity as the ODM DPA base on
-   * this hardware (BAR2/DAX offset 0 aliases that region). */
-    if (persistent_bytes > 0)
-        return persistent_bytes;
-    if (total_bytes > 0)
-        return total_bytes;
-    return 0;
-}
-
-uint64_t
-xferBenchNixlWorker::discoverOdmBaseAddr() {
-    if (odm_base_addr_ != 0)
-        return odm_base_addr_;
-
-    const std::string &odm_dev =
-        odm_device_path_.empty() ? "/dev/odm0" : odm_device_path_;
-    xferBenchConfig::odm_device_path = odm_dev;
-
-    uint64_t total_bytes = 0;
-    odm_dpa_base_ = readCxlOdmBaseBytes(odm_dev, &total_bytes);
-    if (odm_dpa_base_ == 0)
-        odm_dpa_base_ = ODM_ODM_FALLBACK_ADDR;
-    xferBenchConfig::odm_dpa_base = odm_dpa_base_;
-
-  /* DMA via /dev/odm0 requires mailbox-allocated IOVA (GET_IOVA). The BAR2 DAX
-   * window (--dax_device) aliases the CXL IDENTIFY DPA base and is used only
-   * for optional consistency read-back when addresses fall in that range. */
-    if (const char *e = getenv("ODM_ADDR")) {
-        const uint64_t v = strtoull(e, nullptr, 0);
-        if (v != 0) {
-            odm_base_addr_ = v;
-            odm_use_get_iova_ = false;
-            xferBenchConfig::odm_use_get_iova = false;
-            std::cout << "ODM: base 0x" << std::hex << odm_base_addr_ << std::dec
-                      << " (from ODM_ADDR env)" << std::endl;
-            return odm_base_addr_;
-        }
-    }
-
-    odm_iova_fd_ = open(odm_dev.c_str(), O_RDWR);
-    if (odm_iova_fd_ < 0) {
-        std::cerr << "ODM: open(" << odm_dev << ") for GET_IOVA failed: " << strerror(errno)
-                  << std::endl;
-        odm_base_addr_ = odm_dpa_base_;
-        xferBenchConfig::odm_use_get_iova = false;
-        return odm_base_addr_;
-    }
-    struct mrvl_dma_iova_commands iova_cmd {};
-    iova_cmd.target_iova_size = static_cast<uint32_t>(xferBenchConfig::total_buffer_size);
-    if (ioctl(odm_iova_fd_, MRVL_CXL_GET_IOVA_COMMAND, &iova_cmd) < 0) {
-        std::cerr << "ODM: GET_IOVA failed: " << strerror(errno)
-                  << "; falling back to IDENTIFY base 0x" << std::hex << odm_dpa_base_
-                  << std::dec << std::endl;
-        close(odm_iova_fd_);
-        odm_iova_fd_ = -1;
-        odm_base_addr_ = odm_dpa_base_;
-        odm_use_get_iova_ = false;
-        xferBenchConfig::odm_use_get_iova = false;
-        return odm_base_addr_;
-    }
-    odm_base_addr_ = iova_cmd.target_iova_addr;
-    odm_iova_size_ = iova_cmd.target_iova_size;
-    odm_use_get_iova_ = true;
-    xferBenchConfig::odm_use_get_iova = true;
-    std::cout << "ODM: allocated IOVA 0x" << std::hex << odm_base_addr_ << std::dec
-              << " size " << odm_iova_size_ << " via GET_IOVA on " << odm_dev
-              << " (IDENTIFY DPA base 0x" << std::hex << odm_dpa_base_ << std::dec
-              << " used for DAX alias only)" << std::endl;
-    return odm_base_addr_;
-}
-
-void
-xferBenchNixlWorker::seedOdmDramForRead(size_t total_size) {
-    if (odm_use_get_iova_) {
-        seedOdmViaHostWrite(total_size, XFERBENCH_TARGET_BUFFER_ELEMENT);
-        return;
-    }
-    /* BAR2 DAX window: offset 0 aliases the CXL IDENTIFY volatile DPA base. */
-    const std::string &dax = xferBenchConfig::dax_device;
-    if (dax.empty()) {
-        std::cerr << "ODM: consistency seed: --dax_device not set, skipping seed"
-                  << std::endl;
-        return;
-    }
-    int fd = open(dax.c_str(), O_RDWR | O_SYNC);
-    if (fd < 0) {
-        std::cerr << "ODM: consistency seed: open(" << dax << ") failed: "
-                  << strerror(errno) << " (run as root for the DAX window)"
-                  << std::endl;
-        return;
-    }
-    /* devdax mappings must be alignment-sized; round up to 2 MiB to be safe. */
-    size_t map_size = (total_size + (2 << 20) - 1) & ~static_cast<size_t>((2 << 20) - 1);
-    void *p = mmap(nullptr, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (p == MAP_FAILED) {
-        std::cerr << "ODM: consistency seed: mmap(" << dax << ", " << map_size
-                  << ") failed: " << strerror(errno) << std::endl;
-        close(fd);
-        return;
-    }
-    memset(p, XFERBENCH_TARGET_BUFFER_ELEMENT, total_size);
-    __sync_synchronize();  /* publish the BAR2 writes before the ODM read */
-    munmap(p, map_size);
-    close(fd);
-    std::cout << "ODM: seeded " << total_size << " bytes of Iliad DRAM with 0x"
-              << std::hex << (int)XFERBENCH_TARGET_BUFFER_ELEMENT << std::dec
-              << " via " << dax << " for READ consistency" << std::endl;
 }
 
 // Convert vector of xferBenchIOV to nixl_reg_dlist_t
@@ -752,8 +491,9 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
     uint8_t memset_value =
         isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
     // Override the initiator fill byte for memory-probing/round-trip tests.
-    if (isInit && xferBenchConfig::fill_value >= 0)
+    if (isInit && xferBenchConfig::fill_value >= 0) {
         memset_value = static_cast<uint8_t>(xferBenchConfig::fill_value);
+    }
 
     // Assume no CUDA cores exist if Neuron cores are found.
     // There are no AWS instance types with both NVIDIA GPUs and Neuron accelerators.
@@ -915,7 +655,9 @@ xferBenchNixlWorker::initBasicDescFile(size_t buffer_size, xferFileState &fstate
 
     free(buf);
 
-    if (end_offset > fstate.file_size) fstate.file_size = end_offset;
+    if (end_offset > fstate.file_size) {
+        fstate.file_size = end_offset;
+    }
 
     return ret;
 }
@@ -994,7 +736,9 @@ xferBenchNixlWorker::cleanupBasicDescBlk(xferBenchIOV &iov) {
 bool
 xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size) {
     int flags = O_RDWR | O_CREAT | O_LARGEFILE;
-    if (xferBenchConfig::storage_enable_direct) flags |= O_DIRECT;
+    if (xferBenchConfig::storage_enable_direct) {
+        flags |= O_DIRECT;
+    }
 
     int fd = open(device.device_path.c_str(), flags, 0744);
     if (fd < 0) {
@@ -1115,7 +859,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             nixl_reg_dlist_t desc_list(OBJ_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_iovs.push_back(iov_list);
+            remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
         }
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
         // GUSLI backend uses block device descriptors
@@ -1147,23 +891,22 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             nixl_reg_dlist_t desc_list(BLK_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_iovs.push_back(iov_list);
+            remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
         }
     } else if (XFERBENCH_BACKEND_ODM == xferBenchConfig::backend) {
         // ODM backend: register ODM_MEM_SEG for device address range (remote side).
         // The ODM base address (device DPA) is discovered at runtime from the
         // CXL IDENTIFY capacity (no hardcoded --odm_addr).
-        uint64_t odm_base = discoverOdmBaseAddr();
+        uint64_t odm_base = odm_.discoverBaseAddr();
         // For READ consistency, pre-seed the Iliad device memory (via the BAR2
         // DAX alias) with XFERBENCH_TARGET_BUFFER_ELEMENT so the read-back has a
         // known pattern to verify against. EXCEPTION: when an explicit
         // --check_value is given the caller is verifying data a *prior* transfer
         // left in Iliad DRAM (a write-then-read-back round trip), so seeding here
         // would destroy that data — skip it and read back what is already there.
-        if (xferBenchConfig::check_consistency &&
-            xferBenchConfig::op_type == XFERBENCH_OP_READ &&
+        if (xferBenchConfig::check_consistency && xferBenchConfig::op_type == XFERBENCH_OP_READ &&
             xferBenchConfig::check_value < 0) {
-            seedOdmDramForRead(xferBenchConfig::total_buffer_size);
+            odm_.seedDramForRead(xferBenchConfig::total_buffer_size);
         }
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
@@ -1175,7 +918,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             nixl_reg_dlist_t desc_list(ODM_MEM_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem ODM failed");
-            remote_iovs.push_back(iov_list);
+            remote_regs_.emplace_back(*agent, backend_engine, ODM_MEM_SEG, std::move(iov_list));
         }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
@@ -1220,12 +963,14 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                     iov_list.push_back(basic_desc.value());
                 }
                 file_idx += 1;
-                if (file_idx >= num_files) file_idx = 0;
+                if (file_idx >= num_files) {
+                    file_idx = 0;
+                }
             }
             nixl_reg_dlist_t desc_list(FILE_SEG);
             iovListToNixlRegDlist(iov_list, desc_list);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
-            remote_iovs.push_back(iov_list);
+            remote_regs_.emplace_back(*agent, backend_engine, FILE_SEG, std::move(iov_list));
         }
     }
 
@@ -1259,8 +1004,8 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             }
 
             if (basic_desc) {
-                if (!remote_iovs.empty()) {
-                    basic_desc.value().metaInfo = remote_iovs[list_idx][i].metaInfo;
+                if (!remote_regs_.empty()) {
+                    basic_desc.value().metaInfo = remote_regs_[list_idx].iovs()[i].metaInfo;
                 }
                 iov_list.push_back(basic_desc.value());
             }
@@ -1294,6 +1039,8 @@ void
 xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
     nixl_opt_args_t opt_args;
 
+    remote_regs_.clear();
+    remote_fds.clear();
 
     opt_args.backends.push_back(backend_engine);
     for (auto &iov_list : iov_lists) {
@@ -1315,41 +1062,6 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
                 std::cerr << "Unsupported mem type: " << seg_type << std::endl;
                 exit(EXIT_FAILURE);
             }
-        }
-    }
-
-    if (xferBenchConfig::isObjStorageBackend()) {
-        for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescObj(iov);
-            }
-            nixl_reg_dlist_t desc_list(OBJ_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-        }
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_GUSLI) {
-        for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescBlk(iov);
-            }
-            nixl_reg_dlist_t desc_list(BLK_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
-        }
-    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_ODM) {
-        for (auto &iov_list : remote_iovs) {
-            nixl_reg_dlist_t desc_list(ODM_MEM_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem ODM failed");
-        }
-    } else if (xferBenchConfig::isStorageBackend()) {
-        for (auto &iov_list : remote_iovs) {
-            for (auto &iov : iov_list) {
-                cleanupBasicDescFile(iov);
-            }
-            nixl_reg_dlist_t desc_list(FILE_SEG);
-            iovListToNixlRegDlist(iov_list, desc_list);
-            CHECK_NIXL_ERROR(agent->deregisterMem(desc_list, &opt_args), "deregisterMem failed");
         }
     }
 }
@@ -1429,12 +1141,12 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
         uint64_t file_offset = 0;
         size_t list_idx = 0;
         size_t num_devices = xferBenchConfig::num_initiator_dev;
-        size_t buffer_size = xferBenchConfig::total_buffer_size /
-            (num_devices * xferBenchConfig::num_threads);
+        size_t buffer_size =
+            xferBenchConfig::total_buffer_size / (num_devices * xferBenchConfig::num_threads);
         for (auto &iov_list : local_iovs) {
             std::vector<xferBenchIOV> remote_iov_list;
-            size_t entries_per_device = (num_devices > 0 && !iov_list.empty()) ?
-                iov_list.size() / num_devices : 1;
+            size_t entries_per_device =
+                (num_devices > 0 && !iov_list.empty()) ? iov_list.size() / num_devices : 1;
             size_t entry_idx = 0;
             int devidx = 0;
             for (auto &iov : iov_list) {
@@ -1455,9 +1167,9 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     size_t block_in_dev = entry_idx % entries_per_device;
                     size_t block_offset = (block_in_dev * block_size) % buffer_size;
                     xferBenchIOV iov_remote(iov);
-                    iov_remote.addr = remote_iovs[list_idx][odm_dev].addr + block_offset;
+                    iov_remote.addr = remote_regs_[list_idx].iovs()[odm_dev].addr + block_offset;
                     iov_remote.len = block_size;
-                    iov_remote.devId = remote_iovs[list_idx][odm_dev].devId;
+                    iov_remote.devId = remote_regs_[list_idx].iovs()[odm_dev].devId;
                     remote_iov_list.push_back(iov_remote);
                 } else {
                     xferBenchIOV iov_remote(iov);
