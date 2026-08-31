@@ -79,8 +79,15 @@ mlx5_init_cqes(struct mlx5_cqe64 *cqes, uint32_t nb_cqes) {
     }
 }
 
+namespace {
+
 class CqAttrGuard {
 public:
+    CqAttrGuard() = default;
+    CqAttrGuard(const CqAttrGuard &) = delete;
+    CqAttrGuard &
+    operator=(const CqAttrGuard &) = delete;
+
     doca_verbs_cq_attr *value = nullptr;
 
     doca_error_t
@@ -99,6 +106,11 @@ public:
 
 class QpAttrGuard {
 public:
+    QpAttrGuard() = default;
+    QpAttrGuard(const QpAttrGuard &) = delete;
+    QpAttrGuard &
+    operator=(const QpAttrGuard &) = delete;
+
     doca_verbs_qp_init_attr *value = nullptr;
 
     doca_error_t
@@ -114,6 +126,8 @@ public:
         }
     }
 };
+
+} // namespace
 
 namespace nixl::doca::verbs {
 
@@ -338,8 +352,16 @@ qp::qp(doca_gpu *gpu_dev_,
     }
     catch (...) {
         if (qp_gverbs != nullptr) {
-            doca_gpu_verbs_unexport_qp(gpu_dev, qp_gverbs);
+            const doca_error_t unexport_status = doca_gpu_verbs_unexport_qp(gpu_dev, qp_gverbs);
+            if (unexport_status != DOCA_SUCCESS) {
+                NIXL_ERROR << "Failed to unexport DOCA GPU verbs QP during rollback; retaining "
+                              "dependent resources";
+                cq_rq.release();
+                cq_sq.release();
+                throw;
+            }
             qp_gverbs = nullptr;
+            qp_gdev_verbs = nullptr;
         }
         destroyQp();
         throw;
