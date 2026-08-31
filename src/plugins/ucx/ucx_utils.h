@@ -46,6 +46,19 @@ class nixlUcxEp {
 private:
     ucp_ep_h eph{nullptr};
     std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::UNINITIALIZED};
+    /** Remembered because it decides which close flavours UCP will accept. */
+    const ucp_err_handling_mode_t errHandlingMode_;
+
+    /**
+     * UCP only accepts UCP_EP_CLOSE_FLAG_FORCE, and only guarantees request
+     * completion on failure, when error handling is enabled for the endpoint
+     * (ucp_ep.inl, ucp_ep_config_err_handling_enabled).
+     */
+    [[nodiscard]] bool
+    errorHandlingEnabled() const noexcept {
+        return errHandlingMode_ == UCP_ERR_HANDLING_MODE_PEER ||
+            errHandlingMode_ == UCP_ERR_HANDLING_MODE_FAILOVER;
+    }
 
     void
     setState(nixl::ucx::ep_state_t new_state);
