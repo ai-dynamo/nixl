@@ -67,7 +67,8 @@ struct nixlProxyBackendOps {
     std::function<nixl_status_t(const nixlBackendProxySubmission &, nixlBackendProxyRequest &)>
         submit;
     std::function<nixl_status_t(const nixlBackendProxyRequest &)> check_completion;
-    std::function<void(const nixlBackendProxyRequest &)> release_request;
+    /** Establish transport quiescence before view retirement; runs on the owning worker. */
+    std::function<nixl_status_t(uint32_t channel, uint32_t peer)> quiesce;
     std::function<nixl_status_t(uint32_t channel, uint32_t peer)> progress;
     std::function<nixl_status_t()> shutdown;
 
@@ -77,7 +78,7 @@ struct nixlProxyBackendOps {
 
     [[nodiscard]] bool
     complete() const noexcept {
-        return init && submit && check_completion && release_request && progress && shutdown;
+        return init && submit && check_completion && quiesce && progress && shutdown;
     }
 };
 
