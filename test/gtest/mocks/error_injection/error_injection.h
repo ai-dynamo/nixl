@@ -191,9 +191,10 @@ siteName(injection_site_t site);
 
 /*
  * A later ON_CALL wins over the defaults set in the GMockBackendEngine c'tor.
- * Every injected action bumps `calls` so the caller can tell an error the agent
- * swallowed apart from a site the northbound path never reached at all, which
- * would otherwise look identical for the cleanup scenarios.
+ * The installed action bumps `calls`, separating an error the agent swallowed
+ * from a site it never reached: zero once the sequence ends means a matching
+ * status was accidental. The mock increments it after this returns, so `calls`
+ * must outlive the engine, whose teardown can still bump it.
  */
 void
 applyInjection(mockErrorBackendEngine &gmock,
