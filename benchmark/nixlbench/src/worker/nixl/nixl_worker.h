@@ -35,6 +35,34 @@
 #include <random>
 #include "worker/nixl/nixl_mem_region.h"
 
+/**
+ * @brief Scenario-owned resource lifecycle for one transfer-request slot.
+ *
+ * prepare() may acquire resources and replace the slot descriptors before the common worker
+ * creates a transfer request. release() runs only after the request and any common registration
+ * have been released. Both methods must support cleanup after partial preparation.
+ */
+class xferBenchNixlIterationLifecycle {
+public:
+    virtual ~xferBenchNixlIterationLifecycle() = default;
+
+    /** @brief Acquire resources and prepare descriptors for one request. */
+    virtual nixl_status_t
+    prepare(std::vector<xferBenchIOV> &local_iovs, std::vector<xferBenchIOV> &remote_iovs) = 0;
+
+    /** @brief Observe or validate a completed request before its resources are released. */
+    virtual nixl_status_t
+    complete(const std::vector<xferBenchIOV> &local_iovs,
+             const std::vector<xferBenchIOV> &remote_iovs) = 0;
+
+    /** @brief Release resources acquired by prepare(). */
+    virtual nixl_status_t
+    release() = 0;
+};
+
+using iteration_lifecycle_factory_t =
+    std::function<std::unique_ptr<xferBenchNixlIterationLifecycle>(size_t, size_t)>;
+
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
 
 class xferBenchNixlWorker: public xferBenchWorker {
@@ -65,13 +93,45 @@ class xferBenchNixlWorker: public xferBenchWorker {
         void
         poll(size_t block_size) override;
         int
-        synchronizeStart();
+        synchronizeStart() override;
 
         // Data operations
         std::variant<xferBenchStats, int>
         transfer(size_t block_size,
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
+
+    protected:
+        /** @brief Return the configured local memory type. */
+        nixl_mem_t
+        localMemoryType() const;
+        /** @brief Allocate one unregistered local descriptor. */
+        std::optional<xferBenchIOV>
+        allocateLocalIov(size_t buffer_size, int mem_dev_id);
+        /** @brief Fill a local descriptor with one byte value. */
+        void
+        initializeLocalIov(xferBenchIOV &iov, uint8_t value);
+        /** @brief Retain ownership of an open remote file descriptor. */
+        void
+        retainRemoteFile(int fd, size_t file_size);
+        /** @brief Return a retained remote file descriptor by index. */
+        std::optional<int>
+        remoteFileDescriptor(size_t index) const;
+        /** @brief Register local descriptors for the worker lifetime. */
+        bool
+        registerLocalIovs(std::vector<xferBenchIOV> iovs);
+        /** @brief Register remote descriptors for the worker lifetime. */
+        bool
+        registerRemoteIovs(nixl_mem_t memory_type, std::vector<xferBenchIOV> iovs);
+        /** @brief Register descriptors with RAII ownership scoped to one request lifecycle. */
+        std::unique_ptr<NixlMemRegion>
+        registerIterationIovs(nixl_mem_t memory_type, std::vector<xferBenchIOV> iovs);
+        /** @brief Run transfers with scenario-owned per-request resource lifecycles. */
+        std::variant<xferBenchStats, int>
+        transferWithLifecycle(size_t block_size,
+                              const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                              const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists,
+                              const iteration_lifecycle_factory_t &lifecycle_factory);
 
     private:
         std::optional<xferBenchIOV>

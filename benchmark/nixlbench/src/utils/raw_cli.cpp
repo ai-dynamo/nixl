@@ -449,6 +449,7 @@ prepareRawCommand(int argc, char *argv[], std::ostream &out, std::ostream &err) 
     printRawPlan(request, *metadata, xferBenchConfig::num_iter, xferBenchConfig::warmup_iter, out);
     if (!request.raw.dry_run) {
         xferBenchConfig::plugin_parameters = std::move(request.plugin_parameters);
+        xferBenchConfig::plugin_parameters_from_raw_cli = true;
     }
     return {EXIT_SUCCESS, !request.raw.dry_run};
 }
