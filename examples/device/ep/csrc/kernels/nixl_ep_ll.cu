@@ -327,14 +327,14 @@ DISPATCH_RECV:
         // Wait tokens to arrive
         // NOTES: using sub-warp 1 to overlap with sub-warp 0
         int num_recv_tokens = 0, recv_token_begin_idx;
-        EP_DEVICE_ASSERT(num_warps_per_group > 1 and num_warp_groups < 15);
+        EP_DEVICE_ASSERT(num_warps_per_group > 1 and num_warp_groups < 15 and recv_slices > 0);
         if (sub_warp_id == 1 and lane_id == 0 and recv_slice > 0) {
             // Helper slices take slice 0's reservation. Slice 0 publishes on every path,
             // including timeout and masked, so no timeout is needed here
             uint64_t published;
             while ((published = ld_acquire_sys_global(recv_pub + recv_expert_idx)) == ~0ull)
                 ;
-            unpack2(static_cast<int64_t>(published), num_recv_tokens, recv_token_begin_idx);
+            unpack2(published, num_recv_tokens, recv_token_begin_idx);
             shared_num_recv_tokens[warp_group_id] = num_recv_tokens;
             shared_recv_token_begin_idx[warp_group_id] = recv_token_begin_idx;
         } else if (sub_warp_id == 1 and lane_id == 0) {
@@ -467,6 +467,7 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
         const int slices_needed = max(1, ceil_div(tokens_per_pair, num_warps_per_group));
         recv_slices = min(slices_needed, num_sms / active_expert_bound);
     }
+    EP_HOST_ASSERT(recv_slices > 0);
 
     // All-ones marks a slot as unpublished
     if (recv_slices > 1 and (phases & EP_RECV_PHASE))
