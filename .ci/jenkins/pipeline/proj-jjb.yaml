@@ -946,7 +946,7 @@
       - string:
           name: "PUBLISH_DIR"
           default: ""
-          description: "Artifactory publish subdir; empty = verification (nightly default). Manual release runs can pass release/&lt;ver&gt;."
+          description: "Artifactory publish subdir; empty = verification (nightly default). The release poller and manual release runs pass release/&lt;ver&gt;."
       - string:
           name: "DEBUG"
           default: 0

@@ -1,15 +1,15 @@
 #!/bin/bash -eE
 # Scan release/* branches for commits whose published wheels are missing this
-# CUDA variant, and write triggers.txt (one "<sha> <ver> <ucx_ver> <base_tag>"
-# line per missing build) for the poller's trigger step.
+# CUDA variant, and write triggers.txt (one "<sha> <ver> <cuda_major>" line per
+# missing build) for the poller's trigger step.
 #
 # Env (set by build-wheel-release-poller-matrix.yaml):
-#   base_tag      - CUDA base-image tag (matrix axis); variant cuNN = its major
+#   cuda_major    - CUDA major version (matrix axis); names the variant cuNN
 #   MIN_RELEASE   - releases older than this are not built
 #   MAX_COMMITS   - newest N first-parent commits to check per release branch
 #   NIXL_REPO_URL, STORAGE_API_URL, ARTIFACTORY_USER, ARTIFACTORY_TOKEN
 
-variant="cu${base_tag%%.*}"
+variant="cu${cuda_major}"
 
 # The Jenkins checkout is owned by a different uid; trust only it.
 git config --global --add safe.directory "${PWD}"
@@ -38,11 +38,13 @@ for ver in ${branches}; do
     continue
   fi
 
-  # Extract this release's UCX version from its build-container.sh
-  ucx_ver="$(git show "origin/release/${ver}:contrib/build-container.sh" 2>/dev/null \
-    | sed -n 's/^UCX_REF=.*:-\(.*\)}.*/\1/p' | head -1)"
-  if [ -z "${ucx_ver}" ]; then
-    echo "release/${ver}: cannot determine its UCX version, skipping"
+  # The nightly always passes --build-options-file (and the plugin flags), so a
+  # release whose build-container.sh predates them fails at option parsing.
+  # Skip it rather than fan out builds that cannot succeed; release branches cut
+  # from main after that change pass on their own.
+  if ! git show "origin/release/${ver}:contrib/build-container.sh" 2>/dev/null \
+       | grep -q -- '--build-options-file'; then
+    echo "release/${ver}: build-container.sh predates --build-options-file, skipping"
     continue
   fi
 
@@ -68,11 +70,11 @@ for ver in ${branches}; do
     if [ "${http_code}" = "200" ] && grep -q "\"/nixl_${variant}-" folder.json; then
       continue
     fi
-    echo "${sha} ${ver} ${ucx_ver} ${base_tag}" >> triggers.txt
+    echo "${sha} ${ver} ${cuda_major}" >> triggers.txt
     n_build=$((n_build+1))
   done
 
-  echo "release/${ver} (${variant}): ucx=${ucx_ver} candidates=${n_cand} to_build=${n_build}"
+  echo "release/${ver} (${variant}): candidates=${n_cand} to_build=${n_build}"
 done
 
 echo "=== Poller summary (${variant}): $(wc -l < triggers.txt) build(s) to trigger ==="

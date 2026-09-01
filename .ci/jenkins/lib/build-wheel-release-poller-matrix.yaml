@@ -4,12 +4,13 @@
 # every release-branch commit x CUDA variant whose wheels are still missing.
 #
 # How it works:
-# - CUDA variants are the matrix axis (base_tag): each cell scans and triggers
+# - CUDA variants are the matrix axis (cuda_major): each cell scans and triggers
 #   one variant. The scan itself is .ci/scripts/scan-missing-release-wheels.sh.
-# - Which releases build: every release/* branch with version >= MIN_RELEASE,
-#   picked up automatically - new release branches need no change anywhere.
-# - Which UCX: the UCX_REF default in the release's own build-container.sh
-#   (each release carries the UCX it ships with).
+# - Which releases build: every release/* branch with version >= MIN_RELEASE
+#   whose build-container.sh accepts --build-options-file (the nightly always
+#   passes it) - picked up automatically, new release branches need no change.
+# - Which UCX and plugins: whatever the release's own build-container.sh pins;
+#   the poller passes neither, so each release ships what it was built to ship.
 # - Which commits: newest MAX_COMMITS first-parent commits past the fork from main.
 # - Folder: release/<ver>/<nixl_sha8> - the nightly job's
 #   publish layout. A variant counts as published when a nixl_cuNN wheel is
@@ -40,13 +41,14 @@ kubernetes:
 runs_on_dockers:
   - { name: "poller", url: "quay.io/podman/stable:v5.7.1", arch: "x86_64" }
 
-# One cell per CUDA variant: the base-image tag both selects the CUDA toolkit
-# of the triggered build and names the variant (cuNN = major).
+# One cell per CUDA variant: CUDA_MAJOR selects the base image of the triggered
+# build (13 = build-container.sh defaults, 12 = the nightly's pinned CUDA 12
+# image) and names the variant (cuNN).
 matrix:
   axes:
-    base_tag:
-      - "12.9.1-devel-ubi8"
-      - "13.0.1-devel-ubi8"
+    cuda_major:
+      - "12"
+      - "13"
 
 env:
   # Releases older than this are not built. Anything newer is picked up automatically.
@@ -56,10 +58,6 @@ env:
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
   # Artifactory storage API root of the SWX NIXL pypi repo (folder listing).
   STORAGE_API_URL: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
-  # Plugins to bundle into release wheels, forwarded to each triggered build.
-  # The release source must carry the plugin flags in build-container.sh.
-  BUILD_UCX_SPCX_PLUGIN: "true"
-  BUILD_INFINIA: "true"
   MAIL_FROM: "jenkins@nvidia.com"
 
 steps:
@@ -83,25 +81,22 @@ steps:
           def spawned = []
           def failed = []
           for (line in triggers.split('\n')) {
-              // line: <nixl_sha> <ver> <ucx_ver> <base_tag>
+              // line: <nixl_sha> <ver> <cuda_major>
               def parts = line.trim().split(/\s+/)
-              def cu = "cu${parts[3].tokenize('.')[0]}"
+              def cu = "cu${parts[2]}"
               // Per-line guard: one bad trigger must not drop the remaining
               // lines; the next poll retries anything missed.
               try {
                   build(job: 'nixl-ci-build-wheel-nightly',
                         parameters: [
                             string(name: 'NIXL_VERSION', value: parts[0]),
-                            string(name: 'UCX_VERSION', value: parts[2]),
-                            string(name: 'BASE_TAG', value: parts[3]),
+                            string(name: 'CUDA_MAJOR', value: parts[2]),
                             string(name: 'PUBLISH_DIR', value: "release/${parts[1]}"),
                             string(name: 'ci_refspec', value: ciRefspec),
-                            booleanParam(name: 'BUILD_UCX_SPCX_PLUGIN', value: env.BUILD_UCX_SPCX_PLUGIN == 'true'),
-                            booleanParam(name: 'BUILD_INFINIA', value: env.BUILD_INFINIA == 'true'),
                         ],
                         wait: false,
                         propagate: false)
-                  spawned << "release/${parts[1]}/${parts[0].take(8)} ${cu}  (NIXL_VERSION=${parts[0]} BASE_TAG=${parts[3]} spcx=${env.BUILD_UCX_SPCX_PLUGIN} infinia=${env.BUILD_INFINIA})"
+                  spawned << "release/${parts[1]}/${parts[0].take(8)} ${cu}  (NIXL_VERSION=${parts[0]} CUDA_MAJOR=${parts[2]})"
               } catch (err) {
                   failed << "${line}: ${err}"
                   currentBuild.result = 'UNSTABLE'
@@ -122,7 +117,7 @@ steps:
           echo 'No missing wheels - nothing to trigger.'
       }
 
-taskName: '${name}_cu_${base_tag}'
+taskName: '${name}_cu_${cuda_major}'
 
 # Mail the unattended poller only when it fails, mirroring the nightly.
 pipeline_stop:
