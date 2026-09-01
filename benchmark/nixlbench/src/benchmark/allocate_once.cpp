@@ -28,7 +28,6 @@
 namespace nixlbench {
 namespace {
 
-    constexpr int inval_args_exit_code = 2;
     constexpr size_t initialization_chunk = 1024 * 1024;
     constexpr mode_t managed_file_permissions = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
 
@@ -293,7 +292,11 @@ namespace {
             }
         }
 
-        request.files = allocateOnceFileNames(file);
+        auto files = allocateOnceFileNames(file, file_error);
+        if (!files) {
+            return fail(file_error);
+        }
+        request.files = std::move(*files);
         request.managedFiles = file.filenames.empty();
         request.direct = file.direct;
         return true;
@@ -302,7 +305,7 @@ namespace {
 } // namespace
 
 struct allocateOnceScenario::implementation {
-    std::string fileSize;
+    size_t fileSize = 0;
     std::string offsetMode = "random";
     uint64_t seed = 0;
     CLI::Option *seedOption = nullptr;
@@ -324,8 +327,8 @@ supportsAllocateOnce(const pluginMetadata &metadata) {
         (hasMemoryType(metadata, DRAM_SEG) || hasMemoryType(metadata, VRAM_SEG));
 }
 
-std::vector<std::filesystem::path>
-allocateOnceFileNames(const fileOptions &file) {
+std::optional<std::vector<std::filesystem::path>>
+allocateOnceFileNames(const fileOptions &file, std::string &error) {
     std::vector<std::filesystem::path> names;
     if (!file.filenames.empty()) {
         for (const auto &name : splitFileNames(file.filenames)) {
@@ -334,8 +337,15 @@ allocateOnceFileNames(const fileOptions &file) {
         return names;
     }
 
-    const std::filesystem::path directory =
-        file.path.empty() ? std::filesystem::current_path() : std::filesystem::path(file.path);
+    std::filesystem::path directory(file.path);
+    if (file.path.empty()) {
+        std::error_code path_error;
+        directory = std::filesystem::current_path(path_error);
+        if (path_error) {
+            error = "could not determine the current working directory: " + path_error.message();
+            return std::nullopt;
+        }
+    }
     names.reserve(static_cast<size_t>(file.numFiles));
     for (int index = 0; index < file.numFiles; ++index) {
         names.push_back(directory / ("nixlbench_allocate_once_" + std::to_string(index) + ".dat"));
@@ -365,6 +375,8 @@ void
 allocateOnceScenario::addScenarioOptions(CLI::App &command) {
     command
         .add_option("--file-size", implementation_->fileSize, "Logical size of each backing file")
+        ->transform(binarySizeTransform())
+        ->check(CLI::PositiveNumber)
         ->required()
         ->group("Allocate-once options");
     command
@@ -384,21 +396,15 @@ allocateOnceScenario::finalizeScenario(std::ostream &err) {
     auto &request = implementation_->request;
     request.common = commonConfig();
 
-    std::string size_error;
-    const auto parsed_file_size = parseHumanSize(implementation_->fileSize, size_error);
-    if (!parsed_file_size) {
-        err << "Error: invalid file size '" << implementation_->fileSize << "': " << size_error
-            << '\n';
-        return inval_args_exit_code;
-    }
-    request.fileSize = *parsed_file_size;
+    request.fileSize = implementation_->fileSize;
     request.offsetMode = lower(implementation_->offsetMode) == "random" ? offset_mode_t::RANDOM :
                                                                           offset_mode_t::SEQUENTIAL;
     request.seed =
         request.offsetMode == offset_mode_t::RANDOM ? resolveOffsetSeed(implementation_->seed) : 0;
 
-    if (!validateRequest(
-            request, commonFileOptions(), implementation_->seedOption->count() != 0, err)) {
+    const bool seed_provided = implementation_->seedOption->count() != 0;
+    implementation_->seedOption = nullptr;
+    if (!validateRequest(request, commonFileOptions(), seed_provided, err)) {
         return inval_args_exit_code;
     }
     return EXIT_SUCCESS;

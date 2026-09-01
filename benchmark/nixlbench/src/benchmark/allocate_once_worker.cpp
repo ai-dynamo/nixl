@@ -34,6 +34,13 @@ public:
             std::vector<xferBenchIOV> &remote_iovs) override {
         (void)local_iovs;
         const auto slots = offsets_.next();
+        // The shared benchmark loop expands the retained buffer into one block-sized descriptor
+        // per batch entry before this lifecycle runs.
+        if (slots.size() != remote_iovs.size()) {
+            std::cerr << "Scenario offset count does not match the transfer descriptor count"
+                      << std::endl;
+            return NIXL_ERR_INVALID_PARAM;
+        }
         for (size_t index = 0; index < remote_iovs.size(); ++index) {
             remote_iovs[index].addr = slots[index] * blockSize_;
         }

@@ -231,7 +231,6 @@ public:
     static bool gusli_try_use_uring;
     // Opaque plugin parameters are populated only by the verb-based CLI paths.
     static std::optional<nixl_b_params_t> plugin_parameters;
-    static bool plugin_parameters_from_raw_cli;
     static bool use_device_api;
     static int block_threads;
 

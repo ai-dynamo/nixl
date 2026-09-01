@@ -123,9 +123,6 @@ class xferBenchNixlWorker: public xferBenchWorker {
         /** @brief Register remote descriptors for the worker lifetime. */
         bool
         registerRemoteIovs(nixl_mem_t memory_type, std::vector<xferBenchIOV> iovs);
-        /** @brief Register descriptors with RAII ownership scoped to one request lifecycle. */
-        std::unique_ptr<NixlMemRegion>
-        registerIterationIovs(nixl_mem_t memory_type, std::vector<xferBenchIOV> iovs);
         /** @brief Run transfers with scenario-owned per-request resource lifecycles. */
         std::variant<xferBenchStats, int>
         transferWithLifecycle(size_t block_size,

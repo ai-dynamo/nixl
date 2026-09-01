@@ -85,8 +85,8 @@ bool
 supportsAllocateOnce(const pluginMetadata &metadata);
 
 /** @brief Resolve explicit or managed backing-file names. */
-std::vector<std::filesystem::path>
-allocateOnceFileNames(const fileOptions &file);
+std::optional<std::vector<std::filesystem::path>>
+allocateOnceFileNames(const fileOptions &file, std::string &error);
 
 /** @brief Return bounded transfer-memory capacity for an allocate-once request. */
 size_t

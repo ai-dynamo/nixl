@@ -170,7 +170,7 @@ namespace {
 
         const auto contents = readFile(write_log);
         EXPECT_NE(contents.find("ios_pool_size: 4096"), std::string::npos);
-        EXPECT_NE(contents.find("POSIX backend with plugin parameters from raw CLI"),
+        EXPECT_NE(contents.find("POSIX backend with metadata plugin parameters"),
                   std::string::npos);
     }
 
@@ -186,7 +186,7 @@ namespace {
         EXPECT_NE(legacy_contents.find("NIXLBench Configuration"), std::string::npos);
         EXPECT_NE(legacy_contents.find("POSIX backend with API type:"), std::string::npos);
         EXPECT_NE(raw_contents.find("Resolved NIXLBench plan"), std::string::npos);
-        EXPECT_NE(raw_contents.find("POSIX backend with plugin parameters from raw CLI"),
+        EXPECT_NE(raw_contents.find("POSIX backend with metadata plugin parameters"),
                   std::string::npos);
         EXPECT_EQ(raw_contents.find("NIXLBench Configuration"), std::string::npos);
         EXPECT_EQ(raw_contents.find("POSIX API type (--posix_api_type"), std::string::npos);

@@ -155,13 +155,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     agent->getPluginParams(backend_name, mems, backend_params);
 
     if (xferBenchConfig::plugin_parameters) {
-        if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
-            // Keep the existing raw CLI diagnostic stable for compatibility.
-            std::cout << "POSIX backend with plugin parameters from "
-                      << (xferBenchConfig::plugin_parameters_from_raw_cli ? "raw CLI" :
-                                                                            "scenario CLI")
-                      << std::endl;
-        }
+        std::cout << backend_name << " backend with metadata plugin parameters" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
         backend_params["num_threads"] = std::to_string(xferBenchConfig::progress_threads);
 
@@ -985,23 +979,6 @@ xferBenchNixlWorker::registerRemoteIovs(nixl_mem_t memory_type, std::vector<xfer
     }
     remote_regs_.emplace_back(*agent, backend_engine, memory_type, std::move(iovs));
     return true;
-}
-
-std::unique_ptr<NixlMemRegion>
-xferBenchNixlWorker::registerIterationIovs(nixl_mem_t memory_type, std::vector<xferBenchIOV> iovs) {
-    nixl_opt_args_t opt_args;
-    opt_args.backends.push_back(backend_engine);
-    const nixl_reg_dlist_t descriptors = iovListToNixlRegDlist(iovs, memory_type);
-    const auto status = agent->registerMem(descriptors, &opt_args);
-    if (status != NIXL_SUCCESS) {
-        std::cerr << "NIXL: registerMem failed (" << nixlEnumStrings::statusStr(status) << ')'
-                  << std::endl;
-        for (auto &iov : iovs) {
-            cleanupIov(memory_type, iov);
-        }
-        return nullptr;
-    }
-    return std::make_unique<NixlMemRegion>(*agent, backend_engine, memory_type, std::move(iovs));
 }
 
 static void

@@ -5,19 +5,30 @@
 
 #include "utils/cli_common.h"
 
+#include <CLI/CLI.hpp>
 #include <nixl.h>
 
 #include <algorithm>
-#include <cctype>
-#include <charconv>
 #include <cstdint>
 #include <iomanip>
 #include <iterator>
-#include <limits>
+#include <map>
 #include <sstream>
 
 namespace nixlbench {
 namespace {
+
+    bool
+    listAvailablePlugins(nixlAgent &agent,
+                         std::vector<nixl_backend_t> &plugins,
+                         std::string &error) {
+        const auto status = agent.getAvailPlugins(plugins);
+        if (status == NIXL_SUCCESS) {
+            return true;
+        }
+        error = "failed to discover NIXL plugins: " + nixlEnumStrings::statusStr(status);
+        return false;
+    }
 
     std::optional<pluginMetadata>
     queryPluginMetadata(nixlAgent &agent, const std::string &name, std::string &error) {
@@ -34,59 +45,45 @@ namespace {
 
 } // namespace
 
-std::optional<size_t>
-parseHumanSize(const std::string &input, std::string &error) {
-    std::string value;
-    value.reserve(input.size());
-    for (unsigned char ch : input) {
-        if (!std::isspace(ch)) {
-            value.push_back(static_cast<char>(std::toupper(ch)));
-        }
-    }
-    if (value.empty()) {
-        error = "size cannot be empty";
-        return std::nullopt;
-    }
+CLI::Validator
+binarySizeTransform() {
+    const std::map<std::string, uint64_t> units = {
+        {"B", 1},
+        {"K", 1024ULL},
+        {"KB", 1024ULL},
+        {"M", 1024ULL * 1024},
+        {"MB", 1024ULL * 1024},
+        {"G", 1024ULL * 1024 * 1024},
+        {"GB", 1024ULL * 1024 * 1024},
+        {"T", 1024ULL * 1024 * 1024 * 1024},
+        {"TB", 1024ULL * 1024 * 1024 * 1024},
+    };
+    return CLI::AsNumberWithUnit(units);
+}
 
-    size_t digit_count = 0;
-    while (digit_count < value.size() &&
-           std::isdigit(static_cast<unsigned char>(value[digit_count]))) {
-        ++digit_count;
-    }
-    if (digit_count == 0) {
-        error = "size must begin with a positive integer";
-        return std::nullopt;
-    }
+void
+addFileOptions(CLI::App &command, fileOptions &options) {
+    command.add_option("--path", options.path, "Directory for automatically named files")
+        ->group("FILE_SEG resource options");
+    command.add_option("--filenames", options.filenames, "Comma-separated explicit file names")
+        ->group("FILE_SEG resource options");
+    command.add_option("--num-files", options.numFiles, "Number of backing files")
+        ->group("FILE_SEG resource options");
+    command.add_flag("--direct", options.direct, "Use direct file opening")
+        ->group("FILE_SEG resource options");
+}
 
-    uint64_t number = 0;
-    const auto parsed = std::from_chars(value.data(), value.data() + digit_count, number);
-    if (parsed.ec != std::errc() || number == 0) {
-        error = "size must be a positive integer";
-        return std::nullopt;
+void
+addPluginOptions(CLI::App &command,
+                 const nixl_b_params_t &parameters,
+                 std::vector<std::pair<std::string, std::string>> &overrides) {
+    if (parameters.empty()) {
+        return;
     }
-
-    const std::string suffix = value.substr(digit_count);
-    uint64_t multiplier = 0;
-    if (suffix.empty() || suffix == "B") {
-        multiplier = 1;
-    } else if (suffix == "K" || suffix == "KB") {
-        multiplier = 1024ULL;
-    } else if (suffix == "M" || suffix == "MB") {
-        multiplier = 1024ULL * 1024;
-    } else if (suffix == "G" || suffix == "GB") {
-        multiplier = 1024ULL * 1024 * 1024;
-    } else if (suffix == "T" || suffix == "TB") {
-        multiplier = 1024ULL * 1024 * 1024 * 1024;
-    } else {
-        error = "unsupported size suffix '" + suffix +
-            "' (use B, KB, MB, GB, or TB; units are binary multiples)";
-        return std::nullopt;
-    }
-    if (number > std::numeric_limits<size_t>::max() / multiplier) {
-        error = "size is too large for this platform";
-        return std::nullopt;
-    }
-    return static_cast<size_t>(number * multiplier);
+    command.add_option("--plugin-param", overrides, pluginParameterDescription(parameters))
+        ->check(CLI::IsMember(sortedParameterKeys(parameters)).description("").application_index(0))
+        ->type_name("KEY VALUE")
+        ->group("Plugin initialization parameters");
 }
 
 bool
@@ -145,13 +142,25 @@ formatSize(size_t bytes) {
     return output.str();
 }
 
+std::optional<pluginMetadata>
+discoverPluginMetadata(const std::string &name, std::string &error) {
+    nixlAgent agent("nixlbench-cli", nixlAgentConfig{});
+    std::vector<nixl_backend_t> plugins;
+    if (!listAvailablePlugins(agent, plugins, error)) {
+        return std::nullopt;
+    }
+    if (std::find(plugins.begin(), plugins.end(), name) == plugins.end()) {
+        error = name + " plugin is not installed or not visible in the NIXL plugin path";
+        return std::nullopt;
+    }
+    return queryPluginMetadata(agent, name, error);
+}
+
 std::optional<std::vector<pluginMetadata>>
 discoverPluginMetadata(std::string &error) {
     nixlAgent agent("nixlbench-cli", nixlAgentConfig{});
     std::vector<nixl_backend_t> plugins;
-    const auto list_status = agent.getAvailPlugins(plugins);
-    if (list_status != NIXL_SUCCESS) {
-        error = "failed to discover NIXL plugins: " + nixlEnumStrings::statusStr(list_status);
+    if (!listAvailablePlugins(agent, plugins, error)) {
         return std::nullopt;
     }
 

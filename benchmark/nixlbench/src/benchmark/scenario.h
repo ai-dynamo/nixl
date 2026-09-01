@@ -14,9 +14,7 @@
 #include <functional>
 #include <iosfwd>
 #include <memory>
-#include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace CLI {
@@ -26,19 +24,6 @@ class App;
 class xferBenchWorker;
 
 namespace nixlbench {
-
-/** @brief CLI values shared by every modeled scenario. */
-struct scenarioOptions {
-    std::string blockSize;
-    size_t batchSize = 1;
-    int threads = 1;
-    int iterations = 1000;
-    int warmupIterations = 10;
-    std::string operation = "write";
-    std::string initiatorMemory = "auto";
-    bool checkConsistency = false;
-    bool dryRun = false;
-};
 
 /** @brief Validated common configuration consumed by scenario worker strategies. */
 struct scenarioConfig {
@@ -65,73 +50,8 @@ struct legacyWorkerConfig {
     bool storageDirect = false;
 };
 
-/** @brief CLI binding and exact parameter overrides for one discovered plugin. */
-struct scenarioPluginBinding {
-    pluginMetadata metadata;
-    CLI::App *command = nullptr;
-    std::vector<std::pair<std::string, std::string>> overrides;
-};
-
 /** @brief Scenario plugin compatibility predicate. */
 using scenario_plugin_filter_t = std::function<bool(const pluginMetadata &)>;
-/** @brief Owned plugin command bindings for one scenario. */
-using scenario_plugin_bindings_t = std::vector<std::unique_ptr<scenarioPluginBinding>>;
-
-/**
- * @brief Add CLI options shared by all modeled scenarios.
- * @param command Scenario command that owns the options
- * @param options Storage populated by CLI11
- */
-void
-addCommonScenarioOptions(CLI::App &command, scenarioOptions &options);
-
-/**
- * @brief Validate and resolve common scenario options for one selected plugin.
- * @param options Parsed common options
- * @param metadata Metadata advertised by the selected plugin
- * @param overrides Exact plugin parameter overrides supplied by the user
- * @param config Resolved common scenario configuration
- * @param err Error stream
- * @return true on success, otherwise false
- */
-bool
-resolveCommonScenarioOptions(const scenarioOptions &options,
-                             const pluginMetadata &metadata,
-                             const std::vector<std::pair<std::string, std::string>> &overrides,
-                             scenarioConfig &config,
-                             std::ostream &err);
-
-/**
- * @brief Add metadata-driven plugin subcommands compatible with a scenario.
- * @param scenario Scenario command that owns the plugin subcommands
- * @param metadata Installed plugin metadata
- * @param filter Scenario compatibility predicate
- * @param bindings Created plugin command bindings
- * @param err Error stream
- * @return process exit status
- */
-int
-addScenarioPluginCommands(CLI::App &scenario,
-                          const std::vector<pluginMetadata> &metadata,
-                          const scenario_plugin_filter_t &filter,
-                          scenario_plugin_bindings_t &bindings,
-                          std::ostream &err);
-
-/**
- * @brief Return the plugin binding selected by CLI11.
- * @param bindings Scenario plugin bindings
- * @return selected binding, or nullptr when none was selected
- */
-const scenarioPluginBinding *
-selectedScenarioPlugin(const scenario_plugin_bindings_t &bindings);
-
-/**
- * @brief Add file resource options shared by file-backed scenarios.
- * @param command Scenario command that owns the options
- * @param options Storage populated by CLI11
- */
-void
-addFileScenarioOptions(CLI::App &command, fileOptions &options);
 
 /**
  * @brief Translate typed scenario configuration into the legacy gflags bridge.

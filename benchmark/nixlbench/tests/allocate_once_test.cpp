@@ -8,8 +8,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 #include <set>
+#include <unistd.h>
 
 namespace nixlbench {
 namespace {
@@ -107,10 +109,12 @@ namespace {
         file.path = "/tmp/scenario";
         file.numFiles = 2;
 
-        const auto names = allocateOnceFileNames(file);
-        ASSERT_EQ(names.size(), 2U);
-        EXPECT_EQ(names[0], "/tmp/scenario/nixlbench_allocate_once_0.dat");
-        EXPECT_EQ(names[1], "/tmp/scenario/nixlbench_allocate_once_1.dat");
+        std::string error;
+        const auto names = allocateOnceFileNames(file, error);
+        ASSERT_TRUE(names) << error;
+        ASSERT_EQ(names->size(), 2U);
+        EXPECT_EQ((*names)[0], "/tmp/scenario/nixlbench_allocate_once_0.dat");
+        EXPECT_EQ((*names)[1], "/tmp/scenario/nixlbench_allocate_once_1.dat");
     }
 
     TEST(AllocateOnceFileNamesTest, PreservesExplicitFileNames) {
@@ -118,10 +122,33 @@ namespace {
         file.filenames = "/tmp/name one,/tmp/name-two";
         file.numFiles = 2;
 
-        const auto names = allocateOnceFileNames(file);
-        ASSERT_EQ(names.size(), 2U);
-        EXPECT_EQ(names[0], "/tmp/name one");
-        EXPECT_EQ(names[1], "/tmp/name-two");
+        std::string error;
+        const auto names = allocateOnceFileNames(file, error);
+        ASSERT_TRUE(names) << error;
+        ASSERT_EQ(names->size(), 2U);
+        EXPECT_EQ((*names)[0], "/tmp/name one");
+        EXPECT_EQ((*names)[1], "/tmp/name-two");
+    }
+
+    TEST(AllocateOnceFileNamesTest, ReportsAnUnavailableCurrentDirectory) {
+        EXPECT_EXIT(
+            {
+                char directory_template[] = "/tmp/nixlbench-missing-cwd-XXXXXX";
+                const char *directory = mkdtemp(directory_template);
+                if (directory == nullptr || chdir(directory) != 0 || rmdir(directory) != 0) {
+                    _exit(EXIT_FAILURE);
+                }
+
+                fileOptions file;
+                std::string error;
+                const auto names = allocateOnceFileNames(file, error);
+                const bool rejected = !names &&
+                    error.find("could not determine the current working directory") !=
+                        std::string::npos;
+                _exit(rejected ? EXIT_SUCCESS : EXIT_FAILURE);
+            },
+            ::testing::ExitedWithCode(EXIT_SUCCESS),
+            "");
     }
 
 } // namespace

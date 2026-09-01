@@ -336,7 +336,7 @@ namespace {
                                               "--block-size",
                                               "4KB",
                                               "posix"};
-        expect_failure(pr1_incompatible_suffix, "unsupported size suffix 'MIB'");
+        expect_failure(pr1_incompatible_suffix, "mib unit not recognized");
 
         testArguments file_offset_overflow{"nixlbench",
                                            "scenario",
@@ -450,6 +450,7 @@ namespace {
         std::ostringstream err;
         auto result = parse(command, {futureFileMetadata()}, out, err);
         ASSERT_EQ(result.status, 0) << err.str();
+        EXPECT_FALSE(result.scenario->selected());
         const auto config = result.scenario->legacyWorkerConfiguration();
         EXPECT_EQ(config.common.pluginName, "FUTURE-FILE");
         EXPECT_EQ(config.common.initiatorMemory, VRAM_SEG);

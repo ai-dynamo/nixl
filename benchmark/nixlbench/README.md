@@ -394,8 +394,9 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 
 ### Verb-based interface
 
-When configured with `-Dbuild_raw_cli=true`, NIXLBench also provides a
-verb-based interface with `raw` and `scenario` command hierarchies.
+When configured with `-Dbuild_raw_cli=true` and built with the CLI11 dependency
+available, NIXLBench also provides a verb-based interface with `raw` and
+`scenario` command hierarchies.
 
 #### Allocate-once storage scenario
 
@@ -460,11 +461,13 @@ Each thread is assigned to a file round-robin and receives a disjoint file
 partition. Every iteration creates and releases a transfer request. The
 scenario-owned `--offset-mode` is `random` by default and samples unique
 block-aligned locations inside the thread partition; `sequential` walks and
-wraps that partition. This is intentionally distinct from the legacy
-`--randomize_location_mode=blockaligned` behavior, which only shuffles the
-otherwise sequential IOVs in a batch. A nonzero `--seed` makes random selection
-reproducible; zero or an omitted seed resolves to a generated nonzero seed shown
-in the plan. Transfer working memory is therefore
+wraps that partition. The shared benchmark loop expands each thread's retained
+working buffer into `--batch-size` block-sized descriptors before the scenario
+assigns one offset to each descriptor. This is intentionally distinct from the
+legacy `--randomize_location_mode=blockaligned` behavior, which only shuffles
+the otherwise sequential IOVs in a batch. A nonzero `--seed` makes random
+selection reproducible; zero or an omitted seed resolves to a generated nonzero
+seed shown in the plan. Transfer working memory is therefore
 `threads * batch-size * block-size`, independent of the file size. The shared
 worker reports request preparation, post, transfer latency, and throughput.
 `--check-consistency` is available for managed files and validates the last

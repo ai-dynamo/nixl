@@ -9,11 +9,19 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nixl_types.h>
 
+namespace CLI {
+class App;
+class Validator;
+} // namespace CLI
+
 namespace nixlbench {
+
+inline constexpr int inval_args_exit_code = 2;
 
 /** @brief Plugin capabilities and parameters discovered from the NIXL API. */
 struct pluginMetadata {
@@ -30,9 +38,19 @@ struct fileOptions {
     bool direct = false;
 };
 
-/** @brief Parse a positive byte size with an optional binary unit suffix. */
-std::optional<size_t>
-parseHumanSize(const std::string &value, std::string &error);
+/** @brief Build the shared CLI11 transformer for byte sizes with binary unit suffixes. */
+CLI::Validator
+binarySizeTransform();
+
+/** @brief Register shared file-resource options. */
+void
+addFileOptions(CLI::App &command, fileOptions &options);
+
+/** @brief Register exact metadata-advertised plugin parameter overrides. */
+void
+addPluginOptions(CLI::App &command,
+                 const nixl_b_params_t &parameters,
+                 std::vector<std::pair<std::string, std::string>> &overrides);
 
 /** @brief Return whether plugin metadata advertises one memory type. */
 bool
@@ -49,6 +67,10 @@ splitFileNames(const std::string &value);
 /** @brief Format a byte count using a compact binary unit. */
 std::string
 formatSize(size_t bytes);
+
+/** @brief Discover metadata for one installed NIXL plugin. */
+std::optional<pluginMetadata>
+discoverPluginMetadata(const std::string &name, std::string &error);
 
 /** @brief Discover metadata for all installed NIXL plugins. */
 std::optional<std::vector<pluginMetadata>>

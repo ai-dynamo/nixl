@@ -133,8 +133,7 @@ namespace {
             smallAllocateOnceCommand(directory.path(), "read") + " --threads 2 --num-files 2";
 
         ASSERT_EQ(runScenarioCommand(write_command, write_log), 0) << readScenarioLog(write_log);
-        EXPECT_NE(readScenarioLog(write_log).find(
-                      "POSIX backend with plugin parameters from scenario CLI"),
+        EXPECT_NE(readScenarioLog(write_log).find("POSIX backend with metadata plugin parameters"),
                   std::string::npos);
         ASSERT_TRUE(std::filesystem::exists(first_dataset));
         ASSERT_TRUE(std::filesystem::exists(second_dataset));

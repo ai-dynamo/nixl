@@ -23,9 +23,28 @@
 namespace nixlbench {
 namespace {
 
-    constexpr int inval_args_exit_code = 2;
     constexpr int fixed_scenario_large_block_iteration_factor = 1;
     constexpr int fixed_scenario_pipeline_depth = 1;
+
+    struct scenarioOptions {
+        size_t blockSize = 0;
+        size_t batchSize = 1;
+        int threads = 1;
+        int iterations = 1000;
+        int warmupIterations = 10;
+        std::string operation = "write";
+        std::string initiatorMemory = "auto";
+        bool checkConsistency = false;
+        bool dryRun = false;
+    };
+
+    struct scenarioPluginBinding {
+        pluginMetadata metadata;
+        CLI::App *command = nullptr;
+        std::vector<std::pair<std::string, std::string>> overrides;
+    };
+
+    using scenario_plugin_bindings_t = std::vector<std::unique_ptr<scenarioPluginBinding>>;
 
     std::string
     upper(std::string value) {
@@ -79,6 +98,26 @@ namespace {
 
 } // namespace
 
+static void
+addCommonScenarioOptions(CLI::App &command, scenarioOptions &options);
+
+static bool
+resolveCommonScenarioOptions(const scenarioOptions &options,
+                             const pluginMetadata &metadata,
+                             const std::vector<std::pair<std::string, std::string>> &overrides,
+                             scenarioConfig &config,
+                             std::ostream &err);
+
+static int
+addScenarioPluginCommands(CLI::App &scenario,
+                          const std::vector<pluginMetadata> &metadata,
+                          const scenario_plugin_filter_t &filter,
+                          scenario_plugin_bindings_t &bindings,
+                          std::ostream &err);
+
+static const scenarioPluginBinding *
+selectedScenarioPlugin(const scenario_plugin_bindings_t &bindings);
+
 struct benchmarkScenario::implementation {
     implementation(std::string scenario_name,
                    std::string scenario_description,
@@ -122,7 +161,7 @@ benchmarkScenario::addCommand(CLI::App &scenario,
     addScenarioOptions(*implementation_->command);
     addCommonScenarioOptions(*implementation_->command, implementation_->options);
     if (implementation_->hasFileOptions) {
-        addFileScenarioOptions(*implementation_->command, implementation_->file);
+        addFileOptions(*implementation_->command, implementation_->file);
     }
     return addScenarioPluginCommands(*implementation_->command,
                                      metadata,
@@ -150,7 +189,12 @@ benchmarkScenario::finalize(std::ostream &err) {
                                       err)) {
         return inval_args_exit_code;
     }
-    return finalizeScenario(err);
+    const int status = finalizeScenario(err);
+    if (status == EXIT_SUCCESS) {
+        implementation_->command = nullptr;
+        implementation_->plugins.clear();
+    }
+    return status;
 }
 
 void
@@ -201,9 +245,11 @@ benchmarkScenario::commonFileOptions() const {
     return implementation_->file;
 }
 
-void
+static void
 addCommonScenarioOptions(CLI::App &command, scenarioOptions &options) {
     command.add_option("--block-size", options.blockSize, "Bytes in each transferred block")
+        ->transform(binarySizeTransform())
+        ->check(CLI::PositiveNumber)
         ->required()
         ->group("Common scenario options");
     command.add_option("--batch-size", options.batchSize, "Block descriptors in each request")
@@ -234,7 +280,7 @@ addCommonScenarioOptions(CLI::App &command, scenarioOptions &options) {
         ->group("Common scenario options");
 }
 
-int
+static int
 addScenarioPluginCommands(CLI::App &scenario,
                           const std::vector<pluginMetadata> &metadata,
                           const scenario_plugin_filter_t &filter,
@@ -260,23 +306,13 @@ addScenarioPluginCommands(CLI::App &scenario,
         binding->command->fallthrough();
         binding->command->footer("Scenario options may be used before or after this plugin "
                                  "subcommand.");
-        if (!entry.parameters.empty()) {
-            binding->command
-                ->add_option("--plugin-param",
-                             binding->overrides,
-                             pluginParameterDescription(entry.parameters))
-                ->check(CLI::IsMember(sortedParameterKeys(entry.parameters))
-                            .description("")
-                            .application_index(0))
-                ->type_name("KEY VALUE")
-                ->group("Plugin initialization parameters");
-        }
+        addPluginOptions(*binding->command, entry.parameters, binding->overrides);
         bindings.push_back(std::move(binding));
     }
     return EXIT_SUCCESS;
 }
 
-const scenarioPluginBinding *
+static const scenarioPluginBinding *
 selectedScenarioPlugin(const scenario_plugin_bindings_t &bindings) {
     for (const auto &binding : bindings) {
         if (binding->command->parsed()) {
@@ -286,19 +322,7 @@ selectedScenarioPlugin(const scenario_plugin_bindings_t &bindings) {
     return nullptr;
 }
 
-void
-addFileScenarioOptions(CLI::App &command, fileOptions &options) {
-    command.add_option("--path", options.path, "Directory for NIXLBench-managed files")
-        ->group("FILE_SEG resource options");
-    command.add_option("--filenames", options.filenames, "Comma-separated existing file names")
-        ->group("FILE_SEG resource options");
-    command.add_option("--num-files", options.numFiles, "Number of backing files")
-        ->group("FILE_SEG resource options");
-    command.add_flag("--direct", options.direct, "Use direct file opening")
-        ->group("FILE_SEG resource options");
-}
-
-bool
+static bool
 resolveCommonScenarioOptions(const scenarioOptions &options,
                              const pluginMetadata &metadata,
                              const std::vector<std::pair<std::string, std::string>> &overrides,
@@ -309,14 +333,6 @@ resolveCommonScenarioOptions(const scenarioOptions &options,
         return false;
     };
 
-    std::string size_error;
-    const auto block_size = parseHumanSize(options.blockSize, size_error);
-    if (!block_size) {
-        return fail("invalid block size '" + options.blockSize + "': " + size_error);
-    }
-    if (*block_size == 0) {
-        return fail("block size must be positive");
-    }
     if (options.batchSize == 0 || options.threads < 1 || options.iterations < 1 ||
         options.warmupIterations < 0) {
         return fail("batch size, threads, and iterations must be positive; warmup iterations "
@@ -342,7 +358,7 @@ resolveCommonScenarioOptions(const scenarioOptions &options,
     for (const auto &[key, value] : overrides) {
         config.pluginParameters[key] = value;
     }
-    config.blockSize = *block_size;
+    config.blockSize = options.blockSize;
     config.batchSize = options.batchSize;
     config.threads = options.threads;
     config.iterations = options.iterations;
