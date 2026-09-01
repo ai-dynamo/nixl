@@ -509,13 +509,20 @@ class nixl_agent:
             agent_name: Name of the agent. It can be "NIXL_INIT_AGENT", local agent name, or remote agent name
             xfer_list: List of transfer descriptors, can be list of memory region tuples, tensors,
                 Nx3 numpy array, or nixlXferDList. See get_xfer_descs for more details on the structure.
-            mem_type: Optional memory type necessary for list of memory regions.
+                Nx5 numpy array is taken as a compressed (strided) list, where `count` blocks of `len`
+                bytes are spaced `stride` bytes apart (stride == len is dense), with start address
+                of `address`, in the form (address, len, device ID, stride, count).
+            mem_type: Optional memory type necessary for list of memory regions, mandatory for Nx5 arrays.
             backends: Optional list of backend names to limit which backends are used during preparation
 
         Returns:
             Opaque handle to the prepared transfer descriptor list.
         """
-        descs = self.get_xfer_descs(xfer_list, mem_type)
+        is_strided = (
+            isinstance(xfer_list, np.ndarray)
+            and xfer_list.ndim == 2
+            and xfer_list.shape[1] == 5
+        )
 
         is_local = agent_name == "NIXL_INIT_AGENT" or agent_name == ""
         if is_local:
@@ -525,9 +532,15 @@ class nixl_agent:
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
 
-        if is_local:
-            handle = self.agent.prepXferDlist(descs, handle_list)
+        if is_strided:
+            if mem_type is None:
+                raise ValueError("Please specify a mem type for strided descriptors")
+            # An Nx5 array carries no memory type, so it is passed separately
+            handle = self.agent.prepXferDlist(
+                agent_name, self.nixl_mems[mem_type], xfer_list, handle_list
+            )
         else:
+            descs = self.get_xfer_descs(xfer_list, mem_type)
             handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
         return nixl_prepped_dlist_handle(self.agent, handle)
 
