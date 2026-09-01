@@ -641,6 +641,43 @@ nixlUcxWorker::connect(void *addr) {
  * Memory management
  * =========================================== */
 
+namespace {
+
+[[nodiscard]] ucs_memory_type_t
+toUcsMemoryType(ucp_context_h ctx, nixl_mem_t nixl_mem_type) noexcept {
+    switch (nixl_mem_type) {
+    case DRAM_SEG:
+        return UCS_MEMORY_TYPE_HOST;
+
+    case VRAM_SEG: {
+        ucp_context_attr_t attr = {
+            .field_mask = UCP_ATTR_FIELD_MEMORY_TYPES,
+        };
+
+        if (ucp_context_query(ctx, &attr) != UCS_OK) {
+            return UCS_MEMORY_TYPE_UNKNOWN;
+        }
+
+        const bool has_cuda = UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_CUDA);
+        const bool has_rocm = UCS_BIT_GET(attr.memory_types, UCS_MEMORY_TYPE_ROCM);
+
+        if (has_cuda != has_rocm) {
+            return has_cuda ? UCS_MEMORY_TYPE_CUDA : UCS_MEMORY_TYPE_ROCM;
+        }
+
+        return UCS_MEMORY_TYPE_UNKNOWN;
+    }
+
+    case BLK_SEG:
+    case OBJ_SEG:
+    case FILE_SEG:
+        return UCS_MEMORY_TYPE_UNKNOWN;
+    }
+
+    return UCS_MEMORY_TYPE_UNKNOWN;
+}
+
+} // namespace
 
 int
 nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl_mem_type) {
@@ -649,9 +686,10 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
 
     ucp_mem_map_params_t mem_params = {
         .field_mask = UCP_MEM_MAP_PARAM_FIELD_FLAGS | UCP_MEM_MAP_PARAM_FIELD_LENGTH |
-            UCP_MEM_MAP_PARAM_FIELD_ADDRESS,
+            UCP_MEM_MAP_PARAM_FIELD_ADDRESS | UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE,
         .address = mem.base,
         .length = mem.size,
+        .memory_type = toUcsMemoryType(ctx, nixl_mem_type),
     };
 
     ucs_status_t status = ucp_mem_map(ctx.get(), &mem_params, &mem.memh);
