@@ -425,10 +425,7 @@ nixlLocalSection::~nixlLocalSection() {
 /*** Class nixlRemoteSection implementation ***/
 
 nixlRemoteSection::nixlRemoteSection(std::string agent_name) noexcept
-    : agentName(std::move(agent_name)) {
-    static std::atomic<uint64_t> generation_counter{0};
-    generation_ = ++generation_counter;
-}
+    : agentName(std::move(agent_name)) {}
 
 nixl_status_t nixlRemoteSection::addDescList (
                                  const nixl_reg_dlist_t& mem_elms,

@@ -163,11 +163,11 @@ their own nightly/manual trigger. They split into two groups:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com)
-  - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (nixl_ep elastic tests on dlcluster.nvidia.com)
+  - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (NIXL EP tests on dlcluster.nvidia.com)
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
   - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
-- **UCX version:** The three GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.22.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all three with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
+- **UCX version:** The three GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.23.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all three with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
 - **Automatic on every PR:** No — only runs after a `/build` comment triggers Blossom-CI. The dispatcher also aborts any stale in-flight dispatcher run for the same PR (and the leaf builds it started) before starting.
 
 ### `nixl-ci-build-container-pr` (dispatcher-triggered)
@@ -190,9 +190,9 @@ their own nightly/manual trigger. They split into two groups:
 - **Automatic on every PR:** No — standalone/nightly + manual only.
 
 ### `nixl-ci-build-wheel-nightly` (standalone)
-- **Trigger:** Nightly cron (two runs, CUDA 13 and CUDA 12 base images, from `main`), or manual run from any branch/tag/PR ref/SHA.
-- **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`), adds UCX wiring, and publishes verification wheels to Artifactory.
-- **Automatic on every PR:** No — standalone/nightly + manual only.
+- **Trigger:** Nightly cron (two runs, CUDA 13 and CUDA 12 `BASE_TAG`), or manual run. The pipeline and matrix config run from `ci_refspec` (default `main`; pass `refs/pull/<n>/head` to test CI changes end to end before merge); the NIXL source is cloned inside the build from the `NIXL_VERSION` parameter (branch/tag/PR ref/sha), so any ref is buildable without CI files on it.
+- **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`), adds UCX wiring, and publishes wheels to `sw-nbu-swx-nixl-pypi-local` under `<PUBLISH_DIR|verification>/<nixl-sha8>/`. With `PUBLISH_DIR` empty (the default, and what the nightly cron uses) wheels land under `verification/`; manual release runs can pass `release/<ver>`. `BUILD_UCX_SPCX_PLUGIN` and `BUILD_INFINIA` bundle the UCX spcx / Infinia DDN plugins and default to on; each needs a source ref whose `contrib/build-container.sh` carries the flag and pins the plugin version, so turn them off to build a ref that predates them.
+- **Automatic on every PR:** No — standalone nightly + manual only.
 
 ### `nixl-ci-build-llm-container` (standalone)
 - **Trigger:** Manual only (no cron, no webhook).
@@ -253,7 +253,7 @@ NEW_TAG=$(git log -1 --format=%h -- "${CI_FILES[@]}")
 
 This returns the short git commit hash of the most recent commit that touched
 any of the CI source files (`Dockerfile.base`, `Dockerfile.gpu-test`,
-`Dockerfile.build_helper`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
+`Dockerfile.build_helper`, `nixl_ep_vllm_release_test.patch`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
 then patches all six YAML files in the Jenkins workspace with `sed` before the
 matrix library reads them. No commit or push is made — the patch exists only in
 the workspace.

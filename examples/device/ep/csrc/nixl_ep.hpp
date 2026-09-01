@@ -37,6 +37,7 @@
 
 #include <cuda_runtime.h>
 
+#include <ATen/cuda/CUDAContext.h>
 #include <torch/types.h>
 
 #include <pybind11/pytypes.h>
@@ -79,6 +80,13 @@ struct NixlAgentInfo
     nixl_reg_dlist_t sync_count_reg_descs{VRAM_SEG};
     nixl_reg_dlist_t ht_barrier_reg_descs{VRAM_SEG};
     std::vector<bool> wire_up_done; // [num_peers]
+};
+
+struct NixlMemoryViews {
+    nixlMemViewH local = nullptr;
+    nixlMemViewH remote = nullptr;
+    nixlMemViewH barrier = nullptr;
+    nixlMemViewH ht_barrier = nullptr;
 };
 
 struct Buffer {
@@ -165,6 +173,8 @@ private:
     std::vector<NixlPeerInfo> nixl_peer_info;
     NixlPeerInfo my_peer_info;
     nixl_ep::gpu_nixl_ctx gpu_ctx;
+    NixlMemoryViews active_memory_views;
+    NixlMemoryViews staged_memory_views;
     nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
     uint64_t* last_ht_barrier_counter = nullptr;
     uint64_t* local_ht_barrier_counter = nullptr;
@@ -177,8 +187,9 @@ private:
     void _nixl_agents_peer_info_cleanup(const std::vector<int>& ranks);
 
     void _nixl_ep_init(void);
-    void _nixl_ep_memory_views_create(void);
-    void _nixl_ep_memory_views_destroy(void);
+    void _nixl_ep_memory_views_destroy(NixlMemoryViews& memory_views);
+    void _nixl_ep_memory_views_stage(void);
+    void _nixl_ep_memory_views_commit(void);
     void _nixl_ep_destroy(void);
     bool _is_rank_connected(int rank_id) const;
 
