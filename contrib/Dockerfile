@@ -69,6 +69,9 @@ RUN apt-get update -y && \
     libcpprest-dev \
     etcd-server \
     etcd-client \
+    redis-server \
+    libhiredis-dev \
+    libevent-dev \
     autotools-dev \
     automake \
     libtool \
