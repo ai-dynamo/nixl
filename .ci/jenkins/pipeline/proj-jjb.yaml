@@ -913,8 +913,9 @@
             conf_file=.ci/jenkins/lib/build-wheel-nightly-matrix.yaml
     description: >
       <b>NIXL nightly wheel verification build</b><br/>
-      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> and the
-      corresponding UCX version, and publishes them to the verification Artifactory space<br/>
+      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> for CUDA 13
+      and CUDA 12, with the UCX spcx and Infinia plugins always bundled, and publishes them
+      to the verification Artifactory space<br/>
       • Run manually from any NIXL branch / tag / PR / SHA via <code>NIXL_VERSION</code><br/>
       • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: true
@@ -926,42 +927,24 @@
             # Build NIXL wheels nightly around midnight for CUDA 13 and CUDA 12
             # (the cu12 run also produces the nixl meta wheel). Both publish to
             # the repo.
-            H 0 * * * %NIXL_VERSION=main;UCX_VERSION=v1.23.x;BASE_IMAGE=nvcr.io/nvidia/cuda;BASE_TAG=13.2.1-devel-ubi8
-            H 0 * * * %NIXL_VERSION=main;UCX_VERSION=v1.23.x;BASE_IMAGE=nvcr.io/nvidia/cuda;BASE_TAG=12.9.1-devel-ubi8
+            H 0 * * * %NIXL_VERSION=main;CUDA_MAJOR=13
+            H 0 * * * %NIXL_VERSION=main;CUDA_MAJOR=12
     # Manual build parameters
     parameters:
       - string:
           name: "NIXL_VERSION"
           default: "{jjb_branch}"
           description: "NIXL source ref to build wheels from (tag like 1.2.0, branch name, PR ref, or commit hash) - cloned inside the build, not the pipeline checkout ref"
-      - string:
-          name: "UCX_VERSION"
-          default: "v1.23.x"
-          description: "UCX version to build against (tag like v1.23.x, branch name, or commit hash)"
-      - string:
-          name: "BASE_IMAGE"
-          default: "nvcr.io/nvidia/cuda"
-          description: "NGC CUDA source image for the manylinux wheel build"
-      - string:
-          name: "BASE_TAG"
-          default: "13.2.1-devel-ubi8"
-          description: "NGC CUDA image tag (e.g. 13.2.1-devel-ubi8 for CUDA 13 cuObject support, or 12.9.1-devel-ubi8 for CUDA 12). CUDA_VERSION is derived from this automatically."
-      - string:
-          name: "TORCH_VERSIONS"
-          default: ""
-          description: "Comma-separated PyTorch versions to build EP extensions for. Leave empty to auto-derive from CUDA major version."
+      - choice:
+          name: "CUDA_MAJOR"
+          choices:
+            - "13"
+            - "12"
+          description: "CUDA major version to build against. 13 uses build-container.sh's own defaults; 12 uses the pinned CUDA 12 base image/tag."
       - string:
           name: "PUBLISH_DIR"
           default: ""
           description: "Artifactory publish subdir; empty = verification (nightly default). Manual release runs can pass release/&lt;ver&gt;."
-      - bool:
-          name: "BUILD_UCX_SPCX_PLUGIN"
-          default: true
-          description: "Build and bundle the UCX spcx external plugin (the built source ref pins the plugin version in contrib/build-container.sh)"
-      - bool:
-          name: "BUILD_INFINIA"
-          default: true
-          description: "Build and bundle the Infinia DDN plugin (the built source ref pins the plugin version in contrib/build-container.sh; harbor.mellanox.com must be reachable)"
       - string:
           name: "DEBUG"
           default: 0

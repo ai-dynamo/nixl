@@ -1,7 +1,8 @@
 # Nightly NIXL wheel verification build. Pipeline and this config run from
 # main; the source ref (NIXL_VERSION) is cloned into nixl-src, so built refs
 # carry no CI config. Wheels publish to
-# WHEEL_REPO_URL/<PUBLISH_DIR or verification>/<nixl-sha>.
+# WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default) or
+# WHEEL_REPO_URL/<PUBLISH_DIR>/<nixl-sha> for manual release runs.
 
 ---
 job: nixl-ci-build-wheel-nightly
@@ -53,14 +54,16 @@ matrix:
 env:
   NPROC: 16
   GRPC_NPROC: 10
-  MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
-  MANYLINUX_IMAGE_TAG: "2026.06.06-1"
-  # TORCH_VERSIONS comes from the JJB job parameter, which is empty by default so
-  # the Build Wheel step below derives it from the CUDA major. Not set here to
-  # avoid the matrix env overriding the per-run parameter value.
+  # CUDA 12 base image is pinned here (unlikely to change); CUDA 13 passes
+  # nothing and relies on build-container.sh's own default.
+  CU12_BASE_IMAGE: "nvcr.io/nvidia/cuda"
+  CU12_BASE_TAG: "12.9.1-devel-ubi8"
+  CU12_CUDA_VERSION: "12.9"
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
+  # Properties API (same repo, different endpoint) for tagging published wheels.
+  WHEEL_REPO_API: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
   # Source repo cloned in Build Wheel.
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
   MAIL_FROM: "jenkins@nvidia.com"
@@ -100,15 +103,10 @@ steps:
       # Exact first 8 hex for the publish folder key (--short=8 is a minimum
       # and can extend on ambiguity).
       NIXL_SHA="$(git -C nixl-src rev-parse HEAD | cut -c1-8)"
-      # Build against the exact UCX commit; ^{} (last line) peels annotated tags.
-      if [[ "${UCX_VERSION}" =~ ^[a-f0-9]{8,40}$ ]]; then
-        UCX_SHA="${UCX_VERSION:0:8}"
-      else
-        UCX_SHA="$(timeout 30 git ls-remote https://github.com/openucx/ucx.git "${UCX_VERSION}" "${UCX_VERSION}^{}" | tail -n1 | cut -c1-8)"
-      fi
-      [ -n "${UCX_SHA}" ] || { echo "ERROR: cannot resolve UCX_VERSION=${UCX_VERSION}"; exit 1; }
-      # Shas carried to Build Wheel (--ucx-ref) and Publish (folder key).
-      printf 'NIXL_SHA=%s\nUCX_SHA=%s\n' "${NIXL_SHA}" "${UCX_SHA}" > wheel_build_ids.env
+      # Carried to Publish (folder key). UCX ref is not pinned here; it's
+      # build-container.sh's own default and gets recorded in
+      # build_options.env by the Build Wheel step instead.
+      printf 'NIXL_SHA=%s\n' "${NIXL_SHA}" > wheel_build_ids.env
 
   - name: Build Wheel
     credentialsId:
@@ -119,40 +117,29 @@ steps:
       # Build the wheel image from the checked-out nixl-src. --tag pins the
       # image so Publish extracts dist/. Plugin creds bind only here.
       set -x
-      . ./wheel_build_ids.env   # UCX_SHA (+ NIXL_SHA) from Checkout Source
-      # Each plugin is opt-in; the built source ref's build-container.sh must
-      # carry the flag and pins the plugin ref/image.
-      SPCX_FLAGS=""
-      [ "${BUILD_UCX_SPCX_PLUGIN}" = "true" ] && SPCX_FLAGS="--build-ucx-spcx-plugin"
-      INFINIA_FLAGS=""
-      [ "${BUILD_INFINIA}" = "true" ] && INFINIA_FLAGS="--build-infinia"
-      # CUDA MAJOR.MINOR from BASE_TAG (12.9.1-devel-ubi8 -> 12.9): drives the
-      # torch cuXXX index and the cu12/cu13 wheel split.
-      CUDA_VERSION="$(echo "${BASE_TAG}" | grep -oE '^[0-9]+\.[0-9]+')"
-      [ -n "${CUDA_VERSION}" ] || { echo "ERROR: cannot derive CUDA version from BASE_TAG=${BASE_TAG}"; exit 1; }
+      # spcx and Infinia are always bundled in the nightly; the built source
+      # ref's build-container.sh pins the plugin ref/image.
       # The two CUDA majors have different torch coverage: 2.11 is not available
       # on the cu13 index, and 2.14 is not available on the cu12 one.
-      # Auto-select unless overridden.
-      if [ -z "${TORCH_VERSIONS:-}" ]; then
-        if [ "${CUDA_VERSION%%.*}" = "12" ]; then TORCH_VERSIONS="2.11,2.12,2.13"
-        else TORCH_VERSIONS="2.12,2.13,2.14"; fi
+      BASE_IMAGE_FLAGS=""
+      if [ "${CUDA_MAJOR}" = "12" ]; then
+        BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
+        TORCH_VERSIONS="2.11,2.12,2.13"
+      else
+        TORCH_VERSIONS="2.12,2.13,2.14"
       fi
       cd nixl-src
       ./contrib/build-container.sh \
-        --base-image "${BASE_IMAGE}" \
-        --base-image-tag "${BASE_TAG}" \
-        --cuda-version "${CUDA_VERSION}" \
-        --manylinux-image "${MANYLINUX_IMAGE}" \
-        --manylinux-image-tag "${MANYLINUX_IMAGE_TAG}" \
+        ${BASE_IMAGE_FLAGS} \
         --wheel-base "manylinux_${manylinux}" \
         --python-versions "${python_version}" \
         --arch ${arch} \
-        --ucx-ref "${UCX_SHA}" \
         --torch-versions "${TORCH_VERSIONS}" \
         --tag "${WHEEL_IMAGE_TAG}" \
         --dockerfile contrib/Dockerfile.manylinux \
-        ${SPCX_FLAGS} \
-        ${INFINIA_FLAGS}
+        --build-ucx-spcx-plugin \
+        --build-infinia \
+        --build-options-file ../build_options.env
 
   - name: Publish
     credentialsId: 'svc-nixl-new-artifactory-token'
@@ -173,10 +160,35 @@ steps:
       PUBLISH_DIR="${PUBLISH_DIR:-verification}"
       [[ "${PUBLISH_DIR}" =~ ^(verification|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
         || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
-      # Per-commit folder: cu12/cu13 builds of the same commit co-locate, so
-      # `pip install --find-links <path> "nixl[cuXX]"` resolves a matched set.
       . ./wheel_build_ids.env
-      DEST="${WHEEL_REPO_URL}/${PUBLISH_DIR}/${NIXL_SHA}"
+
+      # Provenance recorded by Build Wheel (contrib/build-container.sh
+      # --build-options-file). Only set properties for values that exist,
+      # so an older built ref without this flag just skips them.
+      PROPERTIES=""
+      if [ -f build_options.env ]; then
+        . ./build_options.env
+        [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
+        [ -n "${UCX_SHA:-}" ] && PROPERTIES+=";UCX_SHA=${UCX_SHA}"
+        [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
+        [ "${BUILD_UCX_SPCX_PLUGIN:-}" = "true" ] && [ -n "${UCX_SPCX_PLUGIN_REF:-}" ] \
+          && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
+        [ "${BUILD_INFINIA:-}" = "true" ] && [ -n "${INFINIA_LIBS_IMAGE:-}" ] \
+          && PROPERTIES+=";INFINIA_LIBS_IMAGE=${INFINIA_LIBS_IMAGE}"
+        PROPERTIES="${PROPERTIES#;}"
+      fi
+
+      # verification/ keeps its long-standing g<nixl-sha>.ucx<ucx-sha> folder
+      # schema (consumed by the build-llm-container verification pipeline);
+      # release/<ver> co-locates cu12/cu13 by nixl-sha alone, unkeyed to UCX.
+      if [ "${PUBLISH_DIR}" = "verification" ]; then
+        [ -n "${UCX_SHA:-}" ] || { echo "ERROR: verification publish needs UCX_SHA from build_options.env"; exit 1; }
+        FOLDER="g${NIXL_SHA}.ucx${UCX_SHA}"
+      else
+        FOLDER="${NIXL_SHA}"
+      fi
+      DEST="${WHEEL_REPO_URL}/${PUBLISH_DIR}/${FOLDER}"
+      PROPS_DEST="${WHEEL_REPO_API}/${PUBLISH_DIR}/${FOLDER}"
 
       # curl-PUT (no python on the runner for twine); Artifactory indexes it as a
       # pip repo. rc fails the step on any upload error; set +x hides the token.
@@ -185,22 +197,24 @@ steps:
       for whl in dist/nixl*.whl; do
         curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
           -T "${whl}" "${DEST}/$(basename "${whl}")" || rc=1
+        if [ -n "${PROPERTIES}" ]; then
+          curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -X PUT \
+            "${PROPS_DEST}/$(basename "${whl}")?properties=${PROPERTIES}" || rc=1
+        fi
       done
       exit $rc
 
 taskName: '${name}_${manylinux}/${arch}/python_${python_version}'
 
-# Display name distinguishes builds in the history list:
-# #N-<source>-cuXX[+spcx][+infinia], mirroring nixl-ci-build-container.
+# Display name distinguishes builds in the history list: #N-<source>-cuXX.
 pipeline_start:
   shell: action
   module: groovy
   containerSelector: "{name: 'manylinux'}"
   run: |
     def src = params.NIXL_VERSION ==~ /[0-9a-f]{40}/ ? params.NIXL_VERSION.take(8) : params.NIXL_VERSION
-    def cu = "cu${params.BASE_TAG.tokenize('.')[0]}"
-    def plugins = (params.BUILD_UCX_SPCX_PLUGIN ? '+spcx' : '') + (params.BUILD_INFINIA ? '+infinia' : '')
-    currentBuild.displayName += "-${src}-${cu}${plugins}"
+    def cu = "cu${params.CUDA_MAJOR}"
+    currentBuild.displayName += "-${src}-${cu}"
 
 # Mail the unattended nightly only when it fails; a green night stays quiet.
 pipeline_stop:
@@ -223,9 +237,7 @@ pipeline_stop:
                 <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
                 <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
                 <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
-                <p>UCX Version: <b>${params.UCX_VERSION}</b></p>
-                <p>CUDA Source Image: <b>${params.BASE_IMAGE}:${params.BASE_TAG}</b></p>
-                <p>CUDA Version: <b>${params.CUDA_VERSION}</b></p>
+                <p>CUDA Major: <b>${params.CUDA_MAJOR}</b></p>
             """
         )
     }
