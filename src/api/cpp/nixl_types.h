@@ -16,6 +16,7 @@
  */
 #ifndef _NIXL_TYPES_H
 #define _NIXL_TYPES_H
+#include <atomic>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -231,6 +232,21 @@ struct nixlAgentOptionalArgs {
      * @var Backend custom parameter
      */
     nixl_blob_t customParam;
+
+    /**
+     * @var completionSignal Optional host-side completion signal for NIXL_READ.
+     *
+     * When supported by the selected backend, the signal is incremented with
+     * release ordering after the transfer completes successfully. The signal
+     * must be lock-free, CUDA host-mapped memory and remain valid until the
+     * request completes or is released. A GPU stream can wait on the device
+     * alias with cuStreamWaitValue64() and CU_STREAM_WAIT_VALUE_FLUSH so remote
+     * writes to the destination are visible to subsequent GPU work.
+     *
+     * This option is consumed by postXferReq() and is currently implemented by
+     * the UCX backend for NIXL_READ.
+     */
+    std::atomic<uint64_t> *completionSignal = nullptr;
 };
 /**
  * @brief A typedef for a nixlAgentOptionalArgs

@@ -346,11 +346,21 @@ nixlUcxEp::estimateCost(size_t size,
 }
 
 nixl_status_t
-nixlUcxEp::flushEp(nixlUcxReq &req) {
-    ucp_request_param_t param;
+nixlUcxEp::flushEp(nixlUcxReq &req, std::atomic<uint64_t> *completion_signal) {
+    ucp_request_param_t param = {};
     ucs_status_ptr_t request;
 
-    param.op_attr_mask = 0;
+    if (completion_signal) {
+        param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA;
+        param.cb.send = [](void *, ucs_status_t status, void *user_data) {
+            if (status == UCS_OK) {
+                static_cast<std::atomic<uint64_t> *>(user_data)->fetch_add(
+                    1, std::memory_order_release);
+            }
+        };
+        param.user_data = completion_signal;
+    }
+
     request = ucp_ep_flush_nbx(eph, &param);
 
     if (UCS_PTR_IS_PTR(request)) {
@@ -358,7 +368,11 @@ nixlUcxEp::flushEp(nixlUcxReq &req) {
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    const nixl_status_t status = nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    if ((status == NIXL_SUCCESS) && completion_signal) {
+        completion_signal->fetch_add(1, std::memory_order_release);
+    }
+    return status;
 }
 
 #ifdef HAVE_UCX_SGL_API

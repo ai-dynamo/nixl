@@ -108,7 +108,7 @@ public:
                  std::chrono::microseconds &err_margin,
                  nixl_cost_t &method);
     nixl_status_t
-    flushEp(nixlUcxReq &req);
+    flushEp(nixlUcxReq &req, std::atomic<uint64_t> *completion_signal = nullptr);
 
 #ifdef HAVE_UCX_SGL_API
     /* Scatter-gather list (SGL) operations */

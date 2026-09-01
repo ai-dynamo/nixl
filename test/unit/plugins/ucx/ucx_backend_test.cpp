@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <atomic>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -317,6 +318,10 @@ performTransfer(nixlUcxEngine *ucx1,
     nixl_opt_b_args_t opt_args;
     opt_args.notifMsg = test_str;
     opt_args.hasNotif = use_notif;
+    std::atomic<uint64_t> completion_signal{0};
+    if (op == NIXL_READ) {
+        opt_args.completionSignal = &completion_signal;
+    }
 
 
     // Posting a request, to be updated to return an async handler,
@@ -376,6 +381,11 @@ performTransfer(nixlUcxEngine *ucx1,
                              "Incorrect front notif message");
 
         cout << "OK" << endl;
+    }
+
+    if (op == NIXL_READ) {
+        nixl_exit_on_failure(completion_signal.load(std::memory_order_acquire) == 1,
+                             "Read completion signal was not incremented exactly once");
     }
 
     cout << "\t\tData verification: " << flush;

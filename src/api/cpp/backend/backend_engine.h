@@ -111,6 +111,12 @@ class nixlBackendEngine {
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
         virtual bool supportsNotif() const = 0;
 
+        // Determines if a backend supports a host-mapped GPU completion signal.
+        virtual bool
+        supportsCompletionSignal() const {
+            return false;
+        }
+
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 
 

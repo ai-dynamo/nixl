@@ -115,6 +115,11 @@ public:
         return true;
     }
 
+    bool
+    supportsCompletionSignal() const override {
+        return true;
+    }
+
     nixl_mem_list_t
     getSupportedMems() const override;
 

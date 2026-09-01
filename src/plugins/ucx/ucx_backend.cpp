@@ -62,6 +62,7 @@ private:
     ucx_connection_ptr_t conn_;
     std::vector<nixlUcxReq> requests_;
     nixlUcxWorker *worker_ = nullptr;
+    std::atomic<uint64_t> *completionSignal_ = nullptr;
 
     [[nodiscard]] nixl_status_t
     checkConnection(const nixl_status_t status = NIXL_SUCCESS) const {
@@ -102,6 +103,16 @@ public:
     reserve(size_t size) {
         requests_.reserve(size);
         NIXL_ASSERT(conn_ == nullptr);
+    }
+
+    void
+    setCompletionSignal(std::atomic<uint64_t> *completion_signal) {
+        completionSignal_ = completion_signal;
+    }
+
+    [[nodiscard]] std::atomic<uint64_t> *
+    getCompletionSignal() const {
+        return completionSignal_;
     }
 
     [[nodiscard]] nixl_status_t
@@ -1246,7 +1257,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
      * completed, which can happen after local requests completion.
      */
     nixlUcxReq flush_req;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
+    const nixl_status_t flush_ret = ep->flushEp(flush_req, int_handle->getCompletionSignal());
     if (int_handle->append(flush_ret, flush_req, conn) != NIXL_SUCCESS) {
         return flush_ret;
     }
@@ -1271,6 +1282,19 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                    << ") descriptor lists differ in size";
         return NIXL_ERR_INVALID_PARAM;
     }
+
+    std::atomic<uint64_t> *completion_signal = opt_args ? opt_args->completionSignal : nullptr;
+    if (completion_signal) {
+        if (operation != NIXL_READ) {
+            NIXL_ERROR << "Completion signals are only supported for NIXL_READ";
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+        if (!completion_signal->is_lock_free()) {
+            NIXL_ERROR << "Completion signal must be lock-free";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
+    int_handle->setCompletionSignal(completion_signal);
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 

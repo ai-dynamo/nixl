@@ -17,6 +17,7 @@
 #ifndef __BACKEND_AUX_H_
 #define __BACKEND_AUX_H_
 
+#include <atomic>
 #include <mutex>
 #include <string>
 #include "common/nixl_log.h"
@@ -34,6 +35,7 @@ struct nixlBackendOptionalArgs {
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
+    std::atomic<uint64_t> *completionSignal = nullptr;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;

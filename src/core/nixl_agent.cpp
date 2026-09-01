@@ -1162,6 +1162,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     // Updating the notification based on opt_args
     if (extra_params) {
+        opt_args.completionSignal = extra_params->completionSignal;
         if (extra_params->notif) {
             req_hndl->notifMsg = *extra_params->notif;
             opt_args.notifMsg = *extra_params->notif;
@@ -1183,6 +1184,13 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                         << "' does not support notifications";
         data->addErrorTelemetry(NIXL_ERR_BACKEND);
         return NIXL_ERR_BACKEND;
+    }
+
+    if (opt_args.completionSignal && !req_hndl->engine->supportsCompletionSignal()) {
+        NIXL_ERROR_FUNC << "the selected backend '" << req_hndl->engine->getType()
+                        << "' does not support completion signals";
+        data->addErrorTelemetry(NIXL_ERR_NOT_SUPPORTED);
+        return NIXL_ERR_NOT_SUPPORTED;
     }
 
     // If status is not NIXL_IN_PROG we can repost,
