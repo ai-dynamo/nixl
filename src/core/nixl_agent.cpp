@@ -253,34 +253,8 @@ nixlAgent::getPluginParams (const nixl_backend_t &type,
 
     // TODO: unify to uppercase/lowercase and do ltrim/rtrim for type
 
-    // First try to get options from a loaded plugin
-    auto& plugin_manager = nixlPluginManager::getInstance();
-    auto plugin_handle = plugin_manager.getBackendPlugin(type);
-
-    if (plugin_handle) {
-      // If the plugin is already loaded, get options directly
-        params = plugin_handle->getBackendOptions();
-        mems   = plugin_handle->getBackendMems();
-        return NIXL_SUCCESS;
-    }
-
-    // If plugin isn't loaded yet, try to load it temporarily
-    plugin_handle = plugin_manager.loadBackendPlugin(type);
-    if (plugin_handle) {
-        params = plugin_handle->getBackendOptions();
-        mems   = plugin_handle->getBackendMems();
-
-        NIXL_LOCK_GUARD(data->lock);
-
-        // We don't keep the plugin loaded if we didn't have it before
-        if (data->backendEngines_.count(type) == 0) {
-            plugin_manager.unloadBackendPlugin(type);
-        }
-        return NIXL_SUCCESS;
-    }
-
-    NIXL_ERROR_FUNC << "backend '" << type << "' not found";
-    return NIXL_ERR_NOT_FOUND;
+    auto &plugin_manager = nixlPluginManager::getInstance();
+    return plugin_manager.getBackendParams(type, mems, params);
 }
 
 nixl_status_t

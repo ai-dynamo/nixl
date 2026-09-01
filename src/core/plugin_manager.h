@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef __PLUGIN_MANAGER_H
-#define __PLUGIN_MANAGER_H
+#ifndef NIXL_SRC_CORE_PLUGIN_MANAGER_H
+#define NIXL_SRC_CORE_PLUGIN_MANAGER_H
 
 #include <filesystem>
 #include <string>
@@ -25,7 +25,9 @@
 #include <memory>
 #include <vector>
 #include <mutex>
+
 #include "backend/backend_plugin.h"
+#include "nixl_types.h"
 #include "telemetry/telemetry_plugin.h"
 #include "tracing/trace_plugin.h"
 
@@ -142,13 +144,14 @@ public:
     std::shared_ptr<const nixlTracePluginHandle>
     loadTracePlugin(const std::string &plugin_name);
 
-    // Unload a telemetry plugin
-    void
-    unloadTelemetryPlugin(const nixl_telemetry_plugin_t &plugin_name);
-
     // Unload backend plugin
     void
-    unloadBackendPlugin(const nixl_backend_t &plugin_name);
+    unloadBackendPluginForUnitTest(const nixl_backend_t &plugin_name);
+
+    [[nodiscard]] nixl_status_t
+    getBackendParams(const nixl_backend_t &type,
+                     nixl_mem_list_t &mems,
+                     nixl_b_params_t &params) const;
 
     // Get a backend plugin handle
     std::shared_ptr<const nixlBackendPluginHandle>
@@ -194,7 +197,10 @@ private:
     std::vector<std::string> plugin_dirs_;
     std::vector<nixlBackendStaticPluginInfo> backend_static_plugins_;
     std::vector<nixlTelemetryStaticPluginInfo> telemetry_static_plugins_;
-    std::mutex lock;
+    mutable std::mutex mutex_;
+
+    [[nodiscard]] std::shared_ptr<const nixlBackendPluginHandle>
+    loadBackendPluginImpl(const nixl_backend_t &plugin_name) const;
 
     void
     registerBuiltinPlugins();
@@ -218,12 +224,12 @@ private:
     void
     discoverTracePlugin(const std::string &filename);
 
-    std::shared_ptr<const nixlPluginHandle>
+    [[nodiscard]] static std::shared_ptr<const nixlPluginHandle>
     loadPluginFromPath(const std::string &plugin_path,
                        nixlPluginLoaderFunc loader,
                        bool deepbind = false);
 
-    std::string
+    [[nodiscard]] static std::string
     composePluginPath(const std::string &dir,
                       const std::string &plugin_prefix,
                       const std::string &plugin_name);
@@ -232,4 +238,4 @@ private:
     nixlPluginManager();
 };
 
-#endif // __PLUGIN_MANAGER_H
+#endif
