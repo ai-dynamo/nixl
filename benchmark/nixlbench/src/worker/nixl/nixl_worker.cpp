@@ -205,25 +205,23 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
         std::cout << "GDS MT Num threads: " << xferBenchConfig::gds_mt_num_threads << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
-        // Set API type parameter for POSIX backend
-        if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
-            backend_params["use_aio"] = "true";
-            backend_params["use_uring"] = "false";
-            backend_params["use_posix_aio"] = "false";
-        } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
-            backend_params["use_aio"] = "false";
-            backend_params["use_uring"] = "true";
-            backend_params["use_posix_aio"] = "false";
-        } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_POSIXAIO) {
-            backend_params["use_aio"] = "false";
-            backend_params["use_uring"] = "false";
-            backend_params["use_posix_aio"] = "true";
+        if (!xferBenchConfig::plugin_parameters) {
+            // Preserve the existing flags-only POSIX parameter assembly.
+            if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_AIO) {
+                backend_params["use_aio"] = "true";
+            } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_URING) {
+                backend_params["use_uring"] = "true";
+            } else if (xferBenchConfig::posix_api_type == XFERBENCH_POSIX_API_POSIXAIO) {
+                backend_params["use_posix_aio"] = "true";
+            }
+            std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
+                      << std::endl;
+            backend_params["ios_pool_size"] = std::to_string(xferBenchConfig::posix_ios_pool_size);
+            backend_params["kernel_queue_size"] =
+                std::to_string(xferBenchConfig::posix_kernel_queue_size);
+        } else {
+            std::cout << "POSIX backend with plugin parameters from raw CLI" << std::endl;
         }
-        std::cout << "POSIX backend with API type: " << xferBenchConfig::posix_api_type
-                  << std::endl;
-        backend_params["ios_pool_size"] = std::to_string(xferBenchConfig::posix_ios_pool_size);
-        backend_params["kernel_queue_size"] =
-            std::to_string(xferBenchConfig::posix_kernel_queue_size);
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO)) {
         std::cout << "GPUNETIO backend, network device " << devices[0] << " GPU device "
                   << xferBenchConfig::gpunetio_device_list << " OOB interface "
@@ -346,6 +344,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
+    }
+
+    if (xferBenchConfig::plugin_parameters) {
+        for (const auto &[name, value] : *xferBenchConfig::plugin_parameters) {
+            backend_params[name] = value;
+        }
     }
 
     CHECK_NIXL_ERROR(agent->createBackend(backend_name, backend_params, backend_engine),

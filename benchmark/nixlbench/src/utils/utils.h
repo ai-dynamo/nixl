@@ -27,6 +27,7 @@
 #include <variant>
 #include <vector>
 #include <optional>
+#include <nixl_types.h>
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
@@ -227,6 +228,8 @@ public:
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
     static bool gusli_try_use_uring;
+    // Opaque plugin parameters are populated only by the raw CLI path.
+    static std::optional<nixl_b_params_t> plugin_parameters;
     static bool use_device_api;
     static int block_threads;
 

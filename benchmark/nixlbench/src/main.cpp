@@ -20,6 +20,9 @@
 #include <nixl.h>
 #include <sys/time.h>
 #include "utils/utils.h"
+#if HAVE_RAW_CLI
+#include "utils/raw_cli.h"
+#endif
 #include "utils/scope_guard.h"
 #include "worker/nixl/nixl_worker.h"
 #if HAVE_NVSHMEM && HAVE_CUDA
@@ -159,14 +162,14 @@ static int processBatchSizes(xferBenchWorker &worker,
 namespace {
 std::unique_ptr<xferBenchWorker>
 createWorker() {
-    if (xferBenchConfig::worker_type == "nixl") {
+    if (xferBenchConfig::worker_type == XFERBENCH_WORKER_NIXL) {
         std::vector<std::string> devices = xferBenchConfig::parseDeviceList();
         if (devices.empty()) {
             std::cerr << "Failed to parse device list" << std::endl;
             return nullptr;
         }
         return std::make_unique<xferBenchNixlWorker>(devices);
-    } else if (xferBenchConfig::worker_type == "nvshmem") {
+    } else if (xferBenchConfig::worker_type == XFERBENCH_WORKER_NVSHMEM) {
 #if HAVE_NVSHMEM && HAVE_CUDA
         return std::make_unique<xferBenchNvshmemWorker>();
 #else
@@ -180,12 +183,9 @@ createWorker() {
 }
 } // namespace
 
-int main(int argc, char *argv[]) {
-    int ret = xferBenchConfig::parseConfig(argc, argv);
-    if (0 != ret) {
-        return EXIT_FAILURE;
-    }
-
+static int
+runBenchmark() {
+    int ret = 0;
     int num_threads = xferBenchConfig::num_threads;
 
     // Create the appropriate worker based on worker configuration
@@ -215,7 +215,9 @@ int main(int argc, char *argv[]) {
     }
 
     if (worker_ptr->isInitiator() && worker_ptr->isMasterRank()) {
-        xferBenchConfig::printConfig();
+        if (!xferBenchConfig::plugin_parameters) {
+            xferBenchConfig::printConfig();
+        }
         xferBenchUtils::printStatsHeader();
     }
 
@@ -235,4 +237,23 @@ int main(int argc, char *argv[]) {
     }
 
     return worker_ptr->signaled() ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+int
+main(int argc, char *argv[]) {
+#if HAVE_RAW_CLI
+    if (nixlbench::isRawCommand(argc, argv)) {
+        const auto result = nixlbench::prepareRawCommand(argc, argv, std::cout, std::cerr);
+        if (result.status != EXIT_SUCCESS || !result.execute) {
+            return result.status;
+        }
+        return runBenchmark();
+    }
+#endif
+
+    // Preserve the flags-only interface by routing every non-raw invocation directly to gflags.
+    if (xferBenchConfig::parseConfig(argc, argv) != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    return runBenchmark();
 }
