@@ -689,7 +689,7 @@ nixlUcxContext::memReg(void *addr, size_t size, nixlUcxMem &mem, nixl_mem_t nixl
             UCP_MEM_MAP_PARAM_FIELD_ADDRESS | UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE,
         .address = mem.base,
         .length = mem.size,
-        .memory_type = toUcsMemoryType(ctx, nixl_mem_type),
+        .memory_type = toUcsMemoryType(ctx.get(), nixl_mem_type),
     };
 
     ucs_status_t status = ucp_mem_map(ctx.get(), &mem_params, &mem.memh);
