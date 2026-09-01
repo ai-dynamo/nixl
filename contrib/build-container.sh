@@ -58,7 +58,7 @@ BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
 APT_MIRROR=""
 BUILD_UCX_SPCX_PLUGIN="false"
-UCX_SPCX_PLUGIN_REF="v0.2.x"
+UCX_SPCX_PLUGIN_REF="v0.3.x"
 BUILD_OPTIONS_FILE=""
 
 get_options() {
