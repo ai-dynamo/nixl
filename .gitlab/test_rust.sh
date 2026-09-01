@@ -56,8 +56,8 @@ trap 'kill -9 $ETCD_PID 2>/dev/null || true' EXIT
 cargo test --jobs "$NPROC" -- --test-threads=1
 
 # test that stubs and real wrapper defined APIs / symbols match
-g++ -c ./src/bindings/rust/wrapper.cpp -o wrapper.o -I ./src/api/cpp/
-g++ -c ./src/bindings/rust/stubs.cpp -o stubs.o
+g++ -std=c++20 -c ./src/bindings/rust/wrapper.cpp -o wrapper.o -I ./src/api/cpp/
+g++ -std=c++20 -c ./src/bindings/rust/stubs.cpp -o stubs.o
 
 nm -C --defined-only wrapper.o | awk '$2 ~ /^T$/ {print $3}' | sort > wrapper_symbols.txt
 nm -C --defined-only stubs.o | awk '$2 ~ /^T$/ {print $3}' | grep -v nixl_capi_stub_abort | sort > stubs_symbols.txt
