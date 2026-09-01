@@ -37,6 +37,7 @@ nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str)
 
     const size_t len = str.size();
 
+    workingStr.reserve(workingStr.size() + tag.size() + sizeof(len) + len + 1);
     workingStr.append(tag);
     workingStr.append(_bytesToString(&len, sizeof(size_t)));
     workingStr.append(str);

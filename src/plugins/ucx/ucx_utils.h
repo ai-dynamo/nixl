@@ -46,7 +46,6 @@ class nixlUcxEp {
 private:
     ucp_ep_h eph{nullptr};
     std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::UNINITIALIZED};
-    const uint32_t closeFlags_;
 
     void
     setState(nixl::ucx::ep_state_t new_state);
@@ -69,16 +68,13 @@ public:
         return nixl::ucx::toNixlStatus(state_);
     }
 
-    nixlUcxEp(ucp_worker_h worker,
-              void *addr,
-              ucp_err_handling_mode_t err_handling_mode,
-              uint32_t close_flags);
+    nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp &) = delete;
     nixlUcxEp &
     operator=(const nixlUcxEp &) = delete;
 
-    using am_deleter_t = std::function<void(void *request, void *buffer)>;
+    using am_cleanup_t = std::function<void(void *request, void *buffer)>;
 
     /* Active message handling */
     nixl_status_t
@@ -89,7 +85,7 @@ public:
            size_t len,
            uint32_t flags,
            nixlUcxReq *req = nullptr,
-           const am_deleter_t &deleter = nullptr);
+           am_cleanup_t &&cleanup = nullptr) const;
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -113,6 +109,15 @@ public:
                  nixl_cost_t &method);
     nixl_status_t
     flushEp(nixlUcxReq &req);
+
+#ifdef HAVE_UCX_SGL_API
+    /* Scatter-gather list (SGL) operations */
+    [[nodiscard]] nixl_status_t
+    postSgl(const ucp_dt_local_sgl_t &local,
+            const ucp_dt_remote_sgl_t &remote,
+            size_t count,
+            nixlUcxReq &req);
+#endif
 
     [[nodiscard]] ucp_ep_h
     getEp() const noexcept {
@@ -150,10 +155,13 @@ public:
 class nixlUcxContext {
 private:
     /* Local UCX stuff */
-    ucp_context_h ctx;
+    std::unique_ptr<ucp_context, void (*)(ucp_context_h)> ctx{nullptr, &ucp_cleanup};
     const nixl::ucx::mt_mode_t mtType_;
     const unsigned ucpVersion_;
     const std::string name_;
+
+    [[nodiscard]] bool
+    supportsMemoryType(ucs_memory_type_t mem_type) const;
 
 public:
     nixlUcxContext(const std::vector<std::string> &devs,
@@ -163,8 +171,6 @@ public:
                    size_t num_device_channels,
                    const std::string &engine_conf = "",
                    const std::string &name = "");
-    ~nixlUcxContext();
-
     nixlUcxContext(nixlUcxContext &&) = delete;
     nixlUcxContext(const nixlUcxContext &) = delete;
 
@@ -203,7 +209,6 @@ public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
-        uint32_t ep_close_flags = 0,
         size_t id = 0);
 
     nixlUcxWorker(nixlUcxWorker &&) = delete;
@@ -270,7 +275,6 @@ private:
     const std::string name_;
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     const ucp_err_handling_mode_t err_handling_mode_;
-    const uint32_t epCloseFlags_;
     const size_t id_;
 };
 

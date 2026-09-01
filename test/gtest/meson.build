@@ -86,7 +86,7 @@ elif cuda_dep.found()
     cpp_flags += ['-DHAVE_GPU', '-DHAVE_CUDA']
 endif
 
-if libfabric_dep.found()
+if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
 endif
 
@@ -104,11 +104,16 @@ gtest_sources = [
     'error_handling.cpp',
     'test_transfer.cpp',
     'metadata_exchange.cpp',
+    'md_manager.cpp',
+    'metadata_worker.cpp',
     'common.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
     'telemetry_prometheus_test.cpp',
+    'telemetry_mp_store_test.cpp',
     'telemetry_histogram_test.cpp',
+    'telemetry_prometheus_stress_test.cpp',
+    'telemetry_stress_test.cpp',
     'telemetry_benchmark.cpp',
     'nixl_duration_test.cpp',
     'configuration.cpp'
@@ -131,11 +136,29 @@ else
     ucx_hw_warning_dep = []
 endif
 
+# prometheus_mp collector/exporter unit tests ride the main gtest binary, but
+# only when prometheus-cpp (and thus those libraries) is available.
+if is_variable('nixl_telemetry_mp_collector_dep')
+    gtest_sources += 'telemetry_mp_collector_test.cpp'
+    telemetry_mp_collector_dep = [nixl_telemetry_mp_collector_dep]
+else
+    telemetry_mp_collector_dep = []
+endif
+
+if is_variable('nixl_telemetry_mp_exporter_dep')
+    gtest_sources += 'telemetry_mp_exporter_test.cpp'
+    gtest_sources += 'telemetry_mp_e2e_test.cpp'
+    gtest_sources += 'telemetry_mp_core_test.cpp'
+    telemetry_mp_exporter_dep = [nixl_telemetry_mp_exporter_dep]
+else
+    telemetry_mp_exporter_dep = []
+endif
+
 test_exe = executable('gtest',
     sources : gtest_sources,
-    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../doca-telemetry'), include_directories('../../src/plugins/telemetry/common')],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, device_api_inc, include_directories('../metrics'), include_directories('../../src/plugins/telemetry/common')],
     cpp_args : cpp_flags,
-    dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface],
+    dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, device_api_dep, gtest_dep, gmock_dep, absl_strings_dep, absl_time_dep, ucx_hw_warning_dep, file_utils_interface, nixl_telemetry_mp_store_dep, telemetry_mp_collector_dep, telemetry_mp_exporter_dep],
     link_with: [nixl_build_lib],
     install : true
 )

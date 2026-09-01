@@ -409,7 +409,7 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               uint64_t timeout_cycles,
               void* workspace, int num_device_sms,
               cudaStream_t stream, int phases, nixl_ep::gpu_nixl_ctx* nixl_ctx) {
-    constexpr int kNumMaxTopK = 11;
+    constexpr int kNumMaxTopK = 16;
     const int active_expert_bound = active_rank_bound * num_experts_per_rank;
     const int num_warp_groups = ceil_div(active_expert_bound, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
@@ -1028,7 +1028,7 @@ void combine(void* combined_x,
              bool use_logfmt, uint64_t timeout_cycles,
              void* workspace, int num_device_sms,
              cudaStream_t stream, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx) {
-    constexpr int kNumMaxTopk = 11;
+    constexpr int kNumMaxTopk = 16;
     const int active_expert_bound = active_rank_bound * num_experts_per_rank;
     const int num_warp_groups = ceil_div(active_expert_bound, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
@@ -1087,8 +1087,9 @@ LAUNCH_KERNEL(&cfg, combine_func, \
 #undef COMBINE_LAUNCH_CASE
 }
 
-template <int kNumThreads> __launch_bounds__(kNumThreads, 1)
-__global__ void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask_tensor) {
+template<int kNumThreads>
+__launch_bounds__(kNumThreads, 1) __global__
+    void query_mask_buffer(const int *mask_buffer_ptr, int num_ranks, int *mask_tensor) {
     const auto num_sms = static_cast<int>(gridDim.x);
     const auto sm_id = static_cast<int>(blockIdx.x);
     const auto num_threads = num_sms * kNumThreads;
@@ -1098,7 +1099,11 @@ __global__ void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask
     }
 }
 
-void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask_tensor, cudaStream_t stream) {
+void
+query_mask_buffer(const int *mask_buffer_ptr,
+                  int num_ranks,
+                  int *mask_tensor,
+                  cudaStream_t stream) {
     constexpr int num_sms = 1;
     constexpr int kNumThreads = 1024;
     SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
