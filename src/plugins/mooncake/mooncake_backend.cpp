@@ -152,7 +152,7 @@ nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
         }
         if (local_agent_name_.size() > kMaxNotifNameLen) {
             NIXL_WARN << "Agent name exceeds " << kMaxNotifNameLen
-                      << " bytes and would be truncated in Mooncake notifications";
+                      << " bytes; Mooncake notifications from this agent will be rejected";
         }
         return;
     }
@@ -557,7 +557,7 @@ nixlMooncakeEngine::genNotif(const std::string &remote_agent, const std::string 
     }
 #ifdef HAVE_MOONCAKE_TENT
     if (mode_ == mode::TENT) {
-        if (msg.size() > kMaxNotifMsgLen) {
+        if (msg.size() > kMaxNotifMsgLen || local_agent_name_.size() > kMaxNotifNameLen) {
             return NIXL_ERR_INVALID_PARAM;
         }
         int ret =

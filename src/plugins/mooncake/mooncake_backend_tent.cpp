@@ -64,7 +64,11 @@ nixlMooncakeEngine::postXferTent(const nixl_xfer_op_t &operation,
     }
     int rc = 0;
     if (opt_args && opt_args->hasNotif) {
-        if (opt_args->notifMsg.size() > kMaxNotifMsgLen) {
+        // Both halves of the record are fixed-size and filled with strncpy, so
+        // an oversized name is truncated rather than rejected by TENT - and a
+        // truncated sender identity can collide with another agent's.
+        if (opt_args->notifMsg.size() > kMaxNotifMsgLen ||
+            local_agent_name_.size() > kMaxNotifNameLen) {
             return NIXL_ERR_INVALID_PARAM;
         }
         rc = tent_submit_notif(tent_engine_,

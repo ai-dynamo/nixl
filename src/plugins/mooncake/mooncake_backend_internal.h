@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_MOONCAKE_BACKEND_INTERNAL_H
-#define NIXL_MOONCAKE_BACKEND_INTERNAL_H
+#ifndef NIXL_SRC_PLUGINS_MOONCAKE_MOONCAKE_BACKEND_INTERNAL_H
+#define NIXL_SRC_PLUGINS_MOONCAKE_MOONCAKE_BACKEND_INTERNAL_H
 
 #include "mooncake_backend.h"
 
@@ -65,4 +65,4 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
     bool release_refused = false;
 };
 
-#endif // NIXL_MOONCAKE_BACKEND_INTERNAL_H
+#endif // NIXL_SRC_PLUGINS_MOONCAKE_MOONCAKE_BACKEND_INTERNAL_H
