@@ -17,6 +17,7 @@
 
 #include "gpunetio_backend.h"
 #include "serdes/serdes.h"
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cassert>
 #include <limits>
@@ -1208,7 +1209,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
             if (operation == NIXL_READ && staged_req.num > 0) {
                 const uint32_t prev = staged_req.num - 1;
-                constexpr size_t max_read_size = std::numeric_limits<uint32_t>::max();
+                constexpr size_t max_read_size = std::min<size_t>(
+                    std::numeric_limits<uint32_t>::max(),
+                    DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
                 const bool size_fits = staged_req.size[prev] <= max_read_size &&
                     local[desc_idx].len <= max_read_size - staged_req.size[prev];
                 const bool local_adjacent = staged_req.lbuf[prev] <=
