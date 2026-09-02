@@ -905,7 +905,7 @@ xferBenchConfig::printConfig() {
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             printOption("GPU CUDA Device id list (--device_list=dev1,dev2,...)",
                         gpunetio_device_list);
-            printOption("OOB network interface name for control path (--oob_list=ifface)",
+            printOption("OOB network interface name for control path (--gpunetio_oob_list=IFACE)",
                         gpunetio_oob_list);
             printOption("RoCE GID table index (--gpunetio_gid_index=N)", gpunetio_gid_index);
             printOption("OOB TCP port (--gpunetio_oob_port=N)",
