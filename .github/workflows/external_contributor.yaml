@@ -19,7 +19,7 @@ on:
     types: [opened]
 jobs:
   pr_reminder:
-    if: ${{ github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name && github.event.pull_request.author_association != 'MEMBER' }}
+    if: ${{ github.event.pull_request.author_association != 'MEMBER' }}
     permissions:
       actions: read
       issues: write

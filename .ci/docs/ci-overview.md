@@ -81,8 +81,8 @@ All files below live in `.github/workflows/`.
 
 ### External Contributor (`external_contributor.yaml`)
 - **Trigger:** `pull_request_target`, `opened`.
-- **What it does:** Posts a reminder comment and adds the `external-contribution` label when the PR comes from a fork and its author is not a member of the `ai-dynamo` organization.
-- **Automatic on every PR:** Only fires for fork PRs from non-members — a no-op job condition otherwise.
+- **What it does:** Posts a reminder comment and adds the `external-contribution` label when the PR author is not a member of the `ai-dynamo` organization.
+- **Automatic on every PR:** Only fires for PRs from non-members — a no-op job condition otherwise.
 
 ### Blossom-CI (`blossom-ci.yml`)
 - **Trigger:** `issue_comment` (only proceeds `if` the comment body is exactly `/build`), or manual `workflow_dispatch`.
