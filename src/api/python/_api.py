@@ -509,13 +509,20 @@ class nixl_agent:
             agent_name: Name of the agent. It can be "NIXL_INIT_AGENT", local agent name, or remote agent name
             xfer_list: List of transfer descriptors, can be list of memory region tuples, tensors,
                 Nx3 numpy array, or nixlXferDList. See get_xfer_descs for more details on the structure.
-            mem_type: Optional memory type necessary for list of memory regions.
+                Nx5 numpy array is taken as a compressed (strided) list, where `count` blocks of `len`
+                bytes are spaced `stride` bytes apart (stride == len is dense), with start address
+                of `address`, in the form (address, len, device ID, stride, count).
+            mem_type: Optional memory type necessary for list of memory regions, mandatory for Nx5 arrays.
             backends: Optional list of backend names to limit which backends are used during preparation
 
         Returns:
             Opaque handle to the prepared transfer descriptor list.
         """
-        descs = self.get_xfer_descs(xfer_list, mem_type)
+        is_strided = (
+            isinstance(xfer_list, np.ndarray)
+            and xfer_list.ndim == 2
+            and xfer_list.shape[1] == 5
+        )
 
         is_local = agent_name == "NIXL_INIT_AGENT" or agent_name == ""
         if is_local:
@@ -525,9 +532,15 @@ class nixl_agent:
         for backend_string in backends:
             handle_list.append(self.backends[backend_string])
 
-        if is_local:
-            handle = self.agent.prepXferDlist(descs, handle_list)
+        if is_strided:
+            if mem_type is None:
+                raise ValueError("Please specify a mem type for strided descriptors")
+            # An Nx5 array carries no memory type, so it is passed separately
+            handle = self.agent.prepXferDlist(
+                agent_name, self.nixl_mems[mem_type], xfer_list, handle_list
+            )
         else:
+            descs = self.get_xfer_descs(xfer_list, mem_type)
             handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
         return nixl_prepped_dlist_handle(self.agent, handle)
 
@@ -725,6 +738,47 @@ class nixl_agent:
             handle: Handle to the descriptor list from make_prepped_dlist.
         """
         handle.release()
+
+    """
+    @brief Prepare a memory view handle for either a local or remote
+           descriptor list. The underlying pybind11 overloads of
+           nixlAgent::prepMemView are dispatched by the descriptor list type:
+             - Local : prep_mem_view(dlist: nixlXferDList, backends=[])
+             - Remote: prep_mem_view(dlist: nixlRemoteDList, backends=[])
+           Build the remote list with get_remote_descs.
+           Returns the raw uintptr handle; pair with release_mem_view to free.
+
+    @param dlist A local (nixlXferDList) or remote (nixlRemoteDList) dlist.
+    @param backends Optional list of backend names to limit the preparation to.
+    @return Opaque uintptr handle for the memory view.
+    @note Requires NIXL built against a UCX with the GPU device API (probe via
+          nixl._bindings.HAVE_UCX_GPU_DEVICE_API); otherwise the backend raises
+          nixlBackendError. The descriptors must reference device (VRAM) memory,
+          and an active CUDA context must already exist when the owning agent is
+          created. For a remote dlist, the remote agent's metadata -- including
+          the registered region being viewed -- must be loaded first via
+          add_remote_agent.
+    """
+
+    def prep_mem_view(
+        self,
+        dlist: Union[nixlBind.nixlXferDList, nixlBind.nixlRemoteDList],
+        *,
+        backends: Optional[list[str]] = None,
+    ) -> int:
+        handle_list = []
+        for backend_string in backends or []:
+            handle_list.append(self.backends[backend_string])
+        return self.agent.prepMemView(dlist, handle_list)
+
+    """
+    @brief Release a memory view handle previously returned by prep_mem_view.
+
+    @param mvh uintptr handle returned by prep_mem_view.
+    """
+
+    def release_mem_view(self, mvh: int) -> None:
+        self.agent.releaseMemView(mvh)
 
     def get_new_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
         """Get new notifications that have come to the agent.
@@ -1034,6 +1088,40 @@ class nixl_agent:
                 dlist[i, :] = (base_addr, region_len, gpu_id)
             mem_type = self._tensor_mem_type(descs[0])
             new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], dlist)
+        else:
+            new_descs = None
+
+        return new_descs
+
+    """
+    @brief Get nixlRemoteDList from different input types:
+            a) list of 4 element tuples (address, len, device ID, remote agent name)
+               alongside a mandatory memory type.
+            b) passes along if a nixlRemoteDList is given.
+
+    @param descs List of any of the above types.
+    @param mem_type Optional memory type necessary for (a).
+    @return Remote descriptor list, nixlRemoteDList.
+    """
+
+    def get_remote_descs(
+        self,
+        descs: Union[nixlBind.nixlRemoteDList, list[tuple]],
+        mem_type: Optional[str] = None,
+    ) -> nixlBind.nixlRemoteDList:
+        if isinstance(descs, nixlBind.nixlRemoteDList):
+            return descs
+        elif isinstance(descs[0], tuple):
+            if (mem_type is not None) and (len(descs[0]) == 4):
+                new_descs = nixlBind.nixlRemoteDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type")
+                new_descs = None
+            else:
+                logger.error(
+                    "4-tuple list (addr, len, dev_id, agent_name) needed for remote descriptors"
+                )
+                new_descs = None
         else:
             new_descs = None
 

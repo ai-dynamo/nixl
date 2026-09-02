@@ -14,20 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_TEST_DOCA_TELEMETRY_OPEN_METRICS_TEXT_PARSER_H
-#define NIXL_TEST_DOCA_TELEMETRY_OPEN_METRICS_TEXT_PARSER_H
+#ifndef NIXL_TEST_METRICS_OPEN_METRICS_TEXT_PARSER_H
+#define NIXL_TEST_METRICS_OPEN_METRICS_TEXT_PARSER_H
 
 // -----------------------------------------------------------------------------
 // Test-only helper -- NOT a production-grade or spec-complete parser.
 //
-// A minimal Prometheus/OpenMetrics text-exposition parser used solely by the
-// doca-telemetry unit tests to turn a scraped /metrics body into the in-memory
-// series model in timeseries.h. It handles only the narrow line grammar DOCA's
-// endpoint emits (documented below) and is intentionally strict so that an
-// exporter-format regression fails a test rather than being silently absorbed --
-// it is not a general OpenMetrics implementation (no HELP/TYPE metadata,
-// exemplars, quote escaping, etc.). Do not promote it into product code; use a
-// real parser there.
+// A minimal Prometheus/OpenMetrics text-exposition parser used by the exporter
+// unit tests to turn a scraped /metrics body into the in-memory series model in
+// timeseries.h. It handles only the narrow line grammar those endpoints emit
+// (documented below) and is intentionally strict so that an exporter-format
+// regression fails a test rather than being silently absorbed -- it is not a
+// general OpenMetrics implementation (no HELP/TYPE metadata, exemplars, quote
+// escaping, etc.). Do not promote it into product code; use a real parser there.
 // -----------------------------------------------------------------------------
 
 #include <algorithm>
@@ -41,11 +40,11 @@
 
 #include "timeseries.h"
 
-namespace nixl::doca_test {
+namespace nixl::metrics_test {
 
 // Parses a Prometheus / OpenMetrics text exposition body into time series.
 //
-// The grammar handled is the line format DOCA's endpoint serves:
+// The grammar handled is the line format the exporters' endpoints serve:
 //   name[{key="value"(,key="value")*}] value [timestamp]
 // Comment (`#`) and blank lines are skipped. The parser is deliberately strict --
 // a malformed label block (missing/doubled/trailing comma, repeated key, stray
@@ -189,6 +188,6 @@ namespace open_metrics_text {
 
 } // namespace open_metrics_text
 
-} // namespace nixl::doca_test
+} // namespace nixl::metrics_test
 
-#endif // NIXL_TEST_DOCA_TELEMETRY_OPEN_METRICS_TEXT_PARSER_H
+#endif // NIXL_TEST_METRICS_OPEN_METRICS_TEXT_PARSER_H

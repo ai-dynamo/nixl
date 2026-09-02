@@ -83,7 +83,7 @@ struct nixlLibfabricReq {
     bool in_use; ///< Pool management flag
     size_t chunk_offset; ///< Chunk offset for DATA requests
     size_t chunk_size; ///< Chunk size for DATA requests
-    std::function<void()> completion_callback; ///< Completion callback function
+    std::function<void(nixl_status_t)> completion_callback; ///< Completion callback function
     void *local_addr; ///< Local memory address for transfers
     uint64_t remote_addr; ///< Remote memory address for transfers
     struct fid_mr *local_mr; ///< Local memory registration for transfers
@@ -430,7 +430,10 @@ public:
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
 
     /** Initialize libfabric rail with all resources */
-    nixlLibfabricRail(const std::string &device, const std::string &provider, uint16_t id);
+    nixlLibfabricRail(const std::string &device,
+                      const std::string &provider,
+                      uint16_t id,
+                      enum fi_hmem_iface runtime);
 
     /** Destroy rail and cleanup all libfabric resources */
     ~nixlLibfabricRail();
@@ -669,6 +672,8 @@ private:
     mutable std::mutex mr_cache_mutex_;
     mutable std::atomic<uint64_t> mr_cache_hits_{0};
     mutable std::atomic<uint64_t> mr_cache_misses_{0};
+    // System runtime type (CUDA, NEURON, or SYSTEM) this rail was created for
+    enum fi_hmem_iface runtime_;
 
     void
     pollForCompletions();
