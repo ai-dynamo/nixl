@@ -110,6 +110,9 @@ private:
     reapReleasedReqs() const;
 
 public:
+    static nixl_b_params_t
+    getPluginParams();
+
     nixlPosixEngine(const nixlBackendInitParams *init_params);
     virtual ~nixlPosixEngine();
 
