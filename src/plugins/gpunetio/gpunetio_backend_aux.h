@@ -184,8 +184,8 @@ struct nixlDocaRdmaQp {
     uint32_t rqpn_notif;
     doca_verbs_gid remote_gid{};
     uint32_t remote_lid = 0;
-    bool data_programmed = false;
-    bool notif_programmed = false;
+    bool dataProgrammed = false;
+    bool notifProgrammed = false;
 };
 
 struct nixlDocaEngine;

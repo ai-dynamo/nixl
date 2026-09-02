@@ -769,7 +769,7 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
     NIXL_DEBUG << "connectClientRdmaQp: before lock";
     // std::lock_guard<std::mutex> lock(connectLock);
     std::unique_lock<std::mutex> lock(connectLock);
-    if (rdma_qp->data_programmed || rdma_qp->notif_programmed) {
+    if (rdma_qp->dataProgrammed || rdma_qp->notifProgrammed) {
         if (rdma_qp->rqpn_data != remote_qpn_data || rdma_qp->rqpn_notif != remote_qpn_notif ||
             rdma_qp->remote_lid != remote_lid ||
             memcmp(rdma_qp->remote_gid.raw, remote_gid.raw, sizeof(remote_gid.raw)) != 0) {
@@ -789,26 +789,26 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- data";
-    if (!rdma_qp->data_programmed) {
+    if (!rdma_qp->dataProgrammed) {
         result = connect_verbs_qp(
             this, rdma_qp->qp_data->get_qp(), remote_qpn_data, remote_gid, remote_lid);
         if (result != DOCA_SUCCESS) {
             NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
             return NIXL_ERR_BACKEND;
         }
-        rdma_qp->data_programmed = true;
+        rdma_qp->dataProgrammed = true;
     }
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- notif";
-    if (!rdma_qp->notif_programmed) {
+    if (!rdma_qp->notifProgrammed) {
         result = connect_verbs_qp(
             this, rdma_qp->qp_notif->get_qp(), remote_qpn_notif, remote_gid, remote_lid);
         if (result != DOCA_SUCCESS) {
             NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
             return NIXL_ERR_BACKEND;
         }
-        rdma_qp->notif_programmed = true;
+        rdma_qp->notifProgrammed = true;
     }
 
     // QP programming is complete even if the final ACK exchange later fails.
@@ -970,7 +970,7 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
     NIXL_DEBUG << "connectServerRdmaQp: before lock";
     // std::lock_guard<std::mutex> lock(connectLock);
     std::unique_lock<std::mutex> lock(connectLock);
-    if (rdma_qp->data_programmed || rdma_qp->notif_programmed) {
+    if (rdma_qp->dataProgrammed || rdma_qp->notifProgrammed) {
         if (rdma_qp->rqpn_data != remote_qpn_data || rdma_qp->rqpn_notif != remote_qpn_notif ||
             rdma_qp->remote_lid != remote_lid ||
             memcmp(rdma_qp->remote_gid.raw, remote_gid.raw, sizeof(remote_gid.raw)) != 0) {
@@ -990,26 +990,26 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- data";
-    if (!rdma_qp->data_programmed) {
+    if (!rdma_qp->dataProgrammed) {
         result = connect_verbs_qp(
             this, rdma_qp->qp_data->get_qp(), remote_qpn_data, remote_gid, remote_lid);
         if (result != DOCA_SUCCESS) {
             NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
             return NIXL_ERR_BACKEND;
         }
-        rdma_qp->data_programmed = true;
+        rdma_qp->dataProgrammed = true;
     }
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- notif";
-    if (!rdma_qp->notif_programmed) {
+    if (!rdma_qp->notifProgrammed) {
         result = connect_verbs_qp(
             this, rdma_qp->qp_notif->get_qp(), remote_qpn_notif, remote_gid, remote_lid);
         if (result != DOCA_SUCCESS) {
             NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
             return NIXL_ERR_BACKEND;
         }
-        rdma_qp->notif_programmed = true;
+        rdma_qp->notifProgrammed = true;
     }
 
     // QP programming is complete even if the final ACK exchange later fails.
