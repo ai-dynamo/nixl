@@ -383,13 +383,24 @@ nixlDocaEngine::~nixlDocaEngine() {
     }
 
     bool qps_closed = true;
+    bool retained_closed = true;
     for (auto &qp : qpMap) {
         const bool data_closed = qp.second->qp_data->close();
         const bool notif_closed = qp.second->qp_notif->close();
         qps_closed = data_closed && notif_closed && qps_closed;
     }
+    if (retainedQp_ != nullptr) {
+        const bool data_closed = retainedQp_->qp_data == nullptr || retainedQp_->qp_data->close();
+        const bool notif_closed =
+            retainedQp_->qp_notif == nullptr || retainedQp_->qp_notif->close();
+        retained_closed = data_closed && notif_closed;
+        qps_closed = retained_closed && qps_closed;
+    }
     if (!qps_closed) {
         NIXL_ERROR << "GPUNETIO QP unexport failed; retaining dependent resources";
+        if (!retained_closed) {
+            retainedQp_.release();
+        }
         return;
     }
 
@@ -397,6 +408,7 @@ nixlDocaEngine::~nixlDocaEngine() {
         delete qp.second;
     }
     qpMap.clear();
+    retainedQp_.reset();
 
     NIXL_DEBUG << "Before nixlDocaDestroyNotif ";
     for (auto notif : notifMap) {
@@ -650,6 +662,9 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     if (qpMap.find(remote_agent) != qpMap.end()) {
         return NIXL_IN_PROG;
     }
+    if (retainedQp_ != nullptr) {
+        return NIXL_ERR_BACKEND;
+    }
 
     NIXL_DEBUG << "DOCA addRdmaQp for remote " << remote_agent << std::endl;
 
@@ -685,6 +700,9 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
+        if (!rdma_qp->qp_data->close()) {
+            retainedQp_ = std::move(rdma_qp);
+        }
         return NIXL_ERR_BACKEND;
     }
 
@@ -1028,25 +1046,38 @@ nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
     nixlDocaConnection conn;
     size_t size = remote_conn_info.size();
     // TODO: eventually std::byte?
-    char *addr = new char[size];
+    auto addr = std::make_unique<char[]>(size);
 
     if (remoteConnMap.find(remote_agent) != remoteConnMap.end()) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlSerDes::_stringToBytes((void *)addr, remote_conn_info, size);
+    nixlSerDes::_stringToBytes((void *)addr.get(), remote_conn_info, size);
 
-    int ret = oob_connection_client_setup(addr, &oob_sock_client);
+    int ret = oob_connection_client_setup(addr.get(), &oob_sock_client);
     if (ret < 0) {
         NIXL_ERROR << "Can't connect to server " << ret;
         return NIXL_ERR_BACKEND;
     }
 
     NIXL_INFO << "loadRemoteConnInfo calling addRdmaQp for " << remote_agent.c_str();
-    sendLocalAgentName(oob_sock_client);
-    addRdmaQp(remote_agent);
-    nixlDocaInitNotif(remote_agent, ddev, gdevs[0].second);
-    connectClientRdmaQp(oob_sock_client, remote_agent);
+    nixl_status_t status = sendLocalAgentName(oob_sock_client);
+    if (status == NIXL_SUCCESS) {
+        status = addRdmaQp(remote_agent);
+        if (status == NIXL_IN_PROG) {
+            status = NIXL_SUCCESS;
+        }
+    }
+    if (status == NIXL_SUCCESS) {
+        status = nixlDocaInitNotif(remote_agent, ddev, gdevs[0].second);
+    }
+    if (status == NIXL_SUCCESS) {
+        status = connectClientRdmaQp(oob_sock_client, remote_agent);
+    }
+    if (status != NIXL_SUCCESS) {
+        close(oob_sock_client);
+        return status;
+    }
 
     conn.remoteAgent = remote_agent;
     conn.connected = true;
@@ -1059,8 +1090,6 @@ nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
     NIXL_INFO << "DOCA loadRemoteConnInfo connected agent " << remote_agent;
 
     close(oob_sock_client);
-
-    delete[] addr;
 
     return NIXL_SUCCESS;
 }

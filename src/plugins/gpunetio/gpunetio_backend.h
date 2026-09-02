@@ -182,6 +182,7 @@ private:
     // Map of agent name to saved nixlDocaConnection info
     std::unordered_map<std::string, nixlDocaConnection> remoteConnMap;
     std::unordered_map<std::string, struct nixlDocaRdmaQp *> qpMap;
+    std::unique_ptr<nixlDocaRdmaQp> retainedQp_;
     std::unordered_map<std::string, int> connMap;
     std::unordered_map<std::string, struct nixlDocaNotif *> notifMap;
 
