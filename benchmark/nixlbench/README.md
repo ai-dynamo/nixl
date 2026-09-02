@@ -511,8 +511,6 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 **GPUNETIO Backend:**
 ```
 --gpunetio_device_list LIST # Comma-separated GPU CUDA device id for GPUNETIO
---gpunetio_oob_list IFACE  # OOB interface; set explicitly for bonded network devices
---gpunetio_gid_index N     # RoCE GID table index (default: 0)
 ```
 
 **OBJ (S3) Backend:**

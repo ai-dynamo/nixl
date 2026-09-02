@@ -264,8 +264,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         if (result != DOCA_SUCCESS) {
             rollbackOobDiscoveryFailure(gdevs, verbs_ah_attr, ddev, verbs_pd, verbs_context);
             throw std::invalid_argument(
-                "Failed to determine the GPUNETIO IPv4 address; set oob_interface explicitly "
-                "when using a bonded network device");
+                "Failed to determine the GPUNETIO IPv4 address; set oob_interface explicitly");
         }
         NIXL_DEBUG << "DOCA IP address " << static_cast<unsigned>(ipv4_addr[0]) << " "
                    << static_cast<unsigned>(ipv4_addr[1]) << " "
