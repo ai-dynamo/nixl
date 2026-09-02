@@ -195,7 +195,7 @@ nixlMooncakeEngine::releaseReqHTent(nixlMooncakeBackendReqH *priv) const {
         {
             std::lock_guard<std::mutex> lock(parked_mutex_);
             parked_batches_.push_back(priv->batch_id);
-            if (parked_batches_.size() >= kParkedBatchWarnAt) {
+            if (parked_batches_.size() >= parked_batch_warn_at) {
                 NIXL_WARN << "Mooncake TENT is holding " << parked_batches_.size()
                           << " batches that have not settled after cancellation";
             }

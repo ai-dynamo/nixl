@@ -35,7 +35,7 @@ constexpr uint64_t kTentInvalidBatch = 0;
 // entries through a bad patch is normal, and the sweep stays a linear pass over
 // that. This threshold is for a queue that is not draining at all, which means
 // cancellation is broken rather than slow.
-constexpr size_t kParkedBatchWarnAt = 256;
+constexpr size_t parked_batch_warn_at = 256;
 // The TENT C notification record is {char name[256]; char msg[4096]} and the
 // receive path copies with strncpy, silently truncating anything longer. A
 // truncated notification is worse than a rejected one.
