@@ -400,6 +400,11 @@ nixl_status_t
 nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev, doca_gpu *gpu) {
     struct nixlDocaNotif *notif;
 
+    const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+    if (completion_status != NIXL_SUCCESS) {
+        return completion_status;
+    }
+
     std::lock_guard<std::mutex> lock(notifLock);
     // Same peer can be server or client
     if (notifMap.find(remote_agent) != notifMap.end()) {
@@ -454,8 +459,12 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu =
         qpMap[remote_agent]->qp_notif->get_qp_gpu_dev();
-    while (((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu != nullptr)
-        ;
+    while (((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu != nullptr) {
+        const nixl_status_t wait_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+        if (wait_status != NIXL_SUCCESS) {
+            return wait_status;
+        }
+    }
 
     NIXL_INFO << "nixlDocaInitNotif added new qp for " << remote_agent << std::endl;
 
@@ -1234,6 +1243,10 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+    if (completion_status != NIXL_SUCCESS) {
+        return completion_status;
+    }
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
 
     for (uint32_t idx = treq->start_pos; idx < treq->end_pos; idx++) {
@@ -1272,7 +1285,7 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
             *((volatile uint8_t *)&xferReqRingCpu[idx].in_use) = 0;
             NIXL_INFO << "DOCA checkXfer pos " << idx << " compl_idx " << completion_index
                       << " COMPLETED!\n";
-            return NIXL_SUCCESS;
+            return nixl::gpunetio::completionStatus(wait_exit_cpu);
         } else
             return NIXL_IN_PROG;
     }
@@ -1305,11 +1318,23 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
     // while getNotifs is running
     std::lock_guard<std::mutex> lock(notifLock);
     for (auto &notif : notifMap) {
+        const nixl_status_t preflight_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+        if (preflight_status != NIXL_SUCCESS) {
+            return preflight_status;
+        }
         ((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu =
             qpMap[notif.first]->qp_notif->get_qp_gpu_dev();
         std::atomic_thread_fence(std::memory_order_seq_cst);
-        while (((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu != nullptr)
-            ;
+        while (((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu != nullptr) {
+            const nixl_status_t wait_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+            if (wait_status != NIXL_SUCCESS) {
+                return wait_status;
+            }
+        }
+        const nixl_status_t progress_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+        if (progress_status != NIXL_SUCCESS) {
+            return progress_status;
+        }
         num_msg = ((volatile struct docaNotif *)notif_progress_cpu)->msg_num;
         while (num_msg > 0) {
             recv_idx = notif.second->recv_pi.load() & (DOCA_MAX_NOTIF_INFLIGHT - 1);
@@ -1360,6 +1385,11 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     uint32_t buf_idx;
     uintptr_t msg_buf;
 
+    const nixl_status_t completion_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+    if (completion_status != NIXL_SUCCESS) {
+        return completion_status;
+    }
+
     auto searchNotif = notifMap.find(remote_agent);
     if (searchNotif == notifMap.end()) {
         NIXL_ERROR << "genNotif: can't find notif for remote_agent " << remote_agent << std::endl;
@@ -1397,8 +1427,12 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_send_cpu)->qp_gpu =
         searchQp->second->qp_notif->get_qp_gpu_dev();
-    while (((volatile struct docaNotif *)notif_send_cpu)->qp_gpu != nullptr)
-        ;
+    while (((volatile struct docaNotif *)notif_send_cpu)->qp_gpu != nullptr) {
+        const nixl_status_t wait_status = nixl::gpunetio::completionStatus(wait_exit_cpu);
+        if (wait_status != NIXL_SUCCESS) {
+            return wait_status;
+        }
+    }
 
-    return NIXL_SUCCESS;
+    return nixl::gpunetio::completionStatus(wait_exit_cpu);
 }

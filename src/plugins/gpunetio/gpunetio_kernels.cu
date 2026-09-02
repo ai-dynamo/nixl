@@ -281,9 +281,23 @@ kernel_progress(struct docaXferCompletion *completion_list,
                                     .key = completion_list[index].xferReqRingGpu->lkey_notif},
                                 completion_list[index].xferReqRingGpu->msg_sz,
                                 &out_ticket);
-
-                            doca_gpu_dev_verbs_wait(completion_list[index].xferReqRingGpu->qp_notif,
-                                                    &out_ticket);
+                            int notif_status;
+                            do {
+                                notif_status = nixl_gpunetio_dev_poll_one_cq_at<
+                                    DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+                                    DOCA_GPUNETIO_VERBS_QP_SQ>(
+                                    doca_gpu_dev_verbs_qp_get_cq_sq(
+                                        completion_list[index].xferReqRingGpu->qp_notif),
+                                    out_ticket);
+                            } while (notif_status == EBUSY &&
+                                     DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0);
+                            if (notif_status != 0) {
+                                DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
+                                printf("kernel_progress: notification CQ error %d wqe %ld\n",
+                                       notif_status,
+                                       out_ticket);
+                                continue;
+                            }
 #if ENABLE_DEBUG == 1
                             printf("Notif correctly sent %ld\n", out_ticket);
 #endif
@@ -380,15 +394,28 @@ kernel_progress(struct docaXferCompletion *completion_list,
                                             .key = notif_send_gpu->msg_lkey},
                     notif_send_gpu->msg_size,
                     &out_ticket);
-
-                doca_gpu_dev_verbs_wait(notif_send_gpu->qp_gpu, &out_ticket);
+                int notif_status;
+                do {
+                    notif_status = nixl_gpunetio_dev_poll_one_cq_at<
+                        DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+                        DOCA_GPUNETIO_VERBS_QP_SQ>(
+                        doca_gpu_dev_verbs_qp_get_cq_sq(notif_send_gpu->qp_gpu), out_ticket);
+                } while (notif_status == EBUSY && DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0);
+                if (notif_status != 0) {
+                    DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
+                    printf("kernel_progress: standalone notification CQ error %d wqe %ld\n",
+                           notif_status,
+                           out_ticket);
+                }
 #if ENABLE_DEBUG == 1
-                printf("Notif correctly sent %ld addr %lx msg_lkey %x qp %p size %d\n",
-                       out_ticket,
-                       notif_send_gpu->msg_buf,
-                       notif_send_gpu->msg_lkey,
-                       (void *)notif_send_gpu->qp_gpu,
-                       (int)notif_send_gpu->msg_size);
+                if (notif_status == 0) {
+                    printf("Notif correctly sent %ld addr %lx msg_lkey %x qp %p size %d\n",
+                           out_ticket,
+                           notif_send_gpu->msg_buf,
+                           notif_send_gpu->msg_lkey,
+                           (void *)notif_send_gpu->qp_gpu,
+                           (int)notif_send_gpu->msg_size);
+                }
 #endif
                 DOCA_GPUNETIO_VOLATILE(notif_send_gpu->qp_gpu) = nullptr;
             }
