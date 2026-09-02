@@ -189,23 +189,28 @@ nixlPosixBackendReqH::queueResult(nixl_status_t queue_result) {
     }
 
     requestCancellation();
-    if (queue_result < 0 && cancels_expected_ == 0) {
-        return queue_result;
-    }
-
     if (!isComplete()) {
         return NIXL_IN_PROG;
+    }
+    if (queue_result < 0) {
+        return queue_result;
     }
     return transfer_failed_ ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlPosixBackendReqH::checkXfer() {
-    nixl_status_t queue_result = isComplete() ? NIXL_SUCCESS : io_queue_->poll();
-    if (queue_result < 0 && !isComplete()) {
-        return queue_result;
+    if (isComplete()) {
+        return queueResult(NIXL_SUCCESS);
     }
-    return queueResult(isComplete() ? NIXL_SUCCESS : queue_result);
+
+    nixl_status_t status = io_queue_->poll();
+    if (status < 0) {
+        // poll() errors are terminal and queue-wide. Outstanding work may remain.
+        return status;
+    }
+
+    return queueResult(status);
 }
 
 nixl_status_t
@@ -220,6 +225,7 @@ nixlPosixBackendReqH::postXfer() {
     cancels_expected_ = 0;
     cancels_seen_ = 0;
 
+    int num_enqueued_ios = 0;
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();
          ++local_it, ++remote_it) {
@@ -235,8 +241,11 @@ nixlPosixBackendReqH::postXfer() {
         if (status != NIXL_SUCCESS) {
             // Currently we do not support partial submissions, so it's all or nothing
             NIXL_ERROR << absl::StrFormat("Error preparing I/O operation: %d", status);
-            return status;
+            // Account for the never-enqueued suffix; cancellation callbacks account for the prefix.
+            num_confirmed_ios_ = queue_depth_ - num_enqueued_ios;
+            return queueResult(status);
         }
+        num_enqueued_ios++;
     }
 
     return queueResult(io_queue_->post());
