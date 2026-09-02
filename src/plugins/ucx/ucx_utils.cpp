@@ -454,7 +454,16 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
 
     ucp_params_t ucp_params;
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES | UCP_PARAM_FIELD_MT_WORKERS_SHARED;
-    ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64 | UCP_FEATURE_AM;
+    ucp_params.features = UCP_FEATURE_RMA | UCP_FEATURE_AMO32 | UCP_FEATURE_AMO64;
+
+#ifdef HAVE_UCP_CTRL_FEATURES
+    ucp_params.field_mask |= UCP_PARAM_FIELD_CTRL_FEATURES;
+    ucp_params.ctrl_features = UCP_FEATURE_AM;
+    NIXL_DEBUG << "UCX control features supported, requesting AM as a control feature";
+#else
+    ucp_params.features |= UCP_FEATURE_AM;
+    NIXL_DEBUG << "UCX control features not supported, requesting AM as a data feature";
+#endif
 
     if (!name_.empty()) {
         ucp_params.field_mask |= UCP_PARAM_FIELD_NAME;

@@ -441,6 +441,22 @@ if ucx_dep.found()
     endif
 endif
 
+# UCX control features detection. UCP_PARAM_FIELD_CTRL_FEATURES is an enumerator
+# rather than a macro, so it cannot be probed with #ifdef.
+if ucx_dep.found()
+    have_ucx_ctrl_features = cpp.has_header_symbol('ucp/api/ucp.h',
+        'UCP_PARAM_FIELD_CTRL_FEATURES',
+        dependencies: ucx_dep)
+
+    if have_ucx_ctrl_features
+        add_project_arguments('-DHAVE_UCP_CTRL_FEATURES', language: 'cpp')
+    endif
+
+    summary({
+        'UCX control features' : have_ucx_ctrl_features,
+    }, section: 'UCX', bool_yn: true)
+endif
+
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
