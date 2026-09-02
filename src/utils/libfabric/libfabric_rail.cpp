@@ -729,7 +729,7 @@ nixlLibfabricRail::setXferIdCallback(std::function<void(uint64_t, uint16_t)> cal
 
 void
 nixlLibfabricRail::setXferErrorCallback(
-    std::function<void(uint16_t, uint16_t, nixl_status_t, uint32_t)> callback) {
+    std::function<void(uint16_t, uint16_t, uint32_t)> callback) {
     xferErrorCallback = callback;
 }
 
@@ -990,13 +990,10 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
         } else if (xferErrorCallback) {
             XferErrorPayload payload;
             memcpy(&payload, req->buffer, sizeof(payload));
-            const auto error_status = static_cast<nixl_status_t>(payload.error_status);
             NIXL_DEBUG << "Received transfer-error message on rail " << rail_id
                        << " XFER_ID=" << xfer_id << " agent_idx=" << agent_idx
-                       << " error_status=" << error_status
                        << " final_completions=" << payload.final_completions;
-            xferErrorCallback(
-                static_cast<uint16_t>(xfer_id), agent_idx, error_status, payload.final_completions);
+            xferErrorCallback(static_cast<uint16_t>(xfer_id), agent_idx, payload.final_completions);
         } else {
             NIXL_ERROR << "No transfer-error callback set on rail " << rail_id;
             result = NIXL_ERR_BACKEND;

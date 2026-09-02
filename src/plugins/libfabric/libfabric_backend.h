@@ -241,7 +241,6 @@ private:
         uint32_t total_message_length; // Total length of complete message (all fragments)
         uint16_t agent_name_length; // Length of agent_name in combined payload
         bool xfer_failed; // Initiator reported the transfer failed; stop waiting for its writes
-        nixl_status_t error_status; // Status the initiator reported
 
         PendingNotification(uint16_t xfer_id)
             : notif_xfer_id(xfer_id),
@@ -251,8 +250,7 @@ private:
               received_msg_fragments(0),
               total_message_length(0),
               agent_name_length(0),
-              xfer_failed(false),
-              error_status(NIXL_SUCCESS) {}
+              xfer_failed(false) {}
     };
 
     // O(1) lookup with composite key = (sender_peer_idx << 16) | notif_xfer_id.
@@ -295,15 +293,11 @@ private:
     nixl_status_t
     notifXferErrorPriv(const std::string &remote_agent,
                        uint16_t notif_xfer_id,
-                       nixl_status_t error_status,
                        uint32_t final_completions) const;
 
     // Receiver-side handler for NIXL_LIBFABRIC_MSG_XFER_ERROR
     void
-    handleXferError(uint16_t notif_xfer_id,
-                    uint16_t sender_peer_idx,
-                    nixl_status_t error_status,
-                    uint32_t final_completions);
+    handleXferError(uint16_t notif_xfer_id, uint16_t sender_peer_idx, uint32_t final_completions);
 
     // Tell the target once that this transfer failed, so it stops waiting for writes that never
     // went out. Called only from checkXfer: an asynchronous post failure must not turn postXfer

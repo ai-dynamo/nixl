@@ -127,16 +127,14 @@ struct BinaryNotificationHeader {
 } __attribute__((packed));
 
 /**
- * @brief Payload of a NIXL_LIBFABRIC_MSG_XFER_ERROR control message (8 bytes)
+ * @brief Payload of a NIXL_LIBFABRIC_MSG_XFER_ERROR control message (4 bytes)
  *
  * The transfer this refers to is identified by the xfer_id embedded in the immediate data, so the
- * payload only carries the failing status and how many of the transfer's writes actually
- * completed. The initiator's count is authoritative: the target lowers its expected completion
- * count to final_completions so that it waits for exactly the writes that will arrive, and no
- * longer waits for the ones that failed.
+ * payload only carries how many of the transfer's writes actually completed. The initiator's count
+ * is authoritative: the target lowers its expected completion count to final_completions so that it
+ * waits for exactly the writes that will arrive, and no longer waits for the ones that failed.
  */
 struct XferErrorPayload {
-    int32_t error_status; // nixl_status_t the transfer failed with
     uint32_t final_completions; // Writes that completed on the initiator and will reach the target
 } __attribute__((packed));
 

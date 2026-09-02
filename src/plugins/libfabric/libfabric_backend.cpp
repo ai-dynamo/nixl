@@ -550,9 +550,8 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
         rail_manager_.getRail(notification_rail_id)
             .setXferErrorCallback([this](uint16_t notif_xfer_id,
                                          uint16_t sender_peer_idx,
-                                         nixl_status_t error_status,
                                          uint32_t final_completions) {
-                handleXferError(notif_xfer_id, sender_peer_idx, error_status, final_completions);
+                handleXferError(notif_xfer_id, sender_peer_idx, final_completions);
             });
 
         // Set up XFER_ID tracking callbacks for all rails
@@ -1891,7 +1890,6 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
 nixl_status_t
 nixlLibfabricEngine::notifXferErrorPriv(const std::string &remote_agent,
                                         uint16_t notif_xfer_id,
-                                        nixl_status_t error_status,
                                         uint32_t final_completions) const {
     std::shared_ptr<nixlLibfabricConnection> connection;
     {
@@ -1915,7 +1913,6 @@ nixlLibfabricEngine::notifXferErrorPriv(const std::string &remote_agent,
     }
 
     XferErrorPayload payload{};
-    payload.error_status = static_cast<int32_t>(error_status);
     payload.final_completions = final_completions;
     memcpy(control_request->buffer, &payload, sizeof(payload));
     control_request->buffer_size = sizeof(payload);
@@ -1960,7 +1957,7 @@ nixlLibfabricEngine::notifXferErrorPriv(const std::string &remote_agent,
     }
 
     NIXL_DEBUG << "Sent transfer-error message to " << remote_agent << " XFER_ID=" << notif_xfer_id
-               << " error_status=" << error_status;
+               << " final_completions=" << final_completions;
     return NIXL_SUCCESS;
 }
 
@@ -1985,10 +1982,8 @@ nixlLibfabricEngine::notifXferFailure(nixlLibfabricBackendH *backend_handle,
                << backend_handle->get_submitted_requests_count()
                << " writes completed; notifying target so it does not wait for the rest";
 
-    nixl_status_t status = notifXferErrorPriv(backend_handle->remote_agent_,
-                                              backend_handle->post_xfer_id,
-                                              error_status,
-                                              final_completions);
+    nixl_status_t status = notifXferErrorPriv(
+        backend_handle->remote_agent_, backend_handle->post_xfer_id, final_completions);
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Could not notify " << backend_handle->remote_agent_
                    << " of the transfer error for XFER_ID=" << backend_handle->post_xfer_id
@@ -2173,7 +2168,6 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
 void
 nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
                                      uint16_t sender_peer_idx,
-                                     nixl_status_t error_status,
                                      uint32_t final_completions) {
     {
         std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
@@ -2189,11 +2183,10 @@ nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
         }
 
         it->second.xfer_failed = true;
-        it->second.error_status = error_status;
         it->second.expected_completions = final_completions;
 
         NIXL_ERROR << "Initiator reported a failed transfer: sender_peer_idx=" << sender_peer_idx
-                   << " notif_xfer_id=" << notif_xfer_id << " error_status=" << error_status
+                   << " notif_xfer_id=" << notif_xfer_id
                    << " received_completions=" << it->second.received_completions
                    << " expected_completions=" << it->second.expected_completions
                    << (inserted ? " (error arrived before the notification)" : "")
@@ -2260,8 +2253,8 @@ nixlLibfabricEngine::checkPendingNotifications() {
             if (it->second.xfer_failed) {
                 NIXL_WARN << "Releasing the notification for notif_xfer_id="
                           << it->second.notif_xfer_id
-                          << " whose transfer failed on the initiator with status "
-                          << it->second.error_status << "; only " << it->second.received_completions
+                          << " whose transfer failed on the initiator; only "
+                          << it->second.received_completions
                           << " writes arrived, so the data for this transfer is incomplete";
             }
 
