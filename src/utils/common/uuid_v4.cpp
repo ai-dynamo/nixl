@@ -22,8 +22,19 @@
 
 namespace nixl {
 
+void
+generateRandomBytes(std::uint8_t *output, std::size_t size) {
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<std::uint8_t> dis(0, 255);
+
+    for (std::size_t i = 0; i < size; ++i) {
+        output[i] = dis(gen);
+    }
+}
+
 UUIDv4::UUIDv4() {
-    generate_random_bytes(data.data(), data.size());
+    generateRandomBytes(data.data(), data.size());
     // Set version 4 bits (version 4 = 0100 in binary)
     data[6] = (data[6] & 0x0F) | 0x40;
     // Set variant bits (RFC 9562 variant = 10 in binary)
@@ -44,17 +55,6 @@ UUIDv4::to_string() const {
     }
 
     return oss.str();
-}
-
-void
-UUIDv4::generate_random_bytes(uint8_t *output, size_t size) {
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint8_t> dis(0, 255);
-
-    for (size_t i = 0; i < size; ++i) {
-        output[i] = dis(gen);
-    }
 }
 
 } // namespace nixl

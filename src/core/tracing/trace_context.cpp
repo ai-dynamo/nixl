@@ -131,13 +131,12 @@ nixl::trace::TraceContext
 nixl::trace::generateTraceContext() {
     nixl::trace::TraceContext context;
     do {
-        context.traceId = nixl::UUIDv4{}.get_data();
+        nixl::generateRandomBytes(context.traceId.data(), context.traceId.size());
     } while (isAllZero(context.traceId));
     context.flags = 0x02;
 
     do {
-        const auto span_source = nixl::UUIDv4{}.get_data();
-        std::copy_n(span_source.begin(), context.spanId.size(), context.spanId.begin());
+        nixl::generateRandomBytes(context.spanId.data(), context.spanId.size());
     } while (isAllZero(context.spanId));
     return context;
 }
