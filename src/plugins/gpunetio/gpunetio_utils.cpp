@@ -386,11 +386,22 @@ threadProgressFunc(void *arg) {
 
         // cuCtxSetCurrent(eng->main_cuda_ctx);
 
-        eng->recvRemoteAgentName(oob_sock_client, remote_agent);
-
-        eng->addRdmaQp(remote_agent);
-        eng->nixlDocaInitNotif(remote_agent, eng->ddev, eng->gdevs[0].second);
-        eng->connectServerRdmaQp(oob_sock_client, remote_agent);
+        nixl_status_t status = eng->recvRemoteAgentName(oob_sock_client, remote_agent);
+        if (status == NIXL_SUCCESS) {
+            status = eng->addRdmaQp(remote_agent);
+            if (status == NIXL_IN_PROG) {
+                status = NIXL_SUCCESS;
+            }
+        }
+        if (status == NIXL_SUCCESS) {
+            status = eng->nixlDocaInitNotif(remote_agent, eng->ddev, eng->gdevs[0].second);
+        }
+        if (status == NIXL_SUCCESS) {
+            status = eng->connectServerRdmaQp(oob_sock_client, remote_agent);
+        }
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to set up GPUNETIO connection for " << remote_agent;
+        }
         close(oob_sock_client);
 
         /* Wait for predefined number of */

@@ -965,25 +965,38 @@ nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
     nixlDocaConnection conn;
     size_t size = remote_conn_info.size();
     // TODO: eventually std::byte?
-    char *addr = new char[size];
+    auto addr = std::make_unique<char[]>(size);
 
     if (remoteConnMap.find(remote_agent) != remoteConnMap.end()) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlSerDes::_stringToBytes((void *)addr, remote_conn_info, size);
+    nixlSerDes::_stringToBytes((void *)addr.get(), remote_conn_info, size);
 
-    int ret = oob_connection_client_setup(addr, &oob_sock_client);
+    int ret = oob_connection_client_setup(addr.get(), &oob_sock_client);
     if (ret < 0) {
         NIXL_ERROR << "Can't connect to server " << ret;
         return NIXL_ERR_BACKEND;
     }
 
     NIXL_INFO << "loadRemoteConnInfo calling addRdmaQp for " << remote_agent.c_str();
-    sendLocalAgentName(oob_sock_client);
-    addRdmaQp(remote_agent);
-    nixlDocaInitNotif(remote_agent, ddev, gdevs[0].second);
-    connectClientRdmaQp(oob_sock_client, remote_agent);
+    nixl_status_t status = sendLocalAgentName(oob_sock_client);
+    if (status == NIXL_SUCCESS) {
+        status = addRdmaQp(remote_agent);
+        if (status == NIXL_IN_PROG) {
+            status = NIXL_SUCCESS;
+        }
+    }
+    if (status == NIXL_SUCCESS) {
+        status = nixlDocaInitNotif(remote_agent, ddev, gdevs[0].second);
+    }
+    if (status == NIXL_SUCCESS) {
+        status = connectClientRdmaQp(oob_sock_client, remote_agent);
+    }
+    if (status != NIXL_SUCCESS) {
+        close(oob_sock_client);
+        return status;
+    }
 
     conn.remoteAgent = remote_agent;
     conn.connected = true;
@@ -996,8 +1009,6 @@ nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
     NIXL_INFO << "DOCA loadRemoteConnInfo connected agent " << remote_agent;
 
     close(oob_sock_client);
-
-    delete[] addr;
 
     return NIXL_SUCCESS;
 }
