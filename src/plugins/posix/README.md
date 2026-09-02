@@ -26,6 +26,22 @@ Optionally POSIX plugin can also use liburing.
 `"<modes>:<path>"` string in `metaInfo` (path-mode, backend owns the
 open/close); see [`src/utils/file/README.md`](../../utils/file/README.md#path-mode-file-registration).
 
+## io_uring path opens
+
+When `use_uring=true`, path-mode files are opened asynchronously by default.
+File registration can therefore return before the open completes and will not
+reliably report open errors. Such errors are reported when a transfer uses the
+file.
+
+Set `uring_open_synchronous=true` when file registration must wait for the open
+and report any open error directly. This option defaults to `false` and is
+ignored unless io_uring is selected.
+
+```cpp
+params["use_uring"] = "true";
+params["uring_open_synchronous"] = "true";
+```
+
 ## Dependencies
 To enable Linux AIO support, you need to install the libaio package:
 

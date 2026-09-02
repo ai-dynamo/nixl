@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstring>
 #include <dlfcn.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <iostream>
 #include <liburing.h>
@@ -20,6 +21,9 @@
 #ifndef LIBURING_NOEXCEPT
 #define LIBURING_NOEXCEPT
 #endif
+
+int
+runPosixUringPathAgentTest();
 
 namespace {
 constexpr int request_count = 32, ring_entries = 16, max_poll_iterations = 2000;
@@ -126,6 +130,102 @@ struct uringRequest {
           request(operation, local, remote, test.queue) {}
 };
 
+int
+countProcessFds();
+
+bool
+runEagerPathModeTest() {
+    char path[] = "/tmp/nixl_uring_eager_path_test_XXXXXX";
+    int fd = mkstemp(path);
+    if (fd < 0) {
+        return false;
+    }
+
+    std::array<char, block_size> expected;
+    expected.fill(0x5a);
+    bool success =
+        write(fd, expected.data(), expected.size()) == static_cast<ssize_t>(expected.size());
+    close(fd);
+    if (!success) {
+        unlink(path);
+        return false;
+    }
+
+    auto queue = nixlPosixIOQueue::instantiate("URING", 64, ring_entries);
+    if (!queue) {
+        unlink(path);
+        return false;
+    }
+    const int fds_before_open = countProcessFds();
+    if (fds_before_open < 0) {
+        unlink(path);
+        return false;
+    }
+
+    constexpr int dev_id = 1;
+    std::array<char, block_size> buffer{};
+    completionState state;
+    // A transfer posted before the open CQE is reaped must remain deferred until poll().
+    success = queue->registerFile(dev_id, std::string("ro:") + path) == NIXL_SUCCESS &&
+        queue->enqueue(dev_id, buffer.data(), buffer.size(), 0, true, completionCallback, &state) ==
+            NIXL_SUCCESS &&
+        queue->deregisterFile(dev_id) == NIXL_ERR_NOT_ALLOWED && queue->post() == NIXL_IN_PROG &&
+        state.count == 0;
+
+    for (int i = 0; success && state.count == 0 && i < max_poll_iterations; ++i) {
+        success = queue->poll() >= 0;
+        std::this_thread::sleep_for(poll_pause);
+    }
+
+    success = success && state.count == 1 && state.errors == 0 && buffer == expected;
+
+    if (queue->deregisterFile(dev_id) != NIXL_SUCCESS) {
+        success = false;
+    }
+    success = success && countProcessFds() == fds_before_open;
+
+    unlink(path);
+    return success;
+}
+
+int
+countProcessFds() {
+    DIR *dir = opendir("/proc/self/fd");
+    if (!dir) {
+        return -1;
+    }
+    int count = 0;
+    while (readdir(dir)) {
+        ++count;
+    }
+    closedir(dir);
+    return count;
+}
+
+bool
+runEagerOpenShutdownTest() {
+    const int before = countProcessFds();
+    if (before < 0) {
+        return false;
+    }
+
+    {
+        auto queue = nixlPosixIOQueue::instantiate("URING", 1, ring_entries);
+        if (!queue) {
+            return false;
+        }
+
+        for (int i = 0; i < request_count; ++i) {
+            if (queue->registerFile(i, "ro:/dev/null") != NIXL_SUCCESS) {
+                return false;
+            }
+        }
+        // Queue destruction must reap pending OPENAT CQEs and close every resulting fd.
+    }
+
+    return countProcessFds() == before;
+}
+
 #define URING_CHECK(condition)                                                        \
     do {                                                                              \
         if (!(condition)) {                                                           \
@@ -166,8 +266,7 @@ io_uring_submit(struct io_uring *ring) LIBURING_NOEXCEPT {
 int
 main() {
     io_uring probe_ring{};
-    io_uring_params probe_params{};
-    int probe_ret = io_uring_queue_init_params(ring_entries, &probe_ring, &probe_params);
+    int probe_ret = io_uring_queue_init(ring_entries, &probe_ring, 0);
     if (probe_ret < 0) {
         std::cerr << "io_uring backend test requires a usable ring: " << std::strerror(-probe_ret)
                   << " (" << probe_ret << ")" << std::endl;
@@ -215,5 +314,11 @@ main() {
         URING_CHECK(cancelled_status == NIXL_SUCCESS || cancelled_status == NIXL_ERR_BACKEND);
         URING_CHECK(test.drain() == NIXL_SUCCESS && cancel_completions == 1);
     }
+
+    URING_CHECK(runEagerPathModeTest());
+    URING_CHECK(runEagerOpenShutdownTest());
+    URING_CHECK(runPosixUringPathAgentTest() == 0);
+    std::cout << "io_uring eager path opens: regular-fd=tested" << std::endl;
+
     return 0;
 }

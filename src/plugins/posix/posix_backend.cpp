@@ -233,9 +233,8 @@ nixlPosixBackendReqH::postXfer() {
                                                   this);
 
         if (status != NIXL_SUCCESS) {
-            // Currently we do not support partial submissions, so it's all or nothing
             NIXL_ERROR << absl::StrFormat("Error preparing I/O operation: %d", status);
-            return status;
+            return queueResult(status);
         }
     }
 
@@ -256,6 +255,7 @@ nixlPosixEngine::getPluginParams() {
 #endif
 #ifdef HAVE_LIBURING
     params["use_uring"] = "false";
+    params["uring_open_synchronous"] = "false";
 #endif
 #ifdef HAVE_POSIXAIO
     params["use_posix_aio"] = "false";
@@ -266,10 +266,14 @@ nixlPosixEngine::getPluginParams() {
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       io_queue_type_(getIoQueueType(init_params->customParams)),
+      uring_open_synchronous_(nixl::getBackendParamDefaulted(init_params->customParams,
+                                                             "uring_open_synchronous",
+                                                             false)),
       io_queue_(nixlPosixIOQueue::instantiate(
           io_queue_type_,
           nixl::getBackendParamDefaulted(init_params->customParams, "ios_pool_size", 0u),
-          nixl::getBackendParamDefaulted(init_params->customParams, "kernel_queue_size", 0u))),
+          nixl::getBackendParamDefaulted(init_params->customParams, "kernel_queue_size", 0u),
+          uring_open_synchronous_)),
       io_queue_lock_(init_params->syncMode) {
     if (io_queue_type_.empty()) {
         initErr = true;
@@ -310,13 +314,13 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
                 if (status != NIXL_SUCCESS) {
                     return status;
                 }
+                resv.commit();
                 out = file_md.release();
             }
             catch (const std::system_error &e) {
                 NIXL_ERROR << "POSIX path-mode open failed: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
-            resv.commit();
         }
         return NIXL_SUCCESS;
     }

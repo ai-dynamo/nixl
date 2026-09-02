@@ -23,15 +23,21 @@
 
 #ifdef HAVE_POSIXAIO
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size);
+nixlPosixIOQueueAIOCreate(uint32_t ios_pool_size,
+                          uint32_t kernel_queue_size,
+                          bool open_synchronous);
 #endif
 #ifdef HAVE_LIBURING
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueUringCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size);
+nixlPosixIOQueueUringCreate(uint32_t ios_pool_size,
+                            uint32_t kernel_queue_size,
+                            bool open_synchronous);
 #endif
 #ifdef HAVE_LINUXAIO
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueLinuxAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size);
+nixlPosixIOQueueLinuxAIOCreate(uint32_t ios_pool_size,
+                               uint32_t kernel_queue_size,
+                               bool open_synchronous);
 #endif
 
 static const struct {
@@ -98,7 +104,8 @@ nixlPosixIOQueue::enqueue(uint64_t dev_id,
 std::unique_ptr<nixlPosixIOQueue>
 nixlPosixIOQueue::instantiate(std::string_view io_queue_type,
                               uint32_t ios_pool_size,
-                              uint32_t kernel_queue_size) {
+                              uint32_t kernel_queue_size,
+                              bool open_synchronous) {
     for (const auto &factory : factories) {
         if (io_queue_type == factory.name) {
             if (ios_pool_size == 0) {
@@ -109,7 +116,7 @@ nixlPosixIOQueue::instantiate(std::string_view io_queue_type,
                 kernel_queue_size = DEF_KERNEL_QUEUE_SIZE;
                 NIXL_INFO << "Using default kernel queue size: " << kernel_queue_size;
             }
-            return factory.createFn(ios_pool_size, kernel_queue_size);
+            return factory.createFn(ios_pool_size, kernel_queue_size, open_synchronous);
         }
     }
     return nullptr;
