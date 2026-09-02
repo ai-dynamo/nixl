@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include "common/nixl_log.h"
 #include <chrono>
+#include <thread>
 
 // constexpr auto connection_delay = 500ms;
 constexpr std::chrono::microseconds connection_delay(500000);
@@ -394,11 +395,12 @@ threadProgressFunc(void *arg) {
         oob_sock_client =
             accept(eng->oob_sock_server, (struct sockaddr *)&client_addr, &client_size);
         if (oob_sock_client < 0) {
+            if (ACCESS_ONCE(*eng->pthrStop) != 0) {
+                return nullptr;
+            }
             NIXL_ERROR << "Can't accept new socket connection " << oob_sock_client;
-            if (ACCESS_ONCE(*eng->pthrStop) == 0)
-                NIXL_ERROR << "Can't accept new socket connection " << oob_sock_client;
-            // close(eng->oob_sock_server);
-            return nullptr;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
         }
 
         eng->activeOobSocket.store(oob_sock_client);
