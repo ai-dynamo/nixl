@@ -20,6 +20,11 @@ git fetch --no-tags "${NIXL_REPO_URL}" \
   '+refs/heads/main:refs/remotes/origin/main' \
   '+refs/heads/release/*:refs/remotes/origin/release/*'
 
+# TEST ONLY - revert before merge: expose main as pseudo-release 99.0.0 so the
+# poller chain can be exercised end to end (main is the only ref whose
+# build-container.sh already accepts --build-options-file).
+git update-ref refs/remotes/origin/release/99.0.0 refs/remotes/origin/main
+
 : > triggers.txt
 
 branches="$(git for-each-ref --format='%(refname:lstrip=4)' 'refs/remotes/origin/release/*' | sort -V)"
@@ -48,7 +53,9 @@ for ver in ${branches}; do
     continue
   fi
 
-  base="$(git merge-base origin/main "origin/release/${ver}")"
+  # TEST ONLY - revert before merge: newest commit only (merge-base is empty
+  # for the main pseudo-release).
+  base="$(git rev-parse "origin/release/${ver}~1")"
   candidates="$(git rev-list --first-parent "${base}..origin/release/${ver}" | head -"${MAX_COMMITS}")"
 
   n_cand=0; n_build=0
