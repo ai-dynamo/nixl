@@ -50,7 +50,11 @@ if has_posix_plugin
 
     if has_io_uring
         nixl_posix_uring_app = executable(
-            'nixl_posix_uring_test', 'nixl_posix_uring_test.cpp',
+            'nixl_posix_uring_test',
+            [
+                'nixl_posix_uring_test.cpp',
+                'nixl_posix_uring_path_agent_test.cpp',
+            ],
             dependencies: [nixl_dep, nixl_infra, file_utils_interface, absl_log_dep,
                            posix_backend_interface, io_uring_dep],
             include_directories: [nixl_inc_dirs, utils_inc_dirs,
@@ -58,6 +62,10 @@ if has_posix_plugin
                                   include_directories('../../../../src/plugins/posix')],
             link_args: ['-Wl,--export-dynamic'],
             install: true)
-        test('posix_uring_backend_test', nixl_posix_uring_app)
+        posix_uring_test_env = environment()
+        posix_uring_test_env.set(
+            'NIXL_PLUGIN_DIR', join_paths(plugin_build_dir, 'src/plugins/posix'))
+        test('posix_uring_backend_test', nixl_posix_uring_app,
+             env: posix_uring_test_env)
     endif
 endif

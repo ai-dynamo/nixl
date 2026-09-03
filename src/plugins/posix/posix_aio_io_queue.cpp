@@ -38,13 +38,13 @@ public:
     virtual nixl_status_t
     post(void) override;
     virtual nixl_status_t
-    enqueue(int fd,
-            void *buf,
-            size_t len,
-            off_t offset,
-            bool read,
-            nixlPosixIOQueueDoneCb clb,
-            void *ctx) override;
+    enqueueFd(int fd,
+              void *buf,
+              size_t len,
+              off_t offset,
+              bool read,
+              nixlPosixIOQueueDoneCb clb,
+              void *ctx) override;
     virtual nixl_status_t
     poll(void) override;
     virtual ~nixlPosixIOQueueAIO() override;
@@ -65,13 +65,13 @@ nixlPosixIOQueueAIO::~nixlPosixIOQueueAIO() {
 }
 
 nixl_status_t
-nixlPosixIOQueueAIO::enqueue(int fd,
-                             void *buf,
-                             size_t len,
-                             off_t offset,
-                             bool read,
-                             nixlPosixIOQueueDoneCb clb,
-                             void *ctx) {
+nixlPosixIOQueueAIO::enqueueFd(int fd,
+                               void *buf,
+                               size_t len,
+                               off_t offset,
+                               bool read,
+                               nixlPosixIOQueueDoneCb clb,
+                               void *ctx) {
     if (free_ios_.empty()) {
         NIXL_ERROR << "No more free blocks available";
         return NIXL_ERR_NOT_ALLOWED;
@@ -176,6 +176,6 @@ nixlPosixIOQueueAIO::poll(void) {
 }
 
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size) {
+nixlPosixIOQueueAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size, bool) {
     return std::make_unique<nixlPosixIOQueueAIO>(ios_pool_size, kernel_queue_size);
 }
