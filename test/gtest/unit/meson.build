@@ -38,6 +38,16 @@ unit_test_deps += [tracing_unit_test_dep]
 subdir('telemetry')
 unit_test_deps += [telemetry_unit_test_dep]
 
+gds_mt_test_enabled = enabled_plugins.get('GDS_MT')
+gds_mt_test_enabled = gds_mt_test_enabled and get_option('gds_path') != ''
+gds_mt_test_enabled = gds_mt_test_enabled and not get_option('disable_gds_backend')
+gds_mt_test_enabled = gds_mt_test_enabled and cuda_dep.found()
+gds_mt_test_enabled = gds_mt_test_enabled and taskflow_proj.found()
+if gds_mt_test_enabled
+    subdir('plugins/gds_mt')
+    unit_test_deps += [gds_mt_unit_test_dep]
+endif
+
 cpp = meson.get_compiler('cpp')
 azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)
 if enabled_plugins.get('AZURE_BLOB') and azure_storage_blobs.found()
