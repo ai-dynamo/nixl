@@ -180,7 +180,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
-      testScript: ".gitlab/test_cpp.sh ${NIXL_INSTALL_DIR}"
+      testScript: ".gitlab/test_cpp.sh ${NIXL_INSTALL_DIR} run_uring"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test:${BUILD_NUMBER}"

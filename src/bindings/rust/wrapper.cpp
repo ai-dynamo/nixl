@@ -24,6 +24,7 @@
 #include <exception>
 #include <iterator>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 #include <chrono>
@@ -1493,20 +1494,21 @@ nixl_capi_make_xfer_req(nixl_capi_agent_t agent,
                         size_t remote_indices_count,
                         nixl_capi_xfer_req_t *req_hndl,
                         nixl_capi_opt_args_t opt_args) {
-    if (!agent || !local_descs || !remote_descs || !req_hndl) {
+    if (!agent || !local_descs || !local_descs->handle || !remote_descs || !remote_descs->handle ||
+        !req_hndl) {
         return NIXL_CAPI_ERROR_INVALID_PARAM;
     }
 
     try {
         auto req = new nixl_capi_xfer_req_s;
-        nixl_status_t ret = agent->inner->makeXferReq(
-            static_cast<nixl_xfer_op_t>(operation),
-            local_descs->handle,
-            std::vector<int>(local_indices, local_indices + local_indices_count),
-            remote_descs->handle,
-            std::vector<int>(remote_indices, remote_indices + remote_indices_count),
-            req->req,
-            opt_args ? &opt_args->args : nullptr);
+        nixl_status_t ret =
+            agent->inner->makeXferReq(static_cast<nixl_xfer_op_t>(operation),
+                                      *local_descs->handle,
+                                      std::span(local_indices, local_indices_count),
+                                      *remote_descs->handle,
+                                      std::span(remote_indices, remote_indices_count),
+                                      req->req,
+                                      opt_args ? &opt_args->args : nullptr);
 
         if (ret != NIXL_SUCCESS) {
             delete req;
