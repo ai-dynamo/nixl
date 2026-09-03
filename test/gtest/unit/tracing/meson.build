@@ -15,6 +15,7 @@
 
 tracing_unit_test_dep = declare_dependency(
     sources: [
+        'public_plugin_test.cpp',
         'tracing_test.cpp',
     ],
     include_directories: [nixl_inc_dirs, gtest_inc_dirs],

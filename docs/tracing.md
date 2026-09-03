@@ -36,18 +36,17 @@ execution-trace tools.
   `nixl_trace_plugin_init()` returning a `nixlTracePlugin` (a `create_backend`
   factory + api version). `nixlPluginManager::loadTracePlugin()` discovers and
   `dlopen`s them on demand by the `libtrace_backend_` prefix — the same machinery used
-  for data backends and telemetry exporters. The plugin contract lives in
-  `src/core/tracing/trace_plugin.h`.
+  for data backends and telemetry exporters. The public plugin contract lives in
+  `src/api/cpp/tracing/trace_plugin.h` and is installed as `tracing/trace_plugin.h`.
 - **`Kind`** — the operation kind attached to a span. It selects an NVTX color and
   maps 1:1 onto the Chakra `NodeType` vocabulary:
   `Generic`, `Compute`, `MemoryR`, `MemoryW`, `CommSend`, `CommRecv`, `CommColl`,
   `Metadata`.
 
-`nixl::trace` is an **internal NIXL core API**: it is compiled into `libnixl` but its
-headers (`tracing/trace.h`, `tracing/trace_macros.h`, `tracing/trace_plugin.h`, under
-`src/core/tracing/`) are not installed as public headers. Only NIXL core instruments
-it today; because internal→public is a non-breaking change, it can be promoted to a
-public header later if an external consumer appears.
+`TraceBackend`, `SpanBackend`, and the tracing plugin contract are public extension
+points, installed as `tracing/trace_backend.h` and `tracing/trace_plugin.h`. NIXL's
+instrumentation facade and call-site macros remain internal: external plugins implement
+a backend, while NIXL core owns span creation and routes events to it.
 
 ## Two gates: build/packaging and runtime
 
@@ -66,6 +65,30 @@ runtime**.
   `src/plugins/tracing/<name>/`, installed alongside the other NIXL plugins. A
   backend with an unmet dependency (e.g. NVTX without the CUDA-toolkit `nvtx3`
   headers) is silently skipped so the build stays green.
+
+### Out-of-tree backend plugins
+
+Install NIXL with `-Dinstall_headers=true`, then include the public plugin contract:
+
+```cpp
+#include <tracing/trace_plugin.h>
+```
+
+An out-of-tree backend implements `nixl::trace::TraceBackend` and
+`nixl::trace::SpanBackend`, then exports `nixl_trace_plugin_init()` and
+`nixl_trace_plugin_fini()` as declared by the contract. Compile the plugin as C++20
+with the same compatible C++ standard-library ABI as NIXL. For a NIXL installation
+under `$NIXL_PREFIX`, build against its installed headers:
+
+```bash
+c++ -std=c++20 -fPIC -shared my_trace_plugin.cpp \
+    -I"$NIXL_PREFIX/include" \
+    -o libtrace_backend_my_trace.so
+```
+
+Place the resulting library in NIXL's plugin directory, or point
+`NIXL_PLUGIN_DIR` at the directory containing it. At runtime, select it with
+`NIXL_TRACE_BACKENDS=my_trace`.
 
 ### Runtime (which installed backends the caller activates)
 
