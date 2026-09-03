@@ -51,6 +51,10 @@ getPtr(nixlMemViewH, size_t) {
 } // namespace nixl::gpu::impl::ucx
 #endif
 
+// The proxy implementation needs only CUDA, so unlike the UCX arm it is always
+// present and needs no capability gate.
+#include "proxy/device_proxy.cuh"
+
 namespace nixl::gpu::impl {
 
 namespace detail {
@@ -91,6 +95,8 @@ getXferStatus(xferStatusH &xfer_status) {
     switch (detail::loadExecutionMode(xfer_status)) {
     case exec_mode_t::UCX_DIRECT:
         return ucx::getXferStatus<level>(xfer_status);
+    case exec_mode_t::PROXY:
+        return proxy::getXferStatus<level>(xfer_status);
     default:
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -113,6 +119,8 @@ put(const memViewElem &src,
     nixl_status_t status;
     if (dst_view->execution_mode == exec_mode_t::UCX_DIRECT) {
         status = ucx::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
+    } else if (dst_view->execution_mode == exec_mode_t::PROXY) {
+        status = proxy::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
     } else {
         status = NIXL_ERR_INVALID_PARAM;
     }
@@ -133,6 +141,8 @@ atomicAdd(uint64_t value,
     nixl_status_t status;
     if (view->execution_mode == exec_mode_t::UCX_DIRECT) {
         status = ucx::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
+    } else if (view->execution_mode == exec_mode_t::PROXY) {
+        status = proxy::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
     } else {
         status = NIXL_ERR_INVALID_PARAM;
     }
@@ -146,6 +156,8 @@ getPtr(nixlMemViewH mvh, size_t index) {
     switch (view->execution_mode) {
     case exec_mode_t::UCX_DIRECT:
         return ucx::getPtr(view->backend_memview, index);
+    case exec_mode_t::PROXY:
+        return proxy::getPtr(view->backend_memview, index);
     default:
         return nullptr;
     }

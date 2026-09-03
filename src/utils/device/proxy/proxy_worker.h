@@ -64,6 +64,10 @@ public:
     }
 
 private:
+    /** Make the first owned ring's device current, so every transport call runs on it. */
+    void
+    selectOwnedDevice() noexcept;
+
     void
     runOnce();
 

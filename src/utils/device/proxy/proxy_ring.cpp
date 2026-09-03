@@ -34,6 +34,10 @@ proxyRing::allocate(deviceOps &allocator,
     depth_ = depth;
     control_ = &control;
     ops_ = &allocator;
+    if (allocator.getActiveDevice(device_id_) != NIXL_SUCCESS) {
+        deallocate();
+        return NIXL_ERR_BACKEND;
+    }
     ring_index_ = ring_index;
     consumer_idx_shadow_ = 0;
 

@@ -33,6 +33,7 @@ nixl_status_t
 proxyWorker::start() noexcept {
     try {
         thread_ = std::jthread([this]() {
+            selectOwnedDevice();
             while (!ctx_.stop.stop_requested()) {
                 runOnce();
             }
@@ -49,6 +50,17 @@ void
 proxyWorker::join() noexcept {
     if (thread_.joinable()) {
         thread_.join();
+    }
+}
+
+void
+proxyWorker::selectOwnedDevice() noexcept {
+    if (index_ >= ctx_.channels.size()) {
+        return;
+    }
+    const proxyRing &ring = ctx_.channels[index_].ring(0);
+    if (ring.allocated() && ring.selectDevice() != NIXL_SUCCESS) {
+        NIXL_FATAL << "Failed to select proxy ring device";
     }
 }
 
