@@ -11,8 +11,8 @@
 // This header is intentionally free of any AWS SDK or cuObject dependency so the
 // protocol logic can be unit-tested on its own. It encodes the published S3 RDMA
 // convention (the `x-amz-rdma-*` headers) used by NVIDIA cuObject and implemented
-// by any compliant S3 endpoint (MinIO AIStor today; transparently usable against
-// AWS S3 if/when it adopts the same convention). Nothing here is vendor-specific.
+// by any compliant S3 endpoint (transparently usable against AWS S3 if/when it
+// adopts the same convention). Nothing here is vendor-specific.
 
 #include <sys/types.h> // ssize_t
 

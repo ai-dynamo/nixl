@@ -55,9 +55,10 @@ namespace {
     // internals. We sign manually (rather than via the SDK's AWSAuthV4Signer)
     // because that signer hashes the empty body over plain HTTP — the S3 RDMA
     // server only skips content-sha256 validation when the header is exactly
-    // UNSIGNED-PAYLOAD, and the data here travels out-of-band over RDMA. Mirrors
-    // minio-cpp/rs SignV4S3. All non-signed headers (host, x-amz-rdma-token,
-    // content-*, checksum) must already be set on the request before calling.
+    // UNSIGNED-PAYLOAD, and the data here travels out-of-band over RDMA. This
+    // mirrors the standard S3 SigV4 signing. All non-signed headers (host,
+    // x-amz-rdma-token, content-*, checksum) must already be set on the request
+    // before calling.
     void
     signV4(Aws::Http::HttpRequest &req,
            const Aws::String &access_key,
@@ -230,7 +231,7 @@ S3RdmaControlPlane::S3RdmaControlPlane(const nixl_b_params_t *custom_params) : i
         impl_->scheme = (config.scheme == Aws::Http::Scheme::HTTP) ? "http" : "https";
         impl_->virtual_addressing = nixl_s3_utils::getUseVirtualAddressing(custom_params);
 
-        // Endpoint authority: explicit override (AIStor / S3-compatible) or the
+        // Endpoint authority: explicit override (an S3-compatible endpoint) or the
         // default AWS S3 regional host.
         if (!config.endpointOverride.empty()) {
             Aws::Http::URI ep(config.endpointOverride);
@@ -323,7 +324,7 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t si
 
         // Success: the server completed the RDMA_READ and returns a standard
         // HTTP 200 + ETag (the object payload moved out-of-band, so the HTTP body
-        // is empty). Matches minio-cpp/minio-rs rdmaPut.
+        // is empty). Matches the reference client implementations.
         if (http_status == 200 && !etag.empty()) {
             ctx.etag = etag;
             if (resp->HasHeader("x-amz-checksum-crc64nvme")) {

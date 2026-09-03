@@ -16,9 +16,8 @@
 // error — there is no silent HTTP fallback today, because a server that ignores
 // the token (instead of returning `x-amz-rdma-reply: 501`) would accept a
 // body-less PUT as a 0-byte object (see s3/client.cpp). The protocol is an AWS
-// S3 convention (not vendor-specific), so the same code works against MinIO
-// AIStor today and against any future endpoint (including AWS S3) that adopts
-// it.
+// S3 convention (not vendor-specific), so the same code works against any
+// compliant S3 endpoint that adopts it (including AWS S3 itself).
 //
 // This is the public umbrella header for the S3-over-RDMA utilities. It composes
 // units with a single responsibility each:
