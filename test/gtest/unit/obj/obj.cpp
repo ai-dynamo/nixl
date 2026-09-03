@@ -40,6 +40,10 @@ static const ObjTestConfig dellConfig = {"Dell",
                                          {{"accelerated", "true"}, {"type", "dell"}},
                                          "test-dell-agent",
                                          true};
+static const ObjTestConfig everpureConfig = {"Everpure",
+                                             {{"accelerated", "true"}, {"type", "everpure"}},
+                                             "test-everpure-agent",
+                                             true};
 #endif
 
 // Parameterized tests - run for all client types
@@ -302,12 +306,11 @@ TEST_P(objParamTestFixture, CheckObjectExistsAsyncRequestError) {
 
 // Instantiate parameterized tests for all client configurations
 #if defined HAVE_CUOBJ_CLIENT
-INSTANTIATE_TEST_SUITE_P(ObjClientTests,
-                         objParamTestFixture,
-                         testing::Values(standardConfig, crtConfig, accelConfig, dellConfig),
-                         [](const testing::TestParamInfo<ObjTestConfig> &info) {
-                             return info.param.name;
-                         });
+INSTANTIATE_TEST_SUITE_P(
+    ObjClientTests,
+    objParamTestFixture,
+    testing::Values(standardConfig, crtConfig, accelConfig, dellConfig, everpureConfig),
+    [](const testing::TestParamInfo<ObjTestConfig> &info) { return info.param.name; });
 #else
 INSTANTIATE_TEST_SUITE_P(ObjClientTests,
                          objParamTestFixture,

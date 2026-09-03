@@ -105,6 +105,12 @@ print_usage(const char *program_name) {
               << "  -T, --type TYPE         Vendor type for accelerated engine (e.g., dell)\n"
               << "  -v, --vram              Use VRAM (GPU memory) instead of DRAM\n"
               << "                          (requires --accelerated and CUDA/GPU support)\n"
+              << "  --max-connections N     Sets NIXL_EVERPURE_MAX_CONNECTIONS (AWS SDK "
+                 "default: 25)\n"
+              << "  --connect-timeout-ms N  Sets NIXL_EVERPURE_CONNECT_TIMEOUT_MS (AWS SDK "
+                 "default: 1000)\n"
+              << "  --request-timeout-ms N  Sets NIXL_EVERPURE_REQUEST_TIMEOUT_MS (AWS SDK "
+                 "default: 3000)\n"
               << "  -h, --help              Show this help message\n"
               << "\nExamples:\n"
               << "  " << program_name << " -n 100 -s 16M -t 5\n"
@@ -274,6 +280,9 @@ main(int argc, char *argv[]) {
     bool use_accelerated = false;
     std::string accel_type;
     bool use_vram = false;
+    std::string max_connections;
+    std::string connect_timeout_ms;
+    std::string request_timeout_ms;
     int ret_code = 0;
     nixlXferReqH *write_req = nullptr;
     nixlXferReqH *read_req = nullptr;
@@ -293,6 +302,9 @@ main(int argc, char *argv[]) {
                                            {"accelerated", no_argument, 0, 'a'},
                                            {"type", required_argument, 0, 'T'},
                                            {"vram", no_argument, 0, 'v'},
+                                           {"max-connections", required_argument, 0, 256},
+                                           {"connect-timeout-ms", required_argument, 0, 257},
+                                           {"request-timeout-ms", required_argument, 0, 258},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
@@ -335,6 +347,15 @@ main(int argc, char *argv[]) {
             break;
         case 'v':
             use_vram = true;
+            break;
+        case 256:
+            max_connections = optarg;
+            break;
+        case 257:
+            connect_timeout_ms = optarg;
+            break;
+        case 258:
+            request_timeout_ms = optarg;
             break;
         case 'h':
             print_usage(argv[0]);
@@ -428,6 +449,12 @@ main(int argc, char *argv[]) {
             params["type"] = accel_type;
         }
     }
+
+    if (!max_connections.empty()) setenv("NIXL_EVERPURE_MAX_CONNECTIONS", max_connections.c_str(), 1);
+    if (!connect_timeout_ms.empty())
+        setenv("NIXL_EVERPURE_CONNECT_TIMEOUT_MS", connect_timeout_ms.c_str(), 1);
+    if (!request_timeout_ms.empty())
+        setenv("NIXL_EVERPURE_REQUEST_TIMEOUT_MS", request_timeout_ms.c_str(), 1);
 
     // Pre-allocate host-side buffers: pattern buffer for writes and validation,
     // and a staging buffer for GPU readback during validation.
