@@ -15,6 +15,13 @@
 
 compile_flags = []
 
+gpunetio_oob_endpoint_test = executable(
+        'gpunetio_oob_endpoint_test',
+        'gpunetio_oob_endpoint_test.cpp',
+        include_directories: include_directories('../../../../src/plugins/gpunetio'),
+        install: false)
+test('gpunetio_oob_endpoint', gpunetio_oob_endpoint_test)
+
 if cuda_dep.found()
         cuda_dependencies = [cuda_dep]
         compile_flags += '-DHAVE_CUDA'
