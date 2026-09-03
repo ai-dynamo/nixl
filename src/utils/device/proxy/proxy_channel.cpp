@@ -144,6 +144,9 @@ proxyChannel::drainAndRearm(proxyTransport &transport) noexcept {
         if (!ring.allocated()) {
             continue;
         }
+        if (ring.selectDevice() != NIXL_SUCCESS) {
+            NIXL_FATAL << "Failed to select proxy ring device";
+        }
         if (!ring.assertDrained()) {
             NIXL_FATAL << "Proxy ring has unfinished or unpublished producer tickets";
         }
