@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <vector>
 #include <nixl.h>
 #include <cufile.h>
 
@@ -51,9 +52,17 @@ class nixlGdsIOBatch {
         void reset();
 
     private:
+        nixl_status_t
+        consumeEvent(const CUfileIOEvents_t &ev);
+        nixl_status_t
+        submitRemainders();
+
         CUfileBatchHandle_t batch_handle;
         CUfileIOEvents_t *io_batch_events = nullptr;
         CUfileIOParams_t *io_batch_params = nullptr;
+        // Remainders to resubmit, kept out of io_batch_params, which cuFile
+        // uses until the batch drains
+        std::vector<CUfileIOParams_t> remainders;
         CUfileError_t init_err = {CU_FILE_SUCCESS};
         unsigned int max_reqs = 0;
         unsigned int batch_size = 0;

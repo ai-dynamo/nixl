@@ -360,29 +360,59 @@ nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle) const
         return NIXL_SUCCESS;
     }
 
-    nixl_status_t status = NIXL_SUCCESS;
-    for (auto* batch : gds_handle->batch_io_list) {
-        status = batch->checkStatus();
+    auto &batches = gds_handle->batch_io_list;
+    nixl_status_t failure = NIXL_SUCCESS;
+    size_t in_flight = 0;
+
+    // Reap completed batches, packing the in-flight ones to the front. A batch
+    // left in the list goes back to the pool twice
+    for (auto *batch : batches) {
+        nixl_status_t status = batch->checkStatus();
 
         if (status == NIXL_IN_PROG) {
-            return status;
+            batches[in_flight++] = batch;
+            continue;
         }
 
         if (status < 0) {
             batch->cancelBatch();
+            failure = status;
         }
         returnBatchToPool(batch);
     }
+    batches.resize(in_flight);
 
-    gds_handle->batch_io_list.clear();
-    gds_handle->needs_prep = true;
-    return status;
+    // A batch failure fails the transfer. Reclaim the ones still in flight, or
+    // the pool loses them: the request handle cannot free an incomplete batch
+    if (failure != NIXL_SUCCESS) {
+        for (size_t i = 0; i < in_flight; i++) {
+            batches[i]->cancelBatch();
+            returnBatchToPool(batches[i]);
+        }
+        batches.clear();
+        gds_handle->needs_prep = true;
+        return failure;
+    }
+
+    if (batches.empty()) {
+        gds_handle->needs_prep = true;
+        return NIXL_SUCCESS;
+    }
+    return NIXL_IN_PROG;
 }
 
 nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle) const
 {
 
     nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *) handle;
+
+    // Reclaim the batches of a request released before it completed, or the
+    // pool loses them
+    for (auto *batch : gds_handle->batch_io_list) {
+        batch->cancelBatch();
+        returnBatchToPool(batch);
+    }
+    gds_handle->batch_io_list.clear();
 
     delete gds_handle;
     gds_handle = nullptr;
@@ -391,9 +421,11 @@ nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle) const
 }
 
 nixlGdsEngine::~nixlGdsEngine() {
-    // Clean up the batch pool
+    // Clean up the batch pool. Reset first: a batch that last failed would keep
+    // that status and not release its arrays, and nothing uses it after this
     for (auto* batch : batch_pool) {
         if (batch) {
+            batch->reset();
             delete batch;
         }
     }
