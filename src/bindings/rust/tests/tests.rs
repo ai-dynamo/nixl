@@ -1543,6 +1543,11 @@ fn test_get_xfer_telemetry_success() {
         assert!(telemetry.start_time_us > 0, "Start time should be greater than 0");
         assert!(telemetry.total_bytes > 0, "Total bytes should be greater than 0");
         assert!(telemetry.desc_count > 0, "Descriptor count should be greater than 0");
+        assert_eq!(telemetry.backend_name, "UCX");
+        assert!(telemetry
+            .transport_paths
+            .iter()
+            .all(|path| !path.is_empty()));
 
         // Test convenience methods
         let start_time = telemetry.start_time();
@@ -1615,6 +1620,11 @@ fn test_get_xfer_telemetry_from_request() {
         assert!(telemetry.start_time_us > 0, "Start time should be greater than 0");
         assert!(telemetry.total_bytes > 0, "Total bytes should be greater than 0");
         assert!(telemetry.desc_count > 0, "Descriptor count should be greater than 0");
+        assert_eq!(telemetry.backend_name, "UCX");
+        assert!(telemetry
+            .transport_paths
+            .iter()
+            .all(|path| !path.is_empty()));
 
         println!("Telemetry data from request: {:?}", telemetry);
     }

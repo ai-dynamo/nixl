@@ -792,6 +792,28 @@ nixlUcxWorker::reqCancel(nixlUcxReq req) {
     ucp_request_cancel(worker.get(), req);
 }
 
+std::string
+nixlUcxWorker::getTransportInfo(nixlUcxReq req) const {
+    ucp_worker_attr_t worker_attr{};
+    worker_attr.field_mask = UCP_WORKER_ATTR_FIELD_MAX_INFO_STRING;
+    if (ucp_worker_query(worker.get(), &worker_attr) != UCS_OK ||
+        worker_attr.max_debug_string == 0) {
+        return {};
+    }
+
+    std::vector<char> buffer(worker_attr.max_debug_string);
+    ucp_request_attr_t request_attr{};
+    request_attr.field_mask =
+        UCP_REQUEST_ATTR_FIELD_INFO_STRING | UCP_REQUEST_ATTR_FIELD_INFO_STRING_SIZE;
+    request_attr.debug_string = buffer.data();
+    request_attr.debug_string_size = buffer.size();
+    if (ucp_request_query(req, &request_attr) != UCS_OK) {
+        return {};
+    }
+
+    return buffer.data();
+}
+
 nixl_status_t
 nixlUcxWorker::arm() const noexcept {
     return nixl::ucx::ucsToNixlStatus(ucp_worker_arm(worker.get()));

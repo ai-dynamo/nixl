@@ -41,6 +41,9 @@ completeRequest(nixlUcxWorker w[2],
     } else {
         if (!is_flush) {
             cout << "NOTE: Testing non-inline " << op << " path!" << endl;
+            const std::string info = w[0].getTransportInfo(req);
+            assert(!info.empty());
+            cout << "NOTE: Selected UCX path: " << info << endl;
         }
 
         ret = NIXL_IN_PROG;

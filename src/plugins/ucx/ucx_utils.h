@@ -243,6 +243,19 @@ public:
     void
     reqCancel(nixlUcxReq req);
 
+    /**
+     * @brief Query the transport information selected for a UCX request.
+     *
+     * The returned string describes the protocol, transport lane, and device
+     * selected by UCX for a valid, non-immediate request.
+     *
+     * @param req Valid UCX request handle.
+     * @return The UCX request information string, or an empty string if the
+     *         information is unavailable or the query fails.
+     */
+    [[nodiscard]] std::string
+    getTransportInfo(nixlUcxReq req) const;
+
     [[nodiscard]] nixl_status_t
     arm() const noexcept;
 

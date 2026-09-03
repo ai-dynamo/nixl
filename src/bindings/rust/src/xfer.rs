@@ -76,16 +76,58 @@ impl XferRequest {
             desc_count: 0,
         };
 
+        let agent = self.agent.write().unwrap();
         let status = unsafe {
-            nixl_capi_get_xfer_telemetry(
-                self.agent.write().unwrap().handle.as_ptr(),
-                self.handle(),
-                &mut telemetry,
-            )
+            nixl_capi_get_xfer_telemetry(agent.handle.as_ptr(), self.handle(), &mut telemetry)
         };
 
         match status {
             NIXL_CAPI_SUCCESS => {
+                let mut backend_name = ptr::null_mut();
+                let backend_name_status = unsafe {
+                    nixl_capi_get_xfer_backend_name(
+                        agent.handle.as_ptr(),
+                        self.handle(),
+                        &mut backend_name,
+                    )
+                };
+                if backend_name_status != NIXL_CAPI_SUCCESS || backend_name.is_null() {
+                    tracing::error!(
+                        error = "backend_name_error",
+                        "Failed to get transfer backend name"
+                    );
+                    return Err(NixlError::BackendError);
+                }
+                let backend_name = unsafe {
+                    let name = CStr::from_ptr(backend_name).to_string_lossy().into_owned();
+                    libc::free(backend_name as *mut libc::c_void);
+                    name
+                };
+
+                let mut transport_paths = ptr::null_mut();
+                let transport_paths_status = unsafe {
+                    nixl_capi_get_xfer_transport_paths(
+                        agent.handle.as_ptr(),
+                        self.handle(),
+                        &mut transport_paths,
+                    )
+                };
+                if transport_paths_status != NIXL_CAPI_SUCCESS {
+                    tracing::error!(
+                        error = "transport_path_error",
+                        "Failed to get transfer transport paths"
+                    );
+                    return Err(NixlError::BackendError);
+                }
+
+                let transport_paths =
+                    NonNull::new(transport_paths).ok_or(NixlError::BackendError)?;
+                let transport_paths = utils::StringList::new(transport_paths);
+                let transport_paths = transport_paths
+                    .iter()
+                    .map(|path| path.map(str::to_owned))
+                    .collect::<Result<Vec<_>, _>>()?;
+
                 tracing::trace!("Successfully retrieved transfer telemetry from request");
                 Ok(XferTelemetry {
                     start_time_us: telemetry.start_time_us,
@@ -93,6 +135,8 @@ impl XferRequest {
                     xfer_duration_us: telemetry.xfer_duration_us,
                     total_bytes: telemetry.total_bytes,
                     desc_count: telemetry.desc_count,
+                    backend_name,
+                    transport_paths,
                 })
             },
             NIXL_CAPI_IN_PROG => {

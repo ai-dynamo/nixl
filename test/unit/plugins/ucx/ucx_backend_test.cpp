@@ -101,6 +101,7 @@ createEngine(std::string name, bool p_thread) {
     init.localAgent   = name;
     init.customParams = &custom_params;
     init.type         = "UCX";
+    init.enableTelemetry_ = true;
 
     auto ucx = nixlUcxEngine::create(init).release();
     nixl_exit_on_failure(!ucx->getInitErr(), "Failed to initialize worker1");
@@ -332,6 +333,8 @@ performTransfer(nixlUcxEngine *ucx1,
     nixlBackendReqH *&handle = hiter.getHandle();
     ret3 = ucx1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
     nixl_exit_on_failure(ret3 >= NIXL_SUCCESS, "Failed to post xfer");
+    // NIXL_IN_PROG may refer only to an asynchronous notification.
+    const bool expect_transport_path = ret3 == NIXL_IN_PROG && !use_notif;
 
     if (ret3 == NIXL_SUCCESS) {
         cout << "\t\tWARNING: Tansfer request completed immediately - no testing non-inline path" << endl;
@@ -345,6 +348,15 @@ performTransfer(nixlUcxEngine *ucx1,
             }
             nixl_exit_on_failure(ret3 >= NIXL_SUCCESS, "Failed to check xfer");
         }
+    }
+
+    std::vector<std::string> paths;
+    ucx1->getXferPathInfo(handle, paths);
+    if (expect_transport_path) {
+        nixl_exit_on_failure(!paths.empty(), "Missing UCX transfer path telemetry");
+    }
+    for (const auto &path : paths) {
+        nixl_exit_on_failure(!path.empty(), "Empty UCX transfer path telemetry");
     }
 
     if (hiter.needRelease()) {

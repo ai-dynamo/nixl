@@ -23,6 +23,7 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 
+#include <algorithm>
 #include <optional>
 #include <limits>
 #include <future>
@@ -61,6 +62,7 @@ class nixlUcxBackendReqH : public nixlBackendReqH {
 private:
     ucx_connection_ptr_t conn_;
     std::vector<nixlUcxReq> requests_;
+    std::vector<std::string> transportPaths_;
     nixlUcxWorker *worker_ = nullptr;
 
     [[nodiscard]] nixl_status_t
@@ -122,6 +124,30 @@ public:
     [[nodiscard]] virtual bool
     isComposite() const noexcept {
         return false;
+    }
+
+    void
+    recordTransportPath(nixlUcxReq req) {
+        const std::string path = worker_->getTransportInfo(req);
+        if (!path.empty() &&
+            std::find(transportPaths_.begin(), transportPaths_.end(), path) ==
+                transportPaths_.end()) {
+            transportPaths_.push_back(path);
+        }
+    }
+
+    virtual void
+    resetTransportPaths() {
+        transportPaths_.clear();
+    }
+
+    virtual void
+    getTransportPaths(std::vector<std::string> &paths) const {
+        for (const auto &path : transportPaths_) {
+            if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
+                paths.push_back(path);
+            }
+        }
     }
 
     virtual void
@@ -531,6 +557,22 @@ public:
     [[nodiscard]] bool
     isComposite() const noexcept override {
         return true;
+    }
+
+    void
+    resetTransportPaths() override {
+        nixlUcxBackendReqH::resetTransportPaths();
+        for (auto &chunk : sharedState_->chunks) {
+            chunk.resetTransportPaths();
+        }
+    }
+
+    void
+    getTransportPaths(std::vector<std::string> &paths) const override {
+        nixlUcxBackendReqH::getTransportPaths(paths);
+        for (const auto &chunk : sharedState_->chunks) {
+            chunk.getTransportPaths(paths);
+        }
     }
 
     void
@@ -1156,6 +1198,9 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
 
     nixlUcxReq req;
     const nixl_status_t post_ret = sgl.post(*ep, req);
+    if (enableTelemetry_ && post_ret == NIXL_IN_PROG) {
+        int_handle->recordTransportPath(req);
+    }
     if (int_handle->append(post_ret, req, conn) != NIXL_SUCCESS) {
         return post_ret;
     }
@@ -1219,6 +1264,9 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
             ep->write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
 
         if (ret == NIXL_IN_PROG) {
+            if (enableTelemetry_) {
+                int_handle->recordTransportPath(req);
+            }
             if (pending_req != nullptr) [[likely]] {
                 ucp_request_free(pending_req);
             }
@@ -1265,6 +1313,10 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     const size_t rcnt = remote.descCount();
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     nixl_status_t ret;
+
+    if (enableTelemetry_) {
+        int_handle->resetTransportPaths();
+    }
 
     if (lcnt != rcnt) {
         NIXL_ERROR << "Local (" << lcnt << ") and remote (" << rcnt
@@ -1340,6 +1392,12 @@ nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
     delete int_handle;
 
     return NIXL_SUCCESS;
+}
+
+void
+nixlUcxEngine::getXferPathInfo(const nixlBackendReqH *handle,
+                               std::vector<std::string> &paths) const {
+    static_cast<const nixlUcxBackendReqH *>(handle)->getTransportPaths(paths);
 }
 
 unsigned

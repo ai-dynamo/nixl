@@ -366,6 +366,20 @@ class nixlAgent {
         getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &telemetry) const;
 
         /**
+         * @brief Get detailed telemetry data associated with `req_hndl`.
+         *
+         * In addition to the base transfer telemetry, this overload returns the selected backend
+         * and the actual transport paths reported by it. Transport paths are empty when the
+         * backend does not provide request-level path information.
+         *
+         * @param req_hndl Transfer request handle obtained from makeXferReq/createXferReq
+         * @param telemetry [out] Detailed telemetry information
+         * @return nixl_status_t Error code if call was not successful
+         */
+        nixl_status_t
+        getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_details_t &telemetry) const;
+
+        /**
          * @brief  Query the backend associated with `req_hndl`. E.g., if for genNotif
          *         the same backend as a transfer is desired.
          *
