@@ -537,7 +537,8 @@ TEST_P(SingleWriteTest, SingleWorkerPutGap) {
     getPtrKernel<<<1, 1>>>(dst_mvh, 0, ptr.get());
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
     ASSERT_EQ(cudaGetLastError(), cudaSuccess);
-    ASSERT_NE(*ptr, nullptr);
+    EXPECT_NE(*ptr, nullptr) << "nixlGetPtr is null unless the remote is locally mapped "
+                                "(cuda_ipc / NVLink)";
 
     logResultsPublic(size, count, num_iters, *gpu_timer.start_, *gpu_timer.end_);
 
