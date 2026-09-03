@@ -22,6 +22,7 @@
 #include "utils/utils.h"
 #if HAVE_RAW_CLI
 #include "utils/raw_cli.h"
+#include "benchmark/scenario.h"
 #endif
 #include "utils/scope_guard.h"
 #include "worker/nixl/nixl_worker.h"
@@ -130,7 +131,7 @@ static int processBatchSizes(xferBenchWorker &worker,
             worker.exchangeIOV(local_trans_lists, block_size);
             worker.poll(block_size);
 
-            if (!xferBenchUtils::validateTransfer(false, local_trans_lists, local_trans_lists)) {
+            if (!worker.validateTransfer(false, local_trans_lists, local_trans_lists)) {
                 return EXIT_FAILURE;
             }
             if (IS_PAIRWISE_AND_SG()) {
@@ -147,7 +148,7 @@ static int processBatchSizes(xferBenchWorker &worker,
                 return 1;
             }
 
-            if (!xferBenchUtils::validateTransfer(true, local_trans_lists, remote_trans_lists)) {
+            if (!worker.validateTransfer(true, local_trans_lists, remote_trans_lists)) {
                 return EXIT_FAILURE;
             }
 
@@ -184,12 +185,14 @@ createWorker() {
 } // namespace
 
 static int
-runBenchmark() {
+runBenchmark(std::unique_ptr<xferBenchWorker> worker_ptr = nullptr) {
     int ret = 0;
     int num_threads = xferBenchConfig::num_threads;
 
     // Create the appropriate worker based on worker configuration
-    std::unique_ptr<xferBenchWorker> worker_ptr = createWorker();
+    if (!worker_ptr) {
+        worker_ptr = createWorker();
+    }
     if (!worker_ptr) {
         return EXIT_FAILURE;
     }
@@ -208,6 +211,9 @@ runBenchmark() {
     auto mem_guard = make_scope_guard ([&] {
         worker_ptr->deallocateMemory(iov_lists);
     });
+    if (iov_lists.empty()) {
+        return EXIT_FAILURE;
+    }
 
     ret = worker_ptr->exchangeMetadata();
     if (0 != ret) {
@@ -242,6 +248,40 @@ runBenchmark() {
 int
 main(int argc, char *argv[]) {
 #if HAVE_RAW_CLI
+    if (nixlbench::isScenarioCommand(argc, argv)) {
+        auto result = nixlbench::prepareScenarioCommand(argc, argv, std::cout, std::cerr);
+        if (result.status != EXIT_SUCCESS || !result.execute) {
+            return result.status;
+        }
+        const auto worker_configuration = result.scenario->legacyWorkerConfiguration();
+        auto arguments = nixlbench::legacyWorkerArguments(worker_configuration, argv[0]);
+        std::vector<char *> argument_pointers;
+        argument_pointers.reserve(arguments.size());
+        for (auto &argument : arguments) {
+            argument_pointers.push_back(argument.data());
+        }
+        if (xferBenchConfig::parseConfig(static_cast<int>(argument_pointers.size()),
+                                         argument_pointers.data(),
+                                         worker_configuration.common.pluginParameters) !=
+            EXIT_SUCCESS) {
+            return EXIT_FAILURE;
+        }
+        auto devices = xferBenchConfig::parseDeviceList();
+        if (devices.empty()) {
+            std::cerr << "Failed to parse device list" << std::endl;
+            return EXIT_FAILURE;
+        }
+        if (!result.scenario->prepare(std::cerr)) {
+            return EXIT_FAILURE;
+        }
+        auto worker = result.scenario->createWorker(devices);
+        if (!worker) {
+            std::cerr << "Failed to create scenario worker" << std::endl;
+            return EXIT_FAILURE;
+        }
+        return runBenchmark(std::move(worker));
+    }
+
     if (nixlbench::isRawCommand(argc, argv)) {
         const auto result = nixlbench::prepareRawCommand(argc, argv, std::cout, std::cerr);
         if (result.status != EXIT_SUCCESS || !result.execute) {
@@ -251,7 +291,7 @@ main(int argc, char *argv[]) {
     }
 #endif
 
-    // Preserve the flags-only interface by routing every non-raw invocation directly to gflags.
+    // Preserve the flags-only interface for invocations outside the explicit command hierarchies.
     if (xferBenchConfig::parseConfig(argc, argv) != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }

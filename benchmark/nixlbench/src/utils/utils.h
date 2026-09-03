@@ -136,6 +136,7 @@
 // Segment types
 #define XFERBENCH_SEG_TYPE_DRAM "DRAM"
 #define XFERBENCH_SEG_TYPE_VRAM "VRAM"
+#define XFERBENCH_SEG_TYPE_FILE "FILE"
 #define XFERBENCH_SEG_TYPE_BLK "BLK"
 
 // Worker types
@@ -228,13 +229,15 @@ public:
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
     static bool gusli_try_use_uring;
-    // Opaque plugin parameters are populated only by the raw CLI path.
+    // Opaque plugin parameters are populated only by the verb-based CLI paths.
     static std::optional<nixl_b_params_t> plugin_parameters;
     static bool use_device_api;
     static int block_threads;
 
     static int
-    parseConfig(int argc, char *argv[]);
+    parseConfig(int argc,
+                char *argv[],
+                std::optional<nixl_b_params_t> plugin_parameters_override = std::nullopt);
     static void
     printConfig();
     static void

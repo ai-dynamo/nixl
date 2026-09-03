@@ -176,6 +176,13 @@ xferBenchWorker::~xferBenchWorker() {
     delete rt;
 }
 
+bool
+xferBenchWorker::validateTransfer(bool is_initiator,
+                                  std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                                  std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) {
+    return xferBenchUtils::validateTransfer(is_initiator, local_iov_lists, remote_iov_lists);
+}
+
 std::string xferBenchWorker::getName() const {
     return name;
 }
