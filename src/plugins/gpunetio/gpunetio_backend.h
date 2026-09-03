@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,9 +24,11 @@ class nixlDocaEngine : public nixlBackendEngine {
 public:
     CUcontext main_cuda_ctx;
     int oob_sock_server;
-    std::mutex notifLock;
-    std::mutex qpLock;
+    std::atomic<int> activeOobSocket{-1};
+    mutable std::mutex notifLock;
+    mutable std::mutex qpLock;
     std::mutex connectLock;
+    mutable std::mutex remoteConnLock;
     std::vector<std::pair<uint32_t, doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
     doca_dev *ddev; /* DOCA device handler associated to queues */
     doca_verbs_context *verbs_context; /* DOCA Verbs Context */
@@ -35,7 +37,7 @@ public:
     struct ibv_pd *pd; /* local protection domain */
     doca_verbs_gid gid; /* local gid address */
     doca_verbs_gid remote_gid; /* remote gid address */
-    int lid; /* IB: local ID */
+    int lid = 0; /* IB: local ID */
     int dlid; /* IB: destination ID */
     int gid_index;
     struct ibv_port_attr port_attr;
@@ -150,7 +152,7 @@ private:
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
 
-    uint32_t local_port;
+    uint16_t local_port;
     int noSyncIters;
     uint8_t ipv4_addr[4];
     struct sockaddr oob_saddr;
@@ -186,6 +188,7 @@ private:
     std::unordered_map<std::string, struct nixlDocaNotif *> notifMap;
 
     pthread_t server_thread_id;
+    bool serverThreadStarted = false;
 
     class nixlDocaBckndReq : public nixlBackendReqH {
     private:
