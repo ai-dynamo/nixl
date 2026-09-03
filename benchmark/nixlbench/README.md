@@ -577,6 +577,9 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 **GPUNETIO Backend:**
 ```
 --gpunetio_device_list LIST # Comma-separated GPU CUDA device id for GPUNETIO
+--gpunetio_oob_list IFACE   # OOB interface name for the control path
+--gpunetio_gid_index N      # RoCE GID table index (default: 0)
+--gpunetio_oob_port PORT    # OOB TCP port (default: 6544)
 ```
 
 **OBJ (S3) Backend:**

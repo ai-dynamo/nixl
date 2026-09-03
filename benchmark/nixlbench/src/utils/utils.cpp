@@ -175,6 +175,12 @@ NB_ARG_STRING(
     gpunetio_oob_list,
     "",
     "Comma-separated OOB network interface name for control path (only used with nixl worker)");
+NB_ARG_STRING(gpunetio_gid_index,
+              "0",
+              "RoCE GID table index for GPUNetIO (only used with nixl worker; default: 0)");
+NB_ARG_STRING(gpunetio_oob_port,
+              "",
+              "OOB TCP port for GPUNetIO (only used with nixl worker; default: 6544)");
 
 // OBJ options - only used when backend is OBJ
 NB_ARG_STRING(obj_access_key, "", "Access key for S3 backend");
@@ -292,6 +298,8 @@ int xferBenchConfig::gds_batch_limit = 0;
 int xferBenchConfig::gds_mt_num_threads = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
 std::string xferBenchConfig::gpunetio_oob_list = "";
+std::string xferBenchConfig::gpunetio_gid_index = "0";
+std::string xferBenchConfig::gpunetio_oob_port = "";
 std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
@@ -481,6 +489,8 @@ xferBenchConfig::loadParams(void) {
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             gpunetio_device_list = NB_ARG(gpunetio_device_list);
             gpunetio_oob_list = NB_ARG(gpunetio_oob_list);
+            gpunetio_gid_index = NB_ARG(gpunetio_gid_index);
+            gpunetio_oob_port = NB_ARG(gpunetio_oob_port);
         }
 
         // Load HD3FS-specific configurations if backend is HD3FS
@@ -897,8 +907,11 @@ xferBenchConfig::printConfig() {
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             printOption("GPU CUDA Device id list (--device_list=dev1,dev2,...)",
                         gpunetio_device_list);
-            printOption("OOB network interface name for control path (--oob_list=ifface)",
+            printOption("OOB network interface name for control path (--gpunetio_oob_list=IFACE)",
                         gpunetio_oob_list);
+            printOption("RoCE GID table index (--gpunetio_gid_index=N)", gpunetio_gid_index);
+            printOption("OOB TCP port (--gpunetio_oob_port=N)",
+                        gpunetio_oob_port.empty() ? "6544" : gpunetio_oob_port);
         }
     }
     printOption("Initiator seg type (--initiator_seg_type=[DRAM,VRAM])", initiator_seg_type);
