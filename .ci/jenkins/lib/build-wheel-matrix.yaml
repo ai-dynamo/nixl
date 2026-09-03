@@ -13,7 +13,7 @@
 # dependency layer is pre-built once into the cached wheel_base image (below) and reused
 # via --wheel-base-image, so per-PR wheel builds only compile the wheel stage.
 #
-# CI Usage: build-container.sh --base-image ... --wheel-base ... (builds and packages wheels)
+# CI Usage: build-container.sh --wheel-base ... (builds and packages wheels)
 # User Usage: Full image build via build-container.sh (same script, different invocation)
 #
 # =============================================================================
@@ -36,7 +36,7 @@
 # - Job Configuration: Defines timeout, failure behavior, and Kubernetes resources
 # - Docker Images: Specifies the container images used for different build stages
 #   - Uses contrib/Dockerfile.manylinux via contrib/build-container.sh
-#   - Base image: artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09
+#   - Base image: pinned by contrib/Dockerfile.manylinux (ARG BASE_IMAGE/BASE_IMAGE_TAG)
 # - Matrix Axes: Defines build variations (Python versions and architectures)
 # - Build Steps: Sequential steps for building, testing, and wheel generation
 #
@@ -119,7 +119,7 @@ runs_on_dockers:
       file: 'contrib/Dockerfile.manylinux',
       name: "${WHEEL_BASE_IMAGE_NAME}",
       tag: "${CI_IMAGE_TAG}",
-      build_args: '--build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg BASE_IMAGE_TAG=${BASE_TAG} --build-arg MANYLINUX_IMAGE=${MANYLINUX_IMAGE} --build-arg MANYLINUX_IMAGE_TAG=${MANYLINUX_IMAGE_TAG} --build-arg CUDA_VERSION=${CUDA_VERSION} --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
+      build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
     }
   # The custom 'fw' key is injected as an env var into every step of the branch
   # (ci-demo merges the docker entry into the branch axis), so the shared sanity
@@ -129,16 +129,14 @@ runs_on_dockers:
      name: 'build_helper_vllm',
      fw: 'vllm',
      tag: "${CI_IMAGE_TAG}",
-     arch: 'aarch64',
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+     arch: 'aarch64'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
      name: 'build_helper_sglang',
      fw: 'sglang',
      tag: "${CI_IMAGE_TAG}",
-     arch: 'aarch64',
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+     arch: 'aarch64'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.vllm-base',
@@ -146,7 +144,7 @@ runs_on_dockers:
      tag: "${CI_IMAGE_TAG}",
      arch: 'aarch64',
      category: 'tool',
-     build_args: '--build-arg BASE_IMAGE=${VLLM_BASE_UPSTREAM} --build-arg MODEL_ID=${SANITY_MODEL_ID}'
+     build_args: '--build-arg MODEL_ID=${SANITY_MODEL_ID}'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.sglang-base',
@@ -154,7 +152,7 @@ runs_on_dockers:
      tag: "${CI_IMAGE_TAG}",
      arch: 'aarch64',
      category: 'tool',
-     build_args: '--build-arg BASE_IMAGE=${SGLANG_BASE_UPSTREAM} --build-arg MODEL_ID=${SANITY_MODEL_ID}'
+     build_args: '--build-arg MODEL_ID=${SANITY_MODEL_ID}'
     }
 
 # =============================================================================
@@ -182,18 +180,13 @@ matrix:
 env:
   NPROC: 32
   GRPC_NPROC: 10
-  # wheel_base builds on the public PyPA manylinux_2_28 image and copies CUDA
-  # from an el8/ubi8 NGC CUDA *devel* image (BASE_IMAGE:BASE_TAG). 13.2 is the
-  # minimum for cuObject S3-RDMA support (cuobjclient-13.2.pc).
+  # wheel_base builds on the public PyPA manylinux_2_28 image and copies CUDA from
+  # an el8/ubi8 NGC CUDA *devel* image. Those images and CUDA_VERSION are pinned in
+  # contrib/Dockerfile.manylinux and deliberately not restated here, so the cached
+  # wheel_base image and the wheel stage cannot drift apart. Note build-container.sh
+  # reads BASE_IMAGE/CUDA_VERSION from the environment, so setting them here would
+  # override the Dockerfile even without passing the flags.
   # REACHABILITY: the blossom runner must be able to pull nvcr.io and quay.io.
-  BASE_IMAGE: "nvcr.io/nvidia/cuda"
-  BASE_TAG: "13.2.1-devel-ubi8"
-  # CUDA MAJOR.MINOR — drives the torch cuXXX index + cu12/cu13 meta-wheel split.
-  CUDA_VERSION: "13.2"
-  # Pinned PyPA manylinux release — separate image prefix and tag so either can
-  # be overridden independently (e.g. to mirror to Artifactory).
-  MANYLINUX_IMAGE: "quay.io/pypa/manylinux_2_28"
-  MANYLINUX_IMAGE_TAG: "2026.06.06-1"
   # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
   # the "CI_MANAGED" placeholder must not be hand-edited.
   CI_IMAGE_TAG: "CI_MANAGED"
@@ -210,9 +203,10 @@ env:
   # huggingface.co directly gets the shared CI egress IP rate-limited (429); the mirror has no
   # such limit and allows anonymous reads, so no token is needed.
   SANITY_HF_ENDPOINT: "https://urm.nvidia.com/artifactory/api/huggingfaceml/huggingface-remote"
-  # Pinned upstream bases (concrete versions) so the per-PR sanity gate is reproducible.
-  VLLM_BASE_UPSTREAM: "docker.io/vllm/vllm-openai:v0.23.0"
-  SGLANG_BASE_UPSTREAM: "docker.io/lmsysorg/sglang:v0.5.13.post1"
+  # The vLLM/SGLang upstream bases are pinned to concrete versions in
+  # .ci/dockerfiles/Dockerfile.{vllm,sglang}-base and not restated here: an
+  # override at this level silently won over the Dockerfile, so the upgrade in
+  # #2073 never reached CI.
   # SLURM (dlcluster gb200nvl72_ci) — sanity test only, aarch64. Accessed over SSH to the
   # dlcluster head node (svc-nixl-ssh_key), same partition/account/mechanism as the
   # nixl-ci-dl-gpu job. (gb300nvl72_ci works too but its queue is much busier.)
@@ -285,11 +279,6 @@ steps:
       export NPROC=$NPROC
       export GRPC_NPROC=$GRPC_NPROC
       ./contrib/build-container.sh \
-        --base-image "${BASE_IMAGE}" \
-        --base-image-tag "${BASE_TAG}" \
-        --cuda-version "${CUDA_VERSION}" \
-        --manylinux-image "${MANYLINUX_IMAGE}" \
-        --manylinux-image-tag "${MANYLINUX_IMAGE_TAG}" \
         --wheel-base "${WHL_BASE}" \
         --python-versions "${python_version}" \
         --arch ${arch} \

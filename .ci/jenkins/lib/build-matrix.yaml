@@ -56,7 +56,7 @@ runs_on_dockers:
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-pytorch26.06-cuda13.3-ubuntu24.04", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-13.0.1-ubuntu22.04", tag: "${CI_IMAGE_TAG}",
