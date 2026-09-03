@@ -13,11 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+gdrcopy_lib = cpp.find_library('gdrapi', required: false)
+device_proxy_cpp_args = []
+device_proxy_deps = [nixl_common_dep, device_allocator_interface]
+if gdrcopy_lib.found() and cpp.has_header('gdrapi.h')
+    device_proxy_cpp_args += ['-DHAVE_GDRCOPY']
+    device_proxy_deps += [gdrcopy_lib]
+else
+    message('GDRCopy not found; device proxy will use host-mapped control-memory fallback')
+endif
+
 device_proxy_lib = library('nixl_device_proxy',
            ['proxy_config.cpp', 'proxy_config.h',
+            'proxy_control_buffer.cpp', 'proxy_control_buffer.h',
             'proxy_protocol.h', 'proxy_backend_ops.h'],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           dependencies: [nixl_common_dep, device_allocator_interface],
+           cpp_args: device_proxy_cpp_args,
+           dependencies: device_proxy_deps,
            install: true)
 
 if get_option('install_headers')
