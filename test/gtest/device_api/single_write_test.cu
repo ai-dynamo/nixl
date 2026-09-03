@@ -35,9 +35,10 @@ __global__ void
 putKernel(putParams put_params,
           size_t num_iters,
           unsigned long long *start_time,
-          unsigned long long *end_time) {
+          unsigned long long *end_time,
+          nixl_status_t *error) {
     __shared__ nixlGpuXferStatusH xfer_statuses[MAX_THREADS];
-    nixlGpuXferStatusH xfer_status = xfer_statuses[GetReqIdx<level>()];
+    nixlGpuXferStatusH &xfer_status = xfer_statuses[GetReqIdx<level>()];
 
     assert(GetReqIdx<level>() < MAX_THREADS);
 
@@ -55,6 +56,7 @@ putKernel(putParams put_params,
                                      put_params.flags,
                                      &xfer_status);
         if (status != NIXL_IN_PROG) {
+            atomicExch(reinterpret_cast<int *>(error), static_cast<int>(status));
             printf("Thread %d: nixlPut failed iteration %zu: status=%d (0x%x)\n",
                    threadIdx.x,
                    i,
@@ -68,6 +70,7 @@ putKernel(putParams put_params,
         } while (status == NIXL_IN_PROG);
 
         if (status != NIXL_SUCCESS) {
+            atomicExch(reinterpret_cast<int *>(error), static_cast<int>(status));
             printf("Thread %d: Transfer completion failed iteration %zu: status=%d\n",
                    threadIdx.x,
                    i,
@@ -137,7 +140,9 @@ launchPutKernel(const putParams &put_params,
         start_time = gpu_timer->start_.get();
         end_time = gpu_timer->end_.get();
     }
-    putKernel<level><<<1, num_threads>>>(put_params, num_iters, start_time, end_time);
+    gpuVar<nixl_status_t> kernel_error;
+    putKernel<level>
+        <<<1, num_threads>>>(put_params, num_iters, start_time, end_time, kernel_error.get());
 
     auto err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
@@ -151,7 +156,7 @@ launchPutKernel(const putParams &put_params,
         return NIXL_ERR_BACKEND;
     }
 
-    return NIXL_SUCCESS;
+    return *kernel_error;
 }
 
 class SingleWriteTest : public DeviceApiTestBase {
