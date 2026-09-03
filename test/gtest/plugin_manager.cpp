@@ -61,7 +61,7 @@ protected:
     if (GetParam().type == PluginDesc::PluginType::Real)
       return;
 #endif
-    plugin_manager_.unloadBackendPlugin(GetParam().name);
+    plugin_manager_.unloadBackendPluginForUnitTest(GetParam().name);
   }
 
   /* Returns true if the plugin was successfully loaded, otherwise false. */
@@ -90,7 +90,7 @@ protected:
       if (plugin.type == PluginDesc::PluginType::Real)
         continue;
 #endif
-      plugin_manager_.unloadBackendPlugin(plugin.name);
+      plugin_manager_.unloadBackendPluginForUnitTest(plugin.name);
     }
   }
 
@@ -118,7 +118,7 @@ protected:
 
   void TearDown() override {
     for (const auto &plugin : loaded_plugins_)
-        plugin_manager_.unloadBackendPlugin(plugin);
+        plugin_manager_.unloadBackendPluginForUnitTest(plugin);
   }
 
   /*
@@ -139,7 +139,7 @@ protected:
   void UnloadPlugin(std::string name) {
     if (loaded_plugins_.find(name) == loaded_plugins_.end())
       return;
-    plugin_manager_.unloadBackendPlugin(name);
+    plugin_manager_.unloadBackendPluginForUnitTest(name);
     loaded_plugins_.erase(name);
   }
 
