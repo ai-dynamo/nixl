@@ -29,6 +29,9 @@ unit_test_deps += [agent_unit_test_dep]
 subdir('descriptors')
 unit_test_deps += [descriptors_unit_test_dep]
 
+subdir('device_allocator')
+unit_test_deps += [device_allocator_unit_test_dep]
+
 subdir('util')
 unit_test_deps += [util_unit_test_dep]
 
