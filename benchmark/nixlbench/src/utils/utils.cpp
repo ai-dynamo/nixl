@@ -334,6 +334,7 @@ std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 bool xferBenchConfig::gusli_try_use_uring = false;
+std::optional<nixl_b_params_t> xferBenchConfig::plugin_parameters = std::nullopt;
 bool xferBenchConfig::use_device_api = false;
 int xferBenchConfig::block_threads = 1;
 int xferBenchConfig::device_channel_num = 0;
@@ -433,6 +434,7 @@ setupDeviceAPIConfig() {
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
+    plugin_parameters.reset();
     std::string usage("NIXL Benchmark.  Sample usage:\n\n");
     usage += std::string(argv[0]) + " [flags]";
     gflags::SetUsageMessage(usage);
@@ -607,6 +609,11 @@ xferBenchConfig::loadParams(void) {
     scheme = NB_ARG(scheme);
     mode = NB_ARG(mode);
     op_type = NB_ARG(op_type);
+    if (op_type != XFERBENCH_OP_READ && op_type != XFERBENCH_OP_WRITE) {
+        std::cerr << "Invalid op type: " << op_type << ". Must be one of [READ, WRITE]"
+                  << std::endl;
+        return -1;
+    }
     check_consistency = NB_ARG(check_consistency);
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);

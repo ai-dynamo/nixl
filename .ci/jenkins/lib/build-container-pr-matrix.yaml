@@ -29,7 +29,7 @@ matrix:
 
 env:
   NPROC: 24
-  UCX_VERSION: "v1.22.x"
+  UCX_VERSION: "v1.23.x"
   BASE_IMAGE: "nvcr.io/nvidia/pytorch"
   BASE_IMAGE_TAG: "26.06-py3"
   LOCAL_TAG_BASE: "nixl-ci-pr:build-"

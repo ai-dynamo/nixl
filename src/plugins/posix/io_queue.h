@@ -26,6 +26,7 @@
 #include "backend_aux.h"
 
 using nixlPosixIOQueueDoneCb = std::function<void(void *ctx, uint32_t data_size, int error)>;
+using nixlPosixIOQueueCancelDoneCb = std::function<void(void *ctx)>;
 
 class nixlPosixIOQueue {
 public:
@@ -52,10 +53,24 @@ public:
     virtual nixl_status_t
     poll(void) = 0;
 
+    /** Cancel I/Os owned by @p ctx synchronously when possible; return the number of async
+     * cancellations that will invoke @p clb. */
+    virtual unsigned
+    cancel(void *ctx, nixlPosixIOQueueCancelDoneCb clb) {
+        return 0;
+    }
+
     static std::unique_ptr<nixlPosixIOQueue>
     instantiate(std::string_view io_queue_type, uint32_t ios_pool_size, uint32_t kernel_queue_size);
     static std::string_view
     getDefaultIoQueueType(void);
+
+    static constexpr uint32_t MIN_IOS_POOL_SIZE = 64;
+    static constexpr uint32_t MAX_IOS_POOL_SIZE = 1024 * 64;
+    static constexpr uint32_t DEF_IOS_POOL_SIZE = MAX_IOS_POOL_SIZE;
+    static constexpr uint32_t MIN_KERNEL_QUEUE_SIZE = 16;
+    static constexpr uint32_t MAX_KERNEL_QUEUE_SIZE = 1024;
+    static constexpr uint32_t DEF_KERNEL_QUEUE_SIZE = 256;
 
 protected:
     static uint32_t
@@ -70,20 +85,14 @@ protected:
 
     uint32_t ios_pool_size_;
     uint32_t kernel_queue_size_;
-    static const uint32_t MIN_IOS_POOL_SIZE;
-    static const uint32_t MAX_IOS_POOL_SIZE;
-    static const uint32_t DEF_IOS_POOL_SIZE;
-    static const uint32_t MIN_KERNEL_QUEUE_SIZE;
-    static const uint32_t MAX_KERNEL_QUEUE_SIZE;
-    static const uint32_t DEF_KERNEL_QUEUE_SIZE;
 };
 
 template<typename Entry> class nixlPosixIOQueueImpl : public nixlPosixIOQueue {
 public:
     nixlPosixIOQueueImpl(uint32_t ios_pool_size, uint32_t kernel_queue_size)
         : nixlPosixIOQueue(ios_pool_size, kernel_queue_size),
-          ios_(ios_pool_size) {
-        for (uint32_t i = 0; i < ios_pool_size; i++) {
+          ios_(ios_pool_size_) {
+        for (uint32_t i = 0; i < ios_pool_size_; i++) {
             free_ios_.push_back(&ios_[i]);
         }
     }
