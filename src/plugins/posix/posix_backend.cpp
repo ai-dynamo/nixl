@@ -220,6 +220,7 @@ nixlPosixBackendReqH::postXfer() {
     cancels_expected_ = 0;
     cancels_seen_ = 0;
 
+    int num_enqueued_ios = 0;
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();
          ++local_it, ++remote_it) {
@@ -235,8 +236,13 @@ nixlPosixBackendReqH::postXfer() {
         if (status != NIXL_SUCCESS) {
             // Currently we do not support partial submissions, so it's all or nothing
             NIXL_ERROR << absl::StrFormat("Error preparing I/O operation: %d", status);
-            return status;
+            // The failed I/O and all following I/Os were never enqueued, so they will not
+            // receive completion callbacks. Account for them here; queueResult() cancels
+            // the already-enqueued prefix, whose callbacks account for the rest.
+            num_confirmed_ios_ = queue_depth_ - num_enqueued_ios;
+            return queueResult(status);
         }
+        num_enqueued_ios++;
     }
 
     return queueResult(io_queue_->post());
