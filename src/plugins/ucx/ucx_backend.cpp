@@ -30,6 +30,10 @@
 #include <string.h>
 #include "absl/strings/str_split.h"
 
+#ifdef HAVE_NIXL_DEVICE_API
+#include "device/device_memview.h"
+#endif
+
 namespace {
 [[nodiscard]] bool
 sglEnabledFromConfig() {
@@ -772,33 +776,71 @@ nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
-    const size_t worker_id = getSharedWorkerId(opt_args);
-    try {
-        mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
-        return NIXL_SUCCESS;
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to prepare remote memory view: " << e.what();
-        return NIXL_ERR_BACKEND;
-    }
+    return prepMemViewImpl(dlist, mvh, opt_args, "remote");
 }
 
 nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
+    return prepMemViewImpl(dlist, mvh, opt_args, "local");
+}
+
+#ifdef HAVE_NIXL_DEVICE_API
+template<typename DlistT>
+nixl_status_t
+nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
+                               nixlMemViewH &mvh,
+                               const nixl_opt_b_args_t *opt_args,
+                               const char *kind) const {
+    nixlMemViewH backend_mvh = nullptr;
     const size_t worker_id = getSharedWorkerId(opt_args);
     try {
-        mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
-        return NIXL_SUCCESS;
+        backend_mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
     }
     catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to prepare local memory view: " << e.what();
+        NIXL_ERROR << "Failed to prepare " << kind << " memory view: " << e.what();
         return NIXL_ERR_BACKEND;
     }
+
+    // Device code reaches an implementation through the handle, not through a
+    // build-time choice, so what leaves here is a tagged wrapper rather than
+    // the bare backend handle.
+    const nixl_status_t status =
+        nixlDeviceMemViewAllocate(nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
+    if (status != NIXL_SUCCESS) {
+        nixl::ucx::releaseMemList(backend_mvh);
+    }
+    return status;
 }
 
 void
 nixlUcxEngine::releaseMemView(nixlMemViewH mem_view) const {
-    nixl::ucx::releaseMemList(mem_view);
+    if (mem_view == nullptr) {
+        return;
+    }
+
+    nixlMemViewH backend_mvh = nullptr;
+    if (nixlDeviceMemViewGetBackend(mem_view, backend_mvh) != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to read device memview wrapper for handle " << mem_view;
+        nixlDeviceMemViewFree(mem_view);
+        return;
+    }
+
+    nixl::ucx::releaseMemList(backend_mvh);
+    nixlDeviceMemViewFree(mem_view);
 }
+#else
+template<typename DlistT>
+nixl_status_t
+nixlUcxEngine::prepMemViewImpl(const DlistT &,
+                               nixlMemViewH &,
+                               const nixl_opt_b_args_t *,
+                               const char *) const {
+    NIXL_ERROR << "The GPU Device API requires a CUDA-enabled NIXL build";
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+void
+nixlUcxEngine::releaseMemView(nixlMemViewH) const {}
+#endif

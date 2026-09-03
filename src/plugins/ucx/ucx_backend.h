@@ -196,6 +196,14 @@ public:
 
     void releaseMemView(nixlMemViewH) const override;
 
+    /** Shared by the local and remote prepMemView overloads; kind names which. */
+    template<typename DlistT>
+    nixl_status_t
+    prepMemViewImpl(const DlistT &dlist,
+                    nixlMemViewH &mvh,
+                    const nixl_opt_b_args_t *opt_args,
+                    const char *kind) const;
+
 protected:
     using worker_span_t = std::span<const std::unique_ptr<nixlUcxWorker>>;
 
