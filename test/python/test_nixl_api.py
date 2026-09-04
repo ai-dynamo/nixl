@@ -22,9 +22,89 @@ import torch
 
 import nixl._bindings as bindings
 import nixl._utils as utils
-from nixl._api import nixl_agent, nixl_agent_config, nixl_thread_sync_t
+from nixl._api import (
+    nixl_agent,
+    nixl_agent_config,
+    nixl_thread_sync_t,
+    nixl_xfer_handle,
+)
 
 # NIXL pytest fixtures
+
+
+def test_xfer_handle_cancel():
+    class AgentStub:
+        def __init__(self):
+            self.cancelled = []
+            self.statuses = iter(["PROC", "DONE"])
+            self.status = "PROC"
+            self.released = []
+
+        def cancelXferReq(self, handle):
+            self.cancelled.append(handle)
+
+        def getXferStatus(self, handle):
+            self.status = next(self.statuses)
+            return self.status
+
+        def releaseXferReq(self, handle):
+            if self.status != "DONE":
+                raise bindings.nixlRepostActiveError("NIXL_ERR_REPOST_ACTIVE")
+            self.released.append(handle)
+
+    agent = AgentStub()
+    handle = nixl_xfer_handle(agent, 42)
+
+    handle.cancel()
+    assert agent.cancelled == [42]
+
+    while agent.getXferStatus(42) == "PROC":
+        pass
+
+    handle.release()
+    assert agent.released == [42]
+
+
+def test_xfer_handle_release_failure_preserves_handle():
+    class AgentStub:
+        def __init__(self):
+            self.fail_release = True
+
+        def releaseXferReq(self, handle):
+            if self.fail_release:
+                raise bindings.nixlRepostActiveError("NIXL_ERR_REPOST_ACTIVE")
+
+    agent = AgentStub()
+    handle = nixl_xfer_handle(agent, 42)
+
+    with pytest.raises(bindings.nixlRepostActiveError):
+        handle.release()
+    assert not handle._released
+
+    agent.fail_release = False
+    handle.release()
+    assert handle._released
+
+
+def test_xfer_handle_duplicate_release_logs_error(monkeypatch):
+    class AgentStub:
+        def __init__(self):
+            self.released = []
+
+        def releaseXferReq(self, handle):
+            self.released.append(handle)
+
+    errors = []
+    monkeypatch.setattr("nixl._api.logger.error", lambda *args: errors.append(args))
+    agent = AgentStub()
+    handle = nixl_xfer_handle(agent, 42)
+
+    handle.release()
+    handle.release()
+
+    assert agent.released == [42]
+    assert len(errors) == 1
+    assert errors[0][0].startswith("APPLICATION ERROR: transfer request handle")
 
 
 @pytest.fixture()

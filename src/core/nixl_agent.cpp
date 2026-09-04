@@ -1263,6 +1263,27 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
 }
 
 nixl_status_t
+nixlAgent::cancelXferReq(nixlXferReqH *req_hndl) const {
+    if (!req_hndl) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+
+    if (req_hndl->status != NIXL_IN_PROG) {
+        return req_hndl->status;
+    }
+
+    nixl_status_t status = req_hndl->engine->cancelXfer(req_hndl->backendHandle);
+    if (status < 0) {
+        NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
+                        << "' could not cancel transfer request and returned error status "
+                        << status;
+    }
+    return status;
+}
+
+nixl_status_t
 nixlAgent::getXferTelemetry(const nixlXferReqH *req_hndl, nixl_xfer_telem_t &telemetry) const {
 
     if (!data->telemetry_) {
@@ -1291,26 +1312,10 @@ nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    //attempt to cancel request
-    if(req_hndl->status == NIXL_IN_PROG) {
-        req_hndl->status = req_hndl->engine->checkXfer(
-                                     req_hndl->backendHandle);
-
-        if(req_hndl->status == NIXL_IN_PROG) {
-
-            req_hndl->status = req_hndl->engine->releaseReqH(
-                                         req_hndl->backendHandle);
-
-            if (req_hndl->status < 0) {
-                NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
-                                << "' could not release transfer request and returned error status "
-                                << req_hndl->status;
-                return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
-            }
-            // just in case the backend doesn't set to NULL on success
-            // this will prevent calling releaseReqH again in destructor
-            req_hndl->backendHandle = nullptr;
-        }
+    if (req_hndl->status == NIXL_IN_PROG) {
+        NIXL_ERROR_FUNC << "APPLICATION ERROR: releasing an active transfer. Its buffers may still "
+                           "be in use and must not be reused.";
+        return NIXL_ERR_REPOST_ACTIVE;
     }
     delete req_hndl;
     return NIXL_SUCCESS;

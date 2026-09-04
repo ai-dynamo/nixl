@@ -15,6 +15,8 @@
 #include <unistd.h>
 
 #include "io_queue.h"
+#include "nixl.h"
+#include "nixl_descriptors.h"
 #include "posix_backend.h"
 
 #ifndef LIBURING_NOEXCEPT
@@ -129,6 +131,55 @@ struct uringRequest {
             return 1;                                                                 \
         }                                                                             \
     } while (false)
+
+int
+runExplicitCancelTest() {
+    uringTest storage(submit_mode_t::PARTIAL_ONLY);
+    nixlAgentConfig cfg;
+    cfg.useProgThread = false;
+    nixlAgent agent("POSIXExplicitCancelTester", cfg);
+
+    nixl_b_params_t params{{"use_uring", "true"},
+                           {"ios_pool_size", "64"},
+                           {"kernel_queue_size", std::to_string(ring_entries)}};
+    nixlBackendH *backend = nullptr;
+    URING_CHECK(agent.createBackend("POSIX", params, backend) == NIXL_SUCCESS);
+
+    nixl_reg_dlist_t dram_reg(DRAM_SEG), file_reg(FILE_SEG);
+    nixl_xfer_dlist_t dram_xfer(DRAM_SEG), file_xfer(FILE_SEG);
+    for (int i = 0; i < request_count; i++) {
+        nixlBlobDesc dram_desc(
+            reinterpret_cast<uintptr_t>(storage.buffers[i].data()), block_size, 0);
+        nixlBlobDesc file_desc(i * block_size, block_size, storage.fd);
+        dram_reg.addDesc(dram_desc);
+        file_reg.addDesc(file_desc);
+        dram_xfer.addDesc(dram_desc);
+        file_xfer.addDesc(file_desc);
+    }
+
+    URING_CHECK(agent.registerMem(dram_reg) == NIXL_SUCCESS);
+    URING_CHECK(agent.registerMem(file_reg) == NIXL_SUCCESS);
+
+    nixlXferReqH *request = nullptr;
+    URING_CHECK(agent.createXferReq(
+                    NIXL_WRITE, dram_xfer, file_xfer, "POSIXExplicitCancelTester", request) ==
+                NIXL_SUCCESS);
+    URING_CHECK(agent.postXferReq(request) == NIXL_IN_PROG);
+
+    URING_CHECK(agent.cancelXferReq(request) == NIXL_SUCCESS);
+
+    nixl_status_t status = NIXL_IN_PROG;
+    for (int i = 0; i < max_poll_iterations && status == NIXL_IN_PROG; i++) {
+        status = agent.getXferStatus(request);
+        std::this_thread::sleep_for(poll_pause);
+    }
+    URING_CHECK(status == NIXL_ERR_CANCELED);
+    URING_CHECK(agent.releaseXferReq(request) == NIXL_SUCCESS);
+    URING_CHECK(agent.deregisterMem(file_reg) == NIXL_SUCCESS);
+    URING_CHECK(agent.deregisterMem(dram_reg) == NIXL_SUCCESS);
+    std::cout << "northbound explicit io_uring cancellation: OK" << std::endl;
+    return 0;
+}
 } // namespace
 
 extern "C" int
@@ -169,6 +220,10 @@ main() {
         return 1;
     }
     io_uring_queue_exit(&probe_ring);
+
+    if (runExplicitCancelTest() != 0) {
+        return 1;
+    }
 
     {
         uringTest test(submit_mode_t::PARTIAL_ONLY);
