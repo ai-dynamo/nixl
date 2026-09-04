@@ -56,17 +56,36 @@ constexpr const char *kLogFileEnvVar = "NIXL_LOG_FILE";
  */
 class fileLogSink final : public absl::LogSink {
 public:
+    /**
+     * @brief Opens @p path for append, creating it if needed.
+     *
+     * Never throws: a failure to open leaves the sink closed, which the caller
+     * detects with isOpen() rather than by catching an exception.
+     */
     explicit fileLogSink(const std::string &path) : file_(path, std::ios::app) {}
 
+    /**
+     * @brief Reports whether the file was opened successfully.
+     * @return false if the sink cannot write, in which case it must not be
+     *         registered with Abseil.
+     */
     bool
     isOpen() const {
         return file_.is_open();
     }
 
+    /**
+     * @brief Writes one record to the file, then flushes it.
+     *
+     * Abseil calls this from the logging thread and requires it to be
+     * thread-safe, so the write is serialized on mutex_.
+     *
+     * @param entry The record to write. Its formatted text is borrowed and is
+     *              valid only for the duration of this call.
+     */
     void
     Send(const absl::LogEntry &entry) override {
-        /* Carries the severity, timestamp and source location, and is valid
-         * only for the duration of this call. */
+        /* Carries the severity, timestamp and source location. */
         const auto line = entry.text_message_with_prefix_and_newline();
 
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -74,6 +93,13 @@ public:
         file_.flush();
     }
 
+    /**
+     * @brief Flushes the file on demand.
+     *
+     * Send() already flushes every record, so this exists to honour the
+     * absl::LogSink contract and absl::FlushLogSinks(), which may be called
+     * from any thread.
+     */
     void
     Flush() override {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -95,9 +121,15 @@ std::mutex log_file_mutex;
  */
 fileLogSink *log_file_sink = nullptr; // guarded by log_file_mutex
 
-// Function to initialize logging, run before main() via constructor attribute.
+/**
+ * @brief Applies NIXL_LOG_LEVEL and NIXL_LOG_FILE, before main() runs.
+ *
+ * Invoked through the constructor attribute so logging is configured before any
+ * NIXL code can emit a record.
+ */
 void InitializeNixlLogging() __attribute__((constructor));
 
+/** @brief Definition of the constructor-attribute hook declared above. */
 void InitializeNixlLogging()
 {
     // Map from log level string to settings
@@ -158,6 +190,10 @@ void InitializeNixlLogging()
 
 namespace nixl {
 
+/**
+ * @brief Registers the NIXL_LOG_FILE sink; see nixl_log.h for the contract.
+ * @return true if a sink is registered on return, including when one already was.
+ */
 bool
 initLogFile() {
     const std::lock_guard<std::mutex> lock(log_file_mutex);
@@ -193,6 +229,12 @@ initLogFile() {
     return true;
 }
 
+/**
+ * @brief Removes the NIXL_LOG_FILE sink; see nixl_log.h for the contract.
+ *
+ * The ordering below is the part worth reading: unregister, then flush, then
+ * destroy.
+ */
 void
 shutdownLogFile() {
     const std::lock_guard<std::mutex> lock(log_file_mutex);
@@ -213,13 +255,17 @@ shutdownLogFile() {
 
 namespace {
 
-/*
- * Runs from .fini_array, which is after the static destructors that __cxa_atexit
- * queues, so anything logged while those run is still written to the file.
+/**
+ * @brief Tears the log file down at library unload.
+ *
+ * Runs from .fini_array, which is after the static destructors that
+ * __cxa_atexit queues, so anything logged while those run is still written to
+ * the file.
  */
 void
 ShutdownNixlLogging() __attribute__((destructor));
 
+/** @brief Definition of the destructor-attribute hook declared above. */
 void
 ShutdownNixlLogging() {
     nixl::shutdownLogFile();

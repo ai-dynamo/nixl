@@ -44,25 +44,35 @@ using testing::HasSubstr;
  * tests below check that adding a file does not displace existing output. */
 class countingSink : public absl::LogSink {
 public:
+    /** @brief Registers with Abseil, so it starts observing immediately. */
     countingSink() {
         absl::AddLogSink(this);
     }
 
+    /** @brief Unregisters, so the sink cannot outlive its registration. */
     ~countingSink() override {
         absl::RemoveLogSink(this);
     }
 
+    /**
+     * @brief Records that Abseil delivered @p entry here as well.
+     *
+     * Stores the bare message rather than the prefixed form, so assertions do
+     * not depend on timestamps.
+     */
     void
     Send(const absl::LogEntry &entry) override {
         text_.append(std::string(entry.text_message())).append("\n");
         ++count_;
     }
 
+    /** @brief Number of records this sink has received. */
     size_t
     count() const {
         return count_;
     }
 
+    /** @brief Concatenated messages received so far, one per line. */
     const std::string &
     text() const {
         return text_;
@@ -75,6 +85,12 @@ private:
 
 class nixlLogFileTest : public testing::Test {
 protected:
+    /**
+     * @brief Gives each test a clean sink, a known log level and its own path.
+     *
+     * Raises the level to INFO because most tests log at INFO, which the
+     * default WARN would discard before any sink is consulted.
+     */
     void
     SetUp() override {
         /* The process may already have a sink from its own pre-main
@@ -96,6 +112,12 @@ protected:
         std::filesystem::remove(path_);
     }
 
+    /**
+     * @brief Unregisters the sink, restores the log levels and deletes the file.
+     *
+     * Runs even when a test fails, so one failure cannot leave a sink pointing
+     * at a file the next test is about to remove.
+     */
     void
     TearDown() override {
         nixl::shutdownLogFile();
@@ -104,13 +126,20 @@ protected:
         std::filesystem::remove(path_);
     }
 
-    /* Points NIXL_LOG_FILE at this test's scratch file and registers the sink. */
+    /**
+     * @brief Points NIXL_LOG_FILE at this test's scratch file and registers it.
+     * @return Whatever nixl::initLogFile() reported, so a test can assert on it.
+     */
     bool
     enableLogFile() {
         env_.addVar("NIXL_LOG_FILE", path_.string());
         return nixl::initLogFile();
     }
 
+    /**
+     * @brief Reads the whole log file.
+     * @return Its contents, or an empty string if it does not exist.
+     */
     std::string
     readLogFile() const {
         std::ifstream file(path_);
@@ -119,6 +148,11 @@ protected:
         return contents.str();
     }
 
+    /**
+     * @brief Splits the log file into lines, dropping the trailing newline.
+     * @return One entry per record, which lets a test count records and check
+     *         that none was torn across a line boundary.
+     */
     std::vector<std::string>
     readLogLines() const {
         std::ifstream file(path_);
@@ -129,6 +163,11 @@ protected:
         return lines;
     }
 
+    /**
+     * @brief Reports whether the log file was created at all.
+     * @return true if the path exists, used to prove the disabled paths create
+     *         nothing rather than an empty file.
+     */
     bool
     logFileExists() const {
         return std::filesystem::exists(path_);
@@ -142,6 +181,7 @@ private:
     absl::LogSeverityAtLeast prev_stderr_threshold_ = absl::LogSeverityAtLeast::kInfo;
 };
 
+/** @brief The base case: a record emitted with the sink registered reaches the file. */
 TEST_F(nixlLogFileTest, WritesRecordToFile) {
     ASSERT_TRUE(enableLogFile());
 
@@ -150,6 +190,12 @@ TEST_F(nixlLogFileTest, WritesRecordToFile) {
     EXPECT_THAT(readLogFile(), HasSubstr("a record for the file"));
 }
 
+/**
+ * @brief A file line carries the same prefix Abseil puts on stderr.
+ *
+ * This is what lets a file line be matched against the surrounding console
+ * output: the severity letter first, then the source site.
+ */
 TEST_F(nixlLogFileTest, RecordCarriesSeverityAndSourceLocation) {
     ASSERT_TRUE(enableLogFile());
 
@@ -157,13 +203,12 @@ TEST_F(nixlLogFileTest, RecordCarriesSeverityAndSourceLocation) {
 
     const auto lines = readLogLines();
     ASSERT_EQ(lines.size(), 1u);
-    /* Same prefix Abseil puts on stderr, so a file line can be matched against
-     * the surrounding console output: severity letter, then the source site. */
     EXPECT_EQ(lines[0][0], 'I');
     EXPECT_THAT(lines[0], HasSubstr("nixl_log_file_test.cpp:"));
     EXPECT_THAT(lines[0], HasSubstr("located record"));
 }
 
+/** @brief Records appear one per line, in the order they were emitted. */
 TEST_F(nixlLogFileTest, EachRecordIsOneLine) {
     ASSERT_TRUE(enableLogFile());
 
@@ -178,6 +223,12 @@ TEST_F(nixlLogFileTest, EachRecordIsOneLine) {
     EXPECT_THAT(lines[2], HasSubstr("third"));
 }
 
+/**
+ * @brief The file supplements stderr instead of diverting it.
+ *
+ * The central compatibility claim of the feature: existing tooling that scrapes
+ * a process's console must see exactly what it saw before.
+ */
 TEST_F(nixlLogFileTest, AddsToStderrRatherThanReplacingIt) {
     /* Abseil writes to stderr from its own default handler rather than through
      * a sink, so watch the real thing. */
@@ -192,6 +243,7 @@ TEST_F(nixlLogFileTest, AddsToStderrRatherThanReplacingIt) {
     EXPECT_THAT(readLogFile(), HasSubstr("record for both outputs"));
 }
 
+/** @brief Registering the file sink does not displace other registered sinks. */
 TEST_F(nixlLogFileTest, LeavesOtherSinksUntouched) {
     countingSink other;
     ASSERT_TRUE(enableLogFile());
@@ -203,6 +255,12 @@ TEST_F(nixlLogFileTest, LeavesOtherSinksUntouched) {
     EXPECT_THAT(readLogFile(), HasSubstr("record for every sink"));
 }
 
+/**
+ * @brief NIXL_LOG_LEVEL governs the file exactly as it governs stderr.
+ *
+ * The level gates a record before any sink is consulted, so the file needs no
+ * filtering of its own and cannot drift from what stderr would have shown.
+ */
 TEST_F(nixlLogFileTest, HonoursLogLevel) {
     const gtest::LogIgnoreGuard lig("warning that should be written");
     ASSERT_TRUE(enableLogFile());
@@ -212,12 +270,11 @@ TEST_F(nixlLogFileTest, HonoursLogLevel) {
     NIXL_WARN << "warning that should be written";
 
     const std::string contents = readLogFile();
-    /* The level gates the record before any sink runs, so the file holds the
-     * same set of records the level would have allowed onto stderr. */
     EXPECT_THAT(contents, HasSubstr("warning that should be written"));
     EXPECT_THAT(contents, testing::Not(HasSubstr("info that should be dropped")));
 }
 
+/** @brief With the variable unset, no sink is registered and no file is created. */
 TEST_F(nixlLogFileTest, DisabledWhenEnvVarUnset) {
     /* Deliberately no enableLogFile(). */
     env_.addVar("NIXL_LOG_FILE", "");
@@ -229,6 +286,12 @@ TEST_F(nixlLogFileTest, DisabledWhenEnvVarUnset) {
     EXPECT_FALSE(logFileExists());
 }
 
+/**
+ * @brief An empty value is treated as unset rather than as a filename.
+ *
+ * Matters because exporting a variable with no value is easy to do by accident
+ * in a shell script or container spec.
+ */
 TEST_F(nixlLogFileTest, DisabledWhenEnvVarEmpty) {
     env_.addVar("NIXL_LOG_FILE", "");
 
@@ -238,6 +301,12 @@ TEST_F(nixlLogFileTest, DisabledWhenEnvVarEmpty) {
     EXPECT_FALSE(logFileExists());
 }
 
+/**
+ * @brief A path that cannot be opened degrades to no file, not to a failure.
+ *
+ * A log file we could not open must not take the process, or the rest of
+ * logging, down with it.
+ */
 TEST_F(nixlLogFileTest, UnopenablePathIsNotFatal) {
     const gtest::LogIgnoreGuard lig("Could not open NIXL_LOG_FILE");
     const auto bad = std::filesystem::temp_directory_path() / "nixl-no-such-dir" / "x.log";
@@ -245,14 +314,13 @@ TEST_F(nixlLogFileTest, UnopenablePathIsNotFatal) {
 
     EXPECT_FALSE(nixl::initLogFile());
 
-    /* The point of the check: a log file we could not open must not take the
-     * process, or the rest of logging, down with it. */
     countingSink other;
     NIXL_INFO << "logging still works";
     EXPECT_EQ(other.count(), 1u);
     EXPECT_FALSE(std::filesystem::exists(bad));
 }
 
+/** @brief Repeated init calls leave a single registration, so records are not duplicated. */
 TEST_F(nixlLogFileTest, InitIsIdempotent) {
     ASSERT_TRUE(enableLogFile());
     EXPECT_TRUE(nixl::initLogFile());
@@ -265,6 +333,12 @@ TEST_F(nixlLogFileTest, InitIsIdempotent) {
     EXPECT_EQ(lines.size(), 1u);
 }
 
+/**
+ * @brief Shutdown really unregisters, and a second call is harmless.
+ *
+ * Both halves matter: the destructor-attribute hook may run after a caller has
+ * already shut the sink down explicitly.
+ */
 TEST_F(nixlLogFileTest, ShutdownStopsWritingAndIsIdempotent) {
     ASSERT_TRUE(enableLogFile());
     NIXL_INFO << "before shutdown";
@@ -279,6 +353,12 @@ TEST_F(nixlLogFileTest, ShutdownStopsWritingAndIsIdempotent) {
     EXPECT_THAT(contents, testing::Not(HasSubstr("after shutdown")));
 }
 
+/**
+ * @brief Reopening the same path appends instead of truncating.
+ *
+ * A restarted process should add to the record rather than erase what the
+ * previous one reported.
+ */
 TEST_F(nixlLogFileTest, AppendsAcrossSessions) {
     ASSERT_TRUE(enableLogFile());
     NIXL_INFO << "from the first session";
@@ -287,24 +367,32 @@ TEST_F(nixlLogFileTest, AppendsAcrossSessions) {
     ASSERT_TRUE(nixl::initLogFile());
     NIXL_INFO << "from the second session";
 
-    /* Reopening must not truncate: a restarted process should add to the
-     * record rather than erase what the previous one reported. */
     const std::string contents = readLogFile();
     EXPECT_THAT(contents, HasSubstr("from the first session"));
     EXPECT_THAT(contents, HasSubstr("from the second session"));
 }
 
+/**
+ * @brief Each record is durable as soon as it is logged.
+ *
+ * Read back while the sink is still registered and without an explicit flush. A
+ * process that crashes or hangs never reaches shutdown, so a buffered record
+ * would be lost exactly when the log matters most.
+ */
 TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
     ASSERT_TRUE(enableLogFile());
 
     NIXL_INFO << "readable immediately";
 
-    /* Still registered and never explicitly flushed. A process that crashes or
-     * hangs never reaches shutdown, so a buffered record would be lost exactly
-     * when the log matters most. */
     EXPECT_THAT(readLogFile(), HasSubstr("readable immediately"));
 }
 
+/**
+ * @brief Concurrent writers produce whole lines, never torn ones.
+ *
+ * Abseil holds only a reader lock while dispatching to sinks, so Send() runs
+ * concurrently and the sink must serialize writes itself.
+ */
 TEST_F(nixlLogFileTest, ConcurrentRecordsAreNotInterleaved) {
     ASSERT_TRUE(enableLogFile());
 
