@@ -20,13 +20,13 @@
 #include "common/nixl_log.h"
 
 #include <cstring>
-#include <limits>
 
 /****************************************
  * Peer-id handshake protocol
  *****************************************/
 
 // Wire format for a handshake message body (serialized via nixlSerDes):
+//   "ver"      : uint16 = NIXL_LIBFABRIC_WIRE_VERSION of the sender.
 //   "idx"      : uint16 = assigned_idx (the index we have for this peer)
 //   "name"     : string = agent_name of the SENDER (us). The receiver uses
 //                 it to look up its connection record for us in connections_
@@ -56,6 +56,8 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     }
 
     nixlSerDes sd;
+    const uint16_t wire_version = NIXL_LIBFABRIC_WIRE_VERSION;
+    sd.addBuf(NIXL_HANDSHAKE_TAG_VER, &wire_version, sizeof(wire_version));
     sd.addBuf(NIXL_HANDSHAKE_TAG_IDX, &assigned_idx, sizeof(assigned_idx));
     sd.addStr(NIXL_HANDSHAKE_TAG_NAME, my_name);
     uint8_t has_conn = piggybacked_conn_info.empty() ? 0 : 1;
@@ -92,23 +94,26 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
                                             /*agent_idx=*/0 /* not used for handshake decode */);
 }
 
-uint16_t
-nixlLibfabricEngine::senderImmDataAgentIdx(nixlLibfabricConnection &conn) const {
+nixl_status_t
+nixlLibfabricEngine::senderImmDataAgentIdx(const nixlLibfabricConnection &conn,
+                                           uint16_t &agent_idx) const {
     // Self-connection: same process, no real wire; safe to ship 0, because self connection is
     // inserted the first.
     if (conn.remoteAgent_ == localAgent) {
-        return 0;
+        agent_idx = 0;
+        return NIXL_SUCCESS;
     }
 
     if (conn.handshake_received_.load(std::memory_order_acquire)) {
-        return conn.local_agent_idx_at_remote_;
+        agent_idx = conn.local_agent_idx_at_remote_;
+        return NIXL_SUCCESS;
     }
 
     // Should not reach here if establishConnection() completed successfully.
     NIXL_ERROR << "senderImmDataAgentIdx called before handshake received for '"
                << conn.remoteAgent_ << "'; establishConnection() was likely not called. "
                << "See error logs above for connection and handshake.";
-    return UINT16_MAX;
+    return NIXL_ERR_BACKEND;
 }
 
 void
@@ -120,9 +125,31 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
         return;
     }
 
+    uint16_t peer_wire_version = 0;
+    if (sd.getBuf(NIXL_HANDSHAKE_TAG_VER, &peer_wire_version, sizeof(peer_wire_version)) !=
+        NIXL_SUCCESS) {
+        NIXL_ERROR << "Rejecting handshake with no readable '" << NIXL_HANDSHAKE_TAG_VER
+                   << "' field: the peer is running a libfabric backend older than wire version "
+                   << NIXL_LIBFABRIC_WIRE_VERSION
+                   << ". All agents in a pool must run the same wire version";
+        return;
+    }
+    if (peer_wire_version != NIXL_LIBFABRIC_WIRE_VERSION) {
+        NIXL_ERROR << "Rejecting handshake from a peer on wire version " << peer_wire_version
+                   << "; this agent speaks version " << NIXL_LIBFABRIC_WIRE_VERSION
+                   << ". All agents in a pool must run the same wire version";
+        return;
+    }
+
     uint16_t assigned_idx = 0;
     if (sd.getBuf(NIXL_HANDSHAKE_TAG_IDX, &assigned_idx, sizeof(assigned_idx)) != NIXL_SUCCESS) {
         NIXL_ERROR << "Handshake missing 'idx' field";
+        return;
+    }
+    if (assigned_idx >= NIXL_LIBFABRIC_MAX_AGENTS) {
+        NIXL_ERROR << "Rejecting handshake: peer assigned us agent index " << assigned_idx
+                   << ", which does not fit the " << NIXL_AGENT_INDEX_BITS
+                   << "-bit agent index field (max " << NIXL_LIBFABRIC_MAX_AGENTS << " peers)";
         return;
     }
     std::string peer_agent_name = sd.getStr(NIXL_HANDSHAKE_TAG_NAME);
