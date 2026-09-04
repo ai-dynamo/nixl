@@ -27,18 +27,20 @@ if aws_s3.found() and aws_s3_crt.found() and aws_core.found()
     # Shared S3-over-RDMA infrastructure (NVIDIA cuObject / proposed aws-c-s3
     # protocol), split by responsibility: cuobj_client (buffer registration +
     # token minting), s3_control_plane_http (the signed control-plane GET/PUT),
-    # and rdmaRetry (token-lifecycle wrappers). Each .cpp is internally guarded by
-    # HAVE_CUOBJ_CLIENT and compiles to nothing when the cuObjClient library is
-    # absent; rdma_protocol.h is dependency-free and rdma.h is the public umbrella.
-    # These live here (not in the OBJ plugin) so the accel engines — and any
-    # future vendor engine — can compose them.
+    # and rdmaRetry (token-lifecycle wrappers). The cuObject-dependent units are
+    # added to the build only when the cuObjClient library is found (below), so
+    # they carry no in-source preprocessor guard; rdma_protocol.h is dependency-
+    # free and always built, and rdma.h is the public umbrella. These live here
+    # (not in the OBJ plugin) so the accel engines — and any future vendor
+    # engine — can compose them.
     obj_utils_sources = ['s3/utils.cpp', 's3/utils.h',
-                         'rdma/rdma_protocol.h', 'rdma/rdma.h',
-                         'rdma/cuobj_client.h', 'rdma/cuobj_client.cpp',
-                         'rdma/s3_control_plane_http.h', 'rdma/s3_control_plane_http.cpp',
-                         'rdma/rdmaRetry.h', 'rdma/rdmaRetry.cpp']
+                         'rdma/rdma_protocol.h']
     obj_utils_deps = [nixl_common_dep, partial_aws_s3, partial_aws_s3_crt, partial_aws_core]
     if cuobj_dep.found()
+        obj_utils_sources += ['rdma/rdma.h',
+                              'rdma/cuobj_client.h', 'rdma/cuobj_client.cpp',
+                              'rdma/s3_control_plane_http.h', 'rdma/s3_control_plane_http.cpp',
+                              'rdma/rdmaRetry.h', 'rdma/rdmaRetry.cpp']
         obj_utils_deps += [cuobj_dep]
     endif
 

@@ -13,8 +13,6 @@
 
 #include "rdma_protocol.h"
 
-#ifdef HAVE_CUOBJ_CLIENT
-
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -106,7 +104,5 @@ private:
 };
 
 } // namespace nixl_obj_rdma
-
-#endif // HAVE_CUOBJ_CLIENT
 
 #endif // NIXL_SRC_UTILS_OBJECT_RDMA_S3_CONTROL_PLANE_HTTP_H

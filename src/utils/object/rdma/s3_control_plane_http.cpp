@@ -5,8 +5,6 @@
 
 #include "s3_control_plane_http.h"
 
-#ifdef HAVE_CUOBJ_CLIENT
-
 #include <charconv>
 #include <exception>
 #include <functional>
@@ -445,5 +443,3 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
 }
 
 } // namespace nixl_obj_rdma
-
-#endif // HAVE_CUOBJ_CLIENT

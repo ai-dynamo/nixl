@@ -5,8 +5,6 @@
 
 #include "rdmaRetry.h"
 
-#ifdef HAVE_CUOBJ_CLIENT
-
 #include "common/nixl_log.h"
 
 namespace nixl_obj_rdma {
@@ -68,5 +66,3 @@ rdmaGetWithRetry(SharedCuObjClient &rdma,
 }
 
 } // namespace nixl_obj_rdma
-
-#endif // HAVE_CUOBJ_CLIENT

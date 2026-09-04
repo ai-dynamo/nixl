@@ -9,9 +9,7 @@
 // Process-wide cuObject client for the S3-over-RDMA data path: buffer
 // registration (cuMemObjGetDescriptor) and RDMA-token minting. This is the only
 // component that links libcuobjclient, so it is compiled only when that library
-// is present (HAVE_CUOBJ_CLIENT).
-
-#ifdef HAVE_CUOBJ_CLIENT
+// is present.
 
 #include <cstddef>
 #include <memory>
@@ -100,7 +98,5 @@ private:
 };
 
 } // namespace nixl_obj_rdma
-
-#endif // HAVE_CUOBJ_CLIENT
 
 #endif // NIXL_SRC_UTILS_OBJECT_RDMA_CUOBJ_CLIENT_H

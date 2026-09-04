@@ -5,8 +5,6 @@
 
 #include "cuobj_client.h"
 
-#ifdef HAVE_CUOBJ_CLIENT
-
 #include <exception>
 
 #include "common/nixl_log.h"
@@ -90,5 +88,3 @@ SharedCuObjClient::putToken(char *token) {
 }
 
 } // namespace nixl_obj_rdma
-
-#endif // HAVE_CUOBJ_CLIENT

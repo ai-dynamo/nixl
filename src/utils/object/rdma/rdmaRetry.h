@@ -9,9 +9,7 @@
 // Token-lifecycle + one-transient-retry wrappers that drive a full RDMA PUT/GET:
 // mint a cuObject token (cuobj_client.h), issue the signed control-plane request
 // (s3_control_plane_http.h), release the token, and retry once on a transient
-// failure. Compiled only when the cuObject library is present (HAVE_CUOBJ_CLIENT).
-
-#ifdef HAVE_CUOBJ_CLIENT
+// failure. Compiled only when the cuObject library is present.
 
 #include <cstdint>
 
@@ -67,7 +65,5 @@ rdmaGetWithRetry(SharedCuObjClient &rdma,
                  uint64_t offset);
 
 } // namespace nixl_obj_rdma
-
-#endif // HAVE_CUOBJ_CLIENT
 
 #endif // NIXL_SRC_UTILS_OBJECT_RDMA_RDMARETRY_H

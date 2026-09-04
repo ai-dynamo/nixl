@@ -25,8 +25,9 @@
 //   - cuobj_client.h          cuObject buffer registration + token minting
 //   - s3_control_plane_http.h the signed, body-less control-plane GET/PUT
 //   - rdmaRetry.h             token-lifecycle + one-transient-retry wrappers
-// Everything except rdma_protocol.h is compiled only when the cuObjClient
-// library is present (HAVE_CUOBJ_CLIENT).
+// The cuObject-dependent units (everything except rdma_protocol.h) are added to
+// the build only when the cuObjClient library is present, so this umbrella is
+// meant to be included from code compiled with cuObject support.
 
 #include "rdma_protocol.h"
 #include "cuobj_client.h"
