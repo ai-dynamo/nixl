@@ -43,11 +43,13 @@ struct LogLevelSettings {
 constexpr std::string_view kDefaultLogLevel = "WARN";
 
 // Names the file that log records are mirrored into. Unset disables the sink.
-constexpr const char *kLogFileEnvVar = "NIXL_LOG_FILE";
+constexpr const char *log_file_env_var = "NIXL_LOG_FILE";
 
-/*
- * Appends log records to a file, formatted exactly as they appear on stderr so
- * the two outputs can be compared line for line.
+/**
+ * @brief Appends log records to a file, formatted exactly as on stderr.
+ *
+ * Keeping the formatting identical lets the two outputs be compared line for
+ * line.
  *
  * Abseil may call Send() from any thread, so writes are serialized. Each record
  * is flushed as it arrives: the point of the file is to explain what a process
@@ -85,7 +87,7 @@ public:
      */
     void
     Send(const absl::LogEntry &entry) override {
-        /* Carries the severity, timestamp and source location. */
+        // Carries the severity, timestamp and source location.
         const auto line = entry.text_message_with_prefix_and_newline();
 
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -113,12 +115,10 @@ private:
 
 std::mutex log_file_mutex;
 
-/*
- * Owned manually rather than through a smart pointer with static storage.
- * Static destructors run before .fini_array, so a self-destroying sink would
- * unregister itself while later shutdown code could still be logging; deleting
- * it from the destructor-attribute function below keeps it alive to the end.
- */
+// Owned manually rather than through a smart pointer with static storage.
+// Static destructors run before .fini_array, so a self-destroying sink would
+// unregister itself while later shutdown code could still be logging; deleting
+// it from the destructor-attribute function below keeps it alive to the end.
 fileLogSink *log_file_sink = nullptr; // guarded by log_file_mutex
 
 /**
@@ -168,9 +168,9 @@ void InitializeNixlLogging()
     absl::SetStderrThreshold(settings.min_severity);
     absl::InitializeLog();
 
-    /* Registered before the records below so the version banner, the most
-     * useful line for identifying which build a process is running, is
-     * captured in the file as well. */
+    // Registered before the records below so the version banner, the most
+    // useful line for identifying which build a process is running, is
+    // captured in the file as well.
     nixl::initLogFile();
 
 #ifdef NIXL_VERSION
@@ -202,28 +202,28 @@ initLogFile() {
         return true;
     }
 
-    const char *path = std::getenv(kLogFileEnvVar);
+    const char *path = std::getenv(log_file_env_var);
     if (path == nullptr || *path == '\0') {
         return false;
     }
 
-    /* Cleared so the reason below cannot report a leftover value from some
-     * unrelated earlier call; ofstream is not required to set errno. */
+    // Cleared so the reason below cannot report a leftover value from some
+    // unrelated earlier call; ofstream is not required to set errno.
     errno = 0;
     auto sink = new fileLogSink(path);
     if (!sink->isOpen()) {
         const int open_errno = errno;
         delete sink;
-        /* Reported on stderr and then dropped. Losing the log file must not
-         * stop the process it was meant to describe. */
-        NIXL_WARN << "Could not open " << kLogFileEnvVar << " '" << path
+        // Reported on stderr and then dropped. Losing the log file must not
+        // stop the process it was meant to describe.
+        NIXL_WARN << "Could not open " << log_file_env_var << " '" << path
                   << "', continuing without a log file"
                   << (open_errno != 0 ? ": " + nixl_strerror(open_errno) : "");
         return false;
     }
 
-    /* Registered last: until this call the sink is invisible to Abseil, so a
-     * concurrent log record can never reach a half-built sink. */
+    // Registered last: until this call the sink is invisible to Abseil, so a
+    // concurrent log record can never reach a half-built sink.
     absl::AddLogSink(sink);
     log_file_sink = sink;
     return true;
@@ -243,8 +243,8 @@ shutdownLogFile() {
         return;
     }
 
-    /* Unregistered first, so no record can arrive while the file is closing.
-     * RemoveLogSink waits for calls already inside Send() to return. */
+    // Unregistered first, so no record can arrive while the file is closing.
+    // RemoveLogSink waits for calls already inside Send() to return.
     absl::RemoveLogSink(log_file_sink);
     log_file_sink->Flush();
     delete log_file_sink;
