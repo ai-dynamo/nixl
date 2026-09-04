@@ -41,6 +41,12 @@
 #include "common.h"
 #include "common/nixl_log.h"
 
+// POSIX leaves this to the application to declare, and glibc only exposes it
+// from unistd.h under _GNU_SOURCE, so declare it rather than depend on which
+// feature macros happen to be set. At global scope, not in the namespace below,
+// so it refers to the process environment and not a new internal symbol.
+extern "C" char **environ;
+
 namespace {
 
 using testing::HasSubstr;
@@ -553,7 +559,14 @@ TEST_F(nixlLogFileTest, ConcurrentRecordsAreNotInterleaved) {
         thread.join();
     }
 
-    const auto lines = readLogLines();
+    // Any thread in this process can log while the sink is registered, and such
+    // a record is not this test's business. Drop everything that is not a
+    // payload so an unrelated line cannot fail the count. A torn write is still
+    // caught: if it kept the payload text the shape check below rejects it, and
+    // if it lost the text the count and the set check report it missing.
+    auto lines = readLogLines();
+    std::erase_if(
+        lines, [](const std::string &line) { return line.find("payload ") == std::string::npos; });
     ASSERT_EQ(lines.size(), num_threads * per_thread);
 
     // Every line must be a whole record. A torn or interleaved write would
