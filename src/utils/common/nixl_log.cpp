@@ -24,6 +24,7 @@
 #include "absl/strings/ascii.h"
 #include "absl/container/flat_hash_map.h"
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <ios>
@@ -64,7 +65,7 @@ public:
      * Never throws: a failure to open leaves the sink closed, which the caller
      * detects with isOpen() rather than by catching an exception.
      */
-    explicit fileLogSink(const std::string &path) : file_(path, std::ios::app) {}
+    explicit fileLogSink(const std::string &path) : path_(path), file_(path, std::ios::app) {}
 
     /**
      * @brief Reports whether the file was opened successfully.
@@ -91,8 +92,18 @@ public:
         const auto line = entry.text_message_with_prefix_and_newline();
 
         const std::lock_guard<std::mutex> lock(mutex_);
+        if (failed_) {
+            return;
+        }
+
+        // Cleared so the reason reported below belongs to this write; iostreams
+        // are not required to set errno.
+        errno = 0;
         file_.write(line.data(), static_cast<std::streamsize>(line.size()));
         file_.flush();
+        if (!file_) {
+            reportFailure(errno);
+        }
     }
 
     /**
@@ -105,12 +116,50 @@ public:
     void
     Flush() override {
         const std::lock_guard<std::mutex> lock(mutex_);
+        if (failed_) {
+            return;
+        }
+
+        errno = 0;
         file_.flush();
+        if (!file_) {
+            reportFailure(errno);
+        }
     }
 
 private:
+    /**
+     * @brief Reports the first write failure and stops using the file.
+     *
+     * Once a stream has failed, every later write on it is a silent no-op, so
+     * without this the file would simply stop part way through with nothing to
+     * say why. Records after the failure are dropped rather than retried: the
+     * process being described must not be held up by its own log file.
+     *
+     * Goes straight to stderr rather than through NIXL_WARN, and this is not a
+     * style choice. It runs inside a log sink while holding mutex_, so emitting
+     * a record here would re-enter Send() on this thread and deadlock on that
+     * very mutex.
+     *
+     * @param reason errno from the failed operation, or 0 if it was not set.
+     *               Called with mutex_ held.
+     */
+    void
+    reportFailure(int reason) {
+        failed_ = true;
+
+        const std::string detail = reason != 0 ? ": " + nixl_strerror(reason) : "";
+        std::fprintf(stderr,
+                     "NIXL: could not write to %s '%s'%s; dropping further records\n",
+                     log_file_env_var,
+                     path_.c_str(),
+                     detail.c_str());
+    }
+
     std::mutex mutex_;
+    std::string path_;
     std::ofstream file_;
+    bool failed_ = false;
 };
 
 std::mutex log_file_mutex;
