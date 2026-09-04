@@ -258,9 +258,18 @@ namespace {
 /**
  * @brief Tears the log file down at library unload.
  *
- * Runs from .fini_array, which is after the static destructors that
- * __cxa_atexit queues, so anything logged while those run is still written to
- * the file.
+ * Placed in .fini_array rather than in a static destructor because a
+ * self-destroying sink would unregister itself while later shutdown code could
+ * still be logging. On glibc that also puts it after the destructors
+ * __cxa_atexit queues, so records emitted late in shutdown still reach the
+ * file, but that part is a property of the loader and not something the
+ * standard promises.
+ *
+ * Correctness does not depend on the ordering either way. Send() flushes every
+ * record as it is written, so the worst a different order can cost is the few
+ * records emitted after this runs; it can never lose an earlier record, and it
+ * cannot leave a registered sink dangling, because the sink is removed from
+ * Abseil before it is destroyed.
  */
 void
 ShutdownNixlLogging() __attribute__((destructor));

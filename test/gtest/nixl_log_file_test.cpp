@@ -97,8 +97,8 @@ protected:
          * initialization; drop it so each test starts from a known state. */
         nixl::shutdownLogFile();
 
-        prev_min_level_ = absl::MinLogLevel();
-        prev_stderr_threshold_ = absl::StderrThreshold();
+        prevMinLevel_ = absl::MinLogLevel();
+        prevStderrThreshold_ = absl::StderrThreshold();
 
         /* Most tests log at INFO, which the default WARN level would discard
          * before any sink is consulted. Keep stderr quiet so a passing run does
@@ -121,8 +121,8 @@ protected:
     void
     TearDown() override {
         nixl::shutdownLogFile();
-        absl::SetMinLogLevel(prev_min_level_);
-        absl::SetStderrThreshold(prev_stderr_threshold_);
+        absl::SetMinLogLevel(prevMinLevel_);
+        absl::SetStderrThreshold(prevStderrThreshold_);
         std::filesystem::remove(path_);
     }
 
@@ -177,8 +177,8 @@ protected:
     gtest::ScopedEnv env_;
 
 private:
-    absl::LogSeverityAtLeast prev_min_level_ = absl::LogSeverityAtLeast::kInfo;
-    absl::LogSeverityAtLeast prev_stderr_threshold_ = absl::LogSeverityAtLeast::kInfo;
+    absl::LogSeverityAtLeast prevMinLevel_ = absl::LogSeverityAtLeast::kInfo;
+    absl::LogSeverityAtLeast prevStderrThreshold_ = absl::LogSeverityAtLeast::kInfo;
 };
 
 /** @brief The base case: a record emitted with the sink registered reaches the file. */
@@ -309,7 +309,16 @@ TEST_F(nixlLogFileTest, DisabledWhenEnvVarEmpty) {
  */
 TEST_F(nixlLogFileTest, UnopenablePathIsNotFatal) {
     const gtest::LogIgnoreGuard lig("Could not open NIXL_LOG_FILE");
-    const auto bad = std::filesystem::temp_directory_path() / "nixl-no-such-dir" / "x.log";
+
+    /* Derived from path_, which already carries this process's pid and the test
+     * name, so a concurrent run cannot create the directory and turn the open
+     * into a success. Cleared first in case an earlier run left it behind. */
+    auto missingDir = path_;
+    missingDir += ".missing";
+    std::filesystem::remove_all(missingDir);
+    ASSERT_FALSE(std::filesystem::exists(missingDir));
+
+    const auto bad = missingDir / "x.log";
     env_.addVar("NIXL_LOG_FILE", bad.string());
 
     EXPECT_FALSE(nixl::initLogFile());
