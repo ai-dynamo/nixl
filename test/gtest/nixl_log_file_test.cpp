@@ -22,6 +22,7 @@
 #include <fstream>
 #include <mutex>
 #include <regex>
+#include <string_view>
 #include <set>
 #include <sstream>
 #include <string>
@@ -100,21 +101,30 @@ public:
      * not depend on timestamps.
      *
      * Abseil requires Send() to be thread-safe and will call it from whichever
-     * thread logged, so both members are serialized on mutex_, exactly as the
-     * real sink in nixl_log.cpp does.
+     * thread logged, so the append is serialized on mutex_, exactly as the real
+     * sink in nixl_log.cpp does.
      */
     void
     Send(const absl::LogEntry &entry) override {
         const std::lock_guard<std::mutex> lock(mutex_);
         text_.append(std::string(entry.text_message())).append("\n");
-        ++count_;
     }
 
-    /** @brief Number of records this sink has received. */
+    /**
+     * @brief Number of records received whose message contains @p marker.
+     * @return A count restricted to the caller's own records, so one logged by
+     *         another thread cannot inflate it.
+     */
     size_t
-    count() const {
+    countMatching(std::string_view marker) const {
         const std::lock_guard<std::mutex> lock(mutex_);
-        return count_;
+
+        size_t matching = 0;
+        for (size_t at = text_.find(marker); at != std::string::npos;
+             at = text_.find(marker, at + 1)) {
+            ++matching;
+        }
+        return matching;
     }
 
     /**
@@ -130,7 +140,6 @@ public:
 
 private:
     mutable std::mutex mutex_;
-    size_t count_ = 0;
     std::string text_;
 };
 
@@ -216,6 +225,23 @@ protected:
     }
 
     /**
+     * @brief The log file's lines that contain @p marker.
+     * @return One entry per matching record. Any thread in the process can log
+     *         while the sink is registered, so selecting on the caller's own
+     *         text keeps an unrelated record out of an exact count.
+     */
+    std::vector<std::string>
+    linesMatching(std::string_view marker) const {
+        std::vector<std::string> matching;
+        for (const auto &line : readLogLines()) {
+            if (line.find(marker) != std::string::npos) {
+                matching.push_back(line);
+            }
+        }
+        return matching;
+    }
+
+    /**
      * @brief Reports whether the log file was created at all.
      * @return true if the path exists, used to prove the disabled paths create
      *         nothing rather than an empty file.
@@ -253,22 +279,22 @@ TEST_F(nixlLogFileTest, RecordCarriesSeverityAndSourceLocation) {
 
     NIXL_INFO << "located record";
 
-    const auto lines = readLogLines();
+    const auto lines = linesMatching("located record");
     ASSERT_EQ(lines.size(), 1u);
     EXPECT_EQ(lines[0][0], 'I');
     EXPECT_THAT(lines[0], HasSubstr("nixl_log_file_test.cpp:"));
-    EXPECT_THAT(lines[0], HasSubstr("located record"));
 }
 
 /** @brief Records appear one per line, in the order they were emitted. */
 TEST_F(nixlLogFileTest, EachRecordIsOneLine) {
     ASSERT_TRUE(enableLogFile());
 
-    NIXL_INFO << "first";
-    NIXL_INFO << "second";
-    NIXL_INFO << "third";
+    // A shared prefix, so the three can be selected as a group below.
+    NIXL_INFO << "in order: first";
+    NIXL_INFO << "in order: second";
+    NIXL_INFO << "in order: third";
 
-    const auto lines = readLogLines();
+    const auto lines = linesMatching("in order:");
     ASSERT_EQ(lines.size(), 3u);
     EXPECT_THAT(lines[0], HasSubstr("first"));
     EXPECT_THAT(lines[1], HasSubstr("second"));
@@ -302,8 +328,7 @@ TEST_F(nixlLogFileTest, LeavesOtherSinksUntouched) {
 
     NIXL_INFO << "record for every sink";
 
-    EXPECT_EQ(other.count(), 1u);
-    EXPECT_THAT(other.text(), HasSubstr("record for every sink"));
+    EXPECT_EQ(other.countMatching("record for every sink"), 1u);
     EXPECT_THAT(readLogFile(), HasSubstr("record for every sink"));
 }
 
@@ -377,7 +402,7 @@ TEST_F(nixlLogFileTest, UnopenablePathIsNotFatal) {
 
     countingSink other;
     NIXL_INFO << "logging still works";
-    EXPECT_EQ(other.count(), 1u);
+    EXPECT_EQ(other.countMatching("logging still works"), 1u);
     EXPECT_FALSE(std::filesystem::exists(bad));
 }
 
@@ -390,8 +415,7 @@ TEST_F(nixlLogFileTest, InitIsIdempotent) {
     NIXL_INFO << "written once";
 
     // A sink registered twice would duplicate every record.
-    const auto lines = readLogLines();
-    EXPECT_EQ(lines.size(), 1u);
+    EXPECT_EQ(linesMatching("written once").size(), 1u);
 }
 
 /**
@@ -559,14 +583,11 @@ TEST_F(nixlLogFileTest, ConcurrentRecordsAreNotInterleaved) {
         thread.join();
     }
 
-    // Any thread in this process can log while the sink is registered, and such
-    // a record is not this test's business. Drop everything that is not a
-    // payload so an unrelated line cannot fail the count. A torn write is still
-    // caught: if it kept the payload text the shape check below rejects it, and
-    // if it lost the text the count and the set check report it missing.
-    auto lines = readLogLines();
-    std::erase_if(
-        lines, [](const std::string &line) { return line.find("payload ") == std::string::npos; });
+    // Only this test's records, so one logged by an unrelated thread cannot
+    // fail the count. A torn write is still caught: if it kept the payload text
+    // the shape check below rejects it, and if it lost the text the count and
+    // the set check report it missing.
+    const auto lines = linesMatching("payload ");
     ASSERT_EQ(lines.size(), num_threads * per_thread);
 
     // Every line must be a whole record. A torn or interleaved write would
