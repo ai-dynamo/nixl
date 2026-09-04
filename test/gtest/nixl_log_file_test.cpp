@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
@@ -463,6 +464,42 @@ TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
  * torn down before lateLogger runs and the record goes missing.
  */
 TEST_F(nixlLogFileTest, RecordsFromStaticDestructorsReachTheFile) {
+    // Everything the child needs is built here, before the fork. Between fork()
+    // and exec() only async-signal-safe calls are allowed, and setenv() can
+    // allocate, which would hang the child if another thread held the allocator
+    // lock at the moment of the fork. open() and dup2() below are safe.
+    const std::vector<std::string> overrides = {
+        "NIXL_LOG_FILE=" + path_.string(),
+        "NIXL_LOG_LEVEL=INFO",
+        std::string(late_record_env_var) + "=1",
+    };
+
+    // Inherit the environment, minus the names being overridden, so the values
+    // below win outright rather than relying on how getenv treats duplicates.
+    std::vector<std::string> child_env;
+    for (char **entry = environ; *entry != nullptr; ++entry) {
+        const std::string text(*entry);
+        const std::string name = text.substr(0, text.find('=') + 1);
+        const bool overridden =
+            std::any_of(overrides.begin(), overrides.end(), [&name](const std::string &o) {
+                return o.compare(0, name.size(), name) == 0;
+            });
+        if (!overridden) {
+            child_env.push_back(text);
+        }
+    }
+    child_env.insert(child_env.end(), overrides.begin(), overrides.end());
+
+    std::vector<char *> envp;
+    for (std::string &entry : child_env) {
+        envp.push_back(entry.data());
+    }
+    envp.push_back(nullptr);
+
+    std::string helper_name = "nixl_log_file_late_record_helper";
+    std::string no_tests = "--gtest_filter=-*";
+    std::vector<char *> argv{helper_name.data(), no_tests.data(), nullptr};
+
     const pid_t pid = fork();
     ASSERT_GE(pid, 0) << "fork failed";
 
@@ -475,15 +512,7 @@ TEST_F(nixlLogFileTest, RecordsFromStaticDestructorsReachTheFile) {
             ::dup2(devnull, STDERR_FILENO);
         }
 
-        // Inherited across the exec, and read by the library's constructor.
-        ::setenv("NIXL_LOG_FILE", path_.c_str(), 1);
-        ::setenv("NIXL_LOG_LEVEL", "INFO", 1);
-        ::setenv(late_record_env_var, "1", 1);
-
-        ::execl("/proc/self/exe",
-                "nixl_log_file_late_record_helper",
-                "--gtest_filter=-*",
-                static_cast<char *>(nullptr));
+        ::execve("/proc/self/exe", argv.data(), envp.data());
 
         // Only reached if the exec failed, and kept distinct from any status
         // the helper itself could return.
