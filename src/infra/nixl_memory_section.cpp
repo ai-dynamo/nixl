@@ -17,6 +17,7 @@
 #include <atomic>
 #include <map>
 #include <algorithm>
+#include <limits>
 #include <iostream>
 #include "nixl.h"
 #include "nixl_descriptors.h"
@@ -26,6 +27,31 @@
 #include "serdes/serdes.h"
 
 /*** Class nixlMemSection implementation ***/
+
+namespace {
+uintptr_t
+rangeEnd(const nixlBasicDesc &desc) noexcept {
+    const uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
+    return desc.len == SIZE_MAX ? max_addr : desc.addr + desc.len;
+}
+
+bool
+coversWithEnd(const nixlBasicDesc &covering,
+              const uintptr_t covering_end,
+              const nixlBasicDesc &query) noexcept {
+    const uintptr_t query_end = query.addr + query.len;
+    return covering.devId == query.devId && covering.addr <= query.addr &&
+        query_end >= query.addr && query_end <= covering_end;
+}
+
+bool
+coversFollowingWithEnd(const nixlBasicDesc &covering,
+                       const uintptr_t covering_end,
+                       const nixlBasicDesc &query) noexcept {
+    const uintptr_t query_end = query.addr + query.len;
+    return covering.devId == query.devId && query_end >= query.addr && query_end <= covering_end;
+}
+} // namespace
 
 nixlSecDescList &
 nixlMemSection::emplace(const nixl_mem_t nixl_mem, nixlBackendEngine *backend) {
@@ -78,7 +104,9 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
     if (s_index < 0) {
         return NIXL_ERR_UNKNOWN;
     }
-    resp.emplace(query[0].addr, query[0].len, query[0].devId, base[s_index].metadataP);
+    const nixlSectionDesc *covering = &base[s_index];
+    resp.emplace(query[0].addr, query[0].len, query[0].devId, covering->metadataP);
+    uintptr_t covering_end = rangeEnd(*covering);
 
     // Walk forward for non-decreasing elements; logN search on temporal disorder
     for (int i = 1; i < query.descCount(); ++i) {
@@ -89,16 +117,27 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
                 resp.clear();
                 return NIXL_ERR_UNKNOWN;
             }
+            covering = &base[s_index];
+            covering_end = rangeEnd(*covering);
         } else {
-            while (s_index < size && !base[s_index].covers(query[i]))
-                ++s_index;
+            // The current section covered the previous query. For an ordered
+            // query on the same device, its start cannot precede the section.
+            if (!coversFollowingWithEnd(*covering, covering_end, query[i])) {
+                do {
+                    ++s_index;
+                    if (s_index < size) {
+                        covering = &base[s_index];
+                        covering_end = rangeEnd(*covering);
+                    }
+                } while (s_index < size && !coversWithEnd(*covering, covering_end, query[i]));
+            }
             if (s_index == size) [[unlikely]] {
                 resp.clear();
                 return NIXL_ERR_UNKNOWN;
             }
         }
 
-        resp.emplace(query[i].addr, query[i].len, query[i].devId, base[s_index].metadataP);
+        resp.emplace(query[i].addr, query[i].len, query[i].devId, covering->metadataP);
     }
     return NIXL_SUCCESS;
 }
@@ -131,21 +170,26 @@ nixlMemSection::populate(const nixl_xfer_dlist_t &query,
 
     nixlMetaStrideDesc current(
         query[0].addr, query[0].len, query[0].devId, base[s_index].metadataP, query[0].len, 1);
+    uintptr_t covering_end = rangeEnd(base[s_index]);
     uintptr_t prev_addr = query[0].addr;
 
     for (int i = 1; i < n; ++i) {
         const nixlBasicDesc &it = query[i];
 
-        if (!base[s_index].covers(it)) [[unlikely]] {
+        if (!coversWithEnd(base[s_index], covering_end, it)) [[unlikely]] {
             if (it < query[i - 1]) {
                 s_index = base.getCoveringIndex(it);
                 if (s_index < 0) {
                     resp.clear();
                     return NIXL_ERR_UNKNOWN;
                 }
+                covering_end = rangeEnd(base[s_index]);
             } else {
-                while (s_index < size && !base[s_index].covers(it)) {
+                while (s_index < size && !coversWithEnd(base[s_index], covering_end, it)) {
                     ++s_index;
+                    if (s_index < size) {
+                        covering_end = rangeEnd(base[s_index]);
+                    }
                 }
                 if (s_index == size) {
                     resp.clear();
