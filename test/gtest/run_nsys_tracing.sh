@@ -54,13 +54,45 @@ fi
 # Sanity-check expected NVTX ranges and the new metadata-exchange span.
 NVTX_RANGES="$(nsys stats --force-export=true --report nvtx_sum --format csv "${OUT}.nsys-rep" 2>/dev/null \
     | grep 'nixl::' | sed 's/.*,//' | sort -u)"
-for expected in nixl::loadRemoteMD nixl::registerMem nixl::postXferReq.write; do
+for expected in nixl::loadRemoteMD nixl::registerMem nixl::postXferReq.write nixl::postXferReq.read; do
     if ! echo "${NVTX_RANGES}" | grep -Fq -- "${expected}"; then
         echo "tracing_nsys: expected NVTX range '${expected}' missing from capture" >&2
         echo "${NVTX_RANGES}" | sed 's/^/  seen: /' >&2
         exit 1
     fi
 done
+
+SQLITE="${OUT}.sqlite"
+if ! "${NSYS}" export --type sqlite --force-overwrite true --output "${SQLITE}" \
+    "${OUT}.nsys-rep" >/dev/null; then
+    echo "tracing_nsys: failed to export ${OUT}.nsys-rep to SQLite" >&2
+    exit 1
+fi
+python3 - "${SQLITE}" <<'PY' || exit 1
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+rows = connection.execute(
+    """
+    SELECT COALESCE(events.text, strings.value), events.uint64Value
+    FROM NVTX_EVENTS AS events
+    LEFT JOIN StringIds AS strings ON events.textId = strings.id
+    WHERE COALESCE(events.text, strings.value) IN
+          ('nixl::postXferReq.write', 'nixl::postXferReq.read', 'nixl::xfer.complete')
+    """
+).fetchall()
+post_ids = [payload for name, payload in rows if name.startswith("nixl::postXferReq.")]
+complete_ids = [payload for name, payload in rows if name == "nixl::xfer.complete"]
+if not post_ids or not complete_ids:
+    raise SystemExit("tracing_nsys: missing correlated post or completion events")
+if any(payload is None for payload in post_ids + complete_ids):
+    raise SystemExit("tracing_nsys: correlation payload is not unsigned 64-bit")
+if not set(complete_ids).issubset(set(post_ids)):
+    raise SystemExit("tracing_nsys: completion correlation payload was not posted")
+if max(post_ids.count(payload) for payload in set(post_ids)) < 2:
+    raise SystemExit("tracing_nsys: no request correlation payload was reused")
+PY
 
 echo "tracing_nsys: wrote ${OUT}.nsys-rep"
 exit 0

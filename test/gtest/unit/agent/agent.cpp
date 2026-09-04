@@ -24,6 +24,7 @@
 #include "common.h"
 #include "nixl.h"
 #include "plugin_manager.h"
+#include "transfer_request.h"
 #include "mocks/gmock_engine.h"
 
 namespace gtest {
@@ -66,16 +67,17 @@ namespace agent {
 
     class agentHelper {
     protected:
+        ScopedEnv trace_env_;
         testing::NiceMock<mocks::GMockBackendEngine> gmock_engine_;
         std::unique_ptr<nixlAgent> agent_;
 
     public:
-        agentHelper(const std::string &name)
-            : agent_([&name]() {
-                  nixlAgentConfig cfg;
-                  cfg.useProgThread = true;
-                  return std::make_unique<nixlAgent>(name, cfg);
-              }()) {}
+        agentHelper(const std::string &name) {
+            trace_env_.addVar("NIXL_TRACE_BACKENDS", "");
+            nixlAgentConfig cfg;
+            cfg.useProgThread = true;
+            agent_ = std::make_unique<nixlAgent>(name, cfg);
+        }
 
         ~agentHelper() {
             /* We must release nixlAgent first (i.e. explicitly in the destructor), as it calls
@@ -421,8 +423,15 @@ namespace agent {
                                               xfer_req,
                                               &local_extra_params),
                   NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req->traceCorrelationId(), 0u);
         EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req->traceCorrelationId(), 0u);
+
+        nixl_opt_args_t repost_params;
+        EXPECT_EQ(local_agent_->postXferReq(xfer_req, &repost_params), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req->traceCorrelationId(), 0u);
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);
@@ -499,9 +508,11 @@ namespace agent {
                                             xfer_req,
                                             &local_extra_params),
                   NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req->traceCorrelationId(), 0u);
         EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_SUCCESS);
 
         EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req->traceCorrelationId(), 0u);
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);
