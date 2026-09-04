@@ -39,7 +39,12 @@ impl From<u32> for CostMethod {
     }
 }
 
-/// A handle to a transfer request
+/// A handle to a transfer request.
+///
+/// An in-progress request must be canceled explicitly and polled to a terminal status before it is
+/// dropped. Dropping a request does not cancel or progress the underlying transfer. If dropped
+/// early, NIXL logs an error because the transfer may continue accessing its buffers; those buffers
+/// must not be reused.
 pub struct XferRequest {
     inner: NonNull<bindings::nixl_capi_xfer_req_s>,
     agent: Arc<RwLock<AgentInner>>,

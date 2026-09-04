@@ -1100,6 +1100,24 @@ impl Agent {
         }
     }
 
+    /// Requests cancellation of a transfer without releasing its handle.
+    ///
+    /// Supporting backends accept repeated calls regardless of request state. For an active request,
+    /// continue calling Agent::get_xfer_status until completion before reusing the transfer buffers
+    /// or dropping the request. Backends without cancellation support return an error.
+    pub fn cancel_xfer_req(&self, req: &XferRequest) -> Result<(), NixlError> {
+        let status = unsafe {
+            nixl_capi_cancel_xfer_req(self.inner.write().unwrap().handle.as_ptr(), req.handle())
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => Ok(()),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
+            _ => Err(NixlError::BackendError),
+        }
+    }
+
     /// Queries the backend for a transfer request
     ///
     /// # Arguments

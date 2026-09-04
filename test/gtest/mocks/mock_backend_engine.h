@@ -20,6 +20,7 @@
 #include "backend/backend_engine.h"
 #include "backend/backend_plugin.h"
 #include <cassert>
+#include <vector>
 
 namespace mocks {
 
@@ -68,6 +69,8 @@ public:
                          const nixl_opt_b_args_t *opt_args) const override;
   nixl_status_t checkXfer(nixlBackendReqH *handle) const override;
   nixl_status_t
+  cancelXfer(nixlBackendReqH *handle) const override;
+  nixl_status_t
   releaseReqH(nixlBackendReqH *handle) const override;
 
   nixl_status_t
@@ -100,6 +103,8 @@ private:
   // This represents an engine shared state that is read in every const method and modified in non-cost ones
   // The purpose is to trigger thread sanitizer in multi-threading tests
   int sharedState;
+  std::vector<nixl_status_t> cancelStatuses_;
+  mutable size_t nextCancelStatus_ = 0;
 };
 } // namespace mocks
 

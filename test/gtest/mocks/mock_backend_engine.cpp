@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,13 +16,25 @@
  */
 #include "mock_backend_engine.h"
 #include "gmock_engine.h"
+#include <sstream>
 
 namespace mocks {
 
 MockBackendEngine::MockBackendEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       gmock_backend_engine(GMockBackendEngine::GetFromParams(init_params->customParams)),
-      sharedState(1) {}
+      sharedState(1) {
+    auto it = init_params->customParams->find("cancel_statuses");
+    if (it == init_params->customParams->end()) {
+        return;
+    }
+
+    std::istringstream statuses(it->second);
+    std::string status;
+    while (std::getline(statuses, status, ',')) {
+        cancelStatuses_.push_back(static_cast<nixl_status_t>(std::stoi(status)));
+    }
+}
 
 nixl_status_t
 MockBackendEngine::registerMem(const nixlBlobDesc &mem,
@@ -82,6 +94,15 @@ nixl_status_t
 MockBackendEngine::checkXfer(nixlBackendReqH *handle) const {
     assert(sharedState > 0);
     return gmock_backend_engine->checkXfer(handle);
+}
+
+nixl_status_t
+MockBackendEngine::cancelXfer(nixlBackendReqH *) const {
+    assert(sharedState > 0);
+    if (nextCancelStatus_ >= cancelStatuses_.size()) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+    return cancelStatuses_[nextCancelStatus_++];
 }
 
 nixl_status_t

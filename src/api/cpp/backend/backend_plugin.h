@@ -30,7 +30,7 @@ class nixlUcxEngine;
 // libstdc++ ABI as the NIXL core library. NIXL core currently requires C++20.
 
 // Define the plugin API version
-#define NIXL_PLUGIN_API_VERSION 1
+#define NIXL_PLUGIN_API_VERSION 2
 
 // Define the plugin interface class
 class nixlBackendPlugin {

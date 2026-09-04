@@ -152,7 +152,12 @@ class nixlBackendEngine {
         // Use a handle to progress backend engine and see if a transfer is completed or not
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) const = 0;
 
-        //Backend aborts the transfer if necessary, and destructs the relevant objects
+        /**
+         * @brief Release a backend request handle after its transfer reaches a terminal state.
+         *
+         * @param handle Backend request handle
+         * @return NIXL_SUCCESS on success, otherwise an error code
+         */
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 
         // Prepare a memory view for remote buffers
@@ -246,6 +251,19 @@ class nixlBackendEngine {
                          std::chrono::microseconds &err_margin,
                          nixl_cost_t &method,
                          const nixl_opt_args_t *extra_params = nullptr) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
+        /**
+         * @brief Request asynchronous cancellation without releasing the handle.
+         *
+         * Callers must poll checkXfer until the request reaches a terminal state.
+         *
+         * @param handle Backend request handle
+         * @return NIXL_SUCCESS if cancellation is supported, otherwise an error
+         */
+        virtual nixl_status_t
+        cancelXfer(nixlBackendReqH *handle) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
 };
