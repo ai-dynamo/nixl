@@ -36,7 +36,8 @@ inline constexpr const char *unsigned_payload = "UNSIGNED-PAYLOAD";
 
 // RDMA reply status codes (carried in x-amz-rdma-reply, aligned with HTTP codes).
 inline constexpr int rdma_reply_success = 200; // transfer completed (PUT/GET)
-inline constexpr int rdma_reply_no_content = 204; // transfer completed, no content (PUT)
+inline constexpr int rdma_reply_no_content =
+    204; // No Content (S3 DELETE semantics); the RDMA GET/PUT data path uses 200/206
 inline constexpr int rdma_reply_partial_content = 206; // partial transfer (ranged GET)
 inline constexpr int rdma_reply_not_implemented =
     501; // server declined RDMA (under accelerated=true: hard error)

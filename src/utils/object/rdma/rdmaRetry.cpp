@@ -58,7 +58,10 @@ rdmaGetWithRetry(SharedCuObjClient &rdma,
         }
         ret = cp.rdmaGet(ctx, token, size, offset);
         rdma.putToken(token);
-        if (ret > 0 || ret == rdma_not_supported) {
+        // ret >= 0 is success: 0 is a valid transfer (an empty object/range).
+        // Only a negative rdma_error is a transient failure worth retrying; a
+        // decline is terminal.
+        if (ret >= 0 || ret == rdma_not_supported) {
             break;
         }
     }

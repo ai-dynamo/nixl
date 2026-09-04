@@ -416,10 +416,15 @@ S3RdmaControlPlane::rdmaGet(S3RdmaClientCtx &ctx,
         const std::string etag =
             resp->HasHeader("etag") ? stripQuotes(resp->GetHeader("etag").c_str()) : "";
 
-        // Trust the server's reported transferred byte count (can be < requested
-        // for ranged/partial GETs). Publish ctx.etag only once the response is
-        // fully accepted, so a malformed byte count doesn't leave a stale ETag.
-        ssize_t transferred = static_cast<ssize_t>(size);
+        // The server reports the actual transferred byte count in
+        // x-amz-rdma-bytes-transferred: it is authoritative and already clamped
+        // to the servable object/range length, so it can be < requested for a
+        // ranged/partial GET or an oversized buffer. The header is present iff
+        // that count is > 0, so its absence on an accepted 200/206 means a
+        // zero-byte transfer (an empty object or range) — report 0, not the
+        // requested size. Publish ctx.etag only once the response is fully
+        // accepted, so a malformed byte count doesn't leave a stale ETag.
+        ssize_t transferred = 0;
         if (resp->HasHeader(amz_rdma_bytes_transferred)) {
             const std::string hdr = resp->GetHeader(amz_rdma_bytes_transferred).c_str();
             uint64_t n = 0;
