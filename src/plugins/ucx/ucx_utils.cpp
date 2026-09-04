@@ -483,6 +483,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     config.modify("RNDV_THRESH", "inf");
     config.modify("MAX_RMA_RAILS", "2");
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
+    config.modify("CUDA_IPC_ENABLE_GET_ZCOPY", "on");
 
     // NIXL only needs AMs to be visible after previous PUTs which RC already
     // provides without the need of strict order key.
