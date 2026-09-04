@@ -769,22 +769,24 @@ protected:
         createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
 
         exchangeMD(0, 1);
-        doTransfer(getAgent(0),
-                   getAgentName(0),
-                   getAgent(1),
-                   getAgentName(1),
-                   NIXL_WRITE,
-                   size,
-                   count,
-                   repeat,
-                   num_threads,
-                   DRAM_SEG,
-                   src_buffers,
-                   DRAM_SEG,
-                   dst_buffers,
-                   NIXL_ERR_NO_TELEMETRY,
-                   "notification",
-                   true);
+        for (const auto op : {NIXL_WRITE, NIXL_READ}) {
+            doTransfer(getAgent(0),
+                       getAgentName(0),
+                       getAgent(1),
+                       getAgentName(1),
+                       op,
+                       size,
+                       count,
+                       repeat,
+                       num_threads,
+                       DRAM_SEG,
+                       src_buffers,
+                       DRAM_SEG,
+                       dst_buffers,
+                       NIXL_ERR_NO_TELEMETRY,
+                       "notification",
+                       true);
+        }
         invalidateMD(0, 1);
         deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
         deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
