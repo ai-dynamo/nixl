@@ -17,6 +17,7 @@
 #ifndef __NIXL_LOG_H
 #define __NIXL_LOG_H
 
+#include <string>
 #include <system_error>
 #include "absl/log/log.h"
 #include "absl/log/check.h"
@@ -126,5 +127,46 @@
 static inline std::string nixl_strerror(int err) {
     return std::error_code(err, std::generic_category()).message();
 }
+
+/*-----------------------------------------------------------------------------*
+ * Optional Per-Process Log File
+ *-----------------------------------------------------------------------------*/
+
+namespace nixl {
+
+/*
+ * @brief Mirrors log records into the file named by NIXL_LOG_FILE.
+ *
+ * Records that pass NIXL_LOG_LEVEL are appended to the file in addition to the
+ * existing stderr output; nothing about stderr, or about any other registered
+ * sink, changes. When NIXL_LOG_FILE is unset or empty no sink is registered and
+ * logging behaves exactly as before.
+ *
+ * The file is opened for append rather than truncated, so a process that is
+ * restarted against the same path adds to the record instead of erasing it.
+ * Give each process its own path to keep the output separable.
+ *
+ * Called during library initialization, so callers do not normally need it. It
+ * is exposed so tests can rebind the sink after changing the environment.
+ *
+ * @return true if a file sink is registered on return. Idempotent: returns true
+ *         without reopening anything if a sink is already registered. Opening
+ *         failures are logged and reported as false; they never throw and never
+ *         disturb the rest of the logging setup.
+ */
+bool
+initLogFile();
+
+/*
+ * @brief Unregisters the NIXL_LOG_FILE sink and flushes it.
+ *
+ * Runs at library unload, after static destructors, so records emitted late in
+ * shutdown still reach the file. Safe to call when no sink is registered, and
+ * safe to call more than once.
+ */
+void
+shutdownLogFile();
+
+} // namespace nixl
 
 #endif /* __NIXL_LOG_H */
