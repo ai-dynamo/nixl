@@ -49,12 +49,12 @@ runs_on_dockers:
   # so abseil's absl::Mutex annotations are visible to ThreadSanitizer).
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-pytorch26.06-cuda13.3-ubuntu24.04-tsan", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=thread'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=thread'
     }
   # ASan-instrumented dependency image for the asan_ubsan build.
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-base-pytorch26.06-cuda13.3-ubuntu24.04-asan", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=address'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=address'
     }
 
 matrix:

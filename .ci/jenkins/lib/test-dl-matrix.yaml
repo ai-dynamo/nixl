@@ -71,7 +71,7 @@ runs_on_dockers:
      name: 'nixl-ci-dl-gpu-base-pytorch26.06-cuda13.3-ubuntu24.04',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
     }
 
   - {
@@ -79,7 +79,7 @@ runs_on_dockers:
      name: 'build_helper_dl',
      arch: "aarch64",
      tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04 --build-arg ARCH=${arch}'
+     build_args: '--build-arg ARCH=${arch}'
     }
 
 matrix:
