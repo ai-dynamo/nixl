@@ -35,6 +35,89 @@
 #include "utils/neuron.h"
 #include "utils/utils.h"
 
+namespace {
+
+std::string
+shellQuote(const std::string &value) {
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+std::string
+buildRedisCliPrefix() {
+    std::string prefix;
+    const char *password = getenv("REDIS_PASSWORD");
+    if (password && password[0] != '\0') {
+        prefix += "REDISCLI_AUTH=" + shellQuote(password) + " ";
+    }
+
+    prefix += "redis-cli";
+    const char *host = getenv("REDIS_HOST");
+    if (host && host[0] != '\0') {
+        prefix += " -h " + shellQuote(host);
+    }
+    const char *port = getenv("REDIS_PORT");
+    if (port && port[0] != '\0') {
+        prefix += " -p " + shellQuote(port);
+    }
+    return prefix;
+}
+
+bool
+runRedisCli(const std::string &cmd, const std::string &operation) {
+    std::cout << operation << std::endl;
+    int result = system(cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Failed to " << operation << " (exit code: " << result << ")" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool
+getRedisBench(size_t buffer_size, const std::string &key, void *buffer) {
+    if (buffer_size > 0 && !buffer) {
+        std::cerr << "Invalid Redis GET output buffer for key: " << key << std::endl;
+        return false;
+    }
+
+    const std::string filename = "/tmp/" + key + ".get";
+    const std::string cmd =
+        buildRedisCliPrefix() + " --raw GET " + shellQuote(key) + " > " + shellQuote(filename);
+    if (!runRedisCli(cmd, "Getting Redis key: " + key)) {
+        unlink(filename.c_str());
+        return false;
+    }
+
+    int fd = open(filename.c_str(), O_RDONLY);
+    if (fd < 0) {
+        std::cerr << "Failed to open Redis GET output: " << filename
+                  << " with error: " << strerror(errno) << std::endl;
+        unlink(filename.c_str());
+        return false;
+    }
+
+    ssize_t rc = pread(fd, buffer, buffer_size, 0);
+    close(fd);
+    unlink(filename.c_str());
+    if (rc < 0 || static_cast<size_t>(rc) != buffer_size) {
+        std::cerr << "Redis GET size mismatch for key " << key << ": expected " << buffer_size
+                  << " bytes, got " << (rc < 0 ? 0 : rc) << " bytes" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
 // Define command line parameters
 #define NB_ARG_STRING(param_name, def_val, help_text) DEFINE_string(param_name, def_val, help_text)
 #define NB_ARG_BOOL(param_name, def_val, help_text) DEFINE_bool(param_name, def_val, help_text)
@@ -58,7 +141,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-              "GUSLI, AZURE_BLOB] (only used with nixl worker)");
+              "REDIS, GUSLI, AZURE_BLOB] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -806,8 +889,9 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB])",
-                    backend);
+        printOption(
+            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB])",
+            backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
@@ -962,6 +1046,7 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
@@ -970,6 +1055,7 @@ xferBenchConfig::isStorageBackend() {
 bool
 xferBenchConfig::isObjStorageBackend() {
     return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 };
@@ -1166,7 +1252,12 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                         exit(EXIT_FAILURE);
                     }
                     is_allocated = true;
-                    if (xferBenchConfig::isObjStorageBackend()) {
+                    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+                        if (!getRedisBench(len, iov.metaInfo, addr)) {
+                            std::cerr << "Failed to get Redis key: " << iov.metaInfo << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                    } else if (xferBenchConfig::isObjStorageBackend()) {
                         if (!xferBenchUtils::getObj(iov.metaInfo)) {
                             std::cerr << "Failed to get object: " << iov.metaInfo << std::endl;
                             exit(EXIT_FAILURE);
@@ -1445,6 +1536,26 @@ xferBenchUtils::buildAwsCredentials() {
 }
 
 bool
+xferBenchUtils::putRedis(size_t buffer_size, const std::string &key) {
+    if (buffer_size == 0) {
+        std::cerr << "Invalid Redis seed size: 0" << std::endl;
+        return false;
+    }
+
+    const std::string filename = "/tmp/" + key;
+    int fd = createFile(buffer_size, filename);
+    if (fd < 0) {
+        return false;
+    }
+
+    const std::string cmd =
+        buildRedisCliPrefix() + " -x SET " + shellQuote(key) + " < " + shellQuote(filename);
+    bool ok = runRedisCli(cmd, "Seeding Redis key for READ: " + key);
+    cleanupFile(fd, filename);
+    return ok;
+}
+
+bool
 xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
         // INFINIA backends don't need external CLI put
@@ -1481,6 +1592,11 @@ xferBenchUtils::getObj(const std::string &name) {
 bool
 xferBenchUtils::rmObj(const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        return true;
+    }
+    // REDIS uses OBJ_SEG for remote addressing, but cleanup is not S3/Azure CLI-based.
+    // Bench keys are ephemeral; skip explicit delete (same as prior DRAM_SEG teardown).
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
