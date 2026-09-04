@@ -16,11 +16,14 @@
  */
 
 #include <atomic>
+#include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <regex>
 #include <sstream>
 #include <string>
+#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -39,6 +42,30 @@
 namespace {
 
 using testing::HasSubstr;
+
+// Set by the child process in RecordsFromStaticDestructorsReachTheFile, so the
+// destructor below only logs in the one process that is testing for it.
+constexpr const char *late_record_env_var = "NIXL_TEST_LATE_RECORD";
+constexpr const char *late_record_text = "record from a static destructor";
+
+/**
+ * @brief Logs from a static destructor, to check the log file outlives teardown.
+ *
+ * Declared at file scope so it is constructed before main() and therefore
+ * destroyed near the end of the exit sequence, behind the static objects a real
+ * process registers during startup. That is the stringent position: if the
+ * NIXL_LOG_FILE sink is still registered when this runs, it was still
+ * registered for every static destructor that ran before it.
+ */
+struct lateLogger {
+    ~lateLogger() {
+        if (std::getenv(late_record_env_var) != nullptr) {
+            NIXL_INFO << late_record_text;
+        }
+    }
+};
+
+lateLogger late_logger;
 
 /**
  * @brief Counts what Abseil hands to a sink other than the file sink.
@@ -399,6 +426,46 @@ TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
     NIXL_INFO << "readable immediately";
 
     EXPECT_THAT(readLogFile(), HasSubstr("readable immediately"));
+}
+
+/**
+ * @brief A record logged from a static destructor still reaches the file.
+ *
+ * The teardown hook is an __attribute__((destructor)), so it lands in
+ * .fini_array, which glibc runs after draining the exit-handler queue that
+ * __cxa_atexit registers static destructors on. That ordering is loader
+ * behaviour rather than a language guarantee, so this test pins it down instead
+ * of leaving it as an assumption in a comment.
+ *
+ * Needs a real process exit, which gtest cannot do in-process, so the work
+ * happens in a forked child that configures the log file and then returns
+ * through exit(). If the ordering ever reverses, the sink is torn down before
+ * lateLogger runs and the record goes missing, which this notices.
+ */
+TEST_F(nixlLogFileTest, RecordsFromStaticDestructorsReachTheFile) {
+    const pid_t pid = fork();
+    ASSERT_GE(pid, 0) << "fork failed";
+
+    if (pid == 0) {
+        // Child. Point logging at this test's file and leave through exit() so
+        // the static destructors run for real. Anything this process prints is
+        // its own business, so keep it out of the test output.
+        ::setenv("NIXL_LOG_FILE", path_.c_str(), 1);
+        ::setenv(late_record_env_var, "1", 1);
+        const int devnull = ::open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            ::dup2(devnull, STDOUT_FILENO);
+            ::dup2(devnull, STDERR_FILENO);
+        }
+        std::exit(nixl::initLogFile() ? 0 : 1);
+    }
+
+    int status = 0;
+    ASSERT_EQ(::waitpid(pid, &status, 0), pid);
+    ASSERT_TRUE(WIFEXITED(status)) << "child did not exit normally";
+    ASSERT_EQ(WEXITSTATUS(status), 0) << "child could not open the log file";
+
+    EXPECT_THAT(readLogFile(), HasSubstr(late_record_text));
 }
 
 /**
