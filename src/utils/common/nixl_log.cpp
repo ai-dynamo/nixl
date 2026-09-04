@@ -273,11 +273,11 @@ namespace {
  * Abseil before it is destroyed.
  */
 void
-ShutdownNixlLogging() __attribute__((destructor));
+shutdownNixlLogging() __attribute__((destructor));
 
 /** @brief Definition of the destructor-attribute hook declared above. */
 void
-ShutdownNixlLogging() {
+shutdownNixlLogging() {
     nixl::shutdownLogFile();
 }
 
