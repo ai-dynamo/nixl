@@ -22,6 +22,7 @@
 #include <fstream>
 #include <mutex>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <sys/wait.h>
@@ -557,10 +558,25 @@ TEST_F(nixlLogFileTest, ConcurrentRecordsAreNotInterleaved) {
 
     // Every line must be a whole record. A torn or interleaved write would
     // leave a line that does not end in its own payload.
-    const std::regex record("^I.*payload [0-7]:[0-9]+$");
+    const std::regex record("^I.*payload ([0-9]+):([0-9]+)$");
+    std::set<std::pair<unsigned, unsigned>> seen;
     for (const auto &line : lines) {
-        EXPECT_TRUE(std::regex_match(line, record)) << "malformed line: " << line;
+        std::smatch fields;
+        EXPECT_TRUE(std::regex_match(line, fields, record)) << "malformed line: " << line;
+        if (fields.size() == 3) {
+            seen.emplace(std::stoul(fields[1]), std::stoul(fields[2]));
+        }
     }
+
+    // Checking the line count and each line's shape would still pass if one
+    // payload were written twice and another lost, so compare the set of
+    // payloads actually present against the set that should be.
+    for (unsigned t = 0; t < num_threads; ++t) {
+        for (unsigned i = 0; i < per_thread; ++i) {
+            EXPECT_TRUE(seen.count({t, i}) == 1) << "missing payload " << t << ":" << i;
+        }
+    }
+    EXPECT_EQ(seen.size(), num_threads * per_thread) << "unexpected payloads present";
 }
 
 } // namespace
