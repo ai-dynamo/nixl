@@ -473,6 +473,43 @@ TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
 }
 
 /**
+ * @brief A write failure is reported once, and then records are dropped.
+ *
+ * A stream that has failed treats every later write as a silent no-op, so
+ * without a report the file would stop part way through and say nothing about
+ * why. /dev/full opens like any other file and fails every write with ENOSPC,
+ * which gives the real failure without needing a full filesystem.
+ *
+ * The report has to reach stderr directly. This path runs inside a log sink
+ * holding the sink's own mutex, so reporting through NIXL_WARN would re-enter
+ * it on the same thread and deadlock; a test that hangs here is that bug.
+ */
+TEST_F(nixlLogFileTest, ReportsAWriteFailureOnceThenDropsRecords) {
+    env_.addVar("NIXL_LOG_FILE", "/dev/full");
+    ASSERT_TRUE(nixl::initLogFile()) << "/dev/full should open like any other file";
+
+    testing::internal::CaptureStderr();
+    NIXL_INFO << "first record";
+    NIXL_INFO << "second record";
+    NIXL_INFO << "third record";
+    const std::string captured = testing::internal::GetCapturedStderr();
+
+    // Said once, however many records follow, so a failing file cannot bury
+    // the stderr output that is still working.
+    const std::string report = "could not write to NIXL_LOG_FILE";
+    size_t reports = 0;
+    for (size_t at = captured.find(report); at != std::string::npos;
+         at = captured.find(report, at + 1)) {
+        ++reports;
+    }
+    EXPECT_EQ(reports, 1u) << "stderr was:\n" << captured;
+
+    // Names the file and why, so the report is actionable.
+    EXPECT_THAT(captured, HasSubstr("/dev/full"));
+    EXPECT_THAT(captured, HasSubstr("No space left on device"));
+}
+
+/**
  * @brief A record logged from a static destructor still reaches the file.
  *
  * The teardown hook is an __attribute__((destructor)), so it lands in
