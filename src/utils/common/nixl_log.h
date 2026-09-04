@@ -134,7 +134,7 @@ static inline std::string nixl_strerror(int err) {
 
 namespace nixl {
 
-/*
+/**
  * @brief Mirrors log records into the file named by NIXL_LOG_FILE.
  *
  * Records that pass NIXL_LOG_LEVEL are appended to the file in addition to the
@@ -157,7 +157,7 @@ namespace nixl {
 bool
 initLogFile();
 
-/*
+/**
  * @brief Unregisters the NIXL_LOG_FILE sink and flushes it.
  *
  * Runs at library unload, after static destructors, so records emitted late in
