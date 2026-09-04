@@ -15,11 +15,11 @@
  * limitations under the License.
  */
 
-#include <atomic>
 #include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -90,9 +90,14 @@ public:
      *
      * Stores the bare message rather than the prefixed form, so assertions do
      * not depend on timestamps.
+     *
+     * Abseil requires Send() to be thread-safe and will call it from whichever
+     * thread logged, so both members are serialized on mutex_, exactly as the
+     * real sink in nixl_log.cpp does.
      */
     void
     Send(const absl::LogEntry &entry) override {
+        const std::lock_guard<std::mutex> lock(mutex_);
         text_.append(std::string(entry.text_message())).append("\n");
         ++count_;
     }
@@ -100,17 +105,24 @@ public:
     /** @brief Number of records this sink has received. */
     size_t
     count() const {
+        const std::lock_guard<std::mutex> lock(mutex_);
         return count_;
     }
 
-    /** @brief Concatenated messages received so far, one per line. */
-    const std::string &
+    /**
+     * @brief Concatenated messages received so far, one per line.
+     * @return A copy, because a reference would hand the caller a member that
+     *         another thread's Send() could be appending to.
+     */
+    std::string
     text() const {
+        const std::lock_guard<std::mutex> lock(mutex_);
         return text_;
     }
 
 private:
-    std::atomic<size_t> count_{0};
+    mutable std::mutex mutex_;
+    size_t count_ = 0;
     std::string text_;
 };
 
