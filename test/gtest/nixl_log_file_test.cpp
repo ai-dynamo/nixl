@@ -40,8 +40,12 @@ namespace {
 
 using testing::HasSubstr;
 
-/* Counts what Abseil hands to a sink other than the file sink, which is how the
- * tests below check that adding a file does not displace existing output. */
+/**
+ * @brief Counts what Abseil hands to a sink other than the file sink.
+ *
+ * This is how the tests below check that adding a file does not displace
+ * existing output.
+ */
 class countingSink : public absl::LogSink {
 public:
     /** @brief Registers with Abseil, so it starts observing immediately. */
@@ -83,6 +87,7 @@ private:
     std::string text_;
 };
 
+/** @brief Fixture for the NIXL_LOG_FILE tests; see SetUp() for the isolation it gives. */
 class nixlLogFileTest : public testing::Test {
 protected:
     /**
@@ -93,16 +98,16 @@ protected:
      */
     void
     SetUp() override {
-        /* The process may already have a sink from its own pre-main
-         * initialization; drop it so each test starts from a known state. */
+        // The process may already have a sink from its own pre-main
+        // initialization; drop it so each test starts from a known state.
         nixl::shutdownLogFile();
 
         prevMinLevel_ = absl::MinLogLevel();
         prevStderrThreshold_ = absl::StderrThreshold();
 
-        /* Most tests log at INFO, which the default WARN level would discard
-         * before any sink is consulted. Keep stderr quiet so a passing run does
-         * not bury the real test output in deliberate log records. */
+        // Most tests log at INFO, which the default WARN level would discard
+        // before any sink is consulted. Keep stderr quiet so a passing run does
+        // not bury the real test output in deliberate log records.
         absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
         absl::SetStderrThreshold(absl::LogSeverityAtLeast::kError);
 
@@ -230,8 +235,8 @@ TEST_F(nixlLogFileTest, EachRecordIsOneLine) {
  * a process's console must see exactly what it saw before.
  */
 TEST_F(nixlLogFileTest, AddsToStderrRatherThanReplacingIt) {
-    /* Abseil writes to stderr from its own default handler rather than through
-     * a sink, so watch the real thing. */
+    // Abseil writes to stderr from its own default handler rather than through
+    // a sink, so watch the real thing.
     absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
     ASSERT_TRUE(enableLogFile());
 
@@ -276,7 +281,7 @@ TEST_F(nixlLogFileTest, HonoursLogLevel) {
 
 /** @brief With the variable unset, no sink is registered and no file is created. */
 TEST_F(nixlLogFileTest, DisabledWhenEnvVarUnset) {
-    /* Deliberately no enableLogFile(). */
+    // Deliberately no enableLogFile().
     env_.addVar("NIXL_LOG_FILE", "");
     ::unsetenv("NIXL_LOG_FILE");
 
@@ -310,9 +315,9 @@ TEST_F(nixlLogFileTest, DisabledWhenEnvVarEmpty) {
 TEST_F(nixlLogFileTest, UnopenablePathIsNotFatal) {
     const gtest::LogIgnoreGuard lig("Could not open NIXL_LOG_FILE");
 
-    /* Derived from path_, which already carries this process's pid and the test
-     * name, so a concurrent run cannot create the directory and turn the open
-     * into a success. Cleared first in case an earlier run left it behind. */
+    // Derived from path_, which already carries this process's pid and the test
+    // name, so a concurrent run cannot create the directory and turn the open
+    // into a success. Cleared first in case an earlier run left it behind.
     auto missingDir = path_;
     missingDir += ".missing";
     std::filesystem::remove_all(missingDir);
@@ -337,7 +342,7 @@ TEST_F(nixlLogFileTest, InitIsIdempotent) {
 
     NIXL_INFO << "written once";
 
-    /* A sink registered twice would duplicate every record. */
+    // A sink registered twice would duplicate every record.
     const auto lines = readLogLines();
     EXPECT_EQ(lines.size(), 1u);
 }
@@ -423,8 +428,8 @@ TEST_F(nixlLogFileTest, ConcurrentRecordsAreNotInterleaved) {
     const auto lines = readLogLines();
     ASSERT_EQ(lines.size(), num_threads * per_thread);
 
-    /* Every line must be a whole record. A torn or interleaved write would
-     * leave a line that does not end in its own payload. */
+    // Every line must be a whole record. A torn or interleaved write would
+    // leave a line that does not end in its own payload.
     const std::regex record("^I.*payload [0-7]:[0-9]+$");
     for (const auto &line : lines) {
         EXPECT_TRUE(std::regex_match(line, record)) << "malformed line: " << line;
