@@ -18,9 +18,16 @@
 #include "nixl_log.h"
 #include "absl/log/initialize.h"
 #include "absl/log/globals.h"
+#include "absl/log/log_entry.h"
+#include "absl/log/log_sink.h"
+#include "absl/log/log_sink_registry.h"
 #include "absl/strings/ascii.h"
 #include "absl/container/flat_hash_map.h"
+#include <cerrno>
 #include <cstdlib>
+#include <fstream>
+#include <ios>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -34,6 +41,59 @@ struct LogLevelSettings {
 
 // Default log level if nothing else is specified
 constexpr std::string_view kDefaultLogLevel = "WARN";
+
+// Names the file that log records are mirrored into. Unset disables the sink.
+constexpr const char *kLogFileEnvVar = "NIXL_LOG_FILE";
+
+/*
+ * Appends log records to a file, formatted exactly as they appear on stderr so
+ * the two outputs can be compared line for line.
+ *
+ * Abseil may call Send() from any thread, so writes are serialized. Each record
+ * is flushed as it arrives: the point of the file is to explain what a process
+ * did before it crashed or hung, and holding the tail of the log in a buffer is
+ * precisely the failure that would defeat that.
+ */
+class fileLogSink final : public absl::LogSink {
+public:
+    explicit fileLogSink(const std::string &path) : file_(path, std::ios::app) {}
+
+    bool
+    isOpen() const {
+        return file_.is_open();
+    }
+
+    void
+    Send(const absl::LogEntry &entry) override {
+        /* Carries the severity, timestamp and source location, and is valid
+         * only for the duration of this call. */
+        const auto line = entry.text_message_with_prefix_and_newline();
+
+        const std::lock_guard<std::mutex> lock(mutex_);
+        file_.write(line.data(), static_cast<std::streamsize>(line.size()));
+        file_.flush();
+    }
+
+    void
+    Flush() override {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        file_.flush();
+    }
+
+private:
+    std::mutex mutex_;
+    std::ofstream file_;
+};
+
+std::mutex log_file_mutex;
+
+/*
+ * Owned manually rather than through a smart pointer with static storage.
+ * Static destructors run before .fini_array, so a self-destroying sink would
+ * unregister itself while later shutdown code could still be logging; deleting
+ * it from the destructor-attribute function below keeps it alive to the end.
+ */
+fileLogSink *log_file_sink = nullptr; // guarded by log_file_mutex
 
 // Function to initialize logging, run before main() via constructor attribute.
 void InitializeNixlLogging() __attribute__((constructor));
@@ -76,6 +136,11 @@ void InitializeNixlLogging()
     absl::SetStderrThreshold(settings.min_severity);
     absl::InitializeLog();
 
+    /* Registered before the records below so the version banner, the most
+     * useful line for identifying which build a process is running, is
+     * captured in the file as well. */
+    nixl::initLogFile();
+
 #ifdef NIXL_VERSION
     NIXL_INFO << "NIXL version: " << NIXL_VERSION
 #ifdef NIXL_GIT_HASH
@@ -87,6 +152,77 @@ void InitializeNixlLogging()
     if (invalid_env_var) {
         NIXL_WARN << "Invalid NIXL_LOG_LEVEL environment variable, using default log level: " << kDefaultLogLevel;
     }
+}
+
+} // anonymous namespace
+
+namespace nixl {
+
+bool
+initLogFile() {
+    const std::lock_guard<std::mutex> lock(log_file_mutex);
+
+    if (log_file_sink != nullptr) {
+        return true;
+    }
+
+    const char *path = std::getenv(kLogFileEnvVar);
+    if (path == nullptr || *path == '\0') {
+        return false;
+    }
+
+    /* Cleared so the reason below cannot report a leftover value from some
+     * unrelated earlier call; ofstream is not required to set errno. */
+    errno = 0;
+    auto sink = new fileLogSink(path);
+    if (!sink->isOpen()) {
+        const int open_errno = errno;
+        delete sink;
+        /* Reported on stderr and then dropped. Losing the log file must not
+         * stop the process it was meant to describe. */
+        NIXL_WARN << "Could not open " << kLogFileEnvVar << " '" << path
+                  << "', continuing without a log file"
+                  << (open_errno != 0 ? ": " + nixl_strerror(open_errno) : "");
+        return false;
+    }
+
+    /* Registered last: until this call the sink is invisible to Abseil, so a
+     * concurrent log record can never reach a half-built sink. */
+    absl::AddLogSink(sink);
+    log_file_sink = sink;
+    return true;
+}
+
+void
+shutdownLogFile() {
+    const std::lock_guard<std::mutex> lock(log_file_mutex);
+
+    if (log_file_sink == nullptr) {
+        return;
+    }
+
+    /* Unregistered first, so no record can arrive while the file is closing.
+     * RemoveLogSink waits for calls already inside Send() to return. */
+    absl::RemoveLogSink(log_file_sink);
+    log_file_sink->Flush();
+    delete log_file_sink;
+    log_file_sink = nullptr;
+}
+
+} // namespace nixl
+
+namespace {
+
+/*
+ * Runs from .fini_array, which is after the static destructors that __cxa_atexit
+ * queues, so anything logged while those run is still written to the file.
+ */
+void
+ShutdownNixlLogging() __attribute__((destructor));
+
+void
+ShutdownNixlLogging() {
+    nixl::shutdownLogFile();
 }
 
 } // anonymous namespace
