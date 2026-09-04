@@ -437,33 +437,52 @@ TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
  * behaviour rather than a language guarantee, so this test pins it down instead
  * of leaving it as an assumption in a comment.
  *
- * Needs a real process exit, which gtest cannot do in-process, so the work
- * happens in a forked child that configures the log file and then returns
- * through exit(). If the ordering ever reverses, the sink is torn down before
- * lateLogger runs and the record goes missing, which this notices.
+ * Needs a real process exit, which gtest cannot do in-process, so it runs in a
+ * helper process. That helper is exec'd rather than just forked: continuing in
+ * a forked image would run the whole static-teardown chain, UCX, gRPC,
+ * telemetry and Abseil included, against threads and locks inherited from the
+ * parent's test run, and a mutex held by a thread that did not survive the fork
+ * stays held forever in the child.
+ *
+ * The helper is this same binary, told to run no tests, so all it does is
+ * start up and shut down. Nothing calls initLogFile(): the library's own
+ * constructor registers the sink from NIXL_LOG_FILE, which makes this a test of
+ * the path a real process takes. If the ordering ever reverses, the sink is
+ * torn down before lateLogger runs and the record goes missing.
  */
 TEST_F(nixlLogFileTest, RecordsFromStaticDestructorsReachTheFile) {
     const pid_t pid = fork();
     ASSERT_GE(pid, 0) << "fork failed";
 
     if (pid == 0) {
-        // Child. Point logging at this test's file and leave through exit() so
-        // the static destructors run for real. Anything this process prints is
-        // its own business, so keep it out of the test output.
-        ::setenv("NIXL_LOG_FILE", path_.c_str(), 1);
-        ::setenv(late_record_env_var, "1", 1);
+        // Child. Anything the helper prints is its own business, so keep it out
+        // of the test output. Redirected before the exec so it survives it.
         const int devnull = ::open("/dev/null", O_WRONLY);
         if (devnull >= 0) {
             ::dup2(devnull, STDOUT_FILENO);
             ::dup2(devnull, STDERR_FILENO);
         }
-        std::exit(nixl::initLogFile() ? 0 : 1);
+
+        // Inherited across the exec, and read by the library's constructor.
+        ::setenv("NIXL_LOG_FILE", path_.c_str(), 1);
+        ::setenv("NIXL_LOG_LEVEL", "INFO", 1);
+        ::setenv(late_record_env_var, "1", 1);
+
+        ::execl("/proc/self/exe",
+                "nixl_log_file_late_record_helper",
+                "--gtest_filter=-*",
+                static_cast<char *>(nullptr));
+
+        // Only reached if the exec failed, and kept distinct from any status
+        // the helper itself could return.
+        _exit(127);
     }
 
     int status = 0;
     ASSERT_EQ(::waitpid(pid, &status, 0), pid);
-    ASSERT_TRUE(WIFEXITED(status)) << "child did not exit normally";
-    ASSERT_EQ(WEXITSTATUS(status), 0) << "child could not open the log file";
+    ASSERT_TRUE(WIFEXITED(status)) << "helper did not exit normally";
+    ASSERT_NE(WEXITSTATUS(status), 127) << "could not exec the helper";
+    ASSERT_EQ(WEXITSTATUS(status), 0) << "helper exited " << WEXITSTATUS(status);
 
     EXPECT_THAT(readLogFile(), HasSubstr(late_record_text));
 }
