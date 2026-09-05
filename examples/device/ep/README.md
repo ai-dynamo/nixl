@@ -43,6 +43,10 @@ buffer.disconnect_ranks(ranks)
 - `connect_ranks(remote_ranks, activate=True)`: Establish NIXL connections to new peers (can be called multiple times); in low-latency mode, use `activate=False` to keep new peers masked until explicitly unmasked.
 - `disconnect_ranks(remote_ranks)`: Clean up connections to departing peers
 
+## Environment Variables
+
+- `NIXL_EP_HT_AVOID_RECORD_STREAM`: Enable to make `ht_dispatch`/`ht_combine` keep their tensors alive by reference in the returned event handle instead of calling `record_stream()` on the communication stream. Use it when capturing dispatch/combine into a CUDA graph: under capture `record_stream()` never lets the caching allocator reclaim a block, so a graph holding one dispatch/combine pair per MoE layer pins one set of output buffers per layer. The references are dropped when the caller releases the handle, so the allocator can recycle the block normally, including inside a capture. The variable is read once per `Buffer`, at construction, so set it before creating the `Buffer`; two `Buffer`s may differ. It cannot be combined with `allocate_on_comm_stream`, where holding a reference cannot substitute for `record_stream(compute_stream)`. Unset leaves `record_stream()` behavior unchanged. It is read through the NIXL configuration layer, so it accepts `1`, `true`, `yes`, `on` or `enable` (case insensitive), may be set in the configuration file instead of the environment, and rejects any other value.
+
 ## Testing
 
 The elastic test suite in `tests/elastic/` validates dynamic scaling capabilities:
