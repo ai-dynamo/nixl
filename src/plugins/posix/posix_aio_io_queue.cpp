@@ -57,6 +57,11 @@ protected:
 };
 
 nixlPosixIOQueueAIO::~nixlPosixIOQueueAIO() {
+    // Cancellation is only a hint; do not delay teardown waiting for stragglers.
+    if (!ios_in_flight_.empty()) {
+        NIXL_ERROR << "POSIX AIO queue destroyed with " << ios_in_flight_.size()
+                   << " operations still in flight";
+    }
     for (auto &io : ios_) {
         if (io.aio_.aio_fildes != 0) {
             aio_cancel(io.aio_.aio_fildes, &io.aio_);
