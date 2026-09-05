@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('cpp')
-subdir('python')
-subdir('device')
+if get_option('install_headers')
+    install_headers(
+        'nixl_device.cuh',
+        'device_types.cuh',
+        install_dir: prefix_inc + '/gpu',
+    )
+    install_headers('impl/device_dispatch.cuh', install_dir: prefix_inc + '/gpu/impl')
+    install_headers('impl/ucx/device_ucx.cuh', install_dir: prefix_inc + '/gpu/impl/ucx')
+endif
