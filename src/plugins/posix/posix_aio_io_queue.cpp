@@ -114,7 +114,18 @@ nixlPosixIOQueueAIO::post(void) {
 
         if (ret < 0) {
             NIXL_ERROR << "aio_submit failed: " << nixl_strerror(-ret);
-            ios_to_submit_.push_front(io);
+            // Submission failed immediately (e.g. EBADF when the fd was
+            // closed before submission). Previously this pushed the io
+            // back to ios_to_submit_, leaking the slot forever (it was
+            // never returned to free_ios_) and re-submitting the same
+            // broken request on every subsequent post() -- producing
+            // unbounded error spam and eventually exhausting the io
+            // pool. Instead, notify the callback of the failure, and
+            // return the io to the free pool so the slot is reusable.
+            if (io->clb_) {
+                io->clb_(io->ctx_, 0, -1);
+            }
+            free_ios_.push_back(io);
             return NIXL_ERR_BACKEND;
         }
 
@@ -138,7 +149,17 @@ nixlPosixIOQueueAIO::doCheckCompleted(void) {
             ssize_t ret = aio_return(&io->aio_);
             if (ret < 0 || ret != static_cast<ssize_t>(io->aio_.aio_nbytes)) {
                 NIXL_ERROR << "aio_return failed: " << nixl_strerror(-ret);
-                ios_in_flight_.push_front(io);
+                // IO completed with error: call callback, remove from
+                // in-flight, and return to free pool. Previously this
+                // pushed the io back to ios_in_flight_ and returned
+                // NIXL_ERR_BACKEND, which leaked the slot (it was never
+                // returned to free_ios_) and caused every subsequent
+                // poll() to re-check the same failed request forever.
+                if (io->clb_) {
+                    io->clb_(io->ctx_, 0, -1);
+                }
+                it = ios_in_flight_.erase(it);
+                free_ios_.push_back(io);
                 return NIXL_ERR_BACKEND;
             }
             if (io->clb_) {
@@ -150,7 +171,23 @@ nixlPosixIOQueueAIO::doCheckCompleted(void) {
             return NIXL_IN_PROG;
         } else {
             NIXL_ERROR << "aio_error failed: " << nixl_strerror(-status);
-            ios_in_flight_.push_front(io);
+            // AIO error (e.g. EBADF when the file was closed while I/O
+            // was in flight). Previously this pushed the io back to
+            // ios_in_flight_, leaking the slot and re-checking the same
+            // failed request on every subsequent poll() which produced
+            // thousands of repeated EBADF errors. Instead, call the
+            // callback with an error, remove the io from in-flight, and
+            // return it to the free pool.
+            // POSIX requires aio_return() to be called exactly once after
+            // aio_error() reports a non-EINPROGRESS status, to release the
+            // aiocb's internal state.  The return value is discarded since
+            // the operation already failed.
+            aio_return(&io->aio_);
+            if (io->clb_) {
+                io->clb_(io->ctx_, 0, -1);
+            }
+            it = ios_in_flight_.erase(it);
+            free_ios_.push_back(io);
             return NIXL_ERR_BACKEND;
         }
 
