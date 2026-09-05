@@ -16,20 +16,30 @@
  */
 #include "uuid_v4.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
-#include <random>
+#include <system_error>
+
+#include <cerrno>
+#include <sys/random.h>
 
 namespace nixl {
 
 void
 generateRandomBytes(std::uint8_t *output, std::size_t size) {
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<unsigned int> dis(0, 255);
+    constexpr std::size_t max_entropy_request = 256;
 
-    for (std::size_t i = 0; i < size; ++i) {
-        output[i] = static_cast<std::uint8_t>(dis(gen));
+    for (std::size_t filled = 0; filled < size;) {
+        const std::size_t chunk = std::min(size - filled, max_entropy_request);
+        if (getentropy(output + filled, chunk) == 0) {
+            filled += chunk;
+            continue;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        throw std::system_error(errno, std::generic_category(), "getentropy failed");
     }
 }
 
