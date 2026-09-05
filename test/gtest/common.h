@@ -177,6 +177,7 @@ struct nixlTestParam {
     unsigned numWorkers;
     unsigned numThreads;
     std::string engineConfig;
+    bool sglEnabled = false;
 };
 
 using nixl_test_t = testing::TestWithParam<nixlTestParam>;
@@ -195,5 +196,22 @@ using nixl_test_t = testing::TestWithParam<nixlTestParam>;
         _test_case,                                     \
         testing::ValuesIn(std::vector<nixlTestParam>(   \
             {{_backend, _progress_thread_enabled, _num_workers, _num_threads, _engine_config}})));
+
+#define NIXL_INSTANTIATE_TEST_SGL(_test_name,                                    \
+                                  _test_case,                                    \
+                                  _backend,                                      \
+                                  _progress_thread_enabled,                      \
+                                  _num_workers,                                  \
+                                  _num_threads,                                  \
+                                  _engine_config)                                \
+    INSTANTIATE_TEST_SUITE_P(                                                    \
+        _test_name,                                                              \
+        _test_case,                                                              \
+        testing::ValuesIn(std::vector<nixlTestParam>({{_backend,                 \
+                                                       _progress_thread_enabled, \
+                                                       _num_workers,             \
+                                                       _num_threads,             \
+                                                       _engine_config,           \
+                                                       true}})));
 
 #endif /* TEST_GTEST_COMMON_H */
