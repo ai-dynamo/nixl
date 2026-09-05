@@ -46,6 +46,8 @@ public:
     prepXfer();
     nixl_status_t
     checkXfer();
+    nixl_status_t
+    cancelXfer();
 
     // Exception classes
     class exception : public std::exception {
@@ -87,6 +89,7 @@ private:
     int num_confirmed_ios_; // Number of confirmed IOs
     bool transfer_failed_ = false; // Set if any io of the current transfer failed
     bool cancellation_requested_ = false; // Set when cancellation begins for this transfer
+    bool explicitly_cancelled_ = false; // Set when cancellation was requested northbound
     unsigned cancels_expected_ = 0; // Cancellations expected for this request
     unsigned cancels_seen_ = 0; // Cancellations completed for this request
     std::unique_ptr<nixlPosixIOQueue> &io_queue_; // Async I/O queue instance
@@ -165,6 +168,8 @@ public:
 
     nixl_status_t
     checkXfer(nixlBackendReqH *handle) const override;
+    nixl_status_t
+    cancelXfer(nixlBackendReqH *handle) const override;
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 

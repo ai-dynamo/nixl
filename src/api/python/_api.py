@@ -88,10 +88,14 @@ class nixl_prepped_dlist_handle:
 
 class nixl_xfer_handle:
     """Opaque handle wrapper for a transfer request.
-    Use release() to explicitly free resources. If transfer was not complete, this will initiate
-    the abort process (if available) and will raise an exception.
-    __del__ calls release() and if it fails, it logs the failure and defers release by queuing
-    the handle in leaked xfer handles list, which will be re-released during agent destruction
+    Use cancel() to request cancellation, then continue polling until the request reaches DONE or
+    raises a terminal transfer error. Buffers must not be reused before that terminal status.
+    Call release() exactly once and do not use the handle afterward. Releasing an active request is
+    supported, but NIXL prints an application error and raises nixlRepostActiveError because its
+    buffers may still be in use. The handle remains valid after this exception. Continuing to poll
+    it and retrying release after it becomes terminal is deprecated compatibility behavior.
+    Releasing an already released handle logs an application error and is temporarily ignored for
+    compatibility; it will become an error in a future release.
 
     Args:
         agent: Owning nixl_agent used to perform release operations.
@@ -109,9 +113,26 @@ class nixl_xfer_handle:
         return f"nixl_xfer_handle(0x{self._handle:x}, released={self._released})"
 
     def release(self):
+        if self._released:
+            logger.error(
+                "APPLICATION ERROR: transfer request handle 0x%x was released more than once. "
+                "Duplicate release is currently ignored for compatibility but will become an "
+                "error in a future NIXL release.",
+                self._handle,
+            )
+            return
+        self._agent.releaseXferReq(self._handle)
+        self._released = True
+
+    def cancel(self):
+        """Request cancellation without releasing this handle.
+
+        Continue polling the request until it reaches a terminal status before reusing its buffers
+        or releasing or dropping the handle. Backends without cancellation support may complete
+        normally.
+        """
         if not self._released:
-            self._agent.releaseXferReq(self._handle)
-            self._released = True
+            self._agent.cancelXferReq(self._handle)
 
     def __del__(self):
         if not self._released:
@@ -673,6 +694,9 @@ class nixl_agent:
     def check_xfer_state(self, handle: nixl_xfer_handle) -> str:
         """Check the state of a transfer operation.
 
+        After cancel_xfer(), continue calling this method until it returns "DONE" or raises a
+        terminal transfer error. The transfer buffers remain in use while this returns "PROC".
+
         Args:
             handle: Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
 
@@ -686,6 +710,18 @@ class nixl_agent:
             return "PROC"
         else:
             return "ERR"
+
+    def cancel_xfer(self, handle: nixl_xfer_handle):
+        """Request cancellation of a transfer without releasing its handle.
+
+        Cancellation is asynchronous. Continue calling check_xfer_state until the request reaches
+        a terminal success or error before reusing its buffers or releasing the handle.
+        Backends without cancellation support may complete the transfer normally.
+
+        Args:
+            handle: Handle to the transfer operation from initialize_xfer or make_prepped_xfer.
+        """
+        handle.cancel()
 
     def get_xfer_telemetry(
         self, handle: nixl_xfer_handle
@@ -722,12 +758,20 @@ class nixl_agent:
         )
 
     def release_xfer_handle(self, handle: nixl_xfer_handle):
-        """Releases a transfer handle, which internally frees the memory used for the handle.
-        If the transfer is active, NIXL will attempt to cancel it.
-        If it cannot be canceled, an error will be returned and the handle will not be freed.
+        """Release a transfer request handle.
+
+        Call this method exactly once and do not use ``handle`` afterward. This method does not
+        cancel or progress a transfer. Calling it while the request is active is supported, but
+        NIXL prints an application error and raises ``nixlRepostActiveError`` because the transfer
+        may still be accessing its buffers; those buffers must not be reused. The handle remains
+        valid after this exception.
+
+        DEPRECATED compatibility behavior: clients may continue polling the retained handle and
+        retry release after it becomes terminal. Any use of ``handle`` after the initial release
+        attempt is deprecated.
 
         Args:
-            handle: Handle to the transfer operation from initialize_xfer or make_xfer.
+            handle: Handle from initialize_xfer or make_prepped_xfer.
         """
         handle.release()
 

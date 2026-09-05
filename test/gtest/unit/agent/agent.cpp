@@ -514,6 +514,44 @@ namespace agent {
         EXPECT_EQ(local_agent_->releasedDlistH(desc_hndl2), NIXL_SUCCESS);
     }
 
+    TEST_F(dualAgentBridgeFixture, ReleaseActiveXferReqFailsAndRetainsHandle) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+
+        nixlBackendReqH backend_req;
+        testing::InSequence sequence;
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), prepXfer)
+            .WillOnce(testing::DoAll(testing::SetArgReferee<4>(&backend_req),
+                                     testing::Return(NIXL_SUCCESS)));
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), postXfer)
+            .WillOnce(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), checkXfer)
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), releaseReqH(&backend_req))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+
+        nixl_xfer_dlist_t local_xfer_dlist(DRAM_SEG), remote_xfer_dlist(DRAM_SEG);
+        local_xfer_dlist.addDesc(s.local_blob.getDesc());
+        remote_xfer_dlist.addDesc(s.remote_blob.getDesc());
+
+        nixlXferReqH *xfer_req = nullptr;
+        EXPECT_EQ(local_agent_->createXferReq(NIXL_WRITE,
+                                              local_xfer_dlist,
+                                              remote_xfer_dlist,
+                                              s.remote_agent_name,
+                                              xfer_req,
+                                              &s.local_extra_params),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_IN_PROG);
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_ERR_REPOST_ACTIVE);
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
+    TEST_F(dualAgentBridgeFixture, CancelNullXferReqFails) {
+        EXPECT_EQ(local_agent_->cancelXferReq(nullptr), NIXL_ERR_INVALID_PARAM);
+    }
+
     TEST_F(dualAgentBridgeFixture, GenNotifTest) {
         const std::string msg = "notification";
         EXPECT_CALL(remote_agent_helper_->getGMockEngine(), getNotifs)

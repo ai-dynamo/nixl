@@ -183,6 +183,18 @@ nixlPosixBackendReqH::requestCancellation() {
 }
 
 nixl_status_t
+nixlPosixBackendReqH::cancelXfer() {
+    if (cancellation_requested_ || isComplete()) {
+        return NIXL_SUCCESS;
+    }
+
+    explicitly_cancelled_ = true;
+    transfer_failed_ = true;
+    requestCancellation();
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
 nixlPosixBackendReqH::queueResult(nixl_status_t queue_result) {
     if (queue_result < 0) {
         transfer_failed_ = true;
@@ -195,6 +207,9 @@ nixlPosixBackendReqH::queueResult(nixl_status_t queue_result) {
 
     if (!isComplete()) {
         return NIXL_IN_PROG;
+    }
+    if (explicitly_cancelled_) {
+        return NIXL_ERR_CANCELED;
     }
     return transfer_failed_ ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }
@@ -217,6 +232,7 @@ nixlPosixBackendReqH::postXfer() {
     num_confirmed_ios_ = 0;
     transfer_failed_ = false;
     cancellation_requested_ = false;
+    explicitly_cancelled_ = false;
     cancels_expected_ = 0;
     cancels_seen_ = 0;
 
@@ -391,6 +407,25 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
         auto &posix_handle = castPosixHandle(handle);
         NIXL_LOCK_GUARD(io_queue_lock_);
         return posix_handle.checkXfer();
+    }
+    catch (const nixlPosixBackendReqH::exception &e) {
+        NIXL_ERROR << e.what();
+        return e.code();
+    }
+    return NIXL_ERR_BACKEND;
+}
+
+nixl_status_t
+nixlPosixEngine::cancelXfer(nixlBackendReqH *handle) const {
+    // Linux AIO and POSIX AIO retain their existing behavior and complete naturally.
+    if (io_queue_type_ != "URING") {
+        return NIXL_SUCCESS;
+    }
+
+    try {
+        auto &posix_handle = castPosixHandle(handle);
+        NIXL_LOCK_GUARD(io_queue_lock_);
+        return posix_handle.cancelXfer();
     }
     catch (const nixlPosixBackendReqH::exception &e) {
         NIXL_ERROR << e.what();

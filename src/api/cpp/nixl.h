@@ -354,6 +354,19 @@ class nixlAgent {
         nixl_status_t
         getXferStatus (nixlXferReqH* req_hndl) const;
 
+        /**
+         * @brief Request cancellation of an active transfer request `req_hndl`.
+         *
+         * This call does not release the request handle and does not make its buffers immediately
+         * reusable. The caller must continue calling @ref getXferStatus until it returns either
+         * NIXL_SUCCESS or an error before reusing the buffers or releasing the handle. Backends
+         * that do not support cancellation may allow the transfer to complete normally.
+         *
+         * @param  req_hndl      Transfer request handle after postXferReq
+         * @return nixl_status_t Error code if the cancellation request was not accepted
+         */
+        nixl_status_t
+        cancelXferReq(nixlXferReqH *req_hndl) const;
 
         /**
          * @brief  Get the telemetry data associated with `req_hndl`.
@@ -378,11 +391,20 @@ class nixlAgent {
                           nixlBackendH* &backend) const;
 
         /**
-         * @brief  Release the transfer request `req_hndl`. If the transfer is active,
-         *         it will be canceled, or return an error if the transfer cannot be aborted.
+         * @brief Release the transfer request `req_hndl`.
+         *
+         * Call this function exactly once and do not use `req_hndl` afterward. Calling it while the
+         * request is active is supported, but NIXL prints an application error and returns
+         * NIXL_ERR_REPOST_ACTIVE because the transfer may still be accessing its buffers; those
+         * buffers must not be reused. Language destructors must not propagate this error.
+         *
+         * @note DEPRECATED compatibility behavior: The current implementation retains an active
+         * request after returning NIXL_ERR_REPOST_ACTIVE, allowing legacy clients to continue
+         * using it. Any use of `req_hndl` after this call, including polling or another release
+         * attempt, is deprecated.
          *
          * @param  req_hndl      Transfer request handle to be released
-         * @return nixl_status_t Error code if call was not successful
+         * @return nixl_status_t NIXL_SUCCESS, or NIXL_ERR_REPOST_ACTIVE if still active
          */
         nixl_status_t
         releaseXferReq (nixlXferReqH* req_hndl) const;

@@ -311,6 +311,9 @@ nixl_capi_status_t nixl_capi_post_xfer_req(
 nixl_capi_status_t nixl_capi_get_xfer_status(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl);
 
 nixl_capi_status_t
+nixl_capi_cancel_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req_hndl);
+
+nixl_capi_status_t
 nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_backend_t *backend);
