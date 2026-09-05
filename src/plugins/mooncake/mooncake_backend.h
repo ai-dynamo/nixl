@@ -30,7 +30,15 @@
 
 #include "transfer_engine_c.h"
 
+// TENT (Transfer Engine NexT) is the next-generation Mooncake engine, driven
+// through its native C API when Mooncake was built with -DUSE_TENT=ON. Its
+// header is included by the implementation only: nothing here may depend on
+// HAVE_MOONCAKE_TENT, or this class would have a different layout in
+// translation units that do not define it (the unit test is one), so the
+// engine handle below is kept type-erased.
+
 class nixlMooncakeBackendMD;
+struct nixlMooncakeBackendReqH;
 
 class nixlMooncakeEngine : public nixlBackendEngine {
 public:
@@ -112,12 +120,62 @@ public:
     genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
 private:
+    // Which Mooncake engine the backend drives. Classic is the default and
+    // keeps the original code path unchanged; Tent selects the next-gen
+    // engine through its native C API (tent_*).
+    enum class mode { CLASSIC, TENT };
+
     struct AgentInfo {
-        int segment_id;
+        // Classic segment ids are int32_t, TENT segment handles are uint64_t;
+        // stored wide and narrowed at the classic call sites.
+        uint64_t segment_id;
     };
 
+    nixl_status_t
+    postXferClassic(const nixl_xfer_op_t &operation,
+                    const nixl_meta_dlist_t &local,
+                    const nixl_meta_dlist_t &remote,
+                    uint64_t segment_id,
+                    nixlMooncakeBackendReqH *priv,
+                    const nixl_opt_b_args_t *opt_args) const;
+    nixl_status_t
+    checkXferClassic(nixlMooncakeBackendReqH *priv) const;
+    nixl_status_t
+    releaseReqHClassic(nixlMooncakeBackendReqH *priv) const;
+
+    nixl_status_t
+    postXferTent(const nixl_xfer_op_t &operation,
+                 const nixl_meta_dlist_t &local,
+                 const nixl_meta_dlist_t &remote,
+                 uint64_t segment_id,
+                 nixlMooncakeBackendReqH *priv,
+                 const nixl_opt_b_args_t *opt_args) const;
+    nixl_status_t
+    checkXferTent(nixlMooncakeBackendReqH *priv) const;
+    nixl_status_t
+    releaseReqHTent(nixlMooncakeBackendReqH *priv) const;
+
+    // Frees the batches parked by releaseReqHTent() as soon as the engine
+    // reports them terminal. A no-op while nothing is parked, which is the
+    // common case.
+    void
+    reclaimParkedBatches() const;
+
+    mode mode_ = mode::CLASSIC;
+    // Sentinel for "no batch allocated": the classic engine reports failure as
+    // INVALID_BATCH (UINT64_MAX), TENT as 0.
+    uint64_t invalid_batch_ = INVALID_BATCH;
+
     mutable std::mutex mutex_;
-    transfer_engine_t engine_;
+    transfer_engine_t engine_ = nullptr;
+    // tent_engine_t, kept as void * so this header stays independent of the
+    // TENT headers and of HAVE_MOONCAKE_TENT (see the note above).
+    void *tent_engine_ = nullptr;
+    // Batches whose release was asked for while transfers were still running.
+    // Kept under their own lock so the sweep never holds mutex_ across an
+    // engine call.
+    mutable std::mutex parked_mutex_;
+    mutable std::vector<uint64_t> parked_batches_;
     const std::string local_agent_name_;
     std::unordered_map<uint64_t, nixlMooncakeBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, AgentInfo> connected_agents_;
