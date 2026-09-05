@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,10 @@ subdir('utils')
 subdir('infra')
 subdir('plugins')
 subdir('core')
+
+# The C API wraps the C++ agent API, so it can only be built once nixl_lib
+# and nixl_build_lib exist; that is why it is not reached via subdir('api').
+subdir('api/c')
 
 # Test utilities library - created after nixl_dep is available to avoid circular dependencies
 nixl_test_utils_lib = library('nixl_test_utils',
