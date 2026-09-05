@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,8 +22,19 @@
 
 namespace nixl {
 
+void
+generateRandomBytes(std::uint8_t *output, std::size_t size) {
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<unsigned int> dis(0, 255);
+
+    for (std::size_t i = 0; i < size; ++i) {
+        output[i] = static_cast<std::uint8_t>(dis(gen));
+    }
+}
+
 UUIDv4::UUIDv4() {
-    generate_random_bytes(data.data(), data.size());
+    generateRandomBytes(data.data(), data.size());
     // Set version 4 bits (version 4 = 0100 in binary)
     data[6] = (data[6] & 0x0F) | 0x40;
     // Set variant bits (RFC 9562 variant = 10 in binary)
@@ -44,17 +55,6 @@ UUIDv4::to_string() const {
     }
 
     return oss.str();
-}
-
-void
-UUIDv4::generate_random_bytes(uint8_t *output, size_t size) {
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint8_t> dis(0, 255);
-
-    for (size_t i = 0; i < size; ++i) {
-        output[i] = dis(gen);
-    }
 }
 
 } // namespace nixl
