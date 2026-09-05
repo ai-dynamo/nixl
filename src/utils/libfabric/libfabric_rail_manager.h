@@ -28,8 +28,12 @@
 #include "libfabric_rail.h"
 
 #ifdef HAVE_CUDA
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#else
 #include <cuda.h>
 #include <cuda_runtime.h>
+#endif
 #endif
 
 // Forward declarations
