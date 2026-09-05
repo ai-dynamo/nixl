@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <numeric>
 #include <sstream>
@@ -248,6 +249,11 @@ NB_ARG_BOOL(use_device_api,
             "When enabled, --num_threads is repurposed as the CUDA kernel "
             "block size (num_threads <= 32 -> THREAD level; > 32 -> WARP level, must be a "
             "multiple of 32), and the internal CPU thread count is forced to 1.");
+NB_ARG_INT32(device_channel_num,
+             1,
+             "Number of logical UCX Device API channels, default to 1. "
+             "0 means one channel per execution group. "
+             "Only used when --use_device_api is enabled.");
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
@@ -331,6 +337,7 @@ bool xferBenchConfig::gusli_try_use_uring = false;
 std::optional<nixl_b_params_t> xferBenchConfig::plugin_parameters = std::nullopt;
 bool xferBenchConfig::use_device_api = false;
 int xferBenchConfig::block_threads = 1;
+int xferBenchConfig::device_channel_num = 0;
 
 static bool
 validateDeviceAPIConfig() {
@@ -364,11 +371,65 @@ validateDeviceAPIConfig() {
     if (xferBenchConfig::pipeline_depth != 1) {
         return reject("pipeline_depth must be 1");
     }
+    if (std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr) {
+        return reject("UCX_RC_GDA_NUM_CHANNELS must not be set; "
+                      "use --device_channel_num to configure Device API channels");
+    }
     return true;
 #else
     return reject("UCX GPU Device API support is not enabled in this build. "
                   "Set -Ducx_path=<path> with UCX GPU device headers available");
 #endif
+}
+
+static bool
+setupDeviceAPIConfig() {
+    const int num_threads = xferBenchConfig::num_threads;
+
+    if ((num_threads < 1) || (num_threads > 1024)) {
+        std::cerr << "Invalid value for --num_threads: " << num_threads
+                  << ". Device API requires a GPU kernel block thread count in [1, 1024]"
+                  << std::endl;
+        return false;
+    }
+    if ((num_threads > XFERBENCH_DEVICE_WARP_SIZE) &&
+        (num_threads % XFERBENCH_DEVICE_WARP_SIZE != 0)) {
+        std::cerr << "Invalid value for --num_threads: " << num_threads
+                  << ". Device API requires block_threads > 32 must be a multiple of 32"
+                  << std::endl;
+        return false;
+    }
+    if (xferBenchConfig::device_channel_num < 0) {
+        std::cerr << "Invalid value for --device_channel_num: "
+                  << xferBenchConfig::device_channel_num
+                  << ". Device API channel number must be >= 0" << std::endl;
+        return false;
+    }
+
+    xferBenchConfig::block_threads = num_threads;
+    const int group_num = xferBenchConfig::deviceGroupNum();
+
+    if (xferBenchConfig::device_channel_num == 0) {
+        xferBenchConfig::device_channel_num = group_num;
+    } else if (xferBenchConfig::device_channel_num > group_num) {
+        std::cout << "WARNING: Adjusting --device_channel_num from "
+                  << xferBenchConfig::device_channel_num << " to Device API group number "
+                  << group_num << std::endl;
+        xferBenchConfig::device_channel_num = group_num;
+    }
+    if (xferBenchConfig::num_iter < group_num) {
+        std::cerr << "Invalid value for --num_iter: " << xferBenchConfig::num_iter
+                  << " , must not be smaller than Device API group number: " << group_num
+                  << std::endl;
+        return false;
+    }
+
+    xferBenchConfig::num_threads = 1;
+    std::cout << "Device API mode: kernel block_threads = " << xferBenchConfig::block_threads
+              << ", group_num = " << group_num
+              << ", channel_num = " << xferBenchConfig::device_channel_num
+              << ", num_threads forced to 1" << std::endl;
+    return true;
 }
 
 int
@@ -575,26 +636,9 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
     use_device_api = NB_ARG(use_device_api);
-    if (use_device_api && !validateDeviceAPIConfig()) {
+    device_channel_num = NB_ARG(device_channel_num);
+    if (use_device_api && (!validateDeviceAPIConfig() || !setupDeviceAPIConfig())) {
         return -1;
-    }
-    if (use_device_api) {
-        if (num_threads < 1 || num_threads > 1024) {
-            std::cerr << "Invalid value for --num_threads: " << num_threads
-                      << ". Device API requires a GPU kernel block thread count in [1, 1024]"
-                      << std::endl;
-            return -1;
-        }
-        if (num_threads > 32 && num_threads % 32 != 0) {
-            std::cerr << "Invalid value for --num_threads: " << num_threads
-                      << ". Device API requires block_threads > 32 must be a multiple of 32"
-                      << std::endl;
-            return -1;
-        }
-        block_threads = num_threads;
-        num_threads = 1;
-        std::cout << "Device API mode: kernel block_threads=" << block_threads
-                  << ", num_threads forced to 1" << std::endl;
     }
     etcd_endpoints = NB_ARG(etcd_endpoints);
     asio_address = NB_ARG(asio_address);
@@ -732,12 +776,15 @@ xferBenchConfig::loadParams(void) {
             << std::endl;
         return -1;
     }
-    if ((max_block_size * max_batch_size) > (total_buffer_size / num_threads)) {
+    const int workers = workerNum();
+    const char *worker_kind = use_device_api ? "groups" : "threads";
+
+    if ((max_block_size * max_batch_size) > (total_buffer_size / workers)) {
         std::cerr << "Incorrect buffer size configuration "
                   << "(max_block_size * max_batch_size) "
                   << "(" << (max_block_size * max_batch_size) << ")"
-                  << " is > (total_buffer_size / num_threads) ("
-                  << (total_buffer_size / num_threads) << ")" << std::endl;
+                  << " is > (total_buffer_size / " << workers << " " << worker_kind << ") ("
+                  << (total_buffer_size / workers) << ")" << std::endl;
         return -1;
     }
 
@@ -746,29 +793,31 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
 
-    int partition = (num_threads * large_blk_iter_ftr);
+    int partition = (workers * large_blk_iter_ftr);
     if (num_iter % partition) {
         num_iter += partition - (num_iter % partition);
         std::cout << "WARNING: Adjusting num_iter to " << num_iter
-                  << " to allow equal distribution to " << num_threads << " threads" << std::endl;
+                  << " to allow equal distribution to " << workers << " " << worker_kind
+                  << std::endl;
     }
     if (warmup_iter % partition) {
         warmup_iter += partition - (warmup_iter % partition);
         std::cout << "WARNING: Adjusting warmup_iter to " << warmup_iter
-                  << " to allow equal distribution to " << num_threads << " threads" << std::endl;
+                  << " to allow equal distribution to " << workers << " " << worker_kind
+                  << std::endl;
     }
-    partition = (num_initiator_dev * num_threads);
+    partition = (num_initiator_dev * workers);
     if (total_buffer_size % partition) {
-        std::cerr << "Total_buffer_size must be divisible by the product of num_threads and "
-                     "num_initiator_dev"
+        std::cerr << "Total_buffer_size must be divisible by the product of " << workers << " "
+                  << worker_kind << " and num_initiator_dev"
                   << ", next such value is "
                   << total_buffer_size + partition - (total_buffer_size % partition) << std::endl;
         return -1;
     }
-    partition = (num_target_dev * num_threads);
+    partition = (num_target_dev * workers);
     if (total_buffer_size % partition) {
-        std::cerr << "Total_buffer_size must be divisible by the product of num_threads and "
-                     "num_target_dev"
+        std::cerr << "Total_buffer_size must be divisible by the product of " << workers << " "
+                  << worker_kind << " and num_target_dev"
                   << ", next such value is "
                   << total_buffer_size + partition - (total_buffer_size % partition) << std::endl;
         return -1;
@@ -923,6 +972,8 @@ xferBenchConfig::printConfig() {
     if (use_device_api) {
         printOption("Device API Kernel block threads (--num_threads=N)",
                     std::to_string(block_threads));
+        printOption("Device API channels (--device_channel_num=N)",
+                    std::to_string(device_channel_num));
     }
     printSeparator('-');
     std::cout << std::endl;
@@ -953,6 +1004,19 @@ xferBenchConfig::parseDeviceList() {
     }
 
     return devices;
+}
+
+int
+xferBenchConfig::deviceGroupNum() {
+    return xferBenchConfig::block_threads <= XFERBENCH_DEVICE_WARP_SIZE ?
+        xferBenchConfig::block_threads :
+        xferBenchConfig::block_threads / XFERBENCH_DEVICE_WARP_SIZE;
+}
+
+int
+xferBenchConfig::workerNum() {
+    return xferBenchConfig::use_device_api ? xferBenchConfig::deviceGroupNum() :
+                                             xferBenchConfig::num_threads;
 }
 
 bool
@@ -1344,7 +1408,7 @@ xferBenchUtils::printStats(bool is_target,
     double totalbw = 0;
 
     int total_iter = xferBenchConfig::num_iter;
-    int per_thread_iter = total_iter / xferBenchConfig::num_threads;
+    int per_thread_iter = total_iter / xferBenchConfig::workerNum();
 
     if (block_size > LARGE_BLOCK_SIZE) {
         total_iter /= xferBenchConfig::large_blk_iter_ftr;
