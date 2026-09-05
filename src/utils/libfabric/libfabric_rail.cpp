@@ -876,7 +876,7 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) co
         return processRecvCompletion(comp);
 
     } else if (flags & FI_WRITE) {
-        // Local write completions (fi_writedata) - use context
+        // Local write completions (fi_writemsg with remote completion) - use context
         return processLocalTransferCompletion(comp, "write");
 
     } else if (flags & FI_READ) {
@@ -884,7 +884,7 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) co
         return processLocalTransferCompletion(comp, "read");
 
     } else if (flags & FI_REMOTE_WRITE || flags & FI_REMOTE_CQ_DATA) {
-        // Remote write completions (from fi_writedata) - use immediate data
+        // Remote write completions (from fi_writemsg with remote completion) - use immediate data
         return processRemoteWriteCompletion(comp);
 
     } else {
@@ -1408,10 +1408,10 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
 
             // Log every N attempts to avoid log spam
             if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
-                NIXL_DEBUG << "fi_writedata still retrying EAGAIN on rail " << rail_id << " after "
+                NIXL_DEBUG << "fi_writemsg still retrying EAGAIN on rail " << rail_id << " after "
                            << attempt << " attempts";
             } else {
-                NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
+                NIXL_TRACE << "fi_writemsg returned EAGAIN on rail " << rail_id
                            << ", retrying (attempt " << attempt << ")";
             }
 
@@ -1420,7 +1420,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                 nixl_status_t progress_status = progressCompletionQueue();
                 if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
                     NIXL_ERROR << "progressCompletionQueue failed on rail " << rail_id
-                               << " during fi_writedata retry";
+                               << " during fi_writemsg retry";
                     return progress_status;
                 }
                 if (progress_status == NIXL_SUCCESS) {
@@ -1435,7 +1435,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
         }
     }
 
-    NIXL_ERROR << "fi_writedata failed on rail " << rail_id << ": " << fi_strerror(-ret);
+    NIXL_ERROR << "fi_writemsg failed on rail " << rail_id << ": " << fi_strerror(-ret);
     return NIXL_ERR_BACKEND;
 }
 
