@@ -116,6 +116,7 @@ gtest_sources = [
     'telemetry_stress_test.cpp',
     'telemetry_benchmark.cpp',
     'nixl_duration_test.cpp',
+    'nixl_log_file_test.cpp',
     'configuration.cpp'
     ]
 
