@@ -472,7 +472,7 @@ namespace agent {
 
         const std::vector<int> indices{0};
         nixlXferReqH *request = nullptr;
-        EXPECT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
+        ASSERT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
                                             local_side,
                                             indices,
                                             remote_side,
@@ -481,7 +481,7 @@ namespace agent {
                                             &s.local_extra_params),
                   NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
-        EXPECT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
+        ASSERT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
                                             *local_side,
                                             indices,
                                             *remote_side,
