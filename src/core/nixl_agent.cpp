@@ -782,6 +782,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     }
 
     if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
         if (extra_params->notif) {
             opt_args.notifMsg = *extra_params->notif;
             opt_args.hasNotif = true;

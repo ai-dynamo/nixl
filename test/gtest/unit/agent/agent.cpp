@@ -447,6 +447,53 @@ namespace agent {
         local_agent_->releaseMemView(mvh);
     }
 
+    TEST_F(dualAgentBridgeFixture, PreparedTransfersPreserveBinaryBackendParameters) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+
+        nixl_xfer_dlist_t local_descs(DRAM_SEG), remote_descs(DRAM_SEG);
+        local_descs.addDesc(s.local_blob.getDesc());
+        remote_descs.addDesc(s.remote_blob.getDesc());
+        nixlDlistH *local_side = nullptr, *remote_side = nullptr;
+        ASSERT_EQ(local_agent_->prepXferDlist(local_descs, local_side), NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->prepXferDlist(s.remote_agent_name, remote_descs, remote_side),
+                  NIXL_SUCCESS);
+
+        s.local_extra_params.customParam = std::string("\x12\0\x34\0\x56\0\x78\0", 8);
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(),
+                    prepXfer(testing::_,
+                             testing::_,
+                             testing::_,
+                             testing::_,
+                             testing::_,
+                             testing::Pointee(testing::Field(&nixl_opt_b_args_t::customParam,
+                                                             s.local_extra_params.customParam))))
+            .Times(2);
+
+        const std::vector<int> indices{0};
+        nixlXferReqH *request = nullptr;
+        EXPECT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
+                                            local_side,
+                                            indices,
+                                            remote_side,
+                                            indices,
+                                            request,
+                                            &s.local_extra_params),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
+                                            *local_side,
+                                            indices,
+                                            *remote_side,
+                                            indices,
+                                            request,
+                                            &s.local_extra_params),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releasedDlistH(remote_side), NIXL_SUCCESS);
+    }
+
     TEST_F(dualAgentBridgeFixture, XferReqSubFunctionsTest) {
         const std::string msg = "notification";
         EXPECT_CALL(remote_agent_helper_->getGMockEngine(), getNotifs)
