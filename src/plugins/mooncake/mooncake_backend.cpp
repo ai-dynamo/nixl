@@ -260,9 +260,9 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
     }
     if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
 
-    const static size_t kMaxRequestCount = 1024;
+    const size_t request_count = local.descCount();
     if (priv->batch_id == INVALID_BATCH) {
-        uint64_t batch_id = allocateBatchID(engine_, kMaxRequestCount);
+        uint64_t batch_id = allocateBatchID(engine_, request_count);
         if (batch_id == INVALID_BATCH) {
             return NIXL_ERR_BACKEND;
         }
@@ -270,7 +270,6 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         priv->request_count = 0;
     }
 
-    size_t request_count = local.descCount();
     std::vector<transfer_request_t> request(request_count);
     for (size_t index = 0; index < request_count; ++index) {
         if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
