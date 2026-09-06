@@ -73,7 +73,9 @@ parseGidIndex(const std::string &value) {
 
 uint32_t
 parseDataQpCount(const std::string &value) {
-    if (value.empty()) return 1;
+    if (value.empty()) {
+        return 1;
+    }
 
     size_t parsed_chars = 0;
     unsigned long parsed_value = 0;
@@ -83,8 +85,9 @@ parseDataQpCount(const std::string &value) {
     catch (const std::exception &) {
         throw std::invalid_argument("data_qp_count must be an integer in the range [1, 4]");
     }
-    if (parsed_chars != value.size() || parsed_value < 1 || parsed_value > 4)
+    if (parsed_chars != value.size() || parsed_value < 1 || parsed_value > 4) {
         throw std::invalid_argument("data_qp_count must be an integer in the range [1, 4]");
+    }
     return static_cast<uint32_t>(parsed_value);
 }
 
@@ -127,8 +130,9 @@ constexpr uint32_t DATA_QP_PROTOCOL_VERSION = 2;
 
 bool
 sendDataQps(int fd, const nixlDocaRdmaQp &rdma_qp, uint32_t write_qp_count) {
-    if (write_qp_count == 1)
+    if (write_qp_count == 1) {
         return sendAll(fd, rdma_qp.qpn_data.data(), sizeof(uint32_t));
+    }
 
     const uint32_t header[] = {DATA_QP_PROTOCOL_MAGIC,
                                DATA_QP_PROTOCOL_VERSION,
@@ -140,8 +144,9 @@ sendDataQps(int fd, const nixlDocaRdmaQp &rdma_qp, uint32_t write_qp_count) {
 
 bool
 recvDataQps(int fd, nixlDocaRdmaQp &rdma_qp, uint32_t expected_write_qps) {
-    if (expected_write_qps == 1)
+    if (expected_write_qps == 1) {
         return recvAll(fd, rdma_qp.rqpn_data.data(), sizeof(uint32_t));
+    }
 
     uint32_t header[4] = {};
     return recvAll(fd, header, sizeof(header)) && header[0] == DATA_QP_PROTOCOL_MAGIC &&
@@ -232,9 +237,10 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     data_qp_count = parseDataQpCount((*custom_params)["data_qp_count"]);
     NIXL_INFO << "WRITE data QPs per peer: " << data_qp_count;
-    if (data_qp_count > 1 && nstreams < static_cast<int>(data_qp_count))
+    if (data_qp_count > 1 && nstreams < static_cast<int>(data_qp_count)) {
         throw std::invalid_argument(
             "cuda_streams must be at least data_qp_count for striped WRITEs");
+    }
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     NIXL_INFO << "OOB listen port: " << local_port;
@@ -773,14 +779,14 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
         rdma_qp->qpn_data.reserve(total_data_qps);
         rdma_qp->rqpn_data.resize(total_data_qps);
         for (uint32_t index = 0; index < total_data_qps; ++index) {
-            auto qp = std::make_unique<nixl::doca::verbs::qp>(
-                gdevs[0].second,
-                ddev,
-                verbs_context,
-                verbs_pd,
-                RDMA_SEND_QUEUE_SIZE,
-                RDMA_RECV_QUEUE_SIZE,
-                DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB);
+            auto qp =
+                std::make_unique<nixl::doca::verbs::qp>(gdevs[0].second,
+                                                        ddev,
+                                                        verbs_context,
+                                                        verbs_pd,
+                                                        RDMA_SEND_QUEUE_SIZE,
+                                                        RDMA_RECV_QUEUE_SIZE,
+                                                        DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB);
             rdma_qp->qpn_data.push_back(doca_verbs_qp_get_qpn(qp->get_qp()));
             rdma_qp->qp_data.push_back(std::move(qp));
         }
@@ -1598,13 +1604,17 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
     ScopedCudaDevice deviceGuard(gdevs[0].first);
     std::unique_lock<std::mutex> post_lock(stripedPostLock, std::defer_lock);
-    if (data_qp_count > 1) post_lock.lock();
+    if (data_qp_count > 1) {
+        post_lock.lock();
+    }
 
     nixlDocaRdmaQp *rdma_qp;
     {
         std::lock_guard<std::mutex> lock(qpLock);
         auto search = qpMap.find(remote_agent);
-        if (search == qpMap.end()) return NIXL_ERR_INVALID_PARAM;
+        if (search == qpMap.end()) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
         rdma_qp = search->second;
     }
 
@@ -1615,12 +1625,10 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
 
     for (size_t ordinal = 0; ordinal < treq->positions.size(); ++ordinal) {
         const uint32_t idx = treq->positions[ordinal];
-        const size_t qp_index = operation == NIXL_WRITE && data_qp_count > 1 ?
-            1 + ordinal % data_qp_count :
-            0;
+        const size_t qp_index =
+            operation == NIXL_WRITE && data_qp_count > 1 ? 1 + ordinal % data_qp_count : 0;
         xferReqRingCpu[idx].qp_data = rdma_qp->qp_data[qp_index]->get_qp_gpu_dev();
-        xferReqRingCpu[idx].id =
-            (lastPostedReq.fetch_add(1) & (DOCA_MAX_COMPLETION_INFLIGHT_MASK));
+        xferReqRingCpu[idx].id = (lastPostedReq.fetch_add(1) & (DOCA_MAX_COMPLETION_INFLIGHT_MASK));
         xferReqRingCpu[idx].completion_list = completion_list_gpu;
         xferReqRingCpu[idx].wait_completion_count = 0;
         completion_list_cpu[xferReqRingCpu[idx].id].xferReqRingGpu = xferReqRingGpu + idx;
@@ -1630,11 +1638,13 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     if (operation == NIXL_WRITE && data_qp_count > 1) {
         auto &final_request = xferReqRingCpu[treq->positions.back()];
         uint16_t dependency_count = 0;
-        if (wait_for_previous_tail)
+        if (wait_for_previous_tail) {
             final_request.wait_completion_ids[dependency_count++] = previous_tail_id;
-        for (size_t ordinal = 0; ordinal + 1 < treq->positions.size(); ++ordinal)
+        }
+        for (size_t ordinal = 0; ordinal + 1 < treq->positions.size(); ++ordinal) {
             final_request.wait_completion_ids[dependency_count++] =
                 static_cast<uint16_t>(xferReqRingCpu[treq->positions[ordinal]].id);
+        }
         final_request.wait_completion_count = dependency_count;
     }
     std::atomic_thread_fence(std::memory_order_release);
@@ -1649,13 +1659,13 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
                 doca_kernel_read(treq->stream, xferReqRingCpu[idx].qp_data, xferReqRingGpu, idx);
             break;
         case NIXL_WRITE:
-            result = doca_kernel_write(data_qp_count > 1 ?
-                                           post_stream[(ordinal % data_qp_count) %
-                                                       static_cast<size_t>(nstreams)] :
-                                           treq->stream,
-                                       xferReqRingCpu[idx].qp_data,
-                                       xferReqRingGpu,
-                                       idx);
+            result = doca_kernel_write(
+                data_qp_count > 1 ?
+                    post_stream[(ordinal % data_qp_count) % static_cast<size_t>(nstreams)] :
+                    treq->stream,
+                xferReqRingCpu[idx].qp_data,
+                xferReqRingGpu,
+                idx);
             break;
         default:
             return NIXL_ERR_INVALID_PARAM;
@@ -1706,9 +1716,10 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
     }
     if (status != NIXL_SUCCESS && data_qp_count > 1) {
         ScopedCudaDevice deviceGuard(gdevs[0].first);
-        for (int stream = 0; stream < nstreams; ++stream)
+        for (int stream = 0; stream < nstreams; ++stream) {
             nixlDocaEngineCheckCudaError(cudaStreamSynchronize(post_stream[stream]),
                                          "Failed to stop striped WRITE stream");
+        }
     }
     auto *treq = static_cast<nixlDocaBckndReq *>(handle);
     for (uint32_t idx : treq->positions) {

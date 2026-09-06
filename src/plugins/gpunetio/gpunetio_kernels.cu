@@ -200,12 +200,18 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
                     break;
                 }
             }
-            if (abort_write) break;
+            if (abort_write) {
+                break;
+            }
         }
-        if (!abort_write) base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+        if (!abort_write) {
+            base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+        }
     }
     __syncthreads();
-    if (abort_write) return;
+    if (abort_write) {
+        return;
+    }
 
     for (idx = threadIdx.x; idx < tot_wqe; idx += blockDim.x) {
         wqe_idx = base_wqe_idx + idx;
@@ -380,7 +386,9 @@ kernel_progress(struct docaXferCompletion *completion_list,
                     printf("kernel received notification EBUSY at %d ret %d\n", msg_last, ret);
 #endif
                     DOCA_GPUNETIO_VOLATILE(notif_progress->msg_num) = 0;
-                    if (ret < 0) DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
+                    if (ret < 0) {
+                        DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
+                    }
                     doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
                     DOCA_GPUNETIO_VOLATILE(notif_progress->qp_gpu) = nullptr;
                 }
