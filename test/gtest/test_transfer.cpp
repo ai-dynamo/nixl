@@ -544,8 +544,7 @@ protected:
 
 const std::string TestTransfer::NOTIF_MSG = "notification";
 
-TEST_P(TestTransfer, Loopback)
-{
+TEST_P(TestTransfer, Loopback) {
     constexpr size_t size = 4096;
     constexpr size_t count = 8;
     constexpr size_t repeat = 2;
@@ -586,8 +585,7 @@ protected:
     }
 };
 
-TEST_P(TestTransferLoopbackDisabled, LoopbackRefusedInterAgentUnaffected)
-{
+TEST_P(TestTransferLoopbackDisabled, LoopbackRefusedInterAgentUnaffected) {
     constexpr size_t size = 4096;
     constexpr size_t count = 4;
     constexpr nixl_mem_t mem_type = DRAM_SEG;
@@ -600,13 +598,13 @@ TEST_P(TestTransferLoopbackDisabled, LoopbackRefusedInterAgentUnaffected)
     {
         const LogIgnoreGuard lig("metadata for remote agent .* not found");
         nixlXferReqH *xfer_req = nullptr;
-        EXPECT_NE(getAgent(0).createXferReq(NIXL_WRITE,
-                                            makeDescList<nixlBasicDesc>(src_buffers, mem_type),
-                                            makeDescList<nixlBasicDesc>(local_dst_buffers,
-                                                                        mem_type),
-                                            getAgentName(0),
-                                            xfer_req),
-                  NIXL_SUCCESS);
+        EXPECT_NE(
+            getAgent(0).createXferReq(NIXL_WRITE,
+                                      makeDescList<nixlBasicDesc>(src_buffers, mem_type),
+                                      makeDescList<nixlBasicDesc>(local_dst_buffers, mem_type),
+                                      getAgentName(0),
+                                      xfer_req),
+            NIXL_SUCCESS);
         EXPECT_EQ(xfer_req, nullptr);
     }
 
