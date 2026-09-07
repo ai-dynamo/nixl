@@ -93,8 +93,10 @@ telePID=$!
 sleep 15
 kill -s INT $telePID
 
-# Run the default POSIX queue, then add the io_uring mode when requested by CI.
+# Run the default POSIX queue and its focused Linux AIO tests, then add the io_uring mode
+# when requested by CI.
 ./bin/nixl_posix_test -n 128 -s 1048576
+./bin/nixl_posix_aio_test
 for test_arg in "${@:2}"; do
     if [ "$test_arg" = "run_uring" ]; then
         ./bin/nixl_posix_test -n 128 -s 1048576 -U

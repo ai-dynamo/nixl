@@ -63,14 +63,14 @@ NIXL requires a C++20 compatible compiler (GCC >= 11 or Clang >= 14).
 
 ### UCX
 
-NIXL was tested with UCX version 1.22.x.
+NIXL was tested with UCX version 1.23.x.
 
 [GDRCopy](https://github.com/NVIDIA/gdrcopy) is available on Github and is necessary for maximum performance, but UCX and NIXL will work without it.
 
 ```
 $ git clone https://github.com/openucx/ucx.git
 $ cd ucx
-$ git checkout v1.22.x
+$ git checkout v1.23.x
 $ ./autogen.sh
 $ ./contrib/configure-release-mt       \
     --enable-shared                    \
