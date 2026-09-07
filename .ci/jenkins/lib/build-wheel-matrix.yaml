@@ -360,7 +360,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} .gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
@@ -376,7 +376,7 @@ steps:
     run: run
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${fw}_${BUILD_NUMBER}.txt"
-      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} .gitlab/test_vllm_sglang_sanity.sh ${fw}"
+      testScript: "HF_ENDPOINT=${SANITY_HF_ENDPOINT} HF_HUB_DISABLE_XET=1 .gitlab/test_vllm_sglang_sanity.sh ${fw}"
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${registry_path}/pr/${arch}/${fw}-nixl:${BUILD_NUMBER}"
