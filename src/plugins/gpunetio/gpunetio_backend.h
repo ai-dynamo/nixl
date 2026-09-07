@@ -204,7 +204,6 @@ private:
 
     void
     retireRequest(nixlDocaBckndReq *request) const;
-
     nixl_status_t
     progressThreadStart();
     void

@@ -645,7 +645,7 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     if (init_stream != nullptr) {
         cudaStreamDestroy(init_stream);
     }
-    if (cuda_device_switched && previous_cuda_device != gdevs[0].first) {
+    if (cuda_device_switched && previous_cuda_device != static_cast<int>(gdevs[0].first)) {
         cudaSetDevice(previous_cuda_device);
     }
     if (cuda_result != cudaSuccess) {
@@ -1326,8 +1326,42 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     if (operation != NIXL_READ && operation != NIXL_WRITE) {
         return NIXL_ERR_INVALID_PARAM;
     }
+    if (std::atomic_ref<uint32_t>(progress_state_cpu->failed).load(std::memory_order_acquire) !=
+            0 ||
+        std::atomic_ref<uint32_t>(*wait_exit_cpu).load(std::memory_order_acquire) != 0) {
+        return NIXL_ERR_BACKEND;
+    }
     if (treq->postStatus != NIXL_SUCCESS) {
         return treq->postStatus;
+    }
+
+    const auto completion_state = treq->completionState.load(std::memory_order_acquire);
+    if (completion_state == nixlDocaBckndReq::completion_state::COMPLETING ||
+        (completion_state == nixlDocaBckndReq::completion_state::IN_PROGRESS &&
+         treq->postedCount != 0)) {
+        return NIXL_IN_PROG;
+    }
+    if (completion_state == nixlDocaBckndReq::completion_state::COMPLETE) {
+        for (size_t i = 0; i < treq->positions.size(); ++i) {
+            const uint32_t idx = treq->positions[i];
+            if (std::atomic_ref<uint32_t>(xferReqRingCpu[idx].state)
+                    .load(std::memory_order_acquire) != DOCA_XFER_STATE_COMPLETE) {
+                treq->postStatus = NIXL_ERR_BACKEND;
+                return NIXL_ERR_BACKEND;
+            }
+
+            auto &request = xferReqRingCpu[idx];
+            request.generation++;
+            request.last_wqe = 0;
+            request.data_ticket = 0;
+            request.notif_wqe = 0;
+            request.notif_ticket = 0;
+            request.data_state = DOCA_XFER_DATA_NONE;
+            request.notif_state = DOCA_XFER_NOTIF_NONE;
+            treq->generations[i] = request.generation;
+            std::atomic_ref<uint32_t>(request.state)
+                .store(DOCA_XFER_STATE_PREPARED, std::memory_order_release);
+        }
     }
 
     treq->postedCount = 0;
@@ -1350,49 +1384,59 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
                               idx);
         if (result != DOCA_SUCCESS) {
             treq->postStatus = NIXL_ERR_BACKEND;
+            std::atomic_ref<uint32_t>(progress_state_cpu->failed)
+                .store(1, std::memory_order_release);
+            for (size_t pending = treq->postedCount; pending < treq->positions.size(); ++pending) {
+                std::atomic_ref<uint32_t>(xferReqRingCpu[treq->positions[pending]].state)
+                    .store(DOCA_XFER_STATE_ERROR, std::memory_order_release);
+            }
             break;
         }
         ++treq->postedCount;
     }
 
-    return treq->postedCount == 0 ? treq->postStatus : NIXL_IN_PROG;
+    return treq->postStatus == NIXL_SUCCESS ? NIXL_IN_PROG : treq->postStatus;
 }
 
 nixl_status_t
 nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
-    if (treq->postStatus != NIXL_SUCCESS) {
-        return treq->postStatus;
-    }
-    if (std::atomic_ref<uint32_t>(progress_state_cpu->failed).load(std::memory_order_acquire) !=
-        0) {
-        treq->postStatus = NIXL_ERR_BACKEND;
-        return NIXL_ERR_BACKEND;
-    }
     auto state = treq->completionState.load(std::memory_order_acquire);
     if (state == nixlDocaBckndReq::completion_state::COMPLETE) {
-        return treq->postStatus;
+        return std::atomic_ref<uint32_t>(progress_state_cpu->failed)
+                        .load(std::memory_order_acquire) == 0 &&
+                treq->postStatus == NIXL_SUCCESS ?
+            NIXL_SUCCESS :
+            NIXL_ERR_BACKEND;
     }
     if (state == nixlDocaBckndReq::completion_state::COMPLETING) {
         treq->completionState.wait(state, std::memory_order_acquire);
-        return treq->postStatus;
+        return checkXfer(handle);
     }
 
-    for (size_t i = 0; i < treq->postedCount; ++i) {
+    bool request_error = false;
+    for (size_t i = 0; i < treq->positions.size(); ++i) {
         const uint32_t idx = treq->positions[i];
         const uint32_t req_state =
             std::atomic_ref<uint32_t>(xferReqRingCpu[idx].state).load(std::memory_order_acquire);
         if (xferReqRingCpu[idx].generation != treq->generations[i]) {
-            treq->postStatus = NIXL_ERR_BACKEND;
-            return NIXL_ERR_BACKEND;
+            request_error = true;
+            continue;
         }
         if (req_state == DOCA_XFER_STATE_ERROR) {
-            treq->postStatus = NIXL_ERR_BACKEND;
-            return NIXL_ERR_BACKEND;
+            request_error = true;
+            continue;
         }
         if (req_state != DOCA_XFER_STATE_COMPLETE) {
             return NIXL_IN_PROG;
         }
+    }
+
+    if (request_error || treq->postStatus != NIXL_SUCCESS ||
+        std::atomic_ref<uint32_t>(progress_state_cpu->failed).load(std::memory_order_acquire) !=
+            0) {
+        treq->postStatus = NIXL_ERR_BACKEND;
+        return NIXL_ERR_BACKEND;
     }
 
     retireRequest(treq);
@@ -1429,12 +1473,11 @@ nixl_status_t
 nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
     auto *treq = static_cast<nixlDocaBckndReq *>(handle);
     if (treq->postedCount == 0) {
-        const nixl_status_t status = treq->postStatus;
         for (uint32_t idx : treq->positions) {
             xferReqReserved_[idx].store(false, std::memory_order_release);
         }
         delete treq;
-        return status;
+        return NIXL_SUCCESS;
     }
 
     if (treq->completionState.load(std::memory_order_acquire) !=
@@ -1442,9 +1485,6 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
         nixl_status_t status = checkXfer(handle);
         if (status == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
-        }
-        if (status != NIXL_SUCCESS) {
-            return status;
         }
     }
 
@@ -1602,6 +1642,8 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
                                   progress_state_gpu,
                                   pos);
     if (result != DOCA_SUCCESS) {
+        std::atomic_ref<uint32_t>(xferReqRingCpu[pos].state)
+            .store(DOCA_XFER_STATE_ERROR, std::memory_order_release);
         xferReqReserved_[pos].store(false, std::memory_order_release);
         return NIXL_ERR_BACKEND;
     }
@@ -1613,11 +1655,11 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
             xferReqReserved_[pos].store(false, std::memory_order_release);
             return NIXL_SUCCESS;
         }
-        if (request_state == DOCA_XFER_STATE_ERROR ||
-            std::atomic_ref<uint32_t>(progress_state_cpu->failed).load(std::memory_order_acquire) !=
-                0 ||
-            std::atomic_ref<uint32_t>(*wait_exit_cpu).load(std::memory_order_acquire) != 0) {
+        if (request_state == DOCA_XFER_STATE_ERROR) {
             xferReqReserved_[pos].store(false, std::memory_order_release);
+            return NIXL_ERR_BACKEND;
+        }
+        if (std::atomic_ref<uint32_t>(*wait_exit_cpu).load(std::memory_order_acquire) != 0) {
             return NIXL_ERR_BACKEND;
         }
         std::this_thread::yield();
