@@ -50,7 +50,7 @@ public:
                  const nixl_mem_t remote_type,
                  const size_t desc_count,
                  const nixl_remote_section_weak_t &remote_section_ref,
-                 nixl::trace::TraceContext trace_context);
+                 const nixl::trace::TraceContext &trace_context);
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
@@ -70,7 +70,7 @@ public:
     updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
 
     [[nodiscard]] std::uint64_t
-    traceCorrelationId() const noexcept {
+    traceCorrelationId64() const noexcept {
         return traceContext_.correlationId64();
     }
 

@@ -410,7 +410,7 @@ protected:
                                        &extra_params);
                 ASSERT_EQ(status, NIXL_SUCCESS);
                 EXPECT_NE(xfer_req, nullptr);
-                const auto trace_correlation_id = xfer_req->traceCorrelationId();
+                const auto trace_correlation_id = xfer_req->traceCorrelationId64();
                 if (expect_trace_context) {
                     EXPECT_NE(trace_correlation_id, 0u);
                 }
@@ -420,12 +420,12 @@ protected:
                 for (size_t i = 0; i < repeat; i++) {
                     status = from.postXferReq(xfer_req);
                     ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-                    EXPECT_EQ(xfer_req->traceCorrelationId(), trace_correlation_id);
+                    EXPECT_EQ(xfer_req->traceCorrelationId64(), trace_correlation_id);
 
                     for (int i = 0; i < retry_count; i++) {
                         status = from.getXferStatus(xfer_req);
                         EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
-                        EXPECT_EQ(xfer_req->traceCorrelationId(), trace_correlation_id);
+                        EXPECT_EQ(xfer_req->traceCorrelationId64(), trace_correlation_id);
                         if (status == NIXL_SUCCESS) {
                             break;
                         }

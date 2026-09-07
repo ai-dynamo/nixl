@@ -423,15 +423,15 @@ namespace agent {
                                               xfer_req,
                                               &local_extra_params),
                   NIXL_SUCCESS);
-        EXPECT_EQ(xfer_req->traceCorrelationId(), 0u);
+        EXPECT_EQ(xfer_req->traceCorrelationId64(), 0u);
         EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
-        EXPECT_EQ(xfer_req->traceCorrelationId(), 0u);
+        EXPECT_EQ(xfer_req->traceCorrelationId64(), 0u);
 
         nixl_opt_args_t repost_params;
         EXPECT_EQ(local_agent_->postXferReq(xfer_req, &repost_params), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
-        EXPECT_EQ(xfer_req->traceCorrelationId(), 0u);
+        EXPECT_EQ(xfer_req->traceCorrelationId64(), 0u);
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);
@@ -508,11 +508,11 @@ namespace agent {
                                             xfer_req,
                                             &local_extra_params),
                   NIXL_SUCCESS);
-        EXPECT_EQ(xfer_req->traceCorrelationId(), 0u);
+        EXPECT_EQ(xfer_req->traceCorrelationId64(), 0u);
         EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_SUCCESS);
 
         EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
-        EXPECT_EQ(xfer_req->traceCorrelationId(), 0u);
+        EXPECT_EQ(xfer_req->traceCorrelationId64(), 0u);
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);

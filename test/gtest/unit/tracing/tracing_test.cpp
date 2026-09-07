@@ -398,7 +398,7 @@ TEST(Tracing, RequestStoresFixedCorrelationContext) {
     const nixlXferReqH request(
         "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, context);
 
-    EXPECT_EQ(request.traceCorrelationId(), 0x4bf92f3577b34da6ULL);
+    EXPECT_EQ(request.traceCorrelationId64(), 0x4bf92f3577b34da6ULL);
 }
 
 TEST(Tracing, RequestContextsAreDistinctAndStable) {
@@ -416,10 +416,10 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
                               0,
                               nixl_remote_section_weak_t{},
                               nixl::trace::generateTraceContext());
-    const auto first_id = first.traceCorrelationId();
+    const auto first_id = first.traceCorrelationId64();
 
-    EXPECT_NE(first_id, second.traceCorrelationId());
-    EXPECT_EQ(first.traceCorrelationId(), first_id);
+    EXPECT_NE(first_id, second.traceCorrelationId64());
+    EXPECT_EQ(first.traceCorrelationId64(), first_id);
 }
 
 TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
@@ -431,5 +431,5 @@ TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
                                nixl_remote_section_weak_t{},
                                nixl::trace::TraceContext{});
 
-    EXPECT_EQ(request.traceCorrelationId(), 0u);
+    EXPECT_EQ(request.traceCorrelationId64(), 0u);
 }
