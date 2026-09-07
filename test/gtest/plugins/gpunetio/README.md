@@ -1,13 +1,13 @@
 # GPUNETIO QP-progress GoogleTest harness
 
 `gpunetio_qp_progress_gtest` is a paired, environment-configured integration
-executable. It is intentionally not part of the default test suite: it needs
+executable. Running its paired cases needs
 one source GPU and two target GPUs, a numeric target IPv4 address, unique OOB
 ports, and a shared directory used only to exchange serialized NIXL metadata.
 Control/verification acknowledgements use TCP, outside the measured interval.
 
 The GPUNETIO GTest parent wires this directory. The local `meson.build` builds
-the paired executable and registers it with CTest; absent role configuration is
+the paired executable and registers it with Meson; absent role configuration is
 an explicit GoogleTest skip before any CUDA query.
 
 ## Required environment
@@ -53,13 +53,17 @@ and separate wall time. It does not claim CQ timing or backend-internal timing.
 
 `OutstandingDescriptorsAndAttachedStreamOrder` uses 513 descriptors per
 request (512 data plus an epoch marker) with descriptor merging disabled. It
-holds one delayed source-peer request while completing and releasing 129
-fast-peer requests, forcing live 32-slot ring reuse without exceeding capacity.
-The delay is a test-only CUDA kernel enqueued before the attached transfer; it
-is not a backend option or a production hook. The target verifies every fast
-payload and the delayed payload after a system-acquire of each exact epoch
-marker, then checks data-coupled notifications plus one standalone notification
-per peer. `SingleQpReadWriteControl` provides the paired one-QP WRITE and READ
+posts seven requests per peer, then releases the alternating delayed/fast A
+requests before performing 129 sequential B-peer reuse posts. The delay is a
+test-only CUDA kernel enqueued before the attached transfer; it is not a backend
+option or a production hook. The target verifies every payload after a
+system-acquire of its exact epoch marker, then checks data-coupled notifications
+plus one standalone notification per peer. With descriptor merging disabled,
+the initial 14 requests occupy 28 of the 32 ring entries (513 descriptors use
+two entries each). After those requests are released, the harness performs one
+matched 513-descriptor READ into the reused B source buffer and GPU-verifies its
+peer-distinct payload and epoch. `SingleQpReadWriteControl` provides the paired
+one-active-QP WRITE and READ
 control performance path. It re-posts one prepared WRITE and one prepared READ
 handle across changing payload epochs, with one active QP at a time, and emits
 source API p50/p99 windows separately from the mixed WRITE performance JSON.

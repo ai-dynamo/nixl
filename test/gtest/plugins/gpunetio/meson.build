@@ -16,5 +16,5 @@ gpunetio_qp_progress_gtest = executable(
 )
 
 # The executable is always registered. Without the paired-role environment its
-# GoogleTests explicitly SKIP, so CTest exposes rather than silently omits it.
+# GoogleTests explicitly SKIP, so Meson exposes rather than silently omits it.
 test('gpunetio_qp_progress_gtest', gpunetio_qp_progress_gtest, is_parallel: false, timeout: 180)

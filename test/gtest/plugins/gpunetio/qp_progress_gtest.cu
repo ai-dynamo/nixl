@@ -903,6 +903,12 @@ TargetStress(const Config &config) {
         poll_notifications();
         control.Send('V');
     }
+    control.Expect('R');
+    const size_t read_token = kStressRequests + kFastChurnRequests;
+    Fill(*b_memory.slots[0], SeedB(read_token), EpochB(read_token));
+    CheckCuda(cudaStreamSynchronize(0), "prepare multi-chunk READ payload");
+    control.Send('P');
+    control.Expect('Q');
     control.Expect('D');
     const auto deadline = Clock::now() + std::chrono::seconds(10);
     while (
@@ -957,6 +963,7 @@ void
 SourceStress(const Config &config) {
     StressMemory a_memory(0);
     StressMemory b_memory(0);
+    VerifyCounter read_counter(0);
     DeviceMemory anchor(1, 0);
     Endpoint source(config, "qp-progress-source", config.source_port, anchor);
     const nixl_reg_dlist_t a_registration = StressRegistration(a_memory);
@@ -1048,6 +1055,31 @@ SourceStress(const Config &config) {
         control.Send('B');
         control.Expect('V');
     }
+    // Every B request has completed, released, and been target-verified, so slot 0 is safe to
+    // reuse as the local destination of one matched 513-descriptor READ.
+    control.Send('R');
+    control.Expect('P');
+    nixlXferReqH *read_request = nullptr;
+    const auto read_options = Attached(source.backend, fast_stream, std::nullopt);
+    CheckNixl(
+        source.agent.createXferReq(
+            NIXL_READ,
+            StressList(*b_memory.slots[0]),
+            StressRemoteList(remote[0].b_data, b_memory.slots[0]->bytes(), remote[0].b_epoch, 1),
+            "qp-progress-b",
+            read_request,
+            &read_options),
+        "create multi-chunk stress READ");
+    const nixl_status_t read_post = source.agent.postXferReq(read_request);
+    ASSERT_TRUE(read_post == NIXL_SUCCESS || read_post == NIXL_IN_PROG);
+    ASSERT_EQ(read_post == NIXL_SUCCESS ?
+                  read_post :
+                  Wait(source.agent, read_request, std::chrono::seconds(10)),
+              NIXL_SUCCESS);
+    Release(source.agent, read_request);
+    const size_t read_token = kStressRequests + kFastChurnRequests;
+    ASSERT_EQ(read_counter.Verify(*b_memory.slots[0], SeedB(read_token), EpochB(read_token)), 0U);
+    control.Send('Q');
     CheckNixl(source.agent.genNotif("qp-progress-a", "standalone-a", &source.options),
               "generate standalone notification for target A");
     CheckNixl(source.agent.genNotif("qp-progress-b", "standalone-b", &source.options),
