@@ -492,9 +492,9 @@ namespace agent {
         nixlXferReqH *xfer_req;
         local_extra_params.notif = msg;
         EXPECT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
-                                            desc_hndl1,
+                                            *desc_hndl1,
                                             indices,
-                                            desc_hndl2,
+                                            *desc_hndl2,
                                             indices,
                                             xfer_req,
                                             &local_extra_params),

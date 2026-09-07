@@ -8,6 +8,7 @@ CI_FILES=(
     ".ci/dockerfiles/Dockerfile.base"
     ".ci/dockerfiles/Dockerfile.gpu-test"
     ".ci/dockerfiles/Dockerfile.build_helper"
+    ".ci/patches/nixl_ep_vllm_release_test.patch"
     ".gitlab/build.sh"
     ".ci/scripts/common.sh"
     "contrib/Dockerfile.manylinux"

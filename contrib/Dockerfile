@@ -24,7 +24,7 @@ ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
-ARG UCX_REF="v1.22.x"
+ARG UCX_REF="v1.23.x"
 ARG UCX_SONAME_SUFFIX=""
 ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
@@ -234,6 +234,7 @@ RUN cd /usr/local/src && \
          --disable-static            \
          --disable-doxygen-doc       \
          --enable-optimizations      \
+         --without-avx               \
          --enable-cma                \
          --enable-devel-headers      \
          $EXPERIMENTAL_API_PARAM      \

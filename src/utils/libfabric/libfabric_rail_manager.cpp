@@ -206,6 +206,9 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
         runtime_ = FI_HMEM_CUDA;
         NIXL_INFO << "System runtime: CUDA for " << topology->getNumNvidiaAccel()
                   << " NVIDIA GPU(s)";
+    } else if (topology->getNumAmdAccel() > 0) {
+        runtime_ = FI_HMEM_ROCR;
+        NIXL_INFO << "System runtime: ROCr for " << topology->getNumAmdAccel() << " AMD GPU(s)";
     } else if (topology->getNumAwsAccel() > 0) {
         runtime_ = FI_HMEM_NEURON;
         NIXL_INFO << "System runtime: NEURON for " << topology->getNumAwsAccel()
@@ -351,7 +354,7 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
 
         for (size_t i = 0; i < num_rails_; ++i) {
             rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
-                efa_devices[i], provider_name, static_cast<uint16_t>(i)));
+                efa_devices[i], provider_name, static_cast<uint16_t>(i), runtime_));
 
             // Initialize EFA device mapping
             efa_device_to_rail_map[efa_devices[i]] = i;

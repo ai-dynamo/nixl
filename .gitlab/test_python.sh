@@ -67,6 +67,9 @@ $pip3 install --break-system-packages zmq
 
 start_etcd_server "/nixl/python_ci"
 
+NIXL_TCPSTORE_PORT=$(get_next_tcp_port)
+export NIXL_TCPSTORE_PORT
+
 echo "==== Running python tests ===="
 pytest -s test/python
 

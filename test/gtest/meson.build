@@ -86,7 +86,7 @@ elif cuda_dep.found()
     cpp_flags += ['-DHAVE_GPU', '-DHAVE_CUDA']
 endif
 
-if libfabric_dep.found()
+if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
 endif
 
