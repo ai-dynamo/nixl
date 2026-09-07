@@ -400,7 +400,10 @@ public:
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
 
     /** Initialize libfabric rail with all resources */
-    nixlLibfabricRail(const std::string &device, const std::string &provider, uint16_t id);
+    nixlLibfabricRail(const std::string &device,
+                      const std::string &provider,
+                      uint16_t id,
+                      enum fi_hmem_iface runtime);
 
     /** Destroy rail and cleanup all libfabric resources */
     ~nixlLibfabricRail();
@@ -600,6 +603,9 @@ private:
 
     // Provider capability flags
     bool provider_supports_hmem_;
+
+    // System runtime type (CUDA, NEURON, or SYSTEM) this rail was created for
+    enum fi_hmem_iface runtime_;
 
     void
     pollForCompletions();

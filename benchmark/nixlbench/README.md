@@ -366,6 +366,7 @@ cd /path/to/nixlbench
 rm -rf build && mkdir build
 uv run meson setup build \
   -Dnixl_path=/usr/local/nixl/ \
+  -Dbuild_raw_cli=true \
   -Dprefix=/usr/local/nixlbench \
   --buildtype=release
 cd build && ninja && sudo ninja install
@@ -384,10 +385,75 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 - `etcd_lib_path`: Path to ETCD C++ client library
 - `nvshmem_inc_path`: Path to NVSHMEM include directory
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
+- `build_raw_cli`: Build the experimental CLI11-based raw command path (default: false)
+- `build_tests`: Build NIXLBench tests for non-release builds (default: true)
 - `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)
 - `prefix`: Installation prefix (default: /usr/local)
 
 ## Usage
+
+### Verb-based interface
+
+When configured with `-Dbuild_raw_cli=true`, NIXLBench also provides a
+verb-based interface. The first available command is `raw posix`, which runs
+the existing NIXLBench worker with three explicit ownership layers:
+
+- `raw` owns benchmark controls such as operation, transfer sizes, iterations,
+  threads, and consistency checking.
+- NIXLBench owns shared `FILE_SEG` resource controls such as path, filenames,
+  file count, and direct file opening, and exposes them only when advertised by
+  the selected plugin.
+- The installed plugin owns its initialization parameters. NIXLBench forwards
+  `--plugin-param KEY VALUE` overrides without interpreting names, values,
+  ranges, or relationships.
+
+Raw and `FILE_SEG` options are accepted before or after the backend subcommand.
+Sizes accept `KB`, `MB`, `GB`, and `TB`, using 1024-based multipliers.
+
+```bash
+# Create the directory used by the examples below
+mkdir -p /tmp/nixlbench-data
+
+# Inspect backend-neutral raw benchmark controls
+nixlbench raw --help
+
+# Inspect POSIX configuration exposed by this plugin build
+nixlbench raw posix --help
+
+# Print the resolved configuration without creating a worker or touching files
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --dry-run
+
+# Run a checked write using the same existing benchmark execution machinery
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --operation write \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --check-consistency
+
+# Override exact initialization keys advertised by this plugin build
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --plugin-param ios_pool_size 4096 \
+  --plugin-param use_uring true
+```
+
+Plugin keys and values retain their published spelling and exact string values.
+Only keys advertised by the selected plugin may be overridden. The plugin
+interprets and validates the resolved values during backend creation rather than
+through copied NIXLBench rules, so the `use_uring` example depends on that
+parameter being advertised by the installed POSIX plugin.
+
+The existing flags-only interface remains available for all other commands.
 
 ### ETCD Coordination Setup
 
