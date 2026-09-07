@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -638,6 +639,10 @@ WritePerformanceJson(const Config &config,
                      uint64_t payload_bytes,
                      uint64_t marker_bytes,
                      uint64_t wall_ns) {
+    const uint64_t transfer_ns =
+        std::accumulate(max_windows.begin(), max_windows.end(), uint64_t{0});
+    const double transfer_gbps = double(payload_bytes + marker_bytes) / transfer_ns;
+    const double wall_gbps = double(payload_bytes + marker_bytes) / wall_ns;
     AtomicWrite(
         config.coord / "qp_progress_performance.json",
         "{\"result\":\"PASS\",\"warmup\":" + std::to_string(kWarmup) +
@@ -651,7 +656,12 @@ WritePerformanceJson(const Config &config,
             ",\"actual_payload_bytes\":" + std::to_string(payload_bytes) +
             ",\"actual_marker_bytes\":" + std::to_string(marker_bytes) +
             ",\"actual_transfer_window_bytes\":" + std::to_string(payload_bytes + marker_bytes) +
-            ",\"walltime_ns\":" + std::to_string(wall_ns) +
+            ",\"transfer_window_ns\":" + std::to_string(transfer_ns) +
+            ",\"transfer_window_GBps\":" + std::to_string(transfer_gbps) +
+            ",\"wall_GBps\":" + std::to_string(wall_gbps) +
+            ",\"completed_requests\":" + std::to_string(2 * (kWarmup + kMeasured)) +
+            ",\"measured_requests\":" + std::to_string(2 * kMeasured) +
+            ",\"payload_and_marker_mismatches\":0" + ",\"walltime_ns\":" + std::to_string(wall_ns) +
             ",\"walltime_scope\":\"caller only; not serving\"" +
             ",\"window_definition\":\"source post to source API completion; no CQ timestamps\"}\n");
 }
@@ -697,7 +707,7 @@ SourcePerformance(const Config &config) {
     control.Expect('R');
     const RemoteAddresses remote = LoadMetadata(config, source.agent);
     std::vector<uint64_t> b_windows, a_windows, max_windows;
-    const uint64_t wall_start = NowNs();
+    uint64_t wall_start = 0;
     for (uint64_t repeat = 0; repeat < kRepeats; ++repeat) {
         for (uint64_t round = 0; round < kWarmup + kMeasured; ++round) {
             const uint64_t token = repeat * 1000 + round;
@@ -719,6 +729,9 @@ SourcePerformance(const Config &config) {
                     NIXL_WRITE, b_local, b_remote, "qp-progress-b", b_request, &source.options),
                 "create performance B");
             const uint64_t start = NowNs();
+            if (round == kWarmup) {
+                wall_start = start;
+            }
             const nixl_status_t a_post = source.agent.postXferReq(a_request);
             const uint64_t b_post_ns = NowNs();
             const nixl_status_t b_post = source.agent.postXferReq(b_request);
