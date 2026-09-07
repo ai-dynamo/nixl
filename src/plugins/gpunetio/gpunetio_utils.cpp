@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -428,7 +428,7 @@ netif_get_addr(const char *if_name,
                sa_family_t af,
                struct sockaddr *saddr,
                struct sockaddr *netmask) {
-    int status = 0;
+    int status = -1;
     struct ifaddrs *ifa;
     struct ifaddrs *ifaddrs;
     const struct sockaddr_in6 *saddr6;
