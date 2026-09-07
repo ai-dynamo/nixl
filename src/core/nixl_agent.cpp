@@ -325,6 +325,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
+    init_params.enableLoopback = data->config_.useLoopback;
 
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();

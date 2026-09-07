@@ -132,6 +132,42 @@ def test_nixl_conf_bad_sync_mode():
         nixl_agent_config(sync_mode=1)
 
 
+@pytest.mark.parametrize("enable_loopback", [True, False])
+def test_agent_config_enable_loopback(enable_loopback):
+    mem_size = 128
+    agent = nixl_agent(
+        str(uuid.uuid4()),
+        nixl_agent_config(backends=["UCX"], enable_loopback=enable_loopback),
+    )
+
+    addr1 = utils.malloc_passthru(mem_size)
+    addr2 = utils.malloc_passthru(mem_size)
+    try:
+        agent.register_memory(
+            agent.get_reg_descs(
+                [(addr1, mem_size, 0, ""), (addr2, mem_size, 0, "")], mem_type="DRAM"
+            )
+        )
+
+        src = agent.get_xfer_descs([(addr1, mem_size, 0)], mem_type="DRAM")
+        dst = agent.get_xfer_descs([(addr2, mem_size, 0)], mem_type="DRAM")
+
+        if enable_loopback:
+            handle = agent.initialize_xfer("WRITE", src, dst, agent.name)
+            assert agent.transfer(handle) in ("DONE", "PROC")
+            while agent.check_xfer_state(handle) == "PROC":
+                pass
+            assert agent.check_xfer_state(handle) == "DONE"
+            agent.release_xfer_handle(handle)
+        else:
+            # No self connection, so the agent holds no metadata for its own name.
+            with pytest.raises(bindings.nixlNotFoundError):
+                agent.initialize_xfer("WRITE", src, dst, agent.name)
+    finally:
+        utils.free_passthru(addr1)
+        utils.free_passthru(addr2)
+
+
 def test_make_invalid_op(one_empty_agent, two_xfer_lists):
     # Only READ/WRITE are supported
     with pytest.raises(KeyError):
