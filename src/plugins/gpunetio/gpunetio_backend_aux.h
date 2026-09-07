@@ -54,15 +54,12 @@
 // Local includes
 #include "common/nixl_time.h"
 
-constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
-constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
 constexpr uint32_t RDMA_SEND_QUEUE_SIZE = 2048;
 constexpr uint32_t RDMA_RECV_QUEUE_SIZE = (RDMA_SEND_QUEUE_SIZE * 2);
 constexpr uint32_t DOCA_POST_STREAM_NUM = 4;
 constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
 constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
 constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
-constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
 constexpr uint32_t DOCA_RDMA_CM_LOCAL_PORT_SERVER = 6544;
 constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
 
@@ -79,25 +76,68 @@ constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 #endif
 
 struct docaXferReqGpu {
-    uint32_t id;
     uintptr_t lbuf[DOCA_XFER_REQ_SIZE];
     uintptr_t rbuf[DOCA_XFER_REQ_SIZE];
     size_t size[DOCA_XFER_REQ_SIZE];
     uint32_t lkey[DOCA_XFER_REQ_SIZE];
     uint32_t rkey[DOCA_XFER_REQ_SIZE];
     uint16_t num;
-    uint8_t in_use;
     uint32_t conn_idx;
     uint32_t has_notif_msg_idx;
     uint32_t msg_sz;
     uint64_t last_wqe;
+    uint64_t data_ticket;
+    uint64_t notif_wqe;
+    uint64_t notif_ticket;
+    uint32_t generation;
+    uint32_t state;
+    uint32_t data_state;
+    uint32_t notif_state;
     uintptr_t lbuf_notif;
     uint32_t lkey_notif;
-    uint64_t *last_rsvd;
-    uint64_t *last_posted;
     nixl_xfer_op_t backendOp; /* Needed only in case of GPU device transfer */
     doca_gpu_dev_verbs_qp *qp_data;
     doca_gpu_dev_verbs_qp *qp_notif;
+    struct docaQpProgress *qp_progress;
+};
+
+enum docaXferState : uint32_t {
+    DOCA_XFER_STATE_FREE,
+    DOCA_XFER_STATE_PREPARED,
+    DOCA_XFER_STATE_DATA_POSTED,
+    DOCA_XFER_STATE_NOTIF_PENDING,
+    DOCA_XFER_STATE_NOTIF_POSTED,
+    DOCA_XFER_STATE_COMPLETE,
+    DOCA_XFER_STATE_ERROR,
+};
+
+enum docaXferDataState : uint32_t {
+    DOCA_XFER_DATA_NONE,
+    DOCA_XFER_DATA_POSTED,
+    DOCA_XFER_DATA_COMPLETE,
+};
+
+enum docaXferNotifState : uint32_t {
+    DOCA_XFER_NOTIF_NONE,
+    DOCA_XFER_NOTIF_PENDING,
+    DOCA_XFER_NOTIF_POSTED,
+    DOCA_XFER_NOTIF_COMPLETE,
+};
+
+struct docaQpProgress {
+    uint32_t data_producer_lock;
+    uint32_t notif_producer_lock;
+    uint64_t next_data_ticket;
+    uint64_t head_data_ticket;
+    uint64_t next_notif_ticket;
+    uint64_t head_notif_ticket;
+};
+
+struct docaProgressState {
+    uint32_t active_bitmap;
+    uint32_t progress_cursor;
+    uint32_t failed;
+    uint32_t active_generation[DOCA_XFER_REQ_MAX];
 };
 
 struct nixlDocaNotif {
@@ -109,11 +149,6 @@ struct nixlDocaNotif {
     uint8_t *recv_addr;
     std::atomic<uint32_t> recv_pi;
     std::unique_ptr<nixl::doca::verbs::mr> recv_mr;
-};
-
-struct docaXferCompletion {
-    uint8_t completed;
-    struct docaXferReqGpu *xferReqRingGpu;
 };
 
 struct docaNotif {
@@ -176,6 +211,7 @@ struct nixlDocaRdmaQp {
     uint32_t qpn_notif;
     uint32_t rqpn_notif;
     uint32_t remote_gid_notif;
+    struct docaQpProgress *progress_gpu;
 };
 
 struct nixlDocaEngine;
@@ -210,18 +246,27 @@ doca_error_t
 doca_kernel_write(cudaStream_t stream,
                   doca_gpu_dev_verbs_qp *qp_gpu,
                   struct docaXferReqGpu *xferReqRing,
+                  struct docaProgressState *progress_state,
+                  uint32_t *exit_flag,
                   uint32_t pos);
 doca_error_t
 doca_kernel_read(cudaStream_t stream,
                  doca_gpu_dev_verbs_qp *qp_gpu,
                  struct docaXferReqGpu *xferReqRing,
+                 struct docaProgressState *progress_state,
+                 uint32_t *exit_flag,
                  uint32_t pos);
 doca_error_t
+doca_kernel_publish_notif(cudaStream_t stream,
+                          struct docaXferReqGpu *xfer_req_ring,
+                          struct docaProgressState *progress_state,
+                          uint32_t pos);
+doca_error_t
 doca_kernel_progress(cudaStream_t stream,
-                     struct docaXferCompletion *completion_list,
+                     struct docaXferReqGpu *xfer_req_ring,
+                     struct docaProgressState *progress_state,
                      struct docaNotif *notif_fill,
                      struct docaNotif *notif_progress,
-                     struct docaNotif *notif_send_gpu,
                      uint32_t *exit_flag);
 
 #endif /* GPUNETIO_BACKEND_AUX_H */
