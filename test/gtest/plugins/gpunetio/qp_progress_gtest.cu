@@ -1230,6 +1230,144 @@ SourceFault(const Config &config) {
     control.Send('E');
 }
 
+enum class PreErrorAction { PostTransfer, GenerateNotification };
+
+void
+TargetPreError(const Config &config) {
+    constexpr uint64_t kSentinelRound = 0x5100;
+    DeviceMemory a_memory(kSmallBytes, 0);
+    DeviceMemory b_memory(kSmallBytes, 1);
+    cudaStream_t a_verify_stream = nullptr;
+    cudaStream_t b_verify_stream = nullptr;
+    CheckCuda(cudaSetDevice(0), "select pre-error target A device");
+    CheckCuda(cudaStreamCreateWithFlags(&a_verify_stream, cudaStreamNonBlocking),
+              "create pre-error target A verify stream");
+    CheckCuda(cudaSetDevice(1), "select pre-error target B device");
+    CheckCuda(cudaStreamCreateWithFlags(&b_verify_stream, cudaStreamNonBlocking),
+              "create pre-error target B verify stream");
+    VerifyCounter a_counter(0);
+    VerifyCounter b_counter(1);
+    Fill(a_memory, SeedA(kSentinelRound), EpochA(kSentinelRound), a_verify_stream);
+    Fill(b_memory, SeedB(kSentinelRound), EpochB(kSentinelRound), b_verify_stream);
+    CheckCuda(cudaSetDevice(0), "select pre-error target A prepare device");
+    CheckCuda(cudaStreamSynchronize(a_verify_stream), "prepare pre-error target A sentinel");
+    CheckCuda(cudaSetDevice(1), "select pre-error target B prepare device");
+    CheckCuda(cudaStreamSynchronize(b_verify_stream), "prepare pre-error target B sentinel");
+
+    // All target GPU allocations, verification state, and streams precede the persistent engines.
+    Endpoint a(config, "qp-progress-a", config.target_a_port, a_memory);
+    Endpoint b(config, "qp-progress-b", config.target_b_port, b_memory);
+    Control control(config);
+    PublishMetadata(config, a, a_memory, b, b_memory);
+    control.Send('R');
+    control.Expect('D');
+    ASSERT_EQ(
+        a_counter.Verify(a_memory, SeedA(kSentinelRound), EpochA(kSentinelRound), a_verify_stream),
+        0U);
+    ASSERT_EQ(
+        b_counter.Verify(b_memory, SeedB(kSentinelRound), EpochB(kSentinelRound), b_verify_stream),
+        0U);
+    control.Send('V');
+    control.Expect('C');
+    control.Send('K');
+    CheckCuda(cudaSetDevice(0), "select pre-error target A destroy device");
+    CheckCuda(cudaStreamSynchronize(a_verify_stream), "drain pre-error target A verify stream");
+    CheckCuda(cudaStreamDestroy(a_verify_stream), "destroy pre-error target A verify stream");
+    CheckCuda(cudaSetDevice(1), "select pre-error target B destroy device");
+    CheckCuda(cudaStreamSynchronize(b_verify_stream), "drain pre-error target B verify stream");
+    CheckCuda(cudaStreamDestroy(b_verify_stream), "destroy pre-error target B verify stream");
+}
+
+void
+SourcePreError(const Config &config, PreErrorAction action) {
+    constexpr uint64_t kSourceRound = 0x5200;
+    DeviceMemory a_memory(kSmallBytes, 0);
+    DeviceMemory b_memory(kSmallBytes, 0);
+    cudaStream_t delayed_stream = nullptr;
+    cudaStream_t fast_stream = nullptr;
+    CheckCuda(cudaStreamCreateWithFlags(&delayed_stream, cudaStreamNonBlocking),
+              "create pre-error delayed stream");
+    CheckCuda(cudaStreamCreateWithFlags(&fast_stream, cudaStreamNonBlocking),
+              "create pre-error fast stream");
+    nixl_reg_dlist_t b_registration = Registration(b_memory);
+
+    // Both attached streams and all source GPU memory precede the persistent engine.
+    Endpoint source(config, "qp-progress-source", config.source_port, a_memory);
+    CheckNixl(source.agent.registerMem(b_registration, &source.options),
+              "register pre-error source B memory");
+    Control control(config);
+    control.Expect('R');
+    const RemoteAddresses remote = LoadMetadata(config, source.agent);
+
+    CheckCuda(cudaSetDevice(0), "select pre-error source device");
+    Fill(b_memory, SeedB(kSourceRound), EpochB(kSourceRound), fast_stream);
+    CheckCuda(cudaStreamSynchronize(fast_stream), "prepare pre-error B payload");
+
+    // A's transfer kernel is queued behind a test-only delay. The transfer variant prepares B
+    // before the deliberate CUDA launch-configuration error is left uncleared for
+    // doca_kernel_write.
+    DelayKernel<<<1, 1, 0, delayed_stream>>>(500000000ULL);
+    CheckCuda(cudaGetLastError(), "launch pre-error delay kernel");
+    Fill(a_memory, SeedA(kSourceRound), EpochA(kSourceRound), delayed_stream);
+
+    nixlXferReqH *a_request = nullptr;
+    nixlXferReqH *b_request = nullptr;
+    const auto a_options = Attached(source.backend, delayed_stream, std::nullopt);
+    const auto b_options = Attached(source.backend, fast_stream, std::nullopt);
+    CheckNixl(source.agent.createXferReq(NIXL_WRITE,
+                                         TransferList(a_memory),
+                                         RemoteList(remote.a_data, kSmallBytes, remote.a_epoch, 0),
+                                         "qp-progress-a",
+                                         a_request,
+                                         &a_options),
+              "create pre-error A request");
+    if (action == PreErrorAction::PostTransfer) {
+        CheckNixl(
+            source.agent.createXferReq(NIXL_WRITE,
+                                       TransferList(b_memory),
+                                       RemoteList(remote.b_data, kSmallBytes, remote.b_epoch, 1),
+                                       "qp-progress-b",
+                                       b_request,
+                                       &b_options),
+            "prepare pre-error B request");
+    }
+    const nixl_status_t a_post = source.agent.postXferReq(a_request);
+    ASSERT_TRUE(a_post == NIXL_SUCCESS || a_post == NIXL_IN_PROG);
+
+    CheckCuda(cudaGetLastError(), "clear CUDA error before injection");
+    DelayKernel<<<0, 1>>>(1);
+    ASSERT_EQ(cudaPeekAtLastError(), cudaErrorInvalidConfiguration);
+
+    if (action == PreErrorAction::PostTransfer) {
+        ASSERT_EQ(source.agent.postXferReq(b_request), NIXL_ERR_BACKEND);
+        ASSERT_EQ(source.agent.releaseXferReq(b_request), NIXL_SUCCESS);
+    } else {
+        ASSERT_EQ(source.agent.genNotif("qp-progress-b", "pre-error", &source.options),
+                  NIXL_ERR_BACKEND);
+    }
+
+    // CPU ownership is retained while A is still behind DelayKernel; only the GPU terminal
+    // publication makes its slot releasable.
+    ASSERT_EQ(source.agent.releaseXferReq(a_request), NIXL_IN_PROG);
+    CheckCuda(cudaStreamSynchronize(delayed_stream), "drain pre-error delayed stream");
+    ASSERT_EQ(Wait(source.agent, a_request, std::chrono::seconds(10)), NIXL_ERR_BACKEND);
+    ASSERT_EQ(source.agent.releaseXferReq(a_request), NIXL_SUCCESS);
+    CheckCuda(cudaStreamSynchronize(fast_stream), "drain pre-error attached stream");
+
+    control.Send('D');
+    control.Expect('V');
+    CheckNixl(source.agent.invalidateRemoteMD("qp-progress-a"),
+              "invalidate pre-error target A metadata");
+    CheckNixl(source.agent.invalidateRemoteMD("qp-progress-b"),
+              "invalidate pre-error target B metadata");
+    CheckNixl(source.agent.deregisterMem(b_registration, &source.options),
+              "deregister pre-error source B memory");
+    CheckCuda(cudaStreamDestroy(fast_stream), "destroy pre-error fast stream");
+    CheckCuda(cudaStreamDestroy(delayed_stream), "destroy pre-error delayed stream");
+    control.Send('C');
+    control.Expect('K');
+}
+
 TEST(QpProgress, PerformanceMixed2MiBAnd4KiB) {
     const Config config = GetConfig();
     if (const auto problem = ConfigProblem(config, false)) {
@@ -1275,6 +1413,30 @@ TEST(QpProgress, RemoteDeregisterReturnsBackendError) {
         SourceFault(config);
     } else {
         TargetFault(config);
+    }
+}
+
+TEST(QpProgress, CpuFatalLatchRejectsQueuedTransfer) {
+    const Config config = GetConfig();
+    if (const auto problem = ConfigProblem(config, false)) {
+        GTEST_SKIP() << *problem;
+    }
+    if (config.role == "source") {
+        SourcePreError(config, PreErrorAction::PostTransfer);
+    } else {
+        TargetPreError(config);
+    }
+}
+
+TEST(QpProgress, CpuFatalLatchRejectsQueuedNotification) {
+    const Config config = GetConfig();
+    if (const auto problem = ConfigProblem(config, false)) {
+        GTEST_SKIP() << *problem;
+    }
+    if (config.role == "source") {
+        SourcePreError(config, PreErrorAction::GenerateNotification);
+    } else {
+        TargetPreError(config);
     }
 }
 
