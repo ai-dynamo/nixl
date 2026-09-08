@@ -147,7 +147,10 @@ namespace nixl {
  * Give each process its own path to keep the output separable.
  *
  * Called during library initialization, so callers do not normally need it. It
- * is exposed so tests can rebind the sink after changing the environment.
+ * is exposed so tests can register the sink after changing the environment.
+ * Binding a different path takes a shutdownLogFile() first: while a sink is
+ * registered this returns without so much as reading NIXL_LOG_FILE, so a caller
+ * that skips that step goes on writing to the previous file.
  *
  * @return true if a file sink is registered on return. Idempotent: returns true
  *         without reopening anything if a sink is already registered. Opening
