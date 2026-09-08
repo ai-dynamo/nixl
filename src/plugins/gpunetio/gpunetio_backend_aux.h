@@ -133,7 +133,18 @@ struct docaQpProgress {
     uint64_t head_notif_ticket;
 };
 
+struct docaHostCompletion {
+    uint32_t generation;
+    uint32_t state;
+};
+
+struct docaHostState {
+    uint32_t failed;
+    docaHostCompletion completions[DOCA_XFER_REQ_MAX];
+};
+
 struct docaProgressState {
+    docaHostState *host;
     uint32_t active_bitmap;
     uint32_t progress_cursor;
     uint32_t failed;

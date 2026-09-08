@@ -164,6 +164,10 @@ private:
     struct docaXferReqGpu *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
     mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved_;
+    mutable std::array<uint32_t, DOCA_XFER_REQ_MAX> xferReqGenerations_{};
+    std::atomic<uint32_t> stopped_{0};
+    docaHostState *host_state_cpu_ = nullptr;
+    docaHostState *host_state_gpu_ = nullptr;
 
     struct docaProgressState *progress_state_gpu;
     struct docaProgressState *progress_state_cpu;
@@ -192,6 +196,7 @@ private:
         uint32_t devId;
         std::vector<uint32_t> positions;
         std::vector<uint32_t> generations;
+        doca_gpu_dev_verbs_qp *qp_data = nullptr;
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;
@@ -204,6 +209,8 @@ private:
 
     void
     retireRequest(nixlDocaBckndReq *request) const;
+    void
+    markFailed() const;
     nixl_status_t
     progressThreadStart();
     void
