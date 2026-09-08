@@ -652,7 +652,9 @@ WritePerformanceJson(const Config &config,
             std::to_string(Percentile(b_windows, 0.50)) +
             ",\"b_post_to_done_p99_ns\":" + std::to_string(Percentile(b_windows, 0.99)) +
             ",\"a_post_to_done_p50_ns\":" + std::to_string(Percentile(a_windows, 0.50)) +
+            ",\"a_post_to_done_p99_ns\":" + std::to_string(Percentile(a_windows, 0.99)) +
             ",\"max_window_p50_ns\":" + std::to_string(Percentile(max_windows, 0.50)) +
+            ",\"max_window_p99_ns\":" + std::to_string(Percentile(max_windows, 0.99)) +
             ",\"actual_payload_bytes\":" + std::to_string(payload_bytes) +
             ",\"actual_marker_bytes\":" + std::to_string(marker_bytes) +
             ",\"actual_transfer_window_bytes\":" + std::to_string(payload_bytes + marker_bytes) +
