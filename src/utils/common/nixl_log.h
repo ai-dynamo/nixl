@@ -160,9 +160,11 @@ initLogFile();
 /**
  * @brief Unregisters the NIXL_LOG_FILE sink and flushes it.
  *
- * Runs at library unload, after static destructors, so records emitted late in
- * shutdown still reach the file. Safe to call when no sink is registered, and
- * safe to call more than once.
+ * Runs at library unload. On glibc that is after static destructors, so records
+ * emitted late in shutdown still reach the file; that ordering is loader
+ * behaviour rather than a language guarantee, and is covered by
+ * nixlLogFileTest.RecordsFromStaticDestructorsReachTheFile. Safe to call when
+ * no sink is registered, and safe to call more than once.
  */
 void
 shutdownLogFile();
