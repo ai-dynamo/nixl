@@ -281,11 +281,11 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
                                 (void **)&progress_state_cpu);
     if (result != DOCA_SUCCESS || progress_state_gpu == nullptr || progress_state_cpu == nullptr) {
         result = doca_gpu_mem_alloc(gdevs[0].second,
-                                   sizeof(struct docaProgressState),
-                                   4096,
-                                   DOCA_GPU_MEM_TYPE_CPU_GPU,
-                                   (void **)&progress_state_gpu,
-                                   (void **)&progress_state_cpu);
+                                    sizeof(struct docaProgressState),
+                                    4096,
+                                    DOCA_GPU_MEM_TYPE_CPU_GPU,
+                                    (void **)&progress_state_gpu,
+                                    (void **)&progress_state_cpu);
     }
     if (result != DOCA_SUCCESS || progress_state_gpu == nullptr || progress_state_cpu == nullptr) {
         throw std::runtime_error("Failed to allocate GPUNETIO progress state");
