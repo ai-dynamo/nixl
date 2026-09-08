@@ -262,7 +262,12 @@ ReadFile(const fs::path &path) {
 
 __device__ uint8_t
 Pattern(uint64_t seed, size_t offset) {
-    return static_cast<uint8_t>((seed + offset * 1315423911ULL + (offset >> 7U) * 17ULL) & 0xffU);
+    // Mix the full epoch/source seed and offset: stale payloads and misplaced
+    // chunks must not alias merely because their low eight bits are equal.
+    uint64_t value = seed + (offset + 1) * 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+    return static_cast<uint8_t>(value ^ (value >> 31));
 }
 
 __global__ void
