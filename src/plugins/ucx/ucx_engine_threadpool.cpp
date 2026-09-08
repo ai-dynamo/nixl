@@ -32,6 +32,8 @@
 
 #include "ucx_utils.h"
 
+namespace {
+
 struct nixlUcxBackendSharedState;
 
 /*
@@ -209,7 +211,7 @@ public:
 
     static nixlUcxDedicatedThread *
     getDedicatedThread() {
-        return (nixlUcxDedicatedThread *)tlsThread();
+        return static_cast<nixlUcxDedicatedThread *>(tlsThread());
     }
 
     void
@@ -265,6 +267,8 @@ private:
     asio::io_context &io_;
     std::vector<nixlUcxChunkBackendReqH *> requests_;
 };
+
+} // namespace
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
                                                  size_t num_threads)
@@ -338,7 +342,7 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     std::atomic<nixl_status_t> status{NIXL_SUCCESS};
 
     for (size_t i = 0; i < comp_handle->getNumChunks(); i++) {
-        io_->post([&, i]() {
+        asio::post(*io_, [&, i]() {
             nixlUcxDedicatedThread *thread = nixlUcxDedicatedThread::getDedicatedThread();
             NIXL_ASSERT(thread != nullptr);
 
@@ -347,7 +351,8 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
             NIXL_TRACE << "dedicated " << *thread << " starting " << *chunk_handle;
 
             size_t start_idx = i * chunk_size;
-            size_t end_idx = std::min(start_idx + chunk_size, (size_t)local.descCount());
+            size_t end_idx =
+                std::min(start_idx + chunk_size, static_cast<size_t>(local.descCount()));
             nixl_status_t ret = nixlUcxEngine::sendXferRange(
                 operation, local, remote, remote_agent, chunk_handle, start_idx, end_idx);
             if (ret != NIXL_SUCCESS) {

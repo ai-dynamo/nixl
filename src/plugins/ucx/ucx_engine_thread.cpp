@@ -30,6 +30,8 @@
 
 #include "ucx_utils.h"
 
+namespace {
+
 class nixlUcxSharedThread : public nixlUcxThread {
 public:
     nixlUcxSharedThread(const nixlUcxEngine *engine, size_t num_workers, nixlTime::us_t delay)
@@ -43,7 +45,8 @@ public:
 
         // This will ensure that the resulting delay is at least 1ms and fits into int in order for
         // it to be compatible with poll()
-        int delay_us = std::min((int)delay, std::numeric_limits<int>::max());
+        const int delay_us =
+            static_cast<int>(std::min<nixlTime::us_t>(delay, std::numeric_limits<int>::max()));
         delay_ = std::chrono::ceil<std::chrono::milliseconds>(std::chrono::microseconds(delay_us));
 
         pollFds_.resize(num_workers + 1);
@@ -119,6 +122,8 @@ private:
     int controlPipe_[2];
     std::vector<pollfd> pollFds_;
 };
+
+} // namespace
 
 nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_params,
                                          size_t num_dedicated_workers)

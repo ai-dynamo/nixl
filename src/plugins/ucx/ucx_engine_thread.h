@@ -42,9 +42,7 @@ public:
     }
 
     virtual ~nixlUcxThread() {
-        if (threadActive_) {
-            join();
-        }
+        NIXL_ASSERT_ALWAYS(!threadActive_) << "thread must be joined before destruction";
     }
 
     void

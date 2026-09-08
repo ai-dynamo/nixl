@@ -29,30 +29,7 @@
 #include "ucx_sgl.h"
 #include "ucx_utils.h"
 
-/****************************************
- * Backend request management
- *****************************************/
-
 class nixlUcxBackendReqH : public nixlBackendReqH {
-private:
-    ucx_connection_ptr_t conn_;
-    std::vector<nixlUcxReq> requests_;
-    nixlUcxWorker *worker_ = nullptr;
-
-    [[nodiscard]] nixl_status_t
-    checkConnection(const nixl_status_t status = NIXL_SUCCESS) const {
-        NIXL_ASSERT(conn_ != nullptr);
-        const nixl_status_t conn_status = conn_->getEp(getWorkerId())->checkTxState();
-        return (conn_status != NIXL_SUCCESS) ? conn_status : status;
-    }
-
-protected:
-    void
-    setWorker(nixlUcxWorker *worker) {
-        NIXL_ASSERT(worker_ == nullptr || worker == nullptr);
-        worker_ = worker;
-    }
-
 public:
     // Notification to be sent after completion of all requests
     struct Notif {
@@ -171,6 +148,25 @@ public:
     getWorkerId() const noexcept {
         return worker_->getId();
     }
+
+protected:
+    void
+    setWorker(nixlUcxWorker *worker) {
+        NIXL_ASSERT(worker_ == nullptr || worker == nullptr);
+        worker_ = worker;
+    }
+
+private:
+    [[nodiscard]] nixl_status_t
+    checkConnection(const nixl_status_t status = NIXL_SUCCESS) const {
+        NIXL_ASSERT(conn_ != nullptr);
+        const nixl_status_t conn_status = conn_->getEp(getWorkerId())->checkTxState();
+        return (conn_status != NIXL_SUCCESS) ? conn_status : status;
+    }
+
+    ucx_connection_ptr_t conn_;
+    std::vector<nixlUcxReq> requests_;
+    nixlUcxWorker *worker_ = nullptr;
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_REQUEST_H
