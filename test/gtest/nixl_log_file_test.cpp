@@ -485,6 +485,14 @@ TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
  * it on the same thread and deadlock; a test that hangs here is that bug.
  */
 TEST_F(nixlLogFileTest, ReportsAWriteFailureOnceThenDropsRecords) {
+    // Insisted on rather than assumed: opening a missing /dev/full in append
+    // mode would create an ordinary file that accepts every write, so the test
+    // would fail for a reason that has nothing to do with the code, and leave a
+    // stray file in /dev behind it.
+    if (!std::filesystem::is_character_file("/dev/full")) {
+        GTEST_SKIP() << "/dev/full is not available on this system";
+    }
+
     env_.addVar("NIXL_LOG_FILE", "/dev/full");
     ASSERT_TRUE(nixl::initLogFile()) << "/dev/full should open like any other file";
 
