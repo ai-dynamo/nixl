@@ -276,9 +276,17 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     result = doca_gpu_mem_alloc(gdevs[0].second,
                                 sizeof(struct docaProgressState),
                                 4096,
-                                DOCA_GPU_MEM_TYPE_CPU_GPU,
+                                DOCA_GPU_MEM_TYPE_GPU_CPU,
                                 (void **)&progress_state_gpu,
                                 (void **)&progress_state_cpu);
+    if (result != DOCA_SUCCESS || progress_state_gpu == nullptr || progress_state_cpu == nullptr) {
+        result = doca_gpu_mem_alloc(gdevs[0].second,
+                                   sizeof(struct docaProgressState),
+                                   4096,
+                                   DOCA_GPU_MEM_TYPE_CPU_GPU,
+                                   (void **)&progress_state_gpu,
+                                   (void **)&progress_state_cpu);
+    }
     if (result != DOCA_SUCCESS || progress_state_gpu == nullptr || progress_state_cpu == nullptr) {
         throw std::runtime_error("Failed to allocate GPUNETIO progress state");
     }
@@ -1376,14 +1384,8 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
             }
 
             auto &request = xferReqRingCpu[idx];
-            request.generation++;
-            request.last_wqe = 0;
-            request.data_ticket = 0;
-            request.notif_wqe = 0;
-            request.notif_ticket = 0;
-            request.data_state = DOCA_XFER_DATA_NONE;
-            request.notif_state = DOCA_XFER_NOTIF_NONE;
-            treq->generations[i] = request.generation;
+            // Submission rewrites WQE/ticket fields before publishing their state.
+            request.generation = ++treq->generations[i];
             std::atomic_ref<uint32_t>(request.state)
                 .store(DOCA_XFER_STATE_PREPARED, std::memory_order_release);
         }
