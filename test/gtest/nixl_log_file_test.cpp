@@ -473,6 +473,126 @@ TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
 }
 
 /**
+ * @brief %h and %p expand, so one setting can serve many processes.
+ *
+ * The point of the escapes: a disaggregated run sets one NIXL_LOG_FILE for
+ * every worker and still gets a file per worker.
+ */
+TEST_F(nixlLogFileTest, ExpandsHostAndProcessIntoThePath) {
+    char host[256] = {};
+    ASSERT_EQ(::gethostname(host, sizeof(host) - 1), 0);
+
+    const std::string pattern = path_.string() + "-%h-%p";
+    const std::filesystem::path expanded =
+        path_.string() + "-" + host + "-" + std::to_string(::getpid());
+    std::filesystem::remove(expanded);
+
+    env_.addVar("NIXL_LOG_FILE", pattern);
+    ASSERT_TRUE(nixl::initLogFile());
+    NIXL_INFO << "record for the expanded path";
+    nixl::shutdownLogFile();
+
+    EXPECT_TRUE(std::filesystem::exists(expanded)) << "expected " << expanded;
+    EXPECT_FALSE(std::filesystem::exists(pattern)) << "the raw pattern must not be used as a name";
+
+    std::filesystem::remove(expanded);
+}
+
+/**
+ * @brief %% is a literal percent, and an unknown escape is left as written.
+ *
+ * A path is free to contain a percent that was never meant as an escape, so an
+ * unrecognized one has to survive rather than be swallowed.
+ */
+TEST_F(nixlLogFileTest, LeavesLiteralAndUnknownEscapesAlone) {
+    const std::string pattern = path_.string() + "-%%-%z";
+    const std::filesystem::path expanded = path_.string() + "-%-%z";
+    std::filesystem::remove(expanded);
+
+    env_.addVar("NIXL_LOG_FILE", pattern);
+    ASSERT_TRUE(nixl::initLogFile());
+    NIXL_INFO << "record for the literal path";
+    nixl::shutdownLogFile();
+
+    EXPECT_TRUE(std::filesystem::exists(expanded)) << "expected " << expanded;
+
+    std::filesystem::remove(expanded);
+}
+
+/**
+ * @brief At the limit the file is rotated, and the newest records are kept.
+ *
+ * Which end survives is the whole design question. A log that answers "what
+ * happened just before this hung" has to keep its tail, so the live file holds
+ * the newest records and the previous generation sits beside it. Exactly one
+ * generation is kept, which is what bounds the total.
+ */
+TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
+    constexpr uintmax_t limit = 2048;
+    const std::filesystem::path rotated = path_.string() + ".1";
+    std::filesystem::remove(rotated);
+
+    env_.addVar("NIXL_LOG_FILE", path_.string());
+    env_.addVar("NIXL_LOG_FILE_SIZE", "2K");
+    ASSERT_TRUE(nixl::initLogFile());
+
+    for (unsigned i = 0; i < 200; ++i) {
+        NIXL_INFO << "rotation record " << i;
+    }
+
+    ASSERT_TRUE(std::filesystem::exists(rotated)) << "nothing was rotated";
+    EXPECT_LE(std::filesystem::file_size(path_), limit) << "the live file outgrew the limit";
+
+    // The newest record is in the live file, and the rotated one holds what
+    // came before it.
+    EXPECT_THAT(readLogFile(), HasSubstr("rotation record 199"));
+
+    std::ifstream previous(rotated);
+    std::ostringstream contents;
+    contents << previous.rdbuf();
+    EXPECT_THAT(contents.str(), testing::Not(HasSubstr("rotation record 199")));
+
+    // One generation only, so the total on disk stays bounded.
+    EXPECT_FALSE(std::filesystem::exists(path_.string() + ".2"));
+
+    std::filesystem::remove(rotated);
+}
+
+/** @brief With no NIXL_LOG_FILE_SIZE the file grows, exactly as it used to. */
+TEST_F(nixlLogFileTest, GrowsWithoutLimitWhenNoSizeIsSet) {
+    ASSERT_TRUE(enableLogFile());
+
+    for (unsigned i = 0; i < 200; ++i) {
+        NIXL_INFO << "unbounded record " << i;
+    }
+
+    EXPECT_FALSE(std::filesystem::exists(path_.string() + ".1"));
+    EXPECT_GT(std::filesystem::file_size(path_), 2048u);
+}
+
+/**
+ * @brief A size that cannot be parsed is reported and leaves the file unbounded.
+ *
+ * Falling back to some invented limit would quietly throw away records the
+ * operator meant to keep, which is worse than ignoring the setting and saying
+ * so.
+ */
+TEST_F(nixlLogFileTest, IgnoresAnUnparsableSizeAndSaysSo) {
+    const gtest::LogIgnoreGuard lig("Ignoring NIXL_LOG_FILE_SIZE");
+
+    env_.addVar("NIXL_LOG_FILE", path_.string());
+    env_.addVar("NIXL_LOG_FILE_SIZE", "sometime next week");
+    ASSERT_TRUE(nixl::initLogFile());
+
+    for (unsigned i = 0; i < 200; ++i) {
+        NIXL_INFO << "unparsable size record " << i;
+    }
+
+    EXPECT_FALSE(std::filesystem::exists(path_.string() + ".1"));
+    EXPECT_GT(std::filesystem::file_size(path_), 2048u);
+}
+
+/**
  * @brief A write failure is reported once, and then records are dropped.
  *
  * A stream that has failed treats every later write as a silent no-op, so
