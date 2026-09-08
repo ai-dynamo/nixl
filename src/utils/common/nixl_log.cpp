@@ -23,6 +23,7 @@
 #include "absl/log/log_sink_registry.h"
 #include "absl/strings/ascii.h"
 #include "absl/container/flat_hash_map.h"
+#include <cctype>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -130,6 +131,14 @@ parseLogFileSize(const std::string &text) {
         return 0;
     }
 
+    // Insisted on before parsing, because stoull is too permissive to be given
+    // the raw value: it reads "-1" as a wrap-around to the largest possible
+    // limit, silently turning a nonsense setting into an unbounded file, and it
+    // skips leading whitespace and accepts a leading plus besides.
+    if (std::isdigit(static_cast<unsigned char>(text.front())) == 0) {
+        return std::nullopt;
+    }
+
     size_t digits = 0;
     std::uintmax_t value = 0;
     try {
@@ -185,6 +194,14 @@ public:
         : path_(path),
           file_(path, std::ios::app),
           limit_(limit) {
+        // Not asked when the open failed. file_size() stats the path, which on
+        // failure overwrites the errno that initLogFile() reports for the open,
+        // and would blame a missing file for what was really a permission
+        // problem. written_ stays 0, which an unopened sink never reads.
+        if (!file_.is_open()) {
+            return;
+        }
+
         std::error_code ec;
         const auto existing = std::filesystem::file_size(path, ec);
         written_ = ec ? 0 : existing;

@@ -579,8 +579,30 @@ TEST_F(nixlLogFileTest, GrowsWithoutLimitWhenNoSizeIsSet) {
  */
 TEST_F(nixlLogFileTest, IgnoresAnUnparsableSizeAndSaysSo) {
     const gtest::LogIgnoreGuard lig("Ignoring NIXL_LOG_FILE_SIZE");
+    const std::string report = "Ignoring NIXL_LOG_FILE_SIZE";
 
     env_.addVar("NIXL_LOG_FILE", path_.string());
+
+    // The report is what is asserted on, rather than the absence of rotation,
+    // because "-1" is the case that needs catching: read as an unsigned value
+    // it wraps to the largest limit there is, and a file with a limit that
+    // large never rotates -- which looks exactly like an unbounded one. Only
+    // the report distinguishes a rejected setting from a disastrously
+    // misparsed one.
+    for (const std::string bad : {"sometime next week", "-1", "-1024", "64X", " 64", "+64"}) {
+        countingSink watcher;
+
+        env_.addVar("NIXL_LOG_FILE_SIZE", bad);
+        ASSERT_TRUE(nixl::initLogFile())
+            << "a bad size must not cost the log file: '" << bad << "'";
+        EXPECT_EQ(watcher.countMatching(report), 1u) << "'" << bad << "' was not reported";
+
+        nixl::shutdownLogFile();
+        env_.popVar();
+    }
+
+    // Having been ignored, the limit leaves the file growing as it would with
+    // no limit set at all.
     env_.addVar("NIXL_LOG_FILE_SIZE", "sometime next week");
     ASSERT_TRUE(nixl::initLogFile());
 
@@ -590,6 +612,40 @@ TEST_F(nixlLogFileTest, IgnoresAnUnparsableSizeAndSaysSo) {
 
     EXPECT_FALSE(std::filesystem::exists(path_.string() + ".1"));
     EXPECT_GT(std::filesystem::file_size(path_), 2048u);
+}
+
+/**
+ * @brief A failed open is reported with the open's own reason.
+ *
+ * The sink asks the file's size on the way in, to count an appended-to file's
+ * existing contents against the limit. Asking before checking that the open
+ * succeeded would replace the errno the report is built from, and name the
+ * wrong reason for the failure.
+ */
+TEST_F(nixlLogFileTest, ReportsWhyAnUnopenablePathReallyFailed) {
+    if (::geteuid() == 0) {
+        GTEST_SKIP() << "root bypasses the directory permission this relies on";
+    }
+    const gtest::LogIgnoreGuard lig("Could not open NIXL_LOG_FILE");
+
+    // Searchable but not writable, which is what separates the two reasons:
+    // creating a file here fails with EACCES, while asking the size of that
+    // same missing file fails with ENOENT.
+    const std::filesystem::path directory = path_.string() + "-readonly";
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    std::filesystem::permissions(
+        directory, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+
+    countingSink watcher;
+    env_.addVar("NIXL_LOG_FILE", (directory / "log").string());
+    EXPECT_FALSE(nixl::initLogFile());
+    EXPECT_EQ(watcher.countMatching("Permission denied"), 1u)
+        << "the report named the wrong reason:\n"
+        << watcher.text();
+
+    std::filesystem::permissions(directory, std::filesystem::perms::owner_all);
+    std::filesystem::remove_all(directory);
 }
 
 /**
