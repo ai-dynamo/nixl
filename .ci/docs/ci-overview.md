@@ -22,17 +22,19 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | [Blossom-CI](#blossom-ci-blossom-ciyml) | GitHub Actions | `/build` PR comment, or `workflow_dispatch` | No — manual |
 | `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | No — only after `/build`, but these 7 are the *only* Jenkins jobs in the PR CI path |
 | `nixl-ci-build-container` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
-| `nixl-ci-build-wheel-nightly` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
+| `nixl-ci-build-wheel-nightly` | Jenkins (standalone) | Nightly cron, triggered by `build-wheel-release-poller`, or manual | No — never runs as part of PR CI |
+| `nixl-build-wheel-release-poller` | Jenkins (standalone) | 4-hourly cron + manual | No — never runs as part of PR CI |
 | `nixl-ci-build-llm-container` | Jenkins (standalone) | Manual only | No — never runs as part of PR CI |
 | `nixl-ci-test-llm-container` | Jenkins (standalone) | Manual, or chained from `build-llm-container` via `RUN_TEST` | No — never runs as part of PR CI |
 | `nixl-ci-cleanup-artifacts` | Jenkins (standalone) | Daily cron (6 AM) + manual | No — never runs as part of PR CI |
 | `nixl-ci-nightly` | Jenkins (standalone) | Nightly cron (`H 0`) + manual | No — orchestrates the nightly UCX-`master` run of the 3 GPU jobs |
 
-> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 14 Jenkins jobs: the
-> dispatcher, the 7 jobs it fans out to (the PR CI flow), and 6 standalone jobs
-> (`build-container`, `build-wheel-nightly`, `build-llm-container`,
-> `test-llm-container`, `cleanup-artifacts`, `nightly`). The standalone ones run only on a
-> nightly/daily cron or when someone triggers them manually from the Jenkins UI,
+> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 15 Jenkins jobs: the
+> dispatcher, the 7 jobs it fans out to (the PR CI flow), and 7 standalone jobs
+> (`build-container`, `build-wheel-nightly`, `build-wheel-release-poller`,
+> `build-llm-container`, `test-llm-container`, `cleanup-artifacts`, `nightly`). The
+> standalone ones run only on their own cron, when someone triggers them manually
+> from the Jenkins UI, or when chained from another standalone job,
 > and are never invoked by the dispatcher or by a PR event.
 
 ## GitHub Actions workflows
@@ -151,10 +153,11 @@ their own nightly/manual trigger. They split into two groups:
   the 7 jobs it fans out to. This is the *only* way any Jenkins job runs
   against a PR, and only after a `/build` comment.
 - **Standalone (never run against a PR):** `nixl-ci-build-container`,
-  `nixl-ci-build-wheel-nightly`, `nixl-ci-build-llm-container`,
-  `nixl-ci-test-llm-container`, `nixl-ci-cleanup-artifacts`, `nixl-ci-nightly` —
-  each has its own nightly cron and/or manual trigger and is invoked
-  independently of PRs and of the dispatcher.
+  `nixl-ci-build-wheel-nightly`, `nixl-build-wheel-release-poller`,
+  `nixl-ci-build-llm-container`, `nixl-ci-test-llm-container`,
+  `nixl-ci-cleanup-artifacts`, `nixl-ci-nightly` — each has its own cron, manual
+  trigger, and/or upstream standalone job, and is invoked independently of PRs
+  and of the dispatcher.
 
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
 
@@ -190,9 +193,15 @@ their own nightly/manual trigger. They split into two groups:
 - **Automatic on every PR:** No — standalone/nightly + manual only.
 
 ### `nixl-ci-build-wheel-nightly` (standalone)
-- **Trigger:** Nightly cron (two runs, `CUDA_MAJOR=13` and `CUDA_MAJOR=12`), or manual run. The pipeline and matrix config run from `ci_refspec` (default `main`; pass `refs/pull/<n>/head` to test CI changes end to end before merge); the NIXL source is cloned inside the build from the `NIXL_VERSION` parameter (branch/tag/PR ref/sha), so any ref is buildable without CI files on it.
-- **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`) and publishes wheels to `sw-nbu-swx-nixl-pypi-local`. With `PUBLISH_DIR` empty (the default, and what the nightly cron uses) wheels land under `verification/g<nixl-sha8>.ucx<ucx-sha8>/` — the long-standing schema the `build-llm-container` verification pipeline consumes; manual release runs can pass `release/<ver>`, which co-locates cu12/cu13 under `release/<ver>/<nixl-sha8>/` (unkeyed to UCX). `CUDA_MAJOR` selects the CUDA line to build: `13` (default) passes no base-image flags to `build-container.sh` and relies on its own defaults; `12` passes the pinned CUDA 12 base image/tag from the matrix env. The UCX spcx and Infinia DDN plugins are always bundled (`--build-ucx-spcx-plugin --build-infinia`, unconditional — not job parameters); the source ref's `contrib/build-container.sh` must carry both flags and pin their versions. The resolved build options (base image, UCX ref/sha, plugin flags, etc.) are written to `build_options.env` via `--build-options-file`; Publish reads it and attaches `UCX_REF`, `UCX_SHA`, `CUDA_VERSION`, and (when built) `UCX_SPCX_PLUGIN_REF`/`INFINIA_LIBS_IMAGE` as Artifactory properties on each uploaded wheel (skipped if the built ref's `build-container.sh` predates `--build-options-file`).
-- **Automatic on every PR:** No — standalone nightly + manual only.
+- **Trigger:** Nightly cron (two runs, `CUDA_MAJOR=13` and `CUDA_MAJOR=12`), triggered by [`nixl-build-wheel-release-poller`](#nixl-build-wheel-release-poller-standalone) for release publishing, or manual run. The pipeline and matrix config run from `ci_refspec` (default `main`; pass `refs/pull/<n>/head` to test CI changes end to end before merge); the NIXL source is cloned inside the build from the `NIXL_VERSION` parameter (branch/tag/PR ref/sha), so any ref is buildable without CI files on it.
+- **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`) and publishes wheels to `sw-nbu-swx-nixl-pypi-local`. With `PUBLISH_DIR` empty (the default, and what the nightly cron uses) wheels land under `verification/g<nixl-sha8>.ucx<ucx-sha8>/` — the long-standing schema the `build-llm-container` verification pipeline consumes; the poller and manual release runs pass `release/<ver>`, which co-locates cu12/cu13 under `release/<ver>/<nixl-sha8>/` (unkeyed to UCX). `CUDA_MAJOR` selects the CUDA line to build: `13` (default) passes no base-image flags to `build-container.sh` and relies on its own defaults; `12` passes the pinned CUDA 12 base image/tag from the matrix env. The UCX spcx and Infinia DDN plugins are always bundled (`--build-ucx-spcx-plugin --build-infinia`, unconditional — not job parameters); the source ref's `contrib/build-container.sh` must carry both flags and pin their versions. The resolved build options (base image, UCX ref/sha, plugin flags, etc.) are written to `build_options.env` via `--build-options-file`; Publish reads it and attaches `UCX_REF`, `UCX_SHA`, `CUDA_VERSION`, and (when built) `UCX_SPCX_PLUGIN_REF`/`INFINIA_LIBS_IMAGE` as Artifactory properties on each uploaded wheel (skipped if the built ref's `build-container.sh` predates `--build-options-file`).
+- **Automatic on every PR:** No — standalone nightly/poller-triggered + manual only.
+
+### `nixl-build-wheel-release-poller` (standalone)
+
+- **Trigger:** 4-hourly cron (`H H/4 * * *`) or manual run. The pipeline and matrix config (`.ci/jenkins/lib/build-wheel-release-poller-matrix.yaml`) run from `ci_refspec` (default `main`); the poller forwards `ci_refspec` to the builds it triggers, so a pre-merge test run drives the whole chain from one PR ref.
+- **What it does:** Builds release wheels for every `release/*` branch with version >= 1.4.0 whose `contrib/build-container.sh` accepts `--build-options-file` (the nightly always passes it, so older refs would fail at option parsing) - new release branches are picked up automatically, with no CI config anywhere. The CUDA variants are the matrix axis (`cuda_major`): each cell runs `.ci/scripts/scan-missing-release-wheels.sh` for its variant and triggers the missing builds. Per release the scan takes the newest 10 first-parent commits past the merge-base with `main`, checks the Artifactory folder `release/<ver>/<nixl-sha8>/` for that variant's wheel presence, and triggers [`nixl-ci-build-wheel-nightly`](#nixl-ci-build-wheel-nightly-standalone) once per missing build, passing the commit sha, `CUDA_MAJOR`, and `PUBLISH_DIR=release/<ver>`. UCX and the bundled plugins are not passed: each release builds against the `UCX_REF` and plugin versions pinned in its own `contrib/build-container.sh`. No marker files: a failed build is retried on later cycles while its commit stays within the newest-10 window, and a partially-uploaded variant looks complete; delete the folder in Artifactory to force a rebuild.
+- **Automatic on every PR:** No — standalone cron + manual only, never part of the PR CI path.
 
 ### `nixl-ci-build-llm-container` (standalone)
 - **Trigger:** Manual only (no cron, no webhook).

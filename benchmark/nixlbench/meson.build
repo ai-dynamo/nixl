@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixlbench', 'CPP', version: '1.4.0',
+project('nixlbench', 'CPP', version: '1.5.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -297,7 +297,7 @@ else
         if have_gpu_side
             have_nixl_device_api = cuda.compiles(
                 '''
-                #include <gpu/ucx/nixl_device.cuh>
+                #include <gpu/nixl_device.cuh>
                 int main() { return 0; }
                 ''',
                 dependencies: [ucx_dep, doca_gpunetio_dep],
