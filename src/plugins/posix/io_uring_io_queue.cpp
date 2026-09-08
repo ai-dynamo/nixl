@@ -39,13 +39,36 @@ struct nixlPosixIoUringCQEData {
 struct nixlPosixIoUringIO : public nixlPosixIoUringCQEData {
     nixlPosixIoUringIO() : nixlPosixIoUringCQEData(nixlPosixIoUringCQEKind::IO) {}
 
+    void *
+    currentBuf() const {
+        return static_cast<char *>(buf_) + completed_;
+    }
+
+    off_t
+    currentOffset() const {
+        return offset_ + static_cast<off_t>(completed_);
+    }
+
+    size_t
+    remaining() const {
+        return len_ - completed_;
+    }
+
+    void
+    advance(size_t completed) {
+        NIXL_ASSERT(completed <= remaining());
+        completed_ += completed;
+    }
+
     int fd;
     void *buf_;
     size_t len_;
     off_t offset_;
+    size_t completed_ = 0;
     bool read_;
     nixlPosixIOQueueDoneCb clb_;
     bool in_flight_ = false; // owned by the ring, not yet reaped
+    bool cancel_requested_ = false;
     bool cancel_pending_ = false; // cancellation is queued or its CQE is pending
 };
 
@@ -89,6 +112,14 @@ private:
     prepareSQEs(void);
     void
     releaseIOIfIdle(nixlPosixIoUringIO *io);
+    void
+    queueForSubmission(nixlPosixIoUringIO *io);
+    void
+    finishIO(nixlPosixIoUringIO *io, int res, bool error);
+    void
+    handleIOCompletion(nixlPosixIoUringIO *io, int res);
+    void
+    handleCancelCompletion(nixlPosixIoUringCancel *cancel);
 
     struct io_uring uring; // The io_uring instance for async I/O operations
     bool terminal_error_ = false;
@@ -137,9 +168,11 @@ nixlPosixIOQueueUring::prepareSQEs(void) {
             nixlPosixIoUringIO *io = ios_to_submit_.front();
             ios_to_submit_.pop_front();
             if (io->read_) {
-                io_uring_prep_read(sqe, io->fd, io->buf_, io->len_, io->offset_);
+                io_uring_prep_read(
+                    sqe, io->fd, io->currentBuf(), io->remaining(), io->currentOffset());
             } else {
-                io_uring_prep_write(sqe, io->fd, io->buf_, io->len_, io->offset_);
+                io_uring_prep_write(
+                    sqe, io->fd, io->currentBuf(), io->remaining(), io->currentOffset());
             }
             io_uring_sqe_set_data(sqe, static_cast<nixlPosixIoUringCQEData *>(io));
             io->in_flight_ = true;
@@ -169,6 +202,76 @@ nixlPosixIOQueueUring::releaseIOIfIdle(nixlPosixIoUringIO *io) {
     if (!io->in_flight_ && !io->cancel_pending_) {
         free_ios_.push_back(io);
     }
+}
+
+void
+nixlPosixIOQueueUring::queueForSubmission(nixlPosixIoUringIO *io) {
+    io->in_flight_ = false;
+    ios_to_submit_.push_back(io);
+}
+
+void
+nixlPosixIOQueueUring::finishIO(nixlPosixIoUringIO *io, int res, bool error) {
+    if (error) {
+        NIXL_DEBUG << absl::StrFormat(
+            "IO operation incomplete: result %d, %zu bytes remaining", res, io->remaining());
+    }
+
+    if (io->clb_) {
+        io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(io->len_), error);
+    }
+
+    io->in_flight_ = false;
+    releaseIOIfIdle(io);
+}
+
+void
+nixlPosixIOQueueUring::handleIOCompletion(nixlPosixIoUringIO *io, int res) {
+    if (res < 0) {
+        finishIO(io, res, true);
+        return;
+    }
+
+    const size_t completed = static_cast<size_t>(res);
+
+    if (completed == 0 && io->remaining() != 0) {
+        finishIO(io, res, true);
+        return;
+    }
+
+    io->advance(completed);
+
+    if (io->remaining() == 0) {
+        finishIO(io, res, false);
+        return;
+    }
+
+    if (io->cancel_requested_) {
+        finishIO(io, res, true);
+        return;
+    }
+
+    NIXL_DEBUG << absl::StrFormat(
+        "io_uring operation completed partially: %zu bytes completed, %zu remaining; "
+        "resubmitting remainder",
+        completed,
+        io->remaining());
+    queueForSubmission(io);
+}
+
+void
+nixlPosixIOQueueUring::handleCancelCompletion(nixlPosixIoUringCancel *cancel) {
+    nixlPosixIoUringIO *io = cancel->io_;
+    NIXL_ASSERT(io && io->cancel_pending_);
+    io->cancel_pending_ = false;
+
+    if (cancel->clb_) {
+        cancel->clb_(cancel->ctx_);
+    }
+
+    cancel->clb_ = nullptr;
+    cancel->ctx_ = nullptr;
+    releaseIOIfIdle(io);
 }
 
 nixl_status_t
@@ -204,30 +307,16 @@ nixlPosixIOQueueUring::doCheckCompleted(void) {
         int res = cqe->res;
         auto *data = static_cast<nixlPosixIoUringCQEData *>(io_uring_cqe_get_data(cqe));
         NIXL_ASSERT(data);
-        nixlPosixIoUringIO *io;
-        if (data->kind_ == nixlPosixIoUringCQEKind::CANCEL) {
-            auto *cancel = static_cast<nixlPosixIoUringCancel *>(data);
-            io = cancel->io_;
-            NIXL_ASSERT(io && io->cancel_pending_);
-            io->cancel_pending_ = false;
-            if (cancel->clb_) {
-                cancel->clb_(cancel->ctx_);
-            }
-            cancel->clb_ = nullptr;
-            cancel->ctx_ = nullptr;
-        } else {
-            io = static_cast<nixlPosixIoUringIO *>(data);
-            int error = res < 0 || static_cast<size_t>(res) != io->len_;
-            if (error) {
-                NIXL_DEBUG << absl::StrFormat(
-                    "IO operation incomplete: result %d, expected %zu", res, io->len_);
-            }
-            if (io->clb_) {
-                io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(res), error);
-            }
-            io->in_flight_ = false;
+
+        switch (data->kind_) {
+        case nixlPosixIoUringCQEKind::IO:
+            handleIOCompletion(static_cast<nixlPosixIoUringIO *>(data), res);
+            break;
+        case nixlPosixIoUringCQEKind::CANCEL:
+            handleCancelCompletion(static_cast<nixlPosixIoUringCancel *>(data));
+            break;
         }
-        releaseIOIfIdle(io);
+
         if (++count == MAX_IO_CHECK_COMPLETED_BATCH_SIZE) {
             break;
         }
@@ -251,6 +340,8 @@ nixlPosixIOQueueUring::enqueue(int fd,
                                bool read,
                                nixlPosixIOQueueDoneCb clb,
                                void *ctx) {
+    NIXL_ASSERT(buf != nullptr);
+
     if (free_ios_.empty()) {
         NIXL_ERROR << "No more free blocks available";
         return NIXL_ERR_NOT_ALLOWED;
@@ -262,13 +353,15 @@ nixlPosixIOQueueUring::enqueue(int fd,
     io->buf_ = buf;
     io->len_ = len;
     io->offset_ = offset;
+    io->completed_ = 0;
     io->read_ = read;
     io->clb_ = clb;
     io->ctx_ = ctx;
     io->in_flight_ = false;
+    io->cancel_requested_ = false;
     io->cancel_pending_ = false;
 
-    ios_to_submit_.push_back(io);
+    queueForSubmission(io);
 
     return NIXL_SUCCESS;
 }
@@ -298,6 +391,7 @@ nixlPosixIOQueueUring::cancel(void *ctx, nixlPosixIOQueueCancelDoneCb clb) {
     for (auto &io : ios_) {
         if (io.in_flight_ && io.ctx_ == ctx && !io.cancel_pending_) {
             size_t index = static_cast<size_t>(&io - ios_.data());
+            io.cancel_requested_ = true;
             io.cancel_pending_ = true;
             cancels_[index].clb_ = clb;
             cancels_[index].ctx_ = ctx;
