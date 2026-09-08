@@ -289,9 +289,9 @@ private:
      * twice the limit is on disk: the new file and the one rotated out of it.
      * Exactly one generation is kept, so the total stays bounded.
      *
-     * A failed rename leaves rotation switched off rather than retried every
-     * record. The file then grows past the limit, which is the better of the
-     * two bad outcomes: a log that is too large can still be read.
+     * A rotation that cannot be done stops the sink. Carrying on would mean
+     * either ignoring the limit that was asked for or quietly redefining what
+     * rotation means, and neither is the caller's instruction.
      *
      * Called with mutex_ held.
      */
@@ -299,29 +299,20 @@ private:
     rotate() {
         file_.close();
 
-        const std::string rotated = path_ + rotated_suffix;
         std::error_code ec;
-        std::filesystem::rename(path_, rotated, ec);
+        std::filesystem::rename(path_, path_ + rotated_suffix, ec);
         if (ec) {
-            limit_ = 0;
-            std::fprintf(stderr,
-                         "NIXL: could not rotate log file '%s' to '%s' (%s); "
-                         "continuing without a size limit\n",
-                         path_.c_str(),
-                         rotated.c_str(),
-                         ec.message().c_str());
+            reportRotateFailure(ec);
+            return;
         }
 
-        // Append either way: if the rename failed the file is still there and
-        // truncating it would throw away the very records rotation exists to
-        // preserve.
         errno = 0;
         file_.open(path_, std::ios::app);
         if (!file_) {
             reportFailure(errno);
             return;
         }
-        written_ = ec ? written_ : 0;
+        written_ = 0;
     }
 
     /**
@@ -350,6 +341,32 @@ private:
                      log_file_env_var,
                      path_.c_str(),
                      detail.c_str());
+    }
+
+    /**
+     * @brief Reports a failed rotation and stops using the file.
+     *
+     * The file is left as it is, holding the records written up to the limit,
+     * rather than truncated: those records are all there will be, so throwing
+     * them away would leave nothing at all.
+     *
+     * Reports once because failed_ stops Send() before it can rotate again,
+     * and goes to stderr for the same reason as reportFailure: emitting a
+     * record while holding mutex_ would deadlock on it.
+     *
+     * @param reason Why the rename failed. Called with mutex_ held.
+     */
+    void
+    reportRotateFailure(const std::error_code &reason) {
+        failed_ = true;
+
+        std::fprintf(stderr,
+                     "NIXL: could not rotate %s '%s' at its %s (%s); "
+                     "dropping further records\n",
+                     log_file_env_var,
+                     path_.c_str(),
+                     log_file_size_env_var,
+                     reason.message().c_str());
     }
 
     std::mutex mutex_;
