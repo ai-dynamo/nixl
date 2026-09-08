@@ -131,7 +131,6 @@ nixl_gpunetio_dev_finish_request(docaXferReqGpu *request,
     auto *completion = &progress_state->host->completions[pos];
     cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(progress_state->active_bitmap)
         .fetch_and(~(1U << pos), cuda::std::memory_order_release);
-    nixl_gpunetio_dev_store_host_state(request->state, terminal);
     completion->generation = generation;
     // Last publication: CPU may rearm/release the slot immediately afterwards.
     nixl_gpunetio_dev_store_host_state(completion->state, terminal);

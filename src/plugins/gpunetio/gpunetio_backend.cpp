@@ -1447,7 +1447,9 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
         ++treq->postedCount;
     }
 
-    return treq->postStatus == NIXL_SUCCESS ? NIXL_IN_PROG : treq->postStatus;
+    // A later launch can fail while earlier chunks still own GPU/NIC work.
+    // Keep the frontend handle in progress until checkXfer has drained them.
+    return treq->postedCount != 0 ? NIXL_IN_PROG : treq->postStatus;
 }
 
 nixl_status_t
@@ -1478,7 +1480,7 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
         if (completion.generation != treq->generations[i]) {
             markFailed();
             treq->postStatus = NIXL_ERR_BACKEND;
-            return NIXL_ERR_BACKEND;
+            return NIXL_IN_PROG;
         }
         if (req_state == DOCA_XFER_STATE_ERROR) {
             request_error = true;
@@ -1540,7 +1542,7 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
                 std::atomic_ref<uint32_t>(completion.state).load(std::memory_order_acquire);
             if ((state != DOCA_XFER_STATE_PREPARED && state != DOCA_XFER_STATE_ERROR) ||
                 completion.generation != treq->generations[i]) {
-                return NIXL_IN_PROG;
+                return NIXL_ERR_REPOST_ACTIVE;
             }
         }
         for (uint32_t idx : treq->positions) {
@@ -1554,7 +1556,7 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
         nixlDocaBckndReq::completion_state::COMPLETE) {
         nixl_status_t status = checkXfer(handle);
         if (status == NIXL_IN_PROG) {
-            return NIXL_IN_PROG;
+            return NIXL_ERR_REPOST_ACTIVE;
         }
         if (status != NIXL_SUCCESS) {
             for (size_t i = 0; i < treq->positions.size(); ++i) {
@@ -1563,7 +1565,7 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
                     std::atomic_ref<uint32_t>(completion.state).load(std::memory_order_acquire);
                 if ((terminal != DOCA_XFER_STATE_COMPLETE && terminal != DOCA_XFER_STATE_ERROR) ||
                     completion.generation != treq->generations[i]) {
-                    return NIXL_IN_PROG;
+                    return NIXL_ERR_REPOST_ACTIVE;
                 }
             }
         }

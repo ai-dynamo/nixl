@@ -1348,7 +1348,7 @@ SourcePreError(const Config &config, PreErrorAction action) {
 
     // CPU ownership is retained while A is still behind DelayKernel; only the GPU terminal
     // publication makes its slot releasable.
-    ASSERT_EQ(source.agent.releaseXferReq(a_request), NIXL_IN_PROG);
+    ASSERT_EQ(source.agent.releaseXferReq(a_request), NIXL_ERR_REPOST_ACTIVE);
     CheckCuda(cudaStreamSynchronize(delayed_stream), "drain pre-error delayed stream");
     ASSERT_EQ(Wait(source.agent, a_request, std::chrono::seconds(10)), NIXL_ERR_BACKEND);
     ASSERT_EQ(source.agent.releaseXferReq(a_request), NIXL_SUCCESS);
