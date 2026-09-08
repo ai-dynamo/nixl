@@ -84,9 +84,13 @@ nixl::trace::TraceContext::sampled() const noexcept {
 
 std::uint64_t
 nixl::trace::TraceContext::correlationId64() const noexcept {
+    if (!valid()) {
+        return 0;
+    }
+
     std::uint64_t result = 0;
-    for (std::size_t index = 0; index < sizeof(result); ++index) {
-        result = (result << 8) | traceId[index];
+    for (const auto byte : spanId) {
+        result = (result << 8) | byte;
     }
     return result;
 }
