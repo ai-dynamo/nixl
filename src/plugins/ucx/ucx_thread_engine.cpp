@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "ucx_engine_thread.h"
+#include "ucx_thread_engine.h"
 
 #include "common/nixl_log.h"
 #include "common/nixl_time.h"

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#include "ucx_engine_threadpool.h"
-#include "ucx_request.h"
+#include "ucx_thread_pool_engine.h"
+#include "ucx_backend_req.h"
 
 #include "common/backend.h"
 #include "common/nixl_log.h"

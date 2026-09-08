@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_PLUGINS_UCX_UCX_REQUEST_H
-#define NIXL_SRC_PLUGINS_UCX_UCX_REQUEST_H
+#ifndef NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H
+#define NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H
 
 #include <memory>
 #include <optional>
@@ -169,4 +169,4 @@ private:
     nixlUcxWorker *worker_ = nullptr;
 };
 
-#endif // NIXL_SRC_PLUGINS_UCX_UCX_REQUEST_H
+#endif // NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H

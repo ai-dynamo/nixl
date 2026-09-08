@@ -16,9 +16,9 @@
  */
 
 #include "ucx_backend.h"
-#include "ucx_engine_thread.h"
-#include "ucx_engine_threadpool.h"
-#include "ucx_request.h"
+#include "ucx_thread_engine.h"
+#include "ucx_thread_pool_engine.h"
+#include "ucx_backend_req.h"
 #include "ucx_sgl.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"

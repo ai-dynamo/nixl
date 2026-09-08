@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_PLUGINS_UCX_UCX_ENGINE_THREAD_H
-#define NIXL_SRC_PLUGINS_UCX_UCX_ENGINE_THREAD_H
+#ifndef NIXL_SRC_PLUGINS_UCX_UCX_THREAD_ENGINE_H
+#define NIXL_SRC_PLUGINS_UCX_UCX_THREAD_ENGINE_H
 
 #include <future>
 #include <memory>
@@ -127,4 +127,4 @@ private:
     std::mutex notifMutex_;
 };
 
-#endif // NIXL_SRC_PLUGINS_UCX_UCX_ENGINE_THREAD_H
+#endif // NIXL_SRC_PLUGINS_UCX_UCX_THREAD_ENGINE_H

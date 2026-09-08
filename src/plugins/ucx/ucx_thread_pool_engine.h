@@ -14,14 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_PLUGINS_UCX_UCX_ENGINE_THREADPOOL_H
-#define NIXL_SRC_PLUGINS_UCX_UCX_ENGINE_THREADPOOL_H
+#ifndef NIXL_SRC_PLUGINS_UCX_UCX_THREAD_POOL_ENGINE_H
+#define NIXL_SRC_PLUGINS_UCX_UCX_THREAD_POOL_ENGINE_H
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "ucx_engine_thread.h"
+#include "ucx_thread_engine.h"
 
 namespace asio {
 class io_context;
@@ -56,4 +56,4 @@ private:
     size_t splitBatchSize_;
 };
 
-#endif // NIXL_SRC_PLUGINS_UCX_UCX_ENGINE_THREADPOOL_H
+#endif // NIXL_SRC_PLUGINS_UCX_UCX_THREAD_POOL_ENGINE_H
