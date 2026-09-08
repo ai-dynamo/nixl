@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.4.0',
+project('nixl', 'CPP', version: '1.5.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -341,6 +341,51 @@ if wheel_variant != ''
     cuda_wheel_dir = 'nixl_' + wheel_variant
 endif
 
+# AMD ROCm/HIP support for the libfabric plugin (mutually exclusive with CUDA;
+# default off). ROCm is requested by setting -Drocm_path=<prefix>; if rocm_path
+# is empty, ROCm support is not requested (there is no default path). Defined
+# here in the root meson.build -- ahead of subdir('src') and subdir('test') --
+# so every libfabric subdir (src/utils, src/plugins, test/unit/utils) consumes a
+# single rocm_dep and hipify_src, with no ordering dependency between them. The
+# plugin's CUDA sources are translated to HIP at build time via hipify-perl;
+# rocm_dep supplies the HIP headers and runtime those translated sources compile
+# and link against. __HIP_PLATFORM_AMD__ lets the HIP headers work under a
+# non-hipcc host compiler. Kept separate from cuda_dep.
+#
+# hipify injects <hip/hip_runtime.h> at the top of each translated source, ahead
+# of the nixl/toml++ headers. HIP defines __noinline__ as a macro, which breaks
+# toml++'s TOML_HAS_ATTR(__noinline__) preprocessor check; TOML_CUDA=1 routes
+# toml++ around that line. HIP also maps some CUDA driver calls onto deprecated
+# HIP APIs, so deprecation is downgraded from error (the tree builds with
+# werror=true) to a warning.
+#
+# hipify-perl ships only with the ROCm/HIP toolchain, so it is required when
+# ROCm is requested and unused (absent) on CUDA-only builds.
+rocm_path = get_option('rocm_path')
+if rocm_path != ''
+    if not fs.exists(rocm_path)
+        error('rocm_path set but ROCm install root not found at ' + rocm_path +
+              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
+    endif
+    rocm_dep = declare_dependency(
+        compile_args : [
+            '-I' + rocm_path + '/include',
+            '-D__HIP_PLATFORM_AMD__',
+            '-DTOML_CUDA=1',
+            '-Wno-error=deprecated-declarations',
+        ],
+        link_args : ['-L' + rocm_path + '/lib', '-lamdhip64', '-lhiprtc'],
+    )
+    message('ROCm/HIP enabled; toolchain path: ' + rocm_path)
+
+    hipify_cmd = find_program('hipify-perl')
+    hipify_src = generator(hipify_cmd,
+                           output : ['@BASENAME@_hip.cpp'],
+                           arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
+else
+    rocm_dep = disabler()
+endif
+
 # Check for etcd-cpp-api - use multiple methods for discovery
 etcd_dep = dependency('etcd-cpp-api', required : false)
 etcd_inc_path = get_option('etcd_inc_path')
@@ -528,7 +573,7 @@ if get_option('buildtype') == 'debug'
 endif
 
 nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry')
-nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
+nixl_device_inc_dirs = include_directories('src/api/device')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
@@ -559,9 +604,6 @@ if get_option('install_headers')
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
 
-  if ucx_gpu_device_api_available
-    install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')
-  endif
 endif
 
 # Doxygen documentation
