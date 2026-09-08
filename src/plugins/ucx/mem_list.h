@@ -24,7 +24,7 @@ class nixlUcxWorker;
 
 namespace nixl::ucx {
 [[nodiscard]] void *
-createMemList(const nixl_remote_meta_dlist_t &, size_t, nixlUcxWorker &);
+createMemList(const nixl_remote_meta_dlist_t &, nixlUcxWorker &);
 
 [[nodiscard]] void *
 createMemList(const nixl_meta_dlist_t &, const nixlUcxWorker &);

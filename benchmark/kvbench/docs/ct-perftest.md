@@ -56,22 +56,24 @@ Sequential CT Perftest configuration defines a sequence of traffic patterns:
 
 ```yaml
 traffic_patterns:
-- matrix_file: /swgwork/eshukrun/nixl/tools/perf/run/llama-405b/prefill_tp_4_decode_tp_8/matrices/matrix_0.txt
+- matrix_file: /path/to/llama-405b/prefill_tp_4_decode_tp_8/matrices/matrix_0.txt
   metadata:
     isl: 38328
   sleep_before_launch_sec: 16.480753057792
-- matrix_file: /swgwork/eshukrun/nixl/tools/perf/run/llama-405b/prefill_tp_4_decode_tp_8/matrices/matrix_1.txt
+  decode_compute_sec: 2.5
+- matrix_file: /path/to/llama-405b/prefill_tp_4_decode_tp_8/matrices/matrix_1.txt
   metadata:
     isl: 25034
   sleep_before_launch_sec: 71.875102179328
 ```
-`traffic_patterns` can contain multiple elements that run sequentially. See `TrafficPattern` in `common.py` for default values.
+`traffic_patterns` can contain multiple elements that run sequentially. See `TrafficPattern` in `test/traffic_pattern.py` for default values.
 
 - **matrix_file**: The file containing the matrix, the matrix cells should be separated by whitespaces and contain either a number of bytes as integer or use a standard unit like K, M and G.
 - **shards**: Number of chunks the buffer has to be sharded into.
 - **mem_type**: For now support only cuda, but it should follow nixl memory types
 - **xfer_op**:  xfer operation, can be READ or WRITE
-- **sleep_before_launch_sec**: number of seconds to sleep before running this traffic pattern, can be used for example to simulate computation.
+- **sleep_before_launch_sec**: Prefill compute simulation, in seconds. Sleeps after the storage read and before the RDMA transfer (default: 0). `sequential-ct-perftest` only.
+- **decode_compute_sec**: Decode compute simulation, in seconds. Sleeps after the RDMA transfer and before the storage write (default: 0). `sequential-ct-perftest` only. Replaces the old `sleep_after_launch_sec`, which is still accepted but deprecated.
 
 Example of a matrix file:
 ```

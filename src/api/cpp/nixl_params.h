@@ -62,6 +62,8 @@ struct nixlAgentConfig {
      */
     uint64_t lthrDelay = kDefaultLthrDelayUs;
 
+    // TODO: Remove ETCD watch timeout from nixlAgentConfig and from nixlMDConfig
+    // on next ABI/API breaking update.
     /**
      * @var ETCD watch timeout in microseconds
      *      Timeout for waiting for metadata changes when watching etcd keys.

@@ -32,6 +32,27 @@ To build from source, follow the main build instructions in the README.md, then 
 pip install .
 ```
 
+## Backend initialization parameters
+
+Backends expose their initialization parameters through `get_plugin_params(backend)`, which
+returns the defaults. Override the values you need before passing the map to `create_backend`:
+
+```python
+from nixl import nixl_agent, nixl_agent_config
+
+# backends=[] leaves backend creation to the caller. The default config
+# initializes UCX, and a backend can only be created once per agent.
+agent = nixl_agent("example_agent", nixl_agent_config(backends=[]))
+
+params = agent.get_plugin_params("UCX")
+params["ucx_error_handling_mode"] = "peer"   # or "none"
+agent.create_backend("UCX", params)
+```
+
+See [UCX backend initialization options](BackendGuide.md#ucx-backend-initialization-options)
+for the supported UCX keys and their semantics. Note that `ucx_error_handling_mode` influences
+UCP transport lane selection in addition to error reporting.
+
 ## Examples
 
 See the [Python examples](../examples/python/) directory for complete working examples including:

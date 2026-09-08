@@ -13,6 +13,6 @@ reviews:
     - "!subprojects/**"
   path_instructions:
     - path: "src/**/*.cpp"
-      instructions: "Follow docs/CodeStyle.md. C++17."
+      instructions: "Follow docs/CodeStyle.md. C++20."
     - path: "src/**/*.h"
-      instructions: "Follow docs/CodeStyle.md. C++17."
+      instructions: "Follow docs/CodeStyle.md. C++20."
