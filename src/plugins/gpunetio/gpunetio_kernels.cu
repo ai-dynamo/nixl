@@ -124,9 +124,9 @@ nixl_gpunetio_dev_mark_failed(docaProgressState *progress_state) {
 
 __device__ void
 nixl_gpunetio_dev_finish_request(docaXferReqGpu *request,
-                               docaProgressState *progress_state,
-                               uint32_t pos,
-                               uint32_t terminal) {
+                                 docaProgressState *progress_state,
+                                 uint32_t pos,
+                                 uint32_t terminal) {
     const uint32_t generation = request->generation;
     auto *completion = &progress_state->host->completions[pos];
     cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(progress_state->active_bitmap)
@@ -139,8 +139,8 @@ nixl_gpunetio_dev_finish_request(docaXferReqGpu *request,
 
 __device__ void
 nixl_gpunetio_dev_terminal_error(docaXferReqGpu *request,
-                                docaProgressState *progress_state,
-                                uint32_t pos) {
+                                 docaProgressState *progress_state,
+                                 uint32_t pos) {
     nixl_gpunetio_dev_finish_request(request, progress_state, pos, DOCA_XFER_STATE_ERROR);
 }
 
