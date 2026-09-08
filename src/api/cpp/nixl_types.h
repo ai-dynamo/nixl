@@ -294,6 +294,30 @@ struct nixlXferTelemetry {
 using nixl_xfer_telem_t = nixlXferTelemetry;
 
 /**
+ * @struct nixlXferTelemetryDetails
+ * @brief Detailed telemetry output including backend and transport path information.
+ *
+ * This extends nixlXferTelemetry instead of changing its layout, preserving binary
+ * compatibility for applications built against the original telemetry structure.
+ */
+struct nixlXferTelemetryDetails : public nixlXferTelemetry {
+    /**
+     * @var backendName Name of the backend selected for this transfer.
+     */
+    std::string backendName;
+
+    /**
+     * @var transportPaths Transport paths used by this transfer, as reported by the backend.
+     */
+    std::vector<std::string> transportPaths;
+};
+
+/**
+ * @brief A typedef for detailed transfer telemetry output.
+ */
+using nixl_xfer_telem_details_t = nixlXferTelemetryDetails;
+
+/**
  * @brief A define for an empty string, that indicates the descriptor list is being
  *        prepared for the local agent as an initiator in prepXferDlist method.
  */

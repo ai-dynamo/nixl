@@ -79,6 +79,19 @@ resolve(const char *name) {
     return sym;
 }
 
+// Resolve a symbol that may be absent from an older nixl C API without aborting.
+void *
+resolve_optional(const char *name) {
+    const auto &h = get_nixl_handle();
+    if (!h.handle) {
+        return nullptr;
+    }
+
+    dlerror(); // clear any stale error
+    void *sym = dlsym(h.handle, name);
+    return dlerror() ? nullptr : sym;
+}
+
 } // anonymous namespace
 
 extern "C" {
@@ -1006,6 +1019,37 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
         nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t, nixl_capi_xfer_telemetry_t);
     static fn_t real = (fn_t)resolve("nixl_capi_get_xfer_telemetry");
     return real(agent, req_hndl, telemetry);
+}
+
+nixl_capi_status_t
+nixl_capi_get_xfer_backend_name(nixl_capi_agent_t agent,
+                                nixl_capi_xfer_req_t req_hndl,
+                                char **backend_name) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t, char **);
+    static fn_t real = (fn_t)resolve_optional("nixl_capi_get_xfer_backend_name");
+    if (!real) {
+        if (backend_name) {
+            *backend_name = nullptr;
+        }
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+    return real(agent, req_hndl, backend_name);
+}
+
+nixl_capi_status_t
+nixl_capi_get_xfer_transport_paths(nixl_capi_agent_t agent,
+                                   nixl_capi_xfer_req_t req_hndl,
+                                   nixl_capi_string_list_t *transport_paths) {
+    using fn_t =
+        nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_xfer_req_t, nixl_capi_string_list_t *);
+    static fn_t real = (fn_t)resolve_optional("nixl_capi_get_xfer_transport_paths");
+    if (!real) {
+        if (transport_paths) {
+            *transport_paths = nullptr;
+        }
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+    return real(agent, req_hndl, transport_paths);
 }
 
 // ---- Stub detection ----

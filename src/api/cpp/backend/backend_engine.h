@@ -29,6 +29,26 @@
 
 constexpr size_t MAX_TELEMETRY_QUEUE_SIZE = 1000;
 
+/**
+ * @brief Optional backend capability for reporting paths used by a transfer request.
+ *
+ * This separate interface intentionally leaves the nixlBackendEngine vtable unchanged so that
+ * plugins built against older compatible releases remain loadable.
+ */
+class nixlBackendXferPathProvider {
+public:
+    virtual ~nixlBackendXferPathProvider() = default;
+
+    /**
+     * @brief Append transport paths used by a completed transfer request.
+     *
+     * The request handle must remain valid and must not have been released. Implementations append
+     * paths not already present in @p paths without clearing existing entries.
+     */
+    virtual void
+    getXferPathInfo(const nixlBackendReqH *handle, std::vector<std::string> &paths) const = 0;
+};
+
 // Base backend engine class for different backend implementations
 class nixlBackendEngine {
     private:

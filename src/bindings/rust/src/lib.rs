@@ -69,6 +69,8 @@ use bindings::{
     nixl_capi_make_xfer_req, nixl_capi_get_local_partial_md,
     nixl_capi_send_local_partial_md, nixl_capi_query_xfer_backend, nixl_capi_opt_args_set_ip_addr,
     nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry,
+    nixl_capi_get_xfer_backend_name,
+    nixl_capi_get_xfer_transport_paths,
     nixl_capi_create_params, nixl_capi_params_add, nixl_capi_is_stub,
     nixl_capi_prep_mem_view_local, nixl_capi_prep_mem_view_remote, nixl_capi_release_mem_view,
     nixl_capi_create_remote_dlist, nixl_capi_destroy_remote_dlist, nixl_capi_remote_dlist_add_desc
@@ -256,6 +258,10 @@ pub struct XferTelemetry {
     pub total_bytes: u64,
     /// Number of descriptors
     pub desc_count: u64,
+    /// Name of the backend selected for the transfer
+    pub backend_name: String,
+    /// Actual transport paths selected by the backend
+    pub transport_paths: Vec<String>,
 }
 
 impl XferTelemetry {

@@ -136,6 +136,27 @@ The **Shared Memory Buffer** plug-in, contains the data per transaction event, w
 - Current design allows silent telemetry loss.
 - Current design does not support selective telemetry. All the telemetry events could be either ON or OFF.
 
+### Per-transfer backend and transport paths
+
+The `getXferTelemetry()` C++ overload taking `nixl_xfer_telem_details_t` returns the
+selected backend in `backendName` and a `transportPaths` vector in addition to
+the base transfer telemetry. The original `nixl_xfer_telem_t` overload and
+structure remain unchanged for binary compatibility. Python's
+`get_xfer_telemetry()` and Rust's `XferRequest::get_telemetry()` expose the same
+combined result; the Rust binding uses the ABI-safe C wrapper accessors
+`nixl_capi_get_xfer_backend_name()` and
+`nixl_capi_get_xfer_transport_paths()`.
+Each entry is a distinct backend-specific description captured from a request that
+carried the data. The UCX backend uses `ucp_request_query()`, so its entries include UCX's
+selected protocol, transport lane, and device information rather than the set of
+candidate transports configured on the endpoint.
+
+The list is empty when the backend does not implement request-level path
+introspection. It can also be empty for a UCX operation that completes immediately:
+UCX does not create a request object in that case, and NIXL does not force asynchronous
+completion merely to collect telemetry. Reposting a request replaces the path data
+with information from the latest transfer.
+
 ## Enabling Telemetry
 
 ### Runtime Configuration

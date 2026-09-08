@@ -2125,6 +2125,56 @@ nixl_capi_get_xfer_telemetry(nixl_capi_agent_t agent,
     }
 }
 
+nixl_capi_status_t
+nixl_capi_get_xfer_backend_name(nixl_capi_agent_t agent,
+                                nixl_capi_xfer_req_t req_hndl,
+                                char **backend_name) {
+    if (!agent || !req_hndl || !backend_name) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    *backend_name = nullptr;
+    try {
+        nixl_xfer_telem_details_t telemetry;
+        nixl_status_t ret = agent->inner->getXferTelemetry(req_hndl->req, telemetry);
+        if (ret != NIXL_SUCCESS) {
+            return nixl_capi_status_from_nixl_status(ret);
+        }
+
+        *backend_name = strdup(telemetry.backendName.c_str());
+        return *backend_name ? NIXL_CAPI_SUCCESS : NIXL_CAPI_ERROR_BACKEND;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
+nixl_capi_status_t
+nixl_capi_get_xfer_transport_paths(nixl_capi_agent_t agent,
+                                   nixl_capi_xfer_req_t req_hndl,
+                                   nixl_capi_string_list_t *transport_paths) {
+    if (!agent || !req_hndl || !transport_paths) {
+        return NIXL_CAPI_ERROR_INVALID_PARAM;
+    }
+
+    *transport_paths = nullptr;
+    try {
+        nixl_xfer_telem_details_t telemetry;
+        nixl_status_t ret = agent->inner->getXferTelemetry(req_hndl->req, telemetry);
+        if (ret != NIXL_SUCCESS) {
+            return nixl_capi_status_from_nixl_status(ret);
+        }
+
+        auto list = new nixl_capi_string_list_s;
+        list->strings = std::move(telemetry.transportPaths);
+        *transport_paths = list;
+        return NIXL_CAPI_SUCCESS;
+    }
+    catch (...) {
+        return NIXL_CAPI_ERROR_BACKEND;
+    }
+}
+
 bool
 nixl_capi_is_stub() {
     return false;
