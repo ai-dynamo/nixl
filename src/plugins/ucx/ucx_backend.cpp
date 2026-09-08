@@ -33,6 +33,10 @@
 #include "absl/strings/str_split.h"
 #include <asio.hpp>
 
+#ifdef HAVE_CUDA
+#include <cuda.h>
+#endif
+
 namespace {
 [[nodiscard]] bool
 sglEnabledFromConfig() {
@@ -269,6 +273,11 @@ protected:
     virtual void
     run() = 0;
 
+    const nixlUcxEngine *
+    getEngine() const noexcept {
+        return engine_;
+    }
+
 private:
     const nixlUcxEngine *engine_;
     std::vector<nixlUcxWorker *> workers_;
@@ -323,6 +332,10 @@ protected:
         bool timeout = true;
         bool pthr_stop = false;
         while (!pthr_stop) {
+            /* progressLoop() and arm() reach the CUDA driver through UCX's cuda_copy transport,
+             * which needs a current context on this thread. */
+            getEngine()->vramApplyCtx();
+
             for (size_t i = 0; i < pollFds_.size() - 1; i++) {
                 if (!(pollFds_[i].revents & POLLIN) && !timeout) continue;
                 pollFds_[i].revents = 0;
@@ -601,6 +614,10 @@ protected:
         NIXL_DEBUG << "dedicated " << *this << " running";
 
         while (!io_.stopped()) {
+            /* status() below drives progressLoop(), which reaches the CUDA driver through UCX's
+             * cuda_copy transport and needs a current context on this thread. */
+            getEngine()->vramApplyCtx();
+
             if (!requests_.empty()) {
                 io_.poll_one();
             } else {
@@ -813,6 +830,98 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
     auto &worker = workers_.front();
     workerAddr = worker->epAddr();
     worker->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, notifAmCb, this);
+
+    /* Derived engines start their progress threads right after this constructor returns, before
+     * any memory is registered, so seed the context here rather than leaving those threads without
+     * one until the first registerMem(). */
+    vramCaptureCurrentCtx();
+}
+
+/****************************************
+ * CUDA context management
+ *
+ * The progress threads below never had a CUDA context made current, but the UCX transports they
+ * drive call into the CUDA driver: with cuda_copy in UCX_TLS, ucp_worker_arm() reaches
+ * uct_cuda_base_iface_event_fd_arm(), which calls cuEventQuery() and segfaults when no context is
+ * current. Capture a context on a thread that has one and re-apply it on the progress threads.
+ * The libfabric plugin does the same thing via vramApplyCtx() (issue #1157).
+ *****************************************/
+
+void
+nixlUcxEngine::vramCaptureCurrentCtx() {
+#ifdef HAVE_CUDA
+    CUcontext ctx = nullptr;
+
+    /* Runs on the thread constructing the engine, which is also the thread that owns the GPU this
+     * agent transfers from. Provisional: a VRAM registration later supersedes it. */
+    if (cuCtxGetCurrent(&ctx) != CUDA_SUCCESS || ctx == nullptr) {
+        return;
+    }
+
+    cudaCtx_.store(ctx, std::memory_order_release);
+    NIXL_DEBUG << "captured current CUDA context " << ctx << " for the UCX progress threads";
+#else
+    /* cudaCtx_ is declared unconditionally so that the header stays ABI-identical between CUDA and
+     * non-CUDA builds; touch it here to keep -Wunused-private-field quiet. */
+    cudaCtx_.store(nullptr, std::memory_order_relaxed);
+#endif
+}
+
+void
+nixlUcxEngine::vramUpdateCtx(const void *address) {
+#ifdef HAVE_CUDA
+    CUmemorytype mem_type = CU_MEMORYTYPE_HOST;
+    CUcontext ctx = nullptr;
+    CUpointer_attribute attr_types[2] = {CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
+                                         CU_POINTER_ATTRIBUTE_CONTEXT};
+    void *attr_data[2] = {&mem_type, &ctx};
+
+    if (cuPointerGetAttributes(2, attr_types, attr_data, (CUdeviceptr)address) != CUDA_SUCCESS) {
+        return;
+    }
+
+    if (mem_type != CU_MEMORYTYPE_DEVICE || ctx == nullptr) {
+        return;
+    }
+
+    /* The context that owns the registered memory is authoritative over whatever was current at
+     * construction time, so it wins. Registrations from a second context are not handled: one
+     * valid context is enough to keep the driver from faulting, and a per-worker context would
+     * need the worker-to-device mapping UCX does not expose here. */
+    if (cudaCtx_.exchange(ctx, std::memory_order_acq_rel) != ctx) {
+        NIXL_DEBUG << "using CUDA context " << ctx << " from the registered VRAM segment "
+                   << address << " for the UCX progress threads";
+    }
+#else
+    (void)address;
+#endif
+}
+
+void
+nixlUcxEngine::vramApplyCtx() const {
+#ifdef HAVE_CUDA
+    void *ctx = cudaCtx_.load(std::memory_order_acquire);
+    if (ctx == nullptr) {
+        return;
+    }
+
+    /* cuCtxGetCurrent is a thread-local read, so the steady state costs no driver work. The set
+     * has to stay inside the progress loop rather than run once at thread start: the thread is
+     * created in the engine constructor, before any memory is registered, so the context it should
+     * use is not known yet at that point. */
+    CUcontext current = nullptr;
+    if (cuCtxGetCurrent(&current) == CUDA_SUCCESS && current == static_cast<CUcontext>(ctx)) {
+        return;
+    }
+
+    const CUresult res = cuCtxSetCurrent(static_cast<CUcontext>(ctx));
+    if (res != CUDA_SUCCESS) {
+        const char *err_str = nullptr;
+        cuGetErrorString(res, &err_str);
+        NIXL_WARN << "cuCtxSetCurrent(" << ctx
+                  << ") on progress thread failed: " << (err_str ? err_str : "unknown error");
+    }
+#endif
 }
 
 nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
@@ -902,11 +1011,19 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
     if (ret) {
         return NIXL_ERR_BACKEND;
     }
+
     priv->rkeyStr = uc->packRkey(priv->mem);
 
     if (priv->rkeyStr.empty()) {
         return NIXL_ERR_BACKEND;
     }
+
+    if (nixl_mem == VRAM_SEG) {
+        /* Runs on the caller's thread, which has the owning context current, so this is where the
+         * progress threads can learn which context to use. */
+        vramUpdateCtx((const void *)mem.addr);
+    }
+
     out = priv.release();
     return NIXL_SUCCESS;
 }
