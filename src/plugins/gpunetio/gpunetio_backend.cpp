@@ -28,6 +28,34 @@
 const char info_delimiter = '-';
 
 namespace {
+class cudaDeviceGuard {
+public:
+    explicit cudaDeviceGuard(uint32_t device) : device_(static_cast<int>(device)) {
+        status_ = cudaGetDevice(&previous_device_);
+        if (status_ == cudaSuccess) {
+            status_ = cudaSetDevice(device_);
+            restore_ = status_ == cudaSuccess && previous_device_ != device_;
+        }
+    }
+
+    ~cudaDeviceGuard() {
+        if (restore_) {
+            cudaSetDevice(previous_device_);
+        }
+    }
+
+    cudaError_t
+    status() const {
+        return status_;
+    }
+
+private:
+    int device_;
+    int previous_device_ = 0;
+    bool restore_ = false;
+    cudaError_t status_ = cudaSuccess;
+};
+
 int
 parseGidIndex(const std::string &value) {
     if (value.empty()) {
@@ -154,18 +182,25 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
 
     result = doca_log_backend_create_standard();
-    if (result != DOCA_SUCCESS) throw std::invalid_argument("Can't initialize doca log");
+    if (result != DOCA_SUCCESS) {
+        throw std::invalid_argument("Can't initialize doca log");
+    }
 
     result = doca_log_backend_create_with_file_sdk(stderr, &sdk_log);
-    if (result != DOCA_SUCCESS) throw std::invalid_argument("Can't initialize doca log");
+    if (result != DOCA_SUCCESS) {
+        throw std::invalid_argument("Can't initialize doca log");
+    }
 
     result = doca_log_backend_set_sdk_level(sdk_log, DOCA_LOG_LEVEL_ERROR);
-    if (result != DOCA_SUCCESS) throw std::invalid_argument("Can't initialize doca log");
+    if (result != DOCA_SUCCESS) {
+        throw std::invalid_argument("Can't initialize doca log");
+    }
 
     NIXL_INFO << "DOCA network devices ";
     // Temporary: will extend to more GPUs in a dedicated PR
-    if (custom_params->count("network_devices") > 1)
+    if (custom_params->count("network_devices") > 1) {
         throw std::invalid_argument("Only 1 network device is allowed");
+    }
 
     if (custom_params->count("network_devices") == 0 || (*custom_params)["network_devices"] == "" ||
         (*custom_params)["network_devices"] == "all") {
@@ -180,8 +215,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     if (custom_params->count("oob_interface") > 0) {
         NIXL_INFO << "DOCA network devices ";
         // Temporary: will extend to more GPUs in a dedicated PR
-        if (custom_params->count("oob_interface") > 1)
+        if (custom_params->count("oob_interface") > 1) {
             throw std::invalid_argument("Only 1 oob interface is allowed");
+        }
 
         oobdev = absl::StrSplit((*custom_params)["oob_interface"], " ");
         NIXL_INFO << "Using oob interface" << oobdev[0];
@@ -196,8 +232,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     NIXL_INFO << "DOCA GPU devices: ";
     // Temporary: will extend to more GPUs in a dedicated PR
-    if (custom_params->count("gpu_devices") > 1)
+    if (custom_params->count("gpu_devices") > 1) {
         throw std::invalid_argument("Only 1 GPU device is allowed");
+    }
 
     if (custom_params->count("gpu_devices") == 0 || (*custom_params)["gpu_devices"] == "" ||
         (*custom_params)["gpu_devices"] == "all") {
@@ -213,9 +250,12 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     NIXL_INFO << std::endl;
 
     nstreams = 0;
-    if (custom_params->count("cuda_streams") != 0 && (*custom_params)["cuda_streams"] != "")
+    if (custom_params->count("cuda_streams") != 0 && (*custom_params)["cuda_streams"] != "") {
         nstreams = std::stoi((*custom_params)["cuda_streams"]);
-    if (nstreams == 0) nstreams = DOCA_POST_STREAM_NUM;
+    }
+    if (nstreams == 0) {
+        nstreams = DOCA_POST_STREAM_NUM;
+    }
 
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
@@ -238,7 +278,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
 
     pd = doca_verbs_bridge_verbs_pd_get_ibv_pd(verbs_pd);
-    if (pd == NULL) throw std::invalid_argument("Failed to get ibv_pd");
+    if (pd == NULL) {
+        throw std::invalid_argument("Failed to get ibv_pd");
+    }
 
     result = doca_rdma_bridge_open_dev_from_pd(pd, &ddev);
     if (result != DOCA_SUCCESS) {
@@ -261,8 +303,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     if (port_attr.link_layer == IBV_LINK_LAYER_INFINIBAND) {
         result = create_verbs_ah_attr(
             verbs_context, gid_index, DOCA_VERBS_ADDR_TYPE_IB_NO_GRH, &verbs_ah_attr);
-        if (result != DOCA_SUCCESS)
+        if (result != DOCA_SUCCESS) {
             throw std::invalid_argument("Failed to create doca verbs ah attributes");
+        }
 
         lid = port_attr.lid;
     } else {
@@ -288,8 +331,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         cudaFree(0);
 
         result = doca_gpu_create(pciBusId, &item.second);
-        if (result != DOCA_SUCCESS)
+        if (result != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to create DOCA GPU device " << doca_error_get_descr(result);
+        }
     }
 
     if (oobdev.size() > 0 && oobdev[0] != "") {
@@ -298,7 +342,8 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         NIXL_DEBUG << "Eth IP address " << static_cast<unsigned>(ipv4_addr[0]) << " "
                    << static_cast<unsigned>(ipv4_addr[1]) << " "
                    << static_cast<unsigned>(ipv4_addr[2]) << " "
-                   << static_cast<unsigned>(ipv4_addr[3]) << " " << "ifface " << oobdev[0].c_str();
+                   << static_cast<unsigned>(ipv4_addr[3]) << " "
+                   << "ifface " << oobdev[0].c_str();
     } else {
         result = doca_devinfo_get_ipv4_addr(
             doca_dev_as_devinfo(ddev), (uint8_t *)ipv4_addr, DOCA_DEVINFO_IPV4_ADDR_SIZE);
@@ -369,10 +414,11 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     nixlDocaEngineCheckCudaError(cudaStreamCreateWithFlags(&wait_stream, cudaStreamNonBlocking),
                                  "Failed to create CUDA stream");
-    for (int i = 0; i < nstreams; i++)
+    for (int i = 0; i < nstreams; i++) {
         nixlDocaEngineCheckCudaError(
             cudaStreamCreateWithFlags(&post_stream[i], cudaStreamNonBlocking),
             "Failed to create CUDA stream");
+    }
     xferStream = 0;
 
     result = doca_gpu_mem_alloc(gdevs[0].second,
@@ -500,8 +546,9 @@ nixlDocaEngine::~nixlDocaEngine() {
     }
 
     NIXL_DEBUG << "Before nixlDocaDestroyNotif ";
-    for (auto notif : notifMap)
+    for (auto notif : notifMap) {
         nixlDocaDestroyNotif(gdevs[0].second, notif.second);
+    }
 
     doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
@@ -513,12 +560,14 @@ nixlDocaEngine::~nixlDocaEngine() {
     qpMap.clear();
 
     result = doca_dev_close(ddev);
-    if (result != DOCA_SUCCESS)
+    if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to close DOCA device " << doca_error_get_descr(result);
+    }
 
     result = doca_gpu_destroy(gdevs[0].second);
-    if (result != DOCA_SUCCESS)
+    if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to close DOCA GPU device " << doca_error_get_descr(result);
+    }
 }
 
 /****************************************
@@ -588,8 +637,9 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     ((volatile struct docaNotif *)notif_fill_cpu)->msg_size = notif->elems_size;
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu = notif_qp_gpu;
-    while (((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu != nullptr)
+    while (((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu != nullptr) {
         ;
+    }
 
     const bool inserted = notifMap.emplace(remote_agent, notif.get()).second;
     if (!inserted) {
@@ -737,6 +787,13 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     }
 
     NIXL_DEBUG << "DOCA addRdmaQp for remote " << remote_agent << std::endl;
+
+    cudaDeviceGuard cuda_device(gdevs[0].first);
+    if (cuda_device.status() != cudaSuccess) {
+        NIXL_ERROR << "Failed to select CUDA device " << gdevs[0].first
+                   << " for QP setup: " << cudaGetErrorString(cuda_device.status());
+        return NIXL_ERR_BACKEND;
+    }
 
     rdma_qp = new struct nixlDocaRdmaQp;
 
@@ -1311,8 +1368,9 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     md->conn = conn;
 
     std::stringstream ss(input.metaInfo.data());
-    while (std::getline(ss, token, info_delimiter))
+    while (std::getline(ss, token, info_delimiter)) {
         tokens.push_back(token);
+    }
 
     uint32_t rkey = static_cast<uint32_t>(atoi(tokens[0].c_str()));
     uintptr_t addr = static_cast<uintptr_t>(atol(tokens[1].c_str()));
@@ -1658,8 +1716,9 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
         }
         ((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu = notif_qp_gpu;
         std::atomic_thread_fence(std::memory_order_seq_cst);
-        while (((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu != nullptr)
+        while (((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu != nullptr) {
             ;
+        }
         num_msg = ((volatile struct docaNotif *)notif_progress_cpu)->msg_num;
         while (num_msg > 0) {
             recv_idx = notif.second->recv_pi.load() & (DOCA_MAX_NOTIF_INFLIGHT - 1);
@@ -1754,8 +1813,9 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     ((volatile struct docaNotif *)notif_send_cpu)->msg_size = newMsg.size();
     std::atomic_thread_fence(std::memory_order_seq_cst);
     ((volatile struct docaNotif *)notif_send_cpu)->qp_gpu = notif_qp_gpu;
-    while (((volatile struct docaNotif *)notif_send_cpu)->qp_gpu != nullptr)
+    while (((volatile struct docaNotif *)notif_send_cpu)->qp_gpu != nullptr) {
         ;
+    }
 
     return NIXL_SUCCESS;
 }
