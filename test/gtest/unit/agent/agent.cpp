@@ -489,6 +489,32 @@ namespace agent {
                                             request,
                                             &s.local_extra_params),
                   NIXL_SUCCESS);
+        nixl_opt_args_t post_params;
+        for (const auto &custom_param : {std::string("\0\x87\0\x65\0\x43\0\x21", 8),
+                                         std::string("\x12\0\x34\0", 4),
+                                         std::string{}}) {
+            post_params.customParam = custom_param;
+            EXPECT_CALL(local_agent_helper_->getGMockEngine(),
+                        postXfer(testing::_,
+                                 testing::_,
+                                 testing::_,
+                                 testing::_,
+                                 testing::_,
+                                 testing::Pointee(testing::Field(&nixl_opt_b_args_t::customParam,
+                                                                 custom_param))))
+                .WillOnce(testing::Return(NIXL_SUCCESS));
+            EXPECT_EQ(local_agent_->postXferReq(request, &post_params), NIXL_SUCCESS);
+        }
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(),
+                    postXfer(testing::_,
+                             testing::_,
+                             testing::_,
+                             testing::_,
+                             testing::_,
+                             testing::Pointee(
+                                 testing::Field(&nixl_opt_b_args_t::customParam, std::string{}))))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_EQ(local_agent_->postXferReq(request), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->releasedDlistH(local_side), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->releasedDlistH(remote_side), NIXL_SUCCESS);
