@@ -20,23 +20,16 @@
 #include <vector>
 #include <span>
 #include <cstring>
-#include <iostream>
-#include <thread>
 #include <memory>
-#include <condition_variable>
 #include <atomic>
 #include <chrono>
 #include <poll.h>
 #include <optional>
 
-#include "nixl.h"
-
 #include "backend/backend_engine.h"
-#include "common/nixl_time.h"
 
 #include "mem_list.h"
 #include "rkey.h"
-#include "ucx_enums.h"
 #include "ucx_utils.h"
 
 class nixlUcxConnection : public nixlBackendConnMD {
