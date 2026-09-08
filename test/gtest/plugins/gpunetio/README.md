@@ -12,6 +12,30 @@ an explicit GoogleTest skip before any CUDA query.
 
 ## Required environment
 
+Build with CUDA, DOCA, GoogleTest/GoogleMock and the normal NIXL development
+dependencies available. Use the same compiler options for both comparison arms.
+The root build disables tests for `buildtype=release`, so use an optimized
+`debugoptimized` build with assertions enabled:
+
+```bash
+meson setup build --buildtype=debugoptimized -Doptimization=3 -Ddebug=false \
+  -Db_ndebug=false -Denable_plugins=GPUNETIO -Dbuild_tests=true \
+  -Dbuild_examples=false -Dbuild_docs=false -Dnixl_cuda_arch_list=90 \
+  -Dcpp_args=-Wno-error=maybe-uninitialized --wrap-mode=forcefallback
+ninja -C build src/core/libnixl.so src/plugins/gpunetio/libplugin_GPUNETIO.so \
+  test/gtest/plugins/gpunetio/gpunetio_qp_progress_gtest
+export QP_TEST="$PWD/build/test/gtest/plugins/gpunetio/gpunetio_qp_progress_gtest"
+export NIXL_PLUGIN_DIR="$PWD/build/src/plugins/gpunetio"
+export LD_LIBRARY_PATH="$(find "$PWD/build/src" -name 'lib*.so' -printf '%h\n' \
+  | sort -u | paste -sd:):${LD_LIBRARY_PATH:-}"
+git rev-parse HEAD
+sha256sum "$QP_TEST" "$NIXL_PLUGIN_DIR/libplugin_GPUNETIO.so"
+```
+
+Architecture 90 and the GCC warning override describe the tested H20 build;
+adapt these to the GPU/compiler in use. Include the DOCA library directory in
+`LD_LIBRARY_PATH` if it is not already in the system loader configuration.
+
 Both processes need `NIXL_PLUGIN_DIR` and `LD_LIBRARY_PATH` pointing to the
 same feature-tree build. Set the following values without placing site-specific
 values in this repository:
@@ -38,11 +62,11 @@ or source target IPv4 is unavailable.
 ```bash
 # Terminal/host with two visible target GPUs.
 NIXL_QP_PROGRESS_ROLE=target \
-  gpunetio_qp_progress_gtest --gtest_filter=QpProgress.PerformanceMixed2MiBAnd4KiB
+  "$QP_TEST" --gtest_filter=QpProgress.PerformanceMixed2MiBAnd4KiB
 
 # Terminal/host with one visible source GPU. Use the target's numeric IPv4.
-NIXL_QP_PROGRESS_ROLE=source NIXL_QP_PROGRESS_TARGET_IPV4=<target-ipv4> \
-  gpunetio_qp_progress_gtest --gtest_filter=QpProgress.PerformanceMixed2MiBAnd4KiB
+NIXL_QP_PROGRESS_ROLE=source \
+  "$QP_TEST" --gtest_filter=QpProgress.PerformanceMixed2MiBAnd4KiB
 ```
 
 The performance case runs one 20-warmup/100-measured pair. Run three fresh
@@ -50,6 +74,10 @@ source/target process pairs externally for independent repeats.
 It writes `qp_progress_performance.json` into the coordinate directory. The
 JSON reports p50/p99 transfer-window latency, actual payload and marker bytes,
 and separate wall time. It does not claim CQ timing or backend-internal timing.
+Both endpoints must print `PASSED`, not `SKIPPED`. Keep all three JSON files per
+arm. Compare medians of the three per-run metrics, reporting small-transfer and
+bulk-transfer tails plus aggregate rate; an isolation win is not automatically
+a throughput win. Profiled runs must not enter the performance comparison.
 
 `OutstandingDescriptorsAndAttachedStreamOrder` uses 513 descriptors per
 request (512 data plus an epoch marker) with descriptor merging disabled. It
