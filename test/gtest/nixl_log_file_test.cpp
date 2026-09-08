@@ -558,6 +558,67 @@ TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
     std::filesystem::remove(rotated);
 }
 
+/**
+ * @brief A rotation it cannot do stops the sink, and says so.
+ *
+ * Carrying on would mean either ignoring the limit that was asked for or
+ * quietly redefining rotation, so the sink stops instead. What it keeps is the
+ * records written up to the limit; the file is left alone rather than
+ * truncated, since those records are all there will be.
+ */
+TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
+    if (::geteuid() == 0) {
+        GTEST_SKIP() << "root bypasses the directory permission this relies on";
+    }
+    constexpr uintmax_t limit = 2048;
+
+    // Writable to begin with, so the log file can be created, and then made
+    // searchable but not writable: renaming needs permission on the directory,
+    // which is now gone, while writing and truncating need it on the file,
+    // which it still has.
+    const std::filesystem::path directory = path_.string() + "-norename";
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path log = directory / "log";
+
+    env_.addVar("NIXL_LOG_FILE", log.string());
+    env_.addVar("NIXL_LOG_FILE_SIZE", "2K");
+    ASSERT_TRUE(nixl::initLogFile());
+    NIXL_INFO << "record that creates the file";
+
+    std::filesystem::permissions(
+        directory, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+
+    testing::internal::CaptureStderr();
+    for (unsigned i = 0; i < 200; ++i) {
+        NIXL_INFO << "unrenamable record " << i;
+    }
+    const std::string captured = testing::internal::GetCapturedStderr();
+
+    // Reported, once, and the limit still holds.
+    const std::string report = "could not rotate NIXL_LOG_FILE";
+    size_t reports = 0;
+    for (size_t at = captured.find(report); at != std::string::npos;
+         at = captured.find(report, at + 1)) {
+        ++reports;
+    }
+    EXPECT_EQ(reports, 1u) << "stderr was:\n" << captured;
+    EXPECT_LE(std::filesystem::file_size(log), limit) << "the limit was abandoned";
+    EXPECT_FALSE(std::filesystem::exists(log.string() + ".1")) << "the rename cannot have worked";
+
+    // Stopped, keeping what it had rather than emptying the file: the earliest
+    // records survive and the ones after the failed rotation are dropped.
+    std::ifstream kept(log);
+    std::ostringstream contents;
+    contents << kept.rdbuf();
+    EXPECT_THAT(contents.str(), HasSubstr("unrenamable record 0"));
+    EXPECT_THAT(contents.str(), testing::Not(HasSubstr("unrenamable record 199")));
+
+    nixl::shutdownLogFile();
+    std::filesystem::permissions(directory, std::filesystem::perms::owner_all);
+    std::filesystem::remove_all(directory);
+}
+
 /** @brief With no NIXL_LOG_FILE_SIZE the file grows, exactly as it used to. */
 TEST_F(nixlLogFileTest, GrowsWithoutLimitWhenNoSizeIsSet) {
     ASSERT_TRUE(enableLogFile());
