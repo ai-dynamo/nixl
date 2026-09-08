@@ -142,8 +142,9 @@ def test_agent_config_enable_loopback(enable_loopback):
 
     addr1 = utils.malloc_passthru(mem_size)
     addr2 = utils.malloc_passthru(mem_size)
+    registered = None
     try:
-        agent.register_memory(
+        registered = agent.register_memory(
             agent.get_reg_descs(
                 [(addr1, mem_size, 0, ""), (addr2, mem_size, 0, "")], mem_type="DRAM"
             )
@@ -164,6 +165,8 @@ def test_agent_config_enable_loopback(enable_loopback):
             with pytest.raises(bindings.nixlNotFoundError):
                 agent.initialize_xfer("WRITE", src, dst, agent.name)
     finally:
+        if registered is not None:
+            agent.deregister_memory(registered)
         utils.free_passthru(addr1)
         utils.free_passthru(addr2)
 
