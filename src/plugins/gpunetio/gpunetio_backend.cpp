@@ -26,6 +26,36 @@
 
 const char info_delimiter = '-';
 
+namespace {
+class cudaDeviceGuard {
+public:
+    explicit cudaDeviceGuard(uint32_t device) : device_(static_cast<int>(device)) {
+        status_ = cudaGetDevice(&previous_device_);
+        if (status_ == cudaSuccess) {
+            status_ = cudaSetDevice(device_);
+            restore_ = status_ == cudaSuccess && previous_device_ != device_;
+        }
+    }
+
+    ~cudaDeviceGuard() {
+        if (restore_) {
+            cudaSetDevice(previous_device_);
+        }
+    }
+
+    cudaError_t
+    status() const {
+        return status_;
+    }
+
+private:
+    int device_;
+    int previous_device_ = 0;
+    bool restore_ = false;
+    cudaError_t status_ = cudaSuccess;
+};
+} // namespace
+
 /****************************************
  * Constructor/Destructor
  *****************************************/
@@ -572,6 +602,13 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
 
     NIXL_DEBUG << "DOCA addRdmaQp for remote " << remote_agent << std::endl;
 
+    cudaDeviceGuard cuda_device(gdevs[0].first);
+    if (cuda_device.status() != cudaSuccess) {
+        NIXL_ERROR << "Failed to select CUDA device " << gdevs[0].first
+                   << " for QP setup: " << cudaGetErrorString(cuda_device.status());
+        return NIXL_ERR_BACKEND;
+    }
+
     rdma_qp = new struct nixlDocaRdmaQp;
     try {
         rdma_qp->qp_data =
@@ -621,16 +658,7 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     }
 
     cudaStream_t init_stream = nullptr;
-    int previous_cuda_device = 0;
-    bool cuda_device_switched = false;
-    cudaError_t cuda_result = cudaGetDevice(&previous_cuda_device);
-    if (cuda_result == cudaSuccess) {
-        cuda_result = cudaSetDevice(gdevs[0].first);
-        cuda_device_switched = cuda_result == cudaSuccess;
-    }
-    if (cuda_result == cudaSuccess) {
-        cuda_result = cudaStreamCreateWithFlags(&init_stream, cudaStreamNonBlocking);
-    }
+    cudaError_t cuda_result = cudaStreamCreateWithFlags(&init_stream, cudaStreamNonBlocking);
     if (cuda_result == cudaSuccess) {
         cuda_result =
             cudaMemsetAsync(rdma_qp->progress_gpu, 0, sizeof(struct docaQpProgress), init_stream);
@@ -644,9 +672,6 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     }
     if (init_stream != nullptr) {
         cudaStreamDestroy(init_stream);
-    }
-    if (cuda_device_switched && previous_cuda_device != static_cast<int>(gdevs[0].first)) {
-        cudaSetDevice(previous_cuda_device);
     }
     if (cuda_result != cudaSuccess) {
         NIXL_ERROR << "Failed to initialize QP progress state " << cudaGetErrorString(cuda_result);
