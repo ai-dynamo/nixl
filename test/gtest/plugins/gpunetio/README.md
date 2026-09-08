@@ -59,6 +59,10 @@ process for each fault trial (`target-fault` plus `source` filtered to the
 fault case). The harness skips if its role, coordinate directory, GPU count,
 or source target IPv4 is unavailable.
 
+Payload generation mixes the full epoch/source seed and byte offset, so both
+payload bytes and markers change between iterations. Generation and validation
+remain outside the measured post-to-completion windows.
+
 ```bash
 # Terminal/host with two visible target GPUs.
 NIXL_QP_PROGRESS_ROLE=target \
@@ -99,3 +103,12 @@ Set `NIXL_QP_PROGRESS_CONTROL_BYTES=2097152` to repeat the same control at 2 MiB
 `RemoteDeregisterReturnsBackendError` requires its fresh fault role and checks
 bounded `NIXL_ERR_BACKEND` and release after target B memory is deregistered
 after source metadata consumption and before its post.
+
+`CpuFatalLatchRejectsQueuedTransfer` and `CpuFatalLatchRejectsQueuedNotification`
+use fresh normal `source`/`target` roles. A deliberate CUDA configuration error
+rejects B before enqueue while A remains behind a test-only stream delay.
+Pending cancellation must return `NIXL_ERR_REPOST_ACTIVE` without losing A's
+handle; after GPU error completion, release succeeds. Target sentinel payloads
+and epochs must remain unchanged. These are CPU pre-enqueue failure tests, not
+arbitrary device-fault injection. Their expected error logs are not benchmark
+failures when the assertions and both process exits pass.
