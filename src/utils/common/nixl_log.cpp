@@ -27,6 +27,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -74,16 +75,21 @@ hostName() {
 }
 
 /**
- * @brief Expands %h, %p and %% in a log file path.
+ * @brief Expands %h, %p, %t and %% in a log file path.
  *
  * Lets every process be given the same NIXL_LOG_FILE while still writing to its
  * own file, which is the only way the setting is usable across the many workers
  * of a disaggregated inference run.
  *
+ * %t separates runs where %p alone cannot: process ids are recycled, and the
+ * file is opened for append, so a restart that is handed an earlier run's id
+ * would otherwise continue that run's file as though it were one process.
+ *
  * @param pattern The configured path, which need not contain any escape.
- * @return @p pattern with %h replaced by the host name, %p by the process id
- *         and %% by a literal %. An unrecognized escape is left exactly as it
- *         was, so a path that legitimately contains a percent still works.
+ * @return @p pattern with %h replaced by the host name, %p by the process id,
+ *         %t by the current Unix time in seconds and %% by a literal %. An
+ *         unrecognized escape is left exactly as it was, so a path that
+ *         legitimately contains a percent still works.
  */
 std::string
 expandLogPath(const std::string &pattern) {
@@ -103,6 +109,10 @@ expandLogPath(const std::string &pattern) {
             break;
         case 'p':
             expanded += std::to_string(::getpid());
+            ++at;
+            break;
+        case 't':
+            expanded += std::to_string(static_cast<long long>(std::time(nullptr)));
             ++at;
             break;
         case '%':
