@@ -15,7 +15,13 @@
 
 # Add dependency on the common utility library which brings in logging deps
 
-nixl_lib_deps = [nixl_infra, serdes_interface, stream_interface, dl_dep, nixl_common_dep, thread_dep]
+nixl_lib_deps = [nixl_infra,
+                serdes_interface,
+                stream_interface,
+                dl_dep,
+                nixl_common_dep,
+                thread_dep,
+                device_allocator_interface]
 
 if etcd_dep.found()
     nixl_lib_deps += [ etcd_dep ]
@@ -63,6 +69,7 @@ endif
 # src/plugins/tracing, loaded on demand by nixlPluginManager.
 nixl_lib_sources = [
     'nixl_agent.cpp',
+    'device/device_memview.cpp',
     'nixl_enum_strings.cpp',
     'nixl_md_manager.cpp',
     'nixl_metadata_worker.cpp',

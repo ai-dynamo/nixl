@@ -174,6 +174,18 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     std::vector<std::string> ndevs, tmp_gdevs; /* Empty vector */
     doca_error_t result;
     nixl_b_params_t *custom_params = init_params->customParams;
+    const auto native_option = custom_params->find("native_device_api");
+    if (native_option != custom_params->end()) {
+        if (native_option->second != "true" && native_option->second != "false") {
+            throw std::invalid_argument("native_device_api must be true or false");
+        }
+        nativeMode_ = native_option->second == "true";
+    }
+#ifndef NIXL_GPUNETIO_DEVICE_API_HOST
+    if (nativeMode_) {
+        throw std::invalid_argument("GPUNETIO native Device API was not built");
+    }
+#endif
     int ret;
     union ibv_gid rgid;
 
@@ -358,6 +370,21 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
                    << static_cast<unsigned>(ipv4_addr[3]);
     }
 
+    if (nativeMode_) {
+        try {
+            initializeNativeState();
+            if (progressThreadStart() != NIXL_SUCCESS) {
+                throw std::runtime_error("Failed to start GPUNETIO connection thread");
+            }
+        }
+        catch (...) {
+            nativeState_.reset();
+            rollbackOobDiscoveryFailure(gdevs, verbs_ah_attr, ddev, verbs_pd, verbs_context);
+            throw;
+        }
+        return;
+    }
+
     // DOCA_GPU_MEM_TYPE_GPU_CPU == GDRCopy
     result = doca_gpu_mem_alloc(gdevs[0].second,
                                 sizeof(struct docaXferReqGpu) * DOCA_XFER_REQ_MAX,
@@ -521,24 +548,36 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
 nixl_mem_list_t
 nixlDocaEngine::getSupportedMems() const {
+    if (nativeMode_) {
+        return {VRAM_SEG};
+    }
     return {DRAM_SEG, VRAM_SEG};
 }
 
 nixlDocaEngine::~nixlDocaEngine() {
     doca_error_t result;
-
-    NIXL_DEBUG << "Before progressThreadStop ";
+    // The listener references this engine; it must stop even if CUDA selection fails.
     progressThreadStop();
+    cudaDeviceGuard cuda_device(gdevs[0].first);
+    if (cuda_device.status() != cudaSuccess) {
+        // No safe CUDA context: retain dependencies rather than free live resources.
+        nativeState_.release();
+        retainedQp_.release();
+        return;
+    }
 
-    ((volatile uint8_t *)wait_exit_cpu)[0] = 1;
-    NIXL_DEBUG << "Before cudaStreamSynchronize ";
-    nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
-    nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
+    if (!nativeMode_) {
+        ((volatile uint8_t *)wait_exit_cpu)[0] = 1;
+        NIXL_DEBUG << "Before cudaStreamSynchronize ";
+        nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
+        nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
 
-    for (int i = 0; i < nstreams; i++) {
-        NIXL_DEBUG << "Before cudaStreamSynchronize post_stream " << i;
-        nixlDocaEngineCheckCudaError(cudaStreamSynchronize(post_stream[i]), "stream synchronize");
-        nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
+        for (int i = 0; i < nstreams; i++) {
+            NIXL_DEBUG << "Before cudaStreamSynchronize post_stream " << i;
+            nixlDocaEngineCheckCudaError(cudaStreamSynchronize(post_stream[i]),
+                                         "stream synchronize");
+            nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
+        }
     }
 
     bool qps_closed = true;
@@ -560,6 +599,7 @@ nixlDocaEngine::~nixlDocaEngine() {
         if (!retained_closed) {
             retainedQp_.release();
         }
+        nativeState_.release();
         return;
     }
 
@@ -575,14 +615,17 @@ nixlDocaEngine::~nixlDocaEngine() {
     }
     notifMap.clear();
 
-    doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
-    doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
-    doca_gpu_mem_free(gdevs[0].second, last_rsvd_flags);
-    doca_gpu_mem_free(gdevs[0].second, last_posted_flags);
-    doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
-    doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
-    doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
-    doca_gpu_mem_free(gdevs[0].second, completion_list_gpu);
+    nativeState_.reset();
+    if (!nativeMode_) {
+        doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
+        doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
+        doca_gpu_mem_free(gdevs[0].second, last_rsvd_flags);
+        doca_gpu_mem_free(gdevs[0].second, last_posted_flags);
+        doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
+        doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
+        doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
+        doca_gpu_mem_free(gdevs[0].second, completion_list_gpu);
+    }
 
     result = doca_gpu_destroy(gdevs[0].second);
     if (result != DOCA_SUCCESS) {
@@ -622,6 +665,9 @@ nixlDocaEngine::~nixlDocaEngine() {
 
 nixl_status_t
 nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev, doca_gpu *gpu) {
+    if (nativeMode_) {
+        return NIXL_SUCCESS;
+    }
     std::lock_guard<std::mutex> lock(notifLock);
     // Same peer can be server or client
     if (notifMap.find(remote_agent) != notifMap.end()) {
@@ -1360,6 +1406,15 @@ nixl_status_t
 nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
                             const nixl_mem_t &nixl_mem,
                             nixlBackendMD *&out) {
+    if (nativeMode_) {
+        cudaPointerAttributes attributes{};
+        if (nixl_mem != VRAM_SEG || mem.devId != gdevs[0].first ||
+            cudaPointerGetAttributes(&attributes, reinterpret_cast<void *>(mem.addr)) !=
+                cudaSuccess ||
+            attributes.type != cudaMemoryTypeDevice || attributes.device != int(gdevs[0].first)) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+    }
     auto priv = std::make_unique<nixlDocaPrivateMetadata>();
     std::stringstream ss;
 
@@ -1373,7 +1428,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
     }
 
     try {
-        priv->mr = std::make_unique<nixl::doca::verbs::mr>(
+        priv->mr = std::make_shared<nixl::doca::verbs::mr>(
             it->second, (void *)mem.addr, 1, (size_t)mem.len, pd);
     }
     catch (const std::exception &e) {
@@ -1469,6 +1524,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    if (nativeMode_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     uint32_t pos;
     nixlDocaBckndReq *treq;
     nixlDocaPrivateMetadata *lmd;
@@ -1641,6 +1699,9 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    if (nativeMode_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
 
     if (operation != NIXL_READ && operation != NIXL_WRITE) {
@@ -1759,6 +1820,9 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
+    if (nativeMode_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     uint32_t recv_idx;
     std::string msg_src;
     uint32_t num_msg = 0;
@@ -1829,6 +1893,9 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
 
 nixl_status_t
 nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
+    if (nativeMode_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     struct nixlDocaNotif *notif;
     uint32_t buf_idx;
     uintptr_t msg_buf;

@@ -59,6 +59,7 @@ get_backend_options() {
     params["gpu_devices"] = "";
     params["cuda_streams"] = "";
     params["gid_index"] = "";
+    params["native_device_api"] = "false";
     return params;
 }
 

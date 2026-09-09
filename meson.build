@@ -448,15 +448,26 @@ else
 endif
 
 # UCX GPU device API detection
+if not get_option('gpunetio_device_api').disabled()
+    if not cuda_dep.found() or not doca_gpunetio_dep.found() or not enabled_plugins.get('GPUNETIO')
+        error('GPUNETIO native Device API requires CUDA and the GPUNETIO plugin')
+    endif
+endif
+
 nvcc_prog = find_program('nvcc', required: false)
 ucx_gpu_device_api_available = false
 if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
     cuda = meson.get_compiler('cuda')
-    # TODO: Expose doca_gpunetio_dep through UCX
     have_gpu_side = cuda.compiles('''
             #include <ucp/api/device/ucp_device_impl.h>
             int main() { return 0; }
-        ''', dependencies : [ucx_dep, doca_gpunetio_dep], args: nvcc_flags)
+        ''', dependencies : [ucx_dep], args: nvcc_flags)
+    if not have_gpu_side and doca_gpunetio_dep.found()
+        have_gpu_side = cuda.compiles('''
+            #include <ucp/api/device/ucp_device_impl.h>
+            int main() { return 0; }
+        ''', dependencies: [ucx_dep, doca_gpunetio_dep], args: nvcc_flags)
+    endif
 
     have_host_side = cpp.has_function('ucp_device_remote_mem_list_create',
         prefix: '#include <ucp/api/device/ucp_host.h>',
@@ -591,6 +602,7 @@ endif
 if get_option('install_headers')
   install_headers('src/api/cpp/nixl.h', install_dir: prefix_inc)
   install_headers('src/api/cpp/nixl_types.h', install_dir: prefix_inc)
+  install_headers('src/api/cpp/nixl_device_backend_types.h', install_dir: prefix_inc)
   install_headers('src/api/cpp/nixl_params.h', install_dir: prefix_inc)
   install_headers('src/api/cpp/nixl_descriptors.h', install_dir: prefix_inc)
   install_headers('src/utils/serdes/serdes.h', install_dir: prefix_inc + '/utils/serdes')
