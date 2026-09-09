@@ -534,10 +534,6 @@ nixlDocaEngine::~nixlDocaEngine() {
     NIXL_DEBUG << "Before cudaStreamSynchronize ";
     nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
     nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
-    doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
-    doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
-    doca_gpu_mem_free(gdevs[0].second, last_rsvd_flags);
-    doca_gpu_mem_free(gdevs[0].second, last_posted_flags);
 
     for (int i = 0; i < nstreams; i++) {
         NIXL_DEBUG << "Before cudaStreamSynchronize post_stream " << i;
@@ -545,29 +541,79 @@ nixlDocaEngine::~nixlDocaEngine() {
         nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
     }
 
+    bool qps_closed = true;
+    bool retained_closed = true;
+    for (auto &qp : qpMap) {
+        const bool data_closed = qp.second->qp_data->close();
+        const bool notif_closed = qp.second->qp_notif->close();
+        qps_closed = data_closed && notif_closed && qps_closed;
+    }
+    if (retainedQp_ != nullptr) {
+        const bool data_closed = retainedQp_->qp_data == nullptr || retainedQp_->qp_data->close();
+        const bool notif_closed =
+            retainedQp_->qp_notif == nullptr || retainedQp_->qp_notif->close();
+        retained_closed = data_closed && notif_closed;
+        qps_closed = retained_closed && qps_closed;
+    }
+    if (!qps_closed) {
+        NIXL_ERROR << "GPUNETIO QP unexport failed; retaining dependent resources";
+        if (!retained_closed) {
+            retainedQp_.release();
+        }
+        return;
+    }
+
+    for (auto &qp : qpMap) {
+        delete qp.second;
+    }
+    qpMap.clear();
+    retainedQp_.reset();
+
     NIXL_DEBUG << "Before nixlDocaDestroyNotif ";
     for (auto notif : notifMap) {
         nixlDocaDestroyNotif(gdevs[0].second, notif.second);
     }
+    notifMap.clear();
 
+    doca_gpu_mem_free(gdevs[0].second, wait_exit_gpu);
+    doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
+    doca_gpu_mem_free(gdevs[0].second, last_rsvd_flags);
+    doca_gpu_mem_free(gdevs[0].second, last_posted_flags);
     doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
     doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
     doca_gpu_mem_free(gdevs[0].second, completion_list_gpu);
 
-    NIXL_DEBUG << "Before qpMap.clear ";
+    result = doca_gpu_destroy(gdevs[0].second);
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to close DOCA GPU device " << doca_error_get_descr(result);
+    }
+    gdevs[0].second = nullptr;
 
-    qpMap.clear();
+    result = doca_verbs_ah_attr_destroy(verbs_ah_attr);
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to destroy DOCA verbs AH " << doca_error_get_descr(result);
+    }
+    verbs_ah_attr = nullptr;
 
     result = doca_dev_close(ddev);
     if (result != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to close DOCA device " << doca_error_get_descr(result);
     }
+    ddev = nullptr;
 
-    result = doca_gpu_destroy(gdevs[0].second);
+    result = doca_verbs_pd_destroy(verbs_pd);
     if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Failed to close DOCA GPU device " << doca_error_get_descr(result);
+        NIXL_ERROR << "Failed to destroy DOCA verbs PD " << doca_error_get_descr(result);
     }
+    verbs_pd = nullptr;
+    pd = nullptr;
+
+    result = doca_verbs_context_destroy(verbs_context);
+    if (result != DOCA_SUCCESS) {
+        NIXL_ERROR << "Failed to destroy DOCA verbs context " << doca_error_get_descr(result);
+    }
+    verbs_context = nullptr;
 }
 
 /****************************************
@@ -600,12 +646,15 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
+        free(notif->send_addr);
         return NIXL_ERR_BACKEND;
     }
 
     notif->recv_addr = (uint8_t *)calloc(notif->elems_size * notif->elems_num, sizeof(uint8_t));
     if (notif->recv_addr == nullptr) {
         NIXL_ERROR << "Can't alloc memory for send notif";
+        notif->send_mr.reset();
+        free(notif->send_addr);
         return NIXL_ERR_BACKEND;
     }
     memset(notif->recv_addr, 0, notif->elems_size * notif->elems_num);
@@ -616,6 +665,9 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
+        notif->send_mr.reset();
+        free(notif->send_addr);
+        free(notif->recv_addr);
         return NIXL_ERR_BACKEND;
     }
 
@@ -654,6 +706,14 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
 
 nixl_status_t
 nixlDocaEngine::nixlDocaDestroyNotif(doca_gpu *gpu, struct nixlDocaNotif *notif) {
+    if (notif == nullptr) {
+        return NIXL_SUCCESS;
+    }
+
+    notif->send_mr.reset();
+    notif->recv_mr.reset();
+    free(notif->send_addr);
+    free(notif->recv_addr);
     delete notif;
 
     return NIXL_SUCCESS;
@@ -775,8 +835,6 @@ nixlDocaEngine::getGpuCudaId() {
 
 nixl_status_t
 nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
-    struct nixlDocaRdmaQp *rdma_qp;
-
     std::lock_guard<std::mutex> lock(qpLock);
 
     NIXL_DEBUG << "addRdmaQp for " << remote_agent << std::endl;
@@ -784,6 +842,9 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     // if client or server already created this QP, no need to re-create
     if (qpMap.find(remote_agent) != qpMap.end()) {
         return NIXL_IN_PROG;
+    }
+    if (retainedQp_ != nullptr) {
+        return NIXL_ERR_BACKEND;
     }
 
     NIXL_DEBUG << "DOCA addRdmaQp for remote " << remote_agent << std::endl;
@@ -795,7 +856,7 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
         return NIXL_ERR_BACKEND;
     }
 
-    rdma_qp = new struct nixlDocaRdmaQp;
+    auto rdma_qp = std::make_unique<nixlDocaRdmaQp>();
 
     try {
         rdma_qp->qp_data =
@@ -827,12 +888,19 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
+        if (!rdma_qp->qp_data->close()) {
+            retainedQp_ = std::move(rdma_qp);
+        }
         return NIXL_ERR_BACKEND;
     }
 
     rdma_qp->qpn_notif = doca_verbs_qp_get_qpn(rdma_qp->qp_notif->get_qp());
 
-    qpMap[remote_agent] = rdma_qp;
+    const auto [qp_it, inserted] = qpMap.emplace(remote_agent, rdma_qp.get());
+    if (!inserted) {
+        return NIXL_IN_PROG;
+    }
+    rdma_qp.release();
 
     NIXL_DEBUG << "DOCA addRdmaQp new QP added for " << remote_agent;
 
@@ -1296,7 +1364,7 @@ nixl_status_t
 nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
                             const nixl_mem_t &nixl_mem,
                             nixlBackendMD *&out) {
-    nixlDocaPrivateMetadata *priv = new nixlDocaPrivateMetadata;
+    auto priv = std::make_unique<nixlDocaPrivateMetadata>();
     std::stringstream ss;
 
     auto it = std::find_if(gdevs.begin(), gdevs.end(), [&mem](std::pair<uint32_t, doca_gpu *> &x) {
@@ -1322,7 +1390,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
        << info_delimiter << ((size_t)priv->mr->get_tot_size());
     priv->remoteMrStr = ss.str();
 
-    out = (nixlBackendMD *)priv;
+    out = priv.release();
 
     return NIXL_SUCCESS;
 }
@@ -1352,13 +1420,12 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     nixlDocaConnection conn;
     std::vector<std::string> tokens;
     std::string token;
-    nixlDocaPublicMetadata *md = new nixlDocaPublicMetadata;
+    auto md = std::make_unique<nixlDocaPublicMetadata>();
     {
         std::lock_guard<std::mutex> lock(remoteConnLock);
         auto search = remoteConnMap.find(remote_agent);
         if (search == remoteConnMap.end() || !search->second.connected) {
             NIXL_ERROR << "err: remote connection not found remote_agent " << remote_agent;
-            delete md;
             return NIXL_ERR_NOT_FOUND;
         }
         conn = search->second;
@@ -1385,13 +1452,14 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
         return NIXL_ERR_BACKEND;
     }
 
-    output = (nixlBackendMD *)md;
+    output = md.release();
 
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlDocaEngine::unloadMD(nixlBackendMD *input) {
+    delete static_cast<nixlDocaPublicMetadata *>(input);
     return NIXL_SUCCESS;
 }
 
