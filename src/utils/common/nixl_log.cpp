@@ -75,6 +75,31 @@ hostName() {
 }
 
 /**
+ * @brief A marker for this process's lifetime, in nanoseconds, for %t.
+ *
+ * Read once and kept, so every expansion within a process agrees. Nanoseconds
+ * rather than seconds because the case this exists for is a rapid restart: in
+ * a PID namespace the worker is handed PID 1 again each time, leaving this as
+ * the only thing telling one run from the next, and two starts can easily fall
+ * in the same second.
+ *
+ * Deliberately the same construction as processRunMarker() in the prometheus_mp
+ * telemetry plugin, which identifies its per-process store files the same way.
+ * Duplicated rather than shared because this is core code and that is a plugin.
+ *
+ * @return Nanoseconds since the epoch, sampled the first time this is called.
+ */
+uint64_t
+processRunMarker() {
+    static const uint64_t marker = [] {
+        struct timespec ts {};
+        ::clock_gettime(CLOCK_REALTIME, &ts);
+        return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
+    }();
+    return marker;
+}
+
+/**
  * @brief Expands %h, %p, %t and %% in a log file path.
  *
  * Lets every process be given the same NIXL_LOG_FILE while still writing to its
@@ -87,7 +112,7 @@ hostName() {
  *
  * @param pattern The configured path, which need not contain any escape.
  * @return @p pattern with %h replaced by the host name, %p by the process id,
- *         %t by the current Unix time in seconds and %% by a literal %. An
+ *         %t by this process's run marker and %% by a literal %. An
  *         unrecognized escape is left exactly as it was, so a path that
  *         legitimately contains a percent still works.
  */
@@ -112,7 +137,7 @@ expandLogPath(const std::string &pattern) {
             ++at;
             break;
         case 't':
-            expanded += std::to_string(static_cast<long long>(std::time(nullptr)));
+            expanded += std::to_string(processRunMarker());
             ++at;
             break;
         case '%':
