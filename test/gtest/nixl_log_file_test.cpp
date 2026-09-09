@@ -677,6 +677,45 @@ TEST_F(nixlLogFileTest, IgnoresAnUnparsableSizeAndSaysSo) {
 }
 
 /**
+ * @brief Setup failures still reach an operator who asked for errors only.
+ *
+ * These are emitted at error severity rather than warning for exactly this
+ * case: at NIXL_LOG_LEVEL=ERROR a warning is filtered out, so someone who set
+ * NIXL_LOG_FILE and got nothing would have no way to find out why.
+ */
+TEST_F(nixlLogFileTest, ReportsSetupFailuresAtErrorSeverity) {
+    const gtest::LogIgnoreGuard size_guard("Ignoring NIXL_LOG_FILE_SIZE");
+    const gtest::LogIgnoreGuard open_guard("Could not open NIXL_LOG_FILE");
+
+    // Restored by TearDown, which puts back what SetUp saved.
+    absl::SetMinLogLevel(absl::LogSeverityAtLeast::kError);
+
+    {
+        countingSink watcher;
+        env_.addVar("NIXL_LOG_FILE", path_.string());
+        env_.addVar("NIXL_LOG_FILE_SIZE", "not a size");
+        ASSERT_TRUE(nixl::initLogFile());
+        EXPECT_EQ(watcher.countMatching("Ignoring NIXL_LOG_FILE_SIZE"), 1u)
+            << "an ignored size limit went unreported";
+        nixl::shutdownLogFile();
+        env_.popVar();
+        env_.popVar();
+    }
+
+    {
+        const std::filesystem::path directory = path_.string() + "-absent";
+        std::filesystem::remove_all(directory);
+
+        countingSink watcher;
+        env_.addVar("NIXL_LOG_FILE", (directory / "log").string());
+        EXPECT_FALSE(nixl::initLogFile());
+        EXPECT_EQ(watcher.countMatching("Could not open NIXL_LOG_FILE"), 1u)
+            << "a log file that never opened went unreported";
+        env_.popVar();
+    }
+}
+
+/**
  * @brief A failed open is reported with the open's own reason.
  *
  * The sink asks the file's size on the way in, to count an appended-to file's
