@@ -10,7 +10,11 @@ job: nixl-ci-build-wheel-nightly
 failFast: false
 timeout_minutes: 180
 
+# registry_auth/registry_path are what ci-demo pushes wheel_base under; both are
+# required now that this job builds an image rather than only pulling.
 registry_host: artifactory.nvidia.com
+registry_auth: svc-nixl-new-artifactory-token
+registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
@@ -31,10 +35,29 @@ kubernetes:
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
 
+# The spcx plugin module is handed over from nixl-ci-compile-ucx-plugin here.
+pvc_volumes:
+  - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
+
 # podman-in-container runner; build-container.sh runs docker/podman inside it.
-# The nightly builds wheel_base from scratch on every run — no caching.
+#
+# wheel_base is built and pushed per-arch by ci-demo before any step runs, then
+# reused by every matrix cell via --wheel-base-image. Previously each of the ten
+# cells (5 python versions x 2 arches) compiled the full dependency stack from
+# scratch; now it compiles twice. Every step below selects the podman runner
+# explicitly, so this entry is only ever a base image - without a selector a
+# step runs in each runner, which would fan the whole matrix out over both.
+# The tag is unique per run (cidemo-init.sh), both because the nightly rebuilds
+# it every time and so it cannot collide with the CI_IMAGE_TAG-keyed image that
+# per-PR builds cache on.
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
+  - {
+      file: 'contrib/Dockerfile.manylinux',
+      name: "${WHEEL_BASE_IMAGE_NAME}",
+      tag: "${WHEEL_BASE_TAG}",
+      build_args: 'NIGHTLY_MANAGED_BASE_ARGS --build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
+    }
 
 matrix:
   axes:
@@ -55,10 +78,26 @@ env:
   NPROC: 16
   GRPC_NPROC: 10
   # CUDA 12 base image is pinned here (unlikely to change); CUDA 13 passes
-  # nothing and relies on build-container.sh's own default.
+  # nothing and relies on contrib/Dockerfile.manylinux's own defaults. Note
+  # these are deliberately not named BASE_IMAGE/CUDA_VERSION: build-container.sh
+  # reads those from the environment, so a matrix-level value would override the
+  # Dockerfile in every invocation even without the flags.
   CU12_BASE_IMAGE: "nvcr.io/nvidia/cuda"
   CU12_BASE_TAG: "12.9.1-devel-ubi8"
   CU12_CUDA_VERSION: "12.9"
+  # Both resolved from the CUDA_MAJOR job parameter by cidemo-init.sh before the
+  # matrix is read: wheel_base is built by ci-demo ahead of every step, so its
+  # base image cannot be picked by the shell conditional in Build Wheel, and
+  # build_args cannot branch on its own. Empty for CUDA 13, so the Dockerfile
+  # defaults apply there as everywhere else. The NIGHTLY_MANAGED placeholders
+  # must not be hand-edited.
+  WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-nightly-manylinux_2_28"
+  WHEEL_BASE_TAG: "NIGHTLY_MANAGED_WHEEL_BASE_TAG"
+  # UCX spcx plugin: compiled by nixl-ci-compile-ucx-plugin against the
+  # wheel_base above and staged per-arch on the shared PVC. Keep the ref in sync
+  # with UCX_SPCX_PLUGIN_REF in contrib/build-container.sh.
+  UCX_SPCX_PLUGIN_REF: "v0.3.x"
+  SPCX_STAGING_ROOT: "/mnt/pvc/${JOB_BASE_NAME}-spcx"
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
@@ -70,6 +109,7 @@ env:
 
 steps:
   - name: Prepare
+    containerSelector: "{name: 'manylinux'}"
     credentialsId: 'svc-nixl-new-artifactory-token'
     parallel: false
     run: |
@@ -80,6 +120,7 @@ steps:
       echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
 
   - name: Checkout Source
+    containerSelector: "{name: 'manylinux'}"
     parallel: false
     run: |
       # Clone the built source (contrib scripts + Dockerfile come from this
@@ -109,6 +150,7 @@ steps:
       printf 'NIXL_SHA=%s\n' "${NIXL_SHA}" > wheel_build_ids.env
 
   - name: Build Wheel
+    containerSelector: "{name: 'manylinux'}"
     credentialsId:
       - 'svc-nixl-gitlab-token'
       - 'ucx-plugin-gitlab-url'
@@ -117,8 +159,10 @@ steps:
       # Build the wheel image from the checked-out nixl-src. --tag pins the
       # image so Publish extracts dist/. Plugin creds bind only here.
       set -x
-      # spcx and Infinia are always bundled in the nightly; the built source
-      # ref's build-container.sh pins the plugin ref/image.
+      # Infinia is always bundled in the nightly; the built source ref's
+      # build-container.sh pins the image. The spcx plugin is not built here -
+      # it was compiled by nixl-ci-compile-ucx-plugin against the same
+      # wheel_base and is picked up from the PVC.
       # The two CUDA majors have different torch coverage: 2.11 is not available
       # on the cu13 index, and 2.14 is not available on the cu12 one.
       BASE_IMAGE_FLAGS=""
@@ -137,11 +181,13 @@ steps:
         --torch-versions "${TORCH_VERSIONS}" \
         --tag "${WHEEL_IMAGE_TAG}" \
         --dockerfile contrib/Dockerfile.manylinux \
-        --build-ucx-spcx-plugin \
+        --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${WHEEL_BASE_TAG}" \
+        --ucx-spcx-plugin-install "${SPCX_STAGING_DIR}/${arch}" \
         --build-infinia \
         --build-options-file ../build_options.env
 
   - name: Publish
+    containerSelector: "{name: 'manylinux'}"
     credentialsId: 'svc-nixl-new-artifactory-token'
     parallel: false
     run: |
@@ -166,13 +212,17 @@ steps:
       # --build-options-file). Only set properties for values that exist,
       # so an older built ref without this flag just skips them.
       PROPERTIES=""
+      # build_options.env carries build-container.sh's own plugin ref default,
+      # which is not what got built: nixl-ci-compile-ucx-plugin compiled the ref
+      # this matrix pinned. Capture it before sourcing shadows the name.
+      SPCX_REF_BUILT="${UCX_SPCX_PLUGIN_REF:-}"
       if [ -f build_options.env ]; then
         . ./build_options.env
         [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
         [ -n "${UCX_SHA:-}" ] && PROPERTIES+=";UCX_SHA=${UCX_SHA}"
         [ -n "${CUDA_VERSION:-}" ] && PROPERTIES+=";CUDA_VERSION=${CUDA_VERSION}"
-        [ "${BUILD_UCX_SPCX_PLUGIN:-}" = "true" ] && [ -n "${UCX_SPCX_PLUGIN_REF:-}" ] \
-          && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
+        [ "${BUILD_UCX_SPCX_PLUGIN:-}" = "true" ] && [ -n "${SPCX_REF_BUILT}" ] \
+          && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${SPCX_REF_BUILT}"
         [ "${BUILD_INFINIA:-}" = "true" ] && [ -n "${INFINIA_LIBS_IMAGE:-}" ] \
           && PROPERTIES+=";INFINIA_LIBS_IMAGE=${INFINIA_LIBS_IMAGE}"
         PROPERTIES="${PROPERTIES#;}"
@@ -215,6 +265,25 @@ pipeline_start:
     def src = params.NIXL_VERSION ==~ /[0-9a-f]{40}/ ? params.NIXL_VERSION.take(8) : params.NIXL_VERSION
     def cu = "cu${params.CUDA_MAJOR}"
     currentBuild.displayName += "-${src}-${cu}"
+
+    // Compile the closed-source UCX spcx plugin against the wheel_base ci-demo
+    // just pushed, before any wheel is built. Runs once for both arches; the
+    // job lives in the plugin repo, so this passes the image name and tag and
+    // gets back only the built module (on the PVC) and a result.
+    def staging = "${env.SPCX_STAGING_ROOT}/${env.BUILD_NUMBER}"
+    def res = build job: 'nixl-ci-compile-ucx-plugin',
+      parameters: [
+        string(name: 'sha1',            value: env.UCX_SPCX_PLUGIN_REF),
+        string(name: 'WHEEL_BASE_NAME', value: env.WHEEL_BASE_IMAGE_NAME),
+        string(name: 'WHEEL_BASE_TAG',  value: env.WHEEL_BASE_TAG),
+        string(name: 'STAGING_DIR',     value: staging),
+      ],
+      propagate: false, wait: true
+    echo "UCX spcx plugin compile: ${res.result} (${res.absoluteUrl})"
+    if (res.result != 'SUCCESS') {
+      error("UCX spcx plugin failed to compile against wheel_base ${env.WHEEL_BASE_TAG} - see ${res.absoluteUrl}")
+    }
+    env.SPCX_STAGING_DIR = staging
 
 # Mail the unattended nightly only when it fails; a green night stays quiet.
 pipeline_stop:
