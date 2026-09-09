@@ -442,6 +442,29 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
     ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 }
 
+TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
+    initAgentsDefault();
+
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+    nixl_opt_args_t args;
+    args.ipAddr = "::1";
+    args.port = src.port;
+
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+    ASSERT_EQ(dst.agent->sendLocalMD(&args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ASSERT_EQ(src.agent->checkRemoteMD(dst.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+    args.port = dst.port;
+    ASSERT_EQ(src.agent->invalidateLocalMD(&args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
+}
+
 TEST_F(MetadataExchangeTestFixture, SocketSendPartialLocal) {
     initAgentsDefault();
 

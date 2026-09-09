@@ -205,8 +205,9 @@ struct nixlAgentOptionalArgs {
     bool includeConnInfo = false;
 
     /**
-     * @var ipAddr Used to specify the IP address of a remote peer for metadata transfer.
-     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+     * @var ipAddr Numeric IPv4 or IPv6 address of a remote peer for metadata transfer.
+     *             IPv6 addresses must be unbracketed, e.g. "::1".
+     *             Used by sendLocalMD, fetchRemoteMD, invalidateLocalMD and sendLocalPartialMD.
      */
     std::string ipAddr;
 

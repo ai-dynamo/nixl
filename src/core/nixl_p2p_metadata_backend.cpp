@@ -51,22 +51,30 @@ constexpr auto frame_body_timeout = std::chrono::seconds(5);
 
 int
 connectToIP(const std::string &ip_addr, int port) {
-    struct sockaddr_in listenerAddr{};
-    listenerAddr.sin_port = htons(port);
-    listenerAddr.sin_family = AF_INET;
-
-    if (inet_pton(AF_INET, ip_addr.c_str(), &listenerAddr.sin_addr) <= 0) {
-        NIXL_ERROR << "inet_pton failed for ip_addr: " << ip_addr;
+    sockaddr_storage listener_addr{};
+    socklen_t listener_addr_len;
+    auto *addr4 = reinterpret_cast<sockaddr_in *>(&listener_addr);
+    auto *addr6 = reinterpret_cast<sockaddr_in6 *>(&listener_addr);
+    if (inet_pton(AF_INET, ip_addr.c_str(), &addr4->sin_addr) == 1) {
+        addr4->sin_family = AF_INET;
+        addr4->sin_port = htons(port);
+        listener_addr_len = sizeof(*addr4);
+    } else if (inet_pton(AF_INET6, ip_addr.c_str(), &addr6->sin6_addr) == 1) {
+        addr6->sin6_family = AF_INET6;
+        addr6->sin6_port = htons(port);
+        listener_addr_len = sizeof(*addr6);
+    } else {
+        NIXL_ERROR << "Invalid IPv4 or IPv6 address: " << ip_addr;
         return -1;
     }
 
-    int ret_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    int ret_fd = socket(listener_addr.ss_family, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (ret_fd == -1) {
         NIXL_ERROR << "socket creation failed for ip_addr: " << ip_addr << " and port: " << port;
         return -1;
     }
 
-    int ret = connect(ret_fd, (struct sockaddr *)&listenerAddr, sizeof(listenerAddr));
+    int ret = connect(ret_fd, reinterpret_cast<sockaddr *>(&listener_addr), listener_addr_len);
     if (ret < 0 && errno != EINPROGRESS) {
         close(ret_fd);
         return -1;
@@ -345,21 +353,36 @@ nixlP2PMetadataBackend::acceptPeers() {
         if (new_fd == -1) {
             break;
         }
-        sockaddr_in client_address;
+        sockaddr_storage client_address;
         socklen_t client_addrlen = sizeof(client_address);
         if (getpeername(new_fd, (sockaddr *)&client_address, &client_addrlen) != 0) {
             NIXL_PERROR << "getpeername failed for accepted client";
             close(new_fd);
             continue;
         }
-        char client_ip[INET_ADDRSTRLEN];
-        if (inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN) == nullptr) {
+        char client_ip[INET6_ADDRSTRLEN];
+        const void *address;
+        int client_port;
+        int family = client_address.ss_family;
+        if (family == AF_INET6) {
+            const auto *client6 = reinterpret_cast<const sockaddr_in6 *>(&client_address);
+            address = &client6->sin6_addr;
+            if (IN6_IS_ADDR_V4MAPPED(&client6->sin6_addr)) {
+                family = AF_INET;
+                address = &client6->sin6_addr.s6_addr[12];
+            }
+            client_port = ntohs(client6->sin6_port);
+        } else {
+            const auto *client4 = reinterpret_cast<const sockaddr_in *>(&client_address);
+            address = &client4->sin_addr;
+            client_port = ntohs(client4->sin_port);
+        }
+        if (inet_ntop(family, address, client_ip, sizeof(client_ip)) == nullptr) {
             NIXL_PERROR << "inet_ntop failed for client address";
             close(new_fd);
             continue;
         }
-        remoteSockets_[std::make_pair(std::string(client_ip),
-                                      (int)ntohs(client_address.sin_port))] = new_fd;
+        remoteSockets_[std::make_pair(std::string(client_ip), client_port)] = new_fd;
         const int flags = fcntl(new_fd, F_GETFL, 0);
         if (flags == -1 || fcntl(new_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
             NIXL_PERROR << "fcntl failed for accepted client";

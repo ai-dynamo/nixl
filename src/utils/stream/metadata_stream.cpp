@@ -32,17 +32,26 @@ nixlMetadataStream::~nixlMetadataStream() {
     closeStream();
 }
 
-bool nixlMetadataStream::setupStream() {
+bool
+nixlMetadataStream::setupStream(int family) {
 
-    socketFd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    socketFd = socket(family, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (socketFd == -1) {
-        NIXL_PERROR << "failed to create stream socket for listener";
         return false;
     }
 
-    listenerAddr.sin_family = AF_INET;
-    listenerAddr.sin_addr.s_addr = INADDR_ANY;
-    listenerAddr.sin_port = htons(port);
+    memset(&listenerAddr, 0, sizeof(listenerAddr));
+    if (family == AF_INET6) {
+        auto *addr = reinterpret_cast<sockaddr_in6 *>(&listenerAddr);
+        addr->sin6_family = AF_INET6;
+        addr->sin6_addr = in6addr_any;
+        addr->sin6_port = htons(port);
+    } else {
+        auto *addr = reinterpret_cast<sockaddr_in *>(&listenerAddr);
+        addr->sin_family = AF_INET;
+        addr->sin_addr.s_addr = INADDR_ANY;
+        addr->sin_port = htons(port);
+    }
 
     return true;
 }
@@ -66,30 +75,55 @@ nixlMDStreamListener::~nixlMDStreamListener() {
 }
 
 void nixlMDStreamListener::setupListener() {
-    if (!setupStream()) {
-        throw std::runtime_error("Failed to create metadata listener socket");
-    }
+    for (const int family : {AF_INET6, AF_INET}) {
+        if (!setupStream(family)) {
+            if (family == AF_INET6 && (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT)) {
+                continue;
+            }
+            NIXL_PERROR << "failed to create stream socket for listener";
+            throw std::runtime_error("Failed to create metadata listener socket");
+        }
+        if (family == AF_INET6) {
+            int v6only = 0;
+            if (setsockopt(socketFd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only)) < 0) {
+                if (errno == ENOPROTOOPT) {
+                    closeStream();
+                    continue;
+                }
+                NIXL_PERROR << "setsockopt(IPV6_V6ONLY) failed while setting up listener for MD";
+                closeStream();
+                throw std::runtime_error("Failed to configure metadata listener socket");
+            }
+        }
 
-    int opt = 1;
-    if (setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR,
-                   &opt, sizeof(opt)) < 0) {
-        NIXL_PERROR << "setsockopt(REUSEADDR) failed while setting up listener for MD";
-        closeStream();
-        throw std::runtime_error("Failed to configure metadata listener socket");
-    }
+        int opt = 1;
+        if (setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+            NIXL_PERROR << "setsockopt(REUSEADDR) failed while setting up listener for MD";
+            closeStream();
+            throw std::runtime_error("Failed to configure metadata listener socket");
+        }
 
-    if (bind(socketFd, (struct sockaddr*)&listenerAddr,
-             sizeof(listenerAddr)) < 0) {
-        NIXL_PERROR << "Socket Bind failed while setting up listener for MD";
-        closeStream();
-        throw std::runtime_error("Failed to bind metadata listener socket");
+        const auto *address = reinterpret_cast<const sockaddr *>(&listenerAddr);
+        const socklen_t length = family == AF_INET6 ? sizeof(sockaddr_in6) : sizeof(sockaddr_in);
+        if (bind(socketFd, address, length) < 0) {
+            if (family == AF_INET6 && errno == EADDRNOTAVAIL) {
+                closeStream();
+                continue;
+            }
+            NIXL_PERROR << "Socket Bind failed while setting up listener for MD";
+            closeStream();
+            throw std::runtime_error("Failed to bind metadata listener socket");
+        }
+        break;
     }
 
     const bool os_assigned_port = (port == 0);
-    sockaddr_in bound_addr;
+    sockaddr_storage bound_addr;
     socklen_t addr_len = sizeof(bound_addr);
     if (getsockname(socketFd, reinterpret_cast<sockaddr *>(&bound_addr), &addr_len) == 0) {
-        port = ntohs(bound_addr.sin_port);
+        port = ntohs(bound_addr.ss_family == AF_INET6 ?
+                         reinterpret_cast<sockaddr_in6 *>(&bound_addr)->sin6_port :
+                         reinterpret_cast<sockaddr_in *>(&bound_addr)->sin_port);
     } else {
         closeStream();
         throw std::runtime_error(
@@ -192,7 +226,7 @@ nixlMDStreamClient::~nixlMDStreamClient() {
 }
 
 bool nixlMDStreamClient::setupClient() {
-    if (!setupStream()) {
+    if (!setupStream(AF_INET)) {
         NIXL_PERROR << "Failed to create metadata client socket";
         return false;
     }
