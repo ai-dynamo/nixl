@@ -228,7 +228,7 @@ struct nixlAgentOptionalArgs {
     std::string metadataLabel;
 
     /**
-     * @var customParam Backend-specific binary parameter, including embedded NUL bytes.
+     * @brief Backend-specific binary parameter, including embedded NUL bytes.
      *      makeXferReq and createXferReq forward this value to the backend's prepXfer.
      *      Each postXferReq call forwards the value supplied for that call to the
      *      backend's postXfer. Empty values and omitted extra_params forward an
