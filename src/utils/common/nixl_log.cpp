@@ -60,11 +60,7 @@ constexpr const char *log_file_size_env_var = "NIXL_LOG_FILE_SIZE";
 // Appended to the log file's name to hold the records rotated out of it.
 constexpr const char *rotated_suffix = ".1";
 
-/**
- * @brief This machine's host name, for %h.
- * @return The host name, or "unknown-host" if it cannot be read, since a
- *         usable-but-vague filename beats failing to log at all.
- */
+/** @brief Host name for %h, or "unknown-host": a vague name beats no log. */
 std::string
 hostName() {
     char buffer[256] = {};
@@ -75,19 +71,7 @@ hostName() {
 }
 
 /**
- * @brief A marker for this process's lifetime, in nanoseconds, for %t.
- *
- * Read once and kept, so every expansion within a process agrees. Nanoseconds
- * rather than seconds because the case this exists for is a rapid restart: in
- * a PID namespace the worker is handed PID 1 again each time, leaving this as
- * the only thing telling one run from the next, and two starts can easily fall
- * in the same second.
- *
- * Deliberately the same construction as processRunMarker() in the prometheus_mp
- * telemetry plugin, which identifies its per-process store files the same way.
- * Duplicated rather than shared because this is core code and that is a plugin.
- *
- * @return Nanoseconds since the epoch, sampled the first time this is called.
+ * @brief Nanoseconds since the epoch, sampled once, for %t.
  */
 uint64_t
 processRunMarker() {
@@ -100,21 +84,15 @@ processRunMarker() {
 }
 
 /**
- * @brief Expands %h, %p, %t and %% in a log file path.
+ * @brief Expands the escapes in a log file path:
  *
- * Lets every process be given the same NIXL_LOG_FILE while still writing to its
- * own file, which is the only way the setting is usable across the many workers
- * of a disaggregated inference run.
+ *   %h  host name
+ *   %p  process id
+ *   %t  this process's run marker, in nanoseconds
+ *   %%  a literal percent
  *
- * %t separates runs where %p alone cannot: process ids are recycled, and the
- * file is opened for append, so a restart that is handed an earlier run's id
- * would otherwise continue that run's file as though it were one process.
- *
- * @param pattern The configured path, which need not contain any escape.
- * @return @p pattern with %h replaced by the host name, %p by the process id,
- *         %t by this process's run marker and %% by a literal %. An
- *         unrecognized escape is left exactly as it was, so a path that
- *         legitimately contains a percent still works.
+ * Lets one NIXL_LOG_FILE serve every worker of a run and still give each its
+ * own file.
  */
 std::string
 expandLogPath(const std::string &pattern) {
@@ -153,12 +131,8 @@ expandLogPath(const std::string &pattern) {
 }
 
 /**
- * @brief Parses NIXL_LOG_FILE_SIZE, which accepts a K, M or G suffix.
- *
- * @param text The configured value, for example "64M". Suffixes are powers of
- *             1024 and case does not matter.
- * @return The limit in bytes, 0 meaning no limit, or nullopt if @p text is not
- *         a size, which the caller reports rather than guessing at.
+ * @brief Parses NIXL_LOG_FILE_SIZE, for example "64M". K, M, G are powers of 1024.
+ * @return Bytes, 0 for no limit, or nullopt if @p text is not a size.
  */
 std::optional<std::uintmax_t>
 parseLogFileSize(const std::string &text) {
@@ -166,10 +140,8 @@ parseLogFileSize(const std::string &text) {
         return 0;
     }
 
-    // Insisted on before parsing, because stoull is too permissive to be given
-    // the raw value: it reads "-1" as a wrap-around to the largest possible
-    // limit, silently turning a nonsense setting into an unbounded file, and it
-    // skips leading whitespace and accepts a leading plus besides.
+    // stoull reads "-1" as a wrap-around to the largest possible limit, and
+    // also accepts leading whitespace and a plus. Insist on a digit first.
     if (std::isdigit(static_cast<unsigned char>(text.front())) == 0) {
         return std::nullopt;
     }
@@ -204,35 +176,22 @@ parseLogFileSize(const std::string &text) {
 /**
  * @brief Appends log records to a file, formatted exactly as on stderr.
  *
- * Keeping the formatting identical lets the two outputs be compared line for
- * line.
- *
- * Abseil may call Send() from any thread, so writes are serialized. Each record
- * is flushed as it arrives: the point of the file is to explain what a process
- * did before it crashed or hung, and holding the tail of the log in a buffer is
- * precisely the failure that would defeat that.
+ * Abseil may call Send() from any thread, so writes are serialized. Every
+ * record is flushed as it arrives: a log that explains a crash cannot hold its
+ * tail in a buffer.
  */
 class fileLogSink final : public absl::LogSink {
 public:
     /**
-     * @brief Opens @p path for append, creating it if needed.
-     *
-     * Never throws: a failure to open leaves the sink closed, which the caller
-     * detects with isOpen() rather than by catching an exception.
-     *
+     * @brief Opens @p path for append; check isOpen() rather than catching.
      * @param path  Where to write, already expanded.
-     * @param limit Bytes to hold before rotating, or 0 for no limit. Counted
-     *              from the file's current size, since opening for append onto
-     *              an earlier run's file inherits whatever it already holds.
+     * @param limit Bytes before rotating, 0 for none. Counted from the current
+     *              size, since appending inherits whatever the file holds.
      */
     fileLogSink(const std::string &path, std::uintmax_t limit)
         : path_(path),
           file_(path, std::ios::app),
           limit_(limit) {
-        // Not asked when the open failed. file_size() stats the path, which on
-        // failure overwrites the errno that initLogFile() reports for the open,
-        // and would blame a missing file for what was really a permission
-        // problem. written_ stays 0, which an unopened sink never reads.
         if (!file_.is_open()) {
             return;
         }
@@ -242,28 +201,18 @@ public:
         written_ = ec ? 0 : existing;
     }
 
-    /**
-     * @brief Reports whether the file was opened successfully.
-     * @return false if the sink cannot write, in which case it must not be
-     *         registered with Abseil.
-     */
+    /** @brief False if the sink cannot write, and must not be registered. */
     bool
     isOpen() const {
         return file_.is_open();
     }
 
     /**
-     * @brief Writes one record to the file, then flushes it.
-     *
-     * Abseil calls this from the logging thread and requires it to be
-     * thread-safe, so the write is serialized on mutex_.
-     *
-     * @param entry The record to write. Its formatted text is borrowed and is
-     *              valid only for the duration of this call.
+     * @brief Writes one record and flushes it.
+     * @param entry Borrowed; valid only for this call.
      */
     void
     Send(const absl::LogEntry &entry) override {
-        // Carries the severity, timestamp and source location.
         const auto line = entry.text_message_with_prefix_and_newline();
 
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -271,10 +220,7 @@ public:
             return;
         }
 
-        // Rotated before the write rather than after, so the limit is one the
-        // file stays under rather than one it briefly exceeds. A record larger
-        // than the whole limit is written anyway, to an empty file, since
-        // rotating for it would loop without ever making room.
+        // Before the write, so the limit is one the file stays under.
         if (limit_ != 0 && written_ != 0 && written_ + line.size() > limit_) {
             rotate();
             if (failed_) {
@@ -282,8 +228,7 @@ public:
             }
         }
 
-        // Cleared so the reason reported below belongs to this write; iostreams
-        // are not required to set errno.
+        // Cleared: iostreams need not set errno, so a stale one could be read.
         errno = 0;
         file_.write(line.data(), static_cast<std::streamsize>(line.size()));
         file_.flush();
@@ -294,13 +239,7 @@ public:
         written_ += line.size();
     }
 
-    /**
-     * @brief Flushes the file on demand.
-     *
-     * Send() already flushes every record, so this exists to honour the
-     * absl::LogSink contract and absl::FlushLogSinks(), which may be called
-     * from any thread.
-     */
+    /** @brief Honours absl::FlushLogSinks(); Send() already flushes each record. */
     void
     Flush() override {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -317,18 +256,10 @@ public:
 
 private:
     /**
-     * @brief Moves the full file aside and starts a new one.
-     *
-     * Keeps the most recent records, which are the ones worth having when the
-     * question is what a process did before it hung. The cost is that up to
-     * twice the limit is on disk: the new file and the one rotated out of it.
-     * Exactly one generation is kept, so the total stays bounded.
-     *
-     * A rotation that cannot be done stops the sink. Carrying on would mean
-     * either ignoring the limit that was asked for or quietly redefining what
-     * rotation means, and neither is the caller's instruction.
-     *
-     * Called with mutex_ held.
+     * @brief Moves the full file aside and starts a new one, keeping the newest
+     *        records. One generation is kept, so at most twice the limit is on
+     *        disk. A rotation that cannot be done stops the sink rather than
+     *        ignoring the limit. Called with mutex_ held.
      */
     void
     rotate() {
@@ -377,16 +308,9 @@ private:
     }
 
     /**
-     * @brief Reports a failed rotation and stops using the file.
-     *
-     * The file is left as it is, holding the records written up to the limit,
-     * rather than truncated: those records are all there will be, so throwing
-     * them away would leave nothing at all.
-     *
-     * Reports once because failed_ stops Send() before it can rotate again,
-     * and goes to stderr for the same reason as reportFailure: the report must
-     * not depend on the logging path it is reporting on.
-     *
+     * @brief Reports a failed rotation and stops using the file, leaving it as
+     *        it is: those records are all there will be. Reports once, since
+     *        failed_ stops Send() rotating again.
      * @param reason Why the rename failed. Called with mutex_ held.
      */
     void
@@ -412,22 +336,14 @@ private:
 
 std::mutex log_file_mutex;
 
-// Owned manually rather than through a smart pointer with static storage.
-// Static destructors run before .fini_array, so a self-destroying sink would
-// unregister itself while later shutdown code could still be logging; deleting
-// it from the destructor-attribute function below keeps it alive to the end.
+// Owned manually: a static smart pointer would unregister the sink during
+// static destruction, while later shutdown code can still be logging.
 fileLogSink *log_file_sink = nullptr; // guarded by log_file_mutex
 
-/**
- * @brief Applies NIXL_LOG_LEVEL and NIXL_LOG_FILE, before main() runs.
- *
- * Invoked through the constructor attribute so logging is configured before any
- * NIXL code can emit a record.
- */
+/** @brief Applies NIXL_LOG_LEVEL and NIXL_LOG_FILE before any NIXL code logs. */
 void
 InitializeNixlLogging() __attribute__((constructor));
 
-/** @brief Definition of the constructor-attribute hook declared above. */
 void
 InitializeNixlLogging() {
     // Map from log level string to settings
@@ -467,9 +383,6 @@ InitializeNixlLogging() {
     absl::SetStderrThreshold(settings.min_severity);
     absl::InitializeLog();
 
-    // Registered before the records below so the version banner, the most
-    // useful line for identifying which build a process is running, is
-    // captured in the file as well.
     nixl::initLogFile();
 
 #ifdef NIXL_VERSION
@@ -511,40 +424,31 @@ initLogFile() {
     const char *configured_size = std::getenv(log_file_size_env_var);
     const auto limit = parseLogFileSize(configured_size != nullptr ? configured_size : "");
     if (!limit.has_value()) {
-        // Left unbounded rather than guessed at. Picking a limit here could
-        // discard records the operator meant to keep.
+        // Left unbounded rather than guessed at: a made-up limit would discard
+        // records the operator meant to keep.
         NIXL_ERROR << "Ignoring " << log_file_size_env_var << " '" << configured_size
                    << "': expected a byte count, optionally suffixed with K, M or G";
     }
 
-    // Cleared so the reason below cannot report a leftover value from some
-    // unrelated earlier call; ofstream is not required to set errno.
+    // Cleared: ofstream need not set errno, so a stale one could be read.
     errno = 0;
     auto sink = new fileLogSink(path, limit.value_or(0));
     if (!sink->isOpen()) {
         const int open_errno = errno;
         delete sink;
-        // Reported and then dropped. Losing the log file must not stop the
-        // process it was meant to describe.
+        // Losing the log file must not stop the process it describes.
         NIXL_ERROR << "Could not open " << log_file_env_var << " '" << path
                    << "', continuing without a log file"
                    << (open_errno != 0 ? ": " + nixl_strerror(open_errno) : "");
         return false;
     }
 
-    // Registered last: until this call the sink is invisible to Abseil, so a
-    // concurrent log record can never reach a half-built sink.
     absl::AddLogSink(sink);
     log_file_sink = sink;
     return true;
 }
 
-/**
- * @brief Removes the NIXL_LOG_FILE sink; see nixl_log.h for the contract.
- *
- * The ordering below is the part worth reading: unregister, then flush, then
- * destroy.
- */
+/** @brief Removes the NIXL_LOG_FILE sink: unregister, flush, then destroy. */
 void
 shutdownLogFile() {
     const std::lock_guard<std::mutex> lock(log_file_mutex);
