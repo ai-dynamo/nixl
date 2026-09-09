@@ -478,8 +478,8 @@ initLogFile() {
     if (!limit.has_value()) {
         // Left unbounded rather than guessed at. Picking a limit here could
         // discard records the operator meant to keep.
-        NIXL_WARN << "Ignoring " << log_file_size_env_var << " '" << configured_size
-                  << "': expected a byte count, optionally suffixed with K, M or G";
+        NIXL_ERROR << "Ignoring " << log_file_size_env_var << " '" << configured_size
+                   << "': expected a byte count, optionally suffixed with K, M or G";
     }
 
     // Cleared so the reason below cannot report a leftover value from some
@@ -489,11 +489,11 @@ initLogFile() {
     if (!sink->isOpen()) {
         const int open_errno = errno;
         delete sink;
-        // Reported on stderr and then dropped. Losing the log file must not
-        // stop the process it was meant to describe.
-        NIXL_WARN << "Could not open " << log_file_env_var << " '" << path
-                  << "', continuing without a log file"
-                  << (open_errno != 0 ? ": " + nixl_strerror(open_errno) : "");
+        // Reported and then dropped. Losing the log file must not stop the
+        // process it was meant to describe.
+        NIXL_ERROR << "Could not open " << log_file_env_var << " '" << path
+                   << "', continuing without a log file"
+                   << (open_errno != 0 ? ": " + nixl_strerror(open_errno) : "");
         return false;
     }
 
