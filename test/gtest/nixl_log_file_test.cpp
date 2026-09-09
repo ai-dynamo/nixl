@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
@@ -528,7 +529,7 @@ TEST_F(nixlLogFileTest, LeavesLiteralAndUnknownEscapesAlone) {
  * generation is kept, which is what bounds the total.
  */
 TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
-    constexpr uintmax_t limit = 2048;
+    constexpr std::uintmax_t limit = 2048;
     const std::filesystem::path rotated = path_.string() + ".1";
     std::filesystem::remove(rotated);
 
@@ -570,7 +571,7 @@ TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
     if (::geteuid() == 0) {
         GTEST_SKIP() << "root bypasses the directory permission this relies on";
     }
-    constexpr uintmax_t limit = 2048;
+    constexpr std::uintmax_t limit = 2048;
 
     // Writable to begin with, so the log file can be created, and then made
     // searchable but not writable: renaming needs permission on the directory,
@@ -717,9 +718,9 @@ TEST_F(nixlLogFileTest, ReportsWhyAnUnopenablePathReallyFailed) {
  * why. /dev/full opens like any other file and fails every write with ENOSPC,
  * which gives the real failure without needing a full filesystem.
  *
- * The report has to reach stderr directly. This path runs inside a log sink
- * holding the sink's own mutex, so reporting through NIXL_WARN would re-enter
- * it on the same thread and deadlock; a test that hangs here is that bug.
+ * The report is asserted on stderr because the sink writes it there directly,
+ * rather than through NIXL_WARN, so that reporting the failure does not depend
+ * on the machinery that just failed.
  */
 TEST_F(nixlLogFileTest, ReportsAWriteFailureOnceThenDropsRecords) {
     // Insisted on rather than assumed: opening a missing /dev/full in append
