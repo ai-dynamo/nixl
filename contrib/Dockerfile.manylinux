@@ -457,15 +457,22 @@ RUN if [ "$BUILD_INFINIA" = "true" ]; then \
         cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
     fi
 
-# Opt-in: build the internal ucx-spcx-plugin against the just-built UCX and
-# install it into the UCX plugins dir, where the wheel bundling
-# (wheel_add_ucx_plugins.py) picks it up like any other UCX module. The
-# plugin source is cloned into the build context (ucx-spcx-plugin-src/) by
-# build-container.sh --build-ucx-spcx-plugin.
-# FlexIO SDK + dpacc (build-time dependencies of the plugin's DPA transport) come from
-# the doca-host repo installed above; libflexio is compile-against only —
-# it is not bundled into the wheel, at runtime it comes from the target
+# Opt-in: install the internal ucx-spcx-plugin into the UCX plugins dir, where
+# the wheel bundling (wheel_add_ucx_plugins.py) picks it up like any other UCX
+# module. A pre-built module must come from a build against the same wheel_base
+# image, since it links that image's UCX.
+# FlexIO SDK + dpacc (build-time dependencies of the plugin's DPA transport)
+# come from the doca-host repo installed above; libflexio is compile-against
+# only — it is not bundled into the wheel, at runtime it comes from the target
 # machine's DOCA/FlexIO installation (like libmlx5 from rdma-core).
+#
+# Two ways in, picked by which directory build-container.sh staged:
+#   ucx-spcx-plugin-install/ — pre-built module (--ucx-spcx-plugin-install), the
+#     per-PR path. Nothing is compiled here and no plugin source is present.
+#   ucx-spcx-plugin-src/     — source (--build-ucx-spcx-plugin), compiled below.
+#     Used by builds that have no published wheel_base to compile against, i.e.
+#     the full two-stage nightly. Being phased out: the COPY that brings the
+#     source in leaves it in that layer even though this RUN removes it.
 # ac_cv_prog_cc_c23=no: gcc-toolset-14 supports C23, so AC_PROG_CC resolves
 # CC to "gcc -std=gnu23". The plugin's src/gdp/Makefile.am passes the compiler
 # through unsplit as -hostcc=$(CC), so dpacc receives a bare -std=gnu23 argument
@@ -473,7 +480,13 @@ RUN if [ "$BUILD_INFINIA" = "true" ]; then \
 # back to C11 (already covered by gcc 14's default gnu17), leaving CC as plain
 # gcc. Drop this once the plugin splits the compiler from its flags.
 ARG BUILD_UCX_SPCX_PLUGIN=false
-RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
+RUN if [ "$BUILD_UCX_SPCX_PLUGIN" != "true" ]; then \
+        : ; \
+    elif [ -n "$(ls -A /workspace/nixl/ucx-spcx-plugin-install 2>/dev/null)" ]; then \
+        mkdir -p /usr/lib64/ucx && \
+        cp -a /workspace/nixl/ucx-spcx-plugin-install/. /usr/lib64/ucx/ && \
+        ldconfig; \
+    elif [ -n "$(ls -A /workspace/nixl/ucx-spcx-plugin-src 2>/dev/null)" ]; then \
         rpm -ivh --nodeps /usr/share/doca-host-3.3.0/repo/Packages/flexio-sdk-*rpm && \
         rpm -ivh --nodeps /usr/share/doca-host-3.3.0/repo/Packages/dpacc-[0-9]*rpm && \
         ldconfig && \
@@ -492,6 +505,9 @@ RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
         make -j"${NPROC}" && \
         make install && \
         cd /workspace/nixl && rm -rf ucx-spcx-plugin-src; \
+    else \
+        echo "ERROR: BUILD_UCX_SPCX_PLUGIN=true but neither ucx-spcx-plugin-install/ nor ucx-spcx-plugin-src/ was staged" >&2; \
+        exit 1; \
     fi
 
 RUN rm -rf build && \
