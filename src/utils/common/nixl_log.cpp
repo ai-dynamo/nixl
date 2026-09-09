@@ -323,10 +323,8 @@ private:
      * say why. Records after the failure are dropped rather than retried: the
      * process being described must not be held up by its own log file.
      *
-     * Goes straight to stderr rather than through NIXL_WARN, and this is not a
-     * style choice. It runs inside a log sink while holding mutex_, so emitting
-     * a record here would re-enter Send() on this thread and deadlock on that
-     * very mutex.
+     * Goes straight to stderr rather than through NIXL_WARN so that reporting
+     * the failure does not depend on the machinery that just failed.
      *
      * @param reason errno from the failed operation, or 0 if it was not set.
      *               Called with mutex_ held.
@@ -351,8 +349,8 @@ private:
      * them away would leave nothing at all.
      *
      * Reports once because failed_ stops Send() before it can rotate again,
-     * and goes to stderr for the same reason as reportFailure: emitting a
-     * record while holding mutex_ would deadlock on it.
+     * and goes to stderr for the same reason as reportFailure: the report must
+     * not depend on the logging path it is reporting on.
      *
      * @param reason Why the rename failed. Called with mutex_ held.
      */
