@@ -22,6 +22,7 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -54,18 +55,23 @@ connectToIP(const std::string &ip_addr, int port) {
     sockaddr_storage listener_addr{};
     socklen_t listener_addr_len;
     auto *addr4 = reinterpret_cast<sockaddr_in *>(&listener_addr);
-    auto *addr6 = reinterpret_cast<sockaddr_in6 *>(&listener_addr);
     if (inet_pton(AF_INET, ip_addr.c_str(), &addr4->sin_addr) == 1) {
         addr4->sin_family = AF_INET;
         addr4->sin_port = htons(port);
         listener_addr_len = sizeof(*addr4);
-    } else if (inet_pton(AF_INET6, ip_addr.c_str(), &addr6->sin6_addr) == 1) {
-        addr6->sin6_family = AF_INET6;
-        addr6->sin6_port = htons(port);
-        listener_addr_len = sizeof(*addr6);
     } else {
-        NIXL_ERROR << "Invalid IPv4 or IPv6 address: " << ip_addr;
-        return -1;
+        addrinfo hints{};
+        hints.ai_family = AF_INET6;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
+        addrinfo *result = nullptr;
+        if (getaddrinfo(ip_addr.c_str(), std::to_string(port).c_str(), &hints, &result) != 0) {
+            NIXL_ERROR << "Invalid IPv4 or IPv6 address: " << ip_addr;
+            return -1;
+        }
+        listener_addr_len = result->ai_addrlen;
+        memcpy(&listener_addr, result->ai_addr, listener_addr_len);
+        freeaddrinfo(result);
     }
 
     int ret_fd = socket(listener_addr.ss_family, SOCK_STREAM | SOCK_NONBLOCK, 0);
@@ -382,7 +388,15 @@ nixlP2PMetadataBackend::acceptPeers() {
             close(new_fd);
             continue;
         }
-        remoteSockets_[std::make_pair(std::string(client_ip), client_port)] = new_fd;
+        std::string peer_ip(client_ip);
+        if (family == AF_INET6) {
+            const auto scope_id =
+                reinterpret_cast<const sockaddr_in6 *>(&client_address)->sin6_scope_id;
+            if (scope_id != 0) {
+                peer_ip += "%" + std::to_string(scope_id);
+            }
+        }
+        remoteSockets_[std::make_pair(peer_ip, client_port)] = new_fd;
         const int flags = fcntl(new_fd, F_GETFL, 0);
         if (flags == -1 || fcntl(new_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
             NIXL_PERROR << "fcntl failed for accepted client";

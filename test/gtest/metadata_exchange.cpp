@@ -16,6 +16,11 @@
  */
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <cerrno>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <thread>
 #include <random>
 #include "nixl.h"
@@ -443,6 +448,22 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
+    const int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    if (fd < 0 && (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT)) {
+        GTEST_SKIP() << "IPv6 is unavailable";
+    }
+    ASSERT_GE(fd, 0);
+    sockaddr_in6 loopback{};
+    loopback.sin6_family = AF_INET6;
+    loopback.sin6_addr = in6addr_loopback;
+    const int bind_result = bind(fd, reinterpret_cast<sockaddr *>(&loopback), sizeof(loopback));
+    const int bind_error = errno;
+    close(fd);
+    if (bind_result < 0 && bind_error == EADDRNOTAVAIL) {
+        GTEST_SKIP() << "IPv6 loopback is unavailable";
+    }
+    ASSERT_EQ(bind_result, 0);
+
     initAgentsDefault();
 
     auto &src = agents_[0];
@@ -455,6 +476,9 @@ TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 
+    const auto scope_id = if_nametoindex("lo");
+    ASSERT_NE(scope_id, 0);
+    args.ipAddr = "::1%" + std::to_string(scope_id);
     ASSERT_EQ(dst.agent->sendLocalMD(&args), NIXL_SUCCESS);
     std::this_thread::sleep_for(std::chrono::seconds(1));
     ASSERT_EQ(src.agent->checkRemoteMD(dst.name, {DRAM_SEG}), NIXL_SUCCESS);

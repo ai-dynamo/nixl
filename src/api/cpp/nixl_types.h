@@ -206,7 +206,8 @@ struct nixlAgentOptionalArgs {
 
     /**
      * @var ipAddr Numeric IPv4 or IPv6 address of a remote peer for metadata transfer.
-     *             IPv6 addresses must be unbracketed, e.g. "::1".
+     *             IPv6 addresses must be unbracketed, e.g. "::1" or "fe80::1%eth0".
+     *             A zone suffix selects an interface on the calling host by name or index.
      *             Used by sendLocalMD, fetchRemoteMD, invalidateLocalMD and sendLocalPartialMD.
      */
     std::string ipAddr;
