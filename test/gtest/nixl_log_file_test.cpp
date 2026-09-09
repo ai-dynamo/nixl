@@ -62,13 +62,10 @@ constexpr const char *late_record_env_var = "NIXL_TEST_LATE_RECORD";
 constexpr const char *late_record_text = "record from a static destructor";
 
 /**
- * @brief Logs from a static destructor, to check the log file outlives teardown.
+ * @brief Logs from a static destructor, to check the file outlives teardown.
  *
- * Declared at file scope so it is constructed before main() and therefore
- * destroyed near the end of the exit sequence, behind the static objects a real
- * process registers during startup. That is the stringent position: if the
- * NIXL_LOG_FILE sink is still registered when this runs, it was still
- * registered for every static destructor that ran before it.
+ * At file scope, so it is destroyed near the end of the exit sequence: if the
+ * sink is still registered here, it was for every earlier static destructor.
  */
 struct lateLogger {
     ~lateLogger() {
@@ -80,12 +77,7 @@ struct lateLogger {
 
 lateLogger late_logger;
 
-/**
- * @brief Counts what Abseil hands to a sink other than the file sink.
- *
- * This is how the tests below check that adding a file does not displace
- * existing output.
- */
+/** @brief Counts what Abseil hands to other sinks, to show none is displaced. */
 class countingSink : public absl::LogSink {
 public:
     /** @brief Registers with Abseil, so it starts observing immediately. */
@@ -99,14 +91,9 @@ public:
     }
 
     /**
-     * @brief Records that Abseil delivered @p entry here as well.
-     *
-     * Stores the bare message rather than the prefixed form, so assertions do
-     * not depend on timestamps.
-     *
-     * Abseil requires Send() to be thread-safe and will call it from whichever
-     * thread logged, so the append is serialized on mutex_, exactly as the real
-     * sink in nixl_log.cpp does.
+     * @brief Records @p entry. Stores the bare message, so assertions do not
+     *        depend on timestamps. Serialized: Abseil calls this from whichever
+     *        thread logged.
      */
     void
     Send(const absl::LogEntry &entry) override {
@@ -114,11 +101,7 @@ public:
         text_.append(std::string(entry.text_message())).append("\n");
     }
 
-    /**
-     * @brief Number of records received whose message contains @p marker.
-     * @return A count restricted to the caller's own records, so one logged by
-     *         another thread cannot inflate it.
-     */
+    /** @brief Records containing @p marker, so another thread cannot inflate a count. */
     size_t
     countMatching(std::string_view marker) const {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -131,11 +114,7 @@ public:
         return matching;
     }
 
-    /**
-     * @brief Concatenated messages received so far, one per line.
-     * @return A copy, because a reference would hand the caller a member that
-     *         another thread's Send() could be appending to.
-     */
+    /** @brief Messages so far, one per line. A copy: Send() may be appending. */
     std::string
     text() const {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -150,24 +129,17 @@ private:
 /** @brief Fixture for the NIXL_LOG_FILE tests; see SetUp() for the isolation it gives. */
 class nixlLogFileTest : public testing::Test {
 protected:
-    /**
-     * @brief Gives each test a clean sink, a known log level and its own path.
-     *
-     * Raises the level to INFO because most tests log at INFO, which the
-     * default WARN would discard before any sink is consulted.
-     */
+    /** @brief Gives each test a clean sink, a known level and its own path. */
     void
     SetUp() override {
-        // The process may already have a sink from its own pre-main
-        // initialization; drop it so each test starts from a known state.
+        // The process may already have a sink from its pre-main setup.
         nixl::shutdownLogFile();
 
         prevMinLevel_ = absl::MinLogLevel();
         prevStderrThreshold_ = absl::StderrThreshold();
 
-        // Most tests log at INFO, which the default WARN level would discard
-        // before any sink is consulted. Keep stderr quiet so a passing run does
-        // not bury the real test output in deliberate log records.
+        // INFO because most tests log there; stderr quiet so a passing run is
+        // not buried in deliberate records.
         absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
         absl::SetStderrThreshold(absl::LogSeverityAtLeast::kError);
 
@@ -177,12 +149,7 @@ protected:
         std::filesystem::remove(path_);
     }
 
-    /**
-     * @brief Unregisters the sink, restores the log levels and deletes the file.
-     *
-     * Runs even when a test fails, so one failure cannot leave a sink pointing
-     * at a file the next test is about to remove.
-     */
+    /** @brief Undoes SetUp, even on failure, so no sink outlives its test. */
     void
     TearDown() override {
         nixl::shutdownLogFile();
@@ -191,20 +158,14 @@ protected:
         std::filesystem::remove(path_);
     }
 
-    /**
-     * @brief Points NIXL_LOG_FILE at this test's scratch file and registers it.
-     * @return Whatever nixl::initLogFile() reported, so a test can assert on it.
-     */
+    /** @brief Points NIXL_LOG_FILE at this test's file; returns what init said. */
     bool
     enableLogFile() {
         env_.addVar("NIXL_LOG_FILE", path_.string());
         return nixl::initLogFile();
     }
 
-    /**
-     * @brief Reads the whole log file.
-     * @return Its contents, or an empty string if it does not exist.
-     */
+    /** @brief The log file's contents, or empty if it does not exist. */
     std::string
     readLogFile() const {
         std::ifstream file(path_);
@@ -213,11 +174,7 @@ protected:
         return contents.str();
     }
 
-    /**
-     * @brief Splits the log file into lines, dropping the trailing newline.
-     * @return One entry per record, which lets a test count records and check
-     *         that none was torn across a line boundary.
-     */
+    /** @brief One entry per record, for counting and checking none was torn. */
     std::vector<std::string>
     readLogLines() const {
         std::ifstream file(path_);
@@ -229,10 +186,8 @@ protected:
     }
 
     /**
-     * @brief The log file's lines that contain @p marker.
-     * @return One entry per matching record. Any thread in the process can log
-     *         while the sink is registered, so selecting on the caller's own
-     *         text keeps an unrelated record out of an exact count.
+     * @brief The log file's lines containing @p marker. Selecting on the test's
+     *        own text keeps another thread's record out of an exact count.
      */
     std::vector<std::string>
     linesMatching(std::string_view marker) const {
@@ -245,11 +200,7 @@ protected:
         return matching;
     }
 
-    /**
-     * @brief Reports whether the log file was created at all.
-     * @return true if the path exists, used to prove the disabled paths create
-     *         nothing rather than an empty file.
-     */
+    /** @brief Whether the file exists, to show a disabled path creates nothing. */
     bool
     logFileExists() const {
         return std::filesystem::exists(path_);
@@ -272,12 +223,7 @@ TEST_F(nixlLogFileTest, WritesRecordToFile) {
     EXPECT_THAT(readLogFile(), HasSubstr("a record for the file"));
 }
 
-/**
- * @brief A file line carries the same prefix Abseil puts on stderr.
- *
- * This is what lets a file line be matched against the surrounding console
- * output: the severity letter first, then the source site.
- */
+/** @brief A file line carries the same prefix as stderr, so the two can be matched. */
 TEST_F(nixlLogFileTest, RecordCarriesSeverityAndSourceLocation) {
     ASSERT_TRUE(enableLogFile());
 
@@ -306,14 +252,11 @@ TEST_F(nixlLogFileTest, EachRecordIsOneLine) {
 }
 
 /**
- * @brief The file supplements stderr instead of diverting it.
- *
- * The central compatibility claim of the feature: existing tooling that scrapes
- * a process's console must see exactly what it saw before.
+ * @brief The file supplements stderr rather than diverting it: tooling that
+ *        scrapes the console must see what it saw before.
  */
 TEST_F(nixlLogFileTest, AddsToStderrRatherThanReplacingIt) {
-    // Abseil writes to stderr from its own default handler rather than through
-    // a sink, so watch the real thing.
+    // Abseil writes stderr from its default handler, not a sink.
     absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
     ASSERT_TRUE(enableLogFile());
 
@@ -337,10 +280,8 @@ TEST_F(nixlLogFileTest, LeavesOtherSinksUntouched) {
 }
 
 /**
- * @brief NIXL_LOG_LEVEL governs the file exactly as it governs stderr.
- *
- * The level gates a record before any sink is consulted, so the file needs no
- * filtering of its own and cannot drift from what stderr would have shown.
+ * @brief NIXL_LOG_LEVEL governs the file as it does stderr: the level gates a
+ *        record before any sink is consulted, so the two cannot drift.
  */
 TEST_F(nixlLogFileTest, HonoursLogLevel) {
     const gtest::LogIgnoreGuard lig("warning that should be written");
@@ -367,12 +308,7 @@ TEST_F(nixlLogFileTest, DisabledWhenEnvVarUnset) {
     EXPECT_FALSE(logFileExists());
 }
 
-/**
- * @brief An empty value is treated as unset rather than as a filename.
- *
- * Matters because exporting a variable with no value is easy to do by accident
- * in a shell script or container spec.
- */
+/** @brief An empty value is unset, not a filename: easy to export by accident. */
 TEST_F(nixlLogFileTest, DisabledWhenEnvVarEmpty) {
     env_.addVar("NIXL_LOG_FILE", "");
 
@@ -382,18 +318,12 @@ TEST_F(nixlLogFileTest, DisabledWhenEnvVarEmpty) {
     EXPECT_FALSE(logFileExists());
 }
 
-/**
- * @brief A path that cannot be opened degrades to no file, not to a failure.
- *
- * A log file we could not open must not take the process, or the rest of
- * logging, down with it.
- */
+/** @brief An unopenable path costs the file, not the process or the rest of logging. */
 TEST_F(nixlLogFileTest, UnopenablePathIsNotFatal) {
     const gtest::LogIgnoreGuard lig("Could not open NIXL_LOG_FILE");
 
-    // Derived from path_, which already carries this process's pid and the test
-    // name, so a concurrent run cannot create the directory and turn the open
-    // into a success. Cleared first in case an earlier run left it behind.
+    // From path_, which carries the pid and test name, so a concurrent run
+    // cannot create the directory and turn the open into a success.
     auto missingDir = path_;
     missingDir += ".missing";
     std::filesystem::remove_all(missingDir);
@@ -422,12 +352,7 @@ TEST_F(nixlLogFileTest, InitIsIdempotent) {
     EXPECT_EQ(linesMatching("written once").size(), 1u);
 }
 
-/**
- * @brief Shutdown really unregisters, and a second call is harmless.
- *
- * Both halves matter: the destructor-attribute hook may run after a caller has
- * already shut the sink down explicitly.
- */
+/** @brief Shutdown unregisters, and a second call is harmless: the hook may follow one. */
 TEST_F(nixlLogFileTest, ShutdownStopsWritingAndIsIdempotent) {
     ASSERT_TRUE(enableLogFile());
     NIXL_INFO << "before shutdown";
@@ -442,12 +367,7 @@ TEST_F(nixlLogFileTest, ShutdownStopsWritingAndIsIdempotent) {
     EXPECT_THAT(contents, testing::Not(HasSubstr("after shutdown")));
 }
 
-/**
- * @brief Reopening the same path appends instead of truncating.
- *
- * A restarted process should add to the record rather than erase what the
- * previous one reported.
- */
+/** @brief Reopening appends: a restart adds to the record rather than erasing it. */
 TEST_F(nixlLogFileTest, AppendsAcrossSessions) {
     ASSERT_TRUE(enableLogFile());
     NIXL_INFO << "from the first session";
@@ -462,11 +382,8 @@ TEST_F(nixlLogFileTest, AppendsAcrossSessions) {
 }
 
 /**
- * @brief Each record is durable as soon as it is logged.
- *
- * Read back while the sink is still registered and without an explicit flush. A
- * process that crashes or hangs never reaches shutdown, so a buffered record
- * would be lost exactly when the log matters most.
+ * @brief Each record is durable as soon as it is logged, read back without an
+ *        explicit flush: a process that hangs never reaches shutdown.
  */
 TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
     ASSERT_TRUE(enableLogFile());
@@ -476,12 +393,7 @@ TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
     EXPECT_THAT(readLogFile(), HasSubstr("readable immediately"));
 }
 
-/**
- * @brief %h and %p expand, so one setting can serve many processes.
- *
- * The point of the escapes: a disaggregated run sets one NIXL_LOG_FILE for
- * every worker and still gets a file per worker.
- */
+/** @brief %h and %p expand, so one setting gives every worker its own file. */
 TEST_F(nixlLogFileTest, ExpandsHostAndProcessIntoThePath) {
     char host[256] = {};
     ASSERT_EQ(::gethostname(host, sizeof(host) - 1), 0);
@@ -503,10 +415,8 @@ TEST_F(nixlLogFileTest, ExpandsHostAndProcessIntoThePath) {
 }
 
 /**
- * @brief %t expands to the current Unix time, which separates runs.
- *
- * Process ids are recycled and the file is opened for append, so without this
- * a restart handed an earlier run's id would carry on that run's file.
+ * @brief %t separates runs: ids are recycled and the file is appended to, so a
+ *        restart given an earlier id would otherwise continue its file.
  */
 TEST_F(nixlLogFileTest, ExpandsTheRunMarkerIntoThePath) {
     const std::string pattern = path_.string() + "-%t";
@@ -545,9 +455,8 @@ TEST_F(nixlLogFileTest, ExpandsTheRunMarkerIntoThePath) {
     EXPECT_GE(marker, before) << "the marker predates the call";
     EXPECT_LE(marker, after) << "the marker postdates the call";
 
-    // Sampled once and kept: binding the sink again in this process must reuse
-    // the same name rather than start a second file. A marker re-read per call
-    // would leave two behind.
+    // Sampled once: rebinding in this process must reuse the name, not start a
+    // second file.
     ASSERT_TRUE(nixl::initLogFile());
     NIXL_INFO << "record after rebinding";
     nixl::shutdownLogFile();
@@ -561,17 +470,12 @@ TEST_F(nixlLogFileTest, ExpandsTheRunMarkerIntoThePath) {
 }
 
 /**
- * @brief A fork without exec keeps writing the parent's file, as documented.
+ * @brief A fork without exec keeps writing the parent's file.
  *
- * This pins behaviour that is documented rather than desired. The path is
- * expanded once when the sink initializes, during library load, so a child of
- * fork() inherits both the expanded name and the open file: its records go to
- * the parent's file, under the parent's %p, and Abseil's cached thread id
- * makes them look like the parent's too.
- *
- * Kept as a test so the documented limit cannot quietly stop being true, in
- * either direction. Workers started through exec are unaffected, which is the
- * usual case, GPU workers included, since CUDA does not survive a bare fork.
+ * Documented rather than desired: the path is expanded once at library load, so
+ * a child inherits the name and the open file. Pinned here so the documented
+ * limit cannot quietly stop being true. Workers started through exec, the usual
+ * case for GPU work, are unaffected.
  */
 TEST_F(nixlLogFileTest, ForkWithoutExecKeepsWritingTheParentsFile) {
     const std::string pattern = path_.string() + "-fork-%p";
@@ -587,15 +491,12 @@ TEST_F(nixlLogFileTest, ForkWithoutExecKeepsWritingTheParentsFile) {
     ASSERT_NE(child, -1) << "fork failed";
     if (child == 0) {
         NIXL_INFO << "record from the child";
-        // _exit, not exit: the child must not run this process's static
-        // destructors or gtest's teardown a second time.
+        // _exit: the child must not run this process's teardown again.
         ::_exit(0);
     }
 
-    // Waited for with a deadline rather than indefinitely. The hazard this test
-    // lives next to is a child inheriting a mutex that some other thread held
-    // across the fork, and that child would block on its first record forever.
-    // An unbounded wait would turn that into a hung run rather than a failure.
+    // With a deadline: a child that inherited a held mutex blocks on its first
+    // record forever, and an unbounded wait would hang the run rather than fail.
     int status = 0;
     pid_t reaped = 0;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -628,12 +529,7 @@ TEST_F(nixlLogFileTest, ForkWithoutExecKeepsWritingTheParentsFile) {
     std::filesystem::remove(child_file);
 }
 
-/**
- * @brief %% is a literal percent, and an unknown escape is left as written.
- *
- * A path is free to contain a percent that was never meant as an escape, so an
- * unrecognized one has to survive rather than be swallowed.
- */
+/** @brief %% is a literal percent, and an unknown escape survives rather than being swallowed. */
 TEST_F(nixlLogFileTest, LeavesLiteralAndUnknownEscapesAlone) {
     const std::string pattern = path_.string() + "-%%-%z";
     const std::filesystem::path expanded = path_.string() + "-%-%z";
@@ -650,12 +546,9 @@ TEST_F(nixlLogFileTest, LeavesLiteralAndUnknownEscapesAlone) {
 }
 
 /**
- * @brief At the limit the file is rotated, and the newest records are kept.
- *
- * Which end survives is the whole design question. A log that answers "what
- * happened just before this hung" has to keep its tail, so the live file holds
- * the newest records and the previous generation sits beside it. Exactly one
- * generation is kept, which is what bounds the total.
+ * @brief At the limit the file rotates, keeping the newest records: a log that
+ *        answers "what happened before this hung" needs its tail. One
+ *        generation is kept, which bounds the total.
  */
 TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
     constexpr std::uintmax_t limit = 2048;
@@ -673,8 +566,7 @@ TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
     ASSERT_TRUE(std::filesystem::exists(rotated)) << "nothing was rotated";
     EXPECT_LE(std::filesystem::file_size(path_), limit) << "the live file outgrew the limit";
 
-    // The newest record is in the live file, and the rotated one holds what
-    // came before it.
+    // Newest in the live file, earlier ones in the rotated file.
     EXPECT_THAT(readLogFile(), HasSubstr("rotation record 199"));
 
     std::ifstream previous(rotated);
@@ -689,12 +581,9 @@ TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
 }
 
 /**
- * @brief A rotation it cannot do stops the sink, and says so.
- *
- * Carrying on would mean either ignoring the limit that was asked for or
- * quietly redefining rotation, so the sink stops instead. What it keeps is the
- * records written up to the limit; the file is left alone rather than
- * truncated, since those records are all there will be.
+ * @brief A rotation it cannot do stops the sink, and says so, rather than
+ *        ignoring the limit. The file is left alone: those records are all
+ *        there will be.
  */
 TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
     if (::geteuid() == 0) {
@@ -702,10 +591,8 @@ TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
     }
     constexpr std::uintmax_t limit = 2048;
 
-    // Writable to begin with, so the log file can be created, and then made
-    // searchable but not writable: renaming needs permission on the directory,
-    // which is now gone, while writing and truncating need it on the file,
-    // which it still has.
+    // Writable first so the file can be created, then searchable but not
+    // writable: rename needs the directory, writing only needs the file.
     const std::filesystem::path directory = path_.string() + "-norename";
     std::filesystem::remove_all(directory);
     std::filesystem::create_directories(directory);
@@ -736,8 +623,7 @@ TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
     EXPECT_LE(std::filesystem::file_size(log), limit) << "the limit was abandoned";
     EXPECT_FALSE(std::filesystem::exists(log.string() + ".1")) << "the rename cannot have worked";
 
-    // Stopped, keeping what it had rather than emptying the file: the earliest
-    // records survive and the ones after the failed rotation are dropped.
+    // Stopped, keeping what it had: the earliest records survive.
     std::ifstream kept(log);
     std::ostringstream contents;
     contents << kept.rdbuf();
@@ -762,11 +648,8 @@ TEST_F(nixlLogFileTest, GrowsWithoutLimitWhenNoSizeIsSet) {
 }
 
 /**
- * @brief A size that cannot be parsed is reported and leaves the file unbounded.
- *
- * Falling back to some invented limit would quietly throw away records the
- * operator meant to keep, which is worse than ignoring the setting and saying
- * so.
+ * @brief An unparsable size is reported and leaves the file unbounded: an
+ *        invented limit would throw away records the operator meant to keep.
  */
 TEST_F(nixlLogFileTest, IgnoresAnUnparsableSizeAndSaysSo) {
     const gtest::LogIgnoreGuard lig("Ignoring NIXL_LOG_FILE_SIZE");
@@ -774,12 +657,9 @@ TEST_F(nixlLogFileTest, IgnoresAnUnparsableSizeAndSaysSo) {
 
     env_.addVar("NIXL_LOG_FILE", path_.string());
 
-    // The report is what is asserted on, rather than the absence of rotation,
-    // because "-1" is the case that needs catching: read as an unsigned value
-    // it wraps to the largest limit there is, and a file with a limit that
-    // large never rotates -- which looks exactly like an unbounded one. Only
-    // the report distinguishes a rejected setting from a disastrously
-    // misparsed one.
+    // Asserted on the report rather than the absence of rotation: "-1" read as
+    // unsigned wraps to a limit so large the file never rotates, which is
+    // indistinguishable from unbounded. Only the report tells them apart.
     for (const std::string bad : {"sometime next week", "-1", "-1024", "64X", " 64", "+64"}) {
         countingSink watcher;
 
@@ -792,8 +672,7 @@ TEST_F(nixlLogFileTest, IgnoresAnUnparsableSizeAndSaysSo) {
         env_.popVar();
     }
 
-    // Having been ignored, the limit leaves the file growing as it would with
-    // no limit set at all.
+    // Ignored, so the file grows as it would with no limit at all.
     env_.addVar("NIXL_LOG_FILE_SIZE", "sometime next week");
     ASSERT_TRUE(nixl::initLogFile());
 
@@ -806,11 +685,9 @@ TEST_F(nixlLogFileTest, IgnoresAnUnparsableSizeAndSaysSo) {
 }
 
 /**
- * @brief Setup failures still reach an operator who asked for errors only.
- *
- * These are emitted at error severity rather than warning for exactly this
- * case: at NIXL_LOG_LEVEL=ERROR a warning is filtered out, so someone who set
- * NIXL_LOG_FILE and got nothing would have no way to find out why.
+ * @brief Setup failures reach an operator who asked for errors only: at
+ *        NIXL_LOG_LEVEL=ERROR a warning would be filtered out, leaving no way
+ *        to find out why the file never appeared.
  */
 TEST_F(nixlLogFileTest, ReportsSetupFailuresAtErrorSeverity) {
     const gtest::LogIgnoreGuard size_guard("Ignoring NIXL_LOG_FILE_SIZE");
@@ -845,12 +722,8 @@ TEST_F(nixlLogFileTest, ReportsSetupFailuresAtErrorSeverity) {
 }
 
 /**
- * @brief A failed open is reported with the open's own reason.
- *
- * The sink asks the file's size on the way in, to count an appended-to file's
- * existing contents against the limit. Asking before checking that the open
- * succeeded would replace the errno the report is built from, and name the
- * wrong reason for the failure.
+ * @brief A failed open is reported with the open's own reason: the size lookup
+ *        the sink does on the way in would otherwise replace its errno.
  */
 TEST_F(nixlLogFileTest, ReportsWhyAnUnopenablePathReallyFailed) {
     if (::geteuid() == 0) {
@@ -858,9 +731,8 @@ TEST_F(nixlLogFileTest, ReportsWhyAnUnopenablePathReallyFailed) {
     }
     const gtest::LogIgnoreGuard lig("Could not open NIXL_LOG_FILE");
 
-    // Searchable but not writable, which is what separates the two reasons:
-    // creating a file here fails with EACCES, while asking the size of that
-    // same missing file fails with ENOENT.
+    // Searchable but not writable: creating fails EACCES, while asking the
+    // size of that missing file fails ENOENT.
     const std::filesystem::path directory = path_.string() + "-readonly";
     std::filesystem::remove_all(directory);
     std::filesystem::create_directories(directory);
@@ -879,22 +751,15 @@ TEST_F(nixlLogFileTest, ReportsWhyAnUnopenablePathReallyFailed) {
 }
 
 /**
- * @brief A write failure is reported once, and then records are dropped.
- *
- * A stream that has failed treats every later write as a silent no-op, so
- * without a report the file would stop part way through and say nothing about
- * why. /dev/full opens like any other file and fails every write with ENOSPC,
- * which gives the real failure without needing a full filesystem.
- *
- * The report is asserted on stderr because the sink writes it there directly,
- * rather than through NIXL_WARN, so that reporting the failure does not depend
- * on the machinery that just failed.
+ * @brief A write failure is reported once, then records are dropped. A failed
+ *        stream no-ops every later write, so without a report the file would
+ *        stop part way through and say nothing. /dev/full gives a real ENOSPC
+ *        without a full filesystem. The report is on stderr because reporting
+ *        must not depend on the machinery that just failed.
  */
 TEST_F(nixlLogFileTest, ReportsAWriteFailureOnceThenDropsRecords) {
-    // Insisted on rather than assumed: opening a missing /dev/full in append
-    // mode would create an ordinary file that accepts every write, so the test
-    // would fail for a reason that has nothing to do with the code, and leave a
-    // stray file in /dev behind it.
+    // Checked rather than assumed: a missing /dev/full would be created as an
+    // ordinary file that accepts every write.
     if (!std::filesystem::is_character_file("/dev/full")) {
         GTEST_SKIP() << "/dev/full is not available on this system";
     }
@@ -908,8 +773,7 @@ TEST_F(nixlLogFileTest, ReportsAWriteFailureOnceThenDropsRecords) {
     NIXL_INFO << "third record";
     const std::string captured = testing::internal::GetCapturedStderr();
 
-    // Said once, however many records follow, so a failing file cannot bury
-    // the stderr output that is still working.
+    // Once, however many records follow, so a failing file cannot bury stderr.
     const std::string report = "could not write to NIXL_LOG_FILE";
     size_t reports = 0;
     for (size_t at = captured.find(report); at != std::string::npos;
@@ -926,38 +790,25 @@ TEST_F(nixlLogFileTest, ReportsAWriteFailureOnceThenDropsRecords) {
 /**
  * @brief A record logged from a static destructor still reaches the file.
  *
- * The teardown hook is an __attribute__((destructor)), so it lands in
- * .fini_array, which glibc runs after draining the exit-handler queue that
- * __cxa_atexit registers static destructors on. That ordering is loader
- * behaviour rather than a language guarantee, so this test pins it down instead
- * of leaving it as an assumption in a comment.
+ * The teardown hook is in .fini_array, which glibc runs after the exit-handler
+ * queue holding static destructors. That is loader behaviour rather than a
+ * language guarantee, so it is pinned here rather than assumed.
  *
- * Needs a real process exit, which gtest cannot do in-process, so it runs in a
- * helper process. That helper is exec'd rather than just forked: continuing in
- * a forked image would run the whole static-teardown chain, UCX, gRPC,
- * telemetry and Abseil included, against threads and locks inherited from the
- * parent's test run, and a mutex held by a thread that did not survive the fork
- * stays held forever in the child.
- *
- * The helper is this same binary, told to run no tests, so all it does is
- * start up and shut down. Nothing calls initLogFile(): the library's own
- * constructor registers the sink from NIXL_LOG_FILE, which makes this a test of
- * the path a real process takes. If the ordering ever reverses, the sink is
- * torn down before lateLogger runs and the record goes missing.
+ * Needs a real process exit, so it runs in a helper: this binary told to run no
+ * tests, exec'd rather than forked, since a forked image would run the whole
+ * teardown chain against locks inherited from the parent's test run. Nothing
+ * calls initLogFile(), so this exercises the path a real process takes.
  */
 TEST_F(nixlLogFileTest, RecordsFromStaticDestructorsReachTheFile) {
-    // Everything the child needs is built here, before the fork. Between fork()
-    // and exec() only async-signal-safe calls are allowed, and setenv() can
-    // allocate, which would hang the child if another thread held the allocator
-    // lock at the moment of the fork. open() and dup2() below are safe.
+    // Built before the fork: only async-signal-safe calls may run between fork
+    // and exec, and setenv() can allocate. open() and dup2() below are safe.
     const std::vector<std::string> overrides = {
         "NIXL_LOG_FILE=" + path_.string(),
         "NIXL_LOG_LEVEL=INFO",
         std::string(late_record_env_var) + "=1",
     };
 
-    // Inherit the environment, minus the names being overridden, so the values
-    // below win outright rather than relying on how getenv treats duplicates.
+    // Minus the names overridden below, so those win rather than duplicating.
     std::vector<std::string> child_env;
     for (char **entry = environ; *entry != nullptr; ++entry) {
         const std::string text(*entry);
@@ -986,8 +837,7 @@ TEST_F(nixlLogFileTest, RecordsFromStaticDestructorsReachTheFile) {
     ASSERT_GE(pid, 0) << "fork failed";
 
     if (pid == 0) {
-        // Child. Anything the helper prints is its own business, so keep it out
-        // of the test output. Redirected before the exec so it survives it.
+        // Child. Keep the helper's output out of the test's, before the exec.
         const int devnull = ::open("/dev/null", O_WRONLY);
         if (devnull >= 0) {
             ::dup2(devnull, STDOUT_FILENO);
@@ -996,8 +846,7 @@ TEST_F(nixlLogFileTest, RecordsFromStaticDestructorsReachTheFile) {
 
         ::execve("/proc/self/exe", argv.data(), envp.data());
 
-        // Only reached if the exec failed, and kept distinct from any status
-        // the helper itself could return.
+        // Only on exec failure; distinct from any status the helper returns.
         _exit(127);
     }
 
@@ -1011,10 +860,8 @@ TEST_F(nixlLogFileTest, RecordsFromStaticDestructorsReachTheFile) {
 }
 
 /**
- * @brief Concurrent writers produce whole lines, never torn ones.
- *
- * Abseil holds only a reader lock while dispatching to sinks, so Send() runs
- * concurrently and the sink must serialize writes itself.
+ * @brief Concurrent writers produce whole lines: Abseil holds only a reader
+ *        lock while dispatching, so the sink must serialize writes itself.
  */
 TEST_F(nixlLogFileTest, ConcurrentRecordsAreNotInterleaved) {
     ASSERT_TRUE(enableLogFile());
@@ -1034,15 +881,12 @@ TEST_F(nixlLogFileTest, ConcurrentRecordsAreNotInterleaved) {
         thread.join();
     }
 
-    // Only this test's records, so one logged by an unrelated thread cannot
-    // fail the count. A torn write is still caught: if it kept the payload text
-    // the shape check below rejects it, and if it lost the text the count and
-    // the set check report it missing.
+    // Only this test's records, so an unrelated thread cannot fail the count.
+    // A torn write still shows up in the shape and set checks below.
     const auto lines = linesMatching("payload ");
     ASSERT_EQ(lines.size(), num_threads * per_thread);
 
-    // Every line must be a whole record. A torn or interleaved write would
-    // leave a line that does not end in its own payload.
+    // A torn write would leave a line not ending in its own payload.
     const std::regex record("^I.*payload ([0-9]+):([0-9]+)$");
     std::set<std::pair<unsigned, unsigned>> seen;
     for (const auto &line : lines) {
@@ -1053,9 +897,8 @@ TEST_F(nixlLogFileTest, ConcurrentRecordsAreNotInterleaved) {
         }
     }
 
-    // Checking the line count and each line's shape would still pass if one
-    // payload were written twice and another lost, so compare the set of
-    // payloads actually present against the set that should be.
+    // Count and shape alone would pass if one payload were written twice and
+    // another lost, so compare the sets.
     for (unsigned t = 0; t < num_threads; ++t) {
         for (unsigned i = 0; i < per_thread; ++i) {
             EXPECT_TRUE(seen.count({t, i}) == 1) << "missing payload " << t << ":" << i;

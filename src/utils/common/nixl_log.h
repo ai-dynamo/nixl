@@ -135,39 +135,28 @@ static inline std::string nixl_strerror(int err) {
 namespace nixl {
 
 /**
- * @brief Mirrors log records into the file named by NIXL_LOG_FILE.
+ * @brief Mirrors records passing NIXL_LOG_LEVEL into the file named by
+ *        NIXL_LOG_FILE, in addition to stderr. Unset or empty registers no
+ *        sink. The file is appended to, not truncated, so give each process its
+ *        own path.
  *
- * Records that pass NIXL_LOG_LEVEL are appended to the file in addition to the
- * existing stderr output; nothing about stderr, or about any other registered
- * sink, changes. When NIXL_LOG_FILE is unset or empty no sink is registered and
- * logging behaves exactly as before.
+ * Called during library initialization; exposed for tests. Binding a different
+ * path needs shutdownLogFile() first, since this returns early, without reading
+ * NIXL_LOG_FILE, while a sink is registered.
  *
- * The file is opened for append rather than truncated, so a process that is
- * restarted against the same path adds to the record instead of erasing it.
- * Give each process its own path to keep the output separable.
- *
- * Called during library initialization, so callers do not normally need it. It
- * is exposed so tests can register the sink after changing the environment.
- * Binding a different path takes a shutdownLogFile() first: while a sink is
- * registered this returns without so much as reading NIXL_LOG_FILE, so a caller
- * that skips that step goes on writing to the previous file.
- *
- * @return true if a file sink is registered on return. Idempotent: returns true
- *         without reopening anything if a sink is already registered. Opening
- *         failures are logged and reported as false; they never throw and never
- *         disturb the rest of the logging setup.
+ * @return true if a sink is registered on return, including when one already
+ *         was. An open failure is logged and returns false; it never throws.
  */
 bool
 initLogFile();
 
 /**
- * @brief Unregisters the NIXL_LOG_FILE sink and flushes it.
+ * @brief Unregisters the NIXL_LOG_FILE sink and flushes it. Safe to call with
+ *        no sink registered, and more than once.
  *
- * Runs at library unload. On glibc that is after static destructors, so records
- * emitted late in shutdown still reach the file; that ordering is loader
- * behaviour rather than a language guarantee, and is covered by
- * nixlLogFileTest.RecordsFromStaticDestructorsReachTheFile. Safe to call when
- * no sink is registered, and safe to call more than once.
+ * Runs at library unload, which on glibc is after static destructors, so late
+ * records still reach the file. That ordering is loader behaviour rather than a
+ * guarantee; nixlLogFileTest.RecordsFromStaticDestructorsReachTheFile covers it.
  */
 void
 shutdownLogFile();
