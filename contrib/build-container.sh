@@ -59,6 +59,7 @@ INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1"
 APT_MIRROR=""
 BUILD_UCX_SPCX_PLUGIN="false"
 UCX_SPCX_PLUGIN_REF="v0.3.x"
+UCX_SPCX_PLUGIN_INSTALL=""
 BUILD_OPTIONS_FILE=""
 
 get_options() {
@@ -211,6 +212,15 @@ get_options() {
         --ucx-spcx-plugin-ref)
             if [ "$2" ]; then
                 UCX_SPCX_PLUGIN_REF=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --ucx-spcx-plugin-install)
+            if [ "$2" ]; then
+                UCX_SPCX_PLUGIN_INSTALL=$2
+                BUILD_UCX_SPCX_PLUGIN="true"
                 shift
             else
                 missing_requirement $1
@@ -380,6 +390,7 @@ show_help() {
     echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
     echo "  [--build-ucx-spcx-plugin build the UCX spcx external plugin (requires NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL in the environment) (requires --dockerfile contrib/Dockerfile or contrib/Dockerfile.manylinux; bundled into the wheel only on the manylinux path)]"
     echo "  [--ucx-spcx-plugin-ref git ref of ucx-spcx-plugin to build (default: ${UCX_SPCX_PLUGIN_REF})]"
+    echo "  [--ucx-spcx-plugin-install directory holding a pre-built plugin module to install instead of building one (implies --build-ucx-spcx-plugin; no gitlab credentials needed)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
@@ -438,8 +449,21 @@ BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
 # any docker builder. The token stays out of URLs and argv (git credential
 # helper reading the environment) so git errors cannot leak it.
 SPCX_SRC_DIR="$BUILD_CONTEXT/ucx-spcx-plugin-src"
-rm -rf "$SPCX_SRC_DIR"
-if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
+SPCX_INSTALL_DIR="$BUILD_CONTEXT/ucx-spcx-plugin-install"
+rm -rf "$SPCX_SRC_DIR" "$SPCX_INSTALL_DIR"
+
+# Pre-built plugin: the module was compiled elsewhere (nixl-ci-compile-ucx-plugin,
+# or by hand) and is staged into the context for the Dockerfile to install. No
+# clone, so no gitlab credentials and no plugin source in the build context.
+if [ -n "$UCX_SPCX_PLUGIN_INSTALL" ]; then
+    if [ -z "$(ls -A "$UCX_SPCX_PLUGIN_INSTALL" 2>/dev/null)" ]; then
+        error "ERROR:" "--ucx-spcx-plugin-install directory is empty or missing: $UCX_SPCX_PLUGIN_INSTALL"
+    fi
+    trap 'rm -rf "$SPCX_INSTALL_DIR"' EXIT
+    mkdir -p "$SPCX_INSTALL_DIR"
+    cp -a "$UCX_SPCX_PLUGIN_INSTALL/." "$SPCX_INSTALL_DIR/"
+    echo "ucx-spcx-plugin: using pre-built module from $UCX_SPCX_PLUGIN_INSTALL"
+elif [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
     # Ask the dockerfile itself rather than matching paths: only the ones with
     # the plugin build block declare the ARG, so this cannot drift.
     if ! grep -q '^ARG BUILD_UCX_SPCX_PLUGIN' "$DOCKER_FILE"; then
