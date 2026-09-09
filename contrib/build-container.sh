@@ -469,6 +469,11 @@ elif [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
     if ! grep -q '^ARG BUILD_UCX_SPCX_PLUGIN' "$DOCKER_FILE"; then
         error "ERROR:" "--build-ucx-spcx-plugin requires a dockerfile that consumes it (contrib/Dockerfile or contrib/Dockerfile.manylinux); $DOCKER_FILE does not"
     fi
+    # The manylinux path installs a pre-built module and no longer compiles one,
+    # so staging source there would silently produce a plugin-less wheel.
+    if grep -q 'ucx-spcx-plugin-install' "$DOCKER_FILE"; then
+        error "ERROR:" "$DOCKER_FILE installs a pre-built plugin module; use --ucx-spcx-plugin-install <dir> instead of --build-ucx-spcx-plugin"
+    fi
     if [ -z "${NIXL_GITLAB_TOKEN:-}" ]; then
         error "ERROR:" "--build-ucx-spcx-plugin requires the NIXL_GITLAB_TOKEN environment variable"
     fi
