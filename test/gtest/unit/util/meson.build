@@ -15,6 +15,7 @@
 
 util_unit_test_dep = declare_dependency(
     sources: [
+        'proxy_config.cpp',
         'proxy_memview_manager.cpp',
         'proxy_runtime.cpp',
         'str_util_test.cpp',
