@@ -506,35 +506,106 @@ TEST_F(nixlLogFileTest, ExpandsHostAndProcessIntoThePath) {
  * Process ids are recycled and the file is opened for append, so without this
  * a restart handed an earlier run's id would carry on that run's file.
  */
-TEST_F(nixlLogFileTest, ExpandsTheStartTimeIntoThePath) {
+TEST_F(nixlLogFileTest, ExpandsTheRunMarkerIntoThePath) {
     const std::string pattern = path_.string() + "-%t";
+    const std::string prefix = path_.filename().string() + "-";
 
-    const auto before = std::time(nullptr);
+    const auto now = [] {
+        struct timespec ts {};
+        ::clock_gettime(CLOCK_REALTIME, &ts);
+        return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
+    };
+    const auto named = [&prefix, this] {
+        std::vector<std::string> found;
+        for (const auto &entry : std::filesystem::directory_iterator(path_.parent_path())) {
+            const std::string name = entry.path().filename().string();
+            if (name.rfind(prefix, 0) == 0) {
+                found.push_back(name.substr(prefix.size()));
+            }
+        }
+        return found;
+    };
+
+    for (const auto &stale : named()) {
+        std::filesystem::remove(path_.parent_path() / (prefix + stale));
+    }
+
+    const uint64_t before = now();
     env_.addVar("NIXL_LOG_FILE", pattern);
     ASSERT_TRUE(nixl::initLogFile());
-    NIXL_INFO << "record for the timestamped path";
+    NIXL_INFO << "record for the marked path";
     nixl::shutdownLogFile();
-    const auto after = std::time(nullptr);
+    const uint64_t after = now();
 
-    // Checked as a range rather than an exact value: the second can turn
-    // between here and the expansion, and a test that depended on it not
-    // turning would fail once in a while for no reason.
-    std::filesystem::path written;
-    for (auto when = before; when <= after && written.empty(); ++when) {
-        const std::filesystem::path candidate =
-            path_.string() + "-" + std::to_string(static_cast<long long>(when));
-        if (std::filesystem::exists(candidate)) {
-            written = candidate;
-        }
+    auto written = named();
+    ASSERT_EQ(written.size(), 1u) << "expected exactly one file named for the run marker";
+    const uint64_t marker = std::stoull(written.front());
+    EXPECT_GE(marker, before) << "the marker predates the call";
+    EXPECT_LE(marker, after) << "the marker postdates the call";
+
+    // Sampled once and kept: binding the sink again in this process must reuse
+    // the same name rather than start a second file. A marker re-read per call
+    // would leave two behind.
+    ASSERT_TRUE(nixl::initLogFile());
+    NIXL_INFO << "record after rebinding";
+    nixl::shutdownLogFile();
+
+    written = named();
+    EXPECT_EQ(written.size(), 1u) << "the run marker moved within one process";
+
+    for (const auto &leftover : written) {
+        std::filesystem::remove(path_.parent_path() / (prefix + leftover));
+    }
+}
+
+/**
+ * @brief A fork without exec keeps writing the parent's file, as documented.
+ *
+ * This pins behaviour that is documented rather than desired. The path is
+ * expanded once when the sink initializes, during library load, so a child of
+ * fork() inherits both the expanded name and the open file: its records go to
+ * the parent's file, under the parent's %p, and Abseil's cached thread id
+ * makes them look like the parent's too.
+ *
+ * Kept as a test so the documented limit cannot quietly stop being true, in
+ * either direction. Workers started through exec are unaffected, which is the
+ * usual case, GPU workers included, since CUDA does not survive a bare fork.
+ */
+TEST_F(nixlLogFileTest, ForkWithoutExecKeepsWritingTheParentsFile) {
+    const std::string pattern = path_.string() + "-fork-%p";
+    const std::filesystem::path parent_file =
+        path_.string() + "-fork-" + std::to_string(::getpid());
+    std::filesystem::remove(parent_file);
+
+    env_.addVar("NIXL_LOG_FILE", pattern);
+    ASSERT_TRUE(nixl::initLogFile());
+    NIXL_INFO << "record from the parent";
+
+    const pid_t child = ::fork();
+    ASSERT_NE(child, -1) << "fork failed";
+    if (child == 0) {
+        NIXL_INFO << "record from the child";
+        // _exit, not exit: the child must not run this process's static
+        // destructors or gtest's teardown a second time.
+        ::_exit(0);
     }
 
-    EXPECT_FALSE(written.empty()) << "no file named for a time between " << before << " and "
-                                  << after;
-    EXPECT_FALSE(std::filesystem::exists(pattern)) << "the raw pattern must not be used as a name";
+    int status = 0;
+    ASSERT_EQ(::waitpid(child, &status, 0), child);
+    nixl::shutdownLogFile();
 
-    if (!written.empty()) {
-        std::filesystem::remove(written);
-    }
+    const std::filesystem::path child_file = path_.string() + "-fork-" + std::to_string(child);
+    EXPECT_FALSE(std::filesystem::exists(child_file))
+        << "a child file appeared, so fork now reinitializes: update the documentation";
+
+    std::ifstream in(parent_file);
+    std::ostringstream contents;
+    contents << in.rdbuf();
+    EXPECT_THAT(contents.str(), HasSubstr("record from the parent"));
+    EXPECT_THAT(contents.str(), HasSubstr("record from the child"));
+
+    std::filesystem::remove(parent_file);
+    std::filesystem::remove(child_file);
 }
 
 /**
