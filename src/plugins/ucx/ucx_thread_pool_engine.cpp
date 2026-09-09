@@ -30,9 +30,13 @@
 #include <vector>
 #include <asio.hpp>
 
+#include "absl/container/inlined_vector.h"
+
 #include "ucx_utils.h"
 
 namespace {
+
+constexpr size_t inline_chunk_futures = 16;
 
 struct nixlUcxBackendSharedState;
 
@@ -352,15 +356,14 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     size_t chunk_size = comp_handle->getChunkSize();
     NIXL_TRACE << "sending " << *comp_handle;
 
-    std::promise<void> promise;
-    std::future<void> future = promise.get_future();
-    std::atomic<size_t> remaining{comp_handle->getNumChunks()};
     std::atomic<nixl_status_t> status{NIXL_SUCCESS};
+    absl::InlinedVector<std::future<void>, inline_chunk_futures> futures;
+    futures.reserve(comp_handle->getNumChunks());
 
     for (size_t i = 0; i < comp_handle->getNumChunks(); i++) {
         // Chunks are distributed round-robin over the dedicated threads
         nixlUcxDedicatedThread *thread = dedicatedThreads_[i % dedicatedThreads_.size()].get();
-        thread->post(std::packaged_task<void()>([&, i, thread]() {
+        futures.push_back(thread->post(std::packaged_task<void()>([&, i, thread]() {
             NIXL_ASSERT(thread == nixlUcxDedicatedThread::getDedicatedThread());
 
             nixlUcxChunkBackendReqH *chunk_handle =
@@ -379,14 +382,17 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
                 NIXL_TRACE << "dedicated " << *thread << " sent " << *chunk_handle;
                 thread->addRequest(chunk_handle);
             }
-
-            if (remaining.fetch_sub(1) == 1) {
-                promise.set_value();
-            }
-        }));
+        })));
     }
 
-    future.wait();
+    // The last posted chunk is the likeliest to finish last
+    for (auto it = futures.rbegin(); it != futures.rend(); ++it) {
+        it->wait();
+    }
+    for (auto &future : futures) {
+        future.get();
+    }
+
     NIXL_TRACE << "sent " << *comp_handle << " with status: " << status.load();
     return status.load();
 }
