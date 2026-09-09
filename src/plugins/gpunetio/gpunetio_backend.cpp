@@ -710,10 +710,6 @@ nixlDocaEngine::nixlDocaDestroyNotif(doca_gpu *gpu, struct nixlDocaNotif *notif)
         return NIXL_SUCCESS;
     }
 
-    notif->send_mr.reset();
-    notif->recv_mr.reset();
-    free(notif->send_addr);
-    free(notif->recv_addr);
     delete notif;
 
     return NIXL_SUCCESS;
