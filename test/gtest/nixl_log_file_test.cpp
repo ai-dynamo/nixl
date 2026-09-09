@@ -16,6 +16,8 @@
  */
 
 #include <algorithm>
+#include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
@@ -590,8 +592,26 @@ TEST_F(nixlLogFileTest, ForkWithoutExecKeepsWritingTheParentsFile) {
         ::_exit(0);
     }
 
+    // Waited for with a deadline rather than indefinitely. The hazard this test
+    // lives next to is a child inheriting a mutex that some other thread held
+    // across the fork, and that child would block on its first record forever.
+    // An unbounded wait would turn that into a hung run rather than a failure.
     int status = 0;
-    ASSERT_EQ(::waitpid(child, &status, 0), child);
+    pid_t reaped = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while ((reaped = ::waitpid(child, &status, WNOHANG)) == 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    if (reaped == 0) {
+        ::kill(child, SIGKILL);
+        ::waitpid(child, &status, 0);
+        nixl::shutdownLogFile();
+        std::filesystem::remove(parent_file);
+        FAIL() << "the forked child never exited; it most likely blocked writing its record";
+    }
+    ASSERT_EQ(reaped, child) << "waitpid failed";
     nixl::shutdownLogFile();
 
     const std::filesystem::path child_file = path_.string() + "-fork-" + std::to_string(child);
