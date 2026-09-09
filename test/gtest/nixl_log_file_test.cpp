@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
@@ -497,6 +498,43 @@ TEST_F(nixlLogFileTest, ExpandsHostAndProcessIntoThePath) {
     EXPECT_FALSE(std::filesystem::exists(pattern)) << "the raw pattern must not be used as a name";
 
     std::filesystem::remove(expanded);
+}
+
+/**
+ * @brief %t expands to the current Unix time, which separates runs.
+ *
+ * Process ids are recycled and the file is opened for append, so without this
+ * a restart handed an earlier run's id would carry on that run's file.
+ */
+TEST_F(nixlLogFileTest, ExpandsTheStartTimeIntoThePath) {
+    const std::string pattern = path_.string() + "-%t";
+
+    const auto before = std::time(nullptr);
+    env_.addVar("NIXL_LOG_FILE", pattern);
+    ASSERT_TRUE(nixl::initLogFile());
+    NIXL_INFO << "record for the timestamped path";
+    nixl::shutdownLogFile();
+    const auto after = std::time(nullptr);
+
+    // Checked as a range rather than an exact value: the second can turn
+    // between here and the expansion, and a test that depended on it not
+    // turning would fail once in a while for no reason.
+    std::filesystem::path written;
+    for (auto when = before; when <= after && written.empty(); ++when) {
+        const std::filesystem::path candidate =
+            path_.string() + "-" + std::to_string(static_cast<long long>(when));
+        if (std::filesystem::exists(candidate)) {
+            written = candidate;
+        }
+    }
+
+    EXPECT_FALSE(written.empty()) << "no file named for a time between " << before << " and "
+                                  << after;
+    EXPECT_FALSE(std::filesystem::exists(pattern)) << "the raw pattern must not be used as a name";
+
+    if (!written.empty()) {
+        std::filesystem::remove(written);
+    }
 }
 
 /**
