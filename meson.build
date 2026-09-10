@@ -147,10 +147,29 @@ has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', depen
 # Check whether the POSIX plugin is enabled
 has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
-# Check for CUObject Client library — try newest first so CUDA 13.2+ wheels
-# pick up the versioned pkg-config module that matches the build environment.
+# Check for CUObject Client library. The pkg-config module is versioned as
+# cuobjclient-<major>.<minor>, so ask pkg-config what the build environment
+# actually provides rather than relying only on a hardcoded list, which goes
+# stale with every CUDA release. The static list below is the fallback for
+# environments where pkg-config cannot be invoked directly.
 cuobj_dep = dependency('', required: false)
-foreach _cuobj_pkg : ['cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1']
+_cuobj_modules = []
+_cuobj_probe = run_command('sh', '-c',
+    'pkg-config --list-all 2>/dev/null | cut -d" " -f1 | grep "^cuobjclient-" | sort -V -r',
+    check: false)
+if _cuobj_probe.returncode() == 0
+    foreach _line : _cuobj_probe.stdout().strip().split('\n')
+        if _line != ''
+            _cuobj_modules += _line
+        endif
+    endforeach
+endif
+foreach _fallback : ['cuobjclient-13.4', 'cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1']
+    if _fallback not in _cuobj_modules
+        _cuobj_modules += _fallback
+    endif
+endforeach
+foreach _cuobj_pkg : _cuobj_modules
     _candidate = dependency(_cuobj_pkg, required: false)
     if _candidate.found()
         cuobj_dep = _candidate
@@ -160,6 +179,15 @@ foreach _cuobj_pkg : ['cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1'
 endforeach
 if cuobj_dep.found()
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
+    summary({'cuObject (OBJ plugin RDMA)': 'enabled'}, section: 'Dependencies')
+else
+    warning('cuObjClient not found: the OBJ plugin will be built WITHOUT cuObject ' +
+            'RDMA acceleration. Searched pkg-config modules: ' +
+            ', '.join(_cuobj_modules) + '. Install the libcuobjclient development ' +
+            'package, which provides cuobjclient-<version>.pc, and make sure ' +
+            'pkg-config can find it (PKG_CONFIG_PATH).')
+    summary({'cuObject (OBJ plugin RDMA)': 'DISABLED - cuobjclient not found'},
+            section: 'Dependencies')
 endif
 
 # Search for Abseil dependencies in the system first
