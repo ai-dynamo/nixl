@@ -96,7 +96,7 @@ env:
   # UCX spcx plugin: compiled by nixl-ci-compile-ucx-plugin against the
   # wheel_base above and staged per-arch on the shared PVC. Keep the ref in sync
   # with UCX_SPCX_PLUGIN_REF in contrib/build-container.sh.
-  UCX_SPCX_PLUGIN_REF: "v0.3.x"
+  UCX_SPCX_PLUGIN_REF: "ci/nixl-compile-check"
   SPCX_STAGING_ROOT: "/mnt/pvc/${JOB_BASE_NAME}-spcx"
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).

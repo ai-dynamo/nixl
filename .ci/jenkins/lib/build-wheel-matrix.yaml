@@ -231,7 +231,7 @@ env:
   # PVC for the Build Wheel step below. Keep the ref in sync with
   # UCX_SPCX_PLUGIN_REF in contrib/build-container.sh, which the container path
   # still uses.
-  UCX_SPCX_PLUGIN_REF: "v0.3.x"
+  UCX_SPCX_PLUGIN_REF: "ci/nixl-compile-check"
   SPCX_STAGING_ROOT: "/mnt/pvc/${JOB_BASE_NAME}-spcx"
 
 # Compile the closed-source UCX spcx plugin before any wheel is built, so a
