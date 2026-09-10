@@ -54,9 +54,6 @@ class nixlAgentData final : public nixlMetadataContext {
         backend_list_t                         notifEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
-        // Bookkeeping from memory view handles to backend engines
-        std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
-
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
             remoteBackends_;
 
@@ -65,9 +62,19 @@ class nixlAgentData final : public nixlMetadataContext {
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
         backend_map_t backendEngines_;
-        // Owning shared_ptr per registration generation; weak refs in handles expire on
-        // invalidation or re-registration.
+        // Discoverable remote sections; pinned views may retain invalidated sections.
         std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
+        struct MemViewBinding {
+            nixlBackendEngine &engine;
+            std::vector<std::shared_ptr<nixlRemoteSection>> owners;
+        };
+        // Owners outlive backend release; engines outlive all bindings.
+        std::unordered_map<nixlMemViewH, MemViewBinding> memViews_;
+        bool isCurrentRemoteSection(const std::string &agent,
+                                    const std::weak_ptr<nixlRemoteSection> &section) const {
+            const auto it = remoteSections_.find(agent);
+            return it != remoteSections_.end() && it->second == section.lock();
+        }
         std::unique_ptr<nixlTelemetry> telemetry_;
         // Composite tracer (fans out to every enabled backend); null when no
         // backend is active.

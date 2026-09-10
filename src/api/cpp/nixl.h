@@ -396,6 +396,8 @@ class nixlAgent {
          * agent. NIXL automatically determines the backend that can perform the preparation. If a
          * list of backends hints is provided (via extra_params), the selection is limited to the
          * specified backends.
+         * Remote metadata is retained until the view is released. Invalidation does not revoke
+         * existing views; prepare a new view to use replacement metadata.
          *
          * @param  dlist         [in]  Descriptor list for the remote buffers
          * @param  mvh           [out] Memory view handle for the remote buffers
@@ -429,6 +431,12 @@ class nixlAgent {
 
         /**
          * @brief  Release a memory view handle.
+         *
+         * Stop and synchronize GPU users before release. Keep buffers and registrations valid
+         * until their operations and views are released, including local/loopback registrations.
+         * Direct mode requires completed operations. Proxy mode waits for queued/backend work
+         * to finish or fail, and requires all GPU producers on the runtime to be stopped.
+         * Agent destruction requires the same caller-side quiescence.
          *
          * @param  mvh           [in] Memory view handle to be released
          */
@@ -523,7 +531,8 @@ class nixlAgent {
         /**
          * @brief  Invalidate the remote agent metadata cached locally. This will
          *         disconnect from that agent if already connected, and no more
-         *         transfers can be initiated towards that agent.
+         *         host transfers can be initiated towards that agent. Existing device memory
+         *         views retain their metadata and must be released separately.
          *
          * @param  remote_agent  Remote agent name to invalidate its metadata blob
          * @return nixl_status_t Error code if call was not successful

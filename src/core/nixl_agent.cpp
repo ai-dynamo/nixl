@@ -235,6 +235,10 @@ nixlAgentData::~nixlAgentData() {
     // Runs before any member is destroyed, so no metadata backend thread can
     // still be in the caches below.
     md_.stop();
+    for (const auto &[view, binding] : memViews_) {
+        binding.engine.releaseMemView(view);
+    }
+    memViews_.clear();
 }
 
 /*** nixlAgent implementation ***/
@@ -806,7 +810,8 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     // The prepped remote dlist snapshot is only valid for the remote registration generation
     // it was prepared from: reject if that generation was invalidated or replaced since.
     const auto remote_sec_ref = remote_side.remoteSectionRef.lock();
-    if (!remote_sec_ref) {
+    if (!remote_sec_ref ||
+        !data->isCurrentRemoteSection(remote_side.remoteAgent, remote_side.remoteSectionRef)) {
         NIXL_ERROR_FUNC << "remote agent '" << remote_side.remoteAgent
                         << "' was invalidated or re-registered after prepped xfer request "
                            "creation; prepped descriptor lists must be re-created";
@@ -1075,7 +1080,8 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
 
     // Check if the remote agent connection info is still valid
     // (assuming cost estimation requires connection info like transfers)
-    if (!req_hndl->remoteAgent.empty() && req_hndl->remoteSection.expired()) {
+    if (!req_hndl->remoteAgent.empty() &&
+        !data->isCurrentRemoteSection(req_hndl->remoteAgent, req_hndl->remoteSection)) {
         NIXL_ERROR_FUNC << "invalid request handle, remote agent was invalidated or "
                            "re-registered after transfer request creation";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -1135,7 +1141,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     std::shared_lock<nixlLock> read_lock(data->lock);
     // The request was created against a specific remote registration generation: refuse to
     // post if that generation was invalidated or replaced by a re-registration meanwhile.
-    if (req_hndl->remoteSection.expired()) {
+    if (!data->isCurrentRemoteSection(req_hndl->remoteAgent, req_hndl->remoteSection)) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated or re-registered after transfer request creation; "
                            "not posting stale handle";
@@ -1234,7 +1240,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
     // Same for users incorrectly recalling this method in error/done.
     if (req_hndl->status == NIXL_IN_PROG) {
         // Check if the remote was invalidated before completion
-        if (req_hndl->remoteSection.expired()) {
+        if (!data->isCurrentRemoteSection(req_hndl->remoteAgent, req_hndl->remoteSection)) {
             NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                             << "' was invalidated or re-registered during transfer";
             return NIXL_ERR_NOT_FOUND;
@@ -1901,6 +1907,7 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
     NIXL_TRACE_ATTR(trace_span, "desc_count", static_cast<std::int64_t>(desc_count));
 
     nixl_remote_meta_dlist_t remote_meta_dlist{mem_type};
+    std::vector<std::shared_ptr<nixlRemoteSection>> owners;
     nixlBackendEngine *engine{nullptr};
     nixl_opt_b_args_t opt_args;
     if (extra_params) {
@@ -1920,6 +1927,7 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
             NIXL_ERROR_FUNC << "Metadata for remote agent '" << desc.remoteAgent << "' not found";
             return NIXL_ERR_NOT_FOUND;
         }
+        owners.push_back(it->second);
 
         if (engine) {
             // Engine has already been selected, add element to the remote metadata
@@ -1957,7 +1965,7 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
 
     const auto status = engine->prepMemView(remote_meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
-        data->mvhToEngine.emplace(mvh, *engine);
+        data->memViews_.emplace(mvh, nixlAgentData::MemViewBinding{*engine, std::move(owners)});
     }
 
     return status;
@@ -1999,7 +2007,7 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
 
     const auto status = engine->prepMemView(meta_dlist, mvh, &opt_args);
     if (status == NIXL_SUCCESS) {
-        data->mvhToEngine.emplace(mvh, *engine);
+        data->memViews_.emplace(mvh, nixlAgentData::MemViewBinding{*engine, {}});
     }
 
     return status;
@@ -2011,12 +2019,12 @@ nixlAgent::releaseMemView(nixlMemViewH mvh) const {
         trace_span, data->tracer_.get(), "nixl::releaseMemView", nixl::trace::Kind::Generic);
 
     const std::lock_guard lock_guard(data->lock);
-    const auto it = data->mvhToEngine.find(mvh);
-    if (it == data->mvhToEngine.end()) {
+    const auto it = data->memViews_.find(mvh);
+    if (it == data->memViews_.end()) {
         NIXL_WARN << "Invalid memory view handle: " << mvh;
         return;
     }
 
-    it->second.releaseMemView(mvh);
-    data->mvhToEngine.erase(it);
+    it->second.engine.releaseMemView(mvh);
+    data->memViews_.erase(it);
 }
