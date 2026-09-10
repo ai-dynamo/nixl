@@ -433,3 +433,15 @@ TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
 
     EXPECT_EQ(request.traceCorrelationId64(), 0u);
 }
+
+TEST(Tracing, ActiveTracerConstructsGeneratedContext) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+
+    const nixl::trace::TraceContext first{tracer.get()};
+    const nixl::trace::TraceContext second{tracer.get()};
+
+    EXPECT_TRUE(first.valid());
+    EXPECT_TRUE(second.valid());
+    EXPECT_NE(first.correlationId64(), second.correlationId64());
+}

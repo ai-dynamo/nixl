@@ -816,14 +816,13 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    auto handle = std::make_unique<nixlXferReqH>(
-        remote_side.remoteAgent,
-        operation,
-        local_descs.getType(),
-        remote_descs.getType(),
-        desc_count,
-        remote_side.remoteSectionRef,
-        data->tracer_ ? nixl::trace::generateTraceContext() : nixl::trace::TraceContext{});
+    auto handle = std::make_unique<nixlXferReqH>(remote_side.remoteAgent,
+                                                 operation,
+                                                 local_descs.getType(),
+                                                 remote_descs.getType(),
+                                                 desc_count,
+                                                 remote_side.remoteSectionRef,
+                                                 nixl::trace::TraceContext{data->tracer_.get()});
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -986,14 +985,13 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     // TODO: merge descriptors back to back in memory (like makeXferReq).
     // TODO [Perf]: Avoid heap allocation on the datapath, maybe use a mem pool
 
-    auto handle = std::make_unique<nixlXferReqH>(
-        remote_agent,
-        operation,
-        local_descs.getType(),
-        remote_descs.getType(),
-        local_descs.descCount(),
-        rem_sec_it->second,
-        data->tracer_ ? nixl::trace::generateTraceContext() : nixl::trace::TraceContext{});
+    auto handle = std::make_unique<nixlXferReqH>(remote_agent,
+                                                 operation,
+                                                 local_descs.getType(),
+                                                 remote_descs.getType(),
+                                                 local_descs.descCount(),
+                                                 rem_sec_it->second,
+                                                 nixl::trace::TraceContext{data->tracer_.get()});
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.

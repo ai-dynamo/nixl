@@ -64,6 +64,19 @@ parseBytes(std::string_view value,
 }
 
 void
+generateInto(nixl::trace::TraceContext &context) {
+    do {
+        nixl::generateRandomBytes(context.traceId.data(), context.traceId.size());
+    } while (isAllZero(context.traceId));
+
+    do {
+        nixl::generateRandomBytes(context.spanId.data(), context.spanId.size());
+    } while (isAllZero(context.spanId));
+
+    context.flags = 0x02;
+}
+
+void
 appendByte(std::string &result, std::uint8_t value) {
     constexpr std::array<char, 16> hex{
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
@@ -71,6 +84,12 @@ appendByte(std::string &result, std::uint8_t value) {
     result.push_back(hex[value & 0x0f]);
 }
 } // namespace
+
+nixl::trace::TraceContext::TraceContext(const nixl::trace::Tracer *tracer) {
+    if (tracer != nullptr) {
+        generateInto(*this);
+    }
+}
 
 bool
 nixl::trace::TraceContext::valid() const noexcept {
@@ -134,13 +153,6 @@ nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
 nixl::trace::TraceContext
 nixl::trace::generateTraceContext() {
     nixl::trace::TraceContext context;
-    do {
-        nixl::generateRandomBytes(context.traceId.data(), context.traceId.size());
-    } while (isAllZero(context.traceId));
-    context.flags = 0x02;
-
-    do {
-        nixl::generateRandomBytes(context.spanId.data(), context.spanId.size());
-    } while (isAllZero(context.spanId));
+    generateInto(context);
     return context;
 }
