@@ -65,7 +65,7 @@ ownershipEnvironment(const std::filesystem::path &path) {
     std::ifstream status("/proc/self/status");
     for (std::string line; std::getline(status, line);) {
         constexpr std::string_view key = "Seccomp:";
-        if (line.rfind(key, 0) == 0) {
+        if (line.starts_with(key)) {
             const auto value = line.find_first_not_of(" \t", key.size());
             out << ", seccomp " << (value == std::string::npos ? "?" : line.substr(value));
             break;
