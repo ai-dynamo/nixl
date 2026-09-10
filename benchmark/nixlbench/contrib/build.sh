@@ -35,9 +35,10 @@ if [ -z ${latest_tag} ]; then
     echo "No git release tag found, setting to unknown version: ${latest_tag}"
 fi
 
-BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
-BASE_IMAGE_TAG=25.10-cuda13.0-devel-ubuntu24.04
-CUSTOM_BASE_IMAGE=0
+# Empty by default and forwarded independently below, so whichever one is left
+# unset comes from the Dockerfile's own ARG default rather than an empty string.
+BASE_IMAGE=""
+BASE_IMAGE_TAG=""
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
@@ -56,7 +57,6 @@ get_options() {
         --base-image)
             if [ "$2" ]; then
                 BASE_IMAGE="$2"
-                CUSTOM_BASE_IMAGE=1
                 shift
             else
                 missing_requirement $1
@@ -65,7 +65,6 @@ get_options() {
         --base-image-tag)
             if [ "$2" ]; then
                 BASE_IMAGE_TAG=$2
-                CUSTOM_BASE_IMAGE=1
                 shift
             else
                 missing_requirement $1
@@ -193,11 +192,9 @@ show_build_options() {
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
     echo "Build Context Args: ${BUILD_CONTEXT_ARGS}"
-    if [ "$CUSTOM_BASE_IMAGE" -eq 1 ]; then
-        echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
-    else
-        echo "Base Image: (using Dockerfile default)"
-    fi
+    # Each component is overridden independently; whichever is unset comes
+    # from the Dockerfile's own ARG default.
+    echo "Base Image: ${BASE_IMAGE:-<Dockerfile default>}:${BASE_IMAGE_TAG:-<Dockerfile default>}"
     if [ -n "$EFA_VERSION" ]; then
         echo "EFA Version: ${EFA_VERSION}"
     fi
@@ -234,9 +231,8 @@ error() {
 
 get_options "$@"
 
-if [ "$CUSTOM_BASE_IMAGE" -eq 1 ]; then
-    BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
-fi
+BUILD_ARGS+="${BASE_IMAGE:+ --build-arg BASE_IMAGE=$BASE_IMAGE}"
+BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"

@@ -64,8 +64,7 @@ runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
      name: 'build_helper_llm',
-     tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04'
+     tag: "${CI_IMAGE_TAG}"
     }
 
 # Matrix kept to a single arch axis because the framework requires `arch` to
