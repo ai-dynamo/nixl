@@ -22,11 +22,18 @@
 #include "telemetry/telemetry_exporter.h"
 #include "telemetry_event.h"
 
+#include <sys/stat.h>
+#include <sys/vfs.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <system_error>
 
@@ -40,6 +47,48 @@ idx(nixl_telemetry_event_type_t t) {
 [[nodiscard]] inline nixlTelemetryExporterInitParams
 initParams(const std::string &agent) {
     return nixlTelemetryExporterInitParams{agent, 4096};
+}
+
+inline constexpr uid_t kNobodyUid = 65534;
+
+[[nodiscard]] inline std::string
+ownershipEnvironment(const std::filesystem::path &path) {
+    std::ostringstream out;
+    out << "euid " << ::geteuid();
+
+    struct statfs fs{};
+    if (::statfs(path.c_str(), &fs) == 0) {
+        out << ", fs type 0x" << std::hex << static_cast<unsigned long>(fs.f_type) << std::dec;
+    }
+
+    std::ifstream uid_map("/proc/self/uid_map");
+    for (std::string line; std::getline(uid_map, line);) {
+        out << ", uid_map [" << line << "]";
+    }
+    return out.str();
+}
+
+[[nodiscard]] inline std::optional<std::string>
+giveAwayOwnership(const std::filesystem::path &path) {
+    if (::geteuid() != 0) {
+        return "needs privileges to give '" + path.string() + "' another owner (" +
+            ownershipEnvironment(path) + ")";
+    }
+    if (::chown(path.c_str(), kNobodyUid, static_cast<gid_t>(-1)) != 0) {
+        return "cannot give '" + path.string() + "' another owner: " + std::strerror(errno) + " (" +
+            ownershipEnvironment(path) + ")";
+    }
+
+    struct stat st{};
+    if (::stat(path.c_str(), &st) != 0) {
+        return "cannot read back the owner of '" + path.string() + "': " + std::strerror(errno);
+    }
+    if (st.st_uid == kNobodyUid) {
+        return std::nullopt;
+    }
+    return "chown to uid " + std::to_string(kNobodyUid) + " reported success but '" +
+        path.string() + "' is still owned by uid " + std::to_string(st.st_uid) + " (" +
+        ownershipEnvironment(path) + ")";
 }
 
 // A telemetry directory of this test's own, mode 0700: the exporter asks
