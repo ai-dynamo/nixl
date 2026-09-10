@@ -100,33 +100,47 @@ endif
 
 cuda_detected = cuda_available
 
-# ROCm / HIP (optional auto-detect; use_rocm=true makes HIP mandatory)
+# ROCm / HIP. As in the root project, ROCm is requested by setting
+# -Drocm_path=<prefix>; an empty rocm_path means ROCm is not requested, so it is
+# never enabled implicitly from the environment. Detection probes for
+# libamdhip64 itself rather than stat'ing <prefix>, because ROCm >= 7.13 makes
+# the install root an alternatives symlink; the prefix-scoped header check stops
+# a system-wide libamdhip64 from satisfying a wrong rocm_path.
 rocm_available = false
 rocm_dep = declare_dependency()
-want_rocm = get_option('use_rocm')
 rocm_path = get_option('rocm_path')
-if rocm_path == ''
-    rocm_path = '/opt/rocm'
-endif
-rocm_lib_path = rocm_path + '/lib'
-rocm_inc_path = rocm_path + '/include'
-rocm_inc = include_directories(rocm_inc_path)
-amdhip64_lib = cpp.find_library('amdhip64', dirs: [rocm_lib_path], required: false)
-if amdhip64_lib.found() and cpp.has_header('hip/hip_runtime.h', include_directories: rocm_inc)
-    rocm_dep = declare_dependency(
-        link_args : ['-L' + rocm_lib_path, '-lamdhip64', '-lhiprtc'],
-        include_directories : rocm_inc)
-    rocm_available = true
-elif want_rocm
-    error('use_rocm=true but ROCm HIP was not found under ' + rocm_path +
-          '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
+if rocm_path != ''
+    rocm_lib_path = rocm_path + '/lib'
+    rocm_inc = include_directories(rocm_path + '/include')
+    amdhip64_lib = cpp.find_library('amdhip64', dirs: [rocm_lib_path], required: false)
+    hiprtc_lib = cpp.find_library('hiprtc', dirs: [rocm_lib_path], required: false)
+    if amdhip64_lib.found() and hiprtc_lib.found() and \
+       cpp.has_header('hip/hip_runtime.h', include_directories: rocm_inc)
+        rocm_dep = declare_dependency(
+            dependencies : [amdhip64_lib, hiprtc_lib],
+            link_args : ['-Wl,-rpath,' + rocm_lib_path],
+            include_directories : rocm_inc)
+        rocm_available = true
+    endif
 endif
 
 rocm_detected = rocm_available
 
-# One translation unit cannot include CUDA and HIP headers together. Use
-# nixlbench_gpu=cuda vs nixlbench_gpu=rocm for two separate Meson builds.
+# One translation unit cannot include CUDA and HIP headers together, so a single
+# build targets exactly one stack. nixlbench_gpu is the one control that picks
+# it. use_rocm predates it and only asserted "ROCm must be present" without
+# selecting it, so -Duse_rocm=true on a host with both SDKs configured a CUDA
+# binary despite ROCm being demanded. It is kept as a compatibility alias that
+# now forces the rocm flavor, and contradicting it is an error rather than a
+# silent CUDA build.
 gpu_flavor = get_option('nixlbench_gpu')
+if get_option('use_rocm')
+    if gpu_flavor == 'cuda'
+        error('use_rocm=true contradicts nixlbench_gpu=cuda; pick one.')
+    endif
+    gpu_flavor = 'rocm'
+endif
+
 if gpu_flavor == 'cuda'
     cuda_available = cuda_detected
     rocm_bench = false
@@ -143,6 +157,10 @@ if gpu_flavor == 'cuda' and not cuda_detected
     error('nixlbench_gpu=cuda was set but CUDA was not found.')
 endif
 if gpu_flavor == 'rocm' and not rocm_detected
+    if rocm_path == ''
+        error('A ROCm nixlbench build was requested but rocm_path is unset. ' +
+              'Set -Drocm_path=<prefix> to the ROCm install root.')
+    endif
     error('nixlbench_gpu=rocm was set but ROCm HIP was not found under ' + rocm_path + '.')
 endif
 

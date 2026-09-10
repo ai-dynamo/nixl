@@ -450,8 +450,8 @@ else
         ${NIXLBENCH_BUILD_DIR} \
         -Dnixl_path=${INSTALL_DIR} \
         -Dprefix=${INSTALL_DIR} \
-        -Duse_rocm=true \
-        -Drocm_path="${ROCM_INSTALL_PATH}"
+        -Dnixlbench_gpu=rocm \
+        -Drocm_path="${ROCM_PATH}"
     ninja -j"$NPROC" -C ${NIXLBENCH_BUILD_DIR}
     ninja -j"$NPROC" -C ${NIXLBENCH_BUILD_DIR} install
 fi # PRE_INSTALLED_NIXL_ENV
