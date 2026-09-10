@@ -38,7 +38,7 @@ CELL_KEY = re.compile(r"^[A-Za-z0-9._-]+$")
 FILE_NAME = re.compile(r"^[A-Za-z0-9._+-]+$")
 # Publish's allowlist plus the folder component.
 FOLDER = re.compile(
-    r"^(verification/g[0-9a-f]{8}\.ucx[0-9a-f]{8}|release/[A-Za-z0-9][A-Za-z0-9._-]*/[0-9]+)$"
+    r"^((verification|staging)/g[0-9a-f]{8}\.ucx[0-9a-f]{8}|release/[A-Za-z0-9][A-Za-z0-9._-]*/[0-9]+)$"
 )
 MANIFEST_NAME = "build-manifest.json"
 HTTP_ATTEMPTS = 3

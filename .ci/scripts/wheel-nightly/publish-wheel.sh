@@ -6,12 +6,13 @@
 # ARTIFACTORY_USER/ARTIFACTORY_TOKEN.
 
 set -x
-# Nightly runs leave PUBLISH_DIR empty and publish to verification/;
-# manual release runs can pass release/<ver>. Allowlist it - the URL is
-# PUT with the service token, and a path like ../<other-repo> would
-# normalize into a different Artifactory repo.
+# Scheduled runs leave PUBLISH_DIR empty and publish to verification/;
+# manual staging runs can pass staging, manual release runs can pass
+# release/<ver>. Allowlist it - the URL is PUT with the service token,
+# and a path like ../<other-repo> would normalize into a different
+# Artifactory repo.
 PUBLISH_DIR="${PUBLISH_DIR:-verification}"
-[[ "${PUBLISH_DIR}" =~ ^(verification|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
+[[ "${PUBLISH_DIR}" =~ ^(verification|staging|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
   || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
 . ./wheel_build_ids.env
 . ./cell.env
@@ -54,9 +55,9 @@ UCX_SHA="$(docker run --rm "${WHEEL_IMAGE_TAG}" git -C /usr/local/src/ucx rev-pa
 PROPERTIES+=";UCX_SHA=${UCX_SHA}"
 
 # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the
-# build-llm-container verification pipeline) and is shared between builds;
-# release/<ver> gets one folder per build.
-if [ "${PUBLISH_DIR}" = "verification" ]; then
+# build-llm-container verification pipeline).
+# staging/ mirrors it. release/<ver> gets one folder per build.
+if [ "${PUBLISH_DIR}" = "verification" ] || [ "${PUBLISH_DIR}" = "staging" ]; then
   FOLDER="g${NIXL_SHA}.ucx${UCX_SHA}"
 else
   FOLDER="${BUILD_NUMBER}"
