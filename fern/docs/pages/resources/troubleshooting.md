@@ -24,7 +24,7 @@ The available log levels are:
 | `TRACE` | Very detailed trace for deep debugging |
 
 <Tip>
-See [Environment Variables](/nixl/resources/environment-variables#core-variables) for the full `NIXL_LOG_LEVEL` reference and all other NIXL configuration knobs.
+See [Environment Variables](/nixl/resources/environment-variables#core-variables) for the full `NIXL_LOG_LEVEL` reference and all other NIXL configuration knobs, and the [Logging Guide](/nixl/user-guide/logging-guide) for capturing a per-process log file.
 </Tip>
 
 ## Error Codes Reference
