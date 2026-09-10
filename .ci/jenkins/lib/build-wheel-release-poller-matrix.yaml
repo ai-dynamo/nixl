@@ -7,7 +7,7 @@
 # - One trigger per commit, not per CUDA variant: the wheel job builds every
 #   CUDA major in a single run. The scan is .ci/scripts/scan-missing-release-wheels.sh.
 # - Which releases build: every release/* branch with version >= MIN_RELEASE
-#   whose build-container.sh accepts --build-options-file (the nightly always
+#   whose build-container.sh accepts --build-options-file (build-wheel always
 #   passes it) - picked up automatically, new release branches need no change.
 # - Which UCX and plugins: whatever the release's own build-container.sh pins;
 #   the poller passes neither, so each release ships what it was built to ship.
@@ -104,7 +104,7 @@ steps:
               }
           }
           // Outcome report. build(wait:false) yields no per-run URL, so link the
-          // nightly job; each spawned build back-links here as "upstream
+          // build-wheel job; each spawned build back-links here as "upstream
           // #${BUILD_NUMBER}", and its per-build downstream link is on this
           // build's page in the classic UI (Blue Ocean hides the widget).
           def report = ["", "===== poller spawned ${spawned.size()} build(s) -> ${env.JENKINS_URL}job/nixl-ci-build-wheel-nightly/ ====="]
@@ -120,7 +120,7 @@ steps:
 
 taskName: '${name}'
 
-# Mail the unattended poller only when it fails, mirroring the nightly.
+# Mail the unattended poller only when it fails, mirroring build-wheel.
 pipeline_stop:
   shell: action
   module: groovy
