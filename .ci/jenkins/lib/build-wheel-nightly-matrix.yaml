@@ -1,8 +1,9 @@
 # Nightly NIXL wheel verification build. Pipeline and this config run from
 # main; the source ref (NIXL_VERSION) is cloned into nixl-src, so built refs
 # carry no CI config. Wheels publish to
-# WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default) or
-# WHEEL_REPO_URL/<PUBLISH_DIR>/<build-number> for release runs.
+# WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default), or
+# WHEEL_REPO_URL/staging/g<nixl-sha>.ucx<ucx-sha> for manual staging runs, or
+# WHEEL_REPO_URL/<PUBLISH_DIR>/<build-number> for manual release runs.
 #
 # One run builds every CUDA major, so a release folder holds a complete wheel
 # set and is owned by this build alone - which is what lets pipeline_stop delete
@@ -178,11 +179,12 @@ steps:
       ls -l dist/
 
       # Nightly runs leave PUBLISH_DIR empty and publish to verification/;
-      # manual release runs can pass release/<ver>. Allowlist it - the URL is
-      # PUT with the service token, and a path like ../<other-repo> would
-      # normalize into a different Artifactory repo.
+      # manual staging runs can pass staging, manual release runs can pass
+      # release/<ver>. Allowlist it - the URL is PUT with the service token,
+      # and a path like ../<other-repo> would normalize into a different
+      # Artifactory repo.
       PUBLISH_DIR="${PUBLISH_DIR:-verification}"
-      [[ "${PUBLISH_DIR}" =~ ^(verification|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
+      [[ "${PUBLISH_DIR}" =~ ^(verification|staging|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
         || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
       . ./wheel_build_ids.env
 
@@ -212,10 +214,10 @@ steps:
       fi
 
       # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the
-      # build-llm-container verification pipeline) and is shared between builds;
-      # release/<ver> gets one folder per build.
-      if [ "${PUBLISH_DIR}" = "verification" ]; then
-        [ -n "${UCX_SHA:-}" ] || { echo "ERROR: verification publish needs UCX_SHA from build_options.env"; exit 1; }
+      # build-llm-container verification pipeline).
+      # staging/ mirrors it. release/<ver> gets one folder per build.
+      if [ "${PUBLISH_DIR}" = "verification" ] || [ "${PUBLISH_DIR}" = "staging" ]; then
+        [ -n "${UCX_SHA:-}" ] || { echo "ERROR: ${PUBLISH_DIR} publish needs UCX_SHA from build_options.env"; exit 1; }
         FOLDER="g${NIXL_SHA}.ucx${UCX_SHA}"
       else
         FOLDER="${BUILD_NUMBER}"
