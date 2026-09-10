@@ -686,5 +686,76 @@ namespace proxy_runtime {
             "unfinished or unpublished");
     }
 
+    TEST_F(ProxyRuntimeTest, RetirementMakesQueuedPutAndAtomicVisibleAcrossRings) {
+        uint64_t source = 0x123456789abcdef0;
+        uint64_t destinations[2][4]{};
+        std::vector<nixl::proxyBackendSubmission> pending[2];
+        auto ops = backend_.ops();
+        ops.submit = [&](const nixl::proxyBackendSubmission &op, nixl::proxyBackendRequest &) {
+            pending[op.channel_id].push_back(op);
+            return NIXL_SUCCESS;
+        };
+        ops.quiesce = [&](uint32_t channel, uint32_t) {
+            // Local completion need not imply remote visibility.
+            for (const auto &op : pending[channel]) {
+                auto *dst = reinterpret_cast<uint64_t *>(op.remote.desc.addr);
+                if (op.opcode == nixl_proxy_opcode_t::PUT) {
+                    std::memcpy(dst, reinterpret_cast<const void *>(op.local.desc.addr), op.size);
+                } else {
+                    *dst += op.value;
+                }
+            }
+            pending[channel].clear();
+            return NIXL_SUCCESS;
+        };
+        max_peers_ = 2;
+        ASSERT_EQ(nixl::proxyRuntime::create(ops, makeConfig(2, 2, 2), runtime_, allocator_),
+                  NIXL_SUCCESS);
+        nixlMemViewH src = nullptr;
+        ASSERT_EQ(
+            runtime_->prepMemView(
+                makeLocalDlist(reinterpret_cast<uintptr_t>(&source), sizeof(source), 0, &local_md_),
+                &src),
+            NIXL_SUCCESS);
+        for (int replacement = 0; replacement < 3; ++replacement) {
+            nixl_remote_meta_dlist_t remote(VRAM_SEG);
+            for (unsigned peer = 0; peer < 2; ++peer) {
+                remote.addDesc(makeRemoteDesc(std::to_string(peer),
+                                              reinterpret_cast<uintptr_t>(destinations[peer]),
+                                              sizeof(destinations[peer]),
+                                              0,
+                                              &remote_md_));
+            }
+            nixlMemViewH dst = nullptr;
+            ASSERT_EQ(runtime_->prepMemView(remote, &dst), NIXL_SUCCESS);
+            for (unsigned channel_id = 0; channel_id < 2; ++channel_id) {
+                for (unsigned peer = 0; peer < 2; ++peer) {
+                    auto put = makePut(src, dst, channel_id, peer);
+                    put.operand = 0;
+                    put.dst_offset = channel_id * 2 * sizeof(uint64_t);
+                    put.size = sizeof(uint64_t);
+                    publish(channel(channel_id, peer), 0, put, 1);
+                    auto atomic = put;
+                    atomic.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
+                    atomic.dst_offset += sizeof(uint64_t);
+                    atomic.operand = 3;
+                    publish(channel(channel_id, peer), 1, atomic, 2);
+                }
+            }
+            if (replacement == 0) {
+                ASSERT_EQ(runtime_->startWorkers(), NIXL_SUCCESS);
+            }
+            ASSERT_EQ(runtime_->unregisterProxyMemView(dst), NIXL_SUCCESS);
+            for (const auto &peer : destinations) {
+                for (unsigned channel_id = 0; channel_id < 2; ++channel_id) {
+                    EXPECT_EQ(peer[channel_id * 2], source);
+                    EXPECT_EQ(peer[channel_id * 2 + 1], 3u * (replacement + 1));
+                }
+            }
+        }
+        EXPECT_EQ(runtime_->unregisterProxyMemView(src), NIXL_SUCCESS);
+        EXPECT_EQ(runtime_->shutdown(), NIXL_SUCCESS);
+    }
+
 } // namespace proxy_runtime
 } // namespace gtest
