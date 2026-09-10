@@ -25,7 +25,7 @@
 #include "common/nixl_log.h"
 
 nixlMetadataStream::nixlMetadataStream(uint16_t port) noexcept : port(port), socketFd(-1) {
-    memset(&listenerAddr, 0, sizeof(listenerAddr));
+    std::memset(&listenerAddr, 0, sizeof(listenerAddr));
 }
 
 nixlMetadataStream::~nixlMetadataStream() {
@@ -35,25 +35,29 @@ nixlMetadataStream::~nixlMetadataStream() {
 bool
 nixlMetadataStream::setupStream(int family) {
 
-    socketFd = socket(family, SOCK_STREAM | SOCK_NONBLOCK, 0);
-    if (socketFd == -1) {
-        return false;
-    }
-
-    memset(&listenerAddr, 0, sizeof(listenerAddr));
-    if (family == AF_INET6) {
-        auto *addr = reinterpret_cast<sockaddr_in6 *>(&listenerAddr);
+    std::memset(&listenerAddr, 0, sizeof(listenerAddr));
+    switch (family) {
+    case AF_INET6: {
+        auto *const addr = reinterpret_cast<sockaddr_in6 *>(&listenerAddr);
         addr->sin6_family = AF_INET6;
         addr->sin6_addr = in6addr_any;
         addr->sin6_port = htons(port);
-    } else {
-        auto *addr = reinterpret_cast<sockaddr_in *>(&listenerAddr);
+        break;
+    }
+    case AF_INET: {
+        auto *const addr = reinterpret_cast<sockaddr_in *>(&listenerAddr);
         addr->sin_family = AF_INET;
         addr->sin_addr.s_addr = INADDR_ANY;
         addr->sin_port = htons(port);
+        break;
+    }
+    default:
+        errno = EAFNOSUPPORT;
+        return false;
     }
 
-    return true;
+    socketFd = socket(family, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    return socketFd != -1;
 }
 
 void nixlMetadataStream::closeStream() {
@@ -84,7 +88,8 @@ void nixlMDStreamListener::setupListener() {
             throw std::runtime_error("Failed to create metadata listener socket");
         }
         if (family == AF_INET6) {
-            int v6only = 0;
+            // Explicitly allow IPv4 peers to connect through the IPv6 listener.
+            const int v6only = 0;
             if (setsockopt(socketFd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only)) < 0) {
                 if (errno == ENOPROTOOPT) {
                     closeStream();
@@ -96,14 +101,14 @@ void nixlMDStreamListener::setupListener() {
             }
         }
 
-        int opt = 1;
+        const int opt = 1;
         if (setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
             NIXL_PERROR << "setsockopt(REUSEADDR) failed while setting up listener for MD";
             closeStream();
             throw std::runtime_error("Failed to configure metadata listener socket");
         }
 
-        const auto *address = reinterpret_cast<const sockaddr *>(&listenerAddr);
+        const auto *const address = reinterpret_cast<const sockaddr *>(&listenerAddr);
         const socklen_t length = family == AF_INET6 ? sizeof(sockaddr_in6) : sizeof(sockaddr_in);
         if (bind(socketFd, address, length) < 0) {
             if (family == AF_INET6 && errno == EADDRNOTAVAIL) {
@@ -121,9 +126,17 @@ void nixlMDStreamListener::setupListener() {
     sockaddr_storage bound_addr;
     socklen_t addr_len = sizeof(bound_addr);
     if (getsockname(socketFd, reinterpret_cast<sockaddr *>(&bound_addr), &addr_len) == 0) {
-        port = ntohs(bound_addr.ss_family == AF_INET6 ?
-                         reinterpret_cast<sockaddr_in6 *>(&bound_addr)->sin6_port :
-                         reinterpret_cast<sockaddr_in *>(&bound_addr)->sin_port);
+        switch (bound_addr.ss_family) {
+        case AF_INET6:
+            port = ntohs(reinterpret_cast<const sockaddr_in6 *>(&bound_addr)->sin6_port);
+            break;
+        case AF_INET:
+            port = ntohs(reinterpret_cast<const sockaddr_in *>(&bound_addr)->sin_port);
+            break;
+        default:
+            closeStream();
+            throw std::runtime_error("Unsupported metadata listener address family");
+        }
     } else {
         closeStream();
         throw std::runtime_error(

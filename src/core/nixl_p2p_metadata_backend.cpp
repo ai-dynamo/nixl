@@ -33,6 +33,7 @@
 #include <absl/strings/str_split.h>
 
 #include <chrono>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -51,37 +52,35 @@ constexpr size_t max_frame_bytes = 1UL << 30; // 1 GiB
 constexpr auto frame_body_timeout = std::chrono::seconds(5);
 
 int
-connectToIP(const std::string &ip_addr, int port) {
-    sockaddr_storage listener_addr{};
-    socklen_t listener_addr_len;
-    auto *addr4 = reinterpret_cast<sockaddr_in *>(&listener_addr);
-    if (inet_pton(AF_INET, ip_addr.c_str(), &addr4->sin_addr) == 1) {
-        addr4->sin_family = AF_INET;
-        addr4->sin_port = htons(port);
-        listener_addr_len = sizeof(*addr4);
-    } else {
-        addrinfo hints{};
-        hints.ai_family = AF_INET6;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
-        addrinfo *result = nullptr;
-        if (getaddrinfo(ip_addr.c_str(), std::to_string(port).c_str(), &hints, &result) != 0) {
-            NIXL_ERROR << "Invalid IPv4 or IPv6 address: " << ip_addr;
-            return -1;
-        }
-        listener_addr_len = result->ai_addrlen;
-        memcpy(&listener_addr, result->ai_addr, listener_addr_len);
-        freeaddrinfo(result);
+connectToIP(const std::string &ip_addr, std::uint16_t port) {
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
+    addrinfo *result = nullptr;
+    if (getaddrinfo(ip_addr.c_str(), std::to_string(port).c_str(), &hints, &result) != 0) {
+        NIXL_ERROR << "Invalid IPv4 or IPv6 address: " << ip_addr;
+        return -1;
     }
+    if (result->ai_family != AF_INET && result->ai_family != AF_INET6) {
+        NIXL_ERROR << "Unsupported address family: " << result->ai_family;
+        freeaddrinfo(result);
+        return -1;
+    }
+    sockaddr_storage listener_addr{};
+    const socklen_t listener_addr_len = result->ai_addrlen;
+    std::memcpy(&listener_addr, result->ai_addr, listener_addr_len);
+    freeaddrinfo(result);
 
-    int ret_fd = socket(listener_addr.ss_family, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    const int ret_fd = socket(listener_addr.ss_family, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (ret_fd == -1) {
         NIXL_ERROR << "socket creation failed for ip_addr: " << ip_addr << " and port: " << port;
         return -1;
     }
 
-    int ret = connect(ret_fd, reinterpret_cast<sockaddr *>(&listener_addr), listener_addr_len);
-    if (ret < 0 && errno != EINPROGRESS) {
+    const int connect_ret =
+        connect(ret_fd, reinterpret_cast<const sockaddr *>(&listener_addr), listener_addr_len);
+    if (connect_ret < 0 && errno != EINPROGRESS) {
         close(ret_fd);
         return -1;
     }
@@ -91,7 +90,7 @@ connectToIP(const std::string &ip_addr, int port) {
     pfd.events = POLLOUT;
     pfd.revents = 0;
 
-    ret = poll(&pfd, 1, 1000); // 1000ms timeout
+    const int ret = poll(&pfd, 1, 1000); // 1000ms timeout
     if (ret <= 0) {
         if (ret < 0) {
             NIXL_PERROR << "poll failed for ip_addr: " << ip_addr << " and port: " << port;
@@ -271,7 +270,7 @@ nixlP2PMetadataBackend::sendLocal(const nixl_opt_args_t *extra_params) {
         return ret;
     }
     const std::string ip = extra_params->ipAddr;
-    const int port = extra_params->port;
+    const std::uint16_t port = extra_params->port;
     worker_.submit([this, ip, port, blob = std::move(blob)]() {
         sendToPeer(ip, port, "NIXLCOMM:LOAD" + blob);
     });
@@ -290,7 +289,7 @@ nixlP2PMetadataBackend::sendLocalPartial(const nixl_reg_dlist_t &descs,
         return ret;
     }
     const std::string ip = extra_params->ipAddr;
-    const int port = extra_params->port;
+    const std::uint16_t port = extra_params->port;
     worker_.submit([this, ip, port, blob = std::move(blob)]() {
         sendToPeer(ip, port, "NIXLCOMM:LOAD" + blob);
     });
@@ -306,7 +305,7 @@ nixlP2PMetadataBackend::fetchRemote(const std::string & /*remote_name*/,
     // Socket fetch is keyed by address, not name; the reply is loaded into the
     // remote-section cache by serviceEvents() when the peer answers.
     const std::string ip = extra_params->ipAddr;
-    const int port = extra_params->port;
+    const std::uint16_t port = extra_params->port;
     worker_.submit([this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:SEND"); });
     return NIXL_SUCCESS;
 }
@@ -317,7 +316,7 @@ nixlP2PMetadataBackend::invalidateLocal(const nixl_opt_args_t *extra_params) {
         return NIXL_ERR_INVALID_PARAM;
     }
     const std::string ip = extra_params->ipAddr;
-    const int port = extra_params->port;
+    const std::uint16_t port = extra_params->port;
     worker_.submit(
         [this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:INVL" + ctx_.agentName()); });
     return NIXL_SUCCESS;
@@ -330,7 +329,9 @@ nixlP2PMetadataBackend::serviceEvents() {
 }
 
 void
-nixlP2PMetadataBackend::sendToPeer(const std::string &ip, int port, const std::string &msg) {
+nixlP2PMetadataBackend::sendToPeer(const std::string &ip,
+                                   std::uint16_t port,
+                                   const std::string &msg) {
     const auto key = std::make_pair(ip, port);
     auto client = remoteSockets_.find(key);
     if (client == remoteSockets_.end()) {
@@ -368,20 +369,29 @@ nixlP2PMetadataBackend::acceptPeers() {
         }
         char client_ip[INET6_ADDRSTRLEN];
         const void *address;
-        int client_port;
+        std::uint16_t client_port;
         int family = client_address.ss_family;
-        if (family == AF_INET6) {
-            const auto *client6 = reinterpret_cast<const sockaddr_in6 *>(&client_address);
+        switch (family) {
+        case AF_INET6: {
+            const auto *const client6 = reinterpret_cast<const sockaddr_in6 *>(&client_address);
             address = &client6->sin6_addr;
             if (IN6_IS_ADDR_V4MAPPED(&client6->sin6_addr)) {
                 family = AF_INET;
                 address = &client6->sin6_addr.s6_addr[12];
             }
             client_port = ntohs(client6->sin6_port);
-        } else {
-            const auto *client4 = reinterpret_cast<const sockaddr_in *>(&client_address);
+            break;
+        }
+        case AF_INET: {
+            const auto *const client4 = reinterpret_cast<const sockaddr_in *>(&client_address);
             address = &client4->sin_addr;
             client_port = ntohs(client4->sin_port);
+            break;
+        }
+        default:
+            NIXL_ERROR << "Unsupported client address family: " << family;
+            close(new_fd);
+            continue;
         }
         if (inet_ntop(family, address, client_ip, sizeof(client_ip)) == nullptr) {
             NIXL_PERROR << "inet_ntop failed for client address";
