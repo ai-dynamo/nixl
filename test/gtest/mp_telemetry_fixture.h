@@ -35,6 +35,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 #include <gtest/gtest.h>
@@ -61,6 +62,16 @@ ownershipEnvironment(const std::filesystem::path &path) {
         out << ", fs type 0x" << std::hex << static_cast<unsigned long>(fs.f_type) << std::dec;
     }
 
+    std::ifstream status("/proc/self/status");
+    for (std::string line; std::getline(status, line);) {
+        constexpr std::string_view key = "Seccomp:";
+        if (line.rfind(key, 0) == 0) {
+            const auto value = line.find_first_not_of(" \t", key.size());
+            out << ", seccomp " << (value == std::string::npos ? "?" : line.substr(value));
+            break;
+        }
+    }
+
     std::ifstream uid_map("/proc/self/uid_map");
     for (std::string line; std::getline(uid_map, line);) {
         out << ", uid_map [" << line << "]";
@@ -68,6 +79,8 @@ ownershipEnvironment(const std::filesystem::path &path) {
     return out.str();
 }
 
+// A chown that returns 0 is not evidence the owner changed: a root-emulating seccomp filter
+// (enroot's, for one) answers it as a successful no-op, so the owner has to be read back.
 [[nodiscard]] inline std::optional<std::string>
 giveAwayOwnership(const std::filesystem::path &path) {
     if (::geteuid() != 0) {
@@ -75,20 +88,22 @@ giveAwayOwnership(const std::filesystem::path &path) {
             ownershipEnvironment(path) + ")";
     }
     if (::chown(path.c_str(), kNobodyUid, static_cast<gid_t>(-1)) != 0) {
-        return "cannot give '" + path.string() + "' another owner: " + std::strerror(errno) + " (" +
+        const int err = errno;
+        return "cannot give '" + path.string() + "' another owner: " + std::strerror(err) + " (" +
             ownershipEnvironment(path) + ")";
     }
 
     struct stat st{};
     if (::stat(path.c_str(), &st) != 0) {
-        return "cannot read back the owner of '" + path.string() + "': " + std::strerror(errno);
+        const int err = errno;
+        return "cannot read back the owner of '" + path.string() + "': " + std::strerror(err);
     }
-    if (st.st_uid == kNobodyUid) {
+    if (st.st_uid != ::geteuid()) {
         return std::nullopt;
     }
     return "chown to uid " + std::to_string(kNobodyUid) + " reported success but '" +
-        path.string() + "' is still owned by uid " + std::to_string(st.st_uid) + " (" +
-        ownershipEnvironment(path) + ")";
+        path.string() + "' is still owned by this process's own uid " + std::to_string(st.st_uid) +
+        " (" + ownershipEnvironment(path) + ")";
 }
 
 // A telemetry directory of this test's own, mode 0700: the exporter asks
