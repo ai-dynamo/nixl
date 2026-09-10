@@ -917,6 +917,8 @@
       and CUDA 12, with the UCX spcx and Infinia plugins always bundled, and publishes them
       to the verification Artifactory space<br/>
       • Run manually from any NIXL branch / tag / PR / SHA via <code>NIXL_VERSION</code><br/>
+      • Also triggered per missing CUDA variant by <code>nixl-build-wheel-release-poller</code>
+      with <code>PUBLISH_DIR=release/&lt;ver&gt;</code><br/>
       • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: true
     sandbox: true
@@ -944,7 +946,7 @@
       - string:
           name: "PUBLISH_DIR"
           default: ""
-          description: "Artifactory publish subdir; empty = verification (nightly default). Manual release runs can pass release/&lt;ver&gt;."
+          description: "Artifactory publish subdir; empty = verification (nightly default). The release poller and manual release runs pass release/&lt;ver&gt;."
       - string:
           name: "DEBUG"
           default: 0
@@ -962,6 +964,72 @@
             <code>refs/pull/1234/head</code> to test CI changes end to end before merge.
     # SCM = ci_refspec (default main): supplies the pipeline + matrix config
     # only; the build clones the source from NIXL_VERSION itself
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            branches: ['${{ci_refspec}}']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +refs/pull/*/head:refs/pull/*/head"
+            browser: githubweb
+            browser-url: "{jjb_git}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"
+
+# Release wheel poller: every 4 hours, compares release/* branch commits against
+# the wheels already published in Artifactory and triggers the nightly wheel
+# builder once per commit per CUDA variant that has no published wheels yet.
+# Named without the nixl-ci- prefix: a scheduled standalone job, not part of CI.
+- job-template:
+    name: "nixl-build-wheel-release-poller"
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 30
+          num-to-keep: 100    # Frequent poller - keep more builds than the nightly
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj=nixl-build-wheel-release-poller
+            conf_file=.ci/jenkins/lib/build-wheel-release-poller-matrix.yaml
+    description: >
+      <b>NIXL release wheel poller</b><br/>
+      • Runs every 4 hours and scans all <code>release/*</code> branches (version &gt;= 1.4.0),
+      looking for commits with no
+      published wheel set under <code>sw-nbu-swx-nixl-pypi-local/release/</code> in Artifactory<br/>
+      • Triggers <code>nixl-ci-build-wheel-nightly</code> per commit per missing CUDA variant
+      (wheel-presence check in Artifactory, no markers) &mdash; a failed build is retried on the
+      next cycle; delete the folder in Artifactory to force a full rebuild<br/>
+      • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: false    # Overlapping polls would double-trigger the same commits
+    sandbox: true
+    # Poll schedule. Wheels of an in-flight build appear well within one poll
+    # interval, so a commit is not re-triggered while building.
+    triggers:
+      - timed: "H H/4 * * *"
+    parameters:
+      - string:
+          name: "DEBUG"
+          default: 0
+          description: "Enable debug prints and traces, valid values are 0-9"
+      - string:
+          name: "MAIL_TO"
+          default: "nixl-ci-alerts@exchange.nvidia.com"
+          description: "Recipient(s) for the failure report. Mail is sent only when the build fails."
+      - string:
+          name: "ci_refspec"
+          default: "{jjb_branch}"
+          description: >
+            Git ref to check out the poller pipeline + matrix config from. Default main;
+            pass e.g. <code>refs/pull/1234/head</code> to test CI changes end to end before
+            merge - the poller forwards it to the triggered builds.
+    # SCM = ci_refspec (default main)
     pipeline-scm:
       scm:
         - git:
@@ -1105,5 +1173,6 @@
         - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for NIXL EP on dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
         - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
+        - "nixl-build-wheel-release-poller"  # Create release wheel poller job
         - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job
         - "{jjb_proj}-nightly"  # Create nightly UCX-master validation orchestrator

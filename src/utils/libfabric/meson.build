@@ -14,14 +14,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# AMD ROCm/HIP support (rocm_dep, hipify_src) is defined once in the root
+# meson.build and consumed here. On ROCm builds (-Drocm_path=<prefix>) the CUDA
+# sources are translated to HIP with hipify-perl; on CUDA-only builds they are
+# used verbatim.
+if rocm_dep.found()
+    libfabric_rail_src = hipify_src.process('libfabric_rail.cpp', extra_args: ['-o'])
+    libfabric_topology_src = hipify_src.process('libfabric_topology.cpp', extra_args: ['-o'])
+    libfabric_rail_manager_src = hipify_src.process('libfabric_rail_manager.cpp', extra_args: ['-o'])
+else
+    libfabric_rail_src = files('libfabric_rail.cpp')
+    libfabric_topology_src = files('libfabric_topology.cpp')
+    libfabric_rail_manager_src = files('libfabric_rail_manager.cpp')
+endif
+
 # Source files
-libfabric_utils_sources = files(
-    'libfabric_rail.cpp',
-    'libfabric_rail_manager.cpp',
+libfabric_utils_sources = [
+    libfabric_rail_src,
     'libfabric_common.cpp',
-    'libfabric_topology.cpp',
-    # More implementation files will be added as we create them
-)
+    libfabric_topology_src,
+    libfabric_rail_manager_src,
+]
 
 # Header files
 libfabric_utils_headers = files(
@@ -61,8 +74,11 @@ if libfabric_dep.found()
     endif
 endif
 
-# Add CUDA support if available
-if cuda_dep.found()
+# Add GPU support: HIP/ROCm when rocm_path is set, CUDA otherwise.
+if rocm_dep.found()
+    libfabric_utils_deps += [rocm_dep]
+    libfabric_utils_cpp_args += ['-DHAVE_CUDA']
+elif cuda_dep.found()
     libfabric_utils_deps += [cuda_dep]
     libfabric_utils_cpp_args += ['-DHAVE_CUDA']
 endif
