@@ -71,6 +71,8 @@ nixlTelemetryEventTypeForStatus(nixl_status_t s) {
         return nixl_telemetry_event_type_t::AGENT_ERR_CANCELED;
     case NIXL_ERR_NO_TELEMETRY:
         return nixl_telemetry_event_type_t::AGENT_ERR_NO_TELEMETRY;
+    case NIXL_ERR_XFER_STALLED:
+        return nixl_telemetry_event_type_t::AGENT_ERR_XFER_STALLED;
     }
     NIXL_ASSERT_ALWAYS(false) << "nixlTelemetryEventTypeForStatus: unhandled nixl_status_t "
                               << static_cast<int>(s) << "; add a case when extending nixl_status_t";
