@@ -26,9 +26,17 @@ if not rocm_dep.found()
     subdir_done()
 endif
 
+# hipFile is a hard prerequisite: without it no AIS target is produced at all.
+# An explicit -Denable_plugins=AIS_MT therefore fails loudly rather than
+# silently building nothing, mirroring the HIP check in ../meson.build. On an
+# autodetected build a missing hipFile just skips the plugin, since ROCm has
+# other uses in this tree (UCX, libfabric) that do not need it.
 hipfile_lib_path = rocm_path + '/lib'
 hipfile_lib_check = cpp.find_library('hipfile', dirs: [hipfile_lib_path], required: false)
 if not hipfile_lib_check.found() or not cpp.has_header('hipfile.h', include_directories : rocm_inc)
+    if is_explicit_enable
+        error('AIS_MT plugin requested but hipFile not found under ' + rocm_path)
+    endif
     subdir_done()
 endif
 hipfile_dep = declare_dependency(
