@@ -36,9 +36,10 @@ class nixlMetadataStream {
         uint16_t port;
         int                 socketFd;
         std::string         listenerAddress;
-        struct sockaddr_in  listenerAddr;
+        sockaddr_storage listenerAddr;
 
-        bool setupStream();
+        bool
+        setupStream(int family);
         void closeStream();
 
     public:
