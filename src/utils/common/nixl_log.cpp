@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include "hostname.h"
 #include "nixl_log.h"
 #include "absl/log/initialize.h"
 #include "absl/log/globals.h"
@@ -60,16 +61,6 @@ constexpr const char *log_file_size_env_var = "NIXL_LOG_FILE_SIZE";
 // Appended to the log file's name to hold the records rotated out of it.
 constexpr const char *rotated_suffix = ".1";
 
-/** @brief Host name for %h, or "unknown-host": a vague name beats no log. */
-std::string
-hostName() {
-    char buffer[256] = {};
-    if (::gethostname(buffer, sizeof(buffer) - 1) != 0) {
-        return "unknown-host";
-    }
-    return buffer;
-}
-
 /**
  * @brief Nanoseconds since the epoch, sampled once, for %t.
  */
@@ -107,7 +98,7 @@ expandLogPath(const std::string &pattern) {
 
         switch (pattern[at + 1]) {
         case 'h':
-            expanded += hostName();
+            expanded += nixl::getHostname().value_or("unknown-host");
             ++at;
             break;
         case 'p':
@@ -424,15 +415,14 @@ initLogFile() {
     const char *configured_size = std::getenv(log_file_size_env_var);
     const auto limit = parseLogFileSize(configured_size != nullptr ? configured_size : "");
     if (!limit.has_value()) {
-        // Left unbounded rather than guessed at: a made-up limit would discard
-        // records the operator meant to keep.
-        NIXL_ERROR << "Ignoring " << log_file_size_env_var << " '" << configured_size
+        NIXL_ERROR << "Invalid " << log_file_size_env_var << " '" << configured_size
                    << "': expected a byte count, optionally suffixed with K, M or G";
+        return false;
     }
 
     // Cleared: ofstream need not set errno, so a stale one could be read.
     errno = 0;
-    auto sink = new fileLogSink(path, limit.value_or(0));
+    auto sink = new fileLogSink(path, *limit);
     if (!sink->isOpen()) {
         const int open_errno = errno;
         delete sink;

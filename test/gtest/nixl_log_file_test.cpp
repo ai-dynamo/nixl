@@ -647,41 +647,23 @@ TEST_F(nixlLogFileTest, GrowsWithoutLimitWhenNoSizeIsSet) {
     EXPECT_GT(std::filesystem::file_size(path_), 2048u);
 }
 
-/**
- * @brief An unparsable size is reported and leaves the file unbounded: an
- *        invented limit would throw away records the operator meant to keep.
- */
-TEST_F(nixlLogFileTest, IgnoresAnUnparsableSizeAndSaysSo) {
-    const gtest::LogIgnoreGuard lig("Ignoring NIXL_LOG_FILE_SIZE");
-    const std::string report = "Ignoring NIXL_LOG_FILE_SIZE";
+/** @brief An unparsable explicit limit is reported and prevents file logging. */
+TEST_F(nixlLogFileTest, RejectsAnUnparsableSizeAndSaysSo) {
+    const gtest::LogIgnoreGuard lig("Invalid NIXL_LOG_FILE_SIZE");
+    const std::string report = "Invalid NIXL_LOG_FILE_SIZE";
 
     env_.addVar("NIXL_LOG_FILE", path_.string());
 
-    // Asserted on the report rather than the absence of rotation: "-1" read as
-    // unsigned wraps to a limit so large the file never rotates, which is
-    // indistinguishable from unbounded. Only the report tells them apart.
     for (const std::string bad : {"sometime next week", "-1", "-1024", "64X", " 64", "+64"}) {
         countingSink watcher;
 
         env_.addVar("NIXL_LOG_FILE_SIZE", bad);
-        ASSERT_TRUE(nixl::initLogFile())
-            << "a bad size must not cost the log file: '" << bad << "'";
+        EXPECT_FALSE(nixl::initLogFile()) << "'" << bad << "' was accepted";
         EXPECT_EQ(watcher.countMatching(report), 1u) << "'" << bad << "' was not reported";
+        EXPECT_FALSE(logFileExists()) << "'" << bad << "' still created a log file";
 
-        nixl::shutdownLogFile();
         env_.popVar();
     }
-
-    // Ignored, so the file grows as it would with no limit at all.
-    env_.addVar("NIXL_LOG_FILE_SIZE", "sometime next week");
-    ASSERT_TRUE(nixl::initLogFile());
-
-    for (unsigned i = 0; i < 200; ++i) {
-        NIXL_INFO << "unparsable size record " << i;
-    }
-
-    EXPECT_FALSE(std::filesystem::exists(path_.string() + ".1"));
-    EXPECT_GT(std::filesystem::file_size(path_), 2048u);
 }
 
 /**
@@ -690,7 +672,7 @@ TEST_F(nixlLogFileTest, IgnoresAnUnparsableSizeAndSaysSo) {
  *        to find out why the file never appeared.
  */
 TEST_F(nixlLogFileTest, ReportsSetupFailuresAtErrorSeverity) {
-    const gtest::LogIgnoreGuard size_guard("Ignoring NIXL_LOG_FILE_SIZE");
+    const gtest::LogIgnoreGuard size_guard("Invalid NIXL_LOG_FILE_SIZE");
     const gtest::LogIgnoreGuard open_guard("Could not open NIXL_LOG_FILE");
 
     // Restored by TearDown, which puts back what SetUp saved.
@@ -700,10 +682,9 @@ TEST_F(nixlLogFileTest, ReportsSetupFailuresAtErrorSeverity) {
         countingSink watcher;
         env_.addVar("NIXL_LOG_FILE", path_.string());
         env_.addVar("NIXL_LOG_FILE_SIZE", "not a size");
-        ASSERT_TRUE(nixl::initLogFile());
-        EXPECT_EQ(watcher.countMatching("Ignoring NIXL_LOG_FILE_SIZE"), 1u)
-            << "an ignored size limit went unreported";
-        nixl::shutdownLogFile();
+        EXPECT_FALSE(nixl::initLogFile());
+        EXPECT_EQ(watcher.countMatching("Invalid NIXL_LOG_FILE_SIZE"), 1u)
+            << "an invalid size limit went unreported";
         env_.popVar();
         env_.popVar();
     }

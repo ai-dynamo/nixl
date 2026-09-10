@@ -82,7 +82,7 @@ Losing the log file never stops the process it was meant to describe. Each failu
 | The file cannot be opened | Reported at error severity, so it is visible even at `NIXL_LOG_LEVEL=ERROR`, and NIXL continues without the file. |
 | A later write fails | Reported once on stderr, and further records are dropped rather than holding up the process. |
 | A rotation cannot be done | Reported on stderr, and the file is left as it is rather than exceeding the limit. Logging to it stops, so the records written up to that point survive. |
-| `NIXL_LOG_FILE_SIZE` cannot be parsed | Reported at error severity, and the file is left unbounded. No limit is invented, since a made-up one would discard records that were meant to be kept. |
+| `NIXL_LOG_FILE_SIZE` cannot be parsed | Reported at error severity, and file logging is disabled rather than ignoring the requested limit. |
 
 <Tip>
 Reports about the log file are written straight to stderr, so they arrive even when the file itself is the thing that failed.
