@@ -117,24 +117,25 @@ TEST(TraceContext, PreservesFlagsAndNormalizesOutput) {
 }
 
 TEST(TraceContext, RoundTripsFixedContextWithoutFieldDrift) {
-    const nixl::trace::TraceContext expected{{0x4b,
-                                              0xf9,
-                                              0x2f,
-                                              0x35,
-                                              0x77,
-                                              0xb3,
-                                              0x4d,
-                                              0xa6,
-                                              0xa3,
-                                              0xce,
-                                              0x92,
-                                              0x9d,
-                                              0x0e,
-                                              0x0e,
-                                              0x47,
-                                              0x36},
-                                             {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7},
-                                             0x03};
+    nixl::trace::TraceContext expected;
+    expected.traceId = {0x4b,
+                        0xf9,
+                        0x2f,
+                        0x35,
+                        0x77,
+                        0xb3,
+                        0x4d,
+                        0xa6,
+                        0xa3,
+                        0xce,
+                        0x92,
+                        0x9d,
+                        0x0e,
+                        0x0e,
+                        0x47,
+                        0x36};
+    expected.spanId = {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7};
+    expected.flags = 0x03;
 
     const auto parsed = nixl::trace::parseTraceparent(nixl::trace::formatTraceparent(expected));
 
@@ -162,6 +163,13 @@ TEST(TraceContext, InvalidContextsProjectZero) {
     no_span.traceId = {0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6};
     ASSERT_FALSE(no_span.valid());
     EXPECT_EQ(no_span.correlationId64(), 0ULL);
+}
+
+TEST(TraceContext, NullTracerYieldsInertContext) {
+    const nixl::trace::TraceContext context{nullptr};
+
+    EXPECT_FALSE(context.valid());
+    EXPECT_EQ(context.correlationId64(), 0ULL);
 }
 
 TEST(TraceContext, ValidSpanIdProjectsNonzero) {

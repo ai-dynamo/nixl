@@ -25,7 +25,12 @@
 
 namespace nixl::trace {
 
+class Tracer;
+
 struct TraceContext {
+    TraceContext() = default;
+    explicit TraceContext(const Tracer *tracer);
+
     std::array<std::uint8_t, 16> traceId{};
     std::array<std::uint8_t, 8> spanId{};
     std::uint8_t flags{};
