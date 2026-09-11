@@ -452,7 +452,7 @@
 
 # Template for NIXL build container job
 # Builds and pushes NIXL and NIXLBench container images for x86_64 and aarch64
-# Supports nightly automatic builds and manual builds via parameters
+# Triggered by {jjb_proj}-verification-launcher and manual builds via parameters
 - job-template:
     name: "{jjb_proj}-build-container"
     project-type: pipeline
@@ -472,23 +472,12 @@
       • Choose between <b>nixlbench</b> or <b>nixl</b> build targets<br/>
       • Optional latest tag update via <code>UPDATE_LATEST</code> parameter<br/>
       • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ <code>verification/nixlbench/</code> or <code>verification/nixl/</code> based on target<br/>
-      • You must be part of access-artifactory-nbu-swx-nixl-users DL group in order to work with these images
+      • You must be part of access-artifactory-nbu-swx-nixl-users DL group in order to work with these images<br/>
+      • Triggered by <code>{jjb_proj}-verification-launcher</code>
       <br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: true
     sandbox: true
-    # Nightly scheduler for automatic builds with default versions
-    triggers:
-      - parameterized-timer:
-          cron: |
-            # Build nixlbench nightly around 22:00 - Ubuntu 24.04
-            H 22 * * * %BUILD_TARGET=nixlbench;UPDATE_LATEST=true
-            # Build nixl nightly around 22:00 - Ubuntu 24.04
-            H 22 * * * %BUILD_TARGET=nixl;UPDATE_LATEST=true
-            # Build nixlbench nightly around 22:00 - PyTorch release
-            H 22 * * * %BUILD_TARGET=nixlbench;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.06-py3;UPDATE_LATEST=true
-            # Build nixl nightly around 22:00 - PyTorch release
-            H 22 * * * %BUILD_TARGET=nixl;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.06-py3;UPDATE_LATEST=true
     # Manual build parameters
     parameters:
       - choice:
@@ -896,8 +885,8 @@
               parent-credentials: true
       script-path: "{jjb_jenkinsfile}"
 
-# Wheel verification job: builds and publishes NIXL wheels to Artifactory. Runs on
-# a nightly schedule (from main) and on manual runs (any branch/tag/PR/SHA).
+# Wheel verification job: builds and publishes NIXL wheels to Artifactory. Triggered by
+# {jjb_proj}-verification-launcher (from main), the release poller, and manual runs (any branch/tag/PR/SHA).
 - job-template:
     name: "{jjb_proj}-build-wheel-nightly"
     project-type: pipeline
@@ -913,25 +902,17 @@
             conf_file=.ci/jenkins/lib/build-wheel-nightly-matrix.yaml
     description: >
       <b>NIXL nightly wheel verification build</b><br/>
-      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> for CUDA 13
-      and CUDA 12, with the UCX spcx and Infinia plugins always bundled, and publishes them
-      to the verification Artifactory space<br/>
+      • Builds NIXL wheels (x86_64 &amp; aarch64) for CUDA 13 and CUDA 12, with the UCX spcx
+      and Infinia plugins always bundled, and publishes them to the verification (default),
+      staging, or release Artifactory space per <code>PUBLISH_DIR</code><br/>
       • Run manually from any NIXL branch / tag / PR / SHA via <code>NIXL_VERSION</code><br/>
+      • Triggered (both CUDA variants, from <code>main</code>) by
+      <code>nixl-ci-verification-launcher</code><br/>
       • Also triggered per missing CUDA variant by <code>nixl-build-wheel-release-poller</code>
       with <code>PUBLISH_DIR=release/&lt;ver&gt;</code><br/>
       • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: true
     sandbox: true
-    # Nightly scheduler; manual runs use the parameter defaults below
-    triggers:
-      - parameterized-timer:
-          cron: |
-            # Build NIXL wheels nightly around midnight for CUDA 13 and CUDA 12
-            # (the cu12 run also produces the nixl meta wheel). Both publish to
-            # the repo.
-            H 0 * * * %NIXL_VERSION=main;CUDA_MAJOR=13
-            H 0 * * * %NIXL_VERSION=main;CUDA_MAJOR=12
-    # Manual build parameters
     parameters:
       - string:
           name: "NIXL_VERSION"
@@ -946,7 +927,7 @@
       - string:
           name: "PUBLISH_DIR"
           default: ""
-          description: "Artifactory publish subdir; empty = verification (nightly default). The release poller and manual release runs pass release/&lt;ver&gt;."
+          description: "Artifactory publish subdir; empty = verification (nightly default). staging publishes to the same g&lt;nixl-sha&gt;.ucx&lt;ucx-sha&gt; schema as verification. The release poller and manual release runs pass release/&lt;ver&gt;."
       - string:
           name: "DEBUG"
           default: 0
@@ -964,6 +945,79 @@
             <code>refs/pull/1234/head</code> to test CI changes end to end before merge.
     # SCM = ci_refspec (default main): supplies the pipeline + matrix config
     # only; the build clones the source from NIXL_VERSION itself
+    pipeline-scm:
+      scm:
+        - git:
+            url: "{jjb_git}"
+            branches: ['${{ci_refspec}}']
+            shallow-clone: false
+            do-not-fetch-tags: false
+            refspec: "+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +refs/pull/*/head:refs/pull/*/head"
+            browser: githubweb
+            browser-url: "{jjb_git}"
+            submodule:
+              disable: false
+              recursive: true
+              tracking: true
+              parent-credentials: true
+      script-path: "{jjb_jenkinsfile}"
+
+# Verification launcher: single scheduler for verification builds.
+- job-template:
+    name: "{jjb_proj}-verification-launcher"
+    project-type: pipeline
+    disabled: false
+    properties:
+      - build-discarder:
+          days-to-keep: 30
+          num-to-keep: 30
+      - inject:
+          keep-system-variables: true
+          properties-content: |
+            jjb_proj={jjb_proj}-verification-launcher
+            conf_file=.ci/jenkins/lib/verification-launcher-matrix.yaml
+    description: >
+      <b>NIXL verification build launcher</b><br/>
+      • <code>LAUNCH_TARGET=wheels</code> (nightly, around midnight): triggers
+      <code>{jjb_proj}-build-wheel-nightly</code> for <code>NIXL_VERSION=main</code>, once each
+      for <code>CUDA_MAJOR=13</code> and <code>CUDA_MAJOR=12</code><br/>
+      • <code>LAUNCH_TARGET=containers</code> (daily, around 9 PM): triggers
+      <code>{jjb_proj}-build-container</code> 4 times &mdash; <b>nixlbench</b> and <b>nixl</b>,
+      each on the default base image and on the DLFW PyTorch daily, all with
+      <code>UPDATE_LATEST=true</code><br/>
+      • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
+    concurrent: false    # Overlapping runs would double-trigger the same builds
+    sandbox: true
+    triggers:
+      - parameterized-timer:
+          cron: |
+            # Wheels around midnight, both CUDA variants (the cu12 run also
+            # produces the nixl meta wheel).
+            H 0 * * * %LAUNCH_TARGET=wheels
+            # Containers around 9 PM, all 4 variants.
+            H 21 * * * %LAUNCH_TARGET=containers
+    parameters:
+      - choice:
+          name: "LAUNCH_TARGET"
+          choices:
+            - "wheels"
+            - "containers"
+          description: >
+            Which builds to trigger:<br/>
+            • <b>wheels</b>: <code>{jjb_proj}-build-wheel-nightly</code>, one run per CUDA major<br/>
+            • <b>containers</b>: <code>{jjb_proj}-build-container</code>, the 4 nightly variants
+      - string:
+          name: "MAIL_TO"
+          default: "nixl-ci-alerts@exchange.nvidia.com"
+          description: "Recipient(s) for the failure report. Mail is sent only when the launcher itself fails to trigger."
+      - string:
+          name: "ci_refspec"
+          default: "{jjb_branch}"
+          description: >
+            Git ref to check out the launcher pipeline + matrix config from. Default main;
+            pass e.g. <code>refs/pull/1234/head</code> to test CI changes end to end before
+            merge - the launcher forwards it to the triggered wheel builds
+            (<code>build-container</code> has no <code>ci_refspec</code> param).
     pipeline-scm:
       scm:
         - git:
@@ -1173,6 +1227,7 @@
         - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for NIXL EP on dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
         - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
+        - "{jjb_proj}-verification-launcher"  # Create verification build launcher job (wheel + container crons)
         - "nixl-build-wheel-release-poller"  # Create release wheel poller job
         - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job
         - "{jjb_proj}-nightly"  # Create nightly UCX-master validation orchestrator
