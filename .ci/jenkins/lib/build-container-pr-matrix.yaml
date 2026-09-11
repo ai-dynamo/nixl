@@ -2,6 +2,11 @@
 # and nixlbench images, so container/packaging breakage is caught on the PR, not just by
 # the nightly nixl-ci-build-container job. One matrix cell per target/arch so all images
 # build in parallel with independent status.
+#
+# No base image is passed: both builds use the tag pinned in their own Dockerfile, so the
+# gate exercises the base we actually ship. Overriding it here (it used to pin a DLFW
+# PyTorch image) skipped the torch and DOCA SDK installs that the pinned cuda-dl-base
+# needs, so the PR gate covered a build path the release images never take.
 
 ---
 job: nixl-ci-build-container-pr
@@ -30,8 +35,6 @@ matrix:
 env:
   NPROC: 24
   UCX_VERSION: "v1.23.x"
-  BASE_IMAGE: "nvcr.io/nvidia/pytorch"
-  BASE_IMAGE_TAG: "26.06-py3"
   LOCAL_TAG_BASE: "nixl-ci-pr:build-"
 
 taskName: "container-build/${target}/${arch}"
@@ -84,13 +87,11 @@ steps:
           # packaging - the parts most sensitive to build/packaging changes.
           export UCX_REF="$UCX_VERSION"
           contrib/build-container.sh \
-            --base-image "$BASE_IMAGE" --base-image-tag "$BASE_IMAGE_TAG" \
             --tag "${LOCAL_TAG_BASE}${target}-${arch}" --arch "$arch" \
             --build-type debug --no-cache
           ;;
         nixlbench)
           benchmark/nixlbench/contrib/build.sh \
-            --base-image "$BASE_IMAGE" --base-image-tag "$BASE_IMAGE_TAG" \
             --tag "${LOCAL_TAG_BASE}${target}-${arch}" --arch "$arch" \
             --no-cache --nixl "$WORKSPACE" --ucx "$WORKSPACE/ucx-src"
           ;;
