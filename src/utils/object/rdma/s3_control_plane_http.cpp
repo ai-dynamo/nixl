@@ -307,6 +307,8 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t si
             Aws::Http::HttpMethod::HTTP_PUT, uri, token, [&ctx](Aws::Http::HttpRequest &req) {
                 req.SetHeaderValue("content-type", "application/octet-stream");
                 req.SetContentLength("0");
+                // Have the server compute and validate a full-object checksum over the RDMA data.
+                req.SetHeaderValue("x-amz-checksum-algorithm", "CRC64NVME");
                 if (!ctx.checksumCrc64nvme.empty()) {
                     req.SetHeaderValue("x-amz-checksum-crc64nvme", ctx.checksumCrc64nvme.c_str());
                 }
@@ -319,11 +321,18 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t si
         const int http_status = static_cast<int>(resp->GetResponseCode());
         const std::string etag =
             resp->HasHeader("etag") ? stripQuotes(resp->GetHeader("etag").c_str()) : "";
+        const std::string reply = resp->HasHeader(amz_rdma_reply) ?
+            std::string(resp->GetHeader(amz_rdma_reply).c_str()) :
+            "";
+        const int reply_code = parseRdmaReply(reply);
 
-        // Success: the server completed the RDMA_READ and returns a standard
-        // HTTP 200 + ETag (the object payload moved out-of-band, so the HTTP body
-        // is empty). Matches the reference client implementations.
-        if (http_status == 200 && !etag.empty()) {
+        // Success requires the server's explicit RDMA acknowledgement
+        // (x-amz-rdma-reply: 200) in addition to HTTP 200 + ETag. A server that
+        // ignores the token stores a 0-byte object from the body-less PUT and
+        // returns 200 + ETag without the reply header; requiring the ack stops
+        // that from being reported as a full transfer. (rdmaGet checks the same
+        // header.)
+        if (http_status == 200 && !etag.empty() && reply_code == rdma_reply_success) {
             ctx.etag = etag;
             if (resp->HasHeader("x-amz-checksum-crc64nvme")) {
                 ctx.checksumCrc64nvme = resp->GetHeader("x-amz-checksum-crc64nvme").c_str();
@@ -331,18 +340,14 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t si
             return static_cast<ssize_t>(size);
         }
 
-        // Only an explicit `x-amz-rdma-reply: 501` is an RDMA decline. Any other
-        // non-200 response (including a plain 4xx/5xx that omits the header) is a
-        // real failure — return rdma_error so the retry path still runs, rather
-        // than misclassifying it as a decline.
-        const std::string reply = resp->HasHeader(amz_rdma_reply) ?
-            std::string(resp->GetHeader(amz_rdma_reply).c_str()) :
-            "";
         std::ostringstream body;
         body << resp->GetResponseBody().rdbuf();
-        if (reply == "501") {
-            NIXL_ERROR << "rdmaPut declined: http=" << http_status << " x-amz-rdma-reply='" << reply
-                       << "' url=" << uri.GetURIString()
+        // An explicit 501 or a missing reply header means the server did not honor
+        // RDMA (a non-RDMA server never sets x-amz-rdma-reply); treat it as a
+        // decline. Any other non-200 is a transport failure so the retry path runs.
+        if (reply_code == rdma_not_supported) {
+            NIXL_ERROR << "rdmaPut declined (no RDMA ack): http=" << http_status
+                       << " x-amz-rdma-reply='" << reply << "' url=" << uri.GetURIString()
                        << " body=" << body.str().substr(0, error_body_log_max)
                        << " key=" << ctx.object;
             return rdma_not_supported;
