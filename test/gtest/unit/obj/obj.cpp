@@ -157,8 +157,7 @@ TEST_P(objParamTestFixture, NullHandleCheckXfer) {
 }
 
 TEST_P(objParamTestFixture, NullHandleReleaseReqH) {
-    nixl_status_t status = objEngine_->releaseReqH(nullptr);
-    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+    EXPECT_DEBUG_DEATH(objEngine_->releaseReqH(nullptr), "");
 }
 
 TEST_P(objParamTestFixture, WriteTransfer) {
