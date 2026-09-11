@@ -74,9 +74,9 @@ struct aioTest {
     std::vector<std::array<char, block_size>> buffers;
     std::unique_ptr<nixlPosixIOQueue> queue;
 
-    explicit aioTest(size_t buffer_count = request_count)
+    explicit aioTest(size_t buffer_count = request_count, uint32_t ios_pool_size = 128)
         : buffers(buffer_count),
-          queue(nixlPosixIOQueue::instantiate("AIO", 128, 16)) {
+          queue(nixlPosixIOQueue::instantiate("AIO", ios_pool_size, 16)) {
         char path[] = "/tmp/nixl_linux_aio_test_XXXXXX";
         if ((fd = mkstemp(path)) < 0) {
             throw std::runtime_error("mkstemp failed");
@@ -122,6 +122,7 @@ struct aioTest {
 struct aioRequest {
     nixl_meta_dlist_t local{DRAM_SEG};
     nixl_meta_dlist_t remote{FILE_SEG};
+    nixl_xfer_op_t operation = NIXL_WRITE;
     nixlPosixBackendReqH request;
 
     aioRequest(aioTest &test, nixlPosixFileMD &file_md, int first, int count)
@@ -140,7 +141,7 @@ struct aioRequest {
               }
               return list;
           }()),
-          request(NIXL_WRITE, local, remote, test.queue) {}
+          request(operation, local, remote, test.queue) {}
 };
 
 nixl_status_t
@@ -365,6 +366,25 @@ main() {
         AIO_CHECK(cancelled.completions == scoped_request_count && cancelled.errors > 0);
         AIO_CHECK(cancelled.cancel_completions == static_cast<int>(waits));
         AIO_CHECK(unrelated.completions == 1 && unrelated.errors == 0);
+    }
+    {
+        constexpr int pool_size = 64, active_count = pool_size - 1;
+        setSubmitMode(submitMode::PASS_THROUGH);
+        aioTest test(pool_size + 1, pool_size);
+        nixlPosixFileMD file_md(test.fd, "");
+        aioRequest active(test, file_md, 0, active_count);
+
+        nixl_status_t active_status = active.request.postXfer();
+        AIO_CHECK(active_status == NIXL_IN_PROG);
+        {
+            aioRequest rejected(test, file_md, active_count, 2);
+            AIO_CHECK(rejected.request.postXfer() == NIXL_ERR_NOT_ALLOWED);
+        }
+        AIO_CHECK(waitFor(active, active_status) == NIXL_SUCCESS);
+        AIO_CHECK(test.drain() == NIXL_SUCCESS);
+
+        std::array<char, block_size> observed{};
+        AIO_CHECK(pread(test.fd, observed.data(), observed.size(), active_count * block_size) == 0);
     }
 
     return 0;

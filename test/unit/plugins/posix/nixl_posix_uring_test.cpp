@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 #include "io_queue.h"
 #include "posix_backend.h"
@@ -25,7 +26,7 @@ namespace {
 constexpr int request_count = 32, ring_entries = 16, max_poll_iterations = 2000;
 constexpr size_t block_size = 4096;
 constexpr auto poll_pause = std::chrono::microseconds(50);
-using buffers_t = std::array<std::array<char, block_size>, request_count>;
+using buffers_t = std::vector<std::array<char, block_size>>;
 
 enum class submit_mode_t { PARTIAL_ONLY, TRANSIENT_ERRORS, PASS_THROUGH };
 submit_mode_t submit_mode = submit_mode_t::PASS_THROUGH;
@@ -50,11 +51,12 @@ cancelCompletionCallback(void *) {
 
 struct uringTest {
     int fd = -1;
-    buffers_t buffers{};
+    buffers_t buffers;
     std::unique_ptr<nixlPosixIOQueue> queue;
 
-    explicit uringTest(submit_mode_t mode)
-        : queue(nixlPosixIOQueue::instantiate("URING", 64, ring_entries)) {
+    explicit uringTest(submit_mode_t mode, size_t buffer_count = request_count)
+        : buffers(buffer_count),
+          queue(nixlPosixIOQueue::instantiate("URING", 64, ring_entries)) {
         submit_mode = mode;
         submit_calls = transient_submit_errors = cancel_completions = first_ready =
             first_submitted = 0;
@@ -106,16 +108,20 @@ struct uringRequest {
     nixl_xfer_op_t operation = NIXL_WRITE;
     nixlPosixBackendReqH request;
 
-    uringRequest(uringTest &test, nixlPosixFileMD &file_md, int index)
+    uringRequest(uringTest &test, nixlPosixFileMD &file_md, int first, int count = 1)
         : local([&] {
               nixl_meta_dlist_t list(DRAM_SEG);
-              list.addDesc(nixlMetaDesc(
-                  reinterpret_cast<uintptr_t>(test.buffers[index].data()), block_size, 0, nullptr));
+              for (int i = first; i < first + count; i++) {
+                  list.addDesc(nixlMetaDesc(
+                      reinterpret_cast<uintptr_t>(test.buffers[i].data()), block_size, 0, nullptr));
+              }
               return list;
           }()),
           remote([&] {
               nixl_meta_dlist_t list(FILE_SEG);
-              list.addDesc(nixlMetaDesc(index * block_size, block_size, test.fd, &file_md));
+              for (int i = first; i < first + count; i++) {
+                  list.addDesc(nixlMetaDesc(i * block_size, block_size, test.fd, &file_md));
+              }
               return list;
           }()),
           request(operation, local, remote, test.queue) {}
@@ -209,6 +215,29 @@ main() {
         }
         URING_CHECK(cancelled_status == NIXL_SUCCESS || cancelled_status == NIXL_ERR_BACKEND);
         URING_CHECK(test.drain() == NIXL_SUCCESS && cancel_completions == 1);
+    }
+    {
+        constexpr int pool_size = 64, active_count = pool_size - 1;
+        uringTest test(submit_mode_t::PASS_THROUGH, pool_size + 1);
+        nixlPosixFileMD file_md(test.fd, "");
+        uringRequest active(test, file_md, 0, active_count);
+
+        nixl_status_t active_status = active.request.postXfer();
+        URING_CHECK(active_status == NIXL_IN_PROG);
+        {
+            uringRequest rejected(test, file_md, active_count, 2);
+            URING_CHECK(rejected.request.postXfer() == NIXL_ERR_NOT_ALLOWED);
+        }
+        for (int i = 0; i < max_poll_iterations && active_status == NIXL_IN_PROG; i++) {
+            active_status = active.request.checkXfer();
+            std::this_thread::sleep_for(poll_pause);
+        }
+        URING_CHECK(active_status == NIXL_SUCCESS);
+        URING_CHECK(test.drain() == NIXL_SUCCESS);
+
+        std::array<char, block_size> observed{};
+        URING_CHECK(
+            pread(test.fd, observed.data(), observed.size(), active_count * block_size) == 0);
     }
     return 0;
 }
