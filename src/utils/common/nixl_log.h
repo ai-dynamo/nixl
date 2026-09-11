@@ -17,6 +17,7 @@
 #ifndef __NIXL_LOG_H
 #define __NIXL_LOG_H
 
+#include <string>
 #include <system_error>
 #include "absl/log/log.h"
 #include "absl/log/check.h"
@@ -126,5 +127,40 @@
 static inline std::string nixl_strerror(int err) {
     return std::error_code(err, std::generic_category()).message();
 }
+
+/*-----------------------------------------------------------------------------*
+ * Optional Per-Process Log File
+ *-----------------------------------------------------------------------------*/
+
+namespace nixl {
+
+/**
+ * @brief Mirrors records passing NIXL_LOG_LEVEL into the file named by
+ *        NIXL_LOG_FILE, in addition to stderr. Unset or empty registers no
+ *        sink. The file is appended to, not truncated, so give each process its
+ *        own path.
+ *
+ * Called during library initialization; exposed for tests. Binding a different
+ * path needs shutdownLogFile() first, since this returns early, without reading
+ * NIXL_LOG_FILE, while a sink is registered.
+ *
+ * @return true if a sink is registered on return, including when one already
+ *         was. An open failure is logged and returns false; it never throws.
+ */
+bool
+initLogFile();
+
+/**
+ * @brief Unregisters the NIXL_LOG_FILE sink and flushes it. Safe to call with
+ *        no sink registered, and more than once.
+ *
+ * Runs at library unload, which on glibc is after static destructors, so late
+ * records still reach the file. That ordering is loader behaviour rather than a
+ * guarantee; nixlLogFileTest.RecordsFromStaticDestructorsReachTheFile covers it.
+ */
+void
+shutdownLogFile();
+
+} // namespace nixl
 
 #endif /* __NIXL_LOG_H */
