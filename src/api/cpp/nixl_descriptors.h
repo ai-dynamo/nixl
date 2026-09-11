@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <limits>
 #include <algorithm>
 #include "nixl_types.h"
 
@@ -105,6 +106,7 @@ public:
      */
     friend bool
     operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs);
+
     /**
      * @brief Check if current object address range covers the input object's
      *
@@ -112,8 +114,21 @@ public:
      */
     bool
     covers(const nixlBasicDesc &query) const noexcept {
-        return (devId == query.devId) && (addr <= query.addr) &&
-            ((addr + len) >= (query.addr + query.len));
+        if (devId != query.devId || addr > query.addr) {
+            return false;
+        }
+
+        constexpr uintptr_t max_addr = std::numeric_limits<uintptr_t>::max();
+        // File-like section lists normalize len=0 to SIZE_MAX to represent an
+        // unbounded registration. Avoid adding that sentinel to a nonzero address.
+        if (len == SIZE_MAX) {
+            return query.len <= max_addr - query.addr;
+        }
+
+        // If this finite range wraps, end is below addr and therefore below
+        // query.addr. The first comparison also keeps the subtraction safe.
+        const uintptr_t end = addr + len;
+        return query.addr <= end && query.len <= end - query.addr;
     }
 
     /**
