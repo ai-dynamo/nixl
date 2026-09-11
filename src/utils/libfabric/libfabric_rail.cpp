@@ -1547,6 +1547,9 @@ nixlLibfabricRail::registerMemory(void *buffer,
         // TCP provider has more limited memory registration capabilities
         // Use basic flags that are commonly supported
         provider_access_flags = FI_READ | FI_WRITE | FI_REMOTE_READ | FI_REMOTE_WRITE;
+    } else if (provider_name == "cxi") {
+        // CXI requires FI_RMA_EVENT to allow fi_writedata/fi_writemsg with target events.
+        provider_access_flags = FI_REMOTE_WRITE | FI_REMOTE_READ | FI_RMA_EVENT;
     } else {
         // EFA and other providers use standard remote access flags
         provider_access_flags = FI_REMOTE_WRITE | FI_REMOTE_READ;
