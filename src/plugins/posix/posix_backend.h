@@ -47,6 +47,16 @@ public:
     nixl_status_t
     checkXfer();
 
+    /**
+     * @brief Whether every completion (confirmed I/Os and expected cancellations) has been
+     *        reaped; queue entries reference this request until then, so only a complete
+     *        request may be freed.
+     */
+    bool
+    isComplete() const {
+        return num_confirmed_ios_ == queue_depth_ && cancels_expected_ == cancels_seen_;
+    }
+
     // Exception classes
     class exception : public std::exception {
     private:
@@ -62,11 +72,6 @@ public:
     };
 
 private:
-    bool
-    isComplete() const {
-        return num_confirmed_ios_ == queue_depth_ && cancels_expected_ == cancels_seen_;
-    }
-
     unsigned
     requestCancellation();
     void
@@ -98,13 +103,18 @@ private:
     mutable std::unique_ptr<nixlPosixIOQueue> io_queue_;
     mutable nixlLock io_queue_lock_;
     nixl::PathModeDevIdRegistry path_mode_devids_;
+    // Requests released while incomplete, freed by reapReleasedReqs(); guarded by io_queue_lock_.
+    mutable std::vector<nixlPosixBackendReqH *> released_reqs_;
+
+    void
+    reapReleasedReqs() const;
 
 public:
     static nixl_b_params_t
     getPluginParams();
 
     nixlPosixEngine(const nixlBackendInitParams *init_params);
-    virtual ~nixlPosixEngine() = default;
+    virtual ~nixlPosixEngine();
 
     bool
     supportsRemote() const override {

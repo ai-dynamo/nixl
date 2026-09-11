@@ -812,6 +812,322 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
     return 0;
 }
 
+// Buffers/files for the release tests; declared before the agent so in-flight I/O at
+// teardown still targets live memory.
+struct releaseTestBuffers {
+    std::vector<std::unique_ptr<void, PosixMemalignDeleter>> dram_addr;
+    std::vector<tempFile> fd;
+    std::unique_ptr<nixlBlobDesc[]> dram_buf;
+    std::unique_ptr<nixlBlobDesc[]> ftrans;
+    nixl_reg_dlist_t dram_for_posix;
+    nixl_reg_dlist_t file_for_posix;
+    nixl_xfer_dlist_t dram_for_posix_xfer;
+    nixl_xfer_dlist_t file_for_posix_xfer;
+
+    releaseTestBuffers()
+        : dram_for_posix(DRAM_SEG),
+          file_for_posix(FILE_SEG),
+          dram_for_posix_xfer(DRAM_SEG),
+          file_for_posix_xfer(FILE_SEG) {}
+};
+
+static int
+setup_release_test_buffers(const std::string &test_files_dir_path_abs_path,
+                           const std::string &file_infix,
+                           int num_transfers,
+                           size_t transfer_size,
+                           releaseTestBuffers &bufs) {
+    bufs.dram_addr.reserve(num_transfers);
+    bufs.fd.reserve(num_transfers);
+    bufs.dram_buf.reset(new nixlBlobDesc[num_transfers]);
+    bufs.ftrans.reset(new nixlBlobDesc[num_transfers]);
+
+    int file_open_flags = O_RDWR | O_CREAT;
+    mode_t file_mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH; // rw-r--r--
+    for (int i = 0; i < num_transfers; ++i) {
+        void *ptr;
+        if (posix_memalign(&ptr, page_size, transfer_size) != 0) {
+            std::cerr << "DRAM allocation failed" << std::endl;
+            return 1;
+        }
+        bufs.dram_addr.emplace_back(ptr);
+        fill_test_pattern(ptr, read_write_test_phrase, transfer_size);
+
+        std::string file_name = generate_timestamped_filename(test_file_name);
+        std::string file_path =
+            test_files_dir_path_abs_path + "/" + file_name + file_infix + std::to_string(i);
+        try {
+            bufs.fd.emplace_back(file_path, file_open_flags, file_mode);
+        }
+        catch (const std::exception &e) {
+            std::cerr << "Failed to open file: " << file_path << " - " << e.what() << std::endl;
+            return 1;
+        }
+
+        bufs.dram_buf[i].addr = (uintptr_t)(ptr);
+        bufs.dram_buf[i].len = transfer_size;
+        bufs.dram_buf[i].devId = 0;
+        bufs.dram_for_posix.addDesc(bufs.dram_buf[i]);
+        bufs.dram_for_posix_xfer.addDesc(bufs.dram_buf[i]);
+
+        bufs.ftrans[i].addr = 0;
+        bufs.ftrans[i].len = transfer_size;
+        bufs.ftrans[i].devId = bufs.fd[i].fd;
+        bufs.file_for_posix.addDesc(bufs.ftrans[i]);
+        bufs.file_for_posix_xfer.addDesc(bufs.ftrans[i]);
+    }
+
+    return 0;
+}
+
+// Regression test for issue #1955: releasing a NIXL_IN_PROG transfer must not free the
+// request while queue entries still hold it as their completion callback context.
+// Determinism: no progress thread, and 256 descriptors against the 64-entry poll cap keep
+// the transfer active across the release.
+int
+test_posix_release_active(const std::string &test_files_dir_path_abs_path, bool use_uring) {
+    constexpr int num_transfers = 256;
+    constexpr size_t transfer_size = 128 * 1024; // 128KB
+
+    nixl_b_params_t params;
+    if (use_uring) {
+        params["use_uring"] = "true";
+        params["use_aio"] = "false";
+    } else {
+        params["use_uring"] = "false";
+    }
+
+    print_segment_title("NIXL STORAGE RELEASE-ACTIVE TEST STARTING (POSIX PLUGIN)");
+
+    print_segment_title(phase_title("Allocating and registering buffers"));
+
+    releaseTestBuffers bufs;
+    if (setup_release_test_buffers(
+            test_files_dir_path_abs_path, "_ra_", num_transfers, transfer_size, bufs) != 0) {
+        return 1;
+    }
+
+    // No progress thread: completions are reaped only by explicit polls.
+    nixlAgentConfig cfg;
+    nixlAgent agent("POSIXReleaseActiveTester", cfg);
+    nixlBackendH *posix = nullptr;
+    if (agent.createBackend("POSIX", params, posix) != NIXL_SUCCESS) {
+        std::cerr << "Failed to create POSIX backend" << std::endl;
+        return 1;
+    }
+
+    if (agent.registerMem(bufs.dram_for_posix) != NIXL_SUCCESS) {
+        std::cerr << "Failed to register DRAM memory with NIXL" << std::endl;
+        return 1;
+    }
+    if (agent.registerMem(bufs.file_for_posix) != NIXL_SUCCESS) {
+        std::cerr << "Failed to register file memory with NIXL" << std::endl;
+        return 1;
+    }
+
+    print_segment_title(phase_title("Releasing an in-progress write transfer"));
+
+    nixlXferReqH *treq = nullptr;
+    nixl_status_t status = agent.createXferReq(NIXL_WRITE,
+                                               bufs.dram_for_posix_xfer,
+                                               bufs.file_for_posix_xfer,
+                                               "POSIXReleaseActiveTester",
+                                               treq);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Failed to create write transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        return 1;
+    }
+
+    status = agent.postXferReq(treq);
+    if (status != NIXL_IN_PROG) {
+        std::cerr << "Expected posted transfer to be NIXL_IN_PROG, got: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        agent.releaseXferReq(treq);
+        return 1;
+    }
+
+    // The backend accepts the release and defers the free; treq is invalid from here on.
+    status = agent.releaseXferReq(treq);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Expected release of an active transfer to succeed, got: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        return 1;
+    }
+    std::cout << "Release of active transfer accepted, free deferred" << std::endl;
+
+    print_segment_title(phase_title("Draining the released transfer with a second write"));
+
+    // A second write polls the shared queue, draining the released transfer (ASAN catches
+    // the old delete-on-release here, LSAN a request never freed). Both writes carry
+    // identical bytes, so the final file contents are deterministic.
+    nixlXferReqH *treq_drain = nullptr;
+    status = agent.createXferReq(NIXL_WRITE,
+                                 bufs.dram_for_posix_xfer,
+                                 bufs.file_for_posix_xfer,
+                                 "POSIXReleaseActiveTester",
+                                 treq_drain);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Failed to create drain transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        return 1;
+    }
+
+    status = agent.postXferReq(treq_drain);
+    if (status < 0) {
+        std::cerr << "Failed to post drain transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        agent.releaseXferReq(treq_drain);
+        return 1;
+    }
+
+    do {
+        status = agent.getXferStatus(treq_drain);
+        if (status < 0) {
+            std::cerr << "Error during drain transfer - status: "
+                      << nixlEnumStrings::statusStr(status) << std::endl;
+            agent.releaseXferReq(treq_drain);
+            return 1;
+        }
+    } while (status == NIXL_IN_PROG);
+
+    status = agent.releaseXferReq(treq_drain);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Failed to release completed drain request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        return 1;
+    }
+    std::cout << "Second write completed; orphaned completions reaped" << std::endl;
+
+    print_segment_title(phase_title("Read-back validation"));
+
+    for (int i = 0; i < num_transfers; ++i) {
+        clear_buffer(bufs.dram_addr[i].get(), transfer_size);
+    }
+
+    nixlXferReqH *treq_read = nullptr;
+    status = agent.createXferReq(NIXL_READ,
+                                 bufs.dram_for_posix_xfer,
+                                 bufs.file_for_posix_xfer,
+                                 "POSIXReleaseActiveTester",
+                                 treq_read);
+    if (status != NIXL_SUCCESS) {
+        std::cerr << "Failed to create read transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        return 1;
+    }
+
+    status = agent.postXferReq(treq_read);
+    if (status < 0) {
+        std::cerr << "Failed to post read transfer request - status: "
+                  << nixlEnumStrings::statusStr(status) << std::endl;
+        agent.releaseXferReq(treq_read);
+        return 1;
+    }
+
+    do {
+        status = agent.getXferStatus(treq_read);
+        if (status < 0) {
+            std::cerr << "Error during read transfer - status: "
+                      << nixlEnumStrings::statusStr(status) << std::endl;
+            agent.releaseXferReq(treq_read);
+            return 1;
+        }
+    } while (status == NIXL_IN_PROG);
+    agent.releaseXferReq(treq_read);
+
+    std::unique_ptr<char[]> expected_buffer = std::make_unique<char[]>(transfer_size);
+    fill_test_pattern(expected_buffer.get(), read_write_test_phrase, transfer_size);
+    for (int i = 0; i < num_transfers; ++i) {
+        if (memcmp(bufs.dram_addr[i].get(), expected_buffer.get(), transfer_size) != 0) {
+            std::cerr << "DRAM buffer " << i << " validation failed" << std::endl;
+            return 1;
+        }
+    }
+    std::cout << "Read-back and validation: OK" << std::endl;
+
+    agent.deregisterMem(bufs.file_for_posix);
+    agent.deregisterMem(bufs.dram_for_posix);
+
+    return 0;
+}
+
+// Companion to test_posix_release_active covering the destructor path: nothing drains the
+// released request, so the engine destructor must free it (verified by LSAN at exit).
+int
+test_posix_release_teardown(const std::string &test_files_dir_path_abs_path, bool use_uring) {
+    constexpr int num_transfers = 256;
+    constexpr size_t transfer_size = 128 * 1024; // 128KB
+
+    nixl_b_params_t params;
+    if (use_uring) {
+        params["use_uring"] = "true";
+        params["use_aio"] = "false";
+    } else {
+        params["use_uring"] = "false";
+    }
+
+    print_segment_title("NIXL STORAGE RELEASE-TEARDOWN TEST STARTING (POSIX PLUGIN)");
+
+    releaseTestBuffers bufs;
+    if (setup_release_test_buffers(
+            test_files_dir_path_abs_path, "_rt_", num_transfers, transfer_size, bufs) != 0) {
+        return 1;
+    }
+
+    {
+        nixlAgentConfig cfg;
+        nixlAgent agent("POSIXReleaseTeardownTester", cfg);
+        nixlBackendH *posix = nullptr;
+        if (agent.createBackend("POSIX", params, posix) != NIXL_SUCCESS) {
+            std::cerr << "Failed to create POSIX backend" << std::endl;
+            return 1;
+        }
+
+        if (agent.registerMem(bufs.dram_for_posix) != NIXL_SUCCESS) {
+            std::cerr << "Failed to register DRAM memory with NIXL" << std::endl;
+            return 1;
+        }
+        if (agent.registerMem(bufs.file_for_posix) != NIXL_SUCCESS) {
+            std::cerr << "Failed to register file memory with NIXL" << std::endl;
+            return 1;
+        }
+
+        nixlXferReqH *treq = nullptr;
+        nixl_status_t status = agent.createXferReq(NIXL_WRITE,
+                                                   bufs.dram_for_posix_xfer,
+                                                   bufs.file_for_posix_xfer,
+                                                   "POSIXReleaseTeardownTester",
+                                                   treq);
+        if (status != NIXL_SUCCESS) {
+            std::cerr << "Failed to create write transfer request - status: "
+                      << nixlEnumStrings::statusStr(status) << std::endl;
+            return 1;
+        }
+
+        status = agent.postXferReq(treq);
+        if (status != NIXL_IN_PROG) {
+            std::cerr << "Expected posted transfer to be NIXL_IN_PROG, got: "
+                      << nixlEnumStrings::statusStr(status) << std::endl;
+            agent.releaseXferReq(treq);
+            return 1;
+        }
+
+        status = agent.releaseXferReq(treq);
+        if (status != NIXL_SUCCESS) {
+            std::cerr << "Expected release of an active transfer to succeed, got: "
+                      << nixlEnumStrings::statusStr(status) << std::endl;
+            return 1;
+        }
+        std::cout << "Release of active transfer accepted, free deferred" << std::endl;
+
+        // The agent goes out of scope with the released transfer still in flight.
+    }
+    std::cout << "Teardown with in-flight released transfer: OK" << std::endl;
+
+    return 0;
+}
+
 // Path-mode parser unit checks (POSIX-only since it owns parsePathMeta tests).
 static void
 checkPathModeParser() {
@@ -1132,6 +1448,24 @@ main (int argc, char *argv[]) {
     ret = test_posix_repost (test_files_dir_path_abs_path, use_uring);
     if (ret != 0) {
         std::cerr << "Repost Test failed" << std::endl;
+        return 1;
+    }
+
+    // Reset phase number for release-active test
+    phase_num = 1;
+
+    ret = test_posix_release_active(test_files_dir_path_abs_path, use_uring);
+    if (ret != 0) {
+        std::cerr << "Release-Active Test failed" << std::endl;
+        return 1;
+    }
+
+    // Reset phase number for release-teardown test
+    phase_num = 1;
+
+    ret = test_posix_release_teardown(test_files_dir_path_abs_path, use_uring);
+    if (ret != 0) {
+        std::cerr << "Release-Teardown Test failed" << std::endl;
         return 1;
     }
 
