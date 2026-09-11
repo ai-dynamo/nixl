@@ -561,7 +561,8 @@ PYBIND11_MODULE(_bindings, m) {
         .def_readwrite("captureTelemetry", &nixlAgentConfig::captureTelemetry)
         .def_readwrite("pthrDelay", &nixlAgentConfig::pthrDelay)
         .def_readwrite("lthrDelay", &nixlAgentConfig::lthrDelay)
-        .def_readwrite("etcdWatchTimeout", &nixlAgentConfig::etcdWatchTimeout);
+        .def_readwrite("etcdWatchTimeout", &nixlAgentConfig::etcdWatchTimeout)
+        .def_readwrite("useLoopback", &nixlAgentConfig::useLoopback);
 
     // note: pybind will automatically convert notif_map to python types:
     // so, a Dictionary of string: List<string>

@@ -159,6 +159,11 @@ class nixl_agent_config:
             agent creation, can be initialized with create_backend.
         sync_mode: Thread synchronization mode to use for the agent.
             If None, sync_mode is set based on the enable_listen flag.
+        enable_loopback: Whether to enable intra-agent (loopback) transfers, where the
+            agent transfers to and from itself. Disable it when the agent only transfers
+            with other agents, to drop the loopback connection from agent creation and
+            its per-descriptor state from memory registration. When disabled, a transfer
+            or notification naming the local agent fails.
     """
 
     def __init__(
@@ -170,6 +175,7 @@ class nixl_agent_config:
         num_threads: int = 0,
         backends: list[str] = ["UCX"],
         sync_mode: Optional[nixl_thread_sync_t] = None,
+        enable_loopback: bool = True,
     ):
         # TODO: add backend init parameters
         self.backends = backends
@@ -178,6 +184,7 @@ class nixl_agent_config:
         self.port = listen_port
         self.capture_telemetry = capture_telemetry
         self.num_threads = num_threads
+        self.enable_loopback = enable_loopback
         if sync_mode is not None and not isinstance(sync_mode, nixl_thread_sync_t):
             raise TypeError(
                 f"sync_mode must be a nixl_thread_sync_t (got {type(sync_mode).__name__!r})"
@@ -226,6 +233,7 @@ class nixl_agent:
         agent_config.pthrDelay = 0
         agent_config.lthrDelay = 100000
         agent_config.captureTelemetry = nixl_conf.capture_telemetry
+        agent_config.useLoopback = nixl_conf.enable_loopback
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
 
         self.name = agent_name

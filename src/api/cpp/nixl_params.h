@@ -37,6 +37,7 @@ struct nixlAgentConfig {
     static constexpr uint64_t kDefaultLthrDelayUs = 100000;
     static constexpr std::chrono::microseconds kDefaultEtcdWatchTimeout =
         std::chrono::microseconds(5000000);
+    static constexpr bool kDefaultUseLoopback = true;
 
     /** @var Enable progress thread */
     bool useProgThread = kDefaultUseProgThread;
@@ -71,6 +72,15 @@ struct nixlAgentConfig {
     std::chrono::microseconds etcdWatchTimeout = kDefaultEtcdWatchTimeout;
 
     /**
+     * @var Enable intra-agent (loopback) transfers, where the agent transfers to and from
+     *      itself. Backends that need a connection for this build it at agent creation and
+     *      keep per-descriptor state for it, so an agent that only transfers with other
+     *      agents can disable it to remove that cost from creation and memory registration.
+     *      With it disabled, a transfer request or notification naming the local agent fails.
+     */
+    bool useLoopback = kDefaultUseLoopback;
+
+    /**
      * @brief  Default constructor.
      */
     nixlAgentConfig() = default;
@@ -86,6 +96,7 @@ struct nixlAgentConfig {
      * @param lthr_delay_us      Optional delay for listener thread in us
      * @param capture_telemetry  Optional flag to enable telemetry capture
      * @param etcd_watch_timeout Optional timeout for etcd watch operations in microseconds
+     * @param use_loopback       Optional flag to enable intra-agent (loopback) transfers
      */
     explicit nixlAgentConfig(
         const bool use_prog_thread,
@@ -96,7 +107,8 @@ struct nixlAgentConfig {
         uint64_t pthr_delay_us = kDefaultPthrDelayUs,
         uint64_t lthr_delay_us = kDefaultLthrDelayUs,
         bool capture_telemetry = kDefaultCaptureTelemetry,
-        std::chrono::microseconds etcd_watch_timeout = kDefaultEtcdWatchTimeout) noexcept
+        std::chrono::microseconds etcd_watch_timeout = kDefaultEtcdWatchTimeout,
+        bool use_loopback = kDefaultUseLoopback) noexcept
         : useProgThread(use_prog_thread),
           useListenThread(use_listen_thread),
           listenPort(port),
@@ -104,7 +116,8 @@ struct nixlAgentConfig {
           captureTelemetry(capture_telemetry),
           pthrDelay(pthr_delay_us),
           lthrDelay(lthr_delay_us),
-          etcdWatchTimeout(etcd_watch_timeout) {}
+          etcdWatchTimeout(etcd_watch_timeout),
+          useLoopback(use_loopback) {}
 };
 
 #endif

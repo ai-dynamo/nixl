@@ -112,6 +112,7 @@ protected:
         cfg.listenPort = listen_port;
         cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
         cfg.captureTelemetry = capture_telemetry;
+        cfg.useLoopback = loopbackEnabled;
         return cfg;
     }
 
@@ -487,6 +488,7 @@ protected:
     }
 
     bool m_gpu_device = false;
+    bool loopbackEnabled = true;
     gtest::ScopedEnv env;
     std::vector<nixlBackendH *> backend_handles;
 
@@ -549,6 +551,91 @@ protected:
 };
 
 const std::string TestTransfer::NOTIF_MSG = "notification";
+
+TEST_P(TestTransfer, Loopback) {
+    constexpr size_t size = 4096;
+    constexpr size_t count = 8;
+    constexpr size_t repeat = 2;
+    constexpr size_t num_threads = 1;
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
+
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+    createRegisteredMem(getAgent(0), size, count, mem_type, src_buffers);
+    createRegisteredMem(getAgent(0), size, count, mem_type, dst_buffers);
+
+    doTransfer(getAgent(0),
+               getAgentName(0),
+               getAgent(0),
+               getAgentName(0),
+               NIXL_WRITE,
+               size,
+               count,
+               repeat,
+               num_threads,
+               mem_type,
+               src_buffers,
+               mem_type,
+               dst_buffers);
+
+    deregisterMem(getAgent(0), src_buffers, mem_type);
+    deregisterMem(getAgent(0), dst_buffers, mem_type);
+}
+
+class TestTransferLoopbackDisabled : public TestTransfer {
+protected:
+    void
+    SetUp() override {
+        env.addVar("NIXL_TELEMETRY_ENABLE", "n");
+        loopbackEnabled = false;
+        for (size_t i = 0; i < 2; i++) {
+            addAgent(i);
+        }
+    }
+};
+
+TEST_P(TestTransferLoopbackDisabled, LoopbackRefusedInterAgentUnaffected) {
+    constexpr size_t size = 4096;
+    constexpr size_t count = 4;
+    constexpr nixl_mem_t mem_type = DRAM_SEG;
+
+    std::vector<MemBuffer> src_buffers, local_dst_buffers, remote_dst_buffers;
+    createRegisteredMem(getAgent(0), size, count, mem_type, src_buffers);
+    createRegisteredMem(getAgent(0), size, count, mem_type, local_dst_buffers);
+    createRegisteredMem(getAgent(1), size, count, mem_type, remote_dst_buffers);
+
+    {
+        const LogIgnoreGuard lig("metadata for remote agent .* not found");
+        nixlXferReqH *xfer_req = nullptr;
+        EXPECT_NE(
+            getAgent(0).createXferReq(NIXL_WRITE,
+                                      makeDescList<nixlBasicDesc>(src_buffers, mem_type),
+                                      makeDescList<nixlBasicDesc>(local_dst_buffers, mem_type),
+                                      getAgentName(0),
+                                      xfer_req),
+            NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req, nullptr);
+    }
+
+    exchangeMD(0, 1);
+    doTransfer(getAgent(0),
+               getAgentName(0),
+               getAgent(1),
+               getAgentName(1),
+               NIXL_WRITE,
+               size,
+               count,
+               1,
+               1,
+               mem_type,
+               src_buffers,
+               mem_type,
+               remote_dst_buffers);
+    invalidateMD(0, 1);
+
+    deregisterMem(getAgent(0), src_buffers, mem_type);
+    deregisterMem(getAgent(0), local_dst_buffers, mem_type);
+    deregisterMem(getAgent(1), remote_dst_buffers, mem_type);
+}
 
 TEST_P(TestTransfer, RandomSizes)
 {
@@ -694,6 +781,8 @@ TEST_P(TestTransferTelemetry, GetXferTelemetryDisabled) {
     runTelemetryTransferTest(512, NIXL_ERR_NO_TELEMETRY, false);
     EXPECT_LE(lig.getIgnoredCount(), 1);
 }
+
+NIXL_INSTANTIATE_TEST(ucx_loopback_disabled, TestTransferLoopbackDisabled, "UCX", true, 2, 0, "");
 
 NIXL_INSTANTIATE_TEST(ucx, TestTransfer, "UCX", true, 2, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestTransfer, "UCX", false, 2, 0, "");
