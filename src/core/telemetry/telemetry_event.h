@@ -27,7 +27,7 @@ constexpr char TELEMETRY_BUFFER_SIZE_VAR[] = "NIXL_TELEMETRY_BUFFER_SIZE";
 constexpr char TELEMETRY_RUN_INTERVAL_VAR[] = "NIXL_TELEMETRY_RUN_INTERVAL";
 constexpr char TELEMETRY_ENABLED_METRICS_VAR[] = "NIXL_TELEMETRY_ENABLED_METRICS";
 
-constexpr inline int TELEMETRY_VERSION = 4;
+constexpr inline int TELEMETRY_VERSION = 5;
 
 /**
  * @enum nixl_telemetry_event_type_t

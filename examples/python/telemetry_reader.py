@@ -33,7 +33,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants from telemetry_event.h
-TELEMETRY_VERSION = 4
+TELEMETRY_VERSION = 5
+DESTRUCTIVE_INTERFERENCE_SIZE = 256
 
 # NIXL telemetry event types (nixl_telemetry_event_type_t)
 AGENT_TX_BYTES = 0
@@ -86,13 +87,42 @@ class BufferHeader(ctypes.Structure):
 
     _pack_ = 1
     _fields_ = [
-        ("write_pos", ctypes.c_size_t),
-        ("read_pos", ctypes.c_size_t),
-        ("version", ctypes.c_uint32),
-        ("expected_version", ctypes.c_uint32),
-        ("capacity", ctypes.c_size_t),
-        ("mask", ctypes.c_size_t),
+        ("write_pos", ctypes.c_size_t),  # [0, 8)
+        ("capacity", ctypes.c_size_t),  # [8, 16)
+        # version stays at offset 16 across layout versions (see cyclic_buffer.h)
+        ("version", ctypes.c_uint32),  # [16, 20)
+        ("expected_version", ctypes.c_uint32),  # [20, 24)
+        ("mask", ctypes.c_size_t),  # [24, 32)
+        (
+            "_pad_write",
+            ctypes.c_char * (DESTRUCTIVE_INTERFERENCE_SIZE - 32),
+        ),  # pad write_pos's interference-size block: [32, 256)
+        ("read_pos", ctypes.c_size_t),  # [256, 264)
+        (
+            "_pad_tail",
+            ctypes.c_char
+            * (DESTRUCTIVE_INTERFERENCE_SIZE - ctypes.sizeof(ctypes.c_size_t)),
+        ),  # match C++ compiler's tail padding: [264, 512)
     ]
+
+
+# Mirror the static_asserts in cyclic_buffer.tpp so a layout drift fails.
+# The pads are checked too since they are maintained by hand here, while
+# the C++ compiler derives them from alignas.
+if ctypes.sizeof(BufferHeader) != 2 * DESTRUCTIVE_INTERFERENCE_SIZE:
+    raise RuntimeError("BufferHeader layout drift: unexpected size")
+for _field, _offset in [
+    ("write_pos", 0),
+    ("capacity", 8),
+    ("version", 16),
+    ("expected_version", 20),
+    ("mask", 24),
+    ("_pad_write", 32),
+    ("read_pos", 256),
+    ("_pad_tail", 264),
+]:
+    if getattr(BufferHeader, _field).offset != _offset:
+        raise RuntimeError(f"BufferHeader layout drift: {_field} moved")
 
 
 class SharedRingBuffer:
@@ -106,9 +136,15 @@ class SharedRingBuffer:
         self.header = None
         self.data = None
         self.buffer_size = None
+        self.cached_write_pos = 0
+        self.cached_mask = 0
 
         self._open_file()
         self._map_memory()
+
+        # Seed the cached positions on attaching to an existing buffer
+        self.cached_write_pos = self.header.write_pos
+        self.cached_mask = self.header.mask
 
     def _open_file(self):
         """Open existing file"""
@@ -188,12 +224,14 @@ class SharedRingBuffer:
         """Pop an event from the buffer"""
         read_pos = self.header.read_pos
 
-        if read_pos == self.header.write_pos:
-            return None
+        if read_pos == self.cached_write_pos:
+            self.cached_write_pos = self.header.write_pos
+            if read_pos == self.cached_write_pos:
+                return None
 
         event = self.data[read_pos]
 
-        next_read = (read_pos + 1) & self.header.mask
+        next_read = (read_pos + 1) & self.cached_mask
         self.header.read_pos = next_read
 
         return event
