@@ -1,0 +1,97 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#ifndef NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_WORKER_H
+#define NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_WORKER_H
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <thread>
+#include "proxy_protocol.h"
+
+struct nixlProxyBackendOps;
+class nixlProxyMemViewRegistry;
+struct nixlProxyChannelState;
+
+class ProxyWorker {
+    public:
+        ProxyWorker(const nixlProxyBackendOps *backend_ops,
+                    const nixlProxyMemViewRegistry *proxy_memview_registry,
+                    std::atomic<uint64_t> *shutdown_state,
+                    nixlProxyChannelState *channels,
+                    uint32_t max_peers,
+                    uint32_t channel_count,
+                    uint32_t worker_index,
+                    uint32_t worker_count,
+                    uint64_t pthr_delay_us) noexcept;
+        ~ProxyWorker();
+
+        void
+        start();
+
+        void join() noexcept;
+
+        void
+        runOnce();
+
+    private:
+        nixlProxyChannelState *
+        getChannelState(uint32_t peer, uint32_t channel_id);
+
+        /**
+         * Apply fn(channel, channel_id, peer) to every ring this worker owns.
+         * Channels are striped across workers; a worker owns every peer of the
+         * channels assigned to it. The one definition of that ownership.
+         */
+        template<typename Fn>
+        void
+        forEachOwnedChannel(Fn &&fn);
+
+        void
+        publishOwnedChannels();
+
+        void
+        submitOwnedChannels();
+
+        void
+        submitReady(nixlProxyChannelState &channel, uint32_t peer);
+
+        void
+        submitToBackend(nixlProxyChannelState &channel,
+                        uint32_t peer,
+                        uint32_t slot,
+                        const nixlProxySubmission &submission);
+
+        void
+        driveBackendProgress();
+
+        void
+        publishCompletions(nixlProxyChannelState &channel);
+
+        const nixlProxyBackendOps *backend_ops_ = nullptr;
+        const nixlProxyMemViewRegistry *proxy_memview_registry_ = nullptr;
+        std::atomic<uint64_t> *shutdown_state_ = nullptr;
+        nixlProxyChannelState *channels_ = nullptr;
+        uint32_t max_peers_ = 0;
+        uint32_t channel_count_ = 0;
+        uint32_t worker_index_ = 0;
+        uint32_t worker_count_ = 0;
+        uint64_t pthr_delay_us_ = 0;
+        std::thread thread_;
+};
+
+#endif // NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_WORKER_H
