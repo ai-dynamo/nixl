@@ -170,58 +170,14 @@ getNumConfiguredNumaNodes(int &node_count) {
     return true;
 }
 
-// Thread-safe atomic counters for optimized ID generation
-static std::atomic<uint16_t> g_xfer_id_counter{1}; // 16-bit XFER_ID counter, start from 1
-static std::atomic<uint8_t> g_seq_id_counter{0}; // 4-bit SEQ_ID counter, start from 0
+// Thread-safe atomic counter for transfer ID generation.
+static_assert(NIXL_XFER_ID_BITS == 16,
+              "XFER_ID width must match the counter type of getNextXferId");
+static std::atomic<uint16_t> g_xfer_id_counter{1};
 
 uint16_t
 getNextXferId() {
-    uint16_t xfer_id = g_xfer_id_counter.fetch_add(1);
-
-    // Handle wraparound: 16-bit field can hold 0 to 65,535
-    if (xfer_id > NIXL_XFER_ID_MASK) {
-        // Reset counter atomically and get a fresh ID
-        uint16_t expected = xfer_id;
-        while (expected > NIXL_XFER_ID_MASK &&
-               !g_xfer_id_counter.compare_exchange_weak(expected, 1)) {
-            expected = g_xfer_id_counter.load();
-        }
-        xfer_id = g_xfer_id_counter.fetch_add(1);
-        // Ensure we don't exceed the mask after reset
-        if (xfer_id > NIXL_XFER_ID_MASK) {
-            xfer_id = 1;
-        }
-    }
-
-    return xfer_id;
-}
-
-uint8_t
-getNextSeqId() {
-    uint8_t seq_id = g_seq_id_counter.fetch_add(1);
-
-    // Handle wraparound: 4-bit field can hold 0 to 15
-    if (seq_id > NIXL_SEQ_ID_MASK) {
-        // Reset counter atomically and get a fresh ID
-        uint8_t expected = seq_id;
-        while (expected > NIXL_SEQ_ID_MASK &&
-               !g_seq_id_counter.compare_exchange_weak(expected, 0)) {
-            expected = g_seq_id_counter.load();
-        }
-        seq_id = g_seq_id_counter.fetch_add(1);
-        // Ensure we don't exceed the mask after reset
-        if (seq_id > NIXL_SEQ_ID_MASK) {
-            seq_id = 0;
-        }
-    }
-
-    return seq_id;
-}
-
-void
-resetSeqId() {
-    // Reset SEQ_ID counter for new postXfer
-    g_seq_id_counter.store(0);
+    return g_xfer_id_counter.fetch_add(1);
 }
 
 nixl_status_t

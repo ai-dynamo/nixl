@@ -58,32 +58,73 @@
 // Handshake timeout (seconds) for waiting on peer's inbound handshake
 #define NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S 60
 
-// Handshake SerDes tag names
+/**
+ * @brief Version of the on-the-wire protocol between two libfabric agents.
+ *
+ * Covers everything two agents must agree on byte-for-byte: the immediate data field layout, the
+ * handshake body, and the notification framing. Bump it in the same change that alters any of them.
+ * Peers exchange it in the handshake and refuse to talk to a version they do not recognize.
+ */
+constexpr uint16_t NIXL_LIBFABRIC_WIRE_VERSION = 1;
+
+// Handshake SerDes tag names.
+constexpr const char *NIXL_HANDSHAKE_TAG_VER = "ver";
 constexpr const char *NIXL_HANDSHAKE_TAG_IDX = "idx";
 constexpr const char *NIXL_HANDSHAKE_TAG_NAME = "name";
 constexpr const char *NIXL_HANDSHAKE_TAG_HAS_CONN = "has_conn";
 constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 
-// The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
-// | 4-bit MSG TYPE flag | 8-bit agent index | 16-bit XFER_ID | 4-bit SEQ_ID |
+// The immediate data associated with an RDMA operation is 32 bits wide (the immediate / remote
+// CQ-data field of fi_writedata() and fi_senddata()). It is divided into the fields below, listed
+// LSB-first so the layout reads in the same order as the shifts:
+//
+//   bits  0..3  : MSG_TYPE     (4 bits)  - message type
+//   bits  4..15 : AGENT_INDEX  (12 bits) - sender's index in the receiver's agent_names_ table
+//   bits 16..31 : XFER_ID      (16 bits) - transfer this operation belongs to
+//
+// AGENT_INDEX caps the number of peers a single agent can address: 12 bits allows 4096 peers.
+//
+// Note that all agents in a pool must run the same wire version; that is enforced by handshake
+// version check.
 
-// Optimized bit field constants (compile-time computed)
-#define NIXL_MSG_TYPE_BITS 4
-#define NIXL_AGENT_INDEX_BITS 8
-#define NIXL_XFER_ID_BITS 16
-#define NIXL_SEQ_ID_BITS 4
+// Total width of the immediate data field on the wire.
+constexpr uint32_t NIXL_IMM_DATA_BITS = 32;
 
-// Pre-computed shift amounts for better performance
-#define NIXL_MSG_TYPE_SHIFT 0
-#define NIXL_AGENT_INDEX_SHIFT 4
-#define NIXL_XFER_ID_SHIFT 12
-#define NIXL_SEQ_ID_SHIFT 28
+// Field widths.
+constexpr uint32_t NIXL_MSG_TYPE_BITS = 4;
+constexpr uint32_t NIXL_AGENT_INDEX_BITS = 12;
+constexpr uint32_t NIXL_XFER_ID_BITS = 16;
 
-// Pre-computed masks (compile-time constants)
-#define NIXL_MSG_TYPE_MASK 0xFU // 0x0000000F (4 bits)
-#define NIXL_AGENT_INDEX_MASK 0xFFU // 0x000000FF (8 bits)
-#define NIXL_XFER_ID_MASK 0xFFFFU // 0x0000FFFF (16 bits)
-#define NIXL_SEQ_ID_MASK 0xFU // 0x0000000F (4 bits)
+// Field offsets, derived by stacking the widths up from the LSB.
+constexpr uint32_t NIXL_MSG_TYPE_SHIFT = 0;
+constexpr uint32_t NIXL_AGENT_INDEX_SHIFT = NIXL_MSG_TYPE_SHIFT + NIXL_MSG_TYPE_BITS;
+constexpr uint32_t NIXL_XFER_ID_SHIFT = NIXL_AGENT_INDEX_SHIFT + NIXL_AGENT_INDEX_BITS;
+
+/** @brief Right-aligned mask for a bit field of the given width. */
+constexpr uint32_t
+nixlImmFieldMask(uint32_t bits) {
+    return static_cast<uint32_t>((1ULL << bits) - 1ULL);
+}
+
+// Field masks, right-aligned (applied after shifting the field down).
+constexpr uint32_t NIXL_MSG_TYPE_MASK = nixlImmFieldMask(NIXL_MSG_TYPE_BITS);
+constexpr uint32_t NIXL_AGENT_INDEX_MASK = nixlImmFieldMask(NIXL_AGENT_INDEX_BITS);
+constexpr uint32_t NIXL_XFER_ID_MASK = nixlImmFieldMask(NIXL_XFER_ID_BITS);
+
+static_assert(NIXL_MSG_TYPE_BITS + NIXL_AGENT_INDEX_BITS + NIXL_XFER_ID_BITS == NIXL_IMM_DATA_BITS,
+              "Immediate data fields must sum to exactly NIXL_IMM_DATA_BITS");
+static_assert(NIXL_XFER_ID_SHIFT + NIXL_XFER_ID_BITS == NIXL_IMM_DATA_BITS,
+              "Topmost immediate data field must end at NIXL_IMM_DATA_BITS");
+
+/**
+ * @brief Maximum number of peers one agent can address, including itself.
+ *
+ * Every agent an engine connects to is assigned an index into its agent_names_ table, and that
+ * index is carried in the AGENT_INDEX field of the immediate data so the receiver can tell who a
+ * transfer came from. The width of that field is therefore a hard cap on the peer count, and
+ * exceeding it would make two peers indistinguishable on the wire.
+ */
+constexpr size_t NIXL_LIBFABRIC_MAX_AGENTS = size_t{1} << NIXL_AGENT_INDEX_BITS;
 
 // Message type constants
 #define NIXL_LIBFABRIC_MSG_NOTIFICTION 2
@@ -98,14 +139,12 @@ constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 #define NIXL_GET_AGENT_INDEX_FROM_IMM(data) \
     (((data) >> NIXL_AGENT_INDEX_SHIFT) & NIXL_AGENT_INDEX_MASK)
 #define NIXL_GET_XFER_ID_FROM_IMM(data) (((data) >> NIXL_XFER_ID_SHIFT) & NIXL_XFER_ID_MASK)
-#define NIXL_GET_SEQ_ID_FROM_IMM(data) (((data) >> NIXL_SEQ_ID_SHIFT) & NIXL_SEQ_ID_MASK)
 
 // Single-operation immediate data creation (minimal bit operations)
-#define NIXL_MAKE_IMM_DATA(msg_type, agent_idx, xfer_id, seq_id)                   \
+#define NIXL_MAKE_IMM_DATA(msg_type, agent_idx, xfer_id)                           \
     (((uint64_t)(msg_type) & NIXL_MSG_TYPE_MASK) |                                 \
      (((uint64_t)(agent_idx) & NIXL_AGENT_INDEX_MASK) << NIXL_AGENT_INDEX_SHIFT) | \
-     (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT) |           \
-     (((uint64_t)(seq_id) & NIXL_SEQ_ID_MASK) << NIXL_SEQ_ID_SHIFT))
+     (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT))
 
 #define NIXL_LIBFABRIC_CQ_BATCH_SIZE 16
 
@@ -284,12 +323,6 @@ namespace LibfabricUtils {
 // Get next unique XFER_ID
 uint16_t
 getNextXferId();
-// Get next 4-bit SEQ_ID
-uint8_t
-getNextSeqId();
-// Reset SEQ_ID counter for new postXfer
-void
-resetSeqId();
 } // namespace LibfabricUtils
 
 // Utility functions

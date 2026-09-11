@@ -31,10 +31,6 @@
 namespace LibfabricUtils {
 uint16_t
 getNextXferId();
-uint8_t
-getNextSeqId();
-void
-resetSeqId();
 } // namespace LibfabricUtils
 
 // Static round-robin counter for rail selection
@@ -464,10 +460,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             status = NIXL_SUCCESS;
         } else if (op_type == nixlLibfabricReq::WRITE) {
             // Direct post (PT OFF path)
-            // Generate next SEQ_ID for this specific write operation
-            uint8_t seq_id = LibfabricUtils::getNextSeqId();
-            uint64_t imm_data =
-                NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
+            uint64_t imm_data = NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id);
             status = rails_[rail_id]->postWrite(req->local_addr,
                                                 req->chunk_size,
                                                 fi_mr_desc(req->local_mr),
@@ -560,10 +553,8 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                                      req);
                 status = NIXL_SUCCESS;
             } else if (op_type == nixlLibfabricReq::WRITE) {
-                // Generate next SEQ_ID for this specific transfer operation
-                uint8_t seq_id = LibfabricUtils::getNextSeqId();
                 uint64_t imm_data =
-                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
+                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id);
                 status = rails_[rail_id]->postWrite(req->local_addr,
                                                     req->chunk_size,
                                                     fi_mr_desc(req->local_mr),
@@ -613,9 +604,8 @@ nixlLibfabricRailManager::deferTransferRequest(nixlLibfabricReq::OpType op_type,
                                                bool is_cuda_vram,
                                                size_t rail_id,
                                                nixlLibfabricReq *req) {
-    uint8_t seq_id = (op_type == nixlLibfabricReq::WRITE) ? LibfabricUtils::getNextSeqId() : 0;
     uint64_t imm_data = (op_type == nixlLibfabricReq::WRITE) ?
-        NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id) :
+        NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id) :
         0;
     nixlLibfabricPostRequest pr{};
     pr.type = (op_type == nixlLibfabricReq::WRITE) ? nixlLibfabricPostRequest::WRITE :
@@ -1027,9 +1017,7 @@ nixlLibfabricRailManager::postControlMessage(
     }
     size_t rail_id = 0; // Use rail 0 for notifications
     uint32_t xfer_id = req->xfer_id;
-    // For control messages, use SEQ_ID 0 since they don't need sequence tracking
-    // TODO: Add sequencing for connection establishment workflow.
-    uint64_t imm_data = NIXL_MAKE_IMM_DATA(msg_type_value, agent_idx, xfer_id, 0);
+    uint64_t imm_data = NIXL_MAKE_IMM_DATA(msg_type_value, agent_idx, xfer_id);
 
     // Set completion callback if provided
     if (completion_callback) {

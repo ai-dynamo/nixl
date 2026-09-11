@@ -21,6 +21,14 @@ if enabled_plugins.get('UCX')
     endif
 endif
 
+if enabled_plugins.get('LIBFABRIC')
+    if not libfabric_dep.found() and is_explicit_enable
+        error('LIBFABRIC plugin tests requested but libfabric dependency not found')
+    elif libfabric_dep.found()
+        subdir('libfabric')
+    endif
+endif
+
 if enabled_plugins.get('POSIX')
     subdir('posix')
 endif
