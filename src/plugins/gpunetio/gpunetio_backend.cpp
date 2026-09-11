@@ -1272,11 +1272,9 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
-    uint32_t tmp = xferRingPos.load() & (DOCA_XFER_REQ_MAX - 1);
-    if (((volatile docaXferCompletion *)completion_list_cpu)[tmp].completed > 0)
-        return NIXL_SUCCESS;
-    else
-        return NIXL_IN_PROG;
+    NIXL_ASSERT(handle != nullptr);
+    // TODO: Track request completion so inactive handles can be safely released.
+    return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
