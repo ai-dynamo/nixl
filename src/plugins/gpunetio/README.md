@@ -30,15 +30,20 @@ There are two mode of operation:
 
 Stream attached mode is optimal when the application has a sequence of CUDA tasks enqueued on the GPU to process data so it can attach, on the same stream, a final RDMA Write CUDA kernel. This way, the CPU can asynchronously submit on a single CUDA stream both data processing and network communications.
 
+Attached streams require `data_qp_count=1`; striped WRITEs use the backend's per-QP stream pool.
+
 Stream pool mode instead is when applications mostly wants to process data on the CPU but still wants to take the advange of GPU taking care of network communications in a parallel way (every CUDA communication kernel will be executed in parallel to others on a different stream).
 
 ## Input parameters
 
-DOCA GPUNetIO backend takes 3 input parameters:
+DOCA GPUNetIO backend takes these input parameters:
 - network_devices: network device to be used during the execution (e.g. mlx5_0). Current release supports only 1 network device.
-- oob_interface: network interface to be used when exchanging control info during initiator/target connection. Optional parameter, not needed if the network device is set in Ethernet mode.
+- oob_interface: network interface to be used when exchanging control info during initiator/target connection. Set this explicitly for bonded network devices whose IPv4 address cannot be obtained from DOCA.
+- oob_port: TCP port used to listen for OOB connection setup. Defaults to 6544. Set a distinct port for each GPUNETIO backend sharing a host network namespace.
 - gpu_devices: GPU CUDA ID to be used during the execution (e.g. 0). Current release supports only 1 GPU device.
 - cuda_streams: how many CUDA streams the backend should created at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. If this parameter is not specified, default value is `DOCA_POST_STREAM_NUM`.
+- gid_index: RoCE GID table index. Defaults to 0; use the GID corresponding to the selected RoCE path.
+- data_qp_count: number of WRITE data QPs per peer, from 1 to 4. Values above 1 require at least the same number of `cuda_streams`, stripe request-ring chunks across dedicated per-QP streams, and defer each ordering chunk until every preceding chunk and the prior request's ordering chunk complete. READ continues to use a separate data QP. The default is 1 and preserves the existing OOB wire format.
 
 ## Example
 
