@@ -12,16 +12,11 @@
 
 #include <algorithm>
 #include <cctype>
-#include <iomanip>
-#include <map>
-#include <sstream>
 #include <string_view>
 #include <utility>
 
 namespace nixlbench {
 namespace {
-
-    constexpr int inval_args_exit_code = 2;
 
     std::string
     upper(std::string value) {
@@ -29,62 +24,6 @@ namespace {
             return static_cast<char>(std::toupper(ch));
         });
         return value;
-    }
-
-    bool
-    hasMemoryType(const PluginMetadata &metadata, nixl_mem_t memory_type) {
-        return std::find(metadata.memory_types.begin(), metadata.memory_types.end(), memory_type) !=
-            metadata.memory_types.end();
-    }
-
-    size_t
-    countCommaSeparated(const std::string &value) {
-        if (value.empty()) {
-            return 0;
-        }
-        return static_cast<size_t>(std::count(value.begin(), value.end(), ',')) + 1;
-    }
-
-    std::vector<std::string>
-    sortedParameterKeys(const nixl_b_params_t &parameters) {
-        std::vector<std::string> keys;
-        keys.reserve(parameters.size());
-        for (const auto &[key, value] : parameters) {
-            (void)value;
-            keys.push_back(key);
-        }
-        std::sort(keys.begin(), keys.end());
-        return keys;
-    }
-
-    std::string
-    pluginParameterDescription(const nixl_b_params_t &parameters) {
-        std::ostringstream description;
-        description << "Override an advertised plugin parameter"
-                    << "\nAdvertised parameters and defaults:";
-        for (const auto &key : sortedParameterKeys(parameters)) {
-            description << "\n  " << key << ": " << parameters.at(key);
-        }
-        return description.str();
-    }
-
-    std::string
-    formatSize(size_t bytes);
-
-    CLI::Validator
-    binarySizeTransform() {
-        const std::map<std::string, uint64_t> units = {
-            {"B", 1},
-            {"K", 1024ULL},
-            {"KB", 1024ULL},
-            {"M", 1024ULL * 1024},
-            {"MB", 1024ULL * 1024},
-            {"G", 1024ULL * 1024 * 1024},
-            {"GB", 1024ULL * 1024 * 1024},
-            {"T", 1024ULL * 1024 * 1024 * 1024},
-            {"TB", 1024ULL * 1024 * 1024 * 1024},
-        };
-        return CLI::AsNumberWithUnit(units);
     }
 
     void
@@ -135,37 +74,6 @@ namespace {
             ->group("Raw benchmark options");
     }
 
-    void
-    addFileOptions(CLI::App &raw, FileOptions &options) {
-        auto *path =
-            raw.add_option("--path", options.path, "Directory for automatically named files")
-                ->group("FILE_SEG resource options");
-        auto *filenames =
-            raw.add_option("--filenames", options.filenames, "Comma-separated explicit file names")
-                ->group("FILE_SEG resource options");
-        path->excludes(filenames);
-        filenames->excludes(path);
-        raw.add_option("--num-files", options.num_files, "Number of backing files")
-            ->check(CLI::PositiveNumber)
-            ->group("FILE_SEG resource options");
-        raw.add_flag("--direct", options.direct, "Use direct file opening")
-            ->group("FILE_SEG resource options");
-    }
-
-    void
-    addPluginOptions(CLI::App &backend,
-                     const nixl_b_params_t &parameters,
-                     std::vector<std::pair<std::string, std::string>> &overrides) {
-        if (parameters.empty()) {
-            return;
-        }
-        backend.add_option("--plugin-param", overrides, pluginParameterDescription(parameters))
-            ->check(
-                CLI::IsMember(sortedParameterKeys(parameters)).description("").application_index(0))
-            ->type_name("KEY VALUE")
-            ->group("Plugin initialization parameters");
-    }
-
     bool
     validateRawOptions(const RawOptions &raw, std::ostream &err) {
         const auto fail = [&](const std::string &message) {
@@ -183,72 +91,27 @@ namespace {
     }
 
     bool
-    validateFileOptions(const FileOptions &file, const RawOptions &raw, std::ostream &err) {
+    validateFileOptions(const fileOptions &file, const RawOptions &raw, std::ostream &err) {
         const auto fail = [&](const std::string &message) {
             err << "Error: " << message << '\n';
             return false;
         };
 
-        if (!file.filenames.empty() &&
-            (file.filenames.front() == ',' || file.filenames.back() == ',' ||
-             file.filenames.find(",,") != std::string::npos)) {
-            return fail("--filenames must not contain empty entries");
+        std::string file_error;
+        if (!nixlbench::validateFileOptions(file, file_error)) {
+            return fail(file_error);
         }
-        if (!file.filenames.empty() &&
-            countCommaSeparated(file.filenames) != static_cast<size_t>(file.num_files)) {
-            return fail("--filenames must contain exactly --num-files entries");
-        }
-        if (file.num_files > raw.threads || raw.threads % file.num_files != 0) {
+        if (file.numFiles > raw.threads || raw.threads % file.numFiles != 0) {
             return fail("--num-files must divide --threads and cannot exceed it");
         }
         return true;
-    }
-
-    std::string
-    formatSize(size_t bytes) {
-        static constexpr const char *units[] = {"B", "KB", "MB", "GB", "TB"};
-        double value = static_cast<double>(bytes);
-        size_t unit = 0;
-        while (value >= 1024.0 && unit + 1 < std::size(units)) {
-            value /= 1024.0;
-            ++unit;
-        }
-        std::ostringstream output;
-        output << std::fixed << std::setprecision(value == static_cast<size_t>(value) ? 0 : 2)
-               << value << ' ' << units[unit] << " (" << bytes << " bytes)";
-        return output.str();
-    }
-
-    bool
-    listAvailablePlugins(nixlAgent &agent,
-                         std::vector<nixl_backend_t> &plugins,
-                         std::string &error) {
-        const auto status = agent.getAvailPlugins(plugins);
-        if (status == NIXL_SUCCESS) {
-            return true;
-        }
-        error = "failed to discover NIXL plugins: " + nixlEnumStrings::statusStr(status);
-        return false;
-    }
-
-    std::optional<PluginMetadata>
-    queryPluginMetadata(nixlAgent &agent, const std::string &name, std::string &error) {
-        PluginMetadata metadata;
-        metadata.name = name;
-        const auto status = agent.getPluginParams(name, metadata.memory_types, metadata.parameters);
-        if (status != NIXL_SUCCESS) {
-            error = "failed to query " + name +
-                " plugin metadata: " + nixlEnumStrings::statusStr(status);
-            return std::nullopt;
-        }
-        return metadata;
     }
 
 } // namespace
 
 void
 printRawPlan(const RawCommandRequest &request,
-             const PluginMetadata &metadata,
+             const pluginMetadata &metadata,
              int normalized_iterations,
              int normalized_warmup_iterations,
              std::ostream &out) {
@@ -256,7 +119,7 @@ printRawPlan(const RawCommandRequest &request,
         << "  command: raw posix\n"
         << "  backend: " << metadata.name << "\n"
         << "  memory types: ";
-    auto memory_types = metadata.memory_types;
+    auto memory_types = metadata.memoryTypes;
     std::sort(memory_types.begin(), memory_types.end());
     for (size_t i = 0; i < memory_types.size(); ++i) {
         if (i != 0) {
@@ -291,7 +154,7 @@ printRawPlan(const RawCommandRequest &request,
             << (request.file.path.empty() ? "<current working directory>" : request.file.path)
             << "\n    filenames: "
             << (request.file.filenames.empty() ? "<automatic>" : request.file.filenames)
-            << "\n    files: " << request.file.num_files
+            << "\n    files: " << request.file.numFiles
             << "\n    direct I/O: " << (request.file.direct ? "enabled" : "disabled");
     }
     out << "\n  plugin parameters:\n";
@@ -308,25 +171,10 @@ isRawCommand(int argc, char *argv[]) {
     return argc > 1 && std::string_view(argv[1]) == "raw";
 }
 
-std::optional<PluginMetadata>
-discoverPluginMetadata(const std::string &name, std::string &error) {
-    nixlAgent agent("nixlbench-cli", nixlAgentConfig{});
-    std::vector<nixl_backend_t> plugins;
-    if (!listAvailablePlugins(agent, plugins, error)) {
-        return std::nullopt;
-    }
-    if (std::find(plugins.begin(), plugins.end(), name) == plugins.end()) {
-        error = name + " plugin is not installed or not visible in the NIXL plugin path";
-        return std::nullopt;
-    }
-
-    return queryPluginMetadata(agent, name, error);
-}
-
 int
 parseRawPosixCommand(int argc,
                      char *argv[],
-                     const PluginMetadata &metadata,
+                     const pluginMetadata &metadata,
                      RawCommandRequest &request,
                      bool &help_requested,
                      std::ostream &out,
@@ -411,7 +259,7 @@ benchmarkFileArguments(const RawCommandRequest &request, const std::string &prog
     if (request.has_file_options) {
         arguments.push_back("--filepath=" + request.file.path);
         arguments.push_back("--filenames=" + request.file.filenames);
-        arguments.push_back("--num_files=" + std::to_string(request.file.num_files));
+        arguments.push_back("--num_files=" + std::to_string(request.file.numFiles));
         arguments.push_back("--storage_enable_direct=" + std::string(boolean(request.file.direct)));
     }
     return arguments;

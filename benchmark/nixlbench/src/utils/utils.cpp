@@ -433,8 +433,10 @@ setupDeviceAPIConfig() {
 }
 
 int
-xferBenchConfig::parseConfig(int argc, char *argv[]) {
-    plugin_parameters.reset();
+xferBenchConfig::parseConfig(int argc,
+                             char *argv[],
+                             std::optional<nixl_b_params_t> plugin_parameters_override) {
+    plugin_parameters = std::move(plugin_parameters_override);
     std::string usage("NIXL Benchmark.  Sample usage:\n\n");
     usage += std::string(argv[0]) + " [flags]";
     gflags::SetUsageMessage(usage);
@@ -1021,7 +1023,9 @@ xferBenchConfig::workerNum() {
 
 bool
 xferBenchConfig::isStorageBackend() {
-    return (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
+    return ((xferBenchConfig::plugin_parameters &&
+             XFERBENCH_SEG_TYPE_FILE == xferBenchConfig::target_seg_type) ||
+            XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GDS_MT == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
