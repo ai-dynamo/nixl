@@ -442,6 +442,48 @@ namespace agent {
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
     }
 
+    TEST_F(dualAgentBridgeFixture, FailedReleaseKeepsXferPollable) {
+        DualAgentSetup setup(DRAM_SEG);
+        setupDualAgent(setup);
+
+        nixl_xfer_dlist_t local_xfer_dlist(DRAM_SEG), remote_xfer_dlist(DRAM_SEG);
+        local_xfer_dlist.addDesc(setup.local_blob.getDesc());
+        remote_xfer_dlist.addDesc(setup.remote_blob.getDesc());
+
+        const auto &mock_engine = local_agent_helper_->getGMockEngine();
+        EXPECT_CALL(mock_engine, prepXfer)
+            .WillOnce([](const nixl_xfer_op_t &,
+                         const nixl_meta_dlist_t &,
+                         const nixl_meta_dlist_t &,
+                         const std::string &,
+                         nixlBackendReqH *&req,
+                         const nixl_opt_b_args_t *) {
+                req = new nixlBackendReqH;
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(mock_engine, postXfer).WillOnce(testing::Return(NIXL_IN_PROG));
+        EXPECT_CALL(mock_engine, checkXfer)
+            .WillOnce(testing::Return(NIXL_IN_PROG))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_CALL(mock_engine, releaseReqH)
+            .WillOnce(testing::Return(NIXL_ERR_BACKEND))
+            .WillOnce([](nixlBackendReqH *req) {
+                delete req;
+                return NIXL_SUCCESS;
+            });
+
+        nixlXferReqH *xfer_req = nullptr;
+        ASSERT_EQ(
+            local_agent_->createXferReq(
+                NIXL_WRITE, local_xfer_dlist, remote_xfer_dlist, setup.remote_agent_name, xfer_req),
+            NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->postXferReq(xfer_req), NIXL_IN_PROG);
+
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_ERR_REPOST_ACTIVE);
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
     TEST_F(dualAgentBridgeFixture, PrepMemViewRemoteDRAM) {
         DualAgentSetup s(DRAM_SEG);
         setupDualAgent(s, /*register_local=*/false);
