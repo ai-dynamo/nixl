@@ -240,7 +240,6 @@ fn create_builder() -> cc::Build {
     let mut builder = cc::Build::new();
     builder
         .cpp(true)
-        .compiler("g++")
         .flag("-std=c++20")
         .flag("-fPIC")
         .flag("-Wno-unused-parameter")
