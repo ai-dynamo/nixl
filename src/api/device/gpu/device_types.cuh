@@ -21,6 +21,7 @@
 #include <cstdint>
 
 #include <nixl_types.h>
+#include <nixl_device_backend_types.h>
 
 namespace nixl::gpu {
 
@@ -28,9 +29,11 @@ struct xferStatusH {
     alignas(16) unsigned char storage[64] = {};
 };
 
-constexpr size_t xfer_status_payload_size = 64;
+constexpr size_t xfer_status_payload_size = 60;
+constexpr size_t xfer_status_mode_offset = xfer_status_payload_size;
 
-static_assert(xfer_status_payload_size == sizeof(xferStatusH));
+static_assert(xfer_status_payload_size < sizeof(xferStatusH));
+static_assert(sizeof(xferStatusH) - xfer_status_payload_size == sizeof(uint32_t));
 
 enum class level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
 

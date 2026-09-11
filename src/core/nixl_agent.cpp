@@ -27,6 +27,8 @@
 #include "backend/backend_engine.h"
 #include "transfer_request.h"
 #include "agent_data.h"
+#include "device/device_memview.h"
+#include "device/device_allocator.h"
 #include "nixl_md_manager.h"
 #include "plugin_manager.h"
 #include "common/configuration.h"
@@ -353,7 +355,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     std::string conn_info;
 
     if (backend->supportsRemote()) {
-        if (!backend->supportsNotif()) {
+        if (!nixlRemoteBackendAdmissionAllowed(
+                backend->getType(), true, backend->supportsNotif(), backend->getDeviceExecMode())) {
             NIXL_ERROR_FUNC << "backend '" << type << "' supportsRemote but not notifications";
             return NIXL_ERR_BACKEND;
         }
@@ -384,7 +387,9 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     }
 
     if (backend->supportsRemote()) {
-        data->notifEngines.push_back(backend.get());
+        if (backend->supportsNotif()) {
+            data->notifEngines.push_back(backend.get());
+        }
         data->connMd_[type] = conn_info;
     }
 
@@ -1299,15 +1304,16 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
         if(req_hndl->status == NIXL_IN_PROG) {
 
-            req_hndl->status = req_hndl->engine->releaseReqH(
-                                         req_hndl->backendHandle);
+            const nixl_status_t release_status =
+                req_hndl->engine->releaseReqH(req_hndl->backendHandle);
 
-            if (req_hndl->status < 0) {
+            if (release_status < 0) {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
                                 << "' could not release transfer request and returned error status "
-                                << req_hndl->status;
+                                << release_status;
                 return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
             }
+            req_hndl->status = release_status;
             // just in case the backend doesn't set to NULL on success
             // this will prevent calling releaseReqH again in destructor
             req_hndl->backendHandle = nullptr;
@@ -1871,24 +1877,39 @@ nixlAgent::checkRemoteMD (const std::string remote_name,
 backend_set_t
 nixlAgentData::getBackends(const nixl_opt_args_t *opt_args,
                            const nixlMemSection &section,
-                           nixl_mem_t mem_type) {
+                           nixl_mem_t mem_type,
+                           bool require_device_api) {
     if (opt_args && !opt_args->backends.empty()) {
         backend_set_t backends;
         for (const auto &backend : opt_args->backends) {
-            backends.insert(backend->engine);
+            if (!require_device_api ||
+                backend->engine->getDeviceExecMode() != nixl_device_exec_mode_t::NONE) {
+                backends.insert(backend->engine);
+            }
         }
 
         return backends;
     }
 
     const auto mem_type_backends = section.queryBackends(mem_type);
-    return mem_type_backends ? *mem_type_backends : backend_set_t{};
+    if (!mem_type_backends || !require_device_api) {
+        return mem_type_backends ? *mem_type_backends : backend_set_t{};
+    }
+
+    backend_set_t backends;
+    for (auto *backend : *mem_type_backends) {
+        if (backend->getDeviceExecMode() != nixl_device_exec_mode_t::NONE) {
+            backends.insert(backend);
+        }
+    }
+    return backends;
 }
 
 nixl_status_t
 nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
                        nixlMemViewH &mvh,
                        const nixl_opt_args_t *extra_params) const {
+    mvh = nullptr;
     const auto desc_count = static_cast<size_t>(dlist.descCount());
     const auto mem_type = dlist.getType();
     NIXL_TRACE_SCOPE(
@@ -1929,7 +1950,7 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
 
         // Engine has not been selected yet, try to find a backend that can add an element to the
         // remote metadata
-        const auto backends = data->getBackends(extra_params, *it->second, mem_type);
+        const auto backends = data->getBackends(extra_params, *it->second, mem_type, true);
         for (const auto &backend : backends) {
             const auto status = it->second->addElement(desc, backend, remote_meta_dlist);
             if (status == NIXL_SUCCESS) {
@@ -1951,9 +1972,45 @@ nixlAgent::prepMemView(const nixl_remote_dlist_t &dlist,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    const auto status = engine->prepMemView(remote_meta_dlist, mvh, &opt_args);
-    if (status == NIXL_SUCCESS) {
-        data->mvhToEngine.emplace(mvh, *engine);
+    int execution_device = -1;
+    const nixl_status_t device_status = nixlGetDeviceAllocator().getActiveDevice(execution_device);
+    if (device_status != NIXL_SUCCESS) {
+        return device_status;
+    }
+    nixlMemViewH backend_mvh = nullptr;
+    const auto backend_status = engine->prepMemView(remote_meta_dlist, backend_mvh, &opt_args);
+    if (backend_status != NIXL_SUCCESS) {
+        return backend_status;
+    }
+    if (backend_mvh == nullptr || engine->getDeviceExecMode() == nixl_device_exec_mode_t::NONE) {
+        if (backend_mvh != nullptr) {
+            engine->releaseMemView(backend_mvh);
+        }
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    const auto status = nixlDeviceMemViewAllocate(engine->getDeviceExecMode(), backend_mvh, mvh);
+    if (status != NIXL_SUCCESS) {
+        engine->releaseMemView(backend_mvh);
+        mvh = nullptr;
+        return status;
+    }
+
+    try {
+        const auto [_, inserted] = data->mvhToEngine.emplace(
+            mvh, nixlDeviceMemViewRecord{engine, backend_mvh, execution_device});
+        if (!inserted) {
+            nixlDeviceMemViewFree(mvh);
+            engine->releaseMemView(backend_mvh);
+            mvh = nullptr;
+            return NIXL_ERR_BACKEND;
+        }
+    }
+    catch (...) {
+        nixlDeviceMemViewFree(mvh);
+        engine->releaseMemView(backend_mvh);
+        mvh = nullptr;
+        return NIXL_ERR_BACKEND;
     }
 
     return status;
@@ -1963,6 +2020,7 @@ nixl_status_t
 nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
                        nixlMemViewH &mvh,
                        const nixl_opt_args_t *extra_params) const {
+    mvh = nullptr;
     const auto mem_type = dlist.getType();
     NIXL_TRACE_SCOPE(
         trace_span, data->tracer_.get(), "nixl::prepMemView", nixl::trace::Kind::MemoryR);
@@ -1977,7 +2035,7 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
     }
 
     const std::lock_guard lock_guard(data->lock);
-    const auto backends = data->getBackends(extra_params, data->localSection_, mem_type);
+    const auto backends = data->getBackends(extra_params, data->localSection_, mem_type, true);
     for (const auto &backend : backends) {
         const auto status = data->localSection_.populate(dlist, backend, meta_dlist);
         if (status == NIXL_SUCCESS) {
@@ -1993,9 +2051,45 @@ nixlAgent::prepMemView(const nixl_local_dlist_t &dlist,
         return NIXL_ERR_NOT_FOUND;
     }
 
-    const auto status = engine->prepMemView(meta_dlist, mvh, &opt_args);
-    if (status == NIXL_SUCCESS) {
-        data->mvhToEngine.emplace(mvh, *engine);
+    int execution_device = -1;
+    const nixl_status_t device_status = nixlGetDeviceAllocator().getActiveDevice(execution_device);
+    if (device_status != NIXL_SUCCESS) {
+        return device_status;
+    }
+    nixlMemViewH backend_mvh = nullptr;
+    const auto backend_status = engine->prepMemView(meta_dlist, backend_mvh, &opt_args);
+    if (backend_status != NIXL_SUCCESS) {
+        return backend_status;
+    }
+    if (backend_mvh == nullptr || engine->getDeviceExecMode() == nixl_device_exec_mode_t::NONE) {
+        if (backend_mvh != nullptr) {
+            engine->releaseMemView(backend_mvh);
+        }
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    const auto status = nixlDeviceMemViewAllocate(engine->getDeviceExecMode(), backend_mvh, mvh);
+    if (status != NIXL_SUCCESS) {
+        engine->releaseMemView(backend_mvh);
+        mvh = nullptr;
+        return status;
+    }
+
+    try {
+        const auto [_, inserted] = data->mvhToEngine.emplace(
+            mvh, nixlDeviceMemViewRecord{engine, backend_mvh, execution_device});
+        if (!inserted) {
+            nixlDeviceMemViewFree(mvh);
+            engine->releaseMemView(backend_mvh);
+            mvh = nullptr;
+            return NIXL_ERR_BACKEND;
+        }
+    }
+    catch (...) {
+        nixlDeviceMemViewFree(mvh);
+        engine->releaseMemView(backend_mvh);
+        mvh = nullptr;
+        return NIXL_ERR_BACKEND;
     }
 
     return status;
@@ -2013,6 +2107,28 @@ nixlAgent::releaseMemView(nixlMemViewH mvh) const {
         return;
     }
 
-    it->second.releaseMemView(mvh);
+    const nixlDeviceMemViewRecord record = it->second;
+    nixlDeviceAllocator &allocator = nixlGetDeviceAllocator();
+    int previous_device = -1;
+    bool restore_device = false;
+    if (record.execution_device >= 0) {
+        if (allocator.getActiveDevice(previous_device) != NIXL_SUCCESS) {
+            NIXL_ERROR << "Cannot select execution device " << record.execution_device
+                       << " before releasing memory view " << mvh;
+            return;
+        }
+        if (previous_device != record.execution_device &&
+            allocator.setActiveDevice(record.execution_device) != NIXL_SUCCESS) {
+            NIXL_ERROR << "Cannot select execution device " << record.execution_device
+                       << " before releasing memory view " << mvh;
+            return;
+        }
+        restore_device = previous_device != record.execution_device;
+    }
+    record.engine->releaseMemView(record.backend_memview);
+    nixlDeviceMemViewFree(mvh);
+    if (restore_device) {
+        allocator.setActiveDevice(previous_device);
+    }
     data->mvhToEngine.erase(it);
 }
