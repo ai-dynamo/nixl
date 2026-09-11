@@ -112,6 +112,27 @@ TEST_P(setupObjAccelTestFixture, AccelQueryMemTest) {
     EXPECT_EQ(resp[2].has_value(), false);
 }
 
+#ifdef HAVE_CUDA
+// GPU-direct (VRAM_SEG) transfer test for the generic standard-protocol
+// S3-over-RDMA engine. Exercises the accel-layer VRAM paths: buffer pinning in
+// registerMem(), VRAM advertisement in getSupportedMems(), and the RDMA
+// putObjectAsync/getObjectAsync data path.
+TEST_P(setupObjAccelTestFixture, AccelVramXferTest) {
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
+    transferHandler<VRAM_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, accel_agent_name, accel_agent_name, false, 1);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+    transfer.resetLocalMem();
+    transfer.testTransfer(NIXL_READ);
+    transfer.checkLocalMem();
+}
+#endif // HAVE_CUDA
+
 INSTANTIATE_TEST_SUITE_P(ObjAccelTests,
                          setupObjAccelTestFixture,
                          testing::Values(obj_accel_test_params));
