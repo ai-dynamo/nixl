@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,17 @@
 
 #include <doca_gpunetio_dev_verbs_onesided.cuh>
 #include <doca_gpunetio_dev_verbs_twosided.cuh>
+#include <doca_version.h>
 #include <cuda.h>
 #include <cuda/atomic>
 
 #include "gpunetio_backend.h"
+
+#if DOCA_VERSION_MAJOR == 3 && DOCA_VERSION_MINOR >= 2
+#define NIXL_GPUNETIO_QP_NEEDS_DUMP(qp) ((qp)->need_mcst)
+#else
+#define NIXL_GPUNETIO_QP_NEEDS_DUMP(qp) ((qp)->need_dump)
+#endif
 
 #define ENABLE_DEBUG 0
 
@@ -107,10 +114,11 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
     tot_wqe = xferReqRing[pos].num;
 
     if (threadIdx.x == 0) {
-        if (qp->need_mcst == true)
+        if (NIXL_GPUNETIO_QP_NEEDS_DUMP(qp) == true) {
             base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe + 1);
-        else
+        } else {
             base_wqe_idx = doca_gpu_dev_verbs_reserve_wq_slots(qp, tot_wqe);
+        }
     }
     __syncthreads();
 
@@ -131,7 +139,7 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
     __syncthreads();
 
     if ((idx - blockDim.x) == (tot_wqe - 1)) {
-        if (qp->need_mcst == true) {
+        if (NIXL_GPUNETIO_QP_NEEDS_DUMP(qp) == true) {
             wqe_idx++;
             wqe_ptr = doca_gpu_dev_verbs_get_wqe_ptr(qp, wqe_idx);
 
@@ -163,6 +171,8 @@ kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint3
 #endif
 }
 
+#undef NIXL_GPUNETIO_QP_NEEDS_DUMP
+
 __global__ void
 kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
     uint64_t wqe_idx = 0;
@@ -191,17 +201,34 @@ kernel_write(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint
                xferReqRing[pos].lkey[idx],
                (uint64_t)xferReqRing[pos].size[idx]);
 #endif
-        doca_gpu_dev_verbs_wqe_prepare_write(qp,
-                                             wqe_ptr,
-                                             wqe_idx,
-                                             MLX5_OPCODE_RDMA_WRITE,
-                                             cflag,
-                                             0,
-                                             (uint64_t)(xferReqRing[pos].rbuf[idx]),
-                                             xferReqRing[pos].rkey[idx],
-                                             (uint64_t)(xferReqRing[pos].lbuf[idx]),
-                                             xferReqRing[pos].lkey[idx],
-                                             xferReqRing[pos].size[idx]);
+        if (xferReqRing[pos].num_sge[idx] == 2) {
+            doca_gpu_dev_verbs_wqe_prepare_write(qp,
+                                                 wqe_ptr,
+                                                 wqe_idx,
+                                                 MLX5_OPCODE_RDMA_WRITE,
+                                                 cflag,
+                                                 0,
+                                                 (uint64_t)(xferReqRing[pos].rbuf[idx]),
+                                                 xferReqRing[pos].rkey[idx],
+                                                 (uint64_t)(xferReqRing[pos].lbuf[idx]),
+                                                 xferReqRing[pos].lkey[idx],
+                                                 xferReqRing[pos].size[idx],
+                                                 (uint64_t)(xferReqRing[pos].lbuf2[idx]),
+                                                 xferReqRing[pos].lkey2[idx],
+                                                 xferReqRing[pos].size2[idx]);
+        } else {
+            doca_gpu_dev_verbs_wqe_prepare_write(qp,
+                                                 wqe_ptr,
+                                                 wqe_idx,
+                                                 MLX5_OPCODE_RDMA_WRITE,
+                                                 cflag,
+                                                 0,
+                                                 (uint64_t)(xferReqRing[pos].rbuf[idx]),
+                                                 xferReqRing[pos].rkey[idx],
+                                                 (uint64_t)(xferReqRing[pos].lbuf[idx]),
+                                                 xferReqRing[pos].lkey[idx],
+                                                 xferReqRing[pos].size[idx]);
+        }
     }
     __syncthreads();
 
@@ -307,7 +334,7 @@ kernel_progress(struct docaXferCompletion *completion_list,
                     nixl_gpunetio_dev_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                                      DOCA_GPUNETIO_VERBS_QP_RQ>(
                         doca_gpu_dev_verbs_qp_get_cq_rq(notif_progress->qp_gpu), msg_last);
-                if (ret != EBUSY) {
+                if (ret == 0) {
 #if ENABLE_DEBUG == 1
                     printf("kernel received notification at %d ret %d\n", msg_last, ret);
 #endif
@@ -335,6 +362,7 @@ kernel_progress(struct docaXferCompletion *completion_list,
                     printf("kernel received notification EBUSY at %d ret %d\n", msg_last, ret);
 #endif
                     DOCA_GPUNETIO_VOLATILE(notif_progress->msg_num) = 0;
+                    if (ret < 0) DOCA_GPUNETIO_VOLATILE(*exit_flag) = 1;
                     doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
                     DOCA_GPUNETIO_VOLATILE(notif_progress->qp_gpu) = nullptr;
                 }
