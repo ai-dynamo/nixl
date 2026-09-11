@@ -225,8 +225,48 @@ impl<'a> RegDescList<'a> {
         let len = desc.size();
         let dev_id = desc.device_id();
 
-        // Add to list
+        // Add to list without metadata
         self.add_desc(addr, len, dev_id);
+        Ok(())
+    }
+
+    /// Add a descriptor from a type implementing NixlDescriptor, including metadata.
+    ///
+    /// This is the metadata-aware variant of [`add_storage_desc`]. It calls
+    /// [`NixlDescriptor::metadata()`] on the descriptor and passes the result
+    /// through to the backend via [`add_desc_with_meta`].
+    ///
+    /// Use this when the backend requires metadata (e.g., OBJ backend for
+    /// object storage keys).
+    ///
+    /// # Safety
+    /// The caller must ensure that:
+    /// - The descriptor remains valid for the lifetime of the list
+    /// - The memory region pointed to by the descriptor remains valid
+    pub fn add_storage_desc_with_metadata(
+        &mut self,
+        desc: &'a dyn NixlDescriptor,
+    ) -> Result<(), NixlError> {
+        // Validate memory type matches
+        let desc_mem_type = desc.mem_type();
+        let list_mem_type = if self.len()? > 0 {
+            self.get_type()?
+        } else {
+            desc_mem_type
+        };
+
+        if desc_mem_type != list_mem_type && list_mem_type != MemType::Unknown {
+            return Err(NixlError::InvalidParam);
+        }
+
+        // Get descriptor details
+        let addr = unsafe { desc.as_ptr() } as usize;
+        let len = desc.size();
+        let dev_id = desc.device_id();
+        let metadata = desc.metadata();
+
+        // Add to list with metadata
+        self.add_desc_with_meta(addr, len, dev_id, &metadata);
         Ok(())
     }
 
