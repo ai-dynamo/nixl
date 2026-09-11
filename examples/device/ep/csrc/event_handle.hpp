@@ -27,7 +27,12 @@
 #include "cuda_warn.hpp"
 #include "kernels/exception.cuh"
 
+#include <ATen/cuda/CUDAContext.h>
+
+#include <torch/types.h>
+
 #include <memory>
+#include <vector>
 
 namespace nixl_ep {
 
@@ -54,8 +59,16 @@ public:
         CUDA_CHECK(cudaStreamWaitEvent(stream, event->get(), 0));
     }
 
+    // Keeps a tensor alive for the handle's lifetime, in place of
+    // record_stream(), which a captured graph never reclaims
+    void
+    retain(const torch::Tensor &tensor) {
+        extra_tensors.push_back(tensor);
+    }
+
 private:
     std::shared_ptr<cuda::Event> event;
+    std::vector<torch::Tensor> extra_tensors;
 };
 
 inline void
