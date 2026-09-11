@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,9 +19,11 @@
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <stdexcept>
+#include <sys/time.h>
 #include <unistd.h>
 #include "common/nixl_log.h"
 #include <chrono>
+#include <thread>
 
 // constexpr auto connection_delay = 500ms;
 constexpr std::chrono::microseconds connection_delay(500000);
@@ -48,7 +50,18 @@ nixlDocaEngineCheckCuError(CUresult result, const char *message) {
 }
 
 int
-oob_connection_client_setup(const char *server_ip, int *oob_sock_fd) {
+setOobSocketTimeouts(int oob_sock_fd) {
+    const timeval timeout{DOCA_OOB_SOCKET_TIMEOUT_SEC, 0};
+    if (setsockopt(oob_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+        setsockopt(oob_sock_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0) {
+        NIXL_ERROR << "Unable to set OOB socket timeout";
+        return -1;
+    }
+    return 0;
+}
+
+int
+oob_connection_client_setup(const char *server_ip, int *oob_sock_fd, uint16_t server_port) {
     struct sockaddr_in server_addr = {0};
     int oob_sock_fd_;
 
@@ -60,15 +73,24 @@ oob_connection_client_setup(const char *server_ip, int *oob_sock_fd) {
     }
     NIXL_INFO << "Socket created successfully";
 
+    if (setOobSocketTimeouts(oob_sock_fd_) != 0) {
+        close(oob_sock_fd_);
+        return -1;
+    }
+
     /* Set port and IP the same as server-side: */
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
-    server_addr.sin_addr.s_addr = inet_addr(server_ip);
+    server_addr.sin_port = htons(server_port);
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) != 1) {
+        close(oob_sock_fd_);
+        NIXL_ERROR << "Invalid server IPv4 address " << server_ip;
+        return -1;
+    }
 
     /* Send connection request to server: */
     if (connect(oob_sock_fd_, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         close(oob_sock_fd_);
-        NIXL_ERROR << "Unable to connect to server at " << server_ip;
+        NIXL_ERROR << "Unable to connect to server at " << server_ip << ":" << server_port;
         return -1;
     }
     NIXL_INFO << "Connected with server successfully";
@@ -181,11 +203,15 @@ destroy_verbs_ah:
 }
 
 doca_error_t
-connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t remote_gid) {
+connect_verbs_qp(nixlDocaEngine *eng,
+                 doca_verbs_qp *qp,
+                 uint32_t rqpn,
+                 const doca_verbs_gid &remote_gid,
+                 uint32_t remote_lid) {
     doca_error_t status = DOCA_SUCCESS, tmp_status = DOCA_SUCCESS;
     doca_verbs_qp_attr *verbs_qp_attr = NULL;
 
-    status = doca_verbs_ah_attr_set_gid(eng->verbs_ah_attr, eng->remote_gid);
+    status = doca_verbs_ah_attr_set_gid(eng->verbs_ah_attr, remote_gid);
     if (status != DOCA_SUCCESS) {
         NIXL_ERROR << "Failed to set remote gid " << doca_error_get_descr(status);
         return status;
@@ -193,7 +219,7 @@ connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t
 
     // IB
     if (eng->port_attr.link_layer == IBV_LINK_LAYER_INFINIBAND) {
-        status = doca_verbs_ah_attr_set_dlid(eng->verbs_ah_attr, eng->dlid);
+        status = doca_verbs_ah_attr_set_dlid(eng->verbs_ah_attr, remote_lid);
         if (status != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to set dlid";
             return status;
@@ -369,16 +395,27 @@ threadProgressFunc(void *arg) {
         oob_sock_client =
             accept(eng->oob_sock_server, (struct sockaddr *)&client_addr, &client_size);
         if (oob_sock_client < 0) {
+            if (ACCESS_ONCE(*eng->pthrStop) != 0) {
+                return nullptr;
+            }
             NIXL_ERROR << "Can't accept new socket connection " << oob_sock_client;
-            if (ACCESS_ONCE(*eng->pthrStop) == 0)
-                NIXL_ERROR << "Can't accept new socket connection " << oob_sock_client;
-            // close(eng->oob_sock_server);
-            return nullptr;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
         }
+
+        eng->activeOobSocket.store(oob_sock_client);
 
         if (ACCESS_ONCE(*eng->pthrStop) == 1) {
             NIXL_DEBUG << "Stopping thread " << oob_sock_client;
+            eng->activeOobSocket.store(-1);
+            close(oob_sock_client);
             return nullptr;
+        }
+
+        if (setOobSocketTimeouts(oob_sock_client) != 0) {
+            eng->activeOobSocket.store(-1);
+            close(oob_sock_client);
+            continue;
         }
 
         NIXL_INFO << "Server: client connected at IP: " << inet_ntoa(client_addr.sin_addr)
@@ -386,11 +423,24 @@ threadProgressFunc(void *arg) {
 
         // cuCtxSetCurrent(eng->main_cuda_ctx);
 
-        eng->recvRemoteAgentName(oob_sock_client, remote_agent);
-
-        eng->addRdmaQp(remote_agent);
-        eng->nixlDocaInitNotif(remote_agent, eng->ddev, eng->gdevs[0].second);
-        eng->connectServerRdmaQp(oob_sock_client, remote_agent);
+        remote_agent.clear();
+        nixl_status_t status = eng->recvRemoteAgentName(oob_sock_client, remote_agent);
+        if (status == NIXL_SUCCESS) {
+            status = eng->addRdmaQp(remote_agent);
+        }
+        if (status == NIXL_IN_PROG) {
+            status = NIXL_SUCCESS;
+        }
+        if (status == NIXL_SUCCESS) {
+            status = eng->nixlDocaInitNotif(remote_agent, eng->ddev, eng->gdevs[0].second);
+        }
+        if (status == NIXL_SUCCESS) {
+            status = eng->connectServerRdmaQp(oob_sock_client, remote_agent);
+        }
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to set up GPUNETIO connection for " << remote_agent;
+        }
+        eng->activeOobSocket.store(-1);
         close(oob_sock_client);
 
         /* Wait for predefined number of */

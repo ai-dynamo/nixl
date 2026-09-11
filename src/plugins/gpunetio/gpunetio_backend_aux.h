@@ -19,6 +19,7 @@
 #define GPUNETIO_BACKEND_AUX_H
 
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -52,6 +53,7 @@
 
 // Local includes
 #include "common/nixl_time.h"
+#include "gpunetio_oob_endpoint.h"
 
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
@@ -62,7 +64,6 @@ constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
 constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
 constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
 constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
-constexpr uint32_t DOCA_RDMA_CM_LOCAL_PORT_SERVER = 6544;
 constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
@@ -71,6 +72,7 @@ constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
 // Pre-fill the whole recv queue with notif once
 constexpr uint32_t DOCA_MAX_NOTIF_INFLIGHT = RDMA_RECV_QUEUE_SIZE;
 constexpr uint32_t DOCA_MAX_NOTIF_MESSAGE_SIZE = 8192;
+constexpr time_t DOCA_OOB_SOCKET_TIMEOUT_SEC = 10;
 constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 
 #ifndef ACCESS_ONCE
@@ -100,14 +102,21 @@ struct docaXferReqGpu {
 };
 
 struct nixlDocaNotif {
-    uint32_t elems_num;
-    uint32_t elems_size;
-    uint8_t *send_addr;
-    std::atomic<uint32_t> send_pi;
+    uint32_t elems_num = 0;
+    uint32_t elems_size = 0;
+    uint8_t *send_addr = nullptr;
+    std::atomic<uint32_t> send_pi{0};
     std::unique_ptr<nixl::doca::verbs::mr> send_mr;
-    uint8_t *recv_addr;
-    std::atomic<uint32_t> recv_pi;
+    uint8_t *recv_addr = nullptr;
+    std::atomic<uint32_t> recv_pi{0};
     std::unique_ptr<nixl::doca::verbs::mr> recv_mr;
+
+    ~nixlDocaNotif() {
+        send_mr.reset();
+        recv_mr.reset();
+        free(send_addr);
+        free(recv_addr);
+    }
 };
 
 struct docaXferCompletion {
@@ -169,12 +178,14 @@ struct nixlDocaRdmaQp {
     std::unique_ptr<nixl::doca::verbs::qp> qp_data;
     uint32_t qpn_data;
     uint32_t rqpn_data;
-    uint32_t remote_gid_data;
 
     std::unique_ptr<nixl::doca::verbs::qp> qp_notif;
     uint32_t qpn_notif;
     uint32_t rqpn_notif;
-    uint32_t remote_gid_notif;
+    doca_verbs_gid remote_gid{};
+    uint32_t remote_lid = 0;
+    bool dataProgrammed = false;
+    bool notifProgrammed = false;
 };
 
 struct nixlDocaEngine;
@@ -184,7 +195,11 @@ nixlDocaEngineCheckCudaError(cudaError_t result, const char *message);
 void
 nixlDocaEngineCheckCuError(CUresult result, const char *message);
 int
-oob_connection_client_setup(const char *server_ip, int *oob_sock_fd);
+oob_connection_client_setup(const char *server_ip,
+                            int *oob_sock_fd,
+                            uint16_t server_port = GPUNETIO_DEFAULT_OOB_PORT);
+int
+setOobSocketTimeouts(int oob_sock_fd);
 void
 oob_connection_client_close(int oob_sock_fd);
 void
@@ -197,7 +212,11 @@ create_verbs_ah_attr(doca_verbs_context *verbs_context,
                      enum doca_verbs_addr_type addr_type,
                      doca_verbs_ah_attr **verbs_ah_attr);
 doca_error_t
-connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t remote_gid);
+connect_verbs_qp(nixlDocaEngine *eng,
+                 doca_verbs_qp *qp,
+                 uint32_t rqpn,
+                 const doca_verbs_gid &remote_gid,
+                 uint32_t remote_lid);
 void *
 threadProgressFunc(void *arg);
 int
