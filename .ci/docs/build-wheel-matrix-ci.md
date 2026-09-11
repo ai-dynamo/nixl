@@ -134,7 +134,13 @@ The nightly job (`nixl-ci-build-wheel-nightly`) omits `--wheel-base-image`, so i
 | `NIXL_SPCX_PLUGIN_REPO_URL` | Git URL of the plugin repo | `ucx-plugin-gitlab-url` | Secret text |
 | `NIXL_GITLAB_TOKEN` | GitLab token (`read_repository` scope) used via a git credential helper so it never appears in URLs, argv, or git error output | `svc-nixl-gitlab-token` | Username/Password (token in password field) |
 
-The plugin ref defaults to `v0.3.x` and is selectable with `--ucx-spcx-plugin-ref`. The plugin build flag, `--build-ucx-spcx-plugin`, is not enabled in the PR CI pipeline - `nixl-ci-build-container-pr` never passes it, so the `ARG` default of `false` applies. It is enabled by default in the standalone `nixl-ci-build-container` verification job (`BUILD_UCX_SPCX_PLUGIN`, uncheck to disable) and in the QA/release invocations of `build-container.sh`, all of which bind both credentials into the environment.
+The plugin ref defaults to `v0.3.x` and is selectable with `--ucx-spcx-plugin-ref`. This source-cloning path serves builds with no published `wheel_base` image to compile against — the full two-stage `nixl-ci-build-wheel-nightly` — plus the standalone `nixl-ci-build-container` verification job (`BUILD_UCX_SPCX_PLUGIN`, uncheck to disable) and the QA/release invocations of `build-container.sh`, all of which bind both credentials into the environment. It is not enabled in the PR CI pipeline: `nixl-ci-build-container-pr` never passes it, so the `ARG` default of `false` applies.
+
+#### Per-PR: pre-built plugin module
+
+`nixl-ci-build-wheel` never clones or builds the plugin. Its `pipeline_start` triggers `nixl-ci-compile-ucx-plugin`, whose definition, matrix and build scripts all live in the closed-source plugin repo, and which runs on the NIXL Jenkins so it can write to the shared PVC. That job builds both arches against the same `wheel_base` image this job will use, and stages the module under `SPCX_STAGING_ROOT/<build>/<arch>/`. The Build Wheel step passes it to `build-container.sh --ucx-spcx-plugin-install <dir>`, which copies it into the build context as `ucx-spcx-plugin-install/` for the Dockerfile to install into the UCX plugins dir. No gitlab credentials are needed on this path, and a compile failure fails the job before any wheel is built.
+
+The split exists because this repo is public and everything in a PR's checkout — Dockerfiles, build scripts, CI matrices — is editable by whoever opened the PR. Cloning the plugin here would put its read credential and its source inside PR-authored code, in a job whose console can be published back to the PR. Only the built module and a pass/fail cross back; the build log stays in the plugin job. The ref built is `UCX_SPCX_PLUGIN_REF` in `build-wheel-matrix.yaml`, kept in sync with the `build-container.sh` default above.
 
 ### Key Dependencies Installed
 
