@@ -223,8 +223,8 @@ nixlPosixBackendReqH::postXfer() {
     for (auto [local_it, remote_it] = std::make_pair(local.begin(), remote.begin());
          local_it != local.end() && remote_it != remote.end();
          ++local_it, ++remote_it) {
-        int fd = static_cast<nixlPosixFileMD *>(remote_it->metadataP)->file_fd.fd();
-        nixl_status_t status = io_queue_->enqueue(fd,
+        uint64_t dev_id = static_cast<nixlPosixFileMD *>(remote_it->metadataP)->devId;
+        nixl_status_t status = io_queue_->enqueue(dev_id,
                                                   reinterpret_cast<void *>(local_it->addr),
                                                   remote_it->len,
                                                   remote_it->addr,
@@ -301,7 +301,16 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
                 return NIXL_ERR_INVALID_PARAM;
             }
             try {
-                out = new nixlPosixFileMD(mem.devId, mem.metaInfo);
+                auto file_md = std::make_unique<nixlPosixFileMD>(mem.devId);
+                nixl_status_t status;
+                {
+                    NIXL_LOCK_GUARD(io_queue_lock_);
+                    status = io_queue_->registerFile(mem.devId, mem.metaInfo);
+                }
+                if (status != NIXL_SUCCESS) {
+                    return status;
+                }
+                out = file_md.release();
             }
             catch (const std::system_error &e) {
                 NIXL_ERROR << "POSIX path-mode open failed: " << e.what();
@@ -317,13 +326,17 @@ nixlPosixEngine::registerMem(const nixlBlobDesc &mem,
 
 nixl_status_t
 nixlPosixEngine::deregisterMem(nixlBackendMD *meta) {
-    // non-null meta is always a file MD. Release the path-mode reservation (path() empty in
-    // fd-mode)
     if (meta) {
         auto *file_md = static_cast<nixlPosixFileMD *>(meta);
-        if (!file_md->file_fd.path().empty()) {
-            path_mode_devids_.release(file_md->devId);
+        nixl_status_t status;
+        {
+            NIXL_LOCK_GUARD(io_queue_lock_);
+            status = io_queue_->deregisterFile(file_md->devId);
         }
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+        path_mode_devids_.release(file_md->devId);
     }
     delete meta;
     return NIXL_SUCCESS;

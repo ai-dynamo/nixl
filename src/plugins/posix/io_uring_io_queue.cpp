@@ -63,13 +63,13 @@ public:
     virtual nixl_status_t
     post(void) override;
     virtual nixl_status_t
-    enqueue(int fd,
-            void *buf,
-            size_t len,
-            off_t offset,
-            bool read,
-            nixlPosixIOQueueDoneCb clb,
-            void *ctx) override;
+    enqueueFd(int fd,
+              void *buf,
+              size_t len,
+              off_t offset,
+              bool read,
+              nixlPosixIOQueueDoneCb clb,
+              void *ctx) override;
     virtual nixl_status_t
     poll(void) override;
     virtual unsigned
@@ -244,13 +244,13 @@ nixlPosixIOQueueUring::doCheckCompleted(void) {
 }
 
 nixl_status_t
-nixlPosixIOQueueUring::enqueue(int fd,
-                               void *buf,
-                               size_t len,
-                               off_t offset,
-                               bool read,
-                               nixlPosixIOQueueDoneCb clb,
-                               void *ctx) {
+nixlPosixIOQueueUring::enqueueFd(int fd,
+                                 void *buf,
+                                 size_t len,
+                                 off_t offset,
+                                 bool read,
+                                 nixlPosixIOQueueDoneCb clb,
+                                 void *ctx) {
     if (free_ios_.empty()) {
         NIXL_ERROR << "No more free blocks available";
         return NIXL_ERR_NOT_ALLOWED;

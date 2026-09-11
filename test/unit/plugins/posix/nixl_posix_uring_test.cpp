@@ -63,12 +63,17 @@ struct uringTest {
             throw std::runtime_error("mkstemp failed");
         }
         unlink(path);
+        if (queue->registerFile(fd, "") != NIXL_SUCCESS) {
+            close(fd);
+            throw std::runtime_error("file registration failed");
+        }
         for (size_t i = 0; i < buffers.size(); i++) {
             std::memset(buffers[i].data(), static_cast<int>(i + 1), buffers[i].size());
         }
     }
 
     ~uringTest() {
+        queue->deregisterFile(fd);
         queue.reset();
         close(fd);
     }
@@ -189,7 +194,7 @@ main() {
     }
     {
         uringTest test(submit_mode_t::PASS_THROUGH);
-        nixlPosixFileMD file_md(test.fd, "");
+        nixlPosixFileMD file_md(test.fd);
         uringRequest cancelled(test, file_md, 0), unrelated(test, file_md, 1);
         nixl_status_t cancelled_status = cancelled.request.postXfer();
         URING_CHECK(cancelled_status >= NIXL_IN_PROG);
