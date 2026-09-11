@@ -16,7 +16,7 @@
 
 infinia_path = get_option('infinia_path')
 if infinia_path == ''
-  error('INFINIA backend requires -Dinfinia_path to point to Infinia Client libraries installation')
+  error('INFINIA backend requires -Dinfinia_path to point to Infinia Async SDK (libred_async.so) installation')
 endif
 
 infinia_lib_path = infinia_path + '/lib'
@@ -26,7 +26,6 @@ infinia_dep = declare_dependency(
                '-Wl,--push-state,--as-needed',
                '-Wl,-lstdc++',
                '-Wl,-rpath,' + infinia_lib_path,
-               '-lred_client',
                '-lred_async',
                '-Wl,--pop-state'],
   include_directories: infinia_inc_path)
@@ -46,7 +45,7 @@ if 'INFINIA' in static_plugins
     'infinia_backend.cpp', 'infinia_backend.h',
     'infinia_client.cpp', 'infinia_client.h',
     'infinia_plugin.cpp',
-    dependencies: [ nixl_infra, cuda_dep, infinia_dep, absl_log_dep ],
+    dependencies: [ nixl_infra, cuda_dep, infinia_dep, absl_log_dep, nixl_common_dep ],
     include_directories: [nixl_inc_dirs,utils_inc_dirs, infinia_inc_path],
     install: false,
     cpp_args : compile_flags + ['-fcoroutines'],
@@ -56,7 +55,7 @@ else
     'infinia_backend.cpp', 'infinia_backend.h',
     'infinia_client.cpp', 'infinia_client.h',
     'infinia_plugin.cpp',
-    dependencies: [nixl_infra, cuda_dep, infinia_dep, absl_log_dep ],
+    dependencies: [nixl_infra, cuda_dep, infinia_dep, absl_log_dep, nixl_common_dep ],
     include_directories: [nixl_inc_dirs,utils_inc_dirs, infinia_inc_path],
     install: true,
     cpp_args : compile_flags + ['-fPIC', '-fcoroutines'],

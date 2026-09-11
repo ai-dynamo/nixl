@@ -33,7 +33,7 @@
 
 // INFINIA plugin version information (single source of truth)
 inline constexpr const char *INFINIA_PLUGIN_NAME = "INFINIA";
-inline constexpr const char *INFINIA_PLUGIN_VERSION = "1.0.0";
+inline constexpr const char *INFINIA_PLUGIN_VERSION = "1.0.1";
 
 // INFINIA default configuration values
 inline constexpr const char *INFINIA_DEFAULT_CLUSTER = "cluster1";
@@ -59,6 +59,32 @@ inline constexpr const char *RED_DATASET_ENV = "RED_DATASET";
 // Forward declarations
 class nixlInfiniaBackendReqH;
 
+// Infinia metadata class to store key information
+class nixlInfiniaMetadata : public nixlBackendMD {
+public:
+    nixlInfiniaMetadata(nixl_mem_t nixl_mem, uint64_t dev_id, const std::string &obj_key)
+        : nixlBackendMD(true),
+          nixlMem(nixl_mem),
+          devId(dev_id),
+          objKey(obj_key),
+          buffer(nullptr),
+          length(0),
+          iomem_handle{},
+          dmabuf_fd(-1) {}
+
+    ~nixlInfiniaMetadata() = default;
+
+    nixl_mem_t nixlMem;
+    uint64_t devId;
+    std::string objKey;
+
+    // Pre-registered memory info
+    void *buffer; // Registered buffer address
+    size_t length; // Registered buffer length
+    red_iomem_hndl_t iomem_handle; // RED memory handle
+    int dmabuf_fd; // DMA-BUF file descriptor (CUDA GPU memory only)
+};
+
 /**
  * @brief Infinia backend engine implementation
  *
@@ -77,6 +103,8 @@ private:
     uint32_t infinia_num_ring_entries_;
     std::string infinia_coremasks_;
     bool infinia_coremasks_set_;
+    bool use_dmabuf_; // Enable/disable DMA-BUF for GPU memory (default: true)
+    bool use_dmabuf_set_; // Track if use_dmabuf_ was explicitly set
     bool initialized_;
 
     std::shared_ptr<InfiniaClient> client_;
@@ -95,6 +123,16 @@ private:
                            const nixl_meta_dlist_t &local,
                            const nixl_meta_dlist_t &remote,
                            const std::string &remote_agent) const;
+
+#ifdef HAVE_CUDA
+    // DMA-BUF registration helper for GPU memory
+    [[nodiscard]] nixl_status_t
+    registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMetadata *metadata);
+
+    // DMA-BUF unregistration helper
+    [[nodiscard]] nixl_status_t
+    unregisterDmabuf(nixlInfiniaMetadata *metadata);
+#endif
 
 public:
     /**
@@ -197,30 +235,6 @@ public:
     // Local operations (required since supportsLocal() returns true)
     [[nodiscard]] nixl_status_t
     loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override;
-};
-
-// Infinia metadata class to store key information
-class nixlInfiniaMetadata : public nixlBackendMD {
-public:
-    nixlInfiniaMetadata(nixl_mem_t nixl_mem, uint64_t dev_id, const std::string &obj_key)
-        : nixlBackendMD(true),
-          nixlMem(nixl_mem),
-          devId(dev_id),
-          objKey(obj_key),
-          buffer(nullptr),
-          length(0),
-          iomem_handle{} {}
-
-    ~nixlInfiniaMetadata() = default;
-
-    nixl_mem_t nixlMem;
-    uint64_t devId;
-    std::string objKey;
-
-    // Pre-registered memory info
-    void *buffer; // Registered buffer address
-    size_t length; // Registered buffer length
-    red_iomem_hndl_t iomem_handle; // RED memory handle
 };
 
 /**
