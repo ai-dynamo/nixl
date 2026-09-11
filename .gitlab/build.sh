@@ -438,9 +438,27 @@ else
     if [ "${BUILD_NIXL_EP}" = "true" ]; then
         EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
     fi
+    # When NIXL_PYTHON is set (currently only by test-dl-ep-matrix.yaml), build and
+    # install NIXL EP against vLLM's Python/Torch venv to prevent ABI mismatches.
+    # Only NIXL's Meson build uses this venv; dependency builds keep system Python.
+    # Other jobs leave NIXL_PYTHON_ARGS empty and keep the existing build behavior.
+    NIXL_PYTHON_ARGS=()
+    NIXL_PYTHON_NATIVE_FILE=""
+    if [ -n "${NIXL_PYTHON:-}" ]; then
+        if [ ! -x "${NIXL_PYTHON}" ]; then
+            echo "ERROR: NIXL_PYTHON is not executable: ${NIXL_PYTHON}" >&2
+            exit 1
+        fi
+        NIXL_PYTHON_NATIVE_FILE=$(mktemp)
+        printf "[binaries]\npython = '%s'\n" "${NIXL_PYTHON}" > "${NIXL_PYTHON_NATIVE_FILE}"
+        NIXL_PYTHON_ARGS=(--native-file "${NIXL_PYTHON_NATIVE_FILE}" -Dpython.install_env=venv)
+    fi
     # shellcheck disable=SC2086
-    meson setup ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
+    meson setup "${NIXL_PYTHON_ARGS[@]}" ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
+    if [ -n "${NIXL_PYTHON_NATIVE_FILE}" ]; then
+        rm -f "${NIXL_PYTHON_NATIVE_FILE}"
+    fi
     mkdir -p dist && cp ${NIXL_BUILD_DIR}/src/bindings/python/nixl-meta/nixl-*.whl dist/
 
     # TODO(kapila): Copy the nixl.pc file to the install directory if needed.

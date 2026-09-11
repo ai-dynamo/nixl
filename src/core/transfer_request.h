@@ -26,12 +26,19 @@
 #include "backend_engine.h"
 #include "telemetry.h"
 #include "common/nixl_duration.h"
+#include "tracing/trace_context.h"
 
 enum nixl_telemetry_stat_status_t {
     NIXL_TELEMETRY_POST = 0,
     NIXL_TELEMETRY_POST_AND_FINISH = 1,
     NIXL_TELEMETRY_FINISH = 2
 };
+
+class nixlRemoteSection;
+
+// Weak ref to the owning remote section: expires when that registration generation is
+// invalidated or replaced, which is the staleness signal for handles created against it.
+using nixl_remote_section_weak_t = std::weak_ptr<nixlRemoteSection>;
 
 // Contains pointers to corresponding backend engine and its handler, and populated
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
@@ -41,8 +48,9 @@ public:
                  const nixl_xfer_op_t backend_op,
                  const nixl_mem_t local_type,
                  const nixl_mem_t remote_type,
-                 const uint64_t remote_generation,
-                 const size_t desc_count);
+                 const size_t desc_count,
+                 const nixl_remote_section_weak_t &remote_section_ref,
+                 const nixl::trace::TraceContext &trace_context);
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
@@ -61,6 +69,11 @@ public:
     void
     updateRequestStats(nixlTelemetry *telemetry, nixl_telemetry_stat_status_t stat_status);
 
+    [[nodiscard]] std::uint64_t
+    traceCorrelationId64() const noexcept {
+        return traceContext_.correlationId64();
+    }
+
     friend class nixlAgent;
 
 private:
@@ -71,8 +84,8 @@ private:
     nixl_meta_dlist_t targetDescs;
 
     const std::string remoteAgent;
-    // Generation of the remote-connection
-    const uint64_t remoteGeneration_;
+    const nixl_remote_section_weak_t remoteSection;
+    const nixl::trace::TraceContext traceContext_;
     nixl_blob_t notifMsg;
     bool hasNotif = false;
 
@@ -84,12 +97,17 @@ private:
 };
 
 struct nixlDlistH {
-    using descs_t = std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_stride_dlist_t>>;
+    using descs_t =
+        std::unordered_map<nixlBackendEngine *, std::unique_ptr<nixl_meta_stride_dlist_t>>;
 
-    nixlDlistH(const std::string &remote_agent, descs_t &&descs);
+    nixlDlistH(const std::string &remote_agent,
+               descs_t &&descs,
+               const nixl_remote_section_weak_t &remote_section_ref);
 
     const std::string remoteAgent; // Empty means "local".
     const descs_t descs;
+    // Empty for local descriptor lists.
+    const nixl_remote_section_weak_t remoteSectionRef;
 };
 
 #endif

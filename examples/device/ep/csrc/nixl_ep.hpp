@@ -37,6 +37,7 @@
 
 #include <cuda_runtime.h>
 
+#include <ATen/cuda/CUDAContext.h>
 #include <torch/types.h>
 
 #include <pybind11/pytypes.h>

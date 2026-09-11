@@ -80,19 +80,23 @@ castPosixHandle(nixlBackendReqH *handle) {
 
 static std::string_view
 getIoQueueType(const nixl_b_params_t *custom_params) {
-    if (nixl::getBackendParamDefaulted(custom_params, "use_aio", false)) {
-        return "AIO";
-    }
+    std::string_view selected;
+    const auto select = [&](const char *parameter, std::string_view queue_type) {
+        if (!nixl::getBackendParamDefaulted(custom_params, parameter, false)) {
+            return;
+        }
+        if (!selected.empty()) {
+            throw std::invalid_argument(
+                "POSIX I/O queue parameters use_aio, use_uring, and use_posix_aio are "
+                "mutually exclusive");
+        }
+        selected = queue_type;
+    };
 
-    if (nixl::getBackendParamDefaulted(custom_params, "use_uring", false)) {
-        return "URING";
-    }
-
-    if (nixl::getBackendParamDefaulted(custom_params, "use_posix_aio", false)) {
-        return "POSIXAIO";
-    }
-
-    return nixlPosixIOQueue::getDefaultIoQueueType();
+    select("use_aio", "AIO");
+    select("use_uring", "URING");
+    select("use_posix_aio", "POSIXAIO");
+    return selected.empty() ? nixlPosixIOQueue::getDefaultIoQueueType() : selected;
 }
 
 // Log completion percentage at regular intervals (every log_percent_step percent)
@@ -241,6 +245,23 @@ nixlPosixBackendReqH::postXfer() {
 // -----------------------------------------------------------------------------
 // POSIX Engine Implementation
 // -----------------------------------------------------------------------------
+
+nixl_b_params_t
+nixlPosixEngine::getPluginParams() {
+    nixl_b_params_t params = {
+        {"ios_pool_size", std::to_string(nixlPosixIOQueue::DEF_IOS_POOL_SIZE)},
+        {"kernel_queue_size", std::to_string(nixlPosixIOQueue::DEF_KERNEL_QUEUE_SIZE)}};
+#ifdef HAVE_LINUXAIO
+    params["use_aio"] = "false";
+#endif
+#ifdef HAVE_LIBURING
+    params["use_uring"] = "false";
+#endif
+#ifdef HAVE_POSIXAIO
+    params["use_posix_aio"] = "false";
+#endif
+    return params;
+}
 
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),

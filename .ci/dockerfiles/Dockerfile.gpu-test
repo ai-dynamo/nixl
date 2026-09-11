@@ -6,7 +6,7 @@
 #   docker build -f .ci/dockerfiles/Dockerfile.gpu-test -t nixl-gpu-test .
 #
 
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.08-py3
 
 FROM ${BASE_IMAGE}
 
@@ -21,6 +21,7 @@ ARG PRE_INSTALLED_UCX_ENV
 ARG UCX_VERSION=v1.23.x
 ARG HAS_GPU=true
 ARG BUILD_NIXL_EP=false
+ARG NIXL_PYTHON
 ARG WORKSPACE=/workspace/nixl
 
 
