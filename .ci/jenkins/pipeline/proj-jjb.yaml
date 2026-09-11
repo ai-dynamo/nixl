@@ -693,8 +693,10 @@
           description: >
             First 8 chars of the NIXL commit sha the wheels were built from, which
             is the folder name the release wheel pipeline publishes under
-            (e.g. <code>51a42f86</code>).<br/>
-            Full wheel URL: <code>sw-nbu-swx-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/nixl*.whl</code>
+            (e.g. <code>51a42f86</code>). For a directory containing wheels whose
+            package version differs from NIXL_VERSION, append that version after
+            <code>@</code> (e.g. <code>59bfaa77@1.4.0</code>).<br/>
+            Wheel directory: <code>sw-nbu-swx-nixl-pypi-local/release/${{NIXL_VERSION}}/&lt;build-id&gt;/</code>
       - string:
           name: "PYTHON_TAG"
           default: "cp312"
