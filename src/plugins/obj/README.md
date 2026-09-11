@@ -72,7 +72,7 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | `crtMinLimit` | Minimum object size (bytes) to use S3 CRT client for high-performance transfers | Disabled**** | No |
 | `throughput_target_gbps` | Target throughput for the S3 CRT client in **whole Gbps** (integer); sizes its parallel connection count | `10` | No |
 | `accelerated` | Enable S3 Accelerated engine (`true`/`false`) | `false` | No |
-| `type` | Accelerated engine type (`dell`, etc.) | - | No |
+| `type` | Accelerated engine type (`dell`, `everpure`, etc.) | - | No |
 
 \* If `access_key` and `secret_key` are not provided, the AWS SDK will attempt to use default credential providers (IAM roles, environment variables, credential files, etc.)
 

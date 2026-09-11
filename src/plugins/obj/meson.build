@@ -51,6 +51,10 @@ if cuobj_dep.found()
         's3_accel/dell/client.h',
         's3_accel/dell/engine_impl.cpp',
         's3_accel/dell/engine_impl.h',
+        's3_accel/everpure/client.cpp',
+        's3_accel/everpure/client.h',
+        's3_accel/everpure/engine_impl.cpp',
+        's3_accel/everpure/engine_impl.h',
     ]
     plugin_deps += [ cuobj_dep ]
 else
