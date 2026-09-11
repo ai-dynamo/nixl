@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -162,10 +162,12 @@ private:
     cudaStream_t wait_stream;
     mutable std::atomic<uint32_t> xferStream;
     mutable std::atomic<uint32_t> lastPostedReq;
+    mutable std::mutex postLock_;
 
     struct docaXferReqGpu *xferReqRingGpu;
     struct docaXferReqGpu *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
+    mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved_;
 
     struct docaXferCompletion *completion_list_gpu;
     struct docaXferCompletion *completion_list_cpu;
@@ -190,16 +192,23 @@ private:
     class nixlDocaBckndReq : public nixlBackendReqH {
     private:
     public:
+        enum class completion_state : uint8_t { IN_PROGRESS, COMPLETING, COMPLETE };
+
         cudaStream_t stream;
         uint32_t devId;
-        uint32_t start_pos;
-        uint32_t end_pos;
+        std::vector<uint32_t> positions;
         uintptr_t backendHandleGpu;
+        size_t postedCount = 0;
+        nixl_status_t postStatus = NIXL_SUCCESS;
+        std::atomic<completion_state> completionState{completion_state::IN_PROGRESS};
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
         ~nixlDocaBckndReq() {}
     };
+
+    void
+    retireRequest(nixlDocaBckndReq *request) const;
 
     nixl_status_t
     progressThreadStart();
