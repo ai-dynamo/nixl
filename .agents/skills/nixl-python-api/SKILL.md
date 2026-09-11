@@ -24,9 +24,10 @@ around NIXL.
   `references/` file needed for the user's lifecycle stage.
 - Do not depend on external skill routing. If installation, plugin, CUDA, or
   framework readiness is missing, stay in this skill and report the missing
-  evidence as a readiness finding instead of giving transfer code.
+  evidence as a readiness finding before implementing readiness-dependent
+  Python API code.
 - Start with installed package, wheel, or source evidence before writing
-  copy-paste Python API code.
+  examples or patching readiness-dependent Python API code.
 
 ## Prerequisites
 
@@ -37,8 +38,10 @@ ask for the smallest source or runtime artifact needed.
 ## Source Rule
 
 Treat the user's installed NIXL package, wheel, or source checkout as the
-source of truth. Before giving copy-paste API code, inspect that installed
-source or runtime surface when available.
+source of truth. Before proposing examples or patching readiness-dependent
+Python API code, inspect the user's installed source or runtime surface; if
+unavailable, provide only fallback-oriented guidance and state the missing
+evidence.
 
 Use version-matched upstream source/docs only when they match the user's
 installed version or commit. Use the fallback snapshot listed in
@@ -46,7 +49,7 @@ installed version or commit. Use the fallback snapshot listed in
 version-sensitive guidance as unresolved pending source evidence until verified
 against the user's version.
 
-## Security Invariants
+## Top-Level Security Invariants
 
 These rules stay in the top layer because they apply before any reference file
 is loaded:
@@ -93,9 +96,9 @@ Before giving a lifecycle recipe, classify readiness:
 | Status | Meaning | Next action |
 | --- | --- | --- |
 | `Ready for API recipe` | Import works, selected backend is created or source-backed, required memory type is supported, and topology is known. | Load the matching lifecycle reference. |
-| `Environment not ready` | `import nixl`, agent construction, CUDA library loading, or package/source identity is failing or unknown. | Ask for the exact error plus package/source evidence; do not write transfer code yet. |
+| `Environment not ready` | `import nixl`, agent construction, CUDA library loading, or package/source identity is failing or unknown. | Ask for the exact error plus package/source evidence; do not implement readiness-dependent Python API code yet. |
 | `Backend evidence missing` | Backend plugin, backend params, backend creation, or required `DRAM`/`VRAM`/storage memory type is not proven. | Request runtime plugin/backend evidence from the same environment. |
-| `Version/source evidence missing` | The user wants copy-paste code but installed version/source is unknown. | Use the fallback snapshot only for orientation and state the exact source evidence still needed. |
+| `Version/source evidence missing` | The user wants examples or readiness-dependent Python API edits but installed version/source is unknown. | Use the fallback snapshot only for orientation and state the exact source evidence still needed. |
 | `Framework-managed boundary` | A framework owns peer setup or metadata exchange. | Ask for the framework integration source/config before replacing it with direct NIXL listener code. |
 
 Useful read-only evidence examples, to run only in the same trusted environment
@@ -142,10 +145,11 @@ Load exactly the reference needed for the current lifecycle stage:
 
 When answering a user:
 
-1. State one of `Source: installed NIXL <version/path/commit>`,
-   `Source: version-matched upstream <commit/tag>`,
-   `Source: fallback snapshot only; installed-version evidence unresolved`, or
-   `Source: version unresolved`.
+1. State one of:
+   - `Source: installed NIXL <version/path/commit>`
+   - `Source: version-matched upstream <commit/tag>`
+   - `Source: fallback snapshot only; installed-version evidence unresolved`
+   - `Source: version unresolved`
 2. State the readiness status and lifecycle stage.
 3. Load the minimal matching reference file and give the smallest reliable
    recipe, patch, or review finding.
@@ -163,7 +167,8 @@ gap instead of continuing with direct NIXL code.
 
 ## Stop Conditions
 
-Stop and ask for evidence instead of writing copy-paste code when:
+Stop and ask for evidence before proposing examples or patching
+readiness-dependent Python API code when:
 
 - Import, agent construction, plugin discovery, backend creation, or required
   backend memory type is unproven.
