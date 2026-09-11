@@ -38,6 +38,7 @@
 #include <random>
 #include <fstream>
 #include <sys/sysinfo.h>
+#include <cstdlib>
 
 using namespace nixlTime;
 
@@ -212,6 +213,8 @@ print_usage(const char *program_name) {
                  "(default: \"0x2\")\n"
               << "  -M, --max-retries N         Max retry attempts for operations (default: 3, "
                  "range: 0-100)\n"
+              << "  -F, --nixl-config FILE       Path to NIXL config file (TOML) passed via "
+                 "NIXL_CONFIG_FILE\n"
               << "\n  Other:\n"
               << "  -S, --seed N                Random seed for reproducibility (default: 0, use "
                  "-1 to skip validation).\n"
@@ -408,6 +411,7 @@ main(int argc, char *argv[]) {
     bool use_vram = false;
     int opt;
     std::string dir_path;
+    std::string nixl_config_file;
     size_t transfer_size = DEFAULT_TRANSFER_SIZE;
     int num_transfers = DEFAULT_NUM_TRANSFERS;
     bool skip_read = false;
@@ -417,6 +421,7 @@ main(int argc, char *argv[]) {
     unsigned int num_ring_entries = 512;
     std::string coremask = "0x2";
     unsigned int max_retries = 3;
+    unsigned int batch_size = 512;
     nixlTime::us_t total_time(0);
     nixlTime::us_t alloc_duration(0);
     nixlTime::us_t write_duration_total(0);
@@ -449,14 +454,16 @@ main(int argc, char *argv[]) {
                                            {"max-retries", required_argument, 0, 'M'},
                                            {"iterations", required_argument, 0, 't'},
                                            {"direct", no_argument, 0, 'D'},
+                                           {"nixl-config", required_argument, 0, 'F'},
                                            {"seed", required_argument, 0, 'S'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
 #ifdef HAVE_CUDA
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwT:B:R:C:M:t:DS:h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwT:B:R:C:M:t:DF:S:h", long_options, NULL)) !=
+           -1) {
 #else
-    while ((opt = getopt_long(argc, argv, "dn:s:rwT:B:R:C:M:t:DS:h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dn:s:rwT:B:R:C:M:t:DF:S:h", long_options, NULL)) != -1) {
 #endif
         switch (opt) {
         case 'd':
@@ -523,6 +530,9 @@ main(int argc, char *argv[]) {
                 return -1;
             }
             break;
+        case 'F':
+            nixl_config_file = optarg;
+            break;
         case 't':
             iterations = atoi(optarg);
             if (iterations <= 0) {
@@ -540,6 +550,10 @@ main(int argc, char *argv[]) {
             print_usage(argv[0]);
             return 0;
         }
+    }
+
+    if (!nixl_config_file.empty()) {
+        setenv("NIXL_CONFIG_FILE", nixl_config_file.c_str(), 1);
     }
 
     if (skip_read && skip_write) {
@@ -622,6 +636,7 @@ main(int argc, char *argv[]) {
     std::cout << "- Ring entries: " << num_ring_entries << std::endl;
     std::cout << "- Core mask: " << coremask << std::endl;
     std::cout << "- Max retries: " << max_retries << std::endl;
+    std::cout << "- Batch size: " << batch_size << std::endl;
     std::cout << "============================================================\n" << std::endl;
 
     // Check memory requirements before starting
@@ -650,6 +665,7 @@ main(int argc, char *argv[]) {
     params["num_ring_entries"] = std::to_string(num_ring_entries);
     params["coremasks"] = coremask;
     params["max_retries"] = std::to_string(max_retries);
+    params["batch_size"] = std::to_string(batch_size);
 
     // To also test the decision making of createXferReq
     ret = agent.createBackend("INFINIA", params, infinia);
@@ -803,6 +819,7 @@ main(int argc, char *argv[]) {
         std::cout << "============================================================" << std::endl;
 
         us_t write_duration(0);
+        nixlXferReqH *write_req = nullptr;
 
         // Create descriptor lists for all transfers
         nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
@@ -970,6 +987,7 @@ main(int argc, char *argv[]) {
         std::cout << "============================================================" << std::endl;
 
         us_t read_duration(0);
+        nixlXferReqH *read_req = nullptr;
 
         // Create descriptor lists for all transfers
         nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
