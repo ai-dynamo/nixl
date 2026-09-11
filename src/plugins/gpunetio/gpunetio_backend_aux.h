@@ -18,6 +18,7 @@
 #ifndef GPUNETIO_BACKEND_AUX_H
 #define GPUNETIO_BACKEND_AUX_H
 
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <iostream>
