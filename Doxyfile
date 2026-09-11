@@ -354,7 +354,7 @@ OPTIMIZE_OUTPUT_SLICE  = NO
 #
 # Note see also the list of default file extension mappings.
 
-EXTENSION_MAPPING      =
+EXTENSION_MAPPING      = cuh=C++
 
 # If the MARKDOWN_SUPPORT tag is enabled then Doxygen pre-processes all comments
 # according to the Markdown format, which allows for more readable
@@ -996,7 +996,7 @@ WARN_LOGFILE           =
 # spaces. See also FILE_PATTERNS and EXTENSION_MAPPING
 # Note: If this tag is empty the current directory is searched.
 
-INPUT                  = docs/doxygen/nixl_doxygen.md README.md LICENSE ATTRIBUTIONS.md CONTRIBUTING.md src/api/cpp src/api/python/
+INPUT                  = docs/doxygen/nixl_doxygen.md README.md LICENSE ATTRIBUTIONS.md CONTRIBUTING.md src/api/cpp src/api/python/ src/api/device/gpu
 
 # This tag can be used to specify the character encoding of the source files
 # that Doxygen parses. Internally Doxygen uses the UTF-8 encoding. Doxygen uses
@@ -1058,6 +1058,7 @@ FILE_PATTERNS          = *.c \
                          *.hh \
                          *.hxx \
                          *.hpp \
+                         *.cuh \
                          *.h++ \
                          *.ixx \
                          *.l \
