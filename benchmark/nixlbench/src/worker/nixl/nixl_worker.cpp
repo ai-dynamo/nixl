@@ -1255,6 +1255,16 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
     iov_lists.clear();
 }
 
+std::vector<int>
+xferBenchNixlWorker::exchangePeerRanks() {
+    return nixlbench::exchangePeerRanks(XFERBENCH_MODE_SG == xferBenchConfig::mode,
+                                        xferBenchConfig::scheme,
+                                        isInitiator(),
+                                        rt->getRank(),
+                                        xferBenchConfig::num_initiator_dev,
+                                        xferBenchConfig::num_target_dev);
+}
+
 int
 xferBenchNixlWorker::exchangeMetadata() {
     int meta_sz, ret = 0;
@@ -1264,13 +1274,7 @@ xferBenchNixlWorker::exchangeMetadata() {
         return 0;
     }
 
-    const std::vector<int> peers =
-        nixlbench::exchangePeerRanks(XFERBENCH_MODE_SG == xferBenchConfig::mode,
-                                     xferBenchConfig::scheme,
-                                     isInitiator(),
-                                     rt->getRank(),
-                                     xferBenchConfig::num_initiator_dev,
-                                     xferBenchConfig::num_target_dev);
+    const std::vector<int> peers = exchangePeerRanks();
 
     if (isTarget()) {
         std::string local_metadata;
@@ -1376,13 +1380,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             }
         }
     } else {
-        const std::vector<int> peers =
-            nixlbench::exchangePeerRanks(XFERBENCH_MODE_SG == xferBenchConfig::mode,
-                                         xferBenchConfig::scheme,
-                                         isInitiator(),
-                                         rt->getRank(),
-                                         xferBenchConfig::num_initiator_dev,
-                                         xferBenchConfig::num_target_dev);
+        const std::vector<int> peers = exchangePeerRanks();
         for (const auto &local_iov : local_iovs) {
             if (isTarget()) {
                 for (size_t peer_index = 0; peer_index < peers.size(); ++peer_index) {
@@ -1443,6 +1441,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     }
 
     if (xferBenchConfig::use_device_api) {
+        const std::vector<int> peers = exchangePeerRanks();
+        const int peer_rank = peers.front();
         if (isTarget() && completion_counter_iov.has_value()) {
             nixlSerDes cc_ser;
             nixl_xfer_dlist_t cc_dlist(seg_type);
@@ -1454,32 +1454,20 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             cc_dlist.addDesc(cc_basic);
             cc_dlist.serialize(&cc_ser);
             std::string cc_export = cc_ser.exportStr();
-            int destrank;
-            if (IS_PAIRWISE_AND_SG()) {
-                destrank = rt->getRank() - xferBenchConfig::num_target_dev;
-            } else {
-                destrank = 0;
-            }
             desc_str_sz = static_cast<int>(cc_export.size());
-            rt->sendInt(&desc_str_sz, destrank);
-            rt->sendChar(cc_export.data(), cc_export.size(), destrank);
+            rt->sendInt(&desc_str_sz, peer_rank);
+            rt->sendChar(cc_export.data(), cc_export.size(), peer_rank);
         } else if (isInitiator()) {
             nixlSerDes cc_ser;
-            int srcrank;
-            if (IS_PAIRWISE_AND_SG()) {
-                srcrank = rt->getRank() + xferBenchConfig::num_initiator_dev;
-            } else {
-                srcrank = 1;
-            }
             completion_counter_iov.reset();
-            if (rt->recvInt(&desc_str_sz, srcrank) != 0) {
+            if (rt->recvInt(&desc_str_sz, peer_rank) != 0) {
                 std::cerr << "NIXL: failed to receive completion counter descriptor size"
                           << std::endl;
                 std::exit(EXIT_FAILURE);
             }
             std::string cc_str;
             cc_str.resize(static_cast<size_t>(desc_str_sz), '\0');
-            if (rt->recvChar(cc_str.data(), cc_str.size(), srcrank) != 0) {
+            if (rt->recvChar(cc_str.data(), cc_str.size(), peer_rank) != 0) {
                 std::cerr << "NIXL: failed to receive completion counter descriptor" << std::endl;
                 std::exit(EXIT_FAILURE);
             }
