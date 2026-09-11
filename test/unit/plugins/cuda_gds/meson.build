@@ -23,3 +23,5 @@ nixl_gds_app = executable('nixl_gds_test', 'nixl_gds_test.cpp',
                                                 include_directories('..')],
                           install: true)
 test('gds_path_mode_smoke', nixl_gds_app)
+test('gds_mt_mode_path_mode_smoke', nixl_gds_app,
+     args: ['--gds-mode', 'mt', '--path-mode-only'])

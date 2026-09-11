@@ -150,7 +150,8 @@ inline int
 runPathModeSmoke(const char *agent_name,
                  const char *backend_name,
                  const char *file_path,
-                 size_t size) {
+                 size_t size,
+                 const nixl_b_params_t &params = {}) {
     const std::string path_a = file_path;
     const std::string path_b = std::string(file_path) + ".b";
 
@@ -166,7 +167,6 @@ runPathModeSmoke(const char *agent_name,
 
     nixlAgentConfig cfg;
     nixlAgent agent(agent_name, cfg);
-    nixl_b_params_t params;
     nixlBackendH *be = nullptr;
     if (agent.createBackend(backend_name, params, be) != NIXL_SUCCESS || !be) {
         std::cout << "SKIP: " << backend_name << " createBackend failed" << std::endl;
