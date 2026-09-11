@@ -26,6 +26,39 @@ Optionally POSIX plugin can also use liburing.
 `"<modes>:<path>"` string in `metaInfo` (path-mode, backend owns the
 open/close); see [`src/utils/file/README.md`](../../utils/file/README.md#path-mode-file-registration).
 
+## Transfer submission and completion
+
+Submission is batched: `postXfer` enqueues every descriptor of the request but
+issues at most `MAX_IO_SUBMIT_BATCH_SIZE` (64) I/Os to the kernel. The remaining
+I/Os are issued by later calls to `checkXfer`, which polls the I/O queue and
+submits the next batch before reaping completions. This is the same in all three
+queue implementations (Linux AIO, io_uring, POSIX AIO).
+
+Two consequences for callers:
+
+* **A request with more than 64 descriptors is not fully submitted until it has
+  been polled.** `getXferStatus` must be called repeatedly while the request
+  reports `NIXL_IN_PROG`, stopping only when it reaches completion or returns an
+  error; a caller that posts and then stops polling (for example one waiting on
+  an external event instead) leaves the remaining I/Os unissued and the transfer
+  never completes. Polling is required for progress, not only to observe it.
+* **Completion is bounded by the number of polls, not only by device speed.**
+  `postXfer` issues the first batch, so a request of N descriptors needs
+  `ceil(N / 64) - 1` further polls to finish submitting, plus at least one more
+  to observe completion. Any sleep the caller inserts between polls is therefore
+  multiplied by that count. Measured on a local NVMe device (256 KiB pages,
+  writes, 5 ms between status checks, median of 9 runs): a 64-descriptor request
+  completed in about 13 ms after 2 polls, and a 256-descriptor request in about
+  37 ms after 5 polls. Poll without sleeping, or scale the interval with the
+  descriptor count, when latency matters.
+
+The I/O queue is shared by all requests on a POSIX backend instance, so polling
+any one transfer handle also advances the in-flight I/Os of the others.
+
+`MAX_IO_SUBMIT_BATCH_SIZE` is a compile-time constant. The surrounding queue
+sizes are tunable through the backend parameters `ios_pool_size` (default 65536)
+and `kernel_queue_size` (default 256).
+
 ## Dependencies
 To enable Linux AIO support, you need to install the libaio package:
 
