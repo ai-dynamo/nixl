@@ -71,7 +71,8 @@ use bindings::{
     nixl_capi_opt_args_set_port, nixl_capi_get_xfer_telemetry,
     nixl_capi_create_params, nixl_capi_params_add, nixl_capi_is_stub,
     nixl_capi_prep_mem_view_local, nixl_capi_prep_mem_view_remote, nixl_capi_release_mem_view,
-    nixl_capi_create_remote_dlist, nixl_capi_destroy_remote_dlist, nixl_capi_remote_dlist_add_desc
+    nixl_capi_create_remote_dlist, nixl_capi_destroy_remote_dlist, nixl_capi_remote_dlist_add_desc,
+    nixl_capi_mem_free
 };
 
 // Re-export status codes
@@ -294,7 +295,7 @@ pub struct OptArgs {
     inner: NonNull<bindings::nixl_capi_opt_args_s>,
 }
 
-/// Copies out a blob the C API malloc'd, and frees it.
+/// Copies out a blob the C API allocated, and releases it with nixl_capi_mem_free.
 fn take_capi_blob(
     status: bindings::nixl_capi_status_t,
     data: *mut std::ffi::c_void,
@@ -306,7 +307,7 @@ fn take_capi_blob(
             // SAFETY: on success the C API left len bytes at data for us to own
             let bytes = unsafe {
                 let vec = std::slice::from_raw_parts(data as *const u8, len).to_vec();
-                libc::free(data);
+                nixl_capi_mem_free(data);
                 vec
             };
             Ok(bytes)

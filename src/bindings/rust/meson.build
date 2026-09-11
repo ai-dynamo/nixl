@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,10 +28,10 @@ if cargo.found() and get_option('rust')
     cargo_build_cmd += ['--release']
   endif
 
-  nixl_include_dir = include_directories('../../api/cpp', '../../infra', '../../core')
+  nixl_include_dir = include_directories('../../api/c', '../../api/cpp', '../../infra', '../../core')
   nixl_dep = declare_dependency(link_with: nixl_lib, include_directories: nixl_include_dir)
 
-  wrapper_sources = ['wrapper.cpp']
+  wrapper_sources = ['../../api/c/nixl_capi.cpp']
   wrapper_lib = static_library('nixl_wrapper',
       sources: wrapper_sources,
       include_directories: [nixl_include_dir, include_directories('/usr/include')],
