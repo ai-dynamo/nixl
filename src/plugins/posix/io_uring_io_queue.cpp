@@ -17,273 +17,552 @@
 
 #include "io_queue.h"
 #include "common/nixl_log.h"
+
 #include <liburing.h>
 #include <absl/strings/str_format.h>
+
+#include <algorithm>
 #include <cerrno>
+#include <fcntl.h>
+#include <stdexcept>
+#include <unordered_map>
+#include <utility>
+#include <unistd.h>
 
-#define MAX_IO_SUBMIT_BATCH_SIZE 64
-#define MAX_IO_CHECK_COMPLETED_BATCH_SIZE 64
+namespace {
 
-enum class nixlPosixIoUringCQEKind {
-    IO,
-    CANCEL,
+struct fileState;
+struct ioSlot;
+
+ioSlot *
+completeOpen(void *owner, int result);
+ioSlot *
+completeData(void *owner, int result);
+ioSlot *
+completeCancel(void *owner, int result);
+ioSlot *
+completeClose(void *owner, int result);
+
+struct completion {
+    using handler_t = ioSlot *(*)(void *, int);
+
+    handler_t handler;
+    void *owner;
 };
 
-struct nixlPosixIoUringCQEData {
-    explicit nixlPosixIoUringCQEData(nixlPosixIoUringCQEKind kind) : kind_(kind) {}
+struct fileState {
+    enum class status_t { PENDING_OPEN, OPENING, OPEN, FAILED, PENDING_CLOSE, CLOSING, CLOSED };
 
-    nixlPosixIoUringCQEKind kind_;
-    void *ctx_ = nullptr;
+    explicit fileState(nixl::PathSpec path_spec)
+        : path(std::move(path_spec.path)),
+          flags(path_spec.flags),
+          mode(path_spec.mode),
+          completionData{completeOpen, this} {}
+
+    std::string path;
+    int flags;
+    mode_t mode;
+    status_t status = status_t::PENDING_OPEN;
+    int fd = -1;
+    int openError = 0;
+    size_t activeIos = 0;
+    bool deregistered = false;
+    completion completionData;
 };
 
-struct nixlPosixIoUringIO : public nixlPosixIoUringCQEData {
-    nixlPosixIoUringIO() : nixlPosixIoUringCQEData(nixlPosixIoUringCQEKind::IO) {}
+struct ioSlot {
+    enum class state_t { FREE, QUEUED, IN_FLIGHT };
 
-    int fd;
-    void *buf_;
-    size_t len_;
-    off_t offset_;
-    bool read_;
+    ioSlot() : data_completion_{completeData, this}, cancel_completion_{completeCancel, this} {}
+
+    int fd = -1;
+    void *buf_ = nullptr;
+    size_t len_ = 0;
+    off_t offset_ = 0;
+    bool read_ = false;
     nixlPosixIOQueueDoneCb clb_;
-    bool in_flight_ = false; // owned by the ring, not yet reaped
-    bool cancel_pending_ = false; // cancellation is queued or its CQE is pending
+    void *ctx_ = nullptr;
+    std::shared_ptr<fileState> file_;
+    state_t state_ = state_t::FREE;
+    bool cancel_pending_ = false;
+    bool cancel_submitted_ = false;
+    nixlPosixIOQueueCancelDoneCb cancel_clb_;
+    completion data_completion_;
+    completion cancel_completion_;
 };
 
-struct nixlPosixIoUringCancel : public nixlPosixIoUringCQEData {
-    nixlPosixIoUringCancel() : nixlPosixIoUringCQEData(nixlPosixIoUringCQEKind::CANCEL) {}
-
-    nixlPosixIoUringIO *io_ = nullptr;
-    nixlPosixIOQueueCancelDoneCb clb_;
-};
-
-class nixlPosixIOQueueUring : public nixlPosixIOQueueImpl<nixlPosixIoUringIO> {
+class nixlPosixIOQueueUring : public nixlPosixIOQueueImpl<ioSlot> {
 public:
-    nixlPosixIOQueueUring(uint32_t ios_pool_size, uint32_t kernel_queue_size);
+    nixlPosixIOQueueUring(uint32_t ios_pool_size,
+                          uint32_t kernel_queue_size,
+                          bool open_synchronous);
 
-    virtual nixl_status_t
+    nixl_status_t
     post(void) override;
-    virtual nixl_status_t
-    enqueue(int fd,
+    nixl_status_t
+    enqueue(uint64_t dev_id,
             void *buf,
             size_t len,
             off_t offset,
             bool read,
             nixlPosixIOQueueDoneCb clb,
             void *ctx) override;
-    virtual nixl_status_t
-    poll(void) override;
-    virtual unsigned
-    cancel(void *ctx, nixlPosixIOQueueCancelDoneCb clb) override;
-    virtual ~nixlPosixIOQueueUring() override;
-
-protected:
     nixl_status_t
-    doCheckCompleted(void);
+    registerFile(uint64_t dev_id, const std::string &meta_info) override;
+    nixl_status_t
+    deregisterFile(uint64_t dev_id) override;
+
+    nixl_status_t
+    poll(void) override;
+    unsigned
+    cancel(void *ctx, nixlPosixIOQueueCancelDoneCb clb) override;
+    ~nixlPosixIOQueueUring() override;
 
 private:
     nixl_status_t
-    driveSubmissions(void);
+    enqueueFd(int fd,
+              void *buf,
+              size_t len,
+              off_t offset,
+              bool read,
+              nixlPosixIOQueueDoneCb clb,
+              void *ctx) override;
+    nixl_status_t
+    enqueueIO(int fd,
+              std::shared_ptr<fileState> file,
+              void *buf,
+              size_t len,
+              off_t offset,
+              bool read,
+              nixlPosixIOQueueDoneCb clb,
+              void *ctx);
     void
-    failQueuedIOs(void *ctx);
+    doCheckCompleted(void);
+    nixl_status_t
+    submitPrepared(unsigned prepared);
     void
-    prepareSQEs(void);
+    retireFile(uint64_t dev_id);
     void
-    releaseIOIfIdle(nixlPosixIoUringIO *io);
+    completeQueuedIO(ioSlot *io, int error);
 
-    struct io_uring uring; // The io_uring instance for async I/O operations
+    struct io_uring uring_{};
+
+    uint32_t cq_capacity_ = 0;
+    size_t in_flight_cqes_ = 0;
+    unsigned pending_sqes_ = 0;
     bool terminal_error_ = false;
-    std::list<nixlPosixIoUringIO *> cancels_to_submit_;
-    std::vector<nixlPosixIoUringCancel> cancels_;
+    bool open_supported_ = false;
+    bool open_synchronous_;
+    std::unordered_map<uint64_t, std::shared_ptr<fileState>> path_files_;
 };
 
-nixlPosixIOQueueUring::nixlPosixIOQueueUring(uint32_t ios_pool_size, uint32_t kernel_queue_size)
-    : nixlPosixIOQueueImpl<nixlPosixIoUringIO>(ios_pool_size, kernel_queue_size),
-      cancels_(ios_.size()) {
-    for (size_t i = 0; i < ios_.size(); i++) {
-        cancels_[i].io_ = &ios_[i];
-    }
-
+nixlPosixIOQueueUring::nixlPosixIOQueueUring(uint32_t ios_pool_size,
+                                             uint32_t kernel_queue_size,
+                                             bool open_synchronous)
+    : nixlPosixIOQueueImpl<ioSlot>(ios_pool_size, kernel_queue_size),
+      open_synchronous_(open_synchronous) {
     io_uring_params params = {};
-    int ret = io_uring_queue_init_params(kernel_queue_size_, &uring, &params);
+    int ret = io_uring_queue_init_params(kernel_queue_size_, &uring_, &params);
     if (ret < 0) {
         throw std::runtime_error(
             absl::StrFormat("Failed to initialize io_uring instance: %s", nixl_strerror(-ret)));
     }
-}
+    cq_capacity_ = params.cq_entries;
 
-// Prepare pending cancellation SQEs before normal I/O SQEs, without submitting them.
-void
-nixlPosixIOQueueUring::prepareSQEs(void) {
-    int num_sqes = 0;
-    while (num_sqes < MAX_IO_SUBMIT_BATCH_SIZE) {
-        if (cancels_to_submit_.empty() && ios_to_submit_.empty()) {
-            break;
-        }
-
-        struct io_uring_sqe *sqe = io_uring_get_sqe(&uring);
-        if (!sqe) {
-            break;
-        }
-
-        if (!cancels_to_submit_.empty()) {
-            nixlPosixIoUringIO *io = cancels_to_submit_.front();
-            cancels_to_submit_.pop_front();
-            size_t index = static_cast<size_t>(io - ios_.data());
-            auto *io_data = static_cast<nixlPosixIoUringCQEData *>(io);
-            io_uring_prep_cancel(sqe, io_data, 0);
-            io_uring_sqe_set_data(sqe, static_cast<nixlPosixIoUringCQEData *>(&cancels_[index]));
-            NIXL_ASSERT(io->cancel_pending_);
-        } else {
-            nixlPosixIoUringIO *io = ios_to_submit_.front();
-            ios_to_submit_.pop_front();
-            if (io->read_) {
-                io_uring_prep_read(sqe, io->fd, io->buf_, io->len_, io->offset_);
-            } else {
-                io_uring_prep_write(sqe, io->fd, io->buf_, io->len_, io->offset_);
-            }
-            io_uring_sqe_set_data(sqe, static_cast<nixlPosixIoUringCQEData *>(io));
-            io->in_flight_ = true;
-        }
-        num_sqes++;
-    }
-}
-
-void
-nixlPosixIOQueueUring::failQueuedIOs(void *ctx) {
-    for (auto it = ios_to_submit_.begin(); it != ios_to_submit_.end();) {
-        nixlPosixIoUringIO *io = *it;
-        if (io->ctx_ != ctx) {
-            ++it;
-            continue;
-        }
-        if (io->clb_) {
-            io->clb_(io->ctx_, 0, 1);
-        }
-        it = ios_to_submit_.erase(it);
-        free_ios_.push_back(io);
-    }
-}
-
-void
-nixlPosixIOQueueUring::releaseIOIfIdle(nixlPosixIoUringIO *io) {
-    if (!io->in_flight_ && !io->cancel_pending_) {
-        free_ios_.push_back(io);
+    // Probe the running kernel because vendors routinely backport io_uring features.
+    io_uring_probe *probe = io_uring_get_probe_ring(&uring_);
+    open_supported_ = probe && io_uring_opcode_supported(probe, IORING_OP_OPENAT);
+    if (probe) {
+        io_uring_free_probe(probe);
     }
 }
 
 nixl_status_t
-nixlPosixIOQueueUring::post(void) {
-    return driveSubmissions();
-}
-
-// Prepare I/O SQEs and submit every ring-ready SQE.
-nixl_status_t
-nixlPosixIOQueueUring::driveSubmissions(void) {
-    if (terminal_error_) {
-        return NIXL_IN_PROG;
-    }
-
-    prepareSQEs();
-
-    int ret = io_uring_submit(&uring);
-    if (ret >= 0 || ret == -EAGAIN || ret == -EBUSY || ret == -EINTR) {
-        return NIXL_IN_PROG;
-    }
-
-    NIXL_ERROR << "io_uring_submit failed: " << nixl_strerror(-ret);
-    terminal_error_ = true;
-    return NIXL_IN_PROG;
-}
-
-inline nixl_status_t
-nixlPosixIOQueueUring::doCheckCompleted(void) {
-    struct io_uring_cqe *cqe;
-    unsigned head;
-    int count = 0;
-    io_uring_for_each_cqe(&uring, head, cqe) {
-        int res = cqe->res;
-        auto *data = static_cast<nixlPosixIoUringCQEData *>(io_uring_cqe_get_data(cqe));
-        NIXL_ASSERT(data);
-        nixlPosixIoUringIO *io;
-        if (data->kind_ == nixlPosixIoUringCQEKind::CANCEL) {
-            auto *cancel = static_cast<nixlPosixIoUringCancel *>(data);
-            io = cancel->io_;
-            NIXL_ASSERT(io && io->cancel_pending_);
-            io->cancel_pending_ = false;
-            if (cancel->clb_) {
-                cancel->clb_(cancel->ctx_);
-            }
-            cancel->clb_ = nullptr;
-            cancel->ctx_ = nullptr;
-        } else {
-            io = static_cast<nixlPosixIoUringIO *>(data);
-            int error = res < 0 || static_cast<size_t>(res) != io->len_;
-            if (error) {
-                NIXL_DEBUG << absl::StrFormat(
-                    "IO operation incomplete: result %d, expected %zu", res, io->len_);
-            }
-            if (io->clb_) {
-                io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(res), error);
-            }
-            io->in_flight_ = false;
-        }
-        releaseIOIfIdle(io);
-        if (++count == MAX_IO_CHECK_COMPLETED_BATCH_SIZE) {
-            break;
-        }
-    }
-
-    // Mark all seen
-    io_uring_cq_advance(&uring, count);
-
-    if (free_ios_.size() == ios_pool_size_) {
-        return NIXL_SUCCESS; // All ios and cancellation cleanup are done
-    }
-
-    return NIXL_IN_PROG; // Some ios or cancellation SQEs still need to drain
+nixlPosixIOQueueUring::enqueueFd(int fd,
+                                 void *buf,
+                                 size_t len,
+                                 off_t offset,
+                                 bool read,
+                                 nixlPosixIOQueueDoneCb clb,
+                                 void *ctx) {
+    return enqueueIO(fd, {}, buf, len, offset, read, std::move(clb), ctx);
 }
 
 nixl_status_t
-nixlPosixIOQueueUring::enqueue(int fd,
+nixlPosixIOQueueUring::enqueue(uint64_t dev_id,
                                void *buf,
                                size_t len,
                                off_t offset,
                                bool read,
                                nixlPosixIOQueueDoneCb clb,
                                void *ctx) {
+    auto file = path_files_.find(dev_id);
+    if (file == path_files_.end()) {
+        return nixlPosixIOQueue::enqueue(dev_id, buf, len, offset, read, std::move(clb), ctx);
+    }
+    return enqueueIO(-1, file->second, buf, len, offset, read, std::move(clb), ctx);
+}
+
+nixl_status_t
+nixlPosixIOQueueUring::enqueueIO(int fd,
+                                 std::shared_ptr<fileState> file,
+                                 void *buf,
+                                 size_t len,
+                                 off_t offset,
+                                 bool read,
+                                 nixlPosixIOQueueDoneCb clb,
+                                 void *ctx) {
+    if (file &&
+        (file->status == fileState::status_t::PENDING_CLOSE ||
+         file->status == fileState::status_t::CLOSING ||
+         file->status == fileState::status_t::CLOSED)) {
+        return NIXL_ERR_NOT_ALLOWED;
+    }
     if (free_ios_.empty()) {
         NIXL_ERROR << "No more free blocks available";
         return NIXL_ERR_NOT_ALLOWED;
     }
-
-    nixlPosixIoUringIO *io = free_ios_.front();
+    ioSlot *io = free_ios_.front();
     free_ios_.pop_front();
     io->fd = fd;
     io->buf_ = buf;
     io->len_ = len;
     io->offset_ = offset;
     io->read_ = read;
-    io->clb_ = clb;
+    io->clb_ = std::move(clb);
     io->ctx_ = ctx;
-    io->in_flight_ = false;
+    io->file_ = std::move(file);
+    io->state_ = ioSlot::state_t::QUEUED;
     io->cancel_pending_ = false;
+    io->cancel_submitted_ = false;
+    io->cancel_clb_ = {};
+    if (io->file_) {
+        ++io->file_->activeIos;
+    }
+    return NIXL_SUCCESS;
+}
 
-    ios_to_submit_.push_back(io);
+void
+queueClose(fileState *file) {
+    if (file->fd < 0 || file->status == fileState::status_t::PENDING_CLOSE ||
+        file->status == fileState::status_t::CLOSING ||
+        file->status == fileState::status_t::CLOSED) {
+        return;
+    }
+    file->status = fileState::status_t::PENDING_CLOSE;
+}
 
+void
+nixlPosixIOQueueUring::retireFile(uint64_t dev_id) {
+    auto file_it = path_files_.find(dev_id);
+    NIXL_ASSERT(file_it != path_files_.end());
+    const auto &file = file_it->second;
+    file->deregistered = true;
+    if (file->status == fileState::status_t::PENDING_OPEN) {
+        file->status = fileState::status_t::CLOSED;
+    } else if (file->status == fileState::status_t::OPEN) {
+        queueClose(file.get());
+    } else if (file->status == fileState::status_t::FAILED) {
+        file->status = fileState::status_t::CLOSED;
+    }
+    if (file->status == fileState::status_t::CLOSED) {
+        path_files_.erase(file_it);
+    }
+}
+
+nixl_status_t
+nixlPosixIOQueueUring::deregisterFile(uint64_t dev_id) {
+    doCheckCompleted();
+    auto file_it = path_files_.find(dev_id);
+    if (file_it == path_files_.end()) {
+        return nixlPosixIOQueue::deregisterFile(dev_id);
+    }
+    const auto file = file_it->second;
+    if (file->activeIos != 0) {
+        return NIXL_ERR_NOT_ALLOWED;
+    }
+    retireFile(dev_id);
+    while (file->status != fileState::status_t::CLOSED) {
+        nixl_status_t status = poll();
+        if (status < 0) {
+            return status;
+        }
+    }
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlPosixIOQueueUring::poll(void) {
-    nixl_status_t completion_status = doCheckCompleted();
-    if (completion_status == NIXL_SUCCESS) {
+nixlPosixIOQueueUring::registerFile(uint64_t dev_id, const std::string &meta_info) {
+    auto path_spec = nixl::parsePathMeta(meta_info);
+    if (!path_spec) {
+        if (path_files_.contains(dev_id)) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        return nixlPosixIOQueue::registerFile(dev_id, meta_info);
+    }
+
+    if (!open_supported_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    if (path_files_.contains(dev_id) || files_.contains(dev_id)) {
+        return NIXL_ERR_NOT_ALLOWED;
+    }
+
+    auto file = std::make_shared<fileState>(std::move(*path_spec));
+    path_files_.emplace(dev_id, file);
+
+    nixl_status_t status = post();
+    if (status < 0) {
+        retireFile(dev_id);
+        return status;
+    }
+    if (!open_synchronous_) {
         return NIXL_SUCCESS;
     }
+
+    while (file->status == fileState::status_t::PENDING_OPEN ||
+           file->status == fileState::status_t::OPENING) {
+        status = poll();
+        if (status < 0) {
+            retireFile(dev_id);
+            return status;
+        }
+    }
+
+    if (file->status == fileState::status_t::FAILED) {
+        retireFile(dev_id);
+        return NIXL_ERR_BACKEND;
+    }
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlPosixIOQueueUring::submitPrepared(unsigned prepared) {
+    pending_sqes_ += prepared;
+    while (pending_sqes_ > 0) {
+        int ret = io_uring_submit(&uring_);
+        if (ret == -EAGAIN || ret == -EBUSY || ret == -EINTR) {
+            return NIXL_IN_PROG;
+        }
+        if (ret < 0) {
+            NIXL_ERROR << "io_uring_submit failed: " << nixl_strerror(-ret);
+            terminal_error_ = true;
+            return NIXL_ERR_BACKEND;
+        }
+        if (ret == 0) {
+            return NIXL_IN_PROG;
+        }
+        const unsigned submitted = std::min(pending_sqes_, static_cast<unsigned>(ret));
+        pending_sqes_ -= submitted;
+        in_flight_cqes_ += submitted;
+    }
+    return NIXL_IN_PROG;
+}
+
+nixl_status_t
+nixlPosixIOQueueUring::post(void) {
     if (terminal_error_) {
         return NIXL_ERR_BACKEND;
     }
+    if (pending_sqes_ > 0) {
+        return submitPrepared(0);
+    }
+    std::erase_if(path_files_, [](const auto &entry) {
+        return entry.second->status == fileState::status_t::CLOSED;
+    });
+    bool failed_io = false;
+    for (auto &io : ios_) {
+        if (io.state_ == ioSlot::state_t::QUEUED && io.file_ &&
+            io.file_->status == fileState::status_t::FAILED) {
+            completeQueuedIO(&io, io.file_->openError);
+            failed_io = true;
+        }
+    }
+    if (failed_io) {
+        return NIXL_IN_PROG;
+    }
 
-    return driveSubmissions();
+    const size_t occupied_cqes = in_flight_cqes_ + pending_sqes_;
+    const size_t available_cqes = cq_capacity_ > occupied_cqes ? cq_capacity_ - occupied_cqes : 0;
+    if (available_cqes == 0) {
+        return NIXL_IN_PROG;
+    }
+
+    unsigned prepared = 0;
+    for (auto &io : ios_) {
+        if (prepared >= available_cqes || io_uring_sq_space_left(&uring_) < 1) {
+            break;
+        }
+        if (!io.cancel_pending_ || io.cancel_submitted_) {
+            continue;
+        }
+        io_uring_sqe *sqe = io_uring_get_sqe(&uring_);
+        io_uring_prep_cancel(sqe, &io.data_completion_, 0);
+        io_uring_sqe_set_data(sqe, &io.cancel_completion_);
+        io.cancel_submitted_ = true;
+        ++prepared;
+    }
+
+    for (const auto &[dev_id, file] : path_files_) {
+        if (prepared >= available_cqes || io_uring_sq_space_left(&uring_) < 1) {
+            break;
+        }
+        if (file->status != fileState::status_t::PENDING_CLOSE) {
+            continue;
+        }
+        io_uring_sqe *sqe = io_uring_get_sqe(&uring_);
+        io_uring_prep_close(sqe, file->fd);
+        file->completionData.handler = completeClose;
+        io_uring_sqe_set_data(sqe, &file->completionData);
+        file->status = fileState::status_t::CLOSING;
+        ++prepared;
+    }
+
+    // Prioritize I/O unblocked by completed opens over more registration opens.
+    for (auto &io : ios_) {
+        if (prepared >= available_cqes || io_uring_sq_space_left(&uring_) < 1) {
+            break;
+        }
+        if (io.state_ != ioSlot::state_t::QUEUED ||
+            (io.file_ && io.file_->status != fileState::status_t::OPEN)) {
+            continue;
+        }
+        io_uring_sqe *data_sqe = io_uring_get_sqe(&uring_);
+        const int fd = io.file_ ? io.file_->fd : io.fd;
+        if (io.read_) {
+            io_uring_prep_read(data_sqe, fd, io.buf_, io.len_, io.offset_);
+        } else {
+            io_uring_prep_write(data_sqe, fd, io.buf_, io.len_, io.offset_);
+        }
+        io.state_ = ioSlot::state_t::IN_FLIGHT;
+        io_uring_sqe_set_data(data_sqe, &io.data_completion_);
+        ++prepared;
+    }
+
+    for (const auto &[dev_id, file] : path_files_) {
+        if (prepared >= available_cqes || io_uring_sq_space_left(&uring_) < 1) {
+            break;
+        }
+        if (file->status != fileState::status_t::PENDING_OPEN) {
+            continue;
+        }
+        io_uring_sqe *open_sqe = io_uring_get_sqe(&uring_);
+        io_uring_prep_openat(open_sqe, AT_FDCWD, file->path.c_str(), file->flags, file->mode);
+        io_uring_sqe_set_data(open_sqe, &file->completionData);
+        file->status = fileState::status_t::OPENING;
+        ++prepared;
+    }
+
+    return submitPrepared(prepared);
+}
+
+void
+nixlPosixIOQueueUring::completeQueuedIO(ioSlot *io, int error) {
+    if (io->clb_) {
+        io->clb_(io->ctx_, 0, error);
+    }
+    if (io->file_ && io->file_->activeIos > 0) {
+        --io->file_->activeIos;
+    }
+    io->file_.reset();
+    io->state_ = ioSlot::state_t::FREE;
+    free_ios_.push_back(io);
+}
+
+ioSlot *
+completeOpen(void *owner, int result) {
+    auto *file = static_cast<fileState *>(owner);
+    if (result < 0) {
+        file->status = fileState::status_t::FAILED;
+        file->openError = -result;
+        if (file->deregistered) {
+            file->status = fileState::status_t::CLOSED;
+        }
+        NIXL_ERROR << absl::StrFormat(
+            "io_uring open failed for %s: %s", file->path, nixl_strerror(-result));
+        return nullptr;
+    }
+
+    file->fd = result;
+    file->status = fileState::status_t::OPEN;
+    if (file->deregistered) {
+        queueClose(file);
+    }
+    return nullptr;
+}
+
+ioSlot *
+completeData(void *owner, int result) {
+    auto *io = static_cast<ioSlot *>(owner);
+    const auto file = io->file_;
+    const int error = result < 0 ? -result : static_cast<size_t>(result) != io->len_;
+    if (io->clb_) {
+        io->clb_(io->ctx_, error ? 0 : static_cast<uint32_t>(result), error);
+    }
+    if (error) {
+        NIXL_DEBUG << absl::StrFormat(
+            "IO operation incomplete: result %d, expected %zu", result, io->len_);
+    }
+    if (file) {
+        --file->activeIos;
+    }
+    io->file_.reset();
+    io->state_ = ioSlot::state_t::FREE;
+    if (io->cancel_pending_ && !io->cancel_submitted_) {
+        io->cancel_pending_ = false;
+        if (io->cancel_clb_) {
+            io->cancel_clb_(io->ctx_);
+        }
+        io->cancel_clb_ = {};
+    }
+    return io->cancel_pending_ ? nullptr : io;
+}
+
+ioSlot *
+completeCancel(void *owner, int) {
+    auto *io = static_cast<ioSlot *>(owner);
+    io->cancel_pending_ = false;
+    io->cancel_submitted_ = false;
+    if (io->cancel_clb_) {
+        io->cancel_clb_(io->ctx_);
+    }
+    io->cancel_clb_ = {};
+    return io->state_ == ioSlot::state_t::FREE ? io : nullptr;
+}
+
+ioSlot *
+completeClose(void *owner, int result) {
+    auto *file = static_cast<fileState *>(owner);
+    if (result < 0) {
+        NIXL_ERROR << absl::StrFormat(
+            "io_uring close failed for %s: %s", file->path, nixl_strerror(-result));
+        ::close(file->fd);
+    }
+    file->fd = -1;
+    file->status = fileState::status_t::CLOSED;
+    return nullptr;
+}
+
+void
+nixlPosixIOQueueUring::doCheckCompleted(void) {
+    io_uring_cqe *cqe;
+    unsigned head;
+    unsigned count = 0;
+    io_uring_for_each_cqe(&uring_, head, cqe) {
+        auto *completion_data = reinterpret_cast<completion *>(io_uring_cqe_get_data(cqe));
+        if (completion_data) {
+            if (auto *io = completion_data->handler(completion_data->owner, cqe->res)) {
+                free_ios_.push_back(io);
+            }
+        }
+        ++count;
+    }
+
+    if (count > 0) {
+        io_uring_cq_advance(&uring_, count);
+        in_flight_cqes_ -= std::min(in_flight_cqes_, static_cast<size_t>(count));
+    }
 }
 
 unsigned
@@ -292,32 +571,74 @@ nixlPosixIOQueueUring::cancel(void *ctx, nixlPosixIOQueueCancelDoneCb clb) {
         return 0;
     }
 
-    failQueuedIOs(ctx);
-
-    unsigned cancels_requested = 0;
     for (auto &io : ios_) {
-        if (io.in_flight_ && io.ctx_ == ctx && !io.cancel_pending_) {
-            size_t index = static_cast<size_t>(&io - ios_.data());
-            io.cancel_pending_ = true;
-            cancels_[index].clb_ = clb;
-            cancels_[index].ctx_ = ctx;
-            cancels_to_submit_.push_back(&io);
-            cancels_requested++;
+        if (io.state_ == ioSlot::state_t::QUEUED && io.ctx_ == ctx) {
+            completeQueuedIO(&io, 1);
         }
     }
 
-    if (cancels_requested != 0) {
-        // Best-effort cancellation blocks only its owning request until callbacks are invoked.
-        driveSubmissions();
+    unsigned requested = 0;
+    for (auto &io : ios_) {
+        if (io.state_ != ioSlot::state_t::IN_FLIGHT || io.ctx_ != ctx || io.cancel_pending_) {
+            continue;
+        }
+        io.cancel_pending_ = true;
+        io.cancel_clb_ = clb;
+        ++requested;
     }
-    return cancels_requested;
+
+    if (requested > 0) {
+        post();
+    }
+    return requested;
+}
+
+nixl_status_t
+nixlPosixIOQueueUring::poll(void) {
+    doCheckCompleted();
+    nixl_status_t post_status = post();
+    if (post_status < 0) {
+        return post_status;
+    }
+    return free_ios_.size() == ios_pool_size_ ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
 nixlPosixIOQueueUring::~nixlPosixIOQueueUring() {
-    io_uring_queue_exit(&uring);
+    // Drain outstanding operations before ring teardown.
+    while (!terminal_error_) {
+        doCheckCompleted();
+        const nixl_status_t status = post();
+        if (status < 0) {
+            break;
+        }
+        if (pending_sqes_ == 0 && in_flight_cqes_ == 0) {
+            break;
+        }
+        if (in_flight_cqes_ > 0) {
+            io_uring_cqe *cqe = nullptr;
+            const int ret = io_uring_wait_cqe(&uring_, &cqe);
+            if (ret < 0) {
+                NIXL_ERROR << "io_uring wait during shutdown failed: " << nixl_strerror(-ret);
+                break;
+            }
+        }
+    }
+    doCheckCompleted();
+
+    io_uring_queue_exit(&uring_);
+    for (const auto &[dev_id, file] : path_files_) {
+        if (file->fd >= 0) {
+            ::close(file->fd);
+        }
+    }
 }
 
+} // namespace
+
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueUringCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size) {
-    return std::make_unique<nixlPosixIOQueueUring>(ios_pool_size, kernel_queue_size);
+nixlPosixIOQueueUringCreate(uint32_t ios_pool_size,
+                            uint32_t kernel_queue_size,
+                            bool open_synchronous) {
+    return std::make_unique<nixlPosixIOQueueUring>(
+        ios_pool_size, kernel_queue_size, open_synchronous);
 }

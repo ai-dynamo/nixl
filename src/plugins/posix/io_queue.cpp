@@ -19,17 +19,25 @@
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
 
+#include <limits>
+
 #ifdef HAVE_POSIXAIO
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size);
+nixlPosixIOQueueAIOCreate(uint32_t ios_pool_size,
+                          uint32_t kernel_queue_size,
+                          bool open_synchronous);
 #endif
 #ifdef HAVE_LIBURING
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueUringCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size);
+nixlPosixIOQueueUringCreate(uint32_t ios_pool_size,
+                            uint32_t kernel_queue_size,
+                            bool open_synchronous);
 #endif
 #ifdef HAVE_LINUXAIO
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueLinuxAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size);
+nixlPosixIOQueueLinuxAIOCreate(uint32_t ios_pool_size,
+                               uint32_t kernel_queue_size,
+                               bool open_synchronous);
 #endif
 
 static const struct {
@@ -47,10 +55,57 @@ static const struct {
 #endif
 };
 
+nixl_status_t
+nixlPosixIOQueue::registerFile(uint64_t dev_id, const std::string &meta_info) {
+    const bool path_mode = nixl::parsePathMeta(meta_info).has_value();
+    if (!path_mode && dev_id > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    auto file = files_.find(dev_id);
+    if (file != files_.end()) {
+        if (path_mode || file->second.pathMode) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        file->second.registrations++;
+        return NIXL_SUCCESS;
+    }
+
+    files_.try_emplace(dev_id, dev_id, meta_info, path_mode);
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlPosixIOQueue::deregisterFile(uint64_t dev_id) {
+    auto file = files_.find(dev_id);
+    if (file == files_.end()) {
+        return NIXL_SUCCESS;
+    }
+    if (--file->second.registrations == 0) {
+        files_.erase(file);
+    }
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlPosixIOQueue::enqueue(uint64_t dev_id,
+                          void *buf,
+                          size_t len,
+                          off_t offset,
+                          bool read,
+                          nixlPosixIOQueueDoneCb clb,
+                          void *ctx) {
+    auto file = files_.find(dev_id);
+    if (file == files_.end()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    return enqueueFd(file->second.fileFd.fd(), buf, len, offset, read, std::move(clb), ctx);
+}
+
 std::unique_ptr<nixlPosixIOQueue>
 nixlPosixIOQueue::instantiate(std::string_view io_queue_type,
                               uint32_t ios_pool_size,
-                              uint32_t kernel_queue_size) {
+                              uint32_t kernel_queue_size,
+                              bool open_synchronous) {
     for (const auto &factory : factories) {
         if (io_queue_type == factory.name) {
             if (ios_pool_size == 0) {
@@ -61,7 +116,7 @@ nixlPosixIOQueue::instantiate(std::string_view io_queue_type,
                 kernel_queue_size = DEF_KERNEL_QUEUE_SIZE;
                 NIXL_INFO << "Using default kernel queue size: " << kernel_queue_size;
             }
-            return factory.createFn(ios_pool_size, kernel_queue_size);
+            return factory.createFn(ios_pool_size, kernel_queue_size, open_synchronous);
         }
     }
     return nullptr;
