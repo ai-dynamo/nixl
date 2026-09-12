@@ -68,20 +68,9 @@ run_elastic_test() {
     local test_name=$1
     local plan_file=$2
     shift 2
-    local arg
-    local disable_ll_nvlink=false
-    for arg in "$@"; do
-        if [[ "$arg" == "--disable-ll-nvlink" ]]; then
-            disable_ll_nvlink=true
-            break
-        fi
-    done
     (
         unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE
         unset UCX_NET_DEVICES UCX_TLS
-        if [[ "$disable_ll_nvlink" == false ]]; then
-            export UCX_TLS=^rc_gda
-        fi
         echo "---- elastic: $test_name, plan=$(basename "$plan_file"), args=[$*] ----"
         PYTHONPATH="${NIXL_BUILD_DIR}/${EP_SRC_DIR}:${EP_SRC_DIR}/tests:${EP_ELASTIC_TEST_DIR}${PYTHONPATH:+:$PYTHONPATH}" \
         timeout 300 "${VLLM_PYTHON}" "${EP_ELASTIC_TEST_DIR}/elastic.py" \
