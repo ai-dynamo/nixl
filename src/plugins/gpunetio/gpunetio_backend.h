@@ -24,9 +24,10 @@ class nixlDocaEngine : public nixlBackendEngine {
 public:
     CUcontext main_cuda_ctx;
     int oob_sock_server;
-    std::mutex notifLock;
-    std::mutex qpLock;
+    mutable std::mutex notifLock;
+    mutable std::mutex qpLock;
     std::mutex connectLock;
+    mutable std::mutex remoteConnLock;
     std::vector<std::pair<uint32_t, doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
     doca_dev *ddev; /* DOCA device handler associated to queues */
     doca_verbs_context *verbs_context; /* DOCA Verbs Context */
@@ -150,7 +151,7 @@ private:
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
 
-    uint32_t local_port;
+    uint16_t local_port;
     int noSyncIters;
     uint8_t ipv4_addr[4];
     struct sockaddr oob_saddr;
@@ -166,6 +167,7 @@ private:
     struct docaXferReqGpu *xferReqRingGpu;
     struct docaXferReqGpu *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
+    mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved;
 
     struct docaXferCompletion *completion_list_gpu;
     struct docaXferCompletion *completion_list_cpu;
@@ -184,6 +186,8 @@ private:
     std::unordered_map<std::string, struct nixlDocaRdmaQp *> qpMap;
     std::unordered_map<std::string, int> connMap;
     std::unordered_map<std::string, struct nixlDocaNotif *> notifMap;
+    std::string notifProgressPeer;
+    size_t notifProgressCursor = 0;
 
     pthread_t server_thread_id;
 
@@ -192,8 +196,7 @@ private:
     public:
         cudaStream_t stream;
         uint32_t devId;
-        uint32_t start_pos;
-        uint32_t end_pos;
+        std::vector<uint32_t> positions;
         uintptr_t backendHandleGpu;
 
         nixlDocaBckndReq() : nixlBackendReqH() {}

@@ -20,7 +20,7 @@
 #include "verbs.h"
 #include "gpunetio_backend_aux.h"
 
-#define VERBS_TEST_MAX_SEND_SEGS (1)
+#define VERBS_TEST_MAX_SEND_SEGS (2)
 #define VERBS_TEST_MAX_RECEIVE_SEGS (1)
 #define VERBS_TEST_DBR_SIZE (8)
 #define ROUND_UP(unaligned_mapping_size, align_val) \
@@ -415,8 +415,9 @@ mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, s
       elem_num(elem_num_),
       elem_size(elem_size_),
       pd(pd_) {
-    if (gpu_dev == nullptr || addr == nullptr || elem_num == 0 || elem_size == 0 || pd == nullptr)
+    if (addr == nullptr || elem_num == 0 || elem_size == 0 || pd == nullptr) {
         throw std::invalid_argument("Invalid mr input values");
+    }
 
     doca_error_t status;
     static size_t host_page_size = sysconf(_SC_PAGESIZE);
@@ -434,7 +435,7 @@ mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, s
     /* Try to map GPU memory with dmabuf.
      * Input size and address should be aliegned to host page size.
      */
-    if ((tot_size % host_page_size) == 0 &&
+    if (gpu_dev != nullptr && (tot_size % host_page_size) == 0 &&
         ((reinterpret_cast<uintptr_t>(addr) % host_page_size) == 0)) {
         status = doca_gpu_dmabuf_fd(gpu_dev, addr, tot_size, &dmabuf_fd);
         if (status == DOCA_SUCCESS) {
@@ -455,6 +456,7 @@ mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, s
      * Fallback mechanism using legacy mode with nvidia-peermem module and ibv_reg_mr.
      */
     if (ibmr == nullptr) {
+        NIXL_INFO << "Registering memory through legacy ibv_reg_mr";
         ibmr = ibv_reg_mr(pd,
                           addr,
                           tot_size,
@@ -476,8 +478,12 @@ mr::mr(void *addr_, size_t tot_size_, uint32_t rkey_)
 }
 
 mr::~mr() {
-    int ret = ibv_dereg_mr(ibmr);
-    if (ret != 0) NIXL_ERROR << "ibv_dereg_mr failed with error " << ret;
+    if (ibmr != nullptr) {
+        int ret = ibv_dereg_mr(ibmr);
+        if (ret != 0) {
+            NIXL_ERROR << "ibv_dereg_mr failed with error " << ret;
+        }
+    }
 }
 
 } // namespace nixl::doca::verbs
