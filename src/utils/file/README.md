@@ -84,9 +84,16 @@ Test files are provided:
 ## Path-Mode File Registration
 
 Path-mode lets a caller declare a `FILE_SEG` descriptor by path in
-`nixlBlobDesc::metaInfo` instead of pre-opening an fd; the backend
-opens in `registerMem` and closes in `deregisterMem`. Motivation:
-collapse N Python `os.open()` GIL crossings into one.
+`nixlBlobDesc::metaInfo` instead of pre-opening an fd; the backend initiates
+the open during `registerMem`, owns the resulting fd, and closes it during
+`deregisterMem`. Motivation: collapse N Python `os.open()` GIL crossings into
+one.
+
+With POSIX io_uring (`use_uring=true`), `registerMem` submits `OPENAT`
+asynchronously by default and may return before the open completes. An invalid
+or missing path can therefore register successfully, with the error reported
+when a transfer first uses the descriptor. Set `uring_open_synchronous=true`
+to make `registerMem` wait for the completion and report open errors directly.
 
 A `metaInfo` string is parsed as path-mode iff it matches:
 
@@ -107,10 +114,12 @@ Examples: `ro:/var/cache/x.bin`, `rw,direct:/var/cache/x.bin`,
 (fail-loud); the design is strictly additive: any non-matching
 `metaInfo` falls through to caller-owned fd in `devId`.
 
-Backends consume the shared helpers `nixl::parsePathMeta()` +
-`nixlFilePathMD` from `file_path_mode.{h,cpp}`. POSIX uses
-`nixlFilePathMD` directly; HF3FS / CUDA_GDS / GDS_MT extend their
-existing per-descriptor MD struct with `owned` (and close the fd in
-`deregisterMem` after the backend-specific teardown). The GDS per-fd
-caches key on the *opened* fd, so two path-mode registrations of the
-same path yield two cuFile handles (no path-level dedup).
+Backends consume `nixl::parsePathMeta()` and the shared helpers from
+`file_path_mode.{h,cpp}`. POSIX metadata (`nixlPosixFileMD`) stores only the
+`uint64_t` device identifier; the selected I/O queue owns the registered file
+state and lifetime. POSIX AIO queues keep a `FileFd` in their queue registry,
+while the io_uring path owns asynchronous open and close state in `fileState`.
+HF3FS / CUDA_GDS / GDS_MT extend their existing per-descriptor MD struct with
+`owned` (and close the fd in `deregisterMem` after the backend-specific
+teardown). The GDS per-fd caches key on the *opened* fd, so two path-mode
+registrations of the same path yield two cuFile handles (no path-level dedup).
