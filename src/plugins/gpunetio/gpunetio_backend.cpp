@@ -26,6 +26,82 @@
 
 const char info_delimiter = '-';
 
+namespace {
+int
+parseGidIndex(const std::string &value) {
+    if (value.empty()) {
+        return 0;
+    }
+
+    size_t parsed_chars = 0;
+    int parsed_value = 0;
+    try {
+        parsed_value = std::stoi(value, &parsed_chars);
+    }
+    catch (const std::exception &) {
+        throw std::invalid_argument("gid_index must be an integer in the range [0, 255]");
+    }
+
+    if (parsed_chars != value.size() || parsed_value < 0 || parsed_value > 255) {
+        throw std::invalid_argument("gid_index must be an integer in the range [0, 255]");
+    }
+
+    return parsed_value;
+}
+
+void
+rollbackOobDiscoveryFailure(std::vector<std::pair<uint32_t, doca_gpu *>> &gdevs,
+                            doca_verbs_ah_attr *&verbs_ah_attr,
+                            doca_dev *&ddev,
+                            doca_verbs_pd *&verbs_pd,
+                            doca_verbs_context *&verbs_context) noexcept {
+    doca_error_t result;
+
+    for (auto item = gdevs.rbegin(); item != gdevs.rend(); ++item) {
+        if (item->second == nullptr) {
+            continue;
+        }
+        result = doca_gpu_destroy(item->second);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to roll back DOCA GPU device " << doca_error_get_descr(result);
+        }
+        item->second = nullptr;
+    }
+
+    if (verbs_ah_attr != nullptr) {
+        result = doca_verbs_ah_attr_destroy(verbs_ah_attr);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to roll back DOCA verbs AH " << doca_error_get_descr(result);
+        }
+        verbs_ah_attr = nullptr;
+    }
+
+    if (ddev != nullptr) {
+        result = doca_dev_close(ddev);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to roll back DOCA device " << doca_error_get_descr(result);
+        }
+        ddev = nullptr;
+    }
+
+    if (verbs_pd != nullptr) {
+        result = doca_verbs_pd_destroy(verbs_pd);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to roll back DOCA verbs PD " << doca_error_get_descr(result);
+        }
+        verbs_pd = nullptr;
+    }
+
+    if (verbs_context != nullptr) {
+        result = doca_verbs_context_destroy(verbs_context);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Failed to roll back DOCA verbs context " << doca_error_get_descr(result);
+        }
+        verbs_context = nullptr;
+    }
+}
+} // namespace
+
 /****************************************
  * Constructor/Destructor
  *****************************************/
@@ -73,6 +149,12 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         NIXL_INFO << std::endl;
     }
 
+    if (oobdev.size() > 0 && oobdev[0] != "" &&
+        netif_get_addr(oobdev[0].c_str(), AF_INET, &oob_saddr, &oob_netmask) != 0) {
+        throw std::invalid_argument("Failed to get IPv4 address for GPUNETIO OOB interface '" +
+                                    oobdev[0] + "'");
+    }
+
     NIXL_INFO << "DOCA GPU devices: ";
     // Temporary: will extend to more GPUs in a dedicated PR
     if (custom_params->count("gpu_devices") > 1)
@@ -97,6 +179,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     if (nstreams == 0) nstreams = DOCA_POST_STREAM_NUM;
 
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
+
+    gid_index = parseGidIndex((*custom_params)["gid_index"]);
+    NIXL_INFO << "RoCE GID index: " << gid_index;
 
     /* Open DOCA device */
     verbs_context = open_ib_device((char *)(ndevs[0].c_str()));
@@ -124,8 +209,6 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     if (ret) {
         throw std::invalid_argument("Failed to query ibv port attributes");
     }
-
-    gid_index = 0;
 
     ret = ibv_query_gid(pd->context, 1, gid_index, &rgid);
     if (ret) {
@@ -169,7 +252,6 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     }
 
     if (oobdev.size() > 0 && oobdev[0] != "") {
-        netif_get_addr(oobdev[0].c_str(), AF_INET, &oob_saddr, &oob_netmask);
         struct sockaddr_in *addr_in = (struct sockaddr_in *)&oob_saddr;
         memcpy(ipv4_addr, (uint8_t *)&(addr_in->sin_addr.s_addr), 4);
         NIXL_DEBUG << "Eth IP address " << static_cast<unsigned>(ipv4_addr[0]) << " "
@@ -177,8 +259,13 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
                    << static_cast<unsigned>(ipv4_addr[2]) << " "
                    << static_cast<unsigned>(ipv4_addr[3]) << " " << "ifface " << oobdev[0].c_str();
     } else {
-        doca_devinfo_get_ipv4_addr(
+        result = doca_devinfo_get_ipv4_addr(
             doca_dev_as_devinfo(ddev), (uint8_t *)ipv4_addr, DOCA_DEVINFO_IPV4_ADDR_SIZE);
+        if (result != DOCA_SUCCESS) {
+            rollbackOobDiscoveryFailure(gdevs, verbs_ah_attr, ddev, verbs_pd, verbs_context);
+            throw std::invalid_argument(
+                "Failed to determine the GPUNETIO IPv4 address; set oob_interface explicitly");
+        }
         NIXL_DEBUG << "DOCA IP address " << static_cast<unsigned>(ipv4_addr[0]) << " "
                    << static_cast<unsigned>(ipv4_addr[1]) << " "
                    << static_cast<unsigned>(ipv4_addr[2]) << " "
