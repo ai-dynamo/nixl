@@ -26,3 +26,6 @@ subprojects/*
 
 # ucx-spcx-plugin source fetched into the build context by build-container.sh
 ucx-spcx-plugin-src/
+
+# Generated Fern example snippets
+/fern/snippets/generated/examples/
