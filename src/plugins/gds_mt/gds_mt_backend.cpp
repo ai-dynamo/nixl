@@ -116,20 +116,35 @@ getThreadCount(const nixlBackendInitParams *init_params) {
     return (count > 0) ? count : default_thread_count;
 }
 
+// cuFileRead/cuFileWrite report filesystem errors as -1 with errno set, and
+// cuFile-level errors either as a negative CUfileOpError return value (as
+// documented) or, as observed in practice, as -1 with the CUfileOpError code
+// stored in errno. strerror is only meaningful for the first case.
+void
+logCuFileIOError(const char *api, ssize_t nbytes) {
+    if (nbytes == -1 && !IS_CUFILE_ERR(errno)) {
+        NIXL_ERROR << "GDS_MT: " << api << " failed: " << strerror(errno);
+    } else {
+        const int err = (nbytes == -1) ? errno : (int)-nbytes;
+        NIXL_ERROR << "GDS_MT: " << api << " failed: " << CUFILE_ERRSTR(err) << " (err=" << err
+                   << ")";
+    }
+}
+
 void
 runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_status) {
     ssize_t nbytes = 0;
     if (req->op == CUFILE_READ) {
         nbytes = cuFileRead (req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
-            NIXL_ERROR << "GDS_MT: cuFileRead failed: " << strerror (errno);
+            logCuFileIOError("cuFileRead", nbytes);
             overall_status->store (NIXL_ERR_BACKEND);
             return;
         }
     } else if (req->op == CUFILE_WRITE) {
         nbytes = cuFileWrite (req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
-            NIXL_ERROR << "GDS_MT: cuFileWrite failed: " << strerror (errno);
+            logCuFileIOError("cuFileWrite", nbytes);
             overall_status->store (NIXL_ERR_BACKEND);
             return;
         }
