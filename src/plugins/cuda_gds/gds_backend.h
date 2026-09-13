@@ -75,11 +75,7 @@ class nixlGdsBackendReqH : public nixlBackendReqH {
     public:
         std::vector<GdsTransferRequestH> request_list;
         std::vector<nixlGdsIOBatch*> batch_io_list;
-        bool needs_prep;
 
-        nixlGdsBackendReqH() {
-            needs_prep = true;
-        }
         ~nixlGdsBackendReqH() {
             for (auto* batch : batch_io_list) {
                 delete batch;
