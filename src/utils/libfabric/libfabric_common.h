@@ -86,6 +86,7 @@ constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 #define NIXL_SEQ_ID_MASK 0xFU // 0x0000000F (4 bits)
 
 // Message type constants
+#define NIXL_LIBFABRIC_MSG_XFER_ERROR 1
 #define NIXL_LIBFABRIC_MSG_NOTIFICTION 2
 #define NIXL_LIBFABRIC_MSG_TRANSFER 4
 // Peer-id handshake message. Sent once per (peer A, peer B) pair after
@@ -123,6 +124,18 @@ struct BinaryNotificationHeader {
     uint16_t notif_seq_id; // Fragment index (0, 1, 2...)
     uint16_t notif_seq_len; // Total number of fragments
     uint32_t payload_length; // Message bytes of this fragment
+} __attribute__((packed));
+
+/**
+ * @brief Payload of a NIXL_LIBFABRIC_MSG_XFER_ERROR control message (4 bytes)
+ *
+ * The transfer this refers to is identified by the xfer_id embedded in the immediate data, so the
+ * payload only carries how many of the transfer's writes actually completed. The initiator's count
+ * is authoritative: the target lowers its expected completion count to final_completions so that it
+ * waits for exactly the writes that will arrive, and no longer waits for the ones that failed.
+ */
+struct XferErrorPayload {
+    uint32_t final_completions; // Writes that completed on the initiator and will reach the target
 } __attribute__((packed));
 
 /**
