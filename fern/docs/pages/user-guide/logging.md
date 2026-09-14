@@ -67,6 +67,8 @@ export NIXL_LOG_FILE_SIZE=64M
 
 On reaching the limit the file is renamed with a `.1` suffix, replacing any previous one, and a new file is started. The live file therefore holds the most recent records, which are the ones that answer what a process did just before it failed, and the generation before them sits alongside it. Exactly one rotated generation is kept, so the total on disk stays under roughly twice the limit.
 
+A record larger than the entire limit cannot fit in either generation. It is still written to stderr, but is omitted from the log file.
+
 If `NIXL_LOG_FILE_SIZE` is not set, the file grows without limit and must be managed externally, for example with `logrotate` using `copytruncate`, or by giving each run a fresh path.
 
 ## When logging itself fails
