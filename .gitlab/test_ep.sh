@@ -58,6 +58,7 @@ nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
+check_rdma_env
 
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
