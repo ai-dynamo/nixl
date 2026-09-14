@@ -11,7 +11,7 @@ The file is a supplement rather than a redirect: stderr keeps receiving exactly 
 
 ## Verbosity
 
-`NIXL_LOG_LEVEL` accepts `ERROR`, `WARN`, `INFO`, `DEBUG` or `TRACE`, defaulting to `WARN`. The level gates a record before any destination is consulted, so it governs the file and stderr identically and the two cannot drift apart.
+`NIXL_LOG_LEVEL` accepts `ERROR`, `WARN`, `INFO`, `DEBUG` or `TRACE`, defaulting to `WARN`. The log level applies to both stderr and the log file when enabled.
 
 ## Writing to a file
 
@@ -30,7 +30,7 @@ Leaving `NIXL_LOG_FILE` unset, or setting it to an empty value, disables file lo
 
 ## One file per process
 
-A file is written by exactly one process. Two processes given the same path will interleave their records into it, and rotation assumes a single writer. Rather than requiring a different setting per worker, the path may contain escapes that expand at startup:
+Each process should write to a distinct file. If multiple processes use the same path, records may interleave, and rotation is unsafe because it assumes a single writer. Rather than requiring a different setting per worker, the path may contain escapes that expand at startup:
 
 | Escape | Expands to |
 |--------|------------|
