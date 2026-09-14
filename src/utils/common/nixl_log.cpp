@@ -84,16 +84,20 @@ processRunMarker() {
  *
  * Lets one NIXL_LOG_FILE serve every worker of a run and still give each its
  * own file.
+ * @return The expanded path, or nullopt for an unknown or incomplete escape.
  */
-[[nodiscard]] std::string
+[[nodiscard]] std::optional<std::string>
 expandLogPath(const std::string &pattern) {
     std::string expanded;
     expanded.reserve(pattern.size() + 32);
 
     for (size_t at = 0; at < pattern.size(); ++at) {
-        if (pattern[at] != '%' || at + 1 == pattern.size()) {
+        if (pattern[at] != '%') {
             expanded += pattern[at];
             continue;
+        }
+        if (at + 1 == pattern.size()) {
+            return std::nullopt;
         }
 
         switch (pattern[at + 1]) {
@@ -114,8 +118,7 @@ expandLogPath(const std::string &pattern) {
             ++at;
             break;
         default:
-            expanded += pattern[at];
-            break;
+            return std::nullopt;
         }
     }
     return expanded;
@@ -411,7 +414,12 @@ initLogFile() {
     if (configured == nullptr || *configured == '\0') {
         return false;
     }
-    const std::string path = expandLogPath(configured);
+    const auto path = expandLogPath(configured);
+    if (!path.has_value()) {
+        NIXL_ERROR << "Invalid " << log_file_env_var << " '" << configured
+                   << "': expected only %h, %p, %t or %% escapes";
+        return false;
+    }
 
     const char *configured_size = std::getenv(log_file_size_env_var);
     const auto limit = parseLogFileSize(configured_size != nullptr ? configured_size : "");
@@ -423,12 +431,12 @@ initLogFile() {
 
     // Cleared: ofstream need not set errno, so a stale one could be read.
     errno = 0;
-    auto sink = new fileLogSink(path, *limit);
+    auto sink = new fileLogSink(*path, *limit);
     if (!sink->isOpen()) {
         const int open_errno = errno;
         delete sink;
         // Losing the log file must not stop the process it describes.
-        NIXL_ERROR << "Could not open " << log_file_env_var << " '" << path
+        NIXL_ERROR << "Could not open " << log_file_env_var << " '" << *path
                    << "', continuing without a log file"
                    << (open_errno != 0 ? ": " + nixl_strerror(open_errno) : "");
         return false;
