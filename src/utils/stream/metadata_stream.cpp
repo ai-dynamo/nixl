@@ -81,7 +81,9 @@ nixlMDStreamListener::~nixlMDStreamListener() {
 void nixlMDStreamListener::setupListener() {
     for (const int family : {AF_INET6, AF_INET}) {
         if (!setupStream(family)) {
-            if (family == AF_INET6 && (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT)) {
+            if (family == AF_INET6 &&
+                (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT || errno == EACCES ||
+                 errno == EPERM)) {
                 continue;
             }
             NIXL_PERROR << "failed to create stream socket for listener";

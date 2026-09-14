@@ -449,7 +449,8 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
 
 TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
     const int fd = socket(AF_INET6, SOCK_STREAM, 0);
-    if (fd < 0 && (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT)) {
+    if (fd < 0 &&
+        (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT || errno == EACCES || errno == EPERM)) {
         GTEST_SKIP() << "IPv6 is unavailable";
     }
     ASSERT_GE(fd, 0);
