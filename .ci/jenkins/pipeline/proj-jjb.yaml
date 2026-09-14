@@ -481,14 +481,14 @@
     triggers:
       - parameterized-timer:
           cron: |
-            # Build nixlbench nightly around 3 AM - Ubuntu 24.04
-            H 3 * * * %BUILD_TARGET=nixlbench;UPDATE_LATEST=true
-            # Build nixl nightly around 4 AM - Ubuntu 24.04
-            H 4 * * * %BUILD_TARGET=nixl;UPDATE_LATEST=true
-            # Build nixlbench nightly around 3 AM - DLFW PyTorch daily
-            H 3 * * * %BUILD_TARGET=nixlbench;BASE_IMAGE=gitlab-master.nvidia.com:5005/dl/dgx/pytorch;BASE_IMAGE_TAG=main-py3-devel;UPDATE_LATEST=true
-            # Build nixl nightly around 4 AM - DLFW PyTorch daily
-            H 4 * * * %BUILD_TARGET=nixl;BASE_IMAGE=gitlab-master.nvidia.com:5005/dl/dgx/pytorch;BASE_IMAGE_TAG=main-py3-devel;UPDATE_LATEST=true
+            # Build nixlbench nightly around 22:00 - Ubuntu 24.04
+            H 22 * * * %BUILD_TARGET=nixlbench;UPDATE_LATEST=true
+            # Build nixl nightly around 22:00 - Ubuntu 24.04
+            H 22 * * * %BUILD_TARGET=nixl;UPDATE_LATEST=true
+            # Build nixlbench nightly around 22:00 - PyTorch release
+            H 22 * * * %BUILD_TARGET=nixlbench;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.06-py3;UPDATE_LATEST=true
+            # Build nixl nightly around 22:00 - PyTorch release
+            H 22 * * * %BUILD_TARGET=nixl;BASE_IMAGE=nvcr.io/nvidia/pytorch;BASE_IMAGE_TAG=26.06-py3;UPDATE_LATEST=true
     # Manual build parameters
     parameters:
       - choice:
@@ -514,7 +514,7 @@
           description: "Base Docker image for the container build"
       - string:
           name: "BASE_IMAGE_TAG"
-          default: "25.10-cuda13.0-devel-ubuntu24.04"
+          default: "26.08-cuda13.4-devel-ubuntu24.04"
           description: "Tag for the base Docker image"
       - string:
           name: "TAG_SUFFIX"
@@ -528,7 +528,7 @@
           description: >
             Update the latest tag for this architecture.<br/>
             When enabled, also creates: <code>&lt;base-image-tag&gt;-&lt;arch&gt;-latest</code><br/>
-            Example: <code>25.10-cuda13.0-devel-ubuntu24.04-aarch64-latest</code><br/>
+            Example: <code>26.08-cuda13.4-devel-ubuntu24.04-aarch64-latest</code><br/>
       - bool:
           name: "BUILD_NIXL_EP"
           default: true
