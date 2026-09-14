@@ -158,24 +158,11 @@ nixl_status_t nixlGdsIOBatch::addToBatch(CUfileHandle_t fh, void *buffer,
     return NIXL_SUCCESS;
 }
 
-nixl_status_t nixlGdsIOBatch::cancelBatch()
-{
+nixl_status_t
+nixlGdsIOBatch::submitBatch(int flags) {
     CUfileError_t   err;
 
-    err = cuFileBatchIOCancel(batch_handle);
-    if (err.err != 0) {
-        logCuFileError("cuFileBatchIOCancel", err.err);
-        return NIXL_ERR_BACKEND;
-    }
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t nixlGdsIOBatch::submitBatch(int flags)
-{
-    CUfileError_t   err;
-
-    err = cuFileBatchIOSubmit(batch_handle, batch_size,
-                              io_batch_params, flags);
+    err = cuFileBatchIOSubmit(batch_handle, batch_size, io_batch_params, flags);
     if (err.err != 0) {
         logCuFileError("cuFileBatchIOSubmit", err.err);
         return NIXL_ERR_BACKEND;
@@ -183,26 +170,135 @@ nixl_status_t nixlGdsIOBatch::submitBatch(int flags)
     return NIXL_SUCCESS;
 }
 
+// Classify one completion event. An entry that moved fewer bytes than requested
+// is not an error: its remainder is recorded for resubmission
+nixl_status_t
+nixlGdsIOBatch::consumeEvent(const CUfileIOEvents_t &ev) {
+    const CUfileIOParams_t *params = static_cast<const CUfileIOParams_t *>(ev.cookie);
+    const ssize_t done = (ssize_t)ev.ret;
+
+    switch (ev.status) {
+    case CUFILE_COMPLETE:
+        break;
+    case CUFILE_WAITING:
+    case CUFILE_PENDING:
+        return NIXL_IN_PROG;
+    case CUFILE_INVALID:
+    case CUFILE_CANCELED:
+    case CUFILE_TIMEOUT:
+    case CUFILE_FAILED:
+        NIXL_ERROR << "GDS batch IO entry failed with status " << ev.status << " and return value "
+                   << done;
+        return NIXL_ERR_BACKEND;
+    }
+
+    if (done <= 0 || (size_t)done > params->u.batch.size) {
+        NIXL_ERROR << "GDS batch IO entry transferred " << done << " of " << params->u.batch.size
+                   << " bytes";
+        return NIXL_ERR_BACKEND;
+    }
+
+    if ((size_t)done < params->u.batch.size) {
+        CUfileIOParams_t rest = *params;
+        rest.u.batch.devPtr_offset += done;
+        rest.u.batch.file_offset += done;
+        rest.u.batch.size -= done;
+        remainders.push_back(rest);
+    }
+
+    return NIXL_SUCCESS;
+}
+
+// Resubmit the recorded remainders. Only called with the batch drained: cuFile
+// is given io_batch_params at submit time
+nixl_status_t
+nixlGdsIOBatch::submitRemainders() {
+    size_t left = 0;
+
+    batch_size = (unsigned int)remainders.size();
+    entries_completed = 0;
+
+    for (unsigned int i = 0; i < batch_size; i++) {
+        io_batch_params[i] = remainders[i];
+        io_batch_params[i].cookie = &io_batch_params[i];
+        left += remainders[i].u.batch.size;
+    }
+    remainders.clear();
+
+    nixl_status_t status = submitBatch(0);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "GDS batch IO left " << left << " bytes of " << batch_size
+                   << " entries untransferred";
+        batch_size = 0; // nothing was submitted, so nothing is left to drain
+        return status;
+    }
+    return NIXL_IN_PROG;
+}
+
+// Count the entries that have reported without acting on the results. Once
+// every submitted entry has reported, cuFile is done with the batch
+bool
+nixlGdsIOBatch::drain() {
+    unsigned int nr = batch_size;
+    struct timespec poll_timeout = {0, 0};
+
+    if (cuFileBatchIOGetStatus(batch_handle, 0, &nr, io_batch_events, &poll_timeout).err != 0) {
+        return false;
+    }
+    for (unsigned int i = 0; i < nr; i++) {
+        if (io_batch_events[i].status != CUFILE_WAITING &&
+            io_batch_events[i].status != CUFILE_PENDING) {
+            entries_completed++;
+        }
+    }
+    return entries_completed >= batch_size;
+}
+
 nixl_status_t nixlGdsIOBatch::checkStatus()
 {
     CUfileError_t       errBatch;
     unsigned int        nr = batch_size;
+    unsigned int completed = 0;
+    nixl_status_t failure = NIXL_SUCCESS;
 
-    errBatch = cuFileBatchIOGetStatus(batch_handle, nr, &nr,
-                                      io_batch_events, NULL);
+    // Poll without blocking: min_nr 0 with a zero timeout returns what is ready
+    struct timespec poll_timeout = {0, 0};
+
+    errBatch = cuFileBatchIOGetStatus(batch_handle, 0, &nr, io_batch_events, &poll_timeout);
     if (errBatch.err != 0) {
         logCuFileError("cuFileBatchIOGetStatus", errBatch.err);
         current_status = NIXL_ERR_BACKEND;
+        return current_status;
     }
 
-    entries_completed += nr;
-    if (entries_completed < (unsigned int)batch_size)
-        current_status = NIXL_IN_PROG;
-    else if (entries_completed > batch_size)
-        current_status = NIXL_ERR_UNKNOWN;
-    else
-        current_status = NIXL_SUCCESS;
+    // Every entry that reported counts as drained, failed or not, so a failed
+    // batch can still be seen to finish
+    for (unsigned int i = 0; i < nr; i++) {
+        nixl_status_t status = consumeEvent(io_batch_events[i]);
+        if (status == NIXL_IN_PROG) {
+            continue;
+        }
+        completed++;
+        if (status != NIXL_SUCCESS && failure == NIXL_SUCCESS) {
+            failure = status;
+        }
+    }
 
+    entries_completed += completed;
+    if (failure != NIXL_SUCCESS) {
+        current_status = failure;
+        return current_status;
+    }
+    if (entries_completed < batch_size) {
+        current_status = NIXL_IN_PROG;
+        return current_status;
+    }
+    if (entries_completed > batch_size) {
+        current_status = NIXL_ERR_UNKNOWN;
+        return current_status;
+    }
+
+    current_status = remainders.empty() ? NIXL_SUCCESS : submitRemainders();
     return current_status;
 }
 
@@ -210,4 +306,5 @@ void nixlGdsIOBatch::reset() {
     entries_completed = 0;
     batch_size = 0;
     current_status = NIXL_ERR_NOT_POSTED;
+    remainders.clear();
 }
