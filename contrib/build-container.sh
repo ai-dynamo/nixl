@@ -450,15 +450,31 @@ BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
 # helper reading the environment) so git errors cannot leak it.
 SPCX_SRC_DIR="$BUILD_CONTEXT/ucx-spcx-plugin-src"
 SPCX_INSTALL_DIR="$BUILD_CONTEXT/ucx-spcx-plugin-install"
+
+# Checked before the staging dirs are cleaned below: they live in the build
+# context, so a caller pointing --ucx-spcx-plugin-install at one would have it
+# deleted out from under them.
+if [ -n "$UCX_SPCX_PLUGIN_INSTALL" ]; then
+    if [ -z "$(ls -A "$UCX_SPCX_PLUGIN_INSTALL" 2>/dev/null)" ]; then
+        error "ERROR:" "--ucx-spcx-plugin-install directory is empty or missing: $UCX_SPCX_PLUGIN_INSTALL"
+    fi
+    spcx_install_real=$(cd "$UCX_SPCX_PLUGIN_INSTALL" && pwd -P)
+    for staging in "$SPCX_SRC_DIR" "$SPCX_INSTALL_DIR"; do
+        staging_real="$(cd "$(dirname "$staging")" && pwd -P)/$(basename "$staging")"
+        case "$spcx_install_real" in
+            "$staging_real"|"$staging_real"/*)
+                error "ERROR:" "--ucx-spcx-plugin-install must be outside the build context staging dir ($staging_real); it is cleaned before the build"
+                ;;
+        esac
+    done
+fi
+
 rm -rf "$SPCX_SRC_DIR" "$SPCX_INSTALL_DIR"
 
 # Pre-built plugin: the module was compiled elsewhere (nixl-ci-compile-ucx-plugin,
 # or by hand) and is staged into the context for the Dockerfile to install. No
 # clone, so no gitlab credentials and no plugin source in the build context.
 if [ -n "$UCX_SPCX_PLUGIN_INSTALL" ]; then
-    if [ -z "$(ls -A "$UCX_SPCX_PLUGIN_INSTALL" 2>/dev/null)" ]; then
-        error "ERROR:" "--ucx-spcx-plugin-install directory is empty or missing: $UCX_SPCX_PLUGIN_INSTALL"
-    fi
     trap 'rm -rf "$SPCX_INSTALL_DIR"' EXIT
     mkdir -p "$SPCX_INSTALL_DIR"
     cp -a "$UCX_SPCX_PLUGIN_INSTALL/." "$SPCX_INSTALL_DIR/"

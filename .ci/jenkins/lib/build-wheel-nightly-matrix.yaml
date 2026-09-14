@@ -20,13 +20,6 @@ credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
-  - credentialsId: 'svc-nixl-gitlab-token'
-    usernameVariable: 'NIXL_GITLAB_USER'
-    passwordVariable: 'NIXL_GITLAB_TOKEN'
-  # Paired with NIXL_GITLAB_TOKEN; only read on the spcx path.
-  - credentialsId: 'ucx-plugin-gitlab-url'
-    type: 'string'
-    variable: 'NIXL_SPCX_PLUGIN_REPO_URL'
 
 kubernetes:
   cloud: il-ipp-blossom-prod
@@ -150,13 +143,11 @@ steps:
 
   - name: Build Wheel
     containerSelector: "{name: 'manylinux'}"
-    credentialsId:
-      - 'svc-nixl-gitlab-token'
-      - 'ucx-plugin-gitlab-url'
     parallel: false
     run: |
       # Build the wheel image from the checked-out nixl-src. --tag pins the
-      # image so Publish extracts dist/. Plugin creds bind only here.
+      # image so Publish extracts dist/. No gitlab credentials: the plugin is
+      # not cloned here, nixl-ci-compile-ucx-plugin compiled it.
       set -x
       # Infinia is always bundled in the nightly; the built source ref's
       # build-container.sh pins the image. The spcx plugin is not built here -
