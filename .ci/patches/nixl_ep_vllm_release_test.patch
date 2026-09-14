@@ -1,0 +1,26 @@
+diff --git a/tests/distributed/test_elastic_ep.py b/tests/distributed/test_elastic_ep.py
+--- a/tests/distributed/test_elastic_ep.py
++++ b/tests/distributed/test_elastic_ep.py
+@@ -175,6 +175,9 @@ def _base_serve_args(dp_size: int = 2, enforce_eager: bool = False) -> list[str
+         "--enable-expert-parallel",
+         "--all2all-backend",
+-        "allgather_reducescatter",
++        os.getenv(
++            "VLLM_TEST_ELASTIC_EP_ALL2ALL_BACKEND",
++            "allgather_reducescatter",
++        ),
+         "--enable-elastic-ep",
+         "--enable-eplb",
+         "--eplb-config.num_redundant_experts",
+@@ -204,4 +207,8 @@ def _base_serve_args(dp_size: int = 2, enforce_eager: bool = False) -> list[str
+-    return args
+-
+-
++    attention_backend = os.getenv("VLLM_ATTENTION_BACKEND")
++    if attention_backend:
++        args.extend(["--attention-backend", attention_backend])
++
++    return args
++
++
+ @pytest.mark.parametrize(

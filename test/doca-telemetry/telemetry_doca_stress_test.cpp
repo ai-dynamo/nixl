@@ -35,8 +35,8 @@
 
 #include <gtest/gtest.h>
 
-using nixl::doca_test::loopbackConnection;
-using nixl::doca_test::scrapeUntilValue;
+using nixl::metrics_test::loopbackConnection;
+using nixl::metrics_test::scrapeUntilValue;
 
 namespace {
 
@@ -76,7 +76,7 @@ TEST_F(docaNixlExporterStressTest, HighVolumeSequenceCounterGaugeAndDropAccumula
     const nixlTelemetryExporterInitParams params{agentName, 4096};
     nixlTelemetryDocaExporter exporter(params);
 
-    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
     const auto txDescriptor =
         nixlEnumStrings::telemetryMetricDescriptor(nixl_telemetry_event_type_t::AGENT_TX_BYTES);
     const std::string txCounter = txDescriptor.counterName;

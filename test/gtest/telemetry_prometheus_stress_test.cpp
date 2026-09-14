@@ -26,19 +26,18 @@
 // order the threads happen to run in.
 
 #include "prometheus_telemetry_fixture.h"
+#include "telemetry_core_scrape.h"
 
 #include "common.h"
 #include "telemetry.h"
 #include "telemetry_event.h"
 
-#include "loopback_connection.h"
-#include "open_metrics_text_parser.h"
+#include "scrape_util.h"
 #include "timeseries.h"
 
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <functional>
 #include <latch>
 #include <optional>
 #include <string>
@@ -47,9 +46,9 @@
 
 #include <gtest/gtest.h>
 
-using nixl::doca_test::labelSet;
-using nixl::doca_test::loopbackConnection;
-using nixl::doca_test::timeSeries;
+using nixl::metrics_test::labelSet;
+using nixl::metrics_test::scrapeMetrics;
+using nixl::metrics_test::timeSeries;
 
 namespace {
 
@@ -66,62 +65,6 @@ constexpr bool kSanitizerBuild = false;
 #else
 constexpr bool kSanitizerBuild = false;
 #endif
-
-timeSeries
-scrapeMetrics(uint16_t port) {
-    return timeSeries(
-        nixl::doca_test::open_metrics_text::parse(loopbackConnection::httpGet(port, "/metrics")));
-}
-
-struct OverflowScrape {
-    bool ok = false; // all produced events were accounted for before the timeout
-    double accepted = 0;
-    double dropped = 0;
-};
-
-// Drives `produce` against a fresh nixlTelemetry backed by the Prometheus
-// exporter with a small (256-slot) staging buffer, then polls /metrics until
-// every produced event is accounted for: accepted (`accepted_metric`, weighted by
-// `accepted_event_weight` events per sample) plus dropped
-// (`agent_telemetry_events_dropped_total`) equals `expected_total_events`. Polling
-// for that exact end state (not a fixed sleep) makes the result timing
-// independent. The instance stays alive through the scrape so the exporter keeps
-// serving the port.
-OverflowScrape
-scrapeCoreOverflow(uint16_t port,
-                   const std::string &agent_name,
-                   const std::string &accepted_metric,
-                   uint64_t accepted_event_weight,
-                   uint64_t expected_total_events,
-                   const std::function<void(nixlTelemetry &)> &produce) {
-    gtest::ScopedEnv telemetry_env;
-    telemetry_env.addVar(TELEMETRY_BUFFER_SIZE_VAR, "256");
-    telemetry_env.addVar(TELEMETRY_RUN_INTERVAL_VAR, "50");
-
-    nixlTelemetry telemetry(agent_name, "prometheus");
-    produce(telemetry);
-
-    const labelSet labels{{"agent_name", agent_name}};
-    OverflowScrape result;
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(kSanitizerBuild ? 20 : 5);
-    do {
-        const timeSeries metrics = scrapeMetrics(port);
-        const auto dropped = metrics.latestValue("agent_telemetry_events_dropped_total", labels);
-        const auto accepted = metrics.latestValue(accepted_metric, labels);
-        if (dropped && accepted) {
-            result.dropped = *dropped;
-            result.accepted = *accepted;
-            if (result.accepted * static_cast<double>(accepted_event_weight) + result.dropped ==
-                static_cast<double>(expected_total_events)) {
-                result.ok = true;
-                return result;
-            }
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    } while (std::chrono::steady_clock::now() < deadline);
-    return result; // ok stays false: full accounting was not observed in time
-}
 
 } // namespace
 
@@ -146,32 +89,35 @@ TEST_F(prometheusTelemetryTest, ConcurrentAddXferStatsOverflowConservation) {
     constexpr uint64_t kEventsPerCall = 4;
     constexpr uint64_t kProducedEvents = kThreads * kCallsPerThread * kEventsPerCall;
 
-    const auto scrape =
-        scrapeCoreOverflow(port_,
-                           agent_name,
-                           "agent_tx_requests_num_total",
-                           kEventsPerCall,
-                           kProducedEvents,
-                           [](nixlTelemetry &telemetry) {
-                               std::latch start_gate(1);
-                               std::vector<std::thread> producers;
-                               producers.reserve(kThreads);
-                               for (uint64_t t = 0; t < kThreads; ++t) {
-                                   producers.emplace_back([&telemetry, &start_gate] {
-                                       start_gate.wait();
-                                       for (uint64_t i = 0; i < kCallsPerThread; ++i) {
-                                           telemetry.addXferStats(std::chrono::microseconds(10),
-                                                                  true,
-                                                                  2000,
-                                                                  std::chrono::microseconds(1));
-                                       }
-                                   });
-                               }
-                               start_gate.count_down();
-                               for (auto &producer : producers) {
-                                   producer.join();
-                               }
-                           });
+    const auto scrape = gtest::scrapeCoreOverflow(
+        {.port = port_,
+         .exporter = "prometheus",
+         .agent = agent_name,
+         .accepted_metric = "agent_tx_requests_num_total",
+         .accepted_event_weight = kEventsPerCall,
+         .expected_total_events = kProducedEvents,
+         .flush_interval = std::chrono::milliseconds(50),
+         .settle_timeout = std::chrono::seconds(kSanitizerBuild ? 20 : 5)},
+        [](nixlTelemetry &telemetry) {
+            std::latch start_gate(1);
+            std::vector<std::thread> producers;
+            producers.reserve(kThreads);
+            for (uint64_t t = 0; t < kThreads; ++t) {
+                producers.emplace_back([&telemetry, &start_gate] {
+                    start_gate.wait();
+                    for (uint64_t i = 0; i < kCallsPerThread; ++i) {
+                        telemetry.addXferStats(std::chrono::microseconds(10),
+                                               true,
+                                               2000,
+                                               std::chrono::microseconds(1));
+                    }
+                });
+            }
+            start_gate.count_down();
+            for (auto &producer : producers) {
+                producer.join();
+            }
+        });
 
     ASSERT_TRUE(scrape.ok) << "accepted*4 + dropped must reach produced events (" << kProducedEvents
                            << ") under concurrent overflow -- no silent loss";
@@ -271,7 +217,7 @@ TEST_F(prometheusTelemetryTest, ConcurrentMixedWorkloadAggregation) {
     // Poll until every deterministic cumulative counter has reached its exact
     // total; with no drops the periodic flush drains all events, so the end state
     // is reached regardless of how flushes interleave (timing independent).
-    timeSeries metrics{nixl::doca_test::seriesMap{}};
+    timeSeries metrics{nixl::metrics_test::seriesMap{}};
     bool converged = false;
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(kSanitizerBuild ? 30 : 10);
