@@ -56,10 +56,6 @@ Include `%t` if the same command may be run more than once. Process ids are recy
 - Give each run a directory of its own, and delete it when the run is done.
 - Omit `%t` and set `NIXL_LOG_FILE_SIZE`. The set of filenames is then bounded by the hosts and process ids in play, and each is capped, at the cost of a restart continuing an earlier file.
 
-### Processes that fork
-
-The path is expanded once, when logging is initialized during library load. A process that then calls `fork()` without `exec()` does not get a separate file for the child: the child inherits the parent's already-open file and keeps writing to it, under the parent's `%p`. Workers started through `exec`, or by a launcher, each get their own file as expected.
-
 ## Bounding the size
 
 Without a limit the log file grows indefinitely. `NIXL_LOG_FILE_SIZE` caps it, in bytes, optionally suffixed with `K`, `M` or `G` for powers of 1024:
