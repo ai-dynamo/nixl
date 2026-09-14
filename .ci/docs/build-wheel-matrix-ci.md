@@ -134,7 +134,7 @@ The nightly job (`nixl-ci-build-wheel-nightly`) omits `--wheel-base-image`, so i
 | `NIXL_SPCX_PLUGIN_REPO_URL` | Git URL of the plugin repo | `ucx-plugin-gitlab-url` | Secret text |
 | `NIXL_GITLAB_TOKEN` | GitLab token (`read_repository` scope) used via a git credential helper so it never appears in URLs, argv, or git error output | `svc-nixl-gitlab-token` | Username/Password (token in password field) |
 
-The plugin ref defaults to `v0.3.x` and is selectable with `--ucx-spcx-plugin-ref`. This source-cloning path serves builds with no published `wheel_base` image to compile against — the full two-stage `nixl-ci-build-wheel-nightly` — plus the standalone `nixl-ci-build-container` verification job (`BUILD_UCX_SPCX_PLUGIN`, uncheck to disable) and the QA/release invocations of `build-container.sh`, all of which bind both credentials into the environment. It is not enabled in the PR CI pipeline: `nixl-ci-build-container-pr` never passes it, so the `ARG` default of `false` applies.
+The plugin ref defaults to `v0.3.x` and is selectable with `--ucx-spcx-plugin-ref`. This source-cloning path serves the standalone `nixl-ci-build-container` verification job (`BUILD_UCX_SPCX_PLUGIN`, uncheck to disable) and the QA/release invocations of `build-container.sh`, all of which bind both credentials into the environment. It is not enabled in the PR CI pipeline: `nixl-ci-build-container-pr` never passes it, so the `ARG` default of `false` applies.
 
 #### Per-PR: pre-built plugin module
 
