@@ -580,6 +580,26 @@ TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
     std::filesystem::remove(rotated);
 }
 
+/** @brief A record too large for an empty file remains on stderr but is omitted here. */
+TEST_F(nixlLogFileTest, DropsRecordLargerThanLimit) {
+    constexpr std::uintmax_t limit = 100;
+    const std::filesystem::path rotated = path_.string() + ".1";
+    std::filesystem::remove(rotated);
+
+    env_.addVar("NIXL_LOG_FILE", path_.string());
+    env_.addVar("NIXL_LOG_FILE_SIZE", std::to_string(limit));
+    ASSERT_TRUE(nixl::initLogFile());
+
+    const std::string payload(150, 'x');
+    NIXL_INFO << "oversized record " << payload;
+
+    EXPECT_EQ(std::filesystem::file_size(path_), 0u);
+    EXPECT_THAT(readLogFile(), testing::Not(HasSubstr(payload)));
+    EXPECT_FALSE(std::filesystem::exists(rotated));
+
+    std::filesystem::remove(rotated);
+}
+
 /**
  * @brief A rotation it cannot do stops the sink, and says so, rather than
  *        ignoring the limit. The file is left alone: those records are all
