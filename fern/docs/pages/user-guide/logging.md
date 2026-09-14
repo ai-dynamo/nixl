@@ -39,7 +39,7 @@ Each process should write to a distinct file. If multiple processes use the same
 | `%t` | A per-process run marker, in nanoseconds since the Unix epoch, sampled once at startup |
 | `%%` | A literal `%` |
 
-An unrecognized escape is left as written, so a path that legitimately contains a percent still works.
+Unknown escapes and a trailing `%` are rejected so future versions can add escapes without silently changing the meaning of an existing path. Use `%%` wherever the path needs a literal percent.
 
 This lets one setting serve every worker of a run:
 

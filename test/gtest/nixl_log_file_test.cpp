@@ -529,10 +529,10 @@ TEST_F(nixlLogFileTest, ForkWithoutExecKeepsWritingTheParentsFile) {
     std::filesystem::remove(child_file);
 }
 
-/** @brief %% is a literal percent, and an unknown escape survives rather than being swallowed. */
-TEST_F(nixlLogFileTest, LeavesLiteralAndUnknownEscapesAlone) {
-    const std::string pattern = path_.string() + "-%%-%z";
-    const std::filesystem::path expanded = path_.string() + "-%-%z";
+/** @brief %% lets a path contain a literal percent. */
+TEST_F(nixlLogFileTest, ExpandsLiteralPercent) {
+    const std::string pattern = path_.string() + "-%%";
+    const std::filesystem::path expanded = path_.string() + "-%";
     std::filesystem::remove(expanded);
 
     env_.addVar("NIXL_LOG_FILE", pattern);
@@ -543,6 +543,25 @@ TEST_F(nixlLogFileTest, LeavesLiteralAndUnknownEscapesAlone) {
     EXPECT_TRUE(std::filesystem::exists(expanded)) << "expected " << expanded;
 
     std::filesystem::remove(expanded);
+}
+
+/** @brief Unknown and incomplete escapes are rejected so future extensions are unambiguous. */
+TEST_F(nixlLogFileTest, RejectsUnknownAndIncompleteEscapes) {
+    const gtest::LogIgnoreGuard lig("Invalid NIXL_LOG_FILE");
+    const std::string report = "Invalid NIXL_LOG_FILE";
+
+    for (const std::string suffix : {"-%z", "-%"}) {
+        const std::filesystem::path pattern = path_.string() + suffix;
+        std::filesystem::remove(pattern);
+        countingSink watcher;
+
+        env_.addVar("NIXL_LOG_FILE", pattern.string());
+        EXPECT_FALSE(nixl::initLogFile()) << "'" << pattern << "' was accepted";
+        EXPECT_EQ(watcher.countMatching(report), 1u) << "'" << pattern << "' was not reported";
+        EXPECT_FALSE(std::filesystem::exists(pattern)) << "'" << pattern << "' was created";
+
+        env_.popVar();
+    }
 }
 
 /**
