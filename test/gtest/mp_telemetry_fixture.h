@@ -76,16 +76,16 @@ ownershipEnvironment(const std::filesystem::path &path) {
     for (std::string line; std::getline(uid_map, line);) {
         out << ", uid_map [" << line << "]";
     }
-    return out.str();
+    return std::move(out).str();
 }
 
 // A chown that returns 0 is not evidence the owner changed: a root-emulating seccomp filter
 // (enroot's, for one) answers it as a successful no-op, so the owner has to be read back.
 [[nodiscard]] inline std::optional<std::string>
 giveAwayOwnership(const std::filesystem::path &path) {
-    if (::geteuid() != 0) {
-        return "needs privileges to give '" + path.string() + "' another owner (" +
-            ownershipEnvironment(path) + ")";
+    if (::geteuid() == kNobodyUid) {
+        return "already runs as uid " + std::to_string(kNobodyUid) + ", so '" + path.string() +
+            "' cannot be given away to it (" + ownershipEnvironment(path) + ")";
     }
     if (::chown(path.c_str(), kNobodyUid, static_cast<gid_t>(-1)) != 0) {
         const int err = errno;
