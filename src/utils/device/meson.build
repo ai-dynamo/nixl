@@ -13,13 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-device_allocator_lib = shared_library('nixl_device_allocator',
+device_utils_lib = library('device_utils',
            ['device_allocator.cpp', 'device_allocator.h'],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
-           dependencies: [dl_dep],
+           dependencies: [nixl_common_dep, dl_dep],
            install: true)
 
-device_allocator_interface = declare_dependency(link_with: device_allocator_lib)
+device_utils_interface = declare_dependency(link_with: device_utils_lib)
 
 if cuda_dep.found()
     shared_library('nixl_device_allocator_cuda',

@@ -25,6 +25,8 @@
 class nixlDeviceMem;
 class nixlMappedHostMem;
 
+#define NIXL_DEVICE_ALLOCATOR_EXPORT __attribute__((visibility("default")))
+
 /**
  * Device memory-ops interface. All host-side interaction with the GPU memory
  * runtime goes through this class so that no other host code needs a
@@ -35,6 +37,7 @@ class nixlMappedHostMem;
  * ordered there, but not all are complete on return; synchronize() is the
  * barrier. Active device state is thread-local: copies, memset, and
  * synchronize use the caller's current device; freeing works from any.
+ * Allocation hooks modify their output pointers only on success.
  */
 class nixlDeviceAllocator {
 public:

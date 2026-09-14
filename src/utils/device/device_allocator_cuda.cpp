@@ -34,13 +34,13 @@ public:
         if (ptr == nullptr || size == 0) {
             return NIXL_ERR_INVALID_PARAM;
         }
-        *ptr = nullptr;
-        const cudaError_t error = cudaMalloc(ptr, size);
+        void *allocation = nullptr;
+        const cudaError_t error = cudaMalloc(&allocation, size);
         if (error != cudaSuccess) {
             logCudaFailure("cudaMalloc", error);
-            *ptr = nullptr;
             return NIXL_ERR_BACKEND;
         }
+        *ptr = allocation;
         return NIXL_SUCCESS;
     }
 
@@ -61,27 +61,26 @@ public:
         if (host_ptr == nullptr || dev_ptr == nullptr || size == 0) {
             return NIXL_ERR_INVALID_PARAM;
         }
-        *host_ptr = nullptr;
-        *dev_ptr = nullptr;
+        void *host_allocation = nullptr;
+        void *device_alias = nullptr;
         // Mapped guarantees cudaHostGetDevicePointer; portable permits use from other GPUs.
         cudaError_t error =
-            cudaHostAlloc(host_ptr, size, cudaHostAllocMapped | cudaHostAllocPortable);
+            cudaHostAlloc(&host_allocation, size, cudaHostAllocMapped | cudaHostAllocPortable);
         if (error != cudaSuccess) {
             logCudaFailure("cudaHostAlloc", error);
-            *host_ptr = nullptr;
             return NIXL_ERR_BACKEND;
         }
-        error = cudaHostGetDevicePointer(dev_ptr, *host_ptr, 0);
+        error = cudaHostGetDevicePointer(&device_alias, host_allocation, 0);
         if (error != cudaSuccess) {
             logCudaFailure("cudaHostGetDevicePointer", error);
-            const cudaError_t free_error = cudaFreeHost(*host_ptr);
+            const cudaError_t free_error = cudaFreeHost(host_allocation);
             if (free_error != cudaSuccess) {
                 logCudaFailure("cudaFreeHost after cudaHostGetDevicePointer", free_error);
             }
-            *host_ptr = nullptr;
-            *dev_ptr = nullptr;
             return NIXL_ERR_BACKEND;
         }
+        *host_ptr = host_allocation;
+        *dev_ptr = device_alias;
         return NIXL_SUCCESS;
     }
 
@@ -168,10 +167,20 @@ public:
 
 } // namespace
 
-extern "C" __attribute__((visibility("default"))) nixlDeviceAllocator *
-nixlCreateCudaDeviceAllocatorV1() noexcept {
+extern "C" NIXL_DEVICE_ALLOCATOR_EXPORT nixlDeviceAllocator *
+nixlCreateCudaDeviceAllocator() noexcept {
     int device_count = 0;
-    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+    const cudaError_t error = cudaGetDeviceCount(&device_count);
+    if (error == cudaErrorNoDevice) {
+        NIXL_INFO << "No CUDA-capable GPU is available";
+        return nullptr;
+    }
+    if (error != cudaSuccess) {
+        logCudaFailure("cudaGetDeviceCount", error);
+        return nullptr;
+    }
+    if (device_count == 0) {
+        NIXL_INFO << "No CUDA-capable GPU is available";
         return nullptr;
     }
 

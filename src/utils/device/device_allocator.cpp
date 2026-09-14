@@ -20,18 +20,17 @@
 
 #include <filesystem>
 
+#include "common/nixl_log.h"
+
 namespace {
 
 constexpr const char *kCudaAllocatorLibrary = "libnixl_device_allocator_cuda.so";
-constexpr const char *kCudaAllocatorFactory = "nixlCreateCudaDeviceAllocatorV1";
+constexpr const char *kCudaAllocatorFactory = "nixlCreateCudaDeviceAllocator";
 
 class nixlUnsupportedDeviceAllocator final : public nixlDeviceAllocator {
 public:
     nixl_status_t
-    doAllocDeviceMem(void **ptr, size_t) noexcept override {
-        if (ptr != nullptr) {
-            *ptr = nullptr;
-        }
+    doAllocDeviceMem(void **, size_t) noexcept override {
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -39,13 +38,7 @@ public:
     doFreeDeviceMem(void *) noexcept override {}
 
     nixl_status_t
-    doAllocMappedHostMem(void **host_ptr, void **dev_ptr, size_t) noexcept override {
-        if (host_ptr != nullptr) {
-            *host_ptr = nullptr;
-        }
-        if (dev_ptr != nullptr) {
-            *dev_ptr = nullptr;
-        }
+    doAllocMappedHostMem(void **, void **, size_t) noexcept override {
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -96,13 +89,18 @@ loadCudaAllocator() noexcept {
     // The frontend and optional CUDA implementation are installed side by side.
     const auto library_path =
         std::filesystem::path(info.dli_fname).parent_path() / kCudaAllocatorLibrary;
-    void *handle = dlopen(library_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    void *handle = dlopen(library_path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
     if (handle == nullptr) {
+        NIXL_INFO << "Failed to load CUDA device allocator from " << library_path << ": "
+                  << dlerror();
         return nullptr;
     }
 
+    dlerror(); // Clear any error left by an earlier dynamic-loader call.
     auto factory = reinterpret_cast<CudaAllocatorFactory>(dlsym(handle, kCudaAllocatorFactory));
     if (factory == nullptr) {
+        NIXL_ERROR << "Failed to find " << kCudaAllocatorFactory << " in " << library_path << ": "
+                   << dlerror();
         dlclose(handle);
         return nullptr;
     }
