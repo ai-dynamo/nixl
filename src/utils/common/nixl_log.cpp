@@ -234,21 +234,6 @@ public:
         written_ += line.size();
     }
 
-    /** @brief Honours absl::FlushLogSinks(); Send() already flushes each record. */
-    void
-    Flush() override {
-        const std::lock_guard lock(mutex_);
-        if (failed_) {
-            return;
-        }
-
-        errno = 0;
-        file_.flush();
-        if (!file_) {
-            reportFailure(errno);
-        }
-    }
-
 private:
     /**
      * @brief Moves the full file aside and starts a new one, keeping the newest
@@ -447,7 +432,7 @@ initLogFile() {
     return true;
 }
 
-/** @brief Removes the NIXL_LOG_FILE sink: unregister, flush, then destroy. */
+/** @brief Removes the NIXL_LOG_FILE sink: unregister, then destroy. */
 void
 shutdownLogFile() {
     const std::lock_guard lock(log_file_mutex);
@@ -459,7 +444,6 @@ shutdownLogFile() {
     // Unregistered first, so no record can arrive while the file is closing.
     // RemoveLogSink waits for calls already inside Send() to return.
     absl::RemoveLogSink(log_file_sink);
-    log_file_sink->Flush();
     delete log_file_sink;
     log_file_sink = nullptr;
 }
