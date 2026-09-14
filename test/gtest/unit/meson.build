@@ -53,7 +53,7 @@ unit_test_exe = executable('unit',
         'main.cpp',
         '../common.cpp',
     ],
-    cpp_args : cpp_args,
+    cpp_args : cpp_flags,
     dependencies : unit_test_deps,
     include_directories: [
         nixl_inc_dirs,
