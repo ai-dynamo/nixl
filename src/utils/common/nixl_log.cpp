@@ -17,6 +17,7 @@
 
 #include "hostname.h"
 #include "nixl_log.h"
+#include "absl/base/no_destructor.h"
 #include "absl/log/initialize.h"
 #include "absl/log/globals.h"
 #include "absl/log/log_entry.h"
@@ -314,11 +315,19 @@ private:
     bool failed_ = false;
 };
 
-std::mutex log_file_mutex;
+struct logFileState {
+    std::mutex mutex;
+    fileLogSink *sink = nullptr;
+};
 
-// Owned manually: a static smart pointer would unregister the sink during
-// static destruction, while later shutdown code can still be logging.
-fileLogSink *log_file_sink = nullptr; // guarded by log_file_mutex
+/**
+ * @brief Process-lifetime state that remains usable from the destructor hook.
+ */
+[[nodiscard]] logFileState &
+getLogFileState() {
+    static absl::NoDestructor<logFileState> state;
+    return *state;
+}
 
 /** @brief Applies NIXL_LOG_LEVEL and NIXL_LOG_FILE before any NIXL code logs. */
 void
@@ -389,9 +398,10 @@ namespace nixl {
  */
 bool
 initLogFile() {
-    const std::lock_guard lock(log_file_mutex);
+    auto &state = getLogFileState();
+    const std::lock_guard lock(state.mutex);
 
-    if (log_file_sink != nullptr) {
+    if (state.sink != nullptr) {
         return true;
     }
 
@@ -428,24 +438,25 @@ initLogFile() {
     }
 
     absl::AddLogSink(sink);
-    log_file_sink = sink;
+    state.sink = sink;
     return true;
 }
 
 /** @brief Removes the NIXL_LOG_FILE sink: unregister, then destroy. */
 void
 shutdownLogFile() {
-    const std::lock_guard lock(log_file_mutex);
+    auto &state = getLogFileState();
+    const std::lock_guard lock(state.mutex);
 
-    if (log_file_sink == nullptr) {
+    if (state.sink == nullptr) {
         return;
     }
 
     // Unregistered first, so no record can arrive while the file is closing.
     // RemoveLogSink waits for calls already inside Send() to return.
-    absl::RemoveLogSink(log_file_sink);
-    delete log_file_sink;
-    log_file_sink = nullptr;
+    absl::RemoveLogSink(state.sink);
+    delete state.sink;
+    state.sink = nullptr;
 }
 
 } // namespace nixl
