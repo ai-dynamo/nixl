@@ -34,21 +34,21 @@ namespace nixl_s3_utils {
  * Returns nullopt if access_key or secret_key are not provided.
  */
 std::optional<Aws::Auth::AWSCredentials>
-createAWSCredentials(nixl_b_params_t *custom_params);
+createAWSCredentials(const nixl_b_params_t *custom_params);
 
 /**
  * Get use_virtual_addressing setting from custom parameters.
  * Defaults to false if not specified.
  */
 bool
-getUseVirtualAddressing(nixl_b_params_t *custom_params);
+getUseVirtualAddressing(const nixl_b_params_t *custom_params);
 
 /**
  * Get bucket name from custom parameters or AWS_DEFAULT_BUCKET env var.
  * Throws runtime_error if bucket cannot be determined.
  */
 std::string
-getBucketName(nixl_b_params_t *custom_params);
+getBucketName(const nixl_b_params_t *custom_params);
 
 /**
  * Template function to configure common client settings.
@@ -70,7 +70,7 @@ getBucketName(nixl_b_params_t *custom_params);
  */
 template<typename ConfigType>
 void
-configureClientCommon(ConfigType &config, nixl_b_params_t *custom_params) {
+configureClientCommon(ConfigType &config, const nixl_b_params_t *custom_params) {
     if (const auto opt =
             nixl::getBackendParamOptional<std::string>(custom_params, "endpoint_override")) {
         config.endpointOverride = *opt;

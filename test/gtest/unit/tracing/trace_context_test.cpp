@@ -117,24 +117,25 @@ TEST(TraceContext, PreservesFlagsAndNormalizesOutput) {
 }
 
 TEST(TraceContext, RoundTripsFixedContextWithoutFieldDrift) {
-    const nixl::trace::TraceContext expected{{0x4b,
-                                              0xf9,
-                                              0x2f,
-                                              0x35,
-                                              0x77,
-                                              0xb3,
-                                              0x4d,
-                                              0xa6,
-                                              0xa3,
-                                              0xce,
-                                              0x92,
-                                              0x9d,
-                                              0x0e,
-                                              0x0e,
-                                              0x47,
-                                              0x36},
-                                             {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7},
-                                             0x03};
+    nixl::trace::TraceContext expected;
+    expected.traceId = {0x4b,
+                        0xf9,
+                        0x2f,
+                        0x35,
+                        0x77,
+                        0xb3,
+                        0x4d,
+                        0xa6,
+                        0xa3,
+                        0xce,
+                        0x92,
+                        0x9d,
+                        0x0e,
+                        0x0e,
+                        0x47,
+                        0x36};
+    expected.spanId = {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7};
+    expected.flags = 0x03;
 
     const auto parsed = nixl::trace::parseTraceparent(nixl::trace::formatTraceparent(expected));
 
@@ -148,11 +149,53 @@ TEST(TraceContext, InvalidContextHasNoTextRepresentation) {
     EXPECT_TRUE(nixl::trace::formatTraceparent({}).empty());
 }
 
-TEST(TraceContext, ProjectsTraceIdBigEndian) {
+TEST(TraceContext, ProjectsSpanIdBigEndian) {
     const auto context = nixl::trace::parseTraceparent(kCanonicalTraceparent);
 
     ASSERT_TRUE(context.has_value());
-    EXPECT_EQ(context->correlationId64(), 0x4bf92f3577b34da6ULL);
+    EXPECT_EQ(context->correlationId64(), 0x00f067aa0ba902b7ULL);
+}
+
+TEST(TraceContext, InvalidContextsProjectZero) {
+    EXPECT_EQ(nixl::trace::TraceContext{}.correlationId64(), 0ULL);
+
+    nixl::trace::TraceContext no_span;
+    no_span.traceId = {0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6};
+    ASSERT_FALSE(no_span.valid());
+    EXPECT_EQ(no_span.correlationId64(), 0ULL);
+}
+
+TEST(TraceContext, NullTracerYieldsInertContext) {
+    const nixl::trace::TraceContext context{nullptr};
+
+    EXPECT_FALSE(context.valid());
+    EXPECT_EQ(context.correlationId64(), 0ULL);
+}
+
+TEST(TraceContext, ValidSpanIdProjectsNonzero) {
+    nixl::trace::TraceContext context;
+    context.traceId[15] = 0x01;
+    context.spanId[7] = 0x01;
+
+    ASSERT_TRUE(context.valid());
+    EXPECT_EQ(context.correlationId64(), 0x01ULL);
+}
+
+TEST(TraceContext, ProjectionFollowsSpanIdAndIsStable) {
+    auto context = nixl::trace::parseTraceparent(kCanonicalTraceparent);
+    ASSERT_TRUE(context.has_value());
+    const auto baseline = context->correlationId64();
+
+    EXPECT_EQ(context->correlationId64(), baseline);
+
+    auto trace_changed = *context;
+    trace_changed.traceId[0] ^= 0xFF;
+    trace_changed.traceId[15] ^= 0xFF;
+    EXPECT_EQ(trace_changed.correlationId64(), baseline);
+
+    auto span_changed = *context;
+    span_changed.spanId[7] ^= 0xFF;
+    EXPECT_NE(span_changed.correlationId64(), baseline);
 }
 
 TEST(TraceContext, GeneratesDistinctValidContexts) {

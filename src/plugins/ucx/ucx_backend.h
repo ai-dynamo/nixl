@@ -20,24 +20,16 @@
 #include <vector>
 #include <span>
 #include <cstring>
-#include <iostream>
-#include <thread>
-#include <mutex>
 #include <memory>
-#include <condition_variable>
 #include <atomic>
 #include <chrono>
 #include <poll.h>
 #include <optional>
 
-#include "nixl.h"
-
 #include "backend/backend_engine.h"
-#include "common/nixl_time.h"
 
 #include "mem_list.h"
 #include "rkey.h"
-#include "ucx_enums.h"
 #include "ucx_utils.h"
 
 class nixlUcxConnection : public nixlBackendConnMD {
@@ -305,63 +297,6 @@ private:
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
-};
-
-class nixlUcxThread;
-
-/**
- * Engine with an optional single progress thread that progresses all shared
- * workers. The thread is started only when there are shared workers; with none
- * shared workers no progress thread is created and progress is synchronous.
- */
-class nixlUcxThreadEngine : public nixlUcxEngine {
-public:
-    nixlUcxThreadEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
-    ~nixlUcxThreadEngine();
-
-    nixl_status_t
-    getNotifs(notif_list_t &notif_list) override;
-
-protected:
-    void
-    appendNotif(std::string &&remote_name, std::string &&msg) override;
-
-private:
-    std::unique_ptr<nixlUcxThread> thread_;
-    std::mutex notifMutex_;
-};
-
-namespace asio {
-class io_context;
-}
-
-class nixlUcxThreadPoolEngine : public nixlUcxThreadEngine {
-public:
-    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params, size_t num_threads);
-    ~nixlUcxThreadPoolEngine();
-
-    nixl_status_t
-    prepXfer(const nixl_xfer_op_t &operation,
-             const nixl_meta_dlist_t &local,
-             const nixl_meta_dlist_t &remote,
-             const std::string &remote_agent,
-             nixlBackendReqH *&handle,
-             const nixl_opt_b_args_t *opt_args = nullptr) const override;
-
-protected:
-    nixl_status_t
-    sendXferRange(const nixl_xfer_op_t &operation,
-                  const nixl_meta_dlist_t &local,
-                  const nixl_meta_dlist_t &remote,
-                  const std::string &remote_agent,
-                  nixlBackendReqH *handle,
-                  size_t start_idx,
-                  size_t end_idx) const override;
-
-private:
-    std::unique_ptr<asio::io_context> io_;
-    std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
-    size_t splitBatchSize_;
 };
 
 #endif
