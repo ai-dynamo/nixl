@@ -786,6 +786,12 @@ nixlLibfabricRail::setXferIdCallback(std::function<void(uint64_t, uint16_t)> cal
     xferIdCallback = callback;
 }
 
+void
+nixlLibfabricRail::setXferErrorCallback(
+    std::function<void(uint16_t, uint16_t, uint32_t)> callback) {
+    xferErrorCallback = callback;
+}
+
 // Per-rail completion processing - handles one rail's CQ with configurable blocking behavior
 nixl_status_t
 nixlLibfabricRail::progressCompletionQueue() {
@@ -1033,6 +1039,22 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
             NIXL_TRACE << "Notification stored via callback";
         } else {
             NIXL_ERROR << "No notification callback set!";
+            result = NIXL_ERR_BACKEND;
+        }
+    } else if (msg_type == NIXL_LIBFABRIC_MSG_XFER_ERROR) {
+        if (comp->len < sizeof(XferErrorPayload)) {
+            NIXL_ERROR << "Transfer-error message too short on rail " << rail_id
+                       << " (len=" << comp->len << ")";
+            result = NIXL_ERR_BACKEND;
+        } else if (xferErrorCallback) {
+            XferErrorPayload payload;
+            memcpy(&payload, req->buffer, sizeof(payload));
+            NIXL_DEBUG << "Received transfer-error message on rail " << rail_id
+                       << " XFER_ID=" << xfer_id << " agent_idx=" << agent_idx
+                       << " final_completions=" << payload.final_completions;
+            xferErrorCallback(static_cast<uint16_t>(xfer_id), agent_idx, payload.final_completions);
+        } else {
+            NIXL_ERROR << "No transfer-error callback set on rail " << rail_id;
             result = NIXL_ERR_BACKEND;
         }
     } else if (msg_type == NIXL_LIBFABRIC_MSG_HANDSHAKE) {
@@ -1569,6 +1591,9 @@ nixlLibfabricRail::registerMemory(void *buffer,
         // TCP provider has more limited memory registration capabilities
         // Use basic flags that are commonly supported
         provider_access_flags = FI_READ | FI_WRITE | FI_REMOTE_READ | FI_REMOTE_WRITE;
+    } else if (provider_name == "cxi") {
+        // CXI requires FI_RMA_EVENT to allow fi_writedata/fi_writemsg with target events.
+        provider_access_flags = FI_REMOTE_WRITE | FI_REMOTE_READ | FI_RMA_EVENT;
     } else {
         // EFA and other providers use standard remote access flags
         provider_access_flags = FI_REMOTE_WRITE | FI_REMOTE_READ;
