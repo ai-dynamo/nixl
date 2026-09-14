@@ -76,12 +76,6 @@ class nixlBackendEngine {
     public:
         explicit nixlBackendEngine(const nixlBackendInitParams *init_params)
             : backendType(init_params->type),
-              // customParams defaults to nullptr and nixlAgent always fills it,
-              // so this only ever fires for a directly constructed engine --
-              // which is what a backend's own unit tests do. The crash lands in
-              // the base member-initializer list, before any derived
-              // constructor body runs, so a backend cannot guard against it
-              // itself.
               customParams(init_params->customParams ? *init_params->customParams :
                                                        nixl_b_params_t{}),
               localAgent(init_params->localAgent),
