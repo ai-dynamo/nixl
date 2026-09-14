@@ -64,7 +64,7 @@ constexpr const char *rotated_suffix = ".1";
 /**
  * @brief Nanoseconds since the epoch, sampled once, for %t.
  */
-uint64_t
+[[nodiscard]] uint64_t
 processRunMarker() {
     static const uint64_t marker = [] {
         struct timespec ts {};
@@ -85,7 +85,7 @@ processRunMarker() {
  * Lets one NIXL_LOG_FILE serve every worker of a run and still give each its
  * own file.
  */
-std::string
+[[nodiscard]] std::string
 expandLogPath(const std::string &pattern) {
     std::string expanded;
     expanded.reserve(pattern.size() + 32);
@@ -125,7 +125,7 @@ expandLogPath(const std::string &pattern) {
  * @brief Parses NIXL_LOG_FILE_SIZE, for example "64M". K, M, G are powers of 1024.
  * @return Bytes, 0 for no limit, or nullopt if @p text is not a size.
  */
-std::optional<std::uintmax_t>
+[[nodiscard]] std::optional<std::uintmax_t>
 parseLogFileSize(const std::string &text) {
     if (text.empty()) {
         return 0;
@@ -164,13 +164,7 @@ parseLogFileSize(const std::string &text) {
     return value * scale;
 }
 
-/**
- * @brief Appends log records to a file, formatted exactly as on stderr.
- *
- * Abseil may call Send() from any thread, so writes are serialized. Every
- * record is flushed as it arrives: a log that explains a crash cannot hold its
- * tail in a buffer.
- */
+/** @brief Appends log records to a file, formatted exactly as on stderr. */
 class fileLogSink final : public absl::LogSink {
 public:
     /**
@@ -193,7 +187,7 @@ public:
     }
 
     /** @brief False if the sink cannot write, and must not be registered. */
-    bool
+    [[nodiscard]] bool
     isOpen() const {
         return file_.is_open();
     }
@@ -206,7 +200,7 @@ public:
     Send(const absl::LogEntry &entry) override {
         const auto line = entry.text_message_with_prefix_and_newline();
 
-        const std::lock_guard<std::mutex> lock(mutex_);
+        const std::lock_guard lock(mutex_);
         if (failed_) {
             return;
         }
@@ -233,7 +227,7 @@ public:
     /** @brief Honours absl::FlushLogSinks(); Send() already flushes each record. */
     void
     Flush() override {
-        const std::lock_guard<std::mutex> lock(mutex_);
+        const std::lock_guard lock(mutex_);
         if (failed_) {
             return;
         }
@@ -400,7 +394,7 @@ namespace nixl {
  */
 bool
 initLogFile() {
-    const std::lock_guard<std::mutex> lock(log_file_mutex);
+    const std::lock_guard lock(log_file_mutex);
 
     if (log_file_sink != nullptr) {
         return true;
@@ -441,7 +435,7 @@ initLogFile() {
 /** @brief Removes the NIXL_LOG_FILE sink: unregister, flush, then destroy. */
 void
 shutdownLogFile() {
-    const std::lock_guard<std::mutex> lock(log_file_mutex);
+    const std::lock_guard lock(log_file_mutex);
 
     if (log_file_sink == nullptr) {
         return;
