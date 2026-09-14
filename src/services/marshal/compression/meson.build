@@ -18,6 +18,7 @@ compression_inc = include_directories('.')
 compression_lib = library('nixl_marshal_compression',
     'compression_backend.cpp',
     'delta_kernel.cu',
+    'coalesce_kernels.cu',
     include_directories: [nixl_inc_dirs, utils_inc_dirs, marshal_inc, compression_inc, nixl_service_inc],
     dependencies: nixl_service_deps + [nvcomp_dep],
     install: true)

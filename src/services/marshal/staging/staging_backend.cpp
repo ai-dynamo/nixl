@@ -84,10 +84,10 @@ namespace {
               ev_(stream),
               size_(size) {}
 
-        std::optional<inboundSlotCompletionData>
+        slot_completion_result_t<inboundSlotCompletionData>
         checkForCompletionImpl() {
             if (!ev_.ready()) {
-                return std::nullopt;
+                return NIXL_IN_PROG;
             }
             return inboundSlotCompletionData{size_};
         }
@@ -104,10 +104,10 @@ namespace {
               ev_(stream),
               size_(size) {}
 
-        std::optional<outboundSlotCompletionData>
+        slot_completion_result_t<outboundSlotCompletionData>
         checkForCompletionImpl() {
             if (!ev_.ready()) {
-                return std::nullopt;
+                return NIXL_IN_PROG;
             }
             // Staging produces no metadata; the wire layer treats empty as "no metadata".
             return outboundSlotCompletionData{size_};

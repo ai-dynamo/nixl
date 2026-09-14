@@ -512,6 +512,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --target_seg_type TYPE     # Memory segment type for target [DRAM, VRAM] (default: DRAM)
 --scheme NAME              # Communication scheme [pairwise, manytoone, onetomany, tp] (default: pairwise)
 --mode MODE                # Process mode [SG (Single GPU per proc), MG (Multi GPU per proc)] (default: SG)
+--marshal_mode MODE        # NIXL service marshal mode [direct, compress] (default: direct; compress requires --recreate_xfer)
 --op_type TYPE             # Operation type [READ, WRITE] (default: WRITE)
 --check_consistency        # Enable consistency checking
 --total_buffer_size SIZE   # Total buffer size across devices per process (default: 8GiB)
@@ -531,6 +532,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --num_initiator_dev NUM    # Number of devices in initiator processes (default: 1)
 --num_target_dev NUM       # Number of devices in target processes (default: 1)
 --enable_pt                # Enable progress thread (only used with nixl worker)
+--telemetry                # Capture per-transfer telemetry, required for the compression ratio and service efficiency (default: false)
 --progress_threads NUM     # Number of progress threads (default: 0)
 --enable_vmm               # Enable VMM memory allocation when DRAM is requested
 ```

@@ -24,8 +24,6 @@ namespace nixlMarshal {
 
 class stagingBackend final : public backend {
 private:
-    const nixlMarshalStagingConfig cfg_;
-
     struct passkey {
         explicit passkey() = default;
     };
@@ -40,7 +38,7 @@ public:
             max_concurrent_transfers;
     }
 
-    explicit stagingBackend(passkey, const nixlMarshalStagingConfig &cfg) : backend(), cfg_(cfg) {}
+    explicit stagingBackend(passkey, const nixlMarshalStagingConfig &) : backend() {}
 
     ~stagingBackend() override;
 

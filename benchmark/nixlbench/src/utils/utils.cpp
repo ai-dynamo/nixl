@@ -70,6 +70,11 @@ NB_ARG_STRING(target_seg_type,
               "remote type automatically.");
 NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, manytoone, onetomany, tp");
 NB_ARG_STRING(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc)");
+NB_ARG_STRING(marshal_mode,
+              XFERBENCH_MARSHAL_DIRECT,
+              "NIXL service marshal mode [direct, staging, compress]. Non-direct modes stage the"
+              " payload through a registered service memory pool and require --recreate_xfer=1"
+              " (only used with nixl worker)");
 NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
 NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check");
 NB_ARG_UINT64(total_buffer_size,
@@ -100,6 +105,10 @@ NB_ARG_INT32(num_threads,
 NB_ARG_INT32(num_initiator_dev, 1, "Number of device in initiator process");
 NB_ARG_INT32(num_target_dev, 1, "Number of device in target process");
 NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
+NB_ARG_BOOL(telemetry,
+            false,
+            "Capture per-transfer telemetry, required for the compression ratio and service"
+            " efficiency");
 NB_ARG_UINT64(progress_threads, 0, "Number of progress threads");
 NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
@@ -268,6 +277,8 @@ std::string xferBenchConfig::initiator_seg_type = "";
 std::string xferBenchConfig::target_seg_type = "";
 std::string xferBenchConfig::scheme = "";
 std::string xferBenchConfig::mode = "";
+std::string xferBenchConfig::marshal_mode = "";
+MarshalSettings xferBenchConfig::marshal{};
 std::string xferBenchConfig::op_type = "";
 bool xferBenchConfig::check_consistency = false;
 size_t xferBenchConfig::total_buffer_size = 0;
@@ -283,6 +294,7 @@ int xferBenchConfig::large_blk_iter_ftr = 16;
 int xferBenchConfig::warmup_iter = 0;
 int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
+bool xferBenchConfig::telemetry = false;
 size_t xferBenchConfig::progress_threads = 0;
 bool xferBenchConfig::enable_vmm = false;
 bool xferBenchConfig::use_hugepages = false;
@@ -432,6 +444,22 @@ setupDeviceAPIConfig() {
     return true;
 }
 
+static std::optional<MarshalSettings>
+parseMarshalMode(const std::string &name) {
+    if (name == XFERBENCH_MARSHAL_DIRECT) {
+        return MarshalSettings{false, nixlMarshalDirectConfig{}, std::nullopt};
+    }
+    if (name == XFERBENCH_MARSHAL_STAGING) {
+        return MarshalSettings{true, nixlMarshalStagingConfig{}, nixlMarshalStagingOptArgs{}};
+    }
+    if (name == XFERBENCH_MARSHAL_COMPRESS) {
+        return MarshalSettings{true,
+                               nixlMarshalCompressConfig{nixl_marshal_compress_algo_t::ANS},
+                               nixlMarshalCompressOptArgs{}};
+    }
+    return std::nullopt;
+}
+
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
     plugin_parameters.reset();
@@ -499,6 +527,7 @@ xferBenchConfig::loadParams(void) {
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         backend = NB_ARG(backend);
         enable_pt = NB_ARG(enable_pt);
+        telemetry = NB_ARG(telemetry);
         progress_threads = NB_ARG(progress_threads);
         device_list = NB_ARG(device_list);
         enable_vmm = NB_ARG(enable_vmm);
@@ -512,6 +541,16 @@ xferBenchConfig::loadParams(void) {
             return -1;
 #endif
         }
+
+        marshal_mode = NB_ARG(marshal_mode);
+        const auto parsed_marshal = parseMarshalMode(marshal_mode);
+        if (!parsed_marshal) {
+            std::cerr << "Invalid marshal mode: " << marshal_mode
+                      << ". Must be one of [direct, staging, compress]" << std::endl;
+            return -1;
+        }
+        marshal = *parsed_marshal;
+
         // Load GDS-specific configurations if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
             gds_batch_pool_size = NB_ARG(gds_batch_pool_size);
@@ -669,6 +708,13 @@ xferBenchConfig::loadParams(void) {
         std::cout << "reregister_mem requires per-iteration request creation."
                   << " Setting recreate_xfer to true." << std::endl;
         recreate_xfer = true;
+    }
+    if (!recreate_xfer && marshal.requires_service_mem) {
+        std::cout << "WARNING: Marshal mode " << marshal_mode
+                  << " requires per-iteration request creation: a marshal request cannot be "
+                     "reposted."
+                  << " Use --recreate_xfer=1 ." << std::endl;
+        return -1;
     }
     if (prepared_xfer && reregister_mem) {
         std::cerr << "prepared_xfer is incompatible with reregister_mem: the prepared "
@@ -857,7 +903,9 @@ xferBenchConfig::printConfig() {
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB])",
                     backend);
+        printOption("Marshal mode (--marshal_mode=[direct,staging,compress])", marshal_mode);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
+        printOption("Capture telemetry (--telemetry=[0,1])", std::to_string(telemetry));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption("Enable VMM (--enable_vmm=[0,1])", std::to_string(enable_vmm));
@@ -1391,8 +1439,12 @@ xferBenchUtils::printStatsHeader() {
                   << std::setw(15) << "Avg Post (us)"
                   << std::setw(15) << "P99 Post (us)"
                   << std::setw(15) << "Avg Tx (us)"
-                  << std::setw(15) << "P99 Tx (us)"
-                  << std::endl;
+                  << std::setw(15) << "P99 Tx (us)";
+        if (xferBenchConfig::telemetry) {
+            std::cout << std::setw(15) << "Comp. Ratio"
+                      << std::setw(15) << "Service Eff. (%)";
+        }
+        std::cout << std::endl;
         // clang-format on
     }
     xferBenchConfig::printSeparator('-');
@@ -1450,6 +1502,12 @@ xferBenchUtils::printStats(bool is_target,
     double transfer_duration = stats.transfer_duration.avg();
     double transfer_p99_duration = stats.transfer_duration.p99();
 
+#ifdef NDEBUG
+    constexpr double base_service_direct_bw = 30;
+#else
+    constexpr double base_service_direct_bw = 53.8;
+#endif
+
     // Tabulate print with fixed width for each string
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         // clang-format off
@@ -1482,8 +1540,15 @@ xferBenchUtils::printStats(bool is_target,
                   << std::setw(15) << post_duration
                   << std::setw(15) << post_p99_duration
                   << std::setw(15) << transfer_duration
-                  << std::setw(15) << transfer_p99_duration
-                  << std::endl;
+                  << std::setw(15) << transfer_p99_duration;
+        if (xferBenchConfig::telemetry) {
+            const auto compression_ratio = stats.compression_ratio.avg();
+            const auto service_efficiency =
+                100.0 * throughput_gb / (base_service_direct_bw * compression_ratio);
+            std::cout << std::setw(15) << compression_ratio
+                      << std::setw(15) << service_efficiency;
+        }
+        std::cout << std::endl;
         // clang-format on
     }
 }
@@ -1854,6 +1919,7 @@ xferBenchStats::clear() {
     prepare_duration.clear();
     post_duration.clear();
     transfer_duration.clear();
+    compression_ratio.clear();
 }
 
 void
@@ -1862,6 +1928,7 @@ xferBenchStats::add(const xferBenchStats &other) {
     prepare_duration.add(other.prepare_duration);
     post_duration.add(other.post_duration);
     transfer_duration.add(other.transfer_duration);
+    compression_ratio.add(other.compression_ratio);
 }
 
 void
@@ -1870,6 +1937,7 @@ xferBenchStats::reserve(size_t n) {
     prepare_duration.reserve(n);
     post_duration.reserve(n);
     transfer_duration.reserve(n);
+    compression_ratio.reserve(n);
 }
 
 /*

@@ -23,12 +23,16 @@
 #include "marshal_types.h"
 
 #include <memory>
-#include <optional>
 #include <string>
+#include <vector>
+#include <variant>
 
 namespace nixlMarshal {
 
 class backend;
+
+template<typename CompletionT>
+using slot_completion_result_t = std::variant<CompletionT, nixl_status_t>;
 
 /**
  * @class asyncHandle
@@ -46,10 +50,11 @@ public:
 
     /**
      * @brief  Poll for completion of the operation.
-     * @return The completion data on success, std::nullopt while the operation is still pending.
+     * @return Completion data on success; NIXL_IN_PROG while pending; a NIXL error status on
+     *         failure.
      * @throw  std::runtime_error if the backend fails while checking for completion.
      */
-    virtual std::optional<CompletionT>
+    virtual slot_completion_result_t<CompletionT>
     checkForCompletion() = 0;
 };
 
@@ -65,7 +70,7 @@ protected:
     using asyncHandle<CompletionT>::asyncHandle;
 
 public:
-    std::optional<CompletionT>
+    slot_completion_result_t<CompletionT>
     checkForCompletion() final {
         return static_cast<Derived *>(this)->checkForCompletionImpl();
     }
@@ -74,6 +79,8 @@ public:
 using inbound_async_handle_t = asyncHandle<inboundSlotCompletionData>;
 using outbound_async_handle_t = asyncHandle<outboundSlotCompletionData>;
 
+// TODO-Eyal: Rename and document the marshal recommendation methods to distinguish them from
+// final service-memory recommendations.
 /**
  * @class backend
  * @brief Abstract interface for the transformation layer of the marshal sub-service.
@@ -108,8 +115,7 @@ public:
      * @param  buffers   Common per-slot buffers and stream.
      * @param  metadata  Marshalling metadata received from the remote agent; used to unmarshall
      *                   the slot data on the destination side.
-     * @param  opts      Optional process inputs. Inbound chunk division is provided as a vector
-     *                   of adjacent piece sizes via option_t::CHUNK_DIVISION.
+     * @param  opts      Optional process inputs.
      * @return Inbound async handle for the operation.
      * @throw  std::runtime_error if the backend fails to process the slot.
      */
@@ -124,7 +130,7 @@ public:
      *
      * @param  buffers Common per-slot buffers and stream.
      * @return Outbound async handle for the operation; checkForCompletion yields
-     *         outboundSlotCompletionData (size/output options + metadata produced for the wire).
+     *         outboundSlotCompletionData (size + metadata produced for the wire).
      * @throw  std::runtime_error if the backend fails to process the slot.
      */
     virtual std::unique_ptr<outbound_async_handle_t>

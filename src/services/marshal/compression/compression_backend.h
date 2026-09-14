@@ -26,20 +26,27 @@
 
 namespace nixlMarshal {
 
+struct ansLayoutCache;
+
 class compressionBackend final : public backend {
 private:
     struct passkey {
         explicit passkey() = default;
     };
 
+    static size_t
+    nvcompChunkSizeForPayload(size_t payload);
+
     nixlMarshalCompressConfig cfg_;
+    size_t nvcompChunkSize_;
+    const std::unique_ptr<const ansLayoutCache> ansLayoutCache_;
     memoryRequirements memoryRequirements_;
 
 
 public:
     static size_t
     recommendServiceMemSize(size_t chunked_payload_size,
-                            uint32_t max_concurrent_transfers,
+                            uint32_t num_slot_groups,
                             nixl_marshal_compress_algo_t algo);
 
     static std::shared_ptr<compressionBackend>
@@ -48,7 +55,7 @@ public:
     explicit compressionBackend(passkey,
                                 const nixlMarshalCompressConfig &cfg,
                                 size_t chunked_payload_size);
-    ~compressionBackend() override = default;
+    ~compressionBackend() override;
 
 
     compressionBackend(const compressionBackend &) = delete;

@@ -27,9 +27,7 @@
 #include "marshal/marshal_backend.h"
 #include "marshal/staging/staging_backend.h"
 #include "marshal/delta/delta_backend.h"
-#ifdef NIXL_HAVE_NVCOMP
 #include "marshal/compression/compression_backend.h"
-#endif
 #include "nixl_service_data.h"
 #include "backend/backend_aux.h"
 #include "nixl_log.h"
@@ -37,6 +35,7 @@
 #include "absl/cleanup/cleanup.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -47,6 +46,7 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 using namespace nixlMarshal;
 
@@ -57,9 +57,13 @@ alignUp(size_t value, size_t alignment) noexcept {
     return (value + alignment - 1) & ~(alignment - 1);
 }
 
-// Both peers of a transfer must agree on this (see marshalLayoutFingerprint), so the
-// service fixes it rather than exposing it through nixlServiceAgentConfig.
-constexpr size_t default_chunked_payload_size = 128UL * 1024 * 1024;
+constexpr size_t service_slot_alignment = 4 * 1024;
+
+void
+failAsymmetricInboundXfer(inboundXferReqH &req, nixl_status_t terminal_status) noexcept {
+    req.terminalStatus = terminal_status;
+    req.state = nixl_service_xfer_state_t::FAILED;
+}
 
 constexpr char nixl_s_prefix[] = "_NIXLS_";
 constexpr char nixl_srts_prefix[] = "_NIXLS_RTS_";
@@ -160,27 +164,6 @@ readFingerprint(const char *&cursor, const char *end) {
     return fingerprint;
 }
 
-std::shared_ptr<std::vector<ChunkDivision::segment>>
-getOutboundSegments(const outboundSlotCompletionData &completion) {
-    if (completion.size != marshal_derived_size) {
-        return ChunkDivision::defaultSegments(completion.size);
-    }
-
-    const auto chunk_division_it =
-        std::find_if(completion.options.begin(), completion.options.end(), [](const auto &option) {
-            return std::holds_alternative<ChunkDivision::processSlotOutput>(option);
-        });
-    if (chunk_division_it == completion.options.end()) {
-        throw std::runtime_error("outbound completion missing chunk division output");
-    }
-
-    const auto &chunk_division = std::get<ChunkDivision::processSlotOutput>(*chunk_division_it);
-    if (!chunk_division.segments) {
-        throw std::runtime_error("outbound completion chunk division is null");
-    }
-    return chunk_division.segments;
-}
-
 /**
  * @brief  Dummy backend used when no marshalling is requested. Both processSlot overrides throw
  *         before constructing any asyncHandle, so no concrete handle subclass is needed here.
@@ -248,12 +231,6 @@ nixlMemFromMemSpace(nixlMarshal::mem_space_t mem_space) {
     }
 }
 
-inline runtimeBuffer
-runtimeBufferFromDesc(const nixlBlobDesc &desc, nixl_mem_t mem) {
-    return runtimeBuffer(absl::Span<std::byte>(reinterpret_cast<std::byte *>(desc.addr), desc.len),
-                         memSpaceFromNixlMem(mem));
-}
-
 void
 addReferenceOption(process_slot_input_options_t &opts,
                    std::byte *ref,
@@ -277,6 +254,19 @@ isTerminalReadServe(nixl_xfer_op_t op, nixl_service_xfer_state_t state) noexcept
     return op == NIXL_READ &&
         (state == nixl_service_xfer_state_t::CANCELLING ||
          state == nixl_service_xfer_state_t::DONE);
+}
+
+template<typename CompletionT>
+bool
+isMarshalInProgress(const slot_completion_result_t<CompletionT> &result) noexcept {
+    const auto *status = std::get_if<nixl_status_t>(&result);
+    return status != nullptr && *status == NIXL_IN_PROG;
+}
+
+template<typename CompletionT>
+[[nodiscard]] const CompletionT *
+tryGetCompletedSlotData(const slot_completion_result_t<CompletionT> &result) noexcept {
+    return std::get_if<CompletionT>(&result);
 }
 
 const nixlMarshalDeltaOptArgs *
@@ -304,17 +294,10 @@ makeMarshalBackend(const nixl_marshal_config_t &mode, size_t chunked_payload_siz
                           [](const nixlMarshalDeltaConfig &cfg) -> std::shared_ptr<backend> {
                               return deltaBackend::createBackend(cfg);
                           },
-#ifdef NIXL_HAVE_NVCOMP
                           [chunked_payload_size](
                               const nixlMarshalCompressConfig &cfg) -> std::shared_ptr<backend> {
                               return compressionBackend::createBackend(cfg, chunked_payload_size);
                           },
-#else
-                          [](const nixlMarshalCompressConfig &) -> std::shared_ptr<backend> {
-                              throw std::invalid_argument(
-                                  "Compression marshal backend requires nvCOMP support");
-                          },
-#endif
                       },
                       mode);
 }
@@ -346,6 +329,31 @@ getValidMarshalOptArgs(const nixl_service_opt_args_t *extra_params,
                           },
                       },
                       mode);
+}
+
+[[nodiscard]] nixl_status_t
+validateMarshalPhase(const nixl_marshal_config_t &mode,
+                     const nixl_marshal_opt_args_t &opt_args,
+                     nixl_xfer_op_t operation,
+                     nixl_marshal_phase_t phase) {
+    if (phase == nixl_marshal_phase_t::PRE_AND_POST_TRANSFER ||
+        std::holds_alternative<nixlMarshalDirectConfig>(mode)) {
+        return NIXL_SUCCESS;
+    }
+
+    const auto *compress_config = std::get_if<nixlMarshalCompressConfig>(&mode);
+    const auto *compress_opt_args = std::get_if<nixlMarshalCompressOptArgs>(&opt_args);
+    if (compress_config == nullptr || compress_opt_args == nullptr ||
+        compress_config->algo != nixl_marshal_compress_algo_t::ANS ||
+        compress_opt_args->delta.has_value()) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    if ((operation == NIXL_WRITE && phase == nixl_marshal_phase_t::PRE_TRANSFER) ||
+        (operation == NIXL_READ && phase == nixl_marshal_phase_t::POST_TRANSFER)) {
+        return NIXL_SUCCESS;
+    }
+    return NIXL_ERR_NOT_SUPPORTED;
 }
 
 // Resolves the notification to carry on a READ receive context from `current` (the value
@@ -392,23 +400,56 @@ slotGroupToWorkItems(const std::list<slotT> &slot_group) {
     return slot_work_items;
 }
 
+size_t
+chunksInDescriptor(size_t desc_len, size_t chunk_size) noexcept {
+    NIXL_ASSERT(desc_len != 0);
+    NIXL_ASSERT(chunk_size != 0);
+    return 1 + (desc_len - 1) / chunk_size;
+}
+
 int
 countChunksAndVerifyMatch(const nixl_xfer_dlist_t &local_desc_list,
                           const nixl_xfer_dlist_t &remote_desc_list,
                           size_t chunk_size) {
-    auto desc_count = local_desc_list.descCount();
-    if (desc_count != remote_desc_list.descCount()) {
+    const auto desc_count = local_desc_list.descCount();
+    if (desc_count != remote_desc_list.descCount() || chunk_size == 0) {
         return -1;
     }
+    constexpr size_t max_total_chunks = static_cast<size_t>(std::numeric_limits<int>::max());
     size_t total_chunks = 0;
     for (int i = 0; i < desc_count; ++i) {
-        auto desc_len = local_desc_list[i].len;
+        const auto desc_len = local_desc_list[i].len;
         if (desc_len != remote_desc_list[i].len) {
             return -1;
         }
-        total_chunks += (desc_len + chunk_size - 1) / chunk_size;
+        const size_t desc_chunks = desc_len == 0 ? 0 : chunksInDescriptor(desc_len, chunk_size);
+        if (desc_chunks > max_chunks_per_desc || desc_chunks > max_total_chunks - total_chunks) {
+            return -1;
+        }
+        total_chunks += desc_chunks;
     }
     return static_cast<int>(total_chunks);
+}
+
+bool
+hasValidAsymmetricDescriptorShape(const nixl_xfer_dlist_t &local_desc_list,
+                                  const nixl_xfer_dlist_t &remote_desc_list) {
+    const auto desc_count = local_desc_list.descCount();
+    // TODO-Eyal: remove once multi-descriptor support is added.
+    if (desc_count != 1 || desc_count != remote_desc_list.descCount() ||
+        local_desc_list.getType() != VRAM_SEG ||
+        (remote_desc_list.getType() != VRAM_SEG && remote_desc_list.getType() != DRAM_SEG &&
+         remote_desc_list.getType() != FILE_SEG)) {
+        return false;
+    }
+    for (int i = 0; i < desc_count; ++i) {
+        const auto desc_len = local_desc_list[i].len;
+        if (desc_len == 0 || desc_len != remote_desc_list[i].len ||
+            desc_len > max_descriptor_size) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Resolves an absolute byte offset (relative to the start of dst_list) plus a size into a
@@ -507,6 +548,14 @@ notifCallbackTemplate(const char *prefix,
         // TODO-Eyal: handle error.
         NIXL_ASSERT(false);
     }
+}
+
+void
+setTelemetryDurations(nixl_xfer_telem_t &telemetry) {
+    const auto duration = std::chrono::duration_cast<chrono_period_us_t>(
+        std::chrono::steady_clock::now() - telemetry.startTime);
+    telemetry.postDuration = duration;
+    telemetry.xferDuration = duration;
 }
 
 } // namespace
@@ -688,21 +737,22 @@ deleteNotifPayload::serialize() const noexcept {
     return delete_msg;
 }
 
-postedNotifPayload::postedNotifPayload(
-    size_t xfer_id,
-    size_t slot_index,
-    size_t original_size,
-    std::shared_ptr<std::vector<nixlMarshal::ChunkDivision::segment>> posted_segments,
-    size_t desc_index,
-    size_t chunk_index,
-    std::string md)
+postedNotifPayload::postedNotifPayload(size_t xfer_id,
+                                       size_t slot_index,
+                                       size_t original_size,
+                                       size_t wire_size,
+                                       size_t desc_index,
+                                       size_t chunk_index,
+                                       std::string md,
+                                       nixl_marshal_mode_t backend)
     : xferId(xfer_id),
       slotIndex(slot_index),
       originalSize(original_size),
-      postedSegments(std::move(posted_segments)),
+      wireSize(wire_size),
       descIndex(desc_index),
       chunkIndex(chunk_index),
-      metadata(std::move(md)) {}
+      metadata(std::move(md)),
+      backend(backend) {}
 
 postedNotifPayload::postedNotifPayload(std::string_view notif) {
     NIXL_ASSERT(notif.rfind(nixl_sposted_prefix, 0) == 0);
@@ -712,55 +762,46 @@ postedNotifPayload::postedNotifPayload(std::string_view notif) {
     xferId = readScalar<size_t>(cursor, end);
     slotIndex = readScalar<size_t>(cursor, end);
     originalSize = readScalar<size_t>(cursor, end);
-    const auto posted_segment_count = readScalar<size_t>(cursor, end);
-    NIXL_ASSERT(posted_segment_count > 0);
-    postedSegments =
-        std::make_shared<std::vector<nixlMarshal::ChunkDivision::segment>>(posted_segment_count);
-    readBytes(
-        cursor, end, postedSegments->data(), postedSegments->size() * sizeof((*postedSegments)[0]));
+    wireSize = readScalar<size_t>(cursor, end);
     descIndex = readScalar<size_t>(cursor, end);
     chunkIndex = readScalar<size_t>(cursor, end);
     const auto metadata_size = readScalar<size_t>(cursor, end);
     metadata = readString(cursor, end, metadata_size);
+    backend = readScalar<decltype(backend)>(cursor, end);
     NIXL_ASSERT(cursor == end);
 }
 
 nixl_blob_t
 postedNotifPayload::serialize() const noexcept {
-    NIXL_ASSERT(postedSegments && !postedSegments->empty());
+    NIXL_ASSERT(wireSize > 0);
     const auto prefix_len = std::char_traits<char>::length(nixl_sposted_prefix);
-    const auto posted_segment_count = postedSegments->size();
     const auto metadata_size = metadata.size();
-    const auto segment_size = posted_segment_count * sizeof((*postedSegments)[0]);
     const auto base_fields_size = sizeof(xferId) + sizeof(slotIndex) + sizeof(originalSize) +
-        sizeof(posted_segment_count) + sizeof(descIndex) + sizeof(chunkIndex) +
-        sizeof(metadata_size);
-    const auto total_size = prefix_len + base_fields_size + segment_size + metadata_size;
+        sizeof(wireSize) + sizeof(descIndex) + sizeof(chunkIndex) + sizeof(metadata_size) +
+        sizeof(backend);
+    const auto total_size = prefix_len + base_fields_size + metadata_size;
     nixl_blob_t posted_msg(total_size, '\0');
     char *cursor = posted_msg.data();
     writeBytes(cursor, nixl_sposted_prefix, prefix_len);
     writeScalar(cursor, xferId);
     writeScalar(cursor, slotIndex);
     writeScalar(cursor, originalSize);
-    writeScalar(cursor, posted_segment_count);
-    writeBytes(cursor, postedSegments->data(), segment_size);
+    writeScalar(cursor, wireSize);
     writeScalar(cursor, descIndex);
     writeScalar(cursor, chunkIndex);
     writeScalar(cursor, metadata_size);
     writeBytes(cursor, metadata.data(), metadata_size);
+    writeScalar(cursor, backend);
     NIXL_ASSERT(cursor == posted_msg.data() + total_size);
     [[maybe_unused]] postedNotifPayload deserialized(posted_msg);
     NIXL_ASSERT(deserialized.xferId == xferId);
     NIXL_ASSERT(deserialized.slotIndex == slotIndex);
     NIXL_ASSERT(deserialized.originalSize == originalSize);
-    NIXL_ASSERT(deserialized.postedSegments->size() == postedSegments->size());
-    for (size_t i = 0; i < postedSegments->size(); ++i) {
-        NIXL_ASSERT((*deserialized.postedSegments)[i].offset == (*postedSegments)[i].offset);
-        NIXL_ASSERT((*deserialized.postedSegments)[i].size == (*postedSegments)[i].size);
-    }
+    NIXL_ASSERT(deserialized.wireSize == wireSize);
     NIXL_ASSERT(deserialized.descIndex == descIndex);
     NIXL_ASSERT(deserialized.chunkIndex == chunkIndex);
     NIXL_ASSERT(deserialized.metadata == metadata);
+    NIXL_ASSERT(deserialized.backend == backend);
     return posted_msg;
 }
 
@@ -787,6 +828,7 @@ rReqPayload::rReqPayload(std::string_view notif) {
     readBytes(cursor, end, recvSlotDescriptors.data(), sizeof(recvSlotDescriptors));
     readBytes(cursor, end, recvMemSpaces.data(), sizeof(recvMemSpaces));
     fingerprint = readFingerprint(cursor, end);
+    dataType = readScalar<decltype(dataType)>(cursor, end);
     const auto has_delta = readScalar<bool>(cursor, end);
     if (has_delta) {
         const auto ref = reinterpret_cast<std::byte *>(readScalar<uintptr_t>(cursor, end));
@@ -808,7 +850,8 @@ rReqPayload::serialize() const noexcept {
         sizeof(uintptr_t) + sizeof(deltaOptArgs->memType) + sizeof(deltaOptArgs->elementSize) :
         0;
     const auto base_fields_size = sizeof(xferId) + sizeof(recvSlotDescriptors) +
-        sizeof(recvMemSpaces) + fingerprint_wire_size + sizeof(has_delta) + sizeof(src_list_size);
+        sizeof(recvMemSpaces) + fingerprint_wire_size + sizeof(decltype(dataType)) +
+        sizeof(has_delta) + sizeof(src_list_size);
     const auto total_size = prefix_len + base_fields_size + delta_size + src_list_size;
     nixl_blob_t rreq_msg(total_size, '\0');
     char *cursor = rreq_msg.data();
@@ -817,6 +860,7 @@ rReqPayload::serialize() const noexcept {
     writeBytes(cursor, recvSlotDescriptors.data(), sizeof(recvSlotDescriptors));
     writeBytes(cursor, recvMemSpaces.data(), sizeof(recvMemSpaces));
     writeFingerprint(cursor, fingerprint);
+    writeScalar(cursor, dataType);
     writeScalar(cursor, has_delta);
     if (has_delta) {
         const auto ref = reinterpret_cast<uintptr_t>(deltaOptArgs->ref);
@@ -830,19 +874,20 @@ rReqPayload::serialize() const noexcept {
     return rreq_msg;
 }
 
-rPostedPayload::rPostedPayload(
-    size_t xfer_id,
-    size_t slot_index,
-    size_t original_size,
-    std::shared_ptr<std::vector<nixlMarshal::ChunkDivision::segment>> posted_segments,
-    size_t dst_byte_offset,
-    std::string md)
+rPostedPayload::rPostedPayload(size_t xfer_id,
+                               size_t slot_index,
+                               size_t original_size,
+                               size_t wire_size,
+                               size_t dst_byte_offset,
+                               std::string md,
+                               nixl_marshal_mode_t backend)
     : xferId(xfer_id),
       slotIndex(slot_index),
       originalSize(original_size),
-      postedSegments(std::move(posted_segments)),
+      wireSize(wire_size),
       dstByteOffset(dst_byte_offset),
-      metadata(std::move(md)) {}
+      metadata(std::move(md)),
+      backend(backend) {}
 
 rPostedPayload::rPostedPayload(std::string_view notif) {
     NIXL_ASSERT(notif.rfind(nixl_srposted_prefix, 0) == 0);
@@ -852,39 +897,33 @@ rPostedPayload::rPostedPayload(std::string_view notif) {
     xferId = readScalar<size_t>(cursor, end);
     slotIndex = readScalar<size_t>(cursor, end);
     originalSize = readScalar<size_t>(cursor, end);
-    const auto posted_segment_count = readScalar<size_t>(cursor, end);
-    NIXL_ASSERT(posted_segment_count > 0);
-    postedSegments =
-        std::make_shared<std::vector<nixlMarshal::ChunkDivision::segment>>(posted_segment_count);
-    readBytes(
-        cursor, end, postedSegments->data(), postedSegments->size() * sizeof((*postedSegments)[0]));
+    wireSize = readScalar<size_t>(cursor, end);
     dstByteOffset = readScalar<size_t>(cursor, end);
     const auto metadata_size = readScalar<size_t>(cursor, end);
     metadata = readString(cursor, end, metadata_size);
+    backend = readScalar<decltype(backend)>(cursor, end);
     NIXL_ASSERT(cursor == end);
 }
 
 nixl_blob_t
 rPostedPayload::serialize() const noexcept {
-    NIXL_ASSERT(postedSegments && !postedSegments->empty());
+    NIXL_ASSERT(wireSize > 0);
     const auto prefix_len = std::char_traits<char>::length(nixl_srposted_prefix);
-    const auto posted_segment_count = postedSegments->size();
     const auto metadata_size = metadata.size();
-    const auto segment_size = posted_segment_count * sizeof((*postedSegments)[0]);
     const auto base_fields_size = sizeof(xferId) + sizeof(slotIndex) + sizeof(originalSize) +
-        sizeof(posted_segment_count) + sizeof(dstByteOffset) + sizeof(metadata_size);
-    const auto total_size = prefix_len + base_fields_size + segment_size + metadata_size;
+        sizeof(wireSize) + sizeof(dstByteOffset) + sizeof(metadata_size) + sizeof(backend);
+    const auto total_size = prefix_len + base_fields_size + metadata_size;
     nixl_blob_t rposted_msg(total_size, '\0');
     char *cursor = rposted_msg.data();
     writeBytes(cursor, nixl_srposted_prefix, prefix_len);
     writeScalar(cursor, xferId);
     writeScalar(cursor, slotIndex);
     writeScalar(cursor, originalSize);
-    writeScalar(cursor, posted_segment_count);
-    writeBytes(cursor, postedSegments->data(), segment_size);
+    writeScalar(cursor, wireSize);
     writeScalar(cursor, dstByteOffset);
     writeScalar(cursor, metadata_size);
     writeBytes(cursor, metadata.data(), metadata_size);
+    writeScalar(cursor, backend);
     NIXL_ASSERT(cursor == rposted_msg.data() + total_size);
     return rposted_msg;
 }
@@ -1044,32 +1083,65 @@ slotT::getProcessSlotInputOptions() const {
 slotWorkItem::slotWorkItem(slotT slot, size_t slot_index) : slot(slot), slotIndex(slot_index) {}
 
 slotPool::slotPool(uintptr_t base_addr,
+                   uintptr_t registered_desc_addr,
                    size_t slot_size,
                    size_t num_slots,
                    size_t chunk_size,
                    nixl_mem_t type,
                    std::optional<size_t> workspace_size)
     : baseAddr_(base_addr),
+      registeredDescAddr_(registered_desc_addr),
       slotSize_(slot_size),
       numSlots_(num_slots),
       chunkSize_(chunk_size),
       workspaceSize_(workspace_size),
       type_(type) {
-    // TODO-Eyal: replace this assertion with something more friendly. It's for nvComp.
-    NIXL_ASSERT(base_addr % 8 == 0);
-    NIXL_ASSERT(slot_size % 8 == 0);
+    // TODO-Eyal: replace these assertions with something more friendly.
+    NIXL_ASSERT(base_addr % service_slot_alignment == 0);
+    NIXL_ASSERT(slot_size % MarshalBackendSizing::slot_stride_alignment == 0);
+    const auto slot_stride = alignUp(slot_size, service_slot_alignment);
     streams_.reserve(num_slots);
     freeList_.reserve(num_slots);
     for (size_t i = 0; i < num_slots; ++i) {
         streams_.emplace_back();
         freeList_.push_back(slotT{this,
-                                  baseAddr_ + static_cast<uintptr_t>(i) * slot_size,
+                                  baseAddr_ + static_cast<uintptr_t>(i) * slot_stride,
                                   slotSize_,
                                   streams_.back().get(),
                                   type_,
                                   chunkSize_,
                                   workspaceSize_});
     }
+}
+
+void
+slotPool::moveFrom(slotPool &&other) noexcept {
+    NIXL_ASSERT(other.freeList_.size() == other.numSlots_);
+    baseAddr_ = other.baseAddr_;
+    registeredDescAddr_ = other.registeredDescAddr_;
+    slotSize_ = other.slotSize_;
+    numSlots_ = other.numSlots_;
+    chunkSize_ = other.chunkSize_;
+    workspaceSize_ = other.workspaceSize_;
+    type_ = other.type_;
+    streams_ = std::move(other.streams_);
+    freeList_ = std::move(other.freeList_);
+    for (auto &slot : freeList_) {
+        slot.pool = this;
+    }
+    other.numSlots_ = 0;
+}
+
+slotPool::slotPool(slotPool &&other) noexcept {
+    moveFrom(std::move(other));
+}
+
+slotPool &
+slotPool::operator=(slotPool &&other) noexcept {
+    if (this != &other) {
+        moveFrom(std::move(other));
+    }
+    return *this;
 }
 
 std::optional<slotT>
@@ -1103,8 +1175,8 @@ slotPool::getChunkSize() const noexcept {
 }
 
 uintptr_t
-slotPool::getBaseAddr() const noexcept {
-    return baseAddr_;
+slotPool::getRegisteredDescAddr() const noexcept {
+    return registeredDescAddr_;
 }
 
 nixl_mem_t
@@ -1112,29 +1184,33 @@ slotPool::getType() const noexcept {
     return type_;
 }
 
-nixlServiceXferReqH::nixlServiceXferReqH(
-    const nixl_xfer_dlist_t &src_desc_list,
-    const std::string &serialized_dst_desc_list,
-    const std::string &remote_agent,
-    const std::array<slotWorkItem, slots_per_xfer> &local_slots,
-    size_t xfer_id,
-    size_t total_chunks,
-    const nixl_marshal_opt_args_t &marshal_opt_args)
+nixlServiceXferReqH::nixlServiceXferReqH(const nixl_xfer_dlist_t &src_desc_list,
+                                         const std::string &serialized_dst_desc_list,
+                                         const std::string &remote_agent,
+                                         size_t chunk_size,
+                                         size_t xfer_id,
+                                         size_t total_chunks,
+                                         const nixl_marshal_opt_args_t &marshal_opt_args,
+                                         nixl_marshal_mode_t backend,
+                                         nixl_marshal_phase_t marshal_phase)
     : xferReq(nullptr),
       nonDirectData(nonDirectDataH{
           remote_agent,
           serialized_dst_desc_list,
           xfer_id,
           nixl_service_xfer_state_t::PRE_START,
-          chunkIteratorH(src_desc_list, local_slots[0].slot.chunkSize, total_chunks),
-          local_slots,
+          chunkIteratorH(src_desc_list, chunk_size, total_chunks, backend),
+          std::array<std::optional<slotWorkItem>, slots_per_xfer>{},
           std::array<std::unique_ptr<outbound_async_handle_t>, slots_per_xfer>{},
-          nixlServiceAgent::trackCompressionRatio ? std::make_unique<compressionStats>() : nullptr,
           std::array<nixlBasicDesc, slots_per_xfer>{},
           std::array<nixlMarshal::mem_space_t, slots_per_xfer>{},
           std::array{remote_slot_state_t::NOT_ALLOCATED, remote_slot_state_t::NOT_ALLOCATED},
           std::array<nixlXferReqH *, slots_per_xfer>{}}),
-      marshalOptArgs(marshal_opt_args) {}
+      marshalOptArgs(marshal_opt_args),
+      phase(marshal_phase) {
+
+    telemetry.emplace().descCount = src_desc_list.descCount();
+}
 
 inboundXferReqH::inboundXferReqH(const std::string &remote_agent,
                                  nixl_xfer_dlist_t &&dst_list,
@@ -1145,6 +1221,7 @@ inboundXferReqH::inboundXferReqH(const std::string &remote_agent,
       dstList(std::move(dst_list)),
       xferId(xfer_id),
       state(nixl_service_xfer_state_t::IN_PROGRESS),
+      phase(nixl_marshal_phase_t::PRE_AND_POST_TRANSFER),
       localSlots(local_slots),
       receiverDeltaRef(receiver_delta_ref) {}
 
@@ -1156,11 +1233,14 @@ inboundXferReqH::inboundXferReqH(const std::string &remote_agent,
                                  std::string serialized_src_list,
                                  nixlXferReqH *direct_child,
                                  std::optional<nixl_blob_t> notif,
+                                 nixlServiceXferReqH *parent,
+                                 nixl_marshal_phase_t marshal_phase,
                                  std::optional<nixlMarshalDeltaReceiverRefArgs> receiver_delta_ref)
     : remoteAgent(remote_agent),
       dstList(std::move(dst_list)),
       xferId(xfer_id),
       state(nixl_service_xfer_state_t::PRE_START),
+      phase(marshal_phase),
       localSlots(local_slots),
       receiverDeltaRef(receiver_delta_ref),
       serializedSrcList(std::move(serialized_src_list)),
@@ -1169,17 +1249,29 @@ inboundXferReqH::inboundXferReqH(const std::string &remote_agent,
       userInitiated(true),
       directChild(direct_child),
       directDone(direct_child == nullptr),
-      marshalDone(false) {}
+      marshalDone(false),
+      parent(parent) {}
 
 nixlServiceAgentData::nixlServiceAgentData(const nixl_marshal_config_t &mode,
-                                           size_t chunked_payload_size)
+                                           size_t chunked_payload_size,
+                                           bool capture_telemetry,
+                                           std::shared_ptr<nixlMarshal::backend> backend)
     : mode_(mode),
       chunkedPayloadSize_(chunked_payload_size),
-      backend_(makeMarshalBackend(mode_, chunkedPayloadSize_)),
+      captureTelemetry_(capture_telemetry),
       nextOutboundXferId_(0) {
+    if (!backend) {
+        throw std::invalid_argument("marshal backend is null");
+    }
+    backends_[static_cast<size_t>(nixl_marshal_mode_t::STAGING)] =
+        makeMarshalBackend(nixlMarshalStagingConfig{}, chunkedPayloadSize_);
+    const auto cfg_backend = marshalBackendFromConfig(mode_);
+    const auto backend_index = static_cast<size_t>(cfg_backend);
+    backends_[backend_index] = std::move(backend);
+
     // Direct mode stages nothing, so it has no per-slot requirements to query.
     if (!std::holds_alternative<nixlMarshalDirectConfig>(mode_)) {
-        marshalSlotMemoryRequirements_ = backend_->getSlotMemoryRequirements();
+        marshalSlotMemoryRequirements_ = backends_[backend_index]->getSlotMemoryRequirements();
     }
 }
 
@@ -1211,58 +1303,116 @@ makeFingerprint(const nixlServiceAgentData &data, const slotPool &pool) {
 
 nixl_status_t
 nixlServiceAgentData::progressService() {
-    std::queue<activeSlotWorkItem> processed_queue;
-    std::unordered_map<std::string, std::set<size_t>> deleted_reqs;
-    for (auto notif_item = serviceNotifQueue_.tryPop(); notif_item.has_value();
-         notif_item = serviceNotifQueue_.tryPop()) {
-        const auto &item = notif_item.value();
-        NIXL_ASSERT(item.payload != nullptr);
-        std::visit(
-            overloaded{[&](const rtsNotifPayload &p) { handleRTS(item.senderAgent, p); },
-                       [&](const ctsNotifPayload &p) { handleCTS(item.senderAgent, p); },
-                       [&](const postedNotifPayload &p) { handlePosted(item.senderAgent, p); },
-                       [&](const rslotNotifPayload &p) { handleRSlot(item.senderAgent, p); },
-                       [&](const deleteNotifPayload &p) {
-                           handleDelete(item.senderAgent, p, deleted_reqs);
-                           NIXL_ASSERT(deleted_reqs.count(item.senderAgent) == 1);
-                           NIXL_ASSERT(deleted_reqs[item.senderAgent].size() >= 1);
-                       },
-                       [&](const rReqPayload &p) { handleRREQ(item.senderAgent, p); },
-                       [&](const rPostedPayload &p) { handleRPosted(item.senderAgent, p); },
-                       [&](const rrSlotPayload &p) { handleRRSlot(item.senderAgent, p); },
-                       [&](const rAbortPayload &p) { handleRAbort(item.senderAgent, p); },
-                       [&](const rAbortAckPayload &p) { handleRAbortAck(item.senderAgent, p); },
-                       [&](const rNakPayload &p) { handleRNak(item.senderAgent, p); }},
-            *item.payload);
-    }
-    while (!activeSlotQueue_.empty()) {
-        auto &work_item = activeSlotQueue_.front();
-        std::visit(overloaded{[&](std::reference_wrapper<nixlServiceXferReqH>) {
-                                  switch (work_item.slot.get().state) {
-                                  case local_slot_state_t::FREE:
-                                      fillLocalSlot(work_item, processed_queue);
-                                      break;
-                                  case local_slot_state_t::BUSY_MARSHAL:
-                                      pollOutboundSlotCompletion(work_item, processed_queue);
-                                      break;
-                                  case local_slot_state_t::READY_TO_SEND:
-                                      trySend(work_item, processed_queue);
-                                      break;
-                                  case local_slot_state_t::BUSY_NIXL:
-                                      pollNixlXferCompletion(work_item, processed_queue);
-                                      break;
-                                  }
-                              },
-                              [&](std::reference_wrapper<inboundXferReqH>) {
-                                  NIXL_ASSERT(work_item.slot.get().state ==
-                                              local_slot_state_t::BUSY_MARSHAL);
-                                  pollInboundSlotCompletion(work_item, processed_queue);
-                              }},
-                   work_item.req);
-        activeSlotQueue_.pop();
-    }
+    deleted_writes_t deleted_writes;
 
-    for (const auto &[sender_agent, xfer_ids] : deleted_reqs) {
+    processServiceNotifications(deleted_writes);
+    progressAndCleanup(deleted_writes);
+    return NIXL_SUCCESS;
+}
+
+void
+nixlServiceAgentData::progressActiveSlots() {
+    // Process exactly the work queued when this pass begins. Any item that remains active is
+    // queued directly for a later pass, so admission handlers can append new work without a final
+    // swap overwriting it.
+    std::queue<activeSlotWorkItem> current_work;
+    activeSlotQueue_.swap(current_work);
+    while (!current_work.empty()) {
+        auto &work_item = current_work.front();
+        auto should_process =
+            std::visit(overloaded{[&](std::reference_wrapper<nixlServiceXferReqH> req_ref) {
+                                      auto &req_data = req_ref.get().nonDirectData.value();
+                                      if (work_item.slot.has_value()) {
+                                          return true;
+                                      }
+                                      if (req_data.state == nixl_service_xfer_state_t::DONE ||
+                                          req_data.state == nixl_service_xfer_state_t::CANCELLING) {
+                                          return false;
+                                      }
+
+                                      NIXL_ASSERT(sourceSlotsPool_.has_value());
+                                      auto allocated = sourceSlotsPool_.value().allocateSlot();
+                                      if (!allocated.has_value()) {
+                                          activeSlotQueue_.push(work_item);
+                                          return false;
+                                      }
+                                      NIXL_ASSERT(!req_data.freeSlotIndexes.none());
+                                      size_t slot_index =
+                                          std::countr_zero(req_data.freeSlotIndexes.to_ulong());
+                                      NIXL_ASSERT(slot_index < slots_per_xfer);
+                                      req_data.freeSlotIndexes.set(slot_index, false);
+                                      req_data.localSlots[slot_index].emplace(
+                                          slotWorkItem{std::move(allocated.value()), slot_index});
+                                      work_item.slot =
+                                          std::ref(req_data.localSlots[slot_index].value());
+                                      return true;
+                                  },
+                                  [&](std::reference_wrapper<inboundXferReqH>) { return true; }},
+                       work_item.req);
+        if (!should_process) {
+            current_work.pop();
+            continue;
+        }
+        NIXL_ASSERT(work_item.slot.has_value());
+        std::visit(
+            overloaded{
+                [&](std::reference_wrapper<nixlServiceXferReqH>) {
+                    switch (work_item.slot.value().get().state) {
+                    case local_slot_state_t::FREE:
+                        fillLocalSlot(work_item, activeSlotQueue_);
+                        break;
+                    case local_slot_state_t::BUSY_MARSHAL:
+                        pollOutboundSlotCompletion(work_item, activeSlotQueue_);
+                        break;
+                    case local_slot_state_t::READY_TO_SEND:
+                        trySend(work_item, activeSlotQueue_);
+                        break;
+                    case local_slot_state_t::BUSY_NIXL:
+                        pollNixlXferCompletion(work_item, activeSlotQueue_);
+                        break;
+                    case local_slot_state_t::BUSY_NIXL_READ:
+                        NIXL_ASSERT(false);
+                        break;
+                    case local_slot_state_t::BUSY_NIXL_HEADER:
+                        pollHeaderXferCompletion(work_item, activeSlotQueue_);
+                        break;
+                    }
+                },
+                [&](std::reference_wrapper<inboundXferReqH>) {
+                    auto &inbound_req =
+                        std::get<std::reference_wrapper<inboundXferReqH>>(work_item.req).get();
+                    if (!inbound_req.asymmetricPostTransfer.has_value()) {
+                        NIXL_ASSERT(work_item.slot.value().get().state ==
+                                    local_slot_state_t::BUSY_MARSHAL);
+                        pollInboundSlotCompletion(work_item, activeSlotQueue_);
+                        return;
+                    }
+                    switch (work_item.slot.value().get().state) {
+                    case local_slot_state_t::FREE:
+                        tryReadAsymmetricPost(work_item, activeSlotQueue_);
+                        break;
+                    case local_slot_state_t::BUSY_NIXL_READ:
+                        pollAsymmetricPostReadCompletion(work_item, activeSlotQueue_);
+                        break;
+                    case local_slot_state_t::BUSY_MARSHAL:
+                        pollInboundSlotCompletion(work_item, activeSlotQueue_);
+                        break;
+                    case local_slot_state_t::BUSY_NIXL_HEADER:
+                        pollAsymmetricPostHeaderCompletion(work_item, activeSlotQueue_);
+                        break;
+                    default:
+                        NIXL_ASSERT(false);
+                        break;
+                    }
+                }},
+            work_item.req);
+        current_work.pop();
+    }
+}
+
+void
+nixlServiceAgentData::cleanupDeletedWrites(deleted_writes_t &deleted_writes) {
+    for (const auto &[sender_agent, xfer_ids] : deleted_writes) {
         auto sender_it = inboundXferReqs_.find(sender_agent);
         if (sender_it == inboundXferReqs_.end()) {
             continue;
@@ -1277,7 +1427,11 @@ nixlServiceAgentData::progressService() {
             sender_reqs.erase(req_it);
         }
     }
+    deleted_writes.clear();
+}
 
+void
+nixlServiceAgentData::cleanupReadServes() {
     // Cleanup for READ serves that finished normally (handleRRSlot, state == DONE) or are
     // draining after an RABORT (handleRAbort, state == CANCELLING): neither "every chunk
     // acked" nor "abort requested" implies every local slot has actually gone idle yet, from
@@ -1286,10 +1440,12 @@ nixlServiceAgentData::progressService() {
     // complete) - so this may take several ticks. The authoritative state already lives on
     // each request, so this scans readServeReqs_ directly rather than tracking a separate
     // index of "terminal" keys that could desync from it.
-    for (auto agent_it = readServeReqs_.begin(); agent_it != readServeReqs_.end();) {
+    auto agent_it = readServeReqs_.begin();
+    while (agent_it != readServeReqs_.end()) {
         auto &xfer_reqs = agent_it->second;
         const std::string &initiator_agent = agent_it->first;
-        for (auto xfer_it = xfer_reqs.begin(); xfer_it != xfer_reqs.end();) {
+        auto xfer_it = xfer_reqs.begin();
+        while (xfer_it != xfer_reqs.end()) {
             NIXL_ASSERT(xfer_it->second->nonDirectData.has_value());
             auto &req_data = xfer_it->second->nonDirectData.value();
             if (req_data.state != nixl_service_xfer_state_t::DONE &&
@@ -1297,10 +1453,10 @@ nixlServiceAgentData::progressService() {
                 ++xfer_it;
                 continue;
             }
-            const bool fully_drained = std::all_of(
-                req_data.localSlots.begin(), req_data.localSlots.end(), [](const slotWorkItem &s) {
-                    return s.state == local_slot_state_t::FREE;
-                });
+            const bool fully_drained =
+                std::all_of(req_data.localSlots.begin(),
+                            req_data.localSlots.end(),
+                            [](const auto &slot) { return !slot.has_value(); });
             if (!fully_drained) {
                 ++xfer_it;
                 continue;
@@ -1309,7 +1465,6 @@ nixlServiceAgentData::progressService() {
                 [[maybe_unused]] auto ack_ret = genRAbortAck(initiator_agent, xfer_it->first);
                 // TODO: handle a genNotif failure here.
             }
-            freeSlotGroup(req_data.localSlots);
             xfer_it = xfer_reqs.erase(xfer_it);
         }
         if (xfer_reqs.empty()) {
@@ -1318,7 +1473,10 @@ nixlServiceAgentData::progressService() {
             ++agent_it;
         }
     }
+}
 
+void
+nixlServiceAgentData::progressReadReceives() {
     // Same idea, for this agent's own READs currently draining after an RABORT_ACK (see
     // handleRAbortAck): the peer has confirmed it is done touching these slots
     // (remoteQuiesced), but any of this agent's own in-flight decodes still need to drain
@@ -1326,7 +1484,8 @@ nixlServiceAgentData::progressService() {
     // any) gets polled: it lives on this map-owned context rather than the caller-owned
     // outer handle, so only progressService() (also driven by getNotifs()) can reach it -
     // see progressReadReceive().
-    for (auto xfer_it = readReceiveReqs_.begin(); xfer_it != readReceiveReqs_.end();) {
+    auto xfer_it = readReceiveReqs_.begin();
+    while (xfer_it != readReceiveReqs_.end()) {
         auto &receive_req = *xfer_it->second;
         progressReadReceive(receive_req);
         if (receive_req.state != nixl_service_xfer_state_t::CANCELLING ||
@@ -1345,9 +1504,71 @@ nixlServiceAgentData::progressService() {
         freeSlotGroup(receive_req.localSlots);
         xfer_it = readReceiveReqs_.erase(xfer_it);
     }
+}
 
-    activeSlotQueue_.swap(processed_queue);
-    return NIXL_SUCCESS;
+void
+nixlServiceAgentData::cleanupAsymmetricPreTransfers() {
+    // Reclaim asymmetric PRE slots only after all in-flight compression and writes have drained.
+    for (auto &[xfer_id, xfer_req] : outboundXferReqs_) {
+        (void)xfer_id;
+        auto &req_data = xfer_req->nonDirectData.value();
+        if (!req_data.asymmetricPreTransfer.has_value() ||
+            req_data.state != nixl_service_xfer_state_t::CANCELLING) {
+            continue;
+        }
+        const bool fully_drained = std::all_of(req_data.localSlots.begin(),
+                                               req_data.localSlots.end(),
+                                               [](const auto &slot) { return !slot.has_value(); });
+        if (fully_drained) {
+            req_data.state = nixl_service_xfer_state_t::DONE;
+        }
+    }
+}
+
+void
+nixlServiceAgentData::progressAndCleanup(deleted_writes_t &deleted_writes) {
+    // A progress epoch makes every release observed so far visible to the slot allocator. Running
+    // this immediately before an admission preserves notification FIFO: start-then-cancel remains
+    // start-then-cancel, while release(old)-then-start(new) reclaims old slots before admitting
+    // new.
+    progressActiveSlots();
+    cleanupDeletedWrites(deleted_writes);
+    cleanupReadServes();
+    progressReadReceives();
+    cleanupAsymmetricPreTransfers();
+}
+
+void
+nixlServiceAgentData::processServiceNotifications(deleted_writes_t &deleted_writes) {
+    for (auto notif_item = serviceNotifQueue_.tryPop(); notif_item.has_value();
+         notif_item = serviceNotifQueue_.tryPop()) {
+        const auto &item = notif_item.value();
+        NIXL_ASSERT(item.payload != nullptr);
+
+        const bool admits_slots = std::holds_alternative<rtsNotifPayload>(*item.payload) ||
+            std::holds_alternative<rReqPayload>(*item.payload);
+        if (admits_slots) {
+            progressAndCleanup(deleted_writes);
+        }
+
+        std::visit(
+            overloaded{[&](const rtsNotifPayload &p) { handleRTS(item.senderAgent, p); },
+                       [&](const ctsNotifPayload &p) { handleCTS(item.senderAgent, p); },
+                       [&](const postedNotifPayload &p) { handlePosted(item.senderAgent, p); },
+                       [&](const rslotNotifPayload &p) { handleRSlot(item.senderAgent, p); },
+                       [&](const deleteNotifPayload &p) {
+                           handleDelete(item.senderAgent, p, deleted_writes);
+                           NIXL_ASSERT(deleted_writes.count(item.senderAgent) == 1);
+                           NIXL_ASSERT(deleted_writes[item.senderAgent].size() >= 1);
+                       },
+                       [&](const rReqPayload &p) { handleRREQ(item.senderAgent, p); },
+                       [&](const rPostedPayload &p) { handleRPosted(item.senderAgent, p); },
+                       [&](const rrSlotPayload &p) { handleRRSlot(item.senderAgent, p); },
+                       [&](const rAbortPayload &p) { handleRAbort(item.senderAgent, p); },
+                       [&](const rAbortAckPayload &p) { handleRAbortAck(item.senderAgent, p); },
+                       [&](const rNakPayload &p) { handleRNak(item.senderAgent, p); }},
+            *item.payload);
+    }
 }
 
 void
@@ -1355,9 +1576,11 @@ nixlServiceAgentData::fillLocalSlot(const activeSlotWorkItem &work_item,
                                     std::queue<activeSlotWorkItem> &processed_queue) {
     auto &req_h = std::get<std::reference_wrapper<nixlServiceXferReqH>>(work_item.req).get();
     auto &req_data = req_h.nonDirectData.value();
-    auto &slot = work_item.slot.get();
+    NIXL_ASSERT(work_item.slot.has_value());
+    auto &slot = work_item.slot.value().get();
     NIXL_ASSERT(req_data.state >= nixl_service_xfer_state_t::IN_PROGRESS);
     if (req_data.state == nixl_service_xfer_state_t::DONE) {
+        freeSingleSourceSlot(req_data, work_item.slot.value());
         return;
     }
     if (req_data.state == nixl_service_xfer_state_t::CANCELLING) {
@@ -1366,6 +1589,7 @@ nixlServiceAgentData::fillLocalSlot(const activeSlotWorkItem &work_item,
         // re-queuing it here is what lets it fall out of activeSlotQueue_. The end-of-tick
         // pass in progressService() notices once every slot of this request has reached
         // this point and finalizes (frees + sends RABORT_ACK).
+        freeSingleSourceSlot(req_data, work_item.slot.value());
         return;
     }
     auto src_addr = req_data.chunkIterator.get();
@@ -1374,21 +1598,24 @@ nixlServiceAgentData::fillLocalSlot(const activeSlotWorkItem &work_item,
         // The sender is done pulling data from the user buffer, however there might still be
         // xfers/"processSlot" operations in progress.
         NIXL_ASSERT(chunk_size == 0);
+        freeSingleSourceSlot(req_data, work_item.slot.value());
         return;
     }
     NIXL_ASSERT(chunk_size > 0);
     auto slot_index = slot.slotIndex;
     const auto current_chunk_local = req_data.chunkIterator.getCurrentChunkLocal();
-    postedNotifPayload posted_notif_payload(
-        req_data.xferId,
-        slot_index,
-        chunk_size,
-        // Placeholder {offset: 0, size: 0}; pollOutboundSlotCompletion replaces it with actual
-        // segments.
-        nixlMarshal::ChunkDivision::defaultSegments(0),
-        req_data.chunkIterator.getCurrentDesc(),
-        current_chunk_local,
-        "");
+    const auto curr_backend = req_data.chunkIterator.getBackend();
+    postedNotifPayload posted_notif_payload(req_data.xferId,
+                                            slot_index,
+                                            chunk_size,
+                                            0,
+                                            req_data.chunkIterator.getCurrentDesc(),
+                                            current_chunk_local,
+                                            "",
+                                            curr_backend);
+    if (req_data.asymmetricPreTransfer.has_value()) {
+        req_data.asymmetricPreTransfer->slotChunkIndices[slot_index] = current_chunk_local;
+    }
     req_data.chunkIterator++;
     NIXL_ASSERT(slot.state == local_slot_state_t::FREE);
     slotBuffers buffers;
@@ -1397,6 +1624,10 @@ nixlServiceAgentData::fillLocalSlot(const activeSlotWorkItem &work_item,
     buffers.dst = slot.slot.toRuntimeBuffer();
 
     auto opts = slot.slot.getProcessSlotInputOptions();
+    if (const auto *compress_opt_args =
+            std::get_if<nixlMarshalCompressOptArgs>(&req_h.marshalOptArgs)) {
+        opts[option_t::ANS_DATA_TYPE] = AnsDataType::processSlotInput{compress_opt_args->dataType};
+    }
     if (const auto *delta_opt_args = getDeltaOptArgs(req_h.marshalOptArgs)) {
         addReferenceOption(opts,
                            delta_opt_args->senderRef,
@@ -1405,7 +1636,8 @@ nixlServiceAgentData::fillLocalSlot(const activeSlotWorkItem &work_item,
                            delta_opt_args->senderMemType,
                            delta_opt_args->elementSize);
     }
-    req_data.outboundAsyncHandles[slot_index] = backend_->outboundProcessSlot(buffers, opts);
+    req_data.outboundAsyncHandles[slot_index] =
+        backends_[static_cast<size_t>(curr_backend)]->outboundProcessSlot(buffers, opts);
     slot.state = local_slot_state_t::BUSY_MARSHAL;
     slot.postedNotif = posted_notif_payload;
     processed_queue.push(work_item);
@@ -1414,22 +1646,38 @@ nixlServiceAgentData::fillLocalSlot(const activeSlotWorkItem &work_item,
 void
 nixlServiceAgentData::pollOutboundSlotCompletion(const activeSlotWorkItem &work_item,
                                                  std::queue<activeSlotWorkItem> &processed_queue) {
-    auto &slot = work_item.slot.get();
+    NIXL_ASSERT(work_item.slot.has_value());
+    auto &slot = work_item.slot.value().get();
     auto slot_index = slot.slotIndex;
     auto &req_h = std::get<std::reference_wrapper<nixlServiceXferReqH>>(work_item.req).get();
     auto &req_data = req_h.nonDirectData.value();
     NIXL_ASSERT(req_data.state >= nixl_service_xfer_state_t::IN_PROGRESS);
+    // A failure elsewhere in the PRE pipeline stops new sends, but this slot may still be
+    // compressing. Wait for it to finish before releasing its handle and returning the slot.
+    if (req_data.asymmetricPreTransfer.has_value() &&
+        req_data.asymmetricPreTransfer->completionStatus != NIXL_IN_PROG) {
+        NIXL_ASSERT(req_data.outboundAsyncHandles[slot_index] != nullptr);
+        NIXL_ASSERT(slot.state == local_slot_state_t::BUSY_MARSHAL);
+        if (isMarshalInProgress(req_data.outboundAsyncHandles[slot_index]->checkForCompletion())) {
+            processed_queue.push(work_item);
+            return;
+        }
+        req_data.outboundAsyncHandles[slot_index].reset();
+        slot.postedNotif = std::nullopt;
+        freeSingleSourceSlot(req_data, work_item.slot.value());
+        return;
+    }
     if (isTerminalReadServe(req_h.op, req_data.state)) {
         // Let the in-flight encode finish so the slot buffer is safe to reclaim, then drop
         // the now-idle slot (do not advance it to READY_TO_SEND / send it during a drain).
         NIXL_ASSERT(req_data.outboundAsyncHandles[slot_index] != nullptr);
         NIXL_ASSERT(slot.state == local_slot_state_t::BUSY_MARSHAL);
-        if (!req_data.outboundAsyncHandles[slot_index]->checkForCompletion().has_value()) {
+        if (isMarshalInProgress(req_data.outboundAsyncHandles[slot_index]->checkForCompletion())) {
             processed_queue.push(work_item);
             return;
         }
         req_data.outboundAsyncHandles[slot_index].reset();
-        slot.state = local_slot_state_t::FREE;
+        freeSingleSourceSlot(req_data, work_item.slot.value());
         return;
     }
     if (req_data.state == nixl_service_xfer_state_t::DONE) {
@@ -1438,87 +1686,89 @@ nixlServiceAgentData::pollOutboundSlotCompletion(const activeSlotWorkItem &work_
     NIXL_ASSERT(req_data.outboundAsyncHandles[slot_index] != nullptr);
     NIXL_ASSERT(slot.state == local_slot_state_t::BUSY_MARSHAL);
 
-    auto completion_data = req_data.outboundAsyncHandles[slot_index]->checkForCompletion();
-    if (!completion_data.has_value()) {
+    auto completion_result = req_data.outboundAsyncHandles[slot_index]->checkForCompletion();
+    if (isMarshalInProgress(completion_result)) {
         processed_queue.push(work_item);
-    } else {
+    } else if (const auto *completion = tryGetCompletedSlotData(completion_result)) {
         NIXL_ASSERT(slot.postedNotif.has_value());
         auto &payload = slot.postedNotif.value();
-        const auto &completion = completion_data.value();
-        payload.postedSegments = getOutboundSegments(completion);
-        payload.metadata = completion.metadata;
-        if constexpr (nixlServiceAgent::trackCompressionRatio) {
-            if (std::holds_alternative<nixlMarshalCompressOptArgs>(req_h.marshalOptArgs)) {
-                NIXL_ASSERT(req_data.compressionStatsHandle != nullptr);
-                size_t outbound_size = 0;
-                for (const auto &segment : *payload.postedSegments) {
-                    outbound_size += segment.size;
-                }
-                auto &stats = *req_data.compressionStatsHandle;
-                const auto ratio =
-                    static_cast<double>(outbound_size) / static_cast<double>(payload.originalSize);
-                if (stats.originalSize == 0) {
-                    stats.minRatio = ratio;
-                    stats.maxRatio = ratio;
-                } else {
-                    stats.minRatio = std::min(stats.minRatio, ratio);
-                    stats.maxRatio = std::max(stats.maxRatio, ratio);
-                }
-                stats.compressedSize += outbound_size;
-                stats.weightedSumSquaredRatio +=
-                    static_cast<double>(payload.originalSize) * ratio * ratio;
-                stats.originalSize += payload.originalSize;
+        payload.wireSize = completion->size;
+        payload.metadata = completion->metadata;
+        req_h.telemetry->totalBytes += payload.wireSize;
+        if (req_data.asymmetricPreTransfer.has_value()) {
+            auto &pre = *req_data.asymmetricPreTransfer;
+            const bool wire_size_valid =
+                payload.wireSize != 0 && payload.wireSize <= slot.slot.slotSize;
+            if (!wire_size_valid || !pre.slotChunkIndices[slot_index].has_value()) {
+                failAsymmetricPreSlot(req_data, slot, NIXL_ERR_BACKEND);
+                return;
             }
+            pre.compressedSizes[*pre.slotChunkIndices[slot_index]] = payload.wireSize;
         }
         slot.state = local_slot_state_t::READY_TO_SEND;
         processed_queue.push(work_item);
+    } else {
+        // TODO-Yoav: handle error using fallback
+        req_data.outboundAsyncHandles[slot_index].reset();
+        slot.state = local_slot_state_t::FREE;
+        throw std::runtime_error("Marshal backend failed to complete outbound slot");
     }
 }
 
 void
 nixlServiceAgentData::trySend(const activeSlotWorkItem &work_item,
                               std::queue<activeSlotWorkItem> &processed_queue) {
-    auto &slot = work_item.slot.get();
+    NIXL_ASSERT(work_item.slot.has_value());
+    auto &slot = work_item.slot.value().get();
     auto slot_index = slot.slotIndex;
     auto &req_h = std::get<std::reference_wrapper<nixlServiceXferReqH>>(work_item.req).get();
     auto &req_data = req_h.nonDirectData.value();
     NIXL_ASSERT(req_data.state >= nixl_service_xfer_state_t::IN_PROGRESS);
+    // Another PRE step already failed, so discard this blob instead of starting a new write.
+    if (req_data.asymmetricPreTransfer.has_value() &&
+        req_data.asymmetricPreTransfer->completionStatus != NIXL_IN_PROG) {
+        NIXL_ASSERT(slot.state == local_slot_state_t::READY_TO_SEND);
+        req_data.outboundAsyncHandles[slot_index].reset();
+        req_data.asymmetricPreTransfer->slotChunkIndices[slot_index].reset();
+        slot.postedNotif = std::nullopt;
+        freeSingleSourceSlot(req_data, work_item.slot.value());
+        return;
+    }
     if (isTerminalReadServe(req_h.op, req_data.state)) {
         // The encode is already complete (READY_TO_SEND); during a drain do not send it,
         // just drop the now-idle slot.
         NIXL_ASSERT(slot.state == local_slot_state_t::READY_TO_SEND);
         req_data.outboundAsyncHandles[slot_index].reset();
         slot.postedNotif = std::nullopt;
-        slot.state = local_slot_state_t::FREE;
+        freeSingleSourceSlot(req_data, work_item.slot.value());
         return;
     }
     if (req_data.state == nixl_service_xfer_state_t::DONE) {
+        freeSingleSourceSlot(req_data, work_item.slot.value());
         return;
     }
     NIXL_ASSERT(slot.state == local_slot_state_t::READY_TO_SEND);
+    if (req_data.asymmetricPreTransfer.has_value()) {
+        trySendAsymmetricPre(work_item, processed_queue);
+        return;
+    }
     if (req_data.remoteSlotStates[slot_index] == remote_slot_state_t::FREE) {
         NIXL_ASSERT(req_data.nixlXferReqs[slot_index] == nullptr);
-        const auto completion =
-            req_data.outboundAsyncHandles[slot_index]->checkForCompletion().value();
-
         nixl_xfer_dlist_t local_slot_dlist(slot.slot.type);
         nixl_xfer_dlist_t remote_slot_dlist(
             nixlMemFromMemSpace(req_data.remoteSlotMemTypes[slot_index]));
         const auto local_slot_desc = slot.slot.toDesc(slot.slot.slotSize);
-        auto outbound_segments = getOutboundSegments(completion);
-        for (const auto &segment : *outbound_segments) {
-            local_slot_dlist.addDesc(nixlBasicDesc(
-                local_slot_desc.addr + segment.offset, segment.size, local_slot_desc.devId));
-            remote_slot_dlist.addDesc(
-                nixlBasicDesc(req_data.remoteSlotDescriptors[slot_index].addr + segment.offset,
-                              segment.size,
-                              req_data.remoteSlotDescriptors[slot_index].devId));
-        }
+        NIXL_ASSERT(slot.postedNotif.has_value());
+        const auto &payload = slot.postedNotif.value();
+        NIXL_ASSERT(payload.wireSize > 0 && payload.wireSize <= slot.slot.slotSize);
+        local_slot_dlist.addDesc(
+            nixlBasicDesc(local_slot_desc.addr, payload.wireSize, local_slot_desc.devId));
+        remote_slot_dlist.addDesc(nixlBasicDesc(req_data.remoteSlotDescriptors[slot_index].addr,
+                                                payload.wireSize,
+                                                req_data.remoteSlotDescriptors[slot_index].devId));
 
         nixlXferReqH *slot_xfer_req = nullptr;
         nixl_opt_args_t extra_params;
-        NIXL_ASSERT(slot.postedNotif.has_value());
-        const auto &payload = slot.postedNotif.value();
         if (req_h.op == NIXL_READ) {
             // Bump this slot's generation before sending, so a stale/duplicate RRSLOT
             // ack for an earlier fill of this same slot (echoing an older generation) can
@@ -1535,9 +1785,10 @@ nixlServiceAgentData::trySend(const activeSlotWorkItem &work_item,
             rPostedPayload rposted_payload(payload.xferId,
                                            payload.slotIndex,
                                            payload.originalSize,
-                                           payload.postedSegments,
+                                           payload.wireSize,
                                            dst_byte_offset,
-                                           payload.metadata);
+                                           payload.metadata,
+                                           payload.backend);
             extra_params.notif = rposted_payload.serialize();
         } else {
             extra_params.notif = payload.serialize();
@@ -1572,13 +1823,106 @@ nixlServiceAgentData::trySend(const activeSlotWorkItem &work_item,
 }
 
 void
+nixlServiceAgentData::failAsymmetricPreSlot(nixlServiceXferReqH::nonDirectDataH &req_data,
+                                            slotWorkItem &slot,
+                                            nixl_status_t status) {
+    NIXL_ASSERT(req_data.asymmetricPreTransfer.has_value());
+    const auto slot_index = slot.slotIndex;
+    auto &pre = *req_data.asymmetricPreTransfer;
+    pre.completionStatus = status;
+    req_data.state = nixl_service_xfer_state_t::CANCELLING;
+    req_data.outboundAsyncHandles[slot_index].reset();
+    pre.slotChunkIndices[slot_index].reset();
+    slot.postedNotif = std::nullopt;
+    freeSingleSourceSlot(req_data, slot);
+}
+
+void
+nixlServiceAgentData::trySendAsymmetricPre(const activeSlotWorkItem &work_item,
+                                           std::queue<activeSlotWorkItem> &processed_queue) {
+    NIXL_ASSERT(work_item.slot.has_value());
+    auto &slot = work_item.slot.value().get();
+    const auto slot_index = slot.slotIndex;
+    auto &req_h = std::get<std::reference_wrapper<nixlServiceXferReqH>>(work_item.req).get();
+    auto &req_data = req_h.nonDirectData.value();
+    NIXL_ASSERT(req_data.asymmetricPreTransfer.has_value());
+    auto &pre = *req_data.asymmetricPreTransfer;
+    NIXL_ASSERT(pre.slotChunkIndices[slot_index].has_value());
+    const size_t chunk_index = *pre.slotChunkIndices[slot_index];
+    if (chunk_index != pre.nextChunkToWrite) {
+        processed_queue.push(work_item);
+        return;
+    }
+
+    const auto completion_result = req_data.outboundAsyncHandles[slot_index]->checkForCompletion();
+    const auto *completion = tryGetCompletedSlotData(completion_result);
+    const size_t wire_size = completion->size;
+    const auto &remote_desc = pre.remoteDstList[0];
+    const size_t payload_end = pre.nextPayloadOffset + wire_size;
+    const size_t next_payload_offset =
+        alignUp(payload_end, MarshalBackendSizing::slot_stride_alignment);
+    const bool extent_valid =
+        wire_size != 0 && wire_size <= slot.slot.slotSize && payload_end <= remote_desc.len;
+    if (!extent_valid) {
+        failAsymmetricPreSlot(req_data, slot, NIXL_ERR_INVALID_PARAM);
+        return;
+    }
+
+    nixl_xfer_dlist_t local_slot_dlist(slot.slot.type);
+    nixl_xfer_dlist_t remote_slot_dlist(pre.remoteDstList.getType());
+    const auto local_slot_desc = slot.slot.toDesc(slot.slot.slotSize);
+    local_slot_dlist.addDesc(nixlBasicDesc(local_slot_desc.addr, wire_size, local_slot_desc.devId));
+    remote_slot_dlist.addDesc(
+        nixlBasicDesc(remote_desc.addr + pre.nextPayloadOffset, wire_size, remote_desc.devId));
+
+    nixlXferReqH *slot_xfer_req = nullptr;
+    const auto create_ret = agent_->createXferReq(
+        NIXL_WRITE, local_slot_dlist, remote_slot_dlist, req_data.remoteAgent, slot_xfer_req);
+    if (create_ret != NIXL_SUCCESS) {
+        failAsymmetricPreSlot(req_data, slot, create_ret);
+        return;
+    }
+    const auto post_ret = agent_->postXferReq(slot_xfer_req);
+    if (post_ret < NIXL_SUCCESS) {
+        agent_->releaseXferReq(slot_xfer_req);
+        failAsymmetricPreSlot(req_data, slot, post_ret);
+        return;
+    }
+
+    req_data.nixlXferReqs[slot_index] = slot_xfer_req;
+    slot.state = local_slot_state_t::BUSY_NIXL;
+    slot.postedNotif = std::nullopt;
+    pre.nextPayloadOffset = next_payload_offset;
+    ++pre.nextChunkToWrite;
+    processed_queue.push(work_item);
+}
+
+void
 nixlServiceAgentData::pollNixlXferCompletion(const activeSlotWorkItem &work_item,
                                              std::queue<activeSlotWorkItem> &processed_queue) {
-    auto &slot = work_item.slot.get();
+    NIXL_ASSERT(work_item.slot.has_value());
+    auto &slot = work_item.slot.value().get();
     auto slot_index = slot.slotIndex;
     auto &req_h = std::get<std::reference_wrapper<nixlServiceXferReqH>>(work_item.req).get();
     auto &req_data = req_h.nonDirectData.value();
     NIXL_ASSERT(req_data.state >= nixl_service_xfer_state_t::IN_PROGRESS);
+    // A previous PRE failure stops new work, but an already posted write must finish before
+    // its handle and slot can be released.
+    if (req_data.asymmetricPreTransfer.has_value() &&
+        req_data.asymmetricPreTransfer->completionStatus != NIXL_IN_PROG) {
+        NIXL_ASSERT(slot.state == local_slot_state_t::BUSY_NIXL);
+        NIXL_ASSERT(req_data.nixlXferReqs[slot_index] != nullptr);
+        if (agent_->getXferStatus(req_data.nixlXferReqs[slot_index]) == NIXL_IN_PROG) {
+            processed_queue.push(work_item);
+            return;
+        }
+        agent_->releaseXferReq(req_data.nixlXferReqs[slot_index]);
+        req_data.nixlXferReqs[slot_index] = nullptr;
+        req_data.outboundAsyncHandles[slot_index].reset();
+        req_data.asymmetricPreTransfer->slotChunkIndices[slot_index].reset();
+        freeSingleSourceSlot(req_data, work_item.slot.value());
+        return;
+    }
     if (isTerminalReadServe(req_h.op, req_data.state)) {
         // Let the in-flight NIXL_WRITE finish and release it, then drop the now-idle slot.
         // A failure status is tolerated here (not asserted): the request is already
@@ -1593,7 +1937,7 @@ nixlServiceAgentData::pollNixlXferCompletion(const activeSlotWorkItem &work_item
             agent_->releaseXferReq(req_data.nixlXferReqs[slot_index]);
         NIXL_ASSERT(release_ret == NIXL_SUCCESS);
         req_data.nixlXferReqs[slot_index] = nullptr;
-        slot.state = local_slot_state_t::FREE;
+        freeSingleSourceSlot(req_data, work_item.slot.value());
         return;
     }
     if (req_data.state == nixl_service_xfer_state_t::DONE) {
@@ -1608,6 +1952,11 @@ nixlServiceAgentData::pollNixlXferCompletion(const activeSlotWorkItem &work_item
         return;
     }
 
+    if (req_data.asymmetricPreTransfer.has_value()) {
+        handleAsymmetricPrePayloadCompletion(work_item, processed_queue, status);
+        return;
+    }
+
     if (status != NIXL_SUCCESS) {
         // TODO-Eyal: handle transfer error status.
         NIXL_ASSERT(false);
@@ -1617,14 +1966,339 @@ nixlServiceAgentData::pollNixlXferCompletion(const activeSlotWorkItem &work_item
     auto release_ret = agent_->releaseXferReq(req_data.nixlXferReqs[slot_index]);
     NIXL_ASSERT(release_ret == NIXL_SUCCESS);
     req_data.nixlXferReqs[slot_index] = nullptr;
+    freeSingleSourceSlot(req_data, work_item.slot.value());
+    processed_queue.emplace(std::ref(req_h));
+}
+
+void
+nixlServiceAgentData::handleAsymmetricPrePayloadCompletion(
+    const activeSlotWorkItem &work_item,
+    std::queue<activeSlotWorkItem> &processed_queue,
+    nixl_status_t status) {
+    NIXL_ASSERT(work_item.slot.has_value());
+    auto &slot = work_item.slot.value().get();
+    const auto slot_index = slot.slotIndex;
+    auto &req_h = std::get<std::reference_wrapper<nixlServiceXferReqH>>(work_item.req).get();
+    auto &req_data = req_h.nonDirectData.value();
+    NIXL_ASSERT(req_data.asymmetricPreTransfer.has_value());
+    auto &pre = *req_data.asymmetricPreTransfer;
+
+    const auto release_ret = agent_->releaseXferReq(req_data.nixlXferReqs[slot_index]);
+    req_data.nixlXferReqs[slot_index] = nullptr;
+    req_data.outboundAsyncHandles[slot_index].reset();
+    pre.slotChunkIndices[slot_index].reset();
+    if (release_ret != NIXL_SUCCESS || status != NIXL_SUCCESS) {
+        freeSingleSourceSlot(req_data, work_item.slot.value());
+        pre.completionStatus = status != NIXL_SUCCESS ? status : release_ret;
+        req_data.state = nixl_service_xfer_state_t::CANCELLING;
+        return;
+    }
+
+    ++pre.completedPayloadWrites;
+    const size_t total_chunks = req_data.chunkIterator.getTotalChunks();
+    if (pre.completedPayloadWrites != total_chunks) {
+        freeSingleSourceSlot(req_data, work_item.slot.value());
+        processed_queue.emplace(std::ref(req_h));
+        return;
+    }
+
+    NIXL_ASSERT(pre.nextChunkToWrite == total_chunks);
+    NIXL_ASSERT(pre.headerState == compressed_header_state_t::NOT_STARTED);
+    NIXL_ASSERT(slot.slot.type == VRAM_SEG);
+    // TODO-Eyal: consider pre-registering host memory for compressedSizes to avoid this copy.
+    const auto copy_status = cudaMemcpy(reinterpret_cast<void *>(slot.slot.baseAddr),
+                                        pre.compressedSizes.data(),
+                                        CompressedObjectLayout::header_size,
+                                        cudaMemcpyHostToDevice);
+    if (copy_status != cudaSuccess) {
+        pre.completionStatus = NIXL_ERR_BACKEND;
+        req_data.state = nixl_service_xfer_state_t::CANCELLING;
+        return;
+    }
+
+    const auto &remote_desc = pre.remoteDstList[0];
+    nixl_xfer_dlist_t local_header_dlist(slot.slot.type);
+    nixl_xfer_dlist_t remote_header_dlist(pre.remoteDstList.getType());
+    local_header_dlist.addDesc(slot.slot.toDesc(CompressedObjectLayout::header_size));
+    remote_header_dlist.addDesc(
+        nixlBasicDesc(remote_desc.addr, CompressedObjectLayout::header_size, remote_desc.devId));
+
+    nixlXferReqH *header_xfer_req = nullptr;
+    const auto create_ret = agent_->createXferReq(
+        NIXL_WRITE, local_header_dlist, remote_header_dlist, req_data.remoteAgent, header_xfer_req);
+    if (create_ret != NIXL_SUCCESS) {
+        pre.completionStatus = create_ret;
+        req_data.state = nixl_service_xfer_state_t::CANCELLING;
+        return;
+    }
+    nixl_opt_args_t header_extra_params;
+    nixl_opt_args_t *header_extra_params_ptr = nullptr;
+    if (!req_data.notifMsg.empty()) {
+        header_extra_params.notif = req_data.notifMsg;
+        header_extra_params_ptr = &header_extra_params;
+    }
+    const auto post_ret = agent_->postXferReq(header_xfer_req, header_extra_params_ptr);
+    if (post_ret < NIXL_SUCCESS) {
+        agent_->releaseXferReq(header_xfer_req);
+        pre.completionStatus = post_ret;
+        req_data.state = nixl_service_xfer_state_t::CANCELLING;
+        return;
+    }
+
+    pre.headerXferReq = header_xfer_req;
+    pre.headerState = compressed_header_state_t::BUSY_NIXL;
+    slot.state = local_slot_state_t::BUSY_NIXL_HEADER;
+    processed_queue.push(work_item);
+}
+
+void
+nixlServiceAgentData::pollHeaderXferCompletion(const activeSlotWorkItem &work_item,
+                                               std::queue<activeSlotWorkItem> &processed_queue) {
+    auto &req_h = std::get<std::reference_wrapper<nixlServiceXferReqH>>(work_item.req).get();
+    auto &req_data = req_h.nonDirectData.value();
+    NIXL_ASSERT(req_data.asymmetricPreTransfer.has_value());
+    auto &pre = *req_data.asymmetricPreTransfer;
+    NIXL_ASSERT(pre.headerXferReq != nullptr);
+
+    const auto status = agent_->getXferStatus(pre.headerXferReq);
+    if (status == NIXL_IN_PROG) {
+        processed_queue.push(work_item);
+        return;
+    }
+
+    const auto release_ret = agent_->releaseXferReq(pre.headerXferReq);
+    pre.headerXferReq = nullptr;
+    pre.headerState = compressed_header_state_t::DONE;
+    NIXL_ASSERT(work_item.slot.has_value());
+    freeSingleSourceSlot(req_data, work_item.slot.value());
+    if (status != NIXL_SUCCESS || release_ret != NIXL_SUCCESS) {
+        pre.completionStatus = status != NIXL_SUCCESS ? status : release_ret;
+        req_data.state = nixl_service_xfer_state_t::CANCELLING;
+        return;
+    }
+    // The aligned next offset accumulates compressed size during the xfer.
+    // It includes the header, payloads, and padding. In the end, it equals the used target buffer
+    // size.
+    req_h.telemetry->totalBytes = pre.nextPayloadOffset;
+    pre.completionStatus = NIXL_SUCCESS;
+    req_data.state = nixl_service_xfer_state_t::CANCELLING;
+}
+
+nixl_status_t
+nixlServiceAgentData::startAsymmetricPost(inboundXferReqH &inbound_req) {
+    NIXL_ASSERT(inbound_req.asymmetricPostTransfer.has_value());
+    auto &post = *inbound_req.asymmetricPostTransfer;
+    auto &slot = inbound_req.localSlots[0];
+    NIXL_ASSERT(slot.state == local_slot_state_t::FREE);
+    NIXL_ASSERT(slot.slot.type == VRAM_SEG);
+
+    nixl_xfer_dlist_t local_header_dlist(slot.slot.type);
+    nixl_xfer_dlist_t remote_header_dlist(post.remoteSrcList.getType());
+    local_header_dlist.addDesc(slot.slot.toDesc(CompressedObjectLayout::header_size));
+    const auto &remote_desc = post.remoteSrcList[0];
+    remote_header_dlist.addDesc(
+        nixlBasicDesc(remote_desc.addr, CompressedObjectLayout::header_size, remote_desc.devId));
+
+    nixlXferReqH *header_xfer_req = nullptr;
+    const auto create_ret = agent_->createXferReq(NIXL_READ,
+                                                  local_header_dlist,
+                                                  remote_header_dlist,
+                                                  inbound_req.remoteAgent,
+                                                  header_xfer_req);
+    if (create_ret != NIXL_SUCCESS) {
+        return create_ret;
+    }
+    const auto post_ret = agent_->postXferReq(header_xfer_req);
+    if (post_ret < NIXL_SUCCESS) {
+        agent_->releaseXferReq(header_xfer_req);
+        return post_ret;
+    }
+
+    post.headerXferReq = header_xfer_req;
+    post.headerState = compressed_header_state_t::BUSY_NIXL;
+    slot.state = local_slot_state_t::BUSY_NIXL_HEADER;
+    activeSlotQueue_.push(activeSlotWorkItem{std::ref(inbound_req), std::ref(slot)});
+    return NIXL_IN_PROG;
+}
+
+void
+nixlServiceAgentData::validateAndIndexAsymmetricPostHeader(inboundXferReqH &inbound_req,
+                                                           size_t max_payload_size) {
+    NIXL_ASSERT(inbound_req.asymmetricPostTransfer.has_value());
+    auto &post = *inbound_req.asymmetricPostTransfer;
+    const auto &remote_desc = post.remoteSrcList[0];
+    size_t payload_offset = CompressedObjectLayout::header_size;
+    for (size_t chunk_index = 0; chunk_index < inbound_req.totalChunks; ++chunk_index) {
+        const size_t compressed_size = post.compressedSizes[chunk_index];
+        if (compressed_size == 0 || compressed_size > max_payload_size ||
+            payload_offset % MarshalBackendSizing::slot_stride_alignment != 0 ||
+            payload_offset > remote_desc.len ||
+            compressed_size > remote_desc.len - payload_offset) {
+            failAsymmetricInboundXfer(inbound_req, NIXL_ERR_INVALID_PARAM);
+            return;
+        }
+        post.payloadOffsets[chunk_index] = payload_offset;
+        const size_t payload_end = payload_offset + compressed_size;
+        payload_offset = alignUp(payload_end, MarshalBackendSizing::slot_stride_alignment);
+    }
+    // Validate that compressed sizes for chunks beyond the descriptor are zeroed.
+    for (size_t chunk_index = inbound_req.totalChunks; chunk_index < max_chunks_per_desc;
+         ++chunk_index) {
+        if (post.compressedSizes[chunk_index] != 0) {
+            failAsymmetricInboundXfer(inbound_req, NIXL_ERR_INVALID_PARAM);
+            return;
+        }
+    }
+    NIXL_ASSERT(inbound_req.parent != nullptr);
+    // The offset accumulates compressed size during header parsing.
+    inbound_req.parent->telemetry->totalBytes = payload_offset;
+}
+
+void
+nixlServiceAgentData::pollAsymmetricPostHeaderCompletion(
+    const activeSlotWorkItem &work_item,
+    std::queue<activeSlotWorkItem> &processed_queue) {
+    auto &inbound_req = std::get<std::reference_wrapper<inboundXferReqH>>(work_item.req).get();
+    auto &post = *inbound_req.asymmetricPostTransfer;
+    NIXL_ASSERT(work_item.slot.has_value());
+    auto &slot = work_item.slot.value().get();
+    NIXL_ASSERT(post.headerXferReq != nullptr);
+
+    const auto status = agent_->getXferStatus(post.headerXferReq);
+    if (status == NIXL_IN_PROG) {
+        processed_queue.push(work_item);
+        return;
+    }
+
+    const auto release_ret = agent_->releaseXferReq(post.headerXferReq);
+    post.headerXferReq = nullptr;
+    post.headerState = compressed_header_state_t::DONE;
     slot.state = local_slot_state_t::FREE;
+    if (status != NIXL_SUCCESS || release_ret != NIXL_SUCCESS) {
+        failAsymmetricInboundXfer(inbound_req, status != NIXL_SUCCESS ? status : release_ret);
+        return;
+    }
+
+    // TODO-Eyal: consider using an async copy or pre-registering host memory for compressedSizes.
+    const auto copy_status = cudaMemcpy(post.compressedSizes.data(),
+                                        reinterpret_cast<void *>(slot.slot.baseAddr),
+                                        CompressedObjectLayout::header_size,
+                                        cudaMemcpyDeviceToHost);
+    if (copy_status != cudaSuccess) {
+        failAsymmetricInboundXfer(inbound_req, NIXL_ERR_BACKEND);
+        return;
+    }
+
+    const size_t max_payload_size = slot.slot.slotSize - slot.slot.workspaceSize.value_or(0);
+    validateAndIndexAsymmetricPostHeader(inbound_req, max_payload_size);
+    if (inbound_req.terminalStatus != NIXL_IN_PROG) {
+        return;
+    }
+
+    for (auto &local_slot : inbound_req.localSlots) {
+        processed_queue.push(activeSlotWorkItem{std::ref(inbound_req), std::ref(local_slot)});
+    }
+}
+
+void
+nixlServiceAgentData::tryReadAsymmetricPost(const activeSlotWorkItem &work_item,
+                                            std::queue<activeSlotWorkItem> &processed_queue) {
+    auto &inbound_req = std::get<std::reference_wrapper<inboundXferReqH>>(work_item.req).get();
+    auto &post = *inbound_req.asymmetricPostTransfer;
+    NIXL_ASSERT(work_item.slot.has_value());
+    auto &slot = work_item.slot.value().get();
+    if (inbound_req.state != nixl_service_xfer_state_t::IN_PROGRESS ||
+        post.nextChunkToRead == inbound_req.totalChunks) {
+        return;
+    }
+
+    const size_t slot_index = slot.slotIndex;
+    const size_t chunk_index = post.nextChunkToRead;
+    const size_t compressed_size = post.compressedSizes[chunk_index];
+    const auto &remote_desc = post.remoteSrcList[0];
+
+    nixl_xfer_dlist_t local_slot_dlist(slot.slot.type);
+    nixl_xfer_dlist_t remote_payload_dlist(post.remoteSrcList.getType());
+    local_slot_dlist.addDesc(slot.slot.toDesc(compressed_size));
+    remote_payload_dlist.addDesc(nixlBasicDesc(
+        remote_desc.addr + post.payloadOffsets[chunk_index], compressed_size, remote_desc.devId));
+
+    nixlXferReqH *payload_xfer_req = nullptr;
+    const auto create_ret = agent_->createXferReq(NIXL_READ,
+                                                  local_slot_dlist,
+                                                  remote_payload_dlist,
+                                                  inbound_req.remoteAgent,
+                                                  payload_xfer_req);
+    if (create_ret != NIXL_SUCCESS) {
+        failAsymmetricInboundXfer(inbound_req, create_ret);
+        return;
+    }
+    const auto post_ret = agent_->postXferReq(payload_xfer_req);
+    if (post_ret < NIXL_SUCCESS) {
+        agent_->releaseXferReq(payload_xfer_req);
+        failAsymmetricInboundXfer(inbound_req, post_ret);
+        return;
+    }
+
+    post.slotChunkIndices[slot_index] = chunk_index;
+    post.nixlXferReqs[slot_index] = payload_xfer_req;
+    ++post.nextChunkToRead;
+    slot.state = local_slot_state_t::BUSY_NIXL_READ;
+    processed_queue.push(work_item);
+}
+
+void
+nixlServiceAgentData::pollAsymmetricPostReadCompletion(
+    const activeSlotWorkItem &work_item,
+    std::queue<activeSlotWorkItem> &processed_queue) {
+    auto &inbound_req = std::get<std::reference_wrapper<inboundXferReqH>>(work_item.req).get();
+    auto &post = *inbound_req.asymmetricPostTransfer;
+    NIXL_ASSERT(work_item.slot.has_value());
+    auto &slot = work_item.slot.value().get();
+    const size_t slot_index = slot.slotIndex;
+    NIXL_ASSERT(post.nixlXferReqs[slot_index] != nullptr);
+    NIXL_ASSERT(post.slotChunkIndices[slot_index].has_value());
+
+    const auto status = agent_->getXferStatus(post.nixlXferReqs[slot_index]);
+    if (status == NIXL_IN_PROG) {
+        processed_queue.push(work_item);
+        return;
+    }
+    const auto release_ret = agent_->releaseXferReq(post.nixlXferReqs[slot_index]);
+    post.nixlXferReqs[slot_index] = nullptr;
+    if (inbound_req.state != nixl_service_xfer_state_t::IN_PROGRESS || status != NIXL_SUCCESS ||
+        release_ret != NIXL_SUCCESS) {
+        if (inbound_req.state == nixl_service_xfer_state_t::IN_PROGRESS) {
+            failAsymmetricInboundXfer(inbound_req, status != NIXL_SUCCESS ? status : release_ret);
+        }
+        post.slotChunkIndices[slot_index].reset();
+        slot.state = local_slot_state_t::FREE;
+        return;
+    }
+
+    const size_t chunk_index = *post.slotChunkIndices[slot_index];
+    const size_t chunk_offset = chunk_index * default_chunked_payload_size;
+    const size_t chunk_size =
+        std::min(default_chunked_payload_size, inbound_req.dstList[0].len - chunk_offset);
+    slotBuffers buffers;
+    buffers.src = slot.slot.toRuntimeBuffer();
+    buffers.src.size = post.compressedSizes[chunk_index];
+    buffers.dst.data = reinterpret_cast<std::byte *>(inbound_req.dstList[0].addr) + chunk_offset;
+    buffers.dst.size = chunk_size;
+    buffers.dst.space = memSpaceFromNixlMem(inbound_req.dstList.getType());
+    inbound_req.slotExpectedSizes[slot_index] = chunk_size;
+    inbound_req.asyncHandles[slot_index] =
+        backends_[static_cast<size_t>(marshalBackendFromConfig(mode_))]->inboundProcessSlot(
+            buffers, "", slot.slot.getProcessSlotInputOptions());
+    slot.state = local_slot_state_t::BUSY_MARSHAL;
     processed_queue.push(work_item);
 }
 
 void
 nixlServiceAgentData::pollInboundSlotCompletion(const activeSlotWorkItem &work_item,
                                                 std::queue<activeSlotWorkItem> &processed_queue) {
-    auto &slot = work_item.slot.get();
+    NIXL_ASSERT(work_item.slot.has_value());
+    auto &slot = work_item.slot.value().get();
     auto slot_index = slot.slotIndex;
     auto &inbound_req = std::get<std::reference_wrapper<inboundXferReqH>>(work_item.req).get();
     if (inbound_req.markedForDeletion) {
@@ -1649,14 +2323,41 @@ nixlServiceAgentData::pollInboundSlotCompletion(const activeSlotWorkItem &work_i
     NIXL_ASSERT(slot.state == local_slot_state_t::BUSY_MARSHAL);
     NIXL_ASSERT(inbound_req.asyncHandles[slot_index] != nullptr);
 
-    auto completion_data = inbound_req.asyncHandles[slot_index]->checkForCompletion();
-    if (!completion_data.has_value()) {
+    auto completion_result = inbound_req.asyncHandles[slot_index]->checkForCompletion();
+    if (isMarshalInProgress(completion_result)) {
         processed_queue.push(work_item);
         return;
     }
 
+    const auto *completion_data = tryGetCompletedSlotData(completion_result);
+    if (completion_data == nullptr) {
+        // TODO-Yoav: handle error using fallback
+        inbound_req.asyncHandles[slot_index].reset();
+        slot.state = local_slot_state_t::FREE;
+        throw std::runtime_error("Marshal backend failed to complete inbound slot");
+    }
     inbound_req.asyncHandles[slot_index].reset();
     slot.state = local_slot_state_t::FREE;
+
+    if (inbound_req.asymmetricPostTransfer.has_value()) {
+        auto &post = *inbound_req.asymmetricPostTransfer;
+        post.slotChunkIndices[slot_index].reset();
+        if (inbound_req.state != nixl_service_xfer_state_t::IN_PROGRESS) {
+            return;
+        }
+        if (completion_data->size != inbound_req.slotExpectedSizes[slot_index]) {
+            failAsymmetricInboundXfer(inbound_req, NIXL_ERR_BACKEND);
+            return;
+        }
+        ++inbound_req.decodedChunks;
+        if (inbound_req.decodedChunks == inbound_req.totalChunks) {
+            inbound_req.marshalDone = true;
+            tryCompleteReadReceive(inbound_req);
+            return;
+        }
+        processed_queue.push(work_item);
+        return;
+    }
 
     if (!inbound_req.userInitiated) {
         auto gen_rslot_ret = genRSlot(inbound_req.remoteAgent, inbound_req.xferId, slot_index);
@@ -1940,8 +2641,7 @@ nixlServiceAgentData::handleCTS(const std::string &sender_agent,
     req_data.remoteSlotMemTypes = cts_payload.receiverMemSpaces;
     req_data.remoteSlotStates = std::array{remote_slot_state_t::FREE, remote_slot_state_t::FREE};
     for (auto i = 0u; i < slots_per_xfer; ++i) {
-        activeSlotQueue_.push(activeSlotWorkItem{std::ref(*outboundXferReqs_[cts_payload.xferId]),
-                                                 std::ref(req_data.localSlots[i])});
+        activeSlotQueue_.push(activeSlotWorkItem{std::ref(*outboundXferReqs_[cts_payload.xferId])});
     }
 }
 
@@ -1966,15 +2666,13 @@ nixlServiceAgentData::handlePosted(const std::string &sender_agent,
     // TODO-Eyal: handle chunk size.
     buffers.dst.size = posted_payload.originalSize;
     buffers.dst.space = memSpaceFromNixlMem(inbound_req->dstList.getType());
-    auto process_slot_options = slot.slot.getProcessSlotInputOptions();
-    if (posted_payload.postedSegments->size() > 1) {
-        buffers.src.size = nixlMarshal::marshal_derived_size;
-        process_slot_options[nixlMarshal::option_t::CHUNK_DIVISION] =
-            nixlMarshal::ChunkDivision::processSlotInput{posted_payload.postedSegments};
-    } else {
-        // Single segment case, for marshals which don't support chunk division.
-        buffers.src.size = posted_payload.postedSegments->back().size;
+    if (posted_payload.wireSize == 0 || posted_payload.wireSize > slot.slot.slotSize) {
+        NIXL_WARN << "nixlServiceAgentData: ignoring POSTED for xfer " << posted_payload.xferId
+                  << " with invalid wire size " << posted_payload.wireSize;
+        return;
     }
+    buffers.src.size = posted_payload.wireSize;
+    auto process_slot_options = slot.slot.getProcessSlotInputOptions();
     if (inbound_req->receiverDeltaRef.has_value()) {
         const auto &delta_ref = *inbound_req->receiverDeltaRef;
         addReferenceOption(process_slot_options,
@@ -1985,7 +2683,8 @@ nixlServiceAgentData::handlePosted(const std::string &sender_agent,
                            delta_ref.elementSize);
     }
     inbound_req->asyncHandles[posted_payload.slotIndex] =
-        backend_->inboundProcessSlot(buffers, posted_payload.metadata, process_slot_options);
+        backends_[static_cast<size_t>(posted_payload.backend)]->inboundProcessSlot(
+            buffers, posted_payload.metadata, process_slot_options);
     slot.state = local_slot_state_t::BUSY_MARSHAL;
     activeSlotQueue_.push(activeSlotWorkItem{std::ref(*inbound_req), std::ref(slot)});
 }
@@ -2009,25 +2708,12 @@ nixlServiceAgentData::handleRSlot(const std::string &source_agent,
     req_data.rslotsReceived++;
     if (req_data.rslotsReceived == req_data.chunkIterator.getTotalChunks()) {
         req_data.state = nixl_service_xfer_state_t::DONE;
-        if (req_data.compressionStatsHandle && req_data.compressionStatsHandle->originalSize > 0) {
-            const auto &stats = *req_data.compressionStatsHandle;
-            const auto avg_ratio =
-                static_cast<double>(stats.compressedSize) / static_cast<double>(stats.originalSize);
-            const auto variance =
-                std::max(0.0,
-                         stats.weightedSumSquaredRatio / static_cast<double>(stats.originalSize) -
-                             avg_ratio * avg_ratio);
-            NIXL_INFO << "Compression ratio stats for transfer " << rslot_payload.xferId
-                      << ": min=" << stats.minRatio << " max=" << stats.maxRatio
-                      << " avg=" << avg_ratio << " std=" << std::sqrt(variance);
-        }
         auto ret = genDelete(source_agent, rslot_payload.xferId);
         if (ret != NIXL_SUCCESS) {
             // TODO-Eyal: handle error.
             NIXL_ASSERT(false);
             return;
         }
-        freeSlotGroup(req_data.localSlots);
         if (!req_data.notifMsg.empty()) {
             auto ret = agent_->genNotif(source_agent, req_data.notifMsg);
             if (ret != NIXL_SUCCESS) {
@@ -2041,15 +2727,14 @@ nixlServiceAgentData::handleRSlot(const std::string &source_agent,
 }
 
 void
-nixlServiceAgentData::handleDelete(
-    const std::string &sender_agent,
-    const deleteNotifPayload &delete_payload,
-    std::unordered_map<std::string, std::set<size_t>> &deleted_reqs) {
+nixlServiceAgentData::handleDelete(const std::string &sender_agent,
+                                   const deleteNotifPayload &delete_payload,
+                                   deleted_writes_t &deleted_writes) {
     NIXL_ASSERT(inboundXferReqs_.count(sender_agent) == 1);
     NIXL_ASSERT(inboundXferReqs_[sender_agent].count(delete_payload.xferId) == 1);
     auto &inbound_req = inboundXferReqs_[sender_agent][delete_payload.xferId];
     inbound_req->markedForDeletion = true;
-    deleted_reqs[sender_agent].insert(delete_payload.xferId);
+    deleted_writes[sender_agent].insert(delete_payload.xferId);
 }
 
 void
@@ -2082,6 +2767,11 @@ nixlServiceAgentData::handleRREQ(const std::string &sender_agent, const rReqPayl
         send_r_nak(NIXL_ERR_INVALID_PARAM);
         return;
     }
+    if (std::holds_alternative<nixlMarshalCompressConfig>(mode_) &&
+        !isValidCompressionDataType(rreq_payload.dataType)) {
+        send_r_nak(NIXL_ERR_INVALID_PARAM);
+        return;
+    }
 
     nixlSerDes serdes;
     if (serdes.importStr(rreq_payload.serializedSrcList) != NIXL_SUCCESS) {
@@ -2109,7 +2799,8 @@ nixlServiceAgentData::handleRREQ(const std::string &sender_agent, const rReqPayl
         send_r_nak(NIXL_ERR_INVALID_PARAM);
         return;
     }
-    const auto &supported_mem_spaces = backend_->getSupportedMemSpaces();
+    const auto &supported_mem_spaces =
+        backends_[static_cast<size_t>(marshalBackendFromConfig(mode_))]->getSupportedMemSpaces();
     if (std::find(supported_mem_spaces.begin(), supported_mem_spaces.end(), src_mem_space) ==
         supported_mem_spaces.end()) {
         send_r_nak(NIXL_ERR_NOT_SUPPORTED);
@@ -2149,18 +2840,11 @@ nixlServiceAgentData::handleRREQ(const std::string &sender_agent, const rReqPayl
             send_r_nak(NIXL_ERR_INVALID_PARAM);
             return;
         }
-        total_chunks += (src_list[i].len + pool.getChunkSize() - 1) / pool.getChunkSize();
+        const auto chunks_in_desc =
+            (src_list[i].len + pool.getChunkSize() - 1) / pool.getChunkSize();
+        NIXL_ASSERT(chunks_in_desc <= max_chunks_per_desc);
+        total_chunks += chunks_in_desc;
     }
-
-    auto slot_group_opt = allocateSlotGroup();
-    if (!slot_group_opt.has_value()) {
-        send_r_nak(NIXL_ERR_NOT_FOUND);
-        return;
-    }
-    auto slot_group = std::move(slot_group_opt).value();
-    // TODO: fix once slots are RAII.
-    auto cleanup = makeSlotGroupCleanup(slot_group);
-    auto slot_work_items = slotGroupToWorkItems(slot_group);
 
     // Build the marshalOptArgs alternative matching this agent's configured mode, carrying
     // the delta sender reference from RREQ when present. RREQ ships the sender's own
@@ -2186,6 +2870,7 @@ nixlServiceAgentData::handleRREQ(const std::string &sender_agent, const rReqPayl
             },
             [&](const nixlMarshalCompressConfig &) -> nixl_marshal_opt_args_t {
                 nixlMarshalCompressOptArgs args;
+                args.dataType = rreq_payload.dataType;
                 if (rreq_payload.deltaOptArgs.has_value()) {
                     nixlMarshalDeltaOptArgs delta_args;
                     delta_args.senderRef = rreq_payload.deltaOptArgs->ref;
@@ -2202,10 +2887,11 @@ nixlServiceAgentData::handleRREQ(const std::string &sender_agent, const rReqPayl
         src_list,
         std::string(), // no RTS is ever sent for a READ-serving request.
         sender_agent,
-        slot_work_items,
+        chunkedPayloadSize_,
         rreq_payload.xferId,
         total_chunks,
-        serving_opt_args);
+        serving_opt_args,
+        marshalBackendFromConfig(mode_));
     wrapper->op = NIXL_READ;
     // RREQ already carries what RTS+CTS would have conveyed separately for a WRITE, so the
     // serving push starts directly at IN_PROGRESS - there is no CTS wait for READ.
@@ -2215,14 +2901,12 @@ nixlServiceAgentData::handleRREQ(const std::string &sender_agent, const rReqPayl
     serving_req_data.remoteSlotMemTypes = rreq_payload.recvMemSpaces;
     serving_req_data.remoteSlotStates =
         std::array{remote_slot_state_t::FREE, remote_slot_state_t::FREE};
-    std::move(cleanup).Cancel();
 
     auto &stored_reqs = readServeReqs_[sender_agent];
     stored_reqs[rreq_payload.xferId] = std::move(wrapper);
     auto &stored_req = *stored_reqs[rreq_payload.xferId];
     for (auto i = 0u; i < slots_per_xfer; ++i) {
-        activeSlotQueue_.push(activeSlotWorkItem{
-            std::ref(stored_req), std::ref(stored_req.nonDirectData->localSlots[i])});
+        activeSlotQueue_.push(activeSlotWorkItem{std::ref(stored_req)});
     }
 }
 
@@ -2281,20 +2965,16 @@ nixlServiceAgentData::handleRPosted(const std::string &sender_agent,
     buffers.dst.data = reinterpret_cast<std::byte *>(dst_desc->addr);
     buffers.dst.size = rposted_payload.originalSize;
     buffers.dst.space = memSpaceFromNixlMem(inbound_req.dstList.getType());
-    auto process_slot_options = slot.slot.getProcessSlotInputOptions();
-    if (rposted_payload.postedSegments->empty()) {
+    if (rposted_payload.wireSize == 0 || rposted_payload.wireSize > slot.slot.slotSize) {
         NIXL_WARN << "nixlServiceAgentData: ignoring RPOSTED for xfer " << rposted_payload.xferId
-                  << " with no posted segments";
+                  << " with invalid wire size " << rposted_payload.wireSize;
         return;
     }
-    if (rposted_payload.postedSegments->size() > 1) {
-        buffers.src.size = nixlMarshal::marshal_derived_size;
-        process_slot_options[nixlMarshal::option_t::CHUNK_DIVISION] =
-            nixlMarshal::ChunkDivision::processSlotInput{rposted_payload.postedSegments};
-    } else {
-        // Single segment case, for marshals which don't support chunk division.
-        buffers.src.size = rposted_payload.postedSegments->back().size;
-    }
+    buffers.src.size = rposted_payload.wireSize;
+    auto process_slot_options = slot.slot.getProcessSlotInputOptions();
+    NIXL_ASSERT(inbound_req.parent != nullptr);
+    inbound_req.parent->telemetry->totalBytes += rposted_payload.wireSize;
+
     if (inbound_req.receiverDeltaRef.has_value()) {
         const auto &delta_ref = *inbound_req.receiverDeltaRef;
         addReferenceOption(process_slot_options,
@@ -2311,7 +2991,8 @@ nixlServiceAgentData::handleRPosted(const std::string &sender_agent,
     // earlier fill of the same slot.
     ++inbound_req.slotGenerations[rposted_payload.slotIndex];
     inbound_req.asyncHandles[rposted_payload.slotIndex] =
-        backend_->inboundProcessSlot(buffers, rposted_payload.metadata, process_slot_options);
+        backends_[static_cast<size_t>(rposted_payload.backend)]->inboundProcessSlot(
+            buffers, rposted_payload.metadata, process_slot_options);
     slot.state = local_slot_state_t::BUSY_MARSHAL;
     activeSlotQueue_.push(activeSlotWorkItem{std::ref(inbound_req), std::ref(slot)});
 }
@@ -2478,11 +3159,9 @@ nixl_status_t
 nixlServiceAgentData::genRTS(nixlServiceXferReqH &xfer_req) {
     NIXL_ASSERT(xfer_req.nonDirectData.has_value());
     NIXL_ASSERT(outboundXferReqs_.count(xfer_req.nonDirectData->xferId) == 1);
-    NIXL_ASSERT(xfer_req.nonDirectData->localSlots[0].slot.slotSize ==
-                xfer_req.nonDirectData->localSlots[1].slot.slotSize);
     rtsNotifPayload rts_payload(xfer_req.nonDirectData->xferId,
                                 xfer_req.nonDirectData->serializedDstDescList,
-                                xfer_req.nonDirectData->localSlots[0].slot.slotSize);
+                                localStagingPools_.back().getSlotSize());
     if (const auto *delta_opt_args = getDeltaOptArgs(xfer_req.marshalOptArgs)) {
         rts_payload.deltaOptArgs = nixlMarshalDeltaReceiverRefArgs{delta_opt_args->receiverRef,
                                                                    delta_opt_args->receiverMemType,
@@ -2509,6 +3188,10 @@ nixlServiceAgentData::genRREQ(nixlServiceXferReqH &xfer_req) {
         std::array{memSpaceFromNixlMem(receive_req.localSlots[0].slot.type),
                    memSpaceFromNixlMem(receive_req.localSlots[1].slot.type)},
         makeFingerprint(*this, *receive_req.localSlots[0].slot.pool));
+    if (const auto *compress_opt_args =
+            std::get_if<nixlMarshalCompressOptArgs>(&xfer_req.marshalOptArgs)) {
+        rreq_payload.dataType = compress_opt_args->dataType;
+    }
     if (const auto *delta_opt_args = getDeltaOptArgs(xfer_req.marshalOptArgs)) {
         // RREQ ships this agent's own reference (it is the one encoding), not the peer's
         // receiverRef - the sender and receiver roles are swapped relative to WRITE's RTS.
@@ -2559,35 +3242,61 @@ nixlServiceAgentData::genRAbortAck(const std::string &remote_agent, size_t xfer_
     return agent_->genNotif(remote_agent, raback_payload.serialize());
 }
 
+void
+nixlServiceAgentData::freeSingleSourceSlot(nixlServiceXferReqH::nonDirectDataH &req_data,
+                                           slotWorkItem &work_item) noexcept {
+    size_t slot_index = work_item.slotIndex;
+    work_item.state = local_slot_state_t::FREE;
+    NIXL_ASSERT(sourceSlotsPool_.has_value());
+    NIXL_ASSERT(work_item.slot.pool == &sourceSlotsPool_.value());
+    sourceSlotsPool_.value().freeSlot(std::move(work_item.slot));
+    req_data.localSlots[slot_index].reset();
+    req_data.freeSlotIndexes.set(slot_index, true);
+}
+
 namespace nixlService {
 
 size_t
 recommendServiceMemSize(const nixl_marshal_config_t &mode, uint32_t max_concurrent_transfers) {
+    return recommendServiceMemSize(mode, max_concurrent_transfers, default_chunked_payload_size);
+}
+
+size_t
+recommendServiceMemSize(const nixl_marshal_config_t &mode,
+                        uint32_t max_concurrent_transfers,
+                        size_t chunked_payload_size) {
     if (std::holds_alternative<nixlMarshalDirectConfig>(mode)) {
         throw std::invalid_argument("Direct mode does not use service memory");
     }
     if (max_concurrent_transfers == 0) {
         throw std::invalid_argument("maxConcurrentTransfers must be at least 1");
     }
+    const auto num_slot_groups = static_cast<size_t>(max_concurrent_transfers) + 1;
+    const auto align_recommendation = [num_slot_groups](size_t recommended_size) {
+        const size_t num_slots = MarshalBackendSizing::slots_per_transfer * num_slot_groups;
+        const size_t recommended_slot_size =
+            recommended_size / num_slots + (recommended_size % num_slots != 0);
+        return alignUp(recommended_slot_size, service_slot_alignment) * num_slots;
+    };
+    size_t mem_size_recommendation;
     if (std::holds_alternative<nixlMarshalStagingConfig>(mode)) {
-        return stagingBackend::recommendServiceMemSize(default_chunked_payload_size,
-                                                       max_concurrent_transfers);
+        mem_size_recommendation = align_recommendation(
+            stagingBackend::recommendServiceMemSize(chunked_payload_size, num_slot_groups));
+    } else if (std::holds_alternative<nixlMarshalDeltaConfig>(mode)) {
+        mem_size_recommendation = align_recommendation(
+            deltaBackend::recommendServiceMemSize(chunked_payload_size, num_slot_groups));
+    } else if (std::holds_alternative<nixlMarshalCompressConfig>(mode)) {
+        mem_size_recommendation = align_recommendation(compressionBackend::recommendServiceMemSize(
+            chunked_payload_size, num_slot_groups, std::get<nixlMarshalCompressConfig>(mode).algo));
+    } else {
+        throw std::invalid_argument("Unknown mode");
     }
-    if (std::holds_alternative<nixlMarshalDeltaConfig>(mode)) {
-        return deltaBackend::recommendServiceMemSize(default_chunked_payload_size,
-                                                     max_concurrent_transfers);
+    // Preserve the requested slot count after advancing an unaligned base to the next boundary.
+    if (mem_size_recommendation > std::numeric_limits<size_t>::max() - service_slot_alignment) {
+        throw std::invalid_argument("Service memory recommendation too large");
     }
-    if (std::holds_alternative<nixlMarshalCompressConfig>(mode)) {
-#ifdef NIXL_HAVE_NVCOMP
-        return compressionBackend::recommendServiceMemSize(
-            default_chunked_payload_size,
-            max_concurrent_transfers,
-            std::get<nixlMarshalCompressConfig>(mode).algo);
-#else
-        throw std::invalid_argument("Compression marshal backend requires nvCOMP support");
-#endif
-    }
-    throw std::invalid_argument("Unknown mode");
+    mem_size_recommendation += service_slot_alignment;
+    return mem_size_recommendation;
 }
 
 } // namespace nixlService
@@ -2599,16 +3308,27 @@ nixlServiceAgent::prepare(nixlServiceAgentConfig cfg) {
 
 std::pair<nixlServiceAgentConfig, std::shared_ptr<nixlServiceAgentData>>
 nixlServiceAgent::prepare(nixlServiceAgentConfig cfg, size_t chunked_payload_size) {
-    auto data = std::make_shared<nixlServiceAgentData>(cfg.mode, chunked_payload_size);
+    auto backend = makeMarshalBackend(cfg.mode, chunked_payload_size);
+    return prepare(std::move(cfg), chunked_payload_size, std::move(backend));
+}
 
-    cfg.notifCallbacks_[nixl_s_prefix] =
-        [data_weak = std::weak_ptr<nixlServiceAgentData>(data)](nixlNotifCallbackArgs &&args) {
-            auto d = data_weak.lock();
-            if (!d) {
-                return;
-            }
-            d->serviceNotifCallback(args.remote_agent, args.raw_notif);
-        };
+std::pair<nixlServiceAgentConfig, std::shared_ptr<nixlServiceAgentData>>
+nixlServiceAgent::prepare(nixlServiceAgentConfig cfg,
+                          size_t chunked_payload_size,
+                          std::shared_ptr<nixlMarshal::backend> backend) {
+    auto data = std::make_shared<nixlServiceAgentData>(
+        cfg.mode, chunked_payload_size, cfg.captureTelemetry, std::move(backend));
+
+    if (!cfg.disableServiceNotifCallbacks) {
+        cfg.notifCallbacks_[nixl_s_prefix] =
+            [data_weak = std::weak_ptr<nixlServiceAgentData>(data)](nixlNotifCallbackArgs &&args) {
+                auto d = data_weak.lock();
+                if (!d) {
+                    return;
+                }
+                d->serviceNotifCallback(args.remote_agent, args.raw_notif);
+            };
+    }
 
     return {std::move(cfg), std::move(data)};
 }
@@ -2632,12 +3352,12 @@ nixlServiceAgent::registerServiceMem(const nixl_reg_dlist_t &descs,
                                      const nixl_opt_args_t * /*extra_params*/) {
     return std::visit(
         overloaded{
-            [this, &descs](const nixlMarshalDirectConfig &) -> nixl_status_t {
-                return NIXL_ERR_NOT_SUPPORTED;
-            },
+            [](const nixlMarshalDirectConfig &) -> nixl_status_t { return NIXL_ERR_NOT_SUPPORTED; },
             [this, &descs](const auto & /*non_direct_mode*/) -> nixl_status_t {
                 auto mem_space = memSpaceFromNixlMem(descs.getType());
-                auto supported_mem_spaces = data_->backend_->getSupportedMemSpaces();
+                auto supported_mem_spaces =
+                    data_->backends_[static_cast<size_t>(marshalBackendFromConfig(data_->mode_))]
+                        ->getSupportedMemSpaces();
                 if (std::find(supported_mem_spaces.begin(),
                               supported_mem_spaces.end(),
                               mem_space) == supported_mem_spaces.end()) {
@@ -2689,25 +3409,38 @@ nixlServiceAgent::registerServiceMem(const nixl_reg_dlist_t &descs,
                      * used  = 7 * 133           = 931 MB
                      */
                     const auto raw_physical_slot_size = chunked_payload_size + marshal_overhead;
-                    const auto slot_stride = alignUp(raw_physical_slot_size,
-                                                     MarshalBackendSizing::slot_stride_alignment);
-                    const auto aligned_base =
-                        alignUp(desc.addr, MarshalBackendSizing::slot_stride_alignment);
+                    const auto slot_size = alignUp(raw_physical_slot_size,
+                                                   MarshalBackendSizing::slot_stride_alignment);
+                    const auto slot_stride = alignUp(slot_size, service_slot_alignment);
+                    auto aligned_base = alignUp(desc.addr, service_slot_alignment);
                     if (aligned_base >= desc.addr && aligned_base - desc.addr > desc.len) {
                         return NIXL_ERR_INVALID_PARAM;
                     }
                     const auto leading_slop = aligned_base - desc.addr;
                     const auto usable_bytes = desc.len - leading_slop;
-                    const auto num_slots = usable_bytes / slot_stride;
+                    auto num_slots = usable_bytes / slot_stride;
                     if (num_slots < slots_per_xfer) {
                         return NIXL_ERR_INVALID_PARAM;
                     }
-                    data_->localStagingPools_.emplace_back(aligned_base,
-                                                           slot_stride,
-                                                           num_slots,
-                                                           chunked_payload_size,
-                                                           descs.getType(),
-                                                           slot_workspace_size);
+                    auto create_pool = [&](auto slot_count) {
+                        return slotPool(aligned_base,
+                                        desc.addr,
+                                        slot_size,
+                                        slot_count,
+                                        chunked_payload_size,
+                                        descs.getType(),
+                                        slot_workspace_size);
+                    };
+
+                    // Populating the fixed source slots first, then the rest.
+                    if (!data_->sourceSlotsPool_.has_value()) {
+                        data_->sourceSlotsPool_.emplace(create_pool(slots_per_xfer));
+                        num_slots -= slots_per_xfer;
+                        aligned_base += slot_stride * slots_per_xfer;
+                    }
+                    if (num_slots > 0) {
+                        data_->localStagingPools_.emplace_back(create_pool(num_slots));
+                    }
                 }
 
                 return NIXL_SUCCESS;
@@ -2719,29 +3452,34 @@ nixlServiceAgent::registerServiceMem(const nixl_reg_dlist_t &descs,
 nixl_status_t
 nixlServiceAgent::deregisterServiceMem(const nixl_reg_dlist_t &descs,
                                        const nixl_opt_args_t * /*extra_params*/) {
-    return std::visit(overloaded{
-                          [this, &descs](const nixlMarshalDirectConfig &) -> nixl_status_t {
-                              return NIXL_ERR_NOT_SUPPORTED;
-                          },
-                          [this, &descs](const auto &non_direct_mode) -> nixl_status_t {
-                              auto const ret = nixlAgent::deregisterMem(descs);
-                              if (ret != NIXL_SUCCESS) {
-                                  return ret;
-                              }
+    return std::visit(
+        overloaded{
+            [](const nixlMarshalDirectConfig &) -> nixl_status_t { return NIXL_ERR_NOT_SUPPORTED; },
+            [this, &descs](const auto &non_direct_mode) -> nixl_status_t {
+                auto const ret = nixlAgent::deregisterMem(descs);
+                if (ret != NIXL_SUCCESS) {
+                    return ret;
+                }
 
-                              // TOOD-Eyal: improve if we want to support mid-request
-                              // deregistration.
-                              for (const auto &desc : descs) {
-                                  data_->localStagingPools_.remove_if(
-                                      [desc](const slotPool &pool) -> bool {
-                                          return pool.getBaseAddr() == desc.addr;
-                                      });
-                              }
+                // TOOD-Eyal: improve if we want to support mid-request
+                // deregistration.
+                for (const auto &desc : descs) {
+                    data_->localStagingPools_.remove_if([desc](const slotPool &pool) -> bool {
+                        return pool.getRegisteredDescAddr() == desc.addr;
+                    });
+                    if (data_->sourceSlotsPool_.has_value() &&
+                        data_->sourceSlotsPool_.value().getRegisteredDescAddr() == desc.addr) {
+                        data_->sourceSlotsPool_ = std::nullopt;
+                    }
+                }
 
-                              return NIXL_SUCCESS;
-                          },
-                      },
-                      data_->mode_);
+                NIXL_ASSERT(data_->sourceSlotsPool_.has_value() ||
+                            data_->localStagingPools_.empty());
+
+                return NIXL_SUCCESS;
+            },
+        },
+        data_->mode_);
 }
 
 nixl_status_t
@@ -2767,27 +3505,28 @@ nixlServiceAgent::createXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    const auto marshal_phase =
+        extra_params == nullptr ? nixl_marshal_phase_t::PRE_AND_POST_TRANSFER : extra_params->phase;
+    const auto phase_status =
+        validateMarshalPhase(data_->mode_, *marshal_opt_args, operation, marshal_phase);
+    if (phase_status != NIXL_SUCCESS) {
+        return phase_status;
+    }
+
     auto create_non_direct_xfer =
         [&](const nixl_marshal_opt_args_t &opt_args,
             const nixl_xfer_dlist_t &marshal_local_descs,
             const nixl_xfer_dlist_t &marshal_remote_descs) -> nixl_status_t {
-        if (data_->localStagingPools_.empty()) {
+        if ((operation == NIXL_READ && data_->localStagingPools_.empty()) ||
+            (operation == NIXL_WRITE && !data_->sourceSlotsPool_.has_value())) {
             return NIXL_ERR_INVALID_PARAM;
         }
-        auto total_chunks =
-            countChunksAndVerifyMatch(marshal_local_descs,
-                                      marshal_remote_descs,
-                                      data_->localStagingPools_.begin()->getChunkSize());
+        const auto chunk_size = data_->chunkedPayloadSize_;
+        const auto total_chunks =
+            countChunksAndVerifyMatch(marshal_local_descs, marshal_remote_descs, chunk_size);
         if (total_chunks == -1) {
             return NIXL_ERR_INVALID_PARAM;
         }
-        auto slot_group_opt = data_->allocateSlotGroup();
-        if (!slot_group_opt.has_value()) {
-            return NIXL_ERR_NOT_FOUND;
-        }
-        auto slot_group = std::move(slot_group_opt).value();
-        // TODO-Eyal: fix once slots are RAII.
-        auto cleanup = makeSlotGroupCleanup(slot_group);
         nixlSerDes serdes;
         const nixl_status_t serialize_ret = marshal_remote_descs.serialize(&serdes);
         if (serialize_ret != NIXL_SUCCESS) {
@@ -2796,12 +3535,13 @@ nixlServiceAgent::createXferReq(const nixl_xfer_op_t &operation,
         auto wrapper = std::make_unique<nixlServiceXferReqH>(marshal_local_descs,
                                                              serdes.exportStr(),
                                                              remote_agent,
-                                                             slotGroupToWorkItems(slot_group),
+                                                             chunk_size,
                                                              data_->nextOutboundXferId_++,
                                                              total_chunks,
-                                                             opt_args);
+                                                             opt_args,
+                                                             marshalBackendFromConfig(data_->mode_),
+                                                             marshal_phase);
         wrapper->op = operation;
-        std::move(cleanup).Cancel();
         req_hndl = wrapper.get();
         data_->outboundXferReqs_[req_hndl->nonDirectData->xferId] = std::move(wrapper);
         return NIXL_SUCCESS;
@@ -2822,10 +3562,9 @@ nixlServiceAgent::createXferReq(const nixl_xfer_op_t &operation,
         if (data_->localStagingPools_.empty()) {
             return NIXL_ERR_INVALID_PARAM;
         }
-        auto total_chunks =
-            countChunksAndVerifyMatch(marshal_dst_descs,
-                                      marshal_src_descs,
-                                      data_->localStagingPools_.begin()->getChunkSize());
+        const auto chunk_size = data_->localStagingPools_.begin()->getChunkSize();
+        const auto total_chunks =
+            countChunksAndVerifyMatch(marshal_dst_descs, marshal_src_descs, chunk_size);
         if (total_chunks == -1) {
             return NIXL_ERR_INVALID_PARAM;
         }
@@ -2845,6 +3584,12 @@ nixlServiceAgent::createXferReq(const nixl_xfer_op_t &operation,
             return serialize_ret;
         }
         const auto xfer_id = data_->nextOutboundXferId_++;
+        auto wrapper = std::make_unique<nixlServiceXferReqH>(marshal_phase);
+        wrapper->marshalOptArgs = opt_args;
+        wrapper->op = NIXL_READ;
+        wrapper->readReceiveXferId = xfer_id;
+        wrapper->telemetry.emplace().descCount = marshal_dst_descs.descCount();
+        req_hndl = wrapper.release();
         auto receive_req =
             std::make_unique<inboundXferReqH>(remote_agent,
                                               nixl_xfer_dlist_t(marshal_dst_descs),
@@ -2854,15 +3599,12 @@ nixlServiceAgent::createXferReq(const nixl_xfer_op_t &operation,
                                               serdes.exportStr(),
                                               direct_child,
                                               resolveReadNotif(std::nullopt, extra_params),
+                                              req_hndl,
+                                              marshal_phase,
                                               receiver_delta_ref);
         std::move(cleanup).Cancel();
         data_->readReceiveReqs_[xfer_id] = std::move(receive_req);
 
-        auto wrapper = std::make_unique<nixlServiceXferReqH>();
-        wrapper->marshalOptArgs = opt_args;
-        wrapper->op = NIXL_READ;
-        wrapper->readReceiveXferId = xfer_id;
-        req_hndl = wrapper.release();
         return NIXL_SUCCESS;
     };
 
@@ -2886,6 +3628,45 @@ nixlServiceAgent::createXferReq(const nixl_xfer_op_t &operation,
             },
             [&](const auto &non_direct_mode_opt_args) -> nixl_status_t {
                 const nixl_marshal_opt_args_t marshal_opt_args_variant = non_direct_mode_opt_args;
+                if (marshal_phase != nixl_marshal_phase_t::PRE_AND_POST_TRANSFER) {
+                    // Asymmetric PRE/POST requires matched non-empty descriptor lists with a
+                    // VRAM initiator and DRAM, VRAM, or FILE targets. Runtime capacity, transfer,
+                    // header, and decode errors are surfaced through getXferStatus().
+                    // TODO-Eyal: support telemetry for asymmetric.
+                    // TODO-Eyal: restructure xfer handles.
+                    const bool descriptor_shape_valid =
+                        hasValidAsymmetricDescriptorShape(local_descs, remote_descs);
+                    if (!descriptor_shape_valid ||
+                        data_->chunkedPayloadSize_ != default_chunked_payload_size) {
+                        return NIXL_ERR_INVALID_PARAM;
+                    }
+                    const size_t chunks_in_first_desc =
+                        chunksInDescriptor(local_descs[0].len, default_chunked_payload_size);
+
+                    if (operation == NIXL_WRITE) {
+                        NIXL_ASSERT(marshal_phase == nixl_marshal_phase_t::PRE_TRANSFER);
+                        const auto create_ret = create_non_direct_xfer(
+                            non_direct_mode_opt_args, local_descs, remote_descs);
+                        if (create_ret != NIXL_SUCCESS) {
+                            return create_ret;
+                        }
+                        req_hndl->nonDirectData->asymmetricPreTransfer.emplace(
+                            nixl_xfer_dlist_t(remote_descs), chunks_in_first_desc);
+                        return NIXL_SUCCESS;
+                    }
+
+                    NIXL_ASSERT(operation == NIXL_READ);
+                    NIXL_ASSERT(marshal_phase == nixl_marshal_phase_t::POST_TRANSFER);
+                    const auto create_ret = create_read_receive_xfer(
+                        non_direct_mode_opt_args, local_descs, remote_descs, nullptr, std::nullopt);
+                    if (create_ret != NIXL_SUCCESS) {
+                        return create_ret;
+                    }
+                    auto &receive_req = *data_->readReceiveReqs_.at(*req_hndl->readReceiveXferId);
+                    receive_req.asymmetricPostTransfer.emplace(nixl_xfer_dlist_t(remote_descs),
+                                                               chunks_in_first_desc);
+                    return NIXL_SUCCESS;
+                }
                 if (const auto *delta_opt_args = getDeltaOptArgs(marshal_opt_args_variant)) {
                     if (delta_opt_args->senderRef == nullptr ||
                         delta_opt_args->receiverRef == nullptr) {
@@ -2935,6 +3716,7 @@ nixlServiceAgent::createXferReq(const nixl_xfer_op_t &operation,
                     wrapper->marshalOptArgs = non_direct_mode_opt_args;
                     wrapper->op = operation;
                     wrapper->xferReq = xfer_req;
+                    wrapper->telemetry.emplace();
                     req_hndl = wrapper.release();
                     return NIXL_SUCCESS;
                 }
@@ -2994,6 +3776,14 @@ nixlServiceAgent::makeXferReq(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    const auto marshal_phase =
+        extra_params == nullptr ? nixl_marshal_phase_t::PRE_AND_POST_TRANSFER : extra_params->phase;
+    const auto phase_status =
+        validateMarshalPhase(data_->mode_, *marshal_opt_args, operation, marshal_phase);
+    if (phase_status != NIXL_SUCCESS) {
+        return phase_status;
+    }
+
     return std::visit(overloaded{
                           [&](const nixlMarshalDirectOptArgs &) -> nixl_status_t {
                               auto wrapper = std::make_unique<nixlServiceXferReqH>();
@@ -3035,11 +3825,49 @@ nixlServiceAgent::postXferReq(nixlServiceXferReqH *req_hndl,
                 return nixlAgent::postXferReq(req_hndl->xferReq, extra_params);
             },
             [&](const auto &non_direct_mode_opt_args) -> nixl_status_t {
+                req_hndl->telemetry->startTime = std::chrono::steady_clock::now();
                 // True for either direction's marshal sub-part; at most one of the two is
                 // ever set on a given handle (WRITE never sets readReceiveXferId, READ never
                 // sets nonDirectData), so this does not need to branch on req_hndl->op.
                 const bool has_marshal_part =
                     req_hndl->nonDirectData.has_value() || req_hndl->readReceiveXferId.has_value();
+
+                if (req_hndl->phase == nixl_marshal_phase_t::POST_TRANSFER) {
+                    NIXL_ASSERT(req_hndl->op == NIXL_READ);
+                    NIXL_ASSERT(req_hndl->readReceiveXferId.has_value());
+                    auto &receive_req = *data_->readReceiveReqs_.at(*req_hndl->readReceiveXferId);
+                    NIXL_ASSERT(receive_req.asymmetricPostTransfer.has_value());
+                    if (receive_req.state != nixl_service_xfer_state_t::PRE_START) {
+                        return NIXL_ERR_REPOST_ACTIVE;
+                    }
+                    receive_req.notif = resolveReadNotif(receive_req.notif, extra_params);
+                    receive_req.state = nixl_service_xfer_state_t::IN_PROGRESS;
+                    const auto start_ret = data_->startAsymmetricPost(receive_req);
+                    if (start_ret < NIXL_SUCCESS) {
+                        failAsymmetricInboundXfer(receive_req, start_ret);
+                        return start_ret;
+                    }
+                    return NIXL_IN_PROG;
+                }
+
+                if (req_hndl->phase == nixl_marshal_phase_t::PRE_TRANSFER) {
+                    NIXL_ASSERT(req_hndl->op == NIXL_WRITE);
+                    NIXL_ASSERT(req_hndl->xferReq == nullptr);
+                    NIXL_ASSERT(req_hndl->nonDirectData.has_value());
+                    auto &req_data = *req_hndl->nonDirectData;
+                    NIXL_ASSERT(req_data.asymmetricPreTransfer.has_value());
+                    if (req_data.state != nixl_service_xfer_state_t::PRE_START) {
+                        return NIXL_ERR_REPOST_ACTIVE;
+                    }
+                    if (extra_params != nullptr && extra_params->notif.has_value()) {
+                        req_data.notifMsg = *extra_params->notif;
+                    }
+                    req_data.state = nixl_service_xfer_state_t::IN_PROGRESS;
+                    for (size_t i = 0; i < slots_per_xfer; i++) {
+                        data_->activeSlotQueue_.push(activeSlotWorkItem{std::ref(*req_hndl)});
+                    }
+                    return NIXL_IN_PROG;
+                }
 
                 // For a READ with a marshal part, the direct child lives on the receive
                 // context (inboundXferReqH::directChild) rather than on req_hndl itself;
@@ -3122,6 +3950,7 @@ nixlServiceAgent::postXferReq(nixlServiceXferReqH *req_hndl,
                 if (!req_hndl->nonDirectData.has_value()) {
                     return NIXL_SUCCESS;
                 }
+                NIXL_ASSERT(!data_->localStagingPools_.empty());
                 auto gen_rts_ret = data_->genRTS(*req_hndl);
                 if (gen_rts_ret != NIXL_SUCCESS) {
                     return gen_rts_ret;
@@ -3164,7 +3993,30 @@ nixlServiceAgent::getXferStatus(nixlServiceXferReqH *req_hndl) {
         // progressService() above already polled the direct child (if any) and the marshal
         // sub-part, and finalized state via tryCompleteReadReceive once both are done - see
         // progressReadReceive() - so there is nothing left to poll here.
-        return (receive_req.state == nixl_service_xfer_state_t::DONE) ? NIXL_SUCCESS : NIXL_IN_PROG;
+        if (receive_req.state == nixl_service_xfer_state_t::DONE) {
+            setTelemetryDurations(*req_hndl->telemetry);
+            return NIXL_SUCCESS;
+        }
+        return NIXL_IN_PROG;
+    }
+
+    if (req_hndl->phase == nixl_marshal_phase_t::PRE_TRANSFER) {
+        NIXL_ASSERT(req_hndl->nonDirectData.has_value());
+        auto &req_data = *req_hndl->nonDirectData;
+        NIXL_ASSERT(req_data.asymmetricPreTransfer.has_value());
+        switch (req_data.state) {
+        case nixl_service_xfer_state_t::PRE_START:
+            return NIXL_ERR_NOT_POSTED;
+        case nixl_service_xfer_state_t::IN_PROGRESS:
+        case nixl_service_xfer_state_t::CANCELLING:
+            return NIXL_IN_PROG;
+        case nixl_service_xfer_state_t::DONE:
+            setTelemetryDurations(*req_hndl->telemetry);
+            return req_data.asymmetricPreTransfer->completionStatus;
+        default:
+            NIXL_ASSERT(false);
+            return NIXL_ERR_UNKNOWN;
+        }
     }
 
     if (req_hndl->xferReq != nullptr) {
@@ -3184,6 +4036,7 @@ nixlServiceAgent::getXferStatus(nixlServiceXferReqH *req_hndl) {
     case nixl_service_xfer_state_t::IN_PROGRESS:
         return NIXL_IN_PROG;
     case nixl_service_xfer_state_t::DONE:
+        setTelemetryDurations(*req_hndl->telemetry);
         return NIXL_SUCCESS;
     default:
         NIXL_ASSERT(false);
@@ -3217,6 +4070,23 @@ nixlServiceAgent::releaseXferReq(nixlServiceXferReqH *req_hndl) {
                         const auto xfer_id = *req_hndl->readReceiveXferId;
                         NIXL_ASSERT(data_->readReceiveReqs_.count(xfer_id) == 1);
                         auto &receive_req = *data_->readReceiveReqs_[xfer_id];
+                        if (receive_req.asymmetricPostTransfer.has_value()) {
+                            const bool fully_drained =
+                                std::all_of(receive_req.localSlots.begin(),
+                                            receive_req.localSlots.end(),
+                                            [](const slotWorkItem &slot) {
+                                                return slot.state == local_slot_state_t::FREE;
+                                            });
+                            // TODO-Eyal: support mid-transfer release for asymmetric POST reads.
+                            if (!fully_drained ||
+                                receive_req.state == nixl_service_xfer_state_t::IN_PROGRESS) {
+                                return NIXL_ERR_REPOST_ACTIVE;
+                            }
+                            data_->freeSlotGroup(receive_req.localSlots);
+                            data_->readReceiveReqs_.erase(xfer_id);
+                            delete req_hndl;
+                            return NIXL_SUCCESS;
+                        }
                         // For a marshal READ, the direct child (if any - null for
                         // marshal-only) lives here rather than on req_hndl (see
                         // inboundXferReqH::directChild), so it is released here instead of
@@ -3270,6 +4140,26 @@ nixlServiceAgent::releaseXferReq(nixlServiceXferReqH *req_hndl) {
                     return (direct_ret != NIXL_SUCCESS) ? direct_ret : read_ret;
                 }
 
+                if (req_hndl->phase == nixl_marshal_phase_t::PRE_TRANSFER) {
+                    NIXL_ASSERT(req_hndl->nonDirectData.has_value());
+                    auto &req_data = *req_hndl->nonDirectData;
+                    if (req_data.state == nixl_service_xfer_state_t::IN_PROGRESS ||
+                        req_data.state == nixl_service_xfer_state_t::CANCELLING) {
+                        return NIXL_ERR_REPOST_ACTIVE;
+                    }
+                    if (req_data.state == nixl_service_xfer_state_t::PRE_START) {
+                        for (auto &slot : req_data.localSlots) {
+                            if (slot.has_value()) {
+                                data_->freeSingleSourceSlot(req_data, slot.value());
+                            }
+                        }
+                    } else {
+                        NIXL_ASSERT(req_data.state == nixl_service_xfer_state_t::DONE);
+                    }
+                    data_->outboundXferReqs_.erase(req_data.xferId);
+                    return direct_ret;
+                }
+
                 if (!req_hndl->nonDirectData.has_value()) {
                     delete req_hndl;
                     return direct_ret;
@@ -3288,7 +4178,11 @@ nixlServiceAgent::releaseXferReq(nixlServiceXferReqH *req_hndl) {
                             return ret;
                         }
                     }
-                    data_->freeSlotGroup(req_data.localSlots);
+                    for (auto &slot : req_data.localSlots) {
+                        if (slot.has_value()) {
+                            data_->freeSingleSourceSlot(req_data, slot.value());
+                        }
+                    }
                 }
                 data_->outboundXferReqs_.erase(
                     req_data.xferId); // This will delete the req_hndl, since it is
@@ -3305,4 +4199,38 @@ nixlServiceAgent::getNotifs(nixl_notifs_t &notifs, const nixl_opt_args_t *extra_
     NIXL_ASSERT(progress_ret == NIXL_SUCCESS || progress_ret == NIXL_IN_PROG);
     auto notifs_ret = nixlAgent::getNotifs(notifs, extra_params);
     return notifs_ret;
+}
+
+nixl_status_t
+nixlServiceAgent::getXferTelemetry(const nixlServiceXferReqH *req_hndl,
+                                   nixl_xfer_telem_t &telemetry) const {
+    return std::visit(
+        overloaded{
+            [&](const nixlMarshalDirectOptArgs &) -> nixl_status_t {
+                return nixlAgent::getXferTelemetry(req_hndl->xferReq, telemetry);
+            },
+            [&](const auto &non_direct_mode_opt_args) -> nixl_status_t {
+                // A request with no marshal part carries no service telemetry
+                if (!req_hndl->nonDirectData.has_value() &&
+                    !req_hndl->readReceiveXferId.has_value()) {
+                    return nixlAgent::getXferTelemetry(req_hndl->xferReq, telemetry);
+                }
+                if (!data_->captureTelemetry_) {
+                    return NIXL_ERR_NO_TELEMETRY;
+                }
+                nixl_service_xfer_state_t state;
+                if (req_hndl->readReceiveXferId.has_value()) {
+                    NIXL_ASSERT(data_->readReceiveReqs_.count(*req_hndl->readReceiveXferId) == 1);
+                    state = data_->readReceiveReqs_[*req_hndl->readReceiveXferId]->state;
+                } else {
+                    state = req_hndl->nonDirectData->state;
+                }
+                if (state != nixl_service_xfer_state_t::DONE) {
+                    return NIXL_ERR_UNKNOWN;
+                }
+                telemetry = *req_hndl->telemetry;
+                return NIXL_SUCCESS;
+            },
+        },
+        req_hndl->marshalOptArgs);
 }

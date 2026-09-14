@@ -40,6 +40,7 @@
 #include <thread>
 #include <utils/serdes/serdes.h>
 #include <omp.h>
+#include <nixl_service.h>
 
 // MAP_HUGE_2MB may not be defined on all systems, define it if needed
 #ifndef MAP_HUGE_2MB
@@ -53,7 +54,9 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) return VRAM_SEG;
+    if (neuronCoreCount() > 0) {
+        return VRAM_SEG;
+    }
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
@@ -117,9 +120,10 @@ getRandomSeed() {
 
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
     : xferBenchWorker(),
+      seg_type(GET_SEG_TYPE(isInitiator())),
+      marshal_(xferBenchConfig::marshal),
+      svc_desc_(seg_type),
       default_rng_(getRandomSeed()) {
-    seg_type = GET_SEG_TYPE(isInitiator());
-
     int rank;
     std::string backend_name;
     nixl_b_params_t backend_params;
@@ -133,11 +137,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 
     rank = rt->getRank();
 
-    nixlAgentConfig dev_meta;
-    dev_meta.useProgThread = enable_pt;
-    dev_meta.syncMode = sync_mode;
-
-    agent = new nixlAgent(name, dev_meta);
+    nixlServiceAgentConfig cfg;
+    cfg.useProgThread = enable_pt;
+    cfg.syncMode = sync_mode;
+    cfg.captureTelemetry = xferBenchConfig::telemetry;
+    cfg.mode = marshal_.cfg;
+    agent = new nixlServiceAgent(name, cfg);
 
     agent->getAvailPlugins(plugins);
 
@@ -377,6 +382,20 @@ xferBenchNixlWorker::~xferBenchNixlWorker() {
         delete agent;
         agent = nullptr;
     }
+}
+
+void
+xferBenchNixlWorker::releaseServiceMem() {
+    nixl_opt_args_t opt_args;
+    opt_args.backends.push_back(backend_engine);
+    CHECK_NIXL_ERROR(agent->deregisterServiceMem(svc_desc_, &opt_args),
+                     "deregisterServiceMem failed");
+    // When adding MG's support, we should cudaSetDevice here
+    for (const auto &desc : svc_desc_) {
+        CHECK_CUDA_ERROR(cudaFree(reinterpret_cast<void *>(desc.addr)),
+                         "Failed to free service staging buffer");
+    }
+    svc_desc_.clear();
 }
 
 // Convert nixl_xfer_dlist_t to vector of xferBenchIOV
@@ -1218,6 +1237,18 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         nixl_reg_dlist_t cc_desc = iovListToNixlRegDlist(cc_list, VRAM_SEG);
         CHECK_NIXL_ERROR(agent->registerMem(cc_desc, &opt_args),
                          "registerMem failed for completion counter");
+    } else if (marshal_.requires_service_mem) {
+        void *svc_ptr = nullptr;
+        const auto svc_size = nixlService::recommendServiceMemSize(marshal_.cfg);
+        CHECK_CUDA_ERROR(cudaMalloc(&svc_ptr, svc_size),
+                         "Failed to allocate service staging buffer");
+        const int dev_id = static_cast<int>(local_regs_.front().iovs().front().devId);
+        svc_desc_.clear();
+        // When supporting multiple devices, we will need to cudaSetDevice
+        svc_desc_.addDesc(nixlBlobDesc(reinterpret_cast<uintptr_t>(svc_ptr), svc_size, dev_id));
+        CHECK_NIXL_ERROR(agent->registerServiceMem(svc_desc_, &opt_args),
+                         "registerServiceMem failed");
+        std::cout << "Registered service staging buffer with " << svc_size << " bytes" << std::endl;
     }
 
     return iov_lists;
@@ -1225,9 +1256,13 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
 void
 xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
-    // Ordering: deregister remote regions before local ones
+    // Ordering: first deregister the service memory, then
+    // remote regions and only after local ones
     // (remote registrations may reference local buffers).
     // NixlMemRegion::release() handles deregisterMem + per-IOV cleanup.
+    if (marshal_.requires_service_mem) {
+        releaseServiceMem();
+    }
     remote_regs_.clear();
     // xferFileState RAII closes backing fds after deregistrations complete.
     remote_fds.clear();
@@ -1247,6 +1282,55 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
 
     local_regs_.clear();
     iov_lists.clear();
+}
+
+static int
+sendMD(xferBenchRT *rt, int peer_rank, std::string &md) {
+    int meta_sz = static_cast<int>(md.size());
+    int ret = rt->sendInt(&meta_sz, peer_rank);
+    if (ret < 0) {
+        return ret;
+    }
+    return rt->sendChar(md.data(), meta_sz, peer_rank);
+}
+
+static int
+recvAndLoadMD(xferBenchRT *rt, nixlServiceAgent *agent, int peer_rank) {
+    int meta_sz;
+    int ret = rt->recvInt(&meta_sz, peer_rank);
+    if (ret < 0) {
+        return ret;
+    }
+
+    std::string remote_md(meta_sz, '\0');
+    ret = rt->recvChar(remote_md.data(), meta_sz, peer_rank);
+    if (ret < 0) {
+        return ret;
+    }
+
+    std::string remote_name;
+    return agent->loadRemoteMD(remote_md, remote_name) == NIXL_SUCCESS ? 0 : -1;
+}
+
+// Send initiator's MD to target after the original target->initiator exchange, so both sides can
+// loadRemoteMD.
+int
+xferBenchNixlWorker::exchangeInitiatorMetadata() {
+    int peer_rank;
+    if (IS_PAIRWISE_AND_SG()) {
+        peer_rank = isTarget() ? rt->getRank() - xferBenchConfig::num_initiator_dev :
+                                 rt->getRank() + xferBenchConfig::num_initiator_dev;
+    } else {
+        peer_rank = isTarget() ? 0 : 1;
+    }
+
+    if (isTarget()) {
+        return recvAndLoadMD(rt, agent, peer_rank);
+    }
+
+    std::string local_md;
+    agent->getLocalMD(local_md);
+    return sendMD(rt, peer_rank, local_md);
 }
 
 int
@@ -1309,7 +1393,9 @@ xferBenchNixlWorker::exchangeMetadata() {
         }
     }
 
-    return ret;
+    // Complete the exchange in the opposite direction. The original phase
+    // above guarantees that the target sends before it starts receiving.
+    return exchangeInitiatorMetadata();
 }
 
 std::vector<std::vector<xferBenchIOV>>
@@ -1567,29 +1653,30 @@ deregisterIterationMem(nixlAgent *agent,
 
 // Per-slot state for execTransferLoop. A slot owns its slice of the IOV
 // vector for the lifetime of the run; req/registered track the current
-// nixlXferReqH and registration state so the prepare/post/recycle helpers
+// nixlServiceXferReqH and registration state so the prepare/post/recycle helpers
 // can be called idempotently.
 struct slotState {
     std::vector<xferBenchIOV> local_iov;
     std::vector<xferBenchIOV> remote_iov;
-    nixlXferReqH *req = nullptr;
+    nixlServiceXferReqH *req = nullptr;
     bool in_flight = false;
     bool registered = false;
     nixlTime::us_t post_ts = 0;
     nixlDlistH *prep_local_dlist = nullptr;
     nixlDlistH *prep_remote_dlist = nullptr;
     std::vector<int> indices;
+    size_t original_bytes = 0;
 };
 
 // Register memory (if --reregister_mem) and create the XferReq for a slot
 // that doesn't already have one. Records the wall-clock time as
 // prepare_duration.
 static nixl_status_t
-prepareSlot(nixlAgent *agent,
+prepareSlot(nixlServiceAgent *agent,
             nixlBackendH *backend_engine,
             const nixl_xfer_op_t op,
             const std::string &target,
-            nixl_opt_args_t &params,
+            nixl_service_opt_args_t &params,
             xferBenchStats &thread_stats,
             slotState &slot) {
     const bool reregister = xferBenchConfig::reregister_mem;
@@ -1622,13 +1709,15 @@ prepareSlot(nixlAgent *agent,
                 slot.indices.resize(ld.descCount());
                 std::iota(slot.indices.begin(), slot.indices.end(), 0);
             }
-            rc = agent->makeXferReq(op,
-                                    *slot.prep_local_dlist,
-                                    slot.indices,
-                                    *slot.prep_remote_dlist,
-                                    slot.indices,
-                                    slot.req,
-                                    &params);
+            // TODO: Implement makeXferReq for service API
+            // rc = agent->makeXferReq(op,
+            //                         *slot.prep_local_dlist,
+            //                         slot.indices,
+            //                         *slot.prep_remote_dlist,
+            //                         slot.indices,
+            //                         slot.req,
+            //                         &params);
+            rc = NIXL_ERR_NOT_SUPPORTED;
         } else {
             nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
             nixl_xfer_dlist_t rd(GET_SEG_TYPE(false));
@@ -1647,9 +1736,12 @@ prepareSlot(nixlAgent *agent,
 // Post the slot's request and record post_duration. Marks the slot
 // in-flight; the caller drives completion via getXferStatus.
 static nixl_status_t
-postSlot(nixlAgent *agent, xferBenchStats &thread_stats, slotState &slot) {
+postSlot(nixlServiceAgent *agent,
+         nixl_service_opt_args_t &params,
+         xferBenchStats &thread_stats,
+         slotState &slot) {
     const nixlTime::us_t post_start = nixlTime::getUs();
-    nixl_status_t rc = agent->postXferReq(slot.req);
+    nixl_status_t rc = agent->postXferReq(slot.req, &params);
     if (rc != NIXL_SUCCESS && rc != NIXL_IN_PROG) {
         return rc;
     }
@@ -1662,7 +1754,7 @@ postSlot(nixlAgent *agent, xferBenchStats &thread_stats, slotState &slot) {
 // Tear down the request and (if --reregister_mem) the registration so the
 // next prepareSlot exercises the full lifecycle.
 static nixl_status_t
-recycleSlot(nixlAgent *agent, nixlBackendH *backend_engine, slotState &slot) {
+recycleSlot(nixlServiceAgent *agent, nixlBackendH *backend_engine, slotState &slot) {
     if (slot.req) {
         agent->releaseXferReq(slot.req);
         slot.req = nullptr;
@@ -1691,7 +1783,7 @@ recycleSlot(nixlAgent *agent, nixlBackendH *backend_engine, slotState &slot) {
 
 // Best-effort teardown for early-exit / error paths.
 static void
-cleanupSlots(nixlAgent *agent, nixlBackendH *backend_engine, std::vector<slotState> &slots) {
+cleanupSlots(nixlServiceAgent *agent, nixlBackendH *backend_engine, std::vector<slotState> &slots) {
     for (auto &slot : slots) {
         if (slot.req) {
             agent->releaseXferReq(slot.req);
@@ -1718,11 +1810,11 @@ cleanupSlots(nixlAgent *agent, nixlBackendH *backend_engine, std::vector<slotSta
 // tears down and rebuilds the request between iterations, --reregister_mem
 // adds the matching registerMem/deregisterMem cycle.
 static int
-execTransferLoop(nixlAgent *agent,
+execTransferLoop(nixlServiceAgent *agent,
                  nixlBackendH *backend_engine,
                  const nixl_xfer_op_t op,
                  const std::string &target,
-                 nixl_opt_args_t &params,
+                 nixl_service_opt_args_t &params,
                  const int num_iter,
                  xferBenchStats &thread_stats,
                  const std::vector<xferBenchIOV> &local_iov,
@@ -1748,6 +1840,10 @@ execTransferLoop(nixlAgent *agent,
         auto rb = remote_iov.begin() + s * entries_per_slot;
         slots[s].local_iov.assign(lb, lb + entries_per_slot);
         slots[s].remote_iov.assign(rb, rb + entries_per_slot);
+        slots[s].original_bytes =
+            std::accumulate(lb, lb + entries_per_slot, size_t{0}, [](size_t sum, const auto &iov) {
+                return sum + iov.len;
+            });
     }
 
     int issued = 0;
@@ -1766,7 +1862,7 @@ execTransferLoop(nixlAgent *agent,
             cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
-        rc = postSlot(agent, thread_stats, slots[s]);
+        rc = postSlot(agent, params, thread_stats, slots[s]);
         if (rc != NIXL_SUCCESS) [[unlikely]] {
             std::cerr << "postSlot failed for slot " << s << ": " << nixlEnumStrings::statusStr(rc)
                       << std::endl;
@@ -1802,6 +1898,19 @@ execTransferLoop(nixlAgent *agent,
             thread_stats.transfer_duration.add(nixlTime::getUs() - slots[s].post_ts);
             slots[s].in_flight = false;
 
+            if (xferBenchConfig::telemetry) {
+                nixl_xfer_telem_t telemetry;
+                rc = agent->getXferTelemetry(slots[s].req, telemetry);
+                if (rc != NIXL_SUCCESS) [[unlikely]] {
+                    std::cerr << "getXferTelemetry failed on slot " << s << ": "
+                              << nixlEnumStrings::statusStr(rc) << std::endl;
+                    cleanupSlots(agent, backend_engine, slots);
+                    return -1;
+                }
+                thread_stats.compression_ratio.add(static_cast<double>(slots[s].original_bytes) /
+                                                   static_cast<double>(telemetry.totalBytes));
+            }
+
             if (issued >= num_iter) {
                 continue;
             }
@@ -1828,7 +1937,7 @@ execTransferLoop(nixlAgent *agent,
                 }
             }
 
-            rc = postSlot(agent, thread_stats, slots[s]);
+            rc = postSlot(agent, params, thread_stats, slots[s]);
             if (rc != NIXL_SUCCESS) [[unlikely]] {
                 std::cerr << "postSlot failed on resubmit for slot " << s << ": "
                           << nixlEnumStrings::statusStr(rc) << std::endl;
@@ -1844,11 +1953,12 @@ execTransferLoop(nixlAgent *agent,
 }
 
 static int
-execTransfer(nixlAgent *agent,
+execTransfer(nixlServiceAgent *agent,
              nixlBackendH *backend_engine,
              const std::vector<std::vector<xferBenchIOV>> &local_iovs,
              const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
              const nixl_xfer_op_t op,
+             const std::optional<nixl_marshal_opt_args_t> &marshal_opt_args,
              const int num_iter,
              const int num_threads,
              xferBenchStats &stats,
@@ -1866,11 +1976,12 @@ execTransfer(nixlAgent *agent,
         const auto &remote_iov = remote_iovs[tid];
 
         // Setup transfer parameters
-        nixl_opt_args_t params;
+        nixl_service_opt_args_t params;
         std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
         if (!xferBenchConfig::isStorageBackend()) {
             params.notif = "0xBEEF";
         }
+        params.marshalOptArgs = marshal_opt_args;
 
         int result = execTransferLoop(agent,
                                       backend_engine,
@@ -2153,6 +2264,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                local_iovs,
                                remote_iovs,
                                xfer_op,
+                               marshal_.opt_args,
                                skip,
                                xferBenchConfig::num_threads,
                                stats,
@@ -2177,16 +2289,20 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                  stats,
                                  &terminate);
     } else {
+        stats.clear();
+
         ret = execTransfer(agent,
                            backend_engine,
                            local_iovs,
                            remote_iovs,
                            xfer_op,
+                           marshal_.opt_args,
                            num_iter,
                            xferBenchConfig::num_threads,
                            stats,
                            &terminate);
     }
+
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);
     }

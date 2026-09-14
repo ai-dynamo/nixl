@@ -55,8 +55,9 @@ nixl_lib_path = join_paths(nixl_path, get_option('libdir'))
 nixl_lib = cpp.find_library('nixl', dirs: [nixl_lib_path])
 nixl_build = cpp.find_library('nixl_build', dirs: [nixl_lib_path])
 nixl_serdes = cpp.find_library('serdes', dirs: [nixl_lib_path])
+nixl_service = cpp.find_library('nixl_service', dirs: [nixl_lib_path])
 
-if not nixl_lib.found() or not nixl_build.found() or not nixl_serdes.found()
+if not nixl_lib.found() or not nixl_build.found() or not nixl_serdes.found() or not nixl_service.found()
     error('NIXL Libraries not found. Exiting.')
 endif
 
@@ -169,9 +170,17 @@ endif
 
 etcd_inc = etcd_inc_path
 nixl_inc = nixl_path + '/include'
+nixl_service_inc = nixl_inc + '/nixl'
+nixl_marshal_inc = nixl_service_inc + '/marshal'
 nvshmem_inc = nvshmem_inc_path
 
-inc_dir = include_directories('.', './src/', nixl_inc)
+inc_dir = include_directories('.', './src/', nixl_inc, nixl_service_inc, nixl_marshal_inc)
+
+# The size-recommendation helpers in nixl_service.h are inline and call directly into the
+# marshal backend libraries, so they have to be linked explicitly.
+nixl_marshal_libs = [
+    cpp.find_library('nixl_marshal_staging', dirs: [nixl_lib_path]),
+]
 
 nvshmem_available = false
 if nvshmem_lib_path != ''
@@ -180,7 +189,7 @@ if nvshmem_lib_path != ''
         nvshmem_host_lib = cpp.find_library('nvshmem_host', dirs: [nvshmem_lib_path])
         if nvshmem_lib.found()
             nvshmem_available = true
-            inc_dir = include_directories('.', './src/', nixl_inc, nvshmem_inc)
+            inc_dir = include_directories('.', './src/', nixl_inc, nixl_service_inc, nixl_marshal_inc, nvshmem_inc)
             add_project_arguments('-DHAVE_NVSHMEM', language: 'cpp')
             add_project_arguments('-Wno-unused-variable', language: 'cpp')
         endif
@@ -345,7 +354,8 @@ configure_file(
     install_dir: get_option('includedir') / 'nixlbench'
 )
 
-deps = [nixl_lib, nixl_build, nixl_serdes, openmp_dep, gflags_dep, tomlplusplus_dep, asio_dep]
+deps = [nixl_lib, nixl_build, nixl_serdes, nixl_service, openmp_dep, gflags_dep, tomlplusplus_dep, asio_dep]
+deps += nixl_marshal_libs
 args = []
 if raw_cli_available
     deps += [cli11_dep]
@@ -382,6 +392,8 @@ if nvshmem_available
         endif
     endif
     nvcc_args += ['-I' + nixl_inc]
+    nvcc_args += ['-I' + nixl_service_inc]
+    nvcc_args += ['-I' + nixl_marshal_inc]
     nvcc_args += ['-I' + nvshmem_inc]
     nvcc_args += ['-I.', '-I./src/', '-I../src/']
     nvcc_args += ['-I' + meson.current_build_dir()]
@@ -395,7 +407,8 @@ if nvshmem_available
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/utils']
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/runtime']
     nvcc_args += ['-L' + meson.current_build_dir() + '/src/worker']
-    nvcc_args += ['-lnixl', '-lnixl_build', '-lserdes', '-lcuda', '-lcudart', '-lnvshmem']
+    nvcc_args += ['-lnixl', '-lnixl_build', '-lserdes', '-lnixl_service', '-lcuda', '-lcudart', '-lnvshmem']
+    nvcc_args += ['-lnixl_marshal_staging', '-lnixl_marshal_delta']
     nvcc_args += args
     nvcc_cmd_files = [
                  meson.current_build_dir() + '/src/utils/libutils.a.p/utils.cpp.o',
