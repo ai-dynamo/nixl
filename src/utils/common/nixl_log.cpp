@@ -205,11 +205,18 @@ public:
             return;
         }
 
-        // Before the write, so the limit is one the file stays under.
-        if (limit_ != 0 && written_ != 0 && written_ + line.size() > limit_) {
-            rotate();
-            if (failed_) {
+        if (limit_ != 0) {
+            // It cannot fit in an empty file. Stderr still receives the record.
+            if (line.size() > limit_) {
                 return;
+            }
+
+            // Rotate before writing so neither generation exceeds the limit.
+            if (written_ > limit_ - line.size()) {
+                rotate();
+                if (failed_) {
+                    return;
+                }
             }
         }
 
