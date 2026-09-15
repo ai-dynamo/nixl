@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -72,14 +72,14 @@ private:
     doca_dev *dev;
     doca_verbs_context *verbs_ctx;
     doca_verbs_pd *verbs_pd;
-    doca_uar *external_uar;
+    doca_uar *external_uar = nullptr;
     uint16_t ncqe;
 
-    doca_verbs_cq *cq_verbs;
-    void *cq_umem_gpu_ptr;
-    doca_umem *cq_umem;
-    void *cq_umem_dbr_gpu_ptr;
-    doca_umem *cq_umem_dbr;
+    doca_verbs_cq *cq_verbs = nullptr;
+    void *cq_umem_gpu_ptr = nullptr;
+    doca_umem *cq_umem = nullptr;
+    void *cq_umem_dbr_gpu_ptr = nullptr;
+    doca_umem *cq_umem_dbr = nullptr;
 };
 
 class qp {
@@ -93,6 +93,13 @@ public:
        doca_gpu_dev_verbs_nic_handler nic_handler);
 
     ~qp();
+
+    /**
+     * @brief Unexport the GPU QP and release its backing resources.
+     * @return true when teardown completed; false when the exported QP must remain alive.
+     */
+    bool
+    close() noexcept;
 
     [[nodiscard]] doca_verbs_qp *
     get_qp() const {
@@ -124,14 +131,14 @@ private:
     uint16_t rq_nwqe;
     doca_gpu_dev_verbs_nic_handler nic_handler;
 
-    doca_verbs_qp *qp_verbs;
-    void *qp_umem_gpu_ptr;
-    doca_umem *qp_umem;
-    void *qp_umem_dbr_gpu_ptr;
-    doca_umem *qp_umem_dbr;
-    doca_uar *external_uar;
-    doca_gpu_verbs_qp *qp_gverbs;
-    doca_gpu_dev_verbs_qp *qp_gdev_verbs;
+    doca_verbs_qp *qp_verbs = nullptr;
+    void *qp_umem_gpu_ptr = nullptr;
+    doca_umem *qp_umem = nullptr;
+    void *qp_umem_dbr_gpu_ptr = nullptr;
+    doca_umem *qp_umem_dbr = nullptr;
+    doca_uar *external_uar = nullptr;
+    doca_gpu_verbs_qp *qp_gverbs = nullptr;
+    doca_gpu_dev_verbs_qp *qp_gdev_verbs = nullptr;
 
     std::unique_ptr<nixl::doca::verbs::cq> cq_rq;
     std::unique_ptr<nixl::doca::verbs::cq> cq_sq;

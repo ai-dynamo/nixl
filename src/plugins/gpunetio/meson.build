@@ -18,11 +18,40 @@ plugin_gpunetio_deps = [dependency('libibverbs'), dependency('libmlx5'), depende
 # C++20 for CUDA is set project-wide in the root meson.build.
 compile_flags = ['-D DOCA_ALLOW_EXPERIMENTAL_API']
 
+native_device_args = []
+if not get_option('gpunetio_device_api').disabled()
+    profile = get_option('gpunetio_device_api_profile')
+    native_device_args = ['-DNIXL_ENABLE_GPUNETIO_DEVICE_API=1']
+    if profile == 'legacy-doca31'
+        if not doca_gpunetio_dep.version().startswith('3.1.')
+            error('SDK_CONTRACT_UNVERIFIED: legacy-doca31 requires DOCA 3.1 headers/libraries')
+        endif
+        native_device_args += ['-DNIXL_GPUNETIO_DEVICE_API_LEGACY_DOCA31=1']
+    else
+        native_device_args += ['-DNIXL_GPUNETIO_DEVICE_API_PUBLIC=1']
+    endif
+    if not nvcc.compiles('''
+        #include <gpu/impl/gpunetio/device_gpunetio.cuh>
+        using namespace nixl::gpu;
+        __global__ void probe(memViewElem a, memViewElem b, xferStatusH *s) {
+            impl::gpunetio::put<level_t::THREAD>(a, b, 4096, 0, 0, s);
+            impl::gpunetio::getXferStatus<level_t::THREAD>(*s);
+        }
+        int main() { return 0; }
+    ''', dependencies: plugin_gpunetio_deps,
+         args: native_device_args + nvcc_flags + ['-std=c++20',
+             '-I' + meson.project_source_root() / 'src/api/device',
+             '-I' + meson.project_source_root() / 'src/api/cpp'])
+        error('SDK_CONTRACT_UNVERIFIED: native PUT/status adapter failed CUDA compile probe')
+    endif
+    compile_flags += ['-DNIXL_GPUNETIO_DEVICE_API_HOST=1']
+endif
+
 if 'GPUNETIO' in static_plugins
     gpunetio_backend_lib = static_library('GPUNETIO',
-               'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
-               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               'verbs/verbs.cpp', 'gpunetio_device_memview.cpp', 'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep, device_allocator_interface],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, nixl_device_inc_dirs],
                install: true,
                cpp_args : compile_flags,
                cuda_args : ['-rdc=true'],
@@ -30,9 +59,9 @@ if 'GPUNETIO' in static_plugins
                install_dir: plugin_install_dir)  # Custom prefix for plugin libraries
 else
     gpunetio_backend_lib = shared_library('GPUNETIO',
-               'verbs/verbs.cpp', 'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
-               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep],
-               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               'verbs/verbs.cpp', 'gpunetio_device_memview.cpp', 'gpunetio_backend.cpp', 'gpunetio_backend.h', 'gpunetio_backend_aux.h', 'gpunetio_plugin.cpp', 'gpunetio_utils.cpp', 'gpunetio_kernels.cu',
+               dependencies: [nixl_infra, serdes_interface, cuda_dep, plugin_gpunetio_deps, absl_log_dep, device_allocator_interface],
+               include_directories: [nixl_inc_dirs, utils_inc_dirs, nixl_device_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries

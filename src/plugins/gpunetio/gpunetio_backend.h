@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,23 +19,26 @@
 #define GPUNETIO_BACKEND_H
 
 #include "gpunetio_backend_aux.h"
+#include "gpunetio_device_memview.h"
 
 class nixlDocaEngine : public nixlBackendEngine {
 public:
     CUcontext main_cuda_ctx;
     int oob_sock_server;
-    std::mutex notifLock;
-    std::mutex qpLock;
+    std::atomic<int> activeOobSocket{-1};
+    mutable std::mutex notifLock;
+    mutable std::mutex qpLock;
     std::mutex connectLock;
+    mutable std::mutex remoteConnLock;
     std::vector<std::pair<uint32_t, doca_gpu *>> gdevs; /* List of DOCA GPUNetIO device handlers */
-    doca_dev *ddev; /* DOCA device handler associated to queues */
-    doca_verbs_context *verbs_context; /* DOCA Verbs Context */
-    doca_verbs_pd *verbs_pd; /* DOCA Verbs Protection Domain */
-    doca_verbs_ah_attr *verbs_ah_attr; /* DOCA Verbs address handle */
-    struct ibv_pd *pd; /* local protection domain */
+    doca_dev *ddev = nullptr; /* DOCA device handler associated to queues */
+    doca_verbs_context *verbs_context = nullptr; /* DOCA Verbs Context */
+    doca_verbs_pd *verbs_pd = nullptr; /* DOCA Verbs Protection Domain */
+    doca_verbs_ah_attr *verbs_ah_attr = nullptr; /* DOCA Verbs address handle */
+    struct ibv_pd *pd = nullptr; /* local protection domain */
     doca_verbs_gid gid; /* local gid address */
     doca_verbs_gid remote_gid; /* remote gid address */
-    int lid; /* IB: local ID */
+    int lid = 0; /* IB: local ID */
     int dlid; /* IB: destination ID */
     int gid_index;
     struct ibv_port_attr port_attr;
@@ -64,8 +67,21 @@ public:
 
     bool
     supportsNotif() const {
-        return true;
+        return !nativeMode_;
     }
+
+    nixl_device_exec_mode_t
+    getDeviceExecMode() const noexcept override;
+
+    nixl_status_t
+    prepMemView(const nixl_meta_dlist_t &,
+                nixlMemViewH &,
+                const nixl_opt_b_args_t * = nullptr) const override;
+    nixl_status_t
+    prepMemView(const nixl_remote_meta_dlist_t &,
+                nixlMemViewH &,
+                const nixl_opt_b_args_t * = nullptr) const override;
+    void releaseMemView(nixlMemViewH) const override;
 
     bool
     supportsProgTh() const {
@@ -144,13 +160,21 @@ public:
     recvRemoteAgentName(int oob_sock_client, std::string &remote_agent);
 
 private:
+    bool nativeMode_ = false;
+    mutable std::unique_ptr<nixlGpunetioNativeState> nativeState_;
+    void
+    initializeNativeState();
+    nixl_status_t
+    prepareNativeView(const nixl_meta_dlist_t *,
+                      const nixl_remote_meta_dlist_t *,
+                      nixlMemViewH &) const;
     struct doca_log_backend *sdk_log;
     std::string msg_tag_start = "DOCAS";
     std::string msg_tag_end = "DOCAE";
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
 
-    uint32_t local_port;
+    uint16_t local_port;
     int noSyncIters;
     uint8_t ipv4_addr[4];
     struct sockaddr oob_saddr;
@@ -158,14 +182,16 @@ private:
     std::thread pthr;
     uint64_t *last_rsvd_flags;
     uint64_t *last_posted_flags;
-    cudaStream_t post_stream[DOCA_POST_STREAM_NUM];
+    cudaStream_t post_stream[DOCA_POST_STREAM_NUM]{};
     cudaStream_t wait_stream;
     mutable std::atomic<uint32_t> xferStream;
     mutable std::atomic<uint32_t> lastPostedReq;
+    mutable std::mutex postLock_;
 
     struct docaXferReqGpu *xferReqRingGpu;
     struct docaXferReqGpu *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
+    mutable std::array<std::atomic_bool, DOCA_XFER_REQ_MAX> xferReqReserved_;
 
     struct docaXferCompletion *completion_list_gpu;
     struct docaXferCompletion *completion_list_cpu;
@@ -182,24 +208,33 @@ private:
     // Map of agent name to saved nixlDocaConnection info
     std::unordered_map<std::string, nixlDocaConnection> remoteConnMap;
     std::unordered_map<std::string, struct nixlDocaRdmaQp *> qpMap;
+    std::unique_ptr<nixlDocaRdmaQp> retainedQp_;
     std::unordered_map<std::string, int> connMap;
     std::unordered_map<std::string, struct nixlDocaNotif *> notifMap;
 
     pthread_t server_thread_id;
+    bool serverThreadStarted = false;
 
     class nixlDocaBckndReq : public nixlBackendReqH {
     private:
     public:
+        enum class completion_state : uint8_t { IN_PROGRESS, COMPLETING, COMPLETE };
+
         cudaStream_t stream;
         uint32_t devId;
-        uint32_t start_pos;
-        uint32_t end_pos;
+        std::vector<uint32_t> positions;
         uintptr_t backendHandleGpu;
+        size_t postedCount = 0;
+        nixl_status_t postStatus = NIXL_SUCCESS;
+        std::atomic<completion_state> completionState{completion_state::IN_PROGRESS};
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
         ~nixlDocaBckndReq() {}
     };
+
+    void
+    retireRequest(nixlDocaBckndReq *request) const;
 
     nixl_status_t
     progressThreadStart();

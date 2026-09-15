@@ -29,6 +29,12 @@ unit_test_deps += [agent_unit_test_dep]
 subdir('descriptors')
 unit_test_deps += [descriptors_unit_test_dep]
 
+subdir('device_allocator')
+unit_test_deps += [device_allocator_unit_test_dep]
+
+subdir('device_memview')
+unit_test_deps += [device_memview_unit_test_dep]
+
 subdir('util')
 unit_test_deps += [util_unit_test_dep]
 
@@ -54,6 +60,7 @@ unit_test_exe = executable('unit',
     dependencies : unit_test_deps,
     include_directories: [
         nixl_inc_dirs,
+        nixl_device_inc_dirs,
         utils_inc_dirs,
     ],
     link_with: [nixl_build_lib],

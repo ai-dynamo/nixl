@@ -53,6 +53,14 @@ subdir('mocks')
 subdir('unit')
 subdir('plugins')
 
+if not get_option('gpunetio_device_api').disabled()
+    native_device_test = executable('native-device-api-test',
+        'device_api/gpunetio_device_api_test.cu',
+        include_directories: [nixl_inc_dirs, nixl_device_inc_dirs],
+        dependencies: [nixl_dep, nixl_infra, cuda_dep, doca_gpunetio_dep, dependency('gtest', main: true)],
+        cuda_args: native_device_args)
+endif
+
 if ucx_gpu_device_api_available
     subdir('device_api')
 endif
@@ -122,7 +130,10 @@ gtest_sources = [
 if ucx_gpu_device_api_available
     gtest_sources += device_api_test_sources
     device_api_inc = [nixl_device_inc_dirs, include_directories('device_api')]
-    device_api_dep = [ucx_dep, doca_gpunetio_dep]
+    device_api_dep = [ucx_dep]
+    if doca_gpunetio_dep.found()
+        device_api_dep += [doca_gpunetio_dep]
+    endif
 else
     device_api_inc = []
     device_api_dep = []

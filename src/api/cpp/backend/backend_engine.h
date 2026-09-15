@@ -24,6 +24,7 @@
 #include <mutex>
 
 #include "nixl_types.h"
+#include "nixl_device_backend_types.h"
 #include "backend_aux.h"
 #include "telemetry_event.h"
 
@@ -110,6 +111,11 @@ class nixlBackendEngine {
         // Determines if a backend supports sending notifications. Related methods are not
         // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
         virtual bool supportsNotif() const = 0;
+
+        virtual nixl_device_exec_mode_t
+        getDeviceExecMode() const noexcept {
+            return nixl_device_exec_mode_t::NONE;
+        }
 
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?
 
