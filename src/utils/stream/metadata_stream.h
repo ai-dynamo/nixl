@@ -28,39 +28,38 @@
 #include <vector>
 #include <netinet/in.h>
 #include "nixl_types.h"
+#include "common/scoped_fd.h"
 
 #define RECV_BUFFER_SIZE 16384
 
 class nixlMetadataStream {
     protected:
         uint16_t port;
-        int                 socketFd;
-        std::string         listenerAddress;
-        sockaddr_storage listenerAddr;
-
-        bool
-        setupStream(int family);
-        void closeStream();
+        nixl::scopedFd socketFd;
 
     public:
         explicit nixlMetadataStream(uint16_t port) noexcept;
-        ~nixlMetadataStream();
 };
 
 
 class nixlMDStreamListener: public nixlMetadataStream {
     private:
         std::thread listenerThread;
-        int csock = -1;
+        nixl::scopedFd csock;
+
+        nixl::scopedFd
+        setupStream(int family);
 
         void            acceptClientsAsync();
-        void            recvFromClients(int clientSocket);
+        void
+        recvFromClients(nixl::scopedFd clientSocket);
 
     public:
         explicit nixlMDStreamListener(uint16_t port) noexcept;
         ~nixlMDStreamListener();
 
-        int         acceptClient();
+        nixl::scopedFd
+        acceptClient();
         void        setupListener();
         void        startListenerForClients();
         void        startListenerForClient();
@@ -69,13 +68,11 @@ class nixlMDStreamListener: public nixlMetadataStream {
 
 class nixlMDStreamClient: public nixlMetadataStream {
     private:
-        int         csock;
         std::string listenerAddress;
         bool setupClient();
 
     public:
         nixlMDStreamClient(const std::string &listenerAddress, uint16_t port);
-        ~nixlMDStreamClient();
 
         bool connectListener();
         void sendData(const std::string& data);

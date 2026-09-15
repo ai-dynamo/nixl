@@ -51,7 +51,7 @@ constexpr size_t max_frame_bytes = 1UL << 30; // 1 GiB
 // worker in the forced body read indefinitely.
 constexpr auto frame_body_timeout = std::chrono::seconds(5);
 
-int
+nixl::scopedFd
 connectToIP(const std::string &ip_addr, std::uint16_t port) {
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
@@ -60,33 +60,27 @@ connectToIP(const std::string &ip_addr, std::uint16_t port) {
     addrinfo *result = nullptr;
     if (getaddrinfo(ip_addr.c_str(), std::to_string(port).c_str(), &hints, &result) != 0) {
         NIXL_ERROR << "Invalid IPv4 or IPv6 address: " << ip_addr;
-        return -1;
+        return {};
     }
-    if (result->ai_family != AF_INET && result->ai_family != AF_INET6) {
-        NIXL_ERROR << "Unsupported address family: " << result->ai_family;
-        freeaddrinfo(result);
-        return -1;
-    }
-    sockaddr_storage listener_addr{};
-    const socklen_t listener_addr_len = result->ai_addrlen;
-    std::memcpy(&listener_addr, result->ai_addr, listener_addr_len);
-    freeaddrinfo(result);
-
-    const int ret_fd = socket(listener_addr.ss_family, SOCK_STREAM | SOCK_NONBLOCK, 0);
-    if (ret_fd == -1) {
-        NIXL_ERROR << "socket creation failed for ip_addr: " << ip_addr << " and port: " << port;
-        return -1;
+    const std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> address(result, freeaddrinfo);
+    if (address->ai_family != AF_INET && address->ai_family != AF_INET6) {
+        NIXL_ERROR << "Unsupported address family: " << address->ai_family;
+        return {};
     }
 
-    const int connect_ret =
-        connect(ret_fd, reinterpret_cast<const sockaddr *>(&listener_addr), listener_addr_len);
+    nixl::scopedFd ret_fd(socket(address->ai_family, SOCK_STREAM | SOCK_NONBLOCK, 0));
+    if (!ret_fd.valid()) {
+        NIXL_PERROR << "socket creation failed for ip_addr: " << ip_addr << " and port: " << port;
+        return {};
+    }
+
+    const int connect_ret = connect(ret_fd.get(), address->ai_addr, address->ai_addrlen);
     if (connect_ret < 0 && errno != EINPROGRESS) {
-        close(ret_fd);
-        return -1;
+        return {};
     }
 
     struct pollfd pfd;
-    pfd.fd = ret_fd;
+    pfd.fd = ret_fd.get();
     pfd.events = POLLOUT;
     pfd.revents = 0;
 
@@ -97,30 +91,26 @@ connectToIP(const std::string &ip_addr, std::uint16_t port) {
         } else {
             NIXL_ERROR << "poll timed out for ip_addr: " << ip_addr << " and port: " << port;
         }
-        close(ret_fd);
-        return -1;
+        return {};
     }
 
     if (!(pfd.revents & POLLOUT)) {
         NIXL_ERROR << "poll returned but socket not ready for write for ip_addr: " << ip_addr
                    << " and port: " << port;
-        close(ret_fd);
-        return -1;
+        return {};
     }
 
     int error = 0;
     socklen_t len = sizeof(error);
-    if (getsockopt(ret_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
+    if (getsockopt(ret_fd.get(), SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
         NIXL_PERROR << "getsockopt failed for ip_addr: " << ip_addr << " and port: " << port;
-        close(ret_fd);
-        return -1;
+        return {};
     }
 
     if (error != 0) {
         errno = error; // For the 'PERROR'.
         NIXL_PERROR << "getsockopt gave error for ip_addr: " << ip_addr << " and port: " << port;
-        close(ret_fd);
-        return -1;
+        return {};
     }
 
     return ret_fd;
@@ -229,12 +219,7 @@ nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx, const n
 }
 
 nixlP2PMetadataBackend::~nixlP2PMetadataBackend() {
-    // Before closing the sockets, not just when worker_ is destroyed after this
-    // body: its poll reads from remoteSockets_.
     worker_.stop();
-    for (auto &[peer, fd] : remoteSockets_) {
-        close(fd);
-    }
 }
 
 std::string_view
@@ -335,36 +320,35 @@ nixlP2PMetadataBackend::sendToPeer(const std::string &ip,
     const auto key = std::make_pair(ip, port);
     auto client = remoteSockets_.find(key);
     if (client == remoteSockets_.end()) {
-        const int new_client = connectToIP(ip, port);
-        if (new_client == -1) {
+        auto new_client = connectToIP(ip, port);
+        if (!new_client.valid()) {
             NIXL_ERROR << "P2P backend could not connect to IP " << ip << " and port " << port;
             return;
         }
-        client = remoteSockets_.emplace(key, new_client).first;
+        client = remoteSockets_.emplace(key, std::move(new_client)).first;
     }
     try {
-        sendCommMessage(client->second, msg);
+        sendCommMessage(client->second.get(), msg);
     }
     catch (const std::runtime_error &e) {
         NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
-        close(client->second);
         remoteSockets_.erase(client);
     }
 }
 
 void
 nixlP2PMetadataBackend::acceptPeers() {
-    int new_fd = 0;
-    while (new_fd != -1) {
-        new_fd = listener_->acceptClient();
-        if (new_fd == -1) {
+    while (true) {
+        auto new_fd = listener_->acceptClient();
+        if (!new_fd.valid()) {
             break;
         }
         sockaddr_storage client_address;
         socklen_t client_addrlen = sizeof(client_address);
-        if (getpeername(new_fd, (sockaddr *)&client_address, &client_addrlen) != 0) {
+        if (getpeername(new_fd.get(),
+                        reinterpret_cast<sockaddr *>(&client_address),
+                        &client_addrlen) != 0) {
             NIXL_PERROR << "getpeername failed for accepted client";
-            close(new_fd);
             continue;
         }
         char client_ip[INET6_ADDRSTRLEN];
@@ -390,12 +374,10 @@ nixlP2PMetadataBackend::acceptPeers() {
         }
         default:
             NIXL_ERROR << "Unsupported client address family: " << family;
-            close(new_fd);
             continue;
         }
         if (inet_ntop(family, address, client_ip, sizeof(client_ip)) == nullptr) {
             NIXL_PERROR << "inet_ntop failed for client address";
-            close(new_fd);
             continue;
         }
         std::string peer_ip(client_ip);
@@ -406,11 +388,12 @@ nixlP2PMetadataBackend::acceptPeers() {
                 peer_ip += "%" + std::to_string(scope_id);
             }
         }
-        remoteSockets_[std::make_pair(peer_ip, client_port)] = new_fd;
-        const int flags = fcntl(new_fd, F_GETFL, 0);
-        if (flags == -1 || fcntl(new_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        const int flags = fcntl(new_fd.get(), F_GETFL, 0);
+        if (flags == -1 || fcntl(new_fd.get(), F_SETFL, flags | O_NONBLOCK) == -1) {
             NIXL_PERROR << "fcntl failed for accepted client";
+            continue;
         }
+        remoteSockets_[std::make_pair(peer_ip, client_port)] = std::move(new_fd);
     }
 }
 
@@ -422,7 +405,7 @@ nixlP2PMetadataBackend::readIncoming() {
         bool disconnected = false;
 
         try {
-            if (!recvCommMessage(socket_iter->second, commands)) {
+            if (!recvCommMessage(socket_iter->second.get(), commands)) {
                 ++socket_iter;
                 continue;
             }
@@ -432,7 +415,6 @@ nixlP2PMetadataBackend::readIncoming() {
         // escape serviceEvents() and take down the worker.
         catch (const std::exception &e) {
             NIXL_ERROR << "Failed to receive message from peer, disconnecting: " << e.what();
-            close(socket_iter->second);
             socket_iter = remoteSockets_.erase(socket_iter);
             continue;
         }
@@ -456,7 +438,7 @@ nixlP2PMetadataBackend::readIncoming() {
                 nixl_blob_t blob;
                 (void)ctx_.getLocalMD(blob);
                 try {
-                    sendCommMessage(socket_iter->second, "NIXLCOMM:LOAD" + blob);
+                    sendCommMessage(socket_iter->second.get(), "NIXLCOMM:LOAD" + blob);
                 }
                 catch (const std::runtime_error &e) {
                     NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
@@ -473,7 +455,6 @@ nixlP2PMetadataBackend::readIncoming() {
         }
 
         if (disconnected) {
-            close(socket_iter->second);
             socket_iter = remoteSockets_.erase(socket_iter);
         } else {
             ++socket_iter;

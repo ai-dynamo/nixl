@@ -20,11 +20,11 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <unistd.h>
 #include <thread>
 #include <random>
 #include "nixl.h"
 #include "common.h"
+#include "common/scoped_fd.h"
 
 // Used to avoid failures when etcd is not available
 #if HAVE_ETCD
@@ -448,18 +448,19 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
-    const int fd = socket(AF_INET6, SOCK_STREAM, 0);
-    if (fd < 0 &&
+    nixl::scopedFd fd(socket(AF_INET6, SOCK_STREAM, 0));
+    if (!fd.valid() &&
         (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT || errno == EACCES || errno == EPERM)) {
         GTEST_SKIP() << "IPv6 is unavailable";
     }
-    ASSERT_GE(fd, 0);
+    ASSERT_TRUE(fd.valid());
     sockaddr_in6 loopback{};
     loopback.sin6_family = AF_INET6;
     loopback.sin6_addr = in6addr_loopback;
-    const int bind_result = bind(fd, reinterpret_cast<sockaddr *>(&loopback), sizeof(loopback));
+    const int bind_result =
+        bind(fd.get(), reinterpret_cast<sockaddr *>(&loopback), sizeof(loopback));
     const int bind_error = errno;
-    close(fd);
+    fd.reset();
     if (bind_result < 0 && bind_error == EADDRNOTAVAIL) {
         GTEST_SKIP() << "IPv6 loopback is unavailable";
     }

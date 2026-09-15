@@ -24,6 +24,7 @@
 #include "nixl_md_config.h"
 #include "nixl_metadata_backend.h"
 #include "nixl_metadata_worker.h"
+#include "common/scoped_fd.h"
 
 #include <cstdint>
 #include <map>
@@ -94,7 +95,7 @@ private:
 
     nixlMetadataContext &ctx_;
     const nixlMDConfig config_;
-    std::map<std::pair<std::string, std::uint16_t>, int> remoteSockets_;
+    std::map<std::pair<std::string, std::uint16_t>, nixl::scopedFd> remoteSockets_;
     std::unique_ptr<nixlMDStreamListener> listener_;
     // Declared last so it joins before the state its tasks touch is destroyed.
     nixlMetadataWorker worker_;
