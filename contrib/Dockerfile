@@ -333,7 +333,12 @@ RUN uv pip install --system --upgrade \
 RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
         echo "Using PyTorch from system site-packages"; \
     else \
-        export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+        if [ "$(echo $CUDA_VERSION | cut -d. -f1)" = "13" ]; then \
+            TORCH_CU_TAG="cu130"; \
+        else \
+            TORCH_CU_TAG="cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)"; \
+        fi && \
+        export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CU_TAG}" && \
         uv pip install --system torch torchvision torchaudio; \
     fi
 # setuptools for PEP 639 license metadata
