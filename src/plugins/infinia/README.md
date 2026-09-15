@@ -4,10 +4,9 @@ This backend provides high-performance object storage using DDN's Infinia storag
 
 ## Dependencies
 
-This backend requires the Infinia Client and Infinia Async libraries. The Infinia installation should include:
+This backend requires the Infinia Async SDK libraries. The Infinia installation should include:
 
-- **libred_client.so** - Core Infinia storage client functionality
-- **libred_async.so** - C++20 coroutine-based async API
+- **libred_async.so** - C++20 coroutine-based async API (links against libred_sdk.so)
 - **Headers**: `<red/red_async.hpp>`, `<red/red_status.h>`
 
 A C++20 compiler (GCC 10+ or Clang 14+) is required for coroutine support.
@@ -27,7 +26,11 @@ The `infinia_path` should point to the Infinia installation directory containing
 
 ## Configuration
 
-The Infinia backend supports configuration through backend parameter maps and environment variables.
+The Infinia backend supports configuration through:
+
+- Backend parameter maps (`nixl_b_params_t`) a key–value map of strings, i.e., `params["cluster"] = "mycluster";`
+- NIXL's common TOML configuration (via `NIXL_CONFIG_FILE` and `nixl::config`)
+- Environment variables (`RED_*`)
 
 ### Backend Parameters
 
@@ -43,8 +46,9 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | `num_buffers` | Number of buffers for operations | `512` | No |
 | `num_ring_entries` | Number of ring buffer entries | `512` | No |
 | `coremasks` | CPU core affinity mask (hexadecimal) | `0x2` | No |
+| `use_dmabuf` | Use DMA-BUF RDMA data transfer | `true` | No |
 | `max_retries` | Maximum retries for failed operations | (library default) | No |
-| `config_file` | Path to configuration file (key=value format) | - | No |
+| `batch_size` | Async operations per batch | (library default) | No |
 
 ### Environment Variables
 
@@ -58,12 +62,38 @@ The following environment variables are supported:
 
 ### Configuration Priority
 
-Configuration values are resolved in the following priority order (highest to lowest):
+Configuration precedence is slightly different for connection settings vs. tuning knobs.
 
-1. **Environment Variables**: Infinia environment variables
-2. **Backend Parameters**: Values passed directly in the backend parameter map
-3. **Configuration File**: Values from config file (if `config_file` parameter is provided)
-4. **Built-in Defaults**: Default values
+**Cluster / tenant / dataset (`cluster`, `tenant`, `subtenant`, `dataset`)**
+
+1. **Environment / NIXL TOML**: `RED_CLUSTER`, `RED_TENANT`, `RED_DATASET`
+   - If the environment variable is set, it wins.
+   - Otherwise, NIXL looks for the same key in the active TOML config
+     (e.g., `RED_CLUSTER` in `nixl-infinia.cfg`).
+2. **Backend Parameters**: Values passed directly in the backend parameter map.
+3. **Built-in Defaults**: `cluster1` / `red` / `red` / `red`.
+
+**Tuning knobs (`sthreads`, `num_buffers`, `num_ring_entries`, `coremasks`, `use_dmabuf`)**
+
+1. **Backend Parameters**: Highest priority for these knobs.
+2. **NIXL TOML**: For each tuning knob, the code does the following:
+   - Start with a compiled default (e.g. `sthreads = 8`).
+   - Apply any backend parameter if you set one
+     (e.g. `params["sthreads"] = "16"` → now `sthreads = 16`).
+   - Only if the value is still equal to the compiled default, it looks at TOML:
+     - If `sthreads` is still `8` (i.e., you didn't override it via params) and TOML has
+       `infinia.sthreads = 16`, then it sets `sthreads = 16` from TOML.
+   - If you did set a backend param for that knob, TOML is skipped for that knob.
+3. **Built-in Defaults**: As listed in the table above.
+
+**Retry/batching (`max_retries`, `batch_size`)**
+
+1. **Backend Parameters**: Highest priority (e.g. `params["max_retries"] = "5"`).
+2. **NIXL TOML**: Applied only if the value is still at the library default:
+   - `infinia.max_retries` overrides `red_async::RED_ASYNC_DEFAULT_MAX_RETRIES`.
+   - `infinia.batch_size` overrides `red_async::RED_ASYNC_DEFAULT_BATCH_SIZE`.
+3. **Library Defaults**: `red_async::RED_ASYNC_DEFAULT_MAX_RETRIES` and
+   `red_async::RED_ASYNC_DEFAULT_BATCH_SIZE`.
 
 ### Configuration Examples
 
@@ -86,23 +116,38 @@ export RED_DATASET=mydataset
 agent.createBackend("INFINIA", {});
 ```
 
-#### Configuration File
+#### NIXL TOML configuration (common config)
+
+NIXL also provides a common TOML-based configuration system. The INFINIA
+backend uses this to read `RED_*` connection settings and the `[infinia]`
+tuning table. An example file is provided as
+`src/plugins/infinia/nixl-infinia.cfg`.
+
+To use it, point `NIXL_CONFIG_FILE` at the example (or a copy of it):
 
 ```bash
-# infinia.conf
-cluster=mycluster
-tenant=mytenant
-subtenant=mysubtenant
-dataset=mydataset
-sthreads=16
-num_buffers=1024
-coremasks=0xff
+export NIXL_CONFIG_FILE=/path/to/src/plugins/infinia/nixl-infinia.cfg
 ```
 
-```cpp
-nixl_b_params_t params = {{"config_file", "/path/to/infinia.conf"}};
-agent.createBackend("INFINIA", params);
-```
+You can also pass the same path via higher-level tools:
+
+- `nixlbench --infinia_config_file /path/to/src/plugins/infinia/nixl-infinia.cfg`
+- `infinia_nixl_test -F /path/to/src/plugins/infinia/nixl-infinia.cfg [...options...]`
+
+The example `nixl-infinia.cfg` shows how to set:
+
+- `RED_CLUSTER`, `RED_TENANT`, `RED_DATASET`
+- `[infinia].sthreads`, `num_buffers`, `num_ring_entries`, `coremasks`, `use_dmabuf`, `max_retries`, `batch_size`
+
+These values act as convenient defaults that can still be overridden by
+backend parameters as described above.
+
+When debug logging is enabled, the INFINIA backend emits a single line during
+initialization starting with `INFINIA effective config:`. This log line
+prints the final resolved values for cluster, tenant, dataset, tuning knobs,
+and batching after applying environment variables, NIXL TOML config, and
+backend parameters. It is the easiest way to verify that your configuration is
+being interpreted as expected.
 
 ## Transfer Operations
 
