@@ -20,6 +20,9 @@
 #include <nixl.h>
 #include <sys/time.h>
 #include "utils/utils.h"
+#if HAVE_RAW_CLI
+#include "utils/raw_cli.h"
+#endif
 #include "utils/scope_guard.h"
 #include "worker/nixl/nixl_worker.h"
 #if HAVE_NVSHMEM && HAVE_CUDA
@@ -62,6 +65,12 @@ static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int nu
         }
     }
     stride = buffer_size / count;
+
+    // For hugepages: ensure stride is a multiple of 2MB so addresses stay 2MB-aligned
+    // This ensures dev_offset = (i * stride) % iov.len is always a multiple of 2MB
+    if (xferBenchConfig::use_hugepages) {
+        stride = ROUND_UP(stride, HUGEPAGE_SIZE);
+    }
 
     return std::make_pair(count, stride);
 }
@@ -108,11 +117,9 @@ static int processBatchSizes(xferBenchWorker &worker,
          !worker.signaled() &&
              batch_size <= xferBenchConfig::max_batch_size;
          batch_size *= 2) {
-        auto local_trans_lists = createTransferDescLists(worker,
-                                                         iov_lists,
-                                                         block_size,
-                                                         batch_size,
-                                                         num_threads);
+        size_t effective_batch = batch_size * xferBenchConfig::pipeline_depth;
+        auto local_trans_lists =
+            createTransferDescLists(worker, iov_lists, block_size, effective_batch, num_threads);
 
         if (worker.isTarget()) {
             if (xferBenchConfig::isStorageBackend()) {
@@ -155,14 +162,14 @@ static int processBatchSizes(xferBenchWorker &worker,
 namespace {
 std::unique_ptr<xferBenchWorker>
 createWorker() {
-    if (xferBenchConfig::worker_type == "nixl") {
+    if (xferBenchConfig::worker_type == XFERBENCH_WORKER_NIXL) {
         std::vector<std::string> devices = xferBenchConfig::parseDeviceList();
         if (devices.empty()) {
             std::cerr << "Failed to parse device list" << std::endl;
             return nullptr;
         }
         return std::make_unique<xferBenchNixlWorker>(devices);
-    } else if (xferBenchConfig::worker_type == "nvshmem") {
+    } else if (xferBenchConfig::worker_type == XFERBENCH_WORKER_NVSHMEM) {
 #if HAVE_NVSHMEM && HAVE_CUDA
         return std::make_unique<xferBenchNvshmemWorker>();
 #else
@@ -176,13 +183,10 @@ createWorker() {
 }
 } // namespace
 
-int main(int argc, char *argv[]) {
-    int ret = xferBenchConfig::parseConfig(argc, argv);
-    if (0 != ret) {
-        return EXIT_FAILURE;
-    }
-
-    int num_threads = xferBenchConfig::num_threads;
+static int
+runBenchmark() {
+    int ret = 0;
+    int num_workers = xferBenchConfig::workerNum();
 
     // Create the appropriate worker based on worker configuration
     std::unique_ptr<xferBenchWorker> worker_ptr = createWorker();
@@ -200,7 +204,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    std::vector<std::vector<xferBenchIOV>> iov_lists = worker_ptr->allocateMemory(num_threads);
+    std::vector<std::vector<xferBenchIOV>> iov_lists = worker_ptr->allocateMemory(num_workers);
     auto mem_guard = make_scope_guard ([&] {
         worker_ptr->deallocateMemory(iov_lists);
     });
@@ -211,7 +215,9 @@ int main(int argc, char *argv[]) {
     }
 
     if (worker_ptr->isInitiator() && worker_ptr->isMasterRank()) {
-        xferBenchConfig::printConfig();
+        if (!xferBenchConfig::plugin_parameters) {
+            xferBenchConfig::printConfig();
+        }
         xferBenchUtils::printStatsHeader();
     }
 
@@ -219,16 +225,35 @@ int main(int argc, char *argv[]) {
          !worker_ptr->signaled() &&
          block_size <= xferBenchConfig::max_block_size;
          block_size *= 2) {
-        ret = processBatchSizes(*worker_ptr, iov_lists, block_size, num_threads);
+        ret = processBatchSizes(*worker_ptr, iov_lists, block_size, num_workers);
         if (0 != ret) {
             return EXIT_FAILURE;
         }
     }
 
-    ret = worker_ptr->synchronize(); // Make sure environment is not used anymore
+    ret = worker_ptr->synchronize(true); // Make sure environment is not used anymore
     if (0 != ret) {
         return EXIT_FAILURE;
     }
 
     return worker_ptr->signaled() ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+int
+main(int argc, char *argv[]) {
+#if HAVE_RAW_CLI
+    if (nixlbench::isRawCommand(argc, argv)) {
+        const auto result = nixlbench::prepareRawCommand(argc, argv, std::cout, std::cerr);
+        if (result.status != EXIT_SUCCESS || !result.execute) {
+            return result.status;
+        }
+        return runBenchmark();
+    }
+#endif
+
+    // Preserve the flags-only interface by routing every non-raw invocation directly to gflags.
+    if (xferBenchConfig::parseConfig(argc, argv) != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    return runBenchmark();
 }

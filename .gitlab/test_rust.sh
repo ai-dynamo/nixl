@@ -20,6 +20,7 @@
 
 set -e
 set -x
+ulimit -c unlimited
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
@@ -52,11 +53,11 @@ export NIXL_NO_STUBS_FALLBACK=1
 start_etcd_server "/nixl/rust_ci"
 trap 'kill -9 $ETCD_PID 2>/dev/null || true' EXIT
 
-cargo test -- --test-threads=1
+cargo test --jobs "$NPROC" -- --test-threads=1
 
 # test that stubs and real wrapper defined APIs / symbols match
-g++ -c ./src/bindings/rust/wrapper.cpp -o wrapper.o -I ./src/api/cpp/
-g++ -c ./src/bindings/rust/stubs.cpp -o stubs.o
+g++ -std=c++20 -c ./src/bindings/rust/wrapper.cpp -o wrapper.o -I ./src/api/cpp/
+g++ -std=c++20 -c ./src/bindings/rust/stubs.cpp -o stubs.o
 
 nm -C --defined-only wrapper.o | awk '$2 ~ /^T$/ {print $3}' | sort > wrapper_symbols.txt
 nm -C --defined-only stubs.o | awk '$2 ~ /^T$/ {print $3}' | grep -v nixl_capi_stub_abort | sort > stubs_symbols.txt
@@ -74,7 +75,7 @@ fi
 
 
 # test stubs build
-cargo build --features stub-api
+cargo build --jobs "$NPROC" --features stub-api
 
 cargo package
 

@@ -20,10 +20,7 @@
 #include "libfabric/libfabric_common.h"
 #include "libfabric/libfabric_rail_manager.h"
 #include "common/nixl_log.h"
-
-#ifdef CUDA_FOUND
-#include <cuda_runtime.h>
-#endif
+#include "gpu_utils.h"
 
 #include <cmath>
 #include <cassert>
@@ -312,23 +309,18 @@ testBasicTopology() {
         topology.printTopologyInfo();
 
         // Test GPU-specific queries only if GPUs are detected
-        int num_gpus = topology.getNumNvidiaAccel();
+        int num_gpus = topology.getNumNvidiaAccel() + topology.getNumAmdAccel();
         if (num_gpus > 0) {
             NIXL_INFO << "3. Testing GPU-specific queries (detected " << num_gpus << " GPUs)...";
             int test_gpus = std::min(num_gpus, 3); // Test up to 3 GPUs or all available
             for (int gpu_id = 0; gpu_id < test_gpus; ++gpu_id) {
-#ifdef CUDA_FOUND
+#ifdef HAVE_GPU
                 // Get PCI bus ID for this GPU
-                cudaDeviceProp prop;
-                cudaGetDeviceProperties(&prop, gpu_id);
-
                 char pci_bus_id[32];
-                snprintf(pci_bus_id,
-                         sizeof(pci_bus_id),
-                         "%04x:%02x:%02x.0",
-                         prop.pciDomainID,
-                         prop.pciBusID,
-                         prop.pciDeviceID);
+                if (!gpuGetPciBusId(gpu_id, pci_bus_id, sizeof(pci_bus_id))) {
+                    NIXL_WARN << "   Failed to get properties for GPU " << gpu_id;
+                    continue;
+                }
 
                 auto gpu_devices = topology.getEfaDevicesForPci(pci_bus_id);
 
@@ -340,7 +332,7 @@ testBasicTopology() {
                 NIXL_INFO << "   GPU " << gpu_id << " (PCI: " << pci_bus_id << ") mapped to "
                           << gpu_devices.size() << " EFA devices: " << device_list;
 #else
-                NIXL_INFO << "   Skipping GPU " << gpu_id << " (CUDA not available)";
+                NIXL_INFO << "   Skipping GPU " << gpu_id << " (GPU support not available)";
 #endif
             }
         } else {

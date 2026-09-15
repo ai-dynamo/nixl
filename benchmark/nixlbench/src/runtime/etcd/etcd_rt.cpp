@@ -82,10 +82,10 @@ xferBenchEtcdRT::setup() {
     }
 
     // Register the rank key with a lease before bumping "size"; a crash before
-    // registration leaves size unchanged. Standalone KeepAlive uses its own
-    // gRPC channel to avoid races with the main client.
+    // registration leaves size unchanged.
     try {
-        keepalive = std::make_unique<etcd::KeepAlive>(stored_etcd_endpoints, lease_ttl_s);
+        // Reuse client's gRPC channel to avoid slow channel creation under load.
+        keepalive = std::make_unique<etcd::KeepAlive>(*client, lease_ttl_s);
     }
     catch (const std::exception &e) {
         client->unlock(lock_response.lock_key());
@@ -130,6 +130,7 @@ xferBenchEtcdRT::~xferBenchEtcdRT() {
     // rather than expiring after the TTL
     if (keepalive) {
         keepalive->Cancel();
+        keepalive.reset();
     }
     // All ranks delete, as some could be missing if ETCD state is confused
     if (client) {
@@ -467,7 +468,8 @@ int xferBenchEtcdRT::reduceSumDouble(double *local_value, double *global_value, 
     }
 }
 
-int xferBenchEtcdRT::barrier(const std::string& barrier_id) {
+int
+xferBenchEtcdRT::barrier(const std::string &barrier_id, const bool finishing) {
     int count = 0;
     std::string barrier_suffix = "barrier/" + barrier_id + "/" + std::to_string(barrier_gen);
     std::string barrier_key = namespace_prefix + barrier_suffix + "/";

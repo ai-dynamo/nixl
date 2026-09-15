@@ -16,7 +16,9 @@
  */
 #include "prometheus_exporter.h"
 #include "common/configuration.h"
+#include "common/hostname.h"
 #include "common/nixl_log.h"
+#include "histogram_buckets.h"
 
 #include <fstream>
 #include <iostream>
@@ -34,21 +36,8 @@ const uint16_t prometheusExporterDefaultPort = 9090;
 const char prometheusPortVar[] = "NIXL_TELEMETRY_PROMETHEUS_PORT";
 const char prometheusLocalVar[] = "NIXL_TELEMETRY_PROMETHEUS_LOCAL";
 
-const std::string prometheusExporterTransferCategory = "NIXL_TELEMETRY_TRANSFER";
-const std::string prometheusExporterPerformanceCategory = "NIXL_TELEMETRY_PERFORMANCE";
-const std::string prometheusExporterMemoryCategory = "NIXL_TELEMETRY_MEMORY";
 const std::string prometheusExporterLocalAddress = "127.0.0.1";
 const std::string prometheusExporterPublicAddress = "0.0.0.0";
-
-std::string
-getHostname() {
-    char hostname[HOST_NAME_MAX + 1];
-    if (gethostname(hostname, sizeof(hostname)) == 0) {
-        hostname[HOST_NAME_MAX] = '\0'; // Ensure null-termination
-        return std::string(hostname);
-    }
-    return "unknown";
-}
 
 std::mutex s_mutex;
 std::weak_ptr<prometheus::Exposer> s_exposer_weak;
@@ -60,7 +49,7 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
     const nixlTelemetryExporterInitParams &init_params)
     : nixlTelemetryExporter(init_params),
       agent_name_(init_params.agentName),
-      hostname_(getHostname()) {
+      hostname_(nixl::getHostname().value_or("unknown")) {
     const bool local = nixl::config::getValueDefaulted(prometheusLocalVar, false);
     const uint16_t port =
         nixl::config::getValueDefaulted(prometheusPortVar, prometheusExporterDefaultPort);
@@ -87,7 +76,21 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
             registry_.reset();
             exposer_.reset();
             registry_ = std::make_shared<prometheus::Registry>();
-            exposer_ = std::make_shared<prometheus::Exposer>(bind_address);
+            try {
+                exposer_ = std::make_shared<prometheus::Exposer>(bind_address);
+            }
+            catch (const std::exception &e) {
+                // civetweb reports a failed port bind with this exact text (verified
+                // against prometheus-cpp v1.3.0 / civetweb 1.16); other startup
+                // failures (threads, ACL, OOM, ...) don't, so they stay fatal.
+                const std::string reason = e.what();
+                if (reason.find("Failed to setup server ports") == std::string::npos) {
+                    throw;
+                }
+                throw nixlTelemetryBindFailed("Prometheus telemetry endpoint '" + bind_address +
+                                              "' could not be bound (likely already in use by "
+                                              "another process)");
+            }
             exposer_->RegisterCollectable(registry_);
             s_exposer_weak = exposer_;
             s_registry_weak = registry_;
@@ -100,6 +103,9 @@ nixlTelemetryPrometheusExporter::nixlTelemetryPrometheusExporter(
         initializeMetrics();
     }
     catch (...) {
+        counters_.clear();
+        gauges_.clear();
+        histograms_.clear();
         s_agent_names.erase(agent_name_);
         throw;
     }
@@ -109,6 +115,7 @@ nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
     const std::lock_guard lock(s_mutex);
     counters_.clear();
     gauges_.clear();
+    histograms_.clear();
     s_agent_names.erase(agent_name_);
     exposer_.reset();
     registry_.reset();
@@ -118,89 +125,99 @@ nixlTelemetryPrometheusExporter::~nixlTelemetryPrometheusExporter() {
 // Events are defined in the telemetry.cpp file
 void
 nixlTelemetryPrometheusExporter::initializeMetrics() {
-    registerCounter(
-        "agent_tx_bytes", "Number of bytes sent by the agent", prometheusExporterTransferCategory);
-    registerCounter("agent_rx_bytes",
-                    "Number of bytes received by the agent",
-                    prometheusExporterTransferCategory);
-    registerCounter("agent_tx_requests_num",
-                    "Number of requests sent by the agent",
-                    prometheusExporterTransferCategory);
-    registerCounter("agent_rx_requests_num",
-                    "Number of requests received by the agent",
-                    prometheusExporterTransferCategory);
-    registerCounter("agent_memory_registered",
-                    "Cumulative memory registered",
-                    prometheusExporterMemoryCategory);
-    registerCounter("agent_memory_deregistered",
-                    "Cumulative memory deregistered",
-                    prometheusExporterMemoryCategory);
-    registerCounter("agent_xfer_time",
-                    "Start to Complete (per request)",
-                    prometheusExporterPerformanceCategory);
-    registerCounter("agent_xfer_post_time",
-                    "Start to posting to Back-End (per request)",
-                    prometheusExporterPerformanceCategory);
-
-    registerGauge("agent_memory_registered", "Memory registered", prometheusExporterMemoryCategory);
-    registerGauge(
-        "agent_memory_deregistered", "Memory deregistered", prometheusExporterMemoryCategory);
+    const std::vector<double> histogram_buckets = nixl::telemetry::resolveHistogramBucketsUs();
+    for (const auto event_type : telemetry_metric_event_types) {
+        const auto descriptor = nixlEnumStrings::telemetryMetricDescriptor(event_type);
+        if (descriptor.counterName != nullptr) {
+            registerCounter(event_type, descriptor.counterName, descriptor.counterHelp);
+        }
+        if (descriptor.gaugeName != nullptr) {
+            registerGauge(event_type, descriptor.gaugeName, descriptor.gaugeHelp);
+        }
+        if (descriptor.histogramName != nullptr) {
+            registerHistogram(
+                event_type, descriptor.histogramName, descriptor.histogramHelp, histogram_buckets);
+        }
+    }
+    registerErrorCounters();
 }
 
 void
-nixlTelemetryPrometheusExporter::registerCounter(const std::string &name,
-                                                 const std::string &help,
-                                                 const std::string &category) {
-    auto &family = prometheus::BuildCounter().Name(name + "_total").Help(help).Register(*registry_);
-    auto &metric =
-        family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
-    counters_[name] = {&family, &metric};
+nixlTelemetryPrometheusExporter::registerCounter(const nixl_telemetry_event_type_t event_type,
+                                                 const std::string &metric_name,
+                                                 const std::string &help) {
+    auto &family = prometheus::BuildCounter().Name(metric_name).Help(help).Register(*registry_);
+    auto &metric = family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}});
+    const auto inserted = counters_.try_emplace(event_type, &family, &metric).second;
+    if (!inserted) {
+        family.Remove(&metric);
+    }
+    NIXL_ASSERT(inserted);
 }
 
 void
-nixlTelemetryPrometheusExporter::registerGauge(const std::string &name,
-                                               const std::string &help,
-                                               const std::string &category) {
-    auto &family = prometheus::BuildGauge().Name(name).Help(help).Register(*registry_);
-    auto &metric =
-        family.Add({{"category", category}, {"hostname", hostname_}, {"agent_name", agent_name_}});
-    gauges_[name] = {&family, &metric};
+nixlTelemetryPrometheusExporter::registerErrorCounters() {
+    auto &family = prometheus::BuildCounter()
+                       .Name(telemetry_error_family_name)
+                       .Help(telemetry_error_family_help)
+                       .Register(*registry_);
+
+    for (const auto event_type : telemetry_error_event_types) {
+        const char *const status = nixlEnumStrings::telemetryErrorStatusLabel(event_type);
+        auto &metric =
+            family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}, {"status", status}});
+        const auto inserted = counters_.try_emplace(event_type, &family, &metric).second;
+        if (!inserted) {
+            family.Remove(&metric);
+        }
+        NIXL_ASSERT(inserted);
+    }
+}
+
+void
+nixlTelemetryPrometheusExporter::registerGauge(const nixl_telemetry_event_type_t event_type,
+                                               const std::string &metric_name,
+                                               const std::string &help) {
+    auto &family = prometheus::BuildGauge().Name(metric_name).Help(help).Register(*registry_);
+    auto &metric = family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}});
+    const auto inserted = gauges_.try_emplace(event_type, &family, &metric).second;
+    if (!inserted) {
+        family.Remove(&metric);
+    }
+    NIXL_ASSERT(inserted);
+}
+
+void
+nixlTelemetryPrometheusExporter::registerHistogram(const nixl_telemetry_event_type_t event_type,
+                                                   const std::string &metric_name,
+                                                   const std::string &help,
+                                                   const std::vector<double> &buckets) {
+    auto &family = prometheus::BuildHistogram().Name(metric_name).Help(help).Register(*registry_);
+    auto &metric = family.Add({{"hostname", hostname_}, {"agent_name", agent_name_}},
+                              prometheus::Histogram::BucketBoundaries(buckets));
+    const auto inserted = histograms_.try_emplace(event_type, &family, &metric).second;
+    if (!inserted) {
+        family.Remove(&metric);
+    }
+    NIXL_ASSERT(inserted);
 }
 
 nixl_status_t
 nixlTelemetryPrometheusExporter::exportEvent(const nixlTelemetryEvent &event) {
-    // TODO(C++20): use std::string_view for lookup keys and transparent hash/equal_to
-    // on counters_/gauges_ to avoid allocating a std::string per event when feasible.
     try {
-        const std::string event_name(nixlEnumStrings::telemetryEventTypeStr(event.eventType_));
-
-        switch (event.category_) {
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_TRANSFER:
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_PERFORMANCE: {
-            const auto it = counters_.find(event_name);
-            if (it != counters_.end()) {
-                it->second.metric->Increment(event.value_);
-            }
-            break;
+        const auto counter_it = counters_.find(event.eventType_);
+        if (counter_it != counters_.end()) {
+            counter_it->second.metric->Increment(event.value_);
         }
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_MEMORY: {
-            const auto it_cnt = counters_.find(event_name);
-            if (it_cnt != counters_.end()) {
-                it_cnt->second.metric->Increment(event.value_);
-            }
 
-            const auto it_gauge = gauges_.find(event_name);
-            if (it_gauge != gauges_.end()) {
-                it_gauge->second.metric->Set(static_cast<double>(event.value_));
-            }
-            break;
+        const auto gauge_it = gauges_.find(event.eventType_);
+        if (gauge_it != gauges_.end()) {
+            gauge_it->second.metric->Set(static_cast<double>(event.value_));
         }
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_CONNECTION:
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_ERROR:
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_SYSTEM:
-        case nixl_telemetry_category_t::NIXL_TELEMETRY_CUSTOM:
-        default:
-            break;
+
+        const auto histogram_it = histograms_.find(event.eventType_);
+        if (histogram_it != histograms_.end()) {
+            histogram_it->second.metric->Observe(static_cast<double>(event.value_));
         }
 
         return NIXL_SUCCESS;

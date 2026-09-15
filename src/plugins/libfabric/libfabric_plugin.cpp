@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-FileCopyrightText: Copyright (c) 2025 Amazon.com, Inc. and affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -22,17 +22,31 @@
 // Plugin type alias for convenience
 using libfabric_plugin_t = nixlBackendPluginCreator<nixlLibfabricEngine>;
 
+static nixl_b_params_t
+getLibfabricBackendOptions() {
+    return {
+        {"num_threads", "0"},
+        {"split_batch_size", "1024"},
+    };
+}
+
 #ifdef STATIC_PLUGIN_LIBFABRIC
 nixlBackendPlugin *
 createStaticLIBFABRICPlugin() {
-    return libfabric_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "LIBFABRIC", "0.1.0", {}, {DRAM_SEG, VRAM_SEG});
+    return libfabric_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                      "LIBFABRIC",
+                                      "0.1.0",
+                                      getLibfabricBackendOptions(),
+                                      {DRAM_SEG, VRAM_SEG});
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return libfabric_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "LIBFABRIC", "0.1.0", {}, {DRAM_SEG, VRAM_SEG});
+    return libfabric_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                      "LIBFABRIC",
+                                      "0.1.0",
+                                      getLibfabricBackendOptions(),
+                                      {DRAM_SEG, VRAM_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

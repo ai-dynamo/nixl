@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,7 +67,16 @@ public:
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const override;
   nixl_status_t checkXfer(nixlBackendReqH *handle) const override;
-  nixl_status_t releaseReqH(nixlBackendReqH *handle) const override;
+  nixl_status_t
+  releaseReqH(nixlBackendReqH *handle) const override;
+
+  nixl_status_t
+  prepMemView(const nixl_remote_meta_dlist_t &dlist,
+              nixlMemViewH &mvh,
+              const nixl_opt_b_args_t *opt_args) const override {
+      assert(sharedState > 0);
+      return gmock_backend_engine->prepMemView(dlist, mvh, opt_args);
+  }
   nixl_status_t getPublicData(const nixlBackendMD *meta, std::string &str) const override {
     assert(sharedState > 0);
     return gmock_backend_engine->getPublicData(meta, str);

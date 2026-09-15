@@ -24,6 +24,7 @@
 #include "common.h"
 #include "nixl.h"
 #include "plugin_manager.h"
+#include "transfer_request.h"
 #include "mocks/gmock_engine.h"
 
 namespace gtest {
@@ -66,16 +67,17 @@ namespace agent {
 
     class agentHelper {
     protected:
+        ScopedEnv trace_env_;
         testing::NiceMock<mocks::GMockBackendEngine> gmock_engine_;
         std::unique_ptr<nixlAgent> agent_;
 
     public:
-        agentHelper(const std::string &name)
-            : agent_([&name]() {
-                  nixlAgentConfig cfg;
-                  cfg.useProgThread = true;
-                  return std::make_unique<nixlAgent>(name, cfg);
-              }()) {}
+        agentHelper(const std::string &name) {
+            trace_env_.addVar("NIXL_TRACE_BACKENDS", "");
+            nixlAgentConfig cfg;
+            cfg.useProgThread = true;
+            agent_ = std::make_unique<nixlAgent>(name, cfg);
+        }
 
         ~agentHelper() {
             /* We must release nixlAgent first (i.e. explicitly in the destructor), as it calls
@@ -140,6 +142,47 @@ namespace agent {
             remote_agent_helper_ = std::make_unique<agentHelper>(remote_agent_name);
             local_agent_ = local_agent_helper_->getAgent();
             remote_agent_ = remote_agent_helper_->getAgent();
+        }
+
+        struct DualAgentSetup {
+            nixlBackendH *local_backend = nullptr;
+            nixlBackendH *remote_backend = nullptr;
+            blob local_blob;
+            blob remote_blob;
+            nixl_reg_dlist_t local_reg_dlist;
+            nixl_reg_dlist_t remote_reg_dlist;
+            nixl_opt_args_t local_extra_params;
+            nixl_opt_args_t remote_extra_params;
+            nixl_b_params_t local_params;
+            nixl_b_params_t remote_params;
+            std::string remote_agent_name;
+
+            explicit DualAgentSetup(nixl_mem_t mem_type)
+                : local_reg_dlist(mem_type),
+                  remote_reg_dlist(mem_type) {}
+        };
+
+        void
+        setupDualAgent(DualAgentSetup &s, bool register_local = true, bool register_remote = true) {
+            EXPECT_EQ(local_agent_helper_->createBackendWithGMock(s.local_params, s.local_backend),
+                      NIXL_SUCCESS);
+            EXPECT_EQ(
+                remote_agent_helper_->createBackendWithGMock(s.remote_params, s.remote_backend),
+                NIXL_SUCCESS);
+            if (register_local) {
+                EXPECT_EQ(
+                    local_agent_helper_->initAndRegisterMemory(
+                        s.local_blob, s.local_reg_dlist, s.local_extra_params, s.local_backend),
+                    NIXL_SUCCESS);
+            }
+            if (register_remote) {
+                EXPECT_EQ(
+                    remote_agent_helper_->initAndRegisterMemory(
+                        s.remote_blob, s.remote_reg_dlist, s.remote_extra_params, s.remote_backend),
+                    NIXL_SUCCESS);
+            }
+            EXPECT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, s.remote_agent_name),
+                      NIXL_SUCCESS);
         }
     };
 
@@ -380,8 +423,15 @@ namespace agent {
                                               xfer_req,
                                               &local_extra_params),
                   NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req->traceCorrelationId64(), 0u);
         EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_SUCCESS);
         EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req->traceCorrelationId64(), 0u);
+
+        nixl_opt_args_t repost_params;
+        EXPECT_EQ(local_agent_->postXferReq(xfer_req, &repost_params), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req->traceCorrelationId64(), 0u);
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);
@@ -390,6 +440,20 @@ namespace agent {
         EXPECT_EQ(notif_map[local_agent_name].front(), msg);
 
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
+    TEST_F(dualAgentBridgeFixture, PrepMemViewRemoteDRAM) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s, /*register_local=*/false);
+
+        nixl_remote_dlist_t remote_dlist(DRAM_SEG);
+        remote_dlist.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+
+        nixlMemViewH mvh = nullptr;
+        EXPECT_EQ(local_agent_->prepMemView(remote_dlist, mvh), NIXL_SUCCESS);
+        EXPECT_NE(mvh, nullptr);
+
+        local_agent_->releaseMemView(mvh);
     }
 
     TEST_F(dualAgentBridgeFixture, XferReqSubFunctionsTest) {
@@ -437,16 +501,18 @@ namespace agent {
         nixlXferReqH *xfer_req;
         local_extra_params.notif = msg;
         EXPECT_EQ(local_agent_->makeXferReq(NIXL_WRITE,
-                                            desc_hndl1,
+                                            *desc_hndl1,
                                             indices,
-                                            desc_hndl2,
+                                            *desc_hndl2,
                                             indices,
                                             xfer_req,
                                             &local_extra_params),
                   NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req->traceCorrelationId64(), 0u);
         EXPECT_EQ(local_agent_->postXferReq(xfer_req), NIXL_SUCCESS);
 
         EXPECT_EQ(local_agent_->getXferStatus(xfer_req), NIXL_SUCCESS);
+        EXPECT_EQ(xfer_req->traceCorrelationId64(), 0u);
 
         nixl_notifs_t notif_map;
         EXPECT_EQ(remote_agent_->getNotifs(notif_map), NIXL_SUCCESS);

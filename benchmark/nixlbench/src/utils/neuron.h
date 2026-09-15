@@ -41,12 +41,13 @@ neuronMemcpy(void *dest, const void *src, size_t count, neuronMemcpyKind kind);
 int
 neuronMemset(void *addr, int val, size_t count);
 
-#define CHECK_NEURON_ERROR(result, message)                                                       \
-    do {                                                                                          \
-        if (result != 0) {                                                                        \
-            std::cerr << "NEURON: " << message << " (Error code: " << result << ")" << std::endl; \
-            exit(EXIT_FAILURE);                                                                   \
-        }                                                                                         \
+#define CHECK_NEURON_ERROR(result, message)                                                   \
+    do {                                                                                      \
+        const auto _r = (result);                                                             \
+        if (_r != 0) {                                                                        \
+            std::cerr << "NEURON: " << message << " (Error code: " << _r << ")" << std::endl; \
+            exit(EXIT_FAILURE);                                                               \
+        }                                                                                     \
     } while (0)
 
 

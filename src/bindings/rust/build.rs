@@ -164,7 +164,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     // Generate bindings with minimal configuration
     let mut builder = bindgen::Builder::default()
         .header("wrapper.h")
-        .clang_arg("-std=c++17")
+        .clang_arg("-std=c++20")
         .clang_arg(format!("-I{}", nixl_include_path))
         .clang_arg("-I../../api/cpp")
         .clang_arg("-I../../infra")
@@ -226,7 +226,7 @@ fn build_stubs(cc_builder: &mut cc::Build) {
     // Generate bindings with minimal configuration
     bindgen::Builder::default()
         .header("wrapper.h")
-        .clang_arg("-std=c++17")
+        .clang_arg("-std=c++20")
         .clang_arg("-x")
         .clang_arg("c++")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
@@ -241,7 +241,7 @@ fn create_builder() -> cc::Build {
     builder
         .cpp(true)
         .compiler("g++")
-        .flag("-std=c++17")
+        .flag("-std=c++20")
         .flag("-fPIC")
         .flag("-Wno-unused-parameter")
         .flag("-Wno-unused-variable");
@@ -273,9 +273,39 @@ fn run_build(use_stub_api: bool) {
     }
 }
 
+/// Locates a CUDA toolkit, returning its library directory.
+fn find_cuda_lib_dir() -> Option<PathBuf> {
+    ["CUDA_PATH", "CUDA_HOME"]
+        .iter()
+        .filter_map(|var| env::var_os(var).map(PathBuf::from))
+        .chain(std::iter::once(PathBuf::from("/usr/local/cuda")))
+        .flat_map(|root| [root.join("lib64"), root.join("lib")])
+        .find(|dir| dir.join("libcudart.so").exists())
+}
+
+/// Gates the memory view tests on a CUDA toolkit being present, so a build
+/// without one links no CUDA symbols.
+fn probe_cuda() {
+    println!("cargo::rustc-check-cfg=cfg(has_cuda)");
+    println!("cargo:rerun-if-env-changed=CUDA_PATH");
+    println!("cargo:rerun-if-env-changed=CUDA_HOME");
+
+    if let Some(lib_dir) = find_cuda_lib_dir() {
+        println!(
+            "cargo:rerun-if-changed={}",
+            lib_dir.join("libcudart.so").display()
+        );
+        let lib_dir = lib_dir.display();
+        println!("cargo:rustc-link-search=native={lib_dir}");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{lib_dir}");
+        println!("cargo:rustc-cfg=has_cuda");
+    }
+}
+
 fn main() {
     // Check if we're building with stub API
     let use_stub_api = cfg!(feature = "stub-api");
 
     run_build(use_stub_api);
+    probe_cuda();
 }

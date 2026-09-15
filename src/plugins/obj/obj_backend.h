@@ -19,6 +19,7 @@
 #define OBJ_BACKEND_H
 
 #include "obj_executor.h"
+#include <optional>
 #include <string>
 #include <memory>
 #include <unordered_map>
@@ -26,6 +27,8 @@
 
 using put_object_callback_t = std::function<void(bool success)>;
 using get_object_callback_t = std::function<void(bool success)>;
+// std::optional<bool>: true = exists, false = not found, std::nullopt = request error
+using check_object_callback_t = std::function<void(std::optional<bool> exists)>;
 
 /**
  * Abstract interface for S3 client operations.
@@ -73,12 +76,15 @@ public:
                    get_object_callback_t callback) = 0;
 
     /**
-     * Check if the object exists.
+     * Asynchronously check if an object exists in S3.
+     * Uses check_object_callback_t: the callback receives a std::optional<bool>
+     * that is true if the object exists, false if it does not, or std::nullopt
+     * if the request failed (indicating an error).
      * @param key The object key
-     * @return true if the object exists, false otherwise
+     * @param callback Callback function invoked with the existence check result
      */
-    virtual bool
-    checkObjectExists(std::string_view key) = 0;
+    virtual void
+    checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) = 0;
 };
 
 /**

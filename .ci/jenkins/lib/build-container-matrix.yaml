@@ -12,8 +12,8 @@ timeout_minutes: 240
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  limits: "{memory: 16Gi, cpu: 8000m}"
-  requests: "{memory: 8Gi, cpu: 4000m}"
+  limits: "{memory: 24Gi, cpu: 12000m}"
+  requests: "{memory: 24Gi, cpu: 12000m}"
 
 runs_on_dockers:
   - { name: "podman", url: "quay.io/podman/stable:v5.7.1", privileged: true }
@@ -27,13 +27,16 @@ matrix:
 
 # Configuration
 env:
+  NPROC: 24
+  GRPC_NPROC: 24
   REGISTRY_HOST_NAME: "artifactory.nvidia.com"
   REGISTRY_REPO_NAME: "sw-nbu-swx-nixl-docker-local"
   REGISTRY_REPO_PATH: "verification"
   ARTIFACTORY_REGISTRY_URL: "${REGISTRY_HOST_NAME}/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}"
-  ARTIFACTORY_CLEANUP_AGE: "3m" # 3 months
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
+  # Internal Ubuntu mirror (public archive/ports.ubuntu.com is unreliable).
+  APT_MIRROR: "https://urm.nvidia.com/artifactory/ubuntu-public"
 
 taskName: "${BUILD_TARGET}/${arch}"
 
@@ -41,6 +44,16 @@ credentials:
   - credentialsId: 'svc-nixl-new-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USERNAME'
     passwordVariable: 'ARTIFACTORY_PASSWORD'
+  - credentialsId: 'nixl-gitlab-registry-token'
+    type: 'string'
+    variable: 'GITLAB_REGISTRY_TOKEN'
+  - credentialsId: 'svc-nixl-gitlab-token'
+    usernameVariable: 'NIXL_GITLAB_USER'
+    passwordVariable: 'NIXL_GITLAB_TOKEN'
+  # Paired with NIXL_GITLAB_TOKEN; only read on the spcx path.
+  - credentialsId: 'ucx-plugin-gitlab-url'
+    type: 'string'
+    variable: 'NIXL_SPCX_PLUGIN_REPO_URL'
 
 pipeline_start:
   shell: action
@@ -51,15 +64,46 @@ pipeline_start:
     currentBuild.displayName += "-${buildName}-${params.NIXL_VERSION}-${params.UCX_VERSION}${suffix}"
     env.ENABLE_NIXL_BUILD = params.BUILD_TARGET == 'nixl' ? 'true' : 'false'
     env.ENABLE_NIXLBENCH_BUILD = params.BUILD_TARGET == 'nixlbench' ? 'true' : 'false'
+
+    // Resolve the NIXL/UCX commits once, here, so both arches build and tag the
+    // exact same sources and pipeline_stop can name the images in the mail.
+    env.NIXL_SHA = env.GIT_COMMIT.take(8)
+    if (params.UCX_VERSION ==~ /^[a-f0-9]{8,40}$/) {
+      env.UCX_SHA = params.UCX_VERSION.take(8)
+    } else {
+      // Single-quoted, so UCX_VERSION reaches git as an argument via the
+      // environment rather than as shell source.
+      env.UCX_SHA = sh(
+        returnStdout: true,
+        label: 'Resolve UCX ref',
+        script: '''
+          REFS=$(git ls-remote https://github.com/openucx/ucx.git "$UCX_VERSION" "$UCX_VERSION^{}")
+          # An annotated tag lists both the tag object and the peeled commit; take the commit.
+          SHA=$(echo "$REFS" | awk 'index($2,"^"){print $1; exit}')
+          [ -n "$SHA" ] || SHA=$(echo "$REFS" | awk 'NR==1{print $1}')
+          echo "$SHA" | cut -c1-8
+        '''
+      ).trim()
+    }
+    if (!env.UCX_SHA) {
+      error("Failed to resolve UCX_VERSION=${params.UCX_VERSION}")
+    }
+    env.IMAGE_TAG_BASE = "${params.BASE_IMAGE_TAG}-nixl-${env.NIXL_SHA}-ucx-${env.UCX_SHA}"
     echo "ENABLE_NIXL_BUILD: ${env.ENABLE_NIXL_BUILD}"
     echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
     echo "BUILD_TARGET: ${params.BUILD_TARGET}"
     echo "BUILD_NIXL_EP: ${params.BUILD_NIXL_EP}"
+    echo "BUILD_UCX_SPCX_PLUGIN: ${params.BUILD_UCX_SPCX_PLUGIN}"
+    echo "BUILD_INFINIA: ${params.BUILD_INFINIA}"
+    echo "IMAGE_TAG_BASE: ${env.IMAGE_TAG_BASE}"
 
 # Build pipeline
 steps:
   - name: Prepare
     containerSelector: "{name: 'podman'}"
+    credentialsId:
+      - 'svc-nixl-new-artifactory-token'
+      - 'nixl-gitlab-registry-token'
     run: |
       # Setup podman and dependencies
       set -x
@@ -67,6 +111,16 @@ steps:
       podman system reset -f || true
       podman info
       ln -sfT $(type -p podman) /usr/bin/docker
+      # Login to Artifactory
+      set +x -v
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+      # Login to the GitLab registry so DLFW base images hosted there can be pulled.
+      # GitLab accepts any username with a read_registry token, so the username is a placeholder.
+      if [ -n "${GITLAB_REGISTRY_TOKEN:-}" ]; then
+        echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 -u nixl-ci --password-stdin
+      fi
+      set +v -x
+
       yum install -y gettext
 
   - name: Build NIXLBench
@@ -75,7 +129,7 @@ steps:
     run: |
       # Clone UCX source for nixlbench
       git clone https://github.com/openucx/ucx.git ucx-src
-      git -C ucx-src checkout "${UCX_VERSION}"
+      git -C ucx-src checkout "${UCX_SHA}"
 
       "benchmark/nixlbench/contrib/build.sh" \
         --base-image "${BASE_IMAGE}" \
@@ -83,18 +137,37 @@ steps:
         --tag "${LOCAL_TAG_BASE}${arch}" \
         --arch "${arch}" \
         --no-cache \
+        --apt-mirror "${APT_MIRROR}" \
         --nixl "$WORKSPACE" \
         --ucx "$WORKSPACE/ucx-src"
 
   - name: Build NIXL
     enable: ${ENABLE_NIXL_BUILD}
     containerSelector: "{name: 'podman'}"
+    credentialsId:
+      - 'svc-nixl-gitlab-token'
+      - 'ucx-plugin-gitlab-url'
     run: |
-      export UCX_REF="${UCX_VERSION}"
+      export UCX_REF="${UCX_SHA}"
 
       NIXL_EP_FLAG=""
       if [[ "${BUILD_NIXL_EP}" == "true" ]]; then
           NIXL_EP_FLAG="--build-nixl-ep"
+      fi
+
+      # The plugin ref is pinned by build-container.sh; the source is fetched
+      # from the gitlab repo bound above.
+      SPCX_FLAG=""
+      if [[ "${BUILD_UCX_SPCX_PLUGIN}" == "true" ]]; then
+          SPCX_FLAG="--build-ucx-spcx-plugin"
+      fi
+
+      # Off by default: build-container.sh only consumes --build-infinia on the
+      # manylinux (wheel) path, so enabling it here fails until the Infinia
+      # block is ported into contrib/Dockerfile.
+      INFINIA_FLAG=""
+      if [[ "${BUILD_INFINIA}" == "true" ]]; then
+          INFINIA_FLAG="--build-infinia"
       fi
 
       "contrib/build-container.sh" \
@@ -104,38 +177,23 @@ steps:
         --arch "${arch}" \
         --build-type debug \
         --no-cache \
-        ${NIXL_EP_FLAG}
+        --apt-mirror "${APT_MIRROR}" \
+        ${NIXL_EP_FLAG} \
+        ${SPCX_FLAG} \
+        ${INFINIA_FLAG}
 
   - name: Add Version Info
     containerSelector: "{name: 'podman'}"
     run: |
-      git config --global --add safe.directory '*'
-      # Extract standardized 8-char commit hash for UCX version info:
-      if [[ "$BUILD_TARGET" == "nixlbench" ]]; then
-        CLEAN_UCX=$(cd "$WORKSPACE/ucx-src" && git rev-parse --short=8 HEAD)
-      else
-        UCX_REF="$UCX_VERSION"
-
-        # Hash? if yes truncate, else ls-remote then truncate
-        if [[ "$UCX_REF" =~ ^[a-f0-9]{8,40}$ ]]; then
-          CLEAN_UCX="${UCX_REF:0:8}"
-        else
-          CLEAN_UCX=$(git ls-remote https://github.com/openucx/ucx.git "$UCX_REF" | head -n1 | cut -c1-8)
-        fi
-
-        # Verify
-        [[ -n "$CLEAN_UCX" ]] || { echo "ERROR: failed to resolve UCX_REF=$UCX_REF"; exit 1; }
-      fi
-
-      # Calculate tag name
-      NIXL_VERSION="$(git rev-parse --short=8 HEAD)"
-      TAG_NAME="${BASE_IMAGE_TAG}-nixl-${NIXL_VERSION}-ucx-${CLEAN_UCX}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
+      # NIXL_SHA/UCX_SHA/IMAGE_TAG_BASE are resolved once in pipeline_start, so the
+      # tag here matches the one pipeline_stop reports in the completion mail.
+      TAG_NAME="${IMAGE_TAG_BASE}-${arch}${TAG_SUFFIX:+-${TAG_SUFFIX}}"
 
       # Generate version info file from template
       export BUILD_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
              BUILD_TARGET BASE_IMAGE BASE_IMAGE_TAG arch \
              BUILD_NUMBER BUILD_URL JOB_NAME NODE_NAME WORKSPACE \
-             NIXL_VERSION UCX_VERSION="${CLEAN_UCX}" TAG_NAME
+             NIXL_VERSION="${NIXL_SHA}" UCX_VERSION="${UCX_SHA}" TAG_NAME
       envsubst < .ci/assets/nixl-version-info.template > version-info
 
       # Add version info to the image
@@ -148,6 +206,7 @@ steps:
     containerSelector: "{name: 'podman'}"
     credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
+      set -eo pipefail
       source version-info
       ARTIFACTORY_REGISTRY="${ARTIFACTORY_REGISTRY_URL}/${BUILD_TARGET}"
       ARTIFACTORY_API="https://${REGISTRY_HOST_NAME}/artifactory/api/storage/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}/${BUILD_TARGET}"
@@ -157,16 +216,13 @@ steps:
       IMAGE_PROPERTIES+="BUILD_NUMBER=${BUILD_NUMBER};JOB_NAME=${JOB_NAME};BUILD_URL=${BUILD_URL};NODE_NAME=${NODE_NAME};"
       IMAGE_PROPERTIES+="BASE_IMAGE=${BASE_IMAGE};BASE_IMAGE_TAG=${BASE_IMAGE_TAG}"
 
-      # Login to Artifactory
-      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
-
       # Function to tag, push, and set properties
       tag_push_set_properties() {
         local target_tag="$1"
         echo "Creating tag: ${target_tag}"
         docker tag "${LOCAL_TAG_BASE}${arch}" "${ARTIFACTORY_REGISTRY}:${target_tag}"
-        docker push "${ARTIFACTORY_REGISTRY}:${target_tag}"
-        curl -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
+        docker push --retry 5 "${ARTIFACTORY_REGISTRY}:${target_tag}"
+        curl --fail -H "Authorization: Bearer ${ARTIFACTORY_PASSWORD}" -X PUT \
           "${ARTIFACTORY_API}/${target_tag}?properties=${IMAGE_PROPERTIES}"
       }
 
@@ -196,8 +252,18 @@ steps:
         if [[ "${BUILD_NIXL_EP}" == "true" ]]; then
             NIXL_EP_FLAG="--build-nixl-ep"
         fi
+        SPCX_FLAG=""
+        if [[ "${BUILD_UCX_SPCX_PLUGIN}" == "true" ]]; then
+            SPCX_FLAG="--build-ucx-spcx-plugin"
+            echo "# --build-ucx-spcx-plugin needs NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL exported"
+        fi
+        INFINIA_FLAG=""
+        if [[ "${BUILD_INFINIA}" == "true" ]]; then
+            INFINIA_FLAG="--build-infinia"
+            echo "# --build-infinia needs harbor.mellanox.com reachable"
+        fi
         echo "export UCX_REF=${UCX_VERSION}"
-        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache ${NIXL_EP_FLAG}"
+        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache ${NIXL_EP_FLAG} ${SPCX_FLAG} ${INFINIA_FLAG}"
       fi
 
 pipeline_stop:
@@ -210,6 +276,23 @@ pipeline_stop:
         def statusColor = jobStatus == 'SUCCESS' ? 'green' : 'red'
 
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
+
+        // Only list the images on SUCCESS - a failed run may not have pushed them,
+        // and a link to a missing image is worse than no link.
+        def imagesSection = ''
+        if (jobStatus == 'SUCCESS') {
+            def suffix = params.TAG_SUFFIX ? "-${params.TAG_SUFFIX}" : ""
+            def repo = "${env.ARTIFACTORY_REGISTRY_URL}/${params.BUILD_TARGET}"
+            def images = []
+            for (arch in ['x86_64', 'aarch64']) {
+                images << "${repo}:${env.IMAGE_TAG_BASE}-${arch}${suffix}"
+                if (params.UPDATE_LATEST) {
+                    images << "${repo}:${params.BASE_IMAGE_TAG}-${arch}-latest"
+                }
+            }
+            def imageList = images.collect { "<li>${it}</li>" }.join('')
+            imagesSection = "<p>Images:</p><ul>${imageList}</ul>"
+        }
 
         mail(
             from: env.MAIL_FROM,
@@ -229,9 +312,9 @@ pipeline_stop:
                 <p>Architectures: <b>x86_64, aarch64</b></p>
                 ${params.UPDATE_LATEST ? '<p>Latest tag updated: <b>Yes</b></p>' : ''}
                 ${params.BUILD_NIXL_EP ? "<p>Build NIXL EP: <b>Yes</b></p>" : ''}
+                ${params.BUILD_UCX_SPCX_PLUGIN ? "<p>UCX spcx plugin: <b>Yes</b></p>" : ''}
+                ${params.BUILD_INFINIA ? "<p>Infinia DDN plugin: <b>Yes</b></p>" : ''}
+                ${imagesSection}
             """
         )
-    }
-    withCredentials([usernamePassword(credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN')]) {
-      sh "yum install -y jq > /dev/null && .ci/scripts/artifactory-cleanup-by-time.sh --path ${REGISTRY_REPO_PATH}/${BUILD_TARGET} ${REGISTRY_REPO_NAME} ${ARTIFACTORY_CLEANUP_AGE}"
     }
