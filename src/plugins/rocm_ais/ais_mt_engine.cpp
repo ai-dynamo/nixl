@@ -20,7 +20,6 @@
 #include <exception>
 #include <string>
 #include <thread>
-#include <unordered_set>
 #include <utility>
 
 #include <hip/hip_runtime.h>
@@ -186,32 +185,6 @@ nixlAisMtEngine::checkXfer(nixlBackendReqH *handle) const {
         return NIXL_IN_PROG;
     }
     ais_handle->running_transfer.get();
-
-    // Defensive: drain every GPU this request touched before reporting
-    // completion. hipFileRead/hipFileWrite are synchronous, so this is likely
-    // redundant, and it drains unrelated application work on those devices on
-    // every poll. Retained from the original AIS_MT engine because removing it
-    // has not been validated on hardware; GDS_MT's checkXfer does no such sync.
-    // TODO: confirm against hipFile semantics and drop if redundant.
-    std::unordered_set<int> devices;
-    for (const aisXferReq &req : ais_handle->request_list) {
-        if (req.dev_id >= 0) {
-            devices.insert(req.dev_id);
-        }
-    }
-    for (const int dev_id : devices) {
-        const hipError_t dev_err = hipSetDevice(dev_id);
-        if (dev_err != hipSuccess) {
-            NIXL_ERROR << "AIS_MT: hipSetDevice failed during sync: "
-                       << hipGetErrorString(dev_err);
-            return NIXL_ERR_BACKEND;
-        }
-        const hipError_t sync_err = hipDeviceSynchronize();
-        if (sync_err != hipSuccess) {
-            NIXL_ERROR << "AIS_MT: hipDeviceSynchronize failed: " << hipGetErrorString(sync_err);
-            return NIXL_ERR_BACKEND;
-        }
-    }
 
     return ais_handle->overall_status.load();
 }
