@@ -19,9 +19,9 @@ The DOCA GPUNetIO backend provides high-performance GPU-to-GPU transfers using G
 
 The DOCA GPUNetIO backend requires:
 
-- **DOCA SDK** -- Version 3.5.0 or later, from the [NVIDIA DOCA SDK](https://developer.nvidia.com/doca-downloads) page. Older DOCA releases use an incompatible GPUNetIO device verbs API; the plugin is skipped when `doca-gpunetio` reports a lower version.
+- **DOCA SDK** -- Version 3.5.0 or later, from the [NVIDIA DOCA SDK](https://developer.nvidia.com/doca-downloads) page. Older DOCA releases use an incompatible GPUNetIO device verbs API. When `doca-gpunetio` reports a lower version the plugin is skipped, or, if you enabled it explicitly with `-Dplugins=...GPUNETIO...`, configuration fails.
 - **GPUDirect Async-capable hardware** -- NVIDIA BlueField SmartNICs (DPUs)
-- **CUDA Toolkit** -- Version 12.8 or later
+- **CUDA Toolkit** -- Version 12.8 or later. This is NIXL's own floor for the plugin; DOCA 3.5 itself is built for CUDA 13.
 
 For system configuration and setup details, see the [DOCA GPUNetIO Programming Guide](https://docs.nvidia.com/doca/sdk/doca+gpunetio/index.html).
 
