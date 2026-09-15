@@ -510,8 +510,7 @@ namespace {
                     xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_FILE &&
                     xferBenchConfig::isStorageBackend() &&
                     xferBenchConfig::total_buffer_size == 4096 &&
-                    xferBenchConfig::start_block_size == 4096 &&
-                    xferBenchConfig::num_iter == 1 &&
+                    xferBenchConfig::start_block_size == 4096 && xferBenchConfig::num_iter == 1 &&
                     xferBenchConfig::plugin_parameters == expected_parameters;
                 _exit(preserved ? EXIT_SUCCESS : EXIT_FAILURE);
             },

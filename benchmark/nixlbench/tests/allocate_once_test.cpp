@@ -133,8 +133,7 @@ namespace {
     TEST(AllocateOncePathModeTest, EncodesBackendOwnedOpenWithoutChangingThePath) {
         EXPECT_EQ(allocateOncePathMetadata("/tmp/name:with spaces", false, false),
                   "ro:/tmp/name:with spaces");
-        EXPECT_EQ(allocateOncePathMetadata("/tmp/direct", true, true),
-                  "rw,direct:/tmp/direct");
+        EXPECT_EQ(allocateOncePathMetadata("/tmp/direct", true, true), "rw,direct:/tmp/direct");
     }
 
     TEST(AllocateOnceFileNamesTest, ReportsAnUnavailableCurrentDirectory) {

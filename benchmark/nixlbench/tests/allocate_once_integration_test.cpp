@@ -150,8 +150,8 @@ namespace {
         ASSERT_FALSE(directory.path().empty());
         const auto log = directory.path() / "path-mode.log";
         const auto dataset = directory.path() / "nixlbench_allocate_once_0.dat";
-        const std::string command = smallAllocateOnceCommand(directory.path(), "read") +
-            " --file-registration-mode path";
+        const std::string command =
+            smallAllocateOnceCommand(directory.path(), "read") + " --file-registration-mode path";
 
         ASSERT_EQ(runScenarioCommand(command, log), 0) << readScenarioLog(log);
         EXPECT_EQ(std::filesystem::file_size(dataset), 64U * 1024U);
