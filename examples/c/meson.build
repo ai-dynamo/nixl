@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('nixl')
-subdir('unit')
-subdir('c-api')
-
-subdir('gtest')
-
-# Standalone DOCA telemetry exporter test (self-contained; only built when the
-# DOCA telemetry headers are present). Kept out of the main gtest target so the
-# DOCA/CollectX gRPC stack is not linked into every test.
-subdir('doca-telemetry')
+if have_c
+    executable(
+        'nixl_capi_example',
+        'nixl_capi_example.c',
+        c_args: ['-std=c11', '-Wall', '-Wextra'],
+        include_directories: [include_directories('../../src/api/c')],
+        link_with: [nixl_capi_libs.get_shared_lib()],
+        install: true,
+    )
+endif
