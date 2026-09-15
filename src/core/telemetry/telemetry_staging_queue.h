@@ -45,10 +45,11 @@ public:
     /**
      * @brief Construct a queue that retains at most @p capacity events.
      *
-     * Reserves storage for @p capacity events up front so the producer path
-     * never reallocates. Any @p capacity is accepted (a zero capacity yields a
-     * queue that drops every push); rejecting a zero telemetry buffer size is
-     * the caller's responsibility (see nixlTelemetry construction).
+     * Reserves both staging buffers for @p capacity events up front, so neither
+     * the producer nor the drain path ever reallocates. Any @p capacity is
+     * accepted (a zero capacity yields a queue that drops every push); rejecting
+     * a zero telemetry buffer size is the caller's responsibility (see
+     * nixlTelemetry construction).
      * @param capacity Maximum number of events retained before pushes are dropped.
      */
     explicit nixlTelemetryStagingQueue(size_t capacity);
@@ -78,14 +79,18 @@ public:
     tryPushBatch(std::span<const nixlTelemetryEvent> events);
 
     /**
-     * @brief Swap the live queue with an empty capacity-reserved vector and
-     *        return the drained events in insertion order.
+     * @brief Swap the two staging buffers and return the drained events in
+     *        insertion order.
      *
      * The swap happens under the mutex; producers can write to the fresh live
-     * vector while the consumer processes the returned one.
+     * buffer while the consumer reads the returned one. Single consumer only.
+     *
+     * The returned view borrows storage owned by the queue. It is invalidated by
+     * the next drainPending() call, which hands that storage back to producers,
+     * so events that must outlive a drain have to be copied out.
      */
-    [[nodiscard]] std::vector<nixlTelemetryEvent>
-    takePending();
+    [[nodiscard]] std::span<const nixlTelemetryEvent>
+    drainPending();
 
     /**
      * @brief Atomically take and reset the number of staging drops accumulated
@@ -99,7 +104,8 @@ public:
 
 private:
     const size_t capacity_;
-    std::vector<nixlTelemetryEvent> events_;
+    std::vector<nixlTelemetryEvent> live_;
+    std::vector<nixlTelemetryEvent> drained_;
     std::mutex mutex_;
     std::atomic<uint64_t> numDroppedEvents_{0};
 };

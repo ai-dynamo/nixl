@@ -25,7 +25,7 @@
 #   abseil lts_2025_08_14, gRPC v1.73.0, AWS 1.11.760, Mooncake v0.3.10.post1,
 #   Azure azure-storage-blobs_12.15.0, libfabric v1.21.0
 # MUTABLE ref (WILL serve stale layer cache after upstream moves — audit before trust):
-#   UCX v1.21.x (moving branch), Node.js `nvm install --lts` (floating)
+#   UCX v1.23.x (moving branch), Node.js `nvm install --lts` (floating)
 # BARE HEAD, no ref at all — fill in the *_REF args below to make these cacheable:
 #   etcd-cpp-apiv3, gusli, gtest-parallel
 # ============================================================================
@@ -77,6 +77,14 @@ ENV PIP_CERT=${SYSTEM_CA_BUNDLE} \
 # e.g. etcd's build invokes /opt/nixl/bin/grpc_cpp_plugin, which needs
 # libgrpc_plugin_support.so from /opt/nixl/lib. Every stage inherits this ENV.
 ENV LD_LIBRARY_PATH="${NIXL_INSTALL_DIR}/lib:${NIXL_INSTALL_DIR}/lib64:/usr/local/lib:/usr/local/lib64"
+
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+# Inherited by every *-build stage and `final`.
+ENV CMAKE_INSTALL_ALWAYS=1
 
 # Some ROCm base images ship broken cmake configs for these.
 RUN rm -rf /usr/lib/cmake/grpc /usr/lib/cmake/protobuf
@@ -462,13 +470,13 @@ RUN set -eux; \
 
 # ============================================================================
 # ucx-build  (independent, parallel with everything)
-# MUTABLE ref v1.21.x -> layer cache may go stale; audit on refresh.
+# MUTABLE ref v1.23.x -> layer cache may go stale; audit on refresh.
 # Installs to ${UCX_INSTALL_DIR} (defaults to ${NIXL_INSTALL_DIR}) -> /out/opt/nixl.
 # ROCm path: no CUDA/gdrcopy/UCCL.
 # ============================================================================
 FROM ${BUILDER_BASE_IMAGE} AS ucx-build
 ARG NIXL_INSTALL_DIR=/opt/nixl
-ARG UCX_VERSION=v1.21.x
+ARG UCX_VERSION=v1.23.x
 RUN set -eux; \
     NPROC=$(nproc); \
     UCX_INSTALL_DIR="${NIXL_INSTALL_DIR}"; \
@@ -482,6 +490,7 @@ RUN set -eux; \
         --disable-static \
         --disable-doxygen-doc \
         --enable-optimizations \
+        --without-avx \
         --enable-cma \
         --enable-devel-headers \
         --with-rocm="${ROCM_PATH}/core" \

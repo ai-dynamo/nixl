@@ -14,17 +14,55 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="26.08-cuda13.4-devel-ubuntu24.04"
 ARG OS
 
+# libcuobjclient dev files: the cuda-dl-base devel images ship the runtime but
+# not libcuobjclient-dev, so the OBJ plugin silently loses cuObject RDMA
+# acceleration. Keep pinned to the same release as BASE_IMAGE_TAG.
+ARG CUOBJ_DEV_IMAGE="nvcr.io/nvidia/cuda-dl-base:26.08-cuda13.4-inference-devel-ubuntu24.04"
+
+FROM ${CUOBJ_DEV_IMAGE} AS cuobj_dev
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    mkdir -p /cuobj/include /cuobj/lib /cuobj/pkgconfig; \
+    cp -a "$T"/include/cuobj*.h /cuobj/include/; \
+    cp -a "$T"/lib/libcuobjclient.so /cuobj/lib/; \
+    cp -a /usr/lib/pkgconfig/cuobjclient-*.pc /cuobj/pkgconfig/; \
+    basename "$(ls "$T"/lib/libcuobjclient.so.1.*)" > /cuobj/soname
+
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+
+# Install them only when the base has a matching runtime and no dev files of
+# its own, so bases that are already correct or have no cuObject are untouched.
+COPY --from=cuobj_dev /cuobj /tmp/cuobj
+RUN set -e; \
+    CUDA_DIR="$(readlink -f /usr/local/cuda)"; \
+    T="$(echo "$CUDA_DIR"/targets/*-linux)"; \
+    have="$(basename "$(ls "$T"/lib/libcuobjclient.so.1.* 2>/dev/null | head -1)" 2>/dev/null)"; \
+    want="$(cat /tmp/cuobj/soname)"; \
+    if [ -e "$T/include/cuobjclient.h" ]; then \
+        echo "cuObject: dev files already present, leaving base untouched"; \
+    elif [ -z "$have" ]; then \
+        echo "cuObject: no runtime in base, skipping dev files"; \
+    elif [ "$have" != "$want" ]; then \
+        echo "cuObject: base runtime $have != dev files $want, skipping"; \
+    else \
+        cp -a /tmp/cuobj/include/*.h "$T/include/"; \
+        cp -a /tmp/cuobj/lib/libcuobjclient.so "$T/lib/"; \
+        PC="$(ls /tmp/cuobj/pkgconfig/cuobjclient-*.pc | head -1)"; \
+        mkdir -p /usr/lib/pkgconfig; \
+        sed "s|^cudaroot=.*|cudaroot=$CUDA_DIR|" "$PC" > "/usr/lib/pkgconfig/$(basename "$PC")"; \
+        echo "cuObject: installed dev files for $want"; \
+    fi; \
+    rm -rf /tmp/cuobj
 
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
-ARG UCX_REF="v1.22.x"
+ARG UCX_REF="v1.23.x"
 ARG UCX_SONAME_SUFFIX=""
 ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
@@ -40,6 +78,20 @@ ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG APT_MIRROR=""
+
+# Optional apt mirror override, e.g. for CI environments with an internal
+# Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
+RUN if [ -n "$APT_MIRROR" ]; then \
+        . /etc/os-release && \
+        printf '%s\n' \
+            'Types: deb' \
+            "URIs: $APT_MIRROR" \
+            "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+            'Components: main restricted universe multiverse' \
+            'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
+        grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
+    fi
 
 # Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
@@ -93,6 +145,13 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get -y install \
     libnuma-dev librdmacm-dev ibverbs-providers
 
 WORKDIR /workspace
+
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+ENV CMAKE_INSTALL_ALWAYS=1
 
 # Build Abseil from source (required for absl/log).
 RUN git clone https://github.com/abseil/abseil-cpp.git && \
@@ -213,6 +272,7 @@ RUN cd /usr/local/src && \
          --disable-static            \
          --disable-doxygen-doc       \
          --enable-optimizations      \
+         --without-avx               \
          --enable-cma                \
          --enable-devel-headers      \
          $EXPERIMENTAL_API_PARAM      \
@@ -284,6 +344,58 @@ COPY . /workspace/nixl
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LIBFABRIC_INSTALL_PATH/lib:$RDMA_CORE_PREFIX/lib:$LD_LIBRARY_PATH
 
+# Opt-in: build the internal ucx-spcx-plugin against the UCX built above and
+# install it into the UCX plugins dir, where UCX loads it like any other module.
+# The plugin source is cloned into the build context (ucx-spcx-plugin-src/) by
+# build-container.sh --build-ucx-spcx-plugin, so this must come after the
+# `COPY . /workspace/nixl` above.
+# FlexIO SDK + dpacc (build-time dependencies of the plugin's DPA transport) come
+# from the doca-host repo added above; libflexio is compile-against only — at
+# runtime it comes from the target machine's DOCA/FlexIO installation.
+# ac_cv_prog_cc_c23=no: on toolchains defaulting to C23, AC_PROG_CC resolves CC to
+# "gcc -std=gnu23". The plugin's src/gdp/Makefile.am passes the compiler through
+# unsplit as -hostcc=$(CC), so dpacc receives a bare -std=gnu23 and rejects it.
+# Drop this once the plugin splits the compiler from its flags.
+ARG BUILD_UCX_SPCX_PLUGIN=false
+RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
+        apt-get update -y && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            flexio-sdk dpacc && \
+        ldconfig && \
+        cd ucx-spcx-plugin-src && \
+        export ACLOCAL_PATH="/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}" && \
+        export ac_cv_prog_cc_c23=no && \
+        ./autogen.sh /usr/local/src/ucx && \
+        ./configure --prefix=$UCX_PREFIX --libdir=$UCX_PREFIX/lib \
+            --enable-shared --disable-static \
+            --with-ucx-src=/usr/local/src/ucx \
+            --with-ucx-build=/usr/local/src/ucx \
+            --with-cuda=/usr/local/cuda \
+            --with-flexio=/opt/mellanox/flexio \
+            --with-dpacc=$DOCA_PREFIX/tools/dpacc \
+            LDFLAGS="-L$UCX_PLUGIN_DIR -L$UCX_PREFIX/lib" && \
+        make -j${NPROC:-$(nproc)} && \
+        make install && \
+        ldconfig && \
+        cd /workspace/nixl && rm -rf ucx-spcx-plugin-src; \
+    fi
+
+# Opt-in: place the pre-staged DDN Infinia libs (from infinia-libs/ in the build
+# context, populated by build-container.sh --build-infinia) into /opt/ddn/red, the
+# infinia_path meson default, so meson auto-detects red_client and builds
+# libplugin_INFINIA.so. No registry pull here: the libs arrive via the COPY above.
+# uuid/uuid.h, included by the DDN red_client headers, comes from the uuid-dev
+# installed with the aws-sdk-cpp deps above.
+ARG BUILD_INFINIA=false
+RUN if [ "$BUILD_INFINIA" = "true" ]; then \
+        if [ -z "$(ls -A /workspace/nixl/infinia-libs 2>/dev/null)" ]; then \
+            echo "ERROR: BUILD_INFINIA=true but /workspace/nixl/infinia-libs is empty (staging failed?)" >&2; \
+            exit 1; \
+        fi; \
+        mkdir -p /opt/ddn/red && \
+        cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
+    fi
+
 # Install pybind11 via apt
 RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 
@@ -304,6 +416,20 @@ RUN rm -rf build && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
+
+# Fail the build if cuObject acceleration did not make it into the plugin.
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    if ! ls "$T"/lib/libcuobjclient.so.1.* >/dev/null 2>&1; then \
+        echo "cuObject: no runtime in base, skipping OBJ plugin check"; \
+    else \
+        P="$(find "$NIXL_PREFIX" -name libplugin_OBJ.so -print -quit)"; \
+        test -n "$P" || { echo "ERROR: libplugin_OBJ.so not found" >&2; exit 1; }; \
+        readelf -d "$P" | grep -q libcuobjclient || { \
+            echo "ERROR: libplugin_OBJ.so is missing libcuobjclient; S3 acceleration is not compiled in" >&2; \
+            exit 1; }; \
+        echo "cuObject: libplugin_OBJ.so links libcuobjclient"; \
+    fi
 
 RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \

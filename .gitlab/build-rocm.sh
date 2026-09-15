@@ -23,6 +23,13 @@ set -e
 set -x
 set -o pipefail
 
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+export CMAKE_INSTALL_ALWAYS=1
+
 # Parse commandline arguments with first argument being the install directory
 # and second argument being the UCX installation directory.
 # Source dependency options grouped with dep download/build/install steps.
@@ -380,7 +387,7 @@ if [ -n "$PRE_INSTALLED_UCX_ENV" ]; then
 else
     # UCCL is skipped if no Nvidia GPU is present.
     # Skipping steps entirely for ROCm.
-    UCX_VERSION=${UCX_VERSION:-v1.21.x}
+    UCX_VERSION=${UCX_VERSION:-v1.23.x}
     git clone --depth 1 --branch "${UCX_VERSION}" https://github.com/openucx/ucx.git ${TMPDIR}/ucx
     ( \
         cd ${TMPDIR}/ucx && \
@@ -391,6 +398,7 @@ else
             --disable-static \
             --disable-doxygen-doc \
             --enable-optimizations \
+            --without-avx \
             --enable-cma \
             --enable-devel-headers \
             --with-verbs \

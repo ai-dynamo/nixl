@@ -22,6 +22,7 @@
 
 #include <tuple>
 #include <iostream>
+#include <span>
 
 #include "nixl.h"
 #include "serdes/serdes.h"
@@ -138,6 +139,67 @@ throw_nixl_exception(const nixl_status_t &status) {
     }
 }
 
+namespace {
+
+// Builds a compressed (strided) descriptor list from an Nx5 numpy array, where each row is a run
+// of `count` blocks of `len` bytes with consecutive block starts spaced `stride` bytes apart:
+// (addr, len, dev_id, stride, count). A dense run has stride == len.
+nixl_stride_dlist_t
+to_stride_dlist(nixl_mem_t mem, const py::array &descs) {
+    static_assert(sizeof(nixlStrideDesc) == 5 * sizeof(uint64_t), "nixlStrideDesc size mismatch");
+
+    if (descs.ndim() != 2 || descs.shape(1) != 5) {
+        throw std::invalid_argument("descs must be a Nx5 numpy array");
+    }
+    if (!py::dtype::of<uint64_t>().equal(descs.dtype()) &&
+        !py::dtype::of<int64_t>().equal(descs.dtype())) {
+        throw std::invalid_argument("descs must be a Nx5 numpy array of uint64 or int64");
+    }
+    if (!(descs.flags() & py::array::c_style)) {
+        throw std::invalid_argument("descs must be a C-contiguous numpy array");
+    }
+
+    size_t n = descs.shape(0);
+    nixl_stride_dlist_t new_list(mem, n);
+    if (n > 0) {
+        // The Nx5 array matches the nixlStrideDesc layout so we can simply memcpy
+        std::memcpy(&new_list[0], descs.data(), descs.size() * sizeof(uint64_t));
+    }
+
+    return new_list;
+}
+
+nixl_opt_args_t
+make_opt_args(const std::vector<uintptr_t> &backends) {
+    nixl_opt_args_t extra_params;
+    for (uintptr_t backend : backends) {
+        extra_params.backends.push_back(reinterpret_cast<nixlBackendH *>(backend));
+    }
+    return extra_params;
+}
+
+template<typename DlistT>
+uintptr_t
+prep_xfer_dlist(const nixlAgent &agent,
+                const std::string &agent_name,
+                const DlistT &descs,
+                const std::vector<uintptr_t> &backends) {
+    const nixl_opt_args_t extra_params = make_opt_args(backends);
+    nixlDlistH *handle = nullptr;
+    throw_nixl_exception(agent.prepXferDlist(agent_name, descs, handle, &extra_params));
+    return reinterpret_cast<uintptr_t>(handle);
+}
+
+template<typename DlistT>
+uintptr_t
+prep_mem_view(const nixlAgent &agent, const DlistT &dlist, const std::vector<uintptr_t> &backends) {
+    const nixl_opt_args_t extra_params = make_opt_args(backends);
+    nixlMemViewH mvh;
+    throw_nixl_exception(agent.prepMemView(dlist, mvh, &extra_params));
+    return reinterpret_cast<uintptr_t>(mvh);
+}
+} // namespace
+
 PYBIND11_MODULE(_bindings, m) {
 
     // TODO: each nixl class and/or function can be documented in place
@@ -147,6 +209,15 @@ PYBIND11_MODULE(_bindings, m) {
     m.attr("NIXL_INIT_AGENT") = NIXL_INIT_AGENT;
 
     m.attr("DEFAULT_COMM_PORT") = default_comm_port;
+
+    // Whether NIXL was built against a UCX with the GPU device API, which the
+    // prepMemView/releaseMemView path requires. Mirrors the meson
+    // HAVE_UCX_GPU_DEVICE_API gate so callers (and tests) can probe support.
+#ifdef HAVE_UCX_GPU_DEVICE_API
+    m.attr("HAVE_UCX_GPU_DEVICE_API") = true;
+#else
+    m.attr("HAVE_UCX_GPU_DEVICE_API") = false;
+#endif
 
     // cast types
     py::enum_<nixl_thread_sync_t>(m, "nixl_thread_sync_t")
@@ -308,6 +379,64 @@ PYBIND11_MODULE(_bindings, m) {
                 nixl_xfer_dlist_t newObj = nixl_xfer_dlist_t(&serdes);
                 return newObj;
             }));
+
+    py::class_<nixl_remote_dlist_t>(m, "nixlRemoteDList")
+        .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
+        .def(py::init([](nixl_mem_t mem, py::list descs) {
+                 nixl_remote_dlist_t new_list(mem, descs.size());
+                 for (size_t i = 0; i < descs.size(); i++) {
+                     if (!py::isinstance<py::tuple>(descs[i])) {
+                         throw py::type_error(
+                             "Each descriptor must be a tuple when provided as a list");
+                     }
+                     auto desc = py::reinterpret_borrow<py::tuple>(descs[i]);
+                     if (desc.size() != 4) {
+                         throw py::value_error(
+                             "Each descriptor must be (addr, len, dev_id, agent_name)");
+                     }
+                     new_list[i] = nixlRemoteDesc(desc[0].cast<uintptr_t>(),
+                                                  desc[1].cast<size_t>(),
+                                                  desc[2].cast<uint64_t>(),
+                                                  desc[3].cast<std::string>());
+                 }
+
+                 return new_list;
+             }),
+             py::arg("type"),
+             py::arg("descs").noconvert())
+        .def("getType", &nixl_remote_dlist_t::getType)
+        .def("descCount", &nixl_remote_dlist_t::descCount)
+        .def("isEmpty", &nixl_remote_dlist_t::isEmpty)
+        .def(py::self == py::self)
+        .def("__getitem__",
+             [](nixl_remote_dlist_t &list, unsigned int i) -> py::tuple {
+                 nixlRemoteDesc &desc = list[i];
+                 return py::make_tuple(desc.addr, desc.len, desc.devId, desc.remoteAgent);
+             })
+        .def("__setitem__",
+             [](nixl_remote_dlist_t &list, unsigned int i, const py::tuple &desc) {
+                 list[i] = nixlRemoteDesc(desc[0].cast<uintptr_t>(),
+                                          desc[1].cast<size_t>(),
+                                          desc[2].cast<uint64_t>(),
+                                          desc[3].cast<std::string>());
+             })
+        .def("addDesc",
+             [](nixl_remote_dlist_t &list, const py::tuple &desc) {
+                 list.addDesc(nixlRemoteDesc(desc[0].cast<uintptr_t>(),
+                                             desc[1].cast<size_t>(),
+                                             desc[2].cast<uint64_t>(),
+                                             desc[3].cast<std::string>()));
+             })
+        .def("append",
+             [](nixl_remote_dlist_t &list, const py::tuple &desc) {
+                 list.addDesc(nixlRemoteDesc(desc[0].cast<uintptr_t>(),
+                                             desc[1].cast<size_t>(),
+                                             desc[2].cast<uint64_t>(),
+                                             desc[3].cast<std::string>()));
+             })
+        .def("remDesc", &nixl_remote_dlist_t::remDesc)
+        .def("clear", &nixl_remote_dlist_t::clear)
+        .def("print", &nixl_remote_dlist_t::print);
 
     py::class_<nixl_reg_dlist_t>(m, "nixlRegDList")
         .def(py::init<nixl_mem_t, int>(), py::arg("type"), py::arg("init_size") = 0)
@@ -550,15 +679,7 @@ PYBIND11_MODULE(_bindings, m) {
                std::string &agent_name,
                const nixl_xfer_dlist_t &descs,
                const std::vector<uintptr_t> &backends) -> uintptr_t {
-                nixlDlistH *handle = nullptr;
-                nixl_opt_args_t extra_params;
-
-                for (uintptr_t backend : backends)
-                    extra_params.backends.push_back((nixlBackendH *)backend);
-
-                throw_nixl_exception(agent.prepXferDlist(agent_name, descs, handle, &extra_params));
-
-                return (uintptr_t)handle;
+                return prep_xfer_dlist(agent, agent_name, descs, backends);
             },
             py::arg("agent_name"),
             py::arg("descs"),
@@ -569,19 +690,27 @@ PYBIND11_MODULE(_bindings, m) {
             [](nixlAgent &agent,
                const nixl_xfer_dlist_t &descs,
                const std::vector<uintptr_t> &backends) -> uintptr_t {
-                nixlDlistH *handle = nullptr;
-                nixl_opt_args_t extra_params;
-
-                for (uintptr_t backend : backends)
-                    extra_params.backends.push_back((nixlBackendH *)backend);
-
-                throw_nixl_exception(agent.prepXferDlist(descs, handle, &extra_params));
-
-                return (uintptr_t)handle;
+                return prep_xfer_dlist(agent, NIXL_INIT_AGENT, descs, backends);
             },
             py::arg("descs"),
             py::arg("backend") = std::vector<uintptr_t>({}),
             py::call_guard<py::gil_scoped_release>())
+        .def(
+            "prepXferDlist",
+            [](nixlAgent &agent,
+               std::string &agent_name,
+               nixl_mem_t mem,
+               const py::array &descs,
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
+                const nixl_stride_dlist_t stride_descs = to_stride_dlist(mem, descs);
+
+                py::gil_scoped_release release;
+                return prep_xfer_dlist(agent, agent_name, stride_descs, backends);
+            },
+            py::arg("agent_name"),
+            py::arg("mem_type"),
+            py::arg("descs").noconvert(),
+            py::arg("backend") = std::vector<uintptr_t>({}))
         .def(
             "makeXferReq",
             [](nixlAgent &agent,
@@ -596,6 +725,11 @@ PYBIND11_MODULE(_bindings, m) {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
+                if (!local_side || !remote_side) {
+                    throw nixlInvalidParamError(
+                        "local_side and remote_side must be valid pointers");
+                }
+
                 for (uintptr_t backend : backends)
                     extra_params.backends.push_back((nixlBackendH *)backend);
 
@@ -606,39 +740,44 @@ PYBIND11_MODULE(_bindings, m) {
                 std::vector<int> local_indices_vec;
                 std::vector<int> remote_indices_vec;
 
-                auto init_indices_lambda = [](py::object &indices) -> std::vector<int> {
+                auto indices_to_span = [](const py::object &indices,
+                                          std::vector<int> &backing) -> std::span<const int> {
                     if (py::isinstance<py::array>(indices)) {
-                        auto indices_array = indices.cast<py::array_t<uint32_t>>();
+                        const auto indices_array = indices.cast<py::array>();
                         if (indices_array.ndim() != 1)
                             throw std::invalid_argument("indices numpy array must be 1D");
-                        if (!py::dtype::of<uint32_t>().equal(indices_array.dtype()) &&
-                            !py::dtype::of<int32_t>().equal(indices_array.dtype()))
-                            throw std::invalid_argument(
-                                "indices numpy array must be 1D of uint32 or int32");
-                        if (!(indices_array.flags() & py::array::c_style))
-                            throw std::invalid_argument("indices numpy array must be C-contiguous");
-                        // We assume that the indices array matches the nixlBasicDesc layout so we
-                        // can simply memcpy
-                        std::vector<int> ret(indices_array.size());
-                        std::memcpy(ret.data(),
-                                    indices_array.data(),
-                                    indices_array.size() * sizeof(uint32_t));
-                        return ret;
-                    } else {
-                        return indices.cast<std::vector<int>>();
+
+                        if (py::dtype::of<int>().equal(indices_array.dtype()) &&
+                            (indices_array.flags() & py::array::c_style)) {
+                            return std::span<const int>(
+                                static_cast<const int *>(indices_array.data()),
+                                static_cast<size_t>(indices_array.size()));
+                        }
+
+                        // TODO: compatibility with previous version, to be removed
+                        using int_array_t =
+                            py::array_t<int, py::array::c_style | py::array::forcecast>;
+                        const auto converted = indices.cast<int_array_t>();
+                        backing.assign(converted.data(), converted.data() + converted.size());
+                        return std::span<const int>(backing);
                     }
+                    backing = indices.cast<std::vector<int>>();
+                    return std::span<const int>(backing);
                 };
 
-                local_indices_vec = init_indices_lambda(local_indices);
-                remote_indices_vec = init_indices_lambda(remote_indices);
+                const auto local_span = indices_to_span(local_indices, local_indices_vec);
+                const auto remote_span = indices_to_span(remote_indices, remote_indices_vec);
+
+                const auto local_dlist = reinterpret_cast<nixlDlistH *>(local_side);
+                const auto remote_dlist = reinterpret_cast<nixlDlistH *>(remote_side);
 
                 {
                     py::gil_scoped_release release;
                     throw_nixl_exception(agent.makeXferReq(operation,
-                                                           (nixlDlistH *)local_side,
-                                                           local_indices_vec,
-                                                           (nixlDlistH *)remote_side,
-                                                           remote_indices_vec,
+                                                           *local_dlist,
+                                                           local_span,
+                                                           *remote_dlist,
+                                                           remote_span,
                                                            handle,
                                                            &extra_params));
                 }
@@ -909,5 +1048,32 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("ip_addr") = std::string(""),
             py::arg("port") = 0,
             py::call_guard<py::gil_scoped_release>())
-        .def("checkRemoteMD", &nixlAgent::checkRemoteMD);
+        .def("checkRemoteMD", &nixlAgent::checkRemoteMD)
+        .def(
+            "prepMemView",
+            [](nixlAgent &agent,
+               const nixl_xfer_dlist_t &dlist,
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
+                return prep_mem_view(agent, dlist, backends);
+            },
+            py::arg("dlist"),
+            py::arg("backends") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "prepMemView",
+            [](nixlAgent &agent,
+               const nixl_remote_dlist_t &dlist,
+               const std::vector<uintptr_t> &backends) -> uintptr_t {
+                return prep_mem_view(agent, dlist, backends);
+            },
+            py::arg("dlist"),
+            py::arg("backends") = std::vector<uintptr_t>({}),
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "releaseMemView",
+            [](nixlAgent &agent, uintptr_t mvh) {
+                agent.releaseMemView(reinterpret_cast<nixlMemViewH>(mvh));
+            },
+            py::arg("mvh"),
+            py::call_guard<py::gil_scoped_release>());
 }

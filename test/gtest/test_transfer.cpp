@@ -22,6 +22,7 @@
 #include "nixl.h"
 #include "nixl_types.h"
 #include "plugin_manager.h"
+#include "transfer_request.h"
 
 #include <absl/strings/str_format.h>
 #include <absl/time/clock.h>
@@ -379,6 +380,7 @@ protected:
                const std::string &from_name,
                nixlAgent &to,
                const std::string &to_name,
+               nixl_xfer_op_t op,
                size_t size,
                size_t count,
                size_t repeat,
@@ -388,7 +390,8 @@ protected:
                nixl_mem_t dst_mem_type,
                std::vector<MemBuffer> dst_buffers,
                nixl_status_t expected_telem_status = NIXL_ERR_NO_TELEMETRY,
-               const std::string &notif_msg = NOTIF_MSG) {
+               const std::string &notif_msg = NOTIF_MSG,
+               bool expect_trace_context = false) {
         std::mutex logger_mutex;
         std::vector<std::thread> threads;
         nixl_notifs_t notif_map;
@@ -398,23 +401,31 @@ protected:
                 extra_params.notif = notif_msg;
 
                 nixlXferReqH *xfer_req = nullptr;
-                nixl_status_t status = from.createXferReq(
-                        NIXL_WRITE,
-                        makeDescList<nixlBasicDesc>(src_buffers, src_mem_type),
-                        makeDescList<nixlBasicDesc>(dst_buffers, dst_mem_type), to_name,
-                        xfer_req, &extra_params);
+                nixl_status_t status =
+                    from.createXferReq(op,
+                                       makeDescList<nixlBasicDesc>(src_buffers, src_mem_type),
+                                       makeDescList<nixlBasicDesc>(dst_buffers, dst_mem_type),
+                                       to_name,
+                                       xfer_req,
+                                       &extra_params);
                 ASSERT_EQ(status, NIXL_SUCCESS);
                 EXPECT_NE(xfer_req, nullptr);
+                const auto trace_correlation_id = xfer_req->traceCorrelationId64();
+                if (expect_trace_context) {
+                    EXPECT_NE(trace_correlation_id, 0u);
+                }
 
                 auto start_time = absl::Now();
 
                 for (size_t i = 0; i < repeat; i++) {
                     status = from.postXferReq(xfer_req);
                     ASSERT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+                    EXPECT_EQ(xfer_req->traceCorrelationId64(), trace_correlation_id);
 
                     for (int i = 0; i < retry_count; i++) {
                         status = from.getXferStatus(xfer_req);
                         EXPECT_TRUE((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG));
+                        EXPECT_EQ(xfer_req->traceCorrelationId64(), trace_correlation_id);
                         if (status == NIXL_SUCCESS) {
                             break;
                         }
@@ -431,8 +442,9 @@ protected:
                 auto bandwidth  = total_size / total_time / (1024 * 1024 * 1024);
                 {
                     const std::lock_guard<std::mutex> lock(logger_mutex);
-                    Logger() << "Thread " << thread << ": " << size << "x" << count << "x" << repeat
-                             << "=" << total_size << " bytes in " << total_time << " seconds "
+                    Logger() << "Thread " << thread << " " << nixlEnumStrings::xferOpStr(op) << ": "
+                             << size << "x" << count << "x" << repeat << "=" << total_size
+                             << " bytes in " << total_time << " seconds "
                              << "(" << bandwidth << " GB/s)";
                 }
 
@@ -519,6 +531,7 @@ protected:
                    getAgentName(0),
                    getAgent(1),
                    getAgentName(1),
+                   NIXL_WRITE,
                    size,
                    count,
                    repeat,
@@ -555,18 +568,21 @@ TEST_P(TestTransfer, RandomSizes)
         createRegisteredMem(getAgent(1), size, count, mem_type, dst_buffers);
 
         exchangeMD(0, 1);
-        doTransfer(getAgent(0),
-                   getAgentName(0),
-                   getAgent(1),
-                   getAgentName(1),
-                   size,
-                   count,
-                   repeat,
-                   num_threads,
-                   mem_type,
-                   src_buffers,
-                   mem_type,
-                   dst_buffers);
+        for (const auto op : {NIXL_WRITE, NIXL_READ}) {
+            doTransfer(getAgent(0),
+                       getAgentName(0),
+                       getAgent(1),
+                       getAgentName(1),
+                       op,
+                       size,
+                       count,
+                       repeat,
+                       num_threads,
+                       mem_type,
+                       src_buffers,
+                       mem_type,
+                       dst_buffers);
+        }
         invalidateMD(0, 1);
         deregisterMem(getAgent(0), src_buffers, mem_type);
         deregisterMem(getAgent(1), dst_buffers, mem_type);
@@ -584,10 +600,21 @@ TEST_P(TestTransfer, remoteMDFromSocket)
     createRegisteredMem(getAgent(1), size, count, mem_type, dst_buffers);
 
     exchangeMDIP(0, 1);
-    doTransfer(getAgent(0), getAgentName(0), getAgent(1), getAgentName(1),
-               size, count, 1, 1,
-               mem_type, src_buffers,
-               mem_type, dst_buffers);
+    for (const auto op : {NIXL_WRITE, NIXL_READ}) {
+        doTransfer(getAgent(0),
+                   getAgentName(0),
+                   getAgent(1),
+                   getAgentName(1),
+                   op,
+                   size,
+                   count,
+                   1,
+                   1,
+                   mem_type,
+                   src_buffers,
+                   mem_type,
+                   dst_buffers);
+    }
 
     invalidateMD(0, 1);
     deregisterMem(getAgent(0), src_buffers, mem_type);
@@ -615,7 +642,9 @@ TEST_P(TestTransfer, EmptyNotificationPayload) {
         getAgent(0), getAgentName(0), getAgent(1), getAgentName(1), repeat, num_threads, "");
 }
 
-TEST_P(TestTransfer, ListenerCommSize) {
+class TestListener : public TestTransfer {};
+
+TEST_P(TestListener, CommSize) {
     std::vector<MemBuffer> buffers;
     createRegisteredMem(getAgent(1), 64, 10000, DRAM_SEG, buffers);
     auto status = fetchRemoteMD(0, 1);
@@ -624,6 +653,8 @@ TEST_P(TestTransfer, ListenerCommSize) {
         wait_until_true([&]() { return checkRemoteMD(0, 1) == NIXL_SUCCESS; }));
     deregisterMem(getAgent(1), buffers, DRAM_SEG);
 }
+
+NIXL_INSTANTIATE_TEST(ucx, TestListener, "UCX", true, 1, 0, "");
 
 TEST_P(TestTransferTelemetry, GetXferTelemetryFile) {
     env.addVar("NIXL_TELEMETRY_ENABLE", "y");
@@ -738,18 +769,24 @@ protected:
         createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
 
         exchangeMD(0, 1);
-        doTransfer(getAgent(0),
-                   getAgentName(0),
-                   getAgent(1),
-                   getAgentName(1),
-                   size,
-                   count,
-                   repeat,
-                   num_threads,
-                   DRAM_SEG,
-                   src_buffers,
-                   DRAM_SEG,
-                   dst_buffers);
+        for (const auto op : {NIXL_WRITE, NIXL_READ}) {
+            doTransfer(getAgent(0),
+                       getAgentName(0),
+                       getAgent(1),
+                       getAgentName(1),
+                       op,
+                       size,
+                       count,
+                       repeat,
+                       num_threads,
+                       DRAM_SEG,
+                       src_buffers,
+                       DRAM_SEG,
+                       dst_buffers,
+                       NIXL_ERR_NO_TELEMETRY,
+                       "notification",
+                       true);
+        }
         invalidateMD(0, 1);
         deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
         deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
@@ -809,6 +846,7 @@ TEST_P(TestTransferTracing, NvtxDemoWalkthrough) {
                getAgentName(0),
                getAgent(1),
                getAgentName(1),
+               NIXL_WRITE,
                size,
                count,
                /*repeat=*/1,

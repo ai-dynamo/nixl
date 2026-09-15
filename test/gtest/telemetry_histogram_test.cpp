@@ -22,41 +22,22 @@
 #include "telemetry_event.h"
 
 #include "histogram_buckets.h"
-#include "loopback_connection.h"
-#include "open_metrics_text_parser.h"
+#include "scrape_util.h"
 #include "timeseries.h"
 
 #include <array>
-#include <chrono>
 #include <limits>
 #include <optional>
 #include <set>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 namespace {
 
-using nixl::doca_test::loopbackConnection;
-using nixl::doca_test::timeSeries;
-
-// Poll /metrics until it serves a non-empty body (the exposer may not be ready
-// the instant the exporter is constructed), then parse it into the time-series
-// model shared with the doca-telemetry tests.
-timeSeries
-scrapeMetrics(uint16_t port) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    do {
-        const std::string body = loopbackConnection::httpGet(port, "/metrics");
-        if (!body.empty()) {
-            return timeSeries(nixl::doca_test::open_metrics_text::parse(body));
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
-    } while (std::chrono::steady_clock::now() < deadline);
-    return timeSeries(nixl::doca_test::seriesMap{});
-}
+using nixl::metrics_test::scrapeMetrics;
+using nixl::metrics_test::timeSeries;
 
 // Cumulative count at the exact `le` boundary of this agent's bucket series.
 // Parses `le` as a double so the check does not depend on boundary formatting.
@@ -142,7 +123,7 @@ TEST_F(prometheusTelemetryTest, XferTimeHistogramRecordsObservations) {
     }
 
     const auto metrics = scrapeMetrics(port_);
-    const nixl::doca_test::labelSet labels{{"agent_name", agent_name}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agent_name}};
 
     EXPECT_EQ(metrics.latestValue("agent_xfer_time_us_count", labels), std::optional<double>(4.0))
         << "histogram _count must equal the number of observations";

@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "common.h"
+#include "transfer_request.h"
 #include "tracing/trace.h"
 
 namespace nixl::trace {
@@ -38,6 +39,8 @@ resolveTraceBackends(const std::optional<std::string> &explicit_spec, bool under
 } // namespace nixl::trace
 
 namespace {
+
+constexpr const char *kUnloadableBackend = "definitely-not-a-backend";
 
 // Records the calls a single backend receives, so tests can assert that one
 // call site fanned out to every backend.
@@ -317,7 +320,7 @@ TEST(Tracing, MakeTracerUnknownBackendReturnsNull) {
     {
         // No plugin exists for this backend, so it resolves to null with a warning.
         const gtest::LogIgnoreGuard ignore("requested but plugin");
-        const auto tracer = nixl::trace::makeTracer({"agent", {"definitely-not-a-backend"}});
+        const auto tracer = nixl::trace::makeTracer({"agent", {kUnloadableBackend}});
         EXPECT_EQ(tracer, nullptr);
     }
 
@@ -325,16 +328,15 @@ TEST(Tracing, MakeTracerUnknownBackendReturnsNull) {
     EXPECT_EQ(none, nullptr);
 }
 
-// The no-backend runtime path: a backend is requested but its plugin is not
-// available (no libtrace_backend_*.so is registered in this unit binary), so
-// makeTracer yields a null tracer. Call sites then fall back to a
-// default-constructed Span -- the stub path that does essentially nothing -- and
-// it must stay safe. NVTX's functional coverage lives in the e2e transfer tests,
-// which load the real plugin.
+// The no-backend runtime path: a backend is requested but no plugin provides
+// it, so makeTracer yields a null tracer. Call sites then fall back to a
+// default-constructed Span -- the stub path that does essentially nothing --
+// and it must stay safe. NVTX's functional coverage lives in the e2e transfer
+// tests, which load the real plugin.
 TEST(Tracing, RequestedBackendWithoutPluginIsInert) {
     {
         const gtest::LogIgnoreGuard ignore("requested but plugin");
-        const auto tracer = nixl::trace::makeTracer({"stub_agent", {"nvtx"}});
+        const auto tracer = nixl::trace::makeTracer({"stub_agent", {kUnloadableBackend}});
         EXPECT_EQ(tracer, nullptr);
     }
 
@@ -386,4 +388,60 @@ TEST(Tracing, CorrelationScopeNullTracerIsInert) {
     nixl::trace::Tracer *tracer = nullptr;
     { const nixl::trace::CorrelationScope scope(tracer, 0x1u); }
     SUCCEED();
+}
+
+TEST(Tracing, RequestStoresFixedCorrelationContext) {
+    nixl::trace::TraceContext context;
+    context.traceId = {0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6};
+    context.spanId = {0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7};
+
+    const nixlXferReqH request(
+        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{}, context);
+
+    EXPECT_EQ(request.traceCorrelationId64(), 0x00f067aa0ba902b7ULL);
+}
+
+TEST(Tracing, RequestContextsAreDistinctAndStable) {
+    const nixlXferReqH first("remote",
+                             NIXL_WRITE,
+                             DRAM_SEG,
+                             DRAM_SEG,
+                             0,
+                             nixl_remote_section_weak_t{},
+                             nixl::trace::generateTraceContext());
+    const nixlXferReqH second("remote",
+                              NIXL_WRITE,
+                              DRAM_SEG,
+                              DRAM_SEG,
+                              0,
+                              nixl_remote_section_weak_t{},
+                              nixl::trace::generateTraceContext());
+    const auto first_id = first.traceCorrelationId64();
+
+    EXPECT_NE(first_id, second.traceCorrelationId64());
+    EXPECT_EQ(first.traceCorrelationId64(), first_id);
+}
+
+TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
+    const nixlXferReqH request("remote",
+                               NIXL_WRITE,
+                               DRAM_SEG,
+                               DRAM_SEG,
+                               0,
+                               nixl_remote_section_weak_t{},
+                               nixl::trace::TraceContext{});
+
+    EXPECT_EQ(request.traceCorrelationId64(), 0u);
+}
+
+TEST(Tracing, ActiveTracerConstructsGeneratedContext) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+
+    const nixl::trace::TraceContext first{tracer.get()};
+    const nixl::trace::TraceContext second{tracer.get()};
+
+    EXPECT_TRUE(first.valid());
+    EXPECT_TRUE(second.valid());
+    EXPECT_NE(first.correlationId64(), second.correlationId64());
 }
