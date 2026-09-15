@@ -184,14 +184,7 @@ validate_gpu_buffer(void *gpu_buffer, size_t size) {
         return false;
     }
 
-    hipError_t err = hipDeviceSynchronize();
-    if (err != hipSuccess) {
-        free(host_buffer);
-        free(expected_buffer);
-        return false;
-    }
-
-    err = hipMemcpy(host_buffer, gpu_buffer, size, hipMemcpyDeviceToHost);
+    hipError_t err = hipMemcpy(host_buffer, gpu_buffer, size, hipMemcpyDeviceToHost);
     if (err != hipSuccess) {
         free(host_buffer);
         free(expected_buffer);
@@ -510,6 +503,18 @@ main(int argc, char *argv[]) {
         printProgress(float(i + 1) / num_transfers);
     }
 
+    // Ensure the initialization IO has completed on the device.
+    // Failing to do so introduces a race condition with hipFile in Phase 2.
+    if (use_vram) {
+        for (unsigned int dev = 0; dev < num_gpus; dev++) {
+            (void)hipSetDevice(dev);
+            if (hipDeviceSynchronize() != hipSuccess) {
+                std::cerr << "Failed to synchronize device " << dev << " after fill\n";
+                goto cleanup;
+            }
+        }
+    }
+
     std::cout << "\n=== Registering memory ===" << std::endl;
     ret = agent.registerMem(file_for_ais_mt);
     if (ret != NIXL_SUCCESS) {
@@ -643,6 +648,19 @@ main(int argc, char *argv[]) {
                     clear_buffer(dram_addr[i], transfer_size);
                 }
                 printProgress(float(i + 1) / num_transfers);
+            }
+
+            // Ensure the clears have completed on the device.
+            // Failing to do so introduces a race condition with hipFile in
+            // Phase 4, silently zeroing data that NIXL reads.
+            if (use_vram) {
+                for (unsigned int dev = 0; dev < num_gpus; dev++) {
+                    (void)hipSetDevice(dev);
+                    if (hipDeviceSynchronize() != hipSuccess) {
+                        std::cerr << "Failed to synchronize device " << dev << " after clear\n";
+                        goto cleanup;
+                    }
+                }
             }
         }
 
