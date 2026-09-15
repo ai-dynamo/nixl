@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
-subdir('stream')
-subdir('file')
-subdir('object')
-subdir('device')
+device_allocator_unit_test_dep = declare_dependency()
 
-if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
-    subdir('libfabric')
+if cuda_dep.found() and is_variable('device_allocator_interface')
+    device_allocator_unit_test_dep = declare_dependency(
+        sources: ['device_allocator.cpp'],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
+        dependencies: [nixl_common_dep, cuda_dep, device_allocator_interface],
+    )
 endif
