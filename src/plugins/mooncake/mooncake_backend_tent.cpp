@@ -138,7 +138,6 @@ nixlMooncakeEngine::checkXferTent(nixlMooncakeBackendReqH *) const {
 #ifdef HAVE_MOONCAKE_TENT
 nixl_status_t
 nixlMooncakeEngine::releaseReqHTent(nixlMooncakeBackendReqH *priv) const {
-    reclaimParkedBatches();
     // Idle handle: never posted, or the batch was already reclaimed on
     // completion.
     if (priv->batch_id == kTentInvalidBatch) {
@@ -190,8 +189,9 @@ nixlMooncakeEngine::releaseReqHTent(nixlMooncakeBackendReqH *priv) const {
         // milliseconds, so no timeout short enough to be acceptable in a
         // release call is long enough to cover the cases that need it.
         // Park the batch instead. The handle goes away now, so the caller never
-        // blocks, and reclaimParkedBatches() frees the batch on a later call
-        // once the engine reports it terminal.
+        // blocks, and reclaimParkedBatches() frees the batch from a later
+        // checkXfer() or getNotifs(), or from the destructor, once the engine
+        // reports it terminal.
         {
             std::lock_guard<std::mutex> lock(parked_mutex_);
             parked_batches_.push_back(priv->batch_id);

@@ -157,7 +157,9 @@ private:
 
     // Frees the batches parked by releaseReqHTent() as soon as the engine
     // reports them terminal. A no-op while nothing is parked, which is the
-    // common case.
+    // common case. Called from checkXfer(), getNotifs() and the destructor;
+    // releaseReqH() itself does not sweep, the core always polls before it
+    // releases.
     void
     reclaimParkedBatches() const;
 
