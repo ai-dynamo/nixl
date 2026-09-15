@@ -80,7 +80,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     fi
 
 RUN apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
     ninja-build \
     pybind11-dev \
     libclang-dev \
@@ -100,7 +100,11 @@ RUN apt-get update -y && \
     libgtest-dev \
     hwloc \
     libhwloc-dev \
-    build-essential
+    build-essential \
+    libhiredis-dev \
+    libevent-dev \
+    redis-tools && \
+    rm -rf /var/lib/apt/lists/*
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
 # Skip only the DOCA SDK install when the base image already ships it.
@@ -176,6 +180,8 @@ ARG LIBFABRIC_VERSION="v1.21.0"
 ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG NIXL_ENABLE_PLUGINS=""
+ARG NIXL_STATIC_PLUGINS=""
 
 WORKDIR /workspace
 
@@ -311,7 +317,9 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE \
+        -Denable_plugins=${NIXL_ENABLE_PLUGINS} \
+        -Dstatic_plugins=${NIXL_STATIC_PLUGINS} && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
