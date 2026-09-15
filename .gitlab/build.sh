@@ -176,13 +176,18 @@ else
         echo "Using PyTorch from system site-packages"
     else
         echo "System torch check failed: ${_torch_check_err}" >&2
-        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
+        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+')
         if [ -z "$cuda_version" ]; then
             echo "ERROR: unable to determine CUDA version from nvcc" >&2
             exit 1
         fi
+        if [ "${cuda_version%%.*}" = "13" ]; then
+            torch_cu_tag="cu130"
+        else
+            torch_cu_tag="cu$(echo "${cuda_version}" | tr -d .)"
+        fi
         $SUDO pip3 --no-cache-dir install --break-system-packages \
-            --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
+            --index-url "https://download.pytorch.org/whl/${torch_cu_tag}" torch
     fi
 
     # DOCA + RDMA build dependencies.
