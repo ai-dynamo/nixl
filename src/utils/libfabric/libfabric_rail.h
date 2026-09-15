@@ -543,7 +543,7 @@ public:
 
     /** Set callback for XFER_ID tracking.
      *  Signature: (imm_data, sender_agent_idx_in_our_table). sender_agent_idx
-     *  is decoded from the imm_data the sender shipped with fi_writedata,
+     *  is decoded from the imm_data the sender shipped with fi_writemsg (with remote completion),
      *  via the handshake-negotiated agent_idx encoding. */
     void
     setXferIdCallback(std::function<void(uint64_t, uint16_t)> callback);
