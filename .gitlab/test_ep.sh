@@ -76,6 +76,7 @@ run_elastic_test() {
         timeout 300 "${VLLM_PYTHON}" "${EP_ELASTIC_TEST_DIR}/elastic.py" \
             --plan "$plan_file" \
             --validate-phase-failures \
+            --kineto \
             "$@"
     )
 }
@@ -115,8 +116,7 @@ run_test_on_both_available_transports "Baseline" \
     --num-topk 8 \
     --num-tokens 128 \
     --hidden-dim 8192 \
-    --timeout-ms 20000 \
-    --kineto
+    --timeout-ms 20000
 
 run_test_on_both_available_transports "Elastic fault" \
     "${EP_ELASTIC_TEST_DIR}/expansion_fault_contraction.json" \
@@ -134,8 +134,7 @@ run_elastic_test "Small-scale fault and simultaneous clean removal + rank failur
     --num-topk 2 \
     --num-tokens 128 \
     --hidden-dim 8192 \
-    --timeout-ms 30000 \
-    --kineto
+    --timeout-ms 30000
 
 run_elastic_test "Multi-step scaling" \
     "${EP_ELASTIC_TEST_DIR}/multi_step_scaling.json" \
