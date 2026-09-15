@@ -18,7 +18,43 @@ limitations under the License.
 # NIXL GDS Plugin
 
 This plugin uses NVIDIA GPUDirect storage cuFile APIs as an I/O backend for
-NIXL.
+NIXL. It provides two backend names that share a common base engine
+(`nixlGdsEngine`, which owns registration, query, the cuFile driver lifecycle
+and transfer validation):
+
+- `GDS`: selects cuFile batch transfers (`nixlGdsBatchEngine`) by default or
+  multi-threaded transfers (`nixlGdsMtEngine`) with the `mode` parameter.
+- `GDS_MT`: multi-threaded transfers via TaskFlow (`nixlGdsMtEngine`). TaskFlow
+  issues one `cuFileRead` or `cuFileWrite` per prepared request. This name
+  remains available for compatibility.
+
+The two backends use the same cuFile driver and therefore cannot be created
+simultaneously within a single agent.
+
+## Backend selection
+
+| Backend | Parameters | Transfer engine |
+| --- | --- | --- |
+| `GDS` | none | Batch |
+| `GDS` | `mode=batch` | Batch |
+| `GDS` | `mode=mt` | Multi-threaded |
+| `GDS_MT` | none | Multi-threaded |
+
+## GDS configuration
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `mode` | `batch` | Transfer engine: `batch` or `mt`. |
+| `batch_pool_size` | `16` | Number of preallocated cuFile batch handles in `batch` mode. |
+| `batch_limit` | `128` | Maximum entries in one cuFile batch in `batch` mode. |
+| `max_request_size` | `16777216` | Maximum bytes in one prepared I/O chunk in `batch` mode. |
+| `thread_count` | `max(1, hardware concurrency / 2)` | Number of persistent TaskFlow workers in `mt` mode. |
+
+## GDS_MT configuration
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `thread_count` | `max(1, hardware concurrency / 2)` | Number of persistent TaskFlow workers. The plugin advertises the computed value as a decimal string. |
 
 [NVIDIA GDS](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html)<br />
 [CUDA GDS Install and Setup](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)
