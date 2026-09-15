@@ -158,7 +158,8 @@ private:
  */
 class Tracer {
 public:
-    explicit Tracer(std::vector<std::unique_ptr<TraceBackend>> backends) noexcept;
+    explicit Tracer(std::vector<std::unique_ptr<TraceBackend>> backends,
+                    double sample_ratio = 0.0) noexcept;
     ~Tracer();
     Tracer(const Tracer &) = delete;
     Tracer &
@@ -168,6 +169,15 @@ public:
     [[nodiscard]] bool
     empty() const noexcept {
         return backends_.empty();
+    }
+
+    /** @brief Sampling ratio applied when a trace context is generated for one
+     *         of this agent's requests. Carried here because the tracer pointer
+     *         is what the generation call sites have; the tracer never reads it
+     *         itself. */
+    [[nodiscard]] double
+    sampleRatio() const noexcept {
+        return sampleRatio_;
     }
 
     [[nodiscard]] Span
@@ -183,6 +193,7 @@ public:
 
 private:
     std::vector<std::unique_ptr<TraceBackend>> backends_;
+    double sampleRatio_{0.0};
 };
 
 /**
@@ -223,6 +234,8 @@ struct TracerConfig {
     std::string agentName;
     /** @brief Backend names requested at runtime (e.g. {"nvtx"}). */
     std::vector<std::string> backends;
+    /** @brief Head-based sampling probability in [0, 1]; 0 samples nothing. */
+    double sampleRatio{0.0};
 };
 
 /**

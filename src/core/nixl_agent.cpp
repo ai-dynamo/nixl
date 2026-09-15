@@ -173,10 +173,12 @@ makeAgentTracer(const std::string &name) {
     const auto trace_env = nixl::config::getValueOptional<std::string>("NIXL_TRACE_BACKENDS");
     auto requested_backends =
         nixl::trace::resolveTraceBackends(trace_env, nixl::trace::runningUnderNsys());
+    const auto sample_ratio = nixl::trace::resolveTraceSampleRatio();
     if (requested_backends.empty()) {
         return nullptr;
     }
-    return nixl::trace::makeTracer(nixl::trace::TracerConfig{name, std::move(requested_backends)});
+    return nixl::trace::makeTracer(
+        nixl::trace::TracerConfig{name, std::move(requested_backends), sample_ratio});
 }
 
 // The settings the manager and its backends need, taken at construction so they
