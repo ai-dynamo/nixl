@@ -152,3 +152,52 @@ start_etcd_server() {
 
     wait_for_etcd
 }
+
+# Print IB port state (sysfs, works without ibv_devinfo) and UCX IB transports.
+# NIXL_CI_MIN_ACTIVE_IB_PORTS (default 0): when > 0, exit 75 with a
+# NIXL_CI_INFRA_ERROR marker if fewer ports are ACTIVE or UCX has no mlx5/GDA
+# transport. 75 != gtest's 1/42, so infra failures are distinguishable.
+check_rdma_env() {
+    local required="${NIXL_CI_MIN_ACTIVE_IB_PORTS:-0}"
+    local active=0 total=0 hca port state link rate ucx_ib_tls=""
+
+    echo "==== RDMA env check ===="
+    echo "--- /dev/infiniband ---"
+    ls -la /dev/infiniband 2>&1 || true
+    echo "--- nvidia_peermem ---"
+    lsmod 2>/dev/null | grep -q nvidia_peermem && echo "nvidia_peermem loaded" || echo "nvidia_peermem not loaded"
+
+    echo "--- IB ports (sysfs) ---"
+    for port in /sys/class/infiniband/*/ports/*; do
+        [ -d "$port" ] || continue
+        hca=$(basename "$(dirname "$(dirname "$port")")")
+        state=$(cat "$port/state" 2>/dev/null || echo "?")
+        link=$(cat "$port/link_layer" 2>/dev/null || echo "?")
+        rate=$(cat "$port/rate" 2>/dev/null || echo "?")
+        echo "  ${hca}:$(basename "$port") state=[${state}] link=${link} rate=${rate}"
+        total=$((total + 1))
+        case "$state" in *ACTIVE*) active=$((active + 1)) ;; esac
+    done
+    echo "  ${active}/${total} IB ports ACTIVE"
+
+    if command -v ucx_info >/dev/null 2>&1; then
+        echo "--- UCX transports (ucx_info -d) ---"
+        ucx_info -d 2>/dev/null | grep -E 'Transport:' | sed 's/^ *//' | sort -u || true
+        ucx_ib_tls=$(ucx_info -d 2>/dev/null | grep -E 'Transport: *(rc_mlx5|dc_mlx5|rc_gda)' || true)
+    else
+        echo "--- ucx_info not installed; skipping UCX transport check ---"
+    fi
+
+    if [ "$required" -gt 0 ]; then
+        if [ "$active" -lt "$required" ]; then
+            echo "NIXL_CI_INFRA_ERROR: only ${active}/${required} required IB ports are ACTIVE on $(hostname)" >&2
+            exit 75
+        fi
+        if command -v ucx_info >/dev/null 2>&1 && [ -z "$ucx_ib_tls" ]; then
+            echo "NIXL_CI_INFRA_ERROR: UCX loaded no IB transport (rc_mlx5/dc_mlx5/rc_gda) on $(hostname)" >&2
+            exit 75
+        fi
+    fi
+    echo "RDMA env check: OK (active=${active}, required=${required})"
+    echo "==== end RDMA env check ===="
+}
