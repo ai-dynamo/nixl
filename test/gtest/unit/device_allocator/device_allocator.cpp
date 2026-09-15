@@ -31,7 +31,7 @@ namespace device_allocator {
     TEST(deviceMemHost, EmptyHandleOperationsAreSafe) {
         nixlDeviceMem mem;
         EXPECT_FALSE(static_cast<bool>(mem));
-        EXPECT_EQ(mem.get(), nullptr);
+        EXPECT_EQ(mem.devicePointer(), nullptr);
         EXPECT_EQ(mem.size(), 0u);
         mem.reset();
         EXPECT_EQ(mem.release(), nullptr);
@@ -44,7 +44,7 @@ namespace device_allocator {
         nixlMappedHostMem mapped;
         EXPECT_FALSE(static_cast<bool>(mapped));
         EXPECT_EQ(mapped.hostPtr(), nullptr);
-        EXPECT_EQ(mapped.devPtr(), nullptr);
+        EXPECT_EQ(mapped.devicePointer(), nullptr);
         EXPECT_EQ(mapped.size(), 0u);
         mapped.reset();
 
@@ -96,19 +96,19 @@ namespace device_allocator {
 
         nixlDeviceMem mem;
         ASSERT_EQ(allocator.allocDeviceMem(kSize, mem), NIXL_SUCCESS);
-        void *const device_ptr = mem.get();
+        void *const device_ptr = mem.devicePointer();
         EXPECT_NE(allocator.allocDeviceMem(0, mem), NIXL_SUCCESS);
-        EXPECT_EQ(mem.get(), device_ptr);
+        EXPECT_EQ(mem.devicePointer(), device_ptr);
         EXPECT_EQ(mem.size(), kSize);
 
         std::vector<unsigned char> src(kSize, 0xA5);
         std::vector<unsigned char> dst(kSize, 0);
-        ASSERT_EQ(allocator.copyHostToDevice(mem.get(), src.data(), kSize), NIXL_SUCCESS);
-        ASSERT_EQ(allocator.copyDeviceToHost(dst.data(), mem.get(), kSize), NIXL_SUCCESS);
+        ASSERT_EQ(allocator.copyHostToDevice(mem.devicePointer(), src.data(), kSize), NIXL_SUCCESS);
+        ASSERT_EQ(allocator.copyDeviceToHost(dst.data(), mem.devicePointer(), kSize), NIXL_SUCCESS);
         EXPECT_EQ(dst, src);
 
-        ASSERT_EQ(allocator.memsetDeviceMem(mem.get(), 0, kSize), NIXL_SUCCESS);
-        ASSERT_EQ(allocator.copyDeviceToHost(dst.data(), mem.get(), kSize), NIXL_SUCCESS);
+        ASSERT_EQ(allocator.memsetDeviceMem(mem.devicePointer(), 0, kSize), NIXL_SUCCESS);
+        ASSERT_EQ(allocator.copyDeviceToHost(dst.data(), mem.devicePointer(), kSize), NIXL_SUCCESS);
         EXPECT_EQ(dst, std::vector<unsigned char>(kSize, 0));
 
         allocator.freeDeviceMem(mem.release());
@@ -116,13 +116,14 @@ namespace device_allocator {
         nixlMappedHostMem mapped;
         ASSERT_EQ(allocator.allocMappedHostMem(kSize, mapped), NIXL_SUCCESS);
         void *const host_ptr = mapped.hostPtr();
-        void *const mapped_device_ptr = mapped.devPtr();
+        void *const mapped_device_ptr = mapped.devicePointer();
         EXPECT_NE(allocator.allocMappedHostMem(0, mapped), NIXL_SUCCESS);
         EXPECT_EQ(mapped.hostPtr(), host_ptr);
-        EXPECT_EQ(mapped.devPtr(), mapped_device_ptr);
+        EXPECT_EQ(mapped.devicePointer(), mapped_device_ptr);
         EXPECT_EQ(mapped.size(), kSize);
         std::fill_n(mapped.asHost<unsigned char>(), kSize, 0x5A);
-        ASSERT_EQ(allocator.copyDeviceToHost(dst.data(), mapped.devPtr(), kSize), NIXL_SUCCESS);
+        ASSERT_EQ(allocator.copyDeviceToHost(dst.data(), mapped.devicePointer(), kSize),
+                  NIXL_SUCCESS);
         EXPECT_EQ(dst, std::vector<unsigned char>(kSize, 0x5A));
     }
 

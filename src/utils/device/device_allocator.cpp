@@ -17,7 +17,6 @@
 #include "device/device_allocator.h"
 
 #include <dlfcn.h>
-
 #include <filesystem>
 
 #include "common/nixl_log.h"
@@ -30,7 +29,7 @@ constexpr const char *kCudaAllocatorFactory = "nixlCreateCudaDeviceAllocator";
 class nixlUnsupportedDeviceAllocator final : public nixlDeviceAllocator {
 public:
     nixl_status_t
-    doAllocDeviceMem(void **, size_t) noexcept override {
+    doAllocDeviceMem(void *&, size_t) noexcept override {
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -38,7 +37,7 @@ public:
     doFreeDeviceMem(void *) noexcept override {}
 
     nixl_status_t
-    doAllocMappedHostMem(void **, void **, size_t) noexcept override {
+    doAllocMappedHostMem(void *&, void *&, size_t) noexcept override {
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -83,6 +82,7 @@ loadCudaAllocator() noexcept {
     Dl_info info{};
     if (dladdr(reinterpret_cast<void *>(&nixlGetDeviceAllocator), &info) == 0 ||
         info.dli_fname == nullptr) {
+        NIXL_ERROR << "Failed to locate the device allocator frontend library";
         return nullptr;
     }
 
@@ -108,6 +108,8 @@ loadCudaAllocator() noexcept {
     nixlDeviceAllocator *allocator = factory();
     if (allocator == nullptr) {
         dlclose(handle);
+    } else {
+        NIXL_INFO << "Loaded CUDA device allocator from " << library_path;
     }
     // Keep the library loaded on success because the allocator and its vtable live in it.
     return allocator;

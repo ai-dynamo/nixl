@@ -17,30 +17,31 @@
 #include "device/device_allocator.h"
 
 #include <cuda_runtime.h>
+#include <string>
 
 #include "common/nixl_log.h"
 
 namespace {
 
-void
-logCudaFailure(const char *operation, cudaError_t error) {
-    NIXL_ERROR << operation << " failed: " << cudaGetErrorString(error);
+std::string
+cudaFailureMsg(const char *operation, cudaError_t error) {
+    return std::string(operation) + " failed: " + cudaGetErrorString(error);
 }
 
 class nixlCudaDeviceAllocator final : public nixlDeviceAllocator {
 public:
     nixl_status_t
-    doAllocDeviceMem(void **ptr, size_t size) noexcept override {
-        if (ptr == nullptr || size == 0) {
+    doAllocDeviceMem(void *&ptr, size_t size) noexcept override {
+        if (size == 0) {
             return NIXL_ERR_INVALID_PARAM;
         }
         void *allocation = nullptr;
         const cudaError_t error = cudaMalloc(&allocation, size);
         if (error != cudaSuccess) {
-            logCudaFailure("cudaMalloc", error);
+            NIXL_ERROR << cudaFailureMsg("cudaMalloc", error);
             return NIXL_ERR_BACKEND;
         }
-        *ptr = allocation;
+        ptr = allocation;
         return NIXL_SUCCESS;
     }
 
@@ -52,13 +53,13 @@ public:
         // allocDeviceMem produced.
         const cudaError_t error = cudaFree(ptr);
         if (error != cudaSuccess) {
-            logCudaFailure("cudaFree", error);
+            NIXL_ERROR << cudaFailureMsg("cudaFree", error);
         }
     }
 
     nixl_status_t
-    doAllocMappedHostMem(void **host_ptr, void **dev_ptr, size_t size) noexcept override {
-        if (host_ptr == nullptr || dev_ptr == nullptr || size == 0) {
+    doAllocMappedHostMem(void *&host_ptr, void *&dev_ptr, size_t size) noexcept override {
+        if (size == 0) {
             return NIXL_ERR_INVALID_PARAM;
         }
         void *host_allocation = nullptr;
@@ -67,20 +68,21 @@ public:
         cudaError_t error =
             cudaHostAlloc(&host_allocation, size, cudaHostAllocMapped | cudaHostAllocPortable);
         if (error != cudaSuccess) {
-            logCudaFailure("cudaHostAlloc", error);
+            NIXL_ERROR << cudaFailureMsg("cudaHostAlloc", error);
             return NIXL_ERR_BACKEND;
         }
         error = cudaHostGetDevicePointer(&device_alias, host_allocation, 0);
         if (error != cudaSuccess) {
-            logCudaFailure("cudaHostGetDevicePointer", error);
+            NIXL_ERROR << cudaFailureMsg("cudaHostGetDevicePointer", error);
             const cudaError_t free_error = cudaFreeHost(host_allocation);
             if (free_error != cudaSuccess) {
-                logCudaFailure("cudaFreeHost after cudaHostGetDevicePointer", free_error);
+                NIXL_ERROR << cudaFailureMsg("cudaFreeHost after failed cudaHostGetDevicePointer",
+                                             free_error);
             }
             return NIXL_ERR_BACKEND;
         }
-        *host_ptr = host_allocation;
-        *dev_ptr = device_alias;
+        host_ptr = host_allocation;
+        dev_ptr = device_alias;
         return NIXL_SUCCESS;
     }
 
@@ -91,7 +93,7 @@ public:
         }
         const cudaError_t error = cudaFreeHost(host_ptr);
         if (error != cudaSuccess) {
-            logCudaFailure("cudaFreeHost", error);
+            NIXL_ERROR << cudaFailureMsg("cudaFreeHost", error);
         }
     }
 
@@ -102,7 +104,7 @@ public:
         }
         const cudaError_t error = cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice);
         if (error != cudaSuccess) {
-            logCudaFailure("cudaMemcpy host to device", error);
+            NIXL_ERROR << cudaFailureMsg("cudaMemcpy host to device", error);
             return NIXL_ERR_BACKEND;
         }
         return NIXL_SUCCESS;
@@ -115,7 +117,7 @@ public:
         }
         const cudaError_t error = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost);
         if (error != cudaSuccess) {
-            logCudaFailure("cudaMemcpy device to host", error);
+            NIXL_ERROR << cudaFailureMsg("cudaMemcpy device to host", error);
             return NIXL_ERR_BACKEND;
         }
         return NIXL_SUCCESS;
@@ -128,7 +130,7 @@ public:
         }
         const cudaError_t error = cudaMemset(ptr, value, size);
         if (error != cudaSuccess) {
-            logCudaFailure("cudaMemset", error);
+            NIXL_ERROR << cudaFailureMsg("cudaMemset", error);
             return NIXL_ERR_BACKEND;
         }
         return NIXL_SUCCESS;
@@ -138,7 +140,7 @@ public:
     synchronize() noexcept override {
         const cudaError_t error = cudaDeviceSynchronize();
         if (error != cudaSuccess) {
-            logCudaFailure("cudaDeviceSynchronize", error);
+            NIXL_ERROR << cudaFailureMsg("cudaDeviceSynchronize", error);
             return NIXL_ERR_BACKEND;
         }
         return NIXL_SUCCESS;
@@ -148,7 +150,7 @@ public:
     getActiveDevice(int &device_id) noexcept override {
         const cudaError_t error = cudaGetDevice(&device_id);
         if (error != cudaSuccess) {
-            logCudaFailure("cudaGetDevice", error);
+            NIXL_ERROR << cudaFailureMsg("cudaGetDevice", error);
             return NIXL_ERR_BACKEND;
         }
         return NIXL_SUCCESS;
@@ -158,7 +160,7 @@ public:
     setActiveDevice(int device_id) noexcept override {
         const cudaError_t error = cudaSetDevice(device_id);
         if (error != cudaSuccess) {
-            logCudaFailure("cudaSetDevice", error);
+            NIXL_ERROR << cudaFailureMsg("cudaSetDevice", error);
             return NIXL_ERR_BACKEND;
         }
         return NIXL_SUCCESS;
@@ -176,11 +178,11 @@ nixlCreateCudaDeviceAllocator() noexcept {
         return nullptr;
     }
     if (error != cudaSuccess) {
-        logCudaFailure("cudaGetDeviceCount", error);
+        NIXL_ERROR << cudaFailureMsg("cudaGetDeviceCount", error);
         return nullptr;
     }
     if (device_count == 0) {
-        NIXL_INFO << "No CUDA-capable GPU is available";
+        NIXL_INFO << "CUDA reported zero available GPUs";
         return nullptr;
     }
 

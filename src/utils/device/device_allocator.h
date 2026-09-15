@@ -89,13 +89,13 @@ public:
 
 protected:
     [[nodiscard]] virtual nixl_status_t
-    doAllocDeviceMem(void **ptr, size_t size) noexcept = 0;
+    doAllocDeviceMem(void *&ptr, size_t size) noexcept = 0;
 
     virtual void
     doFreeDeviceMem(void *ptr) noexcept = 0;
 
     [[nodiscard]] virtual nixl_status_t
-    doAllocMappedHostMem(void **host_ptr, void **dev_ptr, size_t size) noexcept = 0;
+    doAllocMappedHostMem(void *&host_ptr, void *&dev_ptr, size_t size) noexcept = 0;
 
     virtual void
     doFreeMappedHostMem(void *host_ptr) noexcept = 0;
@@ -138,7 +138,7 @@ public:
     operator=(const nixlDeviceMem &) = delete;
 
     [[nodiscard]] void *
-    get() const noexcept {
+    devicePointer() const noexcept {
         return ptr_;
     }
 
@@ -228,7 +228,7 @@ public:
     }
 
     [[nodiscard]] void *
-    devPtr() const noexcept {
+    devicePointer() const noexcept {
         return dev_ptr_;
     }
 
@@ -289,7 +289,7 @@ nixlDeviceAllocator::allocDeviceMem(size_t size, nixlDeviceMem &out) noexcept {
     // `out` is only touched on success; a failed allocation leaves the
     // caller's existing buffer intact.
     void *ptr = nullptr;
-    const nixl_status_t status = doAllocDeviceMem(&ptr, size);
+    const nixl_status_t status = doAllocDeviceMem(ptr, size);
     if (status != NIXL_SUCCESS) {
         return status;
     }
@@ -303,7 +303,7 @@ nixlDeviceAllocator::allocMappedHostMem(size_t size, nixlMappedHostMem &out) noe
     // caller's existing buffer intact.
     void *host_ptr = nullptr;
     void *dev_ptr = nullptr;
-    const nixl_status_t status = doAllocMappedHostMem(&host_ptr, &dev_ptr, size);
+    const nixl_status_t status = doAllocMappedHostMem(host_ptr, dev_ptr, size);
     if (status != NIXL_SUCCESS) {
         return status;
     }

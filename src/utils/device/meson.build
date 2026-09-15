@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-device_utils_lib = library('device_utils',
+device_utils_lib = shared_library('device_utils',
            ['device_allocator.cpp', 'device_allocator.h'],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            dependencies: [nixl_common_dep, dl_dep],
