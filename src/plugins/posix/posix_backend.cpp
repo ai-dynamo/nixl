@@ -399,11 +399,24 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
     return NIXL_ERR_BACKEND;
 }
 
+// A request with outstanding I/O is refused rather than freed: queue entries reference it
+// as their completion callback context, so the caller polls it to completion and retries.
 nixl_status_t
 nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
-    NIXL_ASSERT(handle != nullptr);
-    delete handle;
-    return NIXL_SUCCESS;
+    try {
+        auto &posix_handle = castPosixHandle(handle);
+        NIXL_LOCK_GUARD(io_queue_lock_);
+        if (!posix_handle.isComplete()) {
+            NIXL_DEBUG << "POSIX request has outstanding completions; not releasing";
+            return NIXL_ERR_REPOST_ACTIVE;
+        }
+        delete handle;
+        return NIXL_SUCCESS;
+    }
+    catch (const nixlPosixBackendReqH::exception &e) {
+        NIXL_ERROR << e.what();
+        return e.code();
+    }
 }
 
 nixl_status_t
