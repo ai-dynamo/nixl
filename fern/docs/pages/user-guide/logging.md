@@ -22,7 +22,7 @@ export NIXL_LOG_LEVEL=INFO
 export NIXL_LOG_FILE=/var/log/nixl/agent.log
 ```
 
-The file is appended to rather than truncated, so a restarted process adds to the record instead of erasing it. Each record is flushed as it is written, which means the log is complete up to the moment a process crashed or hung -- the case the file exists for.
+The file is appended to rather than truncated, so a restarted process adds to the record instead of erasing it. Each record is passed directly to `write(2)`, with no userspace stream buffer, which means the log is complete up to the moment a process crashed or hung -- the case the file exists for.
 
 <Note>
 Leaving `NIXL_LOG_FILE` unset, or setting it to an empty value, disables file logging entirely. No file is created.
