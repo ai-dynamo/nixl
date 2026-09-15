@@ -381,10 +381,7 @@ TEST_F(nixlLogFileTest, AppendsAcrossSessions) {
     EXPECT_THAT(contents, HasSubstr("from the second session"));
 }
 
-/**
- * @brief Each record is durable as soon as it is logged, read back without an
- *        explicit flush: a process that hangs never reaches shutdown.
- */
+/** @brief A direct write makes each record readable without waiting for shutdown. */
 TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
     ASSERT_TRUE(enableLogFile());
 

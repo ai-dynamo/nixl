@@ -17,6 +17,7 @@
 
 #include "hostname.h"
 #include "nixl_log.h"
+#include "scoped_fd.h"
 #include "absl/base/no_destructor.h"
 #include "absl/log/initialize.h"
 #include "absl/log/globals.h"
@@ -31,9 +32,8 @@
 #include <cstdio>
 #include <ctime>
 #include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
-#include <fstream>
-#include <ios>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -179,9 +179,9 @@ public:
      */
     fileLogSink(const std::string &path, std::uintmax_t limit)
         : path_(path),
-          file_(path, std::ios::app),
+          fd_(::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0666)),
           limit_(limit) {
-        if (!file_.is_open()) {
+        if (!fd_.valid()) {
             return;
         }
 
@@ -193,11 +193,11 @@ public:
     /** @brief False if the sink cannot write, and must not be registered. */
     [[nodiscard]] bool
     isOpen() const {
-        return file_.is_open();
+        return fd_.valid();
     }
 
     /**
-     * @brief Writes one record and flushes it.
+     * @brief Writes one record directly to the file descriptor.
      * @param entry Borrowed; valid only for this call.
      */
     void
@@ -224,13 +224,17 @@ public:
             }
         }
 
-        // Cleared: iostreams need not set errno, so a stale one could be read.
-        errno = 0;
-        file_.write(line.data(), static_cast<std::streamsize>(line.size()));
-        file_.flush();
-        if (!file_) {
-            reportFailure(errno);
-            return;
+        size_t offset = 0;
+        while (offset < line.size()) {
+            const ssize_t result = ::write(fd_.get(), line.data() + offset, line.size() - offset);
+            if (result > 0) {
+                offset += static_cast<size_t>(result);
+            } else if (result < 0 && errno == EINTR) {
+                continue;
+            } else {
+                reportFailure(result < 0 ? errno : EIO);
+                return;
+            }
         }
         written_ += line.size();
     }
@@ -244,7 +248,7 @@ private:
      */
     void
     rotate() {
-        file_.close();
+        fd_.reset();
 
         std::error_code ec;
         std::filesystem::rename(path_, path_ + rotated_suffix, ec);
@@ -253,9 +257,9 @@ private:
             return;
         }
 
-        errno = 0;
-        file_.open(path_, std::ios::app);
-        if (!file_) {
+        fd_ =
+            nixl::scopedFd(::open(path_.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0666));
+        if (!fd_.valid()) {
             reportFailure(errno);
             return;
         }
@@ -265,10 +269,8 @@ private:
     /**
      * @brief Reports the first write failure and stops using the file.
      *
-     * Once a stream has failed, every later write on it is a silent no-op, so
-     * without this the file would simply stop part way through with nothing to
-     * say why. Records after the failure are dropped rather than retried: the
-     * process being described must not be held up by its own log file.
+     * Records after the failure are dropped rather than retried: the process
+     * being described must not be held up by its own log file.
      *
      * Goes straight to stderr rather than through NIXL_WARN so that reporting
      * the failure does not depend on the machinery that just failed.
@@ -309,7 +311,7 @@ private:
 
     std::mutex mutex_;
     std::string path_;
-    std::ofstream file_;
+    nixl::scopedFd fd_;
     std::uintmax_t limit_ = 0;
     std::uintmax_t written_ = 0;
     bool failed_ = false;
@@ -424,8 +426,6 @@ initLogFile() {
         return false;
     }
 
-    // Cleared: ofstream need not set errno, so a stale one could be read.
-    errno = 0;
     auto sink = new fileLogSink(*path, *limit);
     if (!sink->isOpen()) {
         const int open_errno = errno;
@@ -474,8 +474,8 @@ namespace {
  * a language guarantee, so it is covered by a test rather than assumed:
  * nixlLogFileTest.RecordsFromStaticDestructorsReachTheFile.
  *
- * Correctness does not depend on the ordering even so. Send() flushes every
- * record as it is written, so the worst a different order can cost is the few
+ * Correctness does not depend on the ordering even so. Send() writes every
+ * record directly, so the worst a different order can cost is the few
  * records emitted after this runs; it can never lose an earlier record, and it
  * cannot leave a registered sink dangling, because the sink is removed from
  * Abseil before it is destroyed.
