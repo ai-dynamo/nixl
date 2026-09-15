@@ -926,9 +926,7 @@ infinia_engine::checkXfer(nixlBackendReqH *handle) const {
 
 nixl_status_t
 infinia_engine::releaseReqH(nixlBackendReqH *handle) const {
-    if (!handle) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
+    NIXL_ASSERT(handle != nullptr);
 
     // Futures are automatically released when handle is deleted
     delete handle;
