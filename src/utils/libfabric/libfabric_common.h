@@ -41,6 +41,10 @@
 #define NIXL_LIBFABRIC_CQ_SREAD_TIMEOUT_MS 10
 #define NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD (128 * 1024) // 128KB
 #define LF_EP_NAME_MAX_LEN 56
+#define NIXL_LIBFABRC_DEFAULT_POST_QUEUE_SIZE (32 * 1024) // 32K MPSC entries
+
+// Number of consecutive WRITE descriptors batched onto one rail with FI_MORE before flushing.
+#define NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE 16
 
 // Request pool configuration constants
 #define NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL 4096 // SEND/RECV operations (for notifications)
@@ -82,6 +86,7 @@ constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 #define NIXL_SEQ_ID_MASK 0xFU // 0x0000000F (4 bits)
 
 // Message type constants
+#define NIXL_LIBFABRIC_MSG_XFER_ERROR 1
 #define NIXL_LIBFABRIC_MSG_NOTIFICTION 2
 #define NIXL_LIBFABRIC_MSG_TRANSFER 4
 // Peer-id handshake message. Sent once per (peer A, peer B) pair after
@@ -119,6 +124,18 @@ struct BinaryNotificationHeader {
     uint16_t notif_seq_id; // Fragment index (0, 1, 2...)
     uint16_t notif_seq_len; // Total number of fragments
     uint32_t payload_length; // Message bytes of this fragment
+} __attribute__((packed));
+
+/**
+ * @brief Payload of a NIXL_LIBFABRIC_MSG_XFER_ERROR control message (4 bytes)
+ *
+ * The transfer this refers to is identified by the xfer_id embedded in the immediate data, so the
+ * payload only carries how many of the transfer's writes actually completed. The initiator's count
+ * is authoritative: the target lowers its expected completion count to final_completions so that it
+ * waits for exactly the writes that will arrive, and no longer waits for the ones that failed.
+ */
+struct XferErrorPayload {
+    uint32_t final_completions; // Writes that completed on the initiator and will reach the target
 } __attribute__((packed));
 
 /**
@@ -335,6 +352,34 @@ getCustomStringParam(const nixl_b_params_t &custom_params,
  */
 extern nixl_status_t
 getCustomIntParam(const nixl_b_params_t &custom_params, const std::string &key, size_t &value);
+} // namespace LibfabricUtils
+
+// CUDA context workaround temporary API for exposing to progress thread
+namespace LibfabricUtils {
+
+/**
+ * @brief Mediator class for abstracting engine internals, while allowing consumers (e.g. progress
+ * thread) to have access to the API without having an engine pointer.
+ */
+class nixlLibfaricCudaCtxMediator {
+public:
+    virtual ~nixlLibfaricCudaCtxMediator() {}
+
+    virtual nixl_status_t
+    cudaSetCtx(bool &use_cuda_addr_wa) = 0;
+
+protected:
+    nixlLibfaricCudaCtxMediator() {}
+};
+
+extern void
+setCudaCtxMediator(std::unique_ptr<nixlLibfaricCudaCtxMediator> &&mediator);
+
+extern void
+clearCudaCtxMediator();
+
+extern nixl_status_t
+cudaSetCtx(bool &use_cuda_addr_wa);
 } // namespace LibfabricUtils
 
 #endif // NIXL_SRC_UTILS_LIBFABRIC_LIBFABRIC_COMMON_H

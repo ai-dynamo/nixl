@@ -27,6 +27,7 @@
 #include <variant>
 #include <vector>
 #include <optional>
+#include <nixl_types.h>
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
@@ -79,6 +80,9 @@
 
 #define XFERBENCH_INITIATOR_BUFFER_ELEMENT 0xbb
 #define XFERBENCH_TARGET_BUFFER_ELEMENT 0xaa
+
+// CUDA warp size, to derive Device API group number from block_threads
+#define XFERBENCH_DEVICE_WARP_SIZE 32
 
 // Runtime types
 #define XFERBENCH_RT_ETCD "ETCD"
@@ -141,6 +145,11 @@
 #define XFERBENCH_WORKER_NIXL "nixl"
 #define XFERBENCH_WORKER_NVSHMEM "nvshmem"
 
+// Randomization location modes
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE "none"
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED "blockaligned"
+#define XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED "bytealigned"
+
 #define IS_PAIRWISE_AND_SG()                                 \
     (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_SG == xferBenchConfig::mode)
@@ -177,6 +186,8 @@ public:
     static std::string etcd_endpoints;
     static std::string asio_address; // IPv4
     static uint16_t asio_port;
+    static std::string randomize_location_mode;
+    static uint64_t randomize_location_mode_seed;
     static std::string benchmark_group;
     static std::string filepath;
     static std::string filenames;
@@ -219,6 +230,20 @@ public:
     static std::string gusli_config_file;
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
+    static bool gusli_try_use_uring;
+    // Opaque plugin parameters are populated only by the raw CLI path.
+    static std::optional<nixl_b_params_t> plugin_parameters;
+    static bool use_device_api;
+    static int block_threads;
+    static int device_channel_num;
+
+    /* Number of independent groups Device API kernel runs with. */
+    static int
+    deviceGroupNum();
+
+    /* Parallel workers split iterations across both CPU and Device API. */
+    static int
+    workerNum();
 
     static int
     parseConfig(int argc, char *argv[]);

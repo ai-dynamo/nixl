@@ -260,16 +260,28 @@ nixlLibfabricCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &wa
 
     was_updated = false;
 
-    if (expected_dev == -1) return -1;
-    if (myDevId_ != -1 && expected_dev != myDevId_) return -1;
+    if (expected_dev == -1) {
+        return -1;
+    }
+    if (myDevId_ != -1 && expected_dev != myDevId_) {
+        return -1;
+    }
 
     ret = cudaQueryAddr(address, is_dev, dev, ctx, pci_bus_id);
-    if (ret) return ret;
-    if (!is_dev) return 0;
-    if (dev != expected_dev) return -1;
+    if (ret) {
+        return ret;
+    }
+    if (!is_dev) {
+        return 0;
+    }
+    if (dev != expected_dev) {
+        return -1;
+    }
 
     if (pthrCudaCtx_) {
-        if (pthrCudaCtx_ != ctx) return -1;
+        if (pthrCudaCtx_ != ctx) {
+            return -1;
+        }
         return 0;
     }
 
@@ -283,15 +295,41 @@ nixlLibfabricCudaCtx::cudaUpdateCtxPtr(void *address, int expected_dev, bool &wa
 int
 nixlLibfabricCudaCtx::cudaSetCtx() {
     CUresult result;
-    if (NULL == pthrCudaCtx_) return 0;
+    if (NULL == pthrCudaCtx_) {
+        return 0;
+    }
 
     result = cuCtxSetCurrent(pthrCudaCtx_);
     return (CUDA_SUCCESS == result);
 }
 
+class nixlLibfaricCudaCtxEngineMediator : public LibfabricUtils::nixlLibfaricCudaCtxMediator {
+public:
+    nixlLibfaricCudaCtxEngineMediator(nixlLibfabricEngine *engine) : engine_(engine) {}
+
+    ~nixlLibfaricCudaCtxEngineMediator() override {}
+
+    nixl_status_t
+    cudaSetCtx(bool &use_cuda_addr_wa) override {
+        if (engine_ == nullptr) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        return engine_->vramApplyCtxEx(use_cuda_addr_wa);
+    }
+
+private:
+    nixlLibfabricEngine *engine_;
+};
+
 void
 nixlLibfabricEngine::vramInitCtx() {
     cudaCtx_ = std::make_unique<nixlLibfabricCudaCtx>();
+
+    // install a mediator so that the progress thread can also use this
+    // NOTE: the mediator is stateless and therefore it cannot be involved in a race
+    std::unique_ptr<LibfabricUtils::nixlLibfaricCudaCtxMediator> mediator;
+    mediator.reset(new (std::nothrow) nixlLibfaricCudaCtxEngineMediator(this));
+    setCudaCtxMediator(std::move(mediator));
 }
 
 int
@@ -328,6 +366,18 @@ void
 nixlLibfabricEngine::vramFiniCtx() {
     const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
     cudaCtx_.reset();
+    LibfabricUtils::clearCudaCtxMediator();
+}
+
+nixl_status_t
+nixlLibfabricEngine::vramApplyCtxEx(bool &use_cuda_addr_wa) const {
+    const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
+    use_cuda_addr_wa = cuda_addr_wa_;
+    if (use_cuda_addr_wa && cudaCtx_ && !cudaCtx_->cudaSetCtx()) {
+        NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
+        return NIXL_ERR_BACKEND;
+    }
+    return NIXL_SUCCESS;
 }
 #endif
 
@@ -338,6 +388,9 @@ nixlLibfabricEngine::vramFiniCtx() {
 nixlLibfabricBackendH::nixlLibfabricBackendH(nixl_xfer_op_t op, const std::string &remote_agent)
     : completed_requests_(0),
       submitted_requests_(0),
+      error_status_(NIXL_SUCCESS),
+      successful_requests_(0),
+      xfer_error_sent_(false),
       operation_(op),
       remote_agent_(remote_agent),
       total_notif_msg_len(0) {
@@ -358,19 +411,36 @@ void
 nixlLibfabricBackendH::init_request_tracking(size_t num_requests) {
     submitted_requests_.store(num_requests);
     completed_requests_.store(0);
+    successful_requests_.store(0);
+    error_status_.store(NIXL_SUCCESS);
     NIXL_DEBUG << "Initialized request tracking for " << num_requests << " requests";
 }
 
 void
-nixlLibfabricBackendH::increment_completed_requests() {
-    completed_requests_.fetch_add(1);
-    NIXL_DEBUG << "Request completed, total completed: " << completed_requests_.load() << "/"
-               << submitted_requests_.load();
+nixlLibfabricBackendH::complete_request(nixl_status_t status) {
+    if (status != NIXL_SUCCESS) {
+        nixl_status_t expected = NIXL_SUCCESS;
+        error_status_.compare_exchange_strong(
+            expected, status, std::memory_order_relaxed, std::memory_order_relaxed);
+    } else {
+        successful_requests_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Release ensures the error store above is visible to any thread that
+    // observes the incremented count via an acquire load in is_completed().
+    completed_requests_.fetch_add(1, std::memory_order_release);
+    NIXL_DEBUG << "Request completed (status=" << status
+               << "), total completed: " << completed_requests_.load(std::memory_order_relaxed)
+               << "/" << submitted_requests_.load(std::memory_order_relaxed);
 }
 
 size_t
 nixlLibfabricBackendH::get_completed_requests_count() const {
     return completed_requests_.load();
+}
+
+size_t
+nixlLibfabricBackendH::get_successful_requests_count() const {
+    return successful_requests_.load(std::memory_order_acquire);
 }
 
 size_t
@@ -384,10 +454,22 @@ nixlLibfabricBackendH::adjust_total_submitted_requests(size_t actual_count) {
     NIXL_DEBUG << "Adjusted total requests to actual count: " << actual_count;
 }
 
+nixl_status_t
+nixlLibfabricBackendH::get_error_status() const {
+    return error_status_.load(std::memory_order_acquire);
+}
+
+bool
+nixlLibfabricBackendH::claim_xfer_error_send() {
+    return !xfer_error_sent_.exchange(true);
+}
+
 bool
 nixlLibfabricBackendH::is_completed() const {
-    // Transfer is completed when all requests have local completions
-    return completed_requests_.load() == submitted_requests_.load();
+    // Acquire pairs with release in complete_request() — guarantees we see
+    // any error_status_ written before the final increment.
+    return completed_requests_.load(std::memory_order_acquire) ==
+        submitted_requests_.load(std::memory_order_relaxed);
 }
 
 /****************************************
@@ -415,11 +497,12 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
     NIXL_INFO << "System runtime: "
               << (runtime_ == FI_HMEM_CUDA       ? "CUDA" :
+                      runtime_ == FI_HMEM_ROCR   ? "ROCr" :
                       runtime_ == FI_HMEM_NEURON ? "NEURON" :
                                                    "SYSTEM");
 
 #ifdef HAVE_CUDA
-    if (runtime_ == FI_HMEM_CUDA) {
+    if (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR) {
         // Initialize CUDA context management
         vramInitCtx();
         // CUDA address workaround
@@ -465,6 +548,12 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
                 });
         rail_manager_.getRail(0).setHandshakeCallback(
             [this](const std::string &payload) { handleHandshake(payload); });
+        rail_manager_.getRail(notification_rail_id)
+            .setXferErrorCallback([this](uint16_t notif_xfer_id,
+                                         uint16_t sender_peer_idx,
+                                         uint32_t final_completions) {
+                handleXferError(notif_xfer_id, sender_peer_idx, final_completions);
+            });
 
         // Set up XFER_ID tracking callbacks for all rails
         NIXL_DEBUG << "Setting up XFER_ID tracking callbacks for " << rail_manager_.getNumRails()
@@ -500,8 +589,18 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
 
         // Start Progress thread for rail completion processing
         if (progress_thread_enabled_) {
+            // in case of PT=1 we need to allocate post ring buffer per rail
+            size_t post_queue_size = NIXL_LIBFABRC_DEFAULT_POST_QUEUE_SIZE;
+            LibfabricUtils::getCustomIntParam(
+                getCustomParams(), "post_queue_size", post_queue_size);
+
             for (size_t i = 0; i < rail_manager_.getNumRails(); ++i) {
                 rail_manager_.getRail(i).setProgressThreadEnabled(true);
+                if (!rail_manager_.getRail(i).initPostQueue(post_queue_size)) {
+                    NIXL_ERROR << "Failed to initialize post-queue for rail " << i;
+                    throw std::runtime_error("Failed to initialize the rail manager: unable to "
+                                             "initialize rail post queue");
+                }
             }
 
             NIXL_INFO << "Starting Progress thread for rails with delay: "
@@ -854,8 +953,9 @@ nixlLibfabricEngine::getSupportedMems() const {
     nixl_mem_list_t mems;
     mems.push_back(DRAM_SEG);
 #ifdef HAVE_CUDA
-    if (runtime_ == FI_HMEM_CUDA) {
-        NIXL_DEBUG << "CUDA runtime detected, adding VRAM support";
+    if (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR) {
+        NIXL_DEBUG << (runtime_ == FI_HMEM_CUDA ? "CUDA" : "ROCr")
+                   << " runtime detected, adding VRAM support";
         mems.push_back(VRAM_SEG);
     } else
 #endif
@@ -889,7 +989,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
     // Use system runtime type to determine device-specific operations
     if (nixl_mem == VRAM_SEG) {
 #ifdef HAVE_CUDA
-        if (runtime_ == FI_HMEM_CUDA) {
+        if (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR) {
             // CUDA-specific address query
             // For multi-GPU support, skip CUDA address workaround
             bool use_cuda_addr_wa = false;
@@ -959,7 +1059,7 @@ nixlLibfabricEngine::registerMem(const nixlBlobDesc &mem,
 
 #ifdef HAVE_CUDA
     // Set CUDA context before libfabric operations for VRAM
-    if (nixl_mem == VRAM_SEG && runtime_ == FI_HMEM_CUDA) {
+    if (nixl_mem == VRAM_SEG && (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR)) {
         vramApplyCtx();
     }
 #endif
@@ -1163,6 +1263,40 @@ nixlLibfabricEngine::estimateXferCost(const nixl_xfer_op_t &operation,
     return NIXL_SUCCESS;
 }
 
+int
+nixlLibfabricEngine::batchingRail(const nixl_meta_dlist_t &local,
+                                  int desc_idx,
+                                  size_t xfer_base_offset) const {
+    auto *md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
+    if (!md || md->selected_rails_.empty()) {
+        return -1;
+    }
+    // Striped descriptors are split across their rails and posted without FI_MORE, so they
+    // are not part of the single-rail batching tracked here.
+    if (rail_manager_.usesStriping(local[desc_idx].len, md->selected_rails_.size())) {
+        return -1;
+    }
+    return (int)md->selected_rails_[nixlLibfabricRailManager::railSelectionIndex(
+        xfer_base_offset, desc_idx, /*batch_write=*/true, md->selected_rails_.size())];
+}
+
+bool
+nixlLibfabricEngine::useFiMore(int desc_idx,
+                               int rail_id,
+                               const std::vector<int> &last_desc_idx_per_rail,
+                               std::vector<int> &posts_since_flush) const {
+    if (rail_id < 0) {
+        return false;
+    }
+    if (desc_idx == last_desc_idx_per_rail[rail_id] ||
+        posts_since_flush[rail_id] == NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE - 1) {
+        posts_since_flush[rail_id] = 0;
+        return false;
+    }
+    ++posts_since_flush[rail_id];
+    return true;
+}
+
 nixl_status_t
 nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
                                          const nixl_meta_dlist_t &local,
@@ -1171,40 +1305,52 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
                                          nixlLibfabricBackendH *backend_handle,
                                          int start_idx,
                                          int end_idx,
-                                         int desc_count,
                                          size_t xfer_base_offset,
+                                         bool allow_fi_more,
                                          size_t &submitted_count) const {
     submitted_count = 0;
 
 #ifdef HAVE_CUDA
-    const bool is_cuda_vram = local.getType() == VRAM_SEG && runtime_ == FI_HMEM_CUDA;
+    // NOTE: when progress thread is enabled and the call is deferred via ring-buffer, this should
+    // take place in the context of the progress thread
+    const bool is_cuda_vram =
+        local.getType() == VRAM_SEG && (runtime_ == FI_HMEM_CUDA || runtime_ == FI_HMEM_ROCR);
     bool use_cuda_addr_wa = false;
     int current_cuda_device = -1;
-    if (is_cuda_vram) {
-        const std::lock_guard<std::mutex> lock(cuda_ctx_mutex_);
-        use_cuda_addr_wa = cuda_addr_wa_;
-        if (use_cuda_addr_wa && cudaCtx_ && !cudaCtx_->cudaSetCtx()) {
-            NIXL_ERROR << "Failed to set CUDA context before posting descriptors";
-            return NIXL_ERR_BACKEND;
+    if (!progress_thread_enabled_ && is_cuda_vram) {
+        nixl_status_t status = vramApplyCtxEx(use_cuda_addr_wa);
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+    }
+#else
+    const bool is_cuda_vram = false;
+#endif
+
+    // A FI_MORE post rings no doorbell; a rail's queued batch is only submitted by a later
+    // non-FI_MORE post on the same rail. Rails are resolved per-buffer, so descriptors of one
+    // round-robin group can land on different rails: every rail this chunk touches must have its
+    // last post flushed, or its batch would never be submitted.
+    // allow_fi_more is false on the thread-pool path: chunks on other threads can interleave
+    // posts on the same rail, so a per-chunk walk cannot know a rail's true last post there.
+    const bool batch_writes = allow_fi_more && op_type == nixlLibfabricReq::WRITE;
+
+    std::vector<int> last_desc_idx_per_rail(rail_manager_.getNumRails(), -1);
+    std::vector<int> posts_since_flush(rail_manager_.getNumRails(), 0);
+    if (batch_writes) {
+        for (int i = start_idx; i < end_idx; ++i) {
+            const int rail_id = batchingRail(local, i, xfer_base_offset);
+            if (rail_id >= 0) {
+                last_desc_idx_per_rail[rail_id] = i;
+            }
         }
     }
 
-    auto prepare_cuda_descriptor_post = [&](int device_id, int desc_idx) -> nixl_status_t {
-        if (!is_cuda_vram || use_cuda_addr_wa || device_id == current_cuda_device) {
-            return NIXL_SUCCESS;
-        }
-        cudaError_t cuda_ret = cudaSetDevice(device_id);
-        if (cuda_ret != cudaSuccess) {
-            NIXL_ERROR << "Failed to set CUDA device " << device_id << " while posting descriptor "
-                       << desc_idx << ": " << cudaGetErrorString(cuda_ret);
-            return NIXL_ERR_BACKEND;
-        }
-        current_cuda_device = device_id;
-        return NIXL_SUCCESS;
-    };
-#endif
-
     for (int desc_idx = start_idx; desc_idx < end_idx; ++desc_idx) {
+        const int rail_id = batch_writes ? batchingRail(local, desc_idx, xfer_base_offset) : -1;
+        const bool apply_fi_more =
+            useFiMore(desc_idx, rail_id, last_desc_idx_per_rail, posts_since_flush);
+
         auto *local_md = static_cast<nixlLibfabricPrivateMetadata *>(local[desc_idx].metadataP);
         auto *remote_md = static_cast<nixlLibfabricPublicMetadata *>(remote[desc_idx].metadataP);
 
@@ -1213,9 +1359,18 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
         int device_id = local[desc_idx].devId;
 
 #ifdef HAVE_CUDA
-        if (nixl_status_t status = prepare_cuda_descriptor_post(device_id, desc_idx);
-            status != NIXL_SUCCESS) {
-            return status;
+        // NOTE: when progress thread is enabled and the call is deferred via ring-buffer, this
+        // should take place in the context of the progress thread
+        if (!progress_thread_enabled_ && is_cuda_vram && !use_cuda_addr_wa &&
+            device_id != current_cuda_device) {
+            cudaError_t cuda_ret = cudaSetDevice(device_id);
+            if (cuda_ret != cudaSuccess) {
+                NIXL_ERROR << "Failed to set CUDA device " << device_id
+                           << " while posting descriptor " << desc_idx << ": "
+                           << cudaGetErrorString(cuda_ret);
+                return NIXL_ERR_BACKEND;
+            }
+            current_cuda_device = device_id;
         }
 #endif
 
@@ -1239,11 +1394,15 @@ nixlLibfabricEngine::postXferDescriptors(nixlLibfabricReq::OpType op_type,
             conn->rail_remote_addr_list_,
             imm_agent_idx,
             backend_handle->post_xfer_id,
-            [backend_handle]() { backend_handle->increment_completed_requests(); },
+            [backend_handle](nixl_status_t status) {
+                backend_handle->complete_request(status);
+            }, // Completion callback
             desc_submitted_count,
             desc_idx,
-            desc_count,
-            xfer_base_offset);
+            xfer_base_offset,
+            apply_fi_more,
+            local[desc_idx].devId,
+            is_cuda_vram);
 
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "prepareAndSubmitTransfer failed for descriptor " << desc_idx
@@ -1358,8 +1517,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                                                    backend_handle,
                                                    0,
                                                    desc_count,
-                                                   desc_count,
                                                    xfer_base_offset,
+                                                   /*allow_fi_more=*/true,
                                                    total_submitted);
         if (status != NIXL_SUCCESS) {
             return status;
@@ -1391,8 +1550,8 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
                                                      backend_handle,
                                                      start_idx,
                                                      end_idx,
-                                                     desc_count,
                                                      xfer_base_offset,
+                                                     /*allow_fi_more=*/false,
                                                      chunk_submitted);
                     }
                     catch (const std::exception &e) {
@@ -1514,6 +1673,14 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
 
     // Then check for completions after processing any pending completions
     if (backend_handle->is_completed()) {
+        // Check if any request completed with error
+        nixl_status_t err = backend_handle->get_error_status();
+        if (err != NIXL_SUCCESS) {
+            NIXL_ERROR << "Transfer completed with CQ error status " << err;
+            notifXferFailure(backend_handle, err);
+            return err;
+        }
+
         NIXL_DEBUG << "Data transfer completed successfully";
         if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_READ) {
             nixl_status_t notif_status = notifSendPriv(backend_handle->remote_agent_,
@@ -1533,17 +1700,11 @@ nixlLibfabricEngine::checkXfer(nixlBackendReqH *handle) const {
 
 nixl_status_t
 nixlLibfabricEngine::releaseReqH(nixlBackendReqH *handle) const {
-    // Add any necessary cleanup for libfabric specific request handling
-    // For example, if we're using a custom request structure:
-    // nixlLibfabricReqH* req = static_cast<nixlLibfabricReqH*>(handle);
-    // // Perform any necessary cleanup
-    // delete req;
-
     if (!handle) {
         return NIXL_SUCCESS;
     }
 
-    // Let NIXL framework handle the deletion
+    delete static_cast<nixlLibfabricBackendH *>(handle);
     NIXL_DEBUG << "releaseReqH completed successfully";
     return NIXL_SUCCESS;
 }
@@ -1730,6 +1891,111 @@ nixlLibfabricEngine::notifSendPriv(const std::string &remote_agent,
 }
 
 nixl_status_t
+nixlLibfabricEngine::notifXferErrorPriv(const std::string &remote_agent,
+                                        uint16_t notif_xfer_id,
+                                        uint32_t final_completions) const {
+    std::shared_ptr<nixlLibfabricConnection> connection;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+        auto it = connections_.find(remote_agent);
+        if (it == connections_.end()) {
+            NIXL_ERROR << "No connection found for agent: " << remote_agent
+                       << ", cannot report transfer error for XFER_ID=" << notif_xfer_id;
+            return NIXL_ERR_NOT_FOUND;
+        }
+        connection = it->second;
+    }
+
+    const size_t rail_id = 0; // Control messages always travel on rail 0
+    nixlLibfabricReq *control_request = rail_manager_.getRail(rail_id).allocateControlRequest(
+        sizeof(XferErrorPayload), notif_xfer_id);
+    if (!control_request) {
+        NIXL_ERROR << "Failed to allocate control request for transfer error, XFER_ID="
+                   << notif_xfer_id;
+        return NIXL_ERR_BACKEND;
+    }
+
+    XferErrorPayload payload{};
+    payload.final_completions = final_completions;
+    memcpy(control_request->buffer, &payload, sizeof(payload));
+    control_request->buffer_size = sizeof(payload);
+
+    const uint16_t imm_agent_idx =
+        senderImmDataAgentIdx(const_cast<nixlLibfabricConnection &>(*connection));
+
+    // A successful postControlMessage() only means fi_senddata() accepted the message, so watch
+    // the send completion as well: if it lands in the CQ as an error the target is left waiting
+    // and nothing else reports it. This runs later on the progress thread, by which time the
+    // caller's backend handle may already have been released, so capture values only and never
+    // touch the handle.
+    auto send_completion = [agent = remote_agent,
+                            xfer_id = notif_xfer_id](nixl_status_t send_status) {
+        if (send_status == NIXL_SUCCESS) {
+            return;
+        }
+        NIXL_ERROR << "Transfer-error message to " << agent << " for XFER_ID=" << xfer_id
+                   << " failed in its send CQ with status " << send_status << "; that agent will "
+                   << "keep waiting for writes that never arrive and will not see this transfer's "
+                   << "notification";
+    };
+
+    nixl_status_t status =
+        rail_manager_.postControlMessage(nixlLibfabricRailManager::ControlMessageType::XFER_ERROR,
+                                         control_request,
+                                         connection->rail_remote_addr_list_[rail_id][0],
+                                         imm_agent_idx,
+                                         std::move(send_completion));
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to send transfer-error message for XFER_ID=" << notif_xfer_id;
+        return NIXL_ERR_BACKEND;
+    }
+
+    // Without a progress thread, progress rail to ensure the message is sent
+    if (!progress_thread_enabled_) {
+        status = rail_manager_.getRail(rail_id).progressCompletionQueue();
+        if (status != NIXL_SUCCESS && status != NIXL_IN_PROG) {
+            NIXL_ERROR << "Failed to progress rail 0 in notifXferErrorPriv";
+            return status;
+        }
+    }
+
+    NIXL_DEBUG << "Sent transfer-error message to " << remote_agent << " XFER_ID=" << notif_xfer_id
+               << " final_completions=" << final_completions;
+    return NIXL_SUCCESS;
+}
+
+void
+nixlLibfabricEngine::notifXferFailure(nixlLibfabricBackendH *backend_handle,
+                                      nixl_status_t error_status) const {
+    if (!backend_handle->has_notif || backend_handle->operation_ != nixl_xfer_op_t::NIXL_WRITE ||
+        backend_handle->remote_agent_ == localAgent) {
+        return;
+    }
+
+    if (!backend_handle->claim_xfer_error_send()) {
+        return;
+    }
+
+    const uint32_t final_completions =
+        static_cast<uint32_t>(backend_handle->get_successful_requests_count());
+
+    NIXL_ERROR << "Transfer XFER_ID=" << backend_handle->post_xfer_id << " to "
+               << backend_handle->remote_agent_ << " failed with status " << error_status
+               << " after " << final_completions << " of "
+               << backend_handle->get_submitted_requests_count()
+               << " writes completed; notifying target so it does not wait for the rest";
+
+    nixl_status_t status = notifXferErrorPriv(
+        backend_handle->remote_agent_, backend_handle->post_xfer_id, final_completions);
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Could not notify " << backend_handle->remote_agent_
+                   << " of the transfer error for XFER_ID=" << backend_handle->post_xfer_id
+                   << " (status " << status
+                   << "); that agent will keep waiting for writes that never arrive";
+    }
+}
+
+nixl_status_t
 nixlLibfabricEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
     // Use common fragmentation helper function
     uint32_t total_msg_len = 0;
@@ -1881,7 +2147,12 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
 
         // Update metadata from fragment 0 (agent_name will be extracted after reassembly)
         if (notif_seq_id == 0) {
-            it->second.expected_completions = expected_completions;
+            // A transfer-error message may have arrived first and lowered expected_completions to
+            // the number of writes that actually went out. That count is authoritative, so never
+            // raise it back to the count the initiator optimistically sent at postXfer time.
+            if (!it->second.xfer_failed) {
+                it->second.expected_completions = expected_completions;
+            }
             it->second.total_message_length = total_payload_length;
             it->second.agent_name_length = agent_name_length;
         }
@@ -1894,6 +2165,38 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
     }
 
     // Check if any notifications can now be completed (after releasing the lock)
+    checkPendingNotifications();
+}
+
+void
+nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
+                                     uint16_t sender_peer_idx,
+                                     uint32_t final_completions) {
+    {
+        std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
+
+        const uint64_t key = makePendingKey(sender_peer_idx, notif_xfer_id);
+        auto [it, inserted] = pending_notifications_.try_emplace(key, notif_xfer_id);
+
+        if (inserted) {
+            it->second.remote_agent = "";
+            it->second.received_completions = 0;
+            it->second.expected_msg_fragments = 1; // Default to 1 fragment
+            it->second.received_msg_fragments = 0;
+        }
+
+        it->second.xfer_failed = true;
+        it->second.expected_completions = final_completions;
+
+        NIXL_ERROR << "Initiator reported a failed transfer: sender_peer_idx=" << sender_peer_idx
+                   << " notif_xfer_id=" << notif_xfer_id
+                   << " received_completions=" << it->second.received_completions
+                   << " expected_completions=" << it->second.expected_completions
+                   << (inserted ? " (error arrived before the notification)" : "")
+                   << "; data for this transfer is incomplete";
+    }
+
+    // Check if any notifications can now be completed
     checkPendingNotifications();
 }
 
@@ -1949,6 +2252,14 @@ nixlLibfabricEngine::checkPendingNotifications() {
                        << "/" << it->second.expected_msg_fragments
                        << " writes=" << it->second.received_completions << "/"
                        << it->second.expected_completions;
+
+            if (it->second.xfer_failed) {
+                NIXL_WARN << "Releasing the notification for notif_xfer_id="
+                          << it->second.notif_xfer_id
+                          << " whose transfer failed on the initiator; only "
+                          << it->second.received_completions
+                          << " writes arrived, so the data for this transfer is incomplete";
+            }
 
             // Reassemble combined payload from fragments
             std::string combined_payload;

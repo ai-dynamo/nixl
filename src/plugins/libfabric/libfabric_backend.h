@@ -27,7 +27,6 @@
 #include <atomic>
 #include <chrono>
 #include <unordered_map>
-#include <unordered_set>
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -39,8 +38,16 @@
 #include "libfabric_connection.h"
 
 #ifdef HAVE_CUDA
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#include <hip/hip_runtime_api.h>
+// Define CUDA types as HIP equivalents for AMD
+typedef hipCtx_t CUcontext;
+typedef hipDevice_t CUdevice;
+#else
 #include <cuda.h>
 #include <cuda_runtime.h>
+#endif
 #endif
 
 // Forward declarations
@@ -114,6 +121,9 @@ class nixlLibfabricBackendH : public nixlBackendReqH {
 private:
     std::atomic<size_t> completed_requests_; // Atomic count of completed requests
     std::atomic<size_t> submitted_requests_; // Total number of submitted requests
+    std::atomic<nixl_status_t> error_status_; // Error status from CQ failures
+    std::atomic<size_t> successful_requests_; // Requests that completed without an error
+    std::atomic<bool> xfer_error_sent_; // Target already told about the failure
 
 public:
     uint16_t post_xfer_id;
@@ -135,13 +145,21 @@ public:
     void
     init_request_tracking(size_t num_requests);
 
-    /** Atomically increment completed request count */
+    /** Record completion of one request (with status).
+     *  Stores error and bumps successful_requests_ before incrementing the counter so that
+     *  is_completed() observers always see the error_status_ that caused the transition and the
+     *  final successful count. */
     void
-    increment_completed_requests();
+    complete_request(nixl_status_t status);
 
     /** Get current count of requests completed as part of this transfer */
     size_t
     get_completed_requests_count() const;
+
+    /** Get the number of requests that completed without an error. Meaningful once
+     *  is_completed() is true, when it is the count of writes that actually reached the target. */
+    size_t
+    get_successful_requests_count() const;
 
     /** Get total number of requests submitted as part of this transfer */
     size_t
@@ -150,6 +168,17 @@ public:
     /** Adjust total submitted request count to actual value after submissions complete */
     void
     adjust_total_submitted_requests(size_t actual_count);
+
+    /** Get error status */
+    nixl_status_t
+    get_error_status() const;
+
+    /** Claim the right to send the transfer-error message to the target.
+     * @return true for the first caller only, so the message is sent at most once however many
+     *         times checkXfer is polled. There is deliberately no way to give the claim back:
+     *         delivery is best effort. */
+    bool
+    claim_xfer_error_send();
 };
 
 class nixlLibfabricEngine : public nixlBackendEngine {
@@ -206,7 +235,6 @@ private:
 
     // Receiver Side XFER_ID Tracking
     std::mutex receiver_tracking_mutex_;
-    std::unordered_set<uint32_t> received_remote_writes_; // All received XFER_IDs (global)
 
     // Notification Queuing
     struct PendingNotification {
@@ -220,6 +248,7 @@ private:
         uint16_t received_msg_fragments; // Fragments received so far
         uint32_t total_message_length; // Total length of complete message (all fragments)
         uint16_t agent_name_length; // Length of agent_name in combined payload
+        bool xfer_failed; // Initiator reported the transfer failed; stop waiting for its writes
 
         PendingNotification(uint16_t xfer_id)
             : notif_xfer_id(xfer_id),
@@ -228,7 +257,8 @@ private:
               expected_msg_fragments(0),
               received_msg_fragments(0),
               total_message_length(0),
-              agent_name_length(0) {}
+              agent_name_length(0),
+              xfer_failed(false) {}
     };
 
     // O(1) lookup with composite key = (sender_peer_idx << 16) | notif_xfer_id.
@@ -265,6 +295,23 @@ private:
                   uint32_t total_message_length,
                   uint16_t notif_xfer_id,
                   uint32_t expected_completions) const;
+
+    // Tell the target that notif_xfer_id failed on this side and that only final_completions of
+    // its writes will arrive, so it stops waiting for the rest.
+    nixl_status_t
+    notifXferErrorPriv(const std::string &remote_agent,
+                       uint16_t notif_xfer_id,
+                       uint32_t final_completions) const;
+
+    // Receiver-side handler for NIXL_LIBFABRIC_MSG_XFER_ERROR
+    void
+    handleXferError(uint16_t notif_xfer_id, uint16_t sender_peer_idx, uint32_t final_completions);
+
+    // Tell the target once that this transfer failed, so it stops waiting for writes that never
+    // went out. Called only from checkXfer: an asynchronous post failure must not turn postXfer
+    // into an error.
+    void
+    notifXferFailure(nixlLibfabricBackendH *backend_handle, nixl_status_t error_status) const;
 
     // Private function to fragment notification messages to binary notifications
     void
@@ -328,9 +375,23 @@ private:
                         nixlLibfabricBackendH *backend_handle,
                         int start_idx,
                         int end_idx,
-                        int desc_count,
                         size_t xfer_base_offset,
+                        bool allow_fi_more,
                         size_t &submitted_count) const;
+
+    /** Rail a WRITE descriptor posts on, or -1 if it does not participate in FI_MORE batching
+     *  (no metadata, no selected rails, or striped across multiple rails). */
+    int
+    batchingRail(const nixl_meta_dlist_t &local, int desc_idx, size_t xfer_base_offset) const;
+
+    /** Whether descriptor desc_idx should carry FI_MORE: false (flush) for a rail's last post
+     *  in [start,end) and when the rail's batch reaches NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE.
+     *  Updates posts_since_flush. */
+    bool
+    useFiMore(int desc_idx,
+              int rail_id,
+              const std::vector<int> &last_desc_idx_per_rail,
+              std::vector<int> &posts_since_flush) const;
 
 #ifdef HAVE_CUDA
     // CUDA context management methods
@@ -342,6 +403,11 @@ private:
     vramApplyCtx();
     void
     vramFiniCtx();
+
+    // same as vramApplyCtx, but with additional output parameter
+    nixl_status_t
+    vramApplyCtxEx(bool &use_cuda_addr_wa) const;
+    friend class nixlLibfaricCudaCtxEngineMediator;
 #endif
 
 public:

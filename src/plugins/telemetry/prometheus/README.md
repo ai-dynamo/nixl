@@ -77,7 +77,7 @@ export NIXL_PLUGIN_DIR="path/to/dir/with/.so/files"
 
 ### Multi-process runs
 
-The exporter opens one HTTP scrape endpoint per process. Under multi-process runs (e.g. tensor or data parallelism) every rank process tries to bind the same `NIXL_TELEMETRY_PROMETHEUS_PORT`; only one wins. Losing that race is benign and non-fatal: the affected process logs a single warning and runs **without** a telemetry sink (agent construction still succeeds, the model still runs). Only the process that bound the port exports metrics. Aggregating every rank behind one endpoint is a separate, larger effort.
+The exporter opens one HTTP scrape endpoint per process. Under multi-process runs (e.g. tensor or data parallelism) every rank process tries to bind the same `NIXL_TELEMETRY_PROMETHEUS_PORT`; only one wins. Losing that race is benign and non-fatal: the affected process logs a single warning and runs **without** a telemetry sink (agent construction still succeeds, the model still runs). Only the process that bound the port exports metrics. To aggregate every rank behind one endpoint instead, use the [`prometheus_mp`](../prometheus_mp/README.md) exporter.
 
 ### Metrics & Events
 
