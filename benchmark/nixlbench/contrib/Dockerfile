@@ -299,9 +299,10 @@ ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
 RUN uv pip install --system --upgrade \
     meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Use system torch if present (>=2.7), else install it.
-RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
+RUN if TORCH_CHECK_ERR=$(/usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then \
         echo "Using PyTorch from system site-packages"; \
     else \
+        echo "System torch check failed: ${TORCH_CHECK_ERR}" >&2; \
         export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
         uv pip install --system torch torchvision torchaudio; \
     fi
