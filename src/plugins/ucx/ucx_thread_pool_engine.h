@@ -23,9 +23,7 @@
 
 #include "ucx_thread_engine.h"
 
-namespace asio {
-class io_context;
-}
+class nixlUcxDedicatedThread;
 
 class nixlUcxThreadPoolEngine : public nixlUcxThreadEngine {
 public:
@@ -51,8 +49,7 @@ protected:
                   size_t end_idx) const override;
 
 private:
-    std::unique_ptr<asio::io_context> io_;
-    std::vector<std::unique_ptr<nixlUcxThread>> dedicatedThreads_;
+    std::vector<std::unique_ptr<nixlUcxDedicatedThread>> dedicatedThreads_;
     size_t splitBatchSize_;
 };
 
