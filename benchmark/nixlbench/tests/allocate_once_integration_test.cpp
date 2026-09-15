@@ -145,6 +145,40 @@ namespace {
         EXPECT_EQ(std::filesystem::file_size(second_dataset), 64U * 1024U);
     }
 
+    TEST(AllocateOnceIntegrationTest, PathModeInitializesManagedDataThroughNixl) {
+        scenarioTemporaryDirectory directory;
+        ASSERT_FALSE(directory.path().empty());
+        const auto log = directory.path() / "path-mode.log";
+        const auto dataset = directory.path() / "nixlbench_allocate_once_0.dat";
+        const std::string command = smallAllocateOnceCommand(directory.path(), "read") +
+            " --file-registration-mode path";
+
+        ASSERT_EQ(runScenarioCommand(command, log), 0) << readScenarioLog(log);
+        EXPECT_EQ(std::filesystem::file_size(dataset), 64U * 1024U);
+        EXPECT_NE(readScenarioLog(log).find("file registration: path (backend opens files)"),
+                  std::string::npos);
+        std::ifstream dataset_stream(dataset, std::ios::binary);
+        const std::vector<unsigned char> contents(std::istreambuf_iterator<char>(dataset_stream),
+                                                  {});
+        ASSERT_EQ(contents.size(), 64U * 1024U);
+        EXPECT_TRUE(std::all_of(contents.begin(), contents.end(), [](unsigned char byte) {
+            return byte == XFERBENCH_TARGET_BUFFER_ELEMENT;
+        }));
+    }
+
+    TEST(AllocateOnceIntegrationTest, PathModeWriteConsistencyReadsBackThroughNixl) {
+        scenarioTemporaryDirectory directory;
+        ASSERT_FALSE(directory.path().empty());
+        const auto log = directory.path() / "path-mode-write.log";
+        const std::string command = smallAllocateOnceCommand(directory.path(), "write") +
+            " --file-registration-mode path --offset-mode sequential";
+
+        ASSERT_EQ(runScenarioCommand(command, log), 0) << readScenarioLog(log);
+        const auto contents = readScenarioLog(log);
+        EXPECT_EQ(contents.find("Failed to read from device"), std::string::npos) << contents;
+        EXPECT_EQ(contents.find("Consistency check failed"), std::string::npos) << contents;
+    }
+
     TEST(AllocateOnceIntegrationTest, ManagedWrongSizeFileIsReinitializedToTheRequestedSize) {
         scenarioTemporaryDirectory directory;
         ASSERT_FALSE(directory.path().empty());

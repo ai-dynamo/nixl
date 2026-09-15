@@ -253,19 +253,8 @@ main(int argc, char *argv[]) {
         if (result.status != EXIT_SUCCESS || !result.execute) {
             return result.status;
         }
-        const auto worker_configuration = result.scenario->legacyWorkerConfiguration();
-        auto arguments = nixlbench::legacyWorkerArguments(worker_configuration, argv[0]);
-        std::vector<char *> argument_pointers;
-        argument_pointers.reserve(arguments.size());
-        for (auto &argument : arguments) {
-            argument_pointers.push_back(argument.data());
-        }
-        if (xferBenchConfig::parseConfig(static_cast<int>(argument_pointers.size()),
-                                         argument_pointers.data(),
-                                         worker_configuration.common.pluginParameters) !=
-            EXIT_SUCCESS) {
-            return EXIT_FAILURE;
-        }
+        const auto worker_configuration = result.scenario->executionConfiguration();
+        nixlbench::applyScenarioExecutionConfiguration(worker_configuration);
         auto devices = xferBenchConfig::parseDeviceList();
         if (devices.empty()) {
             std::cerr << "Failed to parse device list" << std::endl;

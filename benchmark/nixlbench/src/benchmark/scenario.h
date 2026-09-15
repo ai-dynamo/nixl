@@ -40,33 +40,29 @@ struct scenarioConfig {
     bool dryRun = false;
 };
 
-/** @brief Typed input to the legacy xferBenchConfig compatibility adapter. */
-struct legacyWorkerConfig {
+/** @brief Typed input to the existing xferBenchConfig-backed execution engine. */
+struct scenarioExecutionConfig {
     scenarioConfig common;
     size_t workingMemory = 0;
     nixl_mem_t targetMemory = DRAM_SEG;
     bool recreateTransferRequest = false;
-    std::vector<std::string> fileNames;
-    bool storageDirect = false;
 };
 
 /** @brief Scenario plugin compatibility predicate. */
 using scenario_plugin_filter_t = std::function<bool(const pluginMetadata &)>;
 
 /**
- * @brief Translate typed scenario configuration into the legacy gflags bridge.
- * @param config Typed worker configuration
- * @param program_name Program name used as argv[0]
- * @return complete legacy argument vector
+ * @brief Apply typed scenario configuration to the existing execution engine.
+ * @param config Fully validated scenario worker configuration
  */
-std::vector<std::string>
-legacyWorkerArguments(const legacyWorkerConfig &config, const std::string &program_name);
+void
+applyScenarioExecutionConfiguration(const scenarioExecutionConfig &config);
 
 /**
  * @brief Extension point for a complete benchmark path.
  *
  * The framework owns common options, plugin discovery and selection, file options, common
- * validation, common plan output, dry-run behavior, and legacy translation. A scenario supplies
+ * validation, common plan output, dry-run behavior, and execution adaptation. A scenario supplies
  * only its distinct options, validation, plan details, resource preparation, and worker strategy.
  */
 class benchmarkScenario {
@@ -108,9 +104,9 @@ public:
     virtual bool
     prepare(std::ostream &err) const = 0;
 
-    /** @brief Build the complete typed legacy worker configuration. */
-    legacyWorkerConfig
-    legacyWorkerConfiguration() const;
+    /** @brief Build the complete typed configuration for the existing execution engine. */
+    scenarioExecutionConfig
+    executionConfiguration() const;
 
     /** @brief Create the scenario-specific worker strategy. */
     virtual std::unique_ptr<xferBenchWorker>
@@ -133,9 +129,9 @@ protected:
     virtual void
     printDryRunPlan(std::ostream &out) const = 0;
 
-    /** @brief Add scenario-specific values to the legacy worker configuration. */
+    /** @brief Add scenario-specific values to the execution configuration. */
     virtual void
-    configureLegacyWorker(legacyWorkerConfig &config) const = 0;
+    configureExecution(scenarioExecutionConfig &config) const = 0;
 
     /** @brief Return the resolved common scenario configuration. */
     const scenarioConfig &

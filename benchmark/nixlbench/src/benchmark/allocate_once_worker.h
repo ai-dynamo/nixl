@@ -38,7 +38,11 @@ public:
                      std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) override;
 
 private:
+    bool
+    initializeManagedFiles();
+
     nixlbench::allocateOnceRequest request_;
+    std::vector<xferBenchIOV> registeredFiles_;
     std::vector<nixlbench::offsetSequence> offsetSequences_;
     std::vector<std::vector<xferBenchIOV>> lastRemoteIovs_;
 };

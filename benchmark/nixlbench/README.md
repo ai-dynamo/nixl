@@ -425,6 +425,7 @@ nixlbench scenario allocate-once posix \
 # Reuse two registered files across four threads and changing random offsets
 nixlbench scenario allocate-once gds \
   --path /tmp/nixlbench-data \
+  --file-registration-mode path \
   --file-size 64GB \
   --block-size 64KB \
   --batch-size 16 \
@@ -444,7 +445,11 @@ NIXLBench-managed files use deterministic names under `--path`. Missing or
 wrong-sized managed files are initialized in bounded chunks and retained after
 the run; exact-sized files are reused unless `--check-consistency` requests a
 known initial byte pattern. With `--filenames`, every file must already exist
-and NIXLBench never creates, resizes, or deletes it.
+and NIXLBench never creates, resizes, or deletes it. The default
+`--file-registration-mode descriptor` makes NIXLBench open and pin each file
+descriptor. The optional `path` mode passes the path to the selected FILE_SEG
+backend, which owns open and close; any required managed-file initialization is
+also issued through that backend before benchmark timing begins.
 
 The scenario owns the open/register-once policy through an allocate-once worker
 strategy built on the common NIXL worker facilities. Generic scenario dispatch
@@ -452,7 +457,7 @@ does not contain allocate-once branches. The common transfer loop invokes a
 scenario-owned lifecycle object before creating each request and after releasing
 it, so later scenarios can acquire and release per-request resources without
 copying that loop. Common options, file options, plugin selection, metadata
-parameters, resolved-plan fields, and legacy translation are owned by the shared
+parameters, resolved-plan fields, and execution adaptation are owned by the shared
 scenario framework. A new scenario supplies only its distinct options,
 validation, plan details, resource policy, and worker strategy, then adds one
 entry to the scenario registry.

@@ -114,15 +114,17 @@ class xferBenchNixlWorker: public xferBenchWorker {
         /** @brief Retain ownership of an open remote file descriptor. */
         void
         retainRemoteFile(int fd, size_t file_size);
-        /** @brief Return a retained remote file descriptor by index. */
-        std::optional<int>
-        remoteFileDescriptor(size_t index) const;
         /** @brief Register local descriptors for the worker lifetime. */
         bool
         registerLocalIovs(std::vector<xferBenchIOV> iovs);
         /** @brief Register remote descriptors for the worker lifetime. */
         bool
         registerRemoteIovs(nixl_mem_t memory_type, std::vector<xferBenchIOV> iovs);
+        /** @brief Transfer between one registered local and remote descriptor. */
+        bool
+        transferRemoteIov(nixl_xfer_op_t operation,
+                          const xferBenchIOV &local_iov,
+                          const xferBenchIOV &remote_iov);
         /** @brief Run transfers with scenario-owned per-request resource lifecycles. */
         std::variant<xferBenchStats, int>
         transferWithLifecycle(size_t block_size,

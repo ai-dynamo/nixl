@@ -22,10 +22,18 @@
 
 namespace nixlbench {
 
+inline constexpr size_t allocate_once_initialization_chunk = 1024 * 1024;
+
 /** @brief Offset selection policy owned by the allocate-once scenario. */
 enum class offset_mode_t {
     SEQUENTIAL, ///< Walk and wrap each thread's disjoint block partition.
     RANDOM, ///< Sample unique block slots inside each thread partition.
+};
+
+/** @brief FILE_SEG registration representation selected by the scenario. */
+enum class file_registration_mode_t {
+    DESCRIPTOR, ///< NIXLBench opens and pins an fd in devId.
+    PATH, ///< The selected NIXL backend opens metaInfo's path.
 };
 
 /** @brief Fully resolved configuration owned by the allocate-once path. */
@@ -37,6 +45,8 @@ struct allocateOnceRequest {
     uint64_t seed = 0;
     bool managedFiles = true;
     bool direct = false;
+    file_registration_mode_t fileRegistrationMode = file_registration_mode_t::DESCRIPTOR;
+    std::vector<bool> initializeFiles;
 };
 
 /** @brief Disjoint block range assigned to one worker thread within one file. */
@@ -78,7 +88,11 @@ private:
 
 /** @brief Prepare and validate backing files before worker construction. */
 bool
-prepareAllocateOnceFiles(const allocateOnceRequest &request, std::ostream &err);
+prepareAllocateOnceFiles(allocateOnceRequest &request, std::ostream &err);
+
+/** @brief Encode a FILE_SEG descriptor using NIXL path-mode registration. */
+std::string
+allocateOncePathMetadata(const std::filesystem::path &path, bool writable, bool direct);
 
 /** @brief Return whether plugin metadata supports the allocate-once scenario. */
 bool
@@ -125,7 +139,7 @@ protected:
     printDryRunPlan(std::ostream &out) const override;
 
     void
-    configureLegacyWorker(legacyWorkerConfig &config) const override;
+    configureExecution(scenarioExecutionConfig &config) const override;
 
 private:
     struct implementation;

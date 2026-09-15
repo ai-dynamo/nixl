@@ -28,7 +28,6 @@
 namespace nixlbench {
 namespace {
 
-    constexpr size_t initialization_chunk = 1024 * 1024;
     constexpr mode_t managed_file_permissions = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
 
     class fileHandle {
@@ -56,7 +55,7 @@ namespace {
             return false;
         }
 
-        const size_t chunk_size = std::min<size_t>(initialization_chunk, size);
+        const size_t chunk_size = std::min<size_t>(allocate_once_initialization_chunk, size);
         void *storage = nullptr;
         const int allocation_status = posix_memalign(&storage, alignment, chunk_size);
         if (allocation_status != 0 || storage == nullptr) {
@@ -160,7 +159,7 @@ offsetSequence::next() {
 }
 
 bool
-prepareAllocateOnceFiles(const allocateOnceRequest &request, std::ostream &err) {
+prepareAllocateOnceFiles(allocateOnceRequest &request, std::ostream &err) {
     const long page_size_value = sysconf(_SC_PAGESIZE);
     if (page_size_value <= 0) {
         err << "Could not determine system page size\n";
@@ -168,8 +167,10 @@ prepareAllocateOnceFiles(const allocateOnceRequest &request, std::ostream &err) 
     }
     const size_t alignment = static_cast<size_t>(page_size_value);
     std::set<std::pair<dev_t, ino_t>> identities;
+    request.initializeFiles.assign(request.files.size(), false);
 
-    for (const auto &path : request.files) {
+    for (size_t index = 0; index < request.files.size(); ++index) {
+        const auto &path = request.files[index];
         int flags =
             (request.managedFiles || request.common.operation == NIXL_WRITE ? O_RDWR : O_RDONLY) |
             O_LARGEFILE;
@@ -201,10 +202,19 @@ prepareAllocateOnceFiles(const allocateOnceRequest &request, std::ostream &err) 
             return false;
         }
         if (request.managedFiles) {
-            if ((static_cast<uint64_t>(info.st_size) != request.fileSize ||
-                 request.common.checkConsistency) &&
-                !initializeManagedFile(fd, request.fileSize, alignment, request.direct, err)) {
-                return false;
+            const bool initialize = static_cast<uint64_t>(info.st_size) != request.fileSize ||
+                request.common.checkConsistency;
+            if (initialize) {
+                if (request.fileRegistrationMode == file_registration_mode_t::PATH) {
+                    if (ftruncate(fd, static_cast<off_t>(request.fileSize)) != 0) {
+                        err << "Failed to resize managed file: " << strerror(errno) << '\n';
+                        return false;
+                    }
+                    request.initializeFiles[index] = true;
+                } else if (!initializeManagedFile(
+                               fd, request.fileSize, alignment, request.direct, err)) {
+                    return false;
+                }
             }
         } else if (static_cast<uint64_t>(info.st_size) < request.fileSize) {
             err << "Explicit file " << path << " is smaller than --file-size\n";
@@ -214,15 +224,12 @@ prepareAllocateOnceFiles(const allocateOnceRequest &request, std::ostream &err) 
     return true;
 }
 
-namespace {
+std::string
+allocateOncePathMetadata(const std::filesystem::path &path, bool writable, bool direct) {
+    return std::string(writable ? "rw" : "ro") + (direct ? ",direct:" : ":") + path.string();
+}
 
-    std::string
-    lower(std::string value) {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
-            return static_cast<char>(std::tolower(character));
-        });
-        return value;
-    }
+namespace {
 
     bool
     multiplyFits(size_t left, size_t right) {
@@ -287,8 +294,9 @@ namespace {
             }
             const size_t alignment = static_cast<size_t>(page_size);
             if (request.fileSize % alignment != 0 || request.common.blockSize % alignment != 0) {
-                return fail(
-                    "--direct requires file and block sizes aligned to the system page size");
+                return fail("--direct requires file and block sizes aligned to the system page "
+                            "size (" +
+                            std::to_string(alignment) + " bytes)");
             }
         }
 
@@ -308,6 +316,7 @@ struct allocateOnceScenario::implementation {
     size_t fileSize = 0;
     std::string offsetMode = "random";
     uint64_t seed = 0;
+    std::string fileRegistrationMode = "descriptor";
     CLI::Option *seedOption = nullptr;
     allocateOnceRequest request;
 };
@@ -389,6 +398,12 @@ allocateOnceScenario::addScenarioOptions(CLI::App &command) {
                                                   implementation_->seed,
                                                   "Random-offset seed; zero selects a random seed")
                                       ->group("Allocate-once options");
+    command
+        .add_option("--file-registration-mode",
+                    implementation_->fileRegistrationMode,
+                    "FILE_SEG registration: descriptor or path")
+        ->check(CLI::IsMember({"descriptor", "path"}, CLI::ignore_case))
+        ->group("Allocate-once options");
 }
 
 int
@@ -397,10 +412,15 @@ allocateOnceScenario::finalizeScenario(std::ostream &err) {
     request.common = commonConfig();
 
     request.fileSize = implementation_->fileSize;
-    request.offsetMode = lower(implementation_->offsetMode) == "random" ? offset_mode_t::RANDOM :
-                                                                          offset_mode_t::SEQUENTIAL;
+    request.offsetMode = xferBenchUtils::lowercase(implementation_->offsetMode) == "random" ?
+        offset_mode_t::RANDOM :
+        offset_mode_t::SEQUENTIAL;
     request.seed =
         request.offsetMode == offset_mode_t::RANDOM ? resolveOffsetSeed(implementation_->seed) : 0;
+    request.fileRegistrationMode =
+        xferBenchUtils::lowercase(implementation_->fileRegistrationMode) == "path" ?
+        file_registration_mode_t::PATH :
+        file_registration_mode_t::DESCRIPTOR;
 
     const bool seed_provided = implementation_->seedOption->count() != 0;
     implementation_->seedOption = nullptr;
@@ -432,6 +452,10 @@ allocateOnceScenario::printScenarioPlan(std::ostream &out) const {
         out << ", seed " << request.seed;
     }
     out << "\n  direct I/O: " << (request.direct ? "enabled" : "disabled")
+        << "\n  file registration: "
+        << (request.fileRegistrationMode == file_registration_mode_t::PATH ?
+                "path (backend opens files)" :
+                "descriptor (NIXLBench opens and pins files)")
         << "\n  lifecycle: open, allocate, and register once; release each transfer request"
         << "\n  execution: shared NIXLBench worker facilities"
         << "\n  timing: transfer-phase request preparation, post, latency, and throughput; "
@@ -450,16 +474,11 @@ allocateOnceScenario::prepare(std::ostream &err) const {
 }
 
 void
-allocateOnceScenario::configureLegacyWorker(legacyWorkerConfig &config) const {
+allocateOnceScenario::configureExecution(scenarioExecutionConfig &config) const {
     const auto &request = implementation_->request;
     config.workingMemory = allocateOnceWorkingMemory(request);
     config.targetMemory = FILE_SEG;
     config.recreateTransferRequest = true;
-    config.fileNames.reserve(request.files.size());
-    for (const auto &file : request.files) {
-        config.fileNames.push_back(file.string());
-    }
-    config.storageDirect = request.direct;
 }
 
 std::unique_ptr<xferBenchWorker>

@@ -141,6 +141,7 @@
 #define XFERBENCH_SEG_TYPE_VRAM "VRAM"
 #define XFERBENCH_SEG_TYPE_FILE "FILE"
 #define XFERBENCH_SEG_TYPE_BLK "BLK"
+#define XFERBENCH_SEG_TYPE_OBJ "OBJ"
 
 // Worker types
 #define XFERBENCH_WORKER_NIXL "nixl"
@@ -247,9 +248,7 @@ public:
     workerNum();
 
     static int
-    parseConfig(int argc,
-                char *argv[],
-                std::optional<nixl_b_params_t> plugin_parameters_override = std::nullopt);
+    parseConfig(int argc, char *argv[]);
     static void
     printConfig();
     static void
@@ -262,6 +261,8 @@ public:
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static std::optional<nixl_mem_t>
+    typedStorageTargetType();
 
 protected:
     static int
@@ -393,6 +394,10 @@ private:
     buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
+    static std::string
+    lowercase(std::string value);
+    static std::string
+    uppercase(std::string value);
     static void
     setRT(xferBenchRT *rt);
     static void
@@ -416,6 +421,10 @@ public:
 
     static bool
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
+    static bool
+    checkMemoryContents(const std::vector<std::vector<xferBenchIOV>> &iov_lists,
+                        nixl_mem_t memory_type,
+                        uint8_t expected_value);
     static bool
     validateTransfer(bool is_initiator,
                      std::vector<std::vector<xferBenchIOV>> &local_lists,

@@ -130,6 +130,13 @@ namespace {
         EXPECT_EQ((*names)[1], "/tmp/name-two");
     }
 
+    TEST(AllocateOncePathModeTest, EncodesBackendOwnedOpenWithoutChangingThePath) {
+        EXPECT_EQ(allocateOncePathMetadata("/tmp/name:with spaces", false, false),
+                  "ro:/tmp/name:with spaces");
+        EXPECT_EQ(allocateOncePathMetadata("/tmp/direct", true, true),
+                  "rw,direct:/tmp/direct");
+    }
+
     TEST(AllocateOnceFileNamesTest, ReportsAnUnavailableCurrentDirectory) {
         EXPECT_EXIT(
             {

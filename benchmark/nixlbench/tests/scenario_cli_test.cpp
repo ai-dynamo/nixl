@@ -125,7 +125,7 @@ namespace {
         }
 
         void
-        configureLegacyWorker(legacyWorkerConfig &config) const override {
+        configureExecution(scenarioExecutionConfig &config) const override {
             config.workingMemory = commonConfig().blockSize;
             config.targetMemory = FILE_SEG;
         }
@@ -186,7 +186,7 @@ namespace {
         EXPECT_EQ(scenario.resolvedFile().path, "/tmp/future");
         EXPECT_EQ(scenario.resolvedFile().numFiles, 2);
 
-        const auto config = scenario.legacyWorkerConfiguration();
+        const auto config = scenario.executionConfiguration();
         EXPECT_EQ(config.common.blockSize, 4096U);
         EXPECT_EQ(config.workingMemory, 4096U);
         EXPECT_EQ(config.targetMemory, FILE_SEG);
@@ -210,17 +210,10 @@ namespace {
         auto result = parse(arguments, {futureFileMetadata()}, out, err);
         ASSERT_EQ(result.status, 0) << err.str();
         ASSERT_NE(result.scenario, nullptr);
-        const auto config = result.scenario->legacyWorkerConfiguration();
+        const auto config = result.scenario->executionConfiguration();
         EXPECT_EQ(config.common.pluginParameters.at("provider-key"), "Exact Value");
-        const auto benchmark_arguments = legacyWorkerArguments(config, "nixlbench");
-        EXPECT_NE(std::find(benchmark_arguments.begin(),
-                            benchmark_arguments.end(),
-                            "--backend=FUTURE-FILE"),
-                  benchmark_arguments.end());
-        EXPECT_NE(std::find(benchmark_arguments.begin(),
-                            benchmark_arguments.end(),
-                            "--initiator_seg_type=VRAM"),
-                  benchmark_arguments.end());
+        EXPECT_EQ(config.common.pluginName, "FUTURE-FILE");
+        EXPECT_EQ(config.common.initiatorMemory, VRAM_SEG);
     }
 
     TEST(ScenarioParserTest, ScenarioOptionsWorkBeforeOrAfterPluginSelection) {
@@ -347,6 +340,20 @@ namespace {
                                            "1B",
                                            "posix"};
         expect_failure(file_offset_overflow, "file-offset limit");
+
+        const long page_size = sysconf(_SC_PAGESIZE);
+        ASSERT_GT(page_size, 1);
+        const std::string misaligned_file_size = std::to_string(page_size + 1);
+        testArguments misaligned_direct{"nixlbench",
+                                        "scenario",
+                                        "allocate-once",
+                                        "--file-size",
+                                        misaligned_file_size.c_str(),
+                                        "--block-size",
+                                        "1",
+                                        "--direct",
+                                        "posix"};
+        expect_failure(misaligned_direct, std::to_string(page_size) + " bytes");
     }
 
     TEST(ScenarioParserTest, ExplicitMemoryDoesNotSilentlyFallBack) {
@@ -404,7 +411,29 @@ namespace {
         EXPECT_NE(out.str().find("open, allocate, and register once"), std::string::npos);
         EXPECT_NE(out.str().find("offset mode: random, seed "), std::string::npos);
         EXPECT_EQ(out.str().find("offset mode: random, seed 0"), std::string::npos);
+        EXPECT_NE(out.str().find("file registration: descriptor"), std::string::npos);
         EXPECT_NE(out.str().find("no backing file was opened"), std::string::npos);
+    }
+
+    TEST(ScenarioPlanTest, ResolvesPathModeAsAnExplicitFileRegistrationChoice) {
+        testArguments arguments{"nixlbench",
+                                "scenario",
+                                "allocate-once",
+                                "--file-size",
+                                "1MB",
+                                "--block-size",
+                                "4KB",
+                                "--file-registration-mode",
+                                "path",
+                                "--dry-run",
+                                "posix"};
+        std::ostringstream out;
+        std::ostringstream err;
+
+        const auto result = parse(arguments, {posixMetadata()}, out, err);
+        ASSERT_EQ(result.status, 0) << err.str();
+        EXPECT_NE(out.str().find("file registration: path (backend opens files)"),
+                  std::string::npos);
     }
 
     TEST(ScenarioPlanTest, ExplicitRandomSeedIsPreservedExactly) {
@@ -451,37 +480,22 @@ namespace {
         auto result = parse(command, {futureFileMetadata()}, out, err);
         ASSERT_EQ(result.status, 0) << err.str();
         EXPECT_FALSE(result.scenario->selected());
-        const auto config = result.scenario->legacyWorkerConfiguration();
+        const auto config = result.scenario->executionConfiguration();
         EXPECT_EQ(config.common.pluginName, "FUTURE-FILE");
         EXPECT_EQ(config.common.initiatorMemory, VRAM_SEG);
         EXPECT_EQ(config.targetMemory, FILE_SEG);
         EXPECT_EQ(config.workingMemory, 32768U);
         EXPECT_TRUE(config.recreateTransferRequest);
-        EXPECT_EQ(config.fileNames.size(), 2U);
 
-        const auto arguments = legacyWorkerArguments(config, "nixlbench");
-        const auto contains = [&](const std::string &argument) {
-            return std::find(arguments.begin(), arguments.end(), argument) != arguments.end();
-        };
-        EXPECT_TRUE(contains("--backend=FUTURE-FILE"));
-        EXPECT_TRUE(contains("--initiator_seg_type=VRAM"));
-        EXPECT_TRUE(contains("--target_seg_type=FILE"));
-        EXPECT_TRUE(contains("--total_buffer_size=32768"));
-        EXPECT_TRUE(contains("--num_iter=14"));
-        EXPECT_TRUE(contains("--warmup_iter=6"));
-        EXPECT_TRUE(contains("--recreate_xfer=true"));
-        EXPECT_EQ(std::find_if(arguments.begin(),
-                               arguments.end(),
-                               [](const std::string &argument) {
-                                   return argument.rfind("--randomize_location_mode=", 0) == 0;
-                               }),
-                  arguments.end());
+        EXPECT_EQ(config.common.iterations, 7);
+        EXPECT_EQ(config.common.warmupIterations, 3);
+        EXPECT_EQ(config.common.threads, 2);
     }
 
-    TEST(ScenarioWorkerBridgeTest, GenericFilePluginRemainsStorageDuringLegacyTranslation) {
+    TEST(ScenarioWorkerBridgeTest, GenericFilePluginRemainsStorageDuringTypedAdaptation) {
         EXPECT_EXIT(
             {
-                legacyWorkerConfig config;
+                scenarioExecutionConfig config;
                 config.common.pluginName = "FUTURE-FILE";
                 config.common.pluginParameters["provider-key"] = "Exact Value";
                 config.common.blockSize = 4096;
@@ -489,26 +503,73 @@ namespace {
                 config.common.warmupIterations = 0;
                 config.workingMemory = 4096;
                 config.targetMemory = FILE_SEG;
-                config.fileNames = {"/tmp/future-file"};
-
-                auto arguments = legacyWorkerArguments(config, "nixlbench");
-                std::vector<char *> argument_pointers;
-                argument_pointers.reserve(arguments.size());
-                for (auto &argument : arguments) {
-                    argument_pointers.push_back(argument.data());
-                }
 
                 const auto expected_parameters = config.common.pluginParameters;
-                const int status =
-                    xferBenchConfig::parseConfig(static_cast<int>(argument_pointers.size()),
-                                                 argument_pointers.data(),
-                                                 expected_parameters);
-                const bool preserved = status == EXIT_SUCCESS &&
-                    xferBenchConfig::backend == "FUTURE-FILE" &&
+                applyScenarioExecutionConfiguration(config);
+                const bool preserved = xferBenchConfig::backend == "FUTURE-FILE" &&
                     xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_FILE &&
                     xferBenchConfig::isStorageBackend() &&
+                    xferBenchConfig::total_buffer_size == 4096 &&
+                    xferBenchConfig::start_block_size == 4096 &&
+                    xferBenchConfig::num_iter == 1 &&
                     xferBenchConfig::plugin_parameters == expected_parameters;
                 _exit(preserved ? EXIT_SUCCESS : EXIT_FAILURE);
+            },
+            ::testing::ExitedWithCode(EXIT_SUCCESS),
+            "");
+    }
+
+    TEST(ScenarioWorkerBridgeTest, TypedObjectTargetDoesNotRequireABackendNameList) {
+        EXPECT_EXIT(
+            {
+                scenarioExecutionConfig config;
+                config.common.pluginName = "FUTURE-OBJECT";
+                config.common.pluginParameters["provider-key"] = "Exact Value";
+                config.common.blockSize = 4096;
+                config.common.iterations = 1;
+                config.common.warmupIterations = 0;
+                config.workingMemory = 4096;
+                config.targetMemory = OBJ_SEG;
+
+                applyScenarioExecutionConfiguration(config);
+                const bool classified = xferBenchConfig::isStorageBackend() &&
+                    xferBenchConfig::isObjStorageBackend() &&
+                    xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_OBJ;
+                _exit(classified ? EXIT_SUCCESS : EXIT_FAILURE);
+            },
+            ::testing::ExitedWithCode(EXIT_SUCCESS),
+            "");
+    }
+
+    TEST(ScenarioWorkerBridgeTest, TypedBlockTargetDoesNotRequireABackendNameList) {
+        EXPECT_EXIT(
+            {
+                scenarioExecutionConfig config;
+                config.common.pluginName = "FUTURE-BLOCK";
+                config.common.pluginParameters["provider-key"] = "Exact Value";
+                config.common.blockSize = 4096;
+                config.common.iterations = 1;
+                config.common.warmupIterations = 0;
+                config.workingMemory = 4096;
+                config.targetMemory = BLK_SEG;
+
+                applyScenarioExecutionConfiguration(config);
+                const bool classified = xferBenchConfig::isStorageBackend() &&
+                    xferBenchConfig::typedStorageTargetType() == BLK_SEG &&
+                    xferBenchConfig::target_seg_type == XFERBENCH_SEG_TYPE_BLK;
+                _exit(classified ? EXIT_SUCCESS : EXIT_FAILURE);
+            },
+            ::testing::ExitedWithCode(EXIT_SUCCESS),
+            "");
+    }
+
+    TEST(ScenarioWorkerBridgeTest, LegacyClassificationStillUsesTheBackendName) {
+        EXPECT_EXIT(
+            {
+                xferBenchConfig::plugin_parameters.reset();
+                xferBenchConfig::backend = XFERBENCH_BACKEND_UCX;
+                xferBenchConfig::target_seg_type = XFERBENCH_SEG_TYPE_FILE;
+                _exit(xferBenchConfig::isStorageBackend() ? EXIT_FAILURE : EXIT_SUCCESS);
             },
             ::testing::ExitedWithCode(EXIT_SUCCESS),
             "");

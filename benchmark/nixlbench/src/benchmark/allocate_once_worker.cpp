@@ -5,6 +5,7 @@
 
 #include "benchmark/allocate_once_worker.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -85,7 +86,18 @@ xferBenchNixlAllocateOnceWorker::allocateMemory(int num_threads) {
     std::vector<xferBenchIOV> file_iovs;
     file_iovs.reserve(request_.files.size());
     std::set<std::pair<dev_t, ino_t>> file_identities;
-    for (const auto &path : request_.files) {
+    for (size_t index = 0; index < request_.files.size(); ++index) {
+        const auto &path = request_.files[index];
+        if (request_.fileRegistrationMode == nixlbench::file_registration_mode_t::PATH) {
+            const bool writable = request_.common.operation == NIXL_WRITE ||
+                (index < request_.initializeFiles.size() && request_.initializeFiles[index]);
+            file_iovs.emplace_back(
+                0,
+                request_.fileSize,
+                static_cast<int>(index),
+                nixlbench::allocateOncePathMetadata(path, writable, request_.direct));
+            continue;
+        }
         const int access_flags = (request_.common.operation == NIXL_WRITE ? O_RDWR : O_RDONLY) |
             O_LARGEFILE | (request_.direct ? O_DIRECT : 0);
         int flags = access_flags;
@@ -134,7 +146,12 @@ xferBenchNixlAllocateOnceWorker::allocateMemory(int num_threads) {
         file_iovs.emplace_back(0, request_.fileSize, fd);
     }
 
+    registeredFiles_ = file_iovs;
     if (!registerRemoteIovs(FILE_SEG, std::move(file_iovs))) {
+        return {};
+    }
+
+    if (!initializeManagedFiles()) {
         return {};
     }
 
@@ -199,18 +216,61 @@ xferBenchNixlAllocateOnceWorker::exchangeIOV(
     for (size_t thread = 0; thread < local_iovs.size(); ++thread) {
         std::vector<xferBenchIOV> remote_iovs;
         remote_iovs.reserve(local_iovs[thread].size());
-        const auto fd = remoteFileDescriptor((*regions)[thread].fileIndex);
-        if (!fd) {
-            std::cerr << "Scenario file descriptor is unavailable for thread " << thread
+        const size_t file_index = (*regions)[thread].fileIndex;
+        if (file_index >= registeredFiles_.size()) {
+            std::cerr << "Scenario file registration is unavailable for thread " << thread
                       << std::endl;
             return {};
         }
+        const auto &file = registeredFiles_[file_index];
         for (const auto &local_iov : local_iovs[thread]) {
-            remote_iovs.emplace_back(0, local_iov.len, *fd);
+            remote_iovs.emplace_back(0, local_iov.len, file.devId, file.metaInfo);
         }
         result.push_back(std::move(remote_iovs));
     }
     return result;
+}
+
+bool
+xferBenchNixlAllocateOnceWorker::initializeManagedFiles() {
+    if (request_.fileRegistrationMode != nixlbench::file_registration_mode_t::PATH ||
+        std::none_of(request_.initializeFiles.begin(),
+                     request_.initializeFiles.end(),
+                     [](bool value) { return value; })) {
+        return true;
+    }
+
+    const size_t chunk_size =
+        std::min(request_.fileSize, nixlbench::allocate_once_initialization_chunk);
+    auto initialization_iov = allocateLocalIov(chunk_size, 0);
+    if (!initialization_iov) {
+        std::cerr << "Failed to allocate managed-file initialization buffer" << std::endl;
+        return false;
+    }
+    initializeLocalIov(*initialization_iov, XFERBENCH_TARGET_BUFFER_ELEMENT);
+    if (!registerLocalIovs({*initialization_iov})) {
+        return false;
+    }
+
+    for (size_t index = 0; index < request_.initializeFiles.size(); ++index) {
+        if (!request_.initializeFiles[index]) {
+            continue;
+        }
+        for (size_t offset = 0; offset < request_.fileSize; offset += chunk_size) {
+            const size_t count = std::min(chunk_size, request_.fileSize - offset);
+            xferBenchIOV local = *initialization_iov;
+            local.len = count;
+            xferBenchIOV remote = registeredFiles_[index];
+            remote.addr = offset;
+            remote.len = count;
+            if (!transferRemoteIov(NIXL_WRITE, local, remote)) {
+                std::cerr << "Failed to initialize managed file through NIXL: "
+                          << request_.files[index] << std::endl;
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 std::variant<xferBenchStats, int>
@@ -238,6 +298,32 @@ xferBenchNixlAllocateOnceWorker::validateTransfer(
     if (!xferBenchConfig::check_consistency) {
         return true;
     }
-    auto &iovs = request_.common.operation == NIXL_READ ? local_iovs : lastRemoteIovs_;
-    return xferBenchUtils::checkConsistency(iovs);
+    if (request_.common.operation == NIXL_READ) {
+        return xferBenchUtils::checkConsistency(local_iovs);
+    }
+    if (request_.fileRegistrationMode == nixlbench::file_registration_mode_t::DESCRIPTOR) {
+        return xferBenchUtils::checkConsistency(lastRemoteIovs_);
+    }
+    if (local_iovs.size() != lastRemoteIovs_.size()) {
+        std::cerr << "Consistency-check descriptor lists do not match" << std::endl;
+        return false;
+    }
+    for (size_t thread = 0; thread < local_iovs.size(); ++thread) {
+        if (local_iovs[thread].size() != lastRemoteIovs_[thread].size()) {
+            std::cerr << "Consistency-check descriptor counts do not match for thread " << thread
+                      << std::endl;
+            return false;
+        }
+        for (size_t index = 0; index < local_iovs[thread].size(); ++index) {
+            initializeLocalIov(local_iovs[thread][index], XFERBENCH_TARGET_BUFFER_ELEMENT);
+            if (!transferRemoteIov(
+                    NIXL_READ, local_iovs[thread][index], lastRemoteIovs_[thread][index])) {
+                std::cerr << "Failed to read path-mode data through NIXL for consistency checking"
+                          << std::endl;
+                return false;
+            }
+        }
+    }
+    return xferBenchUtils::checkMemoryContents(
+        local_iovs, localMemoryType(), XFERBENCH_INITIATOR_BUFFER_ELEMENT);
 }

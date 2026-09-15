@@ -10,12 +10,9 @@
 
 #include <CLI/CLI.hpp>
 
-#include <algorithm>
-#include <cctype>
 #include <limits>
 #include <memory>
 #include <set>
-#include <sstream>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -47,23 +44,7 @@ namespace {
     using scenario_plugin_bindings_t = std::vector<std::unique_ptr<scenarioPluginBinding>>;
 
     std::string
-    upper(std::string value) {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
-            return static_cast<char>(std::toupper(character));
-        });
-        return value;
-    }
-
-    std::string
-    lower(std::string value) {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
-            return static_cast<char>(std::tolower(character));
-        });
-        return value;
-    }
-
-    std::string
-    legacyMemoryName(nixl_mem_t memory) {
+    executionMemoryName(nixl_mem_t memory) {
         switch (memory) {
         case DRAM_SEG:
             return XFERBENCH_SEG_TYPE_DRAM;
@@ -74,7 +55,7 @@ namespace {
         case BLK_SEG:
             return XFERBENCH_SEG_TYPE_BLK;
         case OBJ_SEG:
-            return XFERBENCH_BACKEND_OBJ;
+            return XFERBENCH_SEG_TYPE_OBJ;
         }
         return {};
     }
@@ -227,11 +208,11 @@ benchmarkScenario::dryRun() const {
     return implementation_->config.dryRun;
 }
 
-legacyWorkerConfig
-benchmarkScenario::legacyWorkerConfiguration() const {
-    legacyWorkerConfig config;
+scenarioExecutionConfig
+benchmarkScenario::executionConfiguration() const {
+    scenarioExecutionConfig config;
     config.common = implementation_->config;
-    configureLegacyWorker(config);
+    configureExecution(config);
     return config;
 }
 
@@ -292,7 +273,7 @@ addScenarioPluginCommands(CLI::App &scenario,
         if (!filter(entry)) {
             continue;
         }
-        const std::string command_name = lower(entry.name);
+        const std::string command_name = xferBenchUtils::lowercase(entry.name);
         if (!command_names.insert(command_name).second) {
             err << "Error: installed plugin names are ambiguous when used as CLI subcommands: "
                 << command_name << '\n';
@@ -343,7 +324,7 @@ resolveCommonScenarioOptions(const scenarioOptions &options,
         return fail("aggregate iteration count is too large");
     }
 
-    const std::string requested_memory = upper(options.initiatorMemory);
+    const std::string requested_memory = xferBenchUtils::uppercase(options.initiatorMemory);
     const bool supports_dram = hasMemoryType(metadata, DRAM_SEG);
     const bool supports_vram = hasMemoryType(metadata, VRAM_SEG);
     if (requested_memory == "DRAM" && !supports_dram) {
@@ -363,7 +344,8 @@ resolveCommonScenarioOptions(const scenarioOptions &options,
     config.threads = options.threads;
     config.iterations = options.iterations;
     config.warmupIterations = options.warmupIterations;
-    config.operation = upper(options.operation) == "READ" ? NIXL_READ : NIXL_WRITE;
+    config.operation =
+        xferBenchUtils::uppercase(options.operation) == "READ" ? NIXL_READ : NIXL_WRITE;
     if (requested_memory == "VRAM" || (requested_memory == "AUTO" && supports_vram)) {
         config.initiatorMemory = VRAM_SEG;
     } else if (supports_dram) {
@@ -376,42 +358,39 @@ resolveCommonScenarioOptions(const scenarioOptions &options,
     return true;
 }
 
-std::vector<std::string>
-legacyWorkerArguments(const legacyWorkerConfig &config, const std::string &program_name) {
-    const auto boolean = [](bool value) { return value ? "true" : "false"; };
-    std::ostringstream file_names;
-    for (size_t index = 0; index < config.fileNames.size(); ++index) {
-        if (index != 0) {
-            file_names << ',';
-        }
-        file_names << config.fileNames[index];
-    }
-
-    std::vector<std::string> arguments = {
-        program_name,
-        std::string("--worker_type=") + XFERBENCH_WORKER_NIXL,
-        "--backend=" + config.common.pluginName,
-        "--initiator_seg_type=" + legacyMemoryName(config.common.initiatorMemory),
-        "--target_seg_type=" + legacyMemoryName(config.targetMemory),
-        std::string("--op_type=") +
-            (config.common.operation == NIXL_READ ? XFERBENCH_OP_READ : XFERBENCH_OP_WRITE),
-        "--check_consistency=" + std::string(boolean(config.common.checkConsistency)),
-        "--total_buffer_size=" + std::to_string(config.workingMemory),
-        "--start_block_size=" + std::to_string(config.common.blockSize),
-        "--max_block_size=" + std::to_string(config.common.blockSize),
-        "--start_batch_size=" + std::to_string(config.common.batchSize),
-        "--max_batch_size=" + std::to_string(config.common.batchSize),
-        "--num_iter=" + std::to_string(config.common.iterations * config.common.threads),
-        "--warmup_iter=" + std::to_string(config.common.warmupIterations * config.common.threads),
-        "--num_threads=" + std::to_string(config.common.threads),
-        "--large_blk_iter_ftr=" + std::to_string(fixed_scenario_large_block_iteration_factor),
-        "--pipeline_depth=" + std::to_string(fixed_scenario_pipeline_depth),
-        "--recreate_xfer=" + std::string(boolean(config.recreateTransferRequest)),
-        "--filenames=" + file_names.str(),
-        "--num_files=" + std::to_string(config.fileNames.size()),
-        "--storage_enable_direct=" + std::string(boolean(config.storageDirect)),
-    };
-    return arguments;
+void
+applyScenarioExecutionConfiguration(const scenarioExecutionConfig &config) {
+    xferBenchConfig::worker_type = XFERBENCH_WORKER_NIXL;
+    xferBenchConfig::backend = config.common.pluginName;
+    xferBenchConfig::initiator_seg_type = executionMemoryName(config.common.initiatorMemory);
+    xferBenchConfig::target_seg_type = executionMemoryName(config.targetMemory);
+    xferBenchConfig::scheme = XFERBENCH_SCHEME_PAIRWISE;
+    xferBenchConfig::mode = XFERBENCH_MODE_SG;
+    xferBenchConfig::op_type =
+        config.common.operation == NIXL_READ ? XFERBENCH_OP_READ : XFERBENCH_OP_WRITE;
+    xferBenchConfig::check_consistency = config.common.checkConsistency;
+    xferBenchConfig::total_buffer_size = config.workingMemory;
+    xferBenchConfig::num_initiator_dev = 1;
+    xferBenchConfig::num_target_dev = 1;
+    xferBenchConfig::start_block_size = config.common.blockSize;
+    xferBenchConfig::max_block_size = config.common.blockSize;
+    xferBenchConfig::start_batch_size = config.common.batchSize;
+    xferBenchConfig::max_batch_size = config.common.batchSize;
+    xferBenchConfig::num_iter = config.common.iterations * config.common.threads;
+    xferBenchConfig::warmup_iter = config.common.warmupIterations * config.common.threads;
+    xferBenchConfig::num_threads = config.common.threads;
+    xferBenchConfig::large_blk_iter_ftr = fixed_scenario_large_block_iteration_factor;
+    xferBenchConfig::pipeline_depth = fixed_scenario_pipeline_depth;
+    xferBenchConfig::recreate_xfer = config.recreateTransferRequest;
+    xferBenchConfig::reregister_mem = false;
+    xferBenchConfig::prepared_xfer = false;
+    xferBenchConfig::use_device_api = false;
+    xferBenchConfig::use_hugepages = false;
+    xferBenchConfig::device_list = "all";
+    xferBenchConfig::etcd_endpoints.clear();
+    xferBenchConfig::randomize_location_mode = XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE;
+    xferBenchConfig::randomize_location_mode_seed = 0;
+    xferBenchConfig::plugin_parameters = config.common.pluginParameters;
 }
 
 bool

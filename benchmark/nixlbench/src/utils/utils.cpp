@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -433,10 +434,8 @@ setupDeviceAPIConfig() {
 }
 
 int
-xferBenchConfig::parseConfig(int argc,
-                             char *argv[],
-                             std::optional<nixl_b_params_t> plugin_parameters_override) {
-    plugin_parameters = std::move(plugin_parameters_override);
+xferBenchConfig::parseConfig(int argc, char *argv[]) {
+    plugin_parameters.reset();
     std::string usage("NIXL Benchmark.  Sample usage:\n\n");
     usage += std::string(argv[0]) + " [flags]";
     gflags::SetUsageMessage(usage);
@@ -1023,8 +1022,7 @@ xferBenchConfig::workerNum() {
 
 bool
 xferBenchConfig::isStorageBackend() {
-    return ((xferBenchConfig::plugin_parameters &&
-             XFERBENCH_SEG_TYPE_FILE == xferBenchConfig::target_seg_type) ||
+    return (xferBenchConfig::typedStorageTargetType().has_value() ||
             XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GDS_MT == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
@@ -1037,10 +1035,28 @@ xferBenchConfig::isStorageBackend() {
 
 bool
 xferBenchConfig::isObjStorageBackend() {
-    return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
+    return ((xferBenchConfig::typedStorageTargetType() == OBJ_SEG) ||
+            XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 };
+
+std::optional<nixl_mem_t>
+xferBenchConfig::typedStorageTargetType() {
+    if (!xferBenchConfig::plugin_parameters) {
+        return std::nullopt;
+    }
+    if (XFERBENCH_SEG_TYPE_FILE == xferBenchConfig::target_seg_type) {
+        return FILE_SEG;
+    }
+    if (XFERBENCH_SEG_TYPE_OBJ == xferBenchConfig::target_seg_type) {
+        return OBJ_SEG;
+    }
+    if (XFERBENCH_SEG_TYPE_BLK == xferBenchConfig::target_seg_type) {
+        return BLK_SEG;
+    }
+    return std::nullopt;
+}
 
 
 /**********
@@ -1048,6 +1064,22 @@ xferBenchConfig::isObjStorageBackend() {
  **********/
 xferBenchRT *xferBenchUtils::rt = nullptr;
 std::string xferBenchUtils::dev_to_use = "";
+
+std::string
+xferBenchUtils::lowercase(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
+std::string
+xferBenchUtils::uppercase(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::toupper(character));
+    });
+    return value;
+}
 
 void
 xferBenchUtils::setRT(xferBenchRT *rt) {
@@ -1095,6 +1127,43 @@ allBytesAre(void *buffer, size_t size, uint8_t value) {
         }
     }
     return true; // All bytes match the value
+}
+
+bool
+xferBenchUtils::checkMemoryContents(const std::vector<std::vector<xferBenchIOV>> &iov_lists,
+                                    nixl_mem_t memory_type,
+                                    uint8_t expected_value) {
+    bool matches = true;
+    for (size_t list_index = 0; list_index < iov_lists.size(); ++list_index) {
+        for (size_t iov_index = 0; iov_index < iov_lists[list_index].size(); ++iov_index) {
+            const auto &iov = iov_lists[list_index][iov_index];
+            void *contents = reinterpret_cast<void *>(iov.addr);
+            std::unique_ptr<void, decltype(&free)> host_copy(nullptr, &free);
+            if (memory_type == VRAM_SEG) {
+                void *storage = nullptr;
+                if (posix_memalign(&storage, xferBenchConfig::page_size, iov.len) != 0) {
+                    std::cerr << "Failed to allocate consistency-check buffer of size " << iov.len
+                              << std::endl;
+                    return false;
+                }
+                host_copy.reset(storage);
+                copyVramToHost(storage, reinterpret_cast<void *>(iov.addr), iov.len);
+                contents = storage;
+            } else if (memory_type != DRAM_SEG) {
+                std::cerr << "Unsupported local memory type for consistency check" << std::endl;
+                return false;
+            }
+            if (!allBytesAre(contents, iov.len, expected_value)) {
+                std::cerr << "Consistency check failed for iov " << list_index << ':' << iov_index
+                          << std::endl;
+                matches = false;
+            }
+        }
+    }
+    if (!matches) {
+        std::cerr << "Consistency check failed" << std::endl;
+    }
+    return matches;
 }
 
 // Implement GUSLI device parser (declared in utils.h) so it can be reused by both utils and worker

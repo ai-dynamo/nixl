@@ -11,20 +11,11 @@
 #include <nixl.h>
 
 #include <algorithm>
-#include <cctype>
 #include <string_view>
 #include <utility>
 
 namespace nixlbench {
 namespace {
-
-    std::string
-    upper(std::string value) {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-            return static_cast<char>(std::toupper(ch));
-        });
-        return value;
-    }
 
     void
     addRawOptions(CLI::App &raw, RawOptions &options) {
@@ -225,7 +216,7 @@ parseRawPosixCommand(int argc,
         request.plugin_parameters[key] = value;
     }
 
-    request.raw.operation = upper(request.raw.operation);
+    request.raw.operation = xferBenchUtils::uppercase(request.raw.operation);
     if (!validateRawOptions(request.raw, err)) {
         return inval_args_exit_code;
     }

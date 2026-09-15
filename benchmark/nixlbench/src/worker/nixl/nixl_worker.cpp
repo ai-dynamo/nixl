@@ -810,8 +810,7 @@ createFileFds(std::string name, int num_files, const std::vector<std::string> &f
     const std::string file_path = xferBenchConfig::filepath != "" ?
         xferBenchConfig::filepath :
         std::filesystem::current_path().string();
-    std::string file_backend = xferBenchConfig::backend;
-    std::transform(file_backend.begin(), file_backend.end(), file_backend.begin(), ::tolower);
+    const std::string file_backend = xferBenchUtils::lowercase(xferBenchConfig::backend);
     const std::string file_name_prefix = "/nixlbench_" + file_backend + "_test_file_";
 
     for (int i = 0; i < num_files; i++) {
@@ -944,14 +943,6 @@ xferBenchNixlWorker::allocateLocalIov(size_t buffer_size, int mem_dev_id) {
 void
 xferBenchNixlWorker::retainRemoteFile(int fd, size_t file_size) {
     remote_fds.emplace_back(fd, file_size, 0);
-}
-
-std::optional<int>
-xferBenchNixlWorker::remoteFileDescriptor(size_t index) const {
-    if (index >= remote_fds.size()) {
-        return std::nullopt;
-    }
-    return remote_fds[index].fd;
 }
 
 bool
@@ -1568,27 +1559,11 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     return res;
 }
 
-// Helper to prepare transfer descriptors based on backend type
-static void
-prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
-                           nixl_xfer_dlist_t &remote_desc,
-                           const std::vector<xferBenchIOV> &local_iov,
-                           const std::vector<xferBenchIOV> &remote_iov) {
-    // Set remote descriptor type based on backend
-    if (xferBenchConfig::isObjStorageBackend()) {
-        remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
-    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
-        remote_desc = nixl_xfer_dlist_t(BLK_SEG);
-    } else if (xferBenchConfig::isStorageBackend()) {
-        remote_desc = nixl_xfer_dlist_t(FILE_SEG);
-    }
-
-    iovListToNixlXferDlist(local_iov, local_desc);
-    iovListToNixlXferDlist(remote_iov, remote_desc);
-}
-
 static nixl_mem_t
 getRemoteSegType() {
+    if (const auto target_type = xferBenchConfig::typedStorageTargetType()) {
+        return *target_type;
+    }
     if (xferBenchConfig::isObjStorageBackend()) {
         return OBJ_SEG;
     } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
@@ -1709,7 +1684,8 @@ prepareSlot(nixlAgent *agent,
             if (!slot.prep_local_dlist) {
                 nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
                 nixl_xfer_dlist_t rd(getRemoteSegType());
-                prepareTransferDescriptors(ld, rd, slot.local_iov, slot.remote_iov);
+                iovListToNixlXferDlist(slot.local_iov, ld);
+                iovListToNixlXferDlist(slot.remote_iov, rd);
                 rc = agent->prepXferDlist(NIXL_INIT_AGENT, ld, slot.prep_local_dlist, &params);
                 if (rc != NIXL_SUCCESS) {
                     return rc;
@@ -1731,7 +1707,8 @@ prepareSlot(nixlAgent *agent,
         } else {
             nixl_xfer_dlist_t ld(GET_SEG_TYPE(true));
             nixl_xfer_dlist_t rd(getRemoteSegType());
-            prepareTransferDescriptors(ld, rd, slot.local_iov, slot.remote_iov);
+            iovListToNixlXferDlist(slot.local_iov, ld);
+            iovListToNixlXferDlist(slot.remote_iov, rd);
             rc = agent->createXferReq(op, ld, rd, target, slot.req, &params);
         }
         if (rc != NIXL_SUCCESS) {
@@ -1991,6 +1968,25 @@ execTransferLoop(nixlAgent *agent,
         return -1;
     }
     return 0;
+}
+
+bool
+xferBenchNixlWorker::transferRemoteIov(nixl_xfer_op_t operation,
+                                       const xferBenchIOV &local_iov,
+                                       const xferBenchIOV &remote_iov) {
+    nixl_opt_args_t params;
+    xferBenchStats stats;
+    return execTransferLoop(agent,
+                            backend_engine,
+                            operation,
+                            "initiator",
+                            params,
+                            1,
+                            stats,
+                            {local_iov},
+                            {remote_iov},
+                            0,
+                            {}) == 0;
 }
 
 static int
