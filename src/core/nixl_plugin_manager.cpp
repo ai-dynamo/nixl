@@ -433,7 +433,7 @@ void
 nixlPluginManager::reinitializeForUnitTest() {
     // Lock scope
     {
-        const std::lock_guard lg(lock);
+        const std::lock_guard lg(mutex_);
 
         loaded_backend_plugins_.clear();
         loaded_telemetry_plugins_.clear();
