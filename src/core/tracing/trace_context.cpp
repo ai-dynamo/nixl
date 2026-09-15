@@ -21,6 +21,9 @@
 
 namespace {
 constexpr std::uint8_t supported_trace_flags = 0x03;
+constexpr std::size_t wire_flags_offset = 1;
+constexpr std::size_t wire_trace_id_offset = 2;
+constexpr std::size_t wire_span_id_offset = 18;
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -148,6 +151,56 @@ nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
     result.push_back('-');
     appendByte(result, context.flags & supported_trace_flags);
     return result;
+}
+
+bool
+nixl::trace::encodeTraceContext(const nixl::trace::TraceContext &context,
+                                std::span<std::uint8_t> buffer) {
+    if (!context.valid() || buffer.size() < nixl::trace::traceContextWireSize) {
+        return false;
+    }
+
+    buffer[0] = nixl::trace::traceContextWireVersion;
+    buffer[wire_flags_offset] = context.flags & supported_trace_flags;
+    std::copy(context.traceId.begin(),
+              context.traceId.end(),
+              buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset));
+    std::copy(context.spanId.begin(),
+              context.spanId.end(),
+              buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset));
+    return true;
+}
+
+nixl::trace::WireDecodeResult
+nixl::trace::decodeTraceContext(std::span<const std::uint8_t> buffer,
+                                nixl::trace::TraceContext &context) {
+    if (buffer.empty()) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+    // Dispatch on the version before checking the length: a later version may
+    // define a different size, and such a record must be reported as skippable
+    // rather than as corruption.
+    if (buffer[0] != nixl::trace::traceContextWireVersion) {
+        return nixl::trace::WireDecodeResult::UnknownVersion;
+    }
+    if (buffer.size() != nixl::trace::traceContextWireSize) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+
+    nixl::trace::TraceContext decoded;
+    decoded.flags = buffer[wire_flags_offset] & supported_trace_flags;
+    std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset),
+                decoded.traceId.size(),
+                decoded.traceId.begin());
+    std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset),
+                decoded.spanId.size(),
+                decoded.spanId.begin());
+    if (!decoded.valid()) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+
+    context = decoded;
+    return nixl::trace::WireDecodeResult::Ok;
 }
 
 nixl::trace::TraceContext
