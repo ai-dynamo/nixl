@@ -188,7 +188,7 @@ nixl::trace::decodeTraceContext(std::span<const std::uint8_t> buffer,
     }
 
     nixl::trace::TraceContext decoded;
-    decoded.flags = buffer[wire_flags_offset];
+    decoded.flags = buffer[wire_flags_offset] & supported_trace_flags;
     std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset),
                 decoded.traceId.size(),
                 decoded.traceId.begin());

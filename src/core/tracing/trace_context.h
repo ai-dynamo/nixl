@@ -88,7 +88,9 @@ encodeTraceContext(const TraceContext &context, std::span<std::uint8_t> buffer);
  * @brief Decode one wire record from @p buffer.
  * @return Ok only for a version-1 record of exactly traceContextWireSize bytes
  *         carrying non-zero ids; @p context is assigned in that case only, so a
- *         skipped or rejected record leaves the caller's value intact.
+ *         skipped or rejected record leaves the caller's value intact. Flags
+ *         are masked to the bits this version defines, mirroring the encoder,
+ *         so a peer's reserved bits never reach a stored context.
  */
 [[nodiscard]] WireDecodeResult
 decodeTraceContext(std::span<const std::uint8_t> buffer, TraceContext &context);

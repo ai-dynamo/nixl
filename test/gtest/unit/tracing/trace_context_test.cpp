@@ -40,6 +40,12 @@ canonicalContext() {
     return context.value();
 }
 
+[[nodiscard]] bool
+sameContext(const nixl::trace::TraceContext &left, const nixl::trace::TraceContext &right) {
+    return left.traceId == right.traceId && left.spanId == right.spanId &&
+        left.flags == right.flags;
+}
+
 } // namespace
 
 TEST(TraceContext, ParsesAndFormatsCanonicalTraceparent) {
@@ -254,14 +260,20 @@ TEST(TraceContext, EncodeLeavesTrailingBytesUntouched) {
     }
 }
 
+// Sentinel-filled rather than zeroed, so an implementation that clears the
+// buffer before rejecting cannot pass.
 TEST(TraceContext, RefusesToEncodeInvalidContextOrShortBuffer) {
     std::array<std::uint8_t, nixl::trace::traceContextWireSize> buffer{};
+    buffer.fill(0x5a);
+    const auto untouched = buffer;
     EXPECT_FALSE(nixl::trace::encodeTraceContext(nixl::trace::TraceContext{}, buffer));
-    EXPECT_TRUE(
-        std::all_of(buffer.begin(), buffer.end(), [](std::uint8_t byte) { return byte == 0; }));
+    EXPECT_EQ(buffer, untouched);
 
     std::array<std::uint8_t, nixl::trace::traceContextWireSize - 1> short_buffer{};
+    short_buffer.fill(0xa5);
+    const auto short_untouched = short_buffer;
     EXPECT_FALSE(nixl::trace::encodeTraceContext(canonicalContext(), short_buffer));
+    EXPECT_EQ(short_buffer, short_untouched);
 }
 
 TEST(TraceContext, RoundTripsThroughWireRecord) {
@@ -323,15 +335,18 @@ TEST(TraceContext, SkipsUnknownVersionWithoutTouchingContext) {
     EXPECT_EQ(context.flags, untouched.flags);
 }
 
+// Each rejection below starts from a valid context, so a decoder that writes
+// before validating is caught rather than hidden by an already-invalid
+// destination.
 TEST(TraceContext, RejectsTruncatedRecords) {
     for (std::size_t length = 0; length < nixl::trace::traceContextWireSize; ++length) {
-        nixl::trace::TraceContext decoded;
+        auto decoded = canonicalContext();
         const std::span<const std::uint8_t> truncated{kCanonicalWireRecord.data(), length};
 
         EXPECT_EQ(nixl::trace::decodeTraceContext(truncated, decoded),
                   nixl::trace::WireDecodeResult::Malformed)
             << "length " << length;
-        EXPECT_FALSE(decoded.valid()) << "length " << length;
+        EXPECT_TRUE(sameContext(decoded, canonicalContext())) << "length " << length;
     }
 }
 
@@ -339,9 +354,10 @@ TEST(TraceContext, RejectsOversizedRecord) {
     std::vector<std::uint8_t> buffer(kCanonicalWireRecord.begin(), kCanonicalWireRecord.end());
     buffer.push_back(0x00);
 
-    nixl::trace::TraceContext decoded;
+    auto decoded = canonicalContext();
     EXPECT_EQ(nixl::trace::decodeTraceContext(buffer, decoded),
               nixl::trace::WireDecodeResult::Malformed);
+    EXPECT_TRUE(sameContext(decoded, canonicalContext()));
 }
 
 TEST(TraceContext, RejectsZeroIdsOnDecode) {
@@ -352,9 +368,10 @@ TEST(TraceContext, RejectsZeroIdsOnDecode) {
     std::fill(zero_span.begin() + 18, zero_span.end(), 0x00);
 
     for (const auto &buffer : {zero_trace, zero_span}) {
-        nixl::trace::TraceContext decoded;
+        auto decoded = canonicalContext();
         EXPECT_EQ(nixl::trace::decodeTraceContext(buffer, decoded),
                   nixl::trace::WireDecodeResult::Malformed);
+        EXPECT_TRUE(sameContext(decoded, canonicalContext()));
     }
 }
 
@@ -369,4 +386,16 @@ TEST(TraceContext, DropsReservedFlagBitsAcrossWireRoundTrip) {
     nixl::trace::TraceContext decoded;
     ASSERT_EQ(nixl::trace::decodeTraceContext(buffer, decoded), nixl::trace::WireDecodeResult::Ok);
     EXPECT_EQ(decoded.flags, 0x03);
+}
+
+// A peer's record reaches the decoder without passing through the encoder, so
+// its reserved bits are only dropped if decoding masks them itself.
+TEST(TraceContext, NormalizesReservedFlagBitsFromRawRecord) {
+    auto buffer = kCanonicalWireRecord;
+    buffer[1] = 0xff;
+
+    nixl::trace::TraceContext decoded;
+    ASSERT_EQ(nixl::trace::decodeTraceContext(buffer, decoded), nixl::trace::WireDecodeResult::Ok);
+    EXPECT_EQ(decoded.flags, 0x03);
+    EXPECT_TRUE(decoded.sampled());
 }
