@@ -308,6 +308,61 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `manylinux` runner. Check the step's `containerSelector` against
 `runs_on_dockers`, not just whether `docker` is podman.
 
+## Authenticated github.com clones
+
+The container Dockerfiles build their third-party dependencies (abseil, gRPC,
+etcd-cpp-apiv3, aws-sdk-cpp, azure-sdk, gusli, gtest-parallel) from source, which
+means ~40 `git clone` calls against github.com per image build. Cloning those
+anonymously is unreliable: github.com intermittently answers an anonymous clone
+with `HTTP 401` + `www-authenticate: Basic realm="GitHub"`, and unauthenticated
+requests are budgeted per source IP — one the Blossom cluster shares across every
+tenant, so the failure rate does not track NIXL's own load.
+
+Because git has no credential to offer, a 401 is fatal rather than retried: git
+tries to prompt, finds no TTY, and dies with
+
+```
+fatal: could not read Username for 'https://github.com': No such device or address
+```
+
+That message is misleading in two ways — `github.com` is the credential realm, not
+a host it failed to reach, and `No such device or address` is `ENXIO` from opening
+`/dev/tty`. Neither has anything to do with DNS or connectivity. With a credential
+present git instead answers the 401 by retrying with auth, so the clone succeeds.
+
+**How it is wired.** The `svc-nixl-github-token` credential (already used by
+`GithubHelper` for commit statuses) is bound on the image-build steps of
+`build-container-pr-matrix.yaml` and `build-container-matrix.yaml` as
+`NIXL_GITHUB_USER` / `NIXL_GITHUB_TOKEN`. `contrib/build-container.sh` and
+`benchmark/nixlbench/contrib/build.sh` turn those into an env-sourced build secret:
+
+```
+--secret id=ghnetrc,env=NIXL_GITHUB_NETRC
+```
+
+and each cloning `RUN` mounts it at `/root/.netrc`:
+
+```
+RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone ...
+```
+
+The token is therefore never written to disk by the build scripts, never lands in
+an image layer, and does not appear in `podman history`. It needs no scopes — the
+repos are public and the only purpose is to stop being anonymous.
+
+**Local and external builds are unaffected.** With `NIXL_GITHUB_TOKEN` unset the
+scripts pass no `--secret`, the mount resolves empty, and the clones stay
+anonymous exactly as before. The `ENV GIT_TERMINAL_PROMPT=0` alongside each block
+is deliberate: it keeps a future credential problem from reappearing as the same
+misleading "could not read Username" message.
+
+**Not yet covered.** `contrib/Dockerfile.manylinux` carries the mounts, but its
+wheel-base image is built by CI-demo (see the `file:` entry in
+`build-wheel-matrix.yaml`) rather than by these scripts, so it is still cloning
+anonymously until that path passes the secret. `.gitlab/build.sh` and the
+`taskflow` / `prometheus-cpp` meson `wrap-git` subprojects clone from github.com
+outside the container build entirely and are also still anonymous.
+
 ## Related docs
 
 - [Build Wheel Matrix CI Job Documentation](build-wheel-matrix-ci.md) — deep dive into `nixl-ci-build-wheel`.
