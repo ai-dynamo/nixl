@@ -44,6 +44,13 @@ endif
 ucx_backend_test_dep = [nixl_dep, nixl_infra, thread_dep] + ucx_test_dep + nixl_test_utils_dep
 ucx_test_include_directories = [nixl_inc_dirs, utils_inc_dirs]
 
+if cuda_dep.found() and is_variable('device_proxy_interface')
+    executable('proxy_lifetime', 'proxy_lifetime.cu',
+        dependencies: [nixl_dep, nixl_infra, device_proxy_interface, cuda_dep],
+        include_directories: [nixl_inc_dirs, nixl_device_api_inc_dirs],
+        cuda_args: ['-DHAVE_NIXL_DEVICE_API'])
+endif
+
 ucx_backend_test = executable('ucx_backend_test',
         'ucx_backend_test.cpp',
         dependencies: ucx_backend_test_dep,

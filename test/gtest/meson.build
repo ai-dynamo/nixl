@@ -130,9 +130,12 @@ else
     device_api_dep = []
 endif
 
-if ucx_gpu_device_api_available
+if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
     gtest_sources += ucx_device_api_test_sources
-    device_api_dep += [ucx_dep, doca_gpunetio_dep]
+    device_api_dep += [ucx_dep]
+    if ucx_gpu_device_api_available
+        device_api_dep += [doca_gpunetio_dep]
+    endif
 endif
 
 if ucx_dep.found() and is_variable('ucx_backend_interface')
