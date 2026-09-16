@@ -17,6 +17,7 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 #include <algorithm>
 #include <cassert>
 #include <hip/hip_runtime.h>
@@ -384,12 +385,14 @@ main(int argc, char *argv[]) {
     }
 
     if (use_vram) {
-        vram_addr = new void *[num_transfers];
+        vram_addr = new void *[num_transfers]();
     }
     if (use_dram) {
-        dram_addr = new void *[num_transfers];
+        dram_addr = new void *[num_transfers]();
     }
+    // -1 indicates an uninitialized entry that cleanup should skip entirely.
     fd = new int[num_transfers];
+    std::fill_n(fd, num_transfers, -1);
 
     nixlAgentConfig cfg;
     cfg.useProgThread = true;
@@ -402,6 +405,9 @@ main(int argc, char *argv[]) {
     nixl_reg_dlist_t dram_for_ais_mt(DRAM_SEG);
     nixl_reg_dlist_t file_for_ais_mt(FILE_SEG);
     std::string name;
+    // Parallel to fd[]: the path each entry was opened from, so cleanup can
+    // unlink by name instead of resolving the descriptor.
+    std::vector<std::string> file_names(num_transfers);
 
     std::cout << "\n============================================================" << std::endl;
     std::cout << "                 NIXL STORAGE TEST STARTING (AIS_MT PLUGIN)   "
@@ -480,6 +486,7 @@ main(int argc, char *argv[]) {
             std::cerr << "Failed to open file: " << name << " - " << strerror(errno) << std::endl;
             goto cleanup;
         }
+        file_names[i] = name;
 
         if (use_vram) {
             vram_buf[i].addr = (uintptr_t)(vram_addr[i]);
@@ -785,19 +792,14 @@ success:
 
     std::cout << "Deleting test files..." << std::endl;
     for (i = 0; i < num_transfers; i++) {
-        if (fd[i] > 0) {
-            char proc_path[64];
-            char filename[PATH_MAX];
-            snprintf(proc_path, sizeof(proc_path), "/proc/self/fd/%d", fd[i]);
-            ssize_t len = readlink(proc_path, filename, sizeof(filename) - 1);
-            if (len != -1) {
-                filename[len] = '\0';
-                close(fd[i]);
-                if (unlink(filename) != 0) {
-                    std::cerr << "Warning: Failed to delete file " << filename << ": "
-                              << strerror(errno) << std::endl;
-                }
-            }
+        if (fd[i] < 0) {
+            continue;
+        }
+        close(fd[i]);
+        fd[i] = -1;
+        if (unlink(file_names[i].c_str()) != 0) {
+            std::cerr << "Warning: Failed to delete file " << file_names[i] << ": "
+                      << strerror(errno) << std::endl;
         }
     }
     printProgress(1.0);
