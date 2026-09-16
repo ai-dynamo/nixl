@@ -25,6 +25,10 @@
 #include <filesystem>
 #include <iomanip>
 #include <memory>
+#include <limits>
+#include <mutex>
+#include <unordered_map>
+#include <linux/memfd.h>
 #include <numeric>
 #include <sstream>
 #include "utils/neuron.h"
@@ -316,6 +320,18 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                       << "]: " << dev.device_path << " (" << dev.security_flags << ")"
                       << ", offset = " << dev.dev_offset << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_SPDK)) {
+        backend_params["json_config_file"] = xferBenchConfig::spdk_json_config_file;
+        if (xferBenchConfig::spdk_msg_mempool_size > 0) {
+            backend_params["msg_mempool_size"] =
+                std::to_string(xferBenchConfig::spdk_msg_mempool_size);
+        }
+        std::cout << "SPDK backend initialized:" << std::endl;
+        std::cout << "  JSON config file: " << xferBenchConfig::spdk_json_config_file << std::endl;
+        std::cout << "  bdev name: " << xferBenchConfig::spdk_bdev_name << std::endl;
+        std::cout << "  bdev offset: " << xferBenchConfig::spdk_bdev_offset << std::endl;
+        std::cout << "  message mempool size: " << xferBenchConfig::spdk_msg_mempool_size
+                  << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL)) {
         std::cout << "UCCL backend" << std::endl;
         backend_params["in_python"] = "0";
@@ -436,6 +452,11 @@ public:
     }
 };
 
+// IOVs retain only an address across release()/adopt(). Keep backing FDs alive
+// across that handoff, including repeated deregistration/registration cycles.
+static std::mutex hugepageFdsMutex;
+static std::unordered_map<void *, int> hugepageFds;
+
 class nixlHugepagesAlloc final : public nixlAlloc {
 public:
     nixlHugepagesAlloc(void *addr, size_t size) : nixlAlloc(addr, size) {}
@@ -444,34 +465,72 @@ public:
         if (!addr_) {
             return;
         }
+        int fd = -1;
+        {
+            std::lock_guard lock(hugepageFdsMutex);
+            auto it = hugepageFds.find(addr_);
+            if (it != hugepageFds.end()) {
+                fd = it->second;
+                hugepageFds.erase(it);
+            }
+        }
         const size_t aligned = ROUND_UP(size_, HUGEPAGE_SIZE);
         if (munmap(addr_, aligned) != 0) {
             std::cerr << "Warning: Failed to unmap hugepage memory: " << strerror(errno)
                       << std::endl;
+        }
+        if (fd >= 0) {
+            close(fd);
         }
     }
 };
 
 static std::unique_ptr<nixlAlloc>
 makeHugepagesAlloc(size_t size) {
+    if (size > static_cast<size_t>(std::numeric_limits<off_t>::max()) - (HUGEPAGE_SIZE - 1)) {
+        std::cerr << "Hugepage buffer size is too large" << std::endl;
+        return nullptr;
+    }
     const size_t aligned = ROUND_UP(size, HUGEPAGE_SIZE);
+    const bool shared = xferBenchConfig::backend == XFERBENCH_BACKEND_SPDK;
+    int fd = -1;
+    if (shared) {
+        fd = memfd_create("nixlbench-spdk", MFD_CLOEXEC | MFD_HUGETLB | MFD_HUGE_2MB);
+        if (fd < 0) {
+            std::cerr << "Shared hugepage memfd creation failed: " << strerror(errno) << std::endl;
+            return nullptr;
+        }
+        if (ftruncate(fd, aligned) != 0) {
+            std::cerr << "Shared hugepage memfd sizing failed: " << strerror(errno) << std::endl;
+            close(fd);
+            return nullptr;
+        }
+    }
     void *addr = mmap(nullptr,
                       aligned,
                       PROT_READ | PROT_WRITE,
-                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_HUGE_2MB | MAP_POPULATE,
-                      -1,
+                      shared ? MAP_SHARED | MAP_POPULATE :
+                          MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_HUGE_2MB | MAP_POPULATE,
+                      fd,
                       0);
     if (addr == MAP_FAILED) {
         std::cerr << "Error: Hugepage allocation failed (" << strerror(errno) << ")" << std::endl;
+        if (fd >= 0) {
+            close(fd);
+        }
         std::cerr << "Hugepages may not be available. Check /proc/sys/vm/nr_hugepages and "
-                  << "ensure sufficient hugepages are configured, or run without "
-                  << "--use_hugepages" << std::endl;
+                  << "ensure sufficient hugepages are configured" << std::endl;
         return nullptr;
     }
 
     assert(reinterpret_cast<uintptr_t>(addr) % HUGEPAGE_SIZE == 0);
+    if (shared) {
+        std::lock_guard lock(hugepageFdsMutex);
+        hugepageFds.emplace(addr, fd);
+    }
 
-    std::cout << "Allocated hugepage buffer: addr=0x" << std::hex
+    std::cout << "Allocated " << (shared ? "shared FD-backed " : "")
+              << "hugepage buffer: addr=0x" << std::hex
               << reinterpret_cast<uintptr_t>(addr) << std::dec << ", requested_size=" << size
               << ", allocated_size=" << aligned << std::endl;
 
@@ -895,6 +954,12 @@ xferBenchNixlWorker::initBasicDescBlk(size_t buffer_size, int mem_dev_id, size_t
     return std::optional<xferBenchIOV>(std::in_place, dev_offset, buffer_size, mem_dev_id);
 }
 
+static std::optional<xferBenchIOV>
+initBasicDescSpdk(size_t buffer_size, int mem_dev_id, size_t dev_offset) {
+    return std::optional<xferBenchIOV>(
+        std::in_place, dev_offset, buffer_size, mem_dev_id, xferBenchConfig::spdk_bdev_name);
+}
+
 bool
 xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &device, size_t size) {
     int flags = O_RDWR | O_CREAT | O_LARGEFILE;
@@ -1055,6 +1120,21 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
         }
+    } else if (XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                auto basic_desc =
+                    initBasicDescSpdk(buffer_size, list_idx * num_devices + i,
+                                      xferBenchConfig::spdk_bdev_offset);
+                if (basic_desc) {
+                    iov_list.push_back(basic_desc.value());
+                }
+            }
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, BLK_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
+        }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
         int num_files = xferBenchConfig::num_files;
@@ -1120,6 +1200,11 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                                   !gusli_devices.empty()) ?
                     gusli_devices[i].device_id :
                     i;
+                // Threads may use the same bdev offsets, but their independent
+                // registrations must not alias the same NIXL descriptor key.
+                if (xferBenchConfig::backend == XFERBENCH_BACKEND_SPDK) {
+                    mem_dev_id = list_idx * num_devices + i;
+                }
                 basic_desc = initBasicDescDram(buffer_size, mem_dev_id);
                 break;
             }
@@ -1162,6 +1247,15 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         iov_lists.push_back(std::move(iov_list));
     }
 
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_SPDK && xferBenchConfig::reregister_mem) {
+        // Setup owns the buffers, but iteration slots must be the sole owners
+        // of their registrations. SPDK cannot register overlapping DMA ranges.
+        for (auto &region : local_regs_) {
+            region.deregister();
+        }
+        // BLK descriptors identify open devices, not DMA buffers. Keep their
+        // setup registration: multiple requests may name the same block range.
+    }
     return iov_lists;
 }
 
@@ -1269,6 +1363,13 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
+                } else if (XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = xferBenchConfig::spdk_bdev_offset + file_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = iov.devId;
+                    iov_remote.metaInfo = xferBenchConfig::spdk_bdev_name;
+                    remote_iov_list.push_back(iov_remote);
                 } else {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
@@ -1291,7 +1392,8 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             }
 
             res.push_back(remote_iov_list);
-            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+            if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+                XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
                 const size_t max_offset_in_blocks = local_iovs.size() - 1;
                 file_offset = getFileOffset(file_offset, max_offset_in_blocks, block_size);
             }
@@ -1361,7 +1463,8 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
     // Set remote descriptor type based on backend
     if (xferBenchConfig::isObjStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
-    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+               XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
@@ -1375,7 +1478,8 @@ static nixl_mem_t
 getRemoteSegType() {
     if (xferBenchConfig::isObjStorageBackend()) {
         return OBJ_SEG;
-    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend) {
+    } else if (XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+               XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend) {
         return BLK_SEG;
     } else if (xferBenchConfig::isStorageBackend()) {
         return FILE_SEG;
@@ -1398,10 +1502,13 @@ registerIterationMem(nixlAgent *agent,
         return rc;
     }
 
-    if (xferBenchConfig::isStorageBackend()) {
+    if (xferBenchConfig::isStorageBackend() &&
+        xferBenchConfig::backend != XFERBENCH_BACKEND_SPDK) {
         nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
         rc = agent->registerMem(remote_reg, &reg_args);
         if (rc != NIXL_SUCCESS) {
+            CHECK_NIXL_ERROR(agent->deregisterMem(local_reg, &reg_args),
+                             "rollback local iteration registration failed");
             return rc;
         }
     }
@@ -1424,7 +1531,8 @@ deregisterIterationMem(nixlAgent *agent,
         return rc;
     }
 
-    if (xferBenchConfig::isStorageBackend()) {
+    if (xferBenchConfig::isStorageBackend() &&
+        xferBenchConfig::backend != XFERBENCH_BACKEND_SPDK) {
         nixl_reg_dlist_t remote_reg = iovListToNixlRegDlist(remote_iov, getRemoteSegType());
         rc = agent->deregisterMem(remote_reg, &reg_args);
         if (rc != NIXL_SUCCESS) {

@@ -1011,6 +1011,27 @@ echo 'net.core.wmem_max = 134217728' | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 ```
 
+## SPDK shared hugepage buffers
+
+For `--backend SPDK --use_hugepages`, host buffers use 2 MiB hugetlb memfds
+mapped with `MAP_SHARED`. The benchmark retains each FD until the buffer is
+freed, after normal NIXL deregistration, so `agent.registerMem()` can discover
+the backing FD without privileged access to `/proc/self/map_files`. No
+backend-specific registration call is needed. Allocation failure is fatal;
+there is no fallback to private memory. Reserve sufficient hugepages first.
+
+Other backends retain their existing private hugepage allocator. Without
+`--use_hugepages`, SPDK's current shared-memory-only registration contract will
+reject the benchmark's private heap buffers. This change does not add SPDK
+KV mode: SPDK benchmark transfers still use `BLK_SEG`.
+
+For SPDK, `--reregister_mem` cycles each iteration slot's DRAM registration.
+The allocation remains owned by setup, but its initial registration is released
+before transfers start. Block-device registrations remain open for the run:
+they identify storage, and repeated requests can name the same block range.
+The flag does not measure repeated device open/close. As with other backends,
+`--prepared_xfer` cannot be combined with `--reregister_mem`.
+
 ## Support and Resources
 
 - **Documentation**: https://github.com/ai-dynamo/nixl/tree/main/benchmark/nixlbench

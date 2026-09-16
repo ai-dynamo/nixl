@@ -58,7 +58,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-              "GUSLI, AZURE_BLOB] (only used with nixl worker)");
+              "GUSLI, SPDK, AZURE_BLOB] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -241,6 +241,12 @@ NB_ARG_BOOL(gusli_try_use_uring,
             false,
             "Try to use io_uring engine in GUSLI backend (default: false)");
 
+// SPDK options - only used when backend is SPDK
+NB_ARG_STRING(spdk_json_config_file, "", "SPDK JSON config file for bdev setup");
+NB_ARG_STRING(spdk_bdev_name, "", "SPDK bdev name used for BLK descriptors");
+NB_ARG_UINT64(spdk_bdev_offset, 0, "Starting byte offset for SPDK bdev operations");
+NB_ARG_UINT64(spdk_msg_mempool_size, 0, "SPDK thread message mempool size; 0 uses SPDK default");
+
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
@@ -321,6 +327,10 @@ std::string xferBenchConfig::gusli_config_file = "";
 std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 bool xferBenchConfig::gusli_try_use_uring = false;
+std::string xferBenchConfig::spdk_json_config_file = "";
+std::string xferBenchConfig::spdk_bdev_name = "";
+size_t xferBenchConfig::spdk_bdev_offset = 0;
+size_t xferBenchConfig::spdk_msg_mempool_size = 0;
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -446,6 +456,13 @@ xferBenchConfig::loadParams(void) {
             gusli_device_byte_offsets = NB_ARG(gusli_device_byte_offsets);
             gusli_device_security = NB_ARG(gusli_device_security);
             gusli_try_use_uring = NB_ARG(gusli_try_use_uring);
+        }
+
+        if (backend == XFERBENCH_BACKEND_SPDK) {
+            spdk_json_config_file = NB_ARG(spdk_json_config_file);
+            spdk_bdev_name = NB_ARG(spdk_bdev_name);
+            spdk_bdev_offset = NB_ARG(spdk_bdev_offset);
+            spdk_msg_mempool_size = NB_ARG(spdk_msg_mempool_size);
         }
 
         // Load OBJ-specific configurations if backend is OBJ
@@ -622,6 +639,21 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
 
+    if (backend == XFERBENCH_BACKEND_SPDK) {
+        if (spdk_json_config_file.empty()) {
+            std::cerr << "Error: SPDK backend requires --spdk_json_config_file" << std::endl;
+            return -1;
+        }
+        if (spdk_bdev_name.empty()) {
+            std::cerr << "Error: SPDK backend requires --spdk_bdev_name" << std::endl;
+            return -1;
+        }
+        if (check_consistency) {
+            std::cerr << "Error: Consistency check is not supported for SPDK backend" << std::endl;
+            return -1;
+        }
+    }
+
     if (worker_type == XFERBENCH_WORKER_NVSHMEM) {
         if (!((XFERBENCH_SEG_TYPE_VRAM == initiator_seg_type) &&
               (XFERBENCH_SEG_TYPE_VRAM == target_seg_type) && (1 == num_threads) &&
@@ -729,7 +761,7 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB])",
+        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,SPDK,AZURE_BLOB])",
                     backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
@@ -816,6 +848,16 @@ xferBenchConfig::printConfig() {
             }
         }
 
+        if (backend == XFERBENCH_BACKEND_SPDK) {
+            printOption("SPDK JSON config file (--spdk_json_config_file=path)",
+                        spdk_json_config_file);
+            printOption("SPDK bdev name (--spdk_bdev_name=name)", spdk_bdev_name);
+            printOption("SPDK bdev offset (--spdk_bdev_offset=N)",
+                        std::to_string(spdk_bdev_offset));
+            printOption("SPDK message mempool size (--spdk_msg_mempool_size=N)",
+                        std::to_string(spdk_msg_mempool_size));
+        }
+
         // Print DOCA GPUNetIO options if backend is DOCA GPUNetIO
         if (backend == XFERBENCH_BACKEND_GPUNETIO) {
             printOption("GPU CUDA Device id list (--device_list=dev1,dev2,...)",
@@ -881,6 +923,7 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_SPDK == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 }
