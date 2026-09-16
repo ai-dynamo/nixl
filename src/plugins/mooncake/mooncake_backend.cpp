@@ -111,6 +111,18 @@ queryBatchStatus(transfer_engine_t engine,
 #endif
 }
 
+// BATCH_CLEANUP_DEFERRED in newer transfer_engine_c.h: the engine took over a
+// batch that is still busy and frees it once its requests drain.
+constexpr int kBatchCleanupDeferred = 5;
+
+void
+freeBatch(transfer_engine_t engine, uint64_t batch_id) {
+    const int rc = freeBatchID(engine, batch_id);
+    if (rc != 0 && rc != kBatchCleanupDeferred) {
+        NIXL_WARN << "Mooncake freeBatchID failed with " << rc << ", leaking batch " << batch_id;
+    }
+}
+
 } // namespace
 
 nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
@@ -263,6 +275,30 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
     size_t request_count = 0;
 };
 
+namespace {
+void
+releaseBatch(transfer_engine_t engine, nixlMooncakeBackendReqH *priv) {
+    if (priv->batch_id != INVALID_BATCH) {
+        freeBatch(engine, priv->batch_id);
+        priv->batch_id = INVALID_BATCH;
+    }
+    priv->request_count = 0;
+}
+
+// checkXfer leaves a finished batch allocated so that the poll observing
+// completion does not also destroy every task. Free it before the handle
+// starts another transfer.
+nixl_status_t
+recycleBatch(transfer_engine_t engine, nixlMooncakeBackendReqH *priv) {
+    if (priv->batch_id != INVALID_BATCH &&
+        queryBatchStatus(engine, priv->batch_id, priv->request_count) == NIXL_IN_PROG) {
+        return NIXL_ERR_REPOST_ACTIVE;
+    }
+    releaseBatch(engine, priv);
+    return NIXL_SUCCESS;
+}
+} // namespace
+
 nixl_status_t
 nixlMooncakeEngine::prepXfer(const nixl_xfer_op_t &operation,
                              const nixl_meta_dlist_t &local,
@@ -292,17 +328,12 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         segment_id = agent->second.segment_id;
     }
     if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
-
-    const size_t request_count = local.descCount();
-    if (priv->batch_id == INVALID_BATCH) {
-        uint64_t batch_id = allocateBatchID(engine_, request_count);
-        if (batch_id == INVALID_BATCH) {
-            return NIXL_ERR_BACKEND;
-        }
-        priv->batch_id = batch_id;
-        priv->request_count = 0;
+    const nixl_status_t recycle_status = recycleBatch(engine_, priv);
+    if (recycle_status != NIXL_SUCCESS) {
+        return recycle_status;
     }
 
+    const size_t request_count = local.descCount();
     std::vector<transfer_request_t> request(request_count);
     for (size_t index = 0; index < request_count; ++index) {
         if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
@@ -311,6 +342,11 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         request[index].target_offset = remote[index].addr;
         request[index].length = local[index].len;
         request[index].target_id = segment_id;
+    }
+
+    priv->batch_id = allocateBatchID(engine_, request_count);
+    if (priv->batch_id == INVALID_BATCH) {
+        return NIXL_ERR_BACKEND;
     }
     int rc = 0;
     if (opt_args && opt_args->hasNotif) {
@@ -323,39 +359,26 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         rc = submitTransfer(engine_, priv->batch_id, request.data(), request_count);
     }
     if (rc) return NIXL_ERR_BACKEND;
-    priv->request_count += request_count;
+    priv->request_count = request_count;
     return NIXL_IN_PROG;
 }
 
 nixl_status_t
 nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
-    // Once every request completed, the batch is freed below and batch_id is
-    // reset to INVALID_BATCH. A later checkXfer() on the same handle must not
-    // reach the engine: getTransferStatus() and freeBatchID() cast the batch
-    // id to a BatchDesc pointer and dereference it, so passing INVALID_BATCH
-    // (UINT64_MAX) crashes. Report the already-reached terminal state instead.
+    // Nothing was posted on this handle. getTransferStatus() and freeBatchID()
+    // cast the batch id to a BatchDesc pointer and dereference it, so passing
+    // INVALID_BATCH (UINT64_MAX) crashes.
     if (priv->batch_id == INVALID_BATCH) {
         return NIXL_SUCCESS;
     }
-    const nixl_status_t status = queryBatchStatus(engine_, priv->batch_id, priv->request_count);
-    if (status == NIXL_SUCCESS) {
-        // Each batch_id has the batch size, and cannot process more requests
-        // than the batch size. So, free the batch id here to workaround the issue
-        // where the same nixlBackendReqH could be used to post multiple transfer.
-        freeBatchID(engine_, priv->batch_id);
-        priv->batch_id = INVALID_BATCH;
-        priv->request_count = 0;
-    }
-    return status;
+    return queryBatchStatus(engine_, priv->batch_id, priv->request_count);
 }
 
 nixl_status_t
 nixlMooncakeEngine::releaseReqH(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
-    if (priv->batch_id != INVALID_BATCH) {
-        freeBatchID(engine_, priv->batch_id);
-    }
+    releaseBatch(engine_, priv);
     delete priv;
     return NIXL_SUCCESS;
 }
