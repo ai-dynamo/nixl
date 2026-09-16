@@ -21,6 +21,7 @@
 #include <span>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <atomic>
 #include <chrono>
 #include <poll.h>
@@ -361,6 +362,8 @@ private:
     mutable std::atomic<size_t> sharedWorkerIndex_;
     const bool sglEnabled_;
     nixlBackendTraceSink *const traceSink_;
+
+    std::mutex baseNotifMutex_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
