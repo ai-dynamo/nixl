@@ -1022,8 +1022,8 @@ there is no fallback to private memory. Reserve sufficient hugepages first.
 
 Other backends retain their existing private hugepage allocator. Without
 `--use_hugepages`, SPDK's current shared-memory-only registration contract will
-reject the benchmark's private heap buffers. This change does not add SPDK
-KV mode: SPDK benchmark transfers still use `BLK_SEG`.
+reject the benchmark's private heap buffers. SPDK defaults to block mode
+(`BLK_SEG`); use `--spdk_mode kv` for KV operations.
 
 For SPDK, `--reregister_mem` cycles each iteration slot's DRAM registration.
 The allocation remains owned by setup, but its initial registration is released
@@ -1031,6 +1031,49 @@ before transfers start. Block-device registrations remain open for the run:
 they identify storage, and repeated requests can name the same block range.
 The flag does not measure repeated device open/close. As with other backends,
 `--prepared_xfer` cannot be combined with `--reregister_mem`.
+
+## SPDK KV mode
+
+`--backend SPDK --spdk_mode kv` uses `OBJ_SEG` descriptors and the plugin's
+NVMe KV Store/Retrieve path. No public NIXL API changes are required. The JSON
+configuration must create a KV-capable NVMe bdev; `--spdk_bdev_name` selects
+that bdev (for example, `Vfion7` for controller `Vfio`, namespace 7).
+
+```bash
+nixlbench --backend SPDK --spdk_mode kv --use_hugepages \
+  --spdk_json_config_file client.json --spdk_bdev_name Vfion7 \
+  --spdk_key_namespace 1 --initiator_seg_type DRAM \
+  --total_buffer_size 8388608 --start_block_size 4096 --max_block_size 131072 \
+  --start_batch_size 4 --max_batch_size 4 --pipeline_depth 2 \
+  --num_threads 2 --num_iter 32 --warmup_iter 4 \
+  --op_type WRITE --check_consistency
+```
+
+Use `--op_type READ` for Retrieve measurements. Each case prepopulates its
+keys before warmup, including READ-only runs. With `--check_consistency`, it
+verifies initial values, overwrite semantics, and timed I/O using distinct
+per-key/per-byte patterns. Setup and verification transfers are outside the
+reported timing. WRITE verification retrieves the final values after timing.
+
+Keys are 16 binary bytes: a big-endian 64-bit `--spdk_key_namespace` (default
+0), 32-bit worker index, and 32-bit entry index. Keys are stable across runs
+and value-size sweeps. Choose different namespaces for concurrent processes.
+Runs overwrite existing values; cleanup deregisters metadata but does not
+delete keys because the plugin has no NIXL Delete operation.
+
+KV mode requires shared hugepage DRAM, pairwise mode, zero bdev offset, no
+offset randomization, and nonzero 4 KiB-multiple value sizes. Each worker's
+buffer must fit distinct payloads for every batch/pipeline entry at the
+maximum value size. Transport/target limits may further restrict values.
+
+Prepared transfers are supported. `--reregister_mem` cycles payload
+registrations while retaining object metadata per case. The current SPDK
+vfio-user client supports only 16 memory regions including internal DMA
+allocations: per-entry re-registration can exceed that limit at larger batch
+sizes or thread counts. Normal mode registers whole buffers instead.
+
+Run `contrib/test_spdk_kv_config.sh /path/to/nixlbench` to check rejection of
+incompatible KV configurations without starting a storage service.
 
 ## Support and Resources
 

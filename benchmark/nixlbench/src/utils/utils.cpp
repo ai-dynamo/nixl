@@ -243,7 +243,9 @@ NB_ARG_BOOL(gusli_try_use_uring,
 
 // SPDK options - only used when backend is SPDK
 NB_ARG_STRING(spdk_json_config_file, "", "SPDK JSON config file for bdev setup");
-NB_ARG_STRING(spdk_bdev_name, "", "SPDK bdev name used for BLK descriptors");
+NB_ARG_STRING(spdk_bdev_name, "", "SPDK bdev name used for block or KV operations");
+NB_ARG_STRING(spdk_mode, "block", "SPDK command mode [block, kv]");
+NB_ARG_UINT64(spdk_key_namespace, 0, "KV key namespace; choose distinct values for concurrent processes");
 NB_ARG_UINT64(spdk_bdev_offset, 0, "Starting byte offset for SPDK bdev operations");
 NB_ARG_UINT64(spdk_msg_mempool_size, 0, "SPDK thread message mempool size; 0 uses SPDK default");
 
@@ -329,6 +331,8 @@ std::string xferBenchConfig::gusli_device_security = "";
 bool xferBenchConfig::gusli_try_use_uring = false;
 std::string xferBenchConfig::spdk_json_config_file = "";
 std::string xferBenchConfig::spdk_bdev_name = "";
+std::string xferBenchConfig::spdk_mode = "block";
+uint64_t xferBenchConfig::spdk_key_namespace = 0;
 size_t xferBenchConfig::spdk_bdev_offset = 0;
 size_t xferBenchConfig::spdk_msg_mempool_size = 0;
 
@@ -461,6 +465,8 @@ xferBenchConfig::loadParams(void) {
         if (backend == XFERBENCH_BACKEND_SPDK) {
             spdk_json_config_file = NB_ARG(spdk_json_config_file);
             spdk_bdev_name = NB_ARG(spdk_bdev_name);
+            spdk_mode = NB_ARG(spdk_mode);
+            spdk_key_namespace = NB_ARG(spdk_key_namespace);
             spdk_bdev_offset = NB_ARG(spdk_bdev_offset);
             spdk_msg_mempool_size = NB_ARG(spdk_msg_mempool_size);
         }
@@ -640,6 +646,10 @@ xferBenchConfig::loadParams(void) {
     }
 
     if (backend == XFERBENCH_BACKEND_SPDK) {
+        if (spdk_mode != "block" && spdk_mode != "kv") {
+            std::cerr << "Error: --spdk_mode must be block or kv" << std::endl;
+            return -1;
+        }
         if (spdk_json_config_file.empty()) {
             std::cerr << "Error: SPDK backend requires --spdk_json_config_file" << std::endl;
             return -1;
@@ -648,9 +658,27 @@ xferBenchConfig::loadParams(void) {
             std::cerr << "Error: SPDK backend requires --spdk_bdev_name" << std::endl;
             return -1;
         }
-        if (check_consistency) {
+        if (check_consistency && !isSpdkKv()) {
             std::cerr << "Error: Consistency check is not supported for SPDK backend" << std::endl;
             return -1;
+        }
+        if (isSpdkKv()) {
+            if (!use_hugepages || initiator_seg_type != XFERBENCH_SEG_TYPE_DRAM ||
+                spdk_bdev_offset != 0 || randomize_location_mode != XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE ||
+                scheme != XFERBENCH_SCHEME_PAIRWISE || start_block_size == 0 || max_block_size == 0 ||
+                start_block_size % 4096 || max_block_size % 4096 ||
+                num_threads <= 0 || num_initiator_dev <= 0 || max_batch_size == 0) {
+                std::cerr << "SPDK KV requires shared hugepage DRAM, pairwise mode, zero bdev offset, "
+                             "no offset randomization and 4 KiB-multiple value sizes" << std::endl;
+                return -1;
+            }
+            const uint64_t per_buffer = total_buffer_size / num_threads / num_initiator_dev;
+            if (max_batch_size > per_buffer / max_block_size / pipeline_depth ||
+                max_batch_size > UINT32_MAX / static_cast<uint64_t>(pipeline_depth) / num_initiator_dev) {
+                std::cerr << "SPDK KV requires distinct payload storage for every batch/pipeline entry; "
+                             "increase --total_buffer_size" << std::endl;
+                return -1;
+            }
         }
     }
 
@@ -852,6 +880,8 @@ xferBenchConfig::printConfig() {
             printOption("SPDK JSON config file (--spdk_json_config_file=path)",
                         spdk_json_config_file);
             printOption("SPDK bdev name (--spdk_bdev_name=name)", spdk_bdev_name);
+            printOption("SPDK mode (--spdk_mode=block|kv)", spdk_mode);
+            printOption("SPDK KV key namespace (--spdk_key_namespace=N)", std::to_string(spdk_key_namespace));
             printOption("SPDK bdev offset (--spdk_bdev_offset=N)",
                         std::to_string(spdk_bdev_offset));
             printOption("SPDK message mempool size (--spdk_msg_mempool_size=N)",
@@ -1236,6 +1266,11 @@ xferBenchUtils::validateTransfer(bool is_initiator,
                                  std::vector<std::vector<xferBenchIOV>> &local_lists,
                                  std::vector<std::vector<xferBenchIOV>> &remote_lists) {
     if (!xferBenchConfig::check_consistency) {
+        return true;
+    }
+    if (xferBenchConfig::isSpdkKv()) {
+        // The NIXL worker retrieves and checks KV values through the backend,
+        // rather than treating object keys as filesystem paths.
         return true;
     }
 
