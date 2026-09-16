@@ -1016,7 +1016,7 @@
       • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
     concurrent: false    # Overlapping polls would double-trigger the same commits
     sandbox: true
-    # Poll schedule. Must stay in step with RESERVE_TTL in the matrix config,
+    # Poll schedule. Must stay in step with RESERVE_TTL_MIN in the matrix config,
     # which is what keeps an in-flight build from being triggered twice.
     triggers:
       - timed: "H H/4 * * *"

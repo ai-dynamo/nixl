@@ -55,9 +55,10 @@ env:
   AQL_API_URL: "https://artifactory.nvidia.com/artifactory/api/search/aql"
   WHEEL_REPO_NAME: "sw-nbu-swx-nixl-pypi-local"
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
+  WHEEL_REPO_API: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
   # One poll interval, so a build that died without publishing is retried on the
   # next cycle rather than needing the wheel job to release its reservation.
-  RESERVE_TTL: "4h"
+  RESERVE_TTL_MIN: "240"
   MAIL_FROM: "jenkins@nvidia.com"
 
 steps:

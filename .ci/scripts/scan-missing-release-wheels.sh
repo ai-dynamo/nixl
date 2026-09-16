@@ -10,8 +10,8 @@
 # Env (set by build-wheel-release-poller-matrix.yaml):
 #   MIN_RELEASE   - releases older than this are not built
 #   MAX_COMMITS   - newest N first-parent commits to check per release branch
-#   RESERVE_TTL   - how long an .inflight reservation counts as live
-#   NIXL_REPO_URL, AQL_API_URL, WHEEL_REPO_NAME, WHEEL_REPO_URL,
+#   RESERVE_TTL_MIN - minutes an .inflight reservation counts as live
+#   NIXL_REPO_URL, AQL_API_URL, WHEEL_REPO_NAME, WHEEL_REPO_URL, WHEEL_REPO_API,
 #   ARTIFACTORY_USER, ARTIFACTORY_TOKEN
 
 # The Jenkins checkout is owned by a different uid; trust only it.
@@ -67,20 +67,31 @@ for ver in ${branches}; do
   published="$(grep -oE '"value"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}"' published.json \
     | grep -oE '[0-9a-f]{8}' || true)"
 
-  # $after with a relative age ages reservations out in Artifactory, so nothing
-  # has to release one: a build that failed or vanished lets its reservation
-  # lapse. Same operator family as cleanup-spec.json's "$before".
-  aql_res="items.find({\"repo\":\"${WHEEL_REPO_NAME}\",\"type\":\"file\",\"path\":\"release/${ver}/.inflight\",\"modified\":{\"\$after\":\"${RESERVE_TTL}\"}}).include(\"repo\",\"path\",\"name\")"
+  # Reservations, aged here rather than in the query: AQL rejected both relative
+  # date operators tried against this instance, and ?list already returns
+  # lastModified per file. 404 just means nothing has been reserved yet.
   http_code="$(curl -s --connect-timeout 10 --max-time 30 -o inflight.json -w '%{http_code}' \
-    -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -H 'Content-Type: text/plain' \
-    --data-binary "${aql_res}" "${AQL_API_URL}")" || http_code=""
-  if [ "${http_code}" != "200" ]; then
-    echo "release/${ver}: in-flight AQL returned ${http_code:-<none>}, skipping this cycle"
+    -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+    "${WHEEL_REPO_API}/release/${ver}/.inflight/?list&listFolders=0")" || http_code=""
+  if [ "${http_code}" != "200" ] && [ "${http_code}" != "404" ]; then
+    echo "release/${ver}: in-flight listing returned ${http_code:-<none>}, skipping this cycle"
     head -c 500 inflight.json; echo
     continue
   fi
-  reserved="$(grep -oE '"name"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}"' inflight.json \
-    | grep -oE '[0-9a-f]{8}' || true)"
+  reserved=""
+  if [ "${http_code}" = "200" ]; then
+    now_epoch="$(date -u +%s)"
+    # One record per line. tr drops the trailing newline, hence the `|| [ -n ]`
+    # guard - without it the last reservation is silently ignored.
+    reserved="$(tr -d '\n' < inflight.json | sed 's/{/\n{/g' \
+      | while IFS= read -r rec || [ -n "${rec}" ]; do
+          name="$(printf '%s' "${rec}" | grep -oE '"uri"[[:space:]]*:[[:space:]]*"/[0-9a-f]{8}"' | grep -oE '[0-9a-f]{8}')"
+          ts="$(printf '%s' "${rec}" | grep -oE '"lastModified"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/')"
+          if [ -z "${name}" ] || [ -z "${ts}" ]; then continue; fi
+          ts_epoch="$(date -u -d "${ts}" +%s 2>/dev/null)" || continue
+          [ $(( (now_epoch - ts_epoch) / 60 )) -lt "${RESERVE_TTL_MIN}" ] && printf '%s\n' "${name}"
+        done)"
+  fi
 
   base="$(git merge-base origin/main "origin/release/${ver}")"
   candidates="$(git rev-list --first-parent "${base}..origin/release/${ver}" | head -"${MAX_COMMITS}")"
