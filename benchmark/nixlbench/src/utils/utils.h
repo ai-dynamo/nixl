@@ -104,6 +104,7 @@
 #define XFERBENCH_BACKEND_OBJ "OBJ"
 #define XFERBENCH_BACKEND_REDIS "REDIS"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
+#define XFERBENCH_BACKEND_SPDK "SPDK"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
@@ -269,6 +270,10 @@ public:
     // post-instantiation by the worker via getBackendParams (so LIBFABRIC's runtime-added
     // VRAM_SEG is picked up). The storage/object/block predicates derive from this list.
     static nixl_mem_list_t backend_mems;
+    static std::string spdk_json_config_file;
+    static std::string spdk_bdev_name;
+    static size_t spdk_bdev_offset;
+    static size_t spdk_msg_mempool_size;
 
     static int
     parseConfig(int argc, char *argv[]);
