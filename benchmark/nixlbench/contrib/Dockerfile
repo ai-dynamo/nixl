@@ -168,6 +168,10 @@ FROM ucx_${UCX}_image AS ucx_image
 # --- Stage 4: Final Image Assembly ---
 # Re-declare ARGs needed in this final stage
 ARG ARCH="x86_64"
+# PyTorch publishes wheels for only some CUDA minors, and the base image's own
+# CUDA_VERSION (13.4) has no index. Deliberately not named CUDA_VERSION: the base
+# exports that as ENV, which wins over an ARG of the same name.
+ARG TORCH_CUDA_INDEX="cu130"
 ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
@@ -298,7 +302,7 @@ RUN uv pip install --system --upgrade \
 RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
         echo "Using PyTorch from system site-packages"; \
     else \
-        export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+        export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
         uv pip install --system torch torchvision torchaudio; \
     fi
 # setuptools for PEP 639 license metadata
