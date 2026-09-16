@@ -60,20 +60,23 @@ for ver in ${branches}; do
     -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -H 'Content-Type: text/plain' \
     --data-binary "${aql}" "${AQL_API_URL}")" || http_code=""
   if [ "${http_code}" != "200" ]; then
-    echo "release/${ver}: AQL returned ${http_code:-<none>}, skipping this cycle"
+    echo "release/${ver}: published AQL returned ${http_code:-<none>}, skipping this cycle"
+    head -c 500 published.json; echo
     continue
   fi
   published="$(grep -oE '"value"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}"' published.json \
     | grep -oE '[0-9a-f]{8}' || true)"
 
-  # $last ages reservations out in Artifactory, so nothing has to release one:
-  # a build that failed or vanished simply lets its reservation lapse.
-  aql_res="items.find({\"repo\":\"${WHEEL_REPO_NAME}\",\"type\":\"file\",\"path\":\"release/${ver}/.inflight\",\"modified\":{\"\$last\":\"${RESERVE_TTL}\"}}).include(\"repo\",\"path\",\"name\")"
+  # $after with a relative age ages reservations out in Artifactory, so nothing
+  # has to release one: a build that failed or vanished lets its reservation
+  # lapse. Same operator family as cleanup-spec.json's "$before".
+  aql_res="items.find({\"repo\":\"${WHEEL_REPO_NAME}\",\"type\":\"file\",\"path\":\"release/${ver}/.inflight\",\"modified\":{\"\$after\":\"${RESERVE_TTL}\"}}).include(\"repo\",\"path\",\"name\")"
   http_code="$(curl -s --connect-timeout 10 --max-time 30 -o inflight.json -w '%{http_code}' \
     -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -H 'Content-Type: text/plain' \
     --data-binary "${aql_res}" "${AQL_API_URL}")" || http_code=""
   if [ "${http_code}" != "200" ]; then
     echo "release/${ver}: in-flight AQL returned ${http_code:-<none>}, skipping this cycle"
+    head -c 500 inflight.json; echo
     continue
   fi
   reserved="$(grep -oE '"name"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}"' inflight.json \
