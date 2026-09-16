@@ -4,16 +4,15 @@
 # trigger step.
 #
 # A commit counts as published when a build folder under release/<ver>/ carries
-# it as a NIXL_SHA property. The wheel job stamps that property on the folder
-# only after the whole build goes green (and deletes the folder outright when it
-# does not), so the marker means "complete cu12+cu13 wheel set" - which the old
-# check, "the sha-named folder lists a nixl_cuNN file", could not distinguish
-# from a half-finished upload.
+# it as a NIXL_SHA property, which the wheel job sets only on a fully green
+# build. Commits with a fresh .inflight/<sha8> reservation are already building.
 #
 # Env (set by build-wheel-release-poller-matrix.yaml):
 #   MIN_RELEASE   - releases older than this are not built
 #   MAX_COMMITS   - newest N first-parent commits to check per release branch
-#   NIXL_REPO_URL, AQL_API_URL, WHEEL_REPO_NAME, ARTIFACTORY_USER, ARTIFACTORY_TOKEN
+#   RESERVE_TTL   - how long an .inflight reservation counts as live
+#   NIXL_REPO_URL, AQL_API_URL, WHEEL_REPO_NAME, WHEEL_REPO_URL,
+#   ARTIFACTORY_USER, ARTIFACTORY_TOKEN
 
 # The Jenkins checkout is owned by a different uid; trust only it.
 git config --global --add safe.directory "${PWD}"
@@ -52,14 +51,11 @@ for ver in ${branches}; do
     continue
   fi
 
-  # One AQL for the whole release instead of one GET per commit: collect the
-  # NIXL_SHA marker of every completed build folder under release/<ver>/.
   # repo/path/name are mandatory in any items .include() - Artifactory rejects
-  # the query outright without them ("for permissions reasons").
+  # the query without them ("for permissions reasons").
   aql="items.find({\"repo\":\"${WHEEL_REPO_NAME}\",\"type\":\"folder\",\"path\":\"release/${ver}\",\"@NIXL_SHA\":{\"\$match\":\"*\"}}).include(\"repo\",\"path\",\"name\",\"@NIXL_SHA\")"
-  # Only 200 is conclusive (no results is a valid 200); any other outcome skips
-  # the release until the next cycle, so an Artifactory hiccup cannot fan out
-  # spurious builds for every commit at once.
+  # Only 200 is conclusive (no results is a valid 200); anything else skips the
+  # release so an Artifactory hiccup cannot fan out a build for every commit.
   http_code="$(curl -s --connect-timeout 10 --max-time 30 -o published.json -w '%{http_code}' \
     -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -H 'Content-Type: text/plain' \
     --data-binary "${aql}" "${AQL_API_URL}")" || http_code=""
@@ -67,25 +63,46 @@ for ver in ${branches}; do
     echo "release/${ver}: AQL returned ${http_code:-<none>}, skipping this cycle"
     continue
   fi
-  # include("@NIXL_SHA") narrows the response to that one property, so every
-  # "value" in it is a marker sha.
   published="$(grep -oE '"value"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}"' published.json \
+    | grep -oE '[0-9a-f]{8}' || true)"
+
+  # $last ages reservations out in Artifactory, so nothing has to release one:
+  # a build that failed or vanished simply lets its reservation lapse.
+  aql_res="items.find({\"repo\":\"${WHEEL_REPO_NAME}\",\"type\":\"file\",\"path\":\"release/${ver}/.inflight\",\"modified\":{\"\$last\":\"${RESERVE_TTL}\"}}).include(\"repo\",\"path\",\"name\")"
+  http_code="$(curl -s --connect-timeout 10 --max-time 30 -o inflight.json -w '%{http_code}' \
+    -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -H 'Content-Type: text/plain' \
+    --data-binary "${aql_res}" "${AQL_API_URL}")" || http_code=""
+  if [ "${http_code}" != "200" ]; then
+    echo "release/${ver}: in-flight AQL returned ${http_code:-<none>}, skipping this cycle"
+    continue
+  fi
+  reserved="$(grep -oE '"name"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}"' inflight.json \
     | grep -oE '[0-9a-f]{8}' || true)"
 
   base="$(git merge-base origin/main "origin/release/${ver}")"
   candidates="$(git rev-list --first-parent "${base}..origin/release/${ver}" | head -"${MAX_COMMITS}")"
 
-  n_cand=0; n_build=0
+  n_cand=0; n_build=0; n_flight=0
   for sha in ${candidates}; do
     n_cand=$((n_cand+1))
     if printf '%s\n' "${published}" | grep -qx "${sha:0:8}"; then
       continue
     fi
+    if printf '%s\n' "${reserved}" | grep -qx "${sha:0:8}"; then
+      echo "release/${ver}: ${sha:0:8} already has a build in flight"
+      n_flight=$((n_flight+1))
+      continue
+    fi
+    # Reserve before triggering; a failed reservation only risks a duplicate.
+    curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null \
+      -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -X PUT --data-binary '' \
+      "${WHEEL_REPO_URL}/release/${ver}/.inflight/${sha:0:8}" \
+      || echo "release/${ver}: could not reserve ${sha:0:8}, a duplicate build is possible"
     echo "${sha} ${ver}" >> triggers.txt
     n_build=$((n_build+1))
   done
 
-  echo "release/${ver}: candidates=${n_cand} to_build=${n_build}"
+  echo "release/${ver}: candidates=${n_cand} in_flight=${n_flight} to_build=${n_build}"
 done
 
 echo "=== Poller summary: $(wc -l < triggers.txt) build(s) to trigger ==="

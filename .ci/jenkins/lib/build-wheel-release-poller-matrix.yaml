@@ -15,6 +15,9 @@
 # - Published check: a build folder under release/<ver>/ carrying the commit as
 #   a NIXL_SHA property. The wheel job stamps it only on SUCCESS, so a partial
 #   upload never reads as published - it deletes its own folder on failure.
+# - In flight: a release/<ver>/.inflight/<sha8> reservation written here before
+#   triggering. The marker only appears when a build ends, so without this a
+#   build still running at the next poll would be triggered again.
 # - Consequences: a failing build retries every cycle until it succeeds or the
 #   commit falls out of the MAX_COMMITS window. To force a rebuild, delete the
 #   commit's folder in Artifactory (or just its NIXL_SHA property).
@@ -47,10 +50,14 @@ env:
   # Newest N commits to check per release branch.
   MAX_COMMITS: "10"
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
-  # AQL endpoint + repo name: the published check is a property query, not a
-  # folder listing, so it needs the repo by name rather than by URL.
+  # The published check is a property query, so AQL needs the repo by name; the
+  # URL is for writing .inflight reservations.
   AQL_API_URL: "https://artifactory.nvidia.com/artifactory/api/search/aql"
   WHEEL_REPO_NAME: "sw-nbu-swx-nixl-pypi-local"
+  WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
+  # One poll interval, so a build that died without publishing is retried on the
+  # next cycle rather than needing the wheel job to release its reservation.
+  RESERVE_TTL: "4h"
   MAIL_FROM: "jenkins@nvidia.com"
 
 steps:
