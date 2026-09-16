@@ -74,6 +74,10 @@ class NIXLBench:
         obj_use_virtual_addressing=False,
         obj_endpoint_override="",
         obj_req_checksum="supported",
+        spdk_json_config_file="",
+        spdk_bdev_name="",
+        spdk_bdev_offset=0,
+        spdk_msg_mempool_size=0,
         # Additional nixlbench arguments
         large_blk_iter_ftr=16,
         recreate_xfer=False,
@@ -128,6 +132,10 @@ class NIXLBench:
             obj_use_virtual_addressing (bool, optional): Use virtual addressing for OBJ/S3. Defaults to False.
             obj_endpoint_override (str, optional): Endpoint override for OBJ/S3. Defaults to "".
             obj_req_checksum (str, optional): Required checksum for OBJ/S3. Defaults to "supported".
+            spdk_json_config_file (str, optional): SPDK JSON config file. Defaults to "".
+            spdk_bdev_name (str, optional): SPDK bdev name. Defaults to "".
+            spdk_bdev_offset (int, optional): Starting byte offset for SPDK bdev operations. Defaults to 0.
+            spdk_msg_mempool_size (int, optional): SPDK thread message mempool size. Defaults to 0.
             large_blk_iter_ftr (int, optional): Factor to reduce iterations for large blocks. Defaults to 16.
         """
         self.model = model
@@ -176,6 +184,10 @@ class NIXLBench:
         self.obj_use_virtual_addressing = obj_use_virtual_addressing
         self.obj_endpoint_override = obj_endpoint_override
         self.obj_req_checksum = obj_req_checksum
+        self.spdk_json_config_file = spdk_json_config_file
+        self.spdk_bdev_name = spdk_bdev_name
+        self.spdk_bdev_offset = spdk_bdev_offset
+        self.spdk_msg_mempool_size = spdk_msg_mempool_size
         self.large_blk_iter_ftr = large_blk_iter_ftr
         self.recreate_xfer = recreate_xfer
         self._override_defaults()
@@ -205,6 +217,20 @@ class NIXLBench:
             self.initiator_seg_type = "DRAM"
         else:
             raise ValueError(f"Invalid source for POSIX/HF3FS: {source}")
+
+    def _configure_spdk(self, source: str, destination: str):
+        """Configure SPDK bdev operations."""
+        bdev_names = {"bdev", "blk", "block"}
+        if source in bdev_names and destination == "memory":
+            self.op_type = "READ"
+            self.initiator_seg_type = "DRAM"
+        elif source == "memory" and destination in bdev_names:
+            self.op_type = "WRITE"
+            self.initiator_seg_type = "DRAM"
+        else:
+            raise ValueError(
+                "Invalid source/destination for SPDK: expected memory->bdev or bdev->memory"
+            )
 
     def _configure_ucx(self, backend: str, source: str, destination: str):
         """Configure UCX, GPUNETIO, and Mooncake plugins (same logic for all)"""
@@ -261,6 +287,8 @@ class NIXLBench:
             self._configure_gds(source, destination)
         elif backend_lower in ["posix", "hf3fs"]:
             self._configure_posix(source, destination)
+        elif backend_lower == "spdk":
+            self._configure_spdk(source, destination)
         elif backend_lower in ["ucx", "gpunetio", "mooncake"]:
             self._configure_ucx(backend_lower, source, destination)
         elif backend_lower == "obj":
@@ -354,6 +382,10 @@ class NIXLBench:
             "obj_use_virtual_addressing": self.obj_use_virtual_addressing,
             "obj_endpoint_override": self.obj_endpoint_override,
             "obj_req_checksum": self.obj_req_checksum,
+            "spdk_json_config_file": self.spdk_json_config_file,
+            "spdk_bdev_name": self.spdk_bdev_name,
+            "spdk_bdev_offset": self.spdk_bdev_offset,
+            "spdk_msg_mempool_size": self.spdk_msg_mempool_size,
             # Additional nixlbench parameters
             "large_blk_iter_ftr": self.large_blk_iter_ftr,
             "recreate_xfer": self.recreate_xfer,
@@ -415,6 +447,10 @@ class NIXLBench:
             "obj_use_virtual_addressing": False,
             "obj_endpoint_override": "",
             "obj_req_checksum": "supported",
+            "spdk_json_config_file": "",
+            "spdk_bdev_name": "",
+            "spdk_bdev_offset": 0,
+            "spdk_msg_mempool_size": 0,
             # Additional nixlbench defaults
             "large_blk_iter_ftr": 16,
             "recreate_xfer": False,

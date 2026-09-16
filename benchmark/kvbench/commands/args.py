@@ -45,13 +45,13 @@ def cli_args(func):
         "--source",
         default="file",
         type=str,
-        help="Source of the nixl descriptors [file, memory, gpu] (default: file)",
+        help="Source of the nixl descriptors [file, memory, gpu, bdev] (default: file)",
     )(func)
     func = click.option(
         "--destination",
         default="memory",
         type=str,
-        help="Destination of the nixl descriptors [file, memory, gpu] (default: memory)",
+        help="Destination of the nixl descriptors [file, memory, gpu, bdev] (default: memory)",
     )(func)
     return func
 
@@ -72,7 +72,7 @@ def nixl_bench_args(func):
     func = click.option(
         "--backend",
         type=str,
-        help="Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ] (default: UCX)",
+        help="Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, SPDK] (default: UCX)",
     )(func)
     func = click.option(
         "--worker_type",
@@ -278,6 +278,26 @@ def nixl_bench_args(func):
         "--obj_ca_bundle",
         type=str,
         help="Path to CA bundle for S3 backend (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--spdk_json_config_file",
+        type=str,
+        help="SPDK JSON config file for bdev setup (only used with SPDK backend)",
+    )(func)
+    func = click.option(
+        "--spdk_bdev_name",
+        type=str,
+        help="SPDK bdev name used for BLK descriptors (only used with SPDK backend)",
+    )(func)
+    func = click.option(
+        "--spdk_bdev_offset",
+        type=int,
+        help="Starting byte offset for SPDK bdev operations (default: 0)",
+    )(func)
+    func = click.option(
+        "--spdk_msg_mempool_size",
+        type=int,
+        help="SPDK thread message mempool size; 0 uses SPDK default",
     )(func)
     return func
 
