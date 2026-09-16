@@ -54,7 +54,9 @@ for ver in ${branches}; do
 
   # One AQL for the whole release instead of one GET per commit: collect the
   # NIXL_SHA marker of every completed build folder under release/<ver>/.
-  aql="items.find({\"repo\":\"${WHEEL_REPO_NAME}\",\"type\":\"folder\",\"path\":\"release/${ver}\",\"@NIXL_SHA\":{\"\$match\":\"*\"}}).include(\"@NIXL_SHA\")"
+  # repo/path/name are mandatory in any items .include() - Artifactory rejects
+  # the query outright without them ("for permissions reasons").
+  aql="items.find({\"repo\":\"${WHEEL_REPO_NAME}\",\"type\":\"folder\",\"path\":\"release/${ver}\",\"@NIXL_SHA\":{\"\$match\":\"*\"}}).include(\"repo\",\"path\",\"name\",\"@NIXL_SHA\")"
   # Only 200 is conclusive (no results is a valid 200); any other outcome skips
   # the release until the next cycle, so an Artifactory hiccup cannot fan out
   # spurious builds for every commit at once.
