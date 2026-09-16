@@ -29,7 +29,8 @@
 #include "mooncake_backend.h"
 
 namespace {
-class MooncakeBatchTest : public testing::TestWithParam<std::tuple<nixl_xfer_op_t, bool>> {
+// Parameters: operation, notification, split across submit threads.
+class MooncakeBatchTest : public testing::TestWithParam<std::tuple<nixl_xfer_op_t, bool, bool>> {
 protected:
     static constexpr size_t stride = 32;
     static constexpr size_t length = 16;
@@ -44,8 +45,13 @@ protected:
     nixlBackendReqH *handle = nullptr;
 
     std::unique_ptr<nixlMooncakeEngine>
-    makeEngine(const std::string &name) {
+    makeEngine(const std::string &name, bool split = false) {
         nixl_b_params_t params;
+        if (split) {
+            // Requests 1023 to 2048 below become four batches each.
+            params["num_threads"] = "4";
+            params["split_batch_size"] = "256";
+        }
         nixlBackendInitParams init{};
         init.localAgent = name;
         init.type = "MOONCAKE";
@@ -55,7 +61,7 @@ protected:
 
     void
     SetUp() override {
-        initiator = makeEngine("batch-initiator");
+        initiator = makeEngine("batch-initiator", std::get<2>(GetParam()));
         target = makeEngine("batch-target");
         ASSERT_FALSE(initiator->getInitErr());
         ASSERT_FALSE(target->getInitErr());
@@ -91,7 +97,7 @@ protected:
 };
 
 TEST_P(MooncakeBatchTest, DescriptorBoundariesAndCompletedHandleReuse) {
-    const auto [operation, notify] = GetParam();
+    const auto [operation, notify, split] = GetParam();
     auto &source = operation == NIXL_READ ? remote_buffer : local_buffer;
     auto &destination = operation == NIXL_READ ? local_buffer : remote_buffer;
     size_t round = 0;
@@ -150,9 +156,26 @@ TEST_P(MooncakeBatchTest, DescriptorBoundariesAndCompletedHandleReuse) {
             EXPECT_EQ(notifications.front().second, opts.notifMsg);
         }
     }
+    // Every transfer notified exactly once, a split one after all of its
+    // batches completed. Repeated checks must not notify again.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    notif_list_t late;
+    ASSERT_EQ(target->getNotifs(late), NIXL_SUCCESS);
+    EXPECT_TRUE(late.empty()) << "split=" << split;
 }
 
 INSTANTIATE_TEST_SUITE_P(ReadWrite,
                          MooncakeBatchTest,
-                         testing::Combine(testing::Values(NIXL_READ, NIXL_WRITE), testing::Bool()));
+                         testing::Combine(testing::Values(NIXL_READ, NIXL_WRITE),
+                                          testing::Bool(),
+                                          testing::Values(false)));
+
+// Splitting does not depend on the operation. Over TCP, Transfer Engines older
+// than v0.3.12 (kvcache-ai/Mooncake#2850) report a WRITE complete before the
+// target stored it, which concurrent batches expose.
+INSTANTIATE_TEST_SUITE_P(Split,
+                         MooncakeBatchTest,
+                         testing::Combine(testing::Values(NIXL_READ),
+                                          testing::Bool(),
+                                          testing::Values(true)));
 } // namespace
