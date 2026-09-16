@@ -388,6 +388,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_SPDK)) {
         backend_params["json_config_file"] = xferBenchConfig::spdk_json_config_file;
+        backend_params["bdev_name"] = xferBenchConfig::spdk_bdev_name;
         if (xferBenchConfig::spdk_msg_mempool_size > 0) {
             backend_params["msg_mempool_size"] =
                 std::to_string(xferBenchConfig::spdk_msg_mempool_size);
@@ -1061,7 +1062,9 @@ cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov) {
         cleanupBasicDescVram(iov);
         break;
     case OBJ_SEG:
-        cleanupBasicDescObj(iov);
+        if (!xferBenchConfig::isSpdkKv()) {
+            cleanupBasicDescObj(iov);
+        }
         break;
     default:
         break;
@@ -1181,10 +1184,13 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     opt_args.backends.push_back(backend_engine);
 
-    // REDIS stays an independent backend (putRedis seeding), but remote values
-    // use OBJ_SEG addressing semantics. Handle it before isObjStorageBackend()
-    // so REDIS does not enter the S3/Azure putObj registration path.
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+    if (xferBenchConfig::isSpdkKv()) {
+        // KV object registrations depend on the current value/batch sizes and
+        // are created by exchangeIOV, not from the backing buffer dimensions.
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+        // REDIS stays an independent backend (putRedis seeding), but remote values
+        // use OBJ_SEG addressing semantics. Handle it before isObjStorageBackend()
+        // so REDIS does not enter the S3/Azure putObj registration path.
         struct timeval tv;
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
@@ -1580,6 +1586,38 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
     std::vector<std::vector<xferBenchIOV>> res;
     int desc_str_sz;
 
+    if (xferBenchConfig::isSpdkKv()) {
+        remote_regs_.clear();
+        nixl_opt_args_t params;
+        params.backends.push_back(backend_engine);
+        uint64_t object_id = 0;
+        for (size_t thread = 0; thread < local_iovs.size(); ++thread) {
+            std::vector<xferBenchIOV> objects;
+            for (size_t entry = 0; entry < local_iovs[thread].size(); ++entry) {
+                // Stable 16-byte key: namespace (64), thread (32), entry (32),
+                // all big-endian. Key identity does not depend on addresses.
+                std::string key(16, '\0');
+                for (unsigned byte = 0; byte < 8; ++byte) {
+                    key[byte] =
+                        static_cast<char>(xferBenchConfig::spdk_key_namespace >> (56 - 8 * byte));
+                }
+                for (unsigned byte = 0; byte < 4; ++byte) {
+                    key[8 + byte] = static_cast<char>(thread >> (24 - 8 * byte));
+                    key[12 + byte] = static_cast<char>(entry >> (24 - 8 * byte));
+                }
+                objects.emplace_back(0, block_size, object_id++, key);
+            }
+            auto descs = iovListToNixlRegDlist(objects, OBJ_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(descs, &params), "register SPDK KV objects failed");
+            res.push_back(objects);
+            remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(objects));
+        }
+        std::cout << "SPDK KV: registered " << object_id << " keys, value size " << block_size
+                  << std::endl;
+        synchronize();
+        return res;
+    }
+
     if (xferBenchConfig::isStorageBackend()) {
         size_t fd_idx = 0;
         uint64_t file_offset = 0;
@@ -1791,7 +1829,7 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
                            const std::vector<xferBenchIOV> &local_iov,
                            const std::vector<xferBenchIOV> &remote_iov) {
     // Pick the remote descriptor mem type from the storage taxonomy of the active backend.
-    if (xferBenchConfig::isObjStorageBackend()) {
+    if (xferBenchConfig::isObjStorageBackend() || xferBenchConfig::isSpdkKv()) {
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (xferBenchConfig::isBlkStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
@@ -1805,7 +1843,7 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
 
 static nixl_mem_t
 getRemoteSegType() {
-    if (xferBenchConfig::isObjStorageBackend()) {
+    if (xferBenchConfig::isObjStorageBackend() || xferBenchConfig::isSpdkKv()) {
         return OBJ_SEG;
     } else if (xferBenchConfig::isBlkStorageBackend()) {
         return BLK_SEG;
@@ -2446,6 +2484,49 @@ execQuery(nixlAgent *agent,
     return ret;
 }
 
+// Distinct per-key and per-offset bytes catch routing errors, stale values and
+// partial transfers. Untimed verification deliberately reuses registered DMA
+// buffers, so it exercises the same path as benchmark I/O.
+static bool
+kvPattern(const std::vector<std::vector<xferBenchIOV>> &local,
+          const std::vector<std::vector<xferBenchIOV>> &remote,
+          unsigned generation,
+          bool verify) {
+    for (size_t thread = 0; thread < local.size(); ++thread) {
+        for (size_t entry = 0; entry < local[thread].size(); ++entry) {
+            uint64_t state = 14695981039346656037ULL ^ generation;
+            for (unsigned char c : remote[thread][entry].metaInfo) {
+                state = (state ^ c) * 1099511628211ULL;
+            }
+            auto *bytes = reinterpret_cast<uint8_t *>(local[thread][entry].addr);
+            for (size_t offset = 0; offset < local[thread][entry].len; ++offset) {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                uint8_t expected = static_cast<uint8_t>(state);
+                if (verify && bytes[offset] != expected) {
+                    std::cerr << "SPDK KV mismatch: thread " << thread << ", entry " << entry
+                              << ", byte " << offset << std::endl;
+                    return false;
+                }
+                if (!verify) {
+                    bytes[offset] = expected;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+static void
+clearKvBuffers(const std::vector<std::vector<xferBenchIOV>> &local) {
+    for (const auto &thread : local) {
+        for (const auto &iov : thread) {
+            memset(reinterpret_cast<void *>(iov.addr), 0, iov.len);
+        }
+    }
+}
+
 std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
@@ -2572,6 +2653,44 @@ xferBenchNixlWorker::transfer(size_t block_size,
                   << std::endl;
     }
 
+    auto kvOnce = [&](nixl_xfer_op_t op) {
+        xferBenchStats ignored;
+        return execTransfer(agent,
+                            backend_engine,
+                            local_iovs,
+                            remote_iovs,
+                            op,
+                            xferBenchConfig::pipeline_depth,
+                            xferBenchConfig::num_threads,
+                            ignored,
+                            &terminate);
+    };
+    const unsigned generation = xferBenchConfig::check_consistency ? 1 : 0;
+    if (xferBenchConfig::isSpdkKv()) {
+        // Reads must never depend on stale keys from a previous benchmark.
+        // Two generations also exercise overwrite semantics when checking.
+        for (unsigned gen = 0; gen <= generation; ++gen) {
+            kvPattern(local_iovs, remote_iovs, gen, false);
+            if (kvOnce(NIXL_WRITE) < 0) {
+                return -1;
+            }
+            if (xferBenchConfig::check_consistency) {
+                clearKvBuffers(local_iovs);
+                if (kvOnce(NIXL_READ) < 0 || !kvPattern(local_iovs, remote_iovs, gen, true)) {
+                    return -1;
+                }
+            }
+        }
+        std::cout << "SPDK KV: keys prepopulated"
+                  << (xferBenchConfig::check_consistency ?
+                          "; initial and overwrite verification passed" :
+                          "")
+                  << std::endl;
+        if (xfer_op == NIXL_READ) {
+            clearKvBuffers(local_iovs);
+        }
+    }
+
     // Reduce skip by 10x for large block sizes
     if (block_size > LARGE_BLOCK_SIZE) {
         skip /= xferBenchConfig::large_blk_iter_ftr;
@@ -2638,6 +2757,17 @@ xferBenchNixlWorker::transfer(size_t block_size,
     // Synchronize to ensure all processes have completed the warmup (iter and polling)
     synchronize();
 
+    const unsigned timed_generation = generation + (xfer_op == NIXL_WRITE ? 1 : 0);
+    if (xferBenchConfig::isSpdkKv() && xferBenchConfig::check_consistency) {
+        // Warmup must not mask a missing timed transfer: poison read buffers
+        // and use a new write generation only after warmup is complete.
+        if (xfer_op == NIXL_READ) {
+            clearKvBuffers(local_iovs);
+        } else {
+            kvPattern(local_iovs, remote_iovs, timed_generation, false);
+        }
+    }
+
     if (xferBenchConfig::use_device_api) {
         ret = execDeviceTransfer(local_mvh,
                                  remote_mvh,
@@ -2663,6 +2793,18 @@ xferBenchNixlWorker::transfer(size_t block_size,
         return std::variant<xferBenchStats, int>(ret);
     }
 
+    if (xferBenchConfig::isSpdkKv() && xferBenchConfig::check_consistency) {
+        if (xfer_op == NIXL_WRITE) {
+            clearKvBuffers(local_iovs);
+            if (kvOnce(NIXL_READ) < 0) {
+                return -1;
+            }
+        }
+        if (!kvPattern(local_iovs, remote_iovs, timed_generation, true)) {
+            return -1;
+        }
+        std::cout << "SPDK KV: timed I/O byte verification passed" << std::endl;
+    }
     synchronize();
     return std::variant<xferBenchStats, int>(stats);
 }

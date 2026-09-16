@@ -272,6 +272,13 @@ public:
     static nixl_mem_list_t backend_mems;
     static std::string spdk_json_config_file;
     static std::string spdk_bdev_name;
+    static std::string spdk_mode;
+    static uint64_t spdk_key_namespace;
+
+    static bool
+    isSpdkKv() {
+        return backend == XFERBENCH_BACKEND_SPDK && spdk_mode == "kv";
+    }
     static size_t spdk_bdev_offset;
     static size_t spdk_msg_mempool_size;
 
