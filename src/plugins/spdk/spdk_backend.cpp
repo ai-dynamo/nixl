@@ -24,8 +24,8 @@ validateLists(nixl_xfer_op_t operation,
         NIXL_ERROR << "SPDK: local descriptor list must be DRAM_SEG";
         return NIXL_ERR_INVALID_PARAM;
     }
-    if (remote.getType() != BLK_SEG) {
-        NIXL_ERROR << "SPDK: remote descriptor list must be BLK_SEG";
+    if (remote.getType() != BLK_SEG && remote.getType() != OBJ_SEG) {
+        NIXL_ERROR << "SPDK: remote descriptor list must be BLK_SEG or OBJ_SEG";
         return NIXL_ERR_INVALID_PARAM;
     }
     if (local.descCount() == 0 || local.descCount() != remote.descCount()) {
@@ -42,7 +42,9 @@ validateLists(nixl_xfer_op_t operation,
 resolveDescriptorPair(nixl_xfer_op_t operation,
                       const nixlMetaDesc &local,
                       const nixlMetaDesc &remote,
-                      nixlSpdkIoContext &io) {
+                      nixl_mem_t remote_type,
+                      nixlSpdkDramMD *&dram_out,
+                      nixlSpdkIoTarget &target_out) {
     auto *local_md = dynamic_cast<nixlSpdkMD *>(local.metadataP);
     if (!local_md || local_md->kind() != nixlSpdkMD::Kind::Dram) {
         NIXL_ERROR << "SPDK: local (DRAM) descriptor metadata is missing or invalid";
@@ -55,40 +57,80 @@ resolveDescriptorPair(nixl_xfer_op_t operation,
     }
 
     auto *remote_md = dynamic_cast<nixlSpdkMD *>(remote.metadataP);
-    if (!remote_md || remote_md->kind() != nixlSpdkMD::Kind::Bdev) {
-        NIXL_ERROR << "SPDK: BLK descriptor metadata is missing or invalid";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    auto *bdev = static_cast<nixlSpdkBdevMD *>(remote_md);
-    if (!bdev->desc || !bdev->channel || !bdev->bdev) {
-        NIXL_ERROR << "SPDK: BLK descriptor metadata is missing or invalid";
+    if (!remote_md) {
+        NIXL_ERROR << "SPDK: remote descriptor metadata is missing or invalid";
         return NIXL_ERR_INVALID_PARAM;
     }
     if (local.len != remote.len) {
-        NIXL_ERROR << "SPDK: local and BLK descriptor lengths must match";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    if ((remote.addr % bdev->blockSize) != 0 || (remote.len % bdev->blockSize) != 0) {
-        NIXL_ERROR << "SPDK: BLK descriptor offset and length must be block aligned";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    if ((remote.addr + remote.len) > (bdev->numBlocks * bdev->blockSize)) {
-        NIXL_ERROR << "SPDK: BLK descriptor exceeds bdev capacity";
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    // The bdev layer rejects a write that does not start and end on a
-    // write-unit boundary. Reads have no such constraint.
-    const uint64_t write_unit = uint64_t{bdev->blockSize} * bdev->writeUnitSize;
-    if (operation == NIXL_WRITE &&
-        ((remote.addr % write_unit) != 0 || (remote.len % write_unit) != 0)) {
-        NIXL_ERROR << "SPDK: BLK write offset and length must be write-unit aligned";
+        NIXL_ERROR << "SPDK: local and remote descriptor lengths must match";
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    io.dram = dram;
-    io.bdev = bdev;
-    io.offset = remote.addr;
-    return NIXL_SUCCESS;
+    // validateLists() checks the list type and this checks the metadata kind;
+    // neither implies the other. Dispatching on the kind alone would let a
+    // BLK_SEG list holding OBJ metadata issue an NVMe KV command.
+    const nixlSpdkMD::Kind expected =
+        (remote_type == BLK_SEG) ? nixlSpdkMD::Kind::Bdev : nixlSpdkMD::Kind::Obj;
+    if (remote_md->kind() != expected) {
+        NIXL_ERROR << "SPDK: remote descriptor metadata does not match the list type";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    switch (remote_md->kind()) {
+    case nixlSpdkMD::Kind::Bdev: {
+        auto *bdev = static_cast<nixlSpdkBdevMD *>(remote_md);
+        if (!bdev->desc || !bdev->channel || !bdev->bdev) {
+            NIXL_ERROR << "SPDK: BLK descriptor metadata is missing or invalid";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        if ((remote.addr % bdev->blockSize) != 0 || (remote.len % bdev->blockSize) != 0) {
+            NIXL_ERROR << "SPDK: BLK descriptor offset and length must be block aligned";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        if ((remote.addr + remote.len) > (bdev->numBlocks * bdev->blockSize)) {
+            NIXL_ERROR << "SPDK: BLK descriptor exceeds bdev capacity";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        // The bdev layer rejects a write that does not start and end on a
+        // write-unit boundary. Reads have no such constraint.
+        const uint64_t write_unit = uint64_t{bdev->blockSize} * bdev->writeUnitSize;
+        if (operation == NIXL_WRITE &&
+            ((remote.addr % write_unit) != 0 || (remote.len % write_unit) != 0)) {
+            NIXL_ERROR << "SPDK: BLK write offset and length must be write-unit aligned";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        dram_out = dram;
+        target_out = nixlSpdkBlkTarget{bdev, remote.addr};
+        return NIXL_SUCCESS;
+    }
+    case nixlSpdkMD::Kind::Obj: {
+        // NVMe KV has no intra-object offset, so the remote addr must be 0.
+        auto *obj = static_cast<nixlSpdkObjMD *>(remote_md);
+        // Defensive only: nixlSpdkObjMD::create() rejects an empty key and the
+        // constructor is private, so this cannot fire today. Kept so a future
+        // construction path cannot quietly emit a zero-length KV key.
+        if (obj->key().empty()) {
+            NIXL_ERROR << "SPDK: OBJ descriptor has an empty key";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        if (remote.addr != 0) {
+            NIXL_ERROR << "SPDK: OBJ descriptor offset must be 0 (KV whole-value)";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        if (remote.len == 0) {
+            NIXL_ERROR << "SPDK: OBJ descriptor value length must be non-zero";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        dram_out = dram;
+        target_out = nixlSpdkObjTarget{obj};
+        return NIXL_SUCCESS;
+    }
+    case nixlSpdkMD::Kind::Dram:
+        break;
+    }
+
+    NIXL_ERROR << "SPDK: remote descriptor list must be BLK_SEG or OBJ_SEG";
+    return NIXL_ERR_INVALID_PARAM;
 }
 
 } // namespace
@@ -101,7 +143,6 @@ nixlSpdkBackendReqH::nixlSpdkBackendReqH(nixl_xfer_op_t operation,
     // has to happen after the vector reaches its final storage.
     for (auto &io : ios_) {
         io.reqH = this;
-        io.waitEntry.bdev = io.bdev->bdev;
         io.waitEntry.cb_arg = &io;
     }
 }
@@ -155,8 +196,31 @@ nixlSpdkEngine::registerMem(const nixlBlobDesc &mem,
             NIXL_ERROR << "SPDK: BLK_SEG metaInfo must contain an SPDK bdev name";
             return NIXL_ERR_INVALID_PARAM;
         }
-        auto md = std::make_unique<nixlSpdkBdevMD>(mem.devId, mem.metaInfo);
+        auto md = std::make_unique<nixlSpdkBdevMD>(mem.metaInfo);
         const nixl_status_t status = progress_->openBdev(*md);
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+        out = md.release();
+        return NIXL_SUCCESS;
+    }
+
+    if (mem_type == OBJ_SEG) {
+        // The key must be given explicitly, as BLK_SEG requires its bdev name.
+        // Deriving one from devId would silently collide: two descriptors that
+        // share a devId and omit metaInfo would map to the same object, and the
+        // second write would overwrite the first.
+        if (mem.metaInfo.empty()) {
+            NIXL_ERROR << "SPDK: OBJ_SEG requires the object key in the descriptor metaInfo";
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        auto md = nixlSpdkObjMD::create(mem.metaInfo);
+        if (!md) {
+            NIXL_ERROR << "SPDK: OBJ_SEG key must be 1.." << kNixlSpdkMaxKeyLen
+                       << " bytes (NVMe KV limit), got " << mem.metaInfo.size();
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        const nixl_status_t status = progress_->ensureKvBdev();
         if (status != NIXL_SUCCESS) {
             return status;
         }
@@ -183,6 +247,10 @@ nixlSpdkEngine::deregisterMem(nixlBackendMD *meta) {
     case nixlSpdkMD::Kind::Bdev:
         progress_->closeBdev(static_cast<nixlSpdkBdevMD &>(*md));
         return NIXL_SUCCESS;
+    case nixlSpdkMD::Kind::Obj:
+        // The shared KV device is owned by the progress engine and torn down at
+        // finalization; per-object metadata carries only the key.
+        return NIXL_SUCCESS;
     }
     return NIXL_ERR_INVALID_PARAM;
 }
@@ -203,14 +271,19 @@ nixlSpdkEngine::prepXfer(const nixl_xfer_op_t &operation,
     std::vector<nixlSpdkIoContext> ios;
     ios.reserve(local.descCount());
     for (int i = 0; i < local.descCount(); ++i) {
-        nixlSpdkIoContext io;
-        const nixl_status_t resolved = resolveDescriptorPair(operation, local[i], remote[i], io);
+        nixlSpdkDramMD *dram = nullptr;
+        nixlSpdkIoTarget target;
+        const nixl_status_t resolved =
+            resolveDescriptorPair(operation, local[i], remote[i], remote.getType(), dram, target);
         if (resolved != NIXL_SUCCESS) {
             return resolved;
         }
-        io.buf = reinterpret_cast<void *>(local[i].addr);
-        io.nbytes = local[i].len;
-        ios.push_back(io);
+        ios.push_back(nixlSpdkIoContext{
+            .dram = dram,
+            .target = target,
+            .buf = reinterpret_cast<void *>(local[i].addr),
+            .nbytes = local[i].len,
+        });
     }
 
     handle = std::make_unique<nixlSpdkBackendReqH>(operation, std::move(ios)).release();
@@ -254,16 +327,4 @@ nixlSpdkEngine::releaseReqH(nixlBackendReqH *handle) const {
         return NIXL_ERR_INVALID_PARAM;
     }
     return progress_->releaseRequest(req_h);
-}
-
-nixl_status_t
-nixlSpdkEngine::queryMem(const nixl_reg_dlist_t &descs,
-                         std::vector<nixl_query_resp_t> &resp) const {
-    resp.clear();
-    for (const auto &desc : descs) {
-        nixl_b_params_t item;
-        item["size"] = std::to_string(desc.len);
-        resp.emplace_back(std::move(item));
-    }
-    return NIXL_SUCCESS;
 }
