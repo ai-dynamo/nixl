@@ -2,8 +2,8 @@
 
 This directory contains shared C++ utilities for NIXL file-aware backends:
 
-- `file_utils.{h,cpp}`: `nixl::queryFileInfo()` / `queryFileInfoList()` helpers
-  for the QueryMem API (file existence + stat).
+- `file_utils.{h,cpp}`: `nixl::queryFileInfo()` / `queryFileInfoFromDescList()`
+  helpers for the QueryMem API (file existence + stat).
 - `file_path_mode.{h,cpp}`: `nixl::parsePathMeta()` parser and `nixlFilePathMD`
   owned-fd RAII base for path-mode FILE_SEG registration; see
   [Path-Mode File Registration](#path-mode-file-registration).
@@ -11,7 +11,7 @@ This directory contains shared C++ utilities for NIXL file-aware backends:
 All file-aware plugins (POSIX, HF3FS, CUDA_GDS, GDS_MT) link
 `file_utils_interface` and consume both sets of helpers.
 
-## QueryMem API Implementation through queryFileInfoList
+## QueryMem API Implementation through queryFileInfoFromDescList
 
 The QueryMem API has been implemented for these file backends:
 
@@ -20,10 +20,11 @@ The QueryMem API has been implemented for these file backends:
 - **GDS MT Backend** (`src/plugins/gds_mt/`)
 - **CUDA GDS Backend** (`src/plugins/cuda_gds/`)
 
-The backend extracts the filenames from the input descriptors (`nixl_reg_dlist_t`) and passes them to queryFileInfoList.
-Then queryFileInfoList returns a vector of `nixl_query_resp_t` structures containing:
-   - `accessible`: Boolean indicating if file exists
-   - `info`: Additional file information (size, mode, mtime) if file exists
+The backend passed the input descriptors (`nixl_reg_dlist_t`) to `queryFileInfoFromDescList`.
+That in turn extracts the `metaInfo` fields from all descriptors, queries them via
+`queryFileInfo()`, and returns a vector of `nixl_query_resp_t` structures. These are optional
+maps from string to string containing `size`, `mode` and `mtime` entries. A `nullopt` is used
+when the `::stat()` call fails to provide the information.
 
 ### Usage Example:
 
@@ -40,8 +41,8 @@ nixl_status_t status = plugin->queryMem(descs, resp);
 
 // Check results
 for (const auto& result : resp) {
-    if (result.accessible) {
-        std::cout << "File exists, size: " << result.info["size"] << std::endl;
+    if (result.has_value()) {
+        std::cout << "File exists, size: " << result->at("size") << std::endl;
     } else {
         std::cout << "File does not exist" << std::endl;
     }
@@ -57,10 +58,10 @@ for (const auto& result : resp) {
   - `resp`: Output response structure
 - **Returns**: NIXL_SUCCESS on success, error code otherwise
 
-### `queryFileInfoList`
+### `queryFileInfoFromDescList`
 - **Purpose**: Query file information for multiple files
 - **Parameters**:
-  - `filenames`: Vector of filenames to query
+  - `descs`: Descriptors with filenames
   - `resp`: Output response vector
 - **Returns**: NIXL_SUCCESS on success, error code otherwise
 
@@ -72,8 +73,8 @@ The file utils are built as a shared library (`libfile_utils.so`) and linked wit
 ## Testing
 
 Test files are provided:
-- `test/unit/utils/file/test_file_utils.cpp`: Tests the file utils functions
-- `test/python/test_query_mem.py`: Python tests for QueryMem API functionality
+- `test/gtest/query_mem.cpp`: Tests the file utils functions
+- `test/python/test_nixl_bindings.py`: Python tests including for QueryMem API functionality
 
 ## Dependencies
 

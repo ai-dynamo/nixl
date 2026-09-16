@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,45 +15,30 @@
  * limitations under the License.
  */
 #include "file_utils.h"
+
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
-#include <errno.h>
-#include <cstring>
-#include <iostream>
 
 namespace nixl {
 
-std::optional<nixl_b_params_t>
-queryFileInfo(std::string_view filename) {
-    // If filename is empty, return nullopt (same as any invalid name)
+nixl_query_resp_t
+queryFileInfo(const std::string &filename) {
+
     if (filename.empty()) {
         return std::nullopt;
     }
 
-    // Check if file exists using stat
-    struct stat stat_buf;
-    if (stat(std::string(filename).c_str(), &stat_buf) != 0) {
+    struct ::stat stat_buf;
+    if (::stat(filename.c_str(), &stat_buf) != 0) {
         return std::nullopt;
     }
 
-    nixl_b_params_t info;
-    info["size"] = std::to_string(stat_buf.st_size);
-    info["mode"] = std::to_string(stat_buf.st_mode);
-    info["mtime"] = std::to_string(stat_buf.st_mtime);
-
-    return info;
-}
-
-nixl_status_t
-queryFileInfoList(const std::vector<std::string> &filenames, std::vector<nixl_query_resp_t> &resp) {
-    resp.clear();
-    resp.reserve(filenames.size());
-
-    for (const auto &filename : filenames)
-        resp.emplace_back(queryFileInfo(filename));
-
-    return NIXL_SUCCESS;
+    return nixl_b_params_t{
+        {"size", std::to_string(stat_buf.st_size)},
+        {"mode", std::to_string(stat_buf.st_mode)},
+        {"mtime", std::to_string(stat_buf.st_mtime)}
+    };
 }
 
 } // namespace nixl
