@@ -279,6 +279,8 @@ public:
     static std::string spdk_bdev_name;
     static size_t spdk_bdev_offset;
     static size_t spdk_msg_mempool_size;
+    static std::string spdk_mode;
+    static uint64_t spdk_key_namespace;
 
     static int
     parseConfig(int argc, char *argv[]);
@@ -300,6 +302,8 @@ public:
     isObjStorageBackend();
     static bool
     isBlkStorageBackend();
+    static bool
+    isSpdkKv();
 
 protected:
     static int
