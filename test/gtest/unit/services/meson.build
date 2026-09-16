@@ -23,7 +23,7 @@ service_agent_unit_test_dep = declare_dependency(
         'nixl_service_test.cpp',
     ],
     include_directories: [nixl_inc_dirs, gtest_inc_dirs],
-    dependencies: [nixl_common_dep, nixl_service_dep],
+    dependencies: [nixl_common_dep, nixl_service_dep, gmock_dep],
 )
 services_unit_test_deps += [service_agent_unit_test_dep]
 

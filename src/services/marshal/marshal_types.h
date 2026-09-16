@@ -18,16 +18,15 @@
 #ifndef MARSHAL_TYPES_H
 #define MARSHAL_TYPES_H
 
-#include <functional>
-#include <memory>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <variant>
-#include <vector>
 #include <cuda_runtime.h>
 
 #include "absl/types/span.h"
+
+enum class nixl_marshal_compress_data_type_t : uint8_t;
 
 namespace nixlMarshal {
 
@@ -54,75 +53,23 @@ struct runtimeBuffer {
     runtimeBuffer() : data(nullptr), size(0), space(mem_space_t::INVALID) {}
 };
 
-// Signals that the marshal layer derives the source size from chunk segments.
-constexpr size_t marshal_derived_size = 0xdeadbeef;
-
 struct inboundSlotCompletionData {
     size_t size;
 };
 
-namespace ChunkDivision {
-
-    struct segment {
-        size_t offset;
-        size_t size;
-    };
-
-    inline std::shared_ptr<std::vector<segment>>
-    defaultSegments(size_t size) {
-        return std::make_shared<std::vector<segment>>(1, segment{0, size});
-    }
-
-    inline bool
-    isDefaultSizes(const std::vector<size_t> &sizes) noexcept {
-        return sizes.size() == 1;
-    }
-
-    struct processSlotInput {
-        std::shared_ptr<std::vector<segment>> segments;
-    };
-
-    struct processSlotOutput {
-        std::shared_ptr<std::vector<segment>> segments;
-    };
-
-} // namespace ChunkDivision
-
-using process_slot_output_option_t = std::variant<ChunkDivision::processSlotOutput>;
-
-struct processSlotOutputOptionHash {
-    size_t
-    operator()(const process_slot_output_option_t &option) const noexcept {
-        return std::hash<size_t>{}(option.index());
-    }
-};
-
-struct processSlotOutputOptionEqual {
-    bool
-    operator()(const process_slot_output_option_t &lhs,
-               const process_slot_output_option_t &rhs) const noexcept {
-        return lhs.index() == rhs.index();
-    }
-};
-
-using process_slot_output_options_t = std::unordered_set<process_slot_output_option_t,
-                                                         processSlotOutputOptionHash,
-                                                         processSlotOutputOptionEqual>;
-
 struct outboundSlotCompletionData {
     size_t size;
-    process_slot_output_options_t options = {};
     // Carried in the wire protocol and consumed by the inbound side to unmarshall.
     std::string metadata = {};
 };
 
-// TODO-Eyal: remove enum and maps, change to set like process_slot_output_options_t.
+// TODO-Eyal: remove enum and maps, change to set.
 enum class option_t {
     READ_ONLY_REFERENCE_STRUCTURED_MEMORY,
     SLOT_OVERHEAD,
     WRITEABLE_WORKSPACE_MEMORY,
     USER_CUDA_STREAM,
-    CHUNK_DIVISION,
+    ANS_DATA_TYPE,
 };
 
 namespace ReadOnlyReferenceStructuredMemory {
@@ -162,10 +109,18 @@ namespace UserCudaStream {
 
 } // namespace UserCudaStream
 
+namespace AnsDataType {
+
+    struct processSlotInput {
+        nixl_marshal_compress_data_type_t dataType;
+    };
+
+} // namespace AnsDataType
+
 using process_slot_input_value_t = std::variant<ReadOnlyReferenceStructuredMemory::processSlotInput,
                                                 WriteableWorkspaceMemory::processSlotInput,
                                                 UserCudaStream::processSlotInput,
-                                                ChunkDivision::processSlotInput>;
+                                                AnsDataType::processSlotInput>;
 using process_slot_input_options_t = std::unordered_map<option_t, process_slot_input_value_t>;
 
 using memory_requirement_value_t =

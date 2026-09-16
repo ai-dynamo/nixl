@@ -20,7 +20,8 @@ nixl_worker_sources = [
   'nixl_mem_region.h',
 ]
 
-nixl_worker_deps = [openmp_dep, nixl_lib, nixl_build, nixl_serdes, tomlplusplus_dep]
+nixl_worker_deps = [openmp_dep, nixl_lib, nixl_build, nixl_serdes, nixl_service, tomlplusplus_dep]
+nixl_worker_deps += nixl_marshal_libs
 if cuda_available
   nixl_worker_deps += [cuda_dep]
 elif rocm_available

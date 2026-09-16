@@ -18,6 +18,7 @@
 #ifndef NIXL_SERVICE_DATA_H
 #define NIXL_SERVICE_DATA_H
 
+#include "nixl.h"
 #include "common/nixl_log.h"
 #include "nixl_service_types.h"
 #include "marshal/marshal_backend.h"
@@ -26,6 +27,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <array>
+#include <bit>
+#include <bitset>
 #include <functional>
 #include <list>
 #include <memory>
@@ -40,6 +43,25 @@
 #include <variant>
 
 #include <cuda_runtime.h>
+
+// Both peers of a transfer must agree on this (see marshalLayoutFingerprint), so the
+// service fixes it rather than exposing it through nixlServiceAgentConfig.
+constexpr size_t default_chunked_payload_size = 64UL * 1024 * 1024;
+constexpr size_t max_descriptor_size = 64UL * 1024 * 1024 * 1024;
+static_assert(max_descriptor_size % default_chunked_payload_size == 0);
+constexpr size_t max_chunks_per_desc = max_descriptor_size / default_chunked_payload_size;
+
+namespace nixlService {
+size_t
+recommendServiceMemSize(const nixl_marshal_config_t &mode,
+                        uint32_t max_concurrent_transfers,
+                        size_t chunked_payload_size);
+} // namespace nixlService
+
+namespace CompressedObjectLayout {
+constexpr size_t header_entry_size = sizeof(uint64_t);
+constexpr size_t header_size = max_chunks_per_desc * header_entry_size;
+} // namespace CompressedObjectLayout
 
 /**
  * @class cudaStream
@@ -141,7 +163,16 @@ private:
 
 enum class remote_slot_state_t { NOT_ALLOCATED, BUSY, FREE };
 
-enum class local_slot_state_t { BUSY_MARSHAL, READY_TO_SEND, BUSY_NIXL, FREE };
+enum class local_slot_state_t {
+    BUSY_MARSHAL,
+    READY_TO_SEND,
+    BUSY_NIXL,
+    BUSY_NIXL_READ,
+    BUSY_NIXL_HEADER,
+    FREE
+};
+
+enum class compressed_header_state_t { NOT_STARTED, BUSY_NIXL, DONE };
 
 enum class nixl_service_xfer_state_t {
     PRE_START,
@@ -157,6 +188,23 @@ enum class nixl_service_xfer_state_t {
     FAILED
 };
 
+// TODO-Yoav: tie in a more robust way (template <nixl_marshal_mode_t> class Backend)
+enum class nixl_marshal_mode_t { STAGING, COMPRESSION, DELTA, DIRECT, NUM_BACKENDS };
+
+inline nixl_marshal_mode_t
+marshalBackendFromConfig(const nixl_marshal_config_t &cfg) noexcept {
+    if (std::holds_alternative<nixlMarshalCompressConfig>(cfg)) {
+        return nixl_marshal_mode_t::COMPRESSION;
+    }
+    if (std::holds_alternative<nixlMarshalStagingConfig>(cfg)) {
+        return nixl_marshal_mode_t::STAGING;
+    }
+    if (std::holds_alternative<nixlMarshalDeltaConfig>(cfg)) {
+        return nixl_marshal_mode_t::DELTA;
+    }
+    return nixl_marshal_mode_t::DIRECT;
+}
+
 static constexpr size_t slots_per_xfer = 2;
 
 class chunkIteratorH {
@@ -167,15 +215,20 @@ protected:
     size_t currentChunkGlobal;
     size_t currentChunkLocal;
     size_t currentDesc;
+    nixl_marshal_mode_t backend;
 
 public:
-    chunkIteratorH(const nixl_xfer_dlist_t &desc_list, size_t chunk_size, size_t total_chunks)
+    chunkIteratorH(const nixl_xfer_dlist_t &desc_list,
+                   size_t chunk_size,
+                   size_t total_chunks,
+                   nixl_marshal_mode_t backend)
         : descList(desc_list),
           chunkSize(chunk_size),
           totalChunks(total_chunks),
           currentChunkGlobal(0),
           currentChunkLocal(0),
-          currentDesc(0) {}
+          currentDesc(0),
+          backend(backend) {}
 
     [[nodiscard]] std::byte *
     get() noexcept {
@@ -226,6 +279,11 @@ public:
         return currentDesc;
     }
 
+    [[nodiscard]] nixl_marshal_mode_t
+    getBackend() const noexcept {
+        return backend;
+    }
+
     [[nodiscard]] nixl_mem_t
     getMemType() const noexcept {
         return descList.getType();
@@ -249,20 +307,20 @@ struct postedNotifPayload {
     size_t xferId;
     size_t slotIndex;
     size_t originalSize; // size of data pulled from user buffer.
-    std::shared_ptr<std::vector<nixlMarshal::ChunkDivision::segment>>
-        postedSegments; // marshal segments sent. may be of length 1 or greater.
+    size_t wireSize; // size of the marshalled data transferred through the slot.
     size_t descIndex; // index of the desc in the desc list.
     size_t chunkIndex; // index of the chunk in the desc.
     std::string metadata; // metadata produced by the marshal layer.
+    nixl_marshal_mode_t backend;
 
-    postedNotifPayload(
-        size_t xfer_id,
-        size_t slot_index,
-        size_t original_size,
-        std::shared_ptr<std::vector<nixlMarshal::ChunkDivision::segment>> posted_segments,
-        size_t desc_index,
-        size_t chunk_index,
-        std::string md);
+    postedNotifPayload(size_t xfer_id,
+                       size_t slot_index,
+                       size_t original_size,
+                       size_t wire_size,
+                       size_t desc_index,
+                       size_t chunk_index,
+                       std::string md,
+                       nixl_marshal_mode_t backend);
     explicit postedNotifPayload(std::string_view notif);
     [[nodiscard]] nixl_blob_t
     serialize() const noexcept;
@@ -278,14 +336,6 @@ struct slotWorkItem {
     slotWorkItem(slotT slot, size_t slot_index);
 };
 
-struct compressionStats {
-    double minRatio = 0.0;
-    double maxRatio = 0.0;
-    size_t compressedSize = 0;
-    double weightedSumSquaredRatio = 0.0;
-    size_t originalSize = 0;
-};
-
 struct nixlServiceXferReqH {
     struct nonDirectDataH {
         const std::string remoteAgent;
@@ -293,10 +343,9 @@ struct nixlServiceXferReqH {
         const size_t xferId;
         nixl_service_xfer_state_t state;
         chunkIteratorH chunkIterator;
-        std::array<slotWorkItem, slots_per_xfer> localSlots;
+        std::array<std::optional<slotWorkItem>, slots_per_xfer> localSlots;
         std::array<std::unique_ptr<nixlMarshal::outbound_async_handle_t>, slots_per_xfer>
             outboundAsyncHandles;
-        std::unique_ptr<compressionStats> compressionStatsHandle;
         // Remote slots are not const since they are determined by the remote agent and
         // passed in the CTS notification.
         std::array<nixlBasicDesc, slots_per_xfer> remoteSlotDescriptors;
@@ -311,6 +360,35 @@ struct nixlServiceXferReqH {
         // to tell a stale/duplicate ack for an earlier fill of the same slot apart from the
         // ack for the fill currently in flight.
         std::array<uint64_t, slots_per_xfer> remoteSlotGenerations{};
+
+        struct asymmetricPreTransferState {
+            nixl_xfer_dlist_t remoteDstList;
+            size_t currentDescIndex = 0;
+            size_t chunksInCurrentDesc = 0;
+            size_t descCount = 0;
+            std::array<uint64_t, max_chunks_per_desc> compressedSizes{};
+            std::array<std::optional<size_t>, slots_per_xfer> slotChunkIndices{};
+            size_t nextPayloadOffset = CompressedObjectLayout::header_size;
+            size_t nextChunkToWrite = 0;
+            size_t completedPayloadWrites = 0;
+            bool fillBlocked = false;
+            nixlXferReqH *headerXferReq = nullptr;
+            compressed_header_state_t headerState = compressed_header_state_t::NOT_STARTED;
+            // This field preserves the result to return once all in-flight work has drained
+            // (maybe with errors). It differs from the "state" field as that one tracks execution.
+            nixl_status_t completionStatus = NIXL_IN_PROG;
+
+            asymmetricPreTransferState(nixl_xfer_dlist_t remote_dst_list,
+                                       size_t chunks_in_current_desc)
+                : remoteDstList(std::move(remote_dst_list)),
+                  chunksInCurrentDesc(chunks_in_current_desc),
+                  descCount(static_cast<size_t>(remoteDstList.descCount())) {}
+        };
+
+        std::optional<asymmetricPreTransferState> asymmetricPreTransfer;
+
+        // Bitmask of free source-slot indexes (1 = free).
+        std::bitset<slots_per_xfer> freeSlotIndexes = ~std::bitset<slots_per_xfer>{0};
     };
 
     // The direct (<= direct_desc_threshold) sub-transfer's handle for a WRITE, a direct-only
@@ -325,22 +403,31 @@ struct nixlServiceXferReqH {
     // set this so postXferReq/getXferStatus/releaseXferReq can branch on direction without
     // relying on the (direction-agnostic) marshalOptArgs alternative.
     nixl_xfer_op_t op = NIXL_WRITE;
+    const nixl_marshal_phase_t phase;
     // For a READ handle (op == NIXL_READ) with a marshal part only: the key into
     // nixlServiceAgentData::readReceiveReqs_ identifying this READ's receive context. Empty
     // for a WRITE handle, or for a direct-only READ (no marshal part, hence no context).
     // remoteAgent is deliberately not duplicated here - it is available from the receive
     // context itself (inboundXferReqH::remoteAgent) once looked up by this id.
     std::optional<size_t> readReceiveXferId;
+    std::optional<nixl_xfer_telem_t> telemetry;
 
-    nixlServiceXferReqH(const nixl_xfer_dlist_t &src_desc_list,
-                        const std::string &serialized_dst_desc_list,
-                        const std::string &remote_agent,
-                        const std::array<slotWorkItem, slots_per_xfer> &local_slots,
-                        size_t xfer_id,
-                        size_t total_chunks,
-                        const nixl_marshal_opt_args_t &marshal_opt_args);
+    nixlServiceXferReqH(
+        const nixl_xfer_dlist_t &src_desc_list,
+        const std::string &serialized_dst_desc_list,
+        const std::string &remote_agent,
+        size_t chunk_size,
+        size_t xfer_id,
+        size_t total_chunks,
+        const nixl_marshal_opt_args_t &marshal_opt_args,
+        nixl_marshal_mode_t backend,
+        nixl_marshal_phase_t marshal_phase = nixl_marshal_phase_t::PRE_AND_POST_TRANSFER);
 
-    nixlServiceXferReqH() : xferReq(nullptr), marshalOptArgs(nixlMarshalDirectOptArgs{}) {}
+    explicit nixlServiceXferReqH(
+        nixl_marshal_phase_t marshal_phase = nixl_marshal_phase_t::PRE_AND_POST_TRANSFER)
+        : xferReq(nullptr),
+          marshalOptArgs(nixlMarshalDirectOptArgs{}),
+          phase(marshal_phase) {}
 };
 
 struct nixlMarshalDeltaReceiverRefArgs {
@@ -363,6 +450,7 @@ struct inboundXferReqH {
     const nixl_xfer_dlist_t dstList;
     const size_t xferId;
     nixl_service_xfer_state_t state;
+    const nixl_marshal_phase_t phase;
     bool markedForDeletion = false;
     std::array<slotWorkItem, slots_per_xfer> localSlots;
     std::array<std::unique_ptr<nixlMarshal::inbound_async_handle_t>, slots_per_xfer> asyncHandles;
@@ -396,6 +484,8 @@ struct inboundXferReqH {
     // is observed.
     bool directDone = true;
     bool marshalDone = false;
+    // Failure status returned by getXferStatus() when state is FAILED. This is separate from
+    // state, which tracks request execution and cleanup.
     nixl_status_t terminalStatus = NIXL_IN_PROG;
     // True once handleRAbortAck confirms the peer has fully quiesced this READ (stopped
     // touching this agent's receive slots) after an RABORT. Distinguishes "still waiting for
@@ -410,6 +500,29 @@ struct inboundXferReqH {
     // submitted; compared against the actual decoded size on completion so a corrupted or
     // mismatched chunk fails the logical request instead of landing a wrong-sized write.
     std::array<size_t, slots_per_xfer> slotExpectedSizes{};
+    nixlServiceXferReqH *parent = nullptr;
+
+    struct asymmetricPostTransferState {
+        nixl_xfer_dlist_t remoteSrcList;
+        size_t currentDescIndex = 0;
+        size_t chunksInCurrentDesc = 0;
+        size_t descCount = 0;
+        std::array<uint64_t, max_chunks_per_desc> compressedSizes{};
+        std::array<size_t, max_chunks_per_desc> payloadOffsets{};
+        size_t nextChunkToRead = 0;
+        std::array<std::optional<size_t>, slots_per_xfer> slotChunkIndices{};
+        std::array<nixlXferReqH *, slots_per_xfer> nixlXferReqs{};
+        nixlXferReqH *headerXferReq = nullptr;
+        compressed_header_state_t headerState = compressed_header_state_t::NOT_STARTED;
+
+        asymmetricPostTransferState(nixl_xfer_dlist_t remote_src_list,
+                                    size_t chunks_in_current_desc)
+            : remoteSrcList(std::move(remote_src_list)),
+              chunksInCurrentDesc(chunks_in_current_desc),
+              descCount(static_cast<size_t>(remoteSrcList.descCount())) {}
+    };
+
+    std::optional<asymmetricPostTransferState> asymmetricPostTransfer;
 
     // WRITE-inbound constructor: built by handleRTS() when a peer pushes data to us.
     inboundXferReqH(
@@ -432,12 +545,15 @@ struct inboundXferReqH {
         std::string serialized_src_list,
         nixlXferReqH *direct_child,
         std::optional<nixl_blob_t> notif,
+        nixlServiceXferReqH *parent,
+        nixl_marshal_phase_t marshal_phase,
         std::optional<nixlMarshalDeltaReceiverRefArgs> receiver_delta_ref = std::nullopt);
 };
 
 class slotPool {
 private:
     uintptr_t baseAddr_;
+    uintptr_t registeredDescAddr_;
     size_t slotSize_;
     size_t numSlots_;
     size_t chunkSize_;
@@ -458,8 +574,12 @@ private:
      */
     std::vector<slotT> freeList_;
 
+    void
+    moveFrom(slotPool &&other) noexcept;
+
 public:
     slotPool(uintptr_t base_addr,
+             uintptr_t registered_desc_addr,
              size_t slot_size,
              size_t num_slots,
              size_t chunk_size,
@@ -469,9 +589,10 @@ public:
     slotPool(const slotPool &) = delete;
     slotPool &
     operator=(const slotPool &) = delete;
-    slotPool(slotPool &&) noexcept = default;
+
+    slotPool(slotPool &&) noexcept;
     slotPool &
-    operator=(slotPool &&) noexcept = default;
+    operator=(slotPool &&) noexcept;
 
     ~slotPool() = default;
 
@@ -491,7 +612,7 @@ public:
     getChunkSize() const noexcept;
 
     [[nodiscard]] uintptr_t
-    getBaseAddr() const noexcept;
+    getRegisteredDescAddr() const noexcept;
 
     [[nodiscard]] nixl_mem_t
     getType() const noexcept;
@@ -609,6 +730,7 @@ struct rReqPayload {
     std::array<nixlBasicDesc, slots_per_xfer> recvSlotDescriptors;
     std::array<nixlMarshal::mem_space_t, slots_per_xfer> recvMemSpaces;
     marshalLayoutFingerprint fingerprint;
+    nixl_marshal_compress_data_type_t dataType = nixl_marshal_compress_data_type_t::FLOAT16;
     // Present only for a delta-mode READ; set after construction, mirroring how
     // rtsNotifPayload::deltaOptArgs is populated for WRITE.
     std::optional<nixlMarshalDeltaSenderRefArgs> deltaOptArgs;
@@ -623,6 +745,22 @@ struct rReqPayload {
     serialize() const noexcept;
 };
 
+// A fixed-underlying enum can carry an unnamed value received from the wire. Reject it before
+// installing remote request state or passing the selection to the compression backend.
+[[nodiscard]] constexpr bool
+isValidCompressionDataType(nixl_marshal_compress_data_type_t data_type) noexcept {
+    switch (data_type) {
+    case nixl_marshal_compress_data_type_t::CHAR:
+    case nixl_marshal_compress_data_type_t::UCHAR:
+    case nixl_marshal_compress_data_type_t::FLOAT16:
+    case nixl_marshal_compress_data_type_t::FLOAT8_E4M3:
+        return true;
+    case nixl_marshal_compress_data_type_t::NUM_COMPRESS_DATA_TYPES:
+        return false;
+    }
+    return false;
+}
+
 /**
  * @struct rPostedPayload
  * @brief "Read Posted" message, sent by the peer to the initiator, piggybacked on the slot
@@ -635,17 +773,18 @@ struct rPostedPayload {
     size_t xferId;
     size_t slotIndex;
     size_t originalSize; // size of data pulled from the peer's source buffer.
-    std::shared_ptr<std::vector<nixlMarshal::ChunkDivision::segment>> postedSegments;
+    size_t wireSize; // size of the marshalled data transferred through the slot.
     size_t dstByteOffset; // absolute byte offset into the initiator's destination descriptor list.
     std::string metadata; // metadata produced by the marshal layer.
+    nixl_marshal_mode_t backend;
 
-    rPostedPayload(
-        size_t xfer_id,
-        size_t slot_index,
-        size_t original_size,
-        std::shared_ptr<std::vector<nixlMarshal::ChunkDivision::segment>> posted_segments,
-        size_t dst_byte_offset,
-        std::string md);
+    rPostedPayload(size_t xfer_id,
+                   size_t slot_index,
+                   size_t original_size,
+                   size_t wire_size,
+                   size_t dst_byte_offset,
+                   std::string md,
+                   nixl_marshal_mode_t backend);
     explicit rPostedPayload(std::string_view notif);
     [[nodiscard]] nixl_blob_t
     serialize() const noexcept;
@@ -737,11 +876,13 @@ struct serviceNotifWorkItem {
 
 struct activeSlotWorkItem {
     service_req_ref_t req;
-    std::reference_wrapper<slotWorkItem> slot;
+    std::optional<std::reference_wrapper<slotWorkItem>> slot;
 };
 
 class nixlServiceAgentData {
 protected:
+    using deleted_writes_t = std::unordered_map<std::string, std::set<size_t>>;
+
     friend class nixlServiceAgent;
     friend marshalLayoutFingerprint
     makeFingerprint(const nixlServiceAgentData &data, const slotPool &pool);
@@ -754,8 +895,13 @@ protected:
     nixl_marshal_config_t mode_;
     /** @brief  Payload bytes a single staging slot commits to. Fixed by the service. */
     size_t chunkedPayloadSize_;
-    std::shared_ptr<nixlMarshal::backend> backend_;
+    // Collection is unconditional, exposing to the user is conditional
+    const bool captureTelemetry_;
+    std::array<std::shared_ptr<nixlMarshal::backend>,
+               static_cast<size_t>(nixl_marshal_mode_t::NUM_BACKENDS)>
+        backends_;
     std::list<slotPool> localStagingPools_;
+    std::optional<slotPool> sourceSlotsPool_;
 
     /* The sender allocates the xfer id.
     Thus outbound reqs are keyed by xfer id, and inbound reqs are keyed by sender agent name and
@@ -870,7 +1016,7 @@ protected:
     void
     handleDelete(const std::string &sender_agent,
                  const deleteNotifPayload &delete_payload,
-                 std::unordered_map<std::string, std::set<size_t>> &deleted_reqs);
+                 deleted_writes_t &deleted_writes);
 
     /**
      * @brief  Handle a "Read Request" notification: the initiator is asking this agent to
@@ -972,6 +1118,7 @@ protected:
     [[nodiscard]] std::optional<std::list<slotT>>
     allocateSlotGroup();
 
+    // TODO-Eyal: move this function to the anonymous namespace
     /**
      * @brief  Free a local staging slot group.
      *
@@ -1017,6 +1164,29 @@ protected:
     trySend(const activeSlotWorkItem &work_item, std::queue<activeSlotWorkItem> &processed_queue);
 
     /**
+     * @brief Write one ready compressed PRE chunk directly to its ordered DRAM extent.
+     *
+     * @param work_item An active slot from the current work queue being processed.
+     * @param processed_queue Output queue for work items that should remain pending
+     *                        after this progress tick.
+     */
+    void
+    trySendAsymmetricPre(const activeSlotWorkItem &work_item,
+                         std::queue<activeSlotWorkItem> &processed_queue);
+
+    /**
+     * @brief Fail an asymmetric PRE request and release an idle local slot.
+     *
+     * @param req_data The request containing the PRE state.
+     * @param slot The slot to release.
+     * @param status The terminal failure status.
+     */
+    void
+    failAsymmetricPreSlot(nixlServiceXferReqH::nonDirectDataH &req_data,
+                          slotWorkItem &slot,
+                          nixl_status_t status);
+
+    /**
      * @brief Poll completion of a posted NIXL transfer for a slot.
      *
      * @param work_item An active slot from the current work queue being processed.
@@ -1026,6 +1196,47 @@ protected:
     void
     pollNixlXferCompletion(const activeSlotWorkItem &work_item,
                            std::queue<activeSlotWorkItem> &processed_queue);
+
+    /**
+     * @brief Finish one PRE payload write and start the header write after the final payload.
+     *
+     * @param work_item The slot whose payload write completed.
+     * @param processed_queue Output queue for work items that should remain pending.
+     * @param status Completion status of the payload write.
+     */
+    void
+    handleAsymmetricPrePayloadCompletion(const activeSlotWorkItem &work_item,
+                                         std::queue<activeSlotWorkItem> &processed_queue,
+                                         nixl_status_t status);
+
+    /**
+     * @brief Poll completion of the final compressed-object header write.
+     *
+     * @param work_item An active slot from the current work queue being processed.
+     * @param processed_queue Output queue for work items that should remain pending
+     *                        after this progress tick.
+     */
+    void
+    pollHeaderXferCompletion(const activeSlotWorkItem &work_item,
+                             std::queue<activeSlotWorkItem> &processed_queue);
+
+    nixl_status_t
+    startAsymmetricPost(inboundXferReqH &inbound_req);
+
+    void
+    validateAndIndexAsymmetricPostHeader(inboundXferReqH &inbound_req, size_t max_payload_size);
+
+    void
+    pollAsymmetricPostHeaderCompletion(const activeSlotWorkItem &work_item,
+                                       std::queue<activeSlotWorkItem> &processed_queue);
+
+    void
+    tryReadAsymmetricPost(const activeSlotWorkItem &work_item,
+                          std::queue<activeSlotWorkItem> &processed_queue);
+
+    void
+    pollAsymmetricPostReadCompletion(const activeSlotWorkItem &work_item,
+                                     std::queue<activeSlotWorkItem> &processed_queue);
 
     /**
      * @brief Poll completion of an inbound marshal operation for a local slot.
@@ -1050,8 +1261,39 @@ protected:
     void
     progressReadReceive(inboundXferReqH &ctx);
 
+    /** @brief Progress the active slots that were queued at the start of this pass. */
+    void
+    progressActiveSlots();
+
+    /** @brief Free slots and erase WRITE receive requests marked by DELETE notifications. */
+    void
+    cleanupDeletedWrites(deleted_writes_t &deleted_writes);
+
+    /** @brief Finalize completed or fully drained READ serve requests. */
+    void
+    cleanupReadServes();
+
+    /** @brief Progress READ receive contexts and erase fully drained cancellations. */
+    void
+    progressReadReceives();
+
+    /** @brief Reclaim asymmetric PRE slots after all compression and writes have drained. */
+    void
+    cleanupAsymmetricPreTransfers();
+
+    /** @brief Make all releases observed so far visible to the slot allocator. */
+    void
+    progressAndCleanup(deleted_writes_t &deleted_writes);
+
+    /** @brief Process queued service notifications in FIFO order. */
+    void
+    processServiceNotifications(deleted_writes_t &deleted_writes);
+
 public:
-    nixlServiceAgentData(const nixl_marshal_config_t &mode, size_t chunked_payload_size);
+    nixlServiceAgentData(const nixl_marshal_config_t &mode,
+                         size_t chunked_payload_size,
+                         bool capture_telemetry,
+                         std::shared_ptr<nixlMarshal::backend> backend);
 
     /**
      * @brief  Progress the service work queue and drive service progress.
@@ -1165,6 +1407,16 @@ public:
      */
     void
     tryCompleteReadReceive(inboundXferReqH &inbound_req);
+
+    /**
+     * @brief  Return one leased slot and erase it from its xfer.
+     *
+     * @param  req_data The request we want to unlease a slot from.
+     * @param  work_item The slot we want to unlease.
+     */
+    void
+    freeSingleSourceSlot(nixlServiceXferReqH::nonDirectDataH &req_data,
+                         slotWorkItem &work_item) noexcept;
 };
 
 /**

@@ -22,9 +22,10 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <stdexcept>
 #include <thread>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "delta_backend.h"
@@ -39,12 +40,20 @@ constexpr std::byte zero_pattern = std::byte{0x00};
 constexpr std::chrono::seconds timeout{2};
 
 template<typename CompletionT>
-CompletionT
+[[nodiscard]] const CompletionT *
+tryGetCompletedSlotData(const nixlMarshal::slot_completion_result_t<CompletionT> &result) noexcept {
+    return std::get_if<CompletionT>(&result);
+}
+
+template<typename CompletionT>
+nixlMarshal::slot_completion_result_t<CompletionT>
 waitForCompletion(nixlMarshal::asyncHandle<CompletionT> &handle) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
-        if (auto result = handle.checkForCompletion(); result.has_value()) {
-            return *result;
+        auto result = handle.checkForCompletion();
+        if (!(std::holds_alternative<nixl_status_t>(result) &&
+              std::get<nixl_status_t>(result) == NIXL_IN_PROG)) {
+            return result;
         }
         std::this_thread::yield();
     }
@@ -158,18 +167,21 @@ TEST_F(deltaBackendTest, OutboundThenInbound_SameRef_Roundtrip) {
     auto handle_a = backend_->outboundProcessSlot(makeSlotBuffs(chunk_size, gpu_src_a, gpu_dst_a),
                                                   makeOpts(4, gpu_ref, chunk_size));
     ASSERT_NE(handle_a, nullptr);
-    const auto completion_a = waitForCompletion(*handle_a);
+    const auto result_a = waitForCompletion(*handle_a);
+    const auto *completion_a = tryGetCompletedSlotData(result_a);
+    ASSERT_NE(completion_a, nullptr);
 
-    EXPECT_EQ(completion_a.size, chunk_size);
-    EXPECT_TRUE(completion_a.options.empty());
+    EXPECT_EQ(completion_a->size, chunk_size);
 
     // Transaction B (inbound): dstA (now srcB) XOR ref -> dstB; should equal hostSrcA.
     auto handle_b = backend_->inboundProcessSlot(makeSlotBuffs(chunk_size, gpu_dst_a, gpu_dst_b),
                                                  "unused-metadata",
                                                  makeOpts(4, gpu_ref, chunk_size));
     ASSERT_NE(handle_b, nullptr);
-    const auto completion_b = waitForCompletion(*handle_b);
-    EXPECT_EQ(completion_b.size, chunk_size);
+    const auto result_b = waitForCompletion(*handle_b);
+    const auto *completion_b = tryGetCompletedSlotData(result_b);
+    ASSERT_NE(completion_b, nullptr);
+    EXPECT_EQ(completion_b->size, chunk_size);
 
     std::vector<std::byte> host_dst_b(chunk_size, zero_pattern);
     ASSERT_EQ(cudaMemcpy(host_dst_b.data(), gpu_dst_b, chunk_size, cudaMemcpyDeviceToHost),

@@ -49,7 +49,7 @@ def init_agent(name, rank):
     mode = svc.nixlMarshalCompressConfig()
 
     # Creating service-aware agent configs and agents
-    cfg = svc.nixl_service_agent_config(mode=mode)
+    cfg = svc.nixl_service_agent_config(mode=mode, capture_telemetry=True)
     agent = svc.nixl_service_agent(name, nixl_conf=cfg)
 
     # Getting recommended service pool sizing
@@ -116,18 +116,28 @@ def run_initiator(name, agent, gathered_md, num_bytes, direction):
 
     op = direction.upper()
     print_rank(name, f"Initiating and executing {op} with {remote_name}...")
+    # The selection is captured when the request is created; it may also be
+    # changed to CHAR, UCHAR, or FLOAT8_E4M3.
+    compression_args = svc.nixlMarshalCompressOptArgs(
+        dataType=svc.nixl_marshal_compress_data_type_t.FLOAT16,
+    )
     req = agent.initialize_xfer(
         op,
         local_descs,
         remote_descs,
         remote_agent=remote_name,
         notif_msg=b"SVC_DONE",
+        marshal_opt_args=compression_args,
     )
     agent.transfer(req, notif_msg=b"SVC_DONE")
 
     print_rank(name, "Polling transfer state until completion...")
     while agent.check_xfer_state(req) == "PROC":
         pass
+
+    xfer_telemetry = agent.get_xfer_telemetry(req)
+    compression_ratio = num_bytes / xfer_telemetry.totalBytes
+    print_rank(name, f"The compression ratio is: {compression_ratio:.3f}")
 
     req.release()
 
