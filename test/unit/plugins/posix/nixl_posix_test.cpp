@@ -958,9 +958,11 @@ test_posix_release_active(const std::string &test_files_dir_path_abs_path, bool 
 
     print_segment_title(phase_title("Draining the refused transfer with a second write"));
 
-    // A second write polls the shared queue, completing the refused transfer's I/Os (ASAN
-    // reports the old delete-on-release here as heap-use-after-free in ioDoneClb()). Both
-    // writes carry identical bytes, so the final file contents are deterministic.
+    // A second write polls the shared queue, reaping the refused transfer's completions and
+    // cancellations (ASAN reports the old delete-on-release here as heap-use-after-free in
+    // ioDoneClb()). The refused release requested cancellation, so part of the first write
+    // may be aborted; the drain write covers every descriptor with identical bytes, keeping
+    // the final file contents deterministic.
     nixlXferReqH *treq_drain = nullptr;
     status = agent.createXferReq(NIXL_WRITE,
                                  bufs.dram_for_posix_xfer,
@@ -1003,6 +1005,8 @@ test_posix_release_active(const std::string &test_files_dir_path_abs_path, bool 
 
     // Poll the refused transfer to completion. Ahead of #2244 the stored release error makes
     // this loop exit on the first call; the drain's polls above reap the completions instead.
+    // Once #2244 polls for real, a partly canceled transfer ends with NIXL_ERR_BACKEND, so
+    // the loop only requires the status to leave NIXL_IN_PROG.
     do {
         status = agent.getXferStatus(treq);
     } while (status == NIXL_IN_PROG);
