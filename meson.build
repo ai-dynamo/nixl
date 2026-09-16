@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.4.0',
+project('nixl', 'CPP', version: '1.5.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -147,10 +147,29 @@ has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', depen
 # Check whether the POSIX plugin is enabled
 has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
-# Check for CUObject Client library — try newest first so CUDA 13.2+ wheels
-# pick up the versioned pkg-config module that matches the build environment.
+# Check for CUObject Client library. The pkg-config module is versioned as
+# cuobjclient-<major>.<minor>, so ask pkg-config what the build environment
+# actually provides rather than relying only on a hardcoded list, which goes
+# stale with every CUDA release. The static list below is the fallback for
+# environments where pkg-config cannot be invoked directly.
 cuobj_dep = dependency('', required: false)
-foreach _cuobj_pkg : ['cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1']
+_cuobj_modules = []
+_cuobj_probe = run_command('sh', '-c',
+    'pkg-config --list-all 2>/dev/null | cut -d" " -f1 | grep "^cuobjclient-" | sort -V -r',
+    check: false)
+if _cuobj_probe.returncode() == 0
+    foreach _line : _cuobj_probe.stdout().strip().split('\n')
+        if _line != ''
+            _cuobj_modules += _line
+        endif
+    endforeach
+endif
+foreach _fallback : ['cuobjclient-13.4', 'cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1']
+    if _fallback not in _cuobj_modules
+        _cuobj_modules += _fallback
+    endif
+endforeach
+foreach _cuobj_pkg : _cuobj_modules
     _candidate = dependency(_cuobj_pkg, required: false)
     if _candidate.found()
         cuobj_dep = _candidate
@@ -160,6 +179,15 @@ foreach _cuobj_pkg : ['cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1'
 endforeach
 if cuobj_dep.found()
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
+    summary({'cuObject (OBJ plugin RDMA)': 'enabled'}, section: 'Dependencies')
+else
+    warning('cuObjClient not found: the OBJ plugin will be built WITHOUT cuObject ' +
+            'RDMA acceleration. Searched pkg-config modules: ' +
+            ', '.join(_cuobj_modules) + '. Install the libcuobjclient development ' +
+            'package, which provides cuobjclient-<version>.pc, and make sure ' +
+            'pkg-config can find it (PKG_CONFIG_PATH).')
+    summary({'cuObject (OBJ plugin RDMA)': 'DISABLED - cuobjclient not found'},
+            section: 'Dependencies')
 endif
 
 # Search for Abseil dependencies in the system first
@@ -339,6 +367,51 @@ endif
 wheel_variant = get_option('wheel_variant').strip()
 if wheel_variant != ''
     cuda_wheel_dir = 'nixl_' + wheel_variant
+endif
+
+# AMD ROCm/HIP support for the libfabric plugin (mutually exclusive with CUDA;
+# default off). ROCm is requested by setting -Drocm_path=<prefix>; if rocm_path
+# is empty, ROCm support is not requested (there is no default path). Defined
+# here in the root meson.build -- ahead of subdir('src') and subdir('test') --
+# so every libfabric subdir (src/utils, src/plugins, test/unit/utils) consumes a
+# single rocm_dep and hipify_src, with no ordering dependency between them. The
+# plugin's CUDA sources are translated to HIP at build time via hipify-perl;
+# rocm_dep supplies the HIP headers and runtime those translated sources compile
+# and link against. __HIP_PLATFORM_AMD__ lets the HIP headers work under a
+# non-hipcc host compiler. Kept separate from cuda_dep.
+#
+# hipify injects <hip/hip_runtime.h> at the top of each translated source, ahead
+# of the nixl/toml++ headers. HIP defines __noinline__ as a macro, which breaks
+# toml++'s TOML_HAS_ATTR(__noinline__) preprocessor check; TOML_CUDA=1 routes
+# toml++ around that line. HIP also maps some CUDA driver calls onto deprecated
+# HIP APIs, so deprecation is downgraded from error (the tree builds with
+# werror=true) to a warning.
+#
+# hipify-perl ships only with the ROCm/HIP toolchain, so it is required when
+# ROCm is requested and unused (absent) on CUDA-only builds.
+rocm_path = get_option('rocm_path')
+if rocm_path != ''
+    if not fs.exists(rocm_path)
+        error('rocm_path set but ROCm install root not found at ' + rocm_path +
+              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
+    endif
+    rocm_dep = declare_dependency(
+        compile_args : [
+            '-I' + rocm_path + '/include',
+            '-D__HIP_PLATFORM_AMD__',
+            '-DTOML_CUDA=1',
+            '-Wno-error=deprecated-declarations',
+        ],
+        link_args : ['-L' + rocm_path + '/lib', '-lamdhip64', '-lhiprtc'],
+    )
+    message('ROCm/HIP enabled; toolchain path: ' + rocm_path)
+
+    hipify_cmd = find_program('hipify-perl')
+    hipify_src = generator(hipify_cmd,
+                           output : ['@BASENAME@_hip.cpp'],
+                           arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
+else
+    rocm_dep = disabler()
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
@@ -528,7 +601,7 @@ if get_option('buildtype') == 'debug'
 endif
 
 nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry')
-nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
+nixl_device_inc_dirs = include_directories('src/api/device')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
@@ -559,9 +632,6 @@ if get_option('install_headers')
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
 
-  if ucx_gpu_device_api_available
-    install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')
-  endif
 endif
 
 # Doxygen documentation

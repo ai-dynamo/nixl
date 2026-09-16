@@ -100,6 +100,9 @@ private:
     nixl::PathModeDevIdRegistry path_mode_devids_;
 
 public:
+    static nixl_b_params_t
+    getPluginParams();
+
     nixlPosixEngine(const nixlBackendInitParams *init_params);
     virtual ~nixlPosixEngine() = default;
 

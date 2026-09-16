@@ -14,14 +14,56 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="26.08-cuda13.4-devel-ubuntu24.04"
 ARG OS
 
+# libcuobjclient dev files: the cuda-dl-base devel images ship the runtime but
+# not libcuobjclient-dev, so the OBJ plugin silently loses cuObject RDMA
+# acceleration. Keep pinned to the same release as BASE_IMAGE_TAG.
+ARG CUOBJ_DEV_IMAGE="nvcr.io/nvidia/cuda-dl-base:26.08-cuda13.4-inference-devel-ubuntu24.04"
+
+FROM ${CUOBJ_DEV_IMAGE} AS cuobj_dev
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    mkdir -p /cuobj/include /cuobj/lib /cuobj/pkgconfig; \
+    cp -a "$T"/include/cuobj*.h /cuobj/include/; \
+    cp -a "$T"/lib/libcuobjclient.so /cuobj/lib/; \
+    cp -a /usr/lib/pkgconfig/cuobjclient-*.pc /cuobj/pkgconfig/; \
+    basename "$(ls "$T"/lib/libcuobjclient.so.1.*)" > /cuobj/soname
+
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+
+# Install them only when the base has a matching runtime and no dev files of
+# its own, so bases that are already correct or have no cuObject are untouched.
+COPY --from=cuobj_dev /cuobj /tmp/cuobj
+RUN set -e; \
+    CUDA_DIR="$(readlink -f /usr/local/cuda)"; \
+    T="$(echo "$CUDA_DIR"/targets/*-linux)"; \
+    have="$(basename "$(ls "$T"/lib/libcuobjclient.so.1.* 2>/dev/null | head -1)" 2>/dev/null)"; \
+    want="$(cat /tmp/cuobj/soname)"; \
+    if [ -e "$T/include/cuobjclient.h" ]; then \
+        echo "cuObject: dev files already present, leaving base untouched"; \
+    elif [ -z "$have" ]; then \
+        echo "cuObject: no runtime in base, skipping dev files"; \
+    elif [ "$have" != "$want" ]; then \
+        echo "cuObject: base runtime $have != dev files $want, skipping"; \
+    else \
+        cp -a /tmp/cuobj/include/*.h "$T/include/"; \
+        cp -a /tmp/cuobj/lib/libcuobjclient.so "$T/lib/"; \
+        PC="$(ls /tmp/cuobj/pkgconfig/cuobjclient-*.pc | head -1)"; \
+        mkdir -p /usr/lib/pkgconfig; \
+        sed "s|^cudaroot=.*|cudaroot=$CUDA_DIR|" "$PC" > "/usr/lib/pkgconfig/$(basename "$PC")"; \
+        echo "cuObject: installed dev files for $want"; \
+    fi; \
+    rm -rf /tmp/cuobj
 
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
+# PyTorch publishes wheels for only some CUDA minors, and the base image's own
+# CUDA_VERSION (13.4) has no index. Deliberately not named CUDA_VERSION: the base
+# exports that as ENV, which wins over an ARG of the same name.
+ARG TORCH_CUDA_INDEX="cu130"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
 ARG UCX_REF="v1.23.x"
@@ -295,7 +337,7 @@ RUN uv pip install --system --upgrade \
 RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
         echo "Using PyTorch from system site-packages"; \
     else \
-        export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+        export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
         uv pip install --system torch torchvision torchaudio; \
     fi
 # setuptools for PEP 639 license metadata
@@ -378,6 +420,20 @@ RUN rm -rf build && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
+
+# Fail the build if cuObject acceleration did not make it into the plugin.
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    if ! ls "$T"/lib/libcuobjclient.so.1.* >/dev/null 2>&1; then \
+        echo "cuObject: no runtime in base, skipping OBJ plugin check"; \
+    else \
+        P="$(find "$NIXL_PREFIX" -name libplugin_OBJ.so -print -quit)"; \
+        test -n "$P" || { echo "ERROR: libplugin_OBJ.so not found" >&2; exit 1; }; \
+        readelf -d "$P" | grep -q libcuobjclient || { \
+            echo "ERROR: libplugin_OBJ.so is missing libcuobjclient; S3 acceleration is not compiled in" >&2; \
+            exit 1; }; \
+        echo "cuObject: libplugin_OBJ.so links libcuobjclient"; \
+    fi
 
 RUN echo "$NIXL_PREFIX/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "$NIXL_PLUGIN_DIR" >> /etc/ld.so.conf.d/nixl.conf && \

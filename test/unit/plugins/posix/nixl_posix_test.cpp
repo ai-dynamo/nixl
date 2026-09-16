@@ -717,8 +717,8 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
         fill_test_pattern ((void *)dram_buf[i].addr, repost_test_phrase_2, transfer_size);
     }
 
-#ifdef HAVE_LIBURING
-    if (use_uring) {
+#if defined(HAVE_LIBURING) || defined(HAVE_LINUXAIO)
+    {
         for (const auto &file : fd) {
             if (ftruncate(file.fd, 0) != 0) {
                 return 1;
@@ -742,7 +742,7 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring) {
             return 1;
         }
         if (status >= 0) {
-            std::cerr << "io_uring short write was not reported" << std::endl;
+            std::cerr << "POSIX short write was not reported" << std::endl;
             return 1;
         }
     }

@@ -8,7 +8,7 @@
 #
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and server resources
-# - Docker Images: Dedicated EP base + build_helper (nixl-ci-dl-gpu-ep-base-... and
+# - Docker Images: Dedicated EP base + build_helper (nixl-ci-dl-gpu-ep-base and
 #                  build_helper_dl_ep)
 # - Matrix Axes: aarch64 (UCX version from the UCX_VER job parameter)
 # - Run Steps: build PR image with BUILD_NIXL_EP=true, allocate Slurm, run
@@ -78,10 +78,10 @@ pvc_volumes:
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
-     name: 'nixl-ci-dl-gpu-ep-base-pytorch26.06-cuda13.3-ubuntu24.04',
+     name: 'nixl-ci-dl-gpu-ep-base',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg BUILD_VLLM_ELASTIC_TEST=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg BUILD_VLLM_ELASTIC_TEST=true --build-arg ARCH=${arch} --pull --no-cache'
     }
 
   - {
@@ -89,7 +89,7 @@ runs_on_dockers:
      name: 'build_helper_dl_ep',
      arch: "aarch64",
      tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04 --build-arg ARCH=${arch}'
+     build_args: '--build-arg ARCH=${arch}'
     }
 
 matrix:
@@ -122,7 +122,7 @@ steps:
       --build-arg HAS_GPU=true \
       --build-arg BUILD_NIXL_EP=true \
       --build-arg NIXL_PYTHON=${NIXL_EP_PYTHON} \
-      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base-pytorch26.06-cuda13.3-ubuntu24.04:${CI_IMAGE_TAG} \
+      --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base:${CI_IMAGE_TAG} \
       --tag ${PR_IMAGE} \
       -f .ci/dockerfiles/Dockerfile.gpu-test .
       for i in {1..6}; do
