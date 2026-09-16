@@ -30,14 +30,17 @@ void
 checkSupportedMems(const std::vector<nixl_mem_t> &mems) {
     bool hasDram = false;
     bool hasBlk = false;
+    bool hasObj = false;
 
     for (auto mem : mems) {
         hasDram = hasDram || mem == DRAM_SEG;
         hasBlk = hasBlk || mem == BLK_SEG;
+        hasObj = hasObj || mem == OBJ_SEG;
     }
 
     assert(hasDram);
     assert(hasBlk);
+    assert(hasObj);
 }
 
 void
@@ -47,7 +50,8 @@ checkAdvertisedOptions(const nixl_b_params_t &options) {
     assert(options.count("json_config") == 1);
     assert(options.count("json_config_file") == 1);
     assert(options.count("msg_mempool_size") == 1);
-    // Convenience single-bdev params must also be discoverable.
+    // Convenience single-bdev params must also be discoverable. bdev_name also
+    // names the OBJ_SEG (NVMe-KV) device.
     assert(options.count("bdev_type") == 1);
     assert(options.count("bdev_name") == 1);
     // Knobs that only mattered to the DPDK env must not be advertised.

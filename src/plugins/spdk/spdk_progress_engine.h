@@ -54,6 +54,10 @@ public:
     openBdev(nixlSpdkBdevMD &md);
     void
     closeBdev(nixlSpdkBdevMD &md);
+    // Open and validate the shared KV device on first use: it must support NVMe
+    // passthru and identify as the KV command set.
+    [[nodiscard]] nixl_status_t
+    ensureKvBdev();
 
     [[nodiscard]] nixl_status_t
     postXfer(nixlSpdkBackendReqH *req_h);
@@ -132,8 +136,13 @@ private:
     bdevComplete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg);
     static void
     ioWaitRetry(void *cb_arg);
+    // One callback per context type. A single callback cannot serve both: the
+    // registration-owned bdevs pass a nixlSpdkBdevMD and the shared KV device
+    // passes the engine, and the callback has no way to tell them apart.
     static void
     bdevEventCb(enum spdk_bdev_event_type type, struct spdk_bdev *bdev, void *event_ctx);
+    static void
+    kvBdevEventCb(enum spdk_bdev_event_type type, struct spdk_bdev *bdev, void *event_ctx);
     // Release the channel and descriptor of an open bdev and clear the handles.
     static void
     releaseBdevHandles(spdk_bdev_desc *&desc, spdk_bdev *&bdev, spdk_io_channel *&channel);
@@ -142,6 +151,12 @@ private:
     std::string jsonConfig_;
     std::string jsonConfigFile_;
     std::string coreMask_;
+    // Shared by every OBJ_SEG registration; closed at finalization.
+    std::string objBdevName_;
+    spdk_bdev_desc *kvDesc_ = nullptr;
+    spdk_bdev *kvBdev_ = nullptr;
+    spdk_io_channel *kvChannel_ = nullptr;
+    bool kvOpened_ = false;
     std::size_t msgMempoolSize_ = 0;
     std::atomic<bool> initErr_{false};
     // Whether this backend holds a reference on the process-wide SPDK runtime.
