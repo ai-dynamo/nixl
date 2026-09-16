@@ -178,8 +178,8 @@ nixl::trace::decodeTraceContext(std::span<const std::uint8_t> buffer,
         return nixl::trace::WireDecodeResult::Malformed;
     }
     // Dispatch on the version before checking the length: a later version may
-    // define a different size, and such a record must be reported as skippable
-    // rather than as corruption.
+    // define a different size, so a size mismatch there is not corruption and
+    // must be reported as unrecognized instead.
     if (buffer[0] != nixl::trace::traceContextWireVersion) {
         return nixl::trace::WireDecodeResult::UnknownVersion;
     }

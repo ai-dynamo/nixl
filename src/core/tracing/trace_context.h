@@ -32,9 +32,11 @@ class Tracer;
 /**
  * @brief Wire encoding of a trace context, fixed at 26 bytes:
  *        byte 0 version, byte 1 flags, bytes 2-17 trace id, bytes 18-25 span id.
- *        Version first so a peer that does not know a future record can skip it
- *        instead of misreading it. This is the only binary form of a context;
- *        the struct below is the in-memory value, not an encoding.
+ *        The two ids are byte arrays, copied verbatim. Version first so a peer
+ *        can tell a record it cannot interpret from a corrupt one without
+ *        parsing the rest; the record carries no length of its own, so the
+ *        carrier's framing is what delimits it. This is the only binary form of
+ *        a context; the struct below is the in-memory value, not an encoding.
  */
 inline constexpr std::uint8_t traceContextWireVersion = 0x01;
 inline constexpr std::size_t traceContextWireSize = 26;
@@ -87,8 +89,8 @@ encodeTraceContext(const TraceContext &context, std::span<std::uint8_t> buffer);
 /**
  * @brief Decode one wire record from @p buffer.
  * @return Ok only for a version-1 record of exactly traceContextWireSize bytes
- *         carrying non-zero ids; @p context is assigned in that case only, so a
- *         skipped or rejected record leaves the caller's value intact. Flags
+ *         carrying non-zero ids; @p context is assigned in that case only, so an
+ *         unrecognized or rejected record leaves the caller's value intact. Flags
  *         are masked to the bits this version defines, mirroring the encoder,
  *         so a peer's reserved bits never reach a stored context.
  */
