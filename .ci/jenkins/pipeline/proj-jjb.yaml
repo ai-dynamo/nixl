@@ -934,7 +934,7 @@
       - parameterized-timer:
           cron: |
             # Build NIXL wheels nightly around midnight. One run covers both CUDA
-            # majors (cuda_major is a matrix axis) and the nixl meta wheel.
+            # majors (cuda is a matrix axis) and the nixl meta wheel.
             H 0 * * * %NIXL_VERSION=main
     # Manual build parameters
     parameters:

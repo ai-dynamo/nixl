@@ -55,7 +55,11 @@ matrix:
       - x86_64
       - aarch64
     # Same build, or cu12 and cu13 land in different build-number folders.
-    cuda_major:
+    # Not "cuda_major": Jenkins EnvVars is case-insensitive, so that name
+    # collides with the CUDA_MAJOR job parameter and the axis never reaches the
+    # shell - the leg is still labelled correctly, since taskName is rendered
+    # from the axis map rather than from the environment.
+    cuda:
       - "12"
       - "13"
 
@@ -131,10 +135,10 @@ steps:
       # ref's build-container.sh pins the plugin ref/image.
       # The two CUDA majors have different torch coverage: 2.11 is not available
       # on the cu13 index, and 2.14 is not available on the cu12 one.
-      # Never default the CUDA line: an unset cuda_major used to fall through to
-      # the cu13 branch, so both cells built cu13 and the identical filenames
-      # overwrote each other in the publish folder.
-      case "${cuda_major}" in
+      # Never default the CUDA line: an unset axis falling through to cu13 made
+      # both cells build cu13 under identical filenames, so each overwrote the
+      # other and the folder silently held half a set.
+      case "${cuda}" in
         12)
           BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
           TORCH_VERSIONS="2.11,2.12,2.13"
@@ -144,7 +148,7 @@ steps:
           TORCH_VERSIONS="2.12,2.13,2.14"
           ;;
         *)
-          echo "ERROR: cuda_major is '${cuda_major:-<unset>}', expected 12 or 13"
+          echo "ERROR: cuda is '${cuda:-<unset>}', expected 12 or 13"
           exit 1
           ;;
       esac
@@ -231,7 +235,7 @@ steps:
       done
       exit $rc
 
-taskName: '${name}_${manylinux}/${arch}/python_${python_version}/cu${cuda_major}'
+taskName: '${name}_${manylinux}/${arch}/python_${python_version}/cu${cuda}'
 
 # Display name distinguishes builds in the history list: #N-<source>.
 pipeline_start:
