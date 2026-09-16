@@ -49,6 +49,13 @@ if is_variable('doca_memos_backend_interface') and 'DOCA_MEMOS' in static_plugin
     nixl_lib_deps += [ doca_memos_backend_interface ]
 endif
 
+if 'SPDK' in static_plugins
+    if not is_variable('spdk_backend_interface')
+        error('SPDK is in static_plugins but the SPDK plugin is not being built')
+    endif
+    nixl_lib_deps += [ spdk_backend_interface ]
+endif
+
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
