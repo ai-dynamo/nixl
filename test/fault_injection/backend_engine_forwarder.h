@@ -1,0 +1,119 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#ifndef TEST_FAULT_INJECTION_BACKEND_ENGINE_FORWARDER_H
+#define TEST_FAULT_INJECTION_BACKEND_ENGINE_FORWARDER_H
+
+#include "backend/backend_engine.h"
+
+/**
+ * An inert backend-engine decorator.
+ *
+ * The forwarder does not own the inner engine. The inner engine must outlive
+ * the forwarder.
+ */
+class nixlBackendEngineForwarder : public nixlBackendEngine {
+public:
+    nixlBackendEngineForwarder(const nixlBackendInitParams *init_params, nixlBackendEngine &inner);
+
+    bool
+    supportsRemote() const override;
+    bool
+    supportsLocal() const override;
+    bool
+    supportsNotif() const override;
+    nixl_mem_list_t
+    getSupportedMems() const override;
+
+    nixl_status_t
+    registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
+    nixl_status_t
+    deregisterMem(nixlBackendMD *meta) override;
+    nixl_status_t
+    connect(const std::string &remote_agent) override;
+    nixl_status_t
+    disconnect(const std::string &remote_agent) override;
+    nixl_status_t
+    unloadMD(nixlBackendMD *input) override;
+
+    nixl_status_t
+    prepXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
+    nixl_status_t
+    postXfer(const nixl_xfer_op_t &operation,
+             const nixl_meta_dlist_t &local,
+             const nixl_meta_dlist_t &remote,
+             const std::string &remote_agent,
+             nixlBackendReqH *&handle,
+             const nixl_opt_b_args_t *opt_args = nullptr) const override;
+    nixl_status_t
+    checkXfer(nixlBackendReqH *handle) const override;
+    nixl_status_t
+    releaseReqH(nixlBackendReqH *handle) const override;
+
+    nixl_status_t
+    prepMemView(const nixl_remote_meta_dlist_t &dlist,
+                nixlMemViewH &mvh,
+                const nixl_opt_b_args_t *opt_args = nullptr) const override;
+    nixl_status_t
+    prepMemView(const nixl_meta_dlist_t &dlist,
+                nixlMemViewH &mvh,
+                const nixl_opt_b_args_t *opt_args = nullptr) const override;
+    void
+    releaseMemView(nixlMemViewH mvh) const override;
+
+    nixl_status_t
+    getPublicData(const nixlBackendMD *meta, std::string &str) const override;
+    nixl_status_t
+    getConnInfo(std::string &str) const override;
+    nixl_status_t
+    loadRemoteConnInfo(const std::string &remote_agent,
+                       const std::string &remote_conn_info) override;
+    nixl_status_t
+    loadRemoteMD(const nixlBlobDesc &input,
+                 const nixl_mem_t &nixl_mem,
+                 const std::string &remote_agent,
+                 nixlBackendMD *&output) override;
+    nixl_status_t
+    loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override;
+
+    nixl_status_t
+    getNotifs(notif_list_t &notif_list) override;
+    nixl_status_t
+    genNotif(const std::string &remote_agent, const std::string &msg) const override;
+
+    nixl_status_t
+    queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
+    nixl_status_t
+    estimateXferCost(const nixl_xfer_op_t &operation,
+                     const nixl_meta_dlist_t &local,
+                     const nixl_meta_dlist_t &remote,
+                     const std::string &remote_agent,
+                     nixlBackendReqH *const &handle,
+                     std::chrono::microseconds &duration,
+                     std::chrono::microseconds &err_margin,
+                     nixl_cost_t &method,
+                     const nixl_opt_args_t *extra_params = nullptr) const override;
+
+private:
+    nixlBackendEngine &inner_;
+};
+
+#endif
