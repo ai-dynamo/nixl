@@ -131,13 +131,23 @@ steps:
       # ref's build-container.sh pins the plugin ref/image.
       # The two CUDA majors have different torch coverage: 2.11 is not available
       # on the cu13 index, and 2.14 is not available on the cu12 one.
-      BASE_IMAGE_FLAGS=""
-      if [ "${cuda_major}" = "12" ]; then
-        BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
-        TORCH_VERSIONS="2.11,2.12,2.13"
-      else
-        TORCH_VERSIONS="2.12,2.13,2.14"
-      fi
+      # Never default the CUDA line: an unset cuda_major used to fall through to
+      # the cu13 branch, so both cells built cu13 and the identical filenames
+      # overwrote each other in the publish folder.
+      case "${cuda_major}" in
+        12)
+          BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
+          TORCH_VERSIONS="2.11,2.12,2.13"
+          ;;
+        13)
+          BASE_IMAGE_FLAGS=""
+          TORCH_VERSIONS="2.12,2.13,2.14"
+          ;;
+        *)
+          echo "ERROR: cuda_major is '${cuda_major:-<unset>}', expected 12 or 13"
+          exit 1
+          ;;
+      esac
       cd nixl-src
       ./contrib/build-container.sh \
         ${BASE_IMAGE_FLAGS} \
