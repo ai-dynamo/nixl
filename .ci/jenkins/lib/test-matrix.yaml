@@ -59,6 +59,11 @@ env:
   CI_IMAGE_TAG: "CI_MANAGED"
   ENROOT_MOUNT_PATH: "/enroot_images"  # NFS mount on mizu nodes; on failure the container is exported here as <containerName>.sqsh
   ENROOT_DATA_PATH: "/enroot-data/enroot-data-148069/user-148069"  # svc-nixl user on mizu nodes
+  # Lets the image builds clone third-party deps from github.com as svc-nixl:
+  # anonymous clones get an intermittent HTTP 401. ci-demo builds these images
+  # outside any step, so the token is bound around matrix.main() in the Jenkinsfile.
+  DOCKER_BUILDKIT: 1
+  NIXL_GITHUB_NETRC: "machine github.com login ${NIXL_GITHUB_USER} password ${NIXL_GITHUB_TOKEN}"
 
 empty_volumes:
   - {mountPath: /root, memory: false}
@@ -73,7 +78,7 @@ runs_on_dockers:
      file: '.ci/dockerfiles/Dockerfile.base',
      name: 'nixl-ci-gpu-base',
      tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghnetrc,env=NIXL_GITHUB_NETRC'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',

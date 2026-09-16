@@ -57,6 +57,11 @@ env:
   # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
   # the "CI_MANAGED" placeholder must not be hand-edited.
   CI_IMAGE_TAG: "CI_MANAGED"
+  # Lets the image builds clone third-party deps from github.com as svc-nixl:
+  # anonymous clones get an intermittent HTTP 401. ci-demo builds these images
+  # outside any step, so the token is bound around matrix.main() in the Jenkinsfile.
+  DOCKER_BUILDKIT: 1
+  NIXL_GITHUB_NETRC: "machine github.com login ${NIXL_GITHUB_USER} password ${NIXL_GITHUB_TOKEN}"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
@@ -71,7 +76,7 @@ runs_on_dockers:
      name: 'nixl-ci-dl-gpu-base',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghnetrc,env=NIXL_GITHUB_NETRC'
     }
 
   - {

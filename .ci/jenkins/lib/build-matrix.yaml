@@ -48,19 +48,24 @@ env:
   # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
   # the "CI_MANAGED" placeholder must not be hand-edited.
   CI_IMAGE_TAG: "CI_MANAGED"
+  # Lets the image builds clone third-party deps from github.com as svc-nixl:
+  # anonymous clones get an intermittent HTTP 401. ci-demo builds these images
+  # outside any step, so the token is bound around matrix.main() in the Jenkinsfile.
+  DOCKER_BUILDKIT: 1
+  NIXL_GITHUB_NETRC: "machine github.com login ${NIXL_GITHUB_USER} password ${NIXL_GITHUB_TOKEN}"
 
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-ci-non-gpu-base-cuda12.9", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
+     build_args: '--build-arg BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --secret id=ghnetrc,env=NIXL_GITHUB_NETRC'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-ci-non-gpu-base", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --secret id=ghnetrc,env=NIXL_GITHUB_NETRC'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-ci-non-gpu-base-ubuntu22", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/nvidia/cuda:13.0.1-devel-ubuntu22.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true'
+     build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/nvidia/cuda:13.0.1-devel-ubuntu22.04 --build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg ARCH=${arch} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --secret id=ghnetrc,env=NIXL_GITHUB_NETRC'
     }
 
 matrix:

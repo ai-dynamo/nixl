@@ -73,8 +73,14 @@ steps:
 
   - name: Prepare environment
     containerSelector: "{name: 'podman'}"
+    credentialsId:
+      - 'svc-nixl-github-token'
     run: |
       set -e
+      # Authenticate this clone too: it runs on the agent, outside the image build
+      # that mounts the token as a build secret.
+      . .ci/scripts/common.sh
+      setup_github_netrc
       # nixlbench builds against a UCX source tree; nixl consumes UCX_VERSION directly.
       if [ "$target" = "nixlbench" ]; then
         rm -rf ucx-src

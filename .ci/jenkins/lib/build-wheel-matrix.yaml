@@ -119,7 +119,7 @@ runs_on_dockers:
       file: 'contrib/Dockerfile.manylinux',
       name: "${WHEEL_BASE_IMAGE_NAME}",
       tag: "${CI_IMAGE_TAG}",
-      build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base'
+      build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base --secret id=ghnetrc,env=NIXL_GITHUB_NETRC'
     }
   # The custom 'fw' key is injected as an env var into every step of the branch
   # (ci-demo merges the docker entry into the branch axis), so the shared sanity
@@ -220,6 +220,11 @@ env:
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   STORAGE_DRIVER: overlay
+  # Lets the image builds clone third-party deps from github.com as svc-nixl:
+  # anonymous clones get an intermittent HTTP 401. ci-demo builds these images
+  # outside any step, so the token is bound around matrix.main() in the Jenkinsfile.
+  DOCKER_BUILDKIT: 1
+  NIXL_GITHUB_NETRC: "machine github.com login ${NIXL_GITHUB_USER} password ${NIXL_GITHUB_TOKEN}"
 
 steps:
   # =============================================================================

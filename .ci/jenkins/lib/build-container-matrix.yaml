@@ -135,6 +135,10 @@ steps:
     credentialsId:
       - 'svc-nixl-github-token'
     run: |
+      # Authenticate this clone too: it runs on the agent, outside the image build
+      # that mounts the token as a build secret.
+      . .ci/scripts/common.sh
+      setup_github_netrc
       # Clone UCX source for nixlbench
       git clone https://github.com/openucx/ucx.git ucx-src
       git -C ucx-src checkout "${UCX_SHA}"

@@ -86,7 +86,19 @@ ENV HOME=${_HOME}
 ENV USER=${_LOGIN}
 ENV VLLM_ELASTIC_TEST_DIR=${_HOME}/vllm
 
-RUN /.gitlab/build.sh ${NIXL_INSTALL_DIR}
+# build.sh clones ~10 third-party deps from github.com, plus the taskflow and
+# prometheus-cpp meson wraps. github.com answers anonymous clones with an
+# intermittent HTTP 401; with a credential git answers the challenge instead of
+# dying as "could not read Username". mode=0444 because this stage runs as a
+# non-root user, and the netrc is staged and removed inside the one layer.
+ENV GIT_TERMINAL_PROMPT=0
+RUN --mount=type=secret,id=ghnetrc,mode=0444 \
+    if [ -s /run/secrets/ghnetrc ]; then \
+        cp /run/secrets/ghnetrc "${HOME}/.netrc" && chmod 600 "${HOME}/.netrc"; \
+    fi; \
+    /.gitlab/build.sh ${NIXL_INSTALL_DIR}; rc=$?; \
+    rm -f "${HOME}/.netrc"; \
+    exit $rc
 RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
 
 # Install editable vLLM source with matching CUDA 13 precompiled binaries.

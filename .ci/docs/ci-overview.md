@@ -356,12 +356,36 @@ anonymous exactly as before. The `ENV GIT_TERMINAL_PROMPT=0` alongside each bloc
 is deliberate: it keeps a future credential problem from reappearing as the same
 misleading "could not read Username" message.
 
-**Not yet covered.** `contrib/Dockerfile.manylinux` carries the mounts, but its
-wheel-base image is built by CI-demo (see the `file:` entry in
-`build-wheel-matrix.yaml`) rather than by these scripts, so it is still cloning
-anonymously until that path passes the secret. `.gitlab/build.sh` and the
-`taskflow` / `prometheus-cpp` meson `wrap-git` subprojects clone from github.com
-outside the container build entirely and are also still anonymous.
+**The ci-demo-built images.** Images declared with `file:` in a matrix are built by
+ci-demo outside any step (`Matrix.groovy` `buildImage`), so a per-step
+`credentials:` entry never reaches them. Two things make it work anyway:
+
+- The token is bound around `matrix.main()` in `.ci/jenkins/pipeline/Jenkinsfile`,
+  not just around the `GithubHelper` call, so it is in the environment for the
+  image-build phase too.
+- `build_args` is spliced verbatim into `docker build`, so those entries carry
+  `--secret id=ghnetrc,env=NIXL_GITHUB_NETRC`, with `NIXL_GITHUB_NETRC` and
+  `DOCKER_BUILDKIT=1` set in each matrix's `env:` block (ci-demo exports `env:`
+  into the image build via `withEnv`).
+
+`.ci/dockerfiles/Dockerfile.base` runs as a **non-root** user, so its mount uses
+`mode=0444` and stages the file into `$HOME/.netrc` for the duration of the one
+`RUN`. That covers `.gitlab/build.sh`'s clones and the `taskflow` /
+`prometheus-cpp` meson `wrap-git` subprojects in a single place, for all five
+matrices that build from it.
+
+**On CI agents**, where the token is an env var rather than a mounted file,
+`setup_github_netrc` in `.ci/scripts/common.sh` writes `$HOME/.netrc` and removes
+it on exit. It leaves an existing netrc alone, so it is a no-op inside the
+container build, and it disables `set -x` before the token is expanded so the
+value never reaches the log. `.gitlab/build.sh` and `.gitlab/build-rocm.sh` call
+it, as do the matrix steps that clone UCX on the agent.
+
+**Still anonymous.** `.ci/dockerfiles/Dockerfile.rocm` (9 clones) is not referenced
+by any matrix, so there is nothing to wire a secret through yet. The meson
+`wrap-file` subprojects fetch release tarballs rather than cloning; a 401 there
+fails the download outright instead of prompting, and they are unaffected by this
+change.
 
 ## Related docs
 

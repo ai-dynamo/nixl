@@ -152,3 +152,33 @@ start_etcd_server() {
 
     wait_for_etcd
 }
+
+# github.com answers anonymous clones with an intermittent HTTP 401
+# (www-authenticate: Basic realm="GitHub"). Without a credential git cannot act on
+# it: it tries to prompt, finds no TTY, and dies as "could not read Username".
+# Given one it just retries the request authenticated.
+#
+# This is the CI-agent path, where the token arrives as an env var. Container
+# builds instead mount a netrc as a BuildKit secret, so an existing file is left
+# alone. Writes are done with tracing off so the token never reaches the log.
+setup_github_netrc() {
+    # Tracing goes off before the token is ever expanded: under `set -x` even the
+    # guard below would print it.
+    local restore_xtrace=""
+    case "$-" in
+        *x*) restore_xtrace=1; set +x ;;
+    esac
+
+    if [ -n "${NIXL_GITHUB_TOKEN:-}" ] && [ ! -s "${HOME}/.netrc" ]; then
+        printf 'machine github.com login %s password %s\n' \
+            "${NIXL_GITHUB_USER:-x-access-token}" "${NIXL_GITHUB_TOKEN}" > "${HOME}/.netrc"
+        chmod 600 "${HOME}/.netrc"
+        # Only installed when this function created the file, so it never removes a
+        # netrc that was already there.
+        trap 'rm -f "${HOME}/.netrc"' EXIT
+    fi
+
+    if [ -n "${restore_xtrace}" ]; then
+        set -x
+    fi
+}
