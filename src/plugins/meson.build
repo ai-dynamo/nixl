@@ -128,6 +128,14 @@ if enabled_plugins.get('GUSLI')
     endif
 endif
 
+if enabled_plugins.get('SPDK')
+    if not spdk_dep_found and is_explicit_enable
+        error('SPDK plugin requested but SPDK pkg-config dependencies were not found')
+    elif spdk_dep_found
+        subdir('spdk')
+    endif
+endif
+
 if enabled_plugins.get('GPUNETIO')
     if (not cuda_dep.found() or not doca_gpunetio_dep.found()) and is_explicit_enable
         if not cuda_dep.found()

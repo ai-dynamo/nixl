@@ -25,6 +25,12 @@ if enabled_plugins.get('POSIX')
     subdir('posix')
 endif
 
+# Mirrors the gate in src/plugins/meson.build: without the SPDK dependencies the
+# plugin is skipped, so the variables these tests link against do not exist.
+if enabled_plugins.get('SPDK') and spdk_dep_found
+    subdir('spdk')
+endif
+
 if enabled_plugins.get('GPUNETIO')
     if (not cuda_dep.found() or not doca_gpunetio_dep.found()) and is_explicit_enable
         if not cuda_dep.found()
