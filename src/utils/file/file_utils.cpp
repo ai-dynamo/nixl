@@ -34,11 +34,9 @@ queryFileInfo(const std::string &filename) {
         return std::nullopt;
     }
 
-    return nixl_b_params_t{
-        {"size", std::to_string(stat_buf.st_size)},
-        {"mode", std::to_string(stat_buf.st_mode)},
-        {"mtime", std::to_string(stat_buf.st_mtime)}
-    };
+    return nixl_b_params_t{{"size", std::to_string(stat_buf.st_size)},
+                           {"mode", std::to_string(stat_buf.st_mode)},
+                           {"mtime", std::to_string(stat_buf.st_mtime)}};
 }
 
 } // namespace nixl

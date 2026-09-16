@@ -44,7 +44,7 @@ queryFileInfo(const std::string &filename);
  */
 template<typename DescList>
 [[nodiscard]] nixl_status_t
-queryFileInfoFromDescList(const DescList& descs, std::vector<nixl_query_resp_t> &resp) {
+queryFileInfoFromDescList(const DescList &descs, std::vector<nixl_query_resp_t> &resp) {
     resp.clear();
     resp.reserve(descs.descCount());
 
