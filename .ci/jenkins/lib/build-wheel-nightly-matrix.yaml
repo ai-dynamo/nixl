@@ -2,7 +2,13 @@
 # main; the source ref (NIXL_VERSION) is cloned into nixl-src, so built refs
 # carry no CI config. Wheels publish to
 # WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default) or
-# WHEEL_REPO_URL/<PUBLISH_DIR>/<nixl-sha> for manual release runs.
+# WHEEL_REPO_URL/<PUBLISH_DIR>/<build-number> for release runs.
+#
+# One run builds every CUDA major (cuda_major is a matrix axis), so a release
+# folder holds a complete cu12+cu13 wheel set and is owned by this build alone.
+# That ownership is what lets pipeline_stop delete it on failure; it also makes
+# the folder-level NIXL_SHA property, stamped only on SUCCESS, a reliable
+# "this build finished green" marker for the release poller.
 
 ---
 job: nixl-ci-build-wheel-nightly
@@ -50,6 +56,11 @@ matrix:
     arch:
       - x86_64
       - aarch64
+    # Both CUDA lines in one run: the release folder is keyed by build number,
+    # so cu12 and cu13 have to come from the same build to stay co-located.
+    cuda_major:
+      - "12"
+      - "13"
 
 env:
   NPROC: 16
@@ -64,6 +75,8 @@ env:
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
   # Properties API (same repo, different endpoint) for tagging published wheels.
   WHEEL_REPO_API: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
+  # Browsable tree view of the same repo, for the per-build link in the UI.
+  WHEEL_REPO_UI: "https://artifactory.nvidia.com/ui/repos/tree/General/sw-nbu-swx-nixl-pypi-local"
   # Source repo cloned in Build Wheel.
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
   MAIL_FROM: "jenkins@nvidia.com"
@@ -122,7 +135,7 @@ steps:
       # The two CUDA majors have different torch coverage: 2.11 is not available
       # on the cu13 index, and 2.14 is not available on the cu12 one.
       BASE_IMAGE_FLAGS=""
-      if [ "${CUDA_MAJOR}" = "12" ]; then
+      if [ "${cuda_major}" = "12" ]; then
         BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
         TORCH_VERSIONS="2.11,2.12,2.13"
       else
@@ -162,10 +175,18 @@ steps:
         || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
       . ./wheel_build_ids.env
 
+      # Build identity: always known here, so it stays outside the
+      # build_options.env guard below. NIXL_SHA especially - the release folder
+      # no longer carries the sha, and pipeline_stop copies this property up to
+      # the folder as the poller's "published" marker.
+      PROPERTIES="NIXL_SHA=${NIXL_SHA}"
+      PROPERTIES+=";NIXL_VERSION=${NIXL_VERSION}"
+      PROPERTIES+=";JOB_NAME=${JOB_NAME}"
+      PROPERTIES+=";BUILD_NUMBER=${BUILD_NUMBER}"
+
       # Provenance recorded by Build Wheel (contrib/build-container.sh
       # --build-options-file). Only set properties for values that exist,
       # so an older built ref without this flag just skips them.
-      PROPERTIES=""
       if [ -f build_options.env ]; then
         . ./build_options.env
         [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
@@ -175,17 +196,21 @@ steps:
           && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
         [ "${BUILD_INFINIA:-}" = "true" ] && [ -n "${INFINIA_LIBS_IMAGE:-}" ] \
           && PROPERTIES+=";INFINIA_LIBS_IMAGE=${INFINIA_LIBS_IMAGE}"
-        PROPERTIES="${PROPERTIES#;}"
+        # A trailing `[ ... ] && ...` that does not fire would otherwise leave
+        # the whole if-block with a non-zero status.
+        true
       fi
 
       # verification/ keeps its long-standing g<nixl-sha>.ucx<ucx-sha> folder
-      # schema (consumed by the build-llm-container verification pipeline);
-      # release/<ver> co-locates cu12/cu13 by nixl-sha alone, unkeyed to UCX.
+      # schema (consumed by the build-llm-container verification pipeline), and
+      # is shared by every build of that sha pair - never deleted on failure.
+      # release/<ver> keys on the build number instead: one folder per build,
+      # holding the whole cu12+cu13 set, owned by this build alone.
       if [ "${PUBLISH_DIR}" = "verification" ]; then
         [ -n "${UCX_SHA:-}" ] || { echo "ERROR: verification publish needs UCX_SHA from build_options.env"; exit 1; }
         FOLDER="g${NIXL_SHA}.ucx${UCX_SHA}"
       else
-        FOLDER="${NIXL_SHA}"
+        FOLDER="${BUILD_NUMBER}"
       fi
       DEST="${WHEEL_REPO_URL}/${PUBLISH_DIR}/${FOLDER}"
       PROPS_DEST="${WHEEL_REPO_API}/${PUBLISH_DIR}/${FOLDER}"
@@ -197,32 +222,89 @@ steps:
       for whl in dist/nixl*.whl; do
         curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
           -T "${whl}" "${DEST}/$(basename "${whl}")" || rc=1
-        if [ -n "${PROPERTIES}" ]; then
-          curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -X PUT \
-            "${PROPS_DEST}/$(basename "${whl}")?properties=${PROPERTIES}" || rc=1
-        fi
+        curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -X PUT \
+          "${PROPS_DEST}/$(basename "${whl}")?properties=${PROPERTIES}" || rc=1
       done
       exit $rc
 
-taskName: '${name}_${manylinux}/${arch}/python_${python_version}'
+taskName: '${name}_${manylinux}/${arch}/python_${python_version}/cu${cuda_major}'
 
-# Display name distinguishes builds in the history list: #N-<source>-cuXX.
+# Display name distinguishes builds in the history list: #N-<source>.
 pipeline_start:
   shell: action
   module: groovy
   containerSelector: "{name: 'manylinux'}"
   run: |
     def src = params.NIXL_VERSION ==~ /[0-9a-f]{40}/ ? params.NIXL_VERSION.take(8) : params.NIXL_VERSION
-    def cu = "cu${params.CUDA_MAJOR}"
-    currentBuild.displayName += "-${src}-${cu}"
+    currentBuild.displayName += "-${src}"
 
-# Mail the unattended nightly only when it fails; a green night stays quiet.
+# Settles the release folder, then mails the unattended nightly only when it
+# fails; a green night stays quiet.
+#
+# On a release run the folder is this build's alone (keyed by build number), so
+# this block owns its fate: stamp the completion marker on SUCCESS, delete the
+# whole folder otherwise. A partial wheel set is never salvageable - it has to
+# be rebuilt - so leaving it published only confuses consumers and makes the
+# poller believe the commit is done. verification/ folders are shared between
+# builds of the same sha pair and are left alone either way.
 pipeline_stop:
   shell: action
   module: groovy
   containerSelector: "{name: 'manylinux'}"
   run: |
     def jobStatus = currentBuild.result ?: 'SUCCESS'
+    def isRelease = (params.PUBLISH_DIR ?: '').startsWith('release/')
+    def folderPath = "${params.PUBLISH_DIR}/${env.BUILD_NUMBER}"
+    def folderUrl = "${env.WHEEL_REPO_UI}/${folderPath}"
+    def removedNote = ''
+
+    if (isRelease) {
+        withCredentials([usernamePassword(
+                credentialsId: 'svc-nixl-new-artifactory-token',
+                usernameVariable: 'ARTIFACTORY_USER',
+                passwordVariable: 'ARTIFACTORY_TOKEN')]) {
+            if (jobStatus == 'SUCCESS') {
+                // The poller looks commits up by this folder property, and only
+                // a green build ever sets it. The release poller always passes a
+                // full sha as NIXL_VERSION, so that is the value verbatim; a
+                // manual run naming a branch/tag gets one ls-remote. The wheels
+                // themselves carry the sha each cell actually built, which stays
+                // the ground truth if a branch moved under a manual run.
+                def sha = params.NIXL_VERSION ==~ /[0-9a-f]{40}/
+                    ? params.NIXL_VERSION.take(8)
+                    : sh(returnStdout: true, script: """
+                          git ls-remote "${env.NIXL_REPO_URL}" "${params.NIXL_VERSION}" \
+                            | head -1 | cut -c1-8
+                      """).trim()
+                if (!sha) {
+                    error("cannot resolve NIXL_SHA for the ${folderPath} completion marker")
+                }
+                // recursive=0 is required: the properties API defaults to
+                // recursive, which would stamp this value over the NIXL_SHA each
+                // cell already set on its own wheels. Failing here is loud on
+                // purpose - a folder published without the marker would have the
+                // poller rebuilding the commit forever.
+                sh """
+                    set +x
+                    curl -fsSL -u "\$ARTIFACTORY_USER:\$ARTIFACTORY_TOKEN" -X PUT \
+                      "${env.WHEEL_REPO_API}/${folderPath}?properties=NIXL_SHA=${sha}&recursive=0"
+                """
+                currentBuild.description = "<a href='${folderUrl}'>${folderPath}</a>"
+                echo "Published wheel set: ${folderUrl} (NIXL_SHA=${sha})"
+            } else {
+                // 404 is the normal case when the build died before Publish.
+                // Never let cleanup itself change the build result.
+                sh """
+                    set +x
+                    curl -sS -u "\$ARTIFACTORY_USER:\$ARTIFACTORY_TOKEN" -X DELETE \
+                      "${env.WHEEL_REPO_URL}/${folderPath}" || true
+                """
+                removedNote = "<p>Partial wheel set removed: <b>${folderPath}</b></p>"
+                echo "Removed partial wheel set ${folderPath} (build ${jobStatus})"
+            }
+        }
+    }
+
     if (jobStatus != 'SUCCESS' && params.MAIL_TO) {
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
         mail(
@@ -237,7 +319,7 @@ pipeline_stop:
                 <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
                 <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
                 <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
-                <p>CUDA Major: <b>${params.CUDA_MAJOR}</b></p>
+                ${removedNote}
             """
         )
     }

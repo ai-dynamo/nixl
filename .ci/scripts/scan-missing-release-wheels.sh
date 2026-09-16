@@ -1,15 +1,19 @@
 #!/bin/bash -eE
-# Scan release/* branches for commits whose published wheels are missing this
-# CUDA variant, and write triggers.txt (one "<sha> <ver> <cuda_major>" line per
-# missing build) for the poller's trigger step.
+# Scan release/* branches for commits with no published wheel set, and write
+# triggers.txt (one "<sha> <ver>" line per missing build) for the poller's
+# trigger step.
+#
+# A commit counts as published when a build folder under release/<ver>/ carries
+# it as a NIXL_SHA property. The wheel job stamps that property on the folder
+# only after the whole build goes green (and deletes the folder outright when it
+# does not), so the marker means "complete cu12+cu13 wheel set" - which the old
+# check, "the sha-named folder lists a nixl_cuNN file", could not distinguish
+# from a half-finished upload.
 #
 # Env (set by build-wheel-release-poller-matrix.yaml):
-#   cuda_major    - CUDA major version (matrix axis); names the variant cuNN
 #   MIN_RELEASE   - releases older than this are not built
 #   MAX_COMMITS   - newest N first-parent commits to check per release branch
-#   NIXL_REPO_URL, STORAGE_API_URL, ARTIFACTORY_USER, ARTIFACTORY_TOKEN
-
-variant="cu${cuda_major}"
+#   NIXL_REPO_URL, AQL_API_URL, WHEEL_REPO_NAME, ARTIFACTORY_USER, ARTIFACTORY_TOKEN
 
 # The Jenkins checkout is owned by a different uid; trust only it.
 git config --global --add safe.directory "${PWD}"
@@ -48,34 +52,39 @@ for ver in ${branches}; do
     continue
   fi
 
+  # One AQL for the whole release instead of one GET per commit: collect the
+  # NIXL_SHA marker of every completed build folder under release/<ver>/.
+  aql="items.find({\"repo\":\"${WHEEL_REPO_NAME}\",\"type\":\"folder\",\"path\":\"release/${ver}\",\"@NIXL_SHA\":{\"\$match\":\"*\"}}).include(\"@NIXL_SHA\")"
+  # Only 200 is conclusive (no results is a valid 200); any other outcome skips
+  # the release until the next cycle, so an Artifactory hiccup cannot fan out
+  # spurious builds for every commit at once.
+  http_code="$(curl -s --connect-timeout 10 --max-time 30 -o published.json -w '%{http_code}' \
+    -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -H 'Content-Type: text/plain' \
+    --data-binary "${aql}" "${AQL_API_URL}")" || http_code=""
+  if [ "${http_code}" != "200" ]; then
+    echo "release/${ver}: AQL returned ${http_code:-<none>}, skipping this cycle"
+    continue
+  fi
+  # include("@NIXL_SHA") narrows the response to that one property, so every
+  # "value" in it is a marker sha.
+  published="$(grep -oE '"value"[[:space:]]*:[[:space:]]*"[0-9a-f]{8}"' published.json \
+    | grep -oE '[0-9a-f]{8}' || true)"
+
   base="$(git merge-base origin/main "origin/release/${ver}")"
   candidates="$(git rev-list --first-parent "${base}..origin/release/${ver}" | head -"${MAX_COMMITS}")"
 
   n_cand=0; n_build=0
   for sha in ${candidates}; do
-    folder="release/${ver}/${sha:0:8}"
-
-    # Only 200 (folder listing) and 404 (folder absent) are conclusive;
-    # other errors (auth, 5xx, network) skip the commit until the next
-    # cycle so an Artifactory hiccup cannot fan out spurious builds.
-    http_code="$(curl -s --connect-timeout 10 --max-time 30 -o folder.json -w '%{http_code}' \
-      -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" "${STORAGE_API_URL}/${folder}/")" || http_code=""
-    if [ "${http_code}" != "200" ] && [ "${http_code}" != "404" ]; then
-      echo "release/${ver}: ${folder}: storage API returned ${http_code:-<none>}, skipping this cycle"
-      continue
-    fi
-
     n_cand=$((n_cand+1))
-    # The variant is already published when the folder lists a nixl_cuNN wheel.
-    if [ "${http_code}" = "200" ] && grep -q "\"/nixl_${variant}-" folder.json; then
+    if printf '%s\n' "${published}" | grep -qx "${sha:0:8}"; then
       continue
     fi
-    echo "${sha} ${ver} ${cuda_major}" >> triggers.txt
+    echo "${sha} ${ver}" >> triggers.txt
     n_build=$((n_build+1))
   done
 
-  echo "release/${ver} (${variant}): candidates=${n_cand} to_build=${n_build}"
+  echo "release/${ver}: candidates=${n_cand} to_build=${n_build}"
 done
 
-echo "=== Poller summary (${variant}): $(wc -l < triggers.txt) build(s) to trigger ==="
+echo "=== Poller summary: $(wc -l < triggers.txt) build(s) to trigger ==="
 cat triggers.txt
