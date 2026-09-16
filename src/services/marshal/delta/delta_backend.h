@@ -31,8 +31,6 @@ namespace nixlMarshal {
  */
 class deltaBackend final : public backend {
 private:
-    const nixlMarshalDeltaConfig cfg_;
-
     struct passkey {
         explicit passkey() = default;
     };
@@ -41,7 +39,7 @@ public:
     static std::shared_ptr<deltaBackend>
     createBackend(const nixlMarshalDeltaConfig &cfg);
 
-    explicit deltaBackend(passkey, const nixlMarshalDeltaConfig &cfg) : backend(), cfg_(cfg) {
+    explicit deltaBackend(passkey, const nixlMarshalDeltaConfig &) : backend() {
         throw std::runtime_error("DeltaBackend: not implemented");
     }
 
@@ -58,17 +56,17 @@ public:
                        const process_slot_input_options_t &opts = {}) override;
 
     static constexpr size_t
-    recommendServiceMemSize(size_t chunked_payload_size, uint32_t max_concurrent_transfers) {
+    recommendServiceMemSize(size_t chunked_payload_size, uint32_t num_slot_groups) {
         constexpr size_t slots = MarshalBackendSizing::slots_per_transfer;
         if (chunked_payload_size > std::numeric_limits<size_t>::max() / slots) {
             throw std::invalid_argument("chunkedPayloadSize too large");
         }
         const size_t per_transfer_size = chunked_payload_size * slots;
-        if (max_concurrent_transfers != 0 &&
-            per_transfer_size > std::numeric_limits<size_t>::max() / max_concurrent_transfers) {
+        if (num_slot_groups != 0 &&
+            per_transfer_size > std::numeric_limits<size_t>::max() / num_slot_groups) {
             throw std::invalid_argument("maxConcurrentTransfers too large");
         }
-        return per_transfer_size * max_concurrent_transfers;
+        return per_transfer_size * num_slot_groups;
     }
 
     memoryRequirements

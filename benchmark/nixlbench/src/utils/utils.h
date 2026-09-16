@@ -30,6 +30,7 @@
 #include <nixl_types.h>
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
+#include <nixl_service.h>
 #include "runtime/runtime.h"
 
 #if HAVE_CUDA
@@ -147,6 +148,17 @@
 #define XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED "blockaligned"
 #define XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED "bytealigned"
 
+// Marshal modes (only used with nixl worker)
+#define XFERBENCH_MARSHAL_DIRECT "direct"
+#define XFERBENCH_MARSHAL_STAGING "staging"
+#define XFERBENCH_MARSHAL_COMPRESS "compress"
+
+struct MarshalSettings {
+    bool requires_service_mem;
+    nixl_marshal_config_t cfg;
+    std::optional<nixl_marshal_opt_args_t> opt_args;
+};
+
 #define IS_PAIRWISE_AND_SG()                                 \
     (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_SG == xferBenchConfig::mode)
@@ -163,6 +175,8 @@ public:
     static std::string target_seg_type;
     static std::string scheme;
     static std::string mode;
+    static std::string marshal_mode;
+    static MarshalSettings marshal;
     static std::string op_type;
     static bool check_consistency;
     static size_t total_buffer_size;
@@ -178,6 +192,7 @@ public:
     static int warmup_iter;
     static int num_threads;
     static bool enable_pt;
+    static bool telemetry;
     static size_t progress_threads;
     static std::string device_list;
     static std::string etcd_endpoints;
@@ -318,6 +333,7 @@ struct xferBenchStats {
     xferMetricStats prepare_duration;
     xferMetricStats post_duration;
     xferMetricStats transfer_duration;
+    xferMetricStats compression_ratio;
 
     void
     clear();

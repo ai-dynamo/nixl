@@ -49,6 +49,8 @@ nixlMarshalDirectOptArgs = svcBind.nixlMarshalDirectOptArgs
 nixlMarshalStagingOptArgs = svcBind.nixlMarshalStagingOptArgs
 nixlMarshalCompressOptArgs = svcBind.nixlMarshalCompressOptArgs
 nixl_marshal_compress_algo_t = svcBind.nixl_marshal_compress_algo_t
+nixl_marshal_compress_data_type_t = svcBind.nixl_marshal_compress_data_type_t
+nixl_marshal_phase_t = svcBind.nixl_marshal_phase_t
 
 recommendServiceMemSize = svcBind.recommendServiceMemSize
 
@@ -62,6 +64,8 @@ class nixl_service_agent_config(nixl_agent_config):
 
     :param mode: Marshal-mode configuration object.  Defaults to
         :class:`nixlMarshalDirectConfig` (passthrough, no staging memory).
+    :param disable_service_notif_callbacks: If True, skip service-layer
+        notification callbacks. Only for backends that cannot inject them.
     """
 
     def __init__(
@@ -73,6 +77,7 @@ class nixl_service_agent_config(nixl_agent_config):
         capture_telemetry: bool = False,
         num_threads: int = 0,
         backends: list[str] = ["UCX"],
+        disable_service_notif_callbacks: bool = False,
     ):
         super().__init__(
             enable_prog_thread=enable_prog_thread,
@@ -83,6 +88,7 @@ class nixl_service_agent_config(nixl_agent_config):
             backends=backends,
         )
         self.mode = mode if mode is not None else svcBind.nixlMarshalDirectConfig()
+        self.disable_service_notif_callbacks = disable_service_notif_callbacks
 
 
 class nixl_service_agent(nixl_agent):
@@ -129,6 +135,7 @@ class nixl_service_agent(nixl_agent):
         svc_config.lthrDelay = 100000
         svc_config.captureTelemetry = nixl_conf.capture_telemetry
         svc_config.mode = nixl_conf.mode
+        svc_config.disableServiceNotifCallbacks = nixl_conf.disable_service_notif_callbacks
 
         # Create the service agent (IS-A nixlAgent).
         self.agent = svcBind.nixlServiceAgent(agent_name, svc_config)
@@ -214,7 +221,7 @@ class nixl_service_agent(nixl_agent):
         self.agent.deregisterServiceMem(dereg_list, backends_list)
 
     # ------------------------------------------------------------------
-    # Transfer overrides that forward marshal_opt_args
+    # Transfer overrides that forward marshal_opt_args and phase
     # ------------------------------------------------------------------
 
     def initialize_xfer(
@@ -226,12 +233,13 @@ class nixl_service_agent(nixl_agent):
         notif_msg: bytes = b"",
         backends: list[str] = [],
         marshal_opt_args=None,
+        phase: Optional[nixl_marshal_phase_t] = None,
     ) -> nixl_xfer_handle:
         op = self.nixl_ops[operation]
         handle_list = [self.backends[b] for b in backends]
         handle = self.agent.createXferReq(
             op, local_descs, remote_descs, remote_agent, notif_msg,
-            handle_list, marshal_opt_args,
+            handle_list, marshal_opt_args, phase,
         )
         return nixl_xfer_handle(self.agent, handle)
 
@@ -246,6 +254,7 @@ class nixl_service_agent(nixl_agent):
         backends: list[str] = [],
         skip_desc_merge: bool = False,
         marshal_opt_args=None,
+        phase: Optional[nixl_marshal_phase_t] = None,
     ) -> nixl_xfer_handle:
         op = self.nixl_ops[operation]
         handle_list = [self.backends[b] for b in backends]
@@ -259,5 +268,6 @@ class nixl_service_agent(nixl_agent):
             handle_list,
             skip_desc_merge,
             marshal_opt_args,
+            phase,
         )
         return nixl_xfer_handle(self.agent, handle)

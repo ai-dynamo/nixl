@@ -19,6 +19,8 @@
 #include <cuda_runtime.h>
 
 #include <future>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "staging_backend.h"
@@ -29,11 +31,17 @@ namespace services {
 
         using runtime_buffer_t = nixlMarshal::runtimeBuffer;
 
+        template<typename CompletionT>
+        [[nodiscard]] const CompletionT *
+        tryGetCompletedSlotData(
+            const nixlMarshal::slot_completion_result_t<CompletionT> &result) noexcept {
+            return std::get_if<CompletionT>(&result);
+        }
+
         constexpr size_t chunk_size = 1024;
         constexpr uintptr_t fake_src_addr = 0x1000;
         constexpr uintptr_t fake_dst_addr = 0x2000;
         constexpr size_t small_xfer_size = 64;
-        constexpr int fake_device_id = 0;
 
         class stagingBackendTest : public ::testing::Test {
         protected:
@@ -198,20 +206,22 @@ namespace services {
             ASSERT_NE(handle, nullptr);
 
             auto future = std::async(std::launch::async, [&] {
-                std::optional<nixlMarshal::outboundSlotCompletionData> result;
-                while (!result.has_value()) {
+                auto result = handle->checkForCompletion();
+                while (std::holds_alternative<nixl_status_t>(result) &&
+                       std::get<nixl_status_t>(result) == NIXL_IN_PROG) {
                     result = handle->checkForCompletion();
                 }
-                return *result;
+                return result;
             });
 
             ASSERT_EQ(future.wait_for(std::chrono::seconds(2)), std::future_status::ready)
                 << "Copy did not complete in time";
 
-            auto result = future.get();
-            EXPECT_EQ(result.size, chunk_size);
-            EXPECT_TRUE(result.options.empty());
-            EXPECT_TRUE(result.metadata.empty());
+            auto completion = future.get();
+            const auto *result = tryGetCompletedSlotData(completion);
+            ASSERT_NE(result, nullptr);
+            EXPECT_EQ(result->size, chunk_size);
+            EXPECT_TRUE(result->metadata.empty());
 
             std::vector<uint8_t> host_dst(chunk_size, 0);
             ASSERT_EQ(cudaMemcpy(host_dst.data(), gpuDst_, chunk_size, cudaMemcpyDeviceToHost),

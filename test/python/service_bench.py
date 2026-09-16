@@ -80,6 +80,16 @@ DEFAULT_CONCURRENT_XFERS = 1
 DIRECTIONS = ("write", "read")
 DEFAULT_DIRECTION = "write"
 
+COMPRESSION_DATA_TYPES = ("char", "uchar", "float16", "float8-e4m3")
+DEFAULT_COMPRESSION_DATA_TYPE = "float16"
+COMPRESSION_DATA_TYPE_ENUMS = {
+    "char": svc.nixl_marshal_compress_data_type_t.CHAR,
+    "uchar": svc.nixl_marshal_compress_data_type_t.UCHAR,
+    "float16": svc.nixl_marshal_compress_data_type_t.FLOAT16,
+    "float8-e4m3": svc.nixl_marshal_compress_data_type_t.FLOAT8_E4M3,
+}
+COMPRESSION_SERVICE_MODES = ("compress", "compress_ans_delta")
+
 
 def _format_size(num_bytes: int) -> str:
     if num_bytes < (1 << 20):
@@ -102,8 +112,8 @@ class ServiceModeDefinition:
     uses_service_mem: bool
     is_rl: bool # RL = Reinforcement Learning
     make_config: Callable[[], object]
-    # (sender_ref_addr, receiver_ref_addr) -> opt_args; non-RL modes ignore it
-    make_opt_args: Callable[[int, int], object]
+    # (sender_ref_addr, receiver_ref_addr, data_type) -> opt_args
+    make_opt_args: Callable[[int, int, object], object]
 
 
 @dataclass(frozen=True)
@@ -118,13 +128,13 @@ SERVICE_MODE_DEFINITIONS = {
         uses_service_mem=False,
         is_rl=False,
         make_config=lambda: svc.nixlMarshalDirectConfig(),
-        make_opt_args=lambda _sr, _rr: svc.nixlMarshalDirectOptArgs(),
+        make_opt_args=lambda _sr, _rr, _dt: svc.nixlMarshalDirectOptArgs(),
     ),
     "staging": ServiceModeDefinition(
         uses_service_mem=True,
         is_rl=False,
         make_config=lambda: svc.nixlMarshalStagingConfig(),
-        make_opt_args=lambda _sr, _rr: svc.nixlMarshalStagingOptArgs(),
+        make_opt_args=lambda _sr, _rr, _dt: svc.nixlMarshalStagingOptArgs(),
     ),
     "compress": ServiceModeDefinition(
         uses_service_mem=True,
@@ -132,13 +142,13 @@ SERVICE_MODE_DEFINITIONS = {
         make_config=lambda: svc.nixlMarshalCompressConfig(
             algo=svc.nixl_marshal_compress_algo_t.ANS,
         ),
-        make_opt_args=lambda _sr, _rr: svc.nixlMarshalCompressOptArgs(),
+        make_opt_args=lambda _sr, _rr, dt: svc.nixlMarshalCompressOptArgs(dataType=dt),
     ),
     "delta": ServiceModeDefinition(
         uses_service_mem=True,
         is_rl=True,
         make_config=lambda: svc.nixlMarshalDeltaConfig(),
-        make_opt_args=lambda sr, rr: svc.nixlMarshalDeltaOptArgs(
+        make_opt_args=lambda sr, rr, _dt: svc.nixlMarshalDeltaOptArgs(
             senderRef=sr,
             receiverRef=rr,
             senderMemType=bindings.nixl_mem_t.VRAM_SEG,
@@ -152,7 +162,7 @@ SERVICE_MODE_DEFINITIONS = {
         make_config=lambda: svc.nixlMarshalCompressConfig(
             algo=svc.nixl_marshal_compress_algo_t.ANS_DELTA,
         ),
-        make_opt_args=lambda sr, rr: svc.nixlMarshalCompressOptArgs(
+        make_opt_args=lambda sr, rr, dt: svc.nixlMarshalCompressOptArgs(
             delta=svc.nixlMarshalDeltaOptArgs(
                 senderRef=sr,
                 receiverRef=rr,
@@ -160,6 +170,7 @@ SERVICE_MODE_DEFINITIONS = {
                 receiverMemType=bindings.nixl_mem_t.VRAM_SEG,
                 elementSize=BUFFER_ELEM_SIZE,
             ),
+            dataType=dt,
         ),
     ),
 }
@@ -425,7 +436,7 @@ def _resolve_service_mode(
     )
 
 
-def _make_service_agent(name: str, mode_config: object):
+def _make_service_agent(name: str, mode_config: object, telemetry: bool):
     """Construct a service agent with the chosen marshal mode + UCX backend."""
     cfg = svc.nixlServiceAgentConfig()
     cfg.useProgThread = True
@@ -434,7 +445,7 @@ def _make_service_agent(name: str, mode_config: object):
     cfg.syncMode = bindings.NIXL_THREAD_SYNC_NONE
     cfg.pthrDelay = 0
     cfg.lthrDelay = 100000
-    cfg.captureTelemetry = False
+    cfg.captureTelemetry = telemetry
     cfg.mode = mode_config
 
     agent = svc.nixlServiceAgent(name, cfg)
@@ -463,10 +474,12 @@ def benchmark(rank: int, num_ranks: int,
                     iterations: int, warmups: int,
                     buffer_bytes: int,
                     service_mode: str,
+                    compression_data_type: str,
                     num_concurrent_xfers: int,
                     random_src: bool = False,
                     safetensors_file: str | None = None,
-                    direction: str = DEFAULT_DIRECTION):
+                    direction: str = DEFAULT_DIRECTION,
+                    telemetry: bool = True):
     """Run the configured WRITE or READ step ``warmups + iterations`` times.
 
     Setup (registration + MD exchange + xfer-request creation) happens once.
@@ -497,10 +510,12 @@ def benchmark(rank: int, num_ranks: int,
     assert iterations > 0
     assert warmups >= 0
     assert service_mode in SERVICE_MODES, service_mode
+    assert compression_data_type in COMPRESSION_DATA_TYPES, compression_data_type
     assert direction in DIRECTIONS, direction
 
     dev_id = torch.cuda.current_device()
     mode = SERVICE_MODE_DEFINITIONS[service_mode]
+    data_type = COMPRESSION_DATA_TYPE_ENUMS[compression_data_type]
 
     # Every rank builds both buffers unconditionally, regardless of
     # direction/role - see _make_buffers' docstring for why the "unused"
@@ -534,7 +549,7 @@ def benchmark(rank: int, num_ranks: int,
     )
 
     # TODO-Roee: support compression backend.
-    agent, backend = _make_service_agent(str(rank), resolved_mode.config)
+    agent, backend = _make_service_agent(str(rank), resolved_mode.config, telemetry)
 
     slot_elems = buffer_bytes // BUFFER_ELEM_SIZE
 
@@ -731,7 +746,9 @@ def benchmark(rank: int, num_ranks: int,
                             bindings.VRAM_SEG,
                             [(dst_slot_addr, buffer_bytes, peer_dev_id)],
                         )
-                        opt_args = mode.make_opt_args(sender_ref_ptr, dst_slot_addr)
+                        opt_args = mode.make_opt_args(
+                            sender_ref_ptr, dst_slot_addr, data_type,
+                        )
                         reqh = agent.createXferReq(
                             bindings.NIXL_WRITE,
                             src,
@@ -740,6 +757,7 @@ def benchmark(rank: int, num_ranks: int,
                             f"from-{rank}-init-{it}-{j}",
                             [backend],
                             opt_args,
+                            phase=svc.nixl_marshal_phase_t.PRE_AND_POST_TRANSFER,
                         )
                         assert reqh != 0
                         concurrent_handles.append(reqh)
@@ -778,7 +796,9 @@ def benchmark(rank: int, num_ranks: int,
                         # receiverRef = this rank's own (decoder's)
                         # reference - swapped relative to WRITE, where rank
                         # 0 is the encoder.
-                        opt_args = mode.make_opt_args(peer_ref_slot, my_dst_addr)
+                        opt_args = mode.make_opt_args(
+                            peer_ref_slot, my_dst_addr, data_type,
+                        )
                         reqh = agent.createXferReq(
                             bindings.NIXL_READ,
                             local_descs,
@@ -787,10 +807,19 @@ def benchmark(rank: int, num_ranks: int,
                             f"from-{rank}-init-{it}-{j}",
                             [backend],
                             opt_args,
+                            phase=svc.nixl_marshal_phase_t.PRE_AND_POST_TRANSFER,
                         )
                         assert reqh != 0
                         concurrent_handles.append(reqh)
                     peer_handles[r] = concurrent_handles
+
+        def collect_total_bytes() -> int:
+            # Only valid when the agent was built with captureTelemetry on
+            return sum(
+                agent.getXferTelemetry(reqh).totalBytes
+                for concurrent_handles in peer_handles.values()
+                for reqh in concurrent_handles
+            )
 
         def release_peer_handles() -> None:
             for concurrent_handles in peer_handles.values():
@@ -903,6 +932,7 @@ def benchmark(rank: int, num_ranks: int,
 
         dist.barrier()
         elapsed_s = 0.0
+        totalBytes = 0
         for i in range(iterations):
             it = warmups + i
             # Perturbation (either branch) uses the local ground-zero i, not
@@ -922,6 +952,8 @@ def benchmark(rank: int, num_ranks: int,
                 create_peer_handles(it, i, sender_ptrs)
                 run_iteration(it)
                 elapsed_s += time.perf_counter() - t0
+                if telemetry:
+                    totalBytes += collect_total_bytes()
             finally:
                 release_peer_handles()
             if needs_rl_read_barriers:
@@ -937,6 +969,9 @@ def benchmark(rank: int, num_ranks: int,
             len(send_to) if send_to else len(recv_from)
         ) * num_concurrent_xfers * buffer_bytes
         bw_gbps = bytes_per_iter / per_iter_s / 1e9 if per_iter_s > 0 else float("inf")
+        compressionRatio = (
+            bytes_per_iter * iterations / totalBytes if totalBytes > 0 else None
+        )
 
         if direction == "write":
             # Verify final contents only on receiver ranks
@@ -1008,6 +1043,7 @@ def benchmark(rank: int, num_ranks: int,
             buffer_bytes,
             resolved_mode.service_mem_bytes,
             resolved_mode.max_concurrent_transfers,
+            compressionRatio,
         )
     except Exception as exc:
         print(f"[service_bench][rank {rank}] benchmark failed: {exc}")
@@ -1018,10 +1054,12 @@ def _worker(rank: int, num_ranks: int,
             iterations: int, warmups: int,
             buffer_bytes: int,
             service_mode: str,
+            compression_data_type: str,
             safetensors_file: str | None,
             random_src: bool,
             num_concurrent_xfers: int,
             direction: str,
+            telemetry: bool,
             master_addr: str, master_port: int,
             dist_backend: str) -> None:
     """Per-rank entry point launched by ``torch.multiprocessing.spawn``.
@@ -1056,10 +1094,11 @@ def _worker(rank: int, num_ranks: int,
             buffer_bytes,
             service_mem_bytes,
             max_concurrent_transfers,
+            compressionRatio,
         ) = benchmark(
             rank, num_ranks, iterations, warmups, buffer_bytes,
-            service_mode, num_concurrent_xfers, random_src,
-            safetensors_file, direction,
+            service_mode, compression_data_type, num_concurrent_xfers, random_src,
+            safetensors_file, direction, telemetry,
         )
         send_to, recv_from = _build_traffic_pattern(rank, num_ranks)
         if direction == "write":
@@ -1070,9 +1109,18 @@ def _worker(rank: int, num_ranks: int,
             role = "read-init+served" if send_to and recv_from else (
                 "read-init" if send_to else "served"
             )
+        compression_line = (
+            f"compression_ratio={compressionRatio:.3f}\n"
+            if compressionRatio is not None else ""
+        )
+        compression_data_type_line = (
+            f"compression_data_type={compression_data_type}\n"
+            if service_mode in COMPRESSION_SERVICE_MODES else ""
+        )
         result_line = (
             f"\n============ Rank {rank} Results =============\n"
             f"svc={service_mode}\n"
+            f"{compression_data_type_line}"
             f"direction={direction}\n"
             f"role={role}\n"
             f"warmups={warmups}\n"
@@ -1080,6 +1128,7 @@ def _worker(rank: int, num_ranks: int,
             f"total={elapsed_s * 1e3:.3f}ms\n"
             f"per_iter={per_iter_s * 1e6:.1f}us\n"
             f"bw={bw_gbps:.3f} GB/s\n"
+            f"{compression_line}"
             f"=========================================\n"
         )
         rank_results = [None] * num_ranks
@@ -1113,6 +1162,8 @@ def _worker(rank: int, num_ranks: int,
             mode = SERVICE_MODE_DEFINITIONS[service_mode]
             summary = "\n========== Test Configuration ===========\n"
             summary += f"direction={direction}\n"
+            if service_mode in COMPRESSION_SERVICE_MODES:
+                summary += f"compression_data_type={compression_data_type}\n"
             summary += f"buffer_size={_format_size(buffer_bytes)}\n"
             summary += f"concurrent_xfers={num_concurrent_xfers}\n"
             if mode.uses_service_mem:
@@ -1168,6 +1219,14 @@ def parse_args() -> argparse.Namespace:
                              "allocates no service memory; any other mode "
                              "sizes its service-memory allocation from "
                              "recommendServiceMemSize")
+    parser.add_argument(
+        "--compression-data-type",
+        choices=COMPRESSION_DATA_TYPES,
+        default=DEFAULT_COMPRESSION_DATA_TYPE,
+        help="nvCOMP ANS data type for compression modes; ignored by "
+             "non-compression modes "
+             f"(default: {DEFAULT_COMPRESSION_DATA_TYPE})",
+    )
     parser.add_argument("--safetensors-file", type=str, default=None,
                         help="path to a .safetensors file whose tensor data "
                              "will be used as the send buffer instead of "
@@ -1181,6 +1240,11 @@ def parse_args() -> argparse.Namespace:
                              "compare 'compress' vs 'compress_ans_delta' on the "
                              "same data. No effect for RL modes or when "
                              "--safetensors-file is given.")
+    parser.add_argument("--disable-telemetry", dest="telemetry",
+                        action="store_false",
+                        help="disable telemetry capture on the service agent. "
+                             "Telemetry is required for the compression_ratio "
+                             "(default: enabled)")
     parser.add_argument("--dist-backend", default="gloo",
                         choices=("gloo", "nccl"),
                         help="torch.distributed backend for the bootstrap "
@@ -1206,8 +1270,9 @@ def main() -> None:
     mp.spawn(
         _worker,
         args=(args.num_ranks, args.iterations, args.warmups, buffer_bytes,
-              args.service_mode, args.safetensors_file,
+              args.service_mode, args.compression_data_type, args.safetensors_file,
               args.random_src, args.concurrent_xfers, args.direction,
+              args.telemetry,
               args.master_addr, args.master_port, args.dist_backend),
         nprocs=args.num_ranks,
         join=True,

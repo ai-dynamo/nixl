@@ -25,7 +25,9 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <cuda_runtime_api.h>
@@ -44,15 +46,33 @@ namespace services {
             using nixlMarshal::process_slot_input_options_t;
             using nixlMarshal::runtimeBuffer;
             using nixlMarshal::slotBuffers;
-            namespace ChunkDivision = nixlMarshal::ChunkDivision;
+            namespace AnsDataType = nixlMarshal::AnsDataType;
             namespace ReadOnlyReferenceStructuredMemory =
                 nixlMarshal::ReadOnlyReferenceStructuredMemory;
             namespace SlotOverhead = nixlMarshal::SlotOverhead;
             namespace UserCudaStream = nixlMarshal::UserCudaStream;
             namespace WriteableWorkspaceMemory = nixlMarshal::WriteableWorkspaceMemory;
 
-            constexpr size_t payload_bytes = 16 * 1024 * 1024;
+            template<typename CompletionT>
+            [[nodiscard]] const CompletionT *
+            tryGetCompletedSlotData(
+                const nixlMarshal::slot_completion_result_t<CompletionT> &result) noexcept {
+                return std::get_if<CompletionT>(&result);
+            }
+
+            constexpr size_t payload_bytes = 45 * 1024 * 1024 + 12340;
             constexpr size_t ref_element_size = sizeof(uint8_t);
+            constexpr size_t destination_canary_bytes = 64;
+            constexpr uint8_t destination_canary_value = 0xA5;
+            constexpr std::array<nixl_marshal_compress_data_type_t,
+                                 static_cast<size_t>(
+                                     nixl_marshal_compress_data_type_t::NUM_COMPRESS_DATA_TYPES)>
+                ans_data_types = {
+                    nixl_marshal_compress_data_type_t::CHAR,
+                    nixl_marshal_compress_data_type_t::UCHAR,
+                    nixl_marshal_compress_data_type_t::FLOAT16,
+                    nixl_marshal_compress_data_type_t::FLOAT8_E4M3,
+            };
 
 
             constexpr size_t ref_perturb_stride = 128;
@@ -64,22 +84,34 @@ namespace services {
                 return absl::Span<std::byte>(reinterpret_cast<std::byte *>(p), n);
             }
 
+            constexpr size_t nvcomp_chunk_size_bytes = 1U << 16; // 64 KB, mirrors backend constant
+
             size_t
-            totalCompressedSize(const std::vector<ChunkDivision::segment> &segments) {
-                size_t total = 0;
-                for (const auto &seg : segments) {
-                    total += seg.size;
-                }
-                return total;
+            numChunksFor(size_t payload_bytes) {
+                return std::max<size_t>(
+                    1, (payload_bytes + nvcomp_chunk_size_bytes - 1) / nvcomp_chunk_size_bytes);
             }
 
-            const std::vector<ChunkDivision::segment> &
-            chunkSegmentsOf(const nixlMarshal::outboundSlotCompletionData &completion) {
-                EXPECT_FALSE(completion.options.empty());
-                const auto &output =
-                    std::get<ChunkDivision::processSlotOutput>(*completion.options.begin());
-                EXPECT_NE(output.segments, nullptr);
-                return *output.segments;
+            // Reconstructs the total payload size the outbound handle is expected to report by
+            // reading the packed "[offsets[N]][sizes[N]]" header that launchAnsCompress writes to
+            // the front of the compressed buffer. The coalesced payload ends at the last chunk's
+            // offset plus its (unpadded) size, and the header occupies 2 * N * sizeof(size_t).
+            size_t
+            expectedPackedPayloadSize(const void *packed_dst, size_t num_chunks) {
+                std::vector<size_t> offsets(num_chunks);
+                std::vector<size_t> sizes(num_chunks);
+                const auto *base = reinterpret_cast<const std::byte *>(packed_dst);
+                EXPECT_EQ(
+                    cudaMemcpy(
+                        offsets.data(), base, sizeof(size_t) * num_chunks, cudaMemcpyDeviceToHost),
+                    cudaSuccess);
+                EXPECT_EQ(cudaMemcpy(sizes.data(),
+                                     base + sizeof(size_t) * num_chunks,
+                                     sizeof(size_t) * num_chunks,
+                                     cudaMemcpyDeviceToHost),
+                          cudaSuccess);
+                const size_t header_bytes = 2 * sizeof(size_t) * num_chunks;
+                return header_bytes + offsets.back() + sizes.back();
             }
 
             const char *
@@ -155,7 +187,7 @@ namespace services {
                 workspaceBytes_ = ws_req->slotWorkspaceSize;
 
                 ASSERT_EQ(cudaMalloc(&gpuSrc_, payload_bytes), cudaSuccess);
-                ASSERT_EQ(cudaMalloc(&gpuDst_, slotBytes_), cudaSuccess);
+                ASSERT_EQ(cudaMalloc(&gpuDst_, slotBytes_ + destination_canary_bytes), cudaSuccess);
                 ASSERT_EQ(cudaMalloc(&gpuRoundtrip_, payload_bytes), cudaSuccess);
                 ASSERT_EQ(cudaMalloc(&gpuWorkspace_, workspaceBytes_), cudaSuccess);
                 ASSERT_EQ(cudaMalloc(&gpuWorkspaceInbound_, workspaceBytes_), cudaSuccess);
@@ -211,12 +243,18 @@ namespace services {
             }
 
             process_slot_input_options_t
-            makeOptions(const runtimeBuffer &workspace) const {
+            makeOptions(
+                const runtimeBuffer &workspace,
+                std::optional<nixl_marshal_compress_data_type_t> data_type = std::nullopt) const {
                 process_slot_input_options_t opts{
                     {option_t::WRITEABLE_WORKSPACE_MEMORY,
                      WriteableWorkspaceMemory::processSlotInput{workspace}},
                     {option_t::USER_CUDA_STREAM, UserCudaStream::processSlotInput{stream_}},
                 };
+                if (data_type.has_value()) {
+                    opts.emplace(option_t::ANS_DATA_TYPE,
+                                 AnsDataType::processSlotInput{*data_type});
+                }
                 if (isDelta()) {
                     runtimeBuffer ref(asByteSpan(gpuRef_, payload_bytes), mem_space_t::DEVICE);
                     opts.emplace(
@@ -231,10 +269,11 @@ namespace services {
             waitForCompletion(Handle &handle) {
                 auto future = std::async(std::launch::async, [&] {
                     auto result = handle->checkForCompletion();
-                    while (!result.has_value()) {
+                    while (std::holds_alternative<nixl_status_t>(result) &&
+                           std::get<nixl_status_t>(result) == NIXL_IN_PROG) {
                         result = handle->checkForCompletion();
                     }
-                    return *result;
+                    return result;
                 });
                 EXPECT_EQ(future.wait_for(completion_timeout), std::future_status::ready)
                     << "operation did not complete within timeout";
@@ -251,6 +290,20 @@ namespace services {
             EXPECT_GT(workspaceBytes_, 0U);
         }
 
+        TEST_P(compressionBackendTest, InboundRejectsBufferSmallerThanPackedHeader) {
+            const size_t packed_header_size = 2 * sizeof(size_t) * numChunksFor(payload_bytes);
+            ASSERT_GT(packed_header_size, 1U);
+
+            runtimeBuffer src(asByteSpan(gpuDst_, packed_header_size - 1), mem_space_t::DEVICE);
+            runtimeBuffer dst(asByteSpan(gpuRoundtrip_, payload_bytes), mem_space_t::DEVICE);
+            runtimeBuffer workspace(asByteSpan(gpuWorkspaceInbound_, workspaceBytes_),
+                                    mem_space_t::DEVICE);
+
+            EXPECT_THROW(
+                backend_->inboundProcessSlot(slotBuffers{src, dst}, "", makeOptions(workspace)),
+                std::runtime_error);
+        }
+
         TEST_P(compressionBackendTest, OutboundCompressionProducesNonEmptyOutput) {
             runtimeBuffer src(asByteSpan(gpuSrc_, payload_bytes), mem_space_t::DEVICE);
             runtimeBuffer dst(asByteSpan(gpuDst_, slotBytes_), mem_space_t::DEVICE);
@@ -261,12 +314,18 @@ namespace services {
                 backend_->outboundProcessSlot(slotBuffers{src, dst}, makeOptions(workspace));
             ASSERT_NE(handle, nullptr);
 
-            auto completion = waitForCompletion(handle);
-            const auto &segments = chunkSegmentsOf(completion);
-            ASSERT_FALSE(segments.empty());
-            const size_t compressed_size = totalCompressedSize(segments);
-            EXPECT_GT(compressed_size, 0U);
-            EXPECT_LE(compressed_size, slotBytes_);
+            auto completion_result = waitForCompletion(handle);
+            const auto *completion = tryGetCompletedSlotData(completion_result);
+            ASSERT_NE(completion, nullptr);
+            const size_t num_chunks = numChunksFor(payload_bytes);
+            const size_t header_bytes = 2 * sizeof(size_t) * num_chunks;
+            EXPECT_GT(completion->size, header_bytes)
+                << "payload must include more than just the offsets/sizes header";
+            EXPECT_LE(completion->size, slotBytes_);
+            EXPECT_EQ(completion->size, expectedPackedPayloadSize(gpuDst_, num_chunks))
+                << "reported size must match header + last chunk offset + last chunk size";
+            EXPECT_LT(completion->size, payload_bytes)
+                << "compressible input should shrink below the original payload";
 
             std::array<uint8_t, 64> dst_prefix{};
             ASSERT_EQ(
@@ -289,26 +348,35 @@ namespace services {
             auto compress_handle =
                 backend_->outboundProcessSlot(slotBuffers{src, dst}, outbound_opts);
             ASSERT_NE(compress_handle, nullptr);
-            auto compress_completion = waitForCompletion(compress_handle);
-            const auto &outbound_segments = chunkSegmentsOf(compress_completion);
-            ASSERT_FALSE(outbound_segments.empty());
-
-            auto inbound_segments = std::make_shared<std::vector<ChunkDivision::segment>>(
-                outbound_segments.begin(), outbound_segments.end());
+            auto compress_result = waitForCompletion(compress_handle);
+            const auto *compress_completion = tryGetCompletedSlotData(compress_result);
+            ASSERT_NE(compress_completion, nullptr);
+            const size_t num_chunks = numChunksFor(payload_bytes);
+            ASSERT_EQ(compress_completion->size, expectedPackedPayloadSize(gpuDst_, num_chunks));
+            ASSERT_LE(compress_completion->size, slotBytes_);
 
             runtimeBuffer roundtrip_dst(asByteSpan(gpuRoundtrip_, payload_bytes),
                                         mem_space_t::DEVICE);
 
-            auto decompress_opts = makeOptions(inbound_workspace);
-            decompress_opts[option_t::CHUNK_DIVISION] =
-                ChunkDivision::processSlotInput{std::move(inbound_segments)};
+            // The compressed buffer is self-describing: the inbound path reads the packed
+            // offsets/sizes header directly, so no chunk-division option is supplied. Only the
+            // reported payload size is handed to the receiver, exercising that it is sufficient
+            // to fully reconstruct the original data.
+            runtimeBuffer compressed(asByteSpan(gpuDst_, compress_completion->size),
+                                     mem_space_t::DEVICE);
 
-            auto decompress_handle = backend_->inboundProcessSlot(
-                slotBuffers{dst, roundtrip_dst}, compress_completion.metadata, decompress_opts);
+            auto decompress_opts = makeOptions(inbound_workspace);
+
+            auto decompress_handle =
+                backend_->inboundProcessSlot(slotBuffers{compressed, roundtrip_dst},
+                                             compress_completion->metadata,
+                                             decompress_opts);
             ASSERT_NE(decompress_handle, nullptr);
 
-            auto decompress_completion = waitForCompletion(decompress_handle);
-            EXPECT_EQ(decompress_completion.size, payload_bytes);
+            auto decompress_result = waitForCompletion(decompress_handle);
+            const auto *decompress_completion = tryGetCompletedSlotData(decompress_result);
+            ASSERT_NE(decompress_completion, nullptr);
+            EXPECT_EQ(decompress_completion->size, payload_bytes);
 
             std::vector<uint8_t> host_roundtrip(payload_bytes);
             ASSERT_EQ(cudaMemcpy(host_roundtrip.data(),
@@ -319,6 +387,93 @@ namespace services {
             EXPECT_EQ(host_roundtrip, hostSrc_);
         }
 
+        TEST_P(compressionBackendTest, OneWorstCaseSizedBackendRoundTripsAllAnsDataTypes) {
+            runtimeBuffer src(asByteSpan(gpuSrc_, payload_bytes), mem_space_t::DEVICE);
+            runtimeBuffer dst(asByteSpan(gpuDst_, slotBytes_), mem_space_t::DEVICE);
+            runtimeBuffer outbound_workspace(asByteSpan(gpuWorkspace_, workspaceBytes_),
+                                             mem_space_t::DEVICE);
+            runtimeBuffer inbound_workspace(asByteSpan(gpuWorkspaceInbound_, workspaceBytes_),
+                                            mem_space_t::DEVICE);
+            runtimeBuffer roundtrip_dst(asByteSpan(gpuRoundtrip_, payload_bytes),
+                                        mem_space_t::DEVICE);
+
+            for (const auto data_type : ans_data_types) {
+                SCOPED_TRACE(::testing::Message() << "data_type=" << static_cast<int>(data_type));
+                ASSERT_EQ(cudaMemset(gpuDst_, 0, slotBytes_), cudaSuccess);
+                ASSERT_EQ(cudaMemset(gpuRoundtrip_, 0, payload_bytes), cudaSuccess);
+
+                auto compress_handle = backend_->outboundProcessSlot(
+                    slotBuffers{src, dst}, makeOptions(outbound_workspace, data_type));
+                ASSERT_NE(compress_handle, nullptr);
+                auto compress_result = waitForCompletion(compress_handle);
+                const auto *compress_completion = tryGetCompletedSlotData(compress_result);
+                ASSERT_NE(compress_completion, nullptr);
+                ASSERT_LE(compress_completion->size, slotBytes_);
+
+                runtimeBuffer compressed(asByteSpan(gpuDst_, compress_completion->size),
+                                         mem_space_t::DEVICE);
+                auto decompress_handle =
+                    backend_->inboundProcessSlot(slotBuffers{compressed, roundtrip_dst},
+                                                 compress_completion->metadata,
+                                                 makeOptions(inbound_workspace));
+                ASSERT_NE(decompress_handle, nullptr);
+                auto decompress_result = waitForCompletion(decompress_handle);
+                const auto *decompress_completion = tryGetCompletedSlotData(decompress_result);
+                ASSERT_NE(decompress_completion, nullptr);
+                EXPECT_EQ(decompress_completion->size, payload_bytes);
+
+                std::vector<uint8_t> host_roundtrip(payload_bytes);
+                ASSERT_EQ(cudaMemcpy(host_roundtrip.data(),
+                                     gpuRoundtrip_,
+                                     host_roundtrip.size(),
+                                     cudaMemcpyDeviceToHost),
+                          cudaSuccess);
+                EXPECT_EQ(host_roundtrip, hostSrc_);
+            }
+        }
+
+        TEST_P(compressionBackendTest, HighEntropyPackedOutputStaysWithinAdvertisedCapacity) {
+            uint32_t random_state = 0xC001CAFE;
+            for (auto &value : hostSrc_) {
+                random_state = random_state * 1664525U + 1013904223U;
+                value = static_cast<uint8_t>(random_state >> 24U);
+            }
+            ASSERT_EQ(cudaMemcpy(gpuSrc_, hostSrc_.data(), hostSrc_.size(), cudaMemcpyHostToDevice),
+                      cudaSuccess);
+
+            runtimeBuffer src(asByteSpan(gpuSrc_, payload_bytes), mem_space_t::DEVICE);
+            runtimeBuffer dst(asByteSpan(gpuDst_, slotBytes_), mem_space_t::DEVICE);
+            runtimeBuffer workspace(asByteSpan(gpuWorkspace_, workspaceBytes_),
+                                    mem_space_t::DEVICE);
+            auto *canary_begin = reinterpret_cast<std::byte *>(gpuDst_) + slotBytes_;
+
+            for (const auto data_type : ans_data_types) {
+                SCOPED_TRACE(::testing::Message() << "data_type=" << static_cast<int>(data_type));
+                ASSERT_EQ(cudaMemset(gpuDst_, 0, slotBytes_), cudaSuccess);
+                ASSERT_EQ(
+                    cudaMemset(canary_begin, destination_canary_value, destination_canary_bytes),
+                    cudaSuccess);
+
+                auto compress_handle = backend_->outboundProcessSlot(
+                    slotBuffers{src, dst}, makeOptions(workspace, data_type));
+                ASSERT_NE(compress_handle, nullptr);
+                auto completion_result = waitForCompletion(compress_handle);
+                const auto *completion = tryGetCompletedSlotData(completion_result);
+                ASSERT_NE(completion, nullptr);
+                EXPECT_LE(completion->size, slotBytes_);
+                EXPECT_EQ(completion->size,
+                          expectedPackedPayloadSize(gpuDst_, numChunksFor(payload_bytes)));
+
+                std::array<uint8_t, destination_canary_bytes> canary{};
+                ASSERT_EQ(
+                    cudaMemcpy(canary.data(), canary_begin, canary.size(), cudaMemcpyDeviceToHost),
+                    cudaSuccess);
+                EXPECT_TRUE(std::all_of(canary.begin(), canary.end(), [](uint8_t value) {
+                    return value == destination_canary_value;
+                }));
+            }
+        }
+
         TEST_P(compressionBackendTest, OutboundInboundRoundTripWithSmallerRuntimePayload) {
             // The configured payload is an upper bound. A final service slot can be smaller and
             // must still fit the workspace provisioned from that upper bound. The 1152-byte
@@ -326,6 +481,7 @@ namespace services {
             constexpr size_t runtime_payload_shortfall_bytes = 1152;
             constexpr size_t runtime_payload_bytes =
                 payload_bytes - runtime_payload_shortfall_bytes;
+            const size_t expected_num_chunks = numChunksFor(runtime_payload_bytes);
 
             runtimeBuffer src(asByteSpan(gpuSrc_, runtime_payload_bytes), mem_space_t::DEVICE);
             runtimeBuffer dst(asByteSpan(gpuDst_, slotBytes_), mem_space_t::DEVICE);
@@ -337,24 +493,32 @@ namespace services {
             auto compress_handle = backend_->outboundProcessSlot(slotBuffers{src, dst},
                                                                  makeOptions(outbound_workspace));
             ASSERT_NE(compress_handle, nullptr);
-            auto compress_completion = waitForCompletion(compress_handle);
-            const auto &outbound_segments = chunkSegmentsOf(compress_completion);
-            ASSERT_FALSE(outbound_segments.empty());
+            auto compress_result = waitForCompletion(compress_handle);
+            const auto *compress_completion = tryGetCompletedSlotData(compress_result);
+            ASSERT_NE(compress_completion, nullptr);
 
-            auto inbound_segments = std::make_shared<std::vector<ChunkDivision::segment>>(
-                outbound_segments.begin(), outbound_segments.end());
+            const size_t header_bytes = 2 * sizeof(size_t) * expected_num_chunks;
+            EXPECT_GT(compress_completion->size, header_bytes);
+            EXPECT_LE(compress_completion->size, slotBytes_);
+            EXPECT_EQ(compress_completion->size,
+                      expectedPackedPayloadSize(gpuDst_, expected_num_chunks));
+
             runtimeBuffer roundtrip_dst(asByteSpan(gpuRoundtrip_, runtime_payload_bytes),
                                         mem_space_t::DEVICE);
+            runtimeBuffer compressed(asByteSpan(gpuDst_, compress_completion->size),
+                                     mem_space_t::DEVICE);
 
             auto decompress_opts = makeOptions(inbound_workspace);
-            decompress_opts[option_t::CHUNK_DIVISION] =
-                ChunkDivision::processSlotInput{std::move(inbound_segments)};
-            auto decompress_handle = backend_->inboundProcessSlot(
-                slotBuffers{dst, roundtrip_dst}, compress_completion.metadata, decompress_opts);
+            auto decompress_handle =
+                backend_->inboundProcessSlot(slotBuffers{compressed, roundtrip_dst},
+                                             compress_completion->metadata,
+                                             decompress_opts);
             ASSERT_NE(decompress_handle, nullptr);
 
-            auto decompress_completion = waitForCompletion(decompress_handle);
-            EXPECT_EQ(decompress_completion.size, runtime_payload_bytes);
+            auto decompress_result = waitForCompletion(decompress_handle);
+            const auto *decompress_completion = tryGetCompletedSlotData(decompress_result);
+            ASSERT_NE(decompress_completion, nullptr);
+            EXPECT_EQ(decompress_completion->size, runtime_payload_bytes);
 
             std::vector<uint8_t> host_roundtrip(runtime_payload_bytes);
             ASSERT_EQ(cudaMemcpy(host_roundtrip.data(),
@@ -366,13 +530,13 @@ namespace services {
         }
 
         TEST_P(compressionBackendTest, OutboundInboundRoundTripWithNonAlignedPayload) {
-            constexpr size_t nvcomp_chunk_size_bytes = 1U << 18; // 256 KB, mirrors backend constant
             constexpr size_t k_remainder_bytes =
                 12340; // even (FP16-safe), non-zero, non-power-of-2
+            constexpr size_t nvcomp_small_chunk_size_bytes = 1U << 14;
             constexpr size_t k_non_aligned_payload_bytes =
-                3 * nvcomp_chunk_size_bytes + k_remainder_bytes;
+                3 * nvcomp_small_chunk_size_bytes + k_remainder_bytes;
             constexpr size_t expected_num_chunks = 4;
-            static_assert(k_non_aligned_payload_bytes % nvcomp_chunk_size_bytes != 0,
+            static_assert(k_non_aligned_payload_bytes % nvcomp_small_chunk_size_bytes != 0,
                           "payload must not divide evenly into the nvcomp chunk size");
 
             nixlMarshalCompressConfig cfg{};
@@ -465,28 +629,31 @@ namespace services {
             auto compress_handle = backend->outboundProcessSlot(slotBuffers{src, dst},
                                                                 build_opts(gpu_outbound_ws.ptr));
             ASSERT_NE(compress_handle, nullptr);
-            auto compress_completion = waitForCompletion(compress_handle);
-            const auto &outbound_segments = chunkSegmentsOf(compress_completion);
-            ASSERT_EQ(outbound_segments.size(), expected_num_chunks)
-                << "non-aligned payload should produce ceil(payload / chunkSize) chunks";
-            const size_t compressed_total = totalCompressedSize(outbound_segments);
-            EXPECT_GT(compressed_total, 0U);
-            EXPECT_LE(compressed_total, slot_bytes);
+            auto compress_result = waitForCompletion(compress_handle);
+            const auto *compress_completion = tryGetCompletedSlotData(compress_result);
+            ASSERT_NE(compress_completion, nullptr);
 
-            auto inbound_segments = std::make_shared<std::vector<ChunkDivision::segment>>(
-                outbound_segments.begin(), outbound_segments.end());
+            const size_t header_bytes = 2 * sizeof(size_t) * expected_num_chunks;
+            EXPECT_GT(compress_completion->size, header_bytes);
+            EXPECT_LE(compress_completion->size, slot_bytes);
+            EXPECT_EQ(compress_completion->size,
+                      expectedPackedPayloadSize(gpu_dst.ptr, expected_num_chunks));
 
             runtimeBuffer roundtrip_dst(asByteSpan(gpu_roundtrip.ptr, k_non_aligned_payload_bytes),
                                         mem_space_t::DEVICE);
-            auto decompress_opts = build_opts(gpu_inbound_ws.ptr);
-            decompress_opts[option_t::CHUNK_DIVISION] =
-                ChunkDivision::processSlotInput{std::move(inbound_segments)};
 
-            auto decompress_handle = backend->inboundProcessSlot(
-                slotBuffers{dst, roundtrip_dst}, compress_completion.metadata, decompress_opts);
+            runtimeBuffer compressed(asByteSpan(gpu_dst.ptr, compress_completion->size),
+                                     mem_space_t::DEVICE);
+            auto decompress_opts = build_opts(gpu_inbound_ws.ptr);
+            auto decompress_handle =
+                backend->inboundProcessSlot(slotBuffers{compressed, roundtrip_dst},
+                                            compress_completion->metadata,
+                                            decompress_opts);
             ASSERT_NE(decompress_handle, nullptr);
-            auto decompress_completion = waitForCompletion(decompress_handle);
-            EXPECT_EQ(decompress_completion.size, k_non_aligned_payload_bytes);
+            auto decompress_result = waitForCompletion(decompress_handle);
+            const auto *decompress_completion = tryGetCompletedSlotData(decompress_result);
+            ASSERT_NE(decompress_completion, nullptr);
+            EXPECT_EQ(decompress_completion->size, k_non_aligned_payload_bytes);
 
             std::vector<uint8_t> host_roundtrip(k_non_aligned_payload_bytes);
             ASSERT_EQ(cudaMemcpy(host_roundtrip.data(),
@@ -495,6 +662,28 @@ namespace services {
                                  cudaMemcpyDeviceToHost),
                       cudaSuccess);
             EXPECT_EQ(host_roundtrip, host_payload);
+        }
+
+        TEST_P(compressionBackendTest, OutboundFailsWhenWorkspaceTooSmall) {
+            runtimeBuffer src(asByteSpan(gpuSrc_, payload_bytes), mem_space_t::DEVICE);
+            runtimeBuffer dst(asByteSpan(gpuDst_, slotBytes_), mem_space_t::DEVICE);
+
+            // The ANS_DELTA path first carves a full-payload staging buffer out of the
+            // workspace, so leave room for that (backed by the real allocation) while still
+            // starving the nvcomp bookkeeping/temp region that follows it. For plain ANS a
+            // handful of bytes is already too small for the per-chunk pointer/size arrays.
+            // The bookkeeping region is only a few KB, so starve it with a tiny amount rather
+            // than a value that would exceed the (surprisingly small) real workspace.
+            constexpr size_t starved_bookkeeping_bytes = 256;
+            const size_t insufficient_workspace_bytes =
+                (isDelta() ? payload_bytes : 0) + starved_bookkeeping_bytes;
+            ASSERT_LT(insufficient_workspace_bytes, workspaceBytes_);
+            runtimeBuffer tiny_workspace(asByteSpan(gpuWorkspace_, insufficient_workspace_bytes),
+                                         mem_space_t::DEVICE);
+
+            EXPECT_THROW(
+                backend_->outboundProcessSlot(slotBuffers{src, dst}, makeOptions(tiny_workspace)),
+                std::runtime_error);
         }
 
         INSTANTIATE_TEST_SUITE_P(

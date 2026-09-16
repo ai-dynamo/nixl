@@ -1,13 +1,25 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <gtest/gtest.h>
+#include <gmock/gmock.h>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <thread>
 #include <random>
 #include <type_traits>
 #include <vector>
 #include "absl/cleanup/cleanup.h"
+#include "compression_backend.h"
+#include "delta_backend.h"
 #include "nixl_service.h"
 #include "nixl_service_data.h"
+#include "staging_backend.h"
+#include "unit/services/marshals/mock_marshal_backend.h"
 #include <cuda_runtime.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -39,6 +51,31 @@ namespace services {
         EXPECT_THROW((void)deserializeFingerprint(truncated), std::runtime_error);
     }
 
+    TEST(ServiceAgentData, NullBackendRejected) {
+        EXPECT_THROW(
+            { nixlServiceAgentData(nixlMarshalStagingConfig{}, 128 * 1024, false, nullptr); },
+            std::invalid_argument);
+        EXPECT_THROW(
+            { nixlServiceAgentData(nixlMarshalDirectConfig{}, 128 * 1024, false, nullptr); },
+            std::invalid_argument);
+    }
+
+    TEST(ServiceCompressionOptions, DefaultDataTypeIsFloat16) {
+        const nixlMarshalCompressOptArgs options;
+        EXPECT_EQ(options.dataType, nixl_marshal_compress_data_type_t::FLOAT16);
+    }
+
+    TEST(ServiceReadPayloads, RReqCompressionDataTypeValidation) {
+        EXPECT_TRUE(isValidCompressionDataType(nixl_marshal_compress_data_type_t::CHAR));
+        EXPECT_TRUE(isValidCompressionDataType(nixl_marshal_compress_data_type_t::UCHAR));
+        EXPECT_TRUE(isValidCompressionDataType(nixl_marshal_compress_data_type_t::FLOAT16));
+        EXPECT_TRUE(isValidCompressionDataType(nixl_marshal_compress_data_type_t::FLOAT8_E4M3));
+        EXPECT_FALSE(
+            isValidCompressionDataType(nixl_marshal_compress_data_type_t::NUM_COMPRESS_DATA_TYPES));
+        EXPECT_FALSE(
+            isValidCompressionDataType(static_cast<nixl_marshal_compress_data_type_t>(UINT8_MAX)));
+    }
+
     // Infra-free round-trip tests for the new READ protocol payloads (RREQ/RPOSTED/RRSLOT/
     // RABORT/RABORT_ACK/RNAK). None of these are produced or consumed by any code path yet;
     // these tests only verify each payload's own serialize()/deserialize-ctor fidelity.
@@ -63,12 +100,14 @@ namespace services {
         {
             // Without delta opt-args.
             rReqPayload payload(7, serialized_src_list, recv_slots, recv_mem_spaces, fingerprint);
+            payload.dataType = nixl_marshal_compress_data_type_t::FLOAT8_E4M3;
             rReqPayload deserialized(payload.serialize());
             EXPECT_EQ(deserialized.xferId, 7u);
             EXPECT_EQ(deserialized.serializedSrcList, serialized_src_list);
             EXPECT_EQ(deserialized.recvSlotDescriptors, recv_slots);
             EXPECT_EQ(deserialized.recvMemSpaces, recv_mem_spaces);
             EXPECT_EQ(deserialized.fingerprint, fingerprint);
+            EXPECT_EQ(deserialized.dataType, nixl_marshal_compress_data_type_t::FLOAT8_E4M3);
             EXPECT_FALSE(deserialized.deltaOptArgs.has_value());
         }
         {
@@ -86,22 +125,17 @@ namespace services {
     }
 
     TEST(ServiceReadPayloads, RPostedRoundTrip) {
-        auto segments = std::make_shared<std::vector<nixlMarshal::ChunkDivision::segment>>();
-        segments->push_back({0, 4096});
-        segments->push_back({8192, 2048});
-
-        rPostedPayload payload(11, 1, 6144, segments, 0x10000, "compress-metadata");
+        constexpr size_t wire_size = 4096;
+        constexpr auto backend = nixl_marshal_mode_t::COMPRESSION;
+        rPostedPayload payload(11, 1, 6144, wire_size, 0x10000, "compress-metadata", backend);
         rPostedPayload deserialized(payload.serialize());
         EXPECT_EQ(deserialized.xferId, 11u);
         EXPECT_EQ(deserialized.slotIndex, 1u);
         EXPECT_EQ(deserialized.originalSize, 6144u);
-        ASSERT_EQ(deserialized.postedSegments->size(), segments->size());
-        for (size_t i = 0; i < segments->size(); ++i) {
-            EXPECT_EQ((*deserialized.postedSegments)[i].offset, (*segments)[i].offset);
-            EXPECT_EQ((*deserialized.postedSegments)[i].size, (*segments)[i].size);
-        }
+        EXPECT_EQ(deserialized.wireSize, wire_size);
         EXPECT_EQ(deserialized.dstByteOffset, static_cast<size_t>(0x10000));
         EXPECT_EQ(deserialized.metadata, "compress-metadata");
+        EXPECT_EQ(deserialized.backend, backend);
     }
 
     TEST(ServiceReadPayloads, RRSlotRoundTrip) {
@@ -174,6 +208,14 @@ namespace services {
                              nixlServiceAgentConfig cfg,
                              size_t chunked_payload_size)
                 : nixlServiceAgent(name, prepare(std::move(cfg), chunked_payload_size)) {}
+
+            testServiceAgent(const std::string &name,
+                             nixlServiceAgentConfig cfg,
+                             size_t chunked_payload_size,
+                             std::shared_ptr<nixlMarshal::backend> backend)
+                : nixlServiceAgent(
+                      name,
+                      prepare(std::move(cfg), chunked_payload_size, std::move(backend))) {}
         };
 
         template<typename MarshalConfig>
@@ -201,13 +243,19 @@ namespace services {
     } // namespace
 
     template<typename MarshalConfig,
-             size_t slotSize,
-             size_t slotPerServiceMem,
-             size_t chunkSize,
-             nixl_marshal_compress_algo_t compressAlgo = nixl_marshal_compress_algo_t::ANS>
+             size_t slotPerServiceMemT,
+             size_t chunkSizeT,
+             nixl_marshal_compress_algo_t compressAlgo = nixl_marshal_compress_algo_t::ANS,
+             size_t memorySizeT = 1024 * chunkSizeT>
     class nixlServiceTestF : public ::testing::Test {
     public:
         using marshal_config_t = MarshalConfig;
+
+        // Public so TYPED_TEST can use them as TypeParam:: constants (TestFixture is the
+        // empty nixlServiceTest wrapper; inherited static constexpr values are not constant
+        // expressions when named through that intermediate class).
+        static constexpr size_t memSize = memorySizeT;
+        static constexpr size_t chunkSize = chunkSizeT;
 
     protected:
         std::unique_ptr<nixlServiceAgent> agent_0_;
@@ -215,20 +263,24 @@ namespace services {
         bool etcd_valid_ = false;
         bool cuda_valid_ = false;
         int device_id_ = 0;
-
-        static constexpr size_t memSize = 1024 * chunkSize;
-        // slot_size/chunk_size stay snake_case (unlike their sibling members above/below):
-        // camelCase would spell them identically to the slotSize/chunkSize template parameters
-        // they're initialized from, which shadows the parameter within its own member
-        // initializer and fails to compile.
-        static constexpr size_t slot_size = slotSize;
-        static constexpr size_t chunk_size = chunkSize;
-        static constexpr size_t svcMemSize = slot_size * slotPerServiceMem;
         // True for plain delta, and for compression configured with the ANS_DELTA algo - the
         // two cases that need a delta reference buffer on each side.
         static constexpr bool usesDelta = std::is_same_v<MarshalConfig, nixlMarshalDeltaConfig> ||
             (std::is_same_v<MarshalConfig, nixlMarshalCompressConfig> &&
              compressAlgo == nixl_marshal_compress_algo_t::ANS_DELTA);
+
+        static size_t
+        serviceMemSize() {
+            static_assert(slotPerServiceMemT % MarshalBackendSizing::slots_per_transfer == 0);
+            constexpr auto num_slot_groups =
+                slotPerServiceMemT / MarshalBackendSizing::slots_per_transfer;
+            static_assert(num_slot_groups > 1);
+            constexpr auto max_concurrent_transfers = num_slot_groups - 1;
+            return nixlService::recommendServiceMemSize(
+                makeMarshalConfig<MarshalConfig>(compressAlgo),
+                max_concurrent_transfers,
+                chunkSize);
+        }
 
         void *mem_agent_0_ = nullptr;
         void *svc_mem_agent_0_ = nullptr;
@@ -238,6 +290,7 @@ namespace services {
         void *delta_ref_agent_1_ = nullptr;
         std::vector<unsigned char> src_data_;
         std::vector<unsigned char> dst_data_;
+        std::shared_ptr<nixlMarshal::backend> injectedBackend_;
 
         void
         SetUp() override {
@@ -254,8 +307,14 @@ namespace services {
             nixlServiceAgentConfig cfg;
             cfg.mode = makeMarshalConfig<MarshalConfig>(compressAlgo);
             cfg.useProgThread = true;
-            agent_0_ = std::make_unique<testServiceAgent>("agent_0", cfg, chunk_size);
-            agent_1_ = std::make_unique<testServiceAgent>("agent_1", cfg, chunk_size);
+            cfg.captureTelemetry = true;
+            const auto make_agent = [&](const char *name) {
+                return injectedBackend_ ?
+                    std::make_unique<testServiceAgent>(name, cfg, chunkSize, injectedBackend_) :
+                    std::make_unique<testServiceAgent>(name, cfg, chunkSize);
+            };
+            agent_0_ = make_agent("agent_0");
+            agent_1_ = make_agent("agent_1");
             etcd_valid_ = env_etcd_endpoints_set && etcd_running;
             if (!etcd_valid_) {
                 return;
@@ -274,10 +333,11 @@ namespace services {
             }
             ASSERT_EQ(cudaGetDevice(&device_id_), cudaSuccess);
 
+            const auto service_mem_size = serviceMemSize();
             ASSERT_EQ(cudaMalloc(&mem_agent_0_, memSize), cudaSuccess);
-            ASSERT_EQ(cudaMalloc(&svc_mem_agent_0_, svcMemSize), cudaSuccess);
+            ASSERT_EQ(cudaMalloc(&svc_mem_agent_0_, service_mem_size), cudaSuccess);
             ASSERT_EQ(cudaMalloc(&mem_agent_1_, memSize), cudaSuccess);
-            ASSERT_EQ(cudaMalloc(&svc_mem_agent_1_, svcMemSize), cudaSuccess);
+            ASSERT_EQ(cudaMalloc(&svc_mem_agent_1_, service_mem_size), cudaSuccess);
             if constexpr (usesDelta) {
                 ASSERT_EQ(cudaMalloc(&delta_ref_agent_0_, memSize), cudaSuccess);
                 ASSERT_EQ(cudaMalloc(&delta_ref_agent_1_, memSize), cudaSuccess);
@@ -296,14 +356,14 @@ namespace services {
                 nixlBlobDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), memSize, device_id_));
             nixl_reg_dlist_t svc_descs_agent_0(VRAM_SEG);
             svc_descs_agent_0.addDesc(nixlBlobDesc(
-                reinterpret_cast<uintptr_t>(svc_mem_agent_0_), svcMemSize, device_id_));
+                reinterpret_cast<uintptr_t>(svc_mem_agent_0_), service_mem_size, device_id_));
 
             nixl_reg_dlist_t mem_descs_agent_1(VRAM_SEG);
             mem_descs_agent_1.addDesc(
                 nixlBlobDesc(reinterpret_cast<uintptr_t>(mem_agent_1_), memSize, device_id_));
             nixl_reg_dlist_t svc_descs_agent_1(VRAM_SEG);
             svc_descs_agent_1.addDesc(nixlBlobDesc(
-                reinterpret_cast<uintptr_t>(svc_mem_agent_1_), svcMemSize, device_id_));
+                reinterpret_cast<uintptr_t>(svc_mem_agent_1_), service_mem_size, device_id_));
 
             ASSERT_EQ(agent_0_->registerMem(mem_descs_agent_0), NIXL_SUCCESS);
             ASSERT_EQ(agent_0_->registerServiceMem(svc_descs_agent_0), NIXL_SUCCESS);
@@ -382,6 +442,100 @@ namespace services {
             return args;
         }
 
+        nixl_status_t
+        reserveRemainingXferCapacity(nixl_xfer_op_t operation,
+                                     const nixl_xfer_dlist_t &local_descs,
+                                     const nixl_xfer_dlist_t &remote_descs,
+                                     const nixl_service_opt_args_t *extra_params,
+                                     std::vector<nixlServiceXferReqH *> &reserved_handles) {
+            // A malformed slot layout must not turn this diagnostic loop into an unbounded
+            // allocation. The fixtures currently have at most two transfer groups, so this
+            // leaves ample headroom while still failing deterministically on a regression.
+            constexpr size_t max_capacity_reservations = 64;
+            for (size_t reservation = 0; reservation < max_capacity_reservations; ++reservation) {
+                nixlServiceXferReqH *request = nullptr;
+                const nixl_status_t status = agent_0_->createXferReq(
+                    operation, local_descs, remote_descs, "agent_1", request, extra_params);
+                if (status != NIXL_SUCCESS) {
+                    return request == nullptr ? status : NIXL_ERR_UNKNOWN;
+                }
+                if (request == nullptr) {
+                    return NIXL_ERR_UNKNOWN;
+                }
+                reserved_handles.push_back(request);
+            }
+            return NIXL_ERR_UNKNOWN;
+        }
+
+        static constexpr auto testTimeout = std::chrono::seconds(30);
+
+        static nixl_status_t
+        progressUntilTerminal(nixlServiceAgent &owner,
+                              nixlServiceAgent &peer,
+                              nixlServiceXferReqH *request) {
+            const auto deadline = std::chrono::steady_clock::now() + testTimeout;
+            while (std::chrono::steady_clock::now() < deadline) {
+                const nixl_status_t status = owner.getXferStatus(request);
+                if (status != NIXL_IN_PROG) {
+                    return status;
+                }
+
+                nixl_notifs_t owner_notifs;
+                nixl_status_t progress_status = owner.getNotifs(owner_notifs);
+                if (progress_status != NIXL_SUCCESS) {
+                    return progress_status;
+                }
+
+                const nixl_status_t status_after_owner_progress = owner.getXferStatus(request);
+                if (status_after_owner_progress != NIXL_IN_PROG) {
+                    return status_after_owner_progress;
+                }
+
+                nixl_notifs_t peer_notifs;
+                progress_status = peer.getNotifs(peer_notifs);
+                if (progress_status != NIXL_SUCCESS) {
+                    return progress_status;
+                }
+                std::this_thread::yield();
+            }
+            return NIXL_IN_PROG;
+        }
+
+        static nixl_status_t
+        dispatchServiceNotificationsInOneProgressCall(nixlServiceAgent &sender,
+                                                      const std::string &receiver_name,
+                                                      nixlServiceAgent &receiver,
+                                                      const std::string &sentinel) {
+            // A normal notification sent after the service controls is a transport FIFO barrier.
+            // Once the base API observes it, every preceding service callback has populated
+            // serviceNotifQueue_, but the service override has not dispatched that queue yet.
+            nixl_status_t status = sender.genNotif(receiver_name, sentinel);
+            if (status != NIXL_SUCCESS) {
+                return status;
+            }
+
+            const auto deadline = std::chrono::steady_clock::now() + testTimeout;
+            while (std::chrono::steady_clock::now() < deadline) {
+                nixl_notifs_t notifs;
+                status = static_cast<nixlAgent &>(receiver).getNotifs(notifs);
+                if (status != NIXL_SUCCESS) {
+                    return status;
+                }
+                const bool received_sentinel =
+                    std::any_of(notifs.begin(), notifs.end(), [&](const auto &agent_notifs) {
+                        const auto &messages = agent_notifs.second;
+                        return std::find(messages.begin(), messages.end(), sentinel) !=
+                            messages.end();
+                    });
+                if (received_sentinel) {
+                    nixl_notifs_t service_notifs;
+                    return receiver.getNotifs(service_notifs);
+                }
+                std::this_thread::yield();
+            }
+            return NIXL_IN_PROG;
+        }
+
         // Fills the first fill_size bytes of buf with a non-constant pattern, cheaply, so the
         // byte-for-byte comparisons below can actually detect corruption/truncation/misplacement
         // - unlike filling every byte via std::uniform_int_distribution, which for these
@@ -452,7 +606,10 @@ namespace services {
             ASSERT_EQ(agent_0_->postXferReq(req_hndl, &extra_params), NIXL_IN_PROG);
 
             nixl_notifs_t notifs;
+            const auto transfer_deadline = std::chrono::steady_clock::now() + testTimeout;
             while (agent_0_->getXferStatus(req_hndl) == NIXL_IN_PROG) {
+                ASSERT_LT(std::chrono::steady_clock::now(), transfer_deadline)
+                    << "marshalled READ did not complete within the time bound";
                 ASSERT_EQ(agent_0_->getNotifs(notifs), NIXL_SUCCESS);
                 ASSERT_EQ(notifs.size(), 0);
                 // The notification (once delivered) always targets the peer being read from,
@@ -466,7 +623,10 @@ namespace services {
                       cudaSuccess);
             ASSERT_EQ(dst_data_, src_data_);
 
+            const auto notif_deadline = std::chrono::steady_clock::now() + testTimeout;
             while (notifs.size() == 0) {
+                ASSERT_LT(std::chrono::steady_clock::now(), notif_deadline)
+                    << "marshalled READ completion notification was not delivered";
                 ASSERT_EQ(agent_1_->getNotifs(notifs), NIXL_SUCCESS);
             }
             ASSERT_EQ(notifs.size(), 1);
@@ -475,40 +635,113 @@ namespace services {
 
             ASSERT_EQ(agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS);
         }
+
+        // Posts a single xfer with a single descriptor and reports its telemetry. Both buffers
+        // are expected to already hold the payload, so it works for either direction
+        void
+        postSingleDescXferAndGetTelemetry(nixl_xfer_op_t operation,
+                                          const nixl_marshal_opt_args_t &marshal_opt_args,
+                                          nixl_xfer_telem_t &telemetry) {
+            nixl_xfer_dlist_t local_xfer_descs(VRAM_SEG);
+            local_xfer_descs.addDesc(
+                nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), memSize, device_id_));
+            nixl_xfer_dlist_t remote_xfer_descs(VRAM_SEG);
+            remote_xfer_descs.addDesc(
+                nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_1_), memSize, device_id_));
+
+            nixl_service_opt_args_t extra_params{{}, marshal_opt_args};
+            nixlServiceXferReqH *req_hndl = nullptr;
+            ASSERT_EQ(agent_0_->createXferReq(operation,
+                                              local_xfer_descs,
+                                              remote_xfer_descs,
+                                              "agent_1",
+                                              req_hndl,
+                                              &extra_params),
+                      NIXL_SUCCESS);
+            ASSERT_NE(req_hndl, nullptr);
+            constexpr auto desc_count = 1;
+            constexpr auto time_margin = std::chrono::milliseconds(1);
+            const auto xfer_start_t = std::chrono::steady_clock::now();
+            const auto post_status = agent_0_->postXferReq(req_hndl, &extra_params);
+            ASSERT_TRUE(post_status == NIXL_SUCCESS || post_status == NIXL_IN_PROG);
+            nixl_notifs_t notifs;
+            while (agent_0_->getXferStatus(req_hndl) == NIXL_IN_PROG) {
+                ASSERT_EQ(agent_1_->getNotifs(notifs), NIXL_SUCCESS);
+            }
+            ASSERT_EQ(agent_0_->getXferStatus(req_hndl), NIXL_SUCCESS);
+            ASSERT_EQ(agent_0_->getXferTelemetry(req_hndl, telemetry), NIXL_SUCCESS);
+            EXPECT_EQ(telemetry.descCount, desc_count);
+            EXPECT_GT(telemetry.postDuration, chrono_period_us_t(0));
+            EXPECT_GE(telemetry.xferDuration, telemetry.postDuration);
+            const auto elapsed = std::chrono::steady_clock::now() - xfer_start_t;
+            EXPECT_LT(telemetry.xferDuration, elapsed + time_margin);
+            ASSERT_EQ(agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS);
+        }
     };
 
     template<typename Fixture> class nixlServiceTest : public Fixture {};
 
+    constexpr uint32_t nixlServiceTest_max_concurrent_transfers = 1;
+    constexpr uint32_t nixlServiceTest_slot_groups = nixlServiceTest_max_concurrent_transfers + 1;
+
+    using nixl_service_staging_f =
+        nixlServiceTestF<nixlMarshalStagingConfig,
+                         MarshalBackendSizing::slots_per_transfer * nixlServiceTest_slot_groups,
+                         128 * 1024>;
+    using nixl_service_compress_f =
+        nixlServiceTestF<nixlMarshalCompressConfig,
+                         MarshalBackendSizing::slots_per_transfer * nixlServiceTest_slot_groups,
+                         128 * 1024>;
+    using nixl_service_delta_f =
+        nixlServiceTestF<nixlMarshalDeltaConfig,
+                         MarshalBackendSizing::slots_per_transfer * nixlServiceTest_slot_groups,
+                         128 * 1024>;
+
     using nixl_service_test_types_t =
-        ::testing::Types<nixlServiceTestF<nixlMarshalStagingConfig,
-                                          128 * 1024,
-                                          MarshalBackendSizing::slots_per_transfer,
-                                          128 * 1024>,
-                         nixlServiceTestF<nixlMarshalCompressConfig,
-                                          128 * 1024 * 3,
-                                          MarshalBackendSizing::slots_per_transfer,
-                                          128 * 1024>,
-                         nixlServiceTestF<nixlMarshalDeltaConfig,
-                                          128 * 1024,
-                                          MarshalBackendSizing::slots_per_transfer,
-                                          128 * 1024>>;
+        ::testing::Types<nixl_service_staging_f, nixl_service_compress_f, nixl_service_delta_f>;
 
     TYPED_TEST_SUITE(nixlServiceTest, nixl_service_test_types_t);
 
+    template<typename Fixture, nixl_xfer_op_t Op> struct nixlServiceTestWithOp : Fixture {
+        static constexpr nixl_xfer_op_t operation = Op;
+    };
+
+    template<typename Combined> class nixlServiceBothDirectionsTest : public Combined {};
+
+    using nixl_service_both_directions_types_t =
+        ::testing::Types<nixlServiceTestWithOp<nixl_service_staging_f, NIXL_WRITE>,
+                         nixlServiceTestWithOp<nixl_service_staging_f, NIXL_READ>,
+                         nixlServiceTestWithOp<nixl_service_compress_f, NIXL_WRITE>,
+                         nixlServiceTestWithOp<nixl_service_compress_f, NIXL_READ>,
+                         nixlServiceTestWithOp<nixl_service_delta_f, NIXL_WRITE>,
+                         nixlServiceTestWithOp<nixl_service_delta_f, NIXL_READ>>;
+
+    TYPED_TEST_SUITE(nixlServiceBothDirectionsTest, nixl_service_both_directions_types_t);
+
+    class nixlServiceOrderingTest
+        : public nixlServiceTestF<nixlMarshalStagingConfig,
+                                  MarshalBackendSizing::slots_per_transfer *
+                                      nixlServiceTest_slot_groups,
+                                  128 * 1024> {};
+
     template<typename Fixture> class nixlServiceBidirectionalTest : public Fixture {};
+
+    constexpr uint32_t nixlServiceBidirectionalTest_max_concurrent_transfers = 2;
+    constexpr uint32_t nixlServiceBidirectionalTest_slot_groups =
+        nixlServiceBidirectionalTest_max_concurrent_transfers + 1;
 
     using nixl_service_bidirectional_test_types_t =
         ::testing::Types<nixlServiceTestF<nixlMarshalStagingConfig,
-                                          128 * 1024,
-                                          MarshalBackendSizing::slots_per_transfer * 2,
+                                          MarshalBackendSizing::slots_per_transfer *
+                                              nixlServiceBidirectionalTest_slot_groups,
                                           128 * 1024>,
                          nixlServiceTestF<nixlMarshalCompressConfig,
-                                          512 * 1024 * 3,
-                                          MarshalBackendSizing::slots_per_transfer * 2,
+                                          MarshalBackendSizing::slots_per_transfer *
+                                              nixlServiceBidirectionalTest_slot_groups,
                                           512 * 1024>,
                          nixlServiceTestF<nixlMarshalDeltaConfig,
-                                          512 * 1024,
-                                          MarshalBackendSizing::slots_per_transfer * 2,
+                                          MarshalBackendSizing::slots_per_transfer *
+                                              nixlServiceBidirectionalTest_slot_groups,
                                           512 * 1024>>;
 
     TYPED_TEST_SUITE(nixlServiceBidirectionalTest, nixl_service_bidirectional_test_types_t);
@@ -519,21 +752,677 @@ namespace services {
     // of those tests only account for plain nixlMarshalDeltaConfig's single-descriptor
     // restriction, not the equivalent restriction for compression+ANS_DELTA. ANS_DELTA needs
     // extra per-slot workspace beyond plain ANS (see algoWorkspaceOverhead) for the delta
-    // kernel's full-payload staging copy, hence the larger slotSize.
+    // kernel's full-payload staging copy; the backend recommendation accounts for it.
     template<typename Fixture> class nixlServiceAnsDeltaTest : public Fixture {};
+
+    constexpr uint32_t nixlServiceAnsDeltaTest_max_concurrent_transfers = 1;
+    constexpr uint32_t nixlServiceAnsDeltaTest_slot_groups =
+        nixlServiceAnsDeltaTest_max_concurrent_transfers + 1;
 
     using nixl_service_ans_delta_test_types_t =
         ::testing::Types<nixlServiceTestF<nixlMarshalCompressConfig,
-                                          512 * 1024 * 6,
-                                          MarshalBackendSizing::slots_per_transfer,
+                                          MarshalBackendSizing::slots_per_transfer *
+                                              nixlServiceAnsDeltaTest_slot_groups,
                                           512 * 1024,
                                           nixl_marshal_compress_algo_t::ANS_DELTA>>;
 
     TYPED_TEST_SUITE(nixlServiceAnsDeltaTest, nixl_service_ans_delta_test_types_t);
 
+    constexpr uint32_t nixlServiceMockMarshalTest_max_concurrent_transfers = 1;
+    constexpr uint32_t nixlServiceMockMarshalTest_slot_groups =
+        nixlServiceMockMarshalTest_max_concurrent_transfers + 1;
+
+    class nixlServiceMockMarshalTest
+        : public nixlServiceTestF<nixlMarshalStagingConfig,
+                                  MarshalBackendSizing::slots_per_transfer *
+                                      nixlServiceMockMarshalTest_slot_groups,
+                                  128 * 1024> {
+    protected:
+        using base_t = nixlServiceTestF<nixlMarshalStagingConfig,
+                                        MarshalBackendSizing::slots_per_transfer *
+                                            nixlServiceMockMarshalTest_slot_groups,
+                                        128 * 1024>;
+
+        void
+        SetUp() override {
+            mock_ = marshals::mockMarshalBackend::createBackend();
+            injectedBackend_ = mock_;
+            base_t::SetUp();
+        }
+
+        std::shared_ptr<marshals::mockMarshalBackend> mock_;
+    };
+
+    struct asymmetricTestParam {
+        nixl_mem_t targetType;
+        size_t transferSize;
+    };
+
+    constexpr uint32_t nixlServiceAsymmetricModeTest_max_concurrent_transfers = 1;
+    constexpr uint32_t nixlServiceAsymmetricModeTest_slot_groups =
+        nixlServiceAsymmetricModeTest_max_concurrent_transfers + 1;
+
+    class nixlServiceAsymmetricModeTest
+        : public nixlServiceTestF<nixlMarshalCompressConfig,
+                                  MarshalBackendSizing::slots_per_transfer *
+                                      nixlServiceAsymmetricModeTest_slot_groups,
+                                  default_chunked_payload_size,
+                                  nixl_marshal_compress_algo_t::ANS,
+                                  4 * default_chunked_payload_size>,
+          public ::testing::WithParamInterface<asymmetricTestParam> {
+        using base_t = nixlServiceTestF<nixlMarshalCompressConfig,
+                                        MarshalBackendSizing::slots_per_transfer *
+                                            nixlServiceAsymmetricModeTest_slot_groups,
+                                        default_chunked_payload_size,
+                                        nixl_marshal_compress_algo_t::ANS,
+                                        4 * default_chunked_payload_size>;
+
+    protected:
+        static_assert(memSize <= max_descriptor_size);
+        static_assert(memSize % default_chunked_payload_size == 0);
+        size_t transferSize_ = 0;
+
+        std::vector<unsigned char> dramTarget_;
+        std::unique_ptr<nixl_reg_dlist_t> targetRegDescs_;
+        nixlBackendH *targetBackend_ = nullptr;
+        int targetFd_ = -1;
+        std::string targetPath_;
+        bool targetRegistered_ = false;
+
+        void
+        SetUp() override {
+            transferSize_ = GetParam().transferSize;
+            base_t::SetUp();
+            if (!etcd_valid_ || !cuda_valid_) {
+                return;
+            }
+
+            const auto target_type = GetParam().targetType;
+            if (target_type == VRAM_SEG) {
+                return;
+            }
+
+            targetRegDescs_ = std::make_unique<nixl_reg_dlist_t>(target_type);
+            if (target_type == DRAM_SEG) {
+                dramTarget_.resize(transferSize_);
+                targetRegDescs_->addDesc(nixlBlobDesc(
+                    reinterpret_cast<uintptr_t>(dramTarget_.data()), dramTarget_.size(), 0));
+                ASSERT_EQ(agent_1_->registerMem(*targetRegDescs_), NIXL_SUCCESS);
+                targetRegistered_ = true;
+
+                nixl_blob_t remote_md;
+                ASSERT_EQ(agent_1_->getLocalMD(remote_md), NIXL_SUCCESS);
+                std::string remote_name;
+                ASSERT_EQ(agent_0_->loadRemoteMD(remote_md, remote_name), NIXL_SUCCESS);
+                ASSERT_EQ(remote_name, "agent_1");
+                return;
+            }
+
+            ASSERT_EQ(target_type, FILE_SEG);
+            nixlServiceAgentConfig cfg;
+            cfg.mode = nixlMarshalCompressConfig{};
+            cfg.useProgThread = true;
+            cfg.captureTelemetry = true;
+            // GDS_MT does not support special notification injection.
+            cfg.disableServiceNotifCallbacks = true;
+            agent_0_ = std::make_unique<testServiceAgent>("ssd_agent", cfg, chunkSize);
+            ASSERT_EQ(agent_0_->createBackend("GDS_MT", {}, targetBackend_), NIXL_SUCCESS);
+            ASSERT_NE(targetBackend_, nullptr);
+
+            nixl_opt_args_t backend_opts;
+            backend_opts.backends = {targetBackend_};
+            nixl_reg_dlist_t source_descs(VRAM_SEG);
+            source_descs.addDesc(
+                nixlBlobDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), transferSize_, device_id_));
+            ASSERT_EQ(agent_0_->registerMem(source_descs, &backend_opts), NIXL_SUCCESS);
+            nixl_reg_dlist_t service_descs(VRAM_SEG);
+            service_descs.addDesc(nixlBlobDesc(
+                reinterpret_cast<uintptr_t>(svc_mem_agent_0_), serviceMemSize(), device_id_));
+            ASSERT_EQ(agent_0_->registerServiceMem(service_descs), NIXL_SUCCESS);
+
+            const char *target_dir = std::getenv("NIXL_GDS_TEST_DIR");
+            if (target_dir == nullptr || target_dir[0] == '\0') {
+                GTEST_SKIP() << "NIXL_GDS_TEST_DIR is not set";
+            }
+            std::string path = std::string(target_dir) + "/nixl_service_asymmetric_XXXXXX";
+            targetFd_ = mkstemp(path.data());
+            ASSERT_GE(targetFd_, 0);
+            targetPath_ = path;
+            ASSERT_EQ(ftruncate(targetFd_, transferSize_), 0);
+            targetRegDescs_->addDesc(nixlBlobDesc(0, transferSize_, 0, "rw,direct:" + targetPath_));
+            ASSERT_EQ(agent_0_->registerMem(*targetRegDescs_, &backend_opts), NIXL_SUCCESS);
+            targetRegistered_ = true;
+        }
+
+        void
+        TearDown() override {
+            // VRAM is owned by base_t; only derived DRAM/FILE registrations reach here.
+            if (targetRegistered_) {
+                nixl_opt_args_t backend_opts;
+                if (targetBackend_ != nullptr) {
+                    backend_opts.backends = {targetBackend_};
+                }
+                nixlAgent *target_agent =
+                    GetParam().targetType == DRAM_SEG ? agent_1_.get() : agent_0_.get();
+                if (target_agent != nullptr) {
+                    (void)target_agent->deregisterMem(
+                        *targetRegDescs_, targetBackend_ == nullptr ? nullptr : &backend_opts);
+                }
+            }
+            if (targetFd_ >= 0) {
+                (void)close(targetFd_);
+            }
+            if (!targetPath_.empty()) {
+                (void)unlink(targetPath_.c_str());
+            }
+            base_t::TearDown();
+        }
+
+        nixl_xfer_dlist_t
+        targetDescs() const {
+            if (GetParam().targetType == VRAM_SEG) {
+                nixl_xfer_dlist_t descs(VRAM_SEG);
+                descs.addDesc(nixlBasicDesc(
+                    reinterpret_cast<uintptr_t>(mem_agent_1_), transferSize_, device_id_));
+                return descs;
+            }
+            return targetRegDescs_->trim();
+        }
+
+        std::string
+        targetAgentName() const {
+            return GetParam().targetType == FILE_SEG ? "ssd_agent" : "agent_1";
+        }
+
+        nixlServiceAgent &
+        targetAgent() const {
+            return GetParam().targetType == FILE_SEG ? *agent_0_ : *agent_1_;
+        }
+
+        nixl_service_opt_args_t
+        makeExtraParams(nixl_marshal_phase_t phase) const {
+            nixl_service_opt_args_t opts{};
+            opts.marshalOptArgs = nixlMarshalCompressOptArgs{};
+            opts.phase = phase;
+            if (targetBackend_ != nullptr) {
+                opts.backends = {targetBackend_};
+            }
+            return opts;
+        }
+
+        void
+        writeTarget(const void *src, size_t size) {
+            switch (GetParam().targetType) {
+            case DRAM_SEG:
+                std::memcpy(dramTarget_.data(), src, size);
+                break;
+            case VRAM_SEG:
+                ASSERT_EQ(cudaMemcpy(mem_agent_1_, src, size, cudaMemcpyHostToDevice), cudaSuccess);
+                break;
+            case FILE_SEG:
+                ASSERT_EQ(pwrite(targetFd_, src, size, 0), static_cast<ssize_t>(size));
+                ASSERT_EQ(fsync(targetFd_), 0);
+                break;
+            default:
+                FAIL() << "Unsupported target memory type";
+            }
+        }
+
+        void
+        readTarget(void *dst, size_t size) {
+            switch (GetParam().targetType) {
+            case DRAM_SEG:
+                std::memcpy(dst, dramTarget_.data(), size);
+                break;
+            case VRAM_SEG:
+                ASSERT_EQ(cudaMemcpy(dst, mem_agent_1_, size, cudaMemcpyDeviceToHost), cudaSuccess);
+                break;
+            case FILE_SEG:
+                ASSERT_EQ(fsync(targetFd_), 0);
+                ASSERT_EQ(pread(targetFd_, dst, size, 0), static_cast<ssize_t>(size));
+                break;
+            default:
+                FAIL() << "Unsupported target memory type";
+            }
+        }
+    };
+
+    TEST_P(nixlServiceAsymmetricModeTest, ValidatesRequestShapesTypesAndPhases) {
+        if (!etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        nixl_xfer_dlist_t valid_local(VRAM_SEG);
+        valid_local.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), transferSize_, device_id_));
+        const auto valid_remote = targetDescs();
+        auto expect_rejected = [&](nixl_xfer_op_t operation,
+                                   const nixl_xfer_dlist_t &local_descs,
+                                   const nixl_xfer_dlist_t &remote_descs,
+                                   nixl_marshal_phase_t phase,
+                                   nixl_status_t expected_status) {
+            auto extra_params = makeExtraParams(phase);
+            nixlServiceXferReqH *req_hndl = nullptr;
+            EXPECT_EQ(agent_0_->createXferReq(operation,
+                                              local_descs,
+                                              remote_descs,
+                                              targetAgentName(),
+                                              req_hndl,
+                                              &extra_params),
+                      expected_status);
+            EXPECT_EQ(req_hndl, nullptr);
+        };
+
+        auto expect_accepted = [&](nixl_xfer_op_t operation,
+                                   const nixl_xfer_dlist_t &local_descs,
+                                   const nixl_xfer_dlist_t &remote_descs,
+                                   nixl_marshal_phase_t phase) {
+            auto extra_params = makeExtraParams(phase);
+            nixlServiceXferReqH *req_hndl = nullptr;
+            ASSERT_EQ(agent_0_->createXferReq(operation,
+                                              local_descs,
+                                              remote_descs,
+                                              targetAgentName(),
+                                              req_hndl,
+                                              &extra_params),
+                      NIXL_SUCCESS);
+            ASSERT_NE(req_hndl, nullptr);
+            EXPECT_EQ(agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS);
+        };
+
+        nixl_xfer_dlist_t short_local(VRAM_SEG);
+        short_local.addDesc(nixlBasicDesc(
+            reinterpret_cast<uintptr_t>(mem_agent_0_), transferSize_ - 1, device_id_));
+        expect_rejected(NIXL_WRITE,
+                        short_local,
+                        valid_remote,
+                        nixl_marshal_phase_t::PRE_TRANSFER,
+                        NIXL_ERR_INVALID_PARAM);
+
+        nixl_xfer_dlist_t short_remote(GetParam().targetType);
+        auto short_remote_desc = valid_remote[0];
+        --short_remote_desc.len;
+        short_remote.addDesc(short_remote_desc);
+        expect_rejected(NIXL_READ,
+                        valid_local,
+                        short_remote,
+                        nixl_marshal_phase_t::POST_TRANSFER,
+                        NIXL_ERR_INVALID_PARAM);
+
+        const size_t oversized_length = max_descriptor_size + default_chunked_payload_size;
+        nixl_xfer_dlist_t oversized_local(VRAM_SEG);
+        oversized_local.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), oversized_length, device_id_));
+        nixl_xfer_dlist_t oversized_remote(GetParam().targetType);
+        auto oversized_remote_desc = valid_remote[0];
+        oversized_remote_desc.len = oversized_length;
+        oversized_remote.addDesc(oversized_remote_desc);
+        expect_rejected(NIXL_WRITE,
+                        oversized_local,
+                        oversized_remote,
+                        nixl_marshal_phase_t::PRE_TRANSFER,
+                        NIXL_ERR_INVALID_PARAM);
+
+        nixl_xfer_dlist_t multiple_local(VRAM_SEG);
+        multiple_local.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), transferSize_, device_id_));
+        multiple_local.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), transferSize_, device_id_));
+        expect_rejected(NIXL_WRITE,
+                        multiple_local,
+                        valid_remote,
+                        nixl_marshal_phase_t::PRE_TRANSFER,
+                        NIXL_ERR_INVALID_PARAM);
+
+        nixl_xfer_dlist_t multiple_remote(GetParam().targetType);
+        multiple_remote.addDesc(valid_remote[0]);
+        multiple_remote.addDesc(valid_remote[0]);
+        expect_rejected(NIXL_READ,
+                        valid_local,
+                        multiple_remote,
+                        nixl_marshal_phase_t::POST_TRANSFER,
+                        NIXL_ERR_INVALID_PARAM);
+
+        nixl_xfer_dlist_t host_local(DRAM_SEG);
+        host_local.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(src_data_.data()), src_data_.size(), 0));
+        for (const auto operation : {NIXL_WRITE, NIXL_READ}) {
+            const auto phase = operation == NIXL_WRITE ? nixl_marshal_phase_t::PRE_TRANSFER :
+                                                         nixl_marshal_phase_t::POST_TRANSFER;
+            expect_accepted(operation, valid_local, valid_remote, phase);
+        }
+
+        expect_rejected(NIXL_WRITE,
+                        host_local,
+                        valid_remote,
+                        nixl_marshal_phase_t::PRE_TRANSFER,
+                        NIXL_ERR_INVALID_PARAM);
+        expect_rejected(NIXL_READ,
+                        host_local,
+                        valid_remote,
+                        nixl_marshal_phase_t::POST_TRANSFER,
+                        NIXL_ERR_INVALID_PARAM);
+
+        expect_rejected(NIXL_WRITE,
+                        valid_local,
+                        valid_remote,
+                        nixl_marshal_phase_t::POST_TRANSFER,
+                        NIXL_ERR_NOT_SUPPORTED);
+        expect_rejected(NIXL_READ,
+                        valid_local,
+                        valid_remote,
+                        nixl_marshal_phase_t::PRE_TRANSFER,
+                        NIXL_ERR_NOT_SUPPORTED);
+    }
+
+    TEST_P(nixlServiceAsymmetricModeTest, WriteReturnsSuccessOnCompletion) {
+        if (!etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        nixl_xfer_dlist_t local_descs(VRAM_SEG);
+        local_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), transferSize_, device_id_));
+        const auto remote_descs = targetDescs();
+        auto extra_params = makeExtraParams(nixl_marshal_phase_t::PRE_TRANSFER);
+        nixlServiceXferReqH *req_hndl = nullptr;
+        ASSERT_EQ(
+            agent_0_->createXferReq(
+                NIXL_WRITE, local_descs, remote_descs, targetAgentName(), req_hndl, &extra_params),
+            NIXL_SUCCESS);
+        ASSERT_NE(req_hndl, nullptr);
+        ASSERT_EQ(agent_0_->postXferReq(req_hndl, &extra_params), NIXL_IN_PROG);
+
+        nixl_status_t status = NIXL_IN_PROG;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (status == NIXL_IN_PROG) {
+            ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+            status = agent_0_->getXferStatus(req_hndl);
+        }
+        EXPECT_EQ(status, NIXL_SUCCESS);
+        ASSERT_EQ(agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS);
+    }
+
+    TEST_P(nixlServiceAsymmetricModeTest, RejectsMalformedPostHeadersAndActiveRepost) {
+        if (!etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        nixl_xfer_dlist_t local_descs(VRAM_SEG);
+        local_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), transferSize_, device_id_));
+        const auto remote_descs = targetDescs();
+        using header_t = std::array<uint64_t, max_chunks_per_desc>;
+        std::array<header_t, 5> malformed_headers{};
+        const size_t active_chunk_count = 1 + (transferSize_ - 1) / default_chunked_payload_size;
+        ASSERT_LT(active_chunk_count, max_chunks_per_desc);
+        for (size_t case_index = 1; case_index < malformed_headers.size(); ++case_index) {
+            std::fill_n(malformed_headers[case_index].begin(), active_chunk_count, 1);
+        }
+        auto &oversized_entry_header = malformed_headers[1];
+        oversized_entry_header[0] = std::numeric_limits<uint64_t>::max();
+        auto &out_of_bounds_header = malformed_headers[2];
+        std::fill_n(out_of_bounds_header.begin(), active_chunk_count, default_chunked_payload_size);
+        auto &missing_active_entry_header = malformed_headers[3];
+        missing_active_entry_header[active_chunk_count - 1] = 0;
+        auto &nonzero_inactive_entry_header = malformed_headers[4];
+        nonzero_inactive_entry_header[active_chunk_count] = 1;
+
+        for (size_t case_index = 0; case_index < malformed_headers.size(); ++case_index) {
+            SCOPED_TRACE(case_index);
+            writeTarget(malformed_headers[case_index].data(), CompressedObjectLayout::header_size);
+
+            auto extra_params = makeExtraParams(nixl_marshal_phase_t::POST_TRANSFER);
+            nixlServiceXferReqH *req_hndl = nullptr;
+            ASSERT_EQ(agent_0_->createXferReq(NIXL_READ,
+                                              local_descs,
+                                              remote_descs,
+                                              targetAgentName(),
+                                              req_hndl,
+                                              &extra_params),
+                      NIXL_SUCCESS);
+            ASSERT_NE(req_hndl, nullptr);
+            EXPECT_EQ(agent_0_->getXferStatus(req_hndl), NIXL_ERR_NOT_POSTED);
+            ASSERT_EQ(agent_0_->postXferReq(req_hndl, &extra_params), NIXL_IN_PROG);
+            EXPECT_EQ(agent_0_->postXferReq(req_hndl, &extra_params), NIXL_ERR_REPOST_ACTIVE);
+
+            nixl_status_t status = NIXL_IN_PROG;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            while (status == NIXL_IN_PROG) {
+                ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+                status = agent_0_->getXferStatus(req_hndl);
+            }
+            EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+            ASSERT_EQ(agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS);
+        }
+    }
+
+    TEST_P(nixlServiceAsymmetricModeTest, PreWriteThenPostReadPreservesData) {
+        if (!etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        fillWithRepeatingRandomPattern(src_data_, transferSize_);
+        ASSERT_EQ(cudaMemcpy(mem_agent_0_, src_data_.data(), transferSize_, cudaMemcpyHostToDevice),
+                  cudaSuccess);
+
+        nixl_xfer_dlist_t local_descs(VRAM_SEG);
+        local_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), transferSize_, device_id_));
+        const auto remote_descs = targetDescs();
+        auto extra_params = makeExtraParams(nixl_marshal_phase_t::PRE_TRANSFER);
+        nixlServiceXferReqH *req_hndl = nullptr;
+        ASSERT_EQ(
+            agent_0_->createXferReq(
+                NIXL_WRITE, local_descs, remote_descs, targetAgentName(), req_hndl, &extra_params),
+            NIXL_SUCCESS);
+        ASSERT_EQ(agent_0_->postXferReq(req_hndl, &extra_params), NIXL_IN_PROG);
+
+        nixl_status_t status = NIXL_IN_PROG;
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (status == NIXL_IN_PROG) {
+            ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+            status = agent_0_->getXferStatus(req_hndl);
+        }
+        ASSERT_EQ(status, NIXL_SUCCESS);
+        ASSERT_EQ(agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS);
+
+        using header_t = std::array<uint64_t, max_chunks_per_desc>;
+        header_t persisted_header{};
+        readTarget(persisted_header.data(), CompressedObjectLayout::header_size);
+        const size_t active_chunk_count = 1 + (transferSize_ - 1) / default_chunked_payload_size;
+        for (size_t chunk_index = 0; chunk_index < active_chunk_count; ++chunk_index) {
+            EXPECT_NE(persisted_header[chunk_index], 0);
+        }
+        for (size_t chunk_index = active_chunk_count; chunk_index < max_chunks_per_desc;
+             ++chunk_index) {
+            EXPECT_EQ(persisted_header[chunk_index], 0);
+        }
+
+        ASSERT_EQ(cudaMemset(mem_agent_0_, 0, transferSize_), cudaSuccess);
+        extra_params.phase = nixl_marshal_phase_t::POST_TRANSFER;
+        extra_params.notif.reset();
+        req_hndl = nullptr;
+        ASSERT_EQ(
+            agent_0_->createXferReq(
+                NIXL_READ, local_descs, remote_descs, targetAgentName(), req_hndl, &extra_params),
+            NIXL_SUCCESS);
+        if (GetParam().targetType != FILE_SEG) {
+            extra_params.notif = "asymmetric_post_done";
+        }
+        ASSERT_EQ(agent_0_->postXferReq(req_hndl, &extra_params), NIXL_IN_PROG);
+
+        status = NIXL_IN_PROG;
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (status == NIXL_IN_PROG) {
+            ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+            status = agent_0_->getXferStatus(req_hndl);
+        }
+        EXPECT_EQ(status, NIXL_SUCCESS);
+        ASSERT_EQ(agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS);
+
+        ASSERT_EQ(cudaMemcpy(dst_data_.data(), mem_agent_0_, transferSize_, cudaMemcpyDeviceToHost),
+                  cudaSuccess);
+        EXPECT_EQ(dst_data_, src_data_);
+
+        if (GetParam().targetType != FILE_SEG) {
+            nixl_notifs_t notifs;
+            deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            while (notifs.empty()) {
+                ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+                ASSERT_EQ(targetAgent().getNotifs(notifs), NIXL_SUCCESS);
+            }
+            ASSERT_EQ(notifs.size(), 1);
+            ASSERT_EQ(notifs["agent_0"].size(), 1);
+            EXPECT_EQ(notifs["agent_0"].front(), "asymmetric_post_done");
+        }
+    }
+
+    TEST_P(nixlServiceAsymmetricModeTest, XferTelemetry) {
+        if (!etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        fillWithRepeatingRandomPattern(src_data_, transferSize_);
+        ASSERT_EQ(cudaMemcpy(mem_agent_0_, src_data_.data(), transferSize_, cudaMemcpyHostToDevice),
+                  cudaSuccess);
+
+        nixl_xfer_dlist_t local_descs(VRAM_SEG);
+        local_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), transferSize_, device_id_));
+        const auto remote_descs = targetDescs();
+        auto run_xfer = [&](nixl_xfer_op_t operation, nixl_marshal_phase_t phase) {
+            SCOPED_TRACE(operation);
+            size_t total_bytes = 0;
+            [&] {
+                if (operation == NIXL_READ) {
+                    ASSERT_EQ(cudaMemset(mem_agent_0_, 0, transferSize_), cudaSuccess);
+                }
+
+                auto extra_params = makeExtraParams(phase);
+                nixlServiceXferReqH *req_hndl = nullptr;
+                ASSERT_EQ(agent_0_->createXferReq(operation,
+                                                  local_descs,
+                                                  remote_descs,
+                                                  targetAgentName(),
+                                                  req_hndl,
+                                                  &extra_params),
+                          NIXL_SUCCESS);
+                ASSERT_NE(req_hndl, nullptr);
+                ASSERT_EQ(agent_0_->postXferReq(req_hndl, &extra_params), NIXL_IN_PROG);
+
+                nixl_status_t status = NIXL_IN_PROG;
+                // 10 seconds for one xfer should be enough.
+                // TODO-Eyal: remove magic number TOs from this file, make them smaller than 60.
+                const auto constexpr timeout_seconds = 10;
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
+                while (status == NIXL_IN_PROG) {
+                    ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+                    status = agent_0_->getXferStatus(req_hndl);
+                }
+                ASSERT_EQ(status, NIXL_SUCCESS);
+
+                nixl_xfer_telem_t telemetry{};
+                ASSERT_EQ(agent_0_->getXferTelemetry(req_hndl, telemetry), NIXL_SUCCESS);
+                EXPECT_EQ(telemetry.descCount, 1);
+                EXPECT_GT(telemetry.postDuration, chrono_period_us_t(0));
+                EXPECT_GE(telemetry.xferDuration, telemetry.postDuration);
+                EXPECT_GT(telemetry.totalBytes, 0);
+                total_bytes = telemetry.totalBytes;
+
+                ASSERT_EQ(agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS);
+            }();
+            return total_bytes;
+        };
+
+        const auto write_total_bytes = run_xfer(NIXL_WRITE, nixl_marshal_phase_t::PRE_TRANSFER);
+        ASSERT_FALSE(::testing::Test::HasFatalFailure());
+        const auto read_total_bytes = run_xfer(NIXL_READ, nixl_marshal_phase_t::POST_TRANSFER);
+        ASSERT_FALSE(::testing::Test::HasFatalFailure());
+        EXPECT_EQ(read_total_bytes, write_total_bytes);
+    }
+
+    INSTANTIATE_TEST_SUITE_P(
+        TargetMemoryTypes,
+        nixlServiceAsymmetricModeTest,
+        ::testing::Values(asymmetricTestParam{DRAM_SEG, 4 * default_chunked_payload_size},
+                          asymmetricTestParam{DRAM_SEG, 4 * default_chunked_payload_size - 2},
+                          asymmetricTestParam{VRAM_SEG, 4 * default_chunked_payload_size},
+                          asymmetricTestParam{VRAM_SEG, 4 * default_chunked_payload_size - 2},
+                          asymmetricTestParam{FILE_SEG, 4 * default_chunked_payload_size},
+                          asymmetricTestParam{FILE_SEG, 4 * default_chunked_payload_size - 2}),
+        [](const ::testing::TestParamInfo<asymmetricTestParam> &info) {
+            const auto size_name =
+                info.param.transferSize % default_chunked_payload_size == 0 ? "Whole" : "Partial";
+            return nixlEnumStrings::memTypeStr(info.param.targetType) + "_" + size_name;
+        });
+
     TYPED_TEST(nixlServiceTest, CreateAgentValid) {
         ASSERT_NE(this->agent_0_, nullptr);
         ASSERT_NE(this->agent_1_, nullptr);
+    }
+
+    TEST_F(nixlServiceMockMarshalTest, InjectedBackendRunsOnWrite) {
+        if (!etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        EXPECT_CALL(*mock_, outboundProcessSlot(testing::_, testing::_)).Times(testing::AtLeast(1));
+        EXPECT_CALL(*mock_, inboundProcessSlot(testing::_, testing::_, testing::_))
+            .Times(testing::AtLeast(1));
+
+        fillWithRepeatingRandomPattern(src_data_, memSize);
+        ASSERT_EQ(cudaMemcpy(mem_agent_0_, src_data_.data(), memSize, cudaMemcpyHostToDevice),
+                  cudaSuccess);
+
+        nixl_xfer_dlist_t local_xfer_descs(VRAM_SEG);
+        local_xfer_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), memSize, device_id_));
+        nixl_xfer_dlist_t remote_xfer_descs(VRAM_SEG);
+        remote_xfer_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_1_), memSize, device_id_));
+
+        nixlServiceXferReqH *req_hndl = nullptr;
+        nixl_service_opt_args_t extra_params{};
+        extra_params.marshalOptArgs = makeMarshalOptArgs();
+        ASSERT_EQ(agent_0_->createXferReq(NIXL_WRITE,
+                                          local_xfer_descs,
+                                          remote_xfer_descs,
+                                          "agent_1",
+                                          req_hndl,
+                                          &extra_params),
+                  NIXL_SUCCESS);
+        ASSERT_NE(req_hndl, nullptr);
+        const auto post_status = agent_0_->postXferReq(req_hndl, &extra_params);
+        ASSERT_TRUE(post_status == NIXL_SUCCESS || post_status == NIXL_IN_PROG);
+
+        ASSERT_EQ(progressUntilTerminal(*agent_0_, *agent_1_, req_hndl), NIXL_SUCCESS)
+            << "injected-backend WRITE did not complete within the time bound";
+
+        ASSERT_EQ(cudaMemcpy(dst_data_.data(), mem_agent_1_, memSize, cudaMemcpyDeviceToHost),
+                  cudaSuccess);
+        ASSERT_EQ(dst_data_, src_data_);
+
+        ASSERT_EQ(agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS);
     }
 
     // Marshalled (non-direct-split) NIXL_READ is now supported (see createReadReceiveXfer),
@@ -587,6 +1476,39 @@ namespace services {
     // satisfies delta's single-descriptor restriction. See runReadValidTest()'s definition.
     TYPED_TEST(nixlServiceTest, ReadValid) {
         this->runReadValidTest();
+    }
+
+    TYPED_TEST(nixlServiceBothDirectionsTest, CreateXferRejectsTooBigDescriptor) {
+        if (!this->etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!this->cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        nixl_xfer_dlist_t local_descs(VRAM_SEG);
+        local_descs.addDesc(nixlBasicDesc(reinterpret_cast<uintptr_t>(this->mem_agent_0_),
+                                          max_descriptor_size + 1,
+                                          this->device_id_));
+        nixl_xfer_dlist_t remote_descs(VRAM_SEG);
+        remote_descs.addDesc(nixlBasicDesc(reinterpret_cast<uintptr_t>(this->mem_agent_1_),
+                                           max_descriptor_size + 1,
+                                           this->device_id_));
+
+        nixl_service_opt_args_t extra_params{};
+        extra_params.marshalOptArgs = (TypeParam::operation == NIXL_READ) ?
+            this->makeMarshalOptArgs(this->delta_ref_agent_1_, this->delta_ref_agent_0_) :
+            this->makeMarshalOptArgs();
+
+        nixlServiceXferReqH *req_hndl = nullptr;
+        EXPECT_EQ(this->agent_0_->createXferReq(TypeParam::operation,
+                                                local_descs,
+                                                remote_descs,
+                                                "agent_1",
+                                                req_hndl,
+                                                &extra_params),
+                  NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(req_hndl, nullptr);
     }
 
     // Compression configured with the ANS_DELTA algo, in its own dedicated suite (see
@@ -696,15 +1618,6 @@ namespace services {
                                                 &extra_params),
                   NIXL_SUCCESS);
         ASSERT_NE(req_hndl, nullptr);
-        nixlServiceXferReqH *req_hndl_1 = nullptr;
-        ASSERT_EQ(this->agent_0_->createXferReq(NIXL_WRITE,
-                                                local_xfer_descs,
-                                                remote_xfer_descs,
-                                                "agent_1",
-                                                req_hndl_1,
-                                                &extra_params),
-                  NIXL_ERR_NOT_FOUND); // the service memory is just 2 slots, so this should fail.
-        ASSERT_EQ(req_hndl_1, nullptr);
         ASSERT_EQ(this->agent_0_->getXferStatus(req_hndl), NIXL_ERR_NOT_POSTED);
         ASSERT_EQ(this->agent_0_->postXferReq(req_hndl), NIXL_SUCCESS);
         nixl_notifs_t notifs;
@@ -715,6 +1628,7 @@ namespace services {
             ASSERT_EQ(notifs.size(), 0);
         }
         ASSERT_EQ(this->agent_0_->getXferStatus(req_hndl), NIXL_SUCCESS);
+        nixlServiceXferReqH *req_hndl_1 = nullptr;
         ASSERT_EQ(this->agent_0_->createXferReq(NIXL_WRITE,
                                                 local_xfer_descs,
                                                 remote_xfer_descs,
@@ -739,6 +1653,43 @@ namespace services {
             ASSERT_EQ(notifs.size(), 0);
             ASSERT_EQ(this->agent_1_->getNotifs(notifs), NIXL_SUCCESS);
             ASSERT_EQ(notifs.size(), 0);
+        }
+    }
+
+    // Validate getXferTelemetry() on a completed transfer, in both directions
+    TYPED_TEST(nixlServiceTest, XferTelemetry) {
+        if (!this->etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!this->cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        this->fillWithRepeatingRandomPattern(this->src_data_, this->memSize);
+        ASSERT_EQ(
+            cudaMemcpy(
+                this->mem_agent_0_, this->src_data_.data(), this->memSize, cudaMemcpyHostToDevice),
+            cudaSuccess);
+        ASSERT_EQ(
+            cudaMemcpy(
+                this->mem_agent_1_, this->src_data_.data(), this->memSize, cudaMemcpyHostToDevice),
+            cudaSuccess);
+        nixl_xfer_telem_t telemetry{};
+        for (const auto operation : {NIXL_WRITE, NIXL_READ}) {
+            const auto marshal_opt_args = (operation == NIXL_READ) ?
+                this->makeMarshalOptArgs(this->delta_ref_agent_1_, this->delta_ref_agent_0_) :
+                this->makeMarshalOptArgs();
+            this->postSingleDescXferAndGetTelemetry(operation, marshal_opt_args, telemetry);
+            if constexpr (std::is_same_v<typename TestFixture::marshal_config_t,
+                                         nixlMarshalStagingConfig>) {
+                EXPECT_EQ(telemetry.totalBytes, this->memSize);
+            } else {
+                EXPECT_GT(telemetry.totalBytes, 0);
+            }
+
+            this->postSingleDescXferAndGetTelemetry(
+                operation, nixlMarshalDirectOptArgs{}, telemetry);
+            EXPECT_EQ(telemetry.totalBytes, this->memSize);
         }
     }
 
@@ -1109,32 +2060,25 @@ namespace services {
                   NIXL_SUCCESS);
         ASSERT_NE(req_hndl_0, nullptr);
 
-
         extra_params.notif = "first_req";
 
         ASSERT_EQ(this->agent_0_->postXferReq(req_hndl_0, &extra_params), NIXL_SUCCESS);
         ASSERT_EQ(this->agent_0_->getXferStatus(req_hndl_0), NIXL_IN_PROG);
-        nixlServiceXferReqH *req_hndl_1 = nullptr;
-        ASSERT_EQ(this->agent_0_->createXferReq(NIXL_WRITE,
-                                                local_xfer_descs,
-                                                remote_xfer_descs,
-                                                "agent_1",
-                                                req_hndl_1,
-                                                &extra_params),
-                  NIXL_ERR_NOT_FOUND); // the service memory is just 2 slots, so this should fail.
-        ASSERT_EQ(req_hndl_1, nullptr);
         ASSERT_EQ(this->agent_0_->releaseXferReq(req_hndl_0),
                   NIXL_SUCCESS); // Mid transfer release.
         nixl_notifs_t notifs;
-        for (int i = 0; i < 10; i++) {
-            ASSERT_EQ(this->agent_0_->getNotifs(notifs), NIXL_SUCCESS);
-            ASSERT_EQ(notifs.size(), 0);
-            ASSERT_EQ(this->agent_1_->getNotifs(notifs), NIXL_SUCCESS);
-            ASSERT_EQ(notifs.size(), 0);
-            // Give time for the DELETE to be processed s.t. the receiver has free slots for the
-            // next request.
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
+        // Force RTS followed by DELETE through one receiver progress tick. FIFO dispatch must
+        // create the inbound state before cancelling it; type-based reordering used to assert in
+        // handleDelete because the deferred RTS had not created that state yet.
+        ASSERT_EQ(this->dispatchServiceNotificationsInOneProgressCall(
+                      *this->agent_0_, "agent_1", *this->agent_1_, "rts-delete-ready"),
+                  NIXL_SUCCESS);
+        // Consume the now-stale CTS generated while handling RTS. The sender already released the
+        // request, so handleCTS must ignore it.
+        ASSERT_EQ(this->dispatchServiceNotificationsInOneProgressCall(
+                      *this->agent_1_, "agent_0", *this->agent_0_, "stale-cts-ready"),
+                  NIXL_SUCCESS);
+        nixlServiceXferReqH *req_hndl_1 = nullptr;
         ASSERT_EQ(this->agent_0_->createXferReq(NIXL_WRITE,
                                                 local_xfer_descs,
                                                 remote_xfer_descs,
@@ -1145,7 +2089,10 @@ namespace services {
         ASSERT_NE(req_hndl_1, nullptr);
         extra_params.notif = "second_req";
         ASSERT_EQ(this->agent_0_->postXferReq(req_hndl_1, &extra_params), NIXL_SUCCESS);
+        const auto transfer_deadline = std::chrono::steady_clock::now() + this->testTimeout;
         while (this->agent_0_->getXferStatus(req_hndl_1) == NIXL_IN_PROG) {
+            ASSERT_LT(std::chrono::steady_clock::now(), transfer_deadline)
+                << "replacement WRITE did not complete within the time bound";
             ASSERT_EQ(this->agent_0_->getNotifs(notifs), NIXL_SUCCESS);
             ASSERT_EQ(notifs.size(), 0);
             ASSERT_EQ(this->agent_1_->getNotifs(notifs), NIXL_SUCCESS);
@@ -1158,7 +2105,10 @@ namespace services {
         ASSERT_EQ(this->agent_0_->releaseXferReq(req_hndl_1), NIXL_SUCCESS);
         ASSERT_EQ(this->agent_0_->getNotifs(notifs), NIXL_SUCCESS);
         ASSERT_EQ(notifs.count("agent_1"), 0);
+        const auto notif_deadline = std::chrono::steady_clock::now() + this->testTimeout;
         while (notifs.size() == 0) {
+            ASSERT_LT(std::chrono::steady_clock::now(), notif_deadline)
+                << "replacement WRITE completion notification was not delivered";
             ASSERT_EQ(this->agent_1_->getNotifs(notifs), NIXL_SUCCESS);
         }
         ASSERT_EQ(notifs.size(), 1);
@@ -1166,17 +2116,285 @@ namespace services {
         ASSERT_EQ(notifs["agent_0"].front(), "second_req");
     }
 
+    TEST_F(nixlServiceOrderingTest, WriteCompletionThenReplacementAdmissionSameProgressTick) {
+        if (!etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        fillWithRepeatingRandomPattern(src_data_, memSize);
+        ASSERT_EQ(cudaMemcpy(mem_agent_0_, src_data_.data(), memSize, cudaMemcpyHostToDevice),
+                  cudaSuccess);
+
+        nixl_xfer_dlist_t local_xfer_descs(VRAM_SEG);
+        local_xfer_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), memSize, device_id_));
+        nixl_xfer_dlist_t remote_xfer_descs(VRAM_SEG);
+        remote_xfer_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_1_), memSize, device_id_));
+
+        nixl_service_opt_args_t extra_params{};
+        extra_params.marshalOptArgs = makeMarshalOptArgs();
+
+        nixlServiceXferReqH *first_request = nullptr;
+        ASSERT_EQ(agent_0_->createXferReq(NIXL_WRITE,
+                                          local_xfer_descs,
+                                          remote_xfer_descs,
+                                          "agent_1",
+                                          first_request,
+                                          &extra_params),
+                  NIXL_SUCCESS);
+        ASSERT_NE(first_request, nullptr);
+        ASSERT_EQ(agent_0_->postXferReq(first_request, &extra_params), NIXL_SUCCESS);
+        ASSERT_EQ(progressUntilTerminal(*agent_0_, *agent_1_, first_request), NIXL_SUCCESS)
+            << "initial WRITE did not complete within the time bound";
+
+        // Completion generated DELETE, but agent_1 has not service-progressed since then.
+        ASSERT_EQ(agent_0_->releaseXferReq(first_request), NIXL_SUCCESS);
+
+        nixlServiceXferReqH *replacement_request = nullptr;
+        ASSERT_EQ(agent_0_->createXferReq(NIXL_WRITE,
+                                          local_xfer_descs,
+                                          remote_xfer_descs,
+                                          "agent_1",
+                                          replacement_request,
+                                          &extra_params),
+                  NIXL_SUCCESS);
+        ASSERT_NE(replacement_request, nullptr);
+        ASSERT_EQ(agent_0_->postXferReq(replacement_request, &extra_params), NIXL_SUCCESS);
+
+        // Force DELETE(old) and RTS(new) through one progressService() call. The old receive
+        // slots must be reclaimed before the replacement RTS is admitted.
+        ASSERT_EQ(dispatchServiceNotificationsInOneProgressCall(
+                      *agent_0_, "agent_1", *agent_1_, "delete-rts-ready"),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(progressUntilTerminal(*agent_0_, *agent_1_, replacement_request), NIXL_SUCCESS)
+            << "replacement WRITE did not complete within the time bound";
+
+        ASSERT_EQ(cudaMemcpy(dst_data_.data(), mem_agent_1_, memSize, cudaMemcpyDeviceToHost),
+                  cudaSuccess);
+        ASSERT_EQ(dst_data_, src_data_);
+        ASSERT_EQ(agent_0_->releaseXferReq(replacement_request), NIXL_SUCCESS);
+    }
+
+    TEST_F(nixlServiceOrderingTest, WriteCompletionThenReadAdmissionSameProgressTick) {
+        if (!etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        fillWithRepeatingRandomPattern(src_data_, memSize);
+        ASSERT_EQ(cudaMemcpy(mem_agent_0_, src_data_.data(), memSize, cudaMemcpyHostToDevice),
+                  cudaSuccess);
+
+        nixl_xfer_dlist_t write_local_descs(VRAM_SEG);
+        write_local_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), memSize, device_id_));
+        nixl_xfer_dlist_t write_remote_descs(VRAM_SEG);
+        write_remote_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_1_), memSize, device_id_));
+
+        nixl_service_opt_args_t write_params{};
+        write_params.marshalOptArgs = makeMarshalOptArgs();
+        nixlServiceXferReqH *write_request = nullptr;
+        ASSERT_EQ(agent_0_->createXferReq(NIXL_WRITE,
+                                          write_local_descs,
+                                          write_remote_descs,
+                                          "agent_1",
+                                          write_request,
+                                          &write_params),
+                  NIXL_SUCCESS);
+        ASSERT_NE(write_request, nullptr);
+        ASSERT_EQ(agent_0_->postXferReq(write_request, &write_params), NIXL_SUCCESS);
+        ASSERT_EQ(progressUntilTerminal(*agent_0_, *agent_1_, write_request), NIXL_SUCCESS)
+            << "initial WRITE did not complete within the time bound";
+        ASSERT_EQ(agent_0_->releaseXferReq(write_request), NIXL_SUCCESS);
+
+        ASSERT_EQ(cudaMemset(mem_agent_0_, 0, memSize), cudaSuccess);
+        nixl_xfer_dlist_t read_local_descs(VRAM_SEG);
+        read_local_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), memSize, device_id_));
+        nixl_xfer_dlist_t read_remote_descs(VRAM_SEG);
+        read_remote_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_1_), memSize, device_id_));
+
+        nixl_service_opt_args_t read_params{};
+        read_params.marshalOptArgs = makeMarshalOptArgs(delta_ref_agent_1_, delta_ref_agent_0_);
+        nixlServiceXferReqH *read_request = nullptr;
+        ASSERT_EQ(agent_0_->createXferReq(NIXL_READ,
+                                          read_local_descs,
+                                          read_remote_descs,
+                                          "agent_1",
+                                          read_request,
+                                          &read_params),
+                  NIXL_SUCCESS);
+        ASSERT_NE(read_request, nullptr);
+        ASSERT_EQ(agent_0_->postXferReq(read_request, &read_params), NIXL_IN_PROG);
+
+        // DELETE(old WRITE) and RREQ(new READ) target the same one-group pool. The admission
+        // barrier applies equally to RREQ; otherwise the peer rejects this reclaimable request.
+        ASSERT_EQ(dispatchServiceNotificationsInOneProgressCall(
+                      *agent_0_, "agent_1", *agent_1_, "delete-rreq-ready"),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(progressUntilTerminal(*agent_0_, *agent_1_, read_request), NIXL_SUCCESS)
+            << "READ admission did not reuse slots released by the preceding DELETE";
+
+        ASSERT_EQ(cudaMemcpy(dst_data_.data(), mem_agent_0_, memSize, cudaMemcpyDeviceToHost),
+                  cudaSuccess);
+        ASSERT_EQ(dst_data_, src_data_);
+        ASSERT_EQ(agent_0_->releaseXferReq(read_request), NIXL_SUCCESS);
+    }
+
+    TEST_F(nixlServiceOrderingTest, ReadStartThenCancelSameProgressTick) {
+        if (!etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        fillWithRepeatingRandomPattern(src_data_, memSize);
+        ASSERT_EQ(cudaMemcpy(mem_agent_1_, src_data_.data(), memSize, cudaMemcpyHostToDevice),
+                  cudaSuccess);
+
+        nixl_xfer_dlist_t local_xfer_descs(VRAM_SEG);
+        local_xfer_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), memSize, device_id_));
+        nixl_xfer_dlist_t remote_xfer_descs(VRAM_SEG);
+        remote_xfer_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_1_), memSize, device_id_));
+
+        nixl_service_opt_args_t extra_params{};
+        extra_params.marshalOptArgs = makeMarshalOptArgs(delta_ref_agent_1_, delta_ref_agent_0_);
+
+        nixlServiceXferReqH *cancelled_request = nullptr;
+        ASSERT_EQ(agent_0_->createXferReq(NIXL_READ,
+                                          local_xfer_descs,
+                                          remote_xfer_descs,
+                                          "agent_1",
+                                          cancelled_request,
+                                          &extra_params),
+                  NIXL_SUCCESS);
+        ASSERT_NE(cancelled_request, nullptr);
+        ASSERT_EQ(agent_0_->postXferReq(cancelled_request, &extra_params), NIXL_IN_PROG);
+        ASSERT_EQ(agent_0_->releaseXferReq(cancelled_request), NIXL_SUCCESS);
+
+        // RREQ must be admitted before the following RABORT is dispatched. Reordering these
+        // controls would acknowledge a nonexistent serve and then resurrect it.
+        ASSERT_EQ(dispatchServiceNotificationsInOneProgressCall(
+                      *agent_0_, "agent_1", *agent_1_, "rreq-rabort-ready"),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(dispatchServiceNotificationsInOneProgressCall(
+                      *agent_1_, "agent_0", *agent_0_, "rabort-ack-ready"),
+                  NIXL_SUCCESS);
+
+        nixlServiceXferReqH *replacement_request = nullptr;
+        ASSERT_EQ(agent_0_->createXferReq(NIXL_READ,
+                                          local_xfer_descs,
+                                          remote_xfer_descs,
+                                          "agent_1",
+                                          replacement_request,
+                                          &extra_params),
+                  NIXL_SUCCESS);
+        ASSERT_NE(replacement_request, nullptr);
+        ASSERT_EQ(agent_0_->postXferReq(replacement_request, &extra_params), NIXL_IN_PROG);
+        ASSERT_EQ(progressUntilTerminal(*agent_0_, *agent_1_, replacement_request), NIXL_SUCCESS)
+            << "READ replacement failed after same-tick cancellation";
+
+        ASSERT_EQ(cudaMemcpy(dst_data_.data(), mem_agent_0_, memSize, cudaMemcpyDeviceToHost),
+                  cudaSuccess);
+        ASSERT_EQ(dst_data_, src_data_);
+        ASSERT_EQ(agent_0_->releaseXferReq(replacement_request), NIXL_SUCCESS);
+    }
+
+    TEST_F(nixlServiceOrderingTest, ReadAbortAckThenWriteAdmissionSameProgressTick) {
+        if (!etcd_valid_) {
+            GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
+        }
+        if (!cuda_valid_) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
+
+        fillWithRepeatingRandomPattern(src_data_, memSize);
+        ASSERT_EQ(cudaMemcpy(mem_agent_1_, src_data_.data(), memSize, cudaMemcpyHostToDevice),
+                  cudaSuccess);
+        ASSERT_EQ(cudaMemset(mem_agent_0_, 0, memSize), cudaSuccess);
+
+        nixl_xfer_dlist_t read_local_descs(VRAM_SEG);
+        read_local_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), memSize, device_id_));
+        nixl_xfer_dlist_t read_remote_descs(VRAM_SEG);
+        read_remote_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_1_), memSize, device_id_));
+
+        nixl_service_opt_args_t read_params{};
+        read_params.marshalOptArgs = makeMarshalOptArgs(delta_ref_agent_1_, delta_ref_agent_0_);
+        nixlServiceXferReqH *read_request = nullptr;
+        ASSERT_EQ(agent_0_->createXferReq(NIXL_READ,
+                                          read_local_descs,
+                                          read_remote_descs,
+                                          "agent_1",
+                                          read_request,
+                                          &read_params),
+                  NIXL_SUCCESS);
+        ASSERT_NE(read_request, nullptr);
+        ASSERT_EQ(agent_0_->postXferReq(read_request, &read_params), NIXL_IN_PROG);
+        ASSERT_EQ(agent_0_->releaseXferReq(read_request), NIXL_SUCCESS);
+
+        // Dispatch RREQ+RABORT at agent_1. This sends RABORT_ACK but deliberately leaves it
+        // queued at agent_0 so the ACK can share a progress tick with the RTS below.
+        ASSERT_EQ(dispatchServiceNotificationsInOneProgressCall(
+                      *agent_0_, "agent_1", *agent_1_, "rreq-rabort-before-write-ready"),
+                  NIXL_SUCCESS);
+
+        nixl_xfer_dlist_t write_local_descs(VRAM_SEG);
+        write_local_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_1_), memSize, device_id_));
+        nixl_xfer_dlist_t write_remote_descs(VRAM_SEG);
+        write_remote_descs.addDesc(
+            nixlBasicDesc(reinterpret_cast<uintptr_t>(mem_agent_0_), memSize, device_id_));
+
+        nixl_service_opt_args_t write_params{};
+        write_params.marshalOptArgs = makeMarshalOptArgs();
+        nixlServiceXferReqH *write_request = nullptr;
+        ASSERT_EQ(agent_1_->createXferReq(NIXL_WRITE,
+                                          write_local_descs,
+                                          write_remote_descs,
+                                          "agent_0",
+                                          write_request,
+                                          &write_params),
+                  NIXL_SUCCESS);
+        ASSERT_NE(write_request, nullptr);
+        ASSERT_EQ(agent_1_->postXferReq(write_request, &write_params), NIXL_SUCCESS);
+
+        // RABORT_ACK makes the cancelled READ's receive slots reclaimable. They must be freed
+        // before the following RTS attempts to allocate the same slot group.
+        ASSERT_EQ(dispatchServiceNotificationsInOneProgressCall(
+                      *agent_1_, "agent_0", *agent_0_, "rabort-ack-rts-ready"),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(progressUntilTerminal(*agent_1_, *agent_0_, write_request), NIXL_SUCCESS)
+            << "WRITE admission did not reuse slots released by the preceding RABORT_ACK";
+
+        ASSERT_EQ(cudaMemcpy(dst_data_.data(), mem_agent_0_, memSize, cudaMemcpyDeviceToHost),
+                  cudaSuccess);
+        ASSERT_EQ(dst_data_, src_data_);
+        ASSERT_EQ(agent_1_->releaseXferReq(write_request), NIXL_SUCCESS);
+    }
+
     // Cancels a marshalled READ at a sweep of different points in its lifecycle - before ever
     // posting, immediately after posting, at a range of increasing delays after posting, and
     // after letting it fully complete - so that across the sweep a release is likely to land
     // while a slot is in each of local_slot_state_t's BUSY_MARSHAL/READY_TO_SEND/BUSY_NIXL/FREE at
-    // least once, without needing invasive test-only synchronization hooks. After each release,
-    // confirms (a) no crash/assertion failure and (b) no write lands in the destination buffer
-    // once the cancellation has settled. A leaked slot from any individual trial would already
-    // fail that trial's own (or, since this fixture's whole pool is exactly slots_per_xfer slots,
-    // at latest the next trial's) createXferReq assertion below, so a full, independent READ
-    // (runReadValidTest) only needs to run once at the very end, not after every trial, to prove
-    // the pool is left not just numerically free but functionally correct.
+    // least once, without needing invasive test-only synchronization hooks. Before every release,
+    // never-posted guard requests reserve all remaining transfer groups. After the cancellation
+    // settles, exactly one replacement must fit and an additional request must fail, proving that
+    // the active request's complete slot group was reclaimed regardless of the dependency-specific
+    // physical slot stride. A full, independent READ (runReadValidTest) runs once at the very end
+    // to prove the pool is left not just numerically free but functionally correct.
     TYPED_TEST(nixlServiceTest, ReadCancelInEverySlotState) {
         if (!this->etcd_valid_) {
             GTEST_SKIP() << "NIXL_ETCD_ENDPOINTS is not set or etcd is not running";
@@ -1204,6 +2422,17 @@ namespace services {
         {
             auto extra_params = make_extra_params();
             nixlServiceXferReqH *req_hndl = nullptr;
+            ASSERT_EQ(this->agent_0_->createXferReq(NIXL_READ,
+                                                    local_xfer_descs,
+                                                    remote_xfer_descs,
+                                                    "agent_1",
+                                                    req_hndl,
+                                                    &extra_params),
+                      NIXL_SUCCESS);
+            ASSERT_NE(req_hndl, nullptr);
+            ASSERT_EQ(this->agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS);
+
+            req_hndl = nullptr;
             ASSERT_EQ(this->agent_0_->createXferReq(NIXL_READ,
                                                     local_xfer_descs,
                                                     remote_xfer_descs,
@@ -1245,12 +2474,17 @@ namespace services {
             if (release_points[trial].has_value()) {
                 std::this_thread::sleep_for(*release_points[trial]);
             } else {
+                const auto completion_deadline =
+                    std::chrono::steady_clock::now() + this->testTimeout;
                 while (this->agent_0_->getXferStatus(req_hndl) == NIXL_IN_PROG) {
+                    ASSERT_LT(std::chrono::steady_clock::now(), completion_deadline)
+                        << "trial " << trial << ": READ did not complete before release";
                     ASSERT_EQ(this->agent_0_->getNotifs(notifs), NIXL_SUCCESS);
                     ASSERT_EQ(this->agent_1_->getNotifs(notifs), NIXL_SUCCESS);
                 }
             }
             ASSERT_EQ(this->agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS) << "trial " << trial;
+            req_hndl = nullptr;
 
             // Let the drain-to-quiescence (RABORT/RABORT_ACK), or the immediate free path if it
             // had already reached DONE, fully settle before checking for a stale write. 20ms
@@ -1260,6 +2494,17 @@ namespace services {
                 ASSERT_EQ(this->agent_1_->getNotifs(notifs), NIXL_SUCCESS);
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
             }
+
+            ASSERT_EQ(this->agent_0_->createXferReq(NIXL_READ,
+                                                    local_xfer_descs,
+                                                    remote_xfer_descs,
+                                                    "agent_1",
+                                                    req_hndl,
+                                                    &extra_params),
+                      NIXL_SUCCESS)
+                << "trial " << trial << ": released slot group was not reclaimed";
+            ASSERT_NE(req_hndl, nullptr);
+            ASSERT_EQ(this->agent_0_->releaseXferReq(req_hndl), NIXL_SUCCESS) << "trial " << trial;
 
             std::vector<unsigned char> settled(this->memSize);
             ASSERT_EQ(
@@ -1308,9 +2553,9 @@ namespace services {
 
         constexpr size_t direct_desc_threshold = 64 * 1024 * 1024;
         constexpr size_t transfer_size =
-            direct_desc_threshold + TestFixture::chunk_size * slots_per_xfer * 2;
+            direct_desc_threshold + TypeParam::chunkSize * slots_per_xfer * 2;
         static_assert(transfer_size > direct_desc_threshold);
-        static_assert(transfer_size <= TestFixture::memSize);
+        static_assert(transfer_size <= TypeParam::memSize);
 
         // A third agent that only exchanges metadata with agent_0_ (never agent_1_), used to
         // verify handleRPosted's sender check - without it, any agent able to reach agent_0_
@@ -1319,7 +2564,7 @@ namespace services {
         impostor_cfg.mode = nixlMarshalStagingConfig{};
         impostor_cfg.useProgThread = true;
         auto impostor =
-            std::make_unique<testServiceAgent>("impostor", impostor_cfg, this->chunk_size);
+            std::make_unique<testServiceAgent>("impostor", impostor_cfg, this->chunkSize);
         nixlBackendH *impostor_backend = nullptr;
         ASSERT_EQ(impostor->createBackend("UCX", {}, impostor_backend), NIXL_SUCCESS);
         nixl_blob_t impostor_md;
@@ -1361,8 +2606,8 @@ namespace services {
             *req_hndl->readReceiveXferId; // Also rReqPayload.xferId - see genRREQ.
         ASSERT_EQ(this->agent_0_->postXferReq(req_hndl, &extra_params), NIXL_IN_PROG);
 
-        auto segments = std::make_shared<std::vector<nixlMarshal::ChunkDivision::segment>>();
-        segments->push_back({0, 16});
+        const auto backend = marshalBackendFromConfig(typename TypeParam::marshal_config_t{});
+        constexpr size_t wire_size = 16;
 
         // Unrecognized _NIXLS_ subtype: serviceNotifCallback must drop it, not assert.
         ASSERT_EQ(this->agent_1_->genNotif("agent_0", "_NIXLS_BOGUS_no-such-message-kind"),
@@ -1373,23 +2618,29 @@ namespace services {
         // RPOSTED for a nonexistent xfer id.
         ASSERT_EQ(
             this->agent_1_->genNotif(
-                "agent_0", rPostedPayload(xfer_id + 999983, 0, 16, segments, 0, "").serialize()),
+                "agent_0",
+                rPostedPayload(xfer_id + 999983, 0, 16, wire_size, 0, "", backend).serialize()),
             NIXL_SUCCESS);
         // RPOSTED for the real xfer id, but an out-of-range slot index.
         ASSERT_EQ(this->agent_1_->genNotif(
                       "agent_0",
-                      rPostedPayload(xfer_id, slots_per_xfer + 7, 16, segments, 0, "").serialize()),
+                      rPostedPayload(xfer_id, slots_per_xfer + 7, 16, wire_size, 0, "", backend)
+                          .serialize()),
                   NIXL_SUCCESS);
+
         // RPOSTED for the real xfer id and a valid slot index, but a wildly out-of-bounds
         // destination offset ("oversized" relative to the actual destination region).
         ASSERT_EQ(this->agent_1_->genNotif(
                       "agent_0",
-                      rPostedPayload(xfer_id, 0, 16, segments, transfer_size * 4, "").serialize()),
+                      rPostedPayload(xfer_id, 0, 16, wire_size, transfer_size * 4, "", backend)
+                          .serialize()),
                   NIXL_SUCCESS);
         // RPOSTED for the real xfer id from an agent that is not this READ's actual peer.
-        ASSERT_EQ(impostor->genNotif("agent_0",
-                                     rPostedPayload(xfer_id, 0, 16, segments, 0, "").serialize()),
-                  NIXL_SUCCESS);
+        ASSERT_EQ(
+            impostor->genNotif(
+                "agent_0", rPostedPayload(xfer_id, 0, 16, wire_size, 0, "", backend).serialize()),
+            NIXL_SUCCESS);
+
         // RPOSTED for the real xfer id and a valid slot index, with dstByteOffset/originalSize
         // chosen so their sum overflows size_t and wraps back to (in this case, exactly) 0, well
         // within the destination region's bounds. resolveAbsoluteOffset() must reject this via
@@ -1400,7 +2651,8 @@ namespace services {
             const size_t overflow_size = std::numeric_limits<size_t>::max() - overflow_offset + 1;
             ASSERT_EQ(this->agent_1_->genNotif(
                           "agent_0",
-                          rPostedPayload(xfer_id, 0, overflow_size, segments, overflow_offset, "")
+                          rPostedPayload(
+                              xfer_id, 0, overflow_size, wire_size, overflow_offset, "", backend)
                               .serialize()),
                       NIXL_SUCCESS);
         }
@@ -1492,10 +2744,12 @@ namespace services {
         constexpr size_t chunk_size_initiator = 128 * 1024;
         constexpr size_t chunk_size_peer = 256 * 1024; // Deliberately mismatched.
         constexpr size_t mem_size = 1024 * chunk_size_initiator; // Exceeds direct_desc_threshold.
+        constexpr uint32_t max_concurrent_transfers = 1;
+        constexpr uint32_t slot_groups = max_concurrent_transfers + 1;
         constexpr size_t svc_mem_size_initiator =
-            chunk_size_initiator * MarshalBackendSizing::slots_per_transfer;
+            chunk_size_initiator * MarshalBackendSizing::slots_per_transfer * slot_groups;
         constexpr size_t svc_mem_size_peer =
-            chunk_size_peer * MarshalBackendSizing::slots_per_transfer;
+            chunk_size_peer * MarshalBackendSizing::slots_per_transfer * slot_groups;
 
         nixlServiceAgentConfig cfg_initiator;
         cfg_initiator.mode = nixlMarshalStagingConfig{};

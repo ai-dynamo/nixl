@@ -54,7 +54,7 @@ namespace {
             cudaEventDestroy(event_);
         }
 
-        std::optional<CompletionT>
+        slot_completion_result_t<CompletionT>
         checkForCompletionImpl() {
             const auto err = cudaEventQuery(event_);
             if (err == cudaSuccess) {
@@ -67,10 +67,9 @@ namespace {
                 throw std::runtime_error("DeltaEventHandle: unsupported completion type");
             }
             if (err == cudaErrorNotReady) {
-                return std::nullopt;
+                return NIXL_IN_PROG;
             }
-            throw std::runtime_error(std::string("DeltaEventHandle: cudaEventQuery failed: ") +
-                                     cudaGetErrorString(err));
+            return NIXL_ERR_BACKEND;
         }
     };
 

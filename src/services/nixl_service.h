@@ -35,6 +35,10 @@
 class nixlServiceAgentData;
 struct nixlServiceXferReqH;
 
+namespace nixlMarshal {
+class backend;
+}
+
 namespace nixlService {
 /**
  * @brief Recommend the service memory, in bytes per descriptor, to register for a given
@@ -196,6 +200,16 @@ public:
     nixl_status_t
     getNotifs(nixl_notifs_t &notifs, const nixl_opt_args_t *extra_params = nullptr);
 
+    /**
+     * @brief  Query telemetry for a completed service transfer.
+     *
+     * @param  req_hndl  Service transfer handle
+     * @param  telemetry [out] Output telemetry information
+     * @return nixl_status_t
+     */
+    nixl_status_t
+    getXferTelemetry(const nixlServiceXferReqH *req_hndl, nixl_xfer_telem_t &telemetry) const;
+
     nixl_status_t
     createXferReq(const nixl_xfer_op_t &,
                   const nixl_xfer_dlist_t &,
@@ -240,15 +254,14 @@ private:
     prepare(nixlServiceAgentConfig cfg);
 
 protected:
-    /**
-     * @brief  Pre-create nixlServiceAgentData with an explicit chunked payload size.
-     *
-     * @note   Test-only seam. The payload size is baked into the layout fingerprint, so
-     *         production agents must go through the public constructor to stay compatible
-     *         with their peers.
-     */
+    // Test-only: override chunked payload size and/or inject a marshal backend.
     static std::pair<nixlServiceAgentConfig, std::shared_ptr<nixlServiceAgentData>>
     prepare(nixlServiceAgentConfig cfg, size_t chunked_payload_size);
+
+    static std::pair<nixlServiceAgentConfig, std::shared_ptr<nixlServiceAgentData>>
+    prepare(nixlServiceAgentConfig cfg,
+            size_t chunked_payload_size,
+            std::shared_ptr<nixlMarshal::backend> backend);
 
     /**
      * @brief  Delegating constructor that receives the pre-built tag.

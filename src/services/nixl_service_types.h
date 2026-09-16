@@ -21,6 +21,7 @@
 #include "nixl_params.h"
 #include "nixl_descriptors.h"
 
+#include <cstdint>
 #include <variant>
 #include <string>
 #include <unordered_map>
@@ -70,9 +71,19 @@ struct nixlMarshalDeltaOptArgs {
     size_t elementSize = 0;
 };
 
+enum class nixl_marshal_compress_data_type_t : uint8_t {
+    CHAR = 0,
+    UCHAR = 1,
+    FLOAT16 = 2,
+    FLOAT8_E4M3 = 3,
+    NUM_COMPRESS_DATA_TYPES = 4,
+};
+
 struct nixlMarshalCompressOptArgs {
     // Only valid for the ANS_DELTA compression algorithm, must be present.
     std::optional<nixlMarshalDeltaOptArgs> delta;
+    // Algorithms that do not interpret input as typed elements may ignore this option.
+    nixl_marshal_compress_data_type_t dataType = nixl_marshal_compress_data_type_t::FLOAT16;
 };
 
 using nixl_marshal_opt_args_t = std::variant<nixlMarshalDirectOptArgs,
@@ -91,11 +102,40 @@ constexpr size_t slots_per_transfer = 2;
 constexpr size_t slot_stride_alignment = 8;
 } // namespace MarshalBackendSizing
 
-struct nixlServiceAgentConfig : nixlAgentConfig {
-    nixl_marshal_config_t mode = nixlMarshalDirectConfig{};
+enum class nixl_marshal_phase_t {
+    /**
+     * @brief The marshal phase before the transfer.
+     * @details
+     * The marshal will be performed before the transfer. eg. compressing the data.
+     */
+    PRE_TRANSFER,
+    /**
+     * @brief The marshal phase after the transfer.
+     * @details
+     * The marshal will be performed after the transfer. eg. decompressing the data.
+     */
+    POST_TRANSFER,
+    /**
+     * @brief The marshal phase before and after the transfer.
+     * @details
+     * The marshal will be performed before and after the transfer. eg. compressing and
+     * decompressing the data.
+     */
+    PRE_AND_POST_TRANSFER,
 };
 
-struct nixl_service_opt_args_t : nixl_opt_args_t {
+struct nixlServiceAgentConfig : nixlAgentConfig {
+    nixl_marshal_config_t mode = nixlMarshalDirectConfig{};
+    /**
+     * Service notifications are the backbone of the transfer pipeline. Disable their callbacks
+     * only for a backend that cannot inject them, such as GDS_MT used solely as an asymmetric
+     * target.
+     */
+    // TODO-Eyal: Remove this, make the service ask the backend if it supports notifications.
+    bool disableServiceNotifCallbacks = false;
+};
+
+struct nixl_service_opt_args_t : nixl_opt_args_t { // NOLINT(readability-identifier-naming)
     /**
      * @brief The marshal optional arguments.
      *
@@ -107,6 +147,12 @@ struct nixl_service_opt_args_t : nixl_opt_args_t {
      *       mode configured in nixlServiceAgentConfig (via makeXferReq and createXferReq).
      */
     std::optional<nixl_marshal_opt_args_t> marshalOptArgs = std::nullopt;
+
+    /**
+     * @brief The marshal phase for this transfer. Not used if `nixlMarshalDirectConfig` is
+     *        the configured mode.
+     */
+    nixl_marshal_phase_t phase = nixl_marshal_phase_t::PRE_AND_POST_TRANSFER;
 };
 
 #endif // NIXL_SERVICE_TYPES_H

@@ -202,6 +202,19 @@ PYBIND11_MODULE(_service_bindings, m) {
         .value("BITCOMP", nixl_marshal_compress_algo_t::BITCOMP)
         .export_values();
 
+    py::enum_<nixl_marshal_compress_data_type_t>(m, "nixl_marshal_compress_data_type_t")
+        .value("CHAR", nixl_marshal_compress_data_type_t::CHAR)
+        .value("UCHAR", nixl_marshal_compress_data_type_t::UCHAR)
+        .value("FLOAT16", nixl_marshal_compress_data_type_t::FLOAT16)
+        .value("FLOAT8_E4M3", nixl_marshal_compress_data_type_t::FLOAT8_E4M3)
+        .export_values();
+
+    py::enum_<nixl_marshal_phase_t>(m, "nixl_marshal_phase_t")
+        .value("PRE_TRANSFER", nixl_marshal_phase_t::PRE_TRANSFER)
+        .value("POST_TRANSFER", nixl_marshal_phase_t::POST_TRANSFER)
+        .value("PRE_AND_POST_TRANSFER", nixl_marshal_phase_t::PRE_AND_POST_TRANSFER)
+        .export_values();
+
     py::class_<nixlMarshalDirectConfig>(m, "nixlMarshalDirectConfig")
         .def(py::init<>())
         .def("__repr__", [](const nixlMarshalDirectConfig &) {
@@ -298,13 +311,17 @@ PYBIND11_MODULE(_service_bindings, m) {
 
     py::class_<nixlMarshalCompressOptArgs>(m, "nixlMarshalCompressOptArgs")
         .def(py::init<>())
-        .def(py::init([](std::optional<nixlMarshalDeltaOptArgs> delta) {
+        .def(py::init([](std::optional<nixlMarshalDeltaOptArgs> delta,
+                         nixl_marshal_compress_data_type_t data_type) {
                  nixlMarshalCompressOptArgs args;
                  args.delta = delta;
+                 args.dataType = data_type;
                  return args;
              }),
-             py::arg("delta") = std::nullopt)
+             py::arg("delta") = std::nullopt,
+             py::arg("dataType") = nixl_marshal_compress_data_type_t::FLOAT16)
         .def_readwrite("delta", &nixlMarshalCompressOptArgs::delta)
+        .def_readwrite("dataType", &nixlMarshalCompressOptArgs::dataType)
         .def("__repr__", [](const nixlMarshalCompressOptArgs &) {
             return std::string("nixlMarshalCompressOptArgs()");
         });
@@ -332,7 +349,9 @@ PYBIND11_MODULE(_service_bindings, m) {
     // -----------------------------------------------------------------------
     py::class_<nixlServiceAgentConfig, nixlAgentConfig>(m, "nixlServiceAgentConfig")
         .def(py::init<>())
-        .def_readwrite("mode", &nixlServiceAgentConfig::mode);
+        .def_readwrite("mode", &nixlServiceAgentConfig::mode)
+        .def_readwrite("disableServiceNotifCallbacks",
+                       &nixlServiceAgentConfig::disableServiceNotifCallbacks);
 
     // -----------------------------------------------------------------------
     // nixl_service_opt_args_t — optional args carrier. The configured agent
@@ -341,7 +360,8 @@ PYBIND11_MODULE(_service_bindings, m) {
     // -----------------------------------------------------------------------
     py::class_<nixl_service_opt_args_t>(m, "nixl_service_opt_args_t")
         .def(py::init<>())
-        .def_readwrite("marshalOptArgs", &nixl_service_opt_args_t::marshalOptArgs);
+        .def_readwrite("marshalOptArgs", &nixl_service_opt_args_t::marshalOptArgs)
+        .def_readwrite("phase", &nixl_service_opt_args_t::phase);
 
     // -----------------------------------------------------------------------
     // nixlServiceAgent
@@ -420,7 +440,8 @@ PYBIND11_MODULE(_service_bindings, m) {
                const std::string &remote_agent,
                const std::string &notif_msg,
                const std::vector<uintptr_t> &backends,
-               const std::optional<nixl_marshal_opt_args_t> &marshal_opt_args) -> uintptr_t {
+               const std::optional<nixl_marshal_opt_args_t> &marshal_opt_args,
+               const std::optional<nixl_marshal_phase_t> &phase) -> uintptr_t {
                 nixlServiceXferReqH *handle = nullptr;
                 nixl_service_opt_args_t extra_params{};
                 set_backends(extra_params, backends);
@@ -429,6 +450,9 @@ PYBIND11_MODULE(_service_bindings, m) {
                 }
                 if (marshal_opt_args.has_value()) {
                     extra_params.marshalOptArgs = *marshal_opt_args;
+                }
+                if (phase.has_value()) {
+                    extra_params.phase = *phase;
                 }
 
                 throw_nixl_exception(agent.createXferReq(
@@ -442,6 +466,7 @@ PYBIND11_MODULE(_service_bindings, m) {
             py::arg("notif_msg") = std::string{},
             py::arg("backends") = std::vector<uintptr_t>{},
             py::arg("marshal_opt_args") = std::nullopt,
+            py::arg("phase") = std::nullopt,
             py::call_guard<py::gil_scoped_release>())
 
         .def(
@@ -455,7 +480,8 @@ PYBIND11_MODULE(_service_bindings, m) {
                const std::string &notif_msg,
                const std::vector<uintptr_t> &backends,
                bool skip_desc_merge,
-               const std::optional<nixl_marshal_opt_args_t> &marshal_opt_args) -> uintptr_t {
+               const std::optional<nixl_marshal_opt_args_t> &marshal_opt_args,
+               const std::optional<nixl_marshal_phase_t> &phase) -> uintptr_t {
                 nixlServiceXferReqH *handle = nullptr;
                 nixl_service_opt_args_t extra_params{};
                 set_backends(extra_params, backends);
@@ -465,6 +491,9 @@ PYBIND11_MODULE(_service_bindings, m) {
                 extra_params.skipDescMerge = skip_desc_merge;
                 if (marshal_opt_args.has_value()) {
                     extra_params.marshalOptArgs = *marshal_opt_args;
+                }
+                if (phase.has_value()) {
+                    extra_params.phase = *phase;
                 }
 
                 throw_nixl_exception(agent.makeXferReq(operation,
@@ -484,23 +513,28 @@ PYBIND11_MODULE(_service_bindings, m) {
             py::arg("notif_msg") = std::string{},
             py::arg("backends") = std::vector<uintptr_t>{},
             py::arg("skip_desc_merge") = false,
-            py::arg("marshal_opt_args") = std::nullopt)
+            py::arg("marshal_opt_args") = std::nullopt,
+            py::arg("phase") = std::nullopt)
 
         .def(
             "postXferReq",
             [](nixlServiceAgent &agent,
                uintptr_t reqh,
                const std::string &notif_msg,
-               const std::optional<nixl_marshal_opt_args_t> &marshal_opt_args) -> nixl_status_t {
+               const std::optional<nixl_marshal_opt_args_t> &marshal_opt_args,
+               const std::optional<nixl_marshal_phase_t> &phase) -> nixl_status_t {
                 nixl_status_t ret;
                 auto *h = reinterpret_cast<nixlServiceXferReqH *>(reqh);
-                if (!notif_msg.empty() || marshal_opt_args.has_value()) {
+                if (!notif_msg.empty() || marshal_opt_args.has_value() || phase.has_value()) {
                     nixl_service_opt_args_t extra_params{};
                     if (!notif_msg.empty()) {
                         extra_params.notif = notif_msg;
                     }
                     if (marshal_opt_args.has_value()) {
                         extra_params.marshalOptArgs = *marshal_opt_args;
+                    }
+                    if (phase.has_value()) {
+                        extra_params.phase = *phase;
                     }
                     ret = agent.postXferReq(h, &extra_params);
                 } else {
@@ -512,6 +546,7 @@ PYBIND11_MODULE(_service_bindings, m) {
             py::arg("reqh"),
             py::arg("notif_msg") = std::string{},
             py::arg("marshal_opt_args") = std::nullopt,
+            py::arg("phase") = std::nullopt,
             py::call_guard<py::gil_scoped_release>())
 
         .def(
@@ -556,5 +591,15 @@ PYBIND11_MODULE(_service_bindings, m) {
                 return notif_map;
             },
             py::arg("notif_map"),
-            py::arg("backends") = std::vector<uintptr_t>{});
+            py::arg("backends") = std::vector<uintptr_t>{})
+
+        .def(
+            "getXferTelemetry",
+            [](const nixlServiceAgent &agent, uintptr_t reqh) -> nixl_xfer_telem_t {
+                nixl_xfer_telem_t telemetry{};
+                throw_nixl_exception(agent.getXferTelemetry(
+                    reinterpret_cast<const nixlServiceXferReqH *>(reqh), telemetry));
+                return telemetry;
+            },
+            py::arg("reqh"));
 }

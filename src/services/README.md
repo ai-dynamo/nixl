@@ -72,6 +72,10 @@ python ./examples/python/service_api_example.py
 python ./examples/python/service_api_example.py --direction read
 ```
 
+## Run nixlbench
+
+nixlbench supports the service via `--marshal_mode` (`direct` or `compress`).
+
 ## Notes
 
 1. **nvCOMP + supported NVIDIA CUDA hardware are required** for compression service scenarios.

@@ -25,13 +25,14 @@ subdir('marshal')
 # that meson accepts across subdir boundaries.
 nixl_service_sources = files('nixl_service.cpp')
 
+if not nvcomp_dep.found()
+    error('nvCOMP is required to build nixl_service. Set -Dnvcomp_path_lib (and -Dnvcomp_path_inc) or install nvCOMP system-wide.')
+endif
+
 nixl_service_compile_args = []
 nixl_service_extra_deps = [staging_dep]
 nixl_service_extra_deps += [delta_dep]
-if nvcomp_dep.found()
-    nixl_service_compile_args += ['-DNIXL_HAVE_NVCOMP=1']
-    nixl_service_extra_deps += [compression_dep]
-endif
+nixl_service_extra_deps += [compression_dep]
 
 nixl_service_lib = library('nixl_service',
                            nixl_service_sources,
@@ -49,9 +50,12 @@ nixl_service_dep = declare_dependency(
     dependencies: nixl_service_deps + nixl_service_extra_deps)
 
 if get_option('install_headers')
-    install_headers(
-        'nixl_service.h',
-        'nixl_service_types.h',
-        'marshal/marshal_backend.h',
-        subdir: 'nixl')
+    install_headers('nixl_service.h', 'nixl_service_types.h', subdir: 'nixl')
+    # nixl_service.h pulls in the marshal backends, and those include each other by
+    # relative path, so the installed tree has to mirror the source layout.
+    marshal_headers = ['marshal/marshal_backend.h']
+    if nvcomp_dep.found()
+        marshal_headers += ['marshal/compression/compression_backend.h']
+    endif
+    install_headers(marshal_headers, subdir: 'nixl', preserve_path: true)
 endif

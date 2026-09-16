@@ -30,6 +30,7 @@
 #include <functional>
 #include <nixl.h>
 #include <nixl_types.h>
+#include <nixl_service.h>
 #include "utils/utils.h"
 #include "worker/worker.h"
 #include <random>
@@ -39,15 +40,17 @@
 
 class xferBenchNixlWorker: public xferBenchWorker {
     private:
-        nixlAgent* agent;
+        nixlServiceAgent *agent;
         nixlBackendH* backend_engine;
         nixl_mem_t seg_type;
+        MarshalSettings marshal_;
         std::vector<xferFileState> remote_fds;
         std::vector<NixlMemRegion> remote_regs_;
         std::vector<NixlMemRegion> local_regs_;
         std::vector<GusliDeviceConfig> gusli_devices;
         std::string remote_agent_name;
         std::optional<xferBenchIOV> completion_counter_iov;
+        nixl_reg_dlist_t svc_desc_;
 
     public:
         explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
@@ -59,6 +62,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
 
         // Communication and synchronization
         int exchangeMetadata() override;
+        int
+        exchangeInitiatorMetadata();
         std::vector<std::vector<xferBenchIOV>>
         exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                     size_t block_size) override;
@@ -103,6 +108,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
                                        const std::function<void()> &checkLiveness);
 
         std::mt19937_64 default_rng_;
+        void
+        releaseServiceMem();
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H
