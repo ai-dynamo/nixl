@@ -154,6 +154,10 @@ public:
                 (const, override));
 
 private:
+    GMockBackendEngine(nixlBackendInitParams init_params);
+
+    void
+    setDefaults();
     void
     setOptionalDefaults();
 };
