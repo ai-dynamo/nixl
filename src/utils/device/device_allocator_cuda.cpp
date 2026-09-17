@@ -28,7 +28,7 @@ cudaFailureMsg(const char *operation, cudaError_t error) {
     return std::string(operation) + " failed: " + cudaGetErrorString(error);
 }
 
-class nixlCudaDeviceAllocator final : public nixlDeviceAllocator {
+class cudaDeviceAllocator final : public nixl::deviceAllocator {
 public:
     nixl_status_t
     doAllocDeviceMem(void *&ptr, size_t size) noexcept override {
@@ -169,7 +169,7 @@ public:
 
 } // namespace
 
-extern "C" NIXL_DEVICE_ALLOCATOR_EXPORT nixlDeviceAllocator *
+extern "C" NIXL_DEVICE_ALLOCATOR_EXPORT nixl::deviceAllocator *
 nixlCreateCudaDeviceAllocator() noexcept {
     int device_count = 0;
     const cudaError_t error = cudaGetDeviceCount(&device_count);
@@ -186,6 +186,6 @@ nixlCreateCudaDeviceAllocator() noexcept {
         return nullptr;
     }
 
-    static nixlCudaDeviceAllocator allocator;
+    static cudaDeviceAllocator allocator;
     return &allocator;
 }

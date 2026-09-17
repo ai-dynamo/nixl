@@ -26,7 +26,7 @@ namespace {
 constexpr const char *kCudaAllocatorLibrary = "libnixl_device_allocator_cuda.so";
 constexpr const char *kCudaAllocatorFactory = "nixlCreateCudaDeviceAllocator";
 
-class nixlUnsupportedDeviceAllocator final : public nixlDeviceAllocator {
+class unsupportedDeviceAllocator final : public nixl::deviceAllocator {
 public:
     nixl_status_t
     doAllocDeviceMem(void *&, size_t) noexcept override {
@@ -75,12 +75,12 @@ public:
     }
 };
 
-using CudaAllocatorFactory = nixlDeviceAllocator *(*)() noexcept;
+using CudaAllocatorFactory = nixl::deviceAllocator *(*)() noexcept;
 
-nixlDeviceAllocator *
+nixl::deviceAllocator *
 loadCudaAllocator() noexcept {
     Dl_info info{};
-    if (dladdr(reinterpret_cast<void *>(&nixlGetDeviceAllocator), &info) == 0 ||
+    if (dladdr(reinterpret_cast<void *>(&nixl::getDeviceAllocator), &info) == 0 ||
         info.dli_fname == nullptr) {
         NIXL_ERROR << "Failed to locate the device allocator frontend library";
         return nullptr;
@@ -105,7 +105,7 @@ loadCudaAllocator() noexcept {
         return nullptr;
     }
 
-    nixlDeviceAllocator *allocator = factory();
+    nixl::deviceAllocator *allocator = factory();
     if (allocator == nullptr) {
         dlclose(handle);
     } else {
@@ -117,12 +117,16 @@ loadCudaAllocator() noexcept {
 
 } // namespace
 
-nixlDeviceAllocator &
-nixlGetDeviceAllocator() noexcept {
-    static nixlUnsupportedDeviceAllocator unsupported;
-    static nixlDeviceAllocator *allocator = []() noexcept {
-        nixlDeviceAllocator *cuda_allocator = loadCudaAllocator();
+namespace nixl {
+
+deviceAllocator &
+getDeviceAllocator() noexcept {
+    static unsupportedDeviceAllocator unsupported;
+    static deviceAllocator *allocator = []() noexcept {
+        deviceAllocator *cuda_allocator = loadCudaAllocator();
         return cuda_allocator == nullptr ? &unsupported : cuda_allocator;
     }();
     return *allocator;
 }
+
+} // namespace nixl
