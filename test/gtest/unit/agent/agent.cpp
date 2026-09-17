@@ -529,6 +529,110 @@ namespace agent {
         EXPECT_EQ(local_agent_->releasedDlistH(remote_side), NIXL_SUCCESS);
     }
 
+    TEST_F(dualAgentBridgeFixture, ViewsPinMetadataUntilLastRelease) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s, false);
+        nixl_remote_dlist_t descs(DRAM_SEG);
+        descs.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+        char handles[2];
+        unsigned prepared = 0, released = 0, unloaded = 0;
+        const auto &mock = local_agent_helper_->getGMockEngine();
+        EXPECT_CALL(
+            mock,
+            prepMemView(testing::A<const nixl_remote_meta_dlist_t &>(), testing::_, testing::_))
+            .Times(2)
+            .WillRepeatedly([&](const auto &, nixlMemViewH &view, const auto *) {
+                view = &handles[prepared++];
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(mock, releaseMemView).Times(2).WillRepeatedly([&](nixlMemViewH) {
+            EXPECT_EQ(unloaded, 0u);
+            ++released;
+        });
+        EXPECT_CALL(mock, unloadMD).WillOnce([&](nixlBackendMD *) {
+            EXPECT_EQ(released, 2u);
+            ++unloaded;
+            return NIXL_SUCCESS;
+        });
+        nixlMemViewH first = nullptr, second = nullptr;
+        ASSERT_EQ(local_agent_->prepMemView(descs, first), NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->prepMemView(descs, second), NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_SUCCESS);
+        EXPECT_EQ(unloaded, 0u);
+        local_agent_->releaseMemView(first);
+        EXPECT_EQ(unloaded, 0u);
+        local_agent_->releaseMemView(second);
+        EXPECT_EQ(unloaded, 1u);
+        local_agent_helper_.reset();
+    }
+
+    TEST_F(dualAgentBridgeFixture, AgentDestructionReleasesViewsBeforeMetadata) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s, false);
+        nixl_remote_dlist_t descs(DRAM_SEG);
+        descs.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+        nixlMemViewH view = nullptr;
+        ASSERT_EQ(local_agent_->prepMemView(descs, view), NIXL_SUCCESS);
+        testing::InSequence sequence;
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), releaseMemView(view));
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), unloadMD)
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        local_agent_helper_.reset();
+    }
+
+    TEST_F(dualAgentBridgeFixture, FailedViewPreparationDoesNotPinMetadata) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s, false);
+        nixl_remote_dlist_t descs(DRAM_SEG);
+        descs.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+        const auto &mock = local_agent_helper_->getGMockEngine();
+        EXPECT_CALL(
+            mock,
+            prepMemView(testing::A<const nixl_remote_meta_dlist_t &>(), testing::_, testing::_))
+            .WillOnce(testing::Return(NIXL_ERR_BACKEND));
+        EXPECT_CALL(mock, releaseMemView).Times(0);
+        EXPECT_CALL(mock, unloadMD).WillOnce(testing::Return(NIXL_SUCCESS));
+        nixlMemViewH view = nullptr;
+        EXPECT_EQ(local_agent_->prepMemView(descs, view), NIXL_ERR_BACKEND);
+        EXPECT_EQ(view, nullptr);
+        EXPECT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_SUCCESS);
+        local_agent_helper_.reset();
+    }
+
+    TEST_F(dualAgentBridgeFixture, PinnedViewDoesNotKeepHostRequestsValid) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+        nixl_remote_dlist_t views(DRAM_SEG);
+        views.addDesc(nixlRemoteDesc(s.remote_blob.getDesc(), s.remote_agent_name));
+        nixlMemViewH view = nullptr;
+        ASSERT_EQ(local_agent_->prepMemView(views, view), NIXL_SUCCESS);
+        nixl_xfer_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+        local.addDesc(s.local_blob.getDesc());
+        remote.addDesc(s.remote_blob.getDesc());
+        nixlDlistH *local_list = nullptr, *remote_list = nullptr;
+        ASSERT_EQ(local_agent_->prepXferDlist(local, local_list), NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->prepXferDlist(s.remote_agent_name, remote, remote_list),
+                  NIXL_SUCCESS);
+        nixlXferReqH *request = nullptr;
+        const std::vector<int> indices{0};
+        ASSERT_EQ(local_agent_->makeXferReq(
+                      NIXL_WRITE, *local_list, indices, *remote_list, indices, request),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->postXferReq(request), NIXL_ERR_NOT_FOUND);
+        ASSERT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, s.remote_agent_name),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->postXferReq(request), NIXL_ERR_NOT_FOUND);
+        nixlXferReqH *stale = nullptr;
+        EXPECT_EQ(local_agent_->makeXferReq(
+                      NIXL_WRITE, *local_list, indices, *remote_list, indices, stale),
+                  NIXL_ERR_NOT_FOUND);
+        EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releasedDlistH(local_list), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releasedDlistH(remote_list), NIXL_SUCCESS);
+        local_agent_->releaseMemView(view);
+    }
+
     TEST_F(dualAgentBridgeFixture, XferReqSubFunctionsTest) {
         const std::string msg = "notification";
         EXPECT_CALL(remote_agent_helper_->getGMockEngine(), getNotifs)
