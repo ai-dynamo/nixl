@@ -28,12 +28,22 @@ std::atomic<bool> disconnect[2];
 
 std::string conn_info[2];
 
+/* When set (argv[1]), both engines run with connection_mode=sockaddr and each
+ * binds a listener to an ephemeral loopback port. */
+std::string connection_mode;
+
 void
 test_thread(const unsigned id, const bool progress_thread) {
     const std::string my_name = "Agent" + std::to_string(id);
     const std::string other = "Agent" + std::to_string(1 - id);
 
     nixl_b_params_t custom_params;
+    if (!connection_mode.empty()) {
+        custom_params[std::string(nixl_ucx_conn_mode_param_name)] = connection_mode;
+        custom_params[std::string(nixl_ucx_listen_address_param_name)] = "127.0.0.1";
+        custom_params[std::string(nixl_ucx_listen_port_param_name)] = "0";
+    }
+
     nixlBackendInitParams init_params;
     init_params.localAgent = my_name;
     init_params.enableProgTh = progress_thread;
@@ -66,7 +76,10 @@ test_thread(const unsigned id, const bool progress_thread) {
 
     done[id].store(true);
     while (!done[!id].load()) {
-        if (id && !progress_thread) {
+        /* Both engines must keep progressing here: with
+         * connection_mode=sockaddr the peer's connection request is only
+         * accepted from within our own worker progress. */
+        if (!progress_thread) {
             ucx->progress();
         }
     }
@@ -114,7 +127,12 @@ test_perform(const unsigned first, const bool progress_thread) {
 }
 
 int
-main() {
+main(int argc, char *argv[]) {
+    if (argc > 1) {
+        connection_mode = argv[1];
+        std::cout << "Connection mode: " << connection_mode << "\n";
+    }
+
     for (unsigned i = 0; i < 12; ++i) {
         test_perform(i & 1, true);
         test_perform(i & 1, false);

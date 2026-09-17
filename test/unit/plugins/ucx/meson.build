@@ -51,6 +51,13 @@ ucx_backend_test = executable('ucx_backend_test',
         cpp_args : cpp_args,
         install: true)
 
+ucx_sockaddr_test = executable('ucx_sockaddr_test',
+           'ucx_sockaddr_test.cpp',
+           dependencies: ucx_backend_test_dep + [serdes_interface],
+           include_directories: ucx_test_include_directories,
+           cpp_args : cpp_args,
+           install: true)
+
 ucx_backend_multi = executable('ucx_backend_multi',
            'ucx_backend_multi.cpp',
            dependencies: ucx_backend_test_dep,
