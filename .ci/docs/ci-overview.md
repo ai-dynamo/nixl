@@ -364,13 +364,23 @@ ci-demo outside any step (`Matrix.groovy` `buildImage`), so a per-step
   not just around the `GithubHelper` call, so it is in the environment for the
   image-build phase too.
 - `build_args` is spliced verbatim into `docker build`, so those entries carry
-  `--secret id=ghnetrc,env=NIXL_GITHUB_NETRC`, with `NIXL_GITHUB_NETRC` and
-  `DOCKER_BUILDKIT=1` set in each matrix's `env:` block (ci-demo exports `env:`
-  into the image build via `withEnv`).
+  `--secret id=ghnetrc,src=${WORKSPACE}/.ghnetrc`.
+- The netrc itself is written by a `pipeline_on_image_build` hook calling
+  `write_github_netrc`. **The hook is load-bearing, not a convenience.** Putting the
+  credential in the matrix `env:` block does not work: ci-demo resolves `env:` with
+  `resolveTemplate`, a `@NonCPS` Groovy method reading `env.getEnvironment()`, which
+  does not see a `withCredentials` binding. `replaceVars` then leaves the unmatched
+  `${...}` in place rather than blanking it, so the secret silently becomes a
+  literal template string and every clone fails a 401. The hook runs as a real `sh`
+  step, where the binding is always present. Build #3095 of `nixl-ci-non-gpu` failed
+  exactly this way.
 
 `.ci/dockerfiles/Dockerfile.base` runs as a **non-root** user, so its mount uses
 `mode=0444` and stages the file into `$HOME/.netrc` for the duration of the one
-`RUN`. That covers `.gitlab/build.sh`'s clones and the `taskflow` /
+`RUN`. It logs `github.com clones: authenticated` or `: anonymous` so the mode is
+visible at the top of the layer, and CI passes `REQUIRE_GITHUB_AUTH=1` so an empty
+secret fails there rather than as a clone failure ten minutes later. Local builds
+leave it 0 and clone anonymously as before. That covers `.gitlab/build.sh`'s clones and the `taskflow` /
 `prometheus-cpp` meson `wrap-git` subprojects in a single place, for all five
 matrices that build from it.
 

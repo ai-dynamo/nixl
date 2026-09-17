@@ -61,7 +61,6 @@ env:
   # anonymous clones get an intermittent HTTP 401. ci-demo builds these images
   # outside any step, so the token is bound around matrix.main() in the Jenkinsfile.
   DOCKER_BUILDKIT: 1
-  NIXL_GITHUB_NETRC: "machine github.com login ${NIXL_GITHUB_USER} password ${NIXL_GITHUB_TOKEN}"
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
@@ -70,13 +69,22 @@ pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
 # Docker images for DL testing
+# ci-demo builds the images below outside any step, so a per-step `credentials:`
+# entry never reaches them. This hook does run as a real `sh` step inside the
+# withCredentials block wrapping matrix.main(), which is the only place the token
+# is reliably visible; the secret is then handed to `docker build` as a file.
+pipeline_on_image_build:
+  run: |
+    . .ci/scripts/common.sh
+    write_github_netrc "${WORKSPACE}/.ghnetrc"
+
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
      name: 'nixl-ci-dl-gpu-base',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghnetrc,env=NIXL_GITHUB_NETRC'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghnetrc,src=${WORKSPACE}/.ghnetrc --build-arg REQUIRE_GITHUB_AUTH=1'
     }
 
   - {

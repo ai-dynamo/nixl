@@ -35,6 +35,9 @@ ARG VLLM_REF
 # matching -fsanitize flags so AddressSanitizer NIXL builds have an ABI-compatible
 # (instrumented) Abseil. Empty for normal images.
 ARG DEPS_SANITIZE
+# Set by CI so a missing credential fails here instead of 10 minutes later as a
+# clone failure. Left 0 for local builds, which clone anonymously as before.
+ARG REQUIRE_GITHUB_AUTH=0
 # Labels for documentation
 LABEL maintainer="NVIDIA NIXL Team"
 LABEL description="Test environment for NIXL development"
@@ -95,6 +98,12 @@ ENV GIT_TERMINAL_PROMPT=0
 RUN --mount=type=secret,id=ghnetrc,mode=0444 \
     if [ -s /run/secrets/ghnetrc ]; then \
         cp /run/secrets/ghnetrc "${HOME}/.netrc" && chmod 600 "${HOME}/.netrc"; \
+        echo "github.com clones: authenticated"; \
+    elif [ "${REQUIRE_GITHUB_AUTH}" = "1" ]; then \
+        echo "ERROR: ghnetrc secret is empty, github.com clones would be anonymous" >&2; \
+        exit 1; \
+    else \
+        echo "github.com clones: anonymous (no ghnetrc secret supplied)"; \
     fi; \
     /.gitlab/build.sh ${NIXL_INSTALL_DIR}; rc=$?; \
     rm -f "${HOME}/.netrc"; \

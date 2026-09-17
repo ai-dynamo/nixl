@@ -161,6 +161,37 @@ start_etcd_server() {
 # This is the CI-agent path, where the token arrives as an env var. Container
 # builds instead mount a netrc as a BuildKit secret, so an existing file is left
 # alone. Writes are done with tracing off so the token never reaches the log.
+# Write a netrc for github.com to $1, empty when no token is available. Used by the
+# ci-demo `pipeline_on_image_build` hook: that hook runs as a real `sh` step, where a
+# withCredentials binding is reliably present, unlike ci-demo's Groovy-level `env:`
+# templating which cannot see one.
+write_github_netrc() {
+    local dest="$1"
+
+    # Tracing goes off before the token is ever expanded.
+    local restore_xtrace=""
+    case "$-" in
+        *x*) restore_xtrace=1; set +x ;;
+    esac
+
+    : > "${dest}"
+    chmod 600 "${dest}"
+    if [ -n "${NIXL_GITHUB_TOKEN:-}" ]; then
+        printf 'machine github.com login %s password %s\n' \
+            "${NIXL_GITHUB_USER:-x-access-token}" "${NIXL_GITHUB_TOKEN}" > "${dest}"
+    fi
+
+    if [ -n "${restore_xtrace}" ]; then
+        set -x
+    fi
+
+    if [ -s "${dest}" ]; then
+        echo "write_github_netrc: wrote credential to ${dest}"
+    else
+        echo "write_github_netrc: no NIXL_GITHUB_TOKEN; ${dest} left empty (clones stay anonymous)"
+    fi
+}
+
 setup_github_netrc() {
     # Tracing goes off before the token is ever expanded: under `set -x` even the
     # guard below would print it.

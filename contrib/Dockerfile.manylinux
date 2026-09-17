@@ -171,6 +171,19 @@ WORKDIR /workspace
 # Without the secret the mount is simply empty and the clones stay anonymous.
 ENV GIT_TERMINAL_PROMPT=0
 
+# Set by CI so a missing credential fails here instead of part-way through the
+# clones below. Left 0 for local builds, which clone anonymously as before.
+ARG REQUIRE_GITHUB_AUTH=0
+RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc \
+    if [ -s /root/.netrc ]; then \
+        echo "github.com clones: authenticated"; \
+    elif [ "${REQUIRE_GITHUB_AUTH}" = "1" ]; then \
+        echo "ERROR: ghnetrc secret is empty, github.com clones would be anonymous" >&2; \
+        exit 1; \
+    else \
+        echo "github.com clones: anonymous (no ghnetrc secret supplied)"; \
+    fi
+
 # Build Abseil from source (required for absl/log).
 RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone https://github.com/abseil/abseil-cpp.git && \
     cd abseil-cpp && \

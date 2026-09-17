@@ -110,6 +110,15 @@ pvc_volumes:
 # Dockerfile.manylinux changes and reused via --wheel-base-image). The vLLM/SGLang base
 # images (category 'tool') are built + pushed by ci-demo, no steps run in them, and only
 # rebuilt when their Dockerfile changes or CI_IMAGE_TAG is bumped.
+# ci-demo builds the images below outside any step, so a per-step `credentials:`
+# entry never reaches them. This hook does run as a real `sh` step inside the
+# withCredentials block wrapping matrix.main(), which is the only place the token
+# is reliably visible; the secret is then handed to `docker build` as a file.
+pipeline_on_image_build:
+  run: |
+    . .ci/scripts/common.sh
+    write_github_netrc "${WORKSPACE}/.ghnetrc"
+
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true, arch: 'x86_64' }
   # wheel_base: built and pushed by CI-demo when Dockerfile.manylinux changes.
@@ -119,7 +128,7 @@ runs_on_dockers:
       file: 'contrib/Dockerfile.manylinux',
       name: "${WHEEL_BASE_IMAGE_NAME}",
       tag: "${CI_IMAGE_TAG}",
-      build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base --secret id=ghnetrc,env=NIXL_GITHUB_NETRC'
+      build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base --secret id=ghnetrc,src=${WORKSPACE}/.ghnetrc --build-arg REQUIRE_GITHUB_AUTH=1'
     }
   # The custom 'fw' key is injected as an env var into every step of the branch
   # (ci-demo merges the docker entry into the branch axis), so the shared sanity
@@ -224,7 +233,6 @@ env:
   # anonymous clones get an intermittent HTTP 401. ci-demo builds these images
   # outside any step, so the token is bound around matrix.main() in the Jenkinsfile.
   DOCKER_BUILDKIT: 1
-  NIXL_GITHUB_NETRC: "machine github.com login ${NIXL_GITHUB_USER} password ${NIXL_GITHUB_TOKEN}"
 
 steps:
   # =============================================================================
