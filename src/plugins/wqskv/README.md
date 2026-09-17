@@ -1,6 +1,6 @@
 # WQSKV Backend Plugin
 
-NIXL backend over the WDS KVCache vendor library (`libwclient_kvcache.so`).
+NIXL backend over the WDS KVCache vendor library (`libwclient_kv.so`).
 Wraps the C-style vendor API (`wds_kvcache_init` / `wds_kvcache_put` /
 `wds_kvcache_get_vec`, ...) so a NIXL agent can `PUT`/`GET` DRAM buffers into
 WDS KVCache directly, without going through the Mooncake store.
@@ -16,7 +16,7 @@ WDS KVCache directly, without going through the Mooncake store.
 ## Build Requirements
 
 The plugin links against the WDS KVCache client ABI declared in
-`kv_interface.h` and built into `libwclient_kvcache.so`. Two
+`kv_interface.h` and built into `libwclient_kv.so`. Two
 implementations of that ABI are supported and the plugin itself does not
 care which is installed:
 
@@ -33,7 +33,7 @@ care which is installed:
 The plugin is conditionally compiled. `meson setup` enables it only when
 both of the following are satisfied at configure time:
 
-1. `libwclient_kvcache.so` (either implementation) is discoverable.
+1. `libwclient_kv.so` (either implementation) is discoverable.
    Either:
    - Pass `-Dwqskv_lib_path=/path/to/dir` at configure time, **or**
    - Make sure the directory is on the linker search path (e.g.
@@ -58,7 +58,8 @@ Build against a custom location:
 ```bash
 meson setup build -Denable_plugins=WQSKV \
   -Dwqskv_lib_path=/path/to/lib \
-  -Dwqskv_inc_path=/path/to/include
+  -Dwqskv_inc_path=/path/to/include \
+  -Dwqskv_wide_lib_path=/path/to/wide/lib
 ```
 
 Disable explicitly:
@@ -78,6 +79,27 @@ The vendor library requires a JSON config consumed once per process by
 
 1. `customParams["config_path"]` passed to `createBackend` (highest priority)
 2. `WDS_BACKEND_CONFIG_PATH` environment variable
+
+The proprietary WQS runtime uses BRPC pthread interposition and must load its
+Wide/Framework libraries when the process starts. Configure the environment
+before launching any application that loads the WQSKV plugin; patching an
+individual application or `libwclient_kv.so` is not required. The following
+paths match the `sds-wengine-wqs:3.8.210.6-x86_64` image:
+
+```bash
+wqskv_preload=/home/wide/third-party/brpc/build/output/lib/libbrpc.so:/home/wide/wengine/build/lib/libwide_overwrite.so:/home/wide/third-party/wmonitor/build/lib/libapool_client.so:/home/wide/wengine/build/lib/libproto_all.so:/usr/local/framework/lib64/libwrpc.so:/usr/local/framework/lib64/libwlog.so:/usr/local/framework/lib64/libmempool.so:/usr/local/framework/lib64/libwutils.so:/usr/local/framework/lib64/libwthread.so:/usr/local/framework/lib64/libdiagnose.so
+export LD_PRELOAD="${wqskv_preload}${LD_PRELOAD:+:${LD_PRELOAD}}"
+
+wqskv_library_path=/home/wqs/build:/home/wide/wengine/build/lib:/home/wide/third-party/wmonitor/build/lib:/home/wide/third-party/brpc/build/output/lib:/home/wide/third-party/spdk/build/lib:/home/wide/third-party/spdk/dpdk/build/lib:/usr/local/framework/lib64:/usr/local/lib
+export LD_LIBRARY_PATH="${wqskv_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+export WDS_BACKEND_CONFIG_PATH=/etc/manager/nixlClient.json
+```
+
+`libbrpc.so` must remain first in `LD_PRELOAD`. Installations using different
+Wide or Framework layouts should update the paths while preserving the load
+order. The open-source `wqs-mock` implementation does not require this vendor
+runtime setup.
 
 Required JSON keys (see `loadKVCacheOptionsFromJson` in `wqskv_backend.cpp`):
 

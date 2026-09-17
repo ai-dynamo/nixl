@@ -19,7 +19,7 @@
  * @file wqskv_backend.h
  * @brief WQSKV Backend Header - NIXL backend over WDS KV cache vendor lib
  *
- * Wraps the C-style vendor API exposed by libwclient_kvcache.so
+ * Wraps the C-style vendor API exposed by libwclient_kv.so
  * (wds_kvcache_init / wds_kvcache_put / wds_kvcache_get_vec, etc.) so a
  * NIXL agent can PUT/GET DRAM buffers into WDS without going through the
  * mooncake store. Local-only backend (supportsRemote=false). Local memory is

@@ -796,9 +796,9 @@ EOF
 **WQSKV Backend (WDS KVCache):**
 
 The WQSKV backend wraps the proprietary WDS KVCache vendor library
-(`libwclient_kvcache.so`) and exposes `PUT`/`GET` over DRAM as a NIXL local
+(`libwclient_kv.so`) and exposes `PUT`/`GET` over DRAM as a NIXL local
 backend (no remote agent, no networking — keys are stored by the vendor
-library). It is built only when `libwclient_kvcache.so` and `jsoncpp` are
+library). It is built only when `libwclient_kv.so` and `jsoncpp` are
 available at NIXL configure time; see
 [../../src/plugins/wqskv/README.md](../../src/plugins/wqskv/README.md) for
 plugin-side build and configuration details.

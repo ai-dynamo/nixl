@@ -39,6 +39,9 @@ wqskv_plugin_deps = [
     jsoncpp_dep,
     thread_dep,
 ]
+if wqskv_wide_lib_found.found()
+    wqskv_plugin_deps += [wqskv_wide_lib_found]
+endif
 
 if not is_variable('compile_flags')
     compile_flags = []
@@ -49,7 +52,7 @@ if 'WQSKV' in static_plugins
         'WQSKV',
         wqskv_sources,
         dependencies: wqskv_plugin_deps,
-        cpp_args: compile_defs + compile_flags,
+        cpp_args: compile_flags,
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: false,
         name_prefix: 'libplugin_')
@@ -58,7 +61,7 @@ else
         'WQSKV',
         wqskv_sources,
         dependencies: wqskv_plugin_deps,
-        cpp_args: compile_defs + ['-fPIC'],
+        cpp_args: compile_flags + ['-fPIC'],
         include_directories: [nixl_inc_dirs, utils_inc_dirs],
         install: true,
         name_prefix: 'libplugin_',

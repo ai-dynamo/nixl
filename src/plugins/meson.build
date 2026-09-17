@@ -36,14 +36,19 @@ endif
 if enabled_plugins.get('WQSKV')
     wqskv_lib_path = get_option('wqskv_lib_path')
     wqskv_inc_path = get_option('wqskv_inc_path')
+    wqskv_wide_lib_path = get_option('wqskv_wide_lib_path')
     wqskv_find_dirs = wqskv_lib_path != '' ? [wqskv_lib_path] : []
-    wqskv_lib_found = cpp.find_library('wclient_kvcache',
+    wqskv_wide_find_dirs = wqskv_wide_lib_path != '' ? [wqskv_wide_lib_path] : []
+    wqskv_lib_found = cpp.find_library('wclient_kv',
                                        dirs: wqskv_find_dirs,
                                        required: false)
+    wqskv_wide_lib_found = cpp.find_library('wide_overwrite',
+                                            dirs: wqskv_wide_find_dirs,
+                                            required: wqskv_wide_lib_path != '')
     jsoncpp_dep = dependency('jsoncpp', required: false)
     if (not wqskv_lib_found.found() or not jsoncpp_dep.found()) and is_explicit_enable
         if not wqskv_lib_found.found()
-            error('WQSKV plugin requested but libwclient_kvcache not found' +
+            error('WQSKV plugin requested but libwclient_kv not found' +
                   (wqskv_lib_path != '' ? ' in ' + wqskv_lib_path : ' (set wqskv_lib_path)'))
         else
             error('WQSKV plugin requested but jsoncpp dependency not found')

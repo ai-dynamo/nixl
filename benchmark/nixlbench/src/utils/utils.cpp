@@ -1399,7 +1399,8 @@ xferBenchUtils::getObj(const std::string &name) {
 
 bool
 xferBenchUtils::rmObj(const std::string &name) {
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA ||
+        xferBenchConfig::backend == XFERBENCH_BACKEND_WQSKV) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
