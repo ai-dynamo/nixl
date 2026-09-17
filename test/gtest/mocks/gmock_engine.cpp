@@ -26,6 +26,7 @@ char gmock_dummy_mvh;
 
 GMockBackendEngine::GMockBackendEngine() : nixlBackendEngine(&init_params) {
     using testing::Return;
+    using testing::A;
     using testing::_;
 
     ON_CALL(*this, supportsRemote()).WillByDefault(Return(true));
@@ -41,7 +42,7 @@ GMockBackendEngine::GMockBackendEngine() : nixlBackendEngine(&init_params) {
     ON_CALL(*this, postXfer(_, _, _, _, _, _)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, checkXfer(_)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, releaseReqH(_)).WillByDefault(Return(NIXL_SUCCESS));
-    ON_CALL(*this, prepMemView(_, _, _))
+    ON_CALL(*this, prepMemView(A<const nixl_remote_meta_dlist_t &>(), _, _))
         .WillByDefault(
             [](const nixl_remote_meta_dlist_t &, nixlMemViewH &mvh, const nixl_opt_b_args_t *) {
                 mvh = &gmock_dummy_mvh;
@@ -57,6 +58,25 @@ GMockBackendEngine::GMockBackendEngine() : nixlBackendEngine(&init_params) {
     ON_CALL(*this, loadLocalMD(_, _)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, getNotifs(_)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, genNotif(_, _)).WillByDefault(Return(NIXL_SUCCESS));
+    setOptionalDefaults();
+}
+
+GMockBackendEngine::GMockBackendEngine(const nixlBackendInitParams *init_params)
+    : nixlBackendEngine(init_params) {
+    setOptionalDefaults();
+}
+
+void
+GMockBackendEngine::setOptionalDefaults() {
+    using testing::A;
+    using testing::Return;
+    using testing::_;
+
+    ON_CALL(*this, prepMemView(A<const nixl_meta_dlist_t &>(), _, _))
+        .WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
+    ON_CALL(*this, queryMem(_, _)).WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
+    ON_CALL(*this, estimateXferCost(_, _, _, _, _, _, _, _, _))
+        .WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
 }
 
 void
