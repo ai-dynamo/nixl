@@ -44,7 +44,8 @@ inline constexpr std::size_t traceContextWireSize = 26;
 /**
  * @brief Outcome of decoding a wire record. UnknownVersion is a record written
  *        by a peer speaking a later version and must be ignored rather than
- *        treated as corruption; Malformed is not a version-1 record at all.
+ *        treated as corruption; Malformed means known version but invalid
+ *        encoding for that version.
  */
 enum class WireDecodeResult : std::uint8_t {
     Ok,
@@ -80,19 +81,21 @@ formatTraceparent(const TraceContext &context);
  * @brief Encode @p context into the first traceContextWireSize bytes of
  *        @p buffer; any trailing bytes are left untouched so a carrier can
  *        append the record to a larger message.
- * @return False, writing nothing, when the context is invalid or the buffer is
- *         too small. Flags are masked to the bits this version defines.
+ * @return Number of bytes written, so a carrier can frame or advance without
+ *         naming a version's size; std::nullopt, writing nothing, when the
+ *         context is invalid or the buffer is too small. Flags are masked to the
+ *         bits this version defines.
  */
-[[nodiscard]] bool
+[[nodiscard]] std::optional<std::size_t>
 encodeTraceContext(const TraceContext &context, std::span<std::uint8_t> buffer);
 
 /**
  * @brief Decode one wire record from @p buffer.
  * @return Ok only for a version-1 record of exactly traceContextWireSize bytes
- *         carrying non-zero ids; @p context is assigned in that case only, so an
- *         unrecognized or rejected record leaves the caller's value intact. Flags
- *         are masked to the bits this version defines, mirroring the encoder,
- *         so a peer's reserved bits never reach a stored context.
+ *         carrying non-zero ids. UnknownVersion leaves @p context untouched, so
+ *         a later peer's record can be skipped; Malformed leaves it unspecified.
+ *         Flags are masked to the bits this version defines, mirroring the
+ *         encoder, so a peer's reserved bits never reach a stored context.
  */
 [[nodiscard]] WireDecodeResult
 decodeTraceContext(std::span<const std::uint8_t> buffer, TraceContext &context);
