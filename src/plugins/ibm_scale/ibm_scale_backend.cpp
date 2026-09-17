@@ -41,11 +41,13 @@
 
 #include "ibm_scale_backend.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cinttypes>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <limits>
 #include <unistd.h>
 
 #ifdef HAVE_GPFS_FCNTL
@@ -130,10 +132,12 @@ nixlScaleEngine::nixlScaleEngine(const nixlBackendInitParams *init_params)
         unsigned clamped = nextPow2((unsigned)(rs > 1 ? rs : ringSize_));
         ringSize_ = (clamped > 32768u) ? 32768u : clamped;
 
-        disableMarHints_ = scaleParamLl(p, "nixl_scale_disable_mar_hints", disableMarHints_ ? 1 : 0) != 0;
+        disableMarHints_ =
+            scaleParamLl(p, "nixl_scale_disable_mar_hints", disableMarHints_ ? 1 : 0) != 0;
     }
 
-    NIXL_INFO << "IBM_SCALE: init ring_size=" << ringSize_ << " disable_mar_hints=" << disableMarHints_ << " (per-request)";
+    NIXL_INFO << "IBM_SCALE: init ring_size=" << ringSize_
+              << " disable_mar_hints=" << disableMarHints_ << " (per-request)";
     initialized_ = true;
     NIXL_INFO << "IBM_SCALE: backend initialized";
 }
@@ -175,21 +179,30 @@ nixlScaleEngine::registerMem(const nixlBlobDesc &mem,
         fmd = new nixlScaleFileMD(static_cast<uint64_t>(mem.devId), mem.metaInfo, offset, length);
 #ifdef HAVE_GPFS_FCNTL
         if (fmd->file_fd.fd() >= 0) {
-            gpfs_accessRange_t hint{};
-            hint.header.totalLength = sizeof(hint);
-            hint.header.fcntlVersion = GPFS_FCNTL_CURRENT_VERSION;
-            hint.header.fcntlReserved = 0;
-            hint.start = offset;
-            hint.length = length;
-            hint.accuracy = GPFS_ACCESS_SEQUENTIAL;
+            struct {
+                gpfsFcntlHeader_t header;
+                gpfsAccessRange_t accessRange;
+            } arg{};
 
-            int ret = gpfs_fcntl(fmd->file_fd.fd(), &hint);
+            arg.header.totalLength = sizeof(arg);
+            arg.header.fcntlVersion = GPFS_FCNTL_CURRENT_VERSION;
+            arg.header.fcntlReserved = 0;
+
+            arg.accessRange.structLen = sizeof(gpfsAccessRange_t);
+            arg.accessRange.structType = GPFS_FCNTL_ACCESS_RANGE;
+            arg.accessRange.start = offset;
+            arg.accessRange.length = length;
+            arg.accessRange.accuracy = GPFS_ACCESS_SEQUENTIAL;
+
+            int ret = gpfs_fcntl(fmd->file_fd.fd(), &arg);
             if (ret != 0) {
                 NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl registration access hint failed for fd="
                            << fmd->file_fd.fd() << " off=" << offset << " len=" << length
-                           << " ret=" << ret << " errno=" << errno << " (" << strerror(errno) << ")";
+                           << " ret=" << ret << " errno=" << errno << " (" << strerror(errno)
+                           << ")";
             } else {
-                NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl registration access hint registered successfully for fd="
+                NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl registration access hint registered "
+                              "successfully for fd="
                            << fmd->file_fd.fd() << " off=" << offset << " len=" << length;
             }
         }
@@ -218,16 +231,24 @@ nixlScaleEngine::deregisterMem(nixlBackendMD *meta) {
     auto *fmd = static_cast<nixlScaleFileMD *>(meta);
 #ifdef HAVE_GPFS_FCNTL
     if (fmd && fmd->file_fd.fd() >= 0) {
-        gpfs_freeRange_t free_hint{};
-        free_hint.header.totalLength = sizeof(free_hint);
-        free_hint.header.fcntlVersion = GPFS_FCNTL_CURRENT_VERSION;
-        free_hint.header.fcntlReserved = 0;
-        free_hint.start = fmd->regOffset;
-        free_hint.length = fmd->regLength;
+        struct {
+            gpfsFcntlHeader_t header;
+            gpfsFreeRange_t freeRange;
+        } arg{};
 
-        int ret = gpfs_fcntl(fmd->file_fd.fd(), &free_hint);
+        arg.header.totalLength = sizeof(arg);
+        arg.header.fcntlVersion = GPFS_FCNTL_CURRENT_VERSION;
+        arg.header.fcntlReserved = 0;
+
+        arg.freeRange.structLen = sizeof(gpfsFreeRange_t);
+        arg.freeRange.structType = GPFS_FCNTL_FREE_RANGE;
+        arg.freeRange.start = fmd->regOffset;
+        arg.freeRange.length = fmd->regLength;
+
+        int ret = gpfs_fcntl(fmd->file_fd.fd(), &arg);
         if (ret != 0) {
-            NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl free range hint failed: " << errno << " (" << strerror(errno) << ")";
+            NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl free range hint failed: " << errno << " ("
+                       << strerror(errno) << ")";
         } else {
             NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl free range hint released successfully";
         }
@@ -406,21 +427,31 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
 
 #ifdef HAVE_GPFS_FCNTL
     if (!disableMarHints_) {
+        const bool isWrite = !isRead;
         for (const nixlScaleIODesc &d : req.descs()) {
             if (d.fd >= 0) {
-                gpfs_accessRange_t hint{};
-                hint.header.totalLength = sizeof(hint);
-                hint.header.fcntlVersion = GPFS_FCNTL_CURRENT_VERSION;
-                hint.header.fcntlReserved = 0;
-                hint.start = d.offset;
-                hint.length = d.len;
-                hint.accuracy = GPFS_ACCESS_SEQUENTIAL;
+                struct {
+                    gpfsFcntlHeader_t header;
+                    gpfsAccessRange_t accessRange;
+                } arg{};
 
-                int ret = gpfs_fcntl(d.fd, &hint);
+                arg.header.totalLength = sizeof(arg);
+                arg.header.fcntlVersion = GPFS_FCNTL_CURRENT_VERSION;
+                arg.header.fcntlReserved = 0;
+
+                arg.accessRange.structLen = sizeof(gpfsAccessRange_t);
+                arg.accessRange.structType = GPFS_FCNTL_ACCESS_RANGE;
+                arg.accessRange.start = d.offset;
+                arg.accessRange.length = d.len;
+                arg.accessRange.accuracy =
+                    isWrite ? GPFS_ACCESS_WRITE : GPFS_ACCESS_SEQUENTIAL;
+
+                int ret = gpfs_fcntl(d.fd, &arg);
                 if (ret != 0) {
-                    NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl transfer access hint failed for fd=" << d.fd
-                               << " off=" << d.offset << " len=" << d.len << " ret=" << ret
-                               << " errno=" << errno << " (" << strerror(errno) << ")";
+                    NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl transfer access hint failed for fd="
+                               << d.fd << " off=" << d.offset << " len=" << d.len
+                               << " ret=" << ret << " errno=" << errno << " (" << strerror(errno)
+                               << ")";
                 } else {
                     NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl transfer access hint sent for fd=" << d.fd
                                << " off=" << d.offset << " len=" << d.len;
@@ -455,10 +486,12 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                 }
             }
 
+            const auto submitLen = static_cast<unsigned>(std::min(
+                d.len, static_cast<size_t>(std::numeric_limits<unsigned>::max())));
             if (isRead) {
-                io_uring_prep_read(sqe, d.fd, d.buf, (unsigned)d.len, d.offset);
+                io_uring_prep_read(sqe, d.fd, d.buf, submitLen, d.offset);
             } else {
-                io_uring_prep_write(sqe, d.fd, d.buf, (unsigned)d.len, d.offset);
+                io_uring_prep_write(sqe, d.fd, d.buf, submitLen, d.offset);
             }
             io_uring_sqe_set_data64(sqe, (uint64_t)idx);
             ++queued;
@@ -606,10 +639,12 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
             size_t remain = d.len - d.done;
             off_t off = d.offset + (off_t)d.done;
 
+            const auto submitLen = static_cast<unsigned>(std::min(
+                remain, static_cast<size_t>(std::numeric_limits<unsigned>::max())));
             if (isRead) {
-                io_uring_prep_read(sqe, d.fd, ptr, (unsigned)remain, off);
+                io_uring_prep_read(sqe, d.fd, ptr, submitLen, off);
             } else {
-                io_uring_prep_write(sqe, d.fd, ptr, (unsigned)remain, off);
+                io_uring_prep_write(sqe, d.fd, ptr, submitLen, off);
             }
             io_uring_sqe_set_data64(sqe, idx);
 
