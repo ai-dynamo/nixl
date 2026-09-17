@@ -48,6 +48,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#ifdef HAVE_GPFS_FCNTL
+#include <gpfs_fcntl.h>
+#endif
+
 #include "common/nixl_log.h"
 
 namespace {
@@ -112,20 +116,24 @@ nixlScaleEngine::nixlScaleEngine(const nixlBackendInitParams *init_params)
         return (end && *end == '\0') ? r : def;
     };
 
-    ring_size_ = nextPow2((unsigned)envLl("NIXL_SCALE_RING_SIZE", 128));
-    if (ring_size_ > 32768u) {
-        ring_size_ = 32768u;
+    ringSize_ = nextPow2((unsigned)envLl("NIXL_SCALE_RING_SIZE", 128));
+    if (ringSize_ > 32768u) {
+        ringSize_ = 32768u;
     }
+
+    disableMarHints_ = envLl("NIXL_SCALE_DISABLE_MAR_HINTS", 1) != 0;
 
     // customParams override env vars.
     if (init_params->customParams) {
         const nixl_b_params_t *p = init_params->customParams;
-        long long rs = scaleParamLl(p, "nixl_scale_ring_size", (long long)ring_size_);
-        unsigned clamped = nextPow2((unsigned)(rs > 1 ? rs : ring_size_));
-        ring_size_ = (clamped > 32768u) ? 32768u : clamped;
+        long long rs = scaleParamLl(p, "nixl_scale_ring_size", (long long)ringSize_);
+        unsigned clamped = nextPow2((unsigned)(rs > 1 ? rs : ringSize_));
+        ringSize_ = (clamped > 32768u) ? 32768u : clamped;
+
+        disableMarHints_ = scaleParamLl(p, "nixl_scale_disable_mar_hints", disableMarHints_ ? 1 : 0) != 0;
     }
 
-    NIXL_INFO << "IBM_SCALE: init ring_size=" << ring_size_ << " (per-request)";
+    NIXL_INFO << "IBM_SCALE: init ring_size=" << ringSize_ << " disable_mar_hints=" << disableMarHints_ << " (per-request)";
     initialized_ = true;
     NIXL_INFO << "IBM_SCALE: backend initialized";
 }
@@ -165,6 +173,27 @@ nixlScaleEngine::registerMem(const nixlBlobDesc &mem,
         long long offset = static_cast<long long>(mem.addr);
         long long length = static_cast<long long>(mem.len);
         fmd = new nixlScaleFileMD(static_cast<uint64_t>(mem.devId), mem.metaInfo, offset, length);
+#ifdef HAVE_GPFS_FCNTL
+        if (fmd->file_fd.fd() >= 0) {
+            gpfs_accessRange_t hint{};
+            hint.header.totalLength = sizeof(hint);
+            hint.header.fcntlVersion = GPFS_FCNTL_CURRENT_VERSION;
+            hint.header.fcntlReserved = 0;
+            hint.start = offset;
+            hint.length = length;
+            hint.accuracy = GPFS_ACCESS_SEQUENTIAL;
+
+            int ret = gpfs_fcntl(fmd->file_fd.fd(), &hint);
+            if (ret != 0) {
+                NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl registration access hint failed for fd="
+                           << fmd->file_fd.fd() << " off=" << offset << " len=" << length
+                           << " ret=" << ret << " errno=" << errno << " (" << strerror(errno) << ")";
+            } else {
+                NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl registration access hint registered successfully for fd="
+                           << fmd->file_fd.fd() << " off=" << offset << " len=" << length;
+            }
+        }
+#endif
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "IBM_SCALE: registerMem failed: " << e.what();
@@ -172,8 +201,8 @@ nixlScaleEngine::registerMem(const nixlBlobDesc &mem,
     }
 
     out = fmd;
-    NIXL_DEBUG << "IBM_SCALE: registerMem fd=" << fmd->file_fd.fd() << " off=" << fmd->reg_offset
-               << " len=" << fmd->reg_length << " blksize=" << fmd->blksize;
+    NIXL_DEBUG << "IBM_SCALE: registerMem fd=" << fmd->file_fd.fd() << " off=" << fmd->regOffset
+               << " len=" << fmd->regLength << " blksize=" << fmd->blksize;
     return NIXL_SUCCESS;
 }
 
@@ -186,7 +215,25 @@ nixlScaleEngine::deregisterMem(nixlBackendMD *meta) {
     if (meta == nullptr) {
         return NIXL_SUCCESS;
     }
-    delete static_cast<nixlScaleFileMD *>(meta);
+    auto *fmd = static_cast<nixlScaleFileMD *>(meta);
+#ifdef HAVE_GPFS_FCNTL
+    if (fmd && fmd->file_fd.fd() >= 0) {
+        gpfs_freeRange_t free_hint{};
+        free_hint.header.totalLength = sizeof(free_hint);
+        free_hint.header.fcntlVersion = GPFS_FCNTL_CURRENT_VERSION;
+        free_hint.header.fcntlReserved = 0;
+        free_hint.start = fmd->regOffset;
+        free_hint.length = fmd->regLength;
+
+        int ret = gpfs_fcntl(fmd->file_fd.fd(), &free_hint);
+        if (ret != 0) {
+            NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl free range hint failed: " << errno << " (" << strerror(errno) << ")";
+        } else {
+            NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl free range hint released successfully";
+        }
+    }
+#endif
+    delete fmd;
     return NIXL_SUCCESS;
 }
 
@@ -294,8 +341,8 @@ nixlScaleEngine::prepXfer(const nixl_xfer_op_t &operation,
                << " raw=" << raw.size() << " coalesced=" << coalesced.size();
 
     unsigned ringDepth = nextPow2((unsigned)coalesced.size() * 2);
-    if (ringDepth < ring_size_) {
-        ringDepth = ring_size_;
+    if (ringDepth < ringSize_) {
+        ringDepth = ringSize_;
     }
     if (ringDepth > 32768u) {
         ringDepth = 32768u;
@@ -333,7 +380,55 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     nixlScaleBackendReqH &req = castScaleHandle(handle);
+
+    // ── Quiesce any outstanding operations from a prior run on this handle ──
+    if (req.ringOk()) {
+        while (req.inFlight() > 0) {
+            struct io_uring_cqe *cqe = nullptr;
+            int ret = io_uring_wait_cqe(req.ring(), &cqe);
+            if (ret < 0) {
+                if (ret == -EINTR) {
+                    continue;
+                }
+                NIXL_ERROR << "IBM_SCALE: postXfer quiescing wait_cqe failed: " << -ret;
+                break;
+            }
+            if (cqe) {
+                io_uring_cqe_seen(req.ring(), cqe);
+                req.decInFlight();
+            }
+        }
+    }
+
+    req.resetState();
+
     const bool isRead = (req.operation() == NIXL_READ);
+
+#ifdef HAVE_GPFS_FCNTL
+    if (!disableMarHints_) {
+        for (const nixlScaleIODesc &d : req.descs()) {
+            if (d.fd >= 0) {
+                gpfs_accessRange_t hint{};
+                hint.header.totalLength = sizeof(hint);
+                hint.header.fcntlVersion = GPFS_FCNTL_CURRENT_VERSION;
+                hint.header.fcntlReserved = 0;
+                hint.start = d.offset;
+                hint.length = d.len;
+                hint.accuracy = GPFS_ACCESS_SEQUENTIAL;
+
+                int ret = gpfs_fcntl(d.fd, &hint);
+                if (ret != 0) {
+                    NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl transfer access hint failed for fd=" << d.fd
+                               << " off=" << d.offset << " len=" << d.len << " ret=" << ret
+                               << " errno=" << errno << " (" << strerror(errno) << ")";
+                } else {
+                    NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl transfer access hint sent for fd=" << d.fd
+                               << " off=" << d.offset << " len=" << d.len;
+                }
+            }
+        }
+    }
+#endif
 
     // ── io_uring path ─────────────────────────────────────────────────────
     if (req.ringOk()) {
@@ -348,6 +443,7 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                 // Ring is full — flush what we have, then retry once.
                 int flushed = io_uring_submit(ring);
                 if (flushed > 0) {
+                    req.addInFlight(flushed);
                     queued -= (size_t)flushed;
                 }
                 sqe = io_uring_get_sqe(ring);
@@ -380,6 +476,7 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                 req.markError();
                 return NIXL_ERR_BACKEND;
             }
+            req.addInFlight(ret);
             queued -= (size_t)ret;
         }
 
@@ -432,12 +529,11 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
 
     nixlScaleBackendReqH &req = castScaleHandle(handle);
 
-    if (req.hasError()) {
-        return NIXL_ERR_BACKEND;
-    }
-
     // Synchronous fallback completed everything in postXfer.
     if (!req.ringOk()) {
+        if (req.hasError()) {
+            return NIXL_ERR_BACKEND;
+        }
         return req.allDone() ? NIXL_SUCCESS : NIXL_IN_PROG;
     }
 
@@ -446,7 +542,7 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
     struct io_uring_cqe *cqe = nullptr;
 
     // Drain all available CQEs without blocking.
-    while (!req.allDone()) {
+    while (true) {
         int ret = io_uring_peek_cqe(ring, &cqe);
         if (ret == -EAGAIN || cqe == nullptr) {
             break;
@@ -456,19 +552,24 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
             NIXL_ERROR << "IBM_SCALE: checkXfer io_uring_peek_cqe error: " << -ret << " ("
                        << strerror(-ret) << ")";
             req.markError();
-            io_uring_cqe_seen(ring, cqe);
-            return NIXL_ERR_BACKEND;
+            break;
         }
 
         uint64_t idx = io_uring_cqe_get_data64(cqe);
         int res = cqe->res;
         io_uring_cqe_seen(ring, cqe);
+        req.decInFlight();
+
+        if (req.hasError()) {
+            // Already in error state, just discard/drain this CQE.
+            continue;
+        }
 
         if (res < 0) {
             NIXL_ERROR << "IBM_SCALE: checkXfer I/O error op=" << (isRead ? "READ" : "WRITE")
                        << " idx=" << idx << " res=" << res << " (" << strerror(-res) << ")";
             req.markError();
-            return NIXL_ERR_BACKEND;
+            continue;
         }
 
         if (idx >= req.descs().size()) {
@@ -478,6 +579,13 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
         }
 
         nixlScaleIODesc &d = req.descs()[idx];
+        if (res == 0 && d.done < d.len) {
+            NIXL_ERROR << "IBM_SCALE: checkXfer zero-byte "
+                       << (isRead ? "read" : "write") << " idx=" << idx << " fd=" << d.fd
+                       << " done=" << d.done << " total=" << d.len;
+            req.markError();
+            continue;
+        }
         d.done += (size_t)res;
 
         if (d.done < d.len) {
@@ -490,7 +598,7 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
                     NIXL_ERROR << "IBM_SCALE: checkXfer SQ full during short-I/O"
                                << " re-submit fd=" << d.fd;
                     req.markError();
-                    return NIXL_ERR_BACKEND;
+                    continue;
                 }
             }
 
@@ -510,15 +618,18 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
                 NIXL_ERROR << "IBM_SCALE: checkXfer short-I/O retry submit failed: " << -sub << " ("
                            << strerror(-sub) << ")";
                 req.markError();
-                return NIXL_ERR_BACKEND;
+                continue;
             }
-
+            req.addInFlight(sub);
             continue;
         }
 
         req.markCompleted();
     }
 
+    if (req.hasError()) {
+        return (req.inFlight() > 0) ? NIXL_IN_PROG : NIXL_ERR_BACKEND;
+    }
     return req.allDone() ? NIXL_SUCCESS : NIXL_IN_PROG;
 }
 
@@ -530,6 +641,11 @@ nixl_status_t
 nixlScaleEngine::releaseReqH(nixlBackendReqH *handle) const {
     if (!handle) {
         return NIXL_ERR_INVALID_PARAM;
+    }
+    nixlScaleBackendReqH &req = castScaleHandle(handle);
+    if (req.inFlight() > 0) {
+        NIXL_ERROR << "IBM_SCALE: releaseReqH failed because " << req.inFlight() << " SQEs are still in flight";
+        return NIXL_ERR_BACKEND;
     }
     delete handle;
     return NIXL_SUCCESS;

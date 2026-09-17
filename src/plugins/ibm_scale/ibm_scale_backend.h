@@ -44,8 +44,8 @@ inline constexpr const char *IBM_SCALE_PLUGIN_VERSION = "0.2.0";
 // number of io_uring SQEs submitted per transfer.
 // ---------------------------------------------------------------------------
 struct nixlScaleFileMD : public nixlFilePathMD {
-    long long reg_offset;
-    long long reg_length;
+    long long regOffset;
+    long long regLength;
     // Filesystem block size (fstatfs f_bsize).  On IBM Storage Scale this
     // matches the NSD block size (e.g. 4 MiB or 8 MiB).  Falls back to 4 MiB
     // if fstatfs() fails.
@@ -55,8 +55,8 @@ struct nixlScaleFileMD : public nixlFilePathMD {
     // samples the filesystem block size via fstatfs() for coalescing.
     nixlScaleFileMD(uint64_t devid, const std::string &metaInfo, long long offset, long long length)
         : nixlFilePathMD(devid, metaInfo),
-          reg_offset(offset),
-          reg_length(length),
+          regOffset(offset),
+          regLength(length),
           blksize(sampleBlksize(file_fd.fd())) {}
 
 private:
@@ -106,7 +106,8 @@ public:
           expected_((int)desc_count),
           completed_(0),
           error_(false),
-          ringOk_(false) {
+          ringOk_(false),
+          inFlight_(0) {
         descs_.reserve(desc_count);
         // Cap at the io_uring hard limit of 32768 entries.
         unsigned depth = (ring_size > 32768u) ? 32768u : ring_size;
@@ -174,6 +175,30 @@ public:
         error_.store(true, std::memory_order_relaxed);
     }
 
+    int
+    inFlight() const noexcept {
+        return inFlight_.load(std::memory_order_relaxed);
+    }
+
+    void
+    addInFlight(int n = 1) noexcept {
+        inFlight_.fetch_add(n, std::memory_order_relaxed);
+    }
+
+    void
+    decInFlight(int n = 1) noexcept {
+        inFlight_.fetch_sub(n, std::memory_order_relaxed);
+    }
+
+    void
+    resetState() {
+        completed_.store(0, std::memory_order_relaxed);
+        error_.store(false, std::memory_order_relaxed);
+        for (auto &d : descs_) {
+            d.done = 0;
+        }
+    }
+
 private:
     nixl_xfer_op_t operation_;
     std::atomic<int> expected_;
@@ -185,6 +210,7 @@ private:
     struct io_uring ring_{};
 
     std::vector<nixlScaleIODesc> descs_;
+    std::atomic<int> inFlight_{0};
 };
 
 // ---------------------------------------------------------------------------
@@ -294,7 +320,10 @@ private:
     // io_uring queue depth used when allocating each per-request ring.
     // Default 128: covers batch-64 with 2x headroom for short-I/O retries.
     // Hard cap: 32768 (io_uring limit).
-    unsigned ring_size_ = 128;
+    unsigned ringSize_ = 128;
+
+    // Skip per-descriptor GPFS hints (default: true, i.e., skip them)
+    bool disableMarHints_ = true;
 };
 
 #endif // NIXL_SRC_PLUGINS_IBM_SCALE_IBM_SCALE_BACKEND_H
