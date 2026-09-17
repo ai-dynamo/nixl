@@ -45,12 +45,6 @@ inline constexpr int INFINIA_DEFAULT_BUFFERS = 512;
 inline constexpr int INFINIA_DEFAULT_RING_ENTRIES = 512;
 inline constexpr const char *INFINIA_DEFAULT_COREMASK = "0x2";
 
-// Batch executor configuration defaults
-inline constexpr int INFINIA_DEFAULT_MAX_BATCH_SIZE = 64;
-inline constexpr int INFINIA_DEFAULT_MAX_CONCURRENT_BATCHES = 4;
-inline constexpr int INFINIA_DEFAULT_WORKER_THREADS = 0; // 0 = auto-detect
-inline constexpr bool INFINIA_DEFAULT_AUTO_TUNE = true;
-
 // RED Client Environment variable strings
 inline constexpr const char *RED_CLUSTER_ENV = "RED_CLUSTER";
 inline constexpr const char *RED_TENANT_ENV = "RED_TENANT";

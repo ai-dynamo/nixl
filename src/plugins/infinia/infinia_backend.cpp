@@ -32,26 +32,26 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-class CudaDeviceGuard {
+class cudaDeviceGuard {
 public:
-    CudaDeviceGuard() : saved_device_(-1), should_restore_(false) {
+    cudaDeviceGuard() : saved_device_(-1), should_restore_(false) {
         if (cudaGetDevice(&saved_device_) == cudaSuccess) {
             should_restore_ = true;
         }
     }
 
-    ~CudaDeviceGuard() {
+    ~cudaDeviceGuard() {
         if (should_restore_ && saved_device_ >= 0) {
             cudaSetDevice(saved_device_);
         }
     }
 
-    CudaDeviceGuard(const CudaDeviceGuard &) = delete;
-    CudaDeviceGuard &
-    operator=(const CudaDeviceGuard &) = delete;
-    CudaDeviceGuard(CudaDeviceGuard &&) = delete;
-    CudaDeviceGuard &
-    operator=(CudaDeviceGuard &&) = delete;
+    cudaDeviceGuard(const cudaDeviceGuard &) = delete;
+    cudaDeviceGuard &
+    operator=(const cudaDeviceGuard &) = delete;
+    cudaDeviceGuard(cudaDeviceGuard &&) = delete;
+    cudaDeviceGuard &
+    operator=(cudaDeviceGuard &&) = delete;
 
 private:
     int saved_device_;
@@ -436,7 +436,7 @@ infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMeta
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
-    CudaDeviceGuard device_guard;
+    cudaDeviceGuard device_guard;
 
     CUdeviceptr dev_ptr = (CUdeviceptr)mem.addr;
     int dmabuf_fd = -1;

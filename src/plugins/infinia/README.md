@@ -171,7 +171,8 @@ The Infinia backend supports read and write operations between local memory and 
 
 ### Memory Registration
 
-- **DRAM_SEG/VRAM_SEG**: Memory is pre-registered with Infinia using `red_config_t::register_user_memory()` to obtain a handle for zero-copy transfers
+- **VRAM_SEG**: GPU memory is pre-registered via DMA-BUF (`red_config_t::register_user_dmabuf()`) when `use_dmabuf` is enabled and the buffer is page-aligned; otherwise it falls back to `red_config_t::register_user_memory()`
+- **DRAM_SEG**: Memory is registered with Infinia using `red_config_t::register_user_memory()` to obtain a handle for zero-copy transfers
 - **OBJ_SEG**: No physical memory registration; only creates devId-to-key mapping
 - Transfer buffers must be fully contained within registered memory regions
 
