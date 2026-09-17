@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -60,6 +61,146 @@ using testing::HasSubstr;
 // destructor below only logs in the one process that is testing for it.
 constexpr const char *late_record_env_var = "NIXL_TEST_LATE_RECORD";
 constexpr const char *late_record_text = "record from a static destructor";
+constexpr const char *helper_mode_env_var = "NIXL_LOG_FILE_TEST_HELPER";
+constexpr const char *helper_path_env_var = "NIXL_LOG_FILE_TEST_PATH";
+constexpr const char *run_marker_helper_mode = "run-marker";
+constexpr const char *fatal_helper_mode = "fatal";
+constexpr const char *fatal_record_text = "fatal record for the file";
+
+struct helperProcessResult {
+    pid_t pid = -1;
+    int status = 0;
+    int launch_error = 0;
+    int wait_error = 0;
+    bool timed_out = false;
+    std::string output;
+};
+
+/** @brief Contents of @p path, or empty if it cannot be read. */
+std::string
+readFile(const std::filesystem::path &path) {
+    std::ifstream file(path);
+    std::ostringstream contents;
+    contents << file.rdbuf();
+    return contents.str();
+}
+
+/** @brief Runs one helper test in a fresh executable with a bounded wait. */
+helperProcessResult
+runHelper(const std::string &mode,
+          const std::string &filter,
+          const std::filesystem::path &data_path,
+          const std::filesystem::path &output_path) {
+    helperProcessResult result;
+
+    const std::vector<std::string> overrides = {
+        "NIXL_LOG_FILE=",
+        "NIXL_LOG_FILE_SIZE=",
+        "NIXL_LOG_LEVEL=INFO",
+        std::string(helper_mode_env_var) + "=" + mode,
+        std::string(helper_path_env_var) + "=" + data_path.string(),
+    };
+
+    // Prepare everything before fork: only async-signal-safe calls are made
+    // between fork and exec in the child.
+    std::vector<std::string> child_env;
+    for (char **entry = environ; *entry != nullptr; ++entry) {
+        const std::string text(*entry);
+        const std::string name = text.substr(0, text.find('=') + 1);
+        const bool overridden =
+            std::any_of(overrides.begin(), overrides.end(), [&name](const std::string &value) {
+                return value.compare(0, name.size(), name) == 0;
+            });
+        if (!overridden) {
+            child_env.push_back(text);
+        }
+    }
+    child_env.insert(child_env.end(), overrides.begin(), overrides.end());
+
+    std::vector<char *> envp;
+    for (std::string &entry : child_env) {
+        envp.push_back(entry.data());
+    }
+    envp.push_back(nullptr);
+
+    std::string helper_name = "nixl_log_file_helper";
+    std::string filter_arg = "--gtest_filter=" + filter;
+    std::string no_color = "--gtest_color=no";
+    std::vector<char *> argv{helper_name.data(), filter_arg.data(), no_color.data(), nullptr};
+
+    const int output_fd =
+        ::open(output_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
+    if (output_fd < 0) {
+        result.launch_error = errno;
+        return result;
+    }
+
+    result.pid = ::fork();
+    if (result.pid < 0) {
+        result.launch_error = errno;
+        ::close(output_fd);
+        return result;
+    }
+
+    if (result.pid == 0) {
+        if (::dup2(output_fd, STDOUT_FILENO) < 0 || ::dup2(output_fd, STDERR_FILENO) < 0) {
+            ::_exit(126);
+        }
+        if (output_fd > STDERR_FILENO) {
+            ::close(output_fd);
+        }
+        ::execve("/proc/self/exe", argv.data(), envp.data());
+        ::_exit(127);
+    }
+    ::close(output_fd);
+
+    pid_t reaped = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while ((reaped = ::waitpid(result.pid, &result.status, WNOHANG)) == 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    if (reaped == 0) {
+        result.timed_out = true;
+        ::kill(result.pid, SIGKILL);
+        if (::waitpid(result.pid, &result.status, 0) < 0) {
+            result.wait_error = errno;
+        }
+    } else if (reaped < 0) {
+        result.wait_error = errno;
+    }
+
+    result.output = readFile(output_path);
+    std::filesystem::remove(output_path);
+    return result;
+}
+
+/** @brief Restores the process working directory on every test exit path. */
+class scopedCurrentPath {
+public:
+    scopedCurrentPath() : original_(std::filesystem::current_path()) {}
+
+    ~scopedCurrentPath() {
+        restore();
+    }
+
+    bool
+    restore() {
+        if (restored_) {
+            return true;
+        }
+
+        std::error_code error;
+        std::filesystem::current_path(original_, error);
+        restored_ = !error;
+        return restored_;
+    }
+
+private:
+    std::filesystem::path original_;
+    bool restored_ = false;
+};
 
 /**
  * @brief Logs from a static destructor, to check the file outlives teardown.
@@ -76,6 +217,88 @@ struct lateLogger {
 };
 
 lateLogger late_logger;
+
+TEST(nixlLogFileHelper, ExpandsTheRunMarkerIntoThePath) {
+    const char *mode = std::getenv(helper_mode_env_var);
+    if (mode == nullptr || mode != std::string_view(run_marker_helper_mode)) {
+        GTEST_SKIP() << "only run by the run-marker regression";
+    }
+
+    const char *configured_path = std::getenv(helper_path_env_var);
+    ASSERT_NE(configured_path, nullptr);
+
+    const std::filesystem::path base(configured_path);
+    const std::string pattern = base.string() + "-%t";
+    const std::string prefix = base.filename().string() + "-";
+    const auto named = [&prefix, &base] {
+        std::vector<std::string> found;
+        for (const auto &entry : std::filesystem::directory_iterator(base.parent_path())) {
+            const std::string name = entry.path().filename().string();
+            if (name.rfind(prefix, 0) == 0) {
+                found.push_back(name.substr(prefix.size()));
+            }
+        }
+        return found;
+    };
+    for (const auto &stale : named()) {
+        std::filesystem::remove(base.parent_path() / (prefix + stale));
+    }
+
+    const auto now = [] {
+        struct timespec ts {};
+        ::clock_gettime(CLOCK_REALTIME, &ts);
+        return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
+    };
+
+    gtest::ScopedEnv env;
+    env.addVar("NIXL_LOG_FILE", pattern);
+    env.addVar("NIXL_LOG_FILE_SIZE", "");
+
+    const uint64_t before = now();
+    ASSERT_TRUE(nixl::initLogFile());
+    NIXL_INFO << "record for the marked path";
+    nixl::shutdownLogFile();
+    const uint64_t after = now();
+
+    auto written = named();
+    ASSERT_EQ(written.size(), 1u) << "expected exactly one file named for the run marker";
+    const uint64_t marker = std::stoull(written.front());
+    EXPECT_GE(marker, before) << "the marker predates its first use";
+    EXPECT_LE(marker, after) << "the marker postdates its first use";
+
+    ASSERT_TRUE(nixl::initLogFile());
+    NIXL_INFO << "record after rebinding";
+    nixl::shutdownLogFile();
+
+    written = named();
+    EXPECT_EQ(written.size(), 1u) << "the run marker moved within one process";
+    if (written.size() == 1) {
+        const std::string contents = readFile(base.parent_path() / (prefix + written.front()));
+        EXPECT_THAT(contents, HasSubstr("record for the marked path"));
+        EXPECT_THAT(contents, HasSubstr("record after rebinding"));
+    }
+
+    for (const auto &leftover : written) {
+        std::filesystem::remove(base.parent_path() / (prefix + leftover));
+    }
+}
+
+TEST(nixlLogFileHelper, EmitsFatalRecord) {
+    const char *mode = std::getenv(helper_mode_env_var);
+    if (mode == nullptr || mode != std::string_view(fatal_helper_mode)) {
+        GTEST_SKIP() << "only run by the fatal-record regression";
+    }
+
+    const char *configured_path = std::getenv(helper_path_env_var);
+    ASSERT_NE(configured_path, nullptr);
+
+    gtest::ScopedEnv env;
+    env.addVar("NIXL_LOG_FILE", configured_path);
+    env.addVar("NIXL_LOG_FILE_SIZE", "");
+    ASSERT_TRUE(nixl::initLogFile());
+
+    NIXL_FATAL << fatal_record_text;
+}
 
 /** @brief Counts what Abseil hands to other sinks, to show none is displaced. */
 class countingSink : public absl::LogSink {
@@ -134,6 +357,10 @@ protected:
     SetUp() override {
         // The process may already have a sink from its pre-main setup.
         nixl::shutdownLogFile();
+
+        // Tests start unlimited regardless of the invoking shell. Individual
+        // tests can push a limit on top, and ScopedEnv restores both layers.
+        env_.addVar("NIXL_LOG_FILE_SIZE", "");
 
         prevMinLevel_ = absl::MinLogLevel();
         prevStderrThreshold_ = absl::StderrThreshold();
@@ -416,54 +643,27 @@ TEST_F(nixlLogFileTest, ExpandsHostAndProcessIntoThePath) {
  *        restart given an earlier id would otherwise continue its file.
  */
 TEST_F(nixlLogFileTest, ExpandsTheRunMarkerIntoThePath) {
-    const std::string pattern = path_.string() + "-%t";
+    const std::filesystem::path output = path_.string() + ".helper-output";
+    const auto result = runHelper(
+        run_marker_helper_mode, "nixlLogFileHelper.ExpandsTheRunMarkerIntoThePath", path_, output);
+
+    // Clean up even when the helper failed before doing so.
     const std::string prefix = path_.filename().string() + "-";
-
-    const auto now = [] {
-        struct timespec ts {};
-        ::clock_gettime(CLOCK_REALTIME, &ts);
-        return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
-    };
-    const auto named = [&prefix, this] {
-        std::vector<std::string> found;
-        for (const auto &entry : std::filesystem::directory_iterator(path_.parent_path())) {
-            const std::string name = entry.path().filename().string();
-            if (name.rfind(prefix, 0) == 0) {
-                found.push_back(name.substr(prefix.size()));
-            }
+    for (const auto &entry : std::filesystem::directory_iterator(path_.parent_path())) {
+        const std::string name = entry.path().filename().string();
+        if (name.rfind(prefix, 0) == 0) {
+            std::filesystem::remove(entry.path());
         }
-        return found;
-    };
-
-    for (const auto &stale : named()) {
-        std::filesystem::remove(path_.parent_path() / (prefix + stale));
     }
 
-    const uint64_t before = now();
-    env_.addVar("NIXL_LOG_FILE", pattern);
-    ASSERT_TRUE(nixl::initLogFile());
-    NIXL_INFO << "record for the marked path";
-    nixl::shutdownLogFile();
-    const uint64_t after = now();
-
-    auto written = named();
-    ASSERT_EQ(written.size(), 1u) << "expected exactly one file named for the run marker";
-    const uint64_t marker = std::stoull(written.front());
-    EXPECT_GE(marker, before) << "the marker predates the call";
-    EXPECT_LE(marker, after) << "the marker postdates the call";
-
-    // Sampled once: rebinding in this process must reuse the name, not start a
-    // second file.
-    ASSERT_TRUE(nixl::initLogFile());
-    NIXL_INFO << "record after rebinding";
-    nixl::shutdownLogFile();
-
-    written = named();
-    EXPECT_EQ(written.size(), 1u) << "the run marker moved within one process";
-
-    for (const auto &leftover : written) {
-        std::filesystem::remove(path_.parent_path() / (prefix + leftover));
-    }
+    ASSERT_EQ(result.launch_error, 0) << "could not launch helper: errno " << result.launch_error;
+    ASSERT_FALSE(result.timed_out) << "run-marker helper exceeded its 10-second deadline\n"
+                                   << result.output;
+    ASSERT_EQ(result.wait_error, 0) << "waitpid failed: errno " << result.wait_error;
+    ASSERT_TRUE(WIFEXITED(result.status)) << "run-marker helper terminated abnormally\n"
+                                          << result.output;
+    ASSERT_NE(WEXITSTATUS(result.status), 127) << "could not exec the run-marker helper";
+    EXPECT_EQ(WEXITSTATUS(result.status), 0) << "run-marker helper failed:\n" << result.output;
 }
 
 /**
@@ -594,6 +794,65 @@ TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
     EXPECT_FALSE(std::filesystem::exists(path_.string() + ".2"));
 
     std::filesystem::remove(rotated);
+}
+
+/**
+ * @brief A relative path is bound when the sink opens, not resolved again when
+ *        rotation happens after the process changes directory.
+ */
+TEST_F(nixlLogFileTest, KeepsRelativePathAcrossWorkingDirectoryChanges) {
+    constexpr std::string_view relative_name = "relative.log";
+    constexpr std::string_view live_sentinel = "unrelated live file";
+    constexpr std::string_view backup_sentinel = "unrelated backup file";
+
+    for (const bool populate_destination : {false, true}) {
+        const std::string variant = populate_destination ? "populated" : "empty";
+        const std::filesystem::path directory_a = path_.string() + "-" + variant + "-a";
+        const std::filesystem::path directory_b = path_.string() + "-" + variant + "-b";
+        std::filesystem::remove_all(directory_a);
+        std::filesystem::remove_all(directory_b);
+        std::filesystem::create_directories(directory_a);
+        std::filesystem::create_directories(directory_b);
+
+        const std::filesystem::path log_a = directory_a / relative_name;
+        const std::filesystem::path rotated_a = log_a.string() + ".1";
+        const std::filesystem::path log_b = directory_b / relative_name;
+        const std::filesystem::path rotated_b = log_b.string() + ".1";
+        if (populate_destination) {
+            std::ofstream(log_b) << live_sentinel;
+            std::ofstream(rotated_b) << backup_sentinel;
+        }
+
+        scopedCurrentPath current_path;
+        std::filesystem::current_path(directory_a);
+        env_.addVar("NIXL_LOG_FILE", std::string(relative_name));
+        env_.addVar("NIXL_LOG_FILE_SIZE", "1K");
+        ASSERT_TRUE(nixl::initLogFile());
+        NIXL_INFO << "record opened in directory A";
+
+        std::filesystem::current_path(directory_b);
+        for (unsigned i = 0; i < 200; ++i) {
+            NIXL_INFO << "relative-path rotation record " << i;
+        }
+        nixl::shutdownLogFile();
+        ASSERT_TRUE(current_path.restore()) << "could not restore the working directory";
+
+        ASSERT_TRUE(std::filesystem::exists(rotated_a)) << "rotation did not stay in directory A";
+        EXPECT_THAT(readFile(log_a), HasSubstr("relative-path rotation record 199"));
+
+        if (populate_destination) {
+            EXPECT_EQ(readFile(log_b), live_sentinel);
+            EXPECT_EQ(readFile(rotated_b), backup_sentinel);
+        } else {
+            EXPECT_FALSE(std::filesystem::exists(log_b));
+            EXPECT_FALSE(std::filesystem::exists(rotated_b));
+        }
+
+        env_.popVar();
+        env_.popVar();
+        std::filesystem::remove_all(directory_a);
+        std::filesystem::remove_all(directory_b);
+    }
 }
 
 /** @brief A record too large for an empty file remains on stderr but is omitted here. */
@@ -802,6 +1061,36 @@ TEST_F(nixlLogFileTest, ReportsAWriteFailureOnceThenDropsRecords) {
     // Names the file and why, so the report is actionable.
     EXPECT_THAT(captured, HasSubstr("/dev/full"));
     EXPECT_THAT(captured, HasSubstr("No space left on device"));
+}
+
+/**
+ * @brief The second fatal dispatch contributes its stack trace rather than a
+ *        duplicate of the fatal message.
+ */
+TEST_F(nixlLogFileTest, WritesFatalMessageOnceWithItsStackTrace) {
+    const std::filesystem::path output = path_.string() + ".helper-output";
+    const auto result =
+        runHelper(fatal_helper_mode, "nixlLogFileHelper.EmitsFatalRecord", path_, output);
+
+    ASSERT_EQ(result.launch_error, 0) << "could not launch helper: errno " << result.launch_error;
+    ASSERT_FALSE(result.timed_out) << "fatal helper exceeded its 10-second deadline\n"
+                                   << result.output;
+    ASSERT_EQ(result.wait_error, 0) << "waitpid failed: errno " << result.wait_error;
+    ASSERT_TRUE(WIFSIGNALED(result.status)) << "fatal helper did not terminate by signal\n"
+                                            << result.output;
+    EXPECT_EQ(WTERMSIG(result.status), SIGABRT) << "fatal helper received an unexpected signal";
+
+    const std::string contents = readLogFile();
+    size_t fatal_messages = 0;
+    for (size_t at = contents.find(fatal_record_text); at != std::string::npos;
+         at = contents.find(fatal_record_text, at + 1)) {
+        ++fatal_messages;
+    }
+    EXPECT_EQ(fatal_messages, 1u) << "the fatal message was not written exactly once:\n"
+                                  << contents;
+
+    EXPECT_THAT(contents, HasSubstr("*** Check failure stack trace: ***\n"))
+        << "the fatal stack-trace content is missing";
 }
 
 /**
