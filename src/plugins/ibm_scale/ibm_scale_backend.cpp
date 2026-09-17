@@ -443,15 +443,13 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                 arg.accessRange.structType = GPFS_FCNTL_ACCESS_RANGE;
                 arg.accessRange.start = d.offset;
                 arg.accessRange.length = d.len;
-                arg.accessRange.accuracy =
-                    isWrite ? GPFS_ACCESS_WRITE : GPFS_ACCESS_SEQUENTIAL;
+                arg.accessRange.accuracy = isWrite ? GPFS_ACCESS_WRITE : GPFS_ACCESS_SEQUENTIAL;
 
                 int ret = gpfs_fcntl(d.fd, &arg);
                 if (ret != 0) {
                     NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl transfer access hint failed for fd="
-                               << d.fd << " off=" << d.offset << " len=" << d.len
-                               << " ret=" << ret << " errno=" << errno << " (" << strerror(errno)
-                               << ")";
+                               << d.fd << " off=" << d.offset << " len=" << d.len << " ret=" << ret
+                               << " errno=" << errno << " (" << strerror(errno) << ")";
                 } else {
                     NIXL_DEBUG << "IBM_SCALE: gpfs_fcntl transfer access hint sent for fd=" << d.fd
                                << " off=" << d.offset << " len=" << d.len;
@@ -486,8 +484,8 @@ nixlScaleEngine::postXfer(const nixl_xfer_op_t &operation,
                 }
             }
 
-            const auto submitLen = static_cast<unsigned>(std::min(
-                d.len, static_cast<size_t>(std::numeric_limits<unsigned>::max())));
+            const auto submitLen = static_cast<unsigned>(
+                std::min(d.len, static_cast<size_t>(std::numeric_limits<unsigned>::max())));
             if (isRead) {
                 io_uring_prep_read(sqe, d.fd, d.buf, submitLen, d.offset);
             } else {
@@ -613,9 +611,9 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
 
         nixlScaleIODesc &d = req.descs()[idx];
         if (res == 0 && d.done < d.len) {
-            NIXL_ERROR << "IBM_SCALE: checkXfer zero-byte "
-                       << (isRead ? "read" : "write") << " idx=" << idx << " fd=" << d.fd
-                       << " done=" << d.done << " total=" << d.len;
+            NIXL_ERROR << "IBM_SCALE: checkXfer zero-byte " << (isRead ? "read" : "write")
+                       << " idx=" << idx << " fd=" << d.fd << " done=" << d.done
+                       << " total=" << d.len;
             req.markError();
             continue;
         }
@@ -639,8 +637,8 @@ nixlScaleEngine::checkXfer(nixlBackendReqH *handle) const {
             size_t remain = d.len - d.done;
             off_t off = d.offset + (off_t)d.done;
 
-            const auto submitLen = static_cast<unsigned>(std::min(
-                remain, static_cast<size_t>(std::numeric_limits<unsigned>::max())));
+            const auto submitLen = static_cast<unsigned>(
+                std::min(remain, static_cast<size_t>(std::numeric_limits<unsigned>::max())));
             if (isRead) {
                 io_uring_prep_read(sqe, d.fd, ptr, submitLen, off);
             } else {
@@ -679,7 +677,8 @@ nixlScaleEngine::releaseReqH(nixlBackendReqH *handle) const {
     }
     nixlScaleBackendReqH &req = castScaleHandle(handle);
     if (req.inFlight() > 0) {
-        NIXL_ERROR << "IBM_SCALE: releaseReqH failed because " << req.inFlight() << " SQEs are still in flight";
+        NIXL_ERROR << "IBM_SCALE: releaseReqH failed because " << req.inFlight()
+                   << " SQEs are still in flight";
         return NIXL_ERR_BACKEND;
     }
     delete handle;
