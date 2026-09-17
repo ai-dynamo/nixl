@@ -173,7 +173,7 @@ class fileLogSink final : public absl::LogSink {
 public:
     /**
      * @brief Opens @p path for append; check isOpen() rather than catching.
-     * @param path  Where to write, already expanded.
+     * @param path  Where to write, already expanded and made absolute.
      * @param limit Bytes before rotating, 0 for none. Counted from the current
      *              size, since appending inherits whatever the file holds.
      */
@@ -202,7 +202,9 @@ public:
      */
     void
     Send(const absl::LogEntry &entry) override {
-        const auto line = entry.text_message_with_prefix_and_newline();
+        const auto payload = entry.stacktrace().empty() ?
+            entry.text_message_with_prefix_and_newline() :
+            entry.stacktrace();
 
         const std::lock_guard lock(mutex_);
         if (failed_) {
@@ -211,12 +213,12 @@ public:
 
         if (limit_ != 0) {
             // It cannot fit in an empty file. Stderr still receives the record.
-            if (line.size() > limit_) {
+            if (payload.size() > limit_) {
                 return;
             }
 
             // Rotate before writing so neither generation exceeds the limit.
-            if (written_ > limit_ - line.size()) {
+            if (written_ > limit_ - payload.size()) {
                 rotate();
                 if (failed_) {
                     return;
@@ -225,8 +227,9 @@ public:
         }
 
         size_t offset = 0;
-        while (offset < line.size()) {
-            const ssize_t result = ::write(fd_.get(), line.data() + offset, line.size() - offset);
+        while (offset < payload.size()) {
+            const ssize_t result =
+                ::write(fd_.get(), payload.data() + offset, payload.size() - offset);
             if (result > 0) {
                 offset += static_cast<size_t>(result);
             } else if (result < 0 && errno == EINTR) {
@@ -236,7 +239,7 @@ public:
                 return;
             }
         }
-        written_ += line.size();
+        written_ += payload.size();
     }
 
 private:
@@ -426,12 +429,21 @@ initLogFile() {
         return false;
     }
 
-    auto sink = new fileLogSink(*path, *limit);
+    std::error_code path_error;
+    const std::filesystem::path resolved_path = std::filesystem::absolute(*path, path_error);
+    if (path_error) {
+        // Losing the log file must not stop the process it describes.
+        NIXL_ERROR << "Could not open " << log_file_env_var << " '" << *path
+                   << "', continuing without a log file: " << path_error.message();
+        return false;
+    }
+
+    auto sink = new fileLogSink(resolved_path.string(), *limit);
     if (!sink->isOpen()) {
         const int open_errno = errno;
         delete sink;
         // Losing the log file must not stop the process it describes.
-        NIXL_ERROR << "Could not open " << log_file_env_var << " '" << *path
+        NIXL_ERROR << "Could not open " << log_file_env_var << " '" << resolved_path.string()
                    << "', continuing without a log file"
                    << (open_errno != 0 ? ": " + nixl_strerror(open_errno) : "");
         return false;
