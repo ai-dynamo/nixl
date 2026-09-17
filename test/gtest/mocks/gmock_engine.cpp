@@ -19,12 +19,36 @@
 
 namespace mocks {
 
-nixl_b_params_t custom_params;
+nixl_b_params_t custom_params{};
 const nixlBackendInitParams init_params{.customParams = &custom_params};
 const std::string gmock_engine_key = "gmock_engine_key";
 char gmock_dummy_mvh;
 
-GMockBackendEngine::GMockBackendEngine() : nixlBackendEngine(&init_params) {
+namespace {
+
+    nixlBackendInitParams
+    normalizeInitParams(const nixlBackendInitParams *params) {
+        nixlBackendInitParams normalized = params == nullptr ? nixlBackendInitParams{} : *params;
+        if (normalized.customParams == nullptr) {
+            normalized.customParams = &custom_params;
+        }
+        return normalized;
+    }
+
+} // namespace
+
+GMockBackendEngine::GMockBackendEngine() : GMockBackendEngine(&init_params) {}
+
+GMockBackendEngine::GMockBackendEngine(const nixlBackendInitParams *init_params)
+    : GMockBackendEngine(normalizeInitParams(init_params)) {}
+
+GMockBackendEngine::GMockBackendEngine(nixlBackendInitParams init_params)
+    : nixlBackendEngine(&init_params) {
+    setDefaults();
+}
+
+void
+GMockBackendEngine::setDefaults() {
     using testing::Return;
     using testing::A;
     using testing::_;
@@ -58,11 +82,6 @@ GMockBackendEngine::GMockBackendEngine() : nixlBackendEngine(&init_params) {
     ON_CALL(*this, loadLocalMD(_, _)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, getNotifs(_)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, genNotif(_, _)).WillByDefault(Return(NIXL_SUCCESS));
-    setOptionalDefaults();
-}
-
-GMockBackendEngine::GMockBackendEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
     setOptionalDefaults();
 }
 
