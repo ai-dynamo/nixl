@@ -1335,12 +1335,11 @@ nixlInfiniaBackendReqH::checkTransfer() {
             failed_operations > 0 ? "true" : "false");
 
         if (failed_operations > 0) {
-            NIXL_WARN << absl::StrFormat(
-                "INFINIA: ERROR rs=%d total=%zu success=%zu failed=%zu",
-                result.overall_status,
-                total_operations,
-                successful_operations,
-                failed_operations);
+            NIXL_WARN << absl::StrFormat("INFINIA: ERROR rs=%d total=%zu success=%zu failed=%zu",
+                                         result.overall_status,
+                                         total_operations,
+                                         successful_operations,
+                                         failed_operations);
 
             // Log failed operations using failed_indices
             if (!result.failed_indices.empty()) {
