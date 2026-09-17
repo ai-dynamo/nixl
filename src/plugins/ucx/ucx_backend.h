@@ -297,6 +297,9 @@ private:
     nixl_status_t
     waitConnected(const ucx_connection_ptr_t &conn, const std::string &remote_agent) const;
 
+    void
+    releaseRequests(std::vector<nixlUcxReq> &reqs, size_t from) const;
+
 #ifdef HAVE_UCX_SGL_API
     nixl_status_t
     prepXferSgl(const nixl_meta_dlist_t &local,

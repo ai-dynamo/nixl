@@ -26,6 +26,7 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 
+#include <algorithm>
 #include <optional>
 #include <string.h>
 #include "absl/strings/str_split.h"
@@ -68,6 +69,30 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
     }
     return std::unique_ptr<nixlUcxEngine>(engine);
 }
+
+namespace {
+/* Backend parameter, falling back to the NIXL_UCX_<PARAM> environment variable
+ * (or the NIXL configuration file), so that a deployment which cannot pass
+ * backend parameters - e.g. a framework that creates the UCX backend with a
+ * fixed parameter set - can still select the connection mode and the listener
+ * address per process. */
+[[nodiscard]] std::optional<std::string>
+getParamOrEnv(nixl_b_params_t *custom_params, std::string_view name) {
+    if (auto opt = nixl::getBackendParamOptional<std::string>(custom_params, std::string(name));
+        opt && !opt->empty()) {
+        return opt;
+    }
+
+    std::string env_name = "NIXL_UCX_" + std::string(name);
+    std::transform(env_name.begin(), env_name.end(), env_name.begin(), ::toupper);
+
+    auto env_value = nixl::config::getValueOptional<std::string>(env_name);
+    if (env_value && env_value->empty()) {
+        return std::nullopt;
+    }
+    return env_value;
+}
+} // namespace
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
     : nixlBackendEngine(&init_params),
@@ -118,14 +143,27 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
     workerAddr = worker->epAddr();
     worker->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, notifAmCb, this);
 
-    if (const auto opt = nixl::getBackendParamOptional<std::string>(
-            custom_params, std::string(nixl_ucx_conn_mode_param_name))) {
+    if (const auto opt = getParamOrEnv(custom_params, nixl_ucx_conn_mode_param_name)) {
         connMode_ = ucx_conn_mode_from_string(*opt);
     }
 
     if (connMode_ == nixl::ucx::conn_mode_t::SOCKADDR) {
-        connectTimeout_ = std::chrono::milliseconds(nixl::getBackendParamDefaulted(
-            custom_params, std::string(nixl_ucx_connect_timeout_param_name), 30000u));
+        if (num_dedicated_workers > 0) {
+            /* waitConnected() progresses every worker, which would race with
+             * the pool threads progressing their dedicated workers. */
+            throw std::runtime_error(
+                "connection_mode=sockaddr is not supported together with dedicated workers "
+                "(num_threads > 0)");
+        }
+        if (numSharedWorkers_ > 1) {
+            NIXL_WARN << "connection_mode=sockaddr with num_workers=" << numSharedWorkers_
+                      << " has only been tested with num_workers=1; all workers connect to the "
+                         "single listener of the peer";
+        }
+
+        if (const auto opt = getParamOrEnv(custom_params, nixl_ucx_connect_timeout_param_name)) {
+            connectTimeout_ = std::chrono::milliseconds(std::stoul(*opt));
+        }
         connInfo_ = initSockaddrListener(custom_params);
     } else {
         connInfo_ = workerAddr;
@@ -136,15 +174,15 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
 
 std::string
 nixlUcxEngine::initSockaddrListener(nixl_b_params_t *custom_params) {
-    auto listen_address = nixl::getBackendParamDefaulted(
-        custom_params, std::string(nixl_ucx_listen_address_param_name), std::string("0.0.0.0"));
+    auto listen_address =
+        getParamOrEnv(custom_params, nixl_ucx_listen_address_param_name).value_or("0.0.0.0");
     if (listen_address.empty()) {
         listen_address = "0.0.0.0";
     }
-    const auto advertise_address = nixl::getBackendParamDefaulted(
-        custom_params, std::string(nixl_ucx_advertise_address_param_name), std::string());
-    const auto listen_port = nixl::getBackendParamDefaulted(
-        custom_params, std::string(nixl_ucx_listen_port_param_name), 0u);
+    const auto advertise_address =
+        getParamOrEnv(custom_params, nixl_ucx_advertise_address_param_name).value_or("");
+    const auto listen_port = uint32_t(
+        std::stoul(getParamOrEnv(custom_params, nixl_ucx_listen_port_param_name).value_or("0")));
 
     const auto bind_addr =
         nixl::ucx::sockaddrConnInfo::resolve(listen_address, uint16_t(listen_port));
@@ -198,6 +236,13 @@ nixlUcxEngine::onConnRequest(ucp_conn_request_h conn_request) {
     }
 
     const std::lock_guard<std::mutex> lock(acceptedEpsMutex_);
+
+    /* Drop endpoints of peers that went away without disconnecting: their
+     * error handler has already moved them to the failed state. */
+    std::erase_if(acceptedEps_, [](const std::unique_ptr<nixlUcxEp> &accepted) {
+        return accepted->checkTxState() == NIXL_ERR_REMOTE_DISCONNECT;
+    });
+
     acceptedEps_.push_back(std::move(ep));
     NIXL_DEBUG << "UCX backend accepted incoming connection, " << acceptedEps_.size()
                << " accepted endpoint(s)";
@@ -295,6 +340,16 @@ nixlUcxEngine::connectSockaddrPeer(const std::string &remote_agent,
     return waitConnected(conn, remote_agent);
 }
 
+void
+nixlUcxEngine::releaseRequests(std::vector<nixlUcxReq> &reqs, size_t from) const {
+    for (size_t i = from; i < reqs.size(); i++) {
+        if (reqs[i] != nullptr) {
+            workers_[i]->reqRelease(reqs[i]);
+            reqs[i] = nullptr;
+        }
+    }
+}
+
 nixl_status_t
 nixlUcxEngine::waitConnected(const ucx_connection_ptr_t &conn,
                              const std::string &remote_agent) const {
@@ -332,18 +387,20 @@ nixlUcxEngine::waitConnected(const ucx_connection_ptr_t &conn,
             if (std::chrono::steady_clock::now() > deadline) {
                 NIXL_ERROR << "Timed out establishing the connection to " << remote_agent
                            << " after " << connectTimeout_.count() << " ms";
-                workers_[i]->reqRelease(reqs[i]);
+                releaseRequests(reqs, i);
                 return NIXL_ERR_BACKEND;
             }
         }
 
-        workers_[i]->reqRelease(reqs[i]);
-
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to establish the connection to " << remote_agent << ", status "
                        << status;
+            releaseRequests(reqs, i);
             return status;
         }
+
+        workers_[i]->reqRelease(reqs[i]);
+        reqs[i] = nullptr;
     }
 
     NIXL_DEBUG << "Connection to " << remote_agent << " is established";

@@ -765,7 +765,15 @@ nixlUcxListener::nixlUcxListener(const nixlUcxWorker &worker,
                                  ucs_status_string(status));
     }
 
-    NIXL_INFO << name_ << ": UCX listener created on " << getBoundAddress().str();
+    try {
+        NIXL_INFO << name_ << ": UCX listener created on " << getBoundAddress().str();
+    }
+    catch (...) {
+        /* The destructor does not run for an object whose constructor threw. */
+        ucp_listener_destroy(listener_);
+        listener_ = nullptr;
+        throw;
+    }
 }
 
 nixlUcxListener::~nixlUcxListener() {

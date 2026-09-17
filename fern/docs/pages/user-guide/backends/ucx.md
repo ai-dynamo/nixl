@@ -66,6 +66,13 @@ See [Configuration](#configuration) for build options.
 | `connect_timeout_ms` | `30000` | `connection_mode=sockaddr` only: how long `loadRemoteConnInfo()` waits for the client/server wireup to complete before failing. |
 | `advertise_address` | *(empty)* | `connection_mode=sockaddr` only: address advertised to remote agents when `listen_address` is a wildcard. Required if `listen_address` is `0.0.0.0` or `::`. |
 
+Every parameter above can also be set through the environment (or the NIXL
+configuration file) as `NIXL_UCX_<PARAM>` in upper case, e.g.
+`NIXL_UCX_CONNECTION_MODE=sockaddr`, `NIXL_UCX_LISTEN_ADDRESS=192.168.10.27`,
+`NIXL_UCX_LISTEN_PORT=18515`. An explicitly passed backend parameter always wins.
+This allows selecting the connection mode per process in a deployment that cannot
+pass backend parameters.
+
 #### connection_mode=sockaddr
 
 In this mode `getConnInfo()` returns a versioned, human readable blob describing the
@@ -108,6 +115,22 @@ Notes and current limitations:
   sufficient for a one-to-one pair of agents.
 - IPv4 and IPv6 are both accepted in the connection info format; IPv4 is what has been
   exercised so far.
+- Not supported together with dedicated workers (`num_threads > 0`); rejected at
+  initialization.
+
+#### Verifying that RDMA CM is used
+
+With `UCX_LOG_LEVEL=debug`, do **not** rely on lines such as
+`wireup.c: ep ...: lane[0]: cm rdmacm` - UCX prints that name even when the TCP
+connection manager is in use. Look instead for:
+
+- present: `rdmacm_cm.c` / `rdmacm_listener.c` / `rdmacm_cm_ep.c` debug lines,
+- absent: `tcp_sockcm.c`, `tcp_listener.c`, `tcp_sockcm_ep.c`, and
+  `failed to open CM on component rdmacm`.
+
+Setting `UCX_SOCKADDR_TLS_PRIORITY=rdmacm` genuinely removes the TCP fallback: when
+no RDMA device is available the backend then fails to initialize (the listener cannot
+be bound) instead of silently using TCP.
 
 ### Build Options
 

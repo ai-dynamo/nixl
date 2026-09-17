@@ -6,3 +6,9 @@
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `NIXL_UCX_WARNING_TIMEOUT` | Integer (ms) | `5000` | Timeout in milliseconds for UCX memory registration warning. If a memory registration takes longer than this threshold, a warning is logged. |
+| `NIXL_UCX_CONNECTION_MODE` | String | `worker_address` | Fallback for the `connection_mode` backend parameter: `worker_address` or `sockaddr`. |
+| `NIXL_UCX_LISTEN_ADDRESS` | String | `0.0.0.0` | Fallback for the `listen_address` backend parameter (`connection_mode=sockaddr`). |
+| `NIXL_UCX_LISTEN_PORT` | Integer | `0` | Fallback for the `listen_port` backend parameter (`connection_mode=sockaddr`). |
+| `NIXL_UCX_ADVERTISE_ADDRESS` | String | *(empty)* | Fallback for the `advertise_address` backend parameter (`connection_mode=sockaddr`). |
+| `NIXL_UCX_CONNECT_TIMEOUT_MS` | Integer (ms) | `30000` | Fallback for the `connect_timeout_ms` backend parameter (`connection_mode=sockaddr`). |
+| `UCX_SOCKADDR_TLS_PRIORITY` | String | `rdmacm,tcp,sockcm` | UCX variable selecting the connection managers used for `connection_mode=sockaddr`. Set to `rdmacm` to require RDMA CM and disable the TCP fallback. |
