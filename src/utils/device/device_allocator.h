@@ -33,8 +33,9 @@ class mappedHostMem;
  * Device memory-ops interface. All host-side interaction with the GPU memory
  * runtime goes through this class so that no other host code needs a
  * cuda_runtime.h include. CUDA is the current platform implementation; HIP
- * can provide another. Allocations are returned as owning RAII handles, while
- * raw alloc/free remain protected implementation hooks. The class is not
+ * can provide another. Allocations are returned as owning RAII handles.
+ * Raw alloc/free remain protected; deviceMem::release()/adopt() is the
+ * C-handle escape hatch. The class is not
  * internally synchronized. Transfers are issued on the default stream and are
  * ordered there, but not all are complete on return; synchronize() is the
  * barrier. Active device state is thread-local: copies, memset, and
@@ -55,17 +56,6 @@ public:
      */
     [[nodiscard]] nixl_status_t
     allocMappedHostMem(size_t size, mappedHostMem &out) noexcept;
-
-    /**
-     * Free device memory. Used for pointers whose ownership left RAII scope
-     * via deviceMem::release() (for example, nixlMemViewH handles crossing
-     * the public API boundary). The pointer must be one allocDeviceMem
-     * produced; it is not validated. Prefer the RAII handles everywhere else.
-     */
-    void
-    freeDeviceMem(void *ptr) noexcept {
-        doFreeDeviceMem(ptr);
-    }
 
     /** src is reusable on return; the device-side write may still be pending. */
     [[nodiscard]] virtual nixl_status_t
@@ -166,12 +156,24 @@ public:
         size_ = 0;
     }
 
-    /** Give up ownership; the pointer must later go to freeDeviceMem(). */
+    /** Give up ownership; reclaim with adopt(). */
     [[nodiscard]] void *
     release() noexcept {
         allocator_ = nullptr;
         size_ = 0;
         return std::exchange(ptr_, nullptr);
+    }
+
+    /**
+     * Take ownership of a pointer previously returned by release(). Null
+     * yields an empty handle. The pointer must be one allocDeviceMem produced.
+     */
+    [[nodiscard]] static deviceMem
+    adopt(deviceAllocator &allocator, void *ptr) noexcept {
+        if (ptr == nullptr) {
+            return deviceMem();
+        }
+        return deviceMem(&allocator, ptr, 0);
     }
 
 private:

@@ -88,9 +88,7 @@ public:
 
     void
     doFreeMappedHostMem(void *host_ptr) noexcept override {
-        if (host_ptr == nullptr) {
-            return;
-        }
+        // cudaFreeHost is a no-op on nullptr, matching doFreeDeviceMem.
         const cudaError_t error = cudaFreeHost(host_ptr);
         if (error != cudaSuccess) {
             NIXL_ERROR << cudaFailureMsg("cudaFreeHost", error);
@@ -99,7 +97,10 @@ public:
 
     nixl_status_t
     copyHostToDevice(void *dst, const void *src, size_t size) noexcept override {
-        if (dst == nullptr || src == nullptr || size == 0) {
+        if (size == 0) {
+            return NIXL_SUCCESS;
+        }
+        if (dst == nullptr || src == nullptr) {
             return NIXL_ERR_INVALID_PARAM;
         }
         const cudaError_t error = cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice);
@@ -112,7 +113,10 @@ public:
 
     nixl_status_t
     copyDeviceToHost(void *dst, const void *src, size_t size) noexcept override {
-        if (dst == nullptr || src == nullptr || size == 0) {
+        if (size == 0) {
+            return NIXL_SUCCESS;
+        }
+        if (dst == nullptr || src == nullptr) {
             return NIXL_ERR_INVALID_PARAM;
         }
         const cudaError_t error = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost);
@@ -125,7 +129,10 @@ public:
 
     nixl_status_t
     memsetDeviceMem(void *ptr, int value, size_t size) noexcept override {
-        if (ptr == nullptr || size == 0) {
+        if (size == 0) {
+            return NIXL_SUCCESS;
+        }
+        if (ptr == nullptr) {
             return NIXL_ERR_INVALID_PARAM;
         }
         const cudaError_t error = cudaMemset(ptr, value, size);

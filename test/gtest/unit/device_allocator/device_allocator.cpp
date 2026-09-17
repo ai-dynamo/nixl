@@ -57,10 +57,12 @@ namespace device_allocator {
         EXPECT_FALSE(static_cast<bool>(moved));
     }
 
-    TEST(deviceAllocatorHost, AccessorIsStableAndFreeNullIsSafe) {
+    TEST(deviceAllocatorHost, AccessorIsStableAndAdoptNullIsSafe) {
         deviceAllocator &allocator = getDeviceAllocator();
         EXPECT_EQ(&allocator, &getDeviceAllocator());
-        allocator.freeDeviceMem(nullptr);
+        deviceMem empty = deviceMem::adopt(allocator, nullptr);
+        EXPECT_FALSE(empty);
+        EXPECT_EQ(empty.devicePointer(), nullptr);
     }
 
     TEST(deviceAllocatorHost, ZeroSizeAllocationsLeaveOutputsEmpty) {
@@ -116,7 +118,7 @@ namespace device_allocator {
         ASSERT_EQ(allocator.copyDeviceToHost(dst.data(), mem.devicePointer(), kSize), NIXL_SUCCESS);
         EXPECT_EQ(dst, std::vector<unsigned char>(kSize, 0));
 
-        allocator.freeDeviceMem(mem.release());
+        deviceMem::adopt(allocator, mem.release());
 
         mappedHostMem mapped;
         ASSERT_EQ(allocator.allocMappedHostMem(kSize, mapped), NIXL_SUCCESS);
