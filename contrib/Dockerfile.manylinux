@@ -168,24 +168,25 @@ WORKDIR /workspace
 # Clone the third-party dependencies below as svc-nixl when the build supplies a
 # token: github.com answers anonymous clones with an intermittent HTTP 401, and
 # budgets unauthenticated requests per source IP, which CI shares cluster-wide.
-# Without the secret the mount is simply empty and the clones stay anonymous.
+# Without the secret the mount is empty and the clones stay anonymous. url.insteadOf
+# rather than a netrc: git only consults ~/.netrc from 2.35 onwards.
 ENV GIT_TERMINAL_PROMPT=0
 
 # Set by CI so a missing credential fails here instead of part-way through the
 # clones below. Left 0 for local builds, which clone anonymously as before.
 ARG REQUIRE_GITHUB_AUTH=0
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc \
-    if [ -s /root/.netrc ]; then \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig \
+    if [ -s /root/.gitconfig ]; then \
         echo "github.com clones: authenticated"; \
     elif [ "${REQUIRE_GITHUB_AUTH}" = "1" ]; then \
-        echo "ERROR: ghnetrc secret is empty, github.com clones would be anonymous" >&2; \
+        echo "ERROR: ghconfig secret is empty, github.com clones would be anonymous" >&2; \
         exit 1; \
     else \
-        echo "github.com clones: anonymous (no ghnetrc secret supplied)"; \
+        echo "github.com clones: anonymous (no ghconfig secret supplied)"; \
     fi
 
 # Build Abseil from source (required for absl/log).
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone https://github.com/abseil/abseil-cpp.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/abseil/abseil-cpp.git && \
     cd abseil-cpp && \
     git fetch --depth 1 origin ${ABSL_TAG} && \
     git checkout ${ABSL_TAG} && \
@@ -202,7 +203,7 @@ RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone https://github.
     ldconfig
 
 ARG GRPC_NPROC
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
     mkdir -p cmake/build && \
     cd cmake/build && \
@@ -226,7 +227,7 @@ RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --recurse-submo
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
 
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc cd /workspace && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /workspace && \
     git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
@@ -241,7 +242,7 @@ RUN wget --tries=3 --waitretry=5 https://curl.se/download/curl-8.19.0.tar.gz && 
     ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --without-libpsl --enable-shared && \
     make -j${NPROC:-$(nproc)} && make install
 
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760
 RUN mkdir aws_sdk_build && cd aws_sdk_build && \
     export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
     export CFLAGS="-I/usr/local/openssl3/include" && \
@@ -256,19 +257,19 @@ RUN mkdir aws_sdk_build && cd aws_sdk_build && \
 
 ENV PKG_CONFIG_PATH=/usr/lib64/pkgconfig:/usr/lib/pkgconfig:$PKG_CONFIG_PATH
 
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone https://github.com/nvidia/gusli.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
      sed -i '/^LFLAGS_ALL =/{/-lrt/ b; s/$/ -lrt/}' Makefile && \
      make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
      cd ..
 
 # Required for Azure SDK
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --depth 1 https://github.com/GNOME/libxml2.git --branch 2.15 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/GNOME/libxml2.git --branch 2.15 && \
     cd libxml2 && \
     ACLOCAL_PATH=/usr/share/aclocal ./autogen.sh && make -j${NPROC:-$(nproc)} && \
     make install
 
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
     export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
@@ -332,7 +333,7 @@ WORKDIR /workspace
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc cd /workspace && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /workspace && \
     git clone --depth 1 https://github.com/NVIDIA/gdrcopy.git && \
     cd gdrcopy && \
     git fetch --tags --depth=1 && \

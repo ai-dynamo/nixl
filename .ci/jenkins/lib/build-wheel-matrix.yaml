@@ -117,7 +117,7 @@ pvc_volumes:
 pipeline_on_image_build:
   run: |
     . .ci/scripts/common.sh
-    write_github_netrc "${WORKSPACE}/.ghnetrc"
+    write_github_gitconfig "${WORKSPACE}/.ghconfig"
 
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true, arch: 'x86_64' }
@@ -128,7 +128,7 @@ runs_on_dockers:
       file: 'contrib/Dockerfile.manylinux',
       name: "${WHEEL_BASE_IMAGE_NAME}",
       tag: "${CI_IMAGE_TAG}",
-      build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base --secret id=ghnetrc,src=${WORKSPACE}/.ghnetrc --build-arg REQUIRE_GITHUB_AUTH=1'
+      build_args: '--build-arg ARCH=${arch} --build-arg NPROC=${NPROC} --build-arg GRPC_NPROC=${GRPC_NPROC} --target wheel_base --secret id=ghconfig,src=${WORKSPACE}/.ghconfig --build-arg REQUIRE_GITHUB_AUTH=1'
     }
   # The custom 'fw' key is injected as an env var into every step of the branch
   # (ci-demo merges the docker entry into the branch axis), so the shared sanity

@@ -158,14 +158,15 @@ start_etcd_server() {
 # it: it tries to prompt, finds no TTY, and dies as "could not read Username".
 # Given one it just retries the request authenticated.
 #
-# This is the CI-agent path, where the token arrives as an env var. Container
-# builds instead mount a netrc as a BuildKit secret, so an existing file is left
-# alone. Writes are done with tracing off so the token never reaches the log.
-# Write a netrc for github.com to $1, empty when no token is available. Used by the
-# ci-demo `pipeline_on_image_build` hook: that hook runs as a real `sh` step, where a
-# withCredentials binding is reliably present, unlike ci-demo's Groovy-level `env:`
-# templating which cannot see one.
-write_github_netrc() {
+# Write a git config that authenticates github.com to $1, empty when no token is
+# available. Used by the ci-demo `pipeline_on_image_build` hook: that hook runs as a
+# real `sh` step, where a withCredentials binding is reliably present, unlike
+# ci-demo's Groovy-level `env:` templating which cannot see one.
+#
+# url.insteadOf rather than a netrc because git only consults ~/.netrc from 2.35
+# onwards - on git 2.34 (Ubuntu 22.04, which build-matrix.yaml still builds) a netrc
+# is ignored outright and the clone stays anonymous.
+write_github_gitconfig() {
     local dest="$1"
 
     # Tracing goes off before the token is ever expanded.
@@ -177,7 +178,7 @@ write_github_netrc() {
     : > "${dest}"
     chmod 600 "${dest}"
     if [ -n "${NIXL_GITHUB_TOKEN:-}" ]; then
-        printf 'machine github.com login %s password %s\n' \
+        printf '[url "https://%s:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' \
             "${NIXL_GITHUB_USER:-x-access-token}" "${NIXL_GITHUB_TOKEN}" > "${dest}"
     fi
 
@@ -186,27 +187,28 @@ write_github_netrc() {
     fi
 
     if [ -s "${dest}" ]; then
-        echo "write_github_netrc: wrote credential to ${dest}"
+        echo "write_github_gitconfig: wrote credential to ${dest}"
     else
-        echo "write_github_netrc: no NIXL_GITHUB_TOKEN; ${dest} left empty (clones stay anonymous)"
+        echo "write_github_gitconfig: no NIXL_GITHUB_TOKEN; ${dest} left empty (clones stay anonymous)"
     fi
 }
 
-setup_github_netrc() {
-    # Tracing goes off before the token is ever expanded: under `set -x` even the
-    # guard below would print it.
+# The CI-agent path, where the token arrives as an env var rather than a mounted
+# secret. Leaves an existing config alone, so it is a no-op inside a container build
+# that already mounts one. Writes with tracing off so the token never reaches the log.
+setup_github_gitconfig() {
     local restore_xtrace=""
     case "$-" in
         *x*) restore_xtrace=1; set +x ;;
     esac
 
-    if [ -n "${NIXL_GITHUB_TOKEN:-}" ] && [ ! -s "${HOME}/.netrc" ]; then
-        printf 'machine github.com login %s password %s\n' \
-            "${NIXL_GITHUB_USER:-x-access-token}" "${NIXL_GITHUB_TOKEN}" > "${HOME}/.netrc"
-        chmod 600 "${HOME}/.netrc"
+    if [ -n "${NIXL_GITHUB_TOKEN:-}" ] && [ ! -s "${HOME}/.gitconfig" ]; then
+        printf '[url "https://%s:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' \
+            "${NIXL_GITHUB_USER:-x-access-token}" "${NIXL_GITHUB_TOKEN}" > "${HOME}/.gitconfig"
+        chmod 600 "${HOME}/.gitconfig"
         # Only installed when this function created the file, so it never removes a
-        # netrc that was already there.
-        trap 'rm -f "${HOME}/.netrc"' EXIT
+        # config that was already there.
+        trap 'rm -f "${HOME}/.gitconfig"' EXIT
     fi
 
     if [ -n "${restore_xtrace}" ]; then

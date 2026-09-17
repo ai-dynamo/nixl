@@ -92,22 +92,21 @@ ENV VLLM_ELASTIC_TEST_DIR=${_HOME}/vllm
 # build.sh clones ~10 third-party deps from github.com, plus the taskflow and
 # prometheus-cpp meson wraps. github.com answers anonymous clones with an
 # intermittent HTTP 401; with a credential git answers the challenge instead of
-# dying as "could not read Username". mode=0444 because this stage runs as a
-# non-root user, and the netrc is staged and removed inside the one layer.
+# dying as "could not read Username". Mounted straight where git looks for it, so
+# nothing is copied and the file cannot outlive the layer. mode=0444 because this
+# stage runs as a non-root user. url.insteadOf rather than a netrc: git only consults
+# ~/.netrc from 2.35 onwards, and the ubuntu22 variant of this image ships git 2.34.
 ENV GIT_TERMINAL_PROMPT=0
-RUN --mount=type=secret,id=ghnetrc,mode=0444 \
-    if [ -s /run/secrets/ghnetrc ]; then \
-        cp /run/secrets/ghnetrc "${HOME}/.netrc" && chmod 600 "${HOME}/.netrc"; \
+RUN --mount=type=secret,id=ghconfig,target=${_HOME}/.gitconfig,mode=0444 \
+    if [ -s "${HOME}/.gitconfig" ]; then \
         echo "github.com clones: authenticated"; \
     elif [ "${REQUIRE_GITHUB_AUTH}" = "1" ]; then \
-        echo "ERROR: ghnetrc secret is empty, github.com clones would be anonymous" >&2; \
+        echo "ERROR: ghconfig secret is empty, github.com clones would be anonymous" >&2; \
         exit 1; \
     else \
-        echo "github.com clones: anonymous (no ghnetrc secret supplied)"; \
+        echo "github.com clones: anonymous (no ghconfig secret supplied)"; \
     fi; \
-    /.gitlab/build.sh ${NIXL_INSTALL_DIR}; rc=$?; \
-    rm -f "${HOME}/.netrc"; \
-    exit $rc
+    /.gitlab/build.sh ${NIXL_INSTALL_DIR}
 RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
 
 # Install editable vLLM source with matching CUDA 13 precompiled binaries.

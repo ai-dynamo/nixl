@@ -80,7 +80,7 @@ steps:
       # Authenticate this clone too: it runs on the agent, outside the image build
       # that mounts the token as a build secret.
       . .ci/scripts/common.sh
-      setup_github_netrc
+      setup_github_gitconfig
       # nixlbench builds against a UCX source tree; nixl consumes UCX_VERSION directly.
       if [ "$target" = "nixlbench" ]; then
         rm -rf ucx-src

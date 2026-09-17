@@ -186,11 +186,12 @@ WORKDIR /workspace
 # Clone the third-party dependencies below as svc-nixl when the build supplies a
 # token: github.com answers anonymous clones with an intermittent HTTP 401, and
 # budgets unauthenticated requests per source IP, which CI shares cluster-wide.
-# Without the secret the mount is simply empty and the clones stay anonymous.
+# Without the secret the mount is empty and the clones stay anonymous. url.insteadOf
+# rather than a netrc: git only consults ~/.netrc from 2.35 onwards.
 ENV GIT_TERMINAL_PROMPT=0
 
 # Build Abseil from source (required for absl/log).
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone https://github.com/abseil/abseil-cpp.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/abseil/abseil-cpp.git && \
     cd abseil-cpp && \
     git fetch --depth 1 origin ${ABSL_TAG} && \
     git checkout ${ABSL_TAG} && \
@@ -207,7 +208,7 @@ RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone https://github.
     ldconfig
 
 # Build gRPC from source against /usr/local Abseil.
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
     mkdir -p cmake/build && \
     cd cmake/build && \
@@ -251,7 +252,7 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
@@ -261,7 +262,7 @@ RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --depth 1 https
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
 
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
     mkdir sdk_build && \
     cd sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_CXX_STANDARD=20 && \
@@ -270,7 +271,7 @@ RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --recurse-submo
 
 # Install install Azure SDK for C++ dependencies and build
 RUN apt-get update && apt-get install -y libxml2-dev
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
     AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
@@ -280,7 +281,7 @@ RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone --depth 1 https
     cmake --install sdk/storage/azure-storage-blobs && \
     cmake --install sdk/identity
 
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone https://github.com/nvidia/gusli.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/nvidia/gusli.git && \
     cd gusli && \
     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
     cd ..

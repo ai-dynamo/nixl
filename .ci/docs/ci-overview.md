@@ -337,13 +337,13 @@ present git instead answers the 401 by retrying with auth, so the clone succeeds
 `benchmark/nixlbench/contrib/build.sh` turn those into an env-sourced build secret:
 
 ```
---secret id=ghnetrc,env=NIXL_GITHUB_NETRC
+--secret id=ghconfig,env=NIXL_GITHUB_GITCONFIG
 ```
 
-and each cloning `RUN` mounts it at `/root/.netrc`:
+and each cloning `RUN` mounts it at `/root/.gitconfig`:
 
 ```
-RUN --mount=type=secret,id=ghnetrc,target=/root/.netrc git clone ...
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone ...
 ```
 
 The token is therefore never written to disk by the build scripts, never lands in
@@ -364,9 +364,9 @@ ci-demo outside any step (`Matrix.groovy` `buildImage`), so a per-step
   not just around the `GithubHelper` call, so it is in the environment for the
   image-build phase too.
 - `build_args` is spliced verbatim into `docker build`, so those entries carry
-  `--secret id=ghnetrc,src=${WORKSPACE}/.ghnetrc`.
-- The netrc itself is written by a `pipeline_on_image_build` hook calling
-  `write_github_netrc`. **The hook is load-bearing, not a convenience.** Putting the
+  `--secret id=ghconfig,src=${WORKSPACE}/.ghconfig`.
+- The config itself is written by a `pipeline_on_image_build` hook calling
+  `write_github_gitconfig`. **The hook is load-bearing, not a convenience.** Putting the
   credential in the matrix `env:` block does not work: ci-demo resolves `env:` with
   `resolveTemplate`, a `@NonCPS` Groovy method reading `env.getEnvironment()`, which
   does not see a `withCredentials` binding. `replaceVars` then leaves the unmatched
@@ -376,17 +376,31 @@ ci-demo outside any step (`Matrix.groovy` `buildImage`), so a per-step
   exactly this way.
 
 `.ci/dockerfiles/Dockerfile.base` runs as a **non-root** user, so its mount uses
-`mode=0444` and stages the file into `$HOME/.netrc` for the duration of the one
-`RUN`. It logs `github.com clones: authenticated` or `: anonymous` so the mode is
+`mode=0444` and mounts straight at `$HOME/.gitconfig`, so nothing is copied and the
+file cannot outlive the layer. It logs `github.com clones: authenticated` or `: anonymous` so the mode is
 visible at the top of the layer, and CI passes `REQUIRE_GITHUB_AUTH=1` so an empty
 secret fails there rather than as a clone failure ten minutes later. Local builds
 leave it 0 and clone anonymously as before. That covers `.gitlab/build.sh`'s clones and the `taskflow` /
 `prometheus-cpp` meson `wrap-git` subprojects in a single place, for all five
 matrices that build from it.
 
+**Why `url.insteadOf` and not a `.netrc`.** git only consults `~/.netrc` from 2.35
+onwards. On git 2.34 — which Ubuntu 22.04 ships, and which `build-matrix.yaml` still
+builds as the `nixl-ci-non-gpu-base-ubuntu22` variant — a netrc is ignored outright:
+the credential is never sent and the clone stays anonymous, with no error to show for
+it. `url."https://<user>:<token>@github.com/".insteadOf` works on every version,
+because the credential is part of the URL rather than a file git may decline to read.
+Verified on 2.34.1 and 2.43.0.
+
+The tradeoff is that the rewritten URL is passed as an argument to `git-remote-https`,
+so the token is visible in that process's argv and in `GIT_TRACE` output. Do not enable
+`GIT_TRACE`/`GIT_CURL_VERBOSE` in these jobs. git redacts the credential in its own
+error messages, keeps it out of `remote.origin.url`, and does not write it into
+submodule configs — all verified.
+
 **On CI agents**, where the token is an env var rather than a mounted file,
-`setup_github_netrc` in `.ci/scripts/common.sh` writes `$HOME/.netrc` and removes
-it on exit. It leaves an existing netrc alone, so it is a no-op inside the
+`setup_github_gitconfig` in `.ci/scripts/common.sh` writes `$HOME/.gitconfig` and
+removes it on exit. It leaves an existing config alone, so it is a no-op inside the
 container build, and it disables `set -x` before the token is expanded so the
 value never reaches the log. `.gitlab/build.sh` and `.gitlab/build-rocm.sh` call
 it, as do the matrix steps that clone UCX on the agent.

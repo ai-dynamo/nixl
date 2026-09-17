@@ -79,14 +79,14 @@ pvc_volumes:
 pipeline_on_image_build:
   run: |
     . .ci/scripts/common.sh
-    write_github_netrc "${WORKSPACE}/.ghnetrc"
+    write_github_gitconfig "${WORKSPACE}/.ghconfig"
 
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
      name: 'nixl-ci-gpu-base',
      tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghnetrc,src=${WORKSPACE}/.ghnetrc --build-arg REQUIRE_GITHUB_AUTH=1'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghconfig,src=${WORKSPACE}/.ghconfig --build-arg REQUIRE_GITHUB_AUTH=1'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
