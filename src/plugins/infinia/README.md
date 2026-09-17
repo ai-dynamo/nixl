@@ -119,8 +119,7 @@ agent.createBackend("INFINIA", {});
 
 NIXL also provides a common TOML-based configuration system. The INFINIA
 backend uses this to read `RED_*` connection settings and the `[infinia]`
-tuning table. An example file is provided as
-`src/plugins/infinia/nixl-infinia.cfg`.
+tuning table.
 
 To use it, point `NIXL_CONFIG_FILE` at the example (or a copy of it):
 

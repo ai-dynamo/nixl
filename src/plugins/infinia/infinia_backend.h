@@ -99,11 +99,9 @@ private:
                            const std::string &remote_agent) const;
 
 #ifdef HAVE_CUDA
-    // DMA-BUF registration helper for GPU memory
     [[nodiscard]] nixl_status_t
     registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMetadata *metadata);
 
-    // DMA-BUF unregistration helper
     [[nodiscard]] nixl_status_t
     unregisterDmabuf(nixlInfiniaMetadata *metadata);
 #endif

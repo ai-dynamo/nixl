@@ -16,7 +16,7 @@
 
 infinia_path = get_option('infinia_path')
 if infinia_path == ''
-  error('INFINIA backend requires -Dinfinia_path to point to Infinia Async SDK (libred_async.so) installation')
+  error('INFINIA backend requires -Dinfinia_path to point to Infinia SDK (libred_async.so) installation')
 endif
 
 infinia_lib_path = infinia_path + '/lib'

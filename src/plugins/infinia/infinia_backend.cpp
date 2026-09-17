@@ -273,7 +273,6 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         auto use_dmabuf_it = params->find("use_dmabuf");
         if (use_dmabuf_it != params->end() && !use_dmabuf_it->second.empty()) {
             std::string val = use_dmabuf_it->second;
-            // Convert to lowercase for comparison
             std::transform(val.begin(), val.end(), val.begin(), ::tolower);
             use_dmabuf_ = (val == "true");
             use_dmabuf_set_ = true;
@@ -376,7 +375,6 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         infinia_coremasks_ = INFINIA_DEFAULT_COREMASK;
     }
 
-    // Debug log: dump final resolved configuration after params/env/TOML/defaults
     NIXL_DEBUG << absl::StrFormat(
         "INFINIA effective config: cluster=%s tenant=%s subtenant=%s dataset=%s "
         "sthreads=%u num_buffers=%u num_ring_entries=%u coremasks=%s use_dmabuf=%s "
@@ -432,7 +430,6 @@ infinia_engine::~infinia_engine() {
 nixl_status_t
 infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMetadata *metadata) {
     if (!use_dmabuf_) {
-        // DMA-BUF disabled, fallback to traditional registration
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -442,7 +439,6 @@ infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMeta
     int dmabuf_fd = -1;
     void *buffer = reinterpret_cast<void *>(mem.addr);
 
-    // Set CUDA device context (required for DMA-BUF operations)
     cudaError_t cuda_err = cudaSetDevice(mem.devId);
     if (cuda_err != cudaSuccess) {
         NIXL_WARN << absl::StrFormat("Failed to set CUDA device %d: %s, "
@@ -452,7 +448,6 @@ infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMeta
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
-    // Check DMA-BUF support on this device
     int supported = 0;
     CUdevice cuda_dev;
     CUresult cu_res = cuDeviceGet(&cuda_dev, mem.devId);
@@ -464,7 +459,6 @@ infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMeta
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
-    // Check page alignment requirements (DMA-BUF typically requires page alignment)
     static size_t host_page_size = sysconf(_SC_PAGESIZE);
     bool is_aligned = (mem.len % host_page_size) == 0 && ((mem.addr % host_page_size) == 0);
 
@@ -478,7 +472,6 @@ infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMeta
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
-    // Export CUDA memory to DMA-BUF
     cu_res = cuMemGetHandleForAddressRange(
         &dmabuf_fd, dev_ptr, mem.len, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
 
@@ -494,7 +487,6 @@ infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMeta
                                   mem.addr,
                                   mem.len);
 
-    // Register using DMA-BUF API
     red_status_t rs =
         red_async::red_config_t::register_user_dmabuf(dmabuf_fd, // DMA-BUF file descriptor
                                                       0, // offset
@@ -528,7 +520,6 @@ infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMeta
 nixl_status_t
 infinia_engine::unregisterDmabuf(nixlInfiniaMetadata *metadata) {
     if (metadata->dmabuf_fd < 0) {
-        // Not registered via DMA-BUF
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -540,13 +531,11 @@ infinia_engine::unregisterDmabuf(nixlInfiniaMetadata *metadata) {
                                       metadata->dmabuf_fd,
                                       static_cast<int>(rs));
         result = NIXL_ERR_BACKEND;
-        // Continue with cleanup even if unregistration fails
     } else {
         NIXL_DEBUG << absl::StrFormat("Successfully unregistered DMA-BUF memory (fd=%d)",
                                       metadata->dmabuf_fd);
     }
 
-    // Close the DMA-BUF file descriptor
     if (close(metadata->dmabuf_fd) != 0) {
         NIXL_WARN << absl::StrFormat(
             "Failed to close DMA-BUF fd=%d: %s", metadata->dmabuf_fd, strerror(errno));
@@ -648,11 +637,9 @@ infinia_engine::registerMem(const nixlBlobDesc &mem,
                 nixl_status_t dmabuf_status = registerGpuMemoryDmabuf(mem, metadata.get());
 
                 if (dmabuf_status == NIXL_SUCCESS) {
-                    // Successfully registered via DMA-BUF
                     out = metadata.release();
                     return NIXL_SUCCESS;
                 }
-                // Fall through to traditional registration if DMA-BUF failed or not supported
             }
 #endif
             // Traditional registration for DRAM or non-DMA-BUF GPU memory
@@ -722,7 +709,6 @@ infinia_engine::deregisterMem(nixlBackendMD *meta) {
                                               infinia_meta->buffer,
                                               static_cast<int>(rs));
                 deregister_status = NIXL_ERR_BACKEND;
-                // Continue with cleanup even if unregistration fails
             } else {
                 NIXL_DEBUG << absl::StrFormat("Successfully unregistered memory (%p)",
                                               infinia_meta->buffer);
@@ -1335,11 +1321,12 @@ nixlInfiniaBackendReqH::checkTransfer() {
             failed_operations > 0 ? "true" : "false");
 
         if (failed_operations > 0) {
-            NIXL_WARN << absl::StrFormat("INFINIA: ERROR rs=%d total=%zu success=%zu failed=%zu",
-                                         result.overall_status,
-                                         total_operations,
-                                         successful_operations,
-                                         failed_operations);
+            NIXL_WARN << absl::StrFormat(
+                "INFINIA: TRANSFER ERROR rs=%d total=%zu success=%zu failed=%zu",
+                result.overall_status,
+                total_operations,
+                successful_operations,
+                failed_operations);
 
             // Log failed operations using failed_indices
             if (!result.failed_indices.empty()) {

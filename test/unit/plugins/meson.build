@@ -95,8 +95,6 @@ infinia_lib_file = 'red_async'
 infinia_lib_found = cc.find_library(infinia_lib_file, dirs: [infinia_lib_path], required: false)
 
 # Infinia SDK 2.5+ symbols required by this plugin.
-# has_header_symbol cannot probe C++ scoped names (preprocessor rejects '::'),
-# so compile a snippet that references each symbol.
 infinia_symbol_found = cpp.compiles('''
     #include <red/red_async.hpp>
     int main() {
