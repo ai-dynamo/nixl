@@ -37,6 +37,12 @@ get_ucx_backend_common_options() {
 
     params.emplace(nixl_ucx_err_handling_param_name,
                    ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
+    params.emplace(nixl_ucx_conn_mode_param_name,
+                   ucx_conn_mode_to_string(nixl::ucx::conn_mode_t::WORKER_ADDRESS));
+    params.emplace(nixl_ucx_listen_address_param_name, "");
+    params.emplace(nixl_ucx_listen_port_param_name, "0");
+    params.emplace(nixl_ucx_advertise_address_param_name, "");
+    params.emplace(nixl_ucx_connect_timeout_param_name, "30000");
     return params;
 }
 
@@ -74,6 +80,36 @@ ucx_err_mode_from_string(std::string_view s) {
         }
     }
 
+    err_msg << ">";
+    throw std::invalid_argument(err_msg.str());
+}
+
+[[nodiscard]] std::string_view
+ucx_conn_mode_to_string(nixl::ucx::conn_mode_t t) {
+    return nixl::ucx::toStringView(t);
+}
+
+[[nodiscard]] nixl::ucx::conn_mode_t
+ucx_conn_mode_from_string(std::string_view s) {
+    constexpr std::array<nixl::ucx::conn_mode_t, 2> modes = {
+        nixl::ucx::conn_mode_t::WORKER_ADDRESS,
+        nixl::ucx::conn_mode_t::SOCKADDR,
+    };
+
+    for (const auto mode : modes) {
+        if (ucx_conn_mode_to_string(mode) == s) {
+            return mode;
+        }
+    }
+
+    std::stringstream err_msg;
+    err_msg << "Invalid " << nixl_ucx_conn_mode_param_name << ": " << s << ". Valid values are: <";
+    for (size_t i = 0; i < modes.size(); ++i) {
+        err_msg << ucx_conn_mode_to_string(modes[i]);
+        if (i < modes.size() - 1) {
+            err_msg << "|";
+        }
+    }
     err_msg << ">";
     throw std::invalid_argument(err_msg.str());
 }
@@ -162,22 +198,59 @@ nixlUcxEp::closeImpl() {
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode) {
-    ucp_ep_params_t ep_params;
-    nixl_status_t status;
-
-    ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS | UCP_EP_PARAM_FIELD_ERR_HANDLER |
-        UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
+void
+nixlUcxEp::createEp(ucp_worker_h worker,
+                    ucp_ep_params_t &ep_params,
+                    ucp_err_handling_mode_t err_handling_mode) {
+    ep_params.field_mask |= UCP_EP_PARAM_FIELD_ERR_HANDLER | UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
     ep_params.err_mode = err_handling_mode;
     ep_params.err_handler.cb = err_cb_wrapper;
     ep_params.err_handler.arg = static_cast<void *>(this);
+
+    const ucs_status_t ucs_status = ucp_ep_create(worker, &ep_params, &eph);
+    if (nixl::ucx::ucsToNixlStatus(ucs_status) != NIXL_SUCCESS) {
+        throw std::runtime_error(std::string("failed to create ep: ") +
+                                 ucs_status_string(ucs_status));
+    }
+
+    /* For the client/server flow ucp_ep_create() only starts the connection
+     * establishment; UCX queues operations until the wireup completes and
+     * invokes the error handler if it fails, which moves the EP to FAILED. */
+    setState(nixl::ucx::ep_state_t::CONNECTED);
+}
+
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode) {
+    ucp_ep_params_t ep_params;
+
+    ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS;
     ep_params.address = reinterpret_cast<ucp_address_t *>(addr);
 
-    status = nixl::ucx::ucsToNixlStatus(ucp_ep_create(worker, &ep_params, &eph));
-    if (status == NIXL_SUCCESS)
-        setState(nixl::ucx::ep_state_t::CONNECTED);
-    else
-        throw std::runtime_error("failed to create ep");
+    createEp(worker, ep_params, err_handling_mode);
+}
+
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
+                     const sockaddr *addr,
+                     socklen_t addrlen,
+                     ucp_err_handling_mode_t err_handling_mode) {
+    ucp_ep_params_t ep_params;
+
+    ep_params.field_mask = UCP_EP_PARAM_FIELD_FLAGS | UCP_EP_PARAM_FIELD_SOCK_ADDR;
+    ep_params.flags = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER;
+    ep_params.sockaddr.addr = addr;
+    ep_params.sockaddr.addrlen = addrlen;
+
+    createEp(worker, ep_params, err_handling_mode);
+}
+
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
+                     ucp_conn_request_h conn_request,
+                     ucp_err_handling_mode_t err_handling_mode) {
+    ucp_ep_params_t ep_params;
+
+    ep_params.field_mask = UCP_EP_PARAM_FIELD_CONN_REQUEST;
+    ep_params.conn_request = conn_request;
+
+    createEp(worker, ep_params, err_handling_mode);
 }
 
 nixlUcxEp::~nixlUcxEp() {
@@ -635,6 +708,124 @@ nixlUcxWorker::connect(void *addr) {
     catch (const std::exception &e) {
         NIXL_ERROR << *this << ": UCX endpoint create failed: " << e.what();
         return {};
+    }
+}
+
+std::unique_ptr<nixlUcxEp>
+nixlUcxWorker::connectSockaddr(const sockaddr *addr, socklen_t addrlen) {
+    try {
+        auto ep = std::make_unique<nixlUcxEp>(worker.get(), addr, addrlen, err_handling_mode_);
+        NIXL_DEBUG << *this << ": created client ep " << ep->getEp() << " to "
+                   << nixl::ucx::sockaddrConnInfo(addr, addrlen).str();
+        return ep;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << *this << ": UCX sockaddr endpoint create failed: " << e.what();
+        return {};
+    }
+}
+
+std::unique_ptr<nixlUcxEp>
+nixlUcxWorker::acceptConnRequest(ucp_conn_request_h conn_request) {
+    try {
+        auto ep = std::make_unique<nixlUcxEp>(worker.get(), conn_request, err_handling_mode_);
+        NIXL_DEBUG << *this << ": accepted ep " << ep->getEp();
+        return ep;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << *this << ": UCX endpoint create from connection request failed: " << e.what();
+        return {};
+    }
+}
+
+/* ===========================================
+ * Listener management
+ * =========================================== */
+
+nixlUcxListener::nixlUcxListener(const nixlUcxWorker &worker,
+                                 const sockaddr *addr,
+                                 socklen_t addrlen,
+                                 conn_handler_t handler)
+    : name_(worker.getName()),
+      worker_(worker.get()),
+      handler_(std::move(handler)) {
+    ucp_listener_params_t params;
+
+    params.field_mask =
+        UCP_LISTENER_PARAM_FIELD_SOCK_ADDR | UCP_LISTENER_PARAM_FIELD_CONN_HANDLER;
+    params.sockaddr.addr = addr;
+    params.sockaddr.addrlen = addrlen;
+    params.conn_handler.cb = connHandlerWrapper;
+    params.conn_handler.arg = this;
+
+    const ucs_status_t status = ucp_listener_create(worker_, &params, &listener_);
+    if (status != UCS_OK) {
+        throw std::runtime_error("Failed to create UCX listener on " +
+                                 nixl::ucx::sockaddrConnInfo(addr, addrlen).str() + ": " +
+                                 ucs_status_string(status));
+    }
+
+    NIXL_INFO << name_ << ": UCX listener created on " << getBoundAddress().str();
+}
+
+nixlUcxListener::~nixlUcxListener() {
+    if (listener_ != nullptr) {
+        ucp_listener_destroy(listener_);
+        listener_ = nullptr;
+    }
+}
+
+nixl::ucx::sockaddrConnInfo
+nixlUcxListener::getBoundAddress() const {
+    ucp_listener_attr_t attr;
+
+    attr.field_mask = UCP_LISTENER_ATTR_FIELD_SOCKADDR;
+    const ucs_status_t status = ucp_listener_query(listener_, &attr);
+    if (status != UCS_OK) {
+        throw std::runtime_error(
+            std::string("Failed to query UCX listener address: ") + ucs_status_string(status) +
+            ". This usually means none of the connection managers in "
+            "UCX_SOCKADDR_TLS_PRIORITY could be opened (e.g. rdmacm was requested but no RDMA "
+            "device is available); run with UCX_LOG_LEVEL=debug to see which connection "
+            "managers UCX could open.");
+    }
+
+    nixl::ucx::sockaddrConnInfo info(reinterpret_cast<const sockaddr *>(&attr.sockaddr),
+                                     sizeof(attr.sockaddr));
+    if (!info.valid() || info.serialize().empty()) {
+        /* UCX accepted the listener but bound it to no address, which happens
+         * when none of the connection managers in UCX_SOCKADDR_TLS_PRIORITY
+         * could be opened (e.g. rdmacm requested but no RDMA device present).
+         * Such a listener silently accepts nothing, so fail loudly instead. */
+        throw std::runtime_error(
+            "UCX listener was created but is not bound to any address: no usable sockaddr "
+            "connection manager. Check UCX_SOCKADDR_TLS_PRIORITY and that the requested "
+            "connection manager (e.g. rdmacm) is available - run with UCX_LOG_LEVEL=debug "
+            "to see which connection managers UCX could open.");
+    }
+
+    return info;
+}
+
+void
+nixlUcxListener::connHandlerWrapper(ucp_conn_request_h conn_request, void *arg) {
+    auto *listener = static_cast<nixlUcxListener *>(arg);
+
+    bool accepted = false;
+    try {
+        accepted = listener->handler_(conn_request);
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << listener->name_ << ": connection request handler failed: " << e.what();
+    }
+
+    if (!accepted) {
+        /* Not rejecting an unhandled request leaks it inside UCX. */
+        const ucs_status_t status = ucp_listener_reject(listener->listener_, conn_request);
+        if (status != UCS_OK) {
+            NIXL_ERROR << listener->name_ << ": failed to reject connection request: "
+                       << ucs_status_string(status);
+        }
     }
 }
 

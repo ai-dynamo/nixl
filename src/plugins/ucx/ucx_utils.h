@@ -18,6 +18,7 @@
 #define NIXL_SRC_UTILS_UCX_UCX_UTILS_H
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <type_traits>
 
@@ -28,11 +29,17 @@ extern "C" {
 #include <nixl_types.h>
 
 #include "rkey.h"
+#include "ucx_conn_info.h"
 #include "ucx_enums.h"
 
 #include "absl/strings/numbers.h"
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
+inline constexpr std::string_view nixl_ucx_conn_mode_param_name = "connection_mode";
+inline constexpr std::string_view nixl_ucx_listen_address_param_name = "listen_address";
+inline constexpr std::string_view nixl_ucx_listen_port_param_name = "listen_port";
+inline constexpr std::string_view nixl_ucx_advertise_address_param_name = "advertise_address";
+inline constexpr std::string_view nixl_ucx_connect_timeout_param_name = "connect_timeout_ms";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
 // field only from UCX 1.22
@@ -49,6 +56,13 @@ private:
 
     void
     setState(nixl::ucx::ep_state_t new_state);
+
+    /* Fills in the error handling fields shared by all endpoint flavors and
+     * creates the endpoint. Throws on failure. */
+    void
+    createEp(ucp_worker_h worker,
+             ucp_ep_params_t &ep_params,
+             ucp_err_handling_mode_t err_handling_mode);
     nixl_status_t
     closeImpl();
 
@@ -68,7 +82,22 @@ public:
         return nixl::ucx::toNixlStatus(state_);
     }
 
+    /* Connect using a remote UCX worker address (connection_mode=worker_address). */
     nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
+
+    /* Client side of the UCP client/server flow (connection_mode=sockaddr):
+     * connects to a remote ucp_listener, letting UCX drive connection
+     * establishment through its connection manager (RDMA CM). */
+    nixlUcxEp(ucp_worker_h worker,
+              const sockaddr *addr,
+              socklen_t addrlen,
+              ucp_err_handling_mode_t err_handling_mode);
+
+    /* Server side of the UCP client/server flow: accepts an incoming connection
+     * request delivered to the listener callback. */
+    nixlUcxEp(ucp_worker_h worker,
+              ucp_conn_request_h conn_request,
+              ucp_err_handling_mode_t err_handling_mode);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp &) = delete;
     nixlUcxEp &
@@ -223,6 +252,15 @@ public:
     epAddr();
     [[nodiscard]] std::unique_ptr<nixlUcxEp>
     connect(void *addr);
+    [[nodiscard]] std::unique_ptr<nixlUcxEp>
+    connectSockaddr(const sockaddr *addr, socklen_t addrlen);
+    [[nodiscard]] std::unique_ptr<nixlUcxEp>
+    acceptConnRequest(ucp_conn_request_h conn_request);
+
+    [[nodiscard]] ucp_err_handling_mode_t
+    getErrHandlingMode() const noexcept {
+        return err_handling_mode_;
+    }
 
     /* Active message handling */
     int
@@ -281,6 +319,44 @@ private:
 std::ostream &
 operator<<(std::ostream &os, const nixlUcxWorker &worker);
 
+/**
+ * A ucp_listener bound to a local IP:port, owned by a single nixlUcxWorker.
+ *
+ * Incoming connection requests are delivered to the callback from within
+ * ucp_worker_progress() of that worker, so the callback must be thread safe
+ * with respect to the owner of the listener.
+ */
+class nixlUcxListener {
+public:
+    /* Returns true if the connection request was consumed (accepted); when it
+     * returns false the listener rejects the request. */
+    using conn_handler_t = std::function<bool(ucp_conn_request_h)>;
+
+    nixlUcxListener(const nixlUcxWorker &worker,
+                    const sockaddr *addr,
+                    socklen_t addrlen,
+                    conn_handler_t handler);
+    ~nixlUcxListener();
+
+    nixlUcxListener(const nixlUcxListener &) = delete;
+    nixlUcxListener &
+    operator=(const nixlUcxListener &) = delete;
+
+    /* Address the listener is actually bound to, as reported by
+     * ucp_listener_query(). This resolves listen_port=0 to the real port. */
+    [[nodiscard]] nixl::ucx::sockaddrConnInfo
+    getBoundAddress() const;
+
+private:
+    static void
+    connHandlerWrapper(ucp_conn_request_h conn_request, void *arg);
+
+    const std::string name_;
+    ucp_worker_h worker_;
+    ucp_listener_h listener_{nullptr};
+    const conn_handler_t handler_;
+};
+
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options();
 
@@ -289,5 +365,12 @@ ucx_err_mode_to_string(ucp_err_handling_mode_t t);
 
 [[nodiscard]] ucp_err_handling_mode_t
 ucx_err_mode_from_string(std::string_view s);
+
+[[nodiscard]] std::string_view
+ucx_conn_mode_to_string(nixl::ucx::conn_mode_t t);
+
+/* Throws std::invalid_argument for an unknown mode name. */
+[[nodiscard]] nixl::ucx::conn_mode_t
+ucx_conn_mode_from_string(std::string_view s);
 
 #endif
