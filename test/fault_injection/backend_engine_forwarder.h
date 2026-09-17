@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TEST_FAULT_INJECTION_BACKEND_ENGINE_FORWARDER_H
-#define TEST_FAULT_INJECTION_BACKEND_ENGINE_FORWARDER_H
+#ifndef NIXL_TEST_FAULT_INJECTION_BACKEND_ENGINE_FORWARDER_H
+#define NIXL_TEST_FAULT_INJECTION_BACKEND_ENGINE_FORWARDER_H
 
 #include "backend/backend_engine.h"
 
