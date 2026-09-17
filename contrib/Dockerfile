@@ -253,7 +253,7 @@ RUN wget --tries=3 --waitretry=5 \
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
-RUN cd /usr/local/src && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src && \
      git clone "$UCX_REPO" ucx && \
      cd ucx && \
      echo "=== Using UCX_REF=$UCX_REF ===" && \

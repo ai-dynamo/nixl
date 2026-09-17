@@ -194,21 +194,22 @@ write_github_gitconfig() {
 }
 
 # The CI-agent path, where the token arrives as an env var rather than a mounted
-# secret. Leaves an existing config alone, so it is a no-op inside a container build
-# that already mounts one. Writes with tracing off so the token never reaches the log.
-setup_github_gitconfig() {
+# secret. Uses GIT_CONFIG_COUNT/KEY/VALUE (git 2.31+) rather than writing
+# ~/.gitconfig: it is additive, so it neither misses auth when a config already
+# exists nor destroys one that does - CI writes `git config --global --add
+# safe.directory` on the agent, which a file-based helper would skip behind or
+# delete. Exported with tracing off so the token never reaches the log.
+setup_github_auth() {
     local restore_xtrace=""
     case "$-" in
         *x*) restore_xtrace=1; set +x ;;
     esac
 
-    if [ -n "${NIXL_GITHUB_TOKEN:-}" ] && [ ! -s "${HOME}/.gitconfig" ]; then
-        printf '[url "https://%s:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' \
-            "${NIXL_GITHUB_USER:-x-access-token}" "${NIXL_GITHUB_TOKEN}" > "${HOME}/.gitconfig"
-        chmod 600 "${HOME}/.gitconfig"
-        # Only installed when this function created the file, so it never removes a
-        # config that was already there.
-        trap 'rm -f "${HOME}/.gitconfig"' EXIT
+    if [ -n "${NIXL_GITHUB_TOKEN:-}" ]; then
+        local n="${GIT_CONFIG_COUNT:-0}"
+        export "GIT_CONFIG_KEY_${n}=url.https://${NIXL_GITHUB_USER:-x-access-token}:${NIXL_GITHUB_TOKEN}@github.com/.insteadOf"
+        export "GIT_CONFIG_VALUE_${n}=https://github.com/"
+        export GIT_CONFIG_COUNT=$((n + 1))
     fi
 
     if [ -n "${restore_xtrace}" ]; then

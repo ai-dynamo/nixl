@@ -340,7 +340,7 @@ present git instead answers the 401 by retrying with auth, so the clone succeeds
 --secret id=ghconfig,env=NIXL_GITHUB_GITCONFIG
 ```
 
-and each cloning `RUN` mounts it at `/root/.gitconfig`:
+and every `RUN` that clones from github.com mounts it at `/root/.gitconfig`:
 
 ```
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone ...
@@ -399,11 +399,23 @@ error messages, keeps it out of `remote.origin.url`, and does not write it into
 submodule configs — all verified.
 
 **On CI agents**, where the token is an env var rather than a mounted file,
-`setup_github_gitconfig` in `.ci/scripts/common.sh` writes `$HOME/.gitconfig` and
-removes it on exit. It leaves an existing config alone, so it is a no-op inside the
-container build, and it disables `set -x` before the token is expanded so the
-value never reaches the log. `.gitlab/build.sh` and `.gitlab/build-rocm.sh` call
-it, as do the matrix steps that clone UCX on the agent.
+`setup_github_auth` in `.ci/scripts/common.sh` exports
+`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` (git 2.31+) instead of
+writing `$HOME/.gitconfig`. That is deliberate: the config is **additive**, so it
+neither skips auth when a `~/.gitconfig` already exists nor deletes one that does.
+CI itself writes `git config --global --add safe.directory` on the agent
+(`build-wheel-nightly-matrix.yaml`), which a file-based helper would either hide
+behind or clobber on cleanup. It also writes the token to no file at all, and
+disables `set -x` before expanding it so the value never reaches the log.
+`.gitlab/build.sh` and `.gitlab/build-rocm.sh` call it, as do the matrix steps that
+clone UCX on the agent.
+
+**Coverage.** Every `RUN` that clones from github.com carries the mount — including
+the two `$UCX_REPO` clones in `contrib/Dockerfile` and `contrib/Dockerfile.manylinux`
+and the vLLM clone in `Dockerfile.base`, whose URLs come from an ARG or a
+continuation line and so are easy to miss when grepping for `github.com` on the
+`RUN` line itself. The meson `wrap-file` subprojects fetch release tarballs rather
+than cloning and need no credential.
 
 **Still anonymous.** `.ci/dockerfiles/Dockerfile.rocm` (9 clones) is not referenced
 by any matrix, so there is nothing to wire a secret through yet. The meson
