@@ -41,35 +41,6 @@ public:
 
 class dummyBackendReqH : public nixlBackendReqH {};
 
-class completeMockBackendEngine : public mocks::GMockBackendEngine {
-public:
-    using mocks::GMockBackendEngine::prepMemView;
-
-    MOCK_METHOD(nixl_status_t,
-                prepMemView,
-                (const nixl_meta_dlist_t &dlist,
-                 nixlMemViewH &mvh,
-                 const nixl_opt_b_args_t *opt_args),
-                (const, override));
-    MOCK_METHOD(void, releaseMemView, (nixlMemViewH mvh), (const, override));
-    MOCK_METHOD(nixl_status_t,
-                queryMem,
-                (const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp),
-                (const, override));
-    MOCK_METHOD(nixl_status_t,
-                estimateXferCost,
-                (const nixl_xfer_op_t &operation,
-                 const nixl_meta_dlist_t &local,
-                 const nixl_meta_dlist_t &remote,
-                 const std::string &remote_agent,
-                 nixlBackendReqH *const &handle,
-                 std::chrono::microseconds &duration,
-                 std::chrono::microseconds &err_margin,
-                 nixl_cost_t &method,
-                 const nixl_opt_args_t *extra_params),
-                (const, override));
-};
-
 class backendEngineForwarderTest : public testing::Test {
 protected:
     backendEngineForwarderTest()
@@ -78,7 +49,7 @@ protected:
 
     nixl_b_params_t custom_params_;
     nixlBackendInitParams init_params_;
-    StrictMock<completeMockBackendEngine> inner_;
+    StrictMock<mocks::GMockBackendEngine> inner_;
     nixlBackendEngineForwarder forwarder_;
 };
 
@@ -183,8 +154,7 @@ TEST_F(backendEngineForwarderTest, ForwardsOptionalOperations) {
         Ref(remote_descs);
     const testing::Matcher<const nixl_meta_dlist_t &> local_descs_matcher = Ref(local_descs);
 
-    EXPECT_CALL(static_cast<mocks::GMockBackendEngine &>(inner_),
-                prepMemView(remote_descs_matcher, _, nullptr))
+    EXPECT_CALL(inner_, prepMemView(remote_descs_matcher, _, nullptr))
         .WillOnce(DoAll(SetArgReferee<1>(&remote_view_token), Return(NIXL_SUCCESS)));
     EXPECT_CALL(inner_, prepMemView(local_descs_matcher, _, nullptr))
         .WillOnce(DoAll(SetArgReferee<1>(&local_view_token), Return(NIXL_ERR_BACKEND)));
