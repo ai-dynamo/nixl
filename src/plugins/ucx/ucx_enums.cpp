@@ -28,6 +28,12 @@ operator<<(std::ostream &os, const mt_mode_t t) {
 }
 
 std::ostream &
+operator<<(std::ostream &os, const conn_mode_t t) {
+    toStream(os, t);
+    return os;
+}
+
+std::ostream &
 operator<<(std::ostream &os, const ep_state_t t) {
     toStream(os, t);
     return os;

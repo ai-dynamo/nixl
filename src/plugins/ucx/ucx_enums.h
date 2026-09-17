@@ -48,6 +48,31 @@ toStringView(const mt_mode_t t) noexcept {
     return nixl::ucx::invalid_string;
 }
 
+/**
+ * How the UCX backend establishes connections to remote agents.
+ *
+ * WORKER_ADDRESS: the legacy path - exchange UCX worker addresses and create
+ *                 endpoints with UCP_EP_PARAM_FIELD_REMOTE_ADDRESS.
+ * SOCKADDR:       UCP client/server path - each agent runs a ucp_listener and
+ *                 peers connect to its IP:port, so that UCX performs connection
+ *                 establishment through its connection manager (e.g. RDMA CM).
+ */
+enum class conn_mode_t {
+    WORKER_ADDRESS,
+    SOCKADDR,
+};
+
+[[nodiscard]] constexpr std::string_view
+toStringView(const conn_mode_t t) noexcept {
+    switch (t) {
+    case conn_mode_t::WORKER_ADDRESS:
+        return "worker_address";
+    case conn_mode_t::SOCKADDR:
+        return "sockaddr";
+    }
+    return nixl::ucx::invalid_string;
+}
+
 enum class ep_state_t {
     UNINITIALIZED,
     CONNECTED,
@@ -103,6 +128,9 @@ toStream(std::ostream &os, const Enum t) {
 
 std::ostream &
 operator<<(std::ostream &os, const mt_mode_t t);
+
+std::ostream &
+operator<<(std::ostream &os, const conn_mode_t t);
 
 std::ostream &
 operator<<(std::ostream &os, const ep_state_t t);
