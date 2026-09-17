@@ -17,7 +17,6 @@
  */
 
 #include "infinia_backend.h"
-#include <iostream>
 #include <string.h>
 #include <unordered_set>
 #include <unordered_map>
@@ -25,13 +24,6 @@
 #include <absl/strings/str_format.h>
 #include "common/nixl_log.h"
 #include "common/configuration.h"
-#include <thread>
-#include <fstream>
-#include <sstream>
-#include <map>
-#include <filesystem>
-#include <string_view>
-#include <ranges>
 #include <algorithm>
 #include <cctype>
 #include <unistd.h> // for close()
@@ -39,6 +31,32 @@
 #ifdef HAVE_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
+
+class CudaDeviceGuard {
+public:
+    CudaDeviceGuard() : saved_device_(-1), should_restore_(false) {
+        if (cudaGetDevice(&saved_device_) == cudaSuccess) {
+            should_restore_ = true;
+        }
+    }
+
+    ~CudaDeviceGuard() {
+        if (should_restore_ && saved_device_ >= 0) {
+            cudaSetDevice(saved_device_);
+        }
+    }
+
+    CudaDeviceGuard(const CudaDeviceGuard &) = delete;
+    CudaDeviceGuard &
+    operator=(const CudaDeviceGuard &) = delete;
+    CudaDeviceGuard(CudaDeviceGuard &&) = delete;
+    CudaDeviceGuard &
+    operator=(CudaDeviceGuard &&) = delete;
+
+private:
+    int saved_device_;
+    bool should_restore_;
+};
 #endif
 
 namespace {
@@ -101,17 +119,6 @@ applyStringOverrideFromConfig(const char *key, std::string &target) {
     }
 }
 
-// Helper for TOML overrides of numeric values, applied only when at default
-template<typename ConfigType, typename ValueType>
-void
-applyConfigOverride(const char *key, const ValueType default_value, ValueType &target) {
-    if (target == default_value) {
-        if (auto v = nixl::config::getValueOptional<ConfigType>(key)) {
-            target = static_cast<ValueType>(*v);
-        }
-    }
-}
-
 // Helper for string TOML overrides that also track an explicit "set" flag
 void
 applyStringTomlOverrideIfNotSet(const char *key, std::string &target, bool &was_set_flag) {
@@ -119,6 +126,17 @@ applyStringTomlOverrideIfNotSet(const char *key, std::string &target, bool &was_
         if (auto v = nixl::config::getValueOptional<std::string>(key)) {
             target = *v;
             was_set_flag = true;
+        }
+    }
+}
+
+// Helper for TOML overrides of numeric values that also track an explicit "set" flag
+template<typename ConfigType, typename ValueType>
+void
+applyNumericTomlOverrideIfNotSet(const char *key, ValueType &target, bool &was_set_flag) {
+    if (!was_set_flag) {
+        if (auto v = nixl::config::getValueOptional<ConfigType>(key)) {
+            target = static_cast<ValueType>(*v);
         }
     }
 }
@@ -149,9 +167,14 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
       infinia_num_buffers_(INFINIA_DEFAULT_BUFFERS),
       infinia_num_ring_entries_(INFINIA_DEFAULT_RING_ENTRIES),
       infinia_coremasks_(INFINIA_DEFAULT_COREMASK),
-      infinia_coremasks_set_(false),
       use_dmabuf_(true), // Enable by default
+      infinia_sthreads_set_(false),
+      infinia_num_buffers_set_(false),
+      infinia_num_ring_entries_set_(false),
+      infinia_coremasks_set_(false),
       use_dmabuf_set_(false),
+      batch_max_retries_set_(false),
+      batch_size_set_(false),
       initialized_(false) {
 
     red_status_t rs;
@@ -201,6 +224,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         if (sthreads_it != params->end() && !sthreads_it->second.empty()) {
             try {
                 infinia_sthreads_ = std::stoul(sthreads_it->second);
+                infinia_sthreads_set_ = true;
             }
             catch (const std::exception &e) {
                 NIXL_WARN << absl::StrFormat("Invalid sthreads value '%s', using default %u",
@@ -214,6 +238,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         if (num_buffers_it != params->end() && !num_buffers_it->second.empty()) {
             try {
                 infinia_num_buffers_ = std::stoul(num_buffers_it->second);
+                infinia_num_buffers_set_ = true;
             }
             catch (const std::exception &e) {
                 NIXL_WARN << absl::StrFormat("Invalid num_buffers value '%s', using default %u",
@@ -227,6 +252,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         if (num_ring_entries_it != params->end() && !num_ring_entries_it->second.empty()) {
             try {
                 infinia_num_ring_entries_ = std::stoul(num_ring_entries_it->second);
+                infinia_num_ring_entries_set_ = true;
             }
             catch (const std::exception &e) {
                 NIXL_WARN << absl::StrFormat(
@@ -260,6 +286,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         if (max_retries_it != params->end() && !max_retries_it->second.empty()) {
             try {
                 batch_config_.max_retries = std::stoull(max_retries_it->second);
+                batch_max_retries_set_ = true;
             }
             catch (const std::exception &) {
                 NIXL_WARN << absl::StrFormat("Invalid max_retries value '%s', using default %zu",
@@ -273,6 +300,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         if (batch_size_it != params->end() && !batch_size_it->second.empty()) {
             try {
                 batch_config_.batch_size = std::stoull(batch_size_it->second);
+                batch_size_set_ = true;
             }
             catch (const std::exception &) {
                 NIXL_WARN << absl::StrFormat("Invalid batch_size value '%s', using default %zu",
@@ -304,24 +332,24 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
     // Environment or config-file override for dataset
     applyStringOverrideFromConfig(RED_DATASET_ENV, infinia_dataset_);
 
-    // TOML [infinia] overrides for tuning parameters if they remain at defaults
-    applyConfigOverride<uint32_t, uint32_t>(
-        "infinia.sthreads", INFINIA_DEFAULT_STHREADS, infinia_sthreads_);
+    // TOML [infinia] overrides for tuning parameters only if not explicitly set via backend params
+    applyNumericTomlOverrideIfNotSet<uint32_t, uint32_t>(
+        "infinia.sthreads", infinia_sthreads_, infinia_sthreads_set_);
 
-    applyConfigOverride<uint32_t, uint32_t>(
-        "infinia.num_buffers", INFINIA_DEFAULT_BUFFERS, infinia_num_buffers_);
+    applyNumericTomlOverrideIfNotSet<uint32_t, uint32_t>(
+        "infinia.num_buffers", infinia_num_buffers_, infinia_num_buffers_set_);
 
-    applyConfigOverride<uint32_t, uint32_t>(
-        "infinia.num_ring_entries", INFINIA_DEFAULT_RING_ENTRIES, infinia_num_ring_entries_);
+    applyNumericTomlOverrideIfNotSet<uint32_t, uint32_t>(
+        "infinia.num_ring_entries", infinia_num_ring_entries_, infinia_num_ring_entries_set_);
 
     applyStringTomlOverrideIfNotSet(
         "infinia.coremasks", infinia_coremasks_, infinia_coremasks_set_);
 
-    applyConfigOverride<uint32_t, decltype(batch_config_.max_retries)>(
-        "infinia.max_retries", red_async::RED_ASYNC_DEFAULT_MAX_RETRIES, batch_config_.max_retries);
+    applyNumericTomlOverrideIfNotSet<uint32_t, decltype(batch_config_.max_retries)>(
+        "infinia.max_retries", batch_config_.max_retries, batch_max_retries_set_);
 
-    applyConfigOverride<uint32_t, decltype(batch_config_.batch_size)>(
-        "infinia.batch_size", red_async::RED_ASYNC_DEFAULT_BATCH_SIZE, batch_config_.batch_size);
+    applyNumericTomlOverrideIfNotSet<uint32_t, decltype(batch_config_.batch_size)>(
+        "infinia.batch_size", batch_config_.batch_size, batch_size_set_);
 
     applyBoolTomlOverrideIfNotSet("infinia.use_dmabuf", use_dmabuf_, use_dmabuf_set_);
 
@@ -408,6 +436,8 @@ infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMeta
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
+    CudaDeviceGuard device_guard;
+
     CUdeviceptr dev_ptr = (CUdeviceptr)mem.addr;
     int dmabuf_fd = -1;
     void *buffer = reinterpret_cast<void *>(mem.addr);
@@ -449,12 +479,8 @@ infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMeta
     }
 
     // Export CUDA memory to DMA-BUF
-    cu_res = cuMemGetHandleForAddressRange(&dmabuf_fd,
-                                           dev_ptr,
-                                           mem.len,
-                                           CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
-                                           0 // flags
-    );
+    cu_res = cuMemGetHandleForAddressRange(
+        &dmabuf_fd, dev_ptr, mem.len, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
 
     if (cu_res != CUDA_SUCCESS || dmabuf_fd < 0) {
         NIXL_WARN << absl::StrFormat("Failed to export GPU memory to DMA-BUF (CUDA error=%d), "
@@ -507,10 +533,13 @@ infinia_engine::unregisterDmabuf(nixlInfiniaMetadata *metadata) {
     }
 
     red_status_t rs = red_async::red_config_t::unregister_user_iomem(metadata->iomem_handle);
+    nixl_status_t result = NIXL_SUCCESS;
+
     if (rs != RED_SUCCESS) {
         NIXL_ERROR << absl::StrFormat("Failed to unregister DMA-BUF memory (fd=%d): status=%d",
                                       metadata->dmabuf_fd,
                                       static_cast<int>(rs));
+        result = NIXL_ERR_BACKEND;
         // Continue with cleanup even if unregistration fails
     } else {
         NIXL_DEBUG << absl::StrFormat("Successfully unregistered DMA-BUF memory (fd=%d)",
@@ -524,7 +553,7 @@ infinia_engine::unregisterDmabuf(nixlInfiniaMetadata *metadata) {
     }
     metadata->dmabuf_fd = -1;
 
-    return NIXL_SUCCESS;
+    return result;
 }
 #endif
 
@@ -674,13 +703,15 @@ infinia_engine::deregisterMem(nixlBackendMD *meta) {
     // Remove from mapping (thread-safe)
     devid_to_key_map_.erase(infinia_meta->devId);
 
+    nixl_status_t deregister_status = NIXL_SUCCESS;
+
     if ((infinia_meta->nixlMem == VRAM_SEG || infinia_meta->nixlMem == DRAM_SEG) &&
         infinia_meta->buffer != nullptr) {
 
 #ifdef HAVE_CUDA
         // If registered via DMA-BUF, use helper function
         if (infinia_meta->dmabuf_fd >= 0) {
-            (void)unregisterDmabuf(infinia_meta.get());
+            deregister_status = unregisterDmabuf(infinia_meta.get());
         } else
 #endif
         {
@@ -690,6 +721,7 @@ infinia_engine::deregisterMem(nixlBackendMD *meta) {
                 NIXL_ERROR << absl::StrFormat("Failed to unregister memory (%p): status=%d",
                                               infinia_meta->buffer,
                                               static_cast<int>(rs));
+                deregister_status = NIXL_ERR_BACKEND;
                 // Continue with cleanup even if unregistration fails
             } else {
                 NIXL_DEBUG << absl::StrFormat("Successfully unregistered memory (%p)",
@@ -699,7 +731,7 @@ infinia_engine::deregisterMem(nixlBackendMD *meta) {
     }
 
     // Smart pointer automatically deletes the object.
-    return NIXL_SUCCESS;
+    return deregister_status;
 }
 
 nixl_status_t
@@ -768,49 +800,15 @@ infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
     // Execute the batch ops in parallel
     red_status_t rs = batch_task.start();
     if (rs != RED_SUCCESS) {
-        // Batch start failed (possibly due to Infinia node failure/SCR eviction)
-        // Treat all keys as "not found" to maintain inference availability
-        // This allows READ path to fall back to recomputation and WRITE path to attempt caching
-        NIXL_WARN << absl::StrFormat(
-            "Failed to start HEAD batch (status=%d) - treating all keys as not found. "
-            "Possible Infinia node failure. Inference continues with cache misses.",
-            static_cast<int>(rs));
-        // resp already initialized to all std::nullopt (line 699)
-        return NIXL_SUCCESS; // Return success to avoid LMCache crash
+        NIXL_ERROR << "Failed to start HEAD batch: status=" << static_cast<int>(rs);
+        return NIXL_ERR_BACKEND;
     }
 
     // Wait for completion (blocks until all operations complete)
-    try {
-        batch_task.wait();
-    }
-    catch (const std::exception &e) {
-        // Exception during wait (possibly due to node failure)
-        // Treat all keys as not found to maintain inference availability
-        NIXL_WARN << absl::StrFormat(
-            "Exception during HEAD batch wait: %s - treating all keys as not found. "
-            "Inference continues with cache misses.",
-            e.what());
-        // resp already initialized to all std::nullopt
-        return NIXL_SUCCESS; // Return success to avoid crash
-    }
+    batch_task.wait();
 
     // Get results (wait() guarantees batch is ready)
-    red_async::rae_batch_task_result_t result;
-    try {
-        result = batch_task.get_result();
-    }
-    catch (const std::exception &e) {
-        // Exception getting results (possibly due to node failure)
-        NIXL_WARN << absl::StrFormat(
-            "Exception getting HEAD batch results: %s - treating all keys as not found. "
-            "Inference continues with cache misses.",
-            e.what());
-        // resp already initialized to all std::nullopt
-        return NIXL_SUCCESS; // Return success to avoid crash
-    }
-
-    // Track failed operations for logging
-    size_t failed_operations = 0;
+    auto result = batch_task.get_result();
 
     // Process results using index mapping to maintain descriptor order
     for (size_t op_idx = 0; op_idx < result.operation_results.size(); ++op_idx) {
@@ -823,30 +821,17 @@ infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
             NIXL_DEBUG << absl::StrFormat("INFINIA: QUERYMEM key='%s' found=true",
                                           keys[op_idx].c_str());
         } else if (op_result.status == RED_ENOENT) {
-            // Key does not exist (normal cache miss)
+            // Key does not exist
             resp[desc_idx] = std::nullopt;
             NIXL_DEBUG << absl::StrFormat("INFINIA: QUERYMEM key='%s' found=false",
                                           keys[op_idx].c_str());
         } else {
-            // Other error - treat as key not found to maintain inference availability
-            // This handles node failures, SCR evictions, and network issues gracefully
-            NIXL_WARN << absl::StrFormat(
-                "HEAD operation for key '%s' failed (status=%d) - treating as not found. "
-                "Possible Infinia node failure.",
-                keys[op_idx].c_str(),
-                static_cast<int>(op_result.status));
+            // Other error - treat as key not found
+            NIXL_WARN << absl::StrFormat("HEAD operation for key '%s' failed: status=%d",
+                                         keys[op_idx].c_str(),
+                                         static_cast<int>(op_result.status));
             resp[desc_idx] = std::nullopt;
-            failed_operations++;
         }
-    }
-
-    // Log summary if there were failures
-    if (failed_operations > 0) {
-        NIXL_WARN << absl::StrFormat(
-            "INFINIA QUERYMEM: %zu/%zu HEAD operations failed - all treated as cache miss. "
-            "Inference continues but may experience performance degradation.",
-            failed_operations,
-            result.operation_results.size());
     }
 
     return NIXL_SUCCESS;
@@ -1306,50 +1291,17 @@ nixlInfiniaBackendReqH::postTransfer() {
             return NIXL_IN_PROG;
         } else if (rs == RED_EAGAIN) {
             NIXL_ERROR << "Too many operations hit RED_EAGAIN during submission";
-            // Handle submission failures based on operation type
-            if (operation_ == NIXL_READ) {
-                NIXL_WARN << "INFINIA READ submission failed (RED_EAGAIN) - treating as cache miss";
-                return NIXL_ERR_NOT_FOUND;
-            } else if (operation_ == NIXL_WRITE) {
-                NIXL_WARN
-                    << "INFINIA WRITE submission failed (RED_EAGAIN) - skipping cache population";
-                return NIXL_SUCCESS; // Report success to avoid crash
-            }
             return NIXL_ERR_BACKEND;
         } else if (rs == RED_EINVAL) {
             NIXL_ERROR << "BatchTask already started or invalid state";
             return NIXL_ERR_INVALID_PARAM;
         } else {
             NIXL_ERROR << "Failed to start batch: status=" << static_cast<int>(rs);
-            // Handle startup failures based on operation type
-            if (operation_ == NIXL_READ) {
-                NIXL_WARN << absl::StrFormat(
-                    "INFINIA READ batch start failed (status=%d) - treating as cache miss "
-                    "to maintain inference availability",
-                    static_cast<int>(rs));
-                return NIXL_ERR_NOT_FOUND;
-            } else if (operation_ == NIXL_WRITE) {
-                NIXL_WARN << absl::StrFormat(
-                    "INFINIA WRITE batch start failed (status=%d) - skipping cache population "
-                    "to maintain inference availability",
-                    static_cast<int>(rs));
-                return NIXL_SUCCESS; // Report success to avoid crash
-            }
             return NIXL_ERR_BACKEND;
         }
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Failed to start batch: " << e.what();
-        // Handle exceptions based on operation type to maintain inference availability
-        if (operation_ == NIXL_READ) {
-            NIXL_WARN << "INFINIA READ batch start exception - treating as cache miss to maintain "
-                         "inference availability";
-            return NIXL_ERR_NOT_FOUND;
-        } else if (operation_ == NIXL_WRITE) {
-            NIXL_WARN << "INFINIA WRITE batch start exception - skipping cache population to "
-                         "maintain inference availability";
-            return NIXL_SUCCESS; // Report success to avoid crash
-        }
         return NIXL_ERR_BACKEND;
     }
 }
@@ -1383,11 +1335,12 @@ nixlInfiniaBackendReqH::checkTransfer() {
             failed_operations > 0 ? "true" : "false");
 
         if (failed_operations > 0) {
-            NIXL_WARN << absl::StrFormat("INFINIA: ERROR rs=%d total=%zu success=%zu failed=%zu",
-                                         result.overall_status,
-                                         total_operations,
-                                         successful_operations,
-                                         failed_operations);
+            NIXL_WARN << absl::StrFormat(
+                "INFINIA: ERROR rs=%d total=%zu success=%zu failed=%zu",
+                result.overall_status,
+                total_operations,
+                successful_operations,
+                failed_operations);
 
             // Log failed operations using failed_indices
             if (!result.failed_indices.empty()) {
@@ -1430,56 +1383,12 @@ nixlInfiniaBackendReqH::checkTransfer() {
         transfer_posted_ = false;
         transfer_completed_ = true;
 
-        // Handle failures based on operation type to maintain inference availability
-        if (transfer_status_ != RED_SUCCESS) {
-            if (operation_ == NIXL_READ) {
-                // For READ operations that failed, treat as cache miss
-                // When an Infinia node goes down (SCR eviction), READ failures should not crash
-                // the inference engine. Instead, treat them as cache misses so LMCache falls back
-                // to local computation. This allows inference to continue with degraded performance
-                // (lower prefix cache hit rate) rather than complete failure.
-                NIXL_WARN << absl::StrFormat(
-                    "INFINIA READ failed (status=%d, failed_ops=%zu/%zu) - treating as cache miss "
-                    "to maintain inference availability. Possible Infinia node failure/SCR "
-                    "eviction.",
-                    static_cast<int>(transfer_status_),
-                    failed_operations,
-                    total_operations);
-                return NIXL_ERR_NOT_FOUND;
-            } else if (operation_ == NIXL_WRITE) {
-                // For WRITE operations that failed, skip cache population but don't crash
-                // Cache writes are optimization (not critical path). If Infinia node is down,
-                // inference can continue without caching - next request will just have cache miss.
-                // This prevents inference worker crashes during node failures/SCR evictions.
-                NIXL_WARN << absl::StrFormat("INFINIA WRITE failed (status=%d, failed_ops=%zu/%zu) "
-                                             "- skipping cache population. "
-                                             "Inference continues but cache hit rate may be "
-                                             "affected. Possible Infinia node failure.",
-                                             static_cast<int>(transfer_status_),
-                                             failed_operations,
-                                             total_operations);
-                return NIXL_SUCCESS; // Report success to LMCache to avoid crash
-            }
-        }
-
         return transfer_status_ == RED_SUCCESS ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Exception while getting batch result: " << e.what();
         transfer_posted_ = false;
         transfer_completed_ = true;
-
-        // Handle exceptions based on operation type to maintain inference availability
-        if (operation_ == NIXL_READ) {
-            NIXL_WARN << "INFINIA READ exception - treating as cache miss to maintain inference "
-                         "availability";
-            return NIXL_ERR_NOT_FOUND;
-        } else if (operation_ == NIXL_WRITE) {
-            NIXL_WARN << "INFINIA WRITE exception - skipping cache population to maintain "
-                         "inference availability";
-            return NIXL_SUCCESS; // Report success to avoid crash
-        }
-
         return NIXL_ERR_BACKEND;
     }
 }

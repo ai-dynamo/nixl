@@ -75,21 +75,20 @@ Configuration precedence is slightly different for connection settings vs. tunin
 
 **Tuning knobs (`sthreads`, `num_buffers`, `num_ring_entries`, `coremasks`, `use_dmabuf`)**
 
-1. **Backend Parameters**: Highest priority for these knobs.
-2. **NIXL TOML**: For each tuning knob, the code does the following:
+1. **Backend Parameters**: Highest priority for these knobs. An explicit backend
+   parameter wins even when its value equals the compiled default
+   (e.g. `params["sthreads"] = "8"` is not overwritten by TOML).
+2. **NIXL TOML**: Applied only if that knob was **not** set via backend parameters.
    - Start with a compiled default (e.g. `sthreads = 8`).
-   - Apply any backend parameter if you set one
-     (e.g. `params["sthreads"] = "16"` → now `sthreads = 16`).
-   - Only if the value is still equal to the compiled default, it looks at TOML:
-     - If `sthreads` is still `8` (i.e., you didn't override it via params) and TOML has
-       `infinia.sthreads = 16`, then it sets `sthreads = 16` from TOML.
-   - If you did set a backend param for that knob, TOML is skipped for that knob.
+   - If you set a backend parameter, TOML is skipped for that knob.
+   - Otherwise, if TOML has `infinia.sthreads = 16`, then `sthreads = 16`.
 3. **Built-in Defaults**: As listed in the table above.
 
 **Retry/batching (`max_retries`, `batch_size`)**
 
 1. **Backend Parameters**: Highest priority (e.g. `params["max_retries"] = "5"`).
-2. **NIXL TOML**: Applied only if the value is still at the library default:
+   An explicit backend parameter wins even when its value equals the library default.
+2. **NIXL TOML**: Applied only if that knob was **not** set via backend parameters:
    - `infinia.max_retries` overrides `red_async::RED_ASYNC_DEFAULT_MAX_RETRIES`.
    - `infinia.batch_size` overrides `red_async::RED_ASYNC_DEFAULT_BATCH_SIZE`.
 3. **Library Defaults**: `red_async::RED_ASYNC_DEFAULT_MAX_RETRIES` and
@@ -136,11 +135,13 @@ You can also pass the same path via higher-level tools:
 
 The example `nixl-infinia.cfg` shows how to set:
 
-- `RED_CLUSTER`, `RED_TENANT`, `RED_DATASET`
-- `[infinia].sthreads`, `num_buffers`, `num_ring_entries`, `coremasks`, `use_dmabuf`, `max_retries`, `batch_size`
+- `RED_CLUSTER`, `RED_TENANT`, `RED_DATASET` (fixed after shared configuration resolution)
+- `[infinia].sthreads`, `num_buffers`, `num_ring_entries`, `coremasks`, `use_dmabuf`, `max_retries`, `batch_size` (tuning settings)
 
-These values act as convenient defaults that can still be overridden by
-backend parameters as described above.
+Backend parameters may override the `[infinia]` tuning settings (`sthreads`, `num_buffers`,
+`num_ring_entries`, `coremasks`, `use_dmabuf`, `max_retries`, `batch_size`), while
+`RED_CLUSTER`, `RED_TENANT`, and `RED_DATASET` remain fixed after shared configuration
+resolution and cannot be overridden by backend parameters.
 
 When debug logging is enabled, the INFINIA backend emits a single line during
 initialization starting with `INFINIA effective config:`. This log line

@@ -58,32 +58,7 @@ inline constexpr const char *RED_DATASET_ENV = "RED_DATASET";
 
 // Forward declarations
 class nixlInfiniaBackendReqH;
-
-// Infinia metadata class to store key information
-class nixlInfiniaMetadata : public nixlBackendMD {
-public:
-    nixlInfiniaMetadata(nixl_mem_t nixl_mem, uint64_t dev_id, const std::string &obj_key)
-        : nixlBackendMD(true),
-          nixlMem(nixl_mem),
-          devId(dev_id),
-          objKey(obj_key),
-          buffer(nullptr),
-          length(0),
-          iomem_handle{},
-          dmabuf_fd(-1) {}
-
-    ~nixlInfiniaMetadata() = default;
-
-    nixl_mem_t nixlMem;
-    uint64_t devId;
-    std::string objKey;
-
-    // Pre-registered memory info
-    void *buffer; // Registered buffer address
-    size_t length; // Registered buffer length
-    red_iomem_hndl_t iomem_handle; // RED memory handle
-    int dmabuf_fd; // DMA-BUF file descriptor (CUDA GPU memory only)
-};
+class nixlInfiniaMetadata;
 
 /**
  * @brief Infinia backend engine implementation
@@ -102,9 +77,14 @@ private:
     uint32_t infinia_num_buffers_;
     uint32_t infinia_num_ring_entries_;
     std::string infinia_coremasks_;
-    bool infinia_coremasks_set_;
     bool use_dmabuf_; // Enable/disable DMA-BUF for GPU memory (default: true)
-    bool use_dmabuf_set_; // Track if use_dmabuf_ was explicitly set
+    bool infinia_sthreads_set_;
+    bool infinia_num_buffers_set_;
+    bool infinia_num_ring_entries_set_;
+    bool infinia_coremasks_set_;
+    bool use_dmabuf_set_;
+    bool batch_max_retries_set_;
+    bool batch_size_set_;
     bool initialized_;
 
     std::shared_ptr<InfiniaClient> client_;
@@ -235,6 +215,32 @@ public:
     // Local operations (required since supportsLocal() returns true)
     [[nodiscard]] nixl_status_t
     loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override;
+};
+
+// Infinia metadata class to store key information
+class nixlInfiniaMetadata : public nixlBackendMD {
+public:
+    nixlInfiniaMetadata(nixl_mem_t nixl_mem, uint64_t dev_id, const std::string &obj_key)
+        : nixlBackendMD(true),
+          nixlMem(nixl_mem),
+          devId(dev_id),
+          objKey(obj_key),
+          buffer(nullptr),
+          length(0),
+          iomem_handle{},
+          dmabuf_fd(-1) {}
+
+    ~nixlInfiniaMetadata() = default;
+
+    nixl_mem_t nixlMem;
+    uint64_t devId;
+    std::string objKey;
+
+    // Pre-registered memory info
+    void *buffer; // Registered buffer address
+    size_t length; // Registered buffer length
+    red_iomem_hndl_t iomem_handle; // RED memory handle
+    int dmabuf_fd; // DMA-BUF file descriptor (CUDA GPU memory only)
 };
 
 /**
