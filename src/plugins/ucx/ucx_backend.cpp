@@ -117,6 +117,91 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
     auto &worker = workers_.front();
     workerAddr = worker->epAddr();
     worker->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, notifAmCb, this);
+
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(
+            custom_params, std::string(nixl_ucx_conn_mode_param_name))) {
+        connMode_ = ucx_conn_mode_from_string(*opt);
+    }
+
+    if (connMode_ == nixl::ucx::conn_mode_t::SOCKADDR) {
+        connectTimeout_ = std::chrono::milliseconds(nixl::getBackendParamDefaulted(
+            custom_params, std::string(nixl_ucx_connect_timeout_param_name), 30000u));
+        connInfo_ = initSockaddrListener(custom_params);
+    } else {
+        connInfo_ = workerAddr;
+    }
+
+    NIXL_INFO << "UCX backend connection mode: " << connMode_;
+}
+
+std::string
+nixlUcxEngine::initSockaddrListener(nixl_b_params_t *custom_params) {
+    auto listen_address = nixl::getBackendParamDefaulted(
+        custom_params, std::string(nixl_ucx_listen_address_param_name), std::string("0.0.0.0"));
+    if (listen_address.empty()) {
+        listen_address = "0.0.0.0";
+    }
+    const auto advertise_address = nixl::getBackendParamDefaulted(
+        custom_params, std::string(nixl_ucx_advertise_address_param_name), std::string());
+    const auto listen_port = nixl::getBackendParamDefaulted(
+        custom_params, std::string(nixl_ucx_listen_port_param_name), 0u);
+
+    const auto bind_addr =
+        nixl::ucx::sockaddrConnInfo::resolve(listen_address, uint16_t(listen_port));
+    if (!bind_addr) {
+        throw std::runtime_error("Invalid " + std::string(nixl_ucx_listen_address_param_name) +
+                                 "=" + listen_address);
+    }
+
+    /* One listener per backend, owned by worker 0 - the same worker whose
+     * address is the single one advertised in worker_address mode, and the
+     * only worker with the notification AM callback registered. Endpoints of
+     * all local workers connect to the peer's single listener. */
+    listener_ = std::make_unique<nixlUcxListener>(
+        *workers_.front(),
+        bind_addr->addr(),
+        bind_addr->addrlen(),
+        [this](ucp_conn_request_h conn_request) { return onConnRequest(conn_request); });
+
+    /* ucp_listener_query() resolves listen_port=0 to the port actually bound. */
+    nixl::ucx::sockaddrConnInfo advertised = listener_->getBoundAddress();
+
+    if (!advertise_address.empty()) {
+        const auto resolved =
+            nixl::ucx::sockaddrConnInfo::resolve(advertise_address, advertised.port());
+        if (!resolved) {
+            throw std::runtime_error("Invalid " +
+                                     std::string(nixl_ucx_advertise_address_param_name) + "=" +
+                                     advertise_address);
+        }
+        advertised = *resolved;
+    }
+
+    if (advertised.isWildcard()) {
+        throw std::runtime_error(
+            "UCX backend is listening on a wildcard address (" + listen_address +
+            "), which cannot be advertised to remote agents. Set " +
+            std::string(nixl_ucx_advertise_address_param_name) +
+            " to the IP address peers should connect to, or bind " +
+            std::string(nixl_ucx_listen_address_param_name) + " to that address directly.");
+    }
+
+    NIXL_INFO << "UCX backend advertising listener address " << advertised.str();
+    return advertised.serialize();
+}
+
+bool
+nixlUcxEngine::onConnRequest(ucp_conn_request_h conn_request) {
+    auto ep = workers_.front()->acceptConnRequest(conn_request);
+    if (!ep) {
+        return false;
+    }
+
+    const std::lock_guard<std::mutex> lock(acceptedEpsMutex_);
+    acceptedEps_.push_back(std::move(ep));
+    NIXL_DEBUG << "UCX backend accepted incoming connection, " << acceptedEps_.size()
+               << " accepted endpoint(s)";
+    return true;
 }
 
 nixl_mem_list_t nixlUcxEngine::getSupportedMems () const {
@@ -142,13 +227,13 @@ nixlUcxEngine::~nixlUcxEngine() {
 *****************************************/
 
 nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
-    str = workerAddr;
+    str = connInfo_;
     return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
     if(remote_agent == localAgent) {
-        return loadRemoteConnInfo(remote_agent, workerAddr);
+        return loadRemoteConnInfo(remote_agent, connInfo_);
     }
 
     return (remoteConnMap.find(remote_agent) == remoteConnMap.end()) ? NIXL_ERR_NOT_FOUND :
@@ -164,27 +249,141 @@ nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
 
     // thread safety?
     remoteConnMap.erase(it);
+
+    /* Accepted endpoints are not tracked per remote agent (NIXL never sends on
+     * them). Once no remote connection is left there is nothing to receive
+     * from either, so they can be released. */
+    if (remoteConnMap.empty()) {
+        const std::lock_guard<std::mutex> lock(acceptedEpsMutex_);
+        acceptedEps_.clear();
+    }
+
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlUcxEngine::connectSockaddrPeer(const std::string &remote_agent,
+                                   const std::string &remote_conn_info,
+                                   const ucx_connection_ptr_t &conn) {
+    const auto remote_addr = nixl::ucx::sockaddrConnInfo::deserialize(remote_conn_info);
+    if (!remote_addr) {
+        NIXL_ERROR << "Remote agent " << remote_agent
+                   << " did not provide a UCX sockaddr connection info blob. Both agents must "
+                      "use the same "
+                   << nixl_ucx_conn_mode_param_name << ".";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_DEBUG << "Connecting to remote agent " << remote_agent << " at " << remote_addr->str();
+
+    for (const auto &uw : workers_) {
+        std::unique_ptr<nixlUcxEp> ep =
+            uw->connectSockaddr(remote_addr->addr(), remote_addr->addrlen());
+        if (!ep) {
+            return NIXL_ERR_BACKEND;
+        }
+        conn->eps.push_back(std::move(ep));
+    }
+
+    if (connectTimeout_.count() == 0) {
+        /* Fully asynchronous connection establishment was requested. Note that
+         * loadRemoteMD() then has to be called late enough for the wireup to
+         * have completed, since unpacking an rkey needs a connected endpoint. */
+        return NIXL_SUCCESS;
+    }
+
+    return waitConnected(conn, remote_agent);
+}
+
+nixl_status_t
+nixlUcxEngine::waitConnected(const ucx_connection_ptr_t &conn,
+                             const std::string &remote_agent) const {
+    std::vector<nixlUcxReq> reqs(conn->eps.size(), nullptr);
+
+    for (size_t i = 0; i < conn->eps.size(); i++) {
+        nixlUcxReq req = nullptr;
+        const nixl_status_t status = conn->eps[i]->flushEp(req);
+
+        if (status == NIXL_IN_PROG) {
+            reqs[i] = req;
+        } else if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to start flush of the endpoint to " << remote_agent
+                       << ", status " << status;
+            return status;
+        }
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + connectTimeout_;
+
+    for (size_t i = 0; i < reqs.size(); i++) {
+        if (reqs[i] == nullptr) {
+            continue;
+        }
+
+        nixl_status_t status;
+        while ((status = workers_[i]->test(reqs[i])) == NIXL_IN_PROG) {
+            /* Progress every worker, not only the one being waited on: this is
+             * what lets the listener accept the peer's connection requests
+             * while we are blocked here. */
+            for (const auto &uw : workers_) {
+                uw->progress();
+            }
+
+            if (std::chrono::steady_clock::now() > deadline) {
+                NIXL_ERROR << "Timed out establishing the connection to " << remote_agent
+                           << " after " << connectTimeout_.count() << " ms";
+                workers_[i]->reqRelease(reqs[i]);
+                return NIXL_ERR_BACKEND;
+            }
+        }
+
+        workers_[i]->reqRelease(reqs[i]);
+
+        if (status != NIXL_SUCCESS) {
+            NIXL_ERROR << "Failed to establish the connection to " << remote_agent << ", status "
+                       << status;
+            return status;
+        }
+    }
+
+    NIXL_DEBUG << "Connection to " << remote_agent << " is established";
     return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent,
                                                  const std::string &remote_conn_info)
 {
-    size_t size = remote_conn_info.size();
-    std::vector<char> addr(size);
-
     if(remoteConnMap.count(remote_agent)) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
     std::shared_ptr<nixlUcxConnection> conn = std::make_shared<nixlUcxConnection>();
-    for (const auto &uw : workers_) {
-        std::unique_ptr<nixlUcxEp> ep = uw->connect(addr.data());
-        if (!ep) {
-            return NIXL_ERR_BACKEND;
+
+    if (connMode_ == nixl::ucx::conn_mode_t::SOCKADDR) {
+        const nixl_status_t status = connectSockaddrPeer(remote_agent, remote_conn_info, conn);
+        if (status != NIXL_SUCCESS) {
+            return status;
         }
-        conn->eps.push_back(std::move(ep));
+    } else {
+        if (nixl::ucx::sockaddrConnInfo::isSockaddrBlob(remote_conn_info)) {
+            NIXL_ERROR << "Remote agent " << remote_agent
+                       << " uses " << nixl_ucx_conn_mode_param_name << "="
+                       << nixl::ucx::conn_mode_t::SOCKADDR << " while this agent uses "
+                       << connMode_;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+
+        const size_t size = remote_conn_info.size();
+        std::vector<char> addr(size);
+
+        nixlSerDes::_stringToBytes(addr.data(), remote_conn_info, size);
+        for (const auto &uw : workers_) {
+            std::unique_ptr<nixlUcxEp> ep = uw->connect(addr.data());
+            if (!ep) {
+                return NIXL_ERR_BACKEND;
+            }
+            conn->eps.push_back(std::move(ep));
+        }
     }
 
     remoteConnMap.insert({remote_agent, conn});

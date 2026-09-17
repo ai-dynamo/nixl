@@ -25,6 +25,8 @@
 #include <chrono>
 #include <poll.h>
 #include <optional>
+#include <mutex>
+#include <unordered_map>
 
 #include "backend/backend_engine.h"
 
@@ -270,6 +272,31 @@ private:
     ucx_connection_ptr_t
     getConnection(const std::string &remote_agent) const;
 
+    /* connection_mode=sockaddr helpers */
+
+    /* Creates the local ucp_listener and returns the connection info blob to be
+     * advertised to peers. Throws on misconfiguration. */
+    std::string
+    initSockaddrListener(nixl_b_params_t *custom_params);
+
+    /* Called from the listener callback, in progress context of worker 0.
+     * Returns true when the connection request has been accepted. */
+    bool
+    onConnRequest(ucp_conn_request_h conn_request);
+
+    nixl_status_t
+    connectSockaddrPeer(const std::string &remote_agent,
+                        const std::string &remote_conn_info,
+                        const ucx_connection_ptr_t &conn);
+
+    /* Waits until the client/server wireup of every endpoint of conn has
+     * completed, progressing the local workers (which also accepts the peer's
+     * incoming connection requests, so two agents connecting to each other at
+     * the same time make progress). Needed because ucp_ep_rkey_unpack() - and
+     * hence loadRemoteMD() - requires a fully connected endpoint. */
+    nixl_status_t
+    waitConnected(const ucx_connection_ptr_t &conn, const std::string &remote_agent) const;
+
 #ifdef HAVE_UCX_SGL_API
     nixl_status_t
     prepXferSgl(const nixl_meta_dlist_t &local,
@@ -297,6 +324,34 @@ private:
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;
+
+    /* Connection establishment mode and the blob returned by getConnInfo():
+     * the local worker address in worker_address mode, the serialized listener
+     * address in sockaddr mode. */
+    nixl::ucx::conn_mode_t connMode_{nixl::ucx::conn_mode_t::WORKER_ADDRESS};
+    std::string connInfo_;
+    std::chrono::milliseconds connectTimeout_{30000};
+
+    /* Server-side endpoints created from incoming connection requests.
+     *
+     * NIXL never sends on these endpoints - notifications and RMA always go
+     * through the local client endpoints held in remoteConnMap - they only
+     * exist to complete the UCX client/server wireup and to receive. They are
+     * therefore not mapped to a remote agent name: they are released when the
+     * last remote connection is dropped, and at engine destruction.
+     *
+     * Mutated from the listener callback, which runs in progress context (and
+     * hence on the progress thread for the threaded engines), so it needs its
+     * own lock rather than relying on the nixlAgent lock.
+     *
+     * Declared after workers_ so that they are destroyed before the workers.
+     */
+    mutable std::mutex acceptedEpsMutex_;
+    std::vector<std::unique_ptr<nixlUcxEp>> acceptedEps_;
+
+    /* Declared last: destroyed first, so no new connection request can arrive
+     * while the accepted endpoints or the workers are being torn down. */
+    std::unique_ptr<nixlUcxListener> listener_;
 };
 
 #endif
