@@ -35,6 +35,9 @@ ARG VLLM_REF
 # matching -fsanitize flags so AddressSanitizer NIXL builds have an ABI-compatible
 # (instrumented) Abseil. Empty for normal images.
 ARG DEPS_SANITIZE
+# Set by CI so a missing credential fails here instead of 10 minutes later as a
+# clone failure. Left 0 for local builds, which clone anonymously as before.
+ARG REQUIRE_GITHUB_AUTH=0
 # Labels for documentation
 LABEL maintainer="NVIDIA NIXL Team"
 LABEL description="Test environment for NIXL development"
@@ -86,12 +89,29 @@ ENV HOME=${_HOME}
 ENV USER=${_LOGIN}
 ENV VLLM_ELASTIC_TEST_DIR=${_HOME}/vllm
 
-RUN /.gitlab/build.sh ${NIXL_INSTALL_DIR}
+# build.sh clones ~10 third-party deps from github.com, plus the taskflow and
+# prometheus-cpp meson wraps. github.com answers anonymous clones with an
+# intermittent HTTP 401; with a credential git answers the challenge instead of
+# dying as "could not read Username". Mounted straight where git looks for it, so
+# nothing is copied and the file cannot outlive the layer. mode=0444 because this
+# stage runs as a non-root user. url.insteadOf rather than a netrc: git only consults
+# ~/.netrc from 2.35 onwards, and the ubuntu22 variant of this image ships git 2.34.
+ENV GIT_TERMINAL_PROMPT=0
+RUN --mount=type=secret,id=ghconfig,target=${_HOME}/.gitconfig,mode=0444 \
+    if [ -s "${HOME}/.gitconfig" ]; then \
+        echo "github.com clones: authenticated"; \
+    elif [ "${REQUIRE_GITHUB_AUTH}" = "1" ]; then \
+        echo "ERROR: ghconfig secret is empty, github.com clones would be anonymous" >&2; \
+        exit 1; \
+    else \
+        echo "github.com clones: anonymous (no ghconfig secret supplied)"; \
+    fi; \
+    /.gitlab/build.sh ${NIXL_INSTALL_DIR}
 RUN sudo rm -rf /.gitlab/build.sh /.ci/scripts/
 
 # Install editable vLLM source with matching CUDA 13 precompiled binaries.
 # Resolve the latest stable release unless explicitly overridden.
-RUN if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
+RUN --mount=type=secret,id=ghconfig,target=${_HOME}/.gitconfig,mode=0444 if [ "${BUILD_VLLM_ELASTIC_TEST}" = "true" ]; then \
         UV="${HOME}/.local/bin/uv"; \
         VENV_PY="${VLLM_ELASTIC_TEST_DIR}/.venv/bin/python"; \
         if [ -z "${VLLM_REF}" ]; then \
