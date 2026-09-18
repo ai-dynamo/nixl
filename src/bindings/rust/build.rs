@@ -14,8 +14,35 @@
 // limitations under the License.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use os_info;
+
+/// Locates the directory holding the nixl C API sources (nixl_capi.h and
+/// nixl_capi.cpp).
+///
+/// Preference order:
+///   1. NIXL_CAPI_SRC_DIR environment variable,
+///   2. a vendored copy under the crate root (capi/), for a published crate,
+///   3. the in-repo layout (../../api/c relative to the crate).
+fn capi_src_dir() -> PathBuf {
+    println!("cargo:rerun-if-env-changed=NIXL_CAPI_SRC_DIR");
+    if let Some(dir) = env::var_os("NIXL_CAPI_SRC_DIR") {
+        return PathBuf::from(dir);
+    }
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let vendored = manifest_dir.join("capi");
+    if vendored.join("nixl_capi.h").exists() {
+        return vendored;
+    }
+    let in_repo = manifest_dir.join("../../api/c");
+    if !in_repo.join("nixl_capi.h").exists() {
+        panic!(
+            "nixl C API sources not found; set NIXL_CAPI_SRC_DIR to a directory \
+             containing nixl_capi.h and nixl_capi.cpp"
+        );
+    }
+    in_repo
+}
 
 fn get_lib_path(nixl_root_path: &str, arch: &str) -> String {
     let os_info = os_info::get();
@@ -84,7 +111,7 @@ fn get_nixl_libs() -> Option<Vec<pkg_config::Library>> {
     }
 }
 
-fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
+fn build_nixl(cc_builder: &mut cc::Build, capi_dir: &Path) -> anyhow::Result<()> {
     let nixl_root_path =
         env::var("NIXL_PREFIX").unwrap_or_else(|_| "/opt/nvidia/nvda_nixl".to_string());
 
@@ -129,7 +156,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     }
 
     // Verify that nixl shared libraries actually exist before proceeding.
-    // Without this check, wrapper.cpp may compile (headers found in source tree)
+    // Without this check, nixl_capi.cpp may compile (headers found in source tree)
     // but linking will fail later when the .so files are missing.
     let nixl_so_found = lib_search_paths.iter().any(|dir| {
         std::path::Path::new(&format!("{}/libnixl.so", dir)).exists()
@@ -146,7 +173,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     }
 
     cc_builder
-        .file("wrapper.cpp")
+        .file(capi_dir.join("nixl_capi.cpp"))
         .includes(nixl_include_paths);
 
     let etcd_enabled = env::var("HAVE_ETCD").map(|v| v != "0").unwrap_or(false);
@@ -163,7 +190,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
 
     // Generate bindings with minimal configuration
     let mut builder = bindgen::Builder::default()
-        .header("wrapper.h")
+        .header(capi_dir.join("nixl_capi.h").display().to_string())
         .clang_arg("-std=c++20")
         .clang_arg(format!("-I{}", nixl_include_path))
         .clang_arg("-I../../api/cpp")
@@ -192,8 +219,8 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     }
 
     // Tell cargo to invalidate the built crate whenever the wrapper changes
-    println!("cargo:rerun-if-changed=wrapper.h");
-    println!("cargo:rerun-if-changed=wrapper.cpp");
+    println!("cargo:rerun-if-changed={}", capi_dir.join("nixl_capi.h").display());
+    println!("cargo:rerun-if-changed={}", capi_dir.join("nixl_capi.cpp").display());
     println!("cargo:rerun-if-env-changed=HAVE_ETCD");
 
     builder
@@ -205,7 +232,7 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_stubs(cc_builder: &mut cc::Build) {
+fn build_stubs(cc_builder: &mut cc::Build, capi_dir: &Path) {
     println!("cargo:warning=Building with stub API - NIXL functions will be resolved at runtime via dlopen");
 
     cc_builder.file("stubs.cpp");
@@ -218,14 +245,14 @@ fn build_stubs(cc_builder: &mut cc::Build) {
 
     // Tell cargo to invalidate the built crate whenever the stubs change
     println!("cargo:rerun-if-changed=stubs.cpp");
-    println!("cargo:rerun-if-changed=wrapper.h");
+    println!("cargo:rerun-if-changed={}", capi_dir.join("nixl_capi.h").display());
 
     // Get the output path for bindings
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     // Generate bindings with minimal configuration
     bindgen::Builder::default()
-        .header("wrapper.h")
+        .header(capi_dir.join("nixl_capi.h").display().to_string())
         .clang_arg("-std=c++20")
         .clang_arg("-x")
         .clang_arg("c++")
@@ -236,11 +263,12 @@ fn build_stubs(cc_builder: &mut cc::Build) {
         .expect("Couldn't write bindings!");
 }
 
-fn create_builder() -> cc::Build {
+fn create_builder(capi_dir: &Path) -> cc::Build {
     let mut builder = cc::Build::new();
     builder
         .cpp(true)
         .compiler("g++")
+        .include(capi_dir)
         .flag("-std=c++20")
         .flag("-fPIC")
         .flag("-Wno-unused-parameter")
@@ -249,27 +277,28 @@ fn create_builder() -> cc::Build {
 }
 
 fn run_build(use_stub_api: bool) {
-    let mut cc_builder = create_builder();
+    let capi_dir = capi_src_dir();
+    let mut cc_builder = create_builder(&capi_dir);
 
     if !use_stub_api {
         let no_fallback = env::var("NIXL_NO_STUBS_FALLBACK")
             .map(|v| v == "1")
             .unwrap_or(false);
 
-        if let Err(e) = build_nixl(&mut cc_builder) {
+        if let Err(e) = build_nixl(&mut cc_builder, &capi_dir) {
             if !no_fallback {
                 println!(
                     "cargo:warning=NIXL build failed: {}, falling back to stub API",
                     e
                 );
-                let mut stub_builder = create_builder();
-                build_stubs(&mut stub_builder);
+                let mut stub_builder = create_builder(&capi_dir);
+                build_stubs(&mut stub_builder, &capi_dir);
             } else {
                 panic!("Failed to build NIXL: {}", e);
             }
         }
     } else {
-        build_stubs(&mut cc_builder);
+        build_stubs(&mut cc_builder, &capi_dir);
     }
 }
 
