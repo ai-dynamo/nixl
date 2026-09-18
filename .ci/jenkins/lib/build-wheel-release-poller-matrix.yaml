@@ -1,23 +1,26 @@
 # Release wheel poller. Runs every 4 hours on main; compares release-branch
 # commits against the wheels already published in Artifactory
-# (sw-nbu-swx-nixl-pypi-local) and triggers nixl-ci-build-wheel-nightly for
-# every release-branch commit x CUDA variant whose wheels are still missing.
+# (sw-nbu-swx-nixl-pypi-local) and triggers nixl-ci-build-wheel-nightly once per
+# release-branch commit whose wheels are still missing.
 #
 # How it works:
-# - CUDA variants are the matrix axis (cuda_major): each cell scans and triggers
-#   one variant. The scan itself is .ci/scripts/scan-missing-release-wheels.sh.
+# - One trigger per commit, not per CUDA variant: the wheel job builds every
+#   CUDA major in a single run. The scan is .ci/scripts/scan-missing-release-wheels.sh.
 # - Which releases build: every release/* branch with version >= MIN_RELEASE
 #   whose build-container.sh accepts --build-options-file (the nightly always
 #   passes it) - picked up automatically, new release branches need no change.
 # - Which UCX and plugins: whatever the release's own build-container.sh pins;
 #   the poller passes neither, so each release ships what it was built to ship.
 # - Which commits: newest MAX_COMMITS first-parent commits past the fork from main.
-# - Folder: release/<ver>/<nixl_sha8> - the nightly job's
-#   publish layout. A variant counts as published when a nixl_cuNN wheel is
-#   present in the folder; there are no marker files.
+# - Published check: a build folder under release/<ver>/ carrying the commit as
+#   a NIXL_SHA property. The wheel job stamps it only on SUCCESS, so a partial
+#   upload never reads as published - it deletes its own folder on failure.
+# - In flight: a release/<ver>/.inflight/<sha8> reservation written here before
+#   triggering. The marker only appears when a build ends, so without this a
+#   build still running at the next poll would be triggered again.
 # - Consequences: a failing build retries every cycle until it succeeds or the
-#   commit falls out of the MAX_COMMITS window; a partial upload of a variant
-#   looks complete - delete the folder in Artifactory to force a rebuild.
+#   commit falls out of the MAX_COMMITS window. To force a rebuild, delete the
+#   commit's folder in Artifactory (or just its NIXL_SHA property).
 
 ---
 job: nixl-build-wheel-release-poller
@@ -41,23 +44,21 @@ kubernetes:
 runs_on_dockers:
   - { name: "poller", url: "quay.io/podman/stable:v5.7.1", arch: "x86_64" }
 
-# One cell per CUDA variant: CUDA_MAJOR selects the base image of the triggered
-# build (13 = build-container.sh defaults, 12 = the nightly's pinned CUDA 12
-# image) and names the variant (cuNN).
-matrix:
-  axes:
-    cuda_major:
-      - "12"
-      - "13"
-
 env:
   # Releases older than this are not built. Anything newer is picked up automatically.
   MIN_RELEASE: "1.4.0"
   # Newest N commits to check per release branch.
   MAX_COMMITS: "10"
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
-  # Artifactory storage API root of the SWX NIXL pypi repo (folder listing).
-  STORAGE_API_URL: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
+  # The published check is a property query, so AQL needs the repo by name; the
+  # URL is for writing .inflight reservations.
+  AQL_API_URL: "https://artifactory.nvidia.com/artifactory/api/search/aql"
+  WHEEL_REPO_NAME: "sw-nbu-swx-nixl-pypi-local"
+  WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
+  WHEEL_REPO_API: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
+  # One poll interval, so a build that died without publishing is retried on the
+  # next cycle rather than needing the wheel job to release its reservation.
+  RESERVE_TTL_MIN: "240"
   MAIL_FROM: "jenkins@nvidia.com"
 
 steps:
@@ -65,7 +66,7 @@ steps:
     credentialsId: 'svc-nixl-new-artifactory-token'
     parallel: false
     run: |
-      # Scan this cell's CUDA variant; writes triggers.txt for the next step.
+      # Writes triggers.txt for the next step.
       .ci/scripts/scan-missing-release-wheels.sh
 
   - name: Trigger Release Builds
@@ -81,22 +82,22 @@ steps:
           def spawned = []
           def failed = []
           for (line in triggers.split('\n')) {
-              // line: <nixl_sha> <ver> <cuda_major>
+              // line: <nixl_sha> <ver>
               def parts = line.trim().split(/\s+/)
-              def cu = "cu${parts[2]}"
               // Per-line guard: one bad trigger must not drop the remaining
               // lines; the next poll retries anything missed.
               try {
                   build(job: 'nixl-ci-build-wheel-nightly',
                         parameters: [
                             string(name: 'NIXL_VERSION', value: parts[0]),
-                            string(name: 'CUDA_MAJOR', value: parts[2]),
                             string(name: 'PUBLISH_DIR', value: "release/${parts[1]}"),
                             string(name: 'ci_refspec', value: ciRefspec),
                         ],
                         wait: false,
                         propagate: false)
-                  spawned << "release/${parts[1]}/${parts[0].take(8)} ${cu}  (NIXL_VERSION=${parts[0]} CUDA_MAJOR=${parts[2]})"
+                  // The publish folder is the spawned build's own number, which
+                  // build(wait:false) does not return - identify it by sha here.
+                  spawned << "release/${parts[1]} @ ${parts[0].take(8)}  (NIXL_VERSION=${parts[0]})"
               } catch (err) {
                   failed << "${line}: ${err}"
                   currentBuild.result = 'UNSTABLE'
@@ -117,7 +118,7 @@ steps:
           echo 'No missing wheels - nothing to trigger.'
       }
 
-taskName: '${name}_cu_${cuda_major}'
+taskName: '${name}'
 
 # Mail the unattended poller only when it fails, mirroring the nightly.
 pipeline_stop:
