@@ -15,6 +15,7 @@
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="26.08-cuda13.4-devel-ubuntu24.04"
+ARG WEBRTC_IMAGE="webrtc"
 
 # libcuobjclient dev files: the cuda-dl-base devel images ship the runtime but
 # not libcuobjclient-dev, so the OBJ plugin silently loses cuObject RDMA
@@ -33,6 +34,9 @@ RUN set -e; \
     cp -a "$T"/lib/libcuobjclient.so /cuobj/lib/; \
     cp -a /usr/lib/pkgconfig/cuobjclient-*.pc /cuobj/pkgconfig/; \
     basename "$(ls "$T"/lib/libcuobjclient.so.1.*)" > /cuobj/soname
+
+# Define webrtc stage to allow copying pre-built WebRTC binaries
+FROM ${WEBRTC_IMAGE}:${BASE_IMAGE_TAG} AS webrtc
 
 # --- Stage 1: Common OS setup ---
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
@@ -86,9 +90,8 @@ RUN apt-get update -y && \
     libclang-dev \
     cmake \
     libgflags-dev \
-    libprotobuf-dev \
     libaio-dev \
-    protobuf-compiler-grpc \
+    liburing-dev \
     libcpprest-dev \
     etcd-server \
     etcd-client \
@@ -97,10 +100,13 @@ RUN apt-get update -y && \
     libtool \
     libz-dev \
     flex \
+    npm \
     libgtest-dev \
     hwloc \
     libhwloc-dev \
-    build-essential
+    build-essential \
+    linux-tools-generic \
+    linux-tools-common
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
 # Skip only the DOCA SDK install when the base image already ships it.
@@ -179,7 +185,9 @@ ARG BUILD_TYPE="release"
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
-ARG GRPC_TAG="v1.73.0"
+ARG GRPC_TAG="v1.76.0"
+ARG PROTOBUF_TAG="v33.4"
+ARG DISABLE_RXDM_DXS="false"
 
 WORKDIR /workspace
 
@@ -200,6 +208,21 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     make install && \
     ldconfig
 
+# Build protobuf from source
+RUN git clone https://github.com/protocolbuffers/protobuf.git -b ${PROTOBUF_TAG} && \
+    cd protobuf && \
+    git submodule update --init --recursive && \
+    mkdir build && \
+    cmake -S . -B build \
+          -DCMAKE_CXX_STANDARD=20 \
+          -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -Dprotobuf_BUILD_TESTS=OFF \
+          -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -Dprotobuf_ABSL_PROVIDER=package && \
+    cmake --build build --parallel ${NPROC:-$(nproc)} && \
+    cmake --install build
+
 # Build gRPC from source against /usr/local Abseil.
 RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
@@ -218,7 +241,7 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
         -Dabsl_DIR=/usr/local/lib/cmake/absl \
         -DgRPC_SSL_PROVIDER=package \
         -DgRPC_ABSL_PROVIDER=package \
-        -DgRPC_PROTOBUF_PROVIDER=module \
+        -DgRPC_PROTOBUF_PROVIDER=package \
         -DgRPC_ZLIB_PROVIDER=package && \
     make -j${NPROC:-$(nproc)} && \
     make install && \
@@ -245,9 +268,17 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
+# Install Bazel for DXS/RxDM
+RUN npm install -g @bazel/bazelisk
+
+COPY --from=webrtc /usr/local/webrtc /usr/local/webrtc
+
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+
 RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
+    sed -i 's/find_dependency(Protobuf)/find_dependency(Protobuf CONFIG)/' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 -DCMAKE_PREFIX_PATH=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
@@ -315,10 +346,12 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
+    protoc --cpp_out=./ src/plugins/gpudirect_tcpxo/control_channel.proto && \
+    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE \
+        -Ddisable_rxdm_dxs=$DISABLE_RXDM_DXS && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
-    ninja install
+    ninja install || { cat /workspace/nixl/build/meson-logs/meson-log.txt || true; exit 1; }
 
 # Fail the build if cuObject acceleration did not make it into the plugin.
 RUN set -e; \

@@ -127,3 +127,7 @@ if enabled_plugins.get('OBJ')
         subdir('object')
     endif
 endif
+
+if enabled_plugins.get('TCPXO')
+    subdir('gpudirect_tcpxo')
+endif

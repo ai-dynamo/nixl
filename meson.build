@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'TCPXO']
 
 enabled_plugins = {}
 
@@ -73,6 +73,12 @@ endif
 
 # set up some global vars for compiler, platform, configuration, etc.
 cpp = meson.get_compiler('cpp')
+
+if get_option('nixl_coverage')
+    add_project_arguments('--coverage', language : ['cpp', 'c'])
+    add_project_link_arguments('--coverage', language : ['cpp', 'c'])
+endif
+
 fs = import('fs')
 
 dl_dep = cpp.find_library('dl', required: true)
@@ -200,6 +206,8 @@ absl_statusor_dep = dependency('absl_statusor', required: false)
 absl_strings_dep = dependency('absl_strings', required: false)
 absl_synchronization_dep = dependency('absl_synchronization', required: false)
 absl_time_dep = dependency('absl_time', required: false)
+absl_flags_dep = dependency('absl_flags', required: false)
+absl_flags_parse_dep = dependency('absl_flags_parse', required: false)
 
 if absl_base_dep.found() and not absl_log_dep.found()
   error('Your Abseil version is too old: found absl_base but missing support for absl_log. ' +
@@ -214,7 +222,9 @@ if not (absl_log_dep.found() and
         absl_statusor_dep.found() and
         absl_strings_dep.found() and
         absl_synchronization_dep.found() and
-        absl_time_dep.found())
+        absl_time_dep.found() and
+        absl_flags_dep.found() and
+        absl_flags_parse_dep.found())
   message('System Abseil missing required components; using subproject fallback')
   abseil_proj = subproject('abseil-cpp')
   absl_log_dep = abseil_proj.get_variable('absl_log_dep')
@@ -225,12 +235,17 @@ if not (absl_log_dep.found() and
   absl_strings_dep = abseil_proj.get_variable('absl_strings_dep')
   absl_synchronization_dep = abseil_proj.get_variable('absl_synchronization_dep')
   absl_time_dep = abseil_proj.get_variable('absl_time_dep')
+  absl_flags_dep = abseil_proj.get_variable('absl_flags_dep')
+  absl_flags_parse_dep = abseil_proj.get_variable('absl_flags_dep')
   summary({'Abseil source': 'subproject'}, section: 'Dependencies')
 else
   message('Using system Abseil dependencies')
   summary({'Abseil source': 'system'}, section: 'Dependencies')
 endif
 taskflow_proj = dependency('taskflow', fallback: ['taskflow', 'taskflow_dep'])
+if not get_option('disable_rxdm_dxs')
+  tcpxo_rxdm_proj = subproject('fastrak-rxdm')
+endif
 
 cuda_inc_path = get_option('cudapath_inc')
 cuda_lib_path = get_option('cudapath_lib')
@@ -268,6 +283,10 @@ endif
 
 if cuda_dep.found()
     add_languages('CUDA')
+    if get_option('nixl_coverage')
+        add_project_arguments('-Xcompiler=--coverage', language: 'cuda')
+        add_project_link_arguments('-Xcompiler=--coverage', language: 'cuda')
+    endif
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
 
@@ -606,7 +625,7 @@ plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
 subdir('src')
-if get_option('build_tests') and get_option('buildtype') != 'release'
+if get_option('build_tests')
   subdir('test')
 endif
 

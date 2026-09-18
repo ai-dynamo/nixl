@@ -1,0 +1,86 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Copyright (c) 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+
+package tcpxo;
+
+// IPv4 addresses are used for gVNIC adapters in A3* VMs
+message IPAddress {
+    string addr = 1;
+}
+
+message DxsAddress {
+    IPAddress addr = 1;
+    uint32 port = 2;
+}
+
+// Listen handles on sender that are reserved for the receiver
+message DxsEndpointListenInfo {
+    uint32 local_fastrak_idx = 1; // sender side
+    uint32 remote_fastrak_idx = 2; // receiver side
+    repeated DxsAddress listen_handles = 3;
+}
+
+enum XferMessageType {
+    XFER_MESSAGE_TYPE_INVALID = 0;
+    XFER_MESSAGE_TYPE_RECV = 1;
+    XFER_MESSAGE_TYPE_SEND = 2;
+}
+
+// Message for workload notifications
+message WorkloadNotificationMessage {
+    string message = 1;
+}
+
+// Message for transfer details
+message XferOp {
+    uint32 target_fastrak_idx = 1;
+    uint32 initiator_fastrak_idx = 2;
+    fixed64 memory_address = 3; // Corresponds to uintptr_t
+    uint64 len = 4; // Corresponds to size_t
+    uint32 flow_idx = 5;
+}
+
+message XferMessage {
+    XferMessageType type = 1;
+    repeated XferOp ops = 2;
+}
+
+// Message to exchange connection information
+message DxsAddressExchangeMessage {
+    repeated DxsEndpointListenInfo endpoint_pairs = 1;
+}
+
+// Message for peer self-identification
+message IdentityMessage {
+    IPAddress addr = 1;
+    uint32 port = 2;
+    DxsAddressExchangeMessage dxs = 3;
+    string agent_name = 4;
+}
+
+message Message {
+    oneof message {
+        WorkloadNotificationMessage notif = 1;
+        XferMessage xfer = 2;
+        DxsAddressExchangeMessage dxs = 3;
+        IdentityMessage identity = 4;
+    }
+}
