@@ -142,6 +142,21 @@ navigation:
       - page: Contribution Guide
         path: ./docs/pages/development/contribution-guide.md
 
+  - section: Examples
+    contents:
+      - page: Basic Two-Peer Transfer
+        path: ./docs/pages/examples/basic-transfer.md
+      - page: GDS Direct Storage
+        path: ./docs/pages/examples/gds-direct-storage.md
+      - page: Remote Storage Transfer
+        path: ./docs/pages/examples/remote-storage.md
+      - page: "NIXL-EP: Expert-Parallel Communication"
+        path: ./docs/pages/examples/nixl-ep.md
+      - page: etcd Metadata Exchange
+        path: ./docs/pages/examples/etcd-metadata-exchange.md
+      - page: Telemetry Reader
+        path: ./docs/pages/examples/telemetry-reader.md
+
   - section: Resources
     contents:
       - page: Environment Variables

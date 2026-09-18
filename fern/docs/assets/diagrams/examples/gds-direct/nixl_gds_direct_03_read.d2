@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL GDS Direct Storage — Phase 3: Read Transfer
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  class: controller
+}
+agent: "NIXL Agent\n(\"GDSTester\")" {
+  class: agent
+}
+storage: "Local Storage\n(NVMe / File)" {
+  class: external
+}
+
+conductor -> agent: "3.1 initialize_xfer(READ, DRAM buf2, FILE)" {
+  class: call
+}
+agent -> agent: "3.2 resolve backend (GDS auto-select)" {
+  class: internal
+}
+conductor -> agent: "3.3 transfer(xfer_handle_read)" {
+  class: call
+}
+storage -> agent: "3.4 GDS direct read — file to DRAM buf2" {
+  class: transfer
+}
+conductor -> agent: "3.5 check_xfer_state(handle) [poll]" {
+  class: internal
+}
+agent -> conductor: "3.6 state: DONE" {
+  class: reply
+}

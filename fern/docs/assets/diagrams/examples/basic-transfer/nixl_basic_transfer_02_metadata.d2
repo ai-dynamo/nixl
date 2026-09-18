@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL Basic Two Peers Transfer — Phase 2: Metadata & Descriptor Exchange
+
+shape: sequence_diagram
+
+target: "Target Agent\n(Port 5555)" {
+  class: agent
+}
+initiator: "Initiator Agent\n(Auto Port)" {
+  class: agent
+}
+
+initiator -> target: "2.1 fetch_remote_metadata(\"target\", ip, 5555)" {
+  class: call
+}
+initiator -> target: "2.2 send_local_metadata(ip, 5555)" {
+  class: call
+}
+initiator -> initiator: "2.3 check_remote_metadata(\"target\") [poll]" {
+  class: internal
+}
+target -> target: "2.4 get_xfer_descs(target_rows)" {
+  class: internal
+}
+target -> target: "2.5 get_serialized_descs(target_descs)" {
+  class: internal
+}
+target -> initiator: "2.6 send_notif(\"initiator\", serialized_descs)" {
+  class: notification
+}
+initiator -> initiator: "2.7 get_new_notifs() [poll]" {
+  class: internal
+}
+initiator -> initiator: "2.8 deserialize_descs(notifs[\"target\"])" {
+  class: internal
+}
