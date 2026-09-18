@@ -90,7 +90,6 @@ processRunMarker() {
 [[nodiscard]] std::optional<std::string>
 expandLogPath(const std::string &pattern) {
     std::string expanded;
-    expanded.reserve(pattern.size() + 32);
 
     for (size_t at = 0; at < pattern.size(); ++at) {
         if (pattern[at] != '%') {
