@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-plugin_gpunetio_deps = [dependency('libibverbs'), dependency('libmlx5'), dependency('doca-common'), dependency('doca-verbs'), dependency('doca-gpunetio')]
+plugin_gpunetio_deps = [dependency('libibverbs'), dependency('libmlx5'), dependency('doca-common'), dependency('doca-verbs'), dependency('doca-gpunetio', version : '>=3.5')]
 
 # C++20 for CUDA is set project-wide in the root meson.build.
 compile_flags = ['-D DOCA_ALLOW_EXPERIMENTAL_API']
