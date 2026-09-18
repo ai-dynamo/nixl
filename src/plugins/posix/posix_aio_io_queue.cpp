@@ -138,7 +138,8 @@ nixlPosixIOQueueAIO::doCheckCompleted(void) {
             ssize_t ret = aio_return(&io->aio_);
             if (ret < 0 || ret != static_cast<ssize_t>(io->aio_.aio_nbytes)) {
                 NIXL_ERROR << "aio_return failed: " << nixl_strerror(-ret);
-                ios_in_flight_.push_front(io);
+                ios_in_flight_.erase(it);
+                free_ios_.push_back(io);
                 return NIXL_ERR_BACKEND;
             }
             if (io->clb_) {
@@ -150,11 +151,10 @@ nixlPosixIOQueueAIO::doCheckCompleted(void) {
             return NIXL_IN_PROG;
         } else {
             NIXL_ERROR << "aio_error failed: " << nixl_strerror(-status);
-            ios_in_flight_.push_front(io);
+            ios_in_flight_.erase(it);
+            free_ios_.push_back(io);
             return NIXL_ERR_BACKEND;
         }
-
-        it++;
 
         num_ios--;
         if (num_ios == 0) {
