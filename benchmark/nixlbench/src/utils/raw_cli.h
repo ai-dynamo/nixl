@@ -6,6 +6,8 @@
 #ifndef NIXL_BENCHMARK_NIXLBENCH_SRC_UTILS_RAW_CLI_H
 #define NIXL_BENCHMARK_NIXLBENCH_SRC_UTILS_RAW_CLI_H
 
+#include "utils/cli_common.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -14,15 +16,7 @@
 #include <string>
 #include <vector>
 
-#include <nixl_types.h>
-
 namespace nixlbench {
-
-struct PluginMetadata {
-    std::string name;
-    nixl_mem_list_t memory_types;
-    nixl_b_params_t parameters;
-};
 
 struct RawOptions {
     std::string operation = "WRITE";
@@ -39,16 +33,9 @@ struct RawOptions {
     bool dry_run = false;
 };
 
-struct FileOptions {
-    std::string path;
-    std::string filenames;
-    int num_files = 1;
-    bool direct = false;
-};
-
 struct RawCommandRequest {
     RawOptions raw;
-    FileOptions file;
+    fileOptions file;
     bool has_file_options = false;
     nixl_b_params_t plugin_parameters;
 };
@@ -61,13 +48,10 @@ struct RawCommandResult {
 bool
 isRawCommand(int argc, char *argv[]);
 
-std::optional<PluginMetadata>
-discoverPluginMetadata(const std::string &name, std::string &error);
-
 int
 parseRawPosixCommand(int argc,
                      char *argv[],
-                     const PluginMetadata &metadata,
+                     const pluginMetadata &metadata,
                      RawCommandRequest &request,
                      bool &help_requested,
                      std::ostream &out,
@@ -78,7 +62,7 @@ benchmarkFileArguments(const RawCommandRequest &request, const std::string &prog
 
 void
 printRawPlan(const RawCommandRequest &request,
-             const PluginMetadata &metadata,
+             const pluginMetadata &metadata,
              int normalized_iterations,
              int normalized_warmup_iterations,
              std::ostream &out);

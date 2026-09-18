@@ -142,13 +142,14 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 # GFlags
 gflags_dep = dependency('gflags', required: true)
 
-# CLI11 is used only by the opt-in `raw` command hierarchy. Legacy invocations
-# continue to use gflags unchanged when CLI11 is unavailable or raw is disabled.
+# CLI11 is used only by the opt-in `raw` and `scenario` command hierarchies.
+# Legacy invocations continue to use gflags unchanged when CLI11 is unavailable
+# or the verb-based interface is disabled.
 cli11_dep = disabler()
 if get_option('build_raw_cli')
     cli11_dep = dependency('CLI11', required: false, fallback: ['cli11'])
     if not cli11_dep.found()
-        warning('CLI11 not found. The raw command path will not be built.')
+        warning('CLI11 not found. The raw and scenario command paths will not be built.')
     endif
 endif
 raw_cli_available = get_option('build_raw_cli') and cli11_dep.found()
@@ -328,6 +329,11 @@ summary(
 subdir('src/utils')
 subdir('src/runtime')
 subdir('src/worker')
+benchmark_path_links = []
+if raw_cli_available
+    subdir('src/benchmark')
+    benchmark_path_links += [benchmark_path_lib]
+endif
 subdir('src/kernels')
 
 # Configure header file
@@ -406,7 +412,13 @@ if nvshmem_available
                  ]
 
     if raw_cli_available
-        nvcc_cmd_files += meson.current_build_dir() + '/src/utils/libutils.a.p/raw_cli.cpp.o'
+        nvcc_cmd_files += [
+            meson.current_build_dir() + '/src/utils/libutils.a.p/cli_common.cpp.o',
+            meson.current_build_dir() + '/src/utils/libutils.a.p/raw_cli.cpp.o',
+            meson.current_build_dir() + '/src/benchmark/libbenchmark_paths.a.p/scenario.cpp.o',
+            meson.current_build_dir() + '/src/benchmark/libbenchmark_paths.a.p/allocate_once.cpp.o',
+            meson.current_build_dir() + '/src/benchmark/libbenchmark_paths.a.p/allocate_once_worker.cpp.o',
+        ]
     endif
 
     if etcd_available
@@ -425,11 +437,11 @@ if nvshmem_available
         build_by_default: true,
         install: true,
         install_dir: get_option('bindir'),
-        depends: [nixlbench_runtimes, utils_lib, worker_libs])
+        depends: [nixlbench_runtimes, utils_lib, worker_libs] + benchmark_path_links)
 else
     nixlbench_target = executable('nixlbench', 'src/main.cpp',
                 include_directories: inc_dir,
-                link_with: [nixlbench_runtimes, utils_lib, worker_libs],
+                link_with: [nixlbench_runtimes, utils_lib, worker_libs] + benchmark_path_links,
                 dependencies: deps,
                 link_args: args,
                 install: true,
@@ -440,6 +452,6 @@ if get_option('build_tests') and get_option('buildtype') != 'release'
     if raw_cli_available
         subdir('tests')
     else
-        message('Skipping raw CLI tests because the raw command path is not built.')
+        message('Skipping verb-based CLI tests because the raw and scenario paths are not built.')
     endif
 endif

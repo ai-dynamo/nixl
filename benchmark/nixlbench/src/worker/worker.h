@@ -64,6 +64,10 @@ class xferBenchWorker {
         transfer(size_t block_size,
                  const std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
                  const std::vector<std::vector<xferBenchIOV>> &remote_iov_lists) = 0;
+        virtual bool
+        validateTransfer(bool is_initiator,
+                         std::vector<std::vector<xferBenchIOV>> &local_iov_lists,
+                         std::vector<std::vector<xferBenchIOV>> &remote_iov_lists);
 };
 
 #endif // NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_WORKER_H
