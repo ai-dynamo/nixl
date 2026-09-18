@@ -119,6 +119,23 @@ The following table summarizes briefly the plugin's runtime configuration:
 - **`nixlLibfabricBackendH`** - Request handle for tracking multi-request transfer completion with atomic counters
 - **`nixlLibfabricConnection`** - Multi-rail connection metadata for remote agents with state management
 
+## Wire Protocol and Scaling Limits
+
+Two agents using this plugin must agree byte-for-byte on how operations are described on the wire:
+the 32-bit immediate data layout, the handshake body, and the notification framing. See the data layout in
+ `src/utils/libfabric/libfabric_common.h`, and `NIXL_LIBFABRIC_WIRE_VERSION`.
+
+What that costs a deployment:
+
+- A single agent can address at most **4096 peers** (`NIXL_LIBFABRIC_MAX_AGENTS`), itself included,
+  counted over the agent's lifetime rather than concurrently. Exceeding the cap fails the connection
+  with `NIXL_ERR_NOT_SUPPORTED` instead of aliasing two peers onto one index. This matters for large
+  disaggregated inference deployments, where one prefill or decode worker may connect to every worker
+  in the opposite pool.
+- Agents built with different wire versions cannot interoperate and refuse each other at handshake,
+  so a rollout that changes the layout has to replace every agent in a pool, not a subset.
+- The provider (e.g. EFA) must offer at least 4 bytes of remote CQ data or rail initialization fails.
+
 ## Troubleshooting
 
 ### Debug Information
@@ -145,5 +162,21 @@ fi_info -l
 # For checking specific devices (e.g. EFA as an example)
 fi_info -p efa
 ```
+
+**`Cannot add agent ...: agent index N does not fit the 12-bit agent index`:**
+
+The agent has exhausted the peer cap described under
+[Wire Protocol and Scaling Limits](#wire-protocol-and-scaling-limits). Indices are retired rather
+than recycled, so the cap is lifetime-scoped: disconnecting a peer does not free its index, and an
+agent that churns through short-lived peers can hit the limit while connected to far fewer. Restart
+or recreate the agent to clear the table, as nothing releases an index in the running process. To
+keep the next lifetime from hitting the cap again, reduce the number of peers a single agent
+connects to, or shard the deployment so each agent talks to a subset of the pool.
+
+**`Rejecting handshake from a peer on wire version N`:**
+
+The two agents are running libfabric backends with incompatible wire protocols, which happens during
+a partial rollout. Upgrade every agent in the pool to the same NIXL version; mismatched agents cannot
+interoperate at all, for the reason given at `NIXL_LIBFABRIC_WIRE_VERSION`.
 
 For additional support, check the NIXL documentation and Libfabric provider-specific guides.
