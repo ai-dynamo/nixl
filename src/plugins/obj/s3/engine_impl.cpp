@@ -34,9 +34,13 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
             local_agent,
             remote_agent);
 
-    if (local.getType() != DRAM_SEG) {
-        NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d",
-                                      local.getType());
+    // VRAM_SEG is a valid local type only for the accelerated (S3-over-RDMA)
+    // engine, which advertises it via getSupportedMems() and pins the buffer in
+    // registerMem(); a plain HTTP engine never registers a VRAM buffer, so it
+    // can never reach postXfer with one.
+    if (local.getType() != DRAM_SEG && local.getType() != VRAM_SEG) {
+        NIXL_ERROR << absl::StrFormat(
+            "Error: Local memory type must be DRAM_SEG or VRAM_SEG, got %d", local.getType());
         return false;
     }
 

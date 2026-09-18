@@ -29,21 +29,18 @@
 
 namespace {
 
-std::string
-getAccelType(const nixl_b_params_t *custom_params) {
-    if (!custom_params) {
-        return "";
-    }
-    auto it = custom_params->find("type");
-    return (it != custom_params->end()) ? it->second : "";
-}
-
 template<typename... Args>
 std::unique_ptr<nixlObjEngineImpl>
-createAccelEngine(const nixl_b_params_t *custom_params, Args &&...args) {
+createAccelEngine(nixl_b_params_t *custom_params, Args &&...args) {
+    // A missing `type` selects the standard, protocol-compliant engine, which
+    // registers under "s3". Normalize to "s3" rather than looking up "" so
+    // resolution stays deterministic regardless of static-init order.
+    std::string type = getAccelType(custom_params);
+    if (type.empty()) {
+        type = "s3";
+    }
     try {
-        return objAccelEngineRegistry::instance().create(getAccelType(custom_params),
-                                                         std::forward<Args>(args)...);
+        return objAccelEngineRegistry::instance().create(type, std::forward<Args>(args)...);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "Failed to create accelerated engine: " << e.what();
