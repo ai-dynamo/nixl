@@ -36,7 +36,7 @@ Each process should write to a distinct file. If multiple processes use the same
 |--------|------------|
 | `%h` | Host name |
 | `%p` | Process id |
-| `%t` | A per-process run marker, in nanoseconds since the Unix epoch, sampled once at startup |
+| `%t` | Process startup time in nanoseconds since the Unix epoch. |
 | `%%` | A literal `%` |
 
 Unknown escapes and a trailing `%` are rejected so future versions can add escapes without silently changing the meaning of an existing path. Use `%%` wherever the path needs a literal percent.
