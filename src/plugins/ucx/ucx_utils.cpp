@@ -31,6 +31,10 @@
 #include "config.h"
 #include "serdes/serdes.h"
 
+#ifndef UCS_BIT_GET
+#define UCS_BIT_GET(_value, _i) (!!((_value) & UCS_BIT(_i)))
+#endif
+
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
     nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
