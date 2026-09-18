@@ -88,18 +88,39 @@ if enabled_plugins.get('HF3FS')
     endif
 endif
 
-infinia_lib_path = get_option('infinia_path') + '/lib'
-infinia_lib_file = 'red_client'
+infinia_path = get_option('infinia_path')
+infinia_inc_path = infinia_path + '/include'
+infinia_lib_path = infinia_path + '/lib'
+infinia_lib_file = 'red_async'
 infinia_lib_found = cc.find_library(infinia_lib_file, dirs: [infinia_lib_path], required: false)
+
+# Infinia SDK 2.5+ symbols required by this plugin.
+infinia_symbol_found = cpp.compiles('''
+    #include <red/red_async.hpp>
+    int main() {
+        (void)red_async::RED_ASYNC_DEFAULT_MAX_RETRIES;
+        (void)red_async::RED_ASYNC_DEFAULT_BATCH_SIZE;
+        (void)red_async::RED_ASYNC_OP_CACHE_HEAD;
+        (void)red_async::RED_ASYNC_OP_CACHE_GET;
+        (void)red_async::RED_ASYNC_OP_CACHE_PUT;
+        return 0;
+    }
+    ''',
+    args: ['-I' + infinia_inc_path],
+    name: 'Infinia SDK 2.5 symbols (tests)')
+
 disable_infinia_backend = get_option('disable_infinia_backend')
+infinia_sdk_ok = infinia_symbol_found and infinia_lib_found.found()
 if enabled_plugins.get('INFINIA')
-    if (disable_infinia_backend or not infinia_lib_found.found()) and is_explicit_enable
+    if (disable_infinia_backend or not infinia_sdk_ok) and is_explicit_enable
         if disable_infinia_backend
             error('INFINIA plugin tests requested but Infinia backend is disabled')
+        elif not infinia_lib_found.found()
+            error('INFINIA plugin tests requested but red_async library not found')
         else
-            error('INFINIA plugin tests requested but red_client library not found')
+            error('INFINIA plugin tests requested but Infinia SDK is too old: needs release 2.5.0 or above')
         endif
-    elif not disable_infinia_backend and infinia_lib_found.found()
+    elif not disable_infinia_backend and infinia_sdk_ok
         subdir('infinia')
     endif
 endif
