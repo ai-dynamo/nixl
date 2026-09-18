@@ -13,21 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-util_unit_test_sources = [
-    'str_util_test.cpp',
-    'uuid_v4_test.cpp',
-]
-# The device proxy is built only with CUDA; its tests run on the host but link its library.
-if is_variable('device_proxy_interface')
-    util_unit_test_sources += [
-        'proxy_memview_registry.cpp',
-        'proxy_registry_lifetime.cpp',
-        'proxy_runtime.cpp',
-    ]
-endif
-
-util_unit_test_dep = declare_dependency(
-    sources: util_unit_test_sources,
-    include_directories: [nixl_inc_dirs, gtest_inc_dirs, utils_inc_dirs],
-    dependencies: [nixl_common_dep],
+device_allocator_unit_test_dep = declare_dependency(
+    sources: ['device_allocator.cpp'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
+    dependencies: [nixl_common_dep, device_utils_interface, gpu_dependencies],
 )
