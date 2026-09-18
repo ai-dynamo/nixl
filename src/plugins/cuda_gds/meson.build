@@ -45,9 +45,6 @@ gds_engine_sources = [
     'gds_backend.cpp', 'gds_backend.h',
     'gds_mt_engine.cpp', 'gds_mt_engine.h',
 ]
-if enabled_plugins.get('GDS')
-    gds_engine_sources += ['gds_batch_engine.cpp', 'gds_batch_engine.h']
-endif
 
 gds_engine_lib = static_library('gds_engine',
     gds_engine_sources,
@@ -63,19 +60,21 @@ gds_engine_dep = declare_dependency(
 
 # "GDS" backend name entry point (batch by default, MT when mode=mt).
 if enabled_plugins.get('GDS')
-    gds_sources = ['gds_plugin.cpp']
-    gds_deps = [gds_engine_dep]
+    gds_sources = [
+        'gds_plugin.cpp',
+        'gds_batch_engine.cpp', 'gds_batch_engine.h',
+    ]
     if 'GDS' in static_plugins
         gds_backend_lib = static_library('GDS',
             gds_sources,
-            dependencies: gds_deps,
+            dependencies: gds_engine_dep,
             include_directories: gds_incs,
             install: false,
             name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
     else
         gds_backend_lib = shared_library('GDS',
             gds_sources,
-            dependencies: gds_deps,
+            dependencies: gds_engine_dep,
             include_directories: gds_incs,
             install: true,
             cpp_args: ['-fPIC'],
@@ -97,18 +96,17 @@ endif
 # "GDS_MT" backend name entry point (per-request TaskFlow strategy).
 if enabled_plugins.get('GDS_MT')
     gds_mt_sources = ['gds_mt_plugin.cpp']
-    gds_mt_deps = [gds_engine_dep]
     if 'GDS_MT' in static_plugins
         gds_mt_backend_lib = static_library('GDS_MT',
             gds_mt_sources,
-            dependencies: gds_mt_deps,
+            dependencies: gds_engine_dep,
             include_directories: gds_incs,
             install: false,
             name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
     else
         gds_mt_backend_lib = shared_library('GDS_MT',
             gds_mt_sources,
-            dependencies: gds_mt_deps,
+            dependencies: gds_engine_dep,
             include_directories: gds_incs,
             install: true,
             cpp_args: ['-fPIC'],

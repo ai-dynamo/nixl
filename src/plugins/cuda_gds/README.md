@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,8 @@ and transfer validation):
   multi-threaded transfers (`nixlGdsMtEngine`) with the `mode` parameter.
 - `GDS_MT`: multi-threaded transfers via TaskFlow (`nixlGdsMtEngine`). TaskFlow
   issues one `cuFileRead` or `cuFileWrite` per prepared request. This name
-  remains available for compatibility.
+  remains temporarily available for compatibility and will be removed in a
+  future update. New integrations should use `GDS` with `mode=mt`.
 
 The two backends use the same cuFile driver and therefore cannot be created
 simultaneously within a single agent.

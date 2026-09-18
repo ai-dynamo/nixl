@@ -32,13 +32,16 @@ struct fileSegData {
     std::shared_ptr<gdsFileHandle> handle;
     uint64_t dev_id;
 
-    fileSegData(std::shared_ptr<gdsFileHandle> h, uint64_t id) : handle(std::move(h)), dev_id(id) {}
+    fileSegData(std::shared_ptr<gdsFileHandle> file_handle, uint64_t device_id)
+        : handle(std::move(file_handle)),
+          dev_id(device_id) {}
 };
 
 struct memSegData {
     gdsMemBuf buf;
 
-    memSegData(void *addr, size_t size, int flags) : buf(addr, size, flags) {}
+    memSegData(void *address, size_t buffer_size, int registration_flags)
+        : buf(address, buffer_size, registration_flags) {}
 };
 
 class nixlGdsMetadata : public nixlBackendMD {
