@@ -885,8 +885,8 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
         total_bytes += local_desc.len;
     }
 
-    NIXL_DEBUG << "merged " << desc_count << " indices into " << handle->initiatorDescs.descCount()
-               << " descriptors";
+    NIXL_DEBUG << "makeXfer bytes: " << total_bytes
+               << ", descs: " << handle->initiatorDescs.descCount() << ", indices: " << desc_count;
 
     handle->engine = backend;
     handle->notifMsg = opt_args.notifMsg;
