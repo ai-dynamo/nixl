@@ -76,9 +76,12 @@ class nixlGdsBackendReqH : public nixlBackendReqH {
         std::vector<GdsTransferRequestH> request_list;
         std::vector<nixlGdsIOBatch*> batch_io_list;
         bool needs_prep;
+        // First failure seen by checkXfer, reported once every batch has drained
+        nixl_status_t failure;
 
         nixlGdsBackendReqH() {
             needs_prep = true;
+            failure = NIXL_SUCCESS;
         }
         ~nixlGdsBackendReqH() {
             for (auto* batch : batch_io_list) {
