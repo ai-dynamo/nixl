@@ -59,6 +59,16 @@ public:
         CUDA_CHECK(cudaEventRecord(event, stream));
     }
 
+    [[nodiscard]] bool
+    is_ready() const {
+        const cudaError_t status = cudaEventQuery(event);
+        if (status == cudaErrorNotReady) {
+            return false;
+        }
+        CUDA_CHECK(status);
+        return true;
+    }
+
 private:
     static cudaEvent_t
     create() {

@@ -178,11 +178,9 @@ class Buffer:
         Returns:
             stream: the communication stream.
         """
-        ts: torch.Stream = self.runtime.get_comm_stream()
-        return torch.cuda.Stream(
-            stream_id=ts.stream_id,
-            device_index=ts.device_index,
-            device_type=ts.device_type,
+        stream_ptr: int = self.runtime.get_comm_stream()
+        return torch.cuda.ExternalStream(
+            stream_ptr, device=self.runtime.get_local_device_id()
         )
 
     def get_local_buffer_tensor(
