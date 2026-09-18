@@ -154,6 +154,9 @@ steps:
       dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test:${BUILD_NUMBER}"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       containerName: "nixl-ci-${BUILD_NUMBER}"
+      slurmEnv: [
+        'NIXL_CI_MIN_ACTIVE_IB_PORTS=4'
+      ]
 
   - name: Run DL Rust tests
     containerSelector: "{name: 'build_helper_dl'}"
@@ -187,7 +190,8 @@ steps:
       credentialsId: "${SSH_CREDENTIALS_ID}"
       containerName: "nixl-ci-${BUILD_NUMBER}"
       slurmEnv: [
-        'UCX_IB_REG_METHODS=rcache'
+        'UCX_IB_REG_METHODS=rcache',
+        'NIXL_CI_MIN_ACTIVE_IB_PORTS=4'
       ]
 
   - name: Run DL Nixlbench tests
