@@ -151,7 +151,7 @@ bool
 initLogFile();
 
 /**
- * @brief Unregisters and destroys the NIXL_LOG_FILE sink. Safe to call with no
+ * @brief Unregisters and destroys the NIXL_LOG_FILE sink; idempotent.
  *        sink registered, and more than once.
  *
  * Runs at library unload, which on glibc is after static destructors, so late
