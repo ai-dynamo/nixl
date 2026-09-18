@@ -145,7 +145,7 @@ namespace nixl {
  * NIXL_LOG_FILE, while a sink is registered.
  *
  * @return true if a sink is registered on return, including when one already
- *         was. An open failure is logged and returns false; it never throws.
+ *         was. An open failure is logged and returns false.
  */
 bool
 initLogFile();

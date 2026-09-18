@@ -11,7 +11,7 @@ The file is a supplement rather than a redirect: stderr keeps receiving exactly 
 
 ## Verbosity
 
-`NIXL_LOG_LEVEL` accepts `ERROR`, `WARN`, `INFO`, `DEBUG` or `TRACE`, defaulting to `WARN`. The log level applies to both stderr and the log file when enabled.
+`NIXL_LOG_LEVEL` accepts `ERROR`, `WARN`, `INFO`, `DEBUG` or `TRACE`, defaulting to `WARN`. The log level applies to both stderr and, when it is enabled, the log file.
 
 ## Writing to a file
 
@@ -47,7 +47,7 @@ This lets one setting serve every worker of a run:
 export NIXL_LOG_FILE=/var/log/nixl/run_%h_%p_%t.log
 ```
 
-Include `%t` if the same command may be run more than once. Process ids are recycled, and because the file is appended to, a restart handed an earlier run's id would otherwise continue that run's file as though the two were one process. `%t` is at nanosecond resolution because a rapid restart inside a PID namespace can be handed the same id within the same second.
+Include `%t` if the same command may be run more than once. Process ids are recycled, and because the file is appended to, a restart handed an earlier run's id would otherwise continue that run's file as though the two were one process. `%t` uses nanosecond resolution.
 
 ### Retention
 
