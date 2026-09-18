@@ -863,7 +863,10 @@ nixlPluginManager::registerBuiltinPlugins() {
 #endif
 
 #ifdef STATIC_PLUGIN_IBM_SCALE
-    extern nixlBackendPlugin *createStaticIBMScalePlugin();
+    // clang-format off
+    extern nixlBackendPlugin *
+    createStaticIBMScalePlugin();
+    // clang-format on
     registerBackendStaticPlugin("IBM_SCALE", createStaticIBMScalePlugin);
 #endif
 
