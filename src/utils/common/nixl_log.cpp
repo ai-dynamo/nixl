@@ -212,7 +212,6 @@ public:
         }
 
         if (limit_ != 0) {
-            // It cannot fit in an empty file. Stderr still receives the record.
             if (payload.size() > limit_) {
                 return;
             }
