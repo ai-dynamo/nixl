@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -208,7 +208,6 @@ sharedRingBuffer<T>::openCyclicBuffer(const std::string &name, int version) {
     void *header_ptr =
         mmap(nullptr, sizeof(bufferHeader), PROT_READ | PROT_WRITE, MAP_SHARED, *file_fd, 0);
     if (header_ptr == MAP_FAILED) {
-        unlink(name.c_str());
         NIXL_ERROR << "Failed to map header memory: " << name
                    << " with error: " << strerror(errno);
         throw std::runtime_error("Failed to map header memory");
@@ -220,7 +219,6 @@ sharedRingBuffer<T>::openCyclicBuffer(const std::string &name, int version) {
     int current_version = temp_header->version.load(std::memory_order_acquire);
     if (current_version != version) {
         munmap(temp_header, sizeof(bufferHeader));
-        unlink(name.c_str());
         NIXL_ERROR << "Version mismatch: expected " + std::to_string(version) + ", got " +
                 std::to_string(current_version);
         throw std::runtime_error("Version mismatch: expected " + std::to_string(version) +
