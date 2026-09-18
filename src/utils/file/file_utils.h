@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,15 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef __FILE_UTILS_H
-#define __FILE_UTILS_H
+#ifndef NIXL_SRC_UTILS_FILE_FILE_UTILS_H
+#define NIXL_SRC_UTILS_FILE_FILE_UTILS_H
+
+#include "nixl_types.h"
 
 #include <string>
-#include <string_view>
 #include <vector>
-#include <optional>
-#include <sys/stat.h>
-#include "nixl_types.h"
 
 /**
  * @brief File utilities for NIXL file backends
@@ -35,18 +33,28 @@ namespace nixl {
  * @param filename The filename to query (can be prefixed)
  * @return nixl_query_resp_t containing file info if accessible, std::nullopt otherwise
  */
-nixl_query_resp_t
-queryFileInfo(std::string_view filename);
+[[nodiscard]] nixl_query_resp_t
+queryFileInfo(const std::string &filename);
 
 /**
  * @brief Query file information for multiple files
- * @param filenames Vector of filenames to query (can be prefixed)
- * @param resp Output response vector
+ * @param descs Descriptors from which to take the filenames
+ * @param resp Output response vector, always modified/cleared
  * @return NIXL_SUCCESS on success, error code otherwise
  */
-nixl_status_t
-queryFileInfoList(const std::vector<std::string> &filenames, std::vector<nixl_query_resp_t> &resp);
+template<typename DescList>
+[[nodiscard]] nixl_status_t
+queryFileInfoFromDescList(const DescList &descs, std::vector<nixl_query_resp_t> &resp) {
+    resp.clear();
+    resp.reserve(descs.descCount());
+
+    for (const auto &desc : descs) {
+        resp.emplace_back(queryFileInfo(desc.metaInfo));
+    }
+
+    return NIXL_SUCCESS;
+}
 
 } // namespace nixl
 
-#endif // __FILE_UTILS_H
+#endif
