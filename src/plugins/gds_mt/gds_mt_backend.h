@@ -21,12 +21,38 @@
 #include <nixl.h>
 #include <nixl_types.h>
 #include <backend/backend_engine.h>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <cufile.h>
 #include "gds_mt_utils.h"
 #include "taskflow/core/executor.hpp"
+
+/**
+ * @brief Resolves a transfer descriptor to its registered base and offset.
+ */
+struct gdsMtResolvedBuffer {
+    void *devPtrBase;
+    size_t devPtrOffset;
+};
+
+/**
+ * @brief Validates a descriptor and calculates its offset from a registered base.
+ * @param registered_base Base address passed to cuFileBufRegister.
+ * @param registered_size Size passed to cuFileBufRegister.
+ * @param descriptor_addr Transfer descriptor address.
+ * @param descriptor_size Transfer descriptor size.
+ * @param resolved Resolved registered base and descriptor offset.
+ * @return NIXL_SUCCESS on success, or NIXL_ERR_INVALID_PARAM when out of range.
+ */
+nixl_status_t
+gdsMtResolveRegisteredBuffer(void *registered_base,
+                            size_t registered_size,
+                            uintptr_t descriptor_addr,
+                            size_t descriptor_size,
+                            gdsMtResolvedBuffer &resolved);
 
 class nixlGdsMtEngine : public nixlBackendEngine {
 public:
