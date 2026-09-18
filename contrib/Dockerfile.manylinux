@@ -432,9 +432,35 @@ ARG BUILD_TYPE="release"
 ARG BUILD_NIXL_EP="true"
 ARG UCX_SONAME_SUFFIX=""
 ARG NPROC=1
+ARG UCX_SPCX_PLUGIN_VERSION=""
+ARG INFINIA_PLUGIN_VERSION=""
 
 COPY . /workspace/nixl
 WORKDIR /workspace/nixl
+
+RUN { \
+        echo ""; \
+        echo "## Build info"; \
+        echo ""; \
+        echo '```text'; \
+        { \
+            echo "NIXL commit: $(git rev-parse HEAD 2>/dev/null || echo unavailable)"; \
+            if command -v ucx_info >/dev/null 2>&1; then \
+                ucx_info -v | sed -e 's/^# //' -e '/^Library path:/d' \
+                                  -e 's/^/UCX /' \
+                                  -e 's/^\(UCX Configured with:\) */\1\n/'; \
+            else \
+                echo "UCX: ucx_info unavailable"; \
+            fi; \
+            if [ -n "$UCX_SPCX_PLUGIN_VERSION" ]; then \
+                echo "SPCX Plugin: $UCX_SPCX_PLUGIN_VERSION"; \
+            fi; \
+            if [ -n "$INFINIA_PLUGIN_VERSION" ]; then \
+                echo "Infinia Plugin: $INFINIA_PLUGIN_VERSION"; \
+            fi; \
+        } | fold -s -w 96 | sed -e 's/[[:space:]]*$//'; \
+        echo '```'; \
+    } >> README.md
 
 # Opt-in: place the pre-staged DDN Infinia libs (from infinia-libs/ in the build
 # context, populated by build-container.sh --build-infinia) into /opt/ddn/red so
