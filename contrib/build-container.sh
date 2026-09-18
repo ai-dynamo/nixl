@@ -15,9 +15,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+set -e
+
 SOURCE_DIR=$(dirname "$(readlink -f "$0")")
 BUILD_CONTEXT=$(dirname "$(readlink -f "$SOURCE_DIR")")
 DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
+WEBRTC_DOCKER_FILE="${SOURCE_DIR}/Dockerfile.webrtc"
 commit_id=$(git rev-parse --short HEAD)
 
 # Get latest TAG and add COMMIT_ID for dev
@@ -60,6 +63,10 @@ APT_MIRROR=""
 BUILD_UCX_SPCX_PLUGIN="false"
 UCX_SPCX_PLUGIN_REF="v0.3.x"
 BUILD_OPTIONS_FILE=""
+
+DISABLE_RXDM_DXS="false"
+FASTRAK_RXDM_URI=""
+DXS_CLIENT_URI=""
 
 get_options() {
     while :; do
@@ -251,6 +258,33 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --webrtc-tag)
+            if [ "$2" ]; then
+                WEBRTC_TAG="--tag $2"
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --disable-rxdm-dxs)
+            DISABLE_RXDM_DXS=true
+            ;;
+        --rxdm-uri)
+            if [ "$2" ]; then
+                FASTRAK_RXDM_URI=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --dxs-uri)
+            if [ "$2" ]; then
+                DXS_CLIENT_URI=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --)
             shift
             break
@@ -278,6 +312,9 @@ get_options() {
 
     if [ -z "$TAG" ]; then
         TAG="--tag nixl:${VERSION}"
+    fi
+    if [ -z "$WEBRTC_TAG" ]; then
+        WEBRTC_TAG="--tag webrtc:26.08-cuda13.4-devel-ubuntu24.04"
     fi
 }
 
@@ -317,6 +354,9 @@ show_build_options() {
         echo "UCX spcx plugin: Disabled"
     fi
     echo "Build Type: ${BUILD_TYPE}"
+    echo "RxDM/DXS disabled: ${DISABLE_RXDM_DXS}"
+    echo "RxDM URI: ${FASTRAK_RXDM_URI}"
+    echo "DXS URI: ${DXS_CLIENT_URI}"
 }
 
 # UCX_REF is often a floating branch/tag (e.g. v1.22.x), so the same ref can
@@ -391,6 +431,9 @@ show_help() {
     echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
     echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
     echo "  [--build-options-file path to write the resolved build options as KEY=VALUE lines]"
+    echo "  [--disable-rxdm-dxs to stub out RxDM/DXS and disable this capability in GPUDirect-TCPXO]"
+    echo "  [--rxdm-uri URI to fastrak-rxdm]"
+    echo "  [--dxs-uri URI to dxs-client]"
     exit 0
 }
 
@@ -430,6 +473,9 @@ BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 BUILD_ARGS+=" --build-arg BUILD_INFINIA=$BUILD_INFINIA"
 BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
 BUILD_ARGS+=" --build-arg BUILD_UCX_SPCX_PLUGIN=$BUILD_UCX_SPCX_PLUGIN"
+BUILD_ARGS+=" --build-arg DISABLE_RXDM_DXS=$DISABLE_RXDM_DXS"
+WEBRTC_BUILD_ARGS+="${BASE_IMAGE:+ --build-arg BASE_IMAGE=$BASE_IMAGE}"
+WEBRTC_BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
 
 # The plugin source is fetched on the host and placed inside the build
 # context (ucx-spcx-plugin-src/), where the Dockerfile's plugin RUN builds
@@ -507,4 +553,16 @@ fi
 show_build_options
 [ -n "$BUILD_OPTIONS_FILE" ] && write_build_options_file
 
+if [[ "$FASTRAK_RXDM_URI" == "" || "$DXS_CLIENT_URI" == "" ]]; then
+  "${SOURCE_DIR}/prepare_source.sh" -p -n
+else
+  "${SOURCE_DIR}/prepare_source.sh" -p -r "$FASTRAK_RXDM_URI" -d "$DXS_CLIENT_URI"
+fi
+
+echo "Building WebRTC tagged: $WEBRTC_TAG"
+docker build --platform linux/$ARCH -f $WEBRTC_DOCKER_FILE $WEBRTC_BUILD_ARGS $WEBRTC_TAG $NO_CACHE $BUILD_CONTEXT
 docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT
+
+# TODO: make this a trap that plays nicely with the other traps
+"${SOURCE_DIR}/prepare_source.sh" -c
+

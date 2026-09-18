@@ -1,0 +1,214 @@
+module(
+    name = "rxdm",
+    version = "1.0.0",
+    repo_name = "rxdm",
+)
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "ortools",
+    sha256 = "6395a00a97ff30af878ee8d7fd5ad0ab1c7844f7219182c6d71acbee1b5f3026",
+    strip_prefix = "or-tools-9.15",
+    url = "https://github.com/google/or-tools/archive/refs/tags/v9.15.tar.gz",
+)
+
+http_archive(
+    name = "webrtc_build",
+    build_file_content = """
+# Group the sources of the library so that CMake rule have access to it
+filegroup(
+    name = "all_srcs",
+    srcs = glob(["*.sh"], exclude = ["build/**"]),
+    visibility = ["//visibility:public"],
+)
+    """,
+    patch_strip = 1,
+    patches = ["//patches:webrtc.patch"],
+    sha256 = "7c3c008dcd90cc338fd3b408c740b9a547b75f2b5464b86dddc55a2f3d887f7e",
+    strip_prefix = "webrtcbuilds-4bc7a6b7006e2bbe514aac6570c2b85c331e08e9",
+    url = "https://github.com/vsimon/webrtcbuilds/archive/4bc7a6b.zip",
+)
+
+http_archive(
+    name = "json",
+    add_prefix = "json",
+    sha256 = "4b92eb0c06d10683f7447ce9406cb97cd4b453be18d7279320f7b2f025c10187",
+    strip_prefix = "json-3.12.0",
+    url = "https://github.com/nlohmann/json/archive/refs/tags/v3.12.0.tar.gz",
+)
+
+http_archive(
+    name = "com_google_tensorflow_serving",
+    patch_strip = 1,
+    patches = ["//patches:tf_serving.patch"],
+    sha256 = "82ca04a9debf9f13985ecb7e29edf1ad0b68473d14d37e503f9f021b45850257",
+    strip_prefix = "serving-2.19.1",
+    url = "https://github.com/tensorflow/serving/archive/refs/tags/2.19.1.zip",
+)
+
+http_archive(
+    name = "ng-log",
+    sha256 = "7c5f0ee8dd44aa0935c9a9c5061a06d64d2fa1a08d5b1d6b5444ec7323d70c7a",
+    strip_prefix = "ng-log-0.8.2",
+    url = "https://github.com/ng-log/ng-log/archive/refs/tags/v0.8.2.zip",
+)
+
+http_archive(
+    name = "com_github_libevent_libevent",
+    build_file = "@com_google_tensorflow_serving//third_party/libevent:BUILD",
+    sha256 = "8836ad722ab211de41cb82fe098911986604f6286f67d10dfb2b6787bf418f49",
+    strip_prefix = "libevent-release-2.1.12-stable",
+    url = "https://github.com/libevent/libevent/archive/release-2.1.12-stable.zip",
+)
+
+http_archive(
+    name = "ecclesia",
+    sha256 = "2dbbb6894202932d08da2812729c7a6f2b2e279ac31a6ac2c8b7be7ca149d0b2",
+    strip_prefix = "ecclesia-machine-management-152808cf1a95acedf62892f8504079066c91a327",
+    url = "https://github.com/google/ecclesia-machine-management/archive/152808c.zip",
+)
+
+bazel_dep(
+    name = "rules_cc",
+    version = "0.2.16",
+)
+
+bazel_dep(
+    name = "rules_license",
+    version = "1.0.0",
+)
+
+bazel_dep(
+    name = "rules_python",
+    version = "1.8.3",
+)
+
+bazel_dep(
+    name = "abseil-cpp",
+    version = "20260107.0",
+    repo_name = "com_google_absl",
+)
+
+bazel_dep(
+    name = "gflags",
+    version = "2.2.2",
+)
+
+bazel_dep(
+    name = "googleapis",
+    version = "0.0.0-20260130-c0fcb356",
+)
+
+bazel_dep(
+    name = "googleapis-cc",
+    version = "1.0.0",
+)
+
+bazel_dep(
+    name = "platforms",
+    version = "1.0.0",
+)
+
+bazel_dep(
+    name = "protobuf",
+    version = "33.4",
+)
+
+bazel_dep(
+    name = "rules_cuda",
+    version = "0.2.5",
+)
+
+bazel_dep(
+    name = "zlib",
+    version = "1.3.1.bcr.8",
+)
+
+bazel_dep(
+    name = "grpc",
+    version = "1.76.0",
+)
+
+bazel_dep(
+    name = "boost.asio",
+    version = "1.89.0.bcr.2",
+)
+single_version_override(
+    module_name = "protobuf",
+    patch_strip = 1,
+    patches = ["//patches:protobuf_undefined.patch"],
+)
+single_version_override(
+    module_name = "grpc",
+    patch_strip = 1,
+    patches = ["//patches:grpc.patch"],
+)
+
+cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
+
+cuda.local_toolchain(
+    name = "local_cuda",
+    toolkit_path = "",
+)
+
+use_repo(cuda, "local_cuda")
+
+new_local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "new_local_repository")
+
+new_local_repository(
+    name = "cuda_headers",
+    build_file = "third_party/cuda_headers/BUILD",
+    path = "/usr/local/cuda",
+)
+
+new_local_repository(
+    name = "webrtc",
+    build_file_content = """
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "webrtc",
+    srcs = ["libwebrtc.a"],
+    hdrs = glob(
+        ["include/**/*.h"],
+        allow_empty = True,
+        exclude = ["include/third_party/**/*.h"],
+    ),
+    includes = ["include"],
+    defines = [
+        "WEBRTC_POSIX",
+        "WEBRTC_LINUX",
+        "WEBRTC_ENABLE_SYMBOL_EXPORT",
+    ],
+    linkopts = [
+        "-ldl",
+        "-pthread",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "webrtc_dbg",
+    srcs = ["libwebrtc_debug.a"],
+    hdrs = glob(
+        ["include/**/*.h"],
+        allow_empty = True,
+        exclude = ["include/third_party/**/*.h"],
+    ),
+    includes = ["include"],
+    defines = [
+        "WEBRTC_POSIX",
+        "WEBRTC_LINUX",
+    ],
+    linkopts = [
+        "-ldl",
+        "-pthread",
+    ],
+    alwayslink = 1,
+)
+""",
+    path = "/usr/local/webrtc",
+)
