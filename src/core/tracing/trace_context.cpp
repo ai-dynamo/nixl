@@ -21,6 +21,9 @@
 
 namespace {
 constexpr std::uint8_t supported_trace_flags = 0x03;
+constexpr std::size_t wire_flags_offset = 1;
+constexpr std::size_t wire_trace_id_offset = 2;
+constexpr std::size_t wire_span_id_offset = 18;
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -148,6 +151,51 @@ nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
     result.push_back('-');
     appendByte(result, context.flags & supported_trace_flags);
     return result;
+}
+
+std::optional<std::size_t>
+nixl::trace::encodeTraceContext(const nixl::trace::TraceContext &context,
+                                std::span<std::uint8_t> buffer) {
+    if (!context.valid() || buffer.size() < nixl::trace::traceContextWireSize) {
+        return std::nullopt;
+    }
+
+    buffer[0] = nixl::trace::traceContextWireVersion;
+    buffer[wire_flags_offset] = context.flags & supported_trace_flags;
+    std::copy(context.traceId.begin(),
+              context.traceId.end(),
+              buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset));
+    std::copy(context.spanId.begin(),
+              context.spanId.end(),
+              buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset));
+    return nixl::trace::traceContextWireSize;
+}
+
+nixl::trace::WireDecodeResult
+nixl::trace::decodeTraceContext(std::span<const std::uint8_t> buffer,
+                                nixl::trace::TraceContext &context) {
+    if (buffer.empty()) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+    if (buffer[0] != nixl::trace::traceContextWireVersion) {
+        return nixl::trace::WireDecodeResult::UnknownVersion;
+    }
+    if (buffer.size() != nixl::trace::traceContextWireSize) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+
+    context.flags = buffer[wire_flags_offset] & supported_trace_flags;
+    std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset),
+                context.traceId.size(),
+                context.traceId.begin());
+    std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset),
+                context.spanId.size(),
+                context.spanId.begin());
+    if (!context.valid()) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+
+    return nixl::trace::WireDecodeResult::Ok;
 }
 
 nixl::trace::TraceContext
