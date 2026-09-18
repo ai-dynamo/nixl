@@ -25,6 +25,8 @@ These variables control fundamental NIXL behavior across all backends.
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `NIXL_LOG_LEVEL` | String | `WARN` | Controls log verbosity. Values: `ERROR`, `WARN`, `INFO`, `DEBUG`, `TRACE`. |
+| `NIXL_LOG_FILE` | String (path) | Not set (file logging disabled) | Also writes log records to this file, in addition to stderr. The path supports [per-process filename escapes](/nixl/user-guide/logging.md#one-file-per-process). |
+| `NIXL_LOG_FILE_SIZE` | Size in bytes, optionally suffixed `K`, `M` or `G` | Not set (no limit) | Bounds `NIXL_LOG_FILE`, keeping the newest records plus one rotated generation. |
 | `NIXL_PLUGIN_DIR` | String (path) | System default | Custom directory to search for backend plug-in shared libraries. |
 | `NIXL_DISABLE_CUDA_ADDR_WA` | Boolean (presence) | Not set (workaround enabled) | Disables CUDA address workaround in the Libfabric backend. Set this variable to any value to disable the workaround. |
 
