@@ -880,8 +880,8 @@ setup_release_test_buffers(const std::string &test_files_dir_path_abs_path,
     return 0;
 }
 
-// Regression test for issue #1955: releasing a NIXL_IN_PROG transfer must be refused, not
-// free the request while queue entries still hold it as their completion callback context.
+// Regression test: releasing a NIXL_IN_PROG transfer must be refused, not free the request
+// while queue entries still hold it as their completion callback context.
 // Determinism: no progress thread, and 256 descriptors against the 64-entry poll cap keep
 // the transfer active across the release.
 int
@@ -1003,10 +1003,11 @@ test_posix_release_active(const std::string &test_files_dir_path_abs_path, bool 
 
     print_segment_title(phase_title("Releasing the drained transfer"));
 
-    // Poll the refused transfer to completion. Ahead of #2244 the stored release error makes
-    // this loop exit on the first call; the drain's polls above reap the completions instead.
-    // Once #2244 polls for real, a partly canceled transfer ends with NIXL_ERR_BACKEND, so
-    // the loop only requires the status to leave NIXL_IN_PROG.
+    // Poll the refused transfer to completion. As long as the agent reports the stored
+    // release error without polling the backend, this loop exits on the first call; the
+    // drain's polls above reap the completions instead. If the agent polls the backend for
+    // real, a partly canceled transfer ends with NIXL_ERR_BACKEND, so the loop only
+    // requires the status to leave NIXL_IN_PROG.
     do {
         status = agent.getXferStatus(treq);
     } while (status == NIXL_IN_PROG);
