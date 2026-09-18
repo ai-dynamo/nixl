@@ -19,11 +19,15 @@
 #define POSIX_IO_QUEUE_H
 
 #include <stdint.h>
+#include <sys/types.h>
 #include <list>
 #include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 #include <functional>
 #include "backend_aux.h"
+#include "file/file_path_mode.h"
 
 using nixlPosixIOQueueDoneCb = std::function<void(void *ctx, uint32_t data_size, int error)>;
 using nixlPosixIOQueueCancelDoneCb = std::function<void(void *ctx)>;
@@ -32,7 +36,8 @@ class nixlPosixIOQueue {
 public:
     using nixlPosixIOQueueCreateFn =
         std::function<std::unique_ptr<nixlPosixIOQueue>(uint32_t ios_pool_size,
-                                                        uint32_t kernel_queue_size)>;
+                                                        uint32_t kernel_queue_size,
+                                                        bool open_synchronous)>;
 
     nixlPosixIOQueue(uint32_t ios_pool_size, uint32_t kernel_queue_size)
         : ios_pool_size_(normalizedIOSPoolSize(ios_pool_size)),
@@ -40,14 +45,31 @@ public:
 
     virtual ~nixlPosixIOQueue() {}
 
+    /**
+     * @brief Register a file identifier for subsequent I/O.
+     * @param dev_id Identifier used by enqueue().
+     * @param meta_info File registration metadata.
+     * @return NIXL_SUCCESS on success, or an error status otherwise.
+     */
     virtual nixl_status_t
-    enqueue(int fd,
+    registerFile(uint64_t dev_id, const std::string &meta_info);
+
+    /**
+     * @brief Deregister a file identifier.
+     * @param dev_id Identifier previously passed to registerFile().
+     * @return NIXL_SUCCESS on success, or an error status otherwise.
+     */
+    virtual nixl_status_t
+    deregisterFile(uint64_t dev_id);
+
+    virtual nixl_status_t
+    enqueue(uint64_t dev_id,
             void *buf,
             size_t len,
             off_t offset,
             bool read,
             nixlPosixIOQueueDoneCb clb,
-            void *ctx) = 0;
+            void *ctx);
     virtual nixl_status_t
     post(void) = 0;
     virtual nixl_status_t
@@ -61,7 +83,10 @@ public:
     }
 
     static std::unique_ptr<nixlPosixIOQueue>
-    instantiate(std::string_view io_queue_type, uint32_t ios_pool_size, uint32_t kernel_queue_size);
+    instantiate(std::string_view io_queue_type,
+                uint32_t ios_pool_size,
+                uint32_t kernel_queue_size,
+                bool open_synchronous = false);
     static std::string_view
     getDefaultIoQueueType(void);
 
@@ -73,6 +98,25 @@ public:
     static constexpr uint32_t DEF_KERNEL_QUEUE_SIZE = 256;
 
 protected:
+    struct registeredFile {
+        registeredFile(uint64_t dev_id, const std::string &meta_info, bool is_path_mode)
+            : fileFd(is_path_mode ? -1 : static_cast<int>(dev_id), meta_info),
+              pathMode(is_path_mode) {}
+
+        nixl::FileFd fileFd;
+        size_t registrations = 1;
+        bool pathMode;
+    };
+
+    virtual nixl_status_t
+    enqueueFd(int fd,
+              void *buf,
+              size_t len,
+              off_t offset,
+              bool read,
+              nixlPosixIOQueueDoneCb clb,
+              void *ctx) = 0;
+
     static uint32_t
     normalizedIOSPoolSize(uint32_t ios_pool_size) {
         return std::clamp(ios_pool_size, MIN_IOS_POOL_SIZE, MAX_IOS_POOL_SIZE);
@@ -85,6 +129,7 @@ protected:
 
     uint32_t ios_pool_size_;
     uint32_t kernel_queue_size_;
+    std::unordered_map<uint64_t, registeredFile> files_;
 };
 
 template<typename Entry> class nixlPosixIOQueueImpl : public nixlPosixIOQueue {
