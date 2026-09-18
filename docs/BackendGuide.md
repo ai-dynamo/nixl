@@ -94,7 +94,7 @@ getPublicData and loadRemoteMD are required if backend supportsRemote, and loadL
 * prepXfer(): Given a descriptor list on each side, read or write operation, and remote agent name (can be loopback to itself if supported), any preparation for a transfer can be performed here, generating a pointer nixlBackendReqH that is a base class to be inherited by the backend for storing state of transfer request.
 * estimateXferCost: Given the same info as prepXfer, as well as the transfer request output from prepXfer, the backend can estimate the time of transfer, with noise margin and method of estimation. This is optional.
 * postXfer(): Posts a transfer request, meaning the backend should start the transfer. This call is asynchronous, meaning it should not wait to finish the transfer. If the transfer is really small, it’s fine to return DONE right after this call.
-* checkXfer(): Checks the status of a transfer request.
+* checkXfer(): Checks the status of a transfer request. A backend may also make forward progress here, not just report it: if postXfer only submits part of a request (for instance because the backend batches submissions to a kernel queue), the remainder is expected to be submitted by subsequent checkXfer calls. The POSIX plugin works this way, so requests larger than its submission batch need repeated status checks to be fully issued; see [`src/plugins/posix/README.md`](../src/plugins/posix/README.md#transfer-submission-and-completion).
 * releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Note that the NIXL agent may release that handle at a number of error cases, expecting this function to handle proper cancellation of requests in addition to freeing resources.
 
 Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotifications, no such notification will be asked.
@@ -237,7 +237,7 @@ Note that inside a transfer, a backend might provide methods for network resilie
 
 ### Get transfer status:
 
-The agent will call the backend specific transfer handle that is stored within the agent transfer handle, and check the status of the transfer. This is achieved through a call to **checkXfer** in the SB API. Internal to the backend, they can call their internal progress method, if that’s necessary to get the latest status of the transfers.
+The agent will call the backend specific transfer handle that is stored within the agent transfer handle, and check the status of the transfer. This is achieved through a call to **checkXfer** in the SB API. Internal to the backend, they can call their internal progress method, if that’s necessary to get the latest status of the transfers. Because a backend may also complete submission inside this call, a user must keep calling **getXferStatus** while the request reports NIXL_IN_PROG, stopping when it completes or returns an error, rather than checking once and waiting on something else; a request that stops being polled may stop making progress.
 
 ### Invalidate transfer request:
 
