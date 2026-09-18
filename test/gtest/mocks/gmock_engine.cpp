@@ -24,26 +24,10 @@ const nixlBackendInitParams init_params{.customParams = &custom_params};
 const std::string gmock_engine_key = "gmock_engine_key";
 char gmock_dummy_mvh;
 
-namespace {
-
-    nixlBackendInitParams
-    normalizeInitParams(const nixlBackendInitParams *params) {
-        nixlBackendInitParams normalized = params == nullptr ? nixlBackendInitParams{} : *params;
-        if (normalized.customParams == nullptr) {
-            normalized.customParams = &custom_params;
-        }
-        return normalized;
-    }
-
-} // namespace
-
 GMockBackendEngine::GMockBackendEngine() : GMockBackendEngine(&init_params) {}
 
 GMockBackendEngine::GMockBackendEngine(const nixlBackendInitParams *init_params)
-    : GMockBackendEngine(normalizeInitParams(init_params)) {}
-
-GMockBackendEngine::GMockBackendEngine(nixlBackendInitParams init_params)
-    : nixlBackendEngine(&init_params) {
+    : nixlBackendEngine(init_params) {
     setDefaults();
 }
 
