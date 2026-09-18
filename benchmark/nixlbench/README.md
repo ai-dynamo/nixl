@@ -33,7 +33,8 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA for storage operations
+- **Storage Backend Support**: GDS, GDS_MT, AIS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB,
+  GUSLI, INFINIA for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -66,6 +67,12 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 - **Docker**: Version 20.10+ (for container builds)
 - **Git**: For source code management
 - **CUDA Toolkit**: 12.8+ (for GPU features)
+- **ROCm / HIP** (optional): when CUDA is absent, Meson can build VRAM paths
+  with HIP. A single build targets one GPU stack: `-Dnixlbench_gpu=auto` (the
+  default) picks CUDA when present and otherwise ROCm, while `cuda` / `rocm`
+  force a stack. To cover both on one machine, run two Meson configures in
+  separate build directories. See `benchmark/nixlbench/meson_options.txt`
+  (`nixlbench_gpu`).
 - **Python**: 3.12+ (for benchmark utilities)
 
 ## Quick Start
@@ -501,7 +508,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --config_file PATH         # Configuraion file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, AIS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
@@ -541,7 +548,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --etcd_endpoints URL       # ETCD server URL for coordination (optional for storage backends)
 ```
 
-#### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
+#### Storage Backend Options (GDS, GDS_MT, AIS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
 ```
 --filepath PATH            # File path for storage operations
 --num_files NUM            # Number of files used by benchmark (default: 1)
@@ -562,10 +569,15 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --gds_batch_limit NUM      # Batch limit for GDS operations (default: 128)
 ```
 
-**GDS_MT Backend:**
+**GDS_MT / AIS_MT (multi-threaded file backends):**
 ```
---gds_mt_num_threads NUM   # Number of threads used by GDS MT plugin (default: 1)
+--gds_mt_num_threads NUM   # Taskflow worker threads for GDS_MT and AIS_MT (default: 1)
 ```
+
+Both plugins use a `thread_count` init parameter; nixlbench forwards your CLI
+`--gds_mt_num_threads` flag unchanged. Paths start at `src/plugins/cuda_gds/`,
+`src/plugins/rocm_ais/`, `src/utils/file/` (shared engine base, backend glue).
+
 
 **POSIX Backend:**
 ```
@@ -677,7 +689,8 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 
 **ETCD Requirements:**
 - **Required**: Network backends (UCX, GPUNETIO, Mooncake, Libfabric) and multi-node setups
-- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances
+- **Optional**: Storage backends (GDS, GDS_MT, AIS_MT, POSIX, HF3FS, OBJ, GUSLI)
+  running as single instances; ETCD optional unless endpoints are set explicitly
 - **Required**: Storage backends when `--etcd_endpoints` is explicitly specified
 
 **For multi-node benchmarks:**
@@ -745,6 +758,17 @@ $ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --back
 # Multi-threaded GDS (no ETCD needed for single instance)
 ./nixlbench --backend GDS_MT --filepath /mnt/storage/testfile --gds_mt_num_threads 8
 ```
+
+**AIS_MT (Multi-threaded ROCm Infinity Storage):**
+```bash
+# Requires NIXL built with AIS_MT; --filepath is a directory prefix (test files
+# are created under it). Use a hipFile-capable path (see plugin docs).
+./nixlbench --backend AIS_MT --filepath /mnt/storage/ais-mt-dir --gds_mt_num_threads 8
+```
+
+For a containerized AMD GPU + NVMe directory + `ais-stats` workflow, see
+[`contrib/run-ais-mt-amd-gpu-test.sh`](contrib/run-ais-mt-amd-gpu-test.sh) and
+[`docs/rocm-ci.md`](../../docs/rocm-ci.md) (AIS_MT on AMD GPU section).
 
 **POSIX Backend:**
 ```bash
@@ -1015,12 +1039,18 @@ docker build --progress=plain --no-cache ...
 ### Runtime Issues
 
 #### Library Not Found Errors
-```bash
-# Update library cache
-sudo ldconfig
 
-# Check library paths
+Meson bakes an RPATH into the installed `nixlbench` binary pointing at the
+library directory under `-Dnixl_path` (for example
+`/usr/local/nixl/lib/x86_64-linux-gnu` on Debian multiarch). Rebuild and
+`meson install` nixlbench after changing `nixl_path`. If the linker still cannot
+resolve `libnixl.so`, point `LD_LIBRARY_PATH` at the directory that holds
+`libnixl.so` (and keep your CUDA or ROCm library paths as needed):
+
+```bash
+sudo ldconfig
 ldd /usr/local/nixlbench/bin/nixlbench
+export LD_LIBRARY_PATH=/usr/local/nixl/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 ```
 
 #### GPU Access Issues

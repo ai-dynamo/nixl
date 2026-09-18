@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'AIS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
 
 enabled_plugins = {}
 
@@ -201,22 +201,29 @@ absl_strings_dep = dependency('absl_strings', required: false)
 absl_synchronization_dep = dependency('absl_synchronization', required: false)
 absl_time_dep = dependency('absl_time', required: false)
 
-if absl_base_dep.found() and not absl_log_dep.found()
-  error('Your Abseil version is too old: found absl_base but missing support for absl_log. ' +
-        'Cannot fallback to subproject because that would result in a mix of Abseil versions at runtime. ' +
-        'Please install a recent Abseil from source on your system and remove old libabsl & libabsl-dev packages.')
+# True only when every piece is available from the system pkg-config stack.
+have_full_system_absl = (
+    absl_log_dep.found() and
+    absl_log_initialize_dep.found() and
+    absl_flat_hash_map_dep.found() and
+    absl_status_dep.found() and
+    absl_statusor_dep.found() and
+    absl_strings_dep.found() and
+    absl_synchronization_dep.found() and
+    absl_time_dep.found())
+
+# Ubuntu/jammy-style installs often ship absl_base without absl_log. We must
+# not link a mix of system and subproject Abseil; use the bundled subproject
+# for *all* Abseil components (including absl_base) when the system set is
+# incomplete.
+if absl_base_dep.found() and not have_full_system_absl
+  message('System Abseil is incomplete (e.g. absl_base without absl_log). Using abseil-cpp subproject for all Abseil components.')
 endif
 
-if not (absl_log_dep.found() and
-        absl_log_initialize_dep.found() and
-        absl_flat_hash_map_dep.found() and
-        absl_status_dep.found() and
-        absl_statusor_dep.found() and
-        absl_strings_dep.found() and
-        absl_synchronization_dep.found() and
-        absl_time_dep.found())
+if not have_full_system_absl
   message('System Abseil missing required components; using subproject fallback')
   abseil_proj = subproject('abseil-cpp')
+  absl_base_dep = abseil_proj.get_variable('absl_base_dep')
   absl_log_dep = abseil_proj.get_variable('absl_log_dep')
   absl_log_initialize_dep = absl_log_dep
   absl_flat_hash_map_dep = abseil_proj.get_variable('absl_container_dep')
@@ -369,43 +376,43 @@ if wheel_variant != ''
     cuda_wheel_dir = 'nixl_' + wheel_variant
 endif
 
-# AMD ROCm/HIP support for the libfabric plugin (mutually exclusive with CUDA;
-# default off). ROCm is requested by setting -Drocm_path=<prefix>; if rocm_path
-# is empty, ROCm support is not requested (there is no default path). Defined
-# here in the root meson.build -- ahead of subdir('src') and subdir('test') --
-# so every libfabric subdir (src/utils, src/plugins, test/unit/utils) consumes a
-# single rocm_dep and hipify_src, with no ordering dependency between them. The
-# plugin's CUDA sources are translated to HIP at build time via hipify-perl;
-# rocm_dep supplies the HIP headers and runtime those translated sources compile
-# and link against. __HIP_PLATFORM_AMD__ lets the HIP headers work under a
-# non-hipcc host compiler. Kept separate from cuda_dep.
-#
-# hipify injects <hip/hip_runtime.h> at the top of each translated source, ahead
-# of the nixl/toml++ headers. HIP defines __noinline__ as a macro, which breaks
-# toml++'s TOML_HAS_ATTR(__noinline__) preprocessor check; TOML_CUDA=1 routes
-# toml++ around that line. HIP also maps some CUDA driver calls onto deprecated
-# HIP APIs, so deprecation is downgraded from error (the tree builds with
-# werror=true) to a warning.
-#
-# hipify-perl ships only with the ROCm/HIP toolchain, so it is required when
-# ROCm is requested and unused (absent) on CUDA-only builds.
+# AMD ROCm/HIP support for NIXL (default off).
+# ROCm is requested by setting -Drocm_path=<prefix>; if rocm_path is empty,
+# ROCm support is disabled. All modules/plugins/tests using ROCm should use
+# the rocm_dep (and if needed, hipify_src) declared here. rocm_dep supplies
+# the HIP runtime and headers, hipify_src uses hipify-perl to translate
+# libfabric's CUDA sources into HIP at build time.
 rocm_path = get_option('rocm_path')
 if rocm_path != ''
-    if not fs.exists(rocm_path)
-        error('rocm_path set but ROCm install root not found at ' + rocm_path +
+    rocm_inc = include_directories(rocm_path + '/include')
+    rocm_lib_path = rocm_path + '/lib'
+    amdhip64_lib = cpp.find_library('amdhip64', dirs : [rocm_lib_path], required : true)
+    if not cpp.has_header('hip/hip_runtime.h', include_directories : rocm_inc)
+        error('rocm_path set but hip/hip_runtime.h not found under ' + rocm_path +
               '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
     endif
     rocm_dep = declare_dependency(
+        dependencies : amdhip64_lib,
         compile_args : [
-            '-I' + rocm_path + '/include',
+            # Lets the HIP headers work under a non-hipcc host compiler.
             '-D__HIP_PLATFORM_AMD__',
+
+            # HIP defines __noinline__, breaking toml++'s TOML_HAS_ATTR check.
+            # TOML_CUDA=1 routes around that line.
             '-DTOML_CUDA=1',
+
+            # hipify maps some CUDA driver calls to deprecated HIP APIs, and builds
+            # with error=true. Drop the errors to warnings.
             '-Wno-error=deprecated-declarations',
         ],
-        link_args : ['-L' + rocm_path + '/lib', '-lamdhip64', '-lhiprtc'],
+        # find_library resolves the libraries; the rpath keeps them reachable at
+        # runtime from a non-default prefix.
+        link_args : ['-Wl,-rpath,' + rocm_lib_path],
+        include_directories : rocm_inc,
     )
     message('ROCm/HIP enabled; toolchain path: ' + rocm_path)
 
+    # hipify-perl is shipped with ROCm and is required for all ROCm builds.
     hipify_cmd = find_program('hipify-perl')
     hipify_src = generator(hipify_cmd,
                            output : ['@BASENAME@_hip.cpp'],
@@ -414,8 +421,18 @@ else
     rocm_dep = disabler()
 endif
 
-# Check for etcd-cpp-api - use multiple methods for discovery
-etcd_dep = dependency('etcd-cpp-api', required : false)
+if cuda_dep.found() and rocm_dep.found()
+    message('CUDA and ROCm/HIP are both available; NVIDIA and AMD plugin stacks may be built together when enabled.')
+endif
+
+# Debian/Ubuntu libetcd-cpp-apiv3-dev usually installs CMake package etcd-cpp-api
+# but no etcd-cpp-api.pc, so probing pkg-config first always fails there. Try
+# CMake first; fall back to pkg-config for installs that only ship a .pc file.
+# (Meson may still warn about -Wl,--push-state tokens when using CMake; harmless.)
+etcd_dep = dependency('etcd-cpp-api', required : false, method : 'cmake')
+if not etcd_dep.found()
+  etcd_dep = dependency('etcd-cpp-api', required : false, method : 'pkg-config')
+endif
 etcd_inc_path = get_option('etcd_inc_path')
 etcd_lib_path = get_option('etcd_lib_path')
 if not etcd_dep.found() and etcd_lib_path != ''

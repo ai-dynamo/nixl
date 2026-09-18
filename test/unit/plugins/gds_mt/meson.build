@@ -17,10 +17,11 @@ if cuda_dep.found() == false
     subdir_done()
 endif
 
-nixl_gds_mt_app = executable('nixl_gds_mt_test', 'nixl_gds_mt_test.cpp',
+nixl_gds_mt_app = executable('nixl_gds_mt_test', '../cuda_gds/nixl_gds_test.cpp',
                              dependencies: [nixl_dep, nixl_infra, cuda_dep, nixl_common_dep],
                              include_directories: [nixl_inc_dirs, utils_inc_dirs,
                                                    include_directories('..')],
+                             cpp_args: ['-DDEFAULT_GDS_MT'],
                              install: true)
 
 test('gds_mt_path_mode_smoke', nixl_gds_mt_app)

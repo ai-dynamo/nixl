@@ -13,26 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ROCm detection (mutually exclusive with CUDA; default off)
-rocm_path = get_option('rocm_path')
-if rocm_path != ''
-    if not fs.exists(rocm_path)
-        error('rocm_path set but ROCm install root not found at ' + rocm_path +
-              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
-    endif
-    rocm_lib_path = rocm_path + '/lib'
-    rocm_inc_path = rocm_path + '/include'
-    rocm_dep = declare_dependency(
-        link_args : ['-L' + rocm_lib_path, '-lamdhip64', '-lhiprtc'],
-        include_directories : include_directories(rocm_inc_path))
-else
-    rocm_dep = disabler()
-endif
-
+# ROCm comes from the root project's rocm_dep (-Drocm_path). ROCm and CUDA stay
+# mutually exclusive per test binary: a single translation unit cannot carry
+# both -DHAVE_ROCM and -DHAVE_CUDA (see cpp_args below).
 ucx_test_dep = [ ucx_dep, nixl_common_dep, ucx_backend_interface]
 
 if rocm_dep.found()
-    ucx_test_dep += [ rocm_dep ]
+    # UCX built --with-rocm pulls in hiprtc; these tests are its only consumer
+    # in this tree, so it is added here rather than to the shared rocm_dep.
+    rocm_ucx_dep = declare_dependency(
+        dependencies : rocm_dep,
+        link_args : ['-L' + rocm_lib_path, '-lhiprtc'])
+    ucx_test_dep += [ rocm_ucx_dep ]
     cpp_args = ['-DHAVE_GPU', '-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
 elif cuda_dep.found()
     ucx_test_dep += [ cuda_dep ]

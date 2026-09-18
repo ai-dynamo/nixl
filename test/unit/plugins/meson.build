@@ -62,6 +62,21 @@ if enabled_plugins.get('GDS_MT')
     endif
 endif
 
+disable_rocm_ais_backend = get_option('disable_rocm_ais_backend')
+if enabled_plugins.get('AIS_MT')
+    if (disable_rocm_ais_backend or not rocm_dep.found() or not taskflow_proj.found()) and is_explicit_enable
+        if disable_rocm_ais_backend
+            error('AIS_MT plugin tests requested but AIS backend is disabled (-Ddisable_rocm_ais_backend=true)')
+        elif not rocm_dep.found()
+            error('AIS_MT plugin tests requested but HIP/ROCm dependency not found')
+        else
+            error('AIS_MT plugin tests requested but Taskflow dependency not found')
+        endif
+    elif not disable_rocm_ais_backend and rocm_dep.found() and taskflow_proj.found()
+        subdir('ais_mt')
+    endif
+endif
+
 cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
 disable_mooncake_backend = get_option('disable_mooncake_backend')

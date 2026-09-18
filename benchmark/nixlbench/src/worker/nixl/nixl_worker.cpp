@@ -21,6 +21,8 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
+/* CUDA/HIP: include only via headers that load toml++ before HIP (see utils.h).
+ * Early hip_runtime.h breaks toml++ on GCC + ROCm (__noinline__ macro). */
 #include <fcntl.h>
 #include <filesystem>
 #include <iomanip>
@@ -48,9 +50,7 @@
 
 static nixl_mem_t
 resolveVramSegment() {
-#if HAVE_CUDA
-    return VRAM_SEG;
-#elif HAVE_ROCM
+#if HAVE_CUDA || HAVE_ROCM
     return VRAM_SEG;
 #else
     if (neuronCoreCount() > 0) return VRAM_SEG;
@@ -213,6 +213,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         std::cout << "GDS_MT backend" << std::endl;
         backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
         std::cout << "GDS MT Num threads: " << xferBenchConfig::gds_mt_num_threads << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_AIS_MT)) {
+        std::cout << "AIS_MT backend" << std::endl;
+        backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
+        std::cout << "AIS_MT thread_count: " << xferBenchConfig::gds_mt_num_threads << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
         if (!xferBenchConfig::plugin_parameters) {
             // Preserve the existing flags-only POSIX parameter assembly.
