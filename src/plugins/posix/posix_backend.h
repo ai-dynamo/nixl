@@ -47,6 +47,18 @@ public:
     nixl_status_t
     checkXfer();
 
+    // True once every completion (confirmed I/Os and expected cancellations) has been reaped.
+    bool
+    isComplete() const {
+        return num_confirmed_ios_ == queue_depth_ && cancels_expected_ == cancels_seen_;
+    }
+
+    // Best-effort abort of outstanding I/O. Queued entries fail synchronously; in-flight
+    // ones get async cancels that isComplete() waits for. Idempotent, and a no-op on a
+    // complete request. Returns the number of async cancellations requested.
+    unsigned
+    requestCancellation();
+
     // Exception classes
     class exception : public std::exception {
     private:
@@ -62,13 +74,6 @@ public:
     };
 
 private:
-    bool
-    isComplete() const {
-        return num_confirmed_ios_ == queue_depth_ && cancels_expected_ == cancels_seen_;
-    }
-
-    unsigned
-    requestCancellation();
     void
     ioDone(uint32_t data_size, int error);
     static void
