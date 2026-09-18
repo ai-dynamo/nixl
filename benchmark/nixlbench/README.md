@@ -512,7 +512,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --target_seg_type TYPE     # Memory segment type for target [DRAM, VRAM] (default: DRAM)
 --scheme NAME              # Communication scheme [pairwise, manytoone, onetomany, tp] (default: pairwise)
 --mode MODE                # Process mode [SG (Single GPU per proc), MG (Multi GPU per proc)] (default: SG)
---op_type TYPE             # Operation type [READ, WRITE] (default: WRITE)
+--op_type TYPE             # Operation type [READ, WRITE, QUERY] (default: WRITE)
 --check_consistency        # Enable consistency checking
 --total_buffer_size SIZE   # Total buffer size across devices per process (default: 8GiB)
 --start_block_size SIZE    # Starting block size (default: 4KiB)

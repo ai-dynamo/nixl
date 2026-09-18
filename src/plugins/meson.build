@@ -140,6 +140,13 @@ if enabled_plugins.get('GPUNETIO')
     endif
 endif
 
+if enabled_plugins.get('DOCA_MEMOS')
+    # Always entered so doca_memos_backend_sources is defined for the unit
+    # tests; the plugin meson.build short-circuits internally when the DOCA
+    # dependencies are missing.
+    subdir('doca_memos')
+endif
+
 subdir('telemetry')
 
 if nixl_trace_enabled
