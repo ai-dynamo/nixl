@@ -5,9 +5,9 @@ description: Configuring NIXL's logging -- verbosity, per-process log files, fil
 
 ## Overview
 
-NIXL logs to standard error by default. `NIXL_LOG_LEVEL` selects how much is emitted, and `NIXL_LOG_FILE` additionally mirrors those records into a file. Both are read once, during library initialization, so they must be set before the process starts.
+NIXL logs to standard error by default. `NIXL_LOG_LEVEL` controls which records are emitted, and `NIXL_LOG_FILE` additionally mirrors them into a file without changing stderr output.
 
-The file is a supplement rather than a redirect: stderr keeps receiving exactly what it received before, in the same format, so existing tooling that scrapes a process's console is unaffected.
+Logging settings are read during library initialization and must be set before the process starts.
 
 ## Verbosity
 
@@ -22,15 +22,15 @@ export NIXL_LOG_LEVEL=INFO
 export NIXL_LOG_FILE=/var/log/nixl/agent.log
 ```
 
-The file is appended to rather than truncated, so a restarted process adds to the record instead of erasing it. Each record is passed directly to `write(2)`, with no userspace stream buffer, which means the log is complete up to the moment a process crashed or hung -- the case the file exists for.
+The file is opened in append mode, and each record is written immediately.
 
 <Note>
-Leaving `NIXL_LOG_FILE` unset, or setting it to an empty value, disables file logging entirely. No file is created.
+Leaving `NIXL_LOG_FILE` unset, or setting it to an empty value, disables file logging.
 </Note>
 
 ## One file per process
 
-Each process should write to a distinct file. If multiple processes use the same path, records may interleave, and rotation is unsafe because it assumes a single writer. Rather than requiring a different setting per worker, the path may contain escapes that expand at startup:
+Each process should write to a distinct file. Sharing a path may interleave records and makes rotation unsafe. Use these escapes to generate per-process paths:
 
 | Escape | Expands to |
 |--------|------------|
@@ -39,22 +39,20 @@ Each process should write to a distinct file. If multiple processes use the same
 | `%t` | Process startup time in nanoseconds since the Unix epoch. |
 | `%%` | A literal `%` |
 
-Unknown escapes and a trailing `%` are rejected so future versions can add escapes without silently changing the meaning of an existing path. Use `%%` wherever the path needs a literal percent.
-
-This lets one setting serve every worker of a run:
+Unknown escapes and a trailing `%` are rejected. Use `%%` for a literal percent.
 
 ```bash
 export NIXL_LOG_FILE=/var/log/nixl/run_%h_%p_%t.log
 ```
 
-Include `%t` if the same command may be run more than once. Process ids are recycled, and because the file is appended to, a restart handed an earlier run's id would otherwise continue that run's file as though the two were one process. `%t` uses nanosecond resolution.
+Use `%t` to distinguish restarts because process ids may be reused. `%t` uses nanosecond resolution.
 
 ### Retention
 
-`%p` and `%t` mean every process of every run leaves its own file behind, which is unbounded across a restart loop. Two ways to keep that in hand:
+Paths containing `%p` and `%t` create a file for every process and run. Manage retention by:
 
-- Give each run a directory of its own, and delete it when the run is done.
-- Omit `%t` and set `NIXL_LOG_FILE_SIZE`. The set of filenames is then bounded by the hosts and process ids in play, and each is capped, at the cost of a restart continuing an earlier file.
+- Deleting each run's log directory when it is no longer needed.
+- Omitting `%t` and setting `NIXL_LOG_FILE_SIZE`, at the cost of a restarted process potentially continuing an earlier file.
 
 ## Bounding the size
 
@@ -65,26 +63,22 @@ export NIXL_LOG_FILE=/var/log/nixl/agent.log
 export NIXL_LOG_FILE_SIZE=64M
 ```
 
-On reaching the limit the file is renamed with a `.1` suffix, replacing any previous one, and a new file is started. The live file therefore holds the most recent records, which are the ones that answer what a process did just before it failed, and the generation before them sits alongside it. Exactly one rotated generation is kept, so the total on disk stays under roughly twice the limit.
+On reaching the limit, the file is renamed with a `.1` suffix, replacing the previous generation, and a new file is started. The total size stays under roughly twice the configured limit.
 
 A record larger than the entire limit cannot fit in either generation. It is still written to stderr, but is omitted from the log file.
 
-If `NIXL_LOG_FILE_SIZE` is not set, the file grows without limit and must be managed externally, for example with `logrotate` using `copytruncate`, or by giving each run a fresh path.
+Without `NIXL_LOG_FILE_SIZE`, manage file growth externally or give each run a fresh path.
 
 ## When logging itself fails
 
-Losing the log file never stops the process it was meant to describe. Each failure is reported and then logging carries on as best it can:
+File logging failures do not terminate the process:
 
 | Failure | Behavior |
 |---------|----------|
-| The file cannot be opened | Reported at error severity, so it is visible even at `NIXL_LOG_LEVEL=ERROR`, and NIXL continues without the file. |
-| A later write fails | Reported once on stderr, and further records are dropped rather than holding up the process. |
-| A rotation cannot be done | Reported on stderr, and the file is left as it is rather than exceeding the limit. Logging to it stops, so the records written up to that point survive. |
-| `NIXL_LOG_FILE_SIZE` cannot be parsed | Reported at error severity, and file logging is disabled rather than ignoring the requested limit. |
-
-<Tip>
-Reports about the log file are written straight to stderr, so they arrive even when the file itself is the thing that failed.
-</Tip>
+| The file cannot be opened | Reported at error severity; file logging is disabled. |
+| A later write fails | Reported once on stderr; further file records are dropped. |
+| A rotation cannot be done | Reported on stderr; file logging stops without exceeding the limit. |
+| `NIXL_LOG_FILE_SIZE` cannot be parsed | Reported at error severity; file logging is disabled. |
 
 ## Reference
 
