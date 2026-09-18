@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,7 +48,13 @@ class nixlGdsIOBatch {
         nixl_status_t submitBatch(int flags);
         nixl_status_t checkStatus();
         nixl_status_t cancelBatch();
-        void reset();
+        void
+        reset();
+
+        nixl_status_t
+        initStatus() const {
+            return (init_err.err == CU_FILE_SUCCESS) ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
+        }
 
     private:
         CUfileBatchHandle_t batch_handle;

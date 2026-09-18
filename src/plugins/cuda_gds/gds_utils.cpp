@@ -128,7 +128,10 @@ nixlGdsIOBatch::~nixlGdsIOBatch()
         current_status == NIXL_ERR_NOT_POSTED) {
             delete[] io_batch_events;
             delete[] io_batch_params;
-            cuFileBatchIODestroy(batch_handle);
+            // The batch handle is only valid if cuFileBatchIOSetUp succeeded
+            if (init_err.err == CU_FILE_SUCCESS) {
+                cuFileBatchIODestroy(batch_handle);
+            }
     } else {
             NIXL_ERROR << "Attempting to delete a batch before completion";
     }
