@@ -1,0 +1,131 @@
+# NIXL verification launcher. Single scheduler for the unattended verification
+# builds: it owns the crons and triggers the build jobs, which carry no
+# schedule of their own. LAUNCH_TARGET selects what a run fires:
+#   wheels     (midnight) -> nixl-ci-build-wheel-nightly, one run per CUDA major
+#   containers (9 PM)     -> nixl-ci-build-container, the 4 nightly variants
+# Fire-and-forget (wait:false): the launcher reports what it spawned, not how
+# the builds ended - each triggered job mails its own failures.
+
+---
+job: nixl-ci-verification-launcher
+
+timeout_minutes: 15
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: '{memory: 2Gi, cpu: 1000m}'
+  requests: '{memory: 1Gi, cpu: 500m}'
+
+# Minimal pod: the single step is pipeline-level groovy, it never uses the
+# container shell.
+runs_on_dockers:
+  - { name: "launcher", url: "dockerhub.nvidia.com/ubuntu:24.04", arch: "x86_64" }
+
+env:
+  MAIL_FROM: "jenkins@nvidia.com"
+
+steps:
+  - name: Trigger Verification Builds
+    containerSelector: "{name: 'launcher'}"
+    shell: action
+    module: groovy
+    parallel: false
+    run: |
+      def target = params.LAUNCH_TARGET ?: 'wheels'
+      // Forward our CI ref so a pre-merge test run drives the wheel builds with
+      // the same pipeline + config revision. build-container has no ci_refspec
+      // param - it checks out NIXL_VERSION - so it is not forwarded there.
+      def ciRefspec = params.ci_refspec ?: 'main'
+      def spawned = []
+      def failed = []
+
+      currentBuild.description = target
+
+      if (target == 'wheels') {
+          // PUBLISH_DIR left unset: both CUDA majors publish to verification/.
+          for (cu in ['13', '12']) {
+              def label = "build-wheel-nightly CUDA_MAJOR=${cu}"
+              // Per-trigger guard: one bad trigger must not drop the rest.
+              try {
+                  build(job: 'nixl-ci-build-wheel-nightly',
+                        parameters: [
+                            string(name: 'NIXL_VERSION', value: 'main'),
+                            string(name: 'CUDA_MAJOR', value: cu),
+                            string(name: 'ci_refspec', value: ciRefspec),
+                        ],
+                        wait: false, propagate: false)
+                  spawned << label
+              } catch (err) {
+                  failed << "${label}: ${err}"
+                  currentBuild.result = 'UNSTABLE'
+              }
+          }
+      } else {
+          // The 4 variants that used to be build-container's own cron:
+          // nixlbench + nixl, each on the job's default base image and on the
+          // DLFW PyTorch daily. Empty base = the job's own default.
+          def dlfwBase = 'gitlab-master.nvidia.com:5005/dl/dgx/pytorch'
+          def dlfwTag = 'main-py3-devel'
+          def containerRuns = [
+              [buildTarget: 'nixlbench', base: '',       tag: ''],
+              [buildTarget: 'nixl',      base: '',       tag: ''],
+              [buildTarget: 'nixlbench', base: dlfwBase, tag: dlfwTag],
+              [buildTarget: 'nixl',      base: dlfwBase, tag: dlfwTag],
+          ]
+          for (run in containerRuns) {
+              def buildParams = [
+                  string(name: 'BUILD_TARGET', value: run.buildTarget),
+                  booleanParam(name: 'UPDATE_LATEST', value: true),
+              ]
+              if (run.base) {
+                  buildParams << string(name: 'BASE_IMAGE', value: run.base)
+                  buildParams << string(name: 'BASE_IMAGE_TAG', value: run.tag)
+              }
+              def label = "build-container ${run.buildTarget} " + (run.base ? 'dlfw-pytorch' : 'default-base')
+              try {
+                  build(job: 'nixl-ci-build-container',
+                        parameters: buildParams,
+                        wait: false, propagate: false)
+                  spawned << label
+              } catch (err) {
+                  failed << "${label}: ${err}"
+                  currentBuild.result = 'UNSTABLE'
+              }
+          }
+      }
+
+      // build(wait:false) yields no per-run URL, so the report lists what was
+      // spawned; each triggered build back-links here as "upstream
+      // #${BUILD_NUMBER}".
+      def report = ["", "===== launcher (${target}) spawned ${spawned.size()} build(s) ====="]
+      report += spawned.collect { "  + ${it}" }
+      if (failed) {
+          report << "----- ${failed.size()} failed to trigger -----"
+          report += failed.collect { "  ! ${it}" }
+      }
+      echo report.join('\n')
+
+# Mail the unattended launcher only when it fails to trigger; the triggered
+# builds report their own results.
+pipeline_stop:
+  shell: action
+  module: groovy
+  containerSelector: "{name: 'launcher'}"
+  run: |
+    def jobStatus = currentBuild.result ?: 'SUCCESS'
+    if (jobStatus != 'SUCCESS' && params.MAIL_TO) {
+        mail(
+            from: env.MAIL_FROM,
+            to: params.MAIL_TO,
+            subject: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' - ${jobStatus}",
+            mimeType: 'text/html',
+            body: """
+                <p>Launch target: <b>${params.LAUNCH_TARGET}</b></p>
+                <p>Status: <span style="color: red;"><b>${jobStatus}</b></span></p>
+                <p>Job: <a href='${env.JOB_URL}'>${env.JOB_NAME}</a></p>
+                <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+                <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
+            """
+        )
+    }
