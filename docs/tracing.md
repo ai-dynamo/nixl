@@ -113,6 +113,33 @@ So `nsys profile ... ./app` needs no NIXL-specific flags to get an NVTX timeline
 (and still records any other backend you asked for), while `NIXL_TRACE_BACKENDS=`
 force-disables tracing even under a profiler.
 
+#### Sampling
+
+| Source | Description |
+| ------ | ----------- |
+| `NIXL_TRACE_SAMPLE_RATIO` env var | Fraction of requests marked as sampled, `0` to `1` (unset or empty = `0`, sample nothing) |
+| `OTEL_TRACES_SAMPLE_RATIO` env var | Fallback used only when the NIXL variable is unset; Dynamo's variable, read so a NIXL inside Dynamo inherits its ratio. Unset means the opposite in each: Dynamo samples everything, NIXL samples nothing |
+
+The ratio applies to the trace contexts the agent generates, so it does nothing
+on its own: with no backend active — no `NIXL_TRACE_BACKENDS`, no nsys — the
+agent creates no contexts, and setting only the ratio produces nothing to see.
+
+The decision is head-based: it is taken once, when the agent creates the trace
+context for a request, and derives from that context's own trace id, so it is
+stable per request and every peer inspecting the same context agrees with it.
+A request is sampled when the random part of its trace id falls in the top
+`ratio` of the range, which is the OpenTelemetry consistent-probability rule: a
+later stage sampling at a lower ratio thins what NIXL kept instead of discarding
+all of it. No backend consumes the sampled flag yet — it is the gate the first
+cross-process carrier will use to decide whether to propagate a context.
+
+A value that is not a number in `[0, 1]` makes agent construction fail, whether
+or not tracing is otherwise enabled, rather than silently sampling nothing. The
+same is not true of `OTEL_TRACES_SAMPLE_RATIO`, which NIXL does not own: a bad
+value there is warned about and ignored. Note that in a `.nixl.cfg` file the
+value must be quoted (`NIXL_TRACE_SAMPLE_RATIO = "0.25"`), since it is read as a
+string.
+
 ## Instrumented operations
 
 The following Agent operations emit spans/markers (more will be added in later

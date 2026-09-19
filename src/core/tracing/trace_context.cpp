@@ -15,8 +15,15 @@
  * limitations under the License.
  */
 #include <algorithm>
+#include <cmath>
+#include <stdexcept>
 
+#include <absl/strings/numbers.h>
+
+#include "common/configuration.h"
+#include "common/nixl_log.h"
 #include "common/uuid_v4.h"
+#include "trace.h"
 #include "trace_context.h"
 
 namespace {
@@ -24,6 +31,8 @@ constexpr std::uint8_t supported_trace_flags = 0x03;
 constexpr std::size_t wire_flags_offset = 1;
 constexpr std::size_t wire_trace_id_offset = 2;
 constexpr std::size_t wire_span_id_offset = 18;
+constexpr std::size_t trace_id_randomness_bytes = 7;
+constexpr double two_pow_56 = 0x1p56;
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -66,8 +75,28 @@ parseBytes(std::string_view value,
     return true;
 }
 
+[[nodiscard]] std::optional<double>
+parseSampleRatio(const std::string &value) {
+    double ratio = 0.0;
+    if (!absl::SimpleAtod(value, &ratio) || !std::isfinite(ratio) || ratio < 0.0 || ratio > 1.0) {
+        return std::nullopt;
+    }
+    return ratio;
+}
+
+[[nodiscard]] std::uint64_t
+traceIdRandomness(const nixl::trace::TraceContext &context) noexcept {
+    std::uint64_t result = 0;
+    for (auto index = context.traceId.size() - trace_id_randomness_bytes;
+         index < context.traceId.size();
+         ++index) {
+        result = (result << 8) | context.traceId[index];
+    }
+    return result;
+}
+
 void
-generateInto(nixl::trace::TraceContext &context) {
+generateInto(nixl::trace::TraceContext &context, double sample_ratio) {
     do {
         nixl::generateRandomBytes(context.traceId.data(), context.traceId.size());
     } while (isAllZero(context.traceId));
@@ -77,6 +106,9 @@ generateInto(nixl::trace::TraceContext &context) {
     } while (isAllZero(context.spanId));
 
     context.flags = 0x02;
+    if (nixl::trace::sampledByRatio(context, sample_ratio)) {
+        context.flags |= 0x01;
+    }
 }
 
 void
@@ -90,7 +122,7 @@ appendByte(std::string &result, std::uint8_t value) {
 
 nixl::trace::TraceContext::TraceContext(const nixl::trace::Tracer *tracer) {
     if (tracer != nullptr) {
-        generateInto(*this);
+        generateInto(*this, tracer->sampleRatio());
     }
 }
 
@@ -198,9 +230,58 @@ nixl::trace::decodeTraceContext(std::span<const std::uint8_t> buffer,
     return nixl::trace::WireDecodeResult::Ok;
 }
 
+bool
+nixl::trace::sampledByRatio(const nixl::trace::TraceContext &context, double ratio) noexcept {
+    if (!context.valid() || !(ratio > 0.0)) {
+        return false;
+    }
+
+    const double kept = ratio * two_pow_56;
+    if (kept >= two_pow_56) {
+        return true;
+    }
+    // Subtract in integers: (1 - ratio) * two_pow_56 rounds to two_pow_56 for
+    // every ratio below 2^-53, which would turn small probabilities into never.
+    const auto threshold =
+        static_cast<std::uint64_t>(two_pow_56) - static_cast<std::uint64_t>(kept);
+    return traceIdRandomness(context) >= threshold;
+}
+
+double
+nixl::trace::resolveTraceSampleRatio() {
+    const auto spec =
+        nixl::config::getValueOptional<std::string>(std::string(nixl::trace::traceSampleRatioVar));
+    if (spec) {
+        if (spec->empty()) {
+            return 0.0;
+        }
+
+        const auto ratio = parseSampleRatio(*spec);
+        if (!ratio) {
+            throw std::invalid_argument(std::string(nixl::trace::traceSampleRatioVar) + "='" +
+                                        *spec + "' must be a number between 0 and 1");
+        }
+        return *ratio;
+    }
+
+    const auto otel_spec = nixl::config::getValueOptional<std::string>(
+        std::string(nixl::trace::otelTracesSampleRatioVar));
+    if (!otel_spec || otel_spec->empty()) {
+        return 0.0;
+    }
+
+    const auto ratio = parseSampleRatio(*otel_spec);
+    if (!ratio) {
+        NIXL_WARN << "nixl::trace: ignoring " << nixl::trace::otelTracesSampleRatioVar << "='"
+                  << *otel_spec << "': not a number between 0 and 1";
+        return 0.0;
+    }
+    return *ratio;
+}
+
 nixl::trace::TraceContext
-nixl::trace::generateTraceContext() {
+nixl::trace::generateTraceContext(double sample_ratio) {
     nixl::trace::TraceContext context;
-    generateInto(context);
+    generateInto(context, sample_ratio);
     return context;
 }
