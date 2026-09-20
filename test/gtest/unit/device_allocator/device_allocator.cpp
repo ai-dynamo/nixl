@@ -91,9 +91,11 @@ namespace device_allocator {
             allocator_ = &getDeviceAllocator();
             int device = 0;
             const nixl_status_t status = allocator_->getActiveDevice(device);
+#ifndef HAVE_CUDA
             if (status == NIXL_ERR_NOT_SUPPORTED) {
                 GTEST_SKIP() << "No device allocator implementation is available.";
             }
+#endif
             ASSERT_EQ(status, NIXL_SUCCESS);
         }
     };
@@ -118,7 +120,10 @@ namespace device_allocator {
         ASSERT_EQ(allocator.copyDeviceToHost(dst.data(), mem.devicePointer(), kSize), NIXL_SUCCESS);
         EXPECT_EQ(dst, std::vector<unsigned char>(kSize, 0));
 
-        deviceMem::adopt(allocator, mem.release());
+        {
+            auto adopted = deviceMem::adopt(allocator, mem.release());
+            EXPECT_EQ(adopted.devicePointer(), device_ptr);
+        }
 
         mappedHostMem mapped;
         ASSERT_EQ(allocator.allocMappedHostMem(kSize, mapped), NIXL_SUCCESS);
