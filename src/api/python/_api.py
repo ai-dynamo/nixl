@@ -700,14 +700,12 @@ class nixl_agent:
             handle: Handle to the transfer operation, from make_prepped_xfer or initialize_xfer.
 
         Returns:
-            nixlXferTelemetry object, or None if telemetry capture is not enabled on the
-            agent (e.g., nixl_agent_config(capture_telemetry=False), which is the default,
-            and the NIXL_TELEMETRY_ENABLE environment variable is not set).
+            nixlXferTelemetry object, or None if telemetry is unavailable because capture
+            is disabled (e.g., nixl_agent_config(capture_telemetry=False), which is the
+            default, and the NIXL_TELEMETRY_ENABLE environment variable is not set) or
+            the active backend does not support telemetry.
         """
-        try:
-            return self.agent.getXferTelemetry(handle._handle)
-        except nixlBind.nixlNoTelemetryError:
-            return None
+        return self.agent.getXferTelemetry(handle._handle)
 
     def query_xfer_backend(self, handle: nixl_xfer_handle) -> str:
         """Query the backend that was chosen for a transfer operation.
