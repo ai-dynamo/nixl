@@ -53,19 +53,14 @@ public:
         pollFds_.back() = {controlPipe_[0], POLLIN, 0};
     }
 
-    ~nixlUcxSharedThread() {
-        close(controlPipe_[0]);
-        close(controlPipe_[1]);
-    }
-
-    void
-    join() override {
+    ~nixlUcxSharedThread() override {
         const char signal = 'X';
-        int ret = write(controlPipe_[1], &signal, sizeof(signal));
-        if (ret < 0) {
+        if (write(controlPipe_[1], &signal, sizeof(signal)) < 0) {
             NIXL_PERROR << "write to progress thread control pipe failed";
         }
-        nixlUcxThread::join();
+        join();
+        close(controlPipe_[0]);
+        close(controlPipe_[1]);
     }
 
     void
@@ -142,12 +137,6 @@ nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_param
         thread_->addWorker(getSharedWorkers()[i].get());
     }
     thread_->start();
-}
-
-nixlUcxThreadEngine::~nixlUcxThreadEngine() {
-    if (thread_) {
-        thread_->join();
-    }
 }
 
 void
