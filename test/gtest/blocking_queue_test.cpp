@@ -1,0 +1,88 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <gtest/gtest.h>
+
+#include <array>
+#include <stop_token>
+#include <thread>
+#include <vector>
+
+#include "blocking_queue.h"
+
+namespace {
+
+struct item : nixl::blockingQueue<item>::node {
+    size_t value = 0;
+};
+
+TEST(blockingQueueTest, FIFO) {
+    nixl::blockingQueue<item> queue;
+    EXPECT_EQ(queue.tryPop(), nullptr);
+
+    std::array<item, 5> items;
+    for (auto &item : items) {
+        queue.push(item);
+    }
+    for (auto &item : items) {
+        EXPECT_EQ(queue.tryPop(), &item);
+    }
+    EXPECT_EQ(queue.tryPop(), nullptr);
+}
+
+TEST(blockingQueueTest, Copy) {
+    nixl::blockingQueue<item> queue;
+    item first;
+    queue.push(first);
+
+    item copy = first;
+    queue.push(copy);
+
+    EXPECT_EQ(queue.tryPop(), &first);
+    EXPECT_EQ(queue.tryPop(), &copy);
+    EXPECT_EQ(queue.tryPop(), nullptr);
+}
+
+TEST(blockingQueueTest, MPMC) {
+    constexpr size_t num_threads = 4;
+    constexpr size_t num_items = 1000;
+    nixl::blockingQueue<item> queue;
+    std::vector<item> items(num_threads * num_items);
+
+    std::vector<std::thread> threads;
+    for (size_t t = 0; t < num_threads; ++t) {
+        threads.emplace_back([&, t]() {
+            for (size_t i = 0; i < num_items; ++i) {
+                queue.push(items[t * num_items + i]);
+            }
+        });
+        threads.emplace_back([&]() {
+            for (size_t i = 0; i < num_items; ++i) {
+                ++queue.pop()->value;
+            }
+        });
+    }
+    for (auto &thread : threads) {
+        thread.join();
+    }
+
+    for (const auto &item : items) {
+        EXPECT_EQ(item.value, 1);
+    }
+}
+
+} // namespace
