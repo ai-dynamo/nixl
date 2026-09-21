@@ -82,12 +82,17 @@ struct aioTest {
             throw std::runtime_error("mkstemp failed");
         }
         unlink(path);
+        if (queue->registerFile(fd, "") != NIXL_SUCCESS) {
+            close(fd);
+            throw std::runtime_error("file registration failed");
+        }
         for (size_t i = 0; i < buffers.size(); i++) {
             std::memset(buffers[i].data(), static_cast<int>(i + 1), buffers[i].size());
         }
     }
 
     ~aioTest() {
+        queue->deregisterFile(fd);
         queue.reset();
         close(fd);
     }
@@ -288,7 +293,7 @@ main() {
     {
         setSubmitMode(submitMode::PARTIAL_THEN_ERROR);
         aioTest test(request_count + 1);
-        nixlPosixFileMD file_md(test.fd, "");
+        nixlPosixFileMD file_md(test.fd);
         aioRequest failed(test, file_md, 0, request_count);
         aioRequest unrelated(test, file_md, request_count, 1);
 
@@ -312,7 +317,7 @@ main() {
         constexpr int completion_error_request_count = 65;
         setSubmitMode(submitMode::COMPLETION_ERROR);
         aioTest test(completion_error_request_count);
-        nixlPosixFileMD file_md(test.fd, "");
+        nixlPosixFileMD file_md(test.fd);
         aioRequest failed(test, file_md, 0, completion_error_request_count);
 
         nixl_status_t status = failed.request.postXfer();

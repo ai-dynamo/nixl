@@ -41,13 +41,13 @@ public:
     virtual nixl_status_t
     post(void) override;
     virtual nixl_status_t
-    enqueue(int fd,
-            void *buf,
-            size_t len,
-            off_t offset,
-            bool read,
-            nixlPosixIOQueueDoneCb clb,
-            void *ctx) override;
+    enqueueFd(int fd,
+              void *buf,
+              size_t len,
+              off_t offset,
+              bool read,
+              nixlPosixIOQueueDoneCb clb,
+              void *ctx) override;
     virtual nixl_status_t
     poll(void) override;
     virtual unsigned
@@ -89,13 +89,13 @@ nixlPosixIOQueueLinuxAIO::nixlPosixIOQueueLinuxAIO(uint32_t ios_pool_size,
 }
 
 nixl_status_t
-nixlPosixIOQueueLinuxAIO::enqueue(int fd,
-                                  void *buf,
-                                  size_t len,
-                                  off_t offset,
-                                  bool read,
-                                  nixlPosixIOQueueDoneCb clb,
-                                  void *ctx) {
+nixlPosixIOQueueLinuxAIO::enqueueFd(int fd,
+                                    void *buf,
+                                    size_t len,
+                                    off_t offset,
+                                    bool read,
+                                    nixlPosixIOQueueDoneCb clb,
+                                    void *ctx) {
     if (terminal_error_) {
         return NIXL_ERR_BACKEND;
     }
@@ -336,6 +336,6 @@ nixlPosixIOQueueLinuxAIO::poll(void) {
 }
 
 std::unique_ptr<nixlPosixIOQueue>
-nixlPosixIOQueueLinuxAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size) {
+nixlPosixIOQueueLinuxAIOCreate(uint32_t ios_pool_size, uint32_t kernel_queue_size, bool) {
     return std::make_unique<nixlPosixIOQueueLinuxAIO>(ios_pool_size, kernel_queue_size);
 }
