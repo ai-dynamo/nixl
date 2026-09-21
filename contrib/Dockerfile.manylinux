@@ -370,7 +370,7 @@ RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | c
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
-ENV UCX_REF="2a053aa97837ef85eaf3253774aa41eb49407ee0"
+ENV UCX_REF="65e342a82dd2609a28c8c2b8c45ed7fe2cb33fa0"
 ARG UCX_SONAME_SUFFIX=""
 RUN cd /usr/local/src && \
      git clone "$UCX_REPO" ucx && \
