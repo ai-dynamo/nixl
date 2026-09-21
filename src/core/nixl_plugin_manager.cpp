@@ -333,7 +333,7 @@ shouldDeepBindPlugin(const std::string &plugin_name) {
         NIXL_WARN << "Invalid " << kUcxDeepBindVar << " value: " << e.what();
     }
 
-    if (requested) {
+    `if (nixl::config::checkExistenc(kUcxDeepBindVar) {`
         NIXL_WARN << kUcxDeepBindVar
                   << " is ignored: RTLD_DEEPBIND mis-binds libc symbols in the "
                      "UCX plugin and crashes UCX initialization.";
