@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <chrono>
 #include <stop_token>
 #include <thread>
 #include <vector>
@@ -55,6 +56,24 @@ TEST(blockingQueueTest, Copy) {
     EXPECT_EQ(queue.tryPop(), &first);
     EXPECT_EQ(queue.tryPop(), &copy);
     EXPECT_EQ(queue.tryPop(), nullptr);
+}
+
+TEST(blockingQueueTest, Stop) {
+    nixl::blockingQueue<item> queue;
+    item single;
+    std::stop_source stopped;
+    stopped.request_stop();
+
+    // A stop request ends the wait, queued items are still drained first
+    EXPECT_EQ(queue.pop(stopped.get_token()), nullptr);
+    queue.push(single);
+    EXPECT_EQ(queue.pop(stopped.get_token()), &single);
+    EXPECT_EQ(queue.pop(stopped.get_token()), nullptr);
+
+    // A stop request wakes a blocked pop
+    std::jthread consumer([&](std::stop_token token) { EXPECT_EQ(queue.pop(token), nullptr); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    consumer.request_stop();
 }
 
 TEST(blockingQueueTest, MPMC) {

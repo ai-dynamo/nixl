@@ -47,6 +47,8 @@ public:
 
     /**
      * @brief Append an item and wake one blocked consumer
+     * @param item New item that is not queued. A single item with intrusive link
+     *             can be queued into at most 1 queue.
      */
     void
     push(T &item) {
