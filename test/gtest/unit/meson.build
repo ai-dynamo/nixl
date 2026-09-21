@@ -38,7 +38,9 @@ unit_test_deps += [tracing_unit_test_dep]
 subdir('telemetry')
 unit_test_deps += [telemetry_unit_test_dep]
 
-if enabled_plugins.get('GDS') or enabled_plugins.get('GDS_MT')
+if is_variable('gds_backend_interface') or is_variable(
+    'gds_mt_backend_interface',
+)
     subdir('gds')
     unit_test_deps += [gds_unit_test_dep]
 endif

@@ -29,8 +29,8 @@ and transfer validation):
   remains temporarily available for compatibility and will be removed in a
   future update. New integrations should use `GDS` with `mode=mt`.
 
-The two backends use the same cuFile driver and therefore cannot be created
-simultaneously within a single agent.
+NIXL continues to treat the two backend names as mutually exclusive within a
+single agent; creating one after the other returns `NIXL_ERR_NOT_ALLOWED`.
 
 ## Backend selection
 

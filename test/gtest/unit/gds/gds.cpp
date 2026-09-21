@@ -20,14 +20,16 @@
 // These tests are intentionally black-box: they assert behavior only through the
 // public nixlAgent / plugin-manager API and never reference any backend-internal
 // class. This keeps them valid regardless of how the plugins are implemented
-// (separate plugins, a merged plugin with a shared engine, etc.), so they serve
-// as the source of truth while GDS and GDS_MT are unified into one plugin.
+// (separate plugin entry points backed by shared implementation, or another
+// internal layout), so they remain valid while the implementation is
+// consolidated.
 //
 // Anything that needs a working cuFile driver (i.e. real GDS hardware) skips
 // gracefully via GTEST_SKIP when the backend cannot be created, mirroring how
 // the rest of the storage tests gate on CUDA availability.
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -61,7 +63,10 @@ hasMem(const nixl_mem_list_t &mems, nixl_mem_t m) {
 
 std::string
 makeSizedFile(const std::string &name, size_t size) {
-    const std::string path = (std::filesystem::temp_directory_path() / name).string();
+    static std::atomic<unsigned long> sequence{0};
+    const std::string unique_name = name + "." + std::to_string(getpid()) + "." +
+        std::to_string(sequence.fetch_add(1, std::memory_order_relaxed));
+    const std::string path = (std::filesystem::temp_directory_path() / unique_name).string();
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (size > 0) {
         f.seekp(static_cast<std::streamoff>(size) - 1);
@@ -368,11 +373,10 @@ TEST_P(GdsBackend, RejectsMemToMemTransfer) {
 }
 
 // ---------------------------------------------------------------------------
-// Group D: risk-targeting (hardware-gated). This is the key driver for the
-// merge: registering the same fd twice and deregistering one registration must
-// not break transfers through the other. On the batch (GDS) path today this is
-// expected to fail due to the by-value file-handle cache; the unified backend
-// fixes it via a refcounted handle cache.
+// Group D: risk-targeting (hardware-gated). Registering the same fd twice and
+// deregistering one registration must not break transfers through the other.
+// The shared implementation fixes the old batch engine's by-value file-handle
+// cache by using a refcounted handle cache.
 // ---------------------------------------------------------------------------
 
 TEST_P(GdsBackend, SharedFdPartialDeregisterStillTransfers) {
@@ -472,8 +476,9 @@ INSTANTIATE_TEST_SUITE_P(GdsFamily,
                          });
 
 // ---------------------------------------------------------------------------
-// Group E: GDS and GDS_MT are mutually exclusive within one agent (they each
-// open the cuFile driver). Not parameterized - it exercises both names.
+// Group E: preserve the existing core contract that GDS and GDS_MT are
+// mutually exclusive within one agent. Not parameterized - it exercises both
+// names.
 // ---------------------------------------------------------------------------
 
 TEST(GdsBackendCombo, GdsThenGdsMtIsRejected) {
@@ -492,8 +497,8 @@ TEST(GdsBackendCombo, GdsThenGdsMtIsRejected) {
     EXPECT_EQ(agent.createBackend("GDS_MT", params, second), NIXL_ERR_NOT_ALLOWED);
 }
 
-// Reverse order: a merge could easily regress one direction of the symmetric
-// illegal-combination check, so assert both.
+// Assert the reverse order too so the illegal-combination check stays
+// symmetric.
 TEST(GdsBackendCombo, GdsMtThenGdsIsRejected) {
     nixlAgentConfig cfg;
     nixlAgent agent("gds_combo_gdsmt_first", cfg);
