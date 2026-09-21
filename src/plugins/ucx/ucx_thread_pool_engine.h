@@ -28,7 +28,6 @@ class nixlUcxDedicatedThread;
 class nixlUcxThreadPoolEngine : public nixlUcxThreadEngine {
 public:
     nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params, size_t num_threads);
-    ~nixlUcxThreadPoolEngine();
 
     nixl_status_t
     prepXfer(const nixl_xfer_op_t &operation,

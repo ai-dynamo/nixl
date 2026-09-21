@@ -304,8 +304,6 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
     }
 }
 
-nixlUcxThreadPoolEngine::~nixlUcxThreadPoolEngine() = default;
-
 nixl_status_t
 nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
                                   const nixl_meta_dlist_t &local,
