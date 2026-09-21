@@ -25,7 +25,7 @@
 #include "launch.cuh"
 
 #include "api.cuh"
-#include "nixl_device.cuh"
+#include <gpu/nixl_device.cuh>
 #include "utils.cuh"
 #include <cooperative_groups.h>
 namespace cg = cooperative_groups;
@@ -35,7 +35,7 @@ namespace nixl_ep {
 __device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst_rank) {
     if (dst_rank == ctx.rank) return (void*) dst_ptr;
 
-    void *remote_ptr = nixlGetPtr(ctx.remote_mvh, dst_rank);
+    void *remote_ptr = ctx.p2p_ptrs[dst_rank];
     if (remote_ptr == nullptr) return nullptr;
 
     return (void*) ((uint64_t) remote_ptr + ctx.offset_get(dst_ptr));
@@ -43,15 +43,24 @@ __device__ inline void* p2p_ptr_get(gpu_nixl_ctx& ctx, uint64_t dst_ptr, int dst
 
 namespace ep_kernels {
 
-template<bool use_warp_sync = false>
+template<bool use_warp_sync = false, bool use_acquire = true>
 __forceinline__ __device__ bool is_rank_masked(int* mask_buffer_ptr, int rank) {
     if (mask_buffer_ptr == nullptr) {
         return false;
     }
     if constexpr (use_warp_sync) {
-        return __shfl_sync(0xffffffff, ld_acquire_global(mask_buffer_ptr + rank), 0) != 0;
+        if constexpr (use_acquire) {
+            return __shfl_sync(
+                       0xffffffff, ld_acquire_global(mask_buffer_ptr + rank), 0) != 0;
+        } else {
+            return __shfl_sync(0xffffffff, mask_buffer_ptr[rank], 0) != 0;
+        }
     } else {
-        return ld_acquire_global(mask_buffer_ptr + rank) != 0;
+        if constexpr (use_acquire) {
+            return ld_acquire_global(mask_buffer_ptr + rank) != 0;
+        } else {
+            return mask_buffer_ptr[rank] != 0;
+        }
     }
 }
 
@@ -400,7 +409,7 @@ void dispatch(void* packed_recv_x, void* packed_recv_x_scales,
               uint64_t timeout_cycles,
               void* workspace, int num_device_sms,
               cudaStream_t stream, int phases, nixl_ep::gpu_nixl_ctx* nixl_ctx) {
-    constexpr int kNumMaxTopK = 11;
+    constexpr int kNumMaxTopK = 16;
     const int active_expert_bound = active_rank_bound * num_experts_per_rank;
     const int num_warp_groups = ceil_div(active_expert_bound, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
@@ -918,7 +927,8 @@ COMBINE_RECV:
                     if (topk_idx_reg < 0)
                         continue;
                     EP_DEVICE_ASSERT(topk_idx_reg < active_expert_bound);
-                    if (is_rank_masked(mask_buffer_ptr, topk_idx_reg / num_local_experts))
+                    if (is_rank_masked<false, false>(
+                            mask_buffer_ptr, topk_idx_reg / num_local_experts))
                         continue;
 
                     mbarrier_wait<true>(empty_barriers[stage_idx], tma_phase, stage_idx);
@@ -959,7 +969,8 @@ COMBINE_RECV:
                     if (topk_idx_reg < 0)
                         continue;
                     EP_DEVICE_ASSERT(topk_idx_reg < active_expert_bound);
-                    if (is_rank_masked(mask_buffer_ptr, topk_idx_reg / num_local_experts))
+                    if (is_rank_masked<false, false>(
+                            mask_buffer_ptr, topk_idx_reg / num_local_experts))
                         continue;
                     const auto& topk_weight = __shfl_sync(0xffffffff, topk_weights_by_lane, i);
 
@@ -1017,7 +1028,7 @@ void combine(void* combined_x,
              bool use_logfmt, uint64_t timeout_cycles,
              void* workspace, int num_device_sms,
              cudaStream_t stream, int phases, bool zero_copy, nixl_ep::gpu_nixl_ctx* nixl_ctx) {
-    constexpr int kNumMaxTopk = 11;
+    constexpr int kNumMaxTopk = 16;
     const int active_expert_bound = active_rank_bound * num_experts_per_rank;
     const int num_warp_groups = ceil_div(active_expert_bound, num_device_sms);
     const int num_warps_per_group = 32 / num_warp_groups;
@@ -1076,8 +1087,9 @@ LAUNCH_KERNEL(&cfg, combine_func, \
 #undef COMBINE_LAUNCH_CASE
 }
 
-template <int kNumThreads> __launch_bounds__(kNumThreads, 1)
-__global__ void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask_tensor) {
+template<int kNumThreads>
+__launch_bounds__(kNumThreads, 1) __global__
+    void query_mask_buffer(const int *mask_buffer_ptr, int num_ranks, int *mask_tensor) {
     const auto num_sms = static_cast<int>(gridDim.x);
     const auto sm_id = static_cast<int>(blockIdx.x);
     const auto num_threads = num_sms * kNumThreads;
@@ -1087,7 +1099,11 @@ __global__ void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask
     }
 }
 
-void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* mask_tensor, cudaStream_t stream) {
+void
+query_mask_buffer(const int *mask_buffer_ptr,
+                  int num_ranks,
+                  int *mask_tensor,
+                  cudaStream_t stream) {
     constexpr int num_sms = 1;
     constexpr int kNumThreads = 1024;
     SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
@@ -1109,6 +1125,21 @@ void update_mask_buffer(int* mask_buffer_ptr, int rank, bool mask, cudaStream_t 
     constexpr int kNumThreads = 32;
     SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
     LAUNCH_KERNEL(&cfg, update_mask_buffer<kNumThreads>, mask_buffer_ptr, rank, mask);
+}
+
+
+__global__ void cache_p2p_ptr_kernel(nixl_ep::gpu_nixl_ctx* nixl_ctx_ptr,
+                                     int rank_id) {
+    auto nixl_ctx = *nixl_ctx_ptr;
+    nixl_ctx.p2p_ptrs[rank_id] =
+        nixl_ctx.remote_mvh == nullptr ? nullptr : nixlGetPtr(nixl_ctx.remote_mvh, rank_id);
+}
+
+void cache_p2p_ptr(gpu_nixl_ctx* nixl_ctx, int rank_id, cudaStream_t stream) {
+    constexpr int num_sms = 1;
+    constexpr int kNumThreads = 1;
+    SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
+    LAUNCH_KERNEL(&cfg, cache_p2p_ptr_kernel, nixl_ctx, rank_id);
 }
 
 

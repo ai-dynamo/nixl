@@ -64,7 +64,7 @@ public:
     }
 
     virtual int
-    barrier(const std::string &barrier_id) override {
+    barrier(const std::string &barrier_id, const bool finishing) override {
         return 0;
     }
 };
@@ -122,8 +122,8 @@ createRT(std::atomic<int> *terminate) {
 } // namespace
 
 int
-xferBenchWorker::synchronize() {
-    if (rt->barrier("sync") != 0) {
+xferBenchWorker::synchronize(const bool finishing) {
+    if (rt->barrier("sync", finishing) != 0) {
         std::cerr << "Failed to synchronize" << std::endl;
         // Best-effort cleanup of non-leased etcd keys (e.g. the "size" key)
         // so they don't poison subsequent runs in the same benchmark_group.

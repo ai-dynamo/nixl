@@ -47,13 +47,6 @@ static const struct {
 #endif
 };
 
-const uint32_t nixlPosixIOQueue::MIN_IOS_POOL_SIZE = 64;
-const uint32_t nixlPosixIOQueue::MAX_IOS_POOL_SIZE = 1024 * 64;
-const uint32_t nixlPosixIOQueue::DEF_IOS_POOL_SIZE = nixlPosixIOQueue::MAX_IOS_POOL_SIZE;
-const uint32_t nixlPosixIOQueue::MIN_KERNEL_QUEUE_SIZE = 16;
-const uint32_t nixlPosixIOQueue::MAX_KERNEL_QUEUE_SIZE = 1024;
-const uint32_t nixlPosixIOQueue::DEF_KERNEL_QUEUE_SIZE = 256;
-
 std::unique_ptr<nixlPosixIOQueue>
 nixlPosixIOQueue::instantiate(std::string_view io_queue_type,
                               uint32_t ios_pool_size,

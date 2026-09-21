@@ -23,6 +23,14 @@ NIXL.
 [NVIDIA GDS](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html)<br />
 [CUDA GDS Install and Setup](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)
 
+## File registration
+
+`FILE_SEG` accepts either fd-in-`devId` (fd-mode) or a
+`"<modes>:<path>"` string in `metaInfo` (path-mode); see
+[`src/utils/file/README.md`](../../utils/file/README.md#path-mode-file-registration).
+Note: `gds_file_map` keys on fd, so two path-mode regs of the same path
+get two cuFile handles (no path-level dedup).
+
 ### cufile.json configuration
 This section provides the recommended configuration for the cufile.json file when using the NIXL GDS plugin in compatibility mode.
 The configuration ensures that sufficient POSIX buffers are available. Only the properties that need to be overridden are included in this cufile.json configuration.

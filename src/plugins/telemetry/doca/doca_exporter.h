@@ -22,7 +22,9 @@
 #include "nixl_types.h"
 
 #include <doca_error.h>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 struct DocaSharedContext;
@@ -35,15 +37,54 @@ public:
     [[nodiscard]] nixl_status_t
     exportEvent(const nixlTelemetryEvent &event) override;
 
+    // Force-pushes accumulated metrics to the DOCA/CollectX Prometheus endpoint.
+    // Production relies on CollectX auto-flush (buffer fill / flush interval);
+    // this is exposed so tests can flush a few events before scraping, since a
+    // handful of samples will not fill the buffer to trigger an auto-flush.
+    [[nodiscard]] nixl_status_t
+    flush();
+
 private:
     const std::string agent_name_;
     std::shared_ptr<DocaSharedContext> ctx_;
+    std::optional<uint64_t> batchTimestamp_;
+
+    void
+    onBatchBegin() noexcept override;
+    void
+    onBatchEnd() noexcept override;
+
+    [[nodiscard]] uint64_t
+    currentTimestamp() noexcept;
+
+    // Appends a counter sample to the time-series. DOCA accumulates the value
+    // (add_counter_increment), so repeated per-operation deltas produce a
+    // monotonic cumulative total, matching the Prometheus exporter.
+    [[nodiscard]] doca_error_t
+    appendCounterSample(const nixlTelemetryEvent &event,
+                        uint64_t timestamp,
+                        const char *counter_name,
+                        const char *label_values[]);
 
     [[nodiscard]] doca_error_t
-    registerCounter(const nixlTelemetryEvent &event, const char *label_values[]);
+    appendErrorCounterSample(const nixlTelemetryEvent &event,
+                             uint64_t timestamp,
+                             const char *status);
 
+    // Appends a gauge sample to the time-series (absolute last-operation value).
     [[nodiscard]] doca_error_t
-    registerGauge(const nixlTelemetryEvent &event, const char *label_values[]);
+    appendGaugeSample(const nixlTelemetryEvent &event,
+                      uint64_t timestamp,
+                      const char *metric_name,
+                      const char *label_values[]);
+
+    // Records the per-operation value into the base histogram registered for this
+    // event's type (created once on the shared context). Tracks the concrete
+    // histogram id so flush() can push it, since the general metrics flush does
+    // not cover histograms. A no-op returning DOCA_SUCCESS when the event has no
+    // histogram.
+    [[nodiscard]] doca_error_t
+    appendHistogramSample(const nixlTelemetryEvent &event, const char *label_values[]);
 };
 
 #endif // NIXL_SRC_PLUGINS_TELEMETRY_DOCA_EXPORTER_H

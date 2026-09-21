@@ -38,6 +38,9 @@ const PluginDesc ucx_plugin_desc{.name = "UCX",
                                  .type = PluginDesc::PluginType::Real};
 const PluginDesc gds_plugin_desc{.name = "GDS",
                                  .type = PluginDesc::PluginType::Real};
+#ifdef HAVE_LIBFABRIC
+const PluginDesc libfabric_plugin_desc{.name = "LIBFABRIC", .type = PluginDesc::PluginType::Real};
+#endif
 
 class LoadSinglePluginTestFixture
     : public testing::TestWithParam<PluginDesc> {
@@ -58,7 +61,7 @@ protected:
     if (GetParam().type == PluginDesc::PluginType::Real)
       return;
 #endif
-    plugin_manager_.unloadBackendPlugin(GetParam().name);
+    plugin_manager_.unloadBackendPluginForUnitTest(GetParam().name);
   }
 
   /* Returns true if the plugin was successfully loaded, otherwise false. */
@@ -87,7 +90,7 @@ protected:
       if (plugin.type == PluginDesc::PluginType::Real)
         continue;
 #endif
-      plugin_manager_.unloadBackendPlugin(plugin.name);
+      plugin_manager_.unloadBackendPluginForUnitTest(plugin.name);
     }
   }
 
@@ -115,7 +118,7 @@ protected:
 
   void TearDown() override {
     for (const auto &plugin : loaded_plugins_)
-        plugin_manager_.unloadBackendPlugin(plugin);
+        plugin_manager_.unloadBackendPluginForUnitTest(plugin);
   }
 
   /*
@@ -136,7 +139,7 @@ protected:
   void UnloadPlugin(std::string name) {
     if (loaded_plugins_.find(name) == loaded_plugins_.end())
       return;
-    plugin_manager_.unloadBackendPlugin(name);
+    plugin_manager_.unloadBackendPluginForUnitTest(name);
     loaded_plugins_.erase(name);
   }
 
@@ -203,6 +206,27 @@ TEST_F(LoadedPluginTestFixture, LoadUnloadSimplePluginTest) {
     EXPECT_TRUE(HasOnlyLoadedPlugins());
 }
 
+TEST_F(LoadedPluginTestFixture, LibfabricPluginAdvertisesPostThreadOptions) {
+#if defined(HAVE_LIBFABRIC) && TEST_ALL_PLUGINS
+    auto plugin_handle = plugin_manager_.getBackendPlugin("LIBFABRIC");
+    if (!plugin_handle) {
+        plugin_handle = plugin_manager_.loadBackendPlugin("LIBFABRIC");
+        if (plugin_handle) {
+            loaded_plugins_.insert("LIBFABRIC");
+        }
+    }
+    ASSERT_NE(plugin_handle, nullptr);
+
+    const auto backend_options = plugin_handle->getBackendOptions();
+    ASSERT_NE(backend_options.find("num_threads"), backend_options.end());
+    ASSERT_NE(backend_options.find("split_batch_size"), backend_options.end());
+    EXPECT_EQ(backend_options.at("num_threads"), "0");
+    EXPECT_EQ(backend_options.at("split_batch_size"), "1024");
+#else
+    GTEST_SKIP();
+#endif
+}
+
 /* Load single plugins tests instantiations. */
 INSTANTIATE_TEST_SUITE_P(MockLoadPluginInstantiation,
                          LoadSinglePluginTestFixture,
@@ -214,6 +238,11 @@ INSTANTIATE_TEST_SUITE_P(UcxLoadPluginInstantiation,
 INSTANTIATE_TEST_SUITE_P(GdsLoadPluginInstantiation,
                          LoadSinglePluginTestFixture,
                          testing::Values(gds_plugin_desc));
+#ifdef HAVE_LIBFABRIC
+INSTANTIATE_TEST_SUITE_P(LibfabricLoadPluginInstantiation,
+                         LoadSinglePluginTestFixture,
+                         testing::Values(libfabric_plugin_desc));
+#endif
 
 /* Load multiple plugins tests instantiations. */
 INSTANTIATE_TEST_SUITE_P(UcxGdsLoadMultiplePluginInstantiation,

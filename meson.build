@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nixl', 'CPP', version: '1.2.0',
+project('nixl', 'CPP', version: '1.5.0',
     default_options: ['buildtype=release',
                 'werror=true',
                 'cpp_std=c++20',
@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'GDS', 'GDS_MT', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA']
 
 enabled_plugins = {}
 
@@ -90,6 +90,30 @@ if get_option('buildtype') == 'release'
   add_global_arguments(abseil_flags, language: 'cpp')
 endif
 
+# Sanitizer build, selected with -Dsanitizer=. Maps to -fsanitize and folds in
+# the third-party build workarounds so a plain `-Dsanitizer=...` build compiles:
+#  - undefined: GCC's UBSan null checks break Abseil's constexpr function-pointer
+#    comparison (GCC #71962, abseil-cpp#1634); drop those sub-checks. ASan still
+#    catches real null dereferences at runtime.
+#  - thread: GCC cannot instrument std::atomic_thread_fence in the Taskflow
+#    headers and -Werror turns the -Wtsan warning fatal; downgrade it.
+sanitizer = get_option('sanitizer')
+if sanitizer != 'none'
+  sanitizer_flag = '-fsanitize=' + sanitizer
+  add_project_arguments(sanitizer_flag, language: 'cpp')
+  add_project_link_arguments(sanitizer_flag, language: 'cpp')
+  sanitizer_parts = sanitizer.split(',')
+  if sanitizer_parts.contains('address')
+    add_project_arguments('-fno-omit-frame-pointer', language: 'cpp')
+  endif
+  if sanitizer_parts.contains('undefined')
+    add_project_arguments(cpp.get_supported_arguments('-fno-sanitize=null,nonnull-attribute,returns-nonnull-attribute'), language: 'cpp')
+  endif
+  if sanitizer_parts.contains('thread')
+    add_project_arguments(cpp.get_supported_arguments('-Wno-error=tsan'), language: 'cpp')
+  endif
+endif
+
 # Check for libaio (for LINUX AIO plugin and test)
 has_linux_aio = false
 linux_aio_dep = cpp.find_library('aio', required: false)
@@ -123,10 +147,47 @@ has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', depen
 # Check whether the POSIX plugin is enabled
 has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
 
-# Check for CUObject Client library
-cuobj_dep = dependency('cuobjclient-13.1', required: false)
+# Check for CUObject Client library. The pkg-config module is versioned as
+# cuobjclient-<major>.<minor>, so ask pkg-config what the build environment
+# actually provides rather than relying only on a hardcoded list, which goes
+# stale with every CUDA release. The static list below is the fallback for
+# environments where pkg-config cannot be invoked directly.
+cuobj_dep = dependency('', required: false)
+_cuobj_modules = []
+_cuobj_probe = run_command('sh', '-c',
+    'pkg-config --list-all 2>/dev/null | cut -d" " -f1 | grep "^cuobjclient-" | sort -V -r',
+    check: false)
+if _cuobj_probe.returncode() == 0
+    foreach _line : _cuobj_probe.stdout().strip().split('\n')
+        if _line != ''
+            _cuobj_modules += _line
+        endif
+    endforeach
+endif
+foreach _fallback : ['cuobjclient-13.4', 'cuobjclient-13.3', 'cuobjclient-13.2', 'cuobjclient-13.1']
+    if _fallback not in _cuobj_modules
+        _cuobj_modules += _fallback
+    endif
+endforeach
+foreach _cuobj_pkg : _cuobj_modules
+    _candidate = dependency(_cuobj_pkg, required: false)
+    if _candidate.found()
+        cuobj_dep = _candidate
+        message('Found CUObjClient pkg-config module: ' + _cuobj_pkg)
+        break
+    endif
+endforeach
 if cuobj_dep.found()
     add_project_arguments('-DHAVE_CUOBJ_CLIENT', language: ['cpp'])
+    summary({'cuObject (OBJ plugin RDMA)': 'enabled'}, section: 'Dependencies')
+else
+    warning('cuObjClient not found: the OBJ plugin will be built WITHOUT cuObject ' +
+            'RDMA acceleration. Searched pkg-config modules: ' +
+            ', '.join(_cuobj_modules) + '. Install the libcuobjclient development ' +
+            'package, which provides cuobjclient-<version>.pc, and make sure ' +
+            'pkg-config can find it (PKG_CONFIG_PATH).')
+    summary({'cuObject (OBJ plugin RDMA)': 'DISABLED - cuobjclient not found'},
+            section: 'Dependencies')
 endif
 
 # Search for Abseil dependencies in the system first
@@ -261,6 +322,21 @@ if cuda_dep.found()
     add_project_arguments('-std=c++20', language: 'cuda')
 
     add_project_link_arguments(nvcc_flags_link, language: 'cuda')
+
+    # When a sanitizer is enabled, forward its runtime to the nvcc-driven link so
+    # mixed C++/CUDA executables get libasan/libubsan/libtsan directly on their
+    # link line. The gtest binary is the case that bites: it compiles the
+    # device_api .cu sources, so meson links it with nvcc, but the sanitizer flag
+    # (added for language 'cpp' above) never reaches that link -- while its C++
+    # TUs were compiled with -fsanitize. Result: "undefined reference to
+    # __asan_unregister_globals ... libasan.so: DSO missing from command line".
+    # nvcc's -Xcompiler treats commas as argument separators, so forward each
+    # sanitizer part on its own -Xcompiler instead of -fsanitize=address,undefined.
+    if sanitizer != 'none'
+        foreach _san_part : sanitizer_parts
+            add_project_link_arguments('-Xcompiler=-fsanitize=' + _san_part, language: 'cuda')
+        endforeach
+    endif
     message('nvcc version: ' + nvcc.version())
     message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
     if nvcc.version().version_compare('>=12.8')
@@ -291,6 +367,51 @@ endif
 wheel_variant = get_option('wheel_variant').strip()
 if wheel_variant != ''
     cuda_wheel_dir = 'nixl_' + wheel_variant
+endif
+
+# AMD ROCm/HIP support for the libfabric plugin (mutually exclusive with CUDA;
+# default off). ROCm is requested by setting -Drocm_path=<prefix>; if rocm_path
+# is empty, ROCm support is not requested (there is no default path). Defined
+# here in the root meson.build -- ahead of subdir('src') and subdir('test') --
+# so every libfabric subdir (src/utils, src/plugins, test/unit/utils) consumes a
+# single rocm_dep and hipify_src, with no ordering dependency between them. The
+# plugin's CUDA sources are translated to HIP at build time via hipify-perl;
+# rocm_dep supplies the HIP headers and runtime those translated sources compile
+# and link against. __HIP_PLATFORM_AMD__ lets the HIP headers work under a
+# non-hipcc host compiler. Kept separate from cuda_dep.
+#
+# hipify injects <hip/hip_runtime.h> at the top of each translated source, ahead
+# of the nixl/toml++ headers. HIP defines __noinline__ as a macro, which breaks
+# toml++'s TOML_HAS_ATTR(__noinline__) preprocessor check; TOML_CUDA=1 routes
+# toml++ around that line. HIP also maps some CUDA driver calls onto deprecated
+# HIP APIs, so deprecation is downgraded from error (the tree builds with
+# werror=true) to a warning.
+#
+# hipify-perl ships only with the ROCm/HIP toolchain, so it is required when
+# ROCm is requested and unused (absent) on CUDA-only builds.
+rocm_path = get_option('rocm_path')
+if rocm_path != ''
+    if not fs.exists(rocm_path)
+        error('rocm_path set but ROCm install root not found at ' + rocm_path +
+              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
+    endif
+    rocm_dep = declare_dependency(
+        compile_args : [
+            '-I' + rocm_path + '/include',
+            '-D__HIP_PLATFORM_AMD__',
+            '-DTOML_CUDA=1',
+            '-Wno-error=deprecated-declarations',
+        ],
+        link_args : ['-L' + rocm_path + '/lib', '-lamdhip64', '-lhiprtc'],
+    )
+    message('ROCm/HIP enabled; toolchain path: ' + rocm_path)
+
+    hipify_cmd = find_program('hipify-perl')
+    hipify_src = generator(hipify_cmd,
+                           output : ['@BASENAME@_hip.cpp'],
+                           arguments : ['@INPUT@', '@EXTRA_ARGS@', '@OUTPUT@'])
+else
+    rocm_dep = disabler()
 endif
 
 # Check for etcd-cpp-api - use multiple methods for discovery
@@ -383,6 +504,16 @@ if ucx_dep.found() and cuda_dep.found() and nvcc_prog.found()
   }, section: 'UCX GPU Device API', bool_yn: true)
 endif
 
+# UCX SGL (scatter-gather list) API detection
+if ucx_dep.found()
+    have_ucx_sgl = cpp.has_type('ucp_dt_local_sgl_t',
+        prefix: '#include <ucp/api/ucp.h>',
+        dependencies: ucx_dep)
+    if have_ucx_sgl
+        add_project_arguments('-DHAVE_UCX_SGL_API', language: 'cpp')
+    endif
+endif
+
 if get_option('disable_gds_backend')
     add_project_arguments('-DDISABLE_GDS_BACKEND', language: 'cpp')
 endif
@@ -391,6 +522,60 @@ endif
 if get_option('buildtype') == 'release'
     # Used by Abseil to strip DCHECK assertions and DVLOG at compile time
     add_project_arguments('-DNDEBUG', language: 'cpp')
+endif
+
+# ---- Tracing (nixl::trace) -------------------------------------------------
+# Two gates: build/packaging (which backend plugins are built, as separate .so
+# modules under src/plugins/tracing) and runtime (which built plugins the caller
+# activates via NIXL_TRACE_BACKENDS / nsys auto-load). The facade itself is
+# always compiled into libnixl.
+nixl_trace_enabled = get_option('with_trace')
+nixl_trace_nvtx_enabled = false
+
+if nixl_trace_enabled
+    # 'cuda' is only an enabled language when cuda_dep.found() (add_languages('CUDA')
+    # above); passing it unconditionally breaks a non-CUDA with_trace configure.
+    nixl_trace_arg_langs = ['cpp']
+    if cuda_dep.found()
+        nixl_trace_arg_langs += ['cuda']
+    endif
+    add_project_arguments('-DNIXL_TRACE_ENABLED', language: nixl_trace_arg_langs)
+
+    requested_trace_backends = []
+    foreach b : get_option('trace_backends').split(',')
+        b_stripped = b.strip()
+        if b_stripped != ''
+            requested_trace_backends += [b_stripped]
+        endif
+    endforeach
+
+    # NVTX: header-only; ships with the CUDA toolkit (nvtx3). Detect-then-disable
+    # gracefully so non-CUDA / werror builds stay green. Built as a separately
+    # loaded plugin (src/plugins/tracing/nvtx), not linked into libnixl; nvtx_inc_dep
+    # is consumed there. PR7 structured payloads require nvToolsExtPayload.h (not
+    # present in all CUDA toolkit images); skip the plugin when either header is absent.
+    if 'nvtx' in requested_trace_backends
+        if cuda_dep.found()
+            nvtx_inc_dep = cuda_dep.partial_dependency(includes: true, compile_args: true)
+            has_nvtx_base = cpp.has_header('nvtx3/nvToolsExt.h', dependencies: nvtx_inc_dep)
+            has_nvtx_payload = cpp.has_header('nvtx3/nvToolsExtPayload.h', dependencies: nvtx_inc_dep)
+            if has_nvtx_base and has_nvtx_payload
+                nixl_trace_nvtx_enabled = true
+                message('nixl::trace: NVTX backend plugin enabled (CUDA-bundled nvtx3 headers)')
+            elif has_nvtx_base and not has_nvtx_payload
+                warning('nixl::trace: nvtx requested but nvtx3/nvToolsExtPayload.h not found; NVTX backend disabled')
+            else
+                warning('nixl::trace: nvtx requested but nvtx3 headers not found; NVTX backend disabled')
+            endif
+        else
+            warning('nixl::trace: nvtx requested but CUDA not found; NVTX backend disabled')
+        endif
+    endif
+
+    summary({
+        'Tracing facade'      : nixl_trace_enabled,
+        'NVTX backend plugin' : nixl_trace_nvtx_enabled,
+    }, section: 'Tracing', bool_yn: true)
 endif
 
 static_plugins = []
@@ -416,7 +601,7 @@ if get_option('buildtype') == 'debug'
 endif
 
 nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/infra', 'src/core', 'src/core/telemetry')
-nixl_gpu_inc_dirs = include_directories('src/api/gpu/ucx')
+nixl_device_inc_dirs = include_directories('src/api/device')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
 
@@ -447,9 +632,6 @@ if get_option('install_headers')
   install_headers('src/infra/mem_section.h', install_dir: prefix_inc)
   install_headers('src/core/telemetry/telemetry_event.h', install_dir: prefix_inc)
 
-  if ucx_gpu_device_api_available
-    install_headers('src/api/gpu/ucx/nixl_device.cuh', install_dir: prefix_inc + '/gpu/ucx')
-  endif
 endif
 
 # Doxygen documentation

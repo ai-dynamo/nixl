@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,7 @@
 #include <thread>
 #include "hf3fs_utils.h"
 #include "backend/backend_engine.h"
+#include "file/file_path_mode.h"
 
 class nixlHf3fsShmException : public std::runtime_error {
 public:
@@ -56,8 +57,15 @@ class nixlHf3fsMetadata : public nixlBackendMD {
 class nixlHf3fsFileMetadata : public nixlHf3fsMetadata {
 public:
     hf3fsFileHandle handle;
+    nixl::FileFd file_fd;
+    uint64_t devId = 0;
 
     nixlHf3fsFileMetadata() : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE) {}
+
+    nixlHf3fsFileMetadata(uint64_t devid, const std::string &metaInfo)
+        : nixlHf3fsMetadata(NIXL_HF3FS_MEM_TYPE_FILE),
+          file_fd(devid, metaInfo),
+          devId(devid) {}
 };
 
 class nixlHf3fsDramMetadata : public nixlHf3fsMetadata {
@@ -116,6 +124,7 @@ class nixlHf3fsEngine : public nixlBackendEngine {
     private:
         hf3fsUtil *hf3fs_utils;
         std::unordered_set<int> hf3fs_file_set;
+        nixl::PathModeDevIdRegistry path_mode_devids_;
         nixl_hf3fs_mem_config mem_config;
         static long page_size;
 

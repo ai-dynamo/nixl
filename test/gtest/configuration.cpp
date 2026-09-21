@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include "common/backend.h"
 #include "common/configuration.h"
 #include "gtest/gtest.h"
 #include "common.h"
@@ -216,11 +217,57 @@ TEST(Config, ConvertUnsigned) {
     testUnsigned<std::uint64_t>();
 }
 
-#if 0
+TEST(Config, BackendBasics) {
+    const std::string negative = "negative";
+    const std::string positive = "positive";
+    const std::string string = "string";
+    const std::string boolean = "boolean";
+    const std::string value = "transmogrify";
+    const std::string unknown = "unknownkey";
 
-  // ReadConfigFile is temporarily disabled because it always fails when it is
-  // not the first or only test to run. TODO: Enable again with more robust
-  // file handling.
+    const nixl_b_params_t p = {
+        {negative, "-42"}, {positive, "129"}, {string, value}, {boolean, "no"}};
+
+    // Test Optional
+    {
+        const auto r = nixl::getBackendParamOptional<int>(p, negative);
+        EXPECT_TRUE(r.has_value());
+        EXPECT_EQ(*r, -42);
+    }
+    {
+        const auto r = nixl::getBackendParamOptional<unsigned>(&p, positive);
+        EXPECT_TRUE(r.has_value());
+        EXPECT_EQ(*r, 129);
+    }
+    {
+        const auto r = nixl::getBackendParamOptional<bool>(&p, unknown);
+        EXPECT_FALSE(r.has_value());
+    }
+    { EXPECT_THROW((void)nixl::getBackendParamOptional<int>(&p, string), std::runtime_error); }
+    {
+        const auto r = nixl::getBackendParamOptional<bool>(nullptr, boolean);
+        EXPECT_FALSE(r.has_value());
+    }
+    // Test Defaulted
+    {
+        const bool r = nixl::getBackendParamDefaulted(p, boolean, true);
+        EXPECT_FALSE(r);
+    }
+    {
+        const bool r = nixl::getBackendParamDefaulted(&p, unknown, true);
+        EXPECT_TRUE(r);
+    }
+    {
+        const std::string r = nixl::getBackendParamDefaulted<std::string>(p, string, "wrong");
+        EXPECT_EQ(r, value);
+    }
+    { EXPECT_THROW((void)nixl::getBackendParamDefaulted(&p, boolean, 0), std::runtime_error); }
+    {
+        const int v = 12345;
+        const unsigned r = nixl::getBackendParamDefaulted(nullptr, value, v);
+        EXPECT_EQ(r, v);
+    }
+}
 
 namespace {
 
@@ -234,6 +281,15 @@ namespace {
     const std::string env2value = "not_an_int";
 
 } // namespace
+
+namespace internal {
+
+    // This function is safe to be called because no other thread is accessing the config.
+
+    void
+    refreshConfigFileForUnitTest();
+
+} // namespace internal
 
 TEST(Config, ReadConfigFile) {
     const auto pid = ::getpid();
@@ -251,6 +307,7 @@ TEST(Config, ReadConfigFile) {
     vars.addVar("NIXL_CONFIG_FILE", path.native());
     vars.addVar(env1name, env1value);
     vars.addVar(env2name, env2value);
+    internal::refreshConfigFileForUnitTest();
     {
         const auto value = nixl::config::getValue<bool>(bool_name);
         EXPECT_TRUE(value);
@@ -273,7 +330,5 @@ TEST(Config, ReadConfigFile) {
         EXPECT_THROW((void)nixl::config::getValue<int>(env2name), std::runtime_error);
     }
 }
-
-#endif
 
 } // namespace nixl::config

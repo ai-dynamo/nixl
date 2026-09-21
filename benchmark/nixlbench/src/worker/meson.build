@@ -19,11 +19,16 @@ worker_sources = [
 ]
 
 worker_deps = [
-  cuda_dep,
   openmp_dep,
   etcd_dep,
   tomlplusplus_dep
 ]
+
+if cuda_available
+  worker_deps += [cuda_dep]
+elif rocm_available
+  worker_deps += [rocm_dep]
+endif
 
 worker_lib = static_library('worker',
   worker_sources,

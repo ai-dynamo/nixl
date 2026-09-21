@@ -18,26 +18,20 @@
 #ifndef NIXL_SRC_UTILS_COMMON_CONFIGURATION_H
 #define NIXL_SRC_UTILS_COMMON_CONFIGURATION_H
 
-#include <algorithm>
-#include <charconv>
-#include <chrono>
-#include <cstdlib>
-#include <filesystem>
-#include <limits>
-#include <optional>
-#include <string>
-#include <strings.h>
-#include <type_traits>
-#include <typeinfo>
-#include <vector>
-
-#include <absl/strings/str_join.h>
-
-#include <toml++/toml.hpp>
-
+#include "config_traits.h"
 #include "exception.h"
 #include "nixl_log.h"
 #include "nixl_types.h"
+#include "toml_traits.h"
+
+#include <toml++/toml.hpp>
+
+#include <algorithm>
+#include <cstdlib>
+#include <optional>
+#include <string>
+#include <type_traits>
+#include <typeinfo>
 
 // General design guideline for configuration handling:
 // - When something does not exist and there is a fallback, use the fallback.
@@ -64,171 +58,15 @@ namespace internal {
     void
     warnIgnoreToml(const std::string &path);
 
-    template<typename, typename = void> struct convertTraits;
-
-    template<> struct convertTraits<bool> {
-        [[nodiscard]] static bool
+    template<typename T> struct convertTraits {
+        [[nodiscard]] static decltype(auto)
         convert(const std::string &value) {
-            static const std::vector<std::string> positive = {
-                "y", "yes", "on", "1", "true", "enable"};
-
-            static const std::vector<std::string> negative = {
-                "n", "no", "off", "0", "false", "disable"};
-
-            if (match(value, positive)) {
-                return true;
-            }
-
-            if (match(value, negative)) {
-                return false;
-            }
-
-            throwRuntimeError("Conversion to bool failed for string '",
-                              value,
-                              "' known are ",
-                              absl::StrJoin(positive, ", "),
-                              " as positive and ",
-                              absl::StrJoin(negative, ", "),
-                              " as negative (case insensitive)");
+            return configTraits<T>::convert(value);
         }
 
-        [[nodiscard]] static bool
+        [[nodiscard]] static decltype(auto)
         convert(const toml::node_view<const toml::node> &view) {
-            if (const auto *node = view.as_boolean()) {
-                return node->get();
-            }
-            throwRuntimeError("Invalid TOML type '", view.type(), "' for Boolean");
-        }
-
-    private:
-        [[nodiscard]] static bool
-        match(const std::string &value, const std::vector<std::string> &haystack) noexcept {
-            const auto pred = [&](const std::string &ref) {
-                return strcasecmp(ref.c_str(), value.c_str()) == 0;
-            };
-            return std::find_if(haystack.begin(), haystack.end(), pred) != haystack.end();
-        }
-    };
-
-    template<> struct convertTraits<std::string> {
-        [[nodiscard]] static std::string
-        convert(const std::string &value) {
-            return value;
-        }
-
-        [[nodiscard]] static std::string
-        convert(const toml::node_view<const toml::node> &view) {
-            if (const auto *node = view.as_string()) {
-                return node->get();
-            }
-            throwRuntimeError("Invalid TOML type '", view.type(), "' for string");
-        }
-    };
-
-    template<> struct convertTraits<std::filesystem::path> {
-        [[nodiscard]] static std::filesystem::path
-        convert(const std::string &value) {
-            return std::filesystem::path(value);
-        }
-
-        [[nodiscard]] static std::filesystem::path
-        convert(const toml::node_view<const toml::node> &view) {
-            return std::filesystem::path(convertTraits<std::string>::convert(view));
-        }
-    };
-
-    template<typename integer> struct integralTraits {
-        [[nodiscard]] static integer
-        convert(const std::string &value) {
-            integer result;
-            const auto status =
-                std::from_chars(start(value), value.data() + value.size(), result, base(value));
-            switch (status.ec) {
-            case std::errc::invalid_argument:
-                throwRuntimeError(
-                    "Invalid integer string '", value, "' for type ", typeid(integer).name());
-            case std::errc::result_out_of_range:
-                throwRuntimeError(
-                    "Integer string '", value, "' out of range for type ", typeid(integer).name());
-            default:
-                if (status.ptr != value.data() + value.size()) {
-                    throwRuntimeError("Trailing garbage in integer string '", value, "'");
-                }
-                break;
-            }
-            return result;
-        }
-
-        [[nodiscard]] static integer
-        convert(const toml::node_view<const toml::node> &view) {
-            if (const auto *node = view.as_integer()) {
-                const auto value = node->get();
-                if (in_range(value)) {
-                    return integer(value);
-                }
-                throwRuntimeError(
-                    "Integer value '", value, "' out of range for type ", typeid(integer).name());
-            }
-            throwRuntimeError("Invalid TOML type '", view.type(), "' for integer");
-        }
-
-    private:
-        [[nodiscard]] static bool
-        isHex(const std::string &value) noexcept {
-            return std::is_unsigned_v<integer> && (value.size() > 2) && (value[0] == '0') &&
-                ((value[1] == 'x') || (value[1] == 'X'));
-        }
-
-        [[nodiscard]] static int
-        base(const std::string &value) noexcept {
-            return isHex(value) ? 16 : 10;
-        }
-
-        [[nodiscard]] static const char *
-        start(const std::string &value) noexcept {
-            return value.data() + (isHex(value) ? 2 : 0);
-        }
-
-        template<typename T>
-        [[nodiscard]] static bool
-        in_range(const T value) noexcept {
-            static_assert(std::is_signed_v<T>);
-            if constexpr (std::is_signed_v<integer>) {
-                return value >= std::numeric_limits<integer>::min() &&
-                    value <= std::numeric_limits<integer>::max();
-            } else {
-                return value >= 0 &&
-                    static_cast<uint64_t>(value) <= std::numeric_limits<integer>::max();
-            }
-        }
-    };
-
-    // Error out for now, in case plain char will be used for strings of length 1.
-    // Please use the integer types signed char or unsigned char for 8-bit integers.
-    template<> struct convertTraits<char> {};
-
-    template<typename integer>
-    struct convertTraits<integer, std::enable_if_t<std::is_integral_v<integer>>>
-        : integralTraits<integer> {};
-
-    template<> struct convertTraits<std::chrono::milliseconds> {
-        [[nodiscard]] static std::chrono::milliseconds
-        convert(const std::string &value) {
-            return std::chrono::milliseconds(convertTraits<uint64_t>::convert(value));
-        }
-
-        [[nodiscard]] static std::chrono::milliseconds
-        convert(const toml::node_view<const toml::node> &view) {
-            if (const auto *node = view.as_time()) {
-                const auto &time = node->get();
-                return std::chrono::milliseconds((time.hour * 3600000) + (time.minute * 60000) +
-                                                 (time.second * 1000) +
-                                                 (time.nanosecond / 1000000));
-            }
-            if (const auto *node = view.as_integer()) {
-                return std::chrono::milliseconds(node->get());
-            }
-            throwRuntimeError("Invalid TOML type '", view.type(), "' for milliseconds");
+            return tomlTraits<T>::convert(view);
         }
     };
 

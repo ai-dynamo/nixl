@@ -363,6 +363,35 @@ Document public APIs and complex implementations:
  */
 ```
 
+### Python Docstrings
+
+Document public Python modules, classes, methods, and functions according to
+[PEP 257](https://peps.python.org/pep-0257/) and use
+[Google-style docstrings](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings)
+for structured sections. The docstring must be the first statement in the documented object.
+
+Start with a concise summary and add the standard `Args:`, `Returns:`, `Raises:`,
+`Examples:`, and `Notes:` sections when applicable. Keep types and defaults in the
+Python signature rather than duplicating them in parameter descriptions. This format is
+readable through Python's built-in help system and can be consumed by API documentation
+generators.
+
+```python
+def connect(host: str, timeout_s: float = 10.0) -> Connection:
+    """Connect to a remote agent.
+
+    Args:
+        host: Hostname or address of the remote agent.
+        timeout_s: Maximum time to wait for the connection.
+
+    Returns:
+        The established connection.
+
+    Raises:
+        ConnectionError: If the remote agent cannot be reached.
+    """
+```
+
 ### PR Documentation
 
 Use the provided template in `.github/pull_request_template.md`:
