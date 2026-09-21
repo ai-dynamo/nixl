@@ -767,12 +767,12 @@ TEST_F(nixlLogFileTest, RejectsUnknownAndIncompleteEscapes) {
  *        generation is kept, which bounds the total.
  */
 TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
-    constexpr std::uintmax_t limit = 2048;
+    constexpr std::uintmax_t limit = 4096;
     const std::filesystem::path rotated = path_.string() + ".1";
     std::filesystem::remove(rotated);
 
     env_.addVar("NIXL_LOG_FILE", path_.string());
-    env_.addVar("NIXL_LOG_FILE_SIZE", "2K");
+    env_.addVar("NIXL_LOG_FILE_SIZE", "4K");
     ASSERT_TRUE(nixl::initLogFile());
 
     for (unsigned i = 0; i < 200; ++i) {
@@ -826,7 +826,7 @@ TEST_F(nixlLogFileTest, KeepsRelativePathAcrossWorkingDirectoryChanges) {
         scopedCurrentPath current_path;
         std::filesystem::current_path(directory_a);
         env_.addVar("NIXL_LOG_FILE", std::string(relative_name));
-        env_.addVar("NIXL_LOG_FILE_SIZE", "1K");
+        env_.addVar("NIXL_LOG_FILE_SIZE", "4K");
         ASSERT_TRUE(nixl::initLogFile());
         NIXL_INFO << "record opened in directory A";
 
@@ -857,7 +857,7 @@ TEST_F(nixlLogFileTest, KeepsRelativePathAcrossWorkingDirectoryChanges) {
 
 /** @brief A record too large for an empty file remains on stderr but is omitted here. */
 TEST_F(nixlLogFileTest, DropsRecordLargerThanLimit) {
-    constexpr std::uintmax_t limit = 100;
+    constexpr std::uintmax_t limit = 4096;
     const std::filesystem::path rotated = path_.string() + ".1";
     std::filesystem::remove(rotated);
 
@@ -865,7 +865,7 @@ TEST_F(nixlLogFileTest, DropsRecordLargerThanLimit) {
     env_.addVar("NIXL_LOG_FILE_SIZE", std::to_string(limit));
     ASSERT_TRUE(nixl::initLogFile());
 
-    const std::string payload(150, 'x');
+    const std::string payload(5000, 'x');
     NIXL_INFO << "oversized record " << payload;
 
     EXPECT_EQ(std::filesystem::file_size(path_), 0u);
@@ -884,7 +884,7 @@ TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
     if (::geteuid() == 0) {
         GTEST_SKIP() << "root bypasses the directory permission this relies on";
     }
-    constexpr std::uintmax_t limit = 2048;
+    constexpr std::uintmax_t limit = 4096;
 
     // Writable first so the file can be created, then searchable but not
     // writable: rename needs the directory, writing only needs the file.
@@ -894,7 +894,7 @@ TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
     const std::filesystem::path log = directory / "log";
 
     env_.addVar("NIXL_LOG_FILE", log.string());
-    env_.addVar("NIXL_LOG_FILE_SIZE", "2K");
+    env_.addVar("NIXL_LOG_FILE_SIZE", "4K");
     ASSERT_TRUE(nixl::initLogFile());
     NIXL_INFO << "record that creates the file";
 
@@ -949,12 +949,39 @@ TEST_F(nixlLogFileTest, RejectsAnUnparsableSizeAndSaysSo) {
 
     env_.addVar("NIXL_LOG_FILE", path_.string());
 
-    for (const std::string bad : {"sometime next week", "-1", "-1024", "64X", " 64", "+64"}) {
+    for (const std::string bad : {
+             "sometime next week",
+             "-1",
+             "-1024",
+             "64X",
+             " 64",
+             "+64",
+             "184467440737095516160",
+         }) {
         countingSink watcher;
 
         env_.addVar("NIXL_LOG_FILE_SIZE", bad);
         EXPECT_FALSE(nixl::initLogFile()) << "'" << bad << "' was accepted";
         EXPECT_EQ(watcher.countMatching(report), 1u) << "'" << bad << "' was not reported";
+        EXPECT_FALSE(logFileExists()) << "'" << bad << "' still created a log file";
+
+        env_.popVar();
+    }
+}
+
+/** @brief A parseable limit below 4096 bytes is rejected with a specific error. */
+TEST_F(nixlLogFileTest, RejectsSizeBelowMinimumAndSaysSo) {
+    const std::string report = "value is below the minimum of 4096 bytes";
+    const gtest::LogIgnoreGuard lig(report);
+
+    env_.addVar("NIXL_LOG_FILE", path_.string());
+
+    for (const std::string bad : {"0", "4095", "3K"}) {
+        countingSink watcher;
+
+        env_.addVar("NIXL_LOG_FILE_SIZE", bad);
+        EXPECT_FALSE(nixl::initLogFile()) << "'" << bad << "' was accepted";
+        EXPECT_EQ(watcher.countMatching(report), 1u) << "'" << bad << "' had no specific error";
         EXPECT_FALSE(logFileExists()) << "'" << bad << "' still created a log file";
 
         env_.popVar();

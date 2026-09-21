@@ -56,7 +56,7 @@ Paths containing `%p` and `%t` create a file for every process and run. Manage r
 
 ## Bounding the size
 
-Without a limit the log file grows indefinitely. `NIXL_LOG_FILE_SIZE` caps it, in bytes, optionally suffixed with `K`, `M` or `G` for powers of 1024:
+Without a limit the log file grows indefinitely. `NIXL_LOG_FILE_SIZE` caps it at 4 KiB or greater, in bytes, optionally suffixed with `K`, `M` or `G`:
 
 ```bash
 export NIXL_LOG_FILE=/var/log/nixl/agent.log
@@ -78,7 +78,7 @@ File logging failures do not terminate the process:
 | The file cannot be opened | Reported at error severity; file logging is disabled. |
 | A later write fails | Reported once on stderr; further file records are dropped. |
 | A rotation cannot be done | Reported on stderr; file logging stops without exceeding the limit. |
-| `NIXL_LOG_FILE_SIZE` cannot be parsed | Reported at error severity; file logging is disabled. |
+| `NIXL_LOG_FILE_SIZE` is below 4 KiB or cannot be parsed | Reported at error severity; file logging is disabled. |
 
 ## Reference
 

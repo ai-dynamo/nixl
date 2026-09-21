@@ -137,8 +137,9 @@ namespace nixl {
 /**
  * @brief Mirrors records passing NIXL_LOG_LEVEL into the file named by
  *        NIXL_LOG_FILE, in addition to stderr. Unset or empty registers no
- *        sink. The file is appended to, not truncated, so give each process its
- *        own path.
+ *        sink. The file is appended to, not truncated. Each process should use
+ *        its own path because shared writers may interleave, and rotation
+ *        assumes a single writer.
  *
  * Called during library initialization; exposed for tests. Binding a different
  * path needs shutdownLogFile() first, since this returns early, without reading
