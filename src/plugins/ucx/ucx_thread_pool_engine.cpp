@@ -213,6 +213,11 @@ class nixlUcxDedicatedThread : public nixlUcxThread {
 public:
     explicit nixlUcxDedicatedThread(nixlUcxEngine *engine) : nixlUcxThread(engine, 1) {}
 
+    ~nixlUcxDedicatedThread() override {
+        io_.stop();
+        join();
+    }
+
     static nixlUcxDedicatedThread *
     getDedicatedThread() {
         return static_cast<nixlUcxDedicatedThread *>(tlsThread());
@@ -228,15 +233,6 @@ public:
     std::future<R>
     post(std::packaged_task<R()> task) {
         return asio::post(io_, std::move(task));
-    }
-
-    /**
-     * @brief Stop the job queue and join the thread
-     */
-    void
-    join() override {
-        io_.stop();
-        nixlUcxThread::join();
     }
 
     void
@@ -308,11 +304,7 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
     }
 }
 
-nixlUcxThreadPoolEngine::~nixlUcxThreadPoolEngine() {
-    for (auto &thread : dedicatedThreads_) {
-        thread->join();
-    }
-}
+nixlUcxThreadPoolEngine::~nixlUcxThreadPoolEngine() = default;
 
 nixl_status_t
 nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
