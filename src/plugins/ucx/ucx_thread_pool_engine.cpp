@@ -30,9 +30,13 @@
 #include <vector>
 #include <asio.hpp>
 
+#include "absl/container/inlined_vector.h"
+
 #include "ucx_utils.h"
 
 namespace {
+
+constexpr size_t inline_chunk_futures = 16;
 
 struct nixlUcxBackendSharedState;
 
@@ -203,15 +207,32 @@ private:
     size_t chunkSize_;
 };
 
+} // namespace
+
 class nixlUcxDedicatedThread : public nixlUcxThread {
 public:
-    nixlUcxDedicatedThread(nixlUcxEngine *engine, asio::io_context &io)
-        : nixlUcxThread(engine, 1),
-          io_(io) {}
+    explicit nixlUcxDedicatedThread(nixlUcxEngine *engine) : nixlUcxThread(engine, 1) {}
+
+    ~nixlUcxDedicatedThread() override {
+        io_.stop();
+        join();
+    }
 
     static nixlUcxDedicatedThread *
     getDedicatedThread() {
         return static_cast<nixlUcxDedicatedThread *>(tlsThread());
+    }
+
+    /**
+     * @brief Queue a job for execution on this thread
+     * @param task Packaged task to run; asio retrieves its future, so the
+     *             caller must not call get_future() on it
+     * @return Future of the task result
+     */
+    template<typename R>
+    [[nodiscard]] std::future<R>
+    post(std::packaged_task<R()> task) {
+        return asio::post(io_, std::move(task));
     }
 
     void
@@ -264,11 +285,9 @@ protected:
     }
 
 private:
-    asio::io_context &io_;
+    asio::io_context io_;
     std::vector<nixlUcxChunkBackendReqH *> requests_;
 };
-
-} // namespace
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
                                                  size_t num_threads)
@@ -277,21 +296,11 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
         nixl::getBackendParamDefaulted(init_params.customParams, "split_batch_size", 1024u);
 
     const auto dedicated_workers = getDedicatedWorkers();
-    io_.reset(new asio::io_context());
     dedicatedThreads_.reserve(dedicated_workers.size());
     for (size_t i = 0; i < dedicated_workers.size(); ++i) {
-        dedicatedThreads_.emplace_back(std::make_unique<nixlUcxDedicatedThread>(this, *io_));
+        dedicatedThreads_.emplace_back(std::make_unique<nixlUcxDedicatedThread>(this));
         dedicatedThreads_.back()->addWorker(dedicated_workers[i].get());
         dedicatedThreads_.back()->start();
-    }
-}
-
-nixlUcxThreadPoolEngine::~nixlUcxThreadPoolEngine() {
-    if (io_) {
-        io_->stop();
-        for (auto &thread : dedicatedThreads_) {
-            thread->join();
-        }
     }
 }
 
@@ -307,7 +316,9 @@ nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
         return nixlUcxEngine::prepXfer(operation, local, remote, remote_agent, handle, opt_args);
     }
 
-    size_t chunk_size = std::max(batch_size / dedicatedThreads_.size(), splitBatchSize_);
+    const size_t num_threads = dedicatedThreads_.size();
+    const size_t chunk_size =
+        std::max((batch_size + num_threads - 1) / num_threads, splitBatchSize_);
     size_t num_chunks = (batch_size + chunk_size - 1) / chunk_size;
 
     const auto comp_handle = new nixlUcxCompositeBackendReqH(
@@ -336,15 +347,15 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     size_t chunk_size = comp_handle->getChunkSize();
     NIXL_TRACE << "sending " << *comp_handle;
 
-    std::promise<void> promise;
-    std::future<void> future = promise.get_future();
-    std::atomic<size_t> remaining{comp_handle->getNumChunks()};
     std::atomic<nixl_status_t> status{NIXL_SUCCESS};
+    absl::InlinedVector<std::future<void>, inline_chunk_futures> futures;
+    futures.reserve(comp_handle->getNumChunks());
 
     for (size_t i = 0; i < comp_handle->getNumChunks(); i++) {
-        asio::post(*io_, [&, i]() {
-            nixlUcxDedicatedThread *thread = nixlUcxDedicatedThread::getDedicatedThread();
-            NIXL_ASSERT(thread != nullptr);
+        // Chunks are distributed round-robin over the dedicated threads
+        nixlUcxDedicatedThread *thread = dedicatedThreads_[i % dedicatedThreads_.size()].get();
+        futures.push_back(thread->post(std::packaged_task<void()>([&, i, thread]() {
+            NIXL_ASSERT(thread == nixlUcxDedicatedThread::getDedicatedThread());
 
             nixlUcxChunkBackendReqH *chunk_handle =
                 comp_handle->startChunk(i, thread->getWorkers()[0]);
@@ -362,14 +373,17 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
                 NIXL_TRACE << "dedicated " << *thread << " sent " << *chunk_handle;
                 thread->addRequest(chunk_handle);
             }
-
-            if (remaining.fetch_sub(1) == 1) {
-                promise.set_value();
-            }
-        });
+        })));
     }
 
-    future.wait();
+    // The last posted chunk is the likeliest to finish last
+    for (auto it = futures.rbegin(); it != futures.rend(); ++it) {
+        it->wait();
+    }
+    for (auto &future : futures) {
+        future.get();
+    }
+
     NIXL_TRACE << "sent " << *comp_handle << " with status: " << status.load();
     return status.load();
 }
