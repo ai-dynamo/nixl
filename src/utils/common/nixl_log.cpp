@@ -26,7 +26,7 @@
 #include "absl/log/log_sink_registry.h"
 #include "absl/strings/ascii.h"
 #include "absl/container/flat_hash_map.h"
-#include <cctype>
+#include <charconv>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -56,8 +56,11 @@ constexpr std::string_view kDefaultLogLevel = "WARN";
 // Names the file that log records are mirrored into. Unset disables the sink.
 constexpr const char *log_file_env_var = "NIXL_LOG_FILE";
 
-// Bounds that file. Unset, empty or 0 lets it grow without limit.
+// Bounds that file. Unset or empty lets it grow without limit.
 constexpr const char *log_file_size_env_var = "NIXL_LOG_FILE_SIZE";
+
+// Smaller limits are unlikely to hold even one useful diagnostic record.
+constexpr std::uintmax_t min_log_file_size = 4096;
 
 // Appended to the log file's name to hold the records rotated out of it.
 constexpr const char *rotated_suffix = ".1";
@@ -129,28 +132,21 @@ expandLogPath(const std::string &pattern) {
  * @return Bytes, 0 for no limit, or nullopt if @p text is not a size.
  */
 [[nodiscard]] std::optional<std::uintmax_t>
-parseLogFileSize(const std::string &text) {
+parseLogFileSize(std::string_view text) {
     if (text.empty()) {
         return 0;
     }
 
-    // stoull reads "-1" as a wrap-around to the largest possible limit, and
-    // also accepts leading whitespace and a plus. Insist on a digit first.
-    if (std::isdigit(static_cast<unsigned char>(text.front())) == 0) {
-        return std::nullopt;
-    }
-
-    size_t digits = 0;
+    const char *begin = text.data();
+    const char *end = begin + text.size();
     std::uintmax_t value = 0;
-    try {
-        value = std::stoull(text, &digits);
-    }
-    catch (const std::exception &) {
+    const auto [suffix_begin, error] = std::from_chars(begin, end, value);
+    if (error != std::errc{}) {
         return std::nullopt;
     }
 
     std::uintmax_t scale = 1;
-    const std::string suffix = text.substr(digits);
+    const std::string_view suffix(suffix_begin, static_cast<size_t>(end - suffix_begin));
     if (suffix == "K" || suffix == "k") {
         scale = 1024;
     } else if (suffix == "M" || suffix == "m") {
@@ -164,6 +160,7 @@ parseLogFileSize(const std::string &text) {
     if (value > std::numeric_limits<std::uintmax_t>::max() / scale) {
         return std::nullopt;
     }
+
     return value * scale;
 }
 
@@ -283,7 +280,7 @@ private:
     reportFailure(int reason) {
         failed_ = true;
 
-        const std::string detail = reason != 0 ? ": " + nixl_strerror(reason) : "";
+        const std::string detail = (reason != 0) ? (": " + nixl_strerror(reason)) : "";
         std::fprintf(stderr,
                      "NIXL: could not write to %s '%s'%s; dropping further records\n",
                      log_file_env_var,
@@ -424,6 +421,11 @@ initLogFile() {
     if (!limit.has_value()) {
         NIXL_ERROR << "Invalid " << log_file_size_env_var << " '" << configured_size
                    << "': expected a byte count, optionally suffixed with K, M or G";
+        return false;
+    }
+    if (configured_size != nullptr && *configured_size != '\0' && *limit < min_log_file_size) {
+        NIXL_ERROR << "Invalid " << log_file_size_env_var << " '" << configured_size
+                   << "': value is below the minimum of " << min_log_file_size << " bytes";
         return false;
     }
 
