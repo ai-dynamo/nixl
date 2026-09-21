@@ -317,7 +317,8 @@ nixlUcxThreadPoolEngine::prepXfer(const nixl_xfer_op_t &operation,
     }
 
     const size_t num_threads = dedicatedThreads_.size();
-    const size_t chunk_size = std::max((batch_size + num_threads - 1) / num_threads, splitBatchSize_);
+    const size_t chunk_size =
+        std::max((batch_size + num_threads - 1) / num_threads, splitBatchSize_);
     size_t num_chunks = (batch_size + chunk_size - 1) / chunk_size;
 
     const auto comp_handle = new nixlUcxCompositeBackendReqH(
