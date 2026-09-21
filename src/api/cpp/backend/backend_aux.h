@@ -135,28 +135,25 @@ operator==(const nixlRemoteMetaDesc &lhs, const nixlRemoteMetaDesc &rhs) {
 typedef nixlDescList<nixlMetaDesc> nixl_meta_dlist_t;
 using nixl_remote_meta_dlist_t = nixlDescList<nixlRemoteMetaDesc>;
 
-// Compressed descriptor: a run of `count` equal-length blocks starting at
-// flat index `start_idx`, with consecutive blocks spaced `stride` bytes apart.
-class nixlStrideDesc : public nixlMetaDesc {
+// Internal compressed descriptor: extends the public nixlStrideDesc geometry with
+// the backend metadata pointer.
+class nixlMetaStrideDesc : public nixlStrideDesc {
 public:
-    size_t stride = 0;
-    size_t count = 0;
+    nixlBackendMD *metadataP = nullptr;
     size_t start_idx = 0;
 
-    nixlStrideDesc() = default;
+    nixlMetaStrideDesc() = default;
 
-    using nixlMetaDesc::nixlMetaDesc;
+    using nixlStrideDesc::nixlStrideDesc;
 
-    nixlStrideDesc(uintptr_t addr,
-                   size_t len,
-                   uint64_t dev_id,
-                   nixlBackendMD *metadata,
-                   size_t stride_,
-                   size_t count_)
-        : nixlMetaDesc(addr, len, dev_id, metadata),
-          stride(stride_),
-          count(count_),
-          start_idx(0) {}
+    nixlMetaStrideDesc(uintptr_t addr,
+                       size_t len,
+                       uint64_t dev_id,
+                       nixlBackendMD *metadata,
+                       size_t stride,
+                       size_t count)
+        : nixlStrideDesc(addr, len, dev_id, stride, count),
+          metadataP(metadata) {}
 
     [[nodiscard]] nixlMetaDesc
     getMetaDesc(size_t idx, size_t size) const noexcept {
@@ -165,9 +162,9 @@ public:
     }
 };
 
-class nixlStrideDescList : public nixlDescList<nixlStrideDesc> {
+class nixlMetaStrideDescList : public nixlDescList<nixlMetaStrideDesc> {
 public:
-    using nixlDescList<nixlStrideDesc>::nixlDescList;
+    using nixlDescList<nixlMetaStrideDesc>::nixlDescList;
 
     // Returns the total number of logical blocks across all runs (the decompressed size).
     [[nodiscard]] size_t
@@ -175,13 +172,13 @@ public:
         if (descs.empty()) {
             return 0;
         }
-        const nixlStrideDesc &last = descs.back();
+        const nixlMetaStrideDesc &last = descs.back();
         return last.start_idx + last.count;
     }
 
     // Returns the run covering the given flat block index, using an educated probe
     // with a binary-search fallback.
-    const nixlStrideDesc &
+    [[nodiscard]] const nixlMetaStrideDesc &
     find(size_t flat_idx, size_t run_size) const noexcept {
         NIXL_ASSERT(run_size > 0);
         // Educated first probe: assume uniform runs
@@ -205,6 +202,6 @@ public:
     }
 };
 
-using nixl_stride_dlist_t = nixlStrideDescList;
+using nixl_meta_stride_dlist_t = nixlMetaStrideDescList;
 
 #endif

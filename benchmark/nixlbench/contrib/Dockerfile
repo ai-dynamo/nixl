@@ -14,18 +14,71 @@
 # limitations under the License.
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-ARG BASE_IMAGE_TAG="25.10-cuda13.0-devel-ubuntu24.04"
+ARG BASE_IMAGE_TAG="26.08-cuda13.4-devel-ubuntu24.04"
+
+# libcuobjclient dev files: the cuda-dl-base devel images ship the runtime but
+# not libcuobjclient-dev, so the OBJ plugin silently loses cuObject RDMA
+# acceleration. Keep pinned to the same release as BASE_IMAGE_TAG.
+ARG CUOBJ_DEV_IMAGE="nvcr.io/nvidia/cuda-dl-base:26.08-cuda13.4-inference-devel-ubuntu24.04"
 
 # UCX argument is either "upstream" (default installed in base image) or "custom" (build from source)
 ARG UCX="upstream"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 
+FROM ${CUOBJ_DEV_IMAGE} AS cuobj_dev
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    mkdir -p /cuobj/include /cuobj/lib /cuobj/pkgconfig; \
+    cp -a "$T"/include/cuobj*.h /cuobj/include/; \
+    cp -a "$T"/lib/libcuobjclient.so /cuobj/lib/; \
+    cp -a /usr/lib/pkgconfig/cuobjclient-*.pc /cuobj/pkgconfig/; \
+    basename "$(ls "$T"/lib/libcuobjclient.so.1.*)" > /cuobj/soname
+
 # --- Stage 1: Common OS setup ---
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
+
+# Install them only when the base has a matching runtime and no dev files of
+# its own, so bases that are already correct or have no cuObject are untouched.
+COPY --from=cuobj_dev /cuobj /tmp/cuobj
+RUN set -e; \
+    CUDA_DIR="$(readlink -f /usr/local/cuda)"; \
+    T="$(echo "$CUDA_DIR"/targets/*-linux)"; \
+    have="$(basename "$(ls "$T"/lib/libcuobjclient.so.1.* 2>/dev/null | head -1)" 2>/dev/null)"; \
+    want="$(cat /tmp/cuobj/soname)"; \
+    if [ -e "$T/include/cuobjclient.h" ]; then \
+        echo "cuObject: dev files already present, leaving base untouched"; \
+    elif [ -z "$have" ]; then \
+        echo "cuObject: no runtime in base, skipping dev files"; \
+    elif [ "$have" != "$want" ]; then \
+        echo "cuObject: base runtime $have != dev files $want, skipping"; \
+    else \
+        cp -a /tmp/cuobj/include/*.h "$T/include/"; \
+        cp -a /tmp/cuobj/lib/libcuobjclient.so "$T/lib/"; \
+        PC="$(ls /tmp/cuobj/pkgconfig/cuobjclient-*.pc | head -1)"; \
+        mkdir -p /usr/lib/pkgconfig; \
+        sed "s|^cudaroot=.*|cudaroot=$CUDA_DIR|" "$PC" > "/usr/lib/pkgconfig/$(basename "$PC")"; \
+        echo "cuObject: installed dev files for $want"; \
+    fi; \
+    rm -rf /tmp/cuobj
 
 # Re-declare for use in this stage
 ARG ARCH="x86_64"
 ARG DEFAULT_PYTHON_VERSION
+ARG APT_MIRROR=""
+
+# Optional apt mirror override, e.g. for CI environments with an internal
+# Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
+RUN if [ -n "$APT_MIRROR" ]; then \
+        . /etc/os-release && \
+        printf '%s\n' \
+            'Types: deb' \
+            "URIs: $APT_MIRROR" \
+            "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+            'Components: main restricted universe multiverse' \
+            'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
+        grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
+    fi
+
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
@@ -115,6 +168,10 @@ FROM ucx_${UCX}_image AS ucx_image
 # --- Stage 4: Final Image Assembly ---
 # Re-declare ARGs needed in this final stage
 ARG ARCH="x86_64"
+# PyTorch publishes wheels for only some CUDA minors, and the base image's own
+# CUDA_VERSION (13.4) has no index. Deliberately not named CUDA_VERSION: the base
+# exports that as ENV, which wins over an ARG of the same name.
+ARG TORCH_CUDA_INDEX="cu130"
 ARG DEFAULT_PYTHON_VERSION
 ARG WHL_PYTHON_VERSIONS="3.12"
 ARG WHL_PLATFORM="manylinux_2_39_$ARCH"
@@ -219,7 +276,7 @@ RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch 
 
 RUN git clone https://github.com/nvidia/gusli.git && \
     cd gusli && \
-    make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0 CXX="g++ -std=c++20" && \
+    make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
     cd ..
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
@@ -245,7 +302,7 @@ RUN uv pip install --system --upgrade \
 RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
         echo "Using PyTorch from system site-packages"; \
     else \
-        export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+        export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
         uv pip install --system torch torchvision torchaudio; \
     fi
 # setuptools for PEP 639 license metadata
@@ -262,6 +319,20 @@ RUN rm -rf build && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
+
+# Fail the build if cuObject acceleration did not make it into the plugin.
+RUN set -e; \
+    T="$(echo "$(readlink -f /usr/local/cuda)"/targets/*-linux)"; \
+    if ! ls "$T"/lib/libcuobjclient.so.1.* >/dev/null 2>&1; then \
+        echo "cuObject: no runtime in base, skipping OBJ plugin check"; \
+    else \
+        P="$(find /usr/local/nixl -name libplugin_OBJ.so -print -quit)"; \
+        test -n "$P" || { echo "ERROR: libplugin_OBJ.so not found" >&2; exit 1; }; \
+        readelf -d "$P" | grep -q libcuobjclient || { \
+            echo "ERROR: libplugin_OBJ.so is missing libcuobjclient; S3 acceleration is not compiled in" >&2; \
+            exit 1; }; \
+        echo "cuObject: libplugin_OBJ.so links libcuobjclient"; \
+    fi
 
 RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && \
     echo "/usr/local/nixl/lib/$ARCH-linux-gnu/plugins" >> /etc/ld.so.conf.d/nixl.conf && \
@@ -295,7 +366,7 @@ RUN uv pip install --system -e benchmark/kvbench
 
 ENV PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
-ENV PYTHON_PATH=/usr/local/nixlbench/lib/python3/dist-packages/nixlbench/
+ENV PYTHONPATH=/usr/local/nixlbench/lib/python3/dist-packages/nixlbench/
 
 # Fix for etcd proto dependencies
 ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
