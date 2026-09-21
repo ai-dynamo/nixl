@@ -320,8 +320,20 @@ shouldDeepBindPlugin(const std::string &plugin_name) {
     /* RTLD_DEEPBIND mis-binds the copy-relocated libc data symbols that libucs
      * reads directly, so UCS walks a bogus `environ` while creating a worker
      * (ucs_config_parser_print_env_vars) and segfaults. The private UCX SONAME
-     * suffix already provides the isolation this flag was meant to add. */
-    if (nixl::config::getValueDefaulted<bool>(kUcxDeepBindVar, false)) {
+     * suffix already provides the isolation this flag was meant to add.
+     *
+     * The fallback covers an absent variable only: configTraits<bool>::convert throws on a
+     * present but unparseable one, and a value nobody can parse must not turn an ignored
+     * setting into a failed backend creation. */
+    bool requested = false;
+    try {
+        requested = nixl::config::getValueDefaulted<bool>(kUcxDeepBindVar, false);
+    }
+    catch (const std::exception &e) {
+        NIXL_WARN << "Invalid " << kUcxDeepBindVar << " value: " << e.what();
+    }
+
+    if (requested) {
         NIXL_WARN << kUcxDeepBindVar
                   << " is ignored: RTLD_DEEPBIND mis-binds libc symbols in the "
                      "UCX plugin and crashes UCX initialization.";
