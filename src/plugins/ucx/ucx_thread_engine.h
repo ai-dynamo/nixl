@@ -55,13 +55,6 @@ public:
     }
 
     virtual void
-    join() {
-        NIXL_ASSERT(threadActive_);
-        threadActive_.reset();
-        thread_->join();
-    }
-
-    virtual void
     addWorker(nixlUcxWorker *worker) {
         NIXL_ASSERT(workers_.size() < workers_.capacity());
         workers_.push_back(worker);
@@ -98,6 +91,15 @@ protected:
     virtual void
     run() = 0;
 
+    void
+    join() {
+        if (!threadActive_) {
+            return;
+        }
+        threadActive_.reset();
+        thread_->join();
+    }
+
 private:
     const nixlUcxEngine *engine_;
     std::vector<nixlUcxWorker *> workers_;
@@ -113,7 +115,6 @@ private:
 class nixlUcxThreadEngine : public nixlUcxEngine {
 public:
     nixlUcxThreadEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
-    ~nixlUcxThreadEngine();
 
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;
