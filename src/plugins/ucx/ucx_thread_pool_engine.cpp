@@ -230,7 +230,7 @@ public:
      * @return Future of the task result
      */
     template<typename R>
-    std::future<R>
+    [[nodiscard]] std::future<R>
     post(std::packaged_task<R()> task) {
         return asio::post(io_, std::move(task));
     }
