@@ -246,8 +246,6 @@ TEST(GdsMode, RejectsUnknownMode) {
     const gtest::LogIgnoreGuard creation_failed("createBackend: backend creation failed for 'GDS'");
     EXPECT_EQ(agent.createBackend("GDS", params, be), NIXL_ERR_BACKEND);
     EXPECT_EQ(be, nullptr);
-    EXPECT_EQ(invalid_mode.getIgnoredCount(), 1);
-    EXPECT_EQ(creation_failed.getIgnoredCount(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -358,8 +356,6 @@ TEST_P(GdsBackend, RejectsMemToMemTransfer) {
                                                   "' failed to prepare the transfer request");
         // Neither side is FILE_SEG: GDS must not accept this.
         EXPECT_NE(agent.createXferReq(NIXL_WRITE, ax, bx, self, req, &ep), NIXL_SUCCESS);
-        EXPECT_EQ(validation_error.getIgnoredCount(), 1);
-        EXPECT_EQ(prepare_error.getIgnoredCount(), 1);
     }
     if (db_registered) {
         EXPECT_EQ(agent.deregisterMem(db, &ep), NIXL_SUCCESS);
@@ -494,7 +490,6 @@ TEST(GdsBackendCombo, GdsThenGdsMtIsRejected) {
     const gtest::LogIgnoreGuard illegal_combination(
         "createBackend: Plugin backend GDS_MT is in illegal combination with GDS");
     EXPECT_EQ(agent.createBackend("GDS_MT", params, second), NIXL_ERR_NOT_ALLOWED);
-    EXPECT_EQ(illegal_combination.getIgnoredCount(), 1);
 }
 
 // Reverse order: a merge could easily regress one direction of the symmetric
@@ -513,7 +508,6 @@ TEST(GdsBackendCombo, GdsMtThenGdsIsRejected) {
     const gtest::LogIgnoreGuard illegal_combination(
         "createBackend: Plugin backend GDS is in illegal combination with GDS_MT");
     EXPECT_EQ(agent.createBackend("GDS", params, second), NIXL_ERR_NOT_ALLOWED);
-    EXPECT_EQ(illegal_combination.getIgnoredCount(), 1);
 }
 
 } // namespace

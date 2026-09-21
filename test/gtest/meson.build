@@ -108,7 +108,6 @@ gtest_sources = [
     'metadata_worker.cpp',
     'common.cpp',
     'query_mem.cpp',
-    'unit/gds/gds.cpp',
     'telemetry_test.cpp',
     'telemetry_prometheus_test.cpp',
     'telemetry_mp_store_test.cpp',

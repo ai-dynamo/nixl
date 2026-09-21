@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
-#include <cstring>
 #include <thread>
 #include <utility>
 
@@ -47,14 +46,14 @@ runCuFileOp(const gdsXferReq *req, std::atomic<nixl_status_t> *overall_status) {
     if (req->op == CUFILE_READ) {
         nbytes = cuFileRead(req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
-            NIXL_ERROR << "GDS_MT: cuFileRead failed: " << strerror(errno);
+            NIXL_ERROR << "GDS_MT: cuFileRead failed: " << nixl_strerror(errno);
             overall_status->store(NIXL_ERR_BACKEND);
             return;
         }
     } else if (req->op == CUFILE_WRITE) {
         nbytes = cuFileWrite(req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
-            NIXL_ERROR << "GDS_MT: cuFileWrite failed: " << strerror(errno);
+            NIXL_ERROR << "GDS_MT: cuFileWrite failed: " << nixl_strerror(errno);
             overall_status->store(NIXL_ERR_BACKEND);
             return;
         }
