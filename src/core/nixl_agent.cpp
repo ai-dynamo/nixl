@@ -784,6 +784,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     }
 
     if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
         if (extra_params->notif) {
             opt_args.notifMsg = *extra_params->notif;
             opt_args.hasNotif = true;
@@ -884,8 +885,8 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
         total_bytes += local_desc.len;
     }
 
-    NIXL_DEBUG << "merged " << desc_count << " indices into " << handle->initiatorDescs.descCount()
-               << " descriptors";
+    NIXL_DEBUG << "makeXfer bytes: " << total_bytes
+               << ", descs: " << handle->initiatorDescs.descCount() << ", indices: " << desc_count;
 
     handle->engine = backend;
     handle->notifMsg = opt_args.notifMsg;
@@ -1164,6 +1165,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     // Updating the notification based on opt_args
     if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
         if (extra_params->notif) {
             req_hndl->notifMsg = *extra_params->notif;
             opt_args.notifMsg = *extra_params->notif;

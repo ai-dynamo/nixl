@@ -16,12 +16,31 @@
  */
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
 #include <set>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "tracing/trace_context.h"
 
 constexpr char kCanonicalTraceparent[] = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+namespace {
+
+constexpr std::array<std::uint8_t, nixl::trace::traceContextWireSize> kCanonicalWireRecord{
+    0x01, 0x01, 0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92,
+    0x9d, 0x0e, 0x0e, 0x47, 0x36, 0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7};
+
+[[nodiscard]] nixl::trace::TraceContext
+canonicalContext() {
+    const auto context = nixl::trace::parseTraceparent(kCanonicalTraceparent);
+    return context.value();
+}
+
+} // namespace
 
 TEST(TraceContext, ParsesAndFormatsCanonicalTraceparent) {
     const auto context = nixl::trace::parseTraceparent(kCanonicalTraceparent);
@@ -211,4 +230,162 @@ TEST(TraceContext, GeneratesDistinctValidContexts) {
     }
 
     EXPECT_EQ(generated.size(), count);
+}
+
+// Pins the byte layout: version first, then flags, then trace id and span id in
+// big-endian order. A dropped version byte, a reversed id, or a shifted offset
+// all change these bytes.
+TEST(TraceContext, EncodesCanonicalContextToFixedBytes) {
+    std::array<std::uint8_t, nixl::trace::traceContextWireSize> buffer{};
+
+    ASSERT_EQ(nixl::trace::encodeTraceContext(canonicalContext(), buffer),
+              nixl::trace::traceContextWireSize);
+    EXPECT_EQ(buffer, kCanonicalWireRecord);
+}
+
+TEST(TraceContext, EncodeLeavesTrailingBytesUntouched) {
+    constexpr std::uint8_t canary = 0xAA;
+    std::array<std::uint8_t, nixl::trace::traceContextWireSize + 6> buffer{};
+    buffer.fill(canary);
+
+    const auto written = nixl::trace::encodeTraceContext(canonicalContext(), buffer);
+    ASSERT_EQ(written, nixl::trace::traceContextWireSize);
+
+    for (std::size_t index = *written; index < buffer.size(); ++index) {
+        EXPECT_EQ(buffer[index], canary) << "index " << index;
+    }
+}
+
+// Sentinel-filled rather than zeroed, so an implementation that clears the
+// buffer before rejecting cannot pass.
+TEST(TraceContext, RefusesToEncodeInvalidContextOrShortBuffer) {
+    std::array<std::uint8_t, nixl::trace::traceContextWireSize> buffer{};
+    buffer.fill(0x5a);
+    const auto untouched = buffer;
+    EXPECT_EQ(nixl::trace::encodeTraceContext(nixl::trace::TraceContext{}, buffer), std::nullopt);
+    EXPECT_EQ(buffer, untouched);
+
+    std::array<std::uint8_t, nixl::trace::traceContextWireSize - 1> short_buffer{};
+    short_buffer.fill(0xa5);
+    const auto short_untouched = short_buffer;
+    EXPECT_EQ(nixl::trace::encodeTraceContext(canonicalContext(), short_buffer), std::nullopt);
+    EXPECT_EQ(short_buffer, short_untouched);
+}
+
+TEST(TraceContext, RoundTripsThroughWireRecord) {
+    nixl::trace::TraceContext minimal;
+    minimal.traceId[15] = 0x01;
+    minimal.spanId[7] = 0x01;
+    minimal.flags = 0x03;
+
+    nixl::trace::TraceContext maximal;
+    maximal.traceId.fill(0xff);
+    maximal.spanId.fill(0xff);
+    maximal.flags = 0x01;
+
+    for (const auto &expected :
+         {canonicalContext(), nixl::trace::generateTraceContext(), minimal, maximal}) {
+        std::array<std::uint8_t, nixl::trace::traceContextWireSize> buffer{};
+        ASSERT_TRUE(nixl::trace::encodeTraceContext(expected, buffer).has_value());
+
+        nixl::trace::TraceContext decoded;
+        ASSERT_EQ(nixl::trace::decodeTraceContext(buffer, decoded),
+                  nixl::trace::WireDecodeResult::Ok);
+        EXPECT_EQ(decoded.traceId, expected.traceId);
+        EXPECT_EQ(decoded.spanId, expected.spanId);
+        EXPECT_EQ(decoded.flags, expected.flags);
+    }
+}
+
+TEST(TraceContext, WireAndTextFormsAgree) {
+    auto expected = nixl::trace::generateTraceContext();
+    expected.flags |= 0x01;
+
+    std::array<std::uint8_t, nixl::trace::traceContextWireSize> buffer{};
+    ASSERT_TRUE(nixl::trace::encodeTraceContext(expected, buffer).has_value());
+    nixl::trace::TraceContext from_wire;
+    ASSERT_EQ(nixl::trace::decodeTraceContext(buffer, from_wire),
+              nixl::trace::WireDecodeResult::Ok);
+
+    const auto from_text = nixl::trace::parseTraceparent(nixl::trace::formatTraceparent(expected));
+
+    ASSERT_TRUE(from_text.has_value());
+    EXPECT_EQ(from_wire.traceId, from_text->traceId);
+    EXPECT_EQ(from_wire.spanId, from_text->spanId);
+    EXPECT_EQ(from_wire.flags, from_text->flags);
+}
+
+// A later peer's record must be skippable without the caller losing the context
+// it already had, which is what an append-only carrier relies on.
+TEST(TraceContext, SkipsUnknownVersionWithoutTouchingContext) {
+    auto buffer = kCanonicalWireRecord;
+    buffer[0] = nixl::trace::traceContextWireVersion + 1;
+
+    auto context = nixl::trace::generateTraceContext();
+    const auto untouched = context;
+
+    EXPECT_EQ(nixl::trace::decodeTraceContext(buffer, context),
+              nixl::trace::WireDecodeResult::UnknownVersion);
+    EXPECT_EQ(context.traceId, untouched.traceId);
+    EXPECT_EQ(context.spanId, untouched.spanId);
+    EXPECT_EQ(context.flags, untouched.flags);
+}
+
+TEST(TraceContext, RejectsTruncatedRecords) {
+    for (std::size_t length = 0; length < nixl::trace::traceContextWireSize; ++length) {
+        nixl::trace::TraceContext decoded;
+        const std::span<const std::uint8_t> truncated{kCanonicalWireRecord.data(), length};
+
+        EXPECT_EQ(nixl::trace::decodeTraceContext(truncated, decoded),
+                  nixl::trace::WireDecodeResult::Malformed)
+            << "length " << length;
+    }
+}
+
+TEST(TraceContext, RejectsOversizedRecord) {
+    std::vector<std::uint8_t> buffer(kCanonicalWireRecord.begin(), kCanonicalWireRecord.end());
+    buffer.push_back(0x00);
+
+    nixl::trace::TraceContext decoded;
+    EXPECT_EQ(nixl::trace::decodeTraceContext(buffer, decoded),
+              nixl::trace::WireDecodeResult::Malformed);
+}
+
+TEST(TraceContext, RejectsZeroIdsOnDecode) {
+    auto zero_trace = kCanonicalWireRecord;
+    std::fill(zero_trace.begin() + 2, zero_trace.begin() + 18, 0x00);
+
+    auto zero_span = kCanonicalWireRecord;
+    std::fill(zero_span.begin() + 18, zero_span.end(), 0x00);
+
+    for (const auto &buffer : {zero_trace, zero_span}) {
+        nixl::trace::TraceContext decoded;
+        EXPECT_EQ(nixl::trace::decodeTraceContext(buffer, decoded),
+                  nixl::trace::WireDecodeResult::Malformed);
+    }
+}
+
+TEST(TraceContext, DropsReservedFlagBitsAcrossWireRoundTrip) {
+    auto context = canonicalContext();
+    context.flags = 0xff;
+
+    std::array<std::uint8_t, nixl::trace::traceContextWireSize> buffer{};
+    ASSERT_TRUE(nixl::trace::encodeTraceContext(context, buffer).has_value());
+    EXPECT_EQ(buffer[1], 0x03);
+
+    nixl::trace::TraceContext decoded;
+    ASSERT_EQ(nixl::trace::decodeTraceContext(buffer, decoded), nixl::trace::WireDecodeResult::Ok);
+    EXPECT_EQ(decoded.flags, 0x03);
+}
+
+// A peer's record reaches the decoder without passing through the encoder, so
+// its reserved bits are only dropped if decoding masks them itself.
+TEST(TraceContext, NormalizesReservedFlagBitsFromRawRecord) {
+    auto buffer = kCanonicalWireRecord;
+    buffer[1] = 0xff;
+
+    nixl::trace::TraceContext decoded;
+    ASSERT_EQ(nixl::trace::decodeTraceContext(buffer, decoded), nixl::trace::WireDecodeResult::Ok);
+    EXPECT_EQ(decoded.flags, 0x03);
+    EXPECT_TRUE(decoded.sampled());
 }
