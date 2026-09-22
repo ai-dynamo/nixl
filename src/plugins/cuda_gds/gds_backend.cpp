@@ -409,5 +409,4 @@ nixl_status_t
 nixlGdsEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const {
     resp = nixl::queryFileInfoFromDescList(descs);
     return NIXL_SUCCESS;
-
 }
