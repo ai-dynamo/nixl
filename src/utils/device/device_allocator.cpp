@@ -26,7 +26,7 @@ namespace {
 constexpr const char *kCudaAllocatorLibrary = "libnixl_device_allocator_cuda.so";
 constexpr const char *kCudaAllocatorFactory = "nixlCreateCudaDeviceAllocator";
 
-class unsupportedDeviceAllocator final : public nixl::deviceAllocator {
+class nullDeviceAllocator final : public nixl::deviceAllocator {
 public:
     nixl_status_t
     doAllocDeviceMem(void *&, size_t) noexcept override {
@@ -45,18 +45,18 @@ public:
     doFreeMappedHostMem(void *) noexcept override {}
 
     nixl_status_t
-    copyHostToDevice(void *, const void *, size_t) noexcept override {
-        return NIXL_ERR_NOT_SUPPORTED;
+    copyHostToDevice(void *, const void *, size_t size) noexcept override {
+        return size == 0 ? NIXL_ERR_INVALID_PARAM : NIXL_ERR_NOT_SUPPORTED;
     }
 
     nixl_status_t
-    copyDeviceToHost(void *, const void *, size_t) noexcept override {
-        return NIXL_ERR_NOT_SUPPORTED;
+    copyDeviceToHost(void *, const void *, size_t size) noexcept override {
+        return size == 0 ? NIXL_ERR_INVALID_PARAM : NIXL_ERR_NOT_SUPPORTED;
     }
 
     nixl_status_t
-    memsetDeviceMem(void *, int, size_t) noexcept override {
-        return NIXL_ERR_NOT_SUPPORTED;
+    memsetDeviceMem(void *, int, size_t size) noexcept override {
+        return size == 0 ? NIXL_ERR_INVALID_PARAM : NIXL_ERR_NOT_SUPPORTED;
     }
 
     nixl_status_t
@@ -79,7 +79,7 @@ using CudaAllocatorFactory = nixl::deviceAllocator *(*)() noexcept;
 
 nixl::deviceAllocator *
 loadCudaAllocator() noexcept {
-    Dl_info info{};
+    Dl_info info;
     if (dladdr(reinterpret_cast<void *>(&nixl::getDeviceAllocator), &info) == 0 ||
         info.dli_fname == nullptr) {
         NIXL_ERROR << "Failed to locate the device allocator frontend library";
@@ -91,16 +91,23 @@ loadCudaAllocator() noexcept {
         std::filesystem::path(info.dli_fname).parent_path() / kCudaAllocatorLibrary;
     void *handle = dlopen(library_path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
     if (handle == nullptr) {
-        NIXL_INFO << "Failed to load CUDA device allocator from " << library_path << ": "
-                  << dlerror();
+        const char *error = dlerror();
+        std::error_code ec;
+        if (std::filesystem::exists(library_path, ec) || ec) {
+            NIXL_WARN << "Failed to load CUDA device allocator from " << library_path << ": "
+                      << error;
+        } else {
+            NIXL_INFO << "CUDA device allocator is unavailable at " << library_path << ": "
+                      << error;
+        }
         return nullptr;
     }
 
     dlerror(); // Clear any error left by an earlier dynamic-loader call.
     auto factory = reinterpret_cast<CudaAllocatorFactory>(dlsym(handle, kCudaAllocatorFactory));
     if (factory == nullptr) {
-        NIXL_ERROR << "Failed to find " << kCudaAllocatorFactory << " in " << library_path << ": "
-                   << dlerror();
+        NIXL_WARN << "Failed to find " << kCudaAllocatorFactory << " in " << library_path << ": "
+                  << dlerror();
         dlclose(handle);
         return nullptr;
     }
@@ -121,10 +128,10 @@ namespace nixl {
 
 deviceAllocator &
 getDeviceAllocator() noexcept {
-    static unsupportedDeviceAllocator unsupported;
+    static nullDeviceAllocator null_allocator;
     static deviceAllocator *allocator = []() noexcept {
         deviceAllocator *cuda_allocator = loadCudaAllocator();
-        return cuda_allocator == nullptr ? &unsupported : cuda_allocator;
+        return cuda_allocator == nullptr ? &null_allocator : cuda_allocator;
     }();
     return *allocator;
 }

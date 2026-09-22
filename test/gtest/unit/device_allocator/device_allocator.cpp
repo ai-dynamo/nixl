@@ -35,26 +35,24 @@ namespace device_allocator {
 
     TEST(deviceMemHost, EmptyHandleOperationsAreSafe) {
         deviceMem mem;
-        EXPECT_FALSE(static_cast<bool>(mem));
+        EXPECT_FALSE(mem);
         EXPECT_EQ(mem.devicePointer(), nullptr);
-        EXPECT_EQ(mem.size(), 0u);
         mem.reset();
         EXPECT_EQ(mem.release(), nullptr);
 
         deviceMem moved(std::move(mem));
-        EXPECT_FALSE(static_cast<bool>(moved));
+        EXPECT_FALSE(moved);
     }
 
     TEST(mappedHostMemHost, EmptyHandleOperationsAreSafe) {
         mappedHostMem mapped;
-        EXPECT_FALSE(static_cast<bool>(mapped));
+        EXPECT_FALSE(mapped);
         EXPECT_EQ(mapped.hostPointer(), nullptr);
         EXPECT_EQ(mapped.devicePointer(), nullptr);
-        EXPECT_EQ(mapped.size(), 0u);
         mapped.reset();
 
         mappedHostMem moved(std::move(mapped));
-        EXPECT_FALSE(static_cast<bool>(moved));
+        EXPECT_FALSE(moved);
     }
 
     TEST(deviceAllocatorHost, AccessorIsStableAndAdoptNullIsSafe) {
@@ -65,15 +63,24 @@ namespace device_allocator {
         EXPECT_EQ(empty.devicePointer(), nullptr);
     }
 
-    TEST(deviceAllocatorHost, ZeroSizeAllocationsLeaveOutputsEmpty) {
+    TEST(deviceAllocatorHost, ZeroSizeOperationsLeaveOutputsUnchanged) {
         deviceAllocator &allocator = getDeviceAllocator();
         deviceMem device_mem;
-        EXPECT_NE(allocator.allocDeviceMem(0, device_mem), NIXL_SUCCESS);
+        EXPECT_EQ(allocator.allocDeviceMem(0, device_mem), NIXL_ERR_INVALID_PARAM);
         EXPECT_FALSE(device_mem);
 
         mappedHostMem mapped_mem;
-        EXPECT_NE(allocator.allocMappedHostMem(0, mapped_mem), NIXL_SUCCESS);
+        EXPECT_EQ(allocator.allocMappedHostMem(0, mapped_mem), NIXL_ERR_INVALID_PARAM);
         EXPECT_FALSE(mapped_mem);
+
+        unsigned char byte = 0xA5;
+        void *pointers[] = {nullptr, &byte};
+        for (void *ptr : pointers) {
+            EXPECT_EQ(allocator.copyHostToDevice(ptr, ptr, 0), NIXL_ERR_INVALID_PARAM);
+            EXPECT_EQ(allocator.copyDeviceToHost(ptr, ptr, 0), NIXL_ERR_INVALID_PARAM);
+            EXPECT_EQ(allocator.memsetDeviceMem(ptr, 0, 0), NIXL_ERR_INVALID_PARAM);
+        }
+        EXPECT_EQ(byte, 0xA5);
     }
 
     class deviceAllocatorTest : public testing::Test {
@@ -106,13 +113,28 @@ namespace device_allocator {
         deviceMem mem;
         ASSERT_EQ(allocator.allocDeviceMem(kSize, mem), NIXL_SUCCESS);
         void *const device_ptr = mem.devicePointer();
-        EXPECT_NE(allocator.allocDeviceMem(0, mem), NIXL_SUCCESS);
+        EXPECT_EQ(allocator.allocDeviceMem(0, mem), NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(mem.devicePointer(), device_ptr);
-        EXPECT_EQ(mem.size(), kSize);
+
+        deviceMem moved(std::move(mem));
+        EXPECT_FALSE(mem);
+        ASSERT_EQ(allocator.allocDeviceMem(kSize, mem), NIXL_SUCCESS);
+        mem = std::move(moved);
+        EXPECT_FALSE(moved);
+        EXPECT_EQ(mem.devicePointer(), device_ptr);
 
         std::vector<unsigned char> src(kSize, 0xA5);
         std::vector<unsigned char> dst(kSize, 0);
         ASSERT_EQ(allocator.copyHostToDevice(mem.devicePointer(), src.data(), kSize), NIXL_SUCCESS);
+        EXPECT_EQ(allocator.copyHostToDevice(mem.devicePointer(), dst.data(), 0),
+                  NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(allocator.copyDeviceToHost(dst.data(), mem.devicePointer(), 0),
+                  NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(dst, std::vector<unsigned char>(kSize, 0));
+        EXPECT_EQ(allocator.memsetDeviceMem(mem.devicePointer(), 0, 0), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(allocator.copyHostToDevice(nullptr, src.data(), kSize), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(allocator.copyDeviceToHost(dst.data(), nullptr, kSize), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(allocator.memsetDeviceMem(nullptr, 0, kSize), NIXL_ERR_INVALID_PARAM);
         ASSERT_EQ(allocator.copyDeviceToHost(dst.data(), mem.devicePointer(), kSize), NIXL_SUCCESS);
         EXPECT_EQ(dst, src);
 
@@ -129,10 +151,18 @@ namespace device_allocator {
         ASSERT_EQ(allocator.allocMappedHostMem(kSize, mapped), NIXL_SUCCESS);
         void *const host_ptr = mapped.hostPointer();
         void *const mapped_device_ptr = mapped.devicePointer();
-        EXPECT_NE(allocator.allocMappedHostMem(0, mapped), NIXL_SUCCESS);
+        EXPECT_EQ(allocator.allocMappedHostMem(0, mapped), NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(mapped.hostPointer(), host_ptr);
         EXPECT_EQ(mapped.devicePointer(), mapped_device_ptr);
-        EXPECT_EQ(mapped.size(), kSize);
+        mappedHostMem moved_mapped(std::move(mapped));
+        EXPECT_FALSE(mapped);
+        EXPECT_EQ(mapped.devicePointer(), nullptr);
+        ASSERT_EQ(allocator.allocMappedHostMem(kSize, mapped), NIXL_SUCCESS);
+        mapped = std::move(moved_mapped);
+        EXPECT_FALSE(moved_mapped);
+        EXPECT_EQ(moved_mapped.devicePointer(), nullptr);
+        EXPECT_EQ(mapped.hostPointer(), host_ptr);
+        EXPECT_EQ(mapped.devicePointer(), mapped_device_ptr);
         std::fill_n(mapped.hostPointer<unsigned char>(), kSize, 0x5A);
         ASSERT_EQ(allocator.copyDeviceToHost(dst.data(), mapped.devicePointer(), kSize),
                   NIXL_SUCCESS);

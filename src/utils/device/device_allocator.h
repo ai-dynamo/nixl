@@ -41,6 +41,9 @@ class mappedHostMem;
  * barrier. Active device state is thread-local: copies, memset, and
  * synchronize use the caller's current device; freeing works from any.
  * Allocation hooks modify their output pointers only on success.
+ * Zero-size allocations, copies and memset return NIXL_ERR_INVALID_PARAM,
+ * even without a device runtime, and leave outputs unchanged. Use
+ * getActiveDevice() to check runtime availability.
  */
 class deviceAllocator {
 public:
@@ -98,9 +101,8 @@ private:
 };
 
 /**
- * Owning, move-only handle to device (HBM) memory. The handle stores only the
- * allocator, the pointer, and the size; the owning device is recovered by
- * the platform free, so the destroying thread may be on any device.
+ * Owning, move-only handle to device memory. The platform free recovers the
+ * owning device, so the destroying thread may be on any device.
  */
 class deviceMem {
 public:
@@ -110,17 +112,16 @@ public:
         reset();
     }
 
-    deviceMem(deviceMem &&other) noexcept {
-        *this = std::move(other);
-    }
+    deviceMem(deviceMem &&other) noexcept
+        : allocator_(other.allocator_),
+          ptr_(std::exchange(other.ptr_, nullptr)) {}
 
     deviceMem &
     operator=(deviceMem &&other) noexcept {
         if (this != &other) {
             reset();
-            allocator_ = std::exchange(other.allocator_, nullptr);
+            allocator_ = other.allocator_;
             ptr_ = std::exchange(other.ptr_, nullptr);
-            size_ = std::exchange(other.size_, 0);
         }
         return *this;
     }
@@ -135,11 +136,6 @@ public:
         return static_cast<T *>(ptr_);
     }
 
-    [[nodiscard]] size_t
-    size() const noexcept {
-        return size_;
-    }
-
     explicit
     operator bool() const noexcept {
         return ptr_ != nullptr;
@@ -151,16 +147,12 @@ public:
             return;
         }
         allocator_->doFreeDeviceMem(ptr_);
-        allocator_ = nullptr;
         ptr_ = nullptr;
-        size_ = 0;
     }
 
     /** Give up ownership; reclaim with adopt(). */
     [[nodiscard]] void *
     release() noexcept {
-        allocator_ = nullptr;
-        size_ = 0;
         return std::exchange(ptr_, nullptr);
     }
 
@@ -170,23 +162,16 @@ public:
      */
     [[nodiscard]] static deviceMem
     adopt(deviceAllocator &allocator, void *ptr) noexcept {
-        if (ptr == nullptr) {
-            return deviceMem();
-        }
-        return deviceMem(&allocator, ptr, 0);
+        return deviceMem(&allocator, ptr);
     }
 
 private:
     friend class deviceAllocator;
 
-    deviceMem(deviceAllocator *allocator, void *ptr, size_t size) noexcept
-        : allocator_(allocator),
-          ptr_(ptr),
-          size_(size) {}
+    deviceMem(deviceAllocator *allocator, void *ptr) noexcept : allocator_(allocator), ptr_(ptr) {}
 
     deviceAllocator *allocator_ = nullptr;
     void *ptr_ = nullptr;
-    size_t size_ = 0;
 };
 
 /**
@@ -201,18 +186,18 @@ public:
         reset();
     }
 
-    mappedHostMem(mappedHostMem &&other) noexcept {
-        *this = std::move(other);
-    }
+    mappedHostMem(mappedHostMem &&other) noexcept
+        : allocator_(other.allocator_),
+          hostPtr_(std::exchange(other.hostPtr_, nullptr)),
+          devPtr_(std::exchange(other.devPtr_, nullptr)) {}
 
     mappedHostMem &
     operator=(mappedHostMem &&other) noexcept {
         if (this != &other) {
             reset();
-            allocator_ = std::exchange(other.allocator_, nullptr);
-            host_ptr_ = std::exchange(other.host_ptr_, nullptr);
-            dev_ptr_ = std::exchange(other.dev_ptr_, nullptr);
-            size_ = std::exchange(other.size_, 0);
+            allocator_ = other.allocator_;
+            hostPtr_ = std::exchange(other.hostPtr_, nullptr);
+            devPtr_ = std::exchange(other.devPtr_, nullptr);
         }
         return *this;
     }
@@ -224,76 +209,69 @@ public:
     template<typename T = void>
     [[nodiscard]] T *
     hostPointer() const noexcept {
-        return static_cast<T *>(host_ptr_);
+        return static_cast<T *>(hostPtr_);
     }
 
     template<typename T = void>
     [[nodiscard]] T *
     devicePointer() const noexcept {
-        return static_cast<T *>(dev_ptr_);
-    }
-
-    [[nodiscard]] size_t
-    size() const noexcept {
-        return size_;
+        return static_cast<T *>(devPtr_);
     }
 
     explicit
     operator bool() const noexcept {
-        return host_ptr_ != nullptr;
+        return hostPtr_ != nullptr;
     }
 
     void
     reset() noexcept {
-        if (host_ptr_ == nullptr) {
+        if (hostPtr_ == nullptr) {
             return;
         }
-        allocator_->doFreeMappedHostMem(host_ptr_);
-        allocator_ = nullptr;
-        host_ptr_ = nullptr;
-        dev_ptr_ = nullptr;
-        size_ = 0;
+        allocator_->doFreeMappedHostMem(hostPtr_);
+        hostPtr_ = nullptr;
+        devPtr_ = nullptr;
     }
 
 private:
     friend class deviceAllocator;
 
-    mappedHostMem(deviceAllocator *allocator, void *host_ptr, void *dev_ptr, size_t size) noexcept
+    mappedHostMem(deviceAllocator *allocator, void *host_ptr, void *dev_ptr) noexcept
         : allocator_(allocator),
-          host_ptr_(host_ptr),
-          dev_ptr_(dev_ptr),
-          size_(size) {}
+          hostPtr_(host_ptr),
+          devPtr_(dev_ptr) {}
 
     deviceAllocator *allocator_ = nullptr;
-    void *host_ptr_ = nullptr;
-    void *dev_ptr_ = nullptr;
-    size_t size_ = 0;
+    void *hostPtr_ = nullptr;
+    void *devPtr_ = nullptr;
 };
 
 inline nixl_status_t
 deviceAllocator::allocDeviceMem(size_t size, deviceMem &out) noexcept {
-    // `out` is only touched on success; a failed allocation leaves the
-    // caller's existing buffer intact.
-    void *ptr = nullptr;
+    if (size == 0) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    void *ptr;
     const nixl_status_t status = doAllocDeviceMem(ptr, size);
     if (status != NIXL_SUCCESS) {
         return status;
     }
-    out = deviceMem(this, ptr, size);
+    out = deviceMem(this, ptr);
     return NIXL_SUCCESS;
 }
 
 inline nixl_status_t
 deviceAllocator::allocMappedHostMem(size_t size, mappedHostMem &out) noexcept {
-    // `out` is only touched on success; a failed allocation leaves the
-    // caller's existing buffer intact.
-    void *host_ptr = nullptr;
-    void *dev_ptr = nullptr;
+    if (size == 0) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    void *host_ptr;
+    void *dev_ptr;
     const nixl_status_t status = doAllocMappedHostMem(host_ptr, dev_ptr, size);
     if (status != NIXL_SUCCESS) {
         return status;
     }
-    out = mappedHostMem(this, host_ptr, dev_ptr, size);
+    out = mappedHostMem(this, host_ptr, dev_ptr);
     return NIXL_SUCCESS;
 }
 
