@@ -27,7 +27,7 @@ namespace nixl {
 
 /**
  * @class blockingQueue
- * @brief Intrusive unbounded FIFO handing items from any number of producers to
+ * @brief Intrusive FIFO handing items from any number of producers to
  *        consumers, with a blocking pop that a stop token can interrupt.
  */
 template<typename T> class blockingQueue {
@@ -36,7 +36,7 @@ public:
      * @brief Intrusive link
      */
     struct node {
-        node *next = nullptr;
+        T *next = nullptr;
     };
 
     blockingQueue() = default;
@@ -51,15 +51,14 @@ public:
      *             can be queued into at most 1 queue.
      */
     void
-    push(T &item) {
+    push(T *item) {
         static_assert(std::is_base_of_v<node, T>,
                       "blockingQueue items must derive from blockingQueue<T>::node");
-        node *const link = &item;
         {
             const std::lock_guard<std::mutex> lock(mutex_);
-            link->next = nullptr;
-            *ptail_ = link;
-            ptail_ = &link->next;
+            item->next = nullptr;
+            *ptail_ = item;
+            ptail_ = &item->next;
         }
         cv_.notify_one();
     }
@@ -86,23 +85,23 @@ public:
     }
 
 private:
-    T *
-    popLocked() {
-        node *const link = head_;
-        if (link == nullptr) {
+    [[nodiscard]] T *
+    popLocked() noexcept {
+        T *const item = head_;
+        if (item == nullptr) {
             return nullptr;
         }
-        head_ = link->next;
-        if (ptail_ == &link->next) {
+        head_ = item->next;
+        if (ptail_ == &item->next) {
             ptail_ = &head_;
         }
-        return static_cast<T *>(link);
+        return item;
     }
 
     std::mutex mutex_;
     std::condition_variable_any cv_;
-    node *head_ = nullptr;
-    node **ptail_ = &head_;
+    T *head_ = nullptr;
+    T **ptail_ = &head_;
 };
 
 } // namespace nixl
