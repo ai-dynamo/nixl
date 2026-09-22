@@ -140,9 +140,9 @@ namespace nixl {
  *        sink. The file is appended to, not truncated. Each process should use
  *        its own path (see the per-process path escapes).
  *
- * Called during library initialization; exposed for tests. Writing to a
- * different path needs shutdownLogFile() first, since this returns early,
- * without reading NIXL_LOG_FILE, while a sink is registered.
+ * Called during library initialization; exposed for tests. To write to a
+ * different path, call shutdownLogFile() first and then initLogFile() again:
+ * once a sink is registered this returns early, without reading NIXL_LOG_FILE.
  *
  * @return true if a sink is registered on return, including when one already
  *         was. An open failure is logged and returns false.
