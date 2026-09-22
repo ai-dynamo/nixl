@@ -289,6 +289,7 @@ nixl_status_t nixlGdsEngine::postXfer(const nixl_xfer_op_t &operation,
         NIXL_ERROR << "Empty request list";
         return NIXL_ERR_INVALID_PARAM;
     }
+    gds_handle->failure = NIXL_SUCCESS;
 
     // Process requests in batches
     const auto& request_list = gds_handle->request_list;
@@ -301,13 +302,10 @@ nixl_status_t nixlGdsEngine::postXfer(const nixl_xfer_op_t &operation,
                                                     batch_size, gds_handle->batch_io_list);
 
         if (status != NIXL_SUCCESS) {
-            // Clean up on error
-            for (auto* batch : gds_handle->batch_io_list) {
-                batch->cancelBatch();
-                returnBatchToPool(batch);
-            }
-            gds_handle->batch_io_list.clear();
-            return status;
+            // The batches already submitted stay with the request until they
+            // drain, and checkXfer reports the failure once they have
+            gds_handle->failure = status;
+            return gds_handle->batch_io_list.empty() ? status : NIXL_IN_PROG;
         }
         current_req += batch_size;
     }
@@ -354,46 +352,67 @@ nixl_status_t nixlGdsEngine::createAndSubmitBatch(const std::vector<GdsTransferR
 nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle) const
 {
     nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *)handle;
+    auto &batches = gds_handle->batch_io_list;
+    size_t in_flight = 0;
 
-    if (gds_handle->batch_io_list.empty()) {
-        gds_handle->needs_prep = true;
-        return NIXL_SUCCESS;
-    }
-
-    nixl_status_t status = NIXL_SUCCESS;
-    for (auto* batch : gds_handle->batch_io_list) {
-        status = batch->checkStatus();
-
-        if (status == NIXL_IN_PROG) {
-            return status;
+    // Reap the batches that have finished, packing the rest to the front. A
+    // batch left in the list would go back to the pool twice. Once the transfer
+    // has failed the remaining batches are only waited for: a batch is reusable
+    // only after every entry has reported, and cuFileBatchIOCancel would stop
+    // it from ever reporting
+    for (auto *batch : batches) {
+        bool done;
+        if (gds_handle->failure != NIXL_SUCCESS) {
+            done = batch->drain();
+        } else {
+            nixl_status_t status = batch->checkStatus();
+            if (status < 0) {
+                gds_handle->failure = status;
+                done = batch->drain();
+            } else {
+                done = (status == NIXL_SUCCESS);
+            }
         }
 
-        if (status < 0) {
-            batch->cancelBatch();
+        if (done) {
+            returnBatchToPool(batch);
+        } else {
+            batches[in_flight++] = batch;
         }
-        returnBatchToPool(batch);
     }
+    batches.resize(in_flight);
 
-    gds_handle->batch_io_list.clear();
+    // The transfer is done only once nothing is in flight, so a failure is
+    // reported after the remaining batches have drained and the request can be
+    // released
+    if (!batches.empty()) {
+        return NIXL_IN_PROG;
+    }
     gds_handle->needs_prep = true;
-    return status;
+    return gds_handle->failure;
 }
 
 nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle) const
 {
-
     nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *) handle;
 
-    delete gds_handle;
-    gds_handle = nullptr;
+    // A request with batches still in flight cannot be released: they would be
+    // lost to the pool, or freed while cuFile still uses them. The caller keeps
+    // polling checkXfer, which reaps them, and releases afterwards
+    if (!gds_handle->batch_io_list.empty()) {
+        return NIXL_ERR_NOT_ALLOWED;
+    }
 
+    delete gds_handle;
     return NIXL_SUCCESS;
 }
 
 nixlGdsEngine::~nixlGdsEngine() {
-    // Clean up the batch pool
+    // Clean up the batch pool. Reset first: a batch that last failed would keep
+    // that status and not release its arrays, and nothing uses it after this
     for (auto* batch : batch_pool) {
         if (batch) {
+            batch->reset();
             delete batch;
         }
     }
