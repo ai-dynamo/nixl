@@ -32,6 +32,7 @@
 #include <sstream>
 #include <string>
 #include <sys/wait.h>
+#include <system_error>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -75,6 +76,18 @@ struct helperProcessResult {
     bool timed_out = false;
     std::string output;
 };
+
+/**
+ * @brief Whether a helper can be started by re-execing this binary.
+ *
+ * The helpers exec /proc/self/exe, which is Linux-only. Tests that need one
+ * skip elsewhere rather than reporting the missing path as a failure.
+ */
+bool
+canExecHelper() {
+    std::error_code error;
+    return std::filesystem::exists("/proc/self/exe", error);
+}
 
 /** @brief Contents of @p path, or empty if it cannot be read. */
 std::string
@@ -643,18 +656,25 @@ TEST_F(nixlLogFileTest, ExpandsHostAndProcessIntoThePath) {
  *        restart given an earlier id would otherwise continue its file.
  */
 TEST_F(nixlLogFileTest, ExpandsTheRunMarkerIntoThePath) {
-    const std::filesystem::path output = path_.string() + ".helper-output";
-    const auto result = runHelper(
-        run_marker_helper_mode, "nixlLogFileHelper.ExpandsTheRunMarkerIntoThePath", path_, output);
-
-    // Clean up even when the helper failed before doing so.
-    const std::string prefix = path_.filename().string() + "-";
-    for (const auto &entry : std::filesystem::directory_iterator(path_.parent_path())) {
-        const std::string name = entry.path().filename().string();
-        if (name.rfind(prefix, 0) == 0) {
-            std::filesystem::remove(entry.path());
-        }
+    if (!canExecHelper()) {
+        GTEST_SKIP() << "re-execing this binary needs /proc/self/exe";
     }
+
+    // A directory of its own: the helper has to scan for the name the marker
+    // produced, and in a shared temp directory that walk would trip over
+    // entries other runs are deleting underneath it.
+    const std::filesystem::path directory = path_.string() + "-marker";
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+
+    const std::filesystem::path output = path_.string() + ".helper-output";
+    const auto result = runHelper(run_marker_helper_mode,
+                                  "nixlLogFileHelper.ExpandsTheRunMarkerIntoThePath",
+                                  directory / "log",
+                                  output);
+
+    // Cleaned up even when the helper failed before doing so.
+    std::filesystem::remove_all(directory);
 
     ASSERT_EQ(result.launch_error, 0) << "could not launch helper: errno " << result.launch_error;
     ASSERT_FALSE(result.timed_out) << "run-marker helper exceeded its 10-second deadline\n"
@@ -1095,6 +1115,10 @@ TEST_F(nixlLogFileTest, ReportsAWriteFailureOnceThenDropsRecords) {
  *        duplicate of the fatal message.
  */
 TEST_F(nixlLogFileTest, WritesFatalMessageOnceWithItsStackTrace) {
+    if (!canExecHelper()) {
+        GTEST_SKIP() << "re-execing this binary needs /proc/self/exe";
+    }
+
     const std::filesystem::path output = path_.string() + ".helper-output";
     const auto result =
         runHelper(fatal_helper_mode, "nixlLogFileHelper.EmitsFatalRecord", path_, output);
@@ -1133,6 +1157,10 @@ TEST_F(nixlLogFileTest, WritesFatalMessageOnceWithItsStackTrace) {
  * calls initLogFile(), so this exercises the path a real process takes.
  */
 TEST_F(nixlLogFileTest, RecordsFromStaticDestructorsReachTheFile) {
+    if (!canExecHelper()) {
+        GTEST_SKIP() << "re-execing this binary needs /proc/self/exe";
+    }
+
     // Built before the fork: only async-signal-safe calls may run between fork
     // and exec, and setenv() can allocate. open() and dup2() below are safe.
     const std::vector<std::string> overrides = {

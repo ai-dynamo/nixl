@@ -39,6 +39,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <system_error>
 #include <unistd.h>
 
@@ -181,9 +182,10 @@ public:
             return;
         }
 
-        std::error_code ec;
-        const auto existing = std::filesystem::file_size(path, ec);
-        written_ = ec ? 0 : existing;
+        struct stat st;
+        if (::fstat(fd_.get(), &st) == 0) {
+            written_ = st.st_size;
+        }
     }
 
     /** @brief False if the sink cannot write, and must not be registered. */
@@ -416,14 +418,15 @@ initLogFile() {
         return false;
     }
 
-    const char *configured_size = std::getenv(log_file_size_env_var);
-    const auto limit = parseLogFileSize(configured_size != nullptr ? configured_size : "");
+    const char *size_setting = std::getenv(log_file_size_env_var);
+    const std::string_view configured_size = size_setting != nullptr ? size_setting : "";
+    const auto limit = parseLogFileSize(configured_size);
     if (!limit.has_value()) {
         NIXL_ERROR << "Invalid " << log_file_size_env_var << " '" << configured_size
                    << "': expected a byte count, optionally suffixed with K, M or G";
         return false;
     }
-    if (configured_size != nullptr && *configured_size != '\0' && *limit < min_log_file_size) {
+    if (!configured_size.empty() && *limit < min_log_file_size) {
         NIXL_ERROR << "Invalid " << log_file_size_env_var << " '" << configured_size
                    << "': value is below the minimum of " << min_log_file_size << " bytes";
         return false;
