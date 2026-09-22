@@ -322,18 +322,10 @@ shouldDeepBindPlugin(const std::string &plugin_name) {
      * (ucs_config_parser_print_env_vars) and segfaults. The private UCX SONAME
      * suffix already provides the isolation this flag was meant to add.
      *
-     * The fallback covers an absent variable only: configTraits<bool>::convert throws on a
-     * present but unparseable one, and a value nobody can parse must not turn an ignored
-     * setting into a failed backend creation. */
-    bool requested = false;
-    try {
-        requested = nixl::config::getValueDefaulted<bool>(kUcxDeepBindVar, false);
-    }
-    catch (const std::exception &e) {
-        NIXL_WARN << "Invalid " << kUcxDeepBindVar << " value: " << e.what();
-    }
-
-    `if (nixl::config::checkExistenc(kUcxDeepBindVar) {`
+     * The variable is deprecated and ignored, so it is not converted: only its presence
+     * matters. Looking the value up is what let an unparseable one reach `createBackend`
+     * (configTraits<bool>::convert throws), and `checkExistence` cannot throw. */
+    if (nixl::config::checkExistence(kUcxDeepBindVar)) {
         NIXL_WARN << kUcxDeepBindVar
                   << " is ignored: RTLD_DEEPBIND mis-binds libc symbols in the "
                      "UCX plugin and crashes UCX initialization.";
