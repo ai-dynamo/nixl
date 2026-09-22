@@ -39,20 +39,19 @@ queryFileInfo(const std::string &filename);
 /**
  * @brief Query file information for multiple files
  * @param descs Descriptors from which to take the filenames
- * @param resp Output response vector, always modified/cleared
- * @return NIXL_SUCCESS on success, error code otherwise
+ * @return std::vector<nixl_query_resp_t> with each entry obtained from queryFileInfo()
  */
 template<typename DescList>
-[[nodiscard]] nixl_status_t
-queryFileInfoFromDescList(const DescList &descs, std::vector<nixl_query_resp_t> &resp) {
-    resp.clear();
+[[nodiscard]] std::vector<nixl_query_resp_t>
+queryFileInfoFromDescList(const DescList &descs) {
+    std::vector<nixl_query_resp_t> resp;
+
     resp.reserve(descs.descCount());
 
     for (const auto &desc : descs) {
         resp.emplace_back(queryFileInfo(desc.metaInfo));
     }
-
-    return NIXL_SUCCESS;
+    return resp;
 }
 
 } // namespace nixl

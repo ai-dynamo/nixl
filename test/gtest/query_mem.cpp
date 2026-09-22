@@ -196,9 +196,7 @@ TEST_F(QueryMemTest, QueryMemDirectTest) {
     descs.addDesc(nixlBlobDesc(0, 0, 0, test_file2));
 
     // Use the file utilities directly
-    std::vector<nixl_query_resp_t> resp;
-    nixl_status_t status = nixl::queryFileInfoFromDescList(descs, resp);
-    EXPECT_EQ(status, NIXL_SUCCESS);
+    const auto resp = nixl::queryFileInfoFromDescList(descs);
     EXPECT_EQ(resp.size(), 2);
     EXPECT_TRUE(resp[0].has_value());
     EXPECT_TRUE(resp[1].has_value());

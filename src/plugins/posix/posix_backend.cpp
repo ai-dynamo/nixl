@@ -409,7 +409,6 @@ nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
 nixl_status_t
 nixlPosixEngine::queryMem(const nixl_reg_dlist_t &descs,
                           std::vector<nixl_query_resp_t> &resp) const {
-    // Extract metadata from descriptors which are file names
-    // Different plugins might customize parsing of metaInfo to get the file names
-    return nixl::queryFileInfoFromDescList(descs, resp);
+    resp = nixl::queryFileInfoFromDescList(descs);
+    return NIXL_SUCCESS;
 }
