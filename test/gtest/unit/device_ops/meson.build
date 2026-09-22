@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-device_allocator_unit_test_dep = declare_dependency(
-    sources: ['device_allocator.cpp'],
+device_ops_unit_test_dep = declare_dependency(
+    sources: ['device_ops.cpp'],
     include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
     dependencies: [nixl_common_dep, device_utils_interface, gpu_dependencies],
 )

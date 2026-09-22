@@ -14,7 +14,7 @@
 # limitations under the License.
 
 device_utils_lib = shared_library('device_utils',
-           ['device_allocator.cpp', 'device_allocator.h'],
+           ['device_ops.cpp', 'device_ops.h'],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            dependencies: [nixl_common_dep, dl_dep],
            install: true)
@@ -22,8 +22,8 @@ device_utils_lib = shared_library('device_utils',
 device_utils_interface = declare_dependency(link_with: device_utils_lib)
 
 if cuda_dep.found()
-    shared_library('nixl_device_allocator_cuda',
-               'device_allocator_cuda.cpp',
+    shared_library('nixl_device_ops_cuda',
+               'device_ops_cuda.cpp',
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                dependencies: [cuda_dep, nixl_common_dep],
                install: true)

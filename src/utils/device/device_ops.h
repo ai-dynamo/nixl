@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_UTILS_DEVICE_DEVICE_ALLOCATOR_H
-#define NIXL_SRC_UTILS_DEVICE_DEVICE_ALLOCATOR_H
+#ifndef NIXL_SRC_UTILS_DEVICE_DEVICE_OPS_H
+#define NIXL_SRC_UTILS_DEVICE_DEVICE_OPS_H
 
 #include <cstddef>
 #include <utility>
@@ -27,7 +27,7 @@ namespace nixl {
 class deviceMem;
 class mappedHostMem;
 
-#define NIXL_DEVICE_ALLOCATOR_EXPORT __attribute__((visibility("default")))
+#define NIXL_DEVICE_OPS_EXPORT __attribute__((visibility("default")))
 
 /**
  * Device memory-ops interface. All host-side interaction with the GPU memory
@@ -45,9 +45,9 @@ class mappedHostMem;
  * even without a device runtime, and leave outputs unchanged. Use
  * getActiveDevice() to check runtime availability.
  */
-class deviceAllocator {
+class deviceOps {
 public:
-    virtual ~deviceAllocator() = default;
+    virtual ~deviceOps() = default;
 
     [[nodiscard]] nixl_status_t
     allocDeviceMem(size_t size, deviceMem &out) noexcept;
@@ -113,14 +113,14 @@ public:
     }
 
     deviceMem(deviceMem &&other) noexcept
-        : allocator_(other.allocator_),
+        : ops_(other.ops_),
           ptr_(std::exchange(other.ptr_, nullptr)) {}
 
     deviceMem &
     operator=(deviceMem &&other) noexcept {
         if (this != &other) {
             reset();
-            allocator_ = other.allocator_;
+            ops_ = other.ops_;
             ptr_ = std::exchange(other.ptr_, nullptr);
         }
         return *this;
@@ -146,7 +146,7 @@ public:
         if (ptr_ == nullptr) {
             return;
         }
-        allocator_->doFreeDeviceMem(ptr_);
+        ops_->doFreeDeviceMem(ptr_);
         ptr_ = nullptr;
     }
 
@@ -161,16 +161,16 @@ public:
      * yields an empty handle. The pointer must be one allocDeviceMem produced.
      */
     [[nodiscard]] static deviceMem
-    adopt(deviceAllocator &allocator, void *ptr) noexcept {
-        return deviceMem(&allocator, ptr);
+    adopt(deviceOps &ops, void *ptr) noexcept {
+        return deviceMem(&ops, ptr);
     }
 
 private:
-    friend class deviceAllocator;
+    friend class deviceOps;
 
-    deviceMem(deviceAllocator *allocator, void *ptr) noexcept : allocator_(allocator), ptr_(ptr) {}
+    deviceMem(deviceOps *ops, void *ptr) noexcept : ops_(ops), ptr_(ptr) {}
 
-    deviceAllocator *allocator_ = nullptr;
+    deviceOps *ops_ = nullptr;
     void *ptr_ = nullptr;
 };
 
@@ -187,7 +187,7 @@ public:
     }
 
     mappedHostMem(mappedHostMem &&other) noexcept
-        : allocator_(other.allocator_),
+        : ops_(other.ops_),
           hostPtr_(std::exchange(other.hostPtr_, nullptr)),
           devPtr_(std::exchange(other.devPtr_, nullptr)) {}
 
@@ -195,7 +195,7 @@ public:
     operator=(mappedHostMem &&other) noexcept {
         if (this != &other) {
             reset();
-            allocator_ = other.allocator_;
+            ops_ = other.ops_;
             hostPtr_ = std::exchange(other.hostPtr_, nullptr);
             devPtr_ = std::exchange(other.devPtr_, nullptr);
         }
@@ -228,26 +228,26 @@ public:
         if (hostPtr_ == nullptr) {
             return;
         }
-        allocator_->doFreeMappedHostMem(hostPtr_);
+        ops_->doFreeMappedHostMem(hostPtr_);
         hostPtr_ = nullptr;
         devPtr_ = nullptr;
     }
 
 private:
-    friend class deviceAllocator;
+    friend class deviceOps;
 
-    mappedHostMem(deviceAllocator *allocator, void *host_ptr, void *dev_ptr) noexcept
-        : allocator_(allocator),
+    mappedHostMem(deviceOps *ops, void *host_ptr, void *dev_ptr) noexcept
+        : ops_(ops),
           hostPtr_(host_ptr),
           devPtr_(dev_ptr) {}
 
-    deviceAllocator *allocator_ = nullptr;
+    deviceOps *ops_ = nullptr;
     void *hostPtr_ = nullptr;
     void *devPtr_ = nullptr;
 };
 
 inline nixl_status_t
-deviceAllocator::allocDeviceMem(size_t size, deviceMem &out) noexcept {
+deviceOps::allocDeviceMem(size_t size, deviceMem &out) noexcept {
     if (size == 0) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -261,7 +261,7 @@ deviceAllocator::allocDeviceMem(size_t size, deviceMem &out) noexcept {
 }
 
 inline nixl_status_t
-deviceAllocator::allocMappedHostMem(size_t size, mappedHostMem &out) noexcept {
+deviceOps::allocMappedHostMem(size_t size, mappedHostMem &out) noexcept {
     if (size == 0) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -275,10 +275,10 @@ deviceAllocator::allocMappedHostMem(size_t size, mappedHostMem &out) noexcept {
     return NIXL_SUCCESS;
 }
 
-/** Process-wide allocator for the device runtime available to this process. */
-[[nodiscard]] deviceAllocator &
-getDeviceAllocator() noexcept;
+/** Process-wide device operations for the device runtime available to this process. */
+[[nodiscard]] deviceOps &
+getDeviceOps() noexcept;
 
 } // namespace nixl
 
-#endif // NIXL_SRC_UTILS_DEVICE_DEVICE_ALLOCATOR_H
+#endif // NIXL_SRC_UTILS_DEVICE_DEVICE_OPS_H

@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "device/device_allocator.h"
+#include "device/device_ops.h"
 
 #include <dlfcn.h>
 #include <filesystem>
@@ -23,10 +23,10 @@
 
 namespace {
 
-constexpr const char *kCudaAllocatorLibrary = "libnixl_device_allocator_cuda.so";
-constexpr const char *kCudaAllocatorFactory = "nixlCreateCudaDeviceAllocator";
+constexpr const char *kCudaDeviceOpsLibrary = "libnixl_device_ops_cuda.so";
+constexpr const char *kCudaDeviceOpsFactory = "nixlCreateCudaDeviceOps";
 
-class nullDeviceAllocator final : public nixl::deviceAllocator {
+class nullDeviceOps final : public nixl::deviceOps {
 public:
     nixl_status_t
     doAllocDeviceMem(void *&, size_t) noexcept override {
@@ -75,65 +75,65 @@ public:
     }
 };
 
-using CudaAllocatorFactory = nixl::deviceAllocator *(*)() noexcept;
+using CudaDeviceOpsFactory = nixl::deviceOps *(*)() noexcept;
 
-nixl::deviceAllocator *
-loadCudaAllocator() noexcept {
+nixl::deviceOps *
+loadCudaDeviceOps() noexcept {
     Dl_info info;
-    if (dladdr(reinterpret_cast<void *>(&nixl::getDeviceAllocator), &info) == 0 ||
+    if (dladdr(reinterpret_cast<void *>(&nixl::getDeviceOps), &info) == 0 ||
         info.dli_fname == nullptr) {
-        NIXL_ERROR << "Failed to locate the device allocator frontend library";
+        NIXL_ERROR << "Failed to locate the device operations frontend library";
         return nullptr;
     }
 
     // The frontend and optional CUDA implementation are installed side by side.
     const auto library_path =
-        std::filesystem::path(info.dli_fname).parent_path() / kCudaAllocatorLibrary;
+        std::filesystem::path(info.dli_fname).parent_path() / kCudaDeviceOpsLibrary;
     void *handle = dlopen(library_path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
     if (handle == nullptr) {
         const char *error = dlerror();
         std::error_code ec;
         if (std::filesystem::exists(library_path, ec) || ec) {
-            NIXL_WARN << "Failed to load CUDA device allocator from " << library_path << ": "
+            NIXL_WARN << "Failed to load CUDA device operations from " << library_path << ": "
                       << error;
         } else {
-            NIXL_INFO << "CUDA device allocator is unavailable at " << library_path << ": "
+            NIXL_INFO << "CUDA device operations are unavailable at " << library_path << ": "
                       << error;
         }
         return nullptr;
     }
 
     dlerror(); // Clear any error left by an earlier dynamic-loader call.
-    auto factory = reinterpret_cast<CudaAllocatorFactory>(dlsym(handle, kCudaAllocatorFactory));
+    auto factory = reinterpret_cast<CudaDeviceOpsFactory>(dlsym(handle, kCudaDeviceOpsFactory));
     if (factory == nullptr) {
-        NIXL_WARN << "Failed to find " << kCudaAllocatorFactory << " in " << library_path << ": "
+        NIXL_WARN << "Failed to find " << kCudaDeviceOpsFactory << " in " << library_path << ": "
                   << dlerror();
         dlclose(handle);
         return nullptr;
     }
 
-    nixl::deviceAllocator *allocator = factory();
-    if (allocator == nullptr) {
+    nixl::deviceOps *ops = factory();
+    if (ops == nullptr) {
         dlclose(handle);
     } else {
-        NIXL_INFO << "Loaded CUDA device allocator from " << library_path;
+        NIXL_INFO << "Loaded CUDA device operations from " << library_path;
     }
-    // Keep the library loaded on success because the allocator and its vtable live in it.
-    return allocator;
+    // Keep the library loaded on success because the implementation and its vtable live in it.
+    return ops;
 }
 
 } // namespace
 
 namespace nixl {
 
-deviceAllocator &
-getDeviceAllocator() noexcept {
-    static nullDeviceAllocator null_allocator;
-    static deviceAllocator *allocator = []() noexcept {
-        deviceAllocator *cuda_allocator = loadCudaAllocator();
-        return cuda_allocator == nullptr ? &null_allocator : cuda_allocator;
+deviceOps &
+getDeviceOps() noexcept {
+    static nullDeviceOps null_ops;
+    static deviceOps *ops = []() noexcept {
+        deviceOps *cuda_ops = loadCudaDeviceOps();
+        return cuda_ops == nullptr ? &null_ops : cuda_ops;
     }();
-    return *allocator;
+    return *ops;
 }
 
 } // namespace nixl

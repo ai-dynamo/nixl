@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "device/device_allocator.h"
+#include "device/device_ops.h"
 
 #include <cuda_runtime.h>
 #include <string>
@@ -37,7 +37,7 @@ cudaStatus(cudaError_t error, const char *operation) {
     return NIXL_SUCCESS;
 }
 
-class cudaDeviceAllocator final : public nixl::deviceAllocator {
+class cudaDeviceOps final : public nixl::deviceOps {
 public:
     nixl_status_t
     doAllocDeviceMem(void *&ptr, size_t size) noexcept override {
@@ -137,8 +137,8 @@ private:
 
 } // namespace
 
-extern "C" NIXL_DEVICE_ALLOCATOR_EXPORT nixl::deviceAllocator *
-nixlCreateCudaDeviceAllocator() noexcept {
+extern "C" NIXL_DEVICE_OPS_EXPORT nixl::deviceOps *
+nixlCreateCudaDeviceOps() noexcept {
     int device_count = 0;
     const cudaError_t error = cudaGetDeviceCount(&device_count);
     if (error == cudaErrorNoDevice) {
@@ -153,6 +153,6 @@ nixlCreateCudaDeviceAllocator() noexcept {
         return nullptr;
     }
 
-    static cudaDeviceAllocator allocator;
-    return &allocator;
+    static cudaDeviceOps ops;
+    return &ops;
 }
