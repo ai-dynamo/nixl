@@ -58,8 +58,7 @@ class GMockBackendEngine : public nixlBackendEngine {
 public:
     GMockBackendEngine();
 
-    GMockBackendEngine(const nixlBackendInitParams *init_params);
-
+    explicit GMockBackendEngine(const nixlBackendInitParams *init_params);
 
     void
     SetToParams(nixl_b_params_t &params) const;
