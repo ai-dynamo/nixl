@@ -397,6 +397,20 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void **data, size_t 
 }
 
 nixl_capi_status_t
+nixl_capi_opt_args_set_custom_param(nixl_capi_opt_args_t args, const void *data, size_t len) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_opt_args_t, const void *, size_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_opt_args_set_custom_param");
+    return real(args, data, len);
+}
+
+nixl_capi_status_t
+nixl_capi_opt_args_get_custom_param(nixl_capi_opt_args_t args, void **data, size_t *len) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_opt_args_t, void **, size_t *);
+    static fn_t real = (fn_t)resolve("nixl_capi_opt_args_get_custom_param");
+    return real(args, data, len);
+}
+
+nixl_capi_status_t
 nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif) {
     using fn_t = nixl_capi_status_t (*)(nixl_capi_opt_args_t, bool);
     static fn_t real = (fn_t)resolve("nixl_capi_opt_args_set_has_notif");
@@ -923,6 +937,63 @@ nixl_capi_query_mem(nixl_capi_agent_t agent,
                                         nixl_capi_opt_args_t);
     static fn_t real = (fn_t)resolve("nixl_capi_query_mem");
     return real(agent, descs, resp, opt_args);
+}
+
+// ---- Memory view functions ----
+
+nixl_capi_status_t
+nixl_capi_prep_mem_view_local(nixl_capi_agent_t agent,
+                              nixl_capi_xfer_dlist_t descs,
+                              nixl_capi_mem_view_t *mvh,
+                              nixl_capi_opt_args_t opt_args) {
+    using fn_t = nixl_capi_status_t (*)(
+        nixl_capi_agent_t, nixl_capi_xfer_dlist_t, nixl_capi_mem_view_t *, nixl_capi_opt_args_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_prep_mem_view_local");
+    return real(agent, descs, mvh, opt_args);
+}
+
+nixl_capi_status_t
+nixl_capi_prep_mem_view_remote(nixl_capi_agent_t agent,
+                               nixl_capi_remote_dlist_t descs,
+                               nixl_capi_mem_view_t *mvh,
+                               nixl_capi_opt_args_t opt_args) {
+    using fn_t = nixl_capi_status_t (*)(
+        nixl_capi_agent_t, nixl_capi_remote_dlist_t, nixl_capi_mem_view_t *, nixl_capi_opt_args_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_prep_mem_view_remote");
+    return real(agent, descs, mvh, opt_args);
+}
+
+nixl_capi_status_t
+nixl_capi_create_remote_dlist(nixl_capi_mem_type_t mem_type, nixl_capi_remote_dlist_t *dlist) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_mem_type_t, nixl_capi_remote_dlist_t *);
+    static fn_t real = (fn_t)resolve("nixl_capi_create_remote_dlist");
+    return real(mem_type, dlist);
+}
+
+nixl_capi_status_t
+nixl_capi_destroy_remote_dlist(nixl_capi_remote_dlist_t dlist) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_remote_dlist_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_destroy_remote_dlist");
+    return real(dlist);
+}
+
+nixl_capi_status_t
+nixl_capi_remote_dlist_add_desc(nixl_capi_remote_dlist_t dlist,
+                                uintptr_t addr,
+                                size_t len,
+                                uint64_t dev_id,
+                                const char *remote_agent) {
+    using fn_t =
+        nixl_capi_status_t (*)(nixl_capi_remote_dlist_t, uintptr_t, size_t, uint64_t, const char *);
+    static fn_t real = (fn_t)resolve("nixl_capi_remote_dlist_add_desc");
+    return real(dlist, addr, len, dev_id, remote_agent);
+}
+
+nixl_capi_status_t
+nixl_capi_release_mem_view(nixl_capi_agent_t agent, nixl_capi_mem_view_t mvh) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_agent_t, nixl_capi_mem_view_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_release_mem_view");
+    return real(agent, mvh);
 }
 
 // ---- Telemetry functions ----

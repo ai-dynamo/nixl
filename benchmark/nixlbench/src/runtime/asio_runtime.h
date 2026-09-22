@@ -137,9 +137,9 @@ public:
     }
 
     int
-    barrier(const std::string &barrier_id) override {
+    barrier(const std::string &barrier_id, const bool finishing) override {
         const std::string barrier_name = barrier_id + "/" + std::to_string(++barrier_);
-        postSend(asio_msg_type_t::BARRIER, barrier_name.data(), barrier_name.size());
+        postSend(asio_msg_type_t::BARRIER, barrier_name.data(), barrier_name.size(), finishing);
         recvWait(asio_msg_type_t::BARRIER,
                  [&](const std::string &data) { return data == barrier_name; });
         return 0;
@@ -214,7 +214,10 @@ private:
     }
 
     void
-    postSend(const asio_msg_type_t type, const void *data, const std::size_t size) {
+    postSend(const asio_msg_type_t type,
+             const void *data,
+             const std::size_t size,
+             const bool finishing = false) {
         if (size > sizeMask_) {
             throw std::runtime_error("Runtime message size " + std::to_string(size) +
                                      " exceeds 16MB-1 limit");
@@ -230,6 +233,7 @@ private:
             if (exception_) {
                 std::rethrow_exception(exception_);
             }
+            finishing_ = finishing;
         }
         asio::post(context_, [this, buffer]() {
             const bool was_empty = outgoing_.empty();
@@ -282,13 +286,18 @@ private:
                              if (ec.value()) {
                                  throw std::runtime_error("ASIO Read data failed: " + ec.message());
                              }
+                             bool finishing = false;
+
                              // Lock scope
                              {
                                  const std::unique_lock lock(mutex_);
                                  incoming_.emplace_back(temp_);
                                  cond_.notify_one();
+                                 finishing = finishing_;
                              }
-                             recvHead();
+                             if (!finishing) {
+                                 recvHead();
+                             }
                          });
     }
 
@@ -332,6 +341,7 @@ private:
     std::list<xferBenchAsioIncoming> incoming_;
     std::exception_ptr exception_;
 
+    bool finishing_ = false;
     std::uint32_t head_;
     xferBenchAsioIncoming temp_;
     std::list<std::string> outgoing_;

@@ -87,6 +87,13 @@ public:
     void
     addDescs(nixlSecDescList &&other);
 
+    void
+    remDescs(std::vector<size_t> indices, order ord = order::UNSORTED);
+
+    template<class... Args>
+    nixlSectionDesc &
+    emplace(Args &&...args) = delete;
+
     // Shadow the parent's non-const operator[] to return a const ref,
     // this prevents mutation of descriptor fields after insertion
     const nixlSectionDesc &
@@ -114,6 +121,38 @@ public:
 private:
     void
     addSortedDescs(std::vector<nixlSectionDesc> batch);
+
+    bool
+    usesUnboundedLen() const noexcept {
+        return type == BLK_SEG || type == OBJ_SEG || type == FILE_SEG;
+    }
+
+    void
+    normalizeSecDesc(nixlSectionDesc &desc) const noexcept {
+        if (usesUnboundedLen() && desc.len == 0) {
+            desc.len = SIZE_MAX;
+        }
+    }
+
+    void
+    normalizeSecDescBatch(std::vector<nixlSectionDesc> &batch) const noexcept {
+        if (!usesUnboundedLen()) {
+            return;
+        }
+        for (auto &d : batch) {
+            if (d.len == 0) {
+                d.len = SIZE_MAX;
+            }
+        }
+    }
+
+    nixlBasicDesc
+    normalizeQuery(const nixlBasicDesc &query) const noexcept {
+        if (!usesUnboundedLen() || query.len != 0) {
+            return query;
+        }
+        return nixlBasicDesc(query.addr, SIZE_MAX, query.devId);
+    }
 };
 
 using nixl_sec_dlist_t = nixlSecDescList;
@@ -140,6 +179,16 @@ class nixlMemSection {
         nixl_status_t populate (const nixl_xfer_dlist_t &query,
                                 nixlBackendEngine* backend,
                                 nixl_meta_dlist_t &resp) const;
+
+        nixl_status_t
+        populate(const nixl_xfer_dlist_t &query,
+                 nixlBackendEngine *backend,
+                 nixl_meta_stride_dlist_t &resp) const;
+
+        nixl_status_t
+        populate(const nixl_stride_dlist_t &query,
+                 nixlBackendEngine *backend,
+                 nixl_meta_stride_dlist_t &resp) const;
 
         [[nodiscard]] nixl_status_t
         addElement(const nixlRemoteDesc &query,

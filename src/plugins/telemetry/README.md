@@ -27,17 +27,19 @@ NIXL telemetry plugins are dynamically loaded shared libraries that export telem
 
 NIXL generates the following telemetry events:
 
-| Category | Event Name | Type | Description |
-|----------|-----------|------|-------------|
-| MEMORY | `agent_memory_registered` | Gauge | Total bytes of memory registered |
-| MEMORY | `agent_memory_deregistered` | Gauge | Total bytes of memory deregistered |
-| TRANSFER | `agent_tx_bytes` | Counter | Total bytes transmitted |
-| TRANSFER | `agent_rx_bytes` | Counter | Total bytes received |
-| TRANSFER | `agent_tx_requests_num` | Counter | Number of transmit requests |
-| TRANSFER | `agent_rx_requests_num` | Counter | Number of receive requests |
-| PERFORMANCE | `agent_xfer_time` | Gauge | Transfer time in microseconds |
-| PERFORMANCE | `agent_xfer_post_time` | Gauge | Post time in microseconds |
-| BACKEND | Backend-specific events | Counter | Dynamic events from backends |
+| Event Name | Type | Description |
+|-----------|------|-------------|
+| `agent_memory_registered` | Gauge | Total bytes of memory registered |
+| `agent_memory_deregistered` | Gauge | Total bytes of memory deregistered |
+| `agent_tx_bytes` | Counter | Total bytes transmitted |
+| `agent_rx_bytes` | Counter | Total bytes received |
+| `agent_tx_requests_num` | Counter | Number of transmit requests |
+| `agent_rx_requests_num` | Counter | Number of receive requests |
+| `agent_xfer_time` | Counter, Gauge, Histogram | Transfer time (start->completion) in microseconds; also a latency histogram `agent_xfer_time_us` |
+| `agent_xfer_post_time` | Counter, Gauge, Histogram | Post time (start->backend-post) in microseconds; also a latency histogram `agent_xfer_post_time_us` |
+| `agent_telemetry_events_dropped` | Counter | Telemetry events dropped at the producer-side staging queue |
+
+The `NIXL_TELEMETRY_ENABLED_METRICS` environment variable is a comma-separated glob allowlist of the event names above, plus the built-in `agent_err_*` error events (unset exports everything). Events whose name is not activated are skipped at the source before they enter the staging queue, so they never reach the exporter and cost nothing on the hot path.
 
 ## Quick Start
 
@@ -84,7 +86,7 @@ nixlTelemetryCsvExporter::nixlTelemetryCsvExporter(
     }
 
     // Write CSV header
-    file_ << "category,event_type,value\n";
+    file_ << "event_type,value\n";
     NIXL_INFO << "CSV exporter initialized: " << file_path;
 }
 
@@ -95,9 +97,8 @@ nixlTelemetryCsvExporter::exportEvent(const nixlTelemetryEvent &event) {
     }
 
     try {
-        file_ << static_cast<int>(event.category_) << ","
-              << nixlEnumStrings::telemetryEventTypeStr(event.eventType_) << ","
-              << event.value_ << "\n";
+        file_ << nixlEnumStrings::telemetryEventTypeStr(event.eventType_) << "," << event.value_
+              << "\n";
         file_.flush();
         return NIXL_SUCCESS;
     }

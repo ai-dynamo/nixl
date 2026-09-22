@@ -130,7 +130,7 @@ using nixl_notifs_t = std::unordered_map<std::string, std::vector<nixl_blob_t>>;
 /**
  * @brief A constant to define the default communication port.
  */
-constexpr int default_comm_port = 8888;
+inline constexpr uint16_t default_comm_port = 8888;
 
 /**
  * @brief A constant to define the default metadata label for ETCD server key.
@@ -228,7 +228,12 @@ struct nixlAgentOptionalArgs {
     std::string metadataLabel;
 
     /**
-     * @var Backend custom parameter
+     * @brief Backend-specific binary parameter, including embedded NUL bytes.
+     *      makeXferReq and createXferReq forward this value to the backend's prepXfer.
+     *      Each postXferReq call forwards the value supplied for that call to the
+     *      backend's postXfer. Empty values and omitted extra_params forward an
+     *      empty blob at that stage. The backend defines the format, supported
+     *      stages, and any state retained in its prepared request.
      */
     nixl_blob_t customParam;
 };

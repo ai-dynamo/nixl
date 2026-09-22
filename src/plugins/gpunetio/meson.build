@@ -15,7 +15,7 @@
 
 plugin_gpunetio_deps = [dependency('libibverbs'), dependency('libmlx5'), dependency('doca-common'), dependency('doca-verbs'), dependency('doca-gpunetio')]
 
-gpu_cuda_args = []
+# C++20 for CUDA is set project-wide in the root meson.build.
 compile_flags = ['-D DOCA_ALLOW_EXPERIMENTAL_API']
 
 if 'GPUNETIO' in static_plugins
@@ -25,7 +25,7 @@ if 'GPUNETIO' in static_plugins
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags,
-               cuda_args : gpu_cuda_args + ['-rdc=true'],
+               cuda_args : ['-rdc=true'],
                name_prefix: 'libplugin_',
                install_dir: plugin_install_dir)  # Custom prefix for plugin libraries
 else
@@ -35,7 +35,6 @@ else
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],
-               cuda_args : gpu_cuda_args,
                name_prefix: 'libplugin_',  # Custom prefix for plugin libraries
                install_dir: plugin_install_dir)
 

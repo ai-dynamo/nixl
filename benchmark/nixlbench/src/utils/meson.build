@@ -22,12 +22,23 @@ utils_sources = [
 ]
 
 utils_deps = [
-  cuda_dep,
   openmp_dep,
   gflags_dep,
+  nixl_lib,
   tomlplusplus_dep,
   dependency('dl', required: true)
 ]
+
+if raw_cli_available
+  utils_sources += ['raw_cli.cpp', 'raw_cli.h']
+  utils_deps += [cli11_dep]
+endif
+
+if cuda_available
+  utils_deps += [cuda_dep]
+elif rocm_available
+  utils_deps += [rocm_dep]
+endif
 
 utils_lib = static_library('utils',
   utils_sources,
@@ -39,4 +50,3 @@ utils_dep = declare_dependency(
   dependencies: utils_deps,
   include_directories: inc_dir
 )
-

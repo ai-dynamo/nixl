@@ -77,7 +77,7 @@ typedef uint8_t __nv_fp8_storage_t;
 namespace nixl_ep {
 
 #ifndef TOPK_IDX_BITS
-#define TOPK_IDX_BITS 64
+#define TOPK_IDX_BITS 32
 #endif
 
 #define INT_BITS_T2(bits) int##bits##_t

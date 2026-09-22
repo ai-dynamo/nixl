@@ -16,18 +16,42 @@
  */
 #include "config.h"
 
+#include <algorithm>
+#include <array>
 #include <stdexcept>
+#include <string>
 
 #include "common/configuration.h"
+#include "common/hw_info.h"
 #include "common/nixl_log.h"
 
+namespace {
+
+bool
+tlsEnablesCudaSupport(std::string_view tls) {
+    const bool deny_list = !tls.empty() && tls.front() == '^';
+    if (deny_list) {
+        tls.remove_prefix(1);
+    }
+
+    const std::string tokens = "," + std::string(tls) + ",";
+    const bool has_cuda_support =
+        std::ranges::any_of(std::array{",all,", ",cuda,", ",cuda_copy,", ",\\cuda_copy,"},
+                            [&](auto token) { return tokens.find(token) != std::string::npos; });
+    return deny_list ? !has_cuda_support : has_cuda_support;
+}
+
+} // namespace
+
 namespace nixl::ucx {
+
 void
 config::modify(std::string_view key, std::string_view value) const {
-    const auto env_val = nixl::config::getValueOptional<std::string>("UCX_" + std::string(key));
+    const auto ucx_key = "UCX_" + std::string(key);
+    const auto env_val = nixl::config::internal::getenvOptional(ucx_key);
 
     if (env_val) {
-        NIXL_DEBUG << "UCX env var has already been set: " << key << "=" << *env_val;
+        NIXL_DEBUG << "UCX env var already set: " << ucx_key << "=" << *env_val;
     } else {
         modifyAlways(key, value);
     }
@@ -44,6 +68,21 @@ config::modifyAlways(std::string_view key, std::string_view value) const {
     } else {
         NIXL_DEBUG << "Modified UCX config: " << key_str << "=" << value_str;
     }
+}
+
+void
+config::validateTlsCudaSupport() const {
+    const auto tls = nixl::config::getValueOptional<std::string>("UCX_TLS");
+    if (nixl::hwInfo::instance().numNvidiaGpus == 0 || !tls || tlsEnablesCudaSupport(*tls)) {
+        return;
+    }
+
+    const std::string error = "Invalid UCX_TLS=" + *tls +
+        " for NIXL UCX backend: NVIDIA GPU(s) are present, "
+        "but this setting does not enable CUDA memory support. Add cuda_copy for "
+        "basic GPU support, or cuda to also include NVLink support.";
+    NIXL_ERROR << error;
+    throw std::runtime_error(error);
 }
 
 ucp_config_t *
