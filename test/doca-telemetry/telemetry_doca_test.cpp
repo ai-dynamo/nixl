@@ -27,8 +27,8 @@
 
 #include <gtest/gtest.h>
 
-using nixl::doca_test::loopbackConnection;
-using nixl::doca_test::scrapeUntilValue;
+using nixl::metrics_test::loopbackConnection;
+using nixl::metrics_test::scrapeUntilValue;
 
 class docaTelemetryTest : public ::testing::Test {
 protected:
@@ -80,7 +80,7 @@ TEST_F(docaTelemetryTest, RawDocaApiServesAccumulatingCounter) {
     }
     ASSERT_EQ(doca_telemetry_exporter_metrics_flush(source), DOCA_SUCCESS);
 
-    const nixl::doca_test::labelSet labels{{"type", "counter"}};
+    const nixl::metrics_test::labelSet labels{{"type", "counter"}};
     const auto metrics =
         scrapeUntilValue(port_, "raw_ops_total", 3.0, std::chrono::seconds(12), labels);
     const std::optional<double> value = metrics.latestValue("raw_ops_total", labels);

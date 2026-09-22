@@ -14,8 +14,8 @@
 # limitations under the License.
 
 # This file is a type stub for static analysis tools (pyright, mypy, IDEs).
-# At runtime it is shadowed by the actual nixl_cu12._api or nixl_cu13._api
-# module, which __init__.py injects into sys.modules["nixl._api"].
+# At runtime it is shadowed by the actual nixl_cu12._api, nixl_cu13._api, or
+# nixl_rocm._api module, which __init__.py injects into sys.modules["nixl._api"].
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -30,12 +30,23 @@ if TYPE_CHECKING:
             nixl_xfer_handle,
         )
     except ImportError:
-        from nixl_cu12._api import (  # type: ignore[import]  # noqa: F401
-            DEFAULT_COMM_PORT,
-            nixl_agent,
-            nixl_agent_config,
-            nixl_backend_handle,
-            nixl_prepped_dlist_handle,
-            nixl_thread_sync_t,
-            nixl_xfer_handle,
-        )
+        try:
+            from nixl_cu12._api import (  # type: ignore[import]  # noqa: F401
+                DEFAULT_COMM_PORT,
+                nixl_agent,
+                nixl_agent_config,
+                nixl_backend_handle,
+                nixl_prepped_dlist_handle,
+                nixl_thread_sync_t,
+                nixl_xfer_handle,
+            )
+        except ImportError:
+            from nixl_rocm._api import (  # type: ignore[import]  # noqa: F401
+                DEFAULT_COMM_PORT,
+                nixl_agent,
+                nixl_agent_config,
+                nixl_backend_handle,
+                nixl_prepped_dlist_handle,
+                nixl_thread_sync_t,
+                nixl_xfer_handle,
+            )

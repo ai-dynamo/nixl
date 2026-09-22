@@ -1,0 +1,122 @@
+# NIXL nightly UCX-master validation orchestrator.
+#
+# Fans out to the three GPU test jobs (nixl-ci-gpu, nixl-ci-dl-gpu,
+# nixl-ci-dl-gpu-ep) with UCX_VER=master, waits for all of them, and emails one
+# consolidated report when any leg fails. This is the single place nightly
+# UCX-master results are collected and sent from; per-PR runs of the GPU jobs
+# cover only the release UCX version.
+#
+# Triggered by the nixl-ci-nightly job (proj-jjb.yaml) on a nightly cron.
+---
+job: nixl-ci-nightly
+
+failFast: false
+# Bounds the whole run; the fan-out step below carries its own 360-min timeout
+# so the report is still sent when a leg hangs.
+timeout_minutes: 400
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  limits: "{memory: 2Gi, cpu: 1000m}"
+  requests: "{memory: 1Gi, cpu: 500m}"
+
+# Minimal pod: the single step is pipeline-level groovy (build/parallel/mail),
+# it does not use the container shell.
+runs_on_dockers:
+  - { name: "orchestrator", url: "dockerhub.nvidia.com/ubuntu:24.04" }
+
+matrix:
+  axes:
+    arch:
+      - x86_64
+
+env:
+  MAIL_FROM: "jenkins@nvidia.com"
+
+taskName: "nightly/${arch}"
+
+steps:
+  - name: Run GPU jobs against UCX master and report
+    containerSelector: "{name: 'orchestrator'}"
+    shell: action
+    module: groovy
+    run: |
+      def leafJobs = [
+          'gpu':       'nixl-ci-gpu',
+          'dl-gpu':    'nixl-ci-dl-gpu',
+          'dl-gpu-ep': 'nixl-ci-dl-gpu-ep',
+      ]
+      def ucxRef = params.UCX_REF ?: 'master'
+      def results = [:]
+
+      currentBuild.description = "UCX ${ucxRef}"
+
+      // Run all legs in parallel; propagate:false so one red leg does not abort
+      // the others. The timeout bounds the whole fan-out (leaf jobs have their
+      // own) so the report is still sent if a leg hangs.
+      def fanOutTimeoutMin = 360
+      def fanOutStart = System.currentTimeMillis()
+      try {
+          timeout(time: fanOutTimeoutMin, unit: 'MINUTES') {
+              parallel(leafJobs.collectEntries { label, jobName ->
+                  [(label): {
+                      try {
+                          def r = build(job: jobName,
+                                        parameters: [string(name: 'UCX_VER', value: ucxRef)],
+                                        wait: true, propagate: false)
+                          results[label] = [result: r.result, url: r.absoluteUrl, number: r.number]
+                      } catch (err) {
+                          if (err instanceof org.jenkinsci.plugins.workflow.steps.FlowInterruptedException) {
+                              throw err  // abort / fan-out timeout
+                          }
+                          echo "Leg ${label} (${jobName}) did not run: ${err}"
+                          results[label] = [result: 'ERROR', url: env.BUILD_URL, number: 0]
+                      }
+                      // Fail the branch so it shows red in the pipeline view; the
+                      // outer catch swallows it so the report is still sent.
+                      if (results[label]?.result != 'SUCCESS') {
+                          error("Leg ${label} (${jobName}): ${results[label]?.result}")
+                      }
+                  }]
+              })
+          }
+      } catch (err) {
+          if (err instanceof org.jenkinsci.plugins.workflow.steps.FlowInterruptedException) {
+              // Rethrow a real abort (end ABORTED, no report); a timeout falls
+              // through to the report. getCauses() is sandbox-blocked, so tell
+              // them apart by elapsed time.
+              def elapsedMin = (System.currentTimeMillis() - fanOutStart) / 60000
+              if (elapsedMin < fanOutTimeoutMin - 1) {
+                  throw err
+              }
+              echo "Nightly fan-out timed out after ${fanOutTimeoutMin} min: ${err}"
+          } else {
+              echo "Nightly fan-out finished with failed leg(s): ${err}"
+          }
+      }
+
+      def failed = leafJobs.keySet().findAll { results[it]?.result != 'SUCCESS' }
+      currentBuild.result = failed ? 'FAILURE' : 'SUCCESS'
+      echo "Nightly UCX-${ucxRef}: " + leafJobs.keySet().collectEntries { [it, results[it]?.result] }
+
+      // Report only when a leg fails; a green night stays quiet.
+      if (failed && params.MAIL_TO) {
+          def rows = leafJobs.keySet().collect { label ->
+              def v = results[label] ?: [result: 'MISSING', url: env.BUILD_URL, number: 0]
+              def color = v.result == 'SUCCESS' ? 'green' : 'red'
+              "<tr><td>${label}</td>" +
+              "<td style='color:${color}'><b>${v.result}</b></td>" +
+              "<td><a href='${v.url}'>#${v.number}</a></td></tr>"
+          }.join("\n")
+          mail(from: env.MAIL_FROM, to: params.MAIL_TO, mimeType: 'text/html',
+               subject: "NIXL nightly UCX-${ucxRef} [${env.BUILD_NUMBER}] - ${currentBuild.result}",
+               body: """
+                   <p>NIXL nightly validation against UCX <b>${ucxRef}</b>.</p>
+                   <table border='1' cellpadding='6' cellspacing='0'>
+                     <tr><th>Job</th><th>Result</th><th>Build</th></tr>
+                     ${rows}
+                   </table>
+                   <p>Orchestrator: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
+               """)
+      }

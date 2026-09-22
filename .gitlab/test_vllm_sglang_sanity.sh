@@ -18,8 +18,9 @@ FRAMEWORK="${1:?usage: test_vllm_sglang_sanity.sh <vllm|sglang>}"
 # resolve the model by its HuggingFace repo id from the cache prefetched below.
 MODEL="${NIXL_SANITY_MODEL_ID:?NIXL_SANITY_MODEL_ID not set (set by the base image)}"
 
-# Multiple sanity jobs can share a SLURM node (8 GPUs, 2 per job) and the srun/enroot
-# containers use HOST networking, so fixed ports would collide across concurrent jobs.
+# This run needs several listeners at once (prefill, decode, proxy, and the frameworks'
+# own side channels) and the srun/enroot containers use HOST networking, so fixed ports
+# would collide with each other and with anything else already bound on the node.
 # Reuse the CI helper (from the workspace copied into the image) to hand out free TCP
 # ports that roll over. common.sh references unset env vars (CI_CONCURRENT_ID/
 # EXECUTOR_NUMBER) at source time, so disable nounset while sourcing, then restore it.
@@ -41,9 +42,9 @@ PROXY_PORT="${PROXY_PORT:-$(get_next_tcp_port)}"
 PROMPT="${PROMPT:-San Francisco is a}"
 SERVER_TIMEOUT="${SERVER_TIMEOUT:-300}"
 # Fraction of GPU memory each server may claim. The frameworks default to ~0.9, which
-# demands nearly the whole GPU to be free at startup; on the shared GB200 CI nodes other
-# processes may already hold GPU memory, and the sanity model needs only a small slice
-# anyway (0.3 of a 186 GiB GB200 is ~56 GiB, ample for 8B weights + KV cache).
+# demands nearly the whole GPU to be free at startup; the sanity model needs only a small
+# slice (0.3 of a 186 GiB GB200 is ~56 GiB, ample for 8B weights + KV cache), so the lower
+# value leaves room for anything the driver or a previous step has not yet released.
 GPU_MEM_FRACTION="${GPU_MEM_FRACTION:-0.3}"
 PROXY_TIMEOUT="${PROXY_TIMEOUT:-120}"
 REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-120}"
@@ -77,8 +78,8 @@ wait_for() {  # wait_for <url> <timeout_s>
 }
 
 # Servers are started with setsid so each gets its own process group; cleanup signals the
-# whole group so forked engine/worker subprocesses can't survive and keep holding GPUs on
-# the shared SLURM node.
+# whole group so forked engine/worker subprocesses can't survive this job and keep holding
+# GPUs against whatever the SLURM node runs next.
 pids=()
 cleanup() {
   for p in "${pids[@]:-}"; do
@@ -95,6 +96,15 @@ python3 -c "import nixl; from importlib.metadata import version; print('nixl', v
 # the image, and vllm/sglang otherwise discover the cache miss deep in their own startup
 # path (burning the health-check timeout); an explicit download fails fast and clearly.
 # huggingface_hub ships in both framework images, so no extra install is needed.
+#
+# HF_ENDPOINT (set by the CI step to SANITY_HF_ENDPOINT, the internal HuggingFace mirror)
+# routes the pull through the mirror instead of huggingface.co, which rate-limits the shared
+# CI egress IP; huggingface_hub reads it from the environment, and the mirror allows anonymous
+# reads so no token is needed. Unset (e.g. a local run) it falls back to huggingface.co. The
+# long HF_HUB_*_TIMEOUT values keep the mirror's cold-cache first fetch from tripping the
+# default (10s) metadata/download timeouts.
+export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-86400}"
+export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-86400}"
 log "prefetching ${MODEL}"
 python3 -c "from huggingface_hub import snapshot_download; snapshot_download('${MODEL}')"
 
@@ -102,8 +112,7 @@ if [ "$FRAMEWORK" = "vllm" ]; then
   python3 -c "from importlib.metadata import version; print('vllm', version('vllm'))"
 
   # Prefill and decode are co-located on one node, so each needs its own NIXL
-  # side-channel handshake port (default 5600 for both -> "Address already in use"),
-  # and they must be host-unique so concurrent jobs on the same node don't collide.
+  # side-channel handshake port (default 5600 for both -> "Address already in use").
   PREFILL_SIDE_PORT="$(get_next_tcp_port)"
   DECODE_SIDE_PORT="$(get_next_tcp_port)"
   setsid env CUDA_VISIBLE_DEVICES=0 VLLM_NIXL_SIDE_CHANNEL_PORT="$PREFILL_SIDE_PORT" \
@@ -133,8 +142,8 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
   python3 -c "from importlib.metadata import version; print('sglang', version('sglang'))"
 
   # The prefill binds a bootstrap server on --disaggregation-bootstrap-port (default
-  # 8998); make it host-unique so concurrent jobs on the same node don't collide. Both
-  # sides are configured with the same port (decode connects to the prefill's bootstrap).
+  # 8998); take a free port rather than trusting the default to be unbound. Both sides
+  # are configured with the same port (decode connects to the prefill's bootstrap).
   BOOTSTRAP_PORT="$(get_next_tcp_port)"
   setsid env CUDA_VISIBLE_DEVICES=0 python3 -m sglang.launch_server --model-path "$MODEL" \
     --mem-fraction-static "$GPU_MEM_FRACTION" \
@@ -153,6 +162,12 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
   wait_for "http://localhost:${PREFILL_PORT}/health" "$SERVER_TIMEOUT"
   wait_for "http://localhost:${DECODE_PORT}/health" "$SERVER_TIMEOUT"
 
+  # Re-pick PROXY_PORT now that the SGLang servers are fully up. SGLang binds internal
+  # ports derived from its base port (gRPC, ZMQ, etc.) that aren't visible to
+  # get_next_tcp_port() until the servers are running; re-allocating here ensures the
+  # router gets a port that doesn't collide with any of those.
+  PROXY_PORT="$(get_next_tcp_port)"
+
   # sglang-router fronts the prefill/decode pair (replaces the removed in-core mini_lb).
   # Installed into the sglang weights-base image (contrib/Dockerfile.sglang-base).
   setsid python3 -m sglang_router.launch_router --pd-disaggregation \
@@ -160,7 +175,7 @@ elif [ "$FRAMEWORK" = "sglang" ]; then
     --decode "http://localhost:${DECODE_PORT}" \
     --host 0.0.0.0 --port "$PROXY_PORT" &
   pids+=($!)
-  wait_for "http://localhost:${PROXY_PORT}/health" "$PROXY_TIMEOUT" || true
+  wait_for "http://localhost:${PROXY_PORT}/health" "$PROXY_TIMEOUT"
   ENDPOINT="http://localhost:${PROXY_PORT}/v1/completions"
 
 else

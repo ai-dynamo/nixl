@@ -36,6 +36,7 @@ build_doca_tests = enabled_plugins.get('TELEMETRY_DOCA') and doca_telemetry_dep.
 if build_doca_tests
     doca_test_exe = executable('doca_test',
         sources: ['telemetry_doca_test.cpp'],
+        include_directories: [utils_inc_dirs, include_directories('../metrics')],
         dependencies: [gtest_dep, doca_telemetry_dep, doca_common_dep],
         # DOCA telemetry metrics APIs are marked experimental (deprecated
         # attribute); mirror the DOCA sample Makefile and the plugin sources.
@@ -49,12 +50,14 @@ if build_doca_tests
     doca_nixl_test_exe = executable('doca_nixl_test',
         sources: [
             'telemetry_doca_nixl_test.cpp',
+            'telemetry_doca_stress_test.cpp',
             doca_exporter_dir / 'doca_exporter.cpp',
         ],
         include_directories: [
             nixl_inc_dirs,
             utils_inc_dirs,
             include_directories(doca_exporter_dir),
+            include_directories('../metrics'),
             include_directories('../../src/plugins/telemetry/common'),
         ],
         dependencies: [gtest_dep, doca_telemetry_dep, doca_common_dep, nixl_infra, nixl_common_dep, absl_log_dep, absl_strings_dep],
@@ -62,7 +65,11 @@ if build_doca_tests
         install: true,
     )
 
-    test('doca_nixl_test', doca_nixl_test_exe, is_parallel: false)
+    # The suite normally runs in well under a second, but each case may spend its
+    # scrape settle budget (12-15s) waiting on a lagging DOCA endpoint. Bound the
+    # test by the sum of those budgets so a slow CI machine reports the failing
+    # assertion instead of a bare timeout.
+    test('doca_nixl_test', doca_nixl_test_exe, is_parallel: false, timeout: 180)
     message('Building standalone DOCA telemetry exporter tests')
 
     cmake = import('cmake')
@@ -95,6 +102,7 @@ if build_doca_tests
                 utils_inc_dirs,
                 include_directories(doca_exporter_dir),
                 include_directories(prometheus_exporter_dir),
+                include_directories('../metrics'),
                 include_directories('../../src/plugins/telemetry/common'),
             ],
             dependencies: [
