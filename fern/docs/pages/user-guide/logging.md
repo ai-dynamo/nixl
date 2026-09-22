@@ -63,7 +63,9 @@ export NIXL_LOG_FILE=/var/log/nixl/agent.log
 export NIXL_LOG_FILE_SIZE=64M
 ```
 
-On reaching the limit, the file is renamed with a `.1` suffix, replacing the previous generation, and a new file is started. The total size stays under roughly twice the configured limit.
+On reaching the limit, the file is renamed with a `.1` suffix, replacing the previous generation, and a new file is started. Files created under the limit occupy at most twice the configured size in total.
+
+Existing files are not truncated when a limit is enabled or reduced. An oversized active file or `.1` backup can exceed the total bound until subsequent rotations replace it. Use a previously unused path if the bound must hold immediately.
 
 A record larger than the entire limit cannot fit in either generation. It is still written to stderr, but is omitted from the log file.
 
@@ -77,7 +79,7 @@ File logging failures do not terminate the process:
 |---------|----------|
 | The file cannot be opened | Reported at error severity; file logging is disabled. |
 | A later write fails | Reported once on stderr; further file records are dropped. |
-| A rotation cannot be done | Reported on stderr; file logging stops without exceeding the limit. |
+| A rotation cannot be done | Reported on stderr; file logging stops. |
 | `NIXL_LOG_FILE_SIZE` is below 4 KiB or cannot be parsed | Reported at error severity; file logging is disabled. |
 
 ## Reference
