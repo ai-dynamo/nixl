@@ -214,7 +214,7 @@ public:
                 return;
             }
 
-            // Rotate before writing so neither generation exceeds the limit.
+            // Rotate before adding a record that would exceed the limit.
             if (written_ > limit_ - payload.size()) {
                 rotate();
                 if (failed_) {
@@ -242,9 +242,9 @@ public:
 private:
     /**
      * @brief Moves the full file aside and starts a new one, keeping the newest
-     *        records. One generation is kept, so at most twice the limit is on
-     *        disk. A rotation that cannot be done stops the sink rather than
-     *        ignoring the limit. Called with mutex_ held.
+     *        records. Existing oversized files are preserved until a later
+     *        rotation replaces them. A failed rotation stops the sink.
+     *        Called with mutex_ held.
      */
     void
     rotate() {

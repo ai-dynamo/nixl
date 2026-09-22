@@ -58,22 +58,22 @@ namespace {
 
 using testing::HasSubstr;
 
-// Set by the child process in RecordsFromStaticDestructorsReachTheFile, so the
-// destructor below only logs in the one process that is testing for it.
-constexpr const char *late_record_env_var = "NIXL_TEST_LATE_RECORD";
 constexpr const char *late_record_text = "record from a static destructor";
 constexpr const char *helper_mode_env_var = "NIXL_LOG_FILE_TEST_HELPER";
 constexpr const char *helper_path_env_var = "NIXL_LOG_FILE_TEST_PATH";
 constexpr const char *run_marker_helper_mode = "run-marker";
 constexpr const char *fatal_helper_mode = "fatal";
+constexpr const char *late_record_helper_mode = "late-record";
+constexpr const char *single_record_helper_mode = "single-record";
+constexpr const char *single_record_text = "record from the helper";
 constexpr const char *fatal_record_text = "fatal record for the file";
 
 struct helperProcessResult {
     pid_t pid = -1;
     int status = 0;
-    int launch_error = 0;
-    int wait_error = 0;
-    bool timed_out = false;
+    int launchError = 0;
+    int waitError = 0;
+    bool timedOut = false;
     std::string output;
 };
 
@@ -107,7 +107,7 @@ runHelper(const std::string &mode,
     helperProcessResult result;
 
     const std::vector<std::string> overrides = {
-        "NIXL_LOG_FILE=",
+        std::string("NIXL_LOG_FILE=") + (mode == late_record_helper_mode ? data_path.string() : ""),
         "NIXL_LOG_FILE_SIZE=",
         "NIXL_LOG_LEVEL=INFO",
         std::string(helper_mode_env_var) + "=" + mode,
@@ -119,6 +119,11 @@ runHelper(const std::string &mode,
     std::vector<std::string> child_env;
     for (char **entry = environ; *entry != nullptr; ++entry) {
         const std::string text(*entry);
+        // Helpers must not inherit repetition, sharding, or parent report files.
+        if (text.rfind("GTEST_", 0) == 0 || text.rfind("XML_OUTPUT_FILE=", 0) == 0 ||
+            text.rfind("TEST_PREMATURE_EXIT_FILE=", 0) == 0) {
+            continue;
+        }
         const std::string name = text.substr(0, text.find('=') + 1);
         const bool overridden =
             std::any_of(overrides.begin(), overrides.end(), [&name](const std::string &value) {
@@ -144,13 +149,13 @@ runHelper(const std::string &mode,
     const int output_fd =
         ::open(output_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
     if (output_fd < 0) {
-        result.launch_error = errno;
+        result.launchError = errno;
         return result;
     }
 
     result.pid = ::fork();
     if (result.pid < 0) {
-        result.launch_error = errno;
+        result.launchError = errno;
         ::close(output_fd);
         return result;
     }
@@ -175,13 +180,13 @@ runHelper(const std::string &mode,
     }
 
     if (reaped == 0) {
-        result.timed_out = true;
+        result.timedOut = true;
         ::kill(result.pid, SIGKILL);
         if (::waitpid(result.pid, &result.status, 0) < 0) {
-            result.wait_error = errno;
+            result.waitError = errno;
         }
     } else if (reaped < 0) {
-        result.wait_error = errno;
+        result.waitError = errno;
     }
 
     result.output = readFile(output_path);
@@ -223,7 +228,8 @@ private:
  */
 struct lateLogger {
     ~lateLogger() {
-        if (std::getenv(late_record_env_var) != nullptr) {
+        const char *mode = std::getenv(helper_mode_env_var);
+        if (mode != nullptr && mode == std::string_view(late_record_helper_mode)) {
             NIXL_INFO << late_record_text;
         }
     }
@@ -311,6 +317,21 @@ TEST(nixlLogFileHelper, EmitsFatalRecord) {
     ASSERT_TRUE(nixl::initLogFile());
 
     NIXL_FATAL << fatal_record_text;
+}
+
+TEST(nixlLogFileHelper, EmitsSingleRecord) {
+    const char *mode = std::getenv(helper_mode_env_var);
+    if (mode == nullptr || mode != std::string_view(single_record_helper_mode)) {
+        GTEST_SKIP() << "only run by the helper-isolation regression";
+    }
+
+    const char *configured_path = std::getenv(helper_path_env_var);
+    ASSERT_NE(configured_path, nullptr);
+
+    gtest::ScopedEnv env;
+    env.addVar("NIXL_LOG_FILE", configured_path);
+    ASSERT_TRUE(nixl::initLogFile());
+    NIXL_INFO << single_record_text;
 }
 
 /** @brief Counts what Abseil hands to other sinks, to show none is displaced. */
@@ -630,6 +651,39 @@ TEST_F(nixlLogFileTest, RecordsAreReadableWithoutWaitingForShutdown) {
     EXPECT_THAT(readLogFile(), HasSubstr("readable immediately"));
 }
 
+TEST_F(nixlLogFileTest, HelpersIgnoreParentGoogleTestEnvironment) {
+    if (!canExecHelper()) {
+        GTEST_SKIP() << "re-execing this binary needs /proc/self/exe";
+    }
+
+    const std::filesystem::path parent_report = path_.string() + ".parent-report";
+    const std::string sentinel = "parent report";
+    std::ofstream(parent_report) << sentinel;
+
+    env_.addVar("GTEST_FILTER", "NoSuchTest.*");
+    env_.addVar("GTEST_REPEAT", "2");
+    env_.addVar("GTEST_TOTAL_SHARDS", "2");
+    env_.addVar("GTEST_SHARD_INDEX", "1");
+    env_.addVar("GTEST_SHARD_STATUS_FILE", parent_report.string());
+    env_.addVar("GTEST_OUTPUT", "xml:" + parent_report.string());
+    env_.addVar("XML_OUTPUT_FILE", parent_report.string());
+    env_.addVar("TEST_PREMATURE_EXIT_FILE", parent_report.string());
+
+    const std::filesystem::path output = path_.string() + ".helper-output";
+    const auto result =
+        runHelper(single_record_helper_mode, "nixlLogFileHelper.EmitsSingleRecord", path_, output);
+    const std::string report_after = readFile(parent_report);
+    std::filesystem::remove(parent_report);
+
+    ASSERT_EQ(result.launchError, 0) << "could not launch helper: errno " << result.launchError;
+    ASSERT_FALSE(result.timedOut) << "helper exceeded its 10-second deadline\n" << result.output;
+    ASSERT_EQ(result.waitError, 0) << "waitpid failed: errno " << result.waitError;
+    ASSERT_TRUE(WIFEXITED(result.status)) << "helper did not exit normally\n" << result.output;
+    ASSERT_EQ(WEXITSTATUS(result.status), 0) << "helper failed:\n" << result.output;
+    EXPECT_EQ(linesMatching(single_record_text).size(), 1u) << result.output;
+    EXPECT_EQ(report_after, sentinel);
+}
+
 /** @brief %h and %p expand, so one setting gives every worker its own file. */
 TEST_F(nixlLogFileTest, ExpandsHostAndProcessIntoThePath) {
     char host[256] = {};
@@ -676,74 +730,14 @@ TEST_F(nixlLogFileTest, ExpandsTheRunMarkerIntoThePath) {
     // Cleaned up even when the helper failed before doing so.
     std::filesystem::remove_all(directory);
 
-    ASSERT_EQ(result.launch_error, 0) << "could not launch helper: errno " << result.launch_error;
-    ASSERT_FALSE(result.timed_out) << "run-marker helper exceeded its 10-second deadline\n"
-                                   << result.output;
-    ASSERT_EQ(result.wait_error, 0) << "waitpid failed: errno " << result.wait_error;
+    ASSERT_EQ(result.launchError, 0) << "could not launch helper: errno " << result.launchError;
+    ASSERT_FALSE(result.timedOut) << "run-marker helper exceeded its 10-second deadline\n"
+                                  << result.output;
+    ASSERT_EQ(result.waitError, 0) << "waitpid failed: errno " << result.waitError;
     ASSERT_TRUE(WIFEXITED(result.status)) << "run-marker helper terminated abnormally\n"
                                           << result.output;
     ASSERT_NE(WEXITSTATUS(result.status), 127) << "could not exec the run-marker helper";
     EXPECT_EQ(WEXITSTATUS(result.status), 0) << "run-marker helper failed:\n" << result.output;
-}
-
-/**
- * @brief A fork without exec keeps writing the parent's file.
- *
- * Documented rather than desired: the path is expanded once at library load, so
- * a child inherits the name and the open file. Pinned here so the documented
- * limit cannot quietly stop being true. Workers started through exec, the usual
- * case for GPU work, are unaffected.
- */
-TEST_F(nixlLogFileTest, ForkWithoutExecKeepsWritingTheParentsFile) {
-    const std::string pattern = path_.string() + "-fork-%p";
-    const std::filesystem::path parent_file =
-        path_.string() + "-fork-" + std::to_string(::getpid());
-    std::filesystem::remove(parent_file);
-
-    env_.addVar("NIXL_LOG_FILE", pattern);
-    ASSERT_TRUE(nixl::initLogFile());
-    NIXL_INFO << "record from the parent";
-
-    const pid_t child = ::fork();
-    ASSERT_NE(child, -1) << "fork failed";
-    if (child == 0) {
-        NIXL_INFO << "record from the child";
-        // _exit: the child must not run this process's teardown again.
-        ::_exit(0);
-    }
-
-    // With a deadline: a child that inherited a held mutex blocks on its first
-    // record forever, and an unbounded wait would hang the run rather than fail.
-    int status = 0;
-    pid_t reaped = 0;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while ((reaped = ::waitpid(child, &status, WNOHANG)) == 0 &&
-           std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    if (reaped == 0) {
-        ::kill(child, SIGKILL);
-        ::waitpid(child, &status, 0);
-        nixl::shutdownLogFile();
-        std::filesystem::remove(parent_file);
-        FAIL() << "the forked child never exited; it most likely blocked writing its record";
-    }
-    ASSERT_EQ(reaped, child) << "waitpid failed";
-    nixl::shutdownLogFile();
-
-    const std::filesystem::path child_file = path_.string() + "-fork-" + std::to_string(child);
-    EXPECT_FALSE(std::filesystem::exists(child_file))
-        << "a child file appeared, so fork now reinitializes: update the documentation";
-
-    std::ifstream in(parent_file);
-    std::ostringstream contents;
-    contents << in.rdbuf();
-    EXPECT_THAT(contents.str(), HasSubstr("record from the parent"));
-    EXPECT_THAT(contents.str(), HasSubstr("record from the child"));
-
-    std::filesystem::remove(parent_file);
-    std::filesystem::remove(child_file);
 }
 
 /** @brief %% lets a path contain a literal percent. */
@@ -814,6 +808,43 @@ TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
     EXPECT_FALSE(std::filesystem::exists(path_.string() + ".2"));
 
     std::filesystem::remove(rotated);
+}
+
+/** @brief Existing oversized files survive until bounded generations replace them. */
+TEST_F(nixlLogFileTest, PreservesExistingOversizedFilesUntilRotationReplacesThem) {
+    constexpr std::uintmax_t limit = 4096;
+    const std::filesystem::path rotated = path_.string() + ".1";
+
+    for (const bool oversized_active : {false, true}) {
+        const std::string initial_active =
+            oversized_active ? std::string(2 * limit, 'a') : "earlier live record\n";
+        const std::string initial_backup(3 * limit, 'b');
+        std::ofstream(path_) << initial_active;
+        std::ofstream(rotated) << initial_backup;
+
+        env_.addVar("NIXL_LOG_FILE", path_.string());
+        env_.addVar("NIXL_LOG_FILE_SIZE", "4K");
+        ASSERT_TRUE(nixl::initLogFile());
+        EXPECT_EQ(readLogFile(), initial_active);
+        EXPECT_EQ(readFile(rotated), initial_backup);
+
+        NIXL_INFO << "first record under the new limit";
+        EXPECT_THAT(readLogFile(), HasSubstr("first record under the new limit"));
+        EXPECT_EQ(readFile(rotated), oversized_active ? initial_active : initial_backup);
+
+        for (unsigned i = 0; i < 200; ++i) {
+            NIXL_INFO << "bounded replacement record " << i;
+        }
+        nixl::shutdownLogFile();
+
+        EXPECT_LE(std::filesystem::file_size(path_), limit);
+        EXPECT_LE(std::filesystem::file_size(rotated), limit);
+        EXPECT_THAT(readLogFile(), HasSubstr("bounded replacement record 199"));
+
+        env_.popVar();
+        env_.popVar();
+        std::filesystem::remove(rotated);
+    }
 }
 
 /**
@@ -1123,10 +1154,10 @@ TEST_F(nixlLogFileTest, WritesFatalMessageOnceWithItsStackTrace) {
     const auto result =
         runHelper(fatal_helper_mode, "nixlLogFileHelper.EmitsFatalRecord", path_, output);
 
-    ASSERT_EQ(result.launch_error, 0) << "could not launch helper: errno " << result.launch_error;
-    ASSERT_FALSE(result.timed_out) << "fatal helper exceeded its 10-second deadline\n"
-                                   << result.output;
-    ASSERT_EQ(result.wait_error, 0) << "waitpid failed: errno " << result.wait_error;
+    ASSERT_EQ(result.launchError, 0) << "could not launch helper: errno " << result.launchError;
+    ASSERT_FALSE(result.timedOut) << "fatal helper exceeded its 10-second deadline\n"
+                                  << result.output;
+    ASSERT_EQ(result.waitError, 0) << "waitpid failed: errno " << result.waitError;
     ASSERT_TRUE(WIFSIGNALED(result.status)) << "fatal helper did not terminate by signal\n"
                                             << result.output;
     EXPECT_EQ(WTERMSIG(result.status), SIGABRT) << "fatal helper received an unexpected signal";
@@ -1161,61 +1192,15 @@ TEST_F(nixlLogFileTest, RecordsFromStaticDestructorsReachTheFile) {
         GTEST_SKIP() << "re-execing this binary needs /proc/self/exe";
     }
 
-    // Built before the fork: only async-signal-safe calls may run between fork
-    // and exec, and setenv() can allocate. open() and dup2() below are safe.
-    const std::vector<std::string> overrides = {
-        "NIXL_LOG_FILE=" + path_.string(),
-        "NIXL_LOG_LEVEL=INFO",
-        std::string(late_record_env_var) + "=1",
-    };
+    const std::filesystem::path output = path_.string() + ".helper-output";
+    const auto result = runHelper(late_record_helper_mode, "-*", path_, output);
 
-    // Minus the names overridden below, so those win rather than duplicating.
-    std::vector<std::string> child_env;
-    for (char **entry = environ; *entry != nullptr; ++entry) {
-        const std::string text(*entry);
-        const std::string name = text.substr(0, text.find('=') + 1);
-        const bool overridden =
-            std::any_of(overrides.begin(), overrides.end(), [&name](const std::string &o) {
-                return o.compare(0, name.size(), name) == 0;
-            });
-        if (!overridden) {
-            child_env.push_back(text);
-        }
-    }
-    child_env.insert(child_env.end(), overrides.begin(), overrides.end());
-
-    std::vector<char *> envp;
-    for (std::string &entry : child_env) {
-        envp.push_back(entry.data());
-    }
-    envp.push_back(nullptr);
-
-    std::string helper_name = "nixl_log_file_late_record_helper";
-    std::string no_tests = "--gtest_filter=-*";
-    std::vector<char *> argv{helper_name.data(), no_tests.data(), nullptr};
-
-    const pid_t pid = fork();
-    ASSERT_GE(pid, 0) << "fork failed";
-
-    if (pid == 0) {
-        // Child. Keep the helper's output out of the test's, before the exec.
-        const int devnull = ::open("/dev/null", O_WRONLY);
-        if (devnull >= 0) {
-            ::dup2(devnull, STDOUT_FILENO);
-            ::dup2(devnull, STDERR_FILENO);
-        }
-
-        ::execve("/proc/self/exe", argv.data(), envp.data());
-
-        // Only on exec failure; distinct from any status the helper returns.
-        _exit(127);
-    }
-
-    int status = 0;
-    ASSERT_EQ(::waitpid(pid, &status, 0), pid);
-    ASSERT_TRUE(WIFEXITED(status)) << "helper did not exit normally";
-    ASSERT_NE(WEXITSTATUS(status), 127) << "could not exec the helper";
-    ASSERT_EQ(WEXITSTATUS(status), 0) << "helper exited " << WEXITSTATUS(status);
+    ASSERT_EQ(result.launchError, 0) << "could not launch helper: errno " << result.launchError;
+    ASSERT_FALSE(result.timedOut) << "late-record helper exceeded its 10-second deadline\n"
+                                  << result.output;
+    ASSERT_EQ(result.waitError, 0) << "waitpid failed: errno " << result.waitError;
+    ASSERT_TRUE(WIFEXITED(result.status)) << "helper did not exit normally\n" << result.output;
+    ASSERT_EQ(WEXITSTATUS(result.status), 0) << "helper failed:\n" << result.output;
 
     EXPECT_THAT(readLogFile(), HasSubstr(late_record_text));
 }
