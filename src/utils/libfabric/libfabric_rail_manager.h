@@ -28,8 +28,12 @@
 #include "libfabric_rail.h"
 
 #ifdef HAVE_CUDA
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#else
 #include <cuda.h>
 #include <cuda_runtime.h>
+#endif
 #endif
 
 // Forward declarations
@@ -270,6 +274,7 @@ public:
     enum class ControlMessageType : int {
         NOTIFICATION, ///< User notification message
         HANDSHAKE, ///< Peer-idx assignment (NIXL_LIBFABRIC_MSG_HANDSHAKE)
+        XFER_ERROR, ///< Batch had unpostable writes (NIXL_LIBFABRIC_MSG_XFER_ERROR)
     };
     /** Send control message via control rail
      * @param msg_type Type of control message

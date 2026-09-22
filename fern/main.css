@@ -227,6 +227,20 @@ svg.card-icon {
   box-shadow: 0 0 0 1px var(--nv-color-green) !important;
 }
 
+.diagram-dark,
+.dark .diagram-light {
+  display: none;
+}
+.dark .diagram-dark {
+  display: block;
+}
+
+/* Size Fern's generated wrapper so sequence diagrams are visible. */
+.sequence-diagram .fern-card > div > span {
+  flex: 0 0 78%;
+  width: 78%;
+}
+
 #builtwithfern,
 #builtwithfern * {
   display: none !important;

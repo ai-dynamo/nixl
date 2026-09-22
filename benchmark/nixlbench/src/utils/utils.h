@@ -27,6 +27,7 @@
 #include <variant>
 #include <vector>
 #include <optional>
+#include <nixl_types.h>
 #include <toml++/toml.hpp>
 #include <utils/common/nixl_time.h>
 #include "runtime/runtime.h"
@@ -79,6 +80,9 @@
 
 #define XFERBENCH_INITIATOR_BUFFER_ELEMENT 0xbb
 #define XFERBENCH_TARGET_BUFFER_ELEMENT 0xaa
+
+// CUDA warp size, to derive Device API group number from block_threads
+#define XFERBENCH_DEVICE_WARP_SIZE 32
 
 // Runtime types
 #define XFERBENCH_RT_ETCD "ETCD"
@@ -227,8 +231,19 @@ public:
     static std::string gusli_device_byte_offsets;
     static std::string gusli_device_security;
     static bool gusli_try_use_uring;
+    // Opaque plugin parameters are populated only by the raw CLI path.
+    static std::optional<nixl_b_params_t> plugin_parameters;
     static bool use_device_api;
     static int block_threads;
+    static int device_channel_num;
+
+    /* Number of independent groups Device API kernel runs with. */
+    static int
+    deviceGroupNum();
+
+    /* Parallel workers split iterations across both CPU and Device API. */
+    static int
+    workerNum();
 
     static int
     parseConfig(int argc, char *argv[]);

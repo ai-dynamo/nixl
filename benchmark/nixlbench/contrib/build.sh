@@ -25,6 +25,7 @@ DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
 UCX_SRC=""
 UCX_BUILD_CONTEXT_ARGS=""
 BUILD_TYPE="release"
+EFA_VERSION=""
 commit_id=$(git rev-parse --short HEAD)
 
 # Get latest TAG and add COMMIT_ID for dev
@@ -34,8 +35,10 @@ if [ -z ${latest_tag} ]; then
     echo "No git release tag found, setting to unknown version: ${latest_tag}"
 fi
 
-BASE_IMAGE=nvcr.io/nvidia/cuda-dl-base
-BASE_IMAGE_TAG=25.10-cuda13.0-devel-ubuntu24.04
+# Empty by default and forwarded independently below, so whichever one is left
+# unset comes from the Dockerfile's own ARG default rather than an empty string.
+BASE_IMAGE=""
+BASE_IMAGE_TAG=""
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
@@ -70,6 +73,17 @@ get_options() {
         --build-type)
             if [ "$2" ]; then
                 BUILD_TYPE=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --aws)
+            DOCKER_FILE="${SOURCE_DIR}/Dockerfile.aws-amzn2023"
+            ;;
+        --efa-version)
+            if [ "$2" ]; then
+                EFA_VERSION=$2
                 shift
             else
                 missing_requirement $1
@@ -171,13 +185,19 @@ get_options() {
 show_build_options() {
     echo ""
     echo "Building NIXLBench Image"
+    echo "Dockerfile: ${DOCKER_FILE}"
     echo "NIXL Source: ${NIXL_SRC}"
     echo "UCX Source: ${UCX_SRC} (optional)"
     echo "Build Type: ${BUILD_TYPE}"
     echo "Image Tag: ${TAG}"
     echo "Build Context: ${BUILD_CONTEXT}"
     echo "Build Context Args: ${BUILD_CONTEXT_ARGS}"
-    echo "Base Image: ${BASE_IMAGE}:${BASE_IMAGE_TAG}"
+    # Each component is overridden independently; whichever is unset comes
+    # from the Dockerfile's own ARG default.
+    echo "Base Image: ${BASE_IMAGE:-<Dockerfile default>}:${BASE_IMAGE_TAG:-<Dockerfile default>}"
+    if [ -n "$EFA_VERSION" ]; then
+        echo "EFA Version: ${EFA_VERSION}"
+    fi
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
@@ -185,8 +205,10 @@ show_build_options() {
 
 show_help() {
     echo "usage: build.sh --nixl <path to nixl source>"
-    echo "  [--base base image]"
+    echo "  [--base-image base image]"
     echo "  [--base-image-tag base image tag]"
+    echo "  [--aws build with Dockerfile.aws-amzn2023]"
+    echo "  [--efa-version EFA installer version]"
     echo "  [--nixlbench path/to/nixlbench/source/dir]"
     echo "  [--ucx path/to/ucx/source/dir]"
     echo "  [--build-type [debug|release] to select build type]"
@@ -209,12 +231,16 @@ error() {
 
 get_options "$@"
 
-BUILD_ARGS+=" --build-arg BASE_IMAGE=$BASE_IMAGE --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG"
+BUILD_ARGS+="${BASE_IMAGE:+ --build-arg BASE_IMAGE=$BASE_IMAGE}"
+BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg BUILD_TYPE=$BUILD_TYPE"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
+if [ -n "$EFA_VERSION" ]; then
+    BUILD_ARGS+=" --build-arg EFA_VERSION=$EFA_VERSION"
+fi
 BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
 
 show_build_options

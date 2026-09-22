@@ -62,6 +62,7 @@ endif
 
 
 nixl_ep_sources = [
+    'csrc/cuda_stream.cpp',
     'csrc/nixl_ep.cpp',
     'csrc/vmm.cpp',
     'csrc/kernels/nixl_ep_ll.cu',
@@ -72,7 +73,7 @@ nixl_ep_sources = [
 
 nixl_ep_inc_dirs = [
     nixl_inc_dirs,
-    nixl_gpu_inc_dirs,
+    nixl_device_inc_dirs,
     include_directories('csrc'),
     include_directories('csrc/kernels'),
     torch_inc_dirs,
@@ -96,6 +97,7 @@ nixl_ep_cpp_args = [
     '-Wno-sign-compare',
     '-Wno-reorder',
     '-Wno-attributes',
+    '-DUSE_CUDA',
 ]
 
 nixl_ep_cuda_args = [
