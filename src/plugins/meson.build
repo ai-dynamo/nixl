@@ -41,30 +41,21 @@ if enabled_plugins.get('LIBFABRIC')
     endif
 endif
 
+# The "GDS" and "GDS_MT" backends are produced by a single plugin directory.
+# GDS exposes both batch and MT modes, while GDS_MT remains as a compatibility
+# entry point for MT mode.
 disable_gds_backend = get_option('disable_gds_backend')
-if enabled_plugins.get('GDS')
-    if (disable_gds_backend or not cuda_dep.found()) and is_explicit_enable
-        if disable_gds_backend
-            error('GDS plugin requested but GDS backend is disabled')
-        else
-            error('GDS plugin requested but CUDA dependency not found')
-        endif
-    elif not disable_gds_backend and cuda_dep.found()
-        subdir('cuda_gds')
-    endif
-endif
-
-if enabled_plugins.get('GDS_MT')
+if enabled_plugins.get('GDS') or enabled_plugins.get('GDS_MT')
     if (disable_gds_backend or not cuda_dep.found() or not taskflow_proj.found()) and is_explicit_enable
         if disable_gds_backend
-            error('GDS_MT plugin requested but GDS backend is disabled')
-        elif not cuda_dep.found()
-            error('GDS_MT plugin requested but CUDA dependency not found')
+            error('GDS/GDS_MT plugin requested but GDS backend is disabled')
+        elif not taskflow_proj.found()
+            error('GDS/GDS_MT plugin requested but Taskflow dependency not found')
         else
-            error('GDS_MT plugin requested but Taskflow dependency not found')
+            error('GDS/GDS_MT plugin requested but CUDA dependency not found')
         endif
     elif not disable_gds_backend and cuda_dep.found() and taskflow_proj.found()
-        subdir('gds_mt')
+        subdir('cuda_gds')
     endif
 endif
 
