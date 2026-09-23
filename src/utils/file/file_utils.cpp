@@ -17,6 +17,7 @@
 #include "file_utils.h"
 
 #include <fcntl.h>
+#include <optional>
 #include <unistd.h>
 #include <sys/stat.h>
 
@@ -37,6 +38,18 @@ queryFileInfo(const std::string &filename) {
     return nixl_b_params_t{{"size", std::to_string(stat_buf.st_size)},
                            {"mode", std::to_string(stat_buf.st_mode)},
                            {"mtime", std::to_string(stat_buf.st_mtime)}};
+}
+
+std::vector<nixl_query_resp_t>
+queryFileInfoFromDescList(const nixl_reg_dlist_t &descs) {
+    std::vector<nixl_query_resp_t> resp;
+
+    resp.reserve(descs.descCount());
+
+    for (const auto &desc : descs) {
+        resp.emplace_back(queryFileInfo(desc.metaInfo));
+    }
+    return resp;
 }
 
 } // namespace nixl

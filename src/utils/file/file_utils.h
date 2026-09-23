@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_UTILS_FILE_FILE_UTILS_H
 #define NIXL_SRC_UTILS_FILE_FILE_UTILS_H
 
+#include "nixl_descriptors.h"
 #include "nixl_types.h"
 
 #include <string>
@@ -41,18 +42,8 @@ queryFileInfo(const std::string &filename);
  * @param descs Descriptors from which to take the filenames
  * @return std::vector<nixl_query_resp_t> with each entry obtained from queryFileInfo()
  */
-template<typename DescList>
 [[nodiscard]] std::vector<nixl_query_resp_t>
-queryFileInfoFromDescList(const DescList &descs) {
-    std::vector<nixl_query_resp_t> resp;
-
-    resp.reserve(descs.descCount());
-
-    for (const auto &desc : descs) {
-        resp.emplace_back(queryFileInfo(desc.metaInfo));
-    }
-    return resp;
-}
+queryFileInfoFromDescList(const nixl_reg_dlist_t &descs);
 
 } // namespace nixl
 
