@@ -63,6 +63,7 @@ constexpr const char *helper_mode_env_var = "NIXL_LOG_FILE_TEST_HELPER";
 constexpr const char *helper_path_env_var = "NIXL_LOG_FILE_TEST_PATH";
 constexpr const char *run_marker_helper_mode = "run-marker";
 constexpr const char *fatal_helper_mode = "fatal";
+constexpr const char *fatal_setup_helper_mode = "fatal-setup";
 constexpr const char *late_record_helper_mode = "late-record";
 constexpr const char *single_record_helper_mode = "single-record";
 constexpr const char *single_record_text = "record from the helper";
@@ -109,6 +110,7 @@ runHelper(const std::string &mode,
     const std::vector<std::string> overrides = {
         std::string("NIXL_LOG_FILE=") + (mode == late_record_helper_mode ? data_path.string() : ""),
         "NIXL_LOG_FILE_SIZE=",
+        "NIXL_LOG_FILE_ERROR_IS_FATAL=",
         "NIXL_LOG_LEVEL=INFO",
         std::string(helper_mode_env_var) + "=" + mode,
         std::string(helper_path_env_var) + "=" + data_path.string(),
@@ -319,6 +321,25 @@ TEST(nixlLogFileHelper, EmitsFatalRecord) {
     NIXL_FATAL << fatal_record_text;
 }
 
+TEST(nixlLogFileHelper, DiesWhenTheLogFileCannotOpenAndErrorsAreFatal) {
+    const char *mode = std::getenv(helper_mode_env_var);
+    if (mode == nullptr || mode != std::string_view(fatal_setup_helper_mode)) {
+        GTEST_SKIP() << "only run by the fatal-setup regression";
+    }
+
+    const char *configured_path = std::getenv(helper_path_env_var);
+    ASSERT_NE(configured_path, nullptr);
+
+    gtest::ScopedEnv env;
+    env.addVar("NIXL_LOG_FILE_ERROR_IS_FATAL", "1");
+    // A path under a directory that does not exist cannot be opened.
+    env.addVar("NIXL_LOG_FILE", std::string(configured_path) + ".missing/x.log");
+
+    // Expected not to return: the report is fatal. Returning at all means the
+    // setting was not honoured, which the parent reports as a normal exit.
+    nixl::initLogFile();
+}
+
 TEST(nixlLogFileHelper, EmitsSingleRecord) {
     const char *mode = std::getenv(helper_mode_env_var);
     if (mode == nullptr || mode != std::string_view(single_record_helper_mode)) {
@@ -392,9 +413,10 @@ protected:
         // The process may already have a sink from its pre-main setup.
         nixl::shutdownLogFile();
 
-        // Tests start unlimited regardless of the invoking shell. Individual
-        // tests can push a limit on top, and ScopedEnv restores both layers.
+        // Tests start unlimited and non-fatal regardless of the invoking shell.
+        // Individual tests can push on top, and ScopedEnv restores both layers.
         env_.addVar("NIXL_LOG_FILE_SIZE", "");
+        env_.addVar("NIXL_LOG_FILE_ERROR_IS_FATAL", "");
 
         prevMinLevel_ = absl::MinLogLevel();
         prevStderrThreshold_ = absl::StderrThreshold();
@@ -599,6 +621,32 @@ TEST_F(nixlLogFileTest, UnopenablePathIsNotFatal) {
     NIXL_INFO << "logging still works";
     EXPECT_EQ(other.countMatching("logging still works"), 1u);
     EXPECT_FALSE(std::filesystem::exists(bad));
+}
+
+/**
+ * @brief Unset, empty, false and unrecognised values all keep a setup failure
+ *        survivable: an abort has to be asked for with a recognised true.
+ */
+TEST_F(nixlLogFileTest, FatalSetupErrorsStayOffForOtherValues) {
+    const gtest::LogIgnoreGuard lig("Could not open NIXL_LOG_FILE");
+
+    // From path_, which carries the pid and test name, so a concurrent run
+    // cannot create the directory and turn the open into a success.
+    auto missingDir = path_;
+    missingDir += ".missing";
+    std::filesystem::remove_all(missingDir);
+    ASSERT_FALSE(std::filesystem::exists(missingDir));
+    const auto bad = missingDir / "x.log";
+
+    for (const char *value : {"", "0", "false", "no", "off", "disable", "n", "not a boolean"}) {
+        env_.addVar("NIXL_LOG_FILE_ERROR_IS_FATAL", value);
+        env_.addVar("NIXL_LOG_FILE", bad.string());
+
+        EXPECT_FALSE(nixl::initLogFile()) << "'" << value << "' made the failure fatal";
+
+        env_.popVar();
+        env_.popVar();
+    }
 }
 
 /** @brief Repeated init calls leave a single registration, so records are not duplicated. */
@@ -1173,6 +1221,34 @@ TEST_F(nixlLogFileTest, WritesFatalMessageOnceWithItsStackTrace) {
 
     EXPECT_THAT(contents, HasSubstr("*** Check failure stack trace: ***\n"))
         << "the fatal stack-trace content is missing";
+}
+
+/**
+ * @brief NIXL_LOG_FILE_ERROR_IS_FATAL turns a setup failure into a fatal one:
+ *        an operator who sets it would rather the process die than run without
+ *        the log it asked for. Needs a helper because the process aborts.
+ */
+TEST_F(nixlLogFileTest, FatalSetupErrorTerminatesTheProcess) {
+    if (!canExecHelper()) {
+        GTEST_SKIP() << "re-execing this binary needs /proc/self/exe";
+    }
+
+    const std::filesystem::path output = path_.string() + ".helper-output";
+    const auto result = runHelper(fatal_setup_helper_mode,
+                                  "nixlLogFileHelper.DiesWhenTheLogFileCannotOpenAndErrorsAreFatal",
+                                  path_,
+                                  output);
+
+    ASSERT_EQ(result.launchError, 0) << "could not launch helper: errno " << result.launchError;
+    ASSERT_FALSE(result.timedOut) << "fatal-setup helper exceeded its 10-second deadline\n"
+                                  << result.output;
+    ASSERT_EQ(result.waitError, 0) << "waitpid failed: errno " << result.waitError;
+    ASSERT_TRUE(WIFSIGNALED(result.status)) << "fatal-setup helper did not terminate by signal\n"
+                                            << result.output;
+    EXPECT_EQ(WTERMSIG(result.status), SIGABRT)
+        << "fatal-setup helper received an unexpected signal";
+    EXPECT_THAT(result.output, HasSubstr("Could not open NIXL_LOG_FILE"))
+        << "the fatal report never named the failure";
 }
 
 /**
