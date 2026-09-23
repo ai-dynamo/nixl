@@ -306,10 +306,12 @@ protected:
                 task = queue_.tryPop();
             } else {
                 NIXL_TRACE << "dedicated " << *this << " waiting for requests";
-                task = queue_.pop(token);
+                // We need to progress idle worker to terminate closed connections
+                getWorkers().front()->progressLoop();
+                task = queue_.pop(token, std::chrono::seconds(1));
             }
 
-            if (task != nullptr) {
+            if (task != nullptr) [[unlikely]] {
                 task->run(worker_);
             }
 
