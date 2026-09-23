@@ -30,13 +30,14 @@ namespace device_ops {
     using nixl::deviceMem;
     using nixl::mappedHostMem;
     using nixl::getDeviceOps;
+    using copyDirection = deviceOps::copyDirection;
 
     constexpr size_t kSize = 4096;
 
     TEST(deviceMemHost, EmptyHandleOperationsAreSafe) {
         deviceMem mem;
         EXPECT_FALSE(mem);
-        EXPECT_EQ(mem.devicePointer(), nullptr);
+        EXPECT_EQ(mem.get(), nullptr);
         mem.reset();
         EXPECT_EQ(mem.release(), nullptr);
 
@@ -55,12 +56,12 @@ namespace device_ops {
         EXPECT_FALSE(moved);
     }
 
-    TEST(deviceOpsHost, AccessorIsStableAndAdoptNullIsSafe) {
+    TEST(deviceOpsHost, AccessorIsStableAndNullHandleIsSafe) {
         deviceOps &ops = getDeviceOps();
         EXPECT_EQ(&ops, &getDeviceOps());
-        deviceMem empty = deviceMem::adopt(ops, nullptr);
+        deviceMem empty(nullptr, {&ops});
         EXPECT_FALSE(empty);
-        EXPECT_EQ(empty.devicePointer(), nullptr);
+        EXPECT_EQ(empty.get(), nullptr);
     }
 
     TEST(deviceOpsHost, ZeroSizeOperationsLeaveOutputsUnchanged) {
@@ -76,8 +77,8 @@ namespace device_ops {
         unsigned char byte = 0xA5;
         void *pointers[] = {nullptr, &byte};
         for (void *ptr : pointers) {
-            EXPECT_EQ(ops.copyHostToDevice(ptr, ptr, 0), NIXL_ERR_INVALID_PARAM);
-            EXPECT_EQ(ops.copyDeviceToHost(ptr, ptr, 0), NIXL_ERR_INVALID_PARAM);
+            EXPECT_EQ(ops.copy(ptr, ptr, 0, copyDirection::HostToDevice), NIXL_ERR_INVALID_PARAM);
+            EXPECT_EQ(ops.copy(ptr, ptr, 0, copyDirection::DeviceToHost), NIXL_ERR_INVALID_PARAM);
             EXPECT_EQ(ops.memsetDeviceMem(ptr, 0, 0), NIXL_ERR_INVALID_PARAM);
         }
         EXPECT_EQ(byte, 0xA5);
@@ -112,37 +113,46 @@ namespace device_ops {
 
         deviceMem mem;
         ASSERT_EQ(ops.allocDeviceMem(kSize, mem), NIXL_SUCCESS);
-        void *const device_ptr = mem.devicePointer();
+        void *const device_ptr = mem.get();
         EXPECT_EQ(ops.allocDeviceMem(0, mem), NIXL_ERR_INVALID_PARAM);
-        EXPECT_EQ(mem.devicePointer(), device_ptr);
+        EXPECT_EQ(mem.get(), device_ptr);
 
         deviceMem moved(std::move(mem));
         EXPECT_FALSE(mem);
         ASSERT_EQ(ops.allocDeviceMem(kSize, mem), NIXL_SUCCESS);
         mem = std::move(moved);
         EXPECT_FALSE(moved);
-        EXPECT_EQ(mem.devicePointer(), device_ptr);
+        EXPECT_EQ(mem.get(), device_ptr);
 
         std::vector<unsigned char> src(kSize, 0xA5);
         std::vector<unsigned char> dst(kSize, 0);
-        ASSERT_EQ(ops.copyHostToDevice(mem.devicePointer(), src.data(), kSize), NIXL_SUCCESS);
-        EXPECT_EQ(ops.copyHostToDevice(mem.devicePointer(), dst.data(), 0), NIXL_ERR_INVALID_PARAM);
-        EXPECT_EQ(ops.copyDeviceToHost(dst.data(), mem.devicePointer(), 0), NIXL_ERR_INVALID_PARAM);
+        ASSERT_EQ(ops.copy(mem.get(), src.data(), kSize, copyDirection::HostToDevice),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(ops.copy(mem.get(), dst.data(), 0, copyDirection::HostToDevice),
+                  NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(ops.copy(dst.data(), mem.get(), 0, copyDirection::DeviceToHost),
+                  NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(dst, std::vector<unsigned char>(kSize, 0));
-        EXPECT_EQ(ops.memsetDeviceMem(mem.devicePointer(), 0, 0), NIXL_ERR_INVALID_PARAM);
-        EXPECT_EQ(ops.copyHostToDevice(nullptr, src.data(), kSize), NIXL_ERR_INVALID_PARAM);
-        EXPECT_EQ(ops.copyDeviceToHost(dst.data(), nullptr, kSize), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(ops.memsetDeviceMem(mem.get(), 0, 0), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(ops.copy(nullptr, src.data(), kSize, copyDirection::HostToDevice),
+                  NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(ops.copy(dst.data(), nullptr, kSize, copyDirection::DeviceToHost),
+                  NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(ops.copy(mem.get(), src.data(), kSize, static_cast<copyDirection>(-1)),
+                  NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(ops.memsetDeviceMem(nullptr, 0, kSize), NIXL_ERR_INVALID_PARAM);
-        ASSERT_EQ(ops.copyDeviceToHost(dst.data(), mem.devicePointer(), kSize), NIXL_SUCCESS);
+        ASSERT_EQ(ops.copy(dst.data(), mem.get(), kSize, copyDirection::DeviceToHost),
+                  NIXL_SUCCESS);
         EXPECT_EQ(dst, src);
 
-        ASSERT_EQ(ops.memsetDeviceMem(mem.devicePointer(), 0, kSize), NIXL_SUCCESS);
-        ASSERT_EQ(ops.copyDeviceToHost(dst.data(), mem.devicePointer(), kSize), NIXL_SUCCESS);
+        ASSERT_EQ(ops.memsetDeviceMem(mem.get(), 0, kSize), NIXL_SUCCESS);
+        ASSERT_EQ(ops.copy(dst.data(), mem.get(), kSize, copyDirection::DeviceToHost),
+                  NIXL_SUCCESS);
         EXPECT_EQ(dst, std::vector<unsigned char>(kSize, 0));
 
         {
-            auto adopted = deviceMem::adopt(ops, mem.release());
-            EXPECT_EQ(adopted.devicePointer(), device_ptr);
+            deviceMem adopted(mem.release(), {&ops});
+            EXPECT_EQ(adopted.get(), device_ptr);
         }
 
         mappedHostMem mapped;
@@ -162,7 +172,8 @@ namespace device_ops {
         EXPECT_EQ(mapped.hostPointer(), host_ptr);
         EXPECT_EQ(mapped.devicePointer(), mapped_device_ptr);
         std::fill_n(mapped.hostPointer<unsigned char>(), kSize, 0x5A);
-        ASSERT_EQ(ops.copyDeviceToHost(dst.data(), mapped.devicePointer(), kSize), NIXL_SUCCESS);
+        ASSERT_EQ(ops.copy(dst.data(), mapped.devicePointer(), kSize, copyDirection::DeviceToHost),
+                  NIXL_SUCCESS);
         EXPECT_EQ(dst, std::vector<unsigned char>(kSize, 0x5A));
     }
 

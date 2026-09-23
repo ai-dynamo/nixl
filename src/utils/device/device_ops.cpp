@@ -45,12 +45,7 @@ public:
     doFreeMappedHostMem(void *) noexcept override {}
 
     nixl_status_t
-    copyHostToDevice(void *, const void *, size_t size) noexcept override {
-        return size == 0 ? NIXL_ERR_INVALID_PARAM : NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    nixl_status_t
-    copyDeviceToHost(void *, const void *, size_t size) noexcept override {
+    copy(void *, const void *, size_t size, copyDirection) noexcept override {
         return size == 0 ? NIXL_ERR_INVALID_PARAM : NIXL_ERR_NOT_SUPPORTED;
     }
 
@@ -125,6 +120,37 @@ loadCudaDeviceOps() noexcept {
 } // namespace
 
 namespace nixl {
+
+nixl_status_t
+deviceOps::allocDeviceMem(size_t size, deviceMem &out) noexcept {
+    if (size == 0) {
+        NIXL_ERROR << "Device allocation requires nonzero size";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    void *ptr;
+    const nixl_status_t status = doAllocDeviceMem(ptr, size);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+    out = deviceMem(ptr, deviceMemDeleter{this});
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+deviceOps::allocMappedHostMem(size_t size, mappedHostMem &out) noexcept {
+    if (size == 0) {
+        NIXL_ERROR << "Mapped host allocation requires nonzero size";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    void *host_ptr;
+    void *dev_ptr;
+    const nixl_status_t status = doAllocMappedHostMem(host_ptr, dev_ptr, size);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+    out = mappedHostMem(this, host_ptr, dev_ptr);
+    return NIXL_SUCCESS;
+}
 
 deviceOps &
 getDeviceOps() noexcept {

@@ -18,14 +18,32 @@
 #define NIXL_SRC_UTILS_DEVICE_DEVICE_OPS_H
 
 #include <cstddef>
+#include <memory>
 #include <utility>
 
 #include <nixl_types.h>
 
 namespace nixl {
 
-class deviceMem;
+class deviceOps;
 class mappedHostMem;
+
+struct mappedHostMemDeleter {
+    deviceOps *ops = nullptr;
+
+    void
+    operator()(void *ptr) const noexcept;
+};
+
+struct deviceMemDeleter {
+    deviceOps *ops = nullptr;
+
+    void
+    operator()(void *ptr) const noexcept;
+};
+
+// Owns device storage; typed access requires a cast of get().
+using deviceMem = std::unique_ptr<void, deviceMemDeleter>;
 
 #define NIXL_DEVICE_OPS_EXPORT __attribute__((visibility("default")))
 
@@ -34,8 +52,8 @@ class mappedHostMem;
  * runtime goes through this class so that no other host code needs a
  * cuda_runtime.h include. CUDA is the current platform implementation; HIP
  * can provide another. Allocations are returned as owning RAII handles.
- * Raw alloc/free remain protected; deviceMem::release()/adopt() is the
- * C-handle escape hatch. The class is not
+ * Raw alloc/free remain protected; release() and construction with the
+ * original deleter cross the C-handle boundary. The class is not
  * internally synchronized. Transfers are issued on the default stream and are
  * ordered there, but not all are complete on return; synchronize() is the
  * barrier. Active device state is thread-local: copies, memset, and
@@ -47,6 +65,8 @@ class mappedHostMem;
  */
 class deviceOps {
 public:
+    enum class copyDirection { HostToDevice, DeviceToHost };
+
     virtual ~deviceOps() = default;
 
     [[nodiscard]] nixl_status_t
@@ -60,13 +80,9 @@ public:
     [[nodiscard]] nixl_status_t
     allocMappedHostMem(size_t size, mappedHostMem &out) noexcept;
 
-    /** src is reusable on return; the device-side write may still be pending. */
+    /** H2D: src is reusable on return; D2H: dst holds the data on return. */
     [[nodiscard]] virtual nixl_status_t
-    copyHostToDevice(void *dst, const void *src, size_t size) noexcept = 0;
-
-    /** Blocking: dst holds the data on return. */
-    [[nodiscard]] virtual nixl_status_t
-    copyDeviceToHost(void *dst, const void *src, size_t size) noexcept = 0;
+    copy(void *dst, const void *src, size_t size, copyDirection direction) noexcept = 0;
 
     /** Enqueued, not complete on return; ordered against later default-stream work. */
     [[nodiscard]] virtual nixl_status_t
@@ -96,184 +112,57 @@ protected:
     doFreeMappedHostMem(void *host_ptr) noexcept = 0;
 
 private:
-    friend class deviceMem;
-    friend class mappedHostMem;
+    friend struct deviceMemDeleter;
+    friend struct mappedHostMemDeleter;
 };
 
-/**
- * Owning, move-only handle to device memory. The platform free recovers the
- * owning device, so the destroying thread may be on any device.
- */
-class deviceMem {
-public:
-    deviceMem() = default;
+inline void
+deviceMemDeleter::operator()(void *ptr) const noexcept {
+    ops->doFreeDeviceMem(ptr);
+}
 
-    ~deviceMem() {
-        reset();
-    }
+inline void
+mappedHostMemDeleter::operator()(void *ptr) const noexcept {
+    ops->doFreeMappedHostMem(ptr);
+}
 
-    deviceMem(deviceMem &&other) noexcept
-        : ops_(other.ops_),
-          ptr_(std::exchange(other.ptr_, nullptr)) {}
-
-    deviceMem &
-    operator=(deviceMem &&other) noexcept {
-        if (this != &other) {
-            reset();
-            ops_ = other.ops_;
-            ptr_ = std::exchange(other.ptr_, nullptr);
-        }
-        return *this;
-    }
-
-    deviceMem(const deviceMem &) = delete;
-    deviceMem &
-    operator=(const deviceMem &) = delete;
-
-    template<typename T = void>
-    [[nodiscard]] T *
-    devicePointer() const noexcept {
-        return static_cast<T *>(ptr_);
-    }
-
-    explicit
-    operator bool() const noexcept {
-        return ptr_ != nullptr;
-    }
-
-    void
-    reset() noexcept {
-        if (ptr_ == nullptr) {
-            return;
-        }
-        ops_->doFreeDeviceMem(ptr_);
-        ptr_ = nullptr;
-    }
-
-    /** Give up ownership; reclaim with adopt(). */
-    [[nodiscard]] void *
-    release() noexcept {
-        return std::exchange(ptr_, nullptr);
-    }
-
-    /**
-     * Take ownership of a pointer previously returned by release(). Null
-     * yields an empty handle. The pointer must be one allocDeviceMem produced.
-     */
-    [[nodiscard]] static deviceMem
-    adopt(deviceOps &ops, void *ptr) noexcept {
-        return deviceMem(&ops, ptr);
-    }
-
-private:
-    friend class deviceOps;
-
-    deviceMem(deviceOps *ops, void *ptr) noexcept : ops_(ops), ptr_(ptr) {}
-
-    deviceOps *ops_ = nullptr;
-    void *ptr_ = nullptr;
-};
-
-/**
- * Owning, move-only handle to pinned host memory mapped into the device
- * address space. Exposes the host pointer and its device-visible alias.
- */
+/** Owns pinned host memory and exposes its non-owning device alias. */
 class mappedHostMem {
 public:
     mappedHostMem() = default;
 
-    ~mappedHostMem() {
-        reset();
-    }
-
-    mappedHostMem(mappedHostMem &&other) noexcept
-        : ops_(other.ops_),
-          hostPtr_(std::exchange(other.hostPtr_, nullptr)),
-          devPtr_(std::exchange(other.devPtr_, nullptr)) {}
-
-    mappedHostMem &
-    operator=(mappedHostMem &&other) noexcept {
-        if (this != &other) {
-            reset();
-            ops_ = other.ops_;
-            hostPtr_ = std::exchange(other.hostPtr_, nullptr);
-            devPtr_ = std::exchange(other.devPtr_, nullptr);
-        }
-        return *this;
-    }
-
-    mappedHostMem(const mappedHostMem &) = delete;
-    mappedHostMem &
-    operator=(const mappedHostMem &) = delete;
-
     template<typename T = void>
     [[nodiscard]] T *
     hostPointer() const noexcept {
-        return static_cast<T *>(hostPtr_);
+        return static_cast<T *>(hostPtr_.get());
     }
 
     template<typename T = void>
     [[nodiscard]] T *
     devicePointer() const noexcept {
-        return static_cast<T *>(devPtr_);
+        return hostPtr_ ? static_cast<T *>(devPtr_) : nullptr;
     }
 
     explicit
     operator bool() const noexcept {
-        return hostPtr_ != nullptr;
+        return static_cast<bool>(hostPtr_);
     }
 
     void
     reset() noexcept {
-        if (hostPtr_ == nullptr) {
-            return;
-        }
-        ops_->doFreeMappedHostMem(hostPtr_);
-        hostPtr_ = nullptr;
-        devPtr_ = nullptr;
+        hostPtr_.reset();
     }
 
 private:
     friend class deviceOps;
 
     mappedHostMem(deviceOps *ops, void *host_ptr, void *dev_ptr) noexcept
-        : ops_(ops),
-          hostPtr_(host_ptr),
+        : hostPtr_(host_ptr, mappedHostMemDeleter{ops}),
           devPtr_(dev_ptr) {}
 
-    deviceOps *ops_ = nullptr;
-    void *hostPtr_ = nullptr;
+    std::unique_ptr<void, mappedHostMemDeleter> hostPtr_;
     void *devPtr_ = nullptr;
 };
-
-inline nixl_status_t
-deviceOps::allocDeviceMem(size_t size, deviceMem &out) noexcept {
-    if (size == 0) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    void *ptr;
-    const nixl_status_t status = doAllocDeviceMem(ptr, size);
-    if (status != NIXL_SUCCESS) {
-        return status;
-    }
-    out = deviceMem(this, ptr);
-    return NIXL_SUCCESS;
-}
-
-inline nixl_status_t
-deviceOps::allocMappedHostMem(size_t size, mappedHostMem &out) noexcept {
-    if (size == 0) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    void *host_ptr;
-    void *dev_ptr;
-    const nixl_status_t status = doAllocMappedHostMem(host_ptr, dev_ptr, size);
-    if (status != NIXL_SUCCESS) {
-        return status;
-    }
-    out = mappedHostMem(this, host_ptr, dev_ptr);
-    return NIXL_SUCCESS;
-}
 
 /** Process-wide device operations for the device runtime available to this process. */
 [[nodiscard]] deviceOps &

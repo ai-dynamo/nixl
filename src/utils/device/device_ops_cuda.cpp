@@ -91,18 +91,32 @@ public:
     }
 
     nixl_status_t
-    copyHostToDevice(void *dst, const void *src, size_t size) noexcept override {
-        return copy(dst, src, size, cudaMemcpyHostToDevice);
-    }
-
-    nixl_status_t
-    copyDeviceToHost(void *dst, const void *src, size_t size) noexcept override {
-        return copy(dst, src, size, cudaMemcpyDeviceToHost);
+    copy(void *dst, const void *src, size_t size, copyDirection direction) noexcept override {
+        if (size == 0 || dst == nullptr || src == nullptr) {
+            NIXL_ERROR << "Invalid device copy: dst=" << dst << " src=" << src << " size=" << size;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        cudaMemcpyKind kind;
+        switch (direction) {
+        case copyDirection::HostToDevice:
+            kind = cudaMemcpyHostToDevice;
+            break;
+        case copyDirection::DeviceToHost:
+            kind = cudaMemcpyDeviceToHost;
+            break;
+        default:
+            NIXL_ERROR << "Invalid device copy direction: " << static_cast<int>(direction);
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        return cudaStatus(cudaMemcpy(dst, src, size, kind),
+                          direction == copyDirection::HostToDevice ? "cudaMemcpy host to device" :
+                                                                     "cudaMemcpy device to host");
     }
 
     nixl_status_t
     memsetDeviceMem(void *ptr, int value, size_t size) noexcept override {
         if (size == 0 || ptr == nullptr) {
+            NIXL_ERROR << "Invalid device memset: ptr=" << ptr << " size=" << size;
             return NIXL_ERR_INVALID_PARAM;
         }
         return cudaStatus(cudaMemset(ptr, value, size), "cudaMemset");
@@ -121,17 +135,6 @@ public:
     nixl_status_t
     setActiveDevice(int device_id) noexcept override {
         return cudaStatus(cudaSetDevice(device_id), "cudaSetDevice");
-    }
-
-private:
-    nixl_status_t
-    copy(void *dst, const void *src, size_t size, cudaMemcpyKind direction) noexcept {
-        if (size == 0 || dst == nullptr || src == nullptr) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        return cudaStatus(cudaMemcpy(dst, src, size, direction),
-                          direction == cudaMemcpyHostToDevice ? "cudaMemcpy host to device" :
-                                                                "cudaMemcpy device to host");
     }
 };
 
