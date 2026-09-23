@@ -73,7 +73,7 @@ Without `NIXL_LOG_FILE_SIZE`, manage file growth externally or give each run a f
 
 ## When logging itself fails
 
-File logging failures do not terminate the process:
+File logging failures do not terminate the process by default:
 
 | Failure | Behavior |
 |---------|----------|
@@ -81,6 +81,8 @@ File logging failures do not terminate the process:
 | A later write fails | Reported once on stderr; further file records are dropped. |
 | A rotation cannot be done | Reported on stderr; file logging stops. |
 | `NIXL_LOG_FILE_SIZE` is below 4 KiB or cannot be parsed | Reported at error severity; file logging is disabled. |
+
+Set `NIXL_LOG_FILE_ERROR_IS_FATAL` to make a setup failure fatal instead: if the log file cannot be initialized -- an unopenable path or an invalid setting -- the process terminates with the report rather than running without its log. Failures after setup, such as a failed write or rotation, remain non-fatal.
 
 ## Reference
 

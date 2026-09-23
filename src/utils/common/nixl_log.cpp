@@ -25,7 +25,10 @@
 #include "absl/log/log_sink.h"
 #include "absl/log/log_sink_registry.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "absl/container/flat_hash_map.h"
+#include <algorithm>
 #include <charconv>
 #include <cerrno>
 #include <cstdint>
@@ -59,6 +62,10 @@ constexpr const char *log_file_env_var = "NIXL_LOG_FILE";
 
 // Bounds that file. Unset or empty lets it grow without limit.
 constexpr const char *log_file_size_env_var = "NIXL_LOG_FILE_SIZE";
+
+// Makes a log file setup failure fatal. Unset or false keeps the default:
+// report the failure and carry on without the file.
+constexpr const char *log_file_error_is_fatal_env_var = "NIXL_LOG_FILE_ERROR_IS_FATAL";
 
 // Smaller limits are unlikely to hold even one useful diagnostic record.
 constexpr std::uintmax_t min_log_file_size = 4096;
@@ -163,6 +170,29 @@ parseLogFileSize(std::string_view text) {
     }
 
     return value * scale;
+}
+
+/** @brief Whether NIXL_LOG_FILE_ERROR_IS_FATAL holds a recognised true value. */
+[[nodiscard]] bool
+logFileErrorIsFatal() {
+    static constexpr std::string_view positive[] = {"y", "yes", "on", "1", "true", "enable"};
+
+    const char *value = std::getenv(log_file_error_is_fatal_env_var);
+    if (value == nullptr) {
+        return false;
+    }
+    return std::any_of(std::begin(positive), std::end(positive), [value](std::string_view word) {
+        return absl::EqualsIgnoreCase(word, value);
+    });
+}
+
+/** @brief Reports a setup failure; fatal when logFileErrorIsFatal(), else an error. */
+void
+reportSetupFailure(const std::string &reason) {
+    if (logFileErrorIsFatal()) {
+        NIXL_FATAL << reason;
+    }
+    NIXL_ERROR << reason << ", continuing without a log file";
 }
 
 /** @brief Appends log records to a file, formatted exactly as on stderr. */
@@ -413,8 +443,11 @@ initLogFile() {
     }
     const auto path = expandLogPath(configured);
     if (!path.has_value()) {
-        NIXL_ERROR << "Invalid " << log_file_env_var << " '" << configured
-                   << "': expected only %h, %p, %t or %% escapes";
+        reportSetupFailure(absl::StrCat("Invalid ",
+                                        log_file_env_var,
+                                        " '",
+                                        configured,
+                                        "': expected only %h, %p, %t or %% escapes"));
         return false;
     }
 
@@ -422,22 +455,30 @@ initLogFile() {
     const std::string_view configured_size = size_setting != nullptr ? size_setting : "";
     const auto limit = parseLogFileSize(configured_size);
     if (!limit.has_value()) {
-        NIXL_ERROR << "Invalid " << log_file_size_env_var << " '" << configured_size
-                   << "': expected a byte count, optionally suffixed with K, M or G";
+        reportSetupFailure(
+            absl::StrCat("Invalid ",
+                         log_file_size_env_var,
+                         " '",
+                         configured_size,
+                         "': expected a byte count, optionally suffixed with K, M or G"));
         return false;
     }
     if (!configured_size.empty() && *limit < min_log_file_size) {
-        NIXL_ERROR << "Invalid " << log_file_size_env_var << " '" << configured_size
-                   << "': value is below the minimum of " << min_log_file_size << " bytes";
+        reportSetupFailure(absl::StrCat("Invalid ",
+                                        log_file_size_env_var,
+                                        " '",
+                                        configured_size,
+                                        "': value is below the minimum of ",
+                                        min_log_file_size,
+                                        " bytes"));
         return false;
     }
 
     std::error_code path_error;
     const std::filesystem::path resolved_path = std::filesystem::absolute(*path, path_error);
     if (path_error) {
-        // Losing the log file must not stop the process it describes.
-        NIXL_ERROR << "Could not open " << log_file_env_var << " '" << *path
-                   << "', continuing without a log file: " << path_error.message();
+        reportSetupFailure(absl::StrCat(
+            "Could not open ", log_file_env_var, " '", *path, "': ", path_error.message()));
         return false;
     }
 
@@ -445,10 +486,12 @@ initLogFile() {
     if (!sink->isOpen()) {
         const int open_errno = errno;
         delete sink;
-        // Losing the log file must not stop the process it describes.
-        NIXL_ERROR << "Could not open " << log_file_env_var << " '" << resolved_path.string()
-                   << "', continuing without a log file"
-                   << (open_errno != 0 ? ": " + nixl_strerror(open_errno) : "");
+        reportSetupFailure(absl::StrCat("Could not open ",
+                                        log_file_env_var,
+                                        " '",
+                                        resolved_path.string(),
+                                        "'",
+                                        open_errno != 0 ? ": " + nixl_strerror(open_errno) : ""));
         return false;
     }
 
