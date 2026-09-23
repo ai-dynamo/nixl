@@ -30,7 +30,7 @@ usage() {
     echo "  GITHUB_REPOSITORY - GitHub repository (e.g., \"ai-dynamo/nixl\")"
     echo ""
     echo "Optional environment variables:"
-    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04)"
+    echo "  CONTAINER_IMAGE   - Container image to use (default: nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04)"
     echo "  TEST_TIMEOUT      - Timeout for test execution in minutes"
     exit 1
 }
@@ -41,7 +41,7 @@ if [ -z "$GITHUB_REF" ] || [ -z "$GITHUB_SERVER_URL" ] || [ -z "$GITHUB_REPOSITO
     usage
 fi
 
-export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04"}
+export CONTAINER_IMAGE=${CONTAINER_IMAGE:-"nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04"}
 
 checkout_ref="$GITHUB_REF"
 case "$GITHUB_REF" in
@@ -55,7 +55,8 @@ if [ -n "$TEST_TIMEOUT" ]; then
 else
     TIMEOUT_CMD=""
 fi
-export AWS_CMD="set -x && git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && cd nixl && git checkout ${checkout_ref} && $TIMEOUT_CMD bash contrib/aws-efa/aws_test_remote.sh \${NIXL_INSTALL_DIR}"
+# The nvidia/cuda base image ships no git; .gitlab/build.sh installs it, but only after the clone.
+export AWS_CMD="set -x && apt-get -qq update && apt-get -qq install -y git && git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} && cd nixl && git checkout ${checkout_ref} && $TIMEOUT_CMD bash contrib/aws-efa/aws_test_remote.sh \${NIXL_INSTALL_DIR}"
 
 # Generate AWS job properties json from template
 envsubst < aws_vars.template > aws_vars.json
