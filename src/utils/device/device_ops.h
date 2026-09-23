@@ -42,25 +42,17 @@ struct deviceMemDeleter {
     operator()(void *ptr) const noexcept;
 };
 
-// Owns device storage; typed access requires a cast of get().
+/**
+ * @brief Owns device storage.
+ * @note Preserve its deleter when rewrapping a released pointer.
+ */
 using deviceMem = std::unique_ptr<void, deviceMemDeleter>;
 
 #define NIXL_DEVICE_OPS_EXPORT __attribute__((visibility("default")))
 
 /**
- * Device memory-ops interface. All host-side interaction with the GPU memory
- * runtime goes through this class so that no other host code needs a
- * cuda_runtime.h include. CUDA is the current platform implementation; HIP
- * can provide another. Allocations are returned as owning RAII handles.
- * Raw alloc/free remain protected; release() and construction with the
- * original deleter cross the C-handle boundary. The class is not
- * internally synchronized. Transfers are issued on the default stream and are
- * ordered there, but not all are complete on return; synchronize() is the
- * barrier. Active device state is thread-local: copies, memset, and
- * synchronize use the caller's current device; freeing works from any.
- * Allocation hooks modify their output pointers only on success.
- * Zero-size allocations, copies and memset return NIXL_ERR_INVALID_PARAM
- * and leave outputs unchanged.
+ * @brief Device memory operations provided by a runtime-loaded backend.
+ * @note Active device selection is thread-local.
  */
 class deviceOps {
 public:
@@ -68,45 +60,68 @@ public:
 
     virtual ~deviceOps() = default;
 
+    /**
+     * @brief Allocate device memory on the active device.
+     * @param[out] out Owning handle; unchanged on failure.
+     * @retval NIXL_ERR_INVALID_PARAM size is zero.
+     * @note This instance must outlive the returned handle.
+     */
     [[nodiscard]] nixl_status_t
     allocDeviceMem(size_t size, deviceMem &out) noexcept;
 
     /**
-     * Allocate pinned host memory that is mapped into the device address
-     * space; the handle exposes both the host pointer and its
-     * device-visible alias.
+     * @brief Allocate pinned host memory with a device-visible alias.
+     * @param[out] out Owning handle; unchanged on failure.
+     * @retval NIXL_ERR_INVALID_PARAM size is zero.
+     * @note This instance must outlive the returned handle.
      */
     [[nodiscard]] nixl_status_t
     allocMappedHostMem(size_t size, mappedHostMem &out) noexcept;
 
-    /** H2D: src is reusable on return; D2H: dst holds the data on return. */
+    /**
+     * @brief Copy between host and device memory using the default stream.
+     * @note On success, H2D source storage is reusable; D2H destination data is ready.
+     *       H2D device completion may still be pending.
+     * @retval NIXL_ERR_INVALID_PARAM Zero size, null pointer or invalid direction;
+     *         no copy is performed.
+     */
     [[nodiscard]] virtual nixl_status_t
     copy(void *dst, const void *src, size_t size, copyDirection direction) noexcept = 0;
 
-    /** Enqueued, not complete on return; ordered against later default-stream work. */
+    /**
+     * @brief Fill device memory using the default stream.
+     * @note Completion is not guaranteed on return.
+     * @retval NIXL_ERR_INVALID_PARAM Zero size or null pointer; no write is performed.
+     */
     [[nodiscard]] virtual nixl_status_t
     memsetDeviceMem(void *ptr, int value, size_t size) noexcept = 0;
 
-    /** Block until all outstanding work on the active device completes. */
+    /** @brief Block until all outstanding work on the active device completes. */
     [[nodiscard]] virtual nixl_status_t
     synchronize() noexcept = 0;
 
+    /** @brief Get the calling thread's active device. */
     [[nodiscard]] virtual nixl_status_t
     getActiveDevice(int &device_id) noexcept = 0;
 
+    /** @brief Set the calling thread's active device. */
     [[nodiscard]] virtual nixl_status_t
     setActiveDevice(int device_id) noexcept = 0;
 
 protected:
+    /** @brief Allocate device storage, assigning ptr only on success. */
     [[nodiscard]] virtual nixl_status_t
     doAllocDeviceMem(void *&ptr, size_t size) noexcept = 0;
 
+    /** @brief Free device storage regardless of the calling thread's active device. */
     virtual void
     doFreeDeviceMem(void *ptr) noexcept = 0;
 
+    /** @brief Allocate mapped host storage, assigning both pointers only on success. */
     [[nodiscard]] virtual nixl_status_t
     doAllocMappedHostMem(void *&host_ptr, void *&dev_ptr, size_t size) noexcept = 0;
 
+    /** @brief Free the host allocation, not its device alias; no device switch required. */
     virtual void
     doFreeMappedHostMem(void *host_ptr) noexcept = 0;
 
@@ -125,7 +140,7 @@ mappedHostMemDeleter::operator()(void *ptr) const noexcept {
     ops->doFreeMappedHostMem(ptr);
 }
 
-/** Owns pinned host memory and exposes its non-owning device alias. */
+/** @brief Owns pinned host memory and exposes its non-owning device alias. */
 class mappedHostMem {
 public:
     mappedHostMem() = default;
@@ -163,7 +178,11 @@ private:
     void *devPtr_ = nullptr;
 };
 
-/** Returns process-wide operations, or nullptr if unavailable. The result is cached. */
+/**
+ * @brief Get the process-wide device operations.
+ * @return Borrowed pointer, or nullptr if unavailable.
+ * @note The first result is cached, including failure.
+ */
 [[nodiscard]] deviceOps *
 getDeviceOps() noexcept;
 
