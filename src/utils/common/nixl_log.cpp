@@ -190,7 +190,7 @@ public:
 
     /** @brief False if the sink cannot write, and must not be registered. */
     [[nodiscard]] bool
-    isOpen() const {
+    isOpen() const noexcept {
         return fd_.valid();
     }
 
