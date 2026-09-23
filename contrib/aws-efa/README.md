@@ -103,7 +103,7 @@ The AWS test script:
 
 ## Container Image
 
-The script uses the container image: `nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04`
+The script uses the container image: `nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04`
 You can override this by setting the `CONTAINER_IMAGE` environment variable:
 
 ```bash
