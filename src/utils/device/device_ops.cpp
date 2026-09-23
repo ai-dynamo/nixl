@@ -26,50 +26,6 @@ namespace {
 constexpr const char *kCudaDeviceOpsLibrary = "libnixl_device_ops_cuda.so";
 constexpr const char *kCudaDeviceOpsFactory = "nixlCreateCudaDeviceOps";
 
-class nullDeviceOps final : public nixl::deviceOps {
-public:
-    nixl_status_t
-    doAllocDeviceMem(void *&, size_t) noexcept override {
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    void
-    doFreeDeviceMem(void *) noexcept override {}
-
-    nixl_status_t
-    doAllocMappedHostMem(void *&, void *&, size_t) noexcept override {
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    void
-    doFreeMappedHostMem(void *) noexcept override {}
-
-    nixl_status_t
-    copy(void *, const void *, size_t size, copyDirection) noexcept override {
-        return size == 0 ? NIXL_ERR_INVALID_PARAM : NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    nixl_status_t
-    memsetDeviceMem(void *, int, size_t size) noexcept override {
-        return size == 0 ? NIXL_ERR_INVALID_PARAM : NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    nixl_status_t
-    synchronize() noexcept override {
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    nixl_status_t
-    getActiveDevice(int &) noexcept override {
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
-    nixl_status_t
-    setActiveDevice(int) noexcept override {
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-};
-
 using CudaDeviceOpsFactory = nixl::deviceOps *(*)() noexcept;
 
 nixl::deviceOps *
@@ -152,14 +108,10 @@ deviceOps::allocMappedHostMem(size_t size, mappedHostMem &out) noexcept {
     return NIXL_SUCCESS;
 }
 
-deviceOps &
+deviceOps *
 getDeviceOps() noexcept {
-    static nullDeviceOps null_ops;
-    static deviceOps *ops = []() noexcept {
-        deviceOps *cuda_ops = loadCudaDeviceOps();
-        return cuda_ops == nullptr ? &null_ops : cuda_ops;
-    }();
-    return *ops;
+    static deviceOps *ops = loadCudaDeviceOps();
+    return ops;
 }
 
 } // namespace nixl

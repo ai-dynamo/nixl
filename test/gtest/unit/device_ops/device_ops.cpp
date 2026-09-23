@@ -57,15 +57,19 @@ namespace device_ops {
     }
 
     TEST(deviceOpsHost, AccessorIsStableAndNullHandleIsSafe) {
-        deviceOps &ops = getDeviceOps();
-        EXPECT_EQ(&ops, &getDeviceOps());
-        deviceMem empty(nullptr, {&ops});
+        deviceOps *ops = getDeviceOps();
+        EXPECT_EQ(ops, getDeviceOps());
+        deviceMem empty(nullptr, {ops});
         EXPECT_FALSE(empty);
         EXPECT_EQ(empty.get(), nullptr);
     }
 
     TEST(deviceOpsHost, ZeroSizeOperationsLeaveOutputsUnchanged) {
-        deviceOps &ops = getDeviceOps();
+        auto *impl = getDeviceOps();
+        if (impl == nullptr) {
+            GTEST_SKIP() << "No device operations implementation is available.";
+        }
+        deviceOps &ops = *impl;
         deviceMem device_mem;
         EXPECT_EQ(ops.allocDeviceMem(0, device_mem), NIXL_ERR_INVALID_PARAM);
         EXPECT_FALSE(device_mem);
@@ -96,15 +100,15 @@ namespace device_ops {
                 GTEST_SKIP() << "No GPU is available.";
             }
             gpuSetDevice(0, "Selecting GPU 0");
-            ops_ = &getDeviceOps();
-            int device = 0;
-            const nixl_status_t status = ops_->getActiveDevice(device);
+            ops_ = getDeviceOps();
 #ifndef HAVE_CUDA
-            if (status == NIXL_ERR_NOT_SUPPORTED) {
+            if (ops_ == nullptr) {
                 GTEST_SKIP() << "No device operations implementation is available.";
             }
 #endif
-            ASSERT_EQ(status, NIXL_SUCCESS);
+            ASSERT_NE(ops_, nullptr);
+            int device = 0;
+            ASSERT_EQ(ops_->getActiveDevice(device), NIXL_SUCCESS);
         }
     };
 

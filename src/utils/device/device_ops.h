@@ -59,9 +59,8 @@ using deviceMem = std::unique_ptr<void, deviceMemDeleter>;
  * barrier. Active device state is thread-local: copies, memset, and
  * synchronize use the caller's current device; freeing works from any.
  * Allocation hooks modify their output pointers only on success.
- * Zero-size allocations, copies and memset return NIXL_ERR_INVALID_PARAM,
- * even without a device runtime, and leave outputs unchanged. Use
- * getActiveDevice() to check runtime availability.
+ * Zero-size allocations, copies and memset return NIXL_ERR_INVALID_PARAM
+ * and leave outputs unchanged.
  */
 class deviceOps {
 public:
@@ -164,8 +163,8 @@ private:
     void *devPtr_ = nullptr;
 };
 
-/** Process-wide device operations for the device runtime available to this process. */
-[[nodiscard]] deviceOps &
+/** Returns process-wide operations, or nullptr if unavailable. The result is cached. */
+[[nodiscard]] deviceOps *
 getDeviceOps() noexcept;
 
 } // namespace nixl
