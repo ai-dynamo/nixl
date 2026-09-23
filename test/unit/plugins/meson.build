@@ -37,29 +37,10 @@ if enabled_plugins.get('GPUNETIO')
     endif
 endif
 
-disable_gds_backend = get_option('disable_gds_backend')
-if enabled_plugins.get('GDS')
-    if (disable_gds_backend or not cuda_dep.found()) and is_explicit_enable
-        if disable_gds_backend
-            error('GDS plugin tests requested but GDS backend is disabled')
-        else
-            error('GDS plugin tests requested but CUDA dependency not found')
-        endif
-    elif not disable_gds_backend
-        subdir('cuda_gds')
-    endif
-endif
-
-if enabled_plugins.get('GDS_MT')
-    if (not taskflow_proj.found() or disable_gds_backend) and is_explicit_enable
-        if not taskflow_proj.found()
-            error('GDS_MT plugin tests requested but Taskflow dependency not found')
-        else
-            error('GDS_MT plugin tests requested but GDS backend is disabled')
-        endif
-    elif taskflow_proj.found()
-        subdir('gds_mt')
-    endif
+if is_variable('gds_backend_interface') or is_variable(
+    'gds_mt_backend_interface',
+)
+    subdir('cuda_gds')
 endif
 
 cc = meson.get_compiler('cpp')
