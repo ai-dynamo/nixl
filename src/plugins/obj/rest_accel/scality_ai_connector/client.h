@@ -23,6 +23,7 @@
 #include <curl/curl.h>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -89,6 +90,9 @@ public:
 /// Default limit on a whole request, connection included.
 constexpr std::size_t default_request_timeout_ms = 2000;
 
+/// Default cap on concurrently-running requests.
+constexpr std::size_t default_max_inflight = 512;
+
 /**
  * libcurl implementation of iRestClient. PUT and GET carry the RDMA descriptor
  * in the x-scal-rdma header and an empty body: the server moves the bytes by
@@ -104,6 +108,8 @@ public:
      *                      (default: max(2, hardware_concurrency / 4)).
      *                      Optional "request_timeout_ms" bounds each request
      *                      (default default_request_timeout_ms).
+     *                      Optional "max_inflight" caps concurrently-running
+     *                      requests ("0" = unlimited, default default_max_inflight).
      */
     explicit restClient(nixl_b_params_t *custom_params);
 
@@ -147,6 +153,10 @@ private:
     /// holding its transfer: for a cache, the caller's fallback is faster.
     std::size_t requestTimeoutMs_;
 
+    // Cap on requests running at once, since each holds a connection and a file
+    // descriptor. Excess requests wait in pending_. 0 disables the cap.
+    std::size_t maxInflight_;
+
     CURLM *multi_ = nullptr;
     std::thread poller_;
     std::mutex queueMtx_;
@@ -154,6 +164,11 @@ private:
     std::atomic<bool> stop_{false};
     /// Handles currently added to multi_. Poller-thread access only (no lock).
     std::unordered_set<requestCtx *> inflight_;
+    /// Built requests waiting for a free in-flight slot. Poller-thread only.
+    std::deque<std::unique_ptr<requestCtx>> pending_;
+    // High-water marks, logged at teardown. Poller-thread only.
+    std::size_t peakInflight_ = 0;
+    std::size_t peakPending_ = 0;
 
     std::string
     buildUrl(std::string_view key) const;
@@ -183,6 +198,11 @@ private:
     /// Push a fully-built request onto the queue and wake the poller.
     void
     enqueue(std::unique_ptr<requestCtx> ctx);
+
+    /// Move pending requests into multi_ while in-flight slots are available.
+    /// Poller-thread only.
+    void
+    startPending();
 
     /// Body of the poller thread: drain queue, perform, reap, poll.
     void

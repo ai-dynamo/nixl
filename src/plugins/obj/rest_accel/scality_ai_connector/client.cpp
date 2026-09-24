@@ -79,6 +79,20 @@ parseRequestTimeoutMs(nixl_b_params_t *params) {
     return *parsed;
 }
 
+std::size_t
+parseMaxInflight(nixl_b_params_t *params) {
+    if (!params || params->count("max_inflight") == 0) {
+        return default_max_inflight;
+    }
+    // 0 means uncapped.
+    const std::string &value = params->at("max_inflight");
+    const std::optional<std::size_t> parsed = parseSize(value);
+    if (!parsed) {
+        throw std::invalid_argument("restClient: max_inflight must be a non-negative integer");
+    }
+    return *parsed;
+}
+
 /// libcurl's description of the failure, or the generic CURLcode text when the
 /// error buffer was left empty.
 std::string
@@ -213,7 +227,8 @@ restClient::finishRequest(requestCtx *ctx, CURLcode res, long http_code) {
 restClient::restClient(nixl_b_params_t *custom_params)
     : numThreads_(parseNumThreads(custom_params)),
       pool_(numThreads_),
-      requestTimeoutMs_(parseRequestTimeoutMs(custom_params)) {
+      requestTimeoutMs_(parseRequestTimeoutMs(custom_params)),
+      maxInflight_(parseMaxInflight(custom_params)) {
     std::call_once(curl_init_flag, []() { curl_global_init(CURL_GLOBAL_DEFAULT); });
     if (!custom_params) {
         throw std::invalid_argument("restClient: custom_params is null");
@@ -234,11 +249,12 @@ restClient::restClient(nixl_b_params_t *custom_params)
     poller_ = std::thread(&restClient::pollerLoop, this);
 
     NIXL_INFO << absl::StrFormat(
-        "restClient initialized: endpoint=%s, callback_threads=%zu, request_timeout_ms=%zu "
-        "(curl_multi poller)",
+        "restClient initialized: endpoint=%s, callback_threads=%zu, request_timeout_ms=%zu, "
+        "max_inflight=%s (curl_multi poller)",
         endpoint_,
         numThreads_,
-        requestTimeoutMs_);
+        requestTimeoutMs_,
+        maxInflight_ == 0 ? std::string("unlimited") : std::to_string(maxInflight_));
 }
 
 restClient::~restClient() {
@@ -253,6 +269,9 @@ restClient::~restClient() {
     if (multi_) {
         curl_multi_cleanup(multi_);
     }
+    NIXL_INFO << "restClient concurrency: peak_inflight=" << peakInflight_
+              << ", peak_pending=" << peakPending_ << ", max_inflight="
+              << (maxInflight_ == 0 ? std::string("unlimited") : std::to_string(maxInflight_));
 }
 
 std::string
@@ -291,11 +310,32 @@ restClient::reapCompletions() {
 }
 
 void
+restClient::startPending() {
+    while (!pending_.empty() && (maxInflight_ == 0 || inflight_.size() < maxInflight_)) {
+        std::unique_ptr<requestCtx> ctx = std::move(pending_.front());
+        pending_.pop_front();
+        requestCtx *raw = ctx.get();
+        CURLMcode mc = curl_multi_add_handle(multi_, raw->easy);
+        if (mc != CURLM_OK) {
+            NIXL_ERROR << absl::StrFormat(
+                "%s: curl_multi_add_handle failed: %s", raw->opName, curl_multi_strerror(mc));
+            finishRequest(ctx.release(), CURLE_FAILED_INIT, 0);
+            continue;
+        }
+        ctx.release(); // ownership tracked via CURLOPT_PRIVATE until completion
+        inflight_.insert(raw);
+        peakInflight_ = std::max(peakInflight_, inflight_.size());
+    }
+    // Sampled after starting, so it counts only what the cap held back.
+    peakPending_ = std::max(peakPending_, pending_.size());
+}
+
+void
 restClient::pollerLoop() {
     for (;;) {
         const bool stopping = stop_.load();
 
-        // 1. Drain the producer queue into multi_. On shutdown, fail queued
+        // 1. Drain the producer queue into pending_. On shutdown, fail queued
         //    requests instead of starting them.
         std::queue<std::unique_ptr<requestCtx>> batch;
         {
@@ -309,37 +349,42 @@ restClient::pollerLoop() {
                 finishRequest(ctx.release(), CURLE_ABORTED_BY_CALLBACK, 0);
                 continue;
             }
-            requestCtx *raw = ctx.get();
-            CURLMcode mc = curl_multi_add_handle(multi_, raw->easy);
-            if (mc != CURLM_OK) {
-                NIXL_ERROR << absl::StrFormat(
-                    "%s: curl_multi_add_handle failed: %s", raw->opName, curl_multi_strerror(mc));
-                finishRequest(ctx.release(), CURLE_FAILED_INIT, 0);
-                continue;
-            }
-            ctx.release(); // ownership tracked via CURLOPT_PRIVATE until completion
-            inflight_.insert(raw);
+            pending_.push_back(std::move(ctx));
         }
 
-        // 2. Advance all in-flight transfers (non-blocking).
+        // 2. Fill the in-flight slots from pending_.
+        startPending();
+
+        // 3. Advance all in-flight transfers (non-blocking).
         int running = 0;
         curl_multi_perform(multi_, &running);
 
-        // 3. Hand finished transfers' callbacks to the worker pool.
+        // 4. Hand finished transfers' callbacks to the worker pool.
         reapCompletions();
 
-        // 4. On shutdown, abort everything in flight so every callback fires
-        //    exactly once.
+        // 5. Completions above freed slots; refill before sleeping so a capped
+        //    queue does not stall waiting for the next socket event.
+        if (!stopping) {
+            startPending();
+        }
+
+        // 6. On shutdown, abort everything queued or in flight so every callback
+        //    fires exactly once.
         if (stopping) {
             for (requestCtx *ctx : inflight_) {
                 curl_multi_remove_handle(multi_, ctx->easy);
                 finishRequest(ctx, CURLE_ABORTED_BY_CALLBACK, 0);
             }
             inflight_.clear();
+            while (!pending_.empty()) {
+                std::unique_ptr<requestCtx> ctx = std::move(pending_.front());
+                pending_.pop_front();
+                finishRequest(ctx.release(), CURLE_ABORTED_BY_CALLBACK, 0);
+            }
             break;
         }
 
-        // 5. Block until socket activity, the 1s backstop, or curl_multi_wakeup().
+        // 7. Block until socket activity, the 1s backstop, or curl_multi_wakeup().
         int numfds = 0;
         curl_multi_poll(multi_, nullptr, 0, 1000, &numfds);
     }

@@ -69,6 +69,7 @@ The engine is selected and configured through the backend's `customParams`.
 
 | Parameter | Default | Meaning |
 |---|---|---|
+| `max_inflight` | `512` | Cap on requests running at once. Each holds a connection and therefore a file descriptor; excess requests queue and start as slots free. `0` disables the cap. |
 | `num_threads` | `max(2, cpu_threads / 4)` | Size of the callback worker pool (see [Concurrency model](#concurrency-model)). |
 | `request_timeout_ms` | `2000` | Limit on each request, connection included (connecting itself is limited to 1 s). A stalled request fails after this instead of holding its transfer; for a cache, falling back is faster than waiting. |
 
@@ -155,6 +156,17 @@ interface, so the in-flight request count does not depend on `num_threads`
 completed request's callback runs in a worker pool sized by `num_threads`, so a
 slow callback cannot stall the poller. The default is sufficient for
 lightweight callbacks.
+
+At most `max_inflight` requests run at once; the rest wait in a queue and start
+as running ones complete. At teardown the client logs the peak number of
+running and waiting requests: a non-zero `peak_pending` means the cap was the
+binding constraint.
+
+The cap is per backend instance, and every running request holds its own
+connection. A host running N workers (for example one vLLM process per GPU,
+each with its own NIXL agent) therefore opens up to N × `max_inflight`
+connections to the endpoint: 16 workers at the default of 512 is 8192. If the
+endpoint limits connections per client, lower `max_inflight` accordingly.
 
 ## Multi-NIC
 
