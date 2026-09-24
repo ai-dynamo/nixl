@@ -75,7 +75,7 @@ if curl_dep.found() and ibverbs_dep.found() and mlx5_dep.found()
         'rest_accel/scality_ai_connector/engine_impl.h',
         'rest_accel/scality_ai_connector/rdma_descriptor_provider.h',
     ]
-    plugin_deps += [ curl_dep, ibverbs_dep, mlx5_dep ]
+    plugin_deps += [ curl_dep, ibverbs_dep, mlx5_dep, dl_dep ]
 else
     message('libcurl, libibverbs or libmlx5 not found. Skipping Scality AI Connector engine')
 endif

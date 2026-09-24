@@ -19,14 +19,21 @@
 
 #include <arpa/inet.h>
 #include <dirent.h>
+#include <dlfcn.h>
+#include <limits.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <vector>
 
+#include "common/config_traits.h"
 #include "common/nixl_log.h"
 #include "common/str_util.h"
 
@@ -43,6 +50,139 @@ countBondSlaves(const char *slaves_line) {
         return 0;
     }
     return static_cast<int>(nixl::str::splitStripped(slaves_line, ' ').size());
+}
+
+/// Canonicalize a sysfs symlink to its /sys/devices/... target. Empty on failure.
+std::string
+canonicalPath(const std::string &path) {
+    char resolved[PATH_MAX];
+    if (realpath(path.c_str(), resolved) == nullptr) {
+        return "";
+    }
+    return std::string(resolved);
+}
+
+/// Read a single integer from a sysfs file; returns fallback on any failure.
+int
+readIntFile(const std::string &path, int fallback = -1) {
+    std::ifstream f(path);
+    int v = fallback;
+    if (f && (f >> v)) {
+        return v;
+    }
+    return fallback;
+}
+
+/// Number of shared leading '/'-separated components between two paths. Used as
+/// a PCIe-proximity score: a longer shared prefix means a closer shared bridge.
+size_t
+commonPathPrefix(const std::string &a, const std::string &b) {
+    if (a.empty() || b.empty()) {
+        return 0;
+    }
+    std::stringstream sa(a), sb(b);
+    std::string ca, cb;
+    size_t n = 0;
+    while (std::getline(sa, ca, '/') && std::getline(sb, cb, '/')) {
+        if (ca != cb) {
+            break;
+        }
+        n++;
+    }
+    return n;
+}
+
+/// The CUDA driver API calls the provider needs, resolved at run time from
+/// libcuda.so.1 so the connector has no build-time CUDA dependency. Any process
+/// holding VRAM has the driver loaded already. When the library or a symbol is
+/// missing, ok is false and GPU/NIC affinity degrades to every NIC being affine.
+struct cudaDriverApi {
+    using cu_init_fn_t = int (*)(unsigned int);
+    using cu_device_get_fn_t = int (*)(int *, int);
+    using cu_device_get_pci_bus_id_fn_t = int (*)(char *, int, int);
+
+    cu_init_fn_t init = nullptr;
+    cu_device_get_fn_t deviceGet = nullptr;
+    cu_device_get_pci_bus_id_fn_t deviceGetPciBusId = nullptr;
+    bool ok = false;
+};
+
+const cudaDriverApi &
+cudaDriver() {
+    static const cudaDriverApi api = [] {
+        cudaDriverApi a;
+        // Never closed: the driver stays loaded for the life of the process.
+        void *lib = dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL);
+        if (!lib) {
+            NIXL_INFO << "ibverbs_dc: libcuda.so.1 not loadable (" << dlerror()
+                      << "); no GPU/NIC affinity";
+            return a;
+        }
+        a.init = reinterpret_cast<cudaDriverApi::cu_init_fn_t>(dlsym(lib, "cuInit"));
+        a.deviceGet =
+            reinterpret_cast<cudaDriverApi::cu_device_get_fn_t>(dlsym(lib, "cuDeviceGet"));
+        a.deviceGetPciBusId = reinterpret_cast<cudaDriverApi::cu_device_get_pci_bus_id_fn_t>(
+            dlsym(lib, "cuDeviceGetPCIBusId"));
+        a.ok = a.init && a.deviceGet && a.deviceGetPciBusId && a.init(0) == 0;
+        if (!a.ok) {
+            NIXL_WARN << "ibverbs_dc: CUDA driver API unavailable; no GPU/NIC affinity";
+        }
+        return a;
+    }();
+    return api;
+}
+
+/// PCI bus id ("0000:1b:00.0", lower-case) for a CUDA device. Empty on error.
+/// Stable identity for the physical GPU under CUDA_VISIBLE_DEVICES, which
+/// renumbers the visible ordinals (the driver API numbers them like the runtime);
+/// maps directly to `nvidia-smi topo`.
+std::string
+gpuBusId(int dev_id) {
+    const cudaDriverApi &cu = cudaDriver();
+    int dev = 0;
+    char busid[32] = {};
+    if (!cu.ok || cu.deviceGet(&dev, dev_id) != 0 ||
+        cu.deviceGetPciBusId(busid, sizeof(busid), dev) != 0) {
+        return "";
+    }
+    // The driver yields upper-case "0000:1B:00.0"; sysfs uses lower-case.
+    for (char *p = busid; *p; ++p) {
+        *p = static_cast<char>(std::tolower(static_cast<unsigned char>(*p)));
+    }
+    return busid;
+}
+
+/// Canonical /sys PCIe path for a CUDA device, via its PCI bus id. Empty on error.
+std::string
+gpuPciPath(int dev_id) {
+    const std::string busid = gpuBusId(dev_id);
+    if (busid.empty()) {
+        return "";
+    }
+    return canonicalPath(std::string("/sys/bus/pci/devices/") + busid);
+}
+
+/// Map a runtime-visible GPU ordinal back to the id the user set: the entry at
+/// position dev_id in CUDA_VISIBLE_DEVICES (which renumbers visible devices to
+/// 0..N). Falls back to dev_id when the variable is unset or the entry is not a
+/// plain integer (e.g. a UUID or MIG handle).
+int
+visibleToUserGpu(int dev_id) {
+    const char *cvd = std::getenv("CUDA_VISIBLE_DEVICES");
+    if (!cvd || dev_id < 0) {
+        return dev_id;
+    }
+    const std::vector<std::string> ids = nixl::str::splitStripped(cvd);
+    if (static_cast<size_t>(dev_id) >= ids.size()) {
+        return dev_id;
+    }
+    try {
+        const int id = nixl::config::configTraits<int>::convert(ids[dev_id]);
+        return id >= 0 ? id : dev_id;
+    }
+    catch (const std::runtime_error &) {
+        return dev_id; // not an integer: a UUID or a MIG handle
+    }
 }
 
 /// RoCE GID type via sysfs: 2 (RoCEv2), 1 (RoCEv1), 0 (IB), -1 on error.
@@ -246,6 +386,14 @@ dcDescriptorProvider::setupNic(const std::string &nic_spec, uint64_t dc_key, nic
     nic.numLagPorts = numLagPorts(nic.devName.c_str());
     NIXL_DEBUG << "ibverbs_dc: NIC " << nic_spec << " LAG ports: " << nic.numLagPorts;
 
+    // PCIe topology for GPU/NIC affinity. Advisory only: a failure here degrades
+    // to no affinity, never blocks.
+    const std::string ib_dev = "/sys/class/infiniband/" + nic.devName + "/device";
+    nic.pciPath = canonicalPath(ib_dev);
+    nic.numaNode = readIntFile(ib_dev + "/numa_node");
+    NIXL_DEBUG << "ibverbs_dc: NIC " << nic_spec << " (" << nic.devName << ") pci_path='"
+               << nic.pciPath << "' numa_node=" << nic.numaNode;
+
     ibv_device_attr dev_attr{};
     if (ibv_query_device(nic.ctx, &dev_attr) == 0) {
         nic.maxMrSize = dev_attr.max_mr_size;
@@ -377,6 +525,10 @@ dcDescriptorProvider::dcDescriptorProvider(const std::vector<std::string> &nics,
         return;
     }
     nicIssued_.assign(nics_.size(), 0);
+    allNics_.resize(nics_.size());
+    for (size_t i = 0; i < nics_.size(); i++) {
+        allNics_[i] = static_cast<int>(i);
+    }
     connected_ = true;
     NIXL_INFO << "ibverbs_dc: DC transport ready across " << nics_.size() << " NIC(s), key=0x"
               << std::hex << std::noshowbase << dc_key << std::dec << ", RoCE sl=" << (int)sl_
@@ -433,14 +585,108 @@ dcDescriptorProvider::isConnected() const {
     return connected_;
 }
 
+const std::vector<int> &
+dcDescriptorProvider::affineNicsFor(int dev_id) {
+    auto it = gpuAffineNics_.find(dev_id);
+    if (it != gpuAffineNics_.end()) {
+        return it->second;
+    }
+
+    const std::string gpu_path = gpuPciPath(dev_id);
+    const int gpu_numa = gpu_path.empty() ? -1 : readIntFile(gpu_path + "/numa_node");
+
+    // Candidate rails: same-NUMA NICs (avoids the cross-socket SYS path). If NUMA
+    // is unknown, every NIC is a candidate.
+    std::vector<int> candidates;
+    if (gpu_numa >= 0) {
+        for (size_t i = 0; i < nics_.size(); ++i) {
+            if (nics_[i].numaNode == gpu_numa) {
+                candidates.push_back(static_cast<int>(i));
+            }
+        }
+    }
+    if (candidates.empty()) {
+        candidates = allNics_;
+    }
+
+    // Narrow to PCIe switch-local NICs, but ONLY when the locality is real. A NIC
+    // is switch-local to the GPU when the GPU's PCIe path reaches into the NIC's
+    // switch, i.e. the GPU shares MORE of the path with that NIC than the NIC's
+    // same-switch siblings share with each other. On hardware where the RDMA NICs
+    // sit on a shared bridge equidistant (NODE) from every GPU in the node, no NIC
+    // is switch-local, so all same-NUMA rails stay in the set. On hardware where
+    // each GPU has a dedicated (PXB/PIX) NIC, that one rail wins.
+    std::vector<int> affine;
+    if (!gpu_path.empty() && candidates.size() > 1) {
+        int best = candidates.front();
+        size_t best_prefix = commonPathPrefix(gpu_path, nics_[best].pciPath);
+        for (int idx : candidates) {
+            size_t p = commonPathPrefix(gpu_path, nics_[idx].pciPath);
+            if (p > best_prefix) {
+                best_prefix = p;
+                best = idx;
+            }
+        }
+        // How deep the best NIC's switch neighborhood extends among the candidates.
+        size_t sibling_prefix = 0;
+        for (int idx : candidates) {
+            if (idx == best) {
+                continue;
+            }
+            sibling_prefix =
+                std::max(sibling_prefix, commonPathPrefix(nics_[best].pciPath, nics_[idx].pciPath));
+        }
+        // GPU reaches past where the siblings diverge -> genuinely switch-local;
+        // keep every candidate at that deepest tier and drop the rest.
+        if (best_prefix > sibling_prefix) {
+            for (int idx : candidates) {
+                if (commonPathPrefix(gpu_path, nics_[idx].pciPath) == best_prefix) {
+                    affine.push_back(idx);
+                }
+            }
+        }
+    }
+
+    // Not switch-local (equidistant NODE-level rails) or NUMA-only: use them all.
+    if (affine.empty()) {
+        affine = candidates;
+    }
+
+    if (gpu_path.empty() && dev_id >= 0) {
+        NIXL_WARN << "ibverbs_dc: no PCIe path for GPU " << visibleToUserGpu(dev_id)
+                  << "; every NIC treated as affine";
+    } else if (gpu_numa < 0 && dev_id >= 0) {
+        NIXL_WARN << "ibverbs_dc: GPU " << visibleToUserGpu(dev_id)
+                  << " reports no NUMA node; every NIC treated as affine";
+    }
+
+    auto res = gpuAffineNics_.emplace(dev_id, std::move(affine));
+    return res.first->second;
+}
+
 size_t
 dcDescriptorProvider::pickRail(const buffer &buf) {
-    size_t best = 0;
-    uint64_t best_cost = nicIssued_[buf.rails[0].nicIdx];
-    for (size_t i = 1; i < buf.rails.size(); ++i) {
-        const uint64_t c = nicIssued_[buf.rails[i].nicIdx];
-        if (c < best_cost) {
-            best_cost = c;
+    // VRAM uses only the rails affine to its GPU. Host memory has no affinity, and
+    // a buffer none of whose affine NICs took the registration uses every rail.
+    const std::vector<int> *affine = nullptr;
+    if (buf.devId >= 0) {
+        affine = &affineNicsFor(buf.devId);
+    }
+    auto is_affine = [&](int nic_idx) {
+        return std::find(affine->begin(), affine->end(), nic_idx) != affine->end();
+    };
+    const bool strict =
+        affine && std::any_of(buf.rails.begin(), buf.rails.end(), [&](const railMr &r) {
+            return is_affine(r.nicIdx);
+        });
+
+    size_t best = buf.rails.size();
+    for (size_t i = 0; i < buf.rails.size(); ++i) {
+        const int nic_idx = buf.rails[i].nicIdx;
+        if (strict && !is_affine(nic_idx)) {
+            continue;
+        }
+        if (best == buf.rails.size() || nicIssued_[nic_idx] < nicIssued_[buf.rails[best].nicIdx]) {
             best = i;
         }
     }
@@ -472,7 +718,7 @@ dcDescriptorProvider::registerRail(void *ptr, size_t size, int nic_idx) {
 }
 
 nixl_status_t
-dcDescriptorProvider::registerMemory(void *ptr, size_t size, int) {
+dcDescriptorProvider::registerMemory(void *ptr, size_t size, int dev_id) {
     if (!connected_) {
         return NIXL_ERR_BACKEND;
     }
@@ -496,9 +742,10 @@ dcDescriptorProvider::registerMemory(void *ptr, size_t size, int) {
     // the rail is chosen per request in makeDescriptor, not here.
     buffer buf;
     buf.len = size;
-    for (size_t nic_idx = 0; nic_idx < nics_.size(); ++nic_idx) {
-        if (ibv_mr *mr = registerRail(ptr, size, static_cast<int>(nic_idx))) {
-            buf.rails.push_back({mr, static_cast<int>(nic_idx)});
+    buf.devId = dev_id;
+    for (int nic_idx : allNics_) {
+        if (ibv_mr *mr = registerRail(ptr, size, nic_idx)) {
+            buf.rails.push_back({mr, nic_idx});
         }
     }
     if (buf.rails.empty()) {
@@ -512,7 +759,8 @@ dcDescriptorProvider::registerMemory(void *ptr, size_t size, int) {
     }
 
     NIXL_DEBUG << "ibverbs_dc: registered 0x" << std::hex << reinterpret_cast<uintptr_t>(ptr)
-               << std::dec << " (" << size << " bytes) on " << buf.rails.size() << " rail(s)";
+               << std::dec << " (" << size << " bytes, dev_id=" << dev_id << ") on "
+               << buf.rails.size() << " rail(s)";
     buffers_[reinterpret_cast<uintptr_t>(ptr)] = std::move(buf);
     return NIXL_SUCCESS;
 }

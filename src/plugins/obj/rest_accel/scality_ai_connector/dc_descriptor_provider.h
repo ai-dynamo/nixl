@@ -39,7 +39,8 @@ static constexpr int dc_max_lag_ports = 4;
  * Opens one DC target per NIC and registers every buffer on all of them, so a
  * request against any buffer can travel on any rail. An rkey covers any
  * sub-range of its MR, so the NIC a request uses is picked when its RDMA
- * descriptor is built: see pickRail.
+ * descriptor is built: see pickRail. VRAM requests use only the NICs affine to
+ * their GPU.
  *
  * The DC target is passive: the server (DCI side) initiates and performs all
  * one-sided RDMA, so this client runs no background threads, CM listener, or CQ
@@ -89,6 +90,8 @@ private:
         uint64_t lagSeq = 0; ///< round-robin cursor over this NIC's LAG ports
         uint64_t maxMrSize = 0; ///< largest MR the device accepts, 0 if unknown
         std::string devName; ///< ib device name (e.g. mlx5_1), for logging
+        std::string pciPath; ///< canonical /sys/devices/... PCIe path of the NIC
+        int numaNode = -1; ///< NUMA node of the NIC, or -1 if unknown
     };
 
     /// One rail of a registered buffer: an MR covering the WHOLE buffer on that
@@ -102,6 +105,7 @@ private:
     /// A caller registration, held on every NIC that accepted it.
     struct buffer {
         size_t len = 0;
+        int devId = -1; ///< GPU ordinal (VRAM) or -1 (host memory)
         int refs = 1; ///< identical registrations sharing these MRs
         std::vector<railMr> rails;
     };
@@ -116,15 +120,29 @@ private:
     static int
     numLagPorts(const char *dev_name);
     /// Index into buf.rails for the next request against buf: the rail whose NIC
-    /// has taken the fewest requests. Caller must hold mu_.
+    /// has taken the fewest requests, among the NICs affine to the buffer's GPU for
+    /// VRAM (all rails if none of them holds the buffer), among all rails for host
+    /// memory. Caller must hold mu_.
     size_t
     pickRail(const buffer &buf);
     /// Register [ptr, ptr+size) on one NIC. Returns nullptr on failure.
     ibv_mr *
     registerRail(void *ptr, size_t size, int nic_idx);
+    /// Resolve (and cache) the set of NIC indices affine to a GPU. Prefers NICs
+    /// that share a PCIe switch with the GPU (PXB/PIX-local); when no NIC is
+    /// switch-local (the RDMA NICs sit on a shared bridge equidistant from every
+    /// GPU in the node), keeps all same-NUMA NICs so requests spread across both
+    /// rails. Falls back to all NICs when no topology info is available.
+    /// Caller must hold mu_.
+    const std::vector<int> &
+    affineNicsFor(int dev_id);
 
     std::vector<nicCtx> nics_;
     bool connected_ = false;
+    /// All NIC indices [0, nics_.size()); the affinity fallback.
+    std::vector<int> allNics_;
+    /// dev_id -> affine NIC indices, resolved once per GPU.
+    std::map<int, std::vector<int>> gpuAffineNics_;
     /// Requests handed out per NIC; pickRail favours the least used.
     std::vector<uint64_t> nicIssued_;
     /// RoCE service level and traffic class for the DCT address vector. They mark
