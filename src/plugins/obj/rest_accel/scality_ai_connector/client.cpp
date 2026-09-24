@@ -111,6 +111,7 @@ enum class rest_method { PUT, GET, HEAD };
 // header list, and response buffer for the full transfer lifetime; the user
 // callback (exactly one of the two, by method) is moved out on completion.
 struct restClient::requestCtx {
+    restClient *client = nullptr;
     CURL *easy = nullptr;
     struct curl_slist *headers = nullptr;
     std::string url;
@@ -129,11 +130,14 @@ struct restClient::requestCtx {
         }
         if (easy) {
             // Must already be removed from the multi handle by the poller.
-            curl_easy_cleanup(easy);
+            client->releaseEasy(easy);
         }
     }
 };
 
+// Apply URL + method-specific options to a clean easy handle (freshly created, or
+// reset on its way back into easyCache_). Every option a request depends on must
+// be set here, since a recycled handle carries none of its predecessor's.
 void
 restClient::buildEasy(requestCtx *ctx) const {
     CURL *curl = ctx->easy;
@@ -164,10 +168,48 @@ restClient::buildEasy(requestCtx *ctx) const {
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(requestTimeoutMs_));
 }
 
+CURL *
+restClient::acquireEasy() {
+    {
+        const std::lock_guard<std::mutex> lk(easyMtx_);
+        if (!easyCache_.empty()) {
+            CURL *easy = easyCache_.back();
+            easyCache_.pop_back();
+            return easy;
+        }
+    }
+    return curl_easy_init();
+}
+
+void
+restClient::releaseEasy(CURL *easy) {
+    // Reset before caching: it clears every option, including the pointers into
+    // the requestCtx being destroyed, while keeping the handle's live connection.
+    curl_easy_reset(easy);
+    {
+        const std::lock_guard<std::mutex> lk(easyMtx_);
+        if (easyCache_.size() < easyCacheCap_) {
+            easyCache_.push_back(easy);
+            return;
+        }
+    }
+    curl_easy_cleanup(easy);
+}
+
 // The posted closure captures only the callback and the result, so the pool never
 // touches curl state.
 void
 restClient::finishRequest(requestCtx *ctx, CURLcode res, long http_code) {
+    // Read while the handle still holds this transfer's stats; releaseEasy() resets
+    // it. 0 means the connection was reused, 1 means a fresh TCP connect.
+    if (ctx->easy) {
+        long num_connects = 0;
+        if (curl_easy_getinfo(ctx->easy, CURLINFO_NUM_CONNECTS, &num_connects) == CURLE_OK) {
+            newConnects_ += static_cast<std::size_t>(num_connects);
+        }
+        ++totalRequests_;
+    }
+
     if (ctx->method == rest_method::HEAD) {
         std::optional<bool> result;
         if (res != CURLE_OK) {
@@ -228,7 +270,10 @@ restClient::restClient(nixl_b_params_t *custom_params)
     : numThreads_(parseNumThreads(custom_params)),
       pool_(numThreads_),
       requestTimeoutMs_(parseRequestTimeoutMs(custom_params)),
-      maxInflight_(parseMaxInflight(custom_params)) {
+      maxInflight_(parseMaxInflight(custom_params)),
+      // At most maxInflight_ handles can be transferring at once, so a larger
+      // cache would only hold connections nothing is waiting to use.
+      easyCacheCap_(maxInflight_ == 0 ? default_max_inflight : maxInflight_) {
     std::call_once(curl_init_flag, []() { curl_global_init(CURL_GLOBAL_DEFAULT); });
     if (!custom_params) {
         throw std::invalid_argument("restClient: custom_params is null");
@@ -246,6 +291,10 @@ restClient::restClient(nixl_b_params_t *custom_params)
     if (!multi_) {
         throw std::runtime_error("restClient: curl_multi_init failed");
     }
+    // Left unset, libcurl sizes the connection cache to the handles currently
+    // added, so each new transfer evicts an idle keep-alive connection and burns
+    // an ephemeral port. Size it to the in-flight cap instead.
+    curl_multi_setopt(multi_, CURLMOPT_MAXCONNECTS, static_cast<long>(easyCacheCap_));
     poller_ = std::thread(&restClient::pollerLoop, this);
 
     NIXL_INFO << absl::StrFormat(
@@ -266,12 +315,22 @@ restClient::~restClient() {
         poller_.join(); // poller fails any outstanding requests before returning
     }
     pool_.join(); // drain queued callbacks
+    // The poller returned every handle to the cache; close them before the multi
+    // handle that owns their connections goes away.
+    for (CURL *easy : easyCache_) {
+        curl_easy_cleanup(easy);
+    }
+    easyCache_.clear();
     if (multi_) {
         curl_multi_cleanup(multi_);
     }
     NIXL_INFO << "restClient concurrency: peak_inflight=" << peakInflight_
               << ", peak_pending=" << peakPending_ << ", max_inflight="
               << (maxInflight_ == 0 ? std::string("unlimited") : std::to_string(maxInflight_));
+    NIXL_INFO << "restClient connections: requests=" << totalRequests_
+              << ", new_connections=" << newConnects_
+              << " (new_connections close to requests means keepalive is not working and "
+                 "the endpoint will exhaust ephemeral ports)";
 }
 
 std::string
@@ -399,12 +458,13 @@ restClient::submitRdmaRequest(const char *op_name,
                               size_t data_len,
                               size_t offset) {
     auto ctx = std::make_unique<requestCtx>();
+    ctx->client = this;
     ctx->opName = op_name;
     ctx->method = is_upload ? rest_method::PUT : rest_method::GET;
     ctx->url = buildUrl(key);
     ctx->boolCb = std::move(callback);
 
-    ctx->easy = curl_easy_init();
+    ctx->easy = acquireEasy();
     if (!ctx->easy) {
         NIXL_ERROR << absl::StrFormat("%s: curl_easy_init failed", op_name);
         if (ctx->boolCb) {
@@ -517,12 +577,13 @@ restClient::getObjectRdmaAsync(std::string_view key,
 void
 restClient::checkObjectExistsAsync(std::string_view key, check_object_callback_t callback) {
     auto ctx = std::make_unique<requestCtx>();
+    ctx->client = this;
     ctx->opName = "checkObjectExistsAsync";
     ctx->method = rest_method::HEAD;
     ctx->url = buildUrl(key);
     ctx->checkCb = std::move(callback);
 
-    ctx->easy = curl_easy_init();
+    ctx->easy = acquireEasy();
     if (!ctx->easy) {
         NIXL_ERROR << "checkObjectExistsAsync: curl_easy_init failed";
         if (ctx->checkCb) {
