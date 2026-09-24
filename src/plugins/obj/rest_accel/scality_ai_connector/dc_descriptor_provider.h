@@ -136,6 +136,13 @@ private:
     /// Caller must hold mu_.
     const std::vector<int> &
     affineNicsFor(int dev_id);
+    /// One-shot NIXL_INFO dump of the registered MR layout. Caller holds mu_.
+    void
+    logLayout();
+    /// NIXL_INFO summary of how requests were spread over the rails, and what
+    /// registration cost. `detailed` adds the per-GPU breakdown. Caller holds mu_.
+    void
+    logRequestSpread(bool detailed);
 
     std::vector<nicCtx> nics_;
     bool connected_ = false;
@@ -145,6 +152,22 @@ private:
     std::map<int, std::vector<int>> gpuAffineNics_;
     /// Requests handed out per NIC; pickRail favours the least used.
     std::vector<uint64_t> nicIssued_;
+    /// Requests that left the owning GPU's affine rails.
+    uint64_t crossNuma_ = 0;
+    /// Requests since the last spread summary.
+    uint64_t sinceSpreadLog_ = 0;
+    /// dev_id -> requests sent down each NIC, for the teardown dump.
+    std::map<int, std::vector<uint64_t>> gpuNicRequests_;
+    /// dev_id -> NUMA node, cached alongside gpuAffineNics_ for logging.
+    std::map<int, int> gpuNuma_;
+    /// Guard so the MR layout is dumped once, at the first transfer.
+    bool layoutLogged_ = false;
+    // Registration cost, reported with the rail summary.
+    std::size_t regCalls_ = 0;
+    std::size_t regRails_ = 0;
+    std::size_t regBytes_ = 0;
+    std::size_t regUs_ = 0;
+    std::size_t deregUs_ = 0;
     /// RoCE service level and traffic class for the DCT address vector. They mark
     /// what this side sends (RDMA read responses and ACKs); the server marks what
     /// it sends itself.

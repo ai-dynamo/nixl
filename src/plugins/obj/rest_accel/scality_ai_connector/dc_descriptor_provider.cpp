@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -51,6 +52,9 @@ countBondSlaves(const char *slaves_line) {
     }
     return static_cast<int>(nixl::str::splitStripped(slaves_line, ' ').size());
 }
+
+/// Requests between one-line spread summaries.
+constexpr uint64_t spread_log_interval = 1u << 20;
 
 /// Canonicalize a sysfs symlink to its /sys/devices/... target. Empty on failure.
 std::string
@@ -539,6 +543,7 @@ dcDescriptorProvider::dcDescriptorProvider(const std::vector<std::string> &nics,
 dcDescriptorProvider::~dcDescriptorProvider() {
     {
         std::lock_guard<std::mutex> lk(mu_);
+        logRequestSpread(true);
         for (auto &kv : buffers_) {
             for (auto &rail : kv.second.rails) {
                 if (rail.mr) {
@@ -660,6 +665,7 @@ dcDescriptorProvider::affineNicsFor(int dev_id) {
                   << " reports no NUMA node; every NIC treated as affine";
     }
 
+    gpuNuma_[dev_id] = gpu_numa;
     auto res = gpuAffineNics_.emplace(dev_id, std::move(affine));
     return res.first->second;
 }
@@ -723,6 +729,7 @@ dcDescriptorProvider::registerMemory(void *ptr, size_t size, int dev_id) {
         return NIXL_ERR_BACKEND;
     }
 
+    const auto reg_start = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lk(mu_);
 
     // The same buffer may be registered more than once (e.g. as two descriptors):
@@ -761,12 +768,20 @@ dcDescriptorProvider::registerMemory(void *ptr, size_t size, int dev_id) {
     NIXL_DEBUG << "ibverbs_dc: registered 0x" << std::hex << reinterpret_cast<uintptr_t>(ptr)
                << std::dec << " (" << size << " bytes, dev_id=" << dev_id << ") on "
                << buf.rails.size() << " rail(s)";
+    // Counted before the move; reading buf.rails afterwards yields 0.
+    regCalls_++;
+    regRails_ += buf.rails.size();
+    regBytes_ += size;
     buffers_[reinterpret_cast<uintptr_t>(ptr)] = std::move(buf);
+    regUs_ += std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - reg_start)
+                  .count();
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
 dcDescriptorProvider::deregisterMemory(void *ptr) {
+    const auto dereg_start = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lk(mu_);
     auto it = buffers_.find(reinterpret_cast<uintptr_t>(ptr));
     if (it == buffers_.end()) {
@@ -782,13 +797,99 @@ dcDescriptorProvider::deregisterMemory(void *ptr) {
         }
     }
     buffers_.erase(it);
+    deregUs_ += std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - dereg_start)
+                    .count();
     return NIXL_SUCCESS;
+}
+
+void
+dcDescriptorProvider::logLayout() {
+    std::string rails;
+    for (const auto &nic : nics_) {
+        rails +=
+            (rails.empty() ? "" : " ") + nic.devName + "(numa" + std::to_string(nic.numaNode) + ")";
+    }
+    NIXL_INFO << "ibverbs_dc: rails: " << rails;
+
+    std::map<int, size_t> buffers_per_owner;
+    size_t mrs = 0;
+    for (const auto &kv : buffers_) {
+        buffers_per_owner[kv.second.devId]++;
+        mrs += kv.second.rails.size();
+    }
+    NIXL_INFO << "ibverbs_dc: " << buffers_.size()
+              << " buffer(s) registered on every rail = " << mrs
+              << " MR(s); the rail per request is chosen at transfer time";
+    for (const auto &owner : buffers_per_owner) {
+        const int dev_id = owner.first;
+        if (dev_id < 0) {
+            NIXL_INFO << "ibverbs_dc:   host memory: " << owner.second
+                      << " buffer(s), no NUMA preference";
+            continue;
+        }
+        std::string names;
+        for (int i : affineNicsFor(dev_id)) {
+            names += (names.empty() ? "" : ",") + nics_[i].devName;
+        }
+        NIXL_INFO << "ibverbs_dc:   GPU " << visibleToUserGpu(dev_id) << " (numa "
+                  << gpuNuma_[dev_id] << "): " << owner.second << " buffer(s), uses " << names;
+    }
+}
+
+void
+dcDescriptorProvider::logRequestSpread(bool detailed) {
+    uint64_t total = 0;
+    for (uint64_t n : nicIssued_) {
+        total += n;
+    }
+    if (total == 0) {
+        return;
+    }
+    std::string per_nic;
+    for (size_t i = 0; i < nics_.size(); ++i) {
+        per_nic += (per_nic.empty() ? "" : " ") + nics_[i].devName + ":" +
+            std::to_string(100 * nicIssued_[i] / total) + "%";
+    }
+    NIXL_INFO << "ibverbs_dc: " << total << " request(s), " << (100 * crossNuma_ / total)
+              << "% off the owning GPU's affine rails: " << per_nic;
+    if (regCalls_ > 0) {
+        NIXL_INFO << "ibverbs_dc: " << regCalls_ << " registration(s) -> " << regRails_
+                  << " MR(s) over " << (regBytes_ >> 20) << " MiB, " << (regUs_ / 1000)
+                  << "ms registering + " << (deregUs_ / 1000) << "ms releasing, "
+                  << ((regUs_ + deregUs_) / regCalls_) << "us per registration ("
+                  << ((regUs_ + deregUs_) / (regRails_ ? regRails_ : 1)) << "us per MR)."
+                  << " A caller that registers per transfer pays this on the critical path;"
+                     " registering a reused pool once would not.";
+    }
+    if (!detailed) {
+        return;
+    }
+    for (const auto &g : gpuNicRequests_) {
+        std::string line;
+        for (size_t i = 0; i < nics_.size(); ++i) {
+            if (g.second[i] == 0) {
+                continue;
+            }
+            line +=
+                (line.empty() ? "" : " ") + nics_[i].devName + ":" + std::to_string(g.second[i]);
+        }
+        if (g.first < 0) {
+            NIXL_INFO << "ibverbs_dc:   host memory -> " << line;
+        } else {
+            NIXL_INFO << "ibverbs_dc:   GPU " << visibleToUserGpu(g.first) << " -> " << line;
+        }
+    }
 }
 
 std::string
 dcDescriptorProvider::makeDescriptor(void *ptr, size_t size) {
     const uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
     std::lock_guard<std::mutex> lk(mu_);
+    if (!layoutLogged_) {
+        logLayout();
+        layoutLogged_ = true;
+    }
 
     if (size > UINT32_MAX) {
         NIXL_ERROR << "ibverbs_dc: request size " << size
@@ -816,6 +917,23 @@ dcDescriptorProvider::makeDescriptor(void *ptr, size_t size) {
     const railMr &rail = buf.rails[pickRail(buf)];
     nicCtx &nic = nics_[rail.nicIdx];
     nicIssued_[rail.nicIdx]++;
+    auto &counts = gpuNicRequests_[buf.devId];
+    if (counts.empty()) {
+        counts.assign(nics_.size(), 0);
+    }
+    counts[rail.nicIdx]++;
+    if (buf.devId >= 0) {
+        const std::vector<int> &affine = affineNicsFor(buf.devId);
+        if (std::find(affine.begin(), affine.end(), rail.nicIdx) == affine.end()) {
+            crossNuma_++;
+        }
+    }
+    // Periodic, because a run that is killed rather than finished never reaches
+    // the teardown dump, and that is exactly when the spread is worth seeing.
+    if (++sinceSpreadLog_ >= spread_log_interval) {
+        sinceSpreadLog_ = 0;
+        logRequestSpread(false);
+    }
 
     return formatDcDescriptor(static_cast<uint64_t>(addr),
                               static_cast<uint32_t>(size),
