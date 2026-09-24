@@ -26,7 +26,6 @@
 #include "nixl_metadata_worker.h"
 #include "common/scoped_fd.h"
 
-#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
@@ -87,7 +86,7 @@ private:
     // Connect-on-demand to (ip, port) and send msg; disconnect on error. Runs as
     // a worker task, so never concurrently with serviceEvents().
     void
-    sendToPeer(const std::string &ip, std::uint16_t port, const std::string &msg);
+    sendToPeer(const std::string &ip, int port, const std::string &msg);
     void
     acceptPeers();
     void
@@ -95,7 +94,7 @@ private:
 
     nixlMetadataContext &ctx_;
     const nixlMDConfig config_;
-    std::map<std::pair<std::string, std::uint16_t>, nixl::scopedFd> remoteSockets_;
+    std::map<std::pair<std::string, int>, nixl::scopedFd> remoteSockets_;
     std::unique_ptr<nixlMDStreamListener> listener_;
     // Declared last so it joins before the state its tasks touch is destroyed.
     nixlMetadataWorker worker_;

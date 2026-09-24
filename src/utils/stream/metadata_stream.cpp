@@ -88,7 +88,7 @@ nixlMDStreamListener::setupStream(int family) {
     }
 
     if (bind(fd.get(), reinterpret_cast<const sockaddr *>(&listener_addr), length) < 0) {
-        if (family == AF_INET6 && errno == EADDRNOTAVAIL) {
+        if (family == AF_INET6) {
             return {};
         }
         NIXL_PERROR << "Socket Bind failed while setting up listener for MD";
@@ -215,6 +215,7 @@ nixlMDStreamClient::nixlMDStreamClient(const std::string &listenerAddress, uint1
       listenerAddress(listenerAddress) {}
 
 bool nixlMDStreamClient::setupClient() {
+    socketFd.reset();
     nixl::scopedFd fd(socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0));
     if (!fd.valid()) {
         NIXL_PERROR << "Failed to create metadata client socket";

@@ -33,6 +33,7 @@
 #include <absl/strings/str_split.h>
 
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -52,7 +53,7 @@ constexpr size_t max_frame_bytes = 1UL << 30; // 1 GiB
 constexpr auto frame_body_timeout = std::chrono::seconds(5);
 
 nixl::scopedFd
-connectToIP(const std::string &ip_addr, std::uint16_t port) {
+connectToIP(const std::string &ip_addr, int port) {
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -255,7 +256,7 @@ nixlP2PMetadataBackend::sendLocal(const nixl_opt_args_t *extra_params) {
         return ret;
     }
     const std::string ip = extra_params->ipAddr;
-    const std::uint16_t port = extra_params->port;
+    const int port = extra_params->port;
     worker_.submit([this, ip, port, blob = std::move(blob)]() {
         sendToPeer(ip, port, "NIXLCOMM:LOAD" + blob);
     });
@@ -274,7 +275,7 @@ nixlP2PMetadataBackend::sendLocalPartial(const nixl_reg_dlist_t &descs,
         return ret;
     }
     const std::string ip = extra_params->ipAddr;
-    const std::uint16_t port = extra_params->port;
+    const int port = extra_params->port;
     worker_.submit([this, ip, port, blob = std::move(blob)]() {
         sendToPeer(ip, port, "NIXLCOMM:LOAD" + blob);
     });
@@ -290,7 +291,7 @@ nixlP2PMetadataBackend::fetchRemote(const std::string & /*remote_name*/,
     // Socket fetch is keyed by address, not name; the reply is loaded into the
     // remote-section cache by serviceEvents() when the peer answers.
     const std::string ip = extra_params->ipAddr;
-    const std::uint16_t port = extra_params->port;
+    const int port = extra_params->port;
     worker_.submit([this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:SEND"); });
     return NIXL_SUCCESS;
 }
@@ -301,7 +302,7 @@ nixlP2PMetadataBackend::invalidateLocal(const nixl_opt_args_t *extra_params) {
         return NIXL_ERR_INVALID_PARAM;
     }
     const std::string ip = extra_params->ipAddr;
-    const std::uint16_t port = extra_params->port;
+    const int port = extra_params->port;
     worker_.submit(
         [this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:INVL" + ctx_.agentName()); });
     return NIXL_SUCCESS;
@@ -314,9 +315,7 @@ nixlP2PMetadataBackend::serviceEvents() {
 }
 
 void
-nixlP2PMetadataBackend::sendToPeer(const std::string &ip,
-                                   std::uint16_t port,
-                                   const std::string &msg) {
+nixlP2PMetadataBackend::sendToPeer(const std::string &ip, int port, const std::string &msg) {
     const auto key = std::make_pair(ip, port);
     auto client = remoteSockets_.find(key);
     if (client == remoteSockets_.end()) {
