@@ -454,6 +454,14 @@ TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
         GTEST_SKIP() << "IPv6 is unavailable";
     }
     ASSERT_TRUE(fd.valid());
+    const int v6only = 0;
+    const int option_result =
+        setsockopt(fd.get(), IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
+    if (option_result < 0 && errno == ENOPROTOOPT) {
+        GTEST_SKIP() << "Dual-stack IPv6 sockets are unavailable";
+    }
+    ASSERT_EQ(option_result, 0);
+
     sockaddr_in6 loopback{};
     loopback.sin6_family = AF_INET6;
     loopback.sin6_addr = in6addr_loopback;
@@ -461,7 +469,9 @@ TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
         bind(fd.get(), reinterpret_cast<sockaddr *>(&loopback), sizeof(loopback));
     const int bind_error = errno;
     fd.reset();
-    if (bind_result < 0 && bind_error == EADDRNOTAVAIL) {
+    if (bind_result < 0 &&
+        (bind_error == EADDRNOTAVAIL || bind_error == EADDRINUSE || bind_error == EACCES ||
+         bind_error == EPERM)) {
         GTEST_SKIP() << "IPv6 loopback is unavailable";
     }
     ASSERT_EQ(bind_result, 0);
