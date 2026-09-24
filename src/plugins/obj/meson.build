@@ -57,20 +57,24 @@ else
     message('Could not find CUObjClient Library. Skipping S3 Accelerated engines')
 endif
 
-# Scality AI Connector: RDMA data plane over in-process libibverbs DC.
+# Scality AI Connector: HTTP control plane over libcurl, RDMA data plane over
+# in-process libibverbs DC.
+curl_dep = dependency('libcurl', required: false)
 ibverbs_dep = dependency('libibverbs', required: false)
 mlx5_dep = dependency('libmlx5', required: false)
-if ibverbs_dep.found() and mlx5_dep.found()
+if curl_dep.found() and ibverbs_dep.found() and mlx5_dep.found()
     message('Enabling Scality AI Connector engine')
     obj_sources += [
+        'rest_accel/scality_ai_connector/client.cpp',
+        'rest_accel/scality_ai_connector/client.h',
         'rest_accel/scality_ai_connector/dc_descriptor.h',
         'rest_accel/scality_ai_connector/dc_descriptor_provider.cpp',
         'rest_accel/scality_ai_connector/dc_descriptor_provider.h',
         'rest_accel/scality_ai_connector/rdma_descriptor_provider.h',
     ]
-    plugin_deps += [ ibverbs_dep, mlx5_dep ]
+    plugin_deps += [ curl_dep, ibverbs_dep, mlx5_dep ]
 else
-    message('libibverbs or libmlx5 not found. Skipping Scality AI Connector engine')
+    message('libcurl, libibverbs or libmlx5 not found. Skipping Scality AI Connector engine')
 endif
 
 if 'OBJ' in static_plugins
