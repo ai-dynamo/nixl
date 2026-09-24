@@ -17,17 +17,13 @@
 #ifndef NIXL_SRC_PLUGINS_UCX_UCX_THREAD_ENGINE_H
 #define NIXL_SRC_PLUGINS_UCX_UCX_THREAD_ENGINE_H
 
-#include <future>
-#include <memory>
 #include <mutex>
 #include <ostream>
-#include <string>
+#include <stop_token>
 #include <thread>
-#include <vector>
+#include <utility>
 
 #include "absl/strings/str_join.h"
-
-#include "common/nixl_log.h"
 
 #include "ucx_backend.h"
 #include "ucx_utils.h"
@@ -37,39 +33,15 @@
  */
 class nixlUcxThread {
 public:
-    nixlUcxThread(const nixlUcxEngine *engine, size_t num_workers) : engine_(engine) {
-        workers_.reserve(num_workers);
-    }
+    nixlUcxThread(const nixlUcxEngine *engine, std::vector<nixlUcxWorker *> workers)
+        : engine_(engine),
+          workers_(std::move(workers)) {}
 
-    virtual ~nixlUcxThread() {
-        NIXL_ASSERT_ALWAYS(!threadActive_) << "thread must be joined before destruction";
-    }
-
-    void
-    start() {
-        NIXL_ASSERT(!threadActive_);
-        threadActive_ = std::make_unique<std::promise<void>>();
-        auto active = threadActive_->get_future();
-        thread_ = std::make_unique<std::thread>(std::ref(*this));
-        active.wait();
-    }
-
-    virtual void
-    addWorker(nixlUcxWorker *worker) {
-        NIXL_ASSERT(workers_.size() < workers_.capacity());
-        workers_.push_back(worker);
-    }
+    virtual ~nixlUcxThread() = default;
 
     const std::vector<nixlUcxWorker *> &
     getWorkers() const {
         return workers_;
-    }
-
-    void
-    operator()() {
-        tlsThread() = this;
-        threadActive_->set_value();
-        run();
     }
 
     static nixlUcxThread *&
@@ -88,23 +60,23 @@ public:
     }
 
 protected:
+    /**
+     * @brief Thread body, returns once a stop is requested on @p token
+     */
     virtual void
-    run() = 0;
+    run(std::stop_token token) = 0;
 
-    void
-    join() {
-        if (!threadActive_) {
-            return;
-        }
-        threadActive_.reset();
-        thread_->join();
+    [[nodiscard]] std::jthread
+    startThread() {
+        return std::jthread([this](std::stop_token token) {
+            tlsThread() = this;
+            run(token);
+        });
     }
 
 private:
     const nixlUcxEngine *engine_;
     std::vector<nixlUcxWorker *> workers_;
-    std::unique_ptr<std::thread> thread_;
-    std::unique_ptr<std::promise<void>> threadActive_;
 };
 
 /**
@@ -124,8 +96,8 @@ protected:
     appendNotif(std::string &&remote_name, std::string &&msg) override;
 
 private:
-    std::unique_ptr<nixlUcxThread> thread_;
     std::mutex notifMutex_;
+    std::unique_ptr<nixlUcxThread> thread_;
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_THREAD_ENGINE_H
