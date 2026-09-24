@@ -29,9 +29,15 @@ nixl_common_deps = [
     dependency('asio', required: true),
 ]
 
-# Get git commit hash
-git_hash = run_command('git', 'rev-parse', '--short=8', 'HEAD', check: false, capture: true)
-git_commit = git_hash.returncode() == 0 ? git_hash.stdout().strip() : 'unknown'
+# vcs_tag() resolves the revision on every build, where run_command() froze it
+# at configure time. '-dirty' marks an uncommitted tree; --exclude='*' reports
+# the hash rather than a tag.
+nixl_git_hash_h = vcs_tag(
+    command: ['git', 'describe', '--always', '--abbrev=8', '--dirty', '--exclude=*'],
+    input: 'nixl_git_hash.h.in',
+    output: 'nixl_git_hash.h',
+    fallback: 'unknown',
+)
 
 # Define a shared library for common utilities
 nixl_common_lib = shared_library('nixl_common',
@@ -40,11 +46,11 @@ nixl_common_lib = shared_library('nixl_common',
     'uuid_v4.cpp',
     'configuration.cpp',
     'nixl_duration.cpp',
+    nixl_git_hash_h,
     dependencies: nixl_common_deps,
     include_directories: [nixl_common_inc, nixl_inc_dirs],
     cpp_args: [
         '-DNIXL_VERSION="' + meson.project_version() + '"',
-        '-DNIXL_GIT_HASH="' + git_commit + '"'
     ],
     install: true,
 )

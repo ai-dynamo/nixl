@@ -16,6 +16,7 @@
  */
 
 #include "nixl_log.h"
+#include "nixl_git_hash.h" // generated at build time by vcs_tag(); defines NIXL_GIT_HASH
 #include "absl/log/initialize.h"
 #include "absl/log/globals.h"
 #include "absl/strings/ascii.h"
