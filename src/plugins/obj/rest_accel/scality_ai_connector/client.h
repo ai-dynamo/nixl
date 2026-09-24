@@ -91,7 +91,8 @@ public:
 /// Default limit on a whole request, connection included.
 constexpr std::size_t default_request_timeout_ms = 2000;
 
-/// Default cap on concurrently-running requests.
+/// Upper bound on the default cap for concurrently-running requests; the default
+/// is also clamped to a share of RLIMIT_NOFILE (see defaultMaxInflight).
 constexpr std::size_t default_max_inflight = 512;
 
 /**
@@ -110,7 +111,8 @@ public:
      *                      Optional "request_timeout_ms" bounds each request
      *                      (default default_request_timeout_ms).
      *                      Optional "max_inflight" caps concurrently-running
-     *                      requests ("0" = unlimited, default default_max_inflight).
+     *                      requests ("0" = unlimited, default
+     *                      min(default_max_inflight, RLIMIT_NOFILE / 4)).
      */
     explicit restClient(nixl_b_params_t *custom_params);
 
@@ -180,6 +182,19 @@ private:
     // below requests means the handle cache is doing its job. Poller-thread only.
     std::size_t totalRequests_ = 0;
     std::size_t newConnects_ = 0;
+    /// The first-connect-failure diagnostic was emitted. Poller-thread only.
+    bool fdExhaustionLogged_ = false;
+    /// The process is out of file descriptors: set when a connect failure finds
+    /// none to spare, cleared when a request gets a response or a later check
+    /// finds descriptors again. While set, the backlog is failed at once.
+    /// Poller-thread only.
+    bool fdExhausted_ = false;
+    /// Descriptors ran out at some point, for the teardown report. Poller-thread
+    /// only.
+    bool fdExhaustionSeen_ = false;
+    /// Requests failed by the backlog drain, reported once at teardown rather
+    /// than one log line each. Poller-thread only.
+    std::size_t fdAbandoned_ = 0;
 
     std::string
     buildUrl(std::string_view key) const;

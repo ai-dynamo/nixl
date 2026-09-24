@@ -21,7 +21,11 @@
 #include <absl/strings/str_format.h>
 #include <asio/post.hpp>
 #include <curl/curl.h>
+#include <dirent.h>
+#include <sys/resource.h>
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -79,12 +83,36 @@ parseRequestTimeoutMs(nixl_b_params_t *params) {
     return *parsed;
 }
 
+/// True if the caller set max_inflight rather than leaving it to us.
+bool
+hasMaxInflight(nixl_b_params_t *params) {
+    return params && params->count("max_inflight") != 0;
+}
+
+/// Share of RLIMIT_NOFILE the default cap may claim. The rest is left to the
+/// caller, whose threads, registrations and fabric contexts are opened after this
+/// client is built and cannot be counted here.
+constexpr std::size_t fd_share_divisor = 4;
+
+/// The cap to use when the caller did not choose one: default_max_inflight,
+/// scaled down to the descriptor limit actually in force.
 std::size_t
-parseMaxInflight(nixl_b_params_t *params) {
-    if (!params || params->count("max_inflight") == 0) {
+defaultMaxInflight() {
+    rlimit lim{};
+    if (getrlimit(RLIMIT_NOFILE, &lim) != 0 || lim.rlim_cur == RLIM_INFINITY) {
         return default_max_inflight;
     }
-    // 0 means uncapped.
+    const std::size_t share = static_cast<std::size_t>(lim.rlim_cur) / fd_share_divisor;
+    return std::max<std::size_t>(1, std::min(default_max_inflight, share));
+}
+
+std::size_t
+parseMaxInflight(nixl_b_params_t *params) {
+    if (!hasMaxInflight(params)) {
+        return defaultMaxInflight();
+    }
+    // 0 means uncapped. An explicit value is honoured as given; the constructor
+    // warns when it does not fit the descriptor limit.
     const std::string &value = params->at("max_inflight");
     const std::optional<std::size_t> parsed = parseSize(value);
     if (!parsed) {
@@ -101,6 +129,70 @@ curlErrorText(CURLcode res, const char *error_buf) {
         return error_buf;
     }
     return curl_easy_strerror(res);
+}
+
+/// The errno libcurl saw from the failing syscall, or "0" if it recorded none.
+/// It tells a refused connection (ECONNREFUSED) from descriptor exhaustion
+/// (EMFILE), which both surface as CURLE_COULDNT_CONNECT. strerror is not
+/// thread-safe, but every caller is the poller thread.
+std::string
+osErrnoText(CURL *easy) {
+    long err = 0;
+    if (easy) {
+        curl_easy_getinfo(easy, CURLINFO_OS_ERRNO, &err);
+    }
+    if (err == 0) {
+        return "0";
+    }
+    return absl::StrFormat("%ld (%s)", err, std::strerror(static_cast<int>(err)));
+}
+
+/// File descriptors the process currently holds, or nullopt with errno set if the
+/// count could not be taken. "." and ".." and our own directory handle are
+/// discounted.
+std::optional<std::size_t>
+openFdCount() {
+    DIR *dir = opendir("/proc/self/fd");
+    if (!dir) {
+        return std::nullopt;
+    }
+    std::size_t count = 0;
+    while (readdir(dir) != nullptr) {
+        count++;
+    }
+    closedir(dir);
+    return count > 3 ? count - 3 : 0;
+}
+
+/// The descriptor count rendered for a log line. Counting needs a descriptor of
+/// its own, so when that fails with EMFILE, say so: it is itself the answer.
+std::string
+openFdCountText() {
+    const int saved = errno;
+    errno = 0;
+    const std::optional<std::size_t> count = openFdCount();
+    const int err = errno;
+    errno = saved;
+    if (count) {
+        return std::to_string(*count);
+    }
+    if (err == EMFILE || err == ENFILE) {
+        return absl::StrFormat("unreadable: %s; taking the count hit the limit too, "
+                               "which is itself the answer",
+                               std::strerror(err));
+    }
+    return absl::StrFormat("unreadable (%s)", std::strerror(err));
+}
+
+/// True if the process has no descriptor to spare: the count could not even be
+/// taken, or it leaves no room for another connection.
+bool
+descriptorsExhausted() {
+    rlimit lim{};
+    const bool have_limit = getrlimit(RLIMIT_NOFILE, &lim) == 0;
+    const std::optional<std::size_t> open_now = openFdCount();
+    return !open_now.has_value() ||
+        (have_limit && lim.rlim_cur != RLIM_INFINITY && *open_now + 1 >= lim.rlim_cur);
 }
 
 } // namespace
@@ -213,10 +305,12 @@ restClient::finishRequest(requestCtx *ctx, CURLcode res, long http_code) {
     if (ctx->method == rest_method::HEAD) {
         std::optional<bool> result;
         if (res != CURLE_OK) {
-            NIXL_ERROR << absl::StrFormat("checkObjectExistsAsync: curl_code=%d (%s) for HEAD %s",
-                                          static_cast<int>(res),
-                                          curlErrorText(res, ctx->errorBuf),
-                                          ctx->url);
+            NIXL_ERROR << absl::StrFormat(
+                "checkObjectExistsAsync: curl_code=%d (%s) os_errno=%s for HEAD %s",
+                static_cast<int>(res),
+                curlErrorText(res, ctx->errorBuf),
+                osErrnoText(ctx->easy),
+                ctx->url);
             result = std::nullopt;
         } else if (http_code >= 200 && http_code < 300) {
             result = true;
@@ -239,13 +333,17 @@ restClient::finishRequest(requestCtx *ctx, CURLcode res, long http_code) {
         });
     } else {
         const bool success = (res == CURLE_OK) && (http_code >= 200 && http_code < 300);
-        if (!success) {
+        // Once descriptor exhaustion is established, further connect failures are
+        // counted and reported at teardown instead of logged one by one.
+        const bool redundant = fdExhausted_ && res == CURLE_COULDNT_CONNECT;
+        if (!success && !redundant) {
             NIXL_ERROR << absl::StrFormat(
-                "%s: failed url=%s curl_code=%d (%s) http_code=%ld body=%s",
+                "%s: failed url=%s curl_code=%d (%s) os_errno=%s http_code=%ld body=%s",
                 ctx->opName,
                 ctx->url,
                 static_cast<int>(res),
                 curlErrorText(res, ctx->errorBuf),
+                osErrnoText(ctx->easy),
                 http_code,
                 ctx->responseBody.empty() ? "<empty>" : ctx->responseBody);
         } else {
@@ -297,13 +395,52 @@ restClient::restClient(nixl_b_params_t *custom_params)
     curl_multi_setopt(multi_, CURLMOPT_MAXCONNECTS, static_cast<long>(easyCacheCap_));
     poller_ = std::thread(&restClient::pollerLoop, this);
 
+    std::string cap_source = "configured";
+    if (!hasMaxInflight(custom_params)) {
+        cap_source = maxInflight_ < default_max_inflight ?
+            absl::StrFormat("default: 1/%zu of RLIMIT_NOFILE", fd_share_divisor) :
+            "default";
+    }
     NIXL_INFO << absl::StrFormat(
         "restClient initialized: endpoint=%s, callback_threads=%zu, request_timeout_ms=%zu, "
-        "max_inflight=%s (curl_multi poller)",
+        "max_inflight=%s (%s, curl_multi poller)",
         endpoint_,
         numThreads_,
         requestTimeoutMs_,
-        maxInflight_ == 0 ? std::string("unlimited") : std::to_string(maxInflight_));
+        maxInflight_ == 0 ? std::string("unlimited") : std::to_string(maxInflight_),
+        cap_source);
+
+    // Descriptors open so far are only a floor: the caller registers memory and
+    // opens its fabric contexts after this.
+    rlimit lim{};
+    const bool have_limit = getrlimit(RLIMIT_NOFILE, &lim) == 0;
+    const std::size_t open_now = openFdCount().value_or(0);
+    if (have_limit && lim.rlim_cur != RLIM_INFINITY) {
+        NIXL_INFO << absl::StrFormat("restClient fd budget: open=%zu (so far), soft_limit=%llu, "
+                                     "max_inflight=%zu, headroom=%lld",
+                                     open_now,
+                                     static_cast<unsigned long long>(lim.rlim_cur),
+                                     maxInflight_,
+                                     static_cast<long long>(lim.rlim_cur) -
+                                         static_cast<long long>(open_now) -
+                                         static_cast<long long>(maxInflight_));
+        if (maxInflight_ != 0 && open_now + maxInflight_ > lim.rlim_cur) {
+            NIXL_WARN << absl::StrFormat(
+                "restClient: max_inflight=%zu plus %zu descriptors already open "
+                "exceeds RLIMIT_NOFILE=%llu. Requests will fail at connect with "
+                "EMFILE and be reported as curl_code=7, indistinguishable from a "
+                "refused connection. Lower max_inflight or raise 'ulimit -n'.",
+                maxInflight_,
+                open_now,
+                static_cast<unsigned long long>(lim.rlim_cur));
+        }
+    } else {
+        NIXL_INFO << absl::StrFormat(
+            "restClient fd budget: open=%zu (so far), soft_limit=unlimited, "
+            "max_inflight=%zu",
+            open_now,
+            maxInflight_);
+    }
 }
 
 restClient::~restClient() {
@@ -331,6 +468,12 @@ restClient::~restClient() {
               << ", new_connections=" << newConnects_
               << " (new_connections close to requests means keepalive is not working and "
                  "the endpoint will exhaust ephemeral ports)";
+    if (fdExhaustionSeen_) {
+        NIXL_ERROR << "restClient: ran out of file descriptors during the run; " << fdAbandoned_
+                   << " queued request(s) were failed without being attempted, and "
+                      "connect failures after the first were not logged individually. "
+                      "See the earlier fd budget line.";
+    }
 }
 
 std::string
@@ -364,6 +507,36 @@ restClient::reapCompletions() {
 
         curl_multi_remove_handle(multi_, easy);
         inflight_.erase(ctx);
+
+        // Every connect failure re-checks whether the process is out of
+        // descriptors: libcurl often leaves the errno unset, so the count is what
+        // tells local exhaustion from a refusing endpoint. The diagnostic is logged
+        // on the first failure only. A request that got a response had a
+        // descriptor, so it clears the state.
+        if (res == CURLE_COULDNT_CONNECT) {
+            fdExhausted_ = descriptorsExhausted();
+            fdExhaustionSeen_ = fdExhaustionSeen_ || fdExhausted_;
+        } else if (http_code != 0) {
+            fdExhausted_ = false;
+        }
+        if (res == CURLE_COULDNT_CONNECT && !fdExhaustionLogged_) {
+            fdExhaustionLogged_ = true;
+            rlimit lim{};
+            const bool have_limit = getrlimit(RLIMIT_NOFILE, &lim) == 0;
+            NIXL_ERROR << absl::StrFormat(
+                "restClient: first connect failure. fds open=%s, soft_limit=%s, "
+                "max_inflight=%zu, curl says '%s'. Every running request holds a "
+                "connection, so open close to the limit means the cap does not fit "
+                "in the descriptors left after the caller's own use: lower "
+                "max_inflight or raise 'ulimit -n'. Open well below the limit points "
+                "at the endpoint instead. Further connect failures are not logged.",
+                openFdCountText(),
+                (have_limit && lim.rlim_cur != RLIM_INFINITY) ? std::to_string(lim.rlim_cur) :
+                                                                std::string("unlimited"),
+                maxInflight_,
+                curlErrorText(res, ctx->errorBuf));
+        }
+
         finishRequest(ctx, res, http_code);
     }
 }
@@ -421,13 +594,28 @@ restClient::pollerLoop() {
         // 4. Hand finished transfers' callbacks to the worker pool.
         reapCompletions();
 
-        // 5. Completions above freed slots; refill before sleeping so a capped
+        // 5. Out of descriptors: nothing queued can connect, so fail the backlog
+        //    now, unless descriptors were freed since the last check. Counted and
+        //    reported at teardown.
+        if (fdExhausted_ && !pending_.empty()) {
+            fdExhausted_ = descriptorsExhausted();
+        }
+        if (fdExhausted_ && !pending_.empty()) {
+            while (!pending_.empty()) {
+                std::unique_ptr<requestCtx> ctx = std::move(pending_.front());
+                pending_.pop_front();
+                fdAbandoned_++;
+                finishRequest(ctx.release(), CURLE_COULDNT_CONNECT, 0);
+            }
+        }
+
+        // 6. Completions above freed slots; refill before sleeping so a capped
         //    queue does not stall waiting for the next socket event.
         if (!stopping) {
             startPending();
         }
 
-        // 6. On shutdown, abort everything queued or in flight so every callback
+        // 7. On shutdown, abort everything queued or in flight so every callback
         //    fires exactly once.
         if (stopping) {
             for (requestCtx *ctx : inflight_) {
@@ -443,7 +631,7 @@ restClient::pollerLoop() {
             break;
         }
 
-        // 7. Block until socket activity, the 1s backstop, or curl_multi_wakeup().
+        // 8. Block until socket activity, the 1s backstop, or curl_multi_wakeup().
         int numfds = 0;
         curl_multi_poll(multi_, nullptr, 0, 1000, &numfds);
     }

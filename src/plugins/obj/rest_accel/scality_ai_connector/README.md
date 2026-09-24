@@ -69,7 +69,7 @@ The engine is selected and configured through the backend's `customParams`.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `max_inflight` | `512` | Cap on requests running at once. Each holds a connection and therefore a file descriptor; excess requests queue and start as slots free. `0` disables the cap. |
+| `max_inflight` | `min(512, RLIMIT_NOFILE / 4)` | Cap on requests running at once. Each holds a connection and therefore a file descriptor, so the default is clamped to a share of `RLIMIT_NOFILE`; excess requests queue and start as slots free. `0` disables the cap. |
 | `num_threads` | `max(2, cpu_threads / 4)` | Size of the callback worker pool (see [Concurrency model](#concurrency-model)). |
 | `request_timeout_ms` | `2000` | Limit on each request, connection included (connecting itself is limited to 1 s). A stalled request fails after this instead of holding its transfer; for a cache, falling back is faster than waiting. |
 
@@ -224,6 +224,7 @@ the server's own RoCE settings.
 | `'endpoint_override' parameter is required` | Set `endpoint_override` in `customParams`. |
 | `RDMA requires a NIC list` | Set `rdma_nics`, or `rdma_dev_addr_list` in `cufile.json`. |
 | `ibverbs_dc: no RDMA device found for NIC` | The IPv4 address or device name matches no local RDMA device. |
+| `restClient: first connect failure. fds open=...` | Open descriptors close to the soft limit: lower `max_inflight` or raise `ulimit -n`. Far below it: the endpoint could not be reached; see the `curl says` text in the log. |
 | `<op>: failed url=<url> curl_code=<n> http_code=<n>` | The HTTP call failed. A non-2xx `http_code` comes from the server; check the object id and endpoint URL. |
 
 ## For contributors
