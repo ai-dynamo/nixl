@@ -17,6 +17,7 @@
 
 #include "configuration.h"
 #include "hostname.h"
+#include "nixl_git_hash.h" // generated at build time by vcs_tag(); defines NIXL_GIT_HASH
 #include "nixl_log.h"
 #include "nixl_log_file_sink.h"
 #include "scoped_fd.h"
