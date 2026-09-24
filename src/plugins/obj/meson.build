@@ -67,9 +67,12 @@ if curl_dep.found() and ibverbs_dep.found() and mlx5_dep.found()
     obj_sources += [
         'rest_accel/scality_ai_connector/client.cpp',
         'rest_accel/scality_ai_connector/client.h',
+        'rest_accel/scality_ai_connector/cufile_nics.h',
         'rest_accel/scality_ai_connector/dc_descriptor.h',
         'rest_accel/scality_ai_connector/dc_descriptor_provider.cpp',
         'rest_accel/scality_ai_connector/dc_descriptor_provider.h',
+        'rest_accel/scality_ai_connector/engine_impl.cpp',
+        'rest_accel/scality_ai_connector/engine_impl.h',
         'rest_accel/scality_ai_connector/rdma_descriptor_provider.h',
     ]
     plugin_deps += [ curl_dep, ibverbs_dep, mlx5_dep ]
