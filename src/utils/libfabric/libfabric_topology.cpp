@@ -729,6 +729,15 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             std::vector<std::string> accel_efa_devices;
             for (const auto &nic : group.nics) {
                 accel_efa_devices.push_back(nic.libfabric_name);
+                // group.common_ancestor is the lowest common ancestor of this NIC and
+                // the group's accelerator: step 2 walks each accelerator up to the node
+                // where it enters the NIC subtree, and step 3 walks these NICs to that
+                // same node. The groups hold copies of the NicInfo values, so the answer
+                // goes on the map entry.
+                auto nic_itr = nic_info_map.find(nic.libfabric_name);
+                if (nic_itr != nic_info_map.end()) {
+                    nic_itr->second.accel_via_pcie_switch = isPcieSwitch(group.common_ancestor);
+                }
             }
             // Find accelerator index in our discovered accelerators list
             int accel_index = -1;
@@ -760,7 +769,40 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
             }
         }
     }
+
+    // Report the PCIe-path verdict per device, so a plugin init states which devices need
+    // the PCIe (BAR1) dmabuf mapping.
+    size_t pcie_path_nic_count = 0;
+    for (const auto &entry : nic_info_map) {
+        const bool pcie_mapping = entry.second.accel_via_pcie_switch;
+        if (pcie_mapping) {
+            pcie_path_nic_count++;
+        }
+        NIXL_DEBUG << "Device " << entry.first << " reaches its closest accelerator "
+                   << (pcie_mapping ? "through a PCIe switch" : "through the host");
+    }
+    NIXL_INFO << "GPU dmabuf mapping: " << pcie_path_nic_count << " of " << nic_info_map.size()
+              << " device(s) reach their accelerator through a PCIe switch";
+
     return NIXL_SUCCESS;
+}
+
+bool
+nixlLibfabricTopology::isPcieSwitch(hwloc_obj_t obj) {
+    return obj != nullptr && obj->type == HWLOC_OBJ_BRIDGE && obj->attr != nullptr &&
+           obj->attr->bridge.upstream_type == HWLOC_OBJ_BRIDGE_PCI;
+}
+
+bool
+nixlLibfabricTopology::nicSharesPcieSwitchWithAccel(const std::string &efa_device) const {
+    const auto itr = nic_info_map.find(efa_device);
+    if (itr == nic_info_map.end()) {
+        NIXL_DEBUG << "No NIC info for EFA device " << efa_device
+                   << "; reporting no PCIe path to an accelerator";
+        return false;
+    }
+
+    return itr->second.accel_via_pcie_switch;
 }
 
 void
@@ -1031,6 +1073,8 @@ nixlLibfabricTopology::collectNicInfo(NicInfo &nic,
     nic.bus_id = bus_id;
     nic.device_id = device_id;
     nic.function_id = function_id;
+    // Filled in by buildTopologyAwareGrouping() once NIC/accelerator grouping runs.
+    nic.accel_via_pcie_switch = false;
     if (!getPcieDevParentSwitchData(hwloc_node,
                                     pcie_addr,
                                     nic.parent_switch_domain,

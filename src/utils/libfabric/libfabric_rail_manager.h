@@ -389,6 +389,13 @@ public:
 private:
     size_t striping_threshold_;
 
+    /** Mapping type that a VRAM registration requests when it exports a CUDA dmabuf. Auto
+     * takes a per-NIC verdict from the PCIe-path topology; ForcePcie and ForceDefault request
+     * the PCIe (BAR1) mapping and the platform default mapping on every device; Off registers
+     * by virtual address. init() sets the mode from the dmabuf_mapping parameter. */
+    enum class DmabufMappingMode { Auto, ForcePcie, ForceDefault, Off };
+    DmabufMappingMode dmabuf_mapping_mode_ = DmabufMappingMode::Auto;
+
     // System runtime type (determined once at initialization)
     fi_hmem_iface runtime_;
 

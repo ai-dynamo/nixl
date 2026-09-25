@@ -275,6 +275,104 @@ static const NeuronTopologyInfo neuron_topologies[] = {
 static const size_t neuron_topology_count =
     sizeof(neuron_topologies) / sizeof(neuron_topologies[0]);
 
+// Expected CUDA dmabuf mapping per captured topology: whether every EFA NIC on the
+// instance reaches its accelerator through a PCIe switch, which chooses between the GPU's
+// PCIe aperture (BAR1) mapping and the platform default.
+//
+// The table covers NVIDIA hosts (p-series) and Neuron hosts (trn-series). Each row holds
+// one expectation, and default_mapping_exceptions names the devices that answer
+// differently on a platform carrying both routes.
+struct DmabufMappingInfo {
+    bool enable;
+    const char *instance_type;
+    const char *topo_file;
+    size_t nic_count;
+    size_t nic_line_speed; // Gbps; only feeds the fi_getinfo mock
+    bool expect_pcie_mapping; // expectation for every device not named below
+    // devices expected to need the default mapping while the rest need the PCIe one
+    std::vector<std::string> default_mapping_exceptions;
+    // True for instances whose all-false expectation rests on grouping staying idle, which
+    // the test asserts by checking the NVIDIA and AMD accelerator counts.
+    bool expect_grouping_skipped;
+};
+
+static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
+    // p-series captures below place each EFA NIC and its GPU under a common PCIe switch,
+    // so a dmabuf for those NICs has to name BAR1.
+    {.enable = true,
+     .instance_type = "p5en.48xl",
+     .topo_file = "p5en.48xl-topo.xml",
+     .nic_count = 16,
+     .nic_line_speed = 200,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {}},
+
+    {.enable = true,
+     .instance_type = "p6-b200.48xl",
+     .topo_file = "p6-b200.48xl-topo.xml",
+     .nic_count = 8,
+     .nic_line_speed = 400,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {}},
+
+    {.enable = true,
+     .instance_type = "p5.48xl",
+     .topo_file = "p5.48xl-topo.xml",
+     .nic_count = 32,
+     .nic_line_speed = 100,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {}},
+
+    // p4d hangs its NICs and GPUs off separate bridges under one host bridge, so they meet
+    // above PCIe and the platform default mapping is the correct request.
+    {.enable = true,
+     .instance_type = "p4d.24xl",
+     .topo_file = "p4d.24xl-topo.xml",
+     .nic_count = 4,
+     .nic_line_speed = 100,
+     .expect_pcie_mapping = false,
+     .default_mapping_exceptions = {}},
+
+    // Neuron instances. Grouping collects NVIDIA and AMD accelerators and runs on a host
+    // carrying one, so every device on a Neuron-only host answers false, and
+    // expect_grouping_skipped asserts that precondition. Each EFA device on these captures
+    // sits under a common PCI bridge with its Neuron device, so the false answer states that
+    // grouping stayed idle. nic_line_speed feeds the fi_getinfo mock.
+    {.enable = true,
+     .instance_type = "trn2.48xl",
+     .topo_file = "trn2.48xl-topo.xml",
+     .nic_count = 16,
+     .nic_line_speed = 200,
+     .expect_pcie_mapping = false,
+     .default_mapping_exceptions = {},
+     .expect_grouping_skipped = true},
+
+    {.enable = true,
+     .instance_type = "trn1.32xl",
+     .topo_file = "trn1.32xl-topo.xml",
+     .nic_count = 8,
+     .nic_line_speed = 100,
+     .expect_pcie_mapping = false,
+     .default_mapping_exceptions = {},
+     .expect_grouping_skipped = true},
+
+    // Mixed attachment on one machine, derived from p5en.48xl-topo.xml with rdmap85s0
+    // relocated from its PCIe switch to the host bridge. The relocated device needs the
+    // platform default mapping and its 15 peers need the PCIe one, so the row holds the
+    // decision to per-device granularity.
+    {.enable = true,
+     .instance_type = "mixed-attachment-synthetic",
+     .topo_file = "mixed-attachment-synthetic-topo.xml",
+     .nic_count = 16,
+     .nic_line_speed = 200,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {"rdmap85s0"}},
+
+    // end of list
+};
+static const size_t dmabuf_mapping_topology_count =
+    sizeof(dmabuf_mapping_topologies) / sizeof(dmabuf_mapping_topologies[0]);
+
 // current topology pointer - used for mocking/injection
 static const TopologyInfo *curr_topology = nullptr;
 
@@ -352,6 +450,18 @@ testNeuronTopologies();
 static int
 testNeuronTopology(const char *instance_type);
 
+// test the PCIe-switch classification that the CUDA dmabuf mapping type turns on
+static int
+testDmabufMappingShapes();
+
+// test the dmabuf mapping decision on every enabled captured topology
+static int
+testDmabufMappingTopologies();
+
+// test the dmabuf mapping decision on a single captured topology
+static int
+testDmabufMappingTopology(const DmabufMappingInfo &mapping_info);
+
 int
 main(int argc, char *argv[]) {
     if (argc > 1) {
@@ -391,7 +501,19 @@ main(int argc, char *argv[]) {
     }
 
     // test for actual rail selection policy
-    return testNumaDramRailSelectionPolicy();
+    res = testNumaDramRailSelectionPolicy();
+    if (res != 0) {
+        return res;
+    }
+
+    // test the CUDA dmabuf mapping decision: ancestor classification first (needs no
+    // XML), then the end-to-end decision on every captured topology
+    res = testDmabufMappingShapes();
+    if (res != 0) {
+        return res;
+    }
+
+    return testDmabufMappingTopologies();
 }
 
 int
@@ -1456,4 +1578,195 @@ testNumaDramRailSelectionPolicy(const char *instance_type) {
     }
     NIXL_ERROR << "Could not find topology spec for instance type " << instance_type;
     return 2;
+}
+
+int
+testDmabufMappingShapes() {
+    NIXL_INFO << "=== Testing PCIe-switch classification behind the dmabuf mapping ===";
+
+    // isPcieSwitch() reads an object's type and attr, so hand-built objects cover the kinds
+    // of ancestor a NIC and its accelerator meet at. testDmabufMappingTopologies() covers
+    // the end-to-end decision per topology.
+    union hwloc_obj_attr_u pcie_attr = {};
+    pcie_attr.bridge.upstream_type = HWLOC_OBJ_BRIDGE_PCI;
+    hwloc_obj pcie_switch = {};
+    pcie_switch.type = HWLOC_OBJ_BRIDGE;
+    pcie_switch.attr = &pcie_attr;
+
+    union hwloc_obj_attr_u host_attr = {};
+    host_attr.bridge.upstream_type = HWLOC_OBJ_BRIDGE_HOST;
+    hwloc_obj host_bridge = {};
+    host_bridge.type = HWLOC_OBJ_BRIDGE;
+    host_bridge.attr = &host_attr;
+
+    // Grouping reports the NIC's own node as the ancestor for an unpaired NIC.
+    hwloc_obj pci_device = {};
+    pci_device.type = HWLOC_OBJ_PCI_DEVICE;
+
+    hwloc_obj machine = {};
+    machine.type = HWLOC_OBJ_MACHINE;
+
+    // A bridge carrying no attr classifies as false.
+    hwloc_obj attr_less_bridge = {};
+    attr_less_bridge.type = HWLOC_OBJ_BRIDGE;
+
+    struct MappingShapeCase {
+        const char *name;
+        hwloc_obj_t ancestor;
+        bool expected;
+    };
+
+    const MappingShapeCase cases[] = {
+        {"bridge entered from PCI (a PCIe switch)", &pcie_switch, true},
+        {"host bridge", &host_bridge, false},
+        {"PCI device (NIC grouped with no accelerator)", &pci_device, false},
+        {"machine root", &machine, false},
+        {"bridge without attributes", &attr_less_bridge, false},
+        {"no ancestor at all", nullptr, false},
+    };
+
+    int rc = 0;
+    for (const auto &test_case : cases) {
+        const bool actual = nixlLibfabricTopology::isPcieSwitch(test_case.ancestor);
+        if (actual != test_case.expected) {
+            NIXL_ERROR << "PCIe-switch classification wrong for case '" << test_case.name
+                       << "': expected " << (test_case.expected ? "true" : "false") << ", got "
+                       << (actual ? "true" : "false");
+            rc = 1;
+        }
+    }
+
+    if (rc == 0) {
+        NIXL_INFO << "   SUCCESS: PCIe-switch classification correct for every ancestor kind";
+    }
+    return rc;
+}
+
+int
+testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
+    // The fi_getinfo mock reads curr_topology for the NIC count and line speed; the rest of
+    // TopologyInfo is unused by this test.
+    TopologyInfo dummy = {.enable = true,
+                          .instance_type = mapping_info.instance_type,
+                          .topo_file = mapping_info.topo_file,
+                          .numa_node_count = 0,
+                          .nic_count = mapping_info.nic_count,
+                          .nic_line_speed = mapping_info.nic_line_speed,
+                          .nic_upstream_link_speed = 0,
+                          .switch_count = 0,
+                          .numa_capacity = 0,
+                          .numa_rail_count = 0,
+                          .test_scenarios = {},
+                          .rail_partition = {}};
+    curr_topology = &dummy;
+    NIXL_TRACE << "Testing dmabuf mapping decision on " << mapping_info.instance_type;
+
+    setTesting();
+    setenv("HWLOC_XMLFILE", mapping_info.topo_file, 1);
+
+    // Same RAII guard as testNeuronTopology(): it undoes the env changes on every exit
+    // path, so the injected topology stays local to this call.
+    struct TestEnvGuard {
+        ~TestEnvGuard() {
+            clearTesting();
+            unsetenv("HWLOC_XMLFILE");
+            curr_topology = nullptr;
+        }
+    } env_guard;
+
+    std::optional<nixlLibfabricTopology> topology_holder;
+    try {
+        topology_holder.emplace();
+    }
+    catch (const std::runtime_error &e) {
+        NIXL_ERROR << "Unexpected topology-discovery failure for " << mapping_info.instance_type
+                   << ": " << e.what();
+        return 1;
+    }
+    const nixlLibfabricTopology &topology = *topology_holder;
+
+    const std::vector<std::string> &devices = topology.getAllDevices();
+    if (devices.size() != mapping_info.nic_count) {
+        NIXL_ERROR << "Invalid EFA NIC count for " << mapping_info.instance_type << ", expected "
+                   << mapping_info.nic_count << ", got " << devices.size();
+        return 2;
+    }
+
+    int rc = 0;
+    size_t exceptions_seen = 0;
+    for (const auto &device : devices) {
+        const auto &exceptions = mapping_info.default_mapping_exceptions;
+        const bool is_exception =
+            std::find(exceptions.begin(), exceptions.end(), device) != exceptions.end();
+        const bool expected = is_exception ? false : mapping_info.expect_pcie_mapping;
+        exceptions_seen += is_exception ? 1 : 0;
+
+        const bool pcie_mapping = topology.nicSharesPcieSwitchWithAccel(device);
+        if (pcie_mapping != expected) {
+            NIXL_ERROR << "Wrong dmabuf mapping decision for EFA device " << device << " on "
+                       << mapping_info.instance_type << ": expected "
+                       << (expected ? "PCIe (BAR1)" : "default") << " mapping, got "
+                       << (pcie_mapping ? "PCIe (BAR1)" : "default");
+            rc = 3;
+        }
+    }
+
+    // Assert the precondition behind an all-false expectation: grouping runs on a host
+    // carrying an NVIDIA or AMD accelerator.
+    if (mapping_info.expect_grouping_skipped &&
+        (topology.getNumNvidiaAccel() != 0 || topology.getNumAmdAccel() != 0)) {
+        NIXL_ERROR << mapping_info.instance_type << " was expected to skip NIC/accelerator "
+                   << "grouping, but discovery reports " << topology.getNumNvidiaAccel()
+                   << " NVIDIA and " << topology.getNumAmdAccel()
+                   << " AMD accelerator(s), so grouping runs and the all-default expectation "
+                   << "does not describe this host";
+        rc = 6;
+    }
+
+    // Every named exception device appears among the discovered devices, so the
+    // mixed-attachment row exercises the case it describes.
+    if (exceptions_seen != mapping_info.default_mapping_exceptions.size()) {
+        NIXL_ERROR << "Expected " << mapping_info.default_mapping_exceptions.size()
+                   << " default-mapping exception device(s) on " << mapping_info.instance_type
+                   << " but only " << exceptions_seen << " were discovered";
+        rc = 5;
+    }
+
+    // An unknown device answers false, so an export for it names the platform default.
+    if (topology.nicSharesPcieSwitchWithAccel("no-such-efa-device")) {
+        NIXL_ERROR << "Unknown EFA device reported a PCIe path to an accelerator on "
+                   << mapping_info.instance_type;
+        rc = 4;
+    }
+
+    if (rc == 0) {
+        const size_t exception_count = mapping_info.default_mapping_exceptions.size();
+        NIXL_INFO << "   SUCCESS: " << mapping_info.instance_type << " -- "
+                  << (devices.size() - exception_count) << " of " << devices.size()
+                  << " EFA device(s) need the "
+                  << (mapping_info.expect_pcie_mapping ? "PCIe (BAR1)" : "default")
+                  << " dmabuf mapping, " << exception_count << " the other one";
+    }
+    return rc;
+}
+
+int
+testDmabufMappingTopologies() {
+    NIXL_INFO << "=== Testing dmabuf mapping decision on captured topologies ===";
+
+    for (size_t i = 0; i < dmabuf_mapping_topology_count; i++) {
+        if (!dmabuf_mapping_topologies[i].enable) {
+            continue;
+        }
+        int res = testDmabufMappingTopology(dmabuf_mapping_topologies[i]);
+        if (res != 0) {
+            NIXL_ERROR << "dmabuf mapping test failed on instance type "
+                       << dmabuf_mapping_topologies[i].instance_type
+                       << " with return code: " << res;
+            return res;
+        }
+    }
+
+    NIXL_INFO << "=== Test completed successfully! ===";
+    return 0;
 }
