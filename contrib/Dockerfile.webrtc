@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
+ARG BASE_IMAGE_TAG="26.08-cuda13.4-devel-ubuntu24.04"
+
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
+
+# Install build dependencies required for webrtcbuilds and depot_tools
+
+RUN apt-get update -y && \
+    apt-get install -y ubuntu-keyring && \
+    apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install \
+    ninja-build \
+    libclang-dev \
+    cmake \
+    libgflags-dev \
+    libprotobuf-dev \
+    libaio-dev \
+    liburing-dev \
+    libcpprest-dev \
+    autotools-dev \
+    automake \
+    autoconf \
+    libtool \
+    libz-dev \
+    flex \
+    libgtest-dev \
+    build-essential \
+    python3.12-dev \
+    clang \
+    hwloc \
+    libhwloc-dev \
+    npm \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+COPY contrib/webrtc.patch /workspace/webrtc.patch
+
+# Build WebRTC
+RUN wget --tries=3 --waitretry=5 --no-verbose https://github.com/vsimon/webrtcbuilds/archive/4bc7a6b.zip -O webrtcbuilds.zip && \
+    unzip webrtcbuilds.zip
+RUN cd webrtcbuilds-4bc7a6b7006e2bbe514aac6570c2b85c331e08e9 && \
+    patch -p1 < ../webrtc.patch && \
+    ./build.sh -r bddd95b63fea8f1baa5461ec4dff23ba1ebac7f9 && \
+    mkdir -p /usr/local/webrtc/include && \
+    cp -r out/webrtc*/include/* /usr/local/webrtc/include/ && \
+    cp out/webrtc*/lib/Release/libwebrtc_full.a /usr/local/webrtc/libwebrtc.a && \
+    cp out/webrtc*/lib/Debug/libwebrtc_full.a /usr/local/webrtc/libwebrtc_debug.a && \
+    cd .. && rm -rf webrtcbuilds-4bc7a6b7006e2bbe514aac6570c2b85c331e08e9 webrtcbuilds.zip out

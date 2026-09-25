@@ -15,6 +15,7 @@
 
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="26.08-cuda13.4-devel-ubuntu24.04"
+ARG WEBRTC_IMAGE="webrtc:${BASE_IMAGE_TAG}"
 ARG OS
 
 # libcuobjclient dev files: the cuda-dl-base devel images ship the runtime but
@@ -31,6 +32,8 @@ RUN set -e; \
     cp -a /usr/lib/pkgconfig/cuobjclient-*.pc /cuobj/pkgconfig/; \
     basename "$(ls "$T"/lib/libcuobjclient.so.1.*)" > /cuobj/soname
 
+# Define webrtc stage to allow copying pre-built WebRTC binaries
+FROM ${WEBRTC_IMAGE} AS webrtc
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG}
 
 # Install them only when the base has a matching runtime and no dev files of
@@ -81,7 +84,10 @@ ARG LIBFABRIC_VERSION="v1.21.0"
 ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
-ARG GRPC_TAG="v1.73.0"
+ARG GRPC_TAG="v1.76.0"
+ARG PROTOBUF_TAG="v33.4"
+ARG DISABLE_RXDM_DXS="false"
+ARG DISABLE_GPUDIRECT_TCPXO_CUDA="false"
 ARG APT_MIRROR=""
 
 # Optional apt mirror override, e.g. for CI environments with an internal
@@ -106,13 +112,14 @@ RUN apt-get update -y && \
     libclang-dev \
     cmake \
     libgflags-dev \
-    libprotobuf-dev \
     libaio-dev \
+    liburing-dev \
     libcpprest-dev \
     etcd-server \
     etcd-client \
     autotools-dev \
     automake \
+    autoconf \
     libtool \
     libz-dev \
     flex \
@@ -126,7 +133,8 @@ RUN apt-get update -y && \
     # aws-sdk-cpp dependencies
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
     # azure-sdk-for-cpp dependencies
-    libxml2-dev
+    libxml2-dev \
+    npm
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
 # Skip only the DOCA SDK install when the base image already ships it.
@@ -174,6 +182,25 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     make install && \
     ldconfig
 
+RUN git clone https://github.com/protocolbuffers/protobuf.git -b ${PROTOBUF_TAG} && \
+    cd protobuf && \
+    git submodule update --init --recursive && \
+    mkdir build && \
+    cmake -S . -B build \
+          -DCMAKE_CXX_STANDARD=20 \
+          -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -Dprotobuf_BUILD_TESTS=OFF \
+          -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -Dprotobuf_ABSL_PROVIDER=package && \
+    cmake --build build --parallel ${NPROC:-$(nproc)} && \
+    cmake --install build
+
+# Copy pre-built WebRTC from webrtc stage.
+COPY --from=webrtc /usr/local/webrtc /usr/local/webrtc
+
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+
 # Build gRPC from source against system/install-prefix Abseil.
 RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
@@ -192,7 +219,7 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
         -Dabsl_DIR=/usr/local/lib/cmake/absl \
         -DgRPC_SSL_PROVIDER=package \
         -DgRPC_ABSL_PROVIDER=package \
-        -DgRPC_PROTOBUF_PROVIDER=module \
+        -DgRPC_PROTOBUF_PROVIDER=package \
         -DgRPC_ZLIB_PROVIDER=package && \
     make -j${NPROC:-$(nproc)} && \
     make install && \
@@ -201,6 +228,7 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
 RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
+    sed -i 's/find_dependency(Protobuf)/find_dependency(Protobuf CONFIG)/' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 -DCMAKE_PREFIX_PATH=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
@@ -343,6 +371,12 @@ RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__vers
 # setuptools for PEP 639 license metadata
 RUN uv pip install --system --upgrade 'setuptools>=80.9.0'
 
+# Install pybind11 via apt
+RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
+
+# Install Bazel for DXS/RxDM
+RUN npm install -g @bazel/bazelisk@1.28.1
+
 WORKDIR /workspace/nixl
 COPY . /workspace/nixl
 
@@ -400,9 +434,6 @@ RUN if [ "$BUILD_INFINIA" = "true" ]; then \
         cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
     fi
 
-# Install pybind11 via apt
-RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
-
 # Set PKG_CONFIG_PATH for NIXL EP dependencies (rdma-core, UCX, DOCA)
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib/$ARCH-linux-gnu/pkgconfig
 ENV PKG_CONFIG_PATH=$RDMA_CORE_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$UCX_PREFIX/lib/pkgconfig:$DOCA_PREFIX/lib/$ARCH-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
@@ -416,10 +447,11 @@ RUN rm -rf build && \
     else \
         NIXL_EP_FLAG=""; \
     fi && \
-    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
+    protoc --cpp_out=./ src/plugins/gpudirect_tcpxo/control_channel.proto && \
+    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE -Ddisable_rxdm_dxs=$DISABLE_RXDM_DXS -Ddisable_gpudirect_tcpxo_cuda=$DISABLE_GPUDIRECT_TCPXO_CUDA && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
-    ninja install
+    ninja install || { cat /workspace/nixl/build/meson-logs/meson-log.txt || true; exit 1; }
 
 # Fail the build if cuObject acceleration did not make it into the plugin.
 RUN set -e; \

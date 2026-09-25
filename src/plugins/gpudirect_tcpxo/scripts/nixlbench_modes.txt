@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Google LLC. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# NIXLBench test suite for --nixlbench-run-mode spread
+default
+pairwise_mg_8_8
+pairwise_mg_4
+fan_out_1_to_8
+fan_in_8_to_1
+tensor_parallel_4_8
+rail_0_1
+rail_0_7
+rail_3_4
+rail_4_4
