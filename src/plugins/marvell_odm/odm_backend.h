@@ -227,10 +227,26 @@ private:
         }
     };
 
+    /* Bookkeeping for queryMem() on auto-allocated (addr=0) DRAM_SEG
+     * registrations. The {addr=0, len, devId} key is not unique: callers
+     * such as nixlbench legitimately register multiple independent
+     * auto-allocated regions of the same size on the same device (one per
+     * worker thread), each getting its own driver-assigned IOVA. `count`
+     * tracks how many live registrations currently share a key; `ambiguous`
+     * is sticky for the lifetime of the entry once two or more registrations
+     * have shared it, so queryMem() never reports a possibly-wrong IOVA for
+     * a key it cannot uniquely resolve. registerMem() itself must never
+     * fail because of a key collision here. */
+    struct AutoIovaEntry {
+        uint64_t dma_addr = 0;
+        int count = 0;
+        bool ambiguous = false;
+    };
+
     int dma_fd_;
     std::string device_path_;
     mutable std::mutex auto_iova_lock_;
-    std::unordered_map<OdmRegKey, uint64_t, OdmRegKeyHash> auto_iova_map_;
+    std::unordered_map<OdmRegKey, AutoIovaEntry, OdmRegKeyHash> auto_iova_map_;
     uint16_t qid_; /* Backward-compat single queue id (odm_qid). */
     uint16_t qid_start_; /* ODM queue range start (inclusive). */
     uint16_t qid_end_; /* ODM queue range end (inclusive). */
