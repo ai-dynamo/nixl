@@ -451,6 +451,7 @@ nixlOdmEngine::deregisterMem(nixlBackendMD *meta) {
 #ifdef HAVE_CUDA
     if (md->type == VRAM_SEG) {
         for (const auto &pr : md->vram_preexport_chunks) {
+            releaseVramDmabuf(pr.first, pr.second);
             evictDmabufRange(pr.first, pr.second);
         }
         md->vram_preexport_chunks.clear();
