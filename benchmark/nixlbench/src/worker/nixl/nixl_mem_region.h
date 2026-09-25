@@ -101,7 +101,7 @@ private:
 
 // Per-IOV cleanup for the given segment type; no-op for types that own nothing.
 void
-cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov);
+cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov, bool owns_buffer = true);
 
 // RAII wrapper around a NIXL memory registration: deregisters the memory and
 // runs the per-IOV cleanup on destruction.
