@@ -354,21 +354,21 @@ nixlOdmEngine::registerMem(const nixlBlobDesc &mem,
             {
                 const OdmRegKey key{mem.addr, mem.len, static_cast<uint32_t>(mem.devId)};
                 std::lock_guard<std::mutex> lock(auto_iova_lock_);
-                const auto inserted =
-                    auto_iova_map_.try_emplace(key, md->dma_addr).second;
-                if (!inserted) {
-                    struct mrvl_dma_iova_commands free_cmd{};
-                    free_cmd.target_iova_addr = md->dma_addr;
-                    free_cmd.target_iova_size = md->size;
-                    if (ioctl(dma_fd_, MRVL_CXL_FREE_IOVA_COMMAND, &free_cmd) < 0) {
-                        NIXL_WARN << "ODM: FREE_IOVA failed after duplicate registration: "
-                                  << strerror(errno);
-                    }
-                    NIXL_ERROR << "ODM: duplicate auto-IOVA registration for addr=0 len="
-                               << mem.len << " devId=" << mem.devId;
-                    delete md;
-                    return NIXL_ERR_INVALID_PARAM;
+                auto &entry = auto_iova_map_[key];
+                if (entry.count == 0) {
+                    entry.dma_addr = md->dma_addr;
+                } else {
+                    /* A second (or later) live registration shares this key.
+                     * queryMem() cannot tell which physical IOVA a future
+                     * query for this key refers to, so mark it permanently
+                     * ambiguous for as long as any of these registrations
+                     * remain live; never fail the registration itself. */
+                    entry.ambiguous = true;
+                    NIXL_DEBUG << "ODM: auto-IOVA key addr=0 len=" << mem.len
+                               << " devId=" << mem.devId << " now has " << (entry.count + 1)
+                               << " live registrations; queryMem() will report ambiguous";
                 }
+                entry.count++;
             }
             NIXL_DEBUG << "ODM: auto-allocated device IOVA 0x" << std::hex << md->dma_addr
                        << std::dec << " size " << mem.len;
@@ -443,7 +443,10 @@ nixlOdmEngine::deregisterMem(nixlBackendMD *meta) {
         }
         const OdmRegKey key{md->addr, md->size, md->dev_id};
         std::lock_guard<std::mutex> lock(auto_iova_lock_);
-        auto_iova_map_.erase(key);
+        auto it = auto_iova_map_.find(key);
+        if (it != auto_iova_map_.end() && --it->second.count <= 0) {
+            auto_iova_map_.erase(it);
+        }
     }
 #ifdef HAVE_CUDA
     if (md->type == VRAM_SEG) {
@@ -466,10 +469,15 @@ nixlOdmEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_re
         const nixlBlobDesc &mem = descs[i];
         const OdmRegKey key{mem.addr, mem.len, static_cast<uint32_t>(mem.devId)};
         const auto it = auto_iova_map_.find(key);
-        if (it != auto_iova_map_.end()) {
+        if (it != auto_iova_map_.end() && !it->second.ambiguous) {
             nixl_b_params_t params;
-            params["device_iova"] = std::to_string(it->second);
+            params["device_iova"] = std::to_string(it->second.dma_addr);
             resp[i] = std::move(params);
+        } else if (it != auto_iova_map_.end() && it->second.ambiguous) {
+            /* Multiple live auto-allocated regions share this {addr=0, len,
+             * devId} key; we cannot tell which one the caller means, so
+             * report "unknown" instead of guessing wrong. */
+            resp[i] = std::nullopt;
         } else if (mem.addr != 0) {
             nixl_b_params_t params;
             params["device_iova"] = std::to_string(mem.addr);
