@@ -34,6 +34,7 @@
 #include "worker/worker.h"
 #include <random>
 #include "worker/nixl/nixl_mem_region.h"
+#include "worker/nixl/nixl_worker_odm.h"
 
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
 
@@ -48,6 +49,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<GusliDeviceConfig> gusli_devices;
         std::string remote_agent_name;
         std::optional<xferBenchIOV> completion_counter_iov;
+        xferBenchOdm::State odm_;
 
     public:
         explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
