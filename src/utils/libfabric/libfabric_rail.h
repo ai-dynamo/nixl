@@ -31,6 +31,7 @@
 #include "nixl.h"
 #include "backend/backend_aux.h"
 #include "libfabric/libfabric_common.h"
+#include "libfabric/libfabric_cuda_dmabuf.h"
 
 // Forward declarations
 class nixlLibfabricConnection;
@@ -425,7 +426,10 @@ public:
     isProperlyInitialized() const;
 
     // Memory registration methods
-    /** Register memory buffer with libfabric */
+    /** Register memory buffer with libfabric.
+     *  The rail registers the region with FI_MR_DMABUF when dmabuf carries an fd and
+     *  canRegisterWithDmabuf() holds for this registration, and by virtual address
+     *  otherwise. A FI_MR_DMABUF registration that fails retries by virtual address. */
     nixl_status_t
     registerMemory(void *buffer,
                    size_t length,
@@ -433,7 +437,15 @@ public:
                    int device_id,
                    enum fi_hmem_iface iface,
                    struct fid_mr **mr_out,
-                   uint64_t *key_out) const;
+                   uint64_t *key_out,
+                   const LibfabricUtils::CudaDmabufExport *dmabuf = nullptr) const;
+
+    /** Check if this rail can register CUDA device memory with a caller-exported dmabuf fd.
+     *  The rail qualifies when its provider is EFA with FI_HMEM support and its fabric
+     *  carries libfabric API 1.20 or newer, the version at which the provider accepts
+     *  FI_MR_DMABUF. A caller exports an fd only for a rail that reports true. */
+    bool
+    canRegisterWithDmabuf(nixl_mem_t mem_type, enum fi_hmem_iface iface) const;
 
     /** Deregister memory from libfabric */
     nixl_status_t
