@@ -53,7 +53,9 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) return VRAM_SEG;
+    if (neuronCoreCount() > 0) {
+        return VRAM_SEG;
+    }
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
@@ -350,6 +352,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         std::cout << "INFINIA backend (plugin will use RED_* environment variables, "
                      "NIXL_CONFIG_FILE, or defaults)"
                   << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MARVELL_ODM)) {
+        xferBenchOdm::configureBackend(devices, odm_, backend_params);
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -375,9 +379,19 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             xferBenchConfig::backend_mems = engine_mems;
         }
     }
+
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MARVELL_ODM)) {
+        const std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : name;
+        odm_.bindNixl(agent, backend_engine, target);
+        xferBenchOdm::setConsistencyState(&odm_);
+    }
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MARVELL_ODM)) {
+        xferBenchOdm::setConsistencyState(nullptr);
+    }
+
     remote_regs_.clear();
     remote_fds.clear();
     local_regs_.clear();
@@ -715,8 +729,7 @@ cleanupVramRocm(xferBenchIOV &iov) {
 
 static std::optional<xferBenchIOV>
 getVramDesc(int devid, size_t buffer_size, bool isInit) {
-    uint8_t memset_value =
-        isInit ? XFERBENCH_INITIATOR_BUFFER_ELEMENT : XFERBENCH_TARGET_BUFFER_ELEMENT;
+    uint8_t memset_value = isInit ? xferBenchInitiatorFillByte() : XFERBENCH_TARGET_BUFFER_ELEMENT;
 
     if (neuronCoreCount() > 0) {
         return getVramDescNeuron(devid, buffer_size, memset_value);
@@ -947,10 +960,12 @@ cleanupBasicDescObj(xferBenchIOV &iov) {
 // FILE fds are owned by xferFileState and BLK descriptors own nothing, so both
 // fall through to the no-op default.
 void
-cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov) {
+cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov, bool owns_buffer) {
     switch (seg_type) {
     case DRAM_SEG:
-        cleanupBasicDescDram(iov);
+        if (owns_buffer) {
+            cleanupBasicDescDram(iov);
+        }
         break;
     case VRAM_SEG:
         cleanupBasicDescVram(iov);
@@ -1168,6 +1183,26 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
             remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
         }
+    } else if (XFERBENCH_BACKEND_MARVELL_ODM == xferBenchConfig::backend) {
+        const std::string &odm_dev =
+            odm_.device_path_.empty() ? xferBenchConfig::odm_device_path : odm_.device_path_;
+        xferBenchConfig::odm_device_path = odm_dev;
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                iov_list.emplace_back(0, buffer_size, static_cast<int>(i));
+            }
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, DRAM_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem ODM failed");
+            remote_regs_.emplace_back(*agent, backend_engine, DRAM_SEG, std::move(iov_list));
+        }
+        if (xferBenchConfig::check_consistency && xferBenchConfig::op_type == XFERBENCH_OP_READ &&
+            xferBenchConfig::check_value < 0) {
+            if (!odm_.seedDramForRead(remote_regs_, xferBenchConfig::total_buffer_size)) {
+                std::cerr << "ODM: failed to seed device DRAM for READ benchmark" << std::endl;
+                exit(EXIT_FAILURE);
+            }
+        }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
         int num_files = xferBenchConfig::num_files;
@@ -1265,7 +1300,7 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         if (seg_type == DRAM_SEG && xferBenchConfig::check_consistency) {
             for (auto &iov : local_regs_.back().iovs()) {
                 if (isInitiator()) {
-                    memset((void *)iov.addr, XFERBENCH_INITIATOR_BUFFER_ELEMENT, iov.len);
+                    memset((void *)iov.addr, xferBenchInitiatorFillByte(), iov.len);
                 } else if (isTarget()) {
                     memset((void *)iov.addr, XFERBENCH_TARGET_BUFFER_ELEMENT, iov.len);
                 }
@@ -1426,6 +1461,21 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     iov_remote.len = block_size;
                     iov_remote.devId = iov.devId;
                     remote_iov_list.push_back(iov_remote);
+                } else if (XFERBENCH_BACKEND_MARVELL_ODM == xferBenchConfig::backend) {
+                    const size_t cfg_num_devices = xferBenchConfig::num_initiator_dev;
+                    const size_t entries_per_device = (cfg_num_devices > 0 && !iov_list.empty()) ?
+                        std::max<size_t>(1, iov_list.size() / cfg_num_devices) :
+                        1;
+                    const size_t odm_dev = devidx / entries_per_device;
+                    const size_t block_in_dev = devidx % entries_per_device;
+                    const size_t buffer_size = xferBenchConfig::total_buffer_size /
+                        (cfg_num_devices * xferBenchConfig::num_threads);
+                    const size_t block_offset = (block_in_dev * block_size) % buffer_size;
+                    xferBenchIOV iov_remote(iov);
+                    iov_remote.addr = remote_regs_[list_idx].iovs()[odm_dev].addr + block_offset;
+                    iov_remote.len = block_size;
+                    iov_remote.devId = remote_regs_[list_idx].iovs()[odm_dev].devId;
+                    remote_iov_list.push_back(iov_remote);
                 } else {
                     xferBenchIOV iov_remote(iov);
                     iov_remote.addr = file_offset;
@@ -1579,6 +1629,8 @@ prepareTransferDescriptors(nixl_xfer_dlist_t &local_desc,
         remote_desc = nixl_xfer_dlist_t(OBJ_SEG);
     } else if (xferBenchConfig::isBlkStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(BLK_SEG);
+    } else if (XFERBENCH_BACKEND_MARVELL_ODM == xferBenchConfig::backend) {
+        remote_desc = nixl_xfer_dlist_t(DRAM_SEG);
     } else if (xferBenchConfig::isStorageBackend()) {
         remote_desc = nixl_xfer_dlist_t(FILE_SEG);
     }
@@ -1593,6 +1645,8 @@ getRemoteSegType() {
         return OBJ_SEG;
     } else if (xferBenchConfig::isBlkStorageBackend()) {
         return BLK_SEG;
+    } else if (XFERBENCH_BACKEND_MARVELL_ODM == xferBenchConfig::backend) {
+        return DRAM_SEG;
     } else if (xferBenchConfig::isStorageBackend()) {
         return FILE_SEG;
     }
