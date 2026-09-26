@@ -102,6 +102,7 @@
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
+#define XFERBENCH_BACKEND_DOCA_MEMOS "DOCA_MEMOS"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -131,6 +132,7 @@
 // Operation types
 #define XFERBENCH_OP_READ "READ"
 #define XFERBENCH_OP_WRITE "WRITE"
+#define XFERBENCH_OP_QUERY "QUERY"
 
 // Mode types
 #define XFERBENCH_MODE_SG "SG"
@@ -244,6 +246,11 @@ public:
     /* Parallel workers split iterations across both CPU and Device API. */
     static int
     workerNum();
+    static std::string doca_memos_device_name;
+    static int doca_memos_num_tasks;
+    static std::string doca_memos_query_mem_mode;
+    static std::string doca_memos_nguid;
+    static bool doca_memos_ignore_read_not_found;
 
     static int
     parseConfig(int argc, char *argv[]);
@@ -259,6 +266,11 @@ public:
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    // True only for backends that expose S3/Azure-style object CRUD helpers
+    // (putObj/getObj/rmObj). DOCA_MEMOS uses OBJ_SEG but has no such helpers,
+    // so it is intentionally excluded.
+    static bool
+    hasObjectStorageHelpers();
 
 protected:
     static int
