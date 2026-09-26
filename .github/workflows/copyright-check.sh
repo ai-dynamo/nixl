@@ -10,6 +10,7 @@ failures=()
 AUTHORS=(
   "NVIDIA CORPORATION & AFFILIATES"
   "Advanced Micro Devices, Inc"
+  "IBM Corporation"
 )
 
 for f in $(git ls-files); do
