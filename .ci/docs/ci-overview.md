@@ -308,6 +308,121 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `manylinux` runner. Check the step's `containerSelector` against
 `runs_on_dockers`, not just whether `docker` is podman.
 
+## Authenticated github.com clones
+
+The container Dockerfiles build their third-party dependencies (abseil, gRPC,
+etcd-cpp-apiv3, aws-sdk-cpp, azure-sdk, gusli, gtest-parallel) from source, which
+means ~40 `git clone` calls against github.com per image build. Cloning those
+anonymously is unreliable: github.com intermittently answers an anonymous clone
+with `HTTP 401` + `www-authenticate: Basic realm="GitHub"`, and unauthenticated
+requests are budgeted per source IP — one the Blossom cluster shares across every
+tenant, so the failure rate does not track NIXL's own load.
+
+Because git has no credential to offer, a 401 is fatal rather than retried: git
+tries to prompt, finds no TTY, and dies with
+
+```
+fatal: could not read Username for 'https://github.com': No such device or address
+```
+
+That message is misleading in two ways — `github.com` is the credential realm, not
+a host it failed to reach, and `No such device or address` is `ENXIO` from opening
+`/dev/tty`. Neither has anything to do with DNS or connectivity. With a credential
+present git instead answers the 401 by retrying with auth, so the clone succeeds.
+
+**How it is wired.** The `svc-nixl-github-token` credential (already used by
+`GithubHelper` for commit statuses) is bound on the image-build steps of
+`build-container-pr-matrix.yaml` and `build-container-matrix.yaml` as
+`NIXL_GITHUB_USER` / `NIXL_GITHUB_TOKEN`. `contrib/build-container.sh` and
+`benchmark/nixlbench/contrib/build.sh` turn those into an env-sourced build secret:
+
+```
+--secret id=ghconfig,env=NIXL_GITHUB_GITCONFIG
+```
+
+and every `RUN` that clones from github.com mounts it at `/root/.gitconfig`:
+
+```
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone ...
+```
+
+The token is therefore never written to disk by the build scripts, never lands in
+an image layer, and does not appear in `podman history`. It needs no scopes — the
+repos are public and the only purpose is to stop being anonymous.
+
+**Local and external builds are unaffected.** With `NIXL_GITHUB_TOKEN` unset the
+scripts pass no `--secret`, the mount resolves empty, and the clones stay
+anonymous exactly as before. The `ENV GIT_TERMINAL_PROMPT=0` alongside each block
+is deliberate: it keeps a future credential problem from reappearing as the same
+misleading "could not read Username" message.
+
+**The ci-demo-built images.** Images declared with `file:` in a matrix are built by
+ci-demo outside any step (`Matrix.groovy` `buildImage`), so a per-step
+`credentials:` entry never reaches them. Two things make it work anyway:
+
+- The token is bound around `matrix.main()` in `.ci/jenkins/pipeline/Jenkinsfile`,
+  not just around the `GithubHelper` call, so it is in the environment for the
+  image-build phase too.
+- `build_args` is spliced verbatim into `docker build`, so those entries carry
+  `--secret id=ghconfig,src=${WORKSPACE}/.ghconfig`.
+- The config itself is written by a `pipeline_on_image_build` hook calling
+  `write_github_gitconfig`. **The hook is load-bearing, not a convenience.** Putting the
+  credential in the matrix `env:` block does not work: ci-demo resolves `env:` with
+  `resolveTemplate`, a `@NonCPS` Groovy method reading `env.getEnvironment()`, which
+  does not see a `withCredentials` binding. `replaceVars` then leaves the unmatched
+  `${...}` in place rather than blanking it, so the secret silently becomes a
+  literal template string and every clone fails a 401. The hook runs as a real `sh`
+  step, where the binding is always present. Build #3095 of `nixl-ci-non-gpu` failed
+  exactly this way.
+
+`.ci/dockerfiles/Dockerfile.base` runs as a **non-root** user, so its mount uses
+`mode=0444` and mounts straight at `$HOME/.gitconfig`, so nothing is copied and the
+file cannot outlive the layer. It logs `github.com clones: authenticated` or `: anonymous` so the mode is
+visible at the top of the layer, and CI passes `REQUIRE_GITHUB_AUTH=1` so an empty
+secret fails there rather than as a clone failure ten minutes later. Local builds
+leave it 0 and clone anonymously as before. That covers `.gitlab/build.sh`'s clones and the `taskflow` /
+`prometheus-cpp` meson `wrap-git` subprojects in a single place, for all five
+matrices that build from it.
+
+**Why `url.insteadOf` and not a `.netrc`.** git only consults `~/.netrc` from 2.35
+onwards. On git 2.34 — which Ubuntu 22.04 ships, and which `build-matrix.yaml` still
+builds as the `nixl-ci-non-gpu-base-ubuntu22` variant — a netrc is ignored outright:
+the credential is never sent and the clone stays anonymous, with no error to show for
+it. `url."https://<user>:<token>@github.com/".insteadOf` works on every version,
+because the credential is part of the URL rather than a file git may decline to read.
+Verified on 2.34.1 and 2.43.0.
+
+The tradeoff is that the rewritten URL is passed as an argument to `git-remote-https`,
+so the token is visible in that process's argv and in `GIT_TRACE` output. Do not enable
+`GIT_TRACE`/`GIT_CURL_VERBOSE` in these jobs. git redacts the credential in its own
+error messages, keeps it out of `remote.origin.url`, and does not write it into
+submodule configs — all verified.
+
+**On CI agents**, where the token is an env var rather than a mounted file,
+`setup_github_auth` in `.ci/scripts/common.sh` exports
+`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` (git 2.31+) instead of
+writing `$HOME/.gitconfig`. That is deliberate: the config is **additive**, so it
+neither skips auth when a `~/.gitconfig` already exists nor deletes one that does.
+CI itself writes `git config --global --add safe.directory` on the agent
+(`build-wheel-nightly-matrix.yaml`), which a file-based helper would either hide
+behind or clobber on cleanup. It also writes the token to no file at all, and
+disables `set -x` before expanding it so the value never reaches the log.
+`.gitlab/build.sh` and `.gitlab/build-rocm.sh` call it, as do the matrix steps that
+clone UCX on the agent.
+
+**Coverage.** Every `RUN` that clones from github.com carries the mount — including
+the two `$UCX_REPO` clones in `contrib/Dockerfile` and `contrib/Dockerfile.manylinux`
+and the vLLM clone in `Dockerfile.base`, whose URLs come from an ARG or a
+continuation line and so are easy to miss when grepping for `github.com` on the
+`RUN` line itself. The meson `wrap-file` subprojects fetch release tarballs rather
+than cloning and need no credential.
+
+**Still anonymous.** `.ci/dockerfiles/Dockerfile.rocm` (9 clones) is not referenced
+by any matrix, so there is nothing to wire a secret through yet. The meson
+`wrap-file` subprojects fetch release tarballs rather than cloning; a 401 there
+fails the download outright instead of prompting, and they are unaffected by this
+change.
+
 ## Related docs
 
 - [Build Wheel Matrix CI Job Documentation](build-wheel-matrix-ci.md) — deep dive into `nixl-ci-build-wheel`.

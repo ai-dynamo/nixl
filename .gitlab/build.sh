@@ -21,6 +21,10 @@ set -e
 set -x
 set -o pipefail
 
+# Authenticate the github.com clones below (and the meson wrap-git subprojects)
+# when a token is available; a no-op otherwise. See .ci/scripts/common.sh.
+setup_github_auth
+
 # Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
 # File modification timestamp check in CMake uses 1 second resolution.
 # This causes problems for fast builds that install, patch then reinstall the same file, as the final install step

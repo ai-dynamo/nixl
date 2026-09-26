@@ -47,6 +47,12 @@ credentials:
   - credentialsId: 'nixl-gitlab-registry-token'
     type: 'string'
     variable: 'GITLAB_REGISTRY_TOKEN'
+  # Authenticates the third-party github.com clones inside the image builds;
+  # anonymous clones get an intermittent 401 and share a per-IP budget with the
+  # whole cluster. Public-repo read only.
+  - credentialsId: 'svc-nixl-github-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
 
 steps:
   - name: Setup docker
@@ -67,8 +73,14 @@ steps:
 
   - name: Prepare environment
     containerSelector: "{name: 'podman'}"
+    credentialsId:
+      - 'svc-nixl-github-token'
     run: |
       set -e
+      # Authenticate this clone too: it runs on the agent, outside the image build
+      # that mounts the token as a build secret.
+      . .ci/scripts/common.sh
+      setup_github_auth
       # nixlbench builds against a UCX source tree; nixl consumes UCX_VERSION directly.
       if [ "$target" = "nixlbench" ]; then
         rm -rf ucx-src
@@ -78,6 +90,8 @@ steps:
 
   - name: Build image
     containerSelector: "{name: 'podman'}"
+    credentialsId:
+      - 'svc-nixl-github-token'
     run: |
       set -e
       case "$target" in

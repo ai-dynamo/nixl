@@ -46,7 +46,15 @@ if (params.githubData) {
 // 4. Handle test execution and reporting
 // 5. Manage artifacts and build results
 try {
-    matrix.main()
+    // Bound around the whole matrix run, not just a step: ci-demo builds the images
+    // declared by `file:` outside any step (Matrix.groovy buildImage), so a per-step
+    // `credentials:` entry never reaches them. Those builds clone third-party deps
+    // from github.com, which answers anonymous clones with an intermittent HTTP 401.
+    withCredentials([usernamePassword(credentialsId: 'svc-nixl-github-token',
+                                      passwordVariable: 'NIXL_GITHUB_TOKEN',
+                                      usernameVariable: 'NIXL_GITHUB_USER')]) {
+        matrix.main()
+    }
 } catch (Exception ex) {
     currentBuild.result = 'FAILURE'
     println ex
