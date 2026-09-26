@@ -52,6 +52,9 @@ static std::pair<size_t, size_t> getStrideScheme(xferBenchWorker &worker, int nu
     } else if (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme) {
         if (worker.isTarget()) {
             count = initiator_device;
+            if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
+                buffer_size = xferBenchConfig::total_buffer_size / num_threads;
+            }
         }
     } else if (XFERBENCH_SCHEME_TP == xferBenchConfig::scheme) {
         if (worker.isInitiator()) {

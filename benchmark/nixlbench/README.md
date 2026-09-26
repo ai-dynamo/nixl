@@ -705,6 +705,39 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 ```
 The workers automatically coordinate ranks through ETCD as they connect. Note, the second nixlbench should be started within 60s, otherwise the first instance will stop with an error in the barrier.
 
+### SG many-to-one
+
+For a host-driven `N`:1 many-to-one WRITE (incast), start `N + 1` processes
+with identical arguments and the same unique `--benchmark_group`. ETCD ranks
+`0..N-1` are initiators and rank `N` is the single target, so start the
+initiators before the target when deterministic role placement is required.
+The Device API remains limited to the pairwise scheme.
+
+```bash
+./nixlbench \
+  --etcd_endpoints http://etcd-server:2379 \
+  --benchmark_group manytoone-example \
+  --backend UCX --mode SG --scheme manytoone \
+  --num_initiator_dev 4 --num_target_dev 1 \
+  --op_type WRITE \
+  --initiator_seg_type VRAM --target_seg_type VRAM \
+  --total_buffer_size 268435456 \
+  --start_block_size 262144 --max_block_size 262144 \
+  --start_batch_size 1 --max_batch_size 1
+```
+
+Run this command in five processes. Each initiator receives a distinct region
+of the target buffer. Assign one GPU per process and expose that GPU to the
+process as CUDA device 0 (for example, with `CUDA_VISIBLE_DEVICES`). When
+`--use_hugepages` is enabled for DRAM, each per-initiator, per-thread target
+region must be a multiple of 2 MiB.
+
+For SG many-to-one, `--total_buffer_size` is the aggregate target region.
+Each initiator receives `total_buffer_size / num_initiator_dev` bytes in total;
+with `num_threads` threads, each initiator-thread receives
+`total_buffer_size / (num_initiator_dev * num_threads)` bytes. The configured
+`block_size * batch_size * pipeline_depth` must fit in that per-thread region.
+
 ### Backend-Specific Examples
 
 #### Network Backends
