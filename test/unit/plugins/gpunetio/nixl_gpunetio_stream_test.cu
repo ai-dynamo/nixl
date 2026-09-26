@@ -18,6 +18,10 @@
 #include <iostream>
 #include <string>
 #include <algorithm>
+#include <csignal>
+#include <cstdlib>
+#include <vector>
+#include <unistd.h>
 #include <nixl_descriptors.h>
 #include <nixl_params.h>
 #include <nixl.h>
@@ -59,7 +63,7 @@ target_kernel (uintptr_t addr, uint8_t val) {
     for (int i = 0; i < (int)SIZE; i++) {
         if (((uint8_t *)buffer_addr)[i] != val) {
             printf (">>>>>>> CUDA target kernel, buffer %d byte %x is wrong\n", threadIdx.x, i);
-            ok = 1;
+            ok = 0;
         }
     }
     if (ok == 1)
@@ -168,8 +172,30 @@ allBytesAre (void *buffer, size_t size, uint8_t value) {
     return true; // All bytes match the value
 }
 
+static void
+cyclePreparedRequests(nixlAgent &agent,
+                      const nixl_xfer_dlist_t &local,
+                      const nixl_xfer_dlist_t &remote,
+                      const std::string &remote_agent,
+                      const nixl_opt_args_t &params) {
+    for (uint32_t iteration = 0; iteration < 64; ++iteration) {
+        nixlXferReqH *request = nullptr;
+        nixl_exit_on_failure(
+            agent.createXferReq(NIXL_WRITE, local, remote, remote_agent, request, &params),
+            "Failed to prepare ring lifecycle request");
+        nixl_exit_on_failure(agent.releaseXferReq(request),
+                             "Failed to release prepared ring lifecycle request");
+    }
+}
+
 int
 main (int argc, char *argv[]) {
+    std::signal(SIGALRM, [](int) {
+        constexpr char message[] = "GPUNetIO lifecycle test exceeded its 120 second deadline\n";
+        (void)write(STDERR_FILENO, message, sizeof(message) - 1);
+        std::_Exit(EXIT_FAILURE);
+    });
+    alarm(120);
     int peer_port;
     nixl_status_t ret = NIXL_SUCCESS;
     uint8_t *data_address;
@@ -179,7 +205,7 @@ main (int argc, char *argv[]) {
     nixl_blob_t remote_desc;
     nixl_blob_t metadata;
     nixl_blob_t remote_metadata;
-    int status = 0;
+    nixl_status_t status = NIXL_SUCCESS;
     static std::string target ("target");
     static std::string initiator ("initiator");
 
@@ -210,7 +236,7 @@ main (int argc, char *argv[]) {
 
     role = std::string (argv[1]);
     std::transform (role.begin(), role.end(), role.begin(), ::tolower);
-    if (!role.compare (initiator) && !role.compare (target)) {
+    if (role != initiator && role != target) {
         std::cerr << "Invalid role. Use 'initiator' or 'target'."
                   << "Currently " << role << std::endl;
         return 1;
@@ -249,7 +275,7 @@ main (int argc, char *argv[]) {
     params["network_devices"] = "mlx5_0";
     params["gpu_devices"] = "0";
     ret = agent.createBackend ("GPUNETIO", params, gpunetio);
-    // check return
+    nixl_exit_on_failure(ret, "Failed to create GPUNetIO backend", role);
 
     nixl_opt_args_t extra_params;
     extra_params.backends.push_back (gpunetio);
@@ -289,6 +315,7 @@ main (int argc, char *argv[]) {
 
     std::cout << " Start Control Path metadata exchanges \n";
     if (role == target) {
+        std::vector<uint8_t> received_data(TRANSFER_NUM_BUFFER * SIZE);
         bool found = false;
         // Not used
         nixl_xfer_dlist_t descs (DRAM_SEG);
@@ -350,7 +377,17 @@ main (int argc, char *argv[]) {
                                   << " msg: " << n.second[idx] << " at " << idx << std::endl;
                         launch_target_wait_kernel (
                                 stream, (uintptr_t)(data_address), INITIATOR_VALUE);
-                        cudaStreamSynchronize (stream);
+                        checkCudaError(cudaStreamSynchronize(stream),
+                                       "Failed to complete target validation kernel");
+                        checkCudaError(cudaMemcpy(received_data.data(),
+                                                  data_address,
+                                                  received_data.size(),
+                                                  cudaMemcpyDeviceToHost),
+                                       "Failed to copy received data to host");
+                        nixl_exit_on_failure(
+                            allBytesAre(received_data.data(), received_data.size(), INITIATOR_VALUE),
+                            "Received payload mismatch",
+                            role);
                         std::cout << " GPUNETIO Transfer completed -- first!\n";
                         found = true;
                         break;
@@ -381,7 +418,17 @@ main (int argc, char *argv[]) {
                                   << " msg: " << n.second[idx] << " at " << idx << std::endl;
                         launch_target_wait_kernel (
                                 stream, (uintptr_t)(data_address), INITIATOR_VALUE + 1);
-                        cudaStreamSynchronize (stream);
+                        checkCudaError(cudaStreamSynchronize(stream),
+                                       "Failed to complete target validation kernel");
+                        checkCudaError(cudaMemcpy(received_data.data(),
+                                                  data_address,
+                                                  received_data.size(),
+                                                  cudaMemcpyDeviceToHost),
+                                       "Failed to copy received data to host");
+                        nixl_exit_on_failure(
+                            allBytesAre(received_data.data(), received_data.size(), INITIATOR_VALUE + 1),
+                            "Received payload mismatch",
+                            role);
                         std::cout << " GPUNETIO Transfer completed -- second!\n";
                         found = true;
                         break;
@@ -465,6 +512,13 @@ main (int argc, char *argv[]) {
             extra_params.customParam.resize (sizeof (uintptr_t));
             *((uintptr_t *)extra_params.customParam.data()) = (uintptr_t)stream;
         }
+        nixl_xfer_dlist_t local_probe(VRAM_SEG);
+        nixl_xfer_dlist_t remote_probe(VRAM_SEG);
+        local_probe.addDesc(local_vram[0]);
+        remote_probe.addDesc(remote_vram_list[0]);
+        const nixl_opt_args_t prepared_params = extra_params;
+        cyclePreparedRequests(agent, local_probe, remote_probe, target, prepared_params);
+
         extra_params.notif = "sent";
         ret = agent.createXferReq (
                 NIXL_WRITE, local_vram, remote_vram_list, target, treq, &extra_params);
@@ -473,6 +527,7 @@ main (int argc, char *argv[]) {
             exit (-1);
         }
 
+        cyclePreparedRequests(agent, local_probe, remote_probe, target, prepared_params);
         std::cout << "Launch initiator send kernel on stream\n";
 
         /* Synthetic simulation of GPU data processing with stream attached mode before sending */
@@ -482,16 +537,19 @@ main (int argc, char *argv[]) {
 
             std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
             status = agent.postXferReq (treq);
-            nixl_exit_on_failure((status < 0), "Failed to post Xfer Req", role);
+            nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
+                                 "Failed to post Xfer Req",
+                                 role);
 
 
             std::cout << "Waiting for completion to re-use buffers\n";
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                nixl_exit_on_failure(!(status == NIXL_SUCCESS && status == NIXL_IN_PROG),
+                nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
                                      "Failed to get Xfer Status",
                                      role);
             }
+            cyclePreparedRequests(agent, local_probe, remote_probe, target, prepared_params);
             // No need for cudaStreamSyncronize as CUDA kernel and Xfer are on the same stream
             std::cout << "Second xfer, prepare data, GPU mode, transfer 2" << std::endl;
             launch_initiator_send_kernel (stream, (uintptr_t)(data_address), INITIATOR_VALUE + 1);
@@ -515,12 +573,14 @@ main (int argc, char *argv[]) {
             // Repost same treq with different data in buffers
             std::cout << "Post the request with GPUNETIO backend transfer 2" << std::endl;
             status = agent.postXferReq (treq);
-            nixl_exit_on_failure(status, "Failed to post Xfer Req", role);
+            nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
+                                 "Failed to post Xfer Req",
+                                 role);
 
             std::cout << "Waiting for completion\n";
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                nixl_exit_on_failure(!(status == NIXL_SUCCESS && status == NIXL_IN_PROG),
+                nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
                                      "Failed to get Xfer Status",
                                      role);
             }
@@ -531,16 +591,19 @@ main (int argc, char *argv[]) {
 
             std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
             status = agent.postXferReq (treq);
-            nixl_exit_on_failure(status, "Failed to post Xfer Req", role);
+            nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
+                                 "Failed to post Xfer Req",
+                                 role);
 
             std::cout << "Waiting for completion\n";
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                nixl_exit_on_failure(!(status == NIXL_SUCCESS && status == NIXL_IN_PROG),
+                nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
                                      "Failed to get Xfer Status",
                                      role);
             }
 
+            cyclePreparedRequests(agent, local_probe, remote_probe, target, prepared_params);
             std::cout << "Second xfer, prepare data, CPU mode, transfer 2" << std::endl;
             cudaMemset ((void *)data_address, INITIATOR_VALUE + 1, TRANSFER_NUM_BUFFER * SIZE);
 
@@ -563,19 +626,21 @@ main (int argc, char *argv[]) {
             // Repost same treq with different data in buffers
             std::cout << "Post the request with GPUNETIO backend transfer 2" << std::endl;
             status = agent.postXferReq (treq);
-            nixl_exit_on_failure(status, "Failed to post Xfer Req", role);
+            nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
+                                 "Failed to post Xfer Req",
+                                 role);
 
             std::cout << "Waiting for completion\n";
             while (status != NIXL_SUCCESS) {
                 status = agent.getXferStatus (treq);
-                nixl_exit_on_failure(!(status == NIXL_SUCCESS && status == NIXL_IN_PROG),
+                nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
                                      "Failed to get Xfer Status",
                                      role);
             }
         }
 
         std::cout << "Releasing request " << std::endl;
-        agent.releaseXferReq (treq);
+        nixl_exit_on_failure(agent.releaseXferReq(treq), "Failed to release transfer request", role);
 
         if (stream_mode.compare ("attached") == 0) {
             cudaStreamSynchronize (stream);
