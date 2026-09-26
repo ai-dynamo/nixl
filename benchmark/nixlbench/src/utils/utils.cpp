@@ -655,11 +655,13 @@ xferBenchConfig::loadParams(void) {
     check_consistency = NB_ARG(check_consistency);
     check_value = NB_ARG(check_value);
     if (check_value > 255) {
-        check_value = check_value & 0xff;
+        std::cerr << "Invalid --check_value: value must be <= 255" << std::endl;
+        return -1;
     }
     fill_value = NB_ARG(fill_value);
     if (fill_value > 255) {
-        fill_value = fill_value & 0xff;
+        std::cerr << "Invalid --fill_value: value must be <= 255" << std::endl;
+        return -1;
     }
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
