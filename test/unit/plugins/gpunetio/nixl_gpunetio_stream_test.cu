@@ -384,10 +384,11 @@ main (int argc, char *argv[]) {
                                                   received_data.size(),
                                                   cudaMemcpyDeviceToHost),
                                        "Failed to copy received data to host");
-                        nixl_exit_on_failure(
-                            allBytesAre(received_data.data(), received_data.size(), INITIATOR_VALUE),
-                            "Received payload mismatch",
-                            role);
+                        nixl_exit_on_failure(allBytesAre(received_data.data(),
+                                                         received_data.size(),
+                                                         INITIATOR_VALUE),
+                                             "Received payload mismatch",
+                                             role);
                         std::cout << " GPUNETIO Transfer completed -- first!\n";
                         found = true;
                         break;
@@ -425,10 +426,11 @@ main (int argc, char *argv[]) {
                                                   received_data.size(),
                                                   cudaMemcpyDeviceToHost),
                                        "Failed to copy received data to host");
-                        nixl_exit_on_failure(
-                            allBytesAre(received_data.data(), received_data.size(), INITIATOR_VALUE + 1),
-                            "Received payload mismatch",
-                            role);
+                        nixl_exit_on_failure(allBytesAre(received_data.data(),
+                                                         received_data.size(),
+                                                         INITIATOR_VALUE + 1),
+                                             "Received payload mismatch",
+                                             role);
                         std::cout << " GPUNETIO Transfer completed -- second!\n";
                         found = true;
                         break;
@@ -537,9 +539,8 @@ main (int argc, char *argv[]) {
 
             std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
             status = agent.postXferReq (treq);
-            nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
-                                 "Failed to post Xfer Req",
-                                 role);
+            nixl_exit_on_failure(
+                status == NIXL_SUCCESS || status == NIXL_IN_PROG, "Failed to post Xfer Req", role);
 
 
             std::cout << "Waiting for completion to re-use buffers\n";
@@ -573,9 +574,8 @@ main (int argc, char *argv[]) {
             // Repost same treq with different data in buffers
             std::cout << "Post the request with GPUNETIO backend transfer 2" << std::endl;
             status = agent.postXferReq (treq);
-            nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
-                                 "Failed to post Xfer Req",
-                                 role);
+            nixl_exit_on_failure(
+                status == NIXL_SUCCESS || status == NIXL_IN_PROG, "Failed to post Xfer Req", role);
 
             std::cout << "Waiting for completion\n";
             while (status != NIXL_SUCCESS) {
@@ -591,9 +591,8 @@ main (int argc, char *argv[]) {
 
             std::cout << "Post the request with GPUNETIO backend transfer 1" << std::endl;
             status = agent.postXferReq (treq);
-            nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
-                                 "Failed to post Xfer Req",
-                                 role);
+            nixl_exit_on_failure(
+                status == NIXL_SUCCESS || status == NIXL_IN_PROG, "Failed to post Xfer Req", role);
 
             std::cout << "Waiting for completion\n";
             while (status != NIXL_SUCCESS) {
@@ -626,9 +625,8 @@ main (int argc, char *argv[]) {
             // Repost same treq with different data in buffers
             std::cout << "Post the request with GPUNETIO backend transfer 2" << std::endl;
             status = agent.postXferReq (treq);
-            nixl_exit_on_failure(status == NIXL_SUCCESS || status == NIXL_IN_PROG,
-                                 "Failed to post Xfer Req",
-                                 role);
+            nixl_exit_on_failure(
+                status == NIXL_SUCCESS || status == NIXL_IN_PROG, "Failed to post Xfer Req", role);
 
             std::cout << "Waiting for completion\n";
             while (status != NIXL_SUCCESS) {
@@ -640,7 +638,8 @@ main (int argc, char *argv[]) {
         }
 
         std::cout << "Releasing request " << std::endl;
-        nixl_exit_on_failure(agent.releaseXferReq(treq), "Failed to release transfer request", role);
+        nixl_exit_on_failure(
+            agent.releaseXferReq(treq), "Failed to release transfer request", role);
 
         if (stream_mode.compare ("attached") == 0) {
             cudaStreamSynchronize (stream);
