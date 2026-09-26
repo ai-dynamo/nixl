@@ -20,14 +20,17 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "common.h"
+#include "nixl.h"
 #include "transfer_request.h"
 #include "tracing/trace.h"
+#include "tracing/trace_context.h"
 
 namespace nixl::trace {
 // Agent-wiring backend-selection policy, defined in nixl_agent.cpp (not exposed
@@ -134,11 +137,15 @@ private:
 };
 
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
-makeMockTracer(CallLog &a, CallLog &b, std::uint64_t id_a = 0, std::uint64_t id_b = 0) {
+makeMockTracer(CallLog &a,
+               CallLog &b,
+               std::uint64_t id_a = 0,
+               std::uint64_t id_b = 0,
+               double sample_ratio = 0.0) {
     std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
     backends.push_back(std::make_unique<MockBackend>("a", &a, id_a));
     backends.push_back(std::make_unique<MockBackend>("b", &b, id_b));
-    return std::make_unique<nixl::trace::Tracer>(std::move(backends));
+    return std::make_unique<nixl::trace::Tracer>(std::move(backends), sample_ratio);
 }
 
 } // namespace
@@ -314,6 +321,18 @@ TEST(Tracing, RunningUnderNsysDetectsInjectionVar) {
     EXPECT_TRUE(nixl::trace::runningUnderNsys());
 }
 
+// makeAgentTracer resolves the ratio before it decides whether any backend is
+// active, so an unusable value is reported rather than accepted silently on the
+// path where no tracer is built at all.
+TEST(Tracing, InvalidSampleRatioIsRejectedWithTracingOff) {
+    gtest::ScopedEnv env;
+    env.addVar("NIXL_TRACE_BACKENDS", "");
+    env.addVar(std::string(nixl::trace::traceSampleRatioVar), "abc");
+
+    const nixlAgentConfig config;
+    EXPECT_THROW(nixlAgent("sample_ratio_agent", config), std::invalid_argument);
+}
+
 // makeTracer ignores empty entries and returns null when no backend resolves to
 // a loadable plugin (so callers can cheaply null-check).
 TEST(Tracing, MakeTracerUnknownBackendReturnsNull) {
@@ -444,4 +463,21 @@ TEST(Tracing, ActiveTracerConstructsGeneratedContext) {
     EXPECT_TRUE(first.valid());
     EXPECT_TRUE(second.valid());
     EXPECT_NE(first.correlationId64(), second.correlationId64());
+}
+
+// The tracer carries the sampling ratio to the generation call sites, which only
+// have the tracer pointer.
+TEST(Tracing, TracerSampleRatioReachesGeneratedContexts) {
+    CallLog a, b;
+    const auto unsampled_tracer = makeMockTracer(a, b);
+    EXPECT_EQ(unsampled_tracer->sampleRatio(), 0.0);
+    EXPECT_FALSE(nixl::trace::TraceContext{unsampled_tracer.get()}.sampled());
+
+    CallLog c, d;
+    const auto sampled_tracer = makeMockTracer(c, d, 0, 0, /*sample_ratio=*/1.0);
+    EXPECT_EQ(sampled_tracer->sampleRatio(), 1.0);
+
+    const nixl::trace::TraceContext context{sampled_tracer.get()};
+    EXPECT_TRUE(context.valid());
+    EXPECT_TRUE(context.sampled());
 }
