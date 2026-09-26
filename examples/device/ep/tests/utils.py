@@ -31,16 +31,20 @@ import torch
 import torch.distributed as dist
 
 
-def init_dist(local_rank: int, num_local_ranks: int):
+def init_dist(
+    local_rank: int,
+    num_local_ranks: int,
+    master_addr: Optional[str] = None,
+):
     # NOTES: you may rewrite this function with your own cluster settings
-    ip = os.getenv("MASTER_ADDR", "127.0.0.1")
+    ip = master_addr or os.getenv("MASTER_ADDR", "127.0.0.1")
     port = int(os.getenv("MASTER_PORT", "8361"))
     num_nodes = int(os.getenv("WORLD_SIZE", 1))
     node_rank = int(os.getenv("RANK", 0))
 
     sig = inspect.signature(dist.init_process_group)
     params = {
-        "backend": "nccl",
+        "backend": "gloo",
         "init_method": f"tcp://{ip}:{port}",
         "world_size": num_nodes * num_local_ranks,
         "rank": node_rank * num_local_ranks + local_rank,
