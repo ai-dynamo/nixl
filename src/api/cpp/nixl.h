@@ -378,8 +378,12 @@ class nixlAgent {
                           nixlBackendH* &backend) const;
 
         /**
-         * @brief  Release the transfer request `req_hndl`. If the transfer is active,
-         *         it will be canceled, or return an error if the transfer cannot be aborted.
+         * @brief  Try to release the transfer request `req_hndl`. A handle without
+         *         outstanding I/Os is freed immediately and the function returns
+         *         NIXL_SUCCESS. If called on a handle with outstanding I/Os, the
+         *         backend may initiate cancellation and return
+         *         NIXL_ERR_REPOST_ACTIVE. The caller should poll getXferStatus
+         *         until the transfer completes and then call releaseXferReq again.
          *
          * @param  req_hndl      Transfer request handle to be released
          * @return nixl_status_t Error code if call was not successful
