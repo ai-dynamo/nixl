@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL ETCD Metadata Exchange — Phase 1: Initialization
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  class: controller
+}
+agent_a: "NIXL Agent\n(\"EtcdAgent1\")" {
+  class: agent
+}
+agent_b: "NIXL Agent\n(\"EtcdAgent2\")" {
+  class: agent
+}
+etcd: "etcd Server\n(localhost:2379)" {
+  class: external
+}
+
+conductor -> conductor: "1.1 set NIXL_ETCD_ENDPOINTS=\n\"http://localhost:2379\"" {
+  class: internal
+}
+conductor -> agent_a: "1.2 create_agent(\"EtcdAgent1\",\nconfig)" {
+  class: call
+}
+conductor -> agent_b: "1.3 create_agent(\"EtcdAgent2\",\nconfig)" {
+  class: call
+}
+agent_a -> agent_a: "1.4 create_backend(\"UCX\")" {
+  class: internal
+}
+agent_b -> agent_b: "1.5 create_backend(\"UCX\")" {
+  class: internal
+}
+agent_a -> agent_a: "1.6 register_memory\n(DRAM, buf1 = 0xaa)" {
+  class: call
+}
+agent_b -> agent_b: "1.7 register_memory\n(DRAM, buf2 = 0xbb)" {
+  class: call
+}

@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL ETCD Metadata Exchange — Phase 5: Invalidation & Teardown
+
+shape: sequence_diagram
+
+agent_a: "NIXL Agent\n(\"EtcdAgent1\")" {
+  class: agent
+}
+etcd: "etcd Server\n(localhost:2379)" {
+  class: external
+}
+agent_b: "NIXL Agent\n(\"EtcdAgent2\")" {
+  class: agent
+}
+
+agent_a -> agent_a: "5.1 releaseXferReq\n(handle)" {
+  class: cleanup
+}
+agent_a -> agent_a: "5.2 deregisterMem\n(dlist1)" {
+  class: internal
+}
+agent_b -> agent_b: "5.3 deregisterMem\n(dlist2)" {
+  class: internal
+}
+agent_a -> etcd: "5.4 invalidateLocalMD() — DELETE\n/nixl/agents/EtcdAgent1/" {
+  class: cleanup
+}
+etcd -> agent_b: "5.5 Watcher fires DELETE event\nfor EtcdAgent1" {
+  class: cleanup-reply
+}
+agent_b -> agent_b: "5.6 discard cached\nEtcdAgent1 metadata" {
+  class: cleanup
+}

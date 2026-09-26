@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL ETCD Metadata Exchange — Phase 4: Transfer
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  class: controller
+}
+agent_a: "NIXL Agent\n(\"EtcdAgent1\")" {
+  class: agent
+}
+agent_b: "NIXL Agent\n(\"EtcdAgent2\")" {
+  class: agent
+}
+
+conductor -> agent_a: "4.1 createXferReq(WRITE, src, dst,\n\"EtcdAgent2\", notif=\"notification\")" {
+  class: call
+}
+agent_a -> agent_a: "4.2 resolve backend\n(UCX auto-select)" {
+  class: internal
+}
+conductor -> agent_a: "4.3 postXferReq(handle)" {
+  class: call
+}
+agent_a -> agent_b: "4.4 RDMA write —\ndata transfer" {
+  class: transfer
+}
+conductor -> agent_a: "4.5 getXferStatus(handle)\n[poll]" {
+  class: internal
+}
+agent_a -> agent_b: "4.6 transfer complete\nnotification delivered: \"notification\"" {
+  class: notification
+  style: {
+    stroke-dash: 3
+  }
+}
+agent_a -> conductor: "4.7 status: SUCCESS" {
+  class: reply
+}
+agent_b -> agent_b: "4.8 getNotifs() —\nreceive notification" {
+  class: internal
+}
