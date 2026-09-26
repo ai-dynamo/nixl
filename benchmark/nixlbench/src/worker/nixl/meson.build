@@ -16,6 +16,8 @@
 nixl_worker_sources = [
   'nixl_worker.cpp',
   'nixl_worker.h',
+  'nixl_worker_odm.cpp',
+  'nixl_worker_odm.h',
   'nixl_mem_region.cpp',
   'nixl_mem_region.h',
 ]

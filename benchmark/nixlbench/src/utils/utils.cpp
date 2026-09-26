@@ -34,6 +34,7 @@
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
+#include "utils/odm_consistency.h"
 #include "utils/utils.h"
 
 // Define command line parameters
@@ -59,7 +60,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-              "GUSLI, AZURE_BLOB] (only used with nixl worker)");
+              "GUSLI, AZURE_BLOB, INFINIA, MARVELL_ODM] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -72,6 +73,14 @@ NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, manytoone, o
 NB_ARG_STRING(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc)");
 NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
 NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check");
+// Override the byte value the consistency check expects (default: -1 = use the
+// built-in 0xbb for WRITE / 0xaa for READ). Useful for a write-then-read
+// round-trip: write fills the target with 0xbb, so an ODM READ of that same
+// memory should verify against 0xbb (--check_value 0xbb).
+NB_ARG_INT32(check_value, -1, "Consistency check expected byte (0-255); -1 = default per op");
+// Override the initiator buffer fill byte (default -1 = 0xbb). Pairs with
+// --check_value for write-then-read memory probing with distinct patterns.
+NB_ARG_INT32(fill_value, -1, "Initiator fill byte (0-255); -1 = default 0xbb");
 NB_ARG_UINT64(total_buffer_size,
               8LL * 1024 * (1 << 20),
               "Total buffer size across device for each process");
@@ -116,6 +125,13 @@ NB_ARG_INT32(gds_batch_pool_size,
              "Batch pool size for GDS operations (only used with GDS backend)");
 NB_ARG_INT32(gds_batch_limit, 128, "Batch limit for GDS operations (only used with GDS backend)");
 NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin");
+
+// MARVELL_ODM options - only used when backend is MARVELL_ODM
+NB_ARG_BOOL(odm_use_io_uring,
+            false,
+            "Enable ODM io_uring uring_cmd submit path (only used with MARVELL_ODM backend)");
+NB_ARG_INT32(odm_qid_start, 0, "First ODM queue id (only used with MARVELL_ODM backend)");
+NB_ARG_INT32(odm_qid_end, 15, "Last ODM queue id (only used with MARVELL_ODM backend)");
 
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
@@ -255,6 +271,9 @@ NB_ARG_INT32(device_channel_num,
              "0 means one channel per execution group. "
              "Only used when --use_device_api is enabled.");
 
+/* ODM device IOVA is auto-allocated by the MARVELL_ODM plugin on registerMem
+ * when remote DRAM_SEG is registered with addr=0. */
+
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
 #undef NB_ARG_UINT64
@@ -270,6 +289,8 @@ std::string xferBenchConfig::scheme = "";
 std::string xferBenchConfig::mode = "";
 std::string xferBenchConfig::op_type = "";
 bool xferBenchConfig::check_consistency = false;
+int xferBenchConfig::check_value = -1;
+int xferBenchConfig::fill_value = -1;
 size_t xferBenchConfig::total_buffer_size = 0;
 bool xferBenchConfig::recreate_xfer = false;
 int xferBenchConfig::num_initiator_dev = 0;
@@ -432,6 +453,11 @@ setupDeviceAPIConfig() {
     return true;
 }
 
+std::string xferBenchConfig::odm_device_path = "/dev/odm0";
+bool xferBenchConfig::odm_use_io_uring = false;
+int xferBenchConfig::odm_qid_start = 0;
+int xferBenchConfig::odm_qid_end = 15;
+
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
     plugin_parameters.reset();
@@ -520,6 +546,18 @@ xferBenchConfig::loadParams(void) {
 
         if (backend == XFERBENCH_BACKEND_GDS_MT) {
             gds_mt_num_threads = NB_ARG(gds_mt_num_threads);
+        }
+
+        if (backend == XFERBENCH_BACKEND_MARVELL_ODM) {
+            odm_use_io_uring = NB_ARG(odm_use_io_uring);
+            odm_qid_start = NB_ARG(odm_qid_start);
+            odm_qid_end = NB_ARG(odm_qid_end);
+            if (odm_qid_start < 0 || odm_qid_end < odm_qid_start) {
+                std::cerr << "Invalid ODM queue range: --odm_qid_start=" << odm_qid_start
+                          << " --odm_qid_end=" << odm_qid_end << " (require 0 <= start <= end)"
+                          << std::endl;
+                return -1;
+            }
         }
 
         // Load POSIX-specific configurations if backend is POSIX
@@ -615,6 +653,16 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
     check_consistency = NB_ARG(check_consistency);
+    check_value = NB_ARG(check_value);
+    if (check_value > 255) {
+        std::cerr << "Invalid --check_value: value must be <= 255" << std::endl;
+        return -1;
+    }
+    fill_value = NB_ARG(fill_value);
+    if (fill_value > 255) {
+        std::cerr << "Invalid --fill_value: value must be <= 255" << std::endl;
+        return -1;
+    }
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
     num_target_dev = NB_ARG(num_target_dev);
@@ -675,6 +723,13 @@ xferBenchConfig::loadParams(void) {
                      "descriptor list handles pin the registration."
                   << std::endl;
         return -1;
+    }
+    if (!recreate_xfer && XFERBENCH_BACKEND_MARVELL_ODM == backend) {
+        std::cout << backend
+                  << " backend requires per-iteration request creation (request cannot be "
+                     "re-posted). Setting recreate_xfer to true."
+                  << std::endl;
+        recreate_xfer = true;
     }
 
     // Validate randomization mode
@@ -855,7 +910,8 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB])",
+        printOption("Backend (--backend=[UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
+                    "GUSLI, AZURE_BLOB, INFINIA, MARVELL_ODM])",
                     backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
@@ -926,6 +982,14 @@ xferBenchConfig::printConfig() {
                         "(--azure_blob_connection_string=connection-string)",
                         azure_blob_connection_string);
         }
+        if (backend == XFERBENCH_BACKEND_MARVELL_ODM) {
+            printOption("ODM device IOVA", "auto (plugin GET_IOVA on addr=0)");
+            printOption("ODM io_uring (--odm_use_io_uring=[0,1])",
+                        std::to_string(odm_use_io_uring));
+            printOption("ODM queue start (--odm_qid_start=N)", std::to_string(odm_qid_start));
+            printOption("ODM queue end (--odm_qid_end=N)", std::to_string(odm_qid_end));
+            printOption("ODM engine", "ODM controller + dma-buf (both directions)");
+        }
 
         if (xferBenchConfig::isStorageBackend()) {
             printOption("filepath (--filepath=path)", filepath);
@@ -956,6 +1020,9 @@ xferBenchConfig::printConfig() {
     printOption("Mode (--mode=[SG,MG])", mode);
     printOption("Op type (--op_type=[READ,WRITE])", op_type);
     printOption("Check consistency (--check_consistency=[0,1])", std::to_string(check_consistency));
+    if (check_value >= 0) {
+        printOption("Check value (--check_value=byte)", std::to_string(check_value));
+    }
     printOption("Total buffer size (--total_buffer_size=N)", std::to_string(total_buffer_size));
     printOption("Num initiator dev (--num_initiator_dev=N)", std::to_string(num_initiator_dev));
     printOption("Num target dev (--num_target_dev=N)", std::to_string(num_target_dev));
@@ -1028,7 +1095,8 @@ xferBenchConfig::isStorageBackend() {
             XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
+            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend ||
+            XFERBENCH_BACKEND_MARVELL_ODM == xferBenchConfig::backend);
 }
 
 bool
@@ -1037,7 +1105,6 @@ xferBenchConfig::isObjStorageBackend() {
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 };
-
 
 /**********
  * xferBench Utils
@@ -1199,6 +1266,9 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
         gusli_devmap_init = true;
     }
     bool pass_check_consistency = true;
+
+    OdmConsistencyContext odm_ctx(iov_lists);
+
     for (const auto &iov_list : iov_lists) {
         for (const auto &iov : iov_list) {
             void *addr = NULL;
@@ -1209,8 +1279,14 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 
             len = iov.len;
 
-            if (xferBenchConfig::isStorageBackend() ||
-                xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO) {
+            if (odm_ctx.fetchWriteBuffer(iov, &addr, &is_allocated)) {
+                // ODM WRITE consistency buffer prepared via NIXL READ.
+            } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_MARVELL_ODM &&
+                       xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
+                // ODM WRITE check requires a NIXL READ staging buffer; do not
+                // fall back to treating the remote device IOVA as host memory.
+            } else if (xferBenchConfig::isStorageBackend() ||
+                       xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO) {
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
                         if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
@@ -1311,11 +1387,16 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
             }
 
             if ("WRITE" == xferBenchConfig::op_type) {
-                check_val = XFERBENCH_INITIATOR_BUFFER_ELEMENT;
+                check_val = xferBenchInitiatorFillByte();
             } else if ("READ" == xferBenchConfig::op_type) {
                 check_val = XFERBENCH_TARGET_BUFFER_ELEMENT;
             }
-            rc = allBytesAre(addr, len, check_val);
+            // Round-trip override: verify against an explicit byte (e.g. an ODM
+            // READ of memory a prior CUDA-copy-engine WRITE filled with 0xbb).
+            if (xferBenchConfig::check_value >= 0) {
+                check_val = static_cast<uint8_t>(xferBenchConfig::check_value);
+            }
+            rc = (addr != nullptr) && allBytesAre(addr, len, check_val);
             if (true != rc) {
                 std::cerr << "Consistency check failed for iov " << i << ":" << j << std::endl;
                 pass_check_consistency = false;
@@ -1346,7 +1427,8 @@ xferBenchUtils::validateTransfer(bool is_initiator,
         if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
             return checkConsistency(local_lists);
         } else if (xferBenchConfig::op_type == XFERBENCH_OP_WRITE) {
-            if (xferBenchConfig::isStorageBackend()) {
+            if (xferBenchConfig::isStorageBackend() ||
+                xferBenchConfig::backend == XFERBENCH_BACKEND_MARVELL_ODM) {
                 return checkConsistency(remote_lists);
             }
         }
