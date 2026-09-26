@@ -1123,7 +1123,11 @@ nixlOdmEngine::postOdmDmabuf(nixlOdmBackendReqH *req) const {
     OdmBatch batch;
     std::vector<OdmWork> items;
     items.reserve(req->segments.size() * odm_num_queues_);
-    int g = 0; /* global round-robin queue index across all segments+pieces */
+    // Start the round-robin index at the calling thread's assigned queue
+    // (same per-thread assignment nextQid() gives the no-pool path above) so
+    // concurrent callers spread their single-piece transfers across distinct
+    // queues instead of all landing on qid_start_.
+    int g = static_cast<int>(nextQid() - qid_start_);
     for (const auto &seg : req->segments) {
         if (seg.len == 0) {
             continue;
