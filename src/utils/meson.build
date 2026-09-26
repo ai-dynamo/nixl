@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-subdir('common')
-subdir('serdes')
 subdir('stream')
 subdir('file')
 subdir('object')
+subdir('device')
 
 if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     subdir('libfabric')
