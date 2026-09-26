@@ -45,6 +45,7 @@ env
 nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
+check_rdma_env
 
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}

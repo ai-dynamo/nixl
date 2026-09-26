@@ -58,6 +58,7 @@ nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
+check_rdma_env
 
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
@@ -90,25 +91,9 @@ run_elastic_test() {
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
 
-# Only run the --disable-ll-nvlink (RDMA) elastic tests when all four CX-7
-# NICs (mlx5_0..mlx5_3) report PORT_ACTIVE.
-all_rdma_nics_active() {
-    local hca
-    for hca in mlx5_0 mlx5_1 mlx5_2 mlx5_3; do
-        if ! ibv_devinfo -d "$hca" 2>/dev/null | grep -q "state:.*PORT_ACTIVE"; then
-            return 1
-        fi
-    done
-    return 0
-}
-
-# RDMA (--disable-ll-nvlink)
-if all_rdma_nics_active; then
-    run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
-    run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
-else
-    echo "Skipping RDMA elastic tests: not all of mlx5_0..mlx5_3 are PORT_ACTIVE on $(hostname)"
-fi
+# RDMA (--disable-ll-nvlink). check_rdma_env already enforced the port requirement.
+run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
+run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
 
 echo "==== nixl_ep elastic tests done ===="
 
