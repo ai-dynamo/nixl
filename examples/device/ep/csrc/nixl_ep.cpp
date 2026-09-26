@@ -72,8 +72,7 @@ Buffer::Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int tim
             return static_cast<uint64_t>(timeout_ms);
         }()),
         rank(rank),
-        explicitly_destroy(explicitly_destroy),
-        comm_stream(at::cuda::getStreamFromPool(true)) {}
+        explicitly_destroy(explicitly_destroy) {}
 
 bool Buffer::_is_rank_connected(int rank_id) const {
     return rank_id == rank or std::find(remote_ranks.begin(), remote_ranks.end(), rank_id) != remote_ranks.end();
@@ -133,6 +132,7 @@ void Buffer::init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes
 
     // Get ranks
     CUDA_CHECK(cudaGetDevice(&device_id));
+    comm_stream = cuda_stream::get_from_pool();
     rdma_rank = rank / NUM_MAX_NVL_PEERS, nvl_rank = rank % NUM_MAX_NVL_PEERS;
     num_rdma_ranks = std::max(1, num_ranks / NUM_MAX_NVL_PEERS), num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
 
@@ -272,8 +272,9 @@ torch::Tensor Buffer::get_local_buffer_tensor(const pybind11::object& dtype, int
     return torch::from_blob(base_ptr, num_bytes / element_bytes, torch::TensorOptions().dtype(casted_dtype).device(at::kCUDA));
 }
 
-torch::Stream Buffer::get_comm_stream() const {
-    return comm_stream;
+int64_t Buffer::get_comm_stream() const {
+    EP_HOST_ASSERT(is_available() && "get_comm_stream() called before update_memory_buffers()");
+    return reinterpret_cast<int64_t>(comm_stream);
 }
 
 void Buffer::destroy() {
@@ -550,7 +551,7 @@ Buffer::get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts,
 
     // Allocate all tensors on comm stream if set
     // NOTES: do not allocate tensors upfront!
-    auto compute_stream = at::cuda::getCurrentCUDAStream();
+    auto compute_stream = cuda_stream::get_current();
     if (allocate_on_comm_stream) {
         EP_HOST_ASSERT(previous_event.has_value() and async);
         cuda_stream::set_current(comm_stream);
@@ -584,16 +585,6 @@ Buffer::get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts,
     std::optional<EventHandle> event;
     if (async) {
         event = EventHandle(comm_stream);
-        for (auto& t: {topk_idx, num_tokens_per_rank, num_tokens_per_expert, is_token_in_rank}) {
-            t.record_stream(comm_stream);
-            if (allocate_on_comm_stream)
-                t.record_stream(compute_stream);
-        }
-        for (auto& to: {num_tokens_per_rdma_rank}) {
-            to.has_value() ? to->record_stream(comm_stream) : void();
-            if (allocate_on_comm_stream)
-                to.has_value() ? to->record_stream(compute_stream) : void();
-        }
     } else {
         stream_wait(compute_stream, comm_stream);
     }
@@ -706,7 +697,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
 
     // Allocate all tensors on comm stream if set
     // NOTES: do not allocate tensors upfront!
-    auto compute_stream = at::cuda::getCurrentCUDAStream();
+    auto compute_stream = cuda_stream::get_current();
     if (allocate_on_comm_stream) {
         EP_HOST_ASSERT(previous_event.has_value() and async);
         cuda_stream::set_current(comm_stream);
@@ -857,23 +848,6 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     std::optional<EventHandle> event;
     if (async) {
         event = EventHandle(comm_stream);
-        for (auto& t: {x, is_token_in_rank, recv_x,
-                       rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum, gbl_channel_prefix_matrix, recv_gbl_rank_prefix_sum}) {
-            t.record_stream(comm_stream);
-            if (allocate_on_comm_stream)
-                t.record_stream(compute_stream);
-        }
-        for (auto& to: {x_scales, topk_idx, topk_weights,
-                        num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert,
-                        cached_rdma_channel_prefix_matrix, cached_recv_rdma_rank_prefix_sum,
-                        cached_gbl_channel_prefix_matrix, cached_recv_gbl_rank_prefix_sum,
-                        recv_topk_idx, recv_topk_weights, recv_x_scales,
-                        recv_rdma_channel_prefix_matrix, recv_gbl_channel_prefix_matrix, send_rdma_head, send_nvl_head,
-                        recv_src_meta}) {
-            to.has_value() ? to->record_stream(comm_stream) : void();
-            if (allocate_on_comm_stream)
-                to.has_value() ? to->record_stream(compute_stream) : void();
-        }
     } else {
         stream_wait(compute_stream, comm_stream);
     }
@@ -926,7 +900,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
 
     // Allocate all tensors on comm stream if set
     // NOTES: do not allocate tensors upfront!
-    auto compute_stream = at::cuda::getCurrentCUDAStream();
+    auto compute_stream = cuda_stream::get_current();
     if (allocate_on_comm_stream) {
         EP_HOST_ASSERT(previous_event.has_value() and async);
         cuda_stream::set_current(comm_stream);
@@ -996,18 +970,6 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
     std::optional<EventHandle> event;
     if (async) {
         event = EventHandle(comm_stream);
-        for (auto& t: {x, src_meta,
-                       is_combined_token_in_rank, rdma_channel_prefix_matrix, rdma_rank_prefix_sum, gbl_channel_prefix_matrix,
-                       combined_x, combined_rdma_head, combined_nvl_head}) {
-            t.record_stream(comm_stream);
-            if (allocate_on_comm_stream)
-                t.record_stream(compute_stream);
-        }
-        for (auto& to: {topk_weights, combined_topk_weights, bias_0, bias_1}) {
-            to.has_value() ? to->record_stream(comm_stream) : void();
-            if (allocate_on_comm_stream)
-                to.has_value() ? to->record_stream(compute_stream) : void();
-        }
     } else {
         stream_wait(compute_stream, comm_stream);
     }
@@ -1064,7 +1026,7 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
     // Wait previous tasks to be finished
     // NOTES: the hook mode will always use the default stream
     cudaStream_t compute_stream = cuda_stream::get_current();
-    cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream.stream();
+    cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream;
     EP_HOST_ASSERT(not (async and return_recv_hook));
     if (not return_recv_hook)
         stream_wait(launch_stream, compute_stream);
@@ -1184,7 +1146,7 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
     // Wait previous tasks to be finished
     // NOTES: the hook mode will always use the default stream
     cudaStream_t compute_stream = cuda_stream::get_current();
-    cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream.stream();
+    cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream;
     EP_HOST_ASSERT(not (async and return_recv_hook));
     if (not return_recv_hook)
         stream_wait(launch_stream, compute_stream);
