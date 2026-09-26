@@ -358,11 +358,11 @@ nixlOdmEngine::registerMem(const nixlBlobDesc &mem,
                 if (entry.count == 0) {
                     entry.dma_addr = md->dma_addr;
                 } else {
-                    /* A second (or later) live registration shares this key.
-                     * queryMem() cannot tell which physical IOVA a future
-                     * query for this key refers to, so mark it permanently
-                     * ambiguous for as long as any of these registrations
-                     * remain live; never fail the registration itself. */
+                    // A second (or later) live registration shares this key.
+                    // queryMem() cannot tell which physical IOVA a future
+                    // query for this key refers to, so mark it permanently
+                    // ambiguous for as long as any of these registrations
+                    // remain live; never fail the registration itself.
                     entry.ambiguous = true;
                     NIXL_DEBUG << "ODM: auto-IOVA key addr=0 len=" << mem.len
                                << " devId=" << mem.devId << " now has " << (entry.count + 1)
@@ -475,9 +475,9 @@ nixlOdmEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_re
             params["device_iova"] = std::to_string(it->second.dma_addr);
             resp[i] = std::move(params);
         } else if (it != auto_iova_map_.end() && it->second.ambiguous) {
-            /* Multiple live auto-allocated regions share this {addr=0, len,
-             * devId} key; we cannot tell which one the caller means, so
-             * report "unknown" instead of guessing wrong. */
+            // Multiple live auto-allocated regions share this {addr=0, len,
+            // devId} key; we cannot tell which one the caller means, so
+            // report "unknown" instead of guessing wrong.
             resp[i] = std::nullopt;
         } else if (mem.addr != 0) {
             nixl_b_params_t params;
