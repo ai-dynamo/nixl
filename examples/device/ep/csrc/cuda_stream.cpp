@@ -21,13 +21,15 @@
 #include <torch/csrc/stable/accelerator.h>
 #include <torch/csrc/stable/c/shim.h>
 #include <torch/headeronly/util/shim_utils.h>
-#include <torch/version.h>
-
-#if TORCH_VERSION_MAJOR < 2 || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR < 10)
-#error "nixl_ep requires PyTorch >=2.10 for torch_set_current_cuda_stream"
-#endif
 
 namespace nixl_ep::cuda_stream {
+cudaStream_t
+get_from_pool() {
+    void *stream;
+    TORCH_ERROR_CODE_CHECK(torch_get_cuda_stream_from_pool(true, -1, &stream));
+    return static_cast<cudaStream_t>(stream);
+}
+
 cudaStream_t
 get_current() {
     void *stream;
