@@ -106,6 +106,7 @@ gtest_sources = [
     'metadata_exchange.cpp',
     'md_manager.cpp',
     'metadata_worker.cpp',
+    'notif_callbacks.cpp',
     'common.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
