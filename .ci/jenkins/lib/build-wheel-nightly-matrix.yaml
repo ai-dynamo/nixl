@@ -2,7 +2,11 @@
 # main; the source ref (NIXL_VERSION) is cloned into nixl-src, so built refs
 # carry no CI config. Wheels publish to
 # WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default) or
-# WHEEL_REPO_URL/<PUBLISH_DIR>/<nixl-sha> for manual release runs.
+# WHEEL_REPO_URL/<PUBLISH_DIR>/<build-number> for release runs.
+#
+# One run builds every CUDA major, so a release folder holds a complete wheel
+# set and is owned by this build alone - which is what lets pipeline_stop delete
+# it on failure and mark it, only on SUCCESS, for the release poller.
 
 ---
 job: nixl-ci-build-wheel-nightly
@@ -50,6 +54,14 @@ matrix:
     arch:
       - x86_64
       - aarch64
+    # Same build, or cu12 and cu13 land in different build-number folders.
+    # Not "cuda_major": Jenkins EnvVars is case-insensitive, so that name
+    # collides with the CUDA_MAJOR job parameter and the axis never reaches the
+    # shell - the leg is still labelled correctly, since taskName is rendered
+    # from the axis map rather than from the environment.
+    cuda:
+      - "12"
+      - "13"
 
 env:
   NPROC: 16
@@ -64,6 +76,8 @@ env:
   WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
   # Properties API (same repo, different endpoint) for tagging published wheels.
   WHEEL_REPO_API: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
+  # Browsable tree view of the same repo, for the per-build link in the UI.
+  WHEEL_REPO_UI: "https://artifactory.nvidia.com/ui/repos/tree/General/sw-nbu-swx-nixl-pypi-local"
   # Source repo cloned in Build Wheel.
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
   MAIL_FROM: "jenkins@nvidia.com"
@@ -121,13 +135,23 @@ steps:
       # ref's build-container.sh pins the plugin ref/image.
       # The two CUDA majors have different torch coverage: 2.11 is not available
       # on the cu13 index, and 2.14 is not available on the cu12 one.
-      BASE_IMAGE_FLAGS=""
-      if [ "${CUDA_MAJOR}" = "12" ]; then
-        BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
-        TORCH_VERSIONS="2.11,2.12,2.13"
-      else
-        TORCH_VERSIONS="2.12,2.13,2.14"
-      fi
+      # Never default the CUDA line: an unset axis falling through to cu13 made
+      # both cells build cu13 under identical filenames, so each overwrote the
+      # other and the folder silently held half a set.
+      case "${cuda}" in
+        12)
+          BASE_IMAGE_FLAGS="--base-image ${CU12_BASE_IMAGE} --base-image-tag ${CU12_BASE_TAG} --cuda-version ${CU12_CUDA_VERSION}"
+          TORCH_VERSIONS="2.11,2.12,2.13"
+          ;;
+        13)
+          BASE_IMAGE_FLAGS=""
+          TORCH_VERSIONS="2.12,2.13,2.14"
+          ;;
+        *)
+          echo "ERROR: cuda is '${cuda:-<unset>}', expected 12 or 13"
+          exit 1
+          ;;
+      esac
       cd nixl-src
       ./contrib/build-container.sh \
         ${BASE_IMAGE_FLAGS} \
@@ -162,10 +186,17 @@ steps:
         || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
       . ./wheel_build_ids.env
 
+      # Outside the build_options.env guard below: the release folder no longer
+      # carries the sha, so NIXL_SHA must be set even for a ref that predates
+      # --build-options-file.
+      PROPERTIES="NIXL_SHA=${NIXL_SHA}"
+      PROPERTIES+=";NIXL_VERSION=${NIXL_VERSION}"
+      PROPERTIES+=";JOB_NAME=${JOB_NAME}"
+      PROPERTIES+=";BUILD_NUMBER=${BUILD_NUMBER}"
+
       # Provenance recorded by Build Wheel (contrib/build-container.sh
       # --build-options-file). Only set properties for values that exist,
       # so an older built ref without this flag just skips them.
-      PROPERTIES=""
       if [ -f build_options.env ]; then
         . ./build_options.env
         [ -n "${UCX_REF:-}" ] && PROPERTIES+=";UCX_REF=${UCX_REF}"
@@ -175,17 +206,19 @@ steps:
           && PROPERTIES+=";UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
         [ "${BUILD_INFINIA:-}" = "true" ] && [ -n "${INFINIA_LIBS_IMAGE:-}" ] \
           && PROPERTIES+=";INFINIA_LIBS_IMAGE=${INFINIA_LIBS_IMAGE}"
-        PROPERTIES="${PROPERTIES#;}"
+        # A trailing `[ ... ] && ...` that does not fire would otherwise leave
+        # the whole if-block with a non-zero status.
+        true
       fi
 
-      # verification/ keeps its long-standing g<nixl-sha>.ucx<ucx-sha> folder
-      # schema (consumed by the build-llm-container verification pipeline);
-      # release/<ver> co-locates cu12/cu13 by nixl-sha alone, unkeyed to UCX.
+      # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the
+      # build-llm-container verification pipeline) and is shared between builds;
+      # release/<ver> gets one folder per build.
       if [ "${PUBLISH_DIR}" = "verification" ]; then
         [ -n "${UCX_SHA:-}" ] || { echo "ERROR: verification publish needs UCX_SHA from build_options.env"; exit 1; }
         FOLDER="g${NIXL_SHA}.ucx${UCX_SHA}"
       else
-        FOLDER="${NIXL_SHA}"
+        FOLDER="${BUILD_NUMBER}"
       fi
       DEST="${WHEEL_REPO_URL}/${PUBLISH_DIR}/${FOLDER}"
       PROPS_DEST="${WHEEL_REPO_API}/${PUBLISH_DIR}/${FOLDER}"
@@ -197,32 +230,108 @@ steps:
       for whl in dist/nixl*.whl; do
         curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
           -T "${whl}" "${DEST}/$(basename "${whl}")" || rc=1
-        if [ -n "${PROPERTIES}" ]; then
-          curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -X PUT \
-            "${PROPS_DEST}/$(basename "${whl}")?properties=${PROPERTIES}" || rc=1
-        fi
+        curl -fsSL -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" -X PUT \
+          "${PROPS_DEST}/$(basename "${whl}")?properties=${PROPERTIES}" || rc=1
       done
       exit $rc
 
-taskName: '${name}_${manylinux}/${arch}/python_${python_version}'
+taskName: '${name}_${manylinux}/${arch}/python_${python_version}/cu${cuda}'
 
-# Display name distinguishes builds in the history list: #N-<source>-cuXX.
+# Display name distinguishes builds in the history list: #N-<source>.
 pipeline_start:
   shell: action
   module: groovy
   containerSelector: "{name: 'manylinux'}"
   run: |
     def src = params.NIXL_VERSION ==~ /[0-9a-f]{40}/ ? params.NIXL_VERSION.take(8) : params.NIXL_VERSION
-    def cu = "cu${params.CUDA_MAJOR}"
-    currentBuild.displayName += "-${src}-${cu}"
+    currentBuild.displayName += "-${src}"
 
-# Mail the unattended nightly only when it fails; a green night stays quiet.
+# Settles the release folder - mark on SUCCESS, delete otherwise - then mails
+# the unattended nightly only when it fails. A partial wheel set has to be
+# rebuilt anyway, so publishing it would only mislead the poller. verification/
+# folders are shared between builds and are left alone either way.
 pipeline_stop:
   shell: action
   module: groovy
   containerSelector: "{name: 'manylinux'}"
   run: |
     def jobStatus = currentBuild.result ?: 'SUCCESS'
+    def publishDir = params.PUBLISH_DIR ?: ''
+    // Publish's allowlist, not just a release/ prefix test: this builds a
+    // credentialed DELETE, and curl normalizes dot segments, so
+    // release/x/../../../<other-repo> would escape into a different repo.
+    def isRelease = publishDir ==~ /release\/[A-Za-z0-9][A-Za-z0-9._-]*/
+    if (!isRelease && publishDir.startsWith('release/')) {
+        echo "PUBLISH_DIR '${publishDir}' is not a valid release path - skipping folder settlement"
+    }
+    def folderPath = "${publishDir}/${env.BUILD_NUMBER}"
+    def folderUrl = "${env.WHEEL_REPO_UI}/${folderPath}"
+    def removedNote = ''
+
+    if (isRelease) {
+        withCredentials([usernamePassword(
+                credentialsId: 'svc-nixl-new-artifactory-token',
+                usernameVariable: 'ARTIFACTORY_USER',
+                passwordVariable: 'ARTIFACTORY_TOKEN')]) {
+            // Checks the status code, not curl's exit status: without -f curl
+            // exits 0 on an HTTP error and a surviving folder reads as deleted.
+            def dropFolder = {
+                def code = sh(returnStdout: true, script: """
+                    set +x
+                    curl -sS -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 2 \
+                      -u "\$ARTIFACTORY_USER:\$ARTIFACTORY_TOKEN" \
+                      -X DELETE "${env.WHEEL_REPO_URL}/${folderPath}"
+                """).trim()
+                if (code in ['200', '204']) {
+                    echo "Removed ${folderPath}"
+                    return true
+                }
+                if (code == '404') {
+                    echo "Nothing to remove at ${folderPath}"
+                    return true
+                }
+                echo "WARNING: DELETE ${folderPath} returned ${code} - it may still be published"
+                return false
+            }
+
+            if (jobStatus == 'SUCCESS') {
+                // The poller always passes a full sha; a manual run naming a
+                // branch/tag needs one ls-remote.
+                def sha = params.NIXL_VERSION ==~ /[0-9a-f]{40}/
+                    ? params.NIXL_VERSION.take(8)
+                    : sh(returnStdout: true, script: """
+                          git ls-remote "${env.NIXL_REPO_URL}" "${params.NIXL_VERSION}" \
+                            | head -1 | cut -c1-8
+                      """).trim()
+                if (!sha) {
+                    error("cannot resolve NIXL_SHA for the ${folderPath} completion marker")
+                }
+                try {
+                    // recursive=0: the properties API defaults to recursive and
+                    // would stamp this over each wheel's own NIXL_SHA.
+                    sh """
+                        set +x
+                        curl -fsSL --retry 3 --retry-delay 2 \
+                          -u "\$ARTIFACTORY_USER:\$ARTIFACTORY_TOKEN" -X PUT \
+                          "${env.WHEEL_REPO_API}/${folderPath}?properties=NIXL_SHA=${sha}&recursive=0"
+                    """
+                    currentBuild.description = "<a href='${folderUrl}'>${folderPath}</a>"
+                    echo "Published wheel set: ${folderUrl} (NIXL_SHA=${sha})"
+                } catch (err) {
+                    // Unmarked, nothing purges release/, and the commit gets
+                    // rebuilt anyway - so drop it rather than orphan it.
+                    echo "Could not mark ${folderPath} - removing it"
+                    dropFolder()
+                    throw err
+                }
+            } else {
+                removedNote = dropFolder()
+                    ? "<p>Partial wheel set removed: <b>${folderPath}</b></p>"
+                    : "<p>Partial wheel set at <b>${folderPath}</b> could NOT be removed - delete it manually</p>"
+            }
+        }
+    }
+
     if (jobStatus != 'SUCCESS' && params.MAIL_TO) {
         def userName = currentBuild.rawBuild.getCause(hudson.model.Cause.UserIdCause)?.userName ?: 'schedule'
         mail(
@@ -237,7 +346,7 @@ pipeline_stop:
                 <p>Build: <a href='${env.BUILD_URL}'>#${env.BUILD_NUMBER}</a></p>
                 <p>Console Output: <a href='${env.BUILD_URL}console'>Full Log</a></p>
                 <p>NIXL Version: <b>${params.NIXL_VERSION}</b></p>
-                <p>CUDA Major: <b>${params.CUDA_MAJOR}</b></p>
+                ${removedNote}
             """
         )
     }
