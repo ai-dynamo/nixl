@@ -317,15 +317,20 @@ shouldDeepBindPlugin(const std::string &plugin_name) {
         return false;
     }
 
-    try {
-        /* TODO: check if RTLD_DEEPBIND is needed at all for UCX/NIXL */
-        return nixl::config::getValueDefaulted<bool>(kUcxDeepBindVar, false);
+    /* RTLD_DEEPBIND mis-binds the copy-relocated libc data symbols that libucs
+     * reads directly, so UCS walks a bogus `environ` while creating a worker
+     * (ucs_config_parser_print_env_vars) and segfaults. The private UCX SONAME
+     * suffix already provides the isolation this flag was meant to add.
+     *
+     * The variable is deprecated and ignored, so it is not converted: only its presence
+     * matters. Looking the value up is what let an unparseable one reach `createBackend`
+     * (configTraits<bool>::convert throws), and `checkExistence` cannot throw. */
+    if (nixl::config::checkExistence(kUcxDeepBindVar)) {
+        NIXL_WARN << kUcxDeepBindVar
+                  << " is ignored: RTLD_DEEPBIND mis-binds libc symbols in the "
+                     "UCX plugin and crashes UCX initialization.";
     }
-    catch (const std::exception &e) {
-        NIXL_WARN << "Invalid " << kUcxDeepBindVar
-                  << " value, enabling RTLD_DEEPBIND: " << e.what();
-        return true;
-    }
+    return false;
 }
 } // namespace
 
