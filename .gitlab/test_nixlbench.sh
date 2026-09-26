@@ -60,6 +60,16 @@ for op_type in READ WRITE; do
     run_nixlbench_one_worker --backend POSIX --op_type $op_type --check_consistency
 done
 
+
+# REDIS storage backend: single-process, no peer, no runtime coordinator needed
+start_redis_server
+
+for op_type in READ WRITE; do
+    run_nixlbench_one_worker --backend REDIS --op_type $op_type --check_consistency
+done
+
+kill -9 $REDIS_PID 2>/dev/null || true
+
 if $HAS_GPU ; then
     seg_types="VRAM DRAM"
 else
