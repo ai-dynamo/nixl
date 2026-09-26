@@ -72,6 +72,7 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
     : nixlBackendEngine(&init_params),
       sharedWorkerIndex_(1),
+      loopbackEnabled_(init_params.enableLoopback),
       sglEnabled_(sglEnabledFromConfig()) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
@@ -148,6 +149,10 @@ nixl_status_t nixlUcxEngine::getConnInfo(std::string &str) const {
 
 nixl_status_t nixlUcxEngine::connect(const std::string &remote_agent) {
     if(remote_agent == localAgent) {
+        if (!loopbackEnabled_) {
+            NIXL_ERROR << "connect to self requested while loopback is disabled";
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
         return loadRemoteConnInfo(remote_agent, workerAddr);
     }
 
@@ -283,6 +288,11 @@ nixl_status_t
 nixlUcxEngine::loadLocalMD (nixlBackendMD* input,
                             nixlBackendMD* &output)
 {
+    if (!loopbackEnabled_) {
+        NIXL_ERROR << "local metadata requested while loopback is disabled";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
     nixlUcxPrivateMetadata* input_md = (nixlUcxPrivateMetadata*) input;
     return internalMDHelper(input_md->rkeyStr, localAgent, output);
 }
