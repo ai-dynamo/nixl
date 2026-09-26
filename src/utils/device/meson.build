@@ -13,14 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-util_unit_test_dep = declare_dependency(
-    sources: [
-        'proxy_memview_registry.cpp',
-        'proxy_registry_lifetime.cpp',
-        'proxy_runtime.cpp',
-        'str_util_test.cpp',
-        'uuid_v4_test.cpp',
-    ],
-    include_directories: [nixl_inc_dirs, gtest_inc_dirs, utils_inc_dirs],
-    dependencies: [nixl_common_dep, device_proxy_interface],
-)
+device_utils_lib = shared_library('device_utils',
+           ['device_ops.cpp', 'device_ops.h'],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
+           dependencies: [nixl_common_dep, dl_dep],
+           install: true)
+
+device_utils_interface = declare_dependency(link_with: device_utils_lib)
+
+if cuda_dep.found()
+    shared_library('nixl_device_ops_cuda',
+               'device_ops_cuda.cpp',
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               dependencies: [cuda_dep, nixl_common_dep],
+               install: true)
+endif
+
+subdir('proxy')
