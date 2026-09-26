@@ -7,10 +7,14 @@ This directory contains shared C++ utilities for NIXL file-aware backends:
 - `file_path_mode.{h,cpp}`: `nixl::parsePathMeta()` parser and `nixlFilePathMD`
   owned-fd RAII base for path-mode FILE_SEG registration; see
   [Path-Mode File Registration](#path-mode-file-registration).
+- `file_engine_base.h`: `FileEngineBase`, a shared `nixlBackendEngine` base for
+  local-only file backends over {DRAM, VRAM, FILE}. It supplies the constant
+  connection, metadata, and capability overrides. CUDA GDS and ROCm AIS derive
+  from it.
 
-All file-aware plugins (POSIX, HF3FS, and CUDA GDS, which provides both the
-`GDS` and `GDS_MT` backend names) link `file_utils_interface` and consume both
-sets of helpers.
+All file-aware plugins (POSIX, HF3FS, CUDA GDS, which provides both the `GDS`
+and `GDS_MT` backend names, and ROCm AIS, which provides the `AIS_MT` backend
+name) link `file_utils_interface` and consume both sets of helpers.
 
 ## QueryMem API Implementation through queryFileInfoList
 
@@ -19,6 +23,7 @@ The QueryMem API has been implemented for these file backends:
 - **POSIX Backend** (`src/plugins/posix/`)
 - **HF3FS Backend** (`src/plugins/hf3fs/`)
 - **CUDA GDS Backend** (`src/plugins/cuda_gds/`, provides both the `GDS` and `GDS_MT` backends)
+- **ROCm AIS Backend** (`src/plugins/rocm_ais/`, provides the `AIS_MT` backend)
 
 The backend extracts the filenames from the input descriptors (`nixl_reg_dlist_t`) and passes them to queryFileInfoList.
 Then queryFileInfoList returns a vector of `nixl_query_resp_t` structures containing:
@@ -110,6 +115,7 @@ Examples: `ro:/var/cache/x.bin`, `rw,direct:/var/cache/x.bin`,
 Backends consume the shared helpers `nixl::parsePathMeta()` and
 `nixl::FileFd` from `file_path_mode.{h,cpp}`. POSIX uses `nixlFilePathMD`
 directly, HF3FS extends its per-descriptor metadata, and CUDA GDS stores the
-`FileFd` in the common metadata implementation used by both backend names. The
-GDS per-fd cache keys on the *opened* fd, so two path-mode registrations of the
-same path yield two cuFile handles (no path-level dedup).
+`FileFd` in the common metadata implementation used by both backend names. ROCm
+AIS stores the `FileFd` in its shared hipFile handle. The GDS and AIS per-fd
+caches key on the *opened* fd, so two path-mode registrations of the same path
+yield two cuFile (or hipFile) handles (no path-level dedup).

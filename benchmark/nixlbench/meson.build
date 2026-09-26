@@ -60,37 +60,9 @@ if not nixl_lib.found() or not nixl_build.found() or not nixl_serdes.found()
     error('NIXL Libraries not found. Exiting.')
 endif
 
-# ROCm (mutually exclusive with CUDA; default off)
-rocm_available = false
-use_rocm = get_option('use_rocm')
-if use_rocm
-    rocm_path = get_option('rocm_path')
-    if rocm_path == ''
-        rocm_path = '/opt/rocm'
-    endif
-    if not fs.exists(rocm_path)
-        error('use_rocm=true but ROCm install root not found at ' + rocm_path +
-              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
-    endif
-    rocm_lib_path = rocm_path + '/lib'
-    rocm_inc_path = rocm_path + '/include'
-    rocm_dep = declare_dependency(
-        link_args : ['-L' + rocm_lib_path, '-lamdhip64', '-lhiprtc'],
-        include_directories : include_directories(rocm_inc_path))
-    add_project_arguments('-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations',
-                          language: 'cpp')
-    if rocm_dep.found()
-        rocm_available = true
-    endif
-endif
-
-# CUDA (skipped when use_rocm=true)
+# CUDA (always probed; independent of ROCm)
 cuda_available = false
-if use_rocm
-    # Placeholder dep so unconditional references to cuda_dep don't error;
-    # cuda_available=false gates real use.
-    cuda_dep = declare_dependency()
-elif cuda_lib_path == ''
+if cuda_lib_path == ''
     cuda_dep = dependency('cuda', required : false, modules : [ 'cudart', 'cuda' ])
     if not cuda_dep.found()
         # Meson is not detecting CUDA reliably on ARM, fallback to default
@@ -124,6 +96,85 @@ else
         link_args : ['-L' + cuda_lib_path, '-L' + cuda_stub_path, '-lcuda', '-lcudart'],
         include_directories : include_directories(cuda_inc_path))
     cuda_available = true
+endif
+
+cuda_detected = cuda_available
+
+# ROCm / HIP. As in the root project, ROCm is requested by setting
+# -Drocm_path=<prefix>; an empty rocm_path means ROCm is not requested, so it is
+# never enabled implicitly from the environment. Detection probes for
+# libamdhip64 itself rather than stat'ing <prefix>, because ROCm >= 7.13 makes
+# the install root an alternatives symlink; the prefix-scoped header check stops
+# a system-wide libamdhip64 from satisfying a wrong rocm_path.
+rocm_available = false
+rocm_dep = declare_dependency()
+rocm_path = get_option('rocm_path')
+if rocm_path != ''
+    rocm_lib_path = rocm_path + '/lib'
+    rocm_inc = include_directories(rocm_path + '/include')
+    amdhip64_lib = cpp.find_library('amdhip64', dirs: [rocm_lib_path], required: false)
+    hiprtc_lib = cpp.find_library('hiprtc', dirs: [rocm_lib_path], required: false)
+    if amdhip64_lib.found() and hiprtc_lib.found() and \
+       cpp.has_header('hip/hip_runtime.h', include_directories: rocm_inc)
+        rocm_dep = declare_dependency(
+            dependencies : [amdhip64_lib, hiprtc_lib],
+            link_args : ['-Wl,-rpath,' + rocm_lib_path],
+            include_directories : rocm_inc)
+        rocm_available = true
+    endif
+endif
+
+rocm_detected = rocm_available
+
+# One translation unit cannot include CUDA and HIP headers together, so a single
+# build targets exactly one stack. nixlbench_gpu is the one control that picks
+# it. use_rocm predates it and only asserted "ROCm must be present" without
+# selecting it, so -Duse_rocm=true on a host with both SDKs configured a CUDA
+# binary despite ROCm being demanded. It is kept as a compatibility alias that
+# now forces the rocm flavor, and contradicting it is an error rather than a
+# silent CUDA build.
+gpu_flavor = get_option('nixlbench_gpu')
+if get_option('use_rocm')
+    if gpu_flavor == 'cuda'
+        error('use_rocm=true contradicts nixlbench_gpu=cuda; pick one.')
+    endif
+    gpu_flavor = 'rocm'
+endif
+
+if gpu_flavor == 'cuda'
+    cuda_available = cuda_detected
+    rocm_bench = false
+elif gpu_flavor == 'rocm'
+    cuda_available = false
+    rocm_bench = rocm_detected
+else
+    cuda_available = cuda_detected
+    rocm_bench = rocm_detected
+endif
+nixlbench_rocm_enabled = rocm_bench and not cuda_available
+
+if gpu_flavor == 'cuda' and not cuda_detected
+    error('nixlbench_gpu=cuda was set but CUDA was not found.')
+endif
+if gpu_flavor == 'rocm' and not rocm_detected
+    if rocm_path == ''
+        error('A ROCm nixlbench build was requested but rocm_path is unset. ' +
+              'Set -Drocm_path=<prefix> to the ROCm install root.')
+    endif
+    error('nixlbench_gpu=rocm was set but ROCm HIP was not found under ' + rocm_path + '.')
+endif
+
+if nixlbench_rocm_enabled
+    add_project_arguments('-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations',
+                          language: 'cpp')
+endif
+
+if cuda_detected and rocm_detected and gpu_flavor == 'auto'
+    message(
+        'CUDA and ROCm both found: default nixlbench build uses CUDA only. ' +
+        'For a HIP binary as well, run a second Meson configure in another ' +
+        'build directory with -Dnixlbench_gpu=rocm.',
+    )
 endif
 
 cuda_fabric_available = false
@@ -174,7 +225,7 @@ nvshmem_inc = nvshmem_inc_path
 inc_dir = include_directories('.', './src/', nixl_inc)
 
 nvshmem_available = false
-if nvshmem_lib_path != ''
+if nvshmem_lib_path != '' and cuda_available
     if cpp.has_header('nvshmem.h', include_directories: include_directories(nvshmem_inc))
         nvshmem_lib = cpp.find_library('nvshmem', dirs: [nvshmem_lib_path])
         nvshmem_host_lib = cpp.find_library('nvshmem_host', dirs: [nvshmem_lib_path])
@@ -191,7 +242,7 @@ if cuda_available
     add_project_arguments('-DHAVE_CUDA', language: 'cpp')
 endif
 
-if rocm_available
+if nixlbench_rocm_enabled
     add_project_arguments('-DHAVE_ROCM', language: 'cpp')
 endif
 
@@ -199,8 +250,8 @@ if cuda_fabric_available
     add_project_arguments('-DHAVE_CUDA_FABRIC', language: 'cpp')
 endif
 
-if not cuda_available and not rocm_available
-    warning('Neither CUDA nor ROCm found. VRAM support will be disabled.')
+if not cuda_available and not nixlbench_rocm_enabled
+    warning('Neither CUDA nor ROCm is enabled for this nixlbench build. VRAM support will be disabled.')
 endif
 
 ucx_device_cuda_args = []
@@ -337,7 +388,7 @@ configure_file(
         'HAVE_ETCD': etcd_available ? '1' : '0',
         'HAVE_NVSHMEM': nvshmem_available ? '1' : '0',
         'HAVE_CUDA': cuda_available ? '1' : '0',
-        'HAVE_ROCM': rocm_available ? '1' : '0',
+        'HAVE_ROCM': nixlbench_rocm_enabled ? '1' : '0',
         'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
         'HAVE_RAW_CLI': raw_cli_available ? '1' : '0',
     },
@@ -355,7 +406,8 @@ if etcd_available
 endif
 if cuda_available
     deps += [cuda_dep]
-elif rocm_available
+endif
+if nixlbench_rocm_enabled
     deps += [rocm_dep]
 endif
 if ucx_gpu_device_api_available

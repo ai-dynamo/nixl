@@ -43,6 +43,10 @@ if is_variable('gds_backend_interface') or is_variable(
     subdir('cuda_gds')
 endif
 
+if is_variable('ais_mt_backend_interface')
+    subdir('ais_mt')
+endif
+
 cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
 disable_mooncake_backend = get_option('disable_mooncake_backend')

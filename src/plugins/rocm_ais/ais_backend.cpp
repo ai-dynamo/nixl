@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,61 +14,66 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <cstdint>
 #include <exception>
 #include <memory>
 #include <system_error>
 #include <utility>
 #include <variant>
 
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 
+#include "ais_backend.h"
 #include "common/nixl_log.h"
 #include "file/file_utils.h"
-#include "gds_backend.h"
 
 namespace {
 
 struct fileSegData {
-    std::shared_ptr<gdsFileHandle> handle;
+    std::shared_ptr<aisFileHandle> handle;
+    // The devId this descriptor registered under. Kept so deregisterMem can
+    // release a path-mode reservation: the fd no longer identifies it.
     uint64_t dev_id;
 
-    fileSegData(std::shared_ptr<gdsFileHandle> file_handle, uint64_t device_id)
+    fileSegData(std::shared_ptr<aisFileHandle> file_handle, uint64_t device_id)
         : handle(std::move(file_handle)),
           dev_id(device_id) {}
 };
 
 struct memSegData {
-    gdsMemBuf buf;
+    std::unique_ptr<aisMemBuf> buf;
 
     memSegData(void *address, size_t buffer_size, int registration_flags)
-        : buf(address, buffer_size, registration_flags) {}
+        : buf(std::make_unique<aisMemBuf>(address, buffer_size, registration_flags)) {}
 };
 
-class nixlGdsMetadata : public nixlBackendMD {
+// Registered-descriptor state. FILE_SEG descriptors share a refcounted hipFile
+// handle; memory descriptors own their pinned-buffer registration.
+class nixlAisMetadata : public nixlBackendMD {
 public:
-    nixlGdsMetadata(std::shared_ptr<gdsFileHandle> file_handle, uint64_t dev_id)
+    nixlAisMetadata(std::shared_ptr<aisFileHandle> file_handle, uint64_t dev_id)
         : nixlBackendMD(true),
           data_(std::in_place_type<fileSegData>, std::move(file_handle), dev_id) {}
 
-    explicit nixlGdsMetadata(void *addr, size_t size, int flags)
+    nixlAisMetadata(void *addr, size_t size, int flags)
         : nixlBackendMD(true),
           data_(std::in_place_type<memSegData>, addr, size, flags) {}
 
-    ~nixlGdsMetadata() override = default;
+    ~nixlAisMetadata() = default;
 
-    nixlGdsMetadata(const nixlGdsMetadata &) = delete;
-    nixlGdsMetadata &
-    operator=(const nixlGdsMetadata &) = delete;
+    nixlAisMetadata(const nixlAisMetadata &) = delete;
+    nixlAisMetadata &
+    operator=(const nixlAisMetadata &) = delete;
 
     std::variant<fileSegData, memSegData> data_;
 };
 
 } // namespace
 
-nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams *init_params)
+nixlAisEngine::nixlAisEngine(const nixlBackendInitParams *init_params)
     : FileEngineBase(init_params) {
     try {
-        driver_ = std::make_unique<gdsDriverHandle>();
+        driver_ = std::make_unique<aisDriverHandle>();
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
@@ -77,55 +82,59 @@ nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams *init_params)
 }
 
 nixl_status_t
-nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
+nixlAisEngine::registerMem(const nixlBlobDesc &mem,
                            const nixl_mem_t &nixl_mem,
                            nixlBackendMD *&out) {
     switch (nixl_mem) {
     case FILE_SEG: {
         auto reservation = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
         if (!reservation.ok()) {
-            NIXL_ERROR << "GDS: path-mode requires a unique devId per file (devId=" << mem.devId
+            NIXL_ERROR << "AIS: path-mode requires a unique devId per file (devId=" << mem.devId
                        << " already registered)";
             return NIXL_ERR_INVALID_PARAM;
         }
 
+        // Path-mode metaInfo ("<modes>:<path>") opens and owns the fd here;
+        // anything else falls through to fd-in-devId with mem.devId as the fd.
         nixl::FileFd file_fd;
         try {
             file_fd = nixl::FileFd(mem.devId, mem.metaInfo);
         }
         catch (const std::system_error &e) {
-            NIXL_ERROR << "GDS: path-mode open failed: " << e.what();
+            NIXL_ERROR << "AIS: path-mode open failed: " << e.what();
             return NIXL_ERR_BACKEND;
         }
         int fd = file_fd.fd();
 
-        std::shared_ptr<gdsFileHandle> handle;
-        if (auto it = gds_file_map_.find(fd); it != gds_file_map_.end()) {
+        // Repeated registrations of the same fd share one hipFile handle; the
+        // map holds a weak reference so the last descriptor deregisters it.
+        std::shared_ptr<aisFileHandle> handle;
+        if (auto it = ais_file_map_.find(fd); it != ais_file_map_.end()) {
             handle = it->second.lock();
             if (!handle) {
-                gds_file_map_.erase(it);
+                ais_file_map_.erase(it);
             }
             // Cache hit: drop file_fd (~FileFd closes any duplicate owned fd).
         }
         if (!handle) {
             try {
-                handle = std::make_shared<gdsFileHandle>(std::move(file_fd));
+                handle = std::make_shared<aisFileHandle>(std::move(file_fd));
             }
             catch (const std::exception &e) {
-                NIXL_ERROR << "GDS: failed to create file handle: " << e.what();
+                NIXL_ERROR << "AIS: failed to create file handle: " << e.what();
                 return NIXL_ERR_BACKEND;
             }
-            gds_file_map_[fd] = handle;
+            ais_file_map_[fd] = handle;
         }
-        out = new nixlGdsMetadata(std::move(handle), mem.devId);
+        out = new nixlAisMetadata(std::move(handle), mem.devId);
         reservation.commit();
         return NIXL_SUCCESS;
     }
 
     case VRAM_SEG: {
-        const cudaError_t error_id = cudaSetDevice(mem.devId);
-        if (error_id != cudaSuccess) {
-            NIXL_ERROR << "GDS: error: cudaSetDevice returned " << cudaGetErrorString(error_id)
+        const hipError_t error_id = hipSetDevice(mem.devId);
+        if (error_id != hipSuccess) {
+            NIXL_ERROR << "AIS: error: hipSetDevice returned " << hipGetErrorString(error_id)
                        << " for device ID " << mem.devId;
             return NIXL_ERR_BACKEND;
         }
@@ -134,11 +143,11 @@ nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
 
     case DRAM_SEG: {
         try {
-            out = new nixlGdsMetadata((void *)mem.addr, mem.len, 0);
+            out = new nixlAisMetadata((void *)mem.addr, mem.len, 0);
             return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
-            NIXL_ERROR << "GDS: failed to create memory buffer: " << e.what();
+            NIXL_ERROR << "AIS: failed to create memory buffer: " << e.what();
             return NIXL_ERR_BACKEND;
         }
     }
@@ -149,19 +158,21 @@ nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
 }
 
 nixl_status_t
-nixlGdsEngine::deregisterMem(nixlBackendMD *meta) {
-    std::unique_ptr<nixlGdsMetadata> md((nixlGdsMetadata *)meta);
+nixlAisEngine::deregisterMem(nixlBackendMD *meta) {
+    std::unique_ptr<nixlAisMetadata> md(static_cast<nixlAisMetadata *>(meta));
 
     if (auto *file_data = std::get_if<fileSegData>(&md->data_)) {
         if (file_data->handle) {
+            // Read everything off the handle before md.reset() drops what may
+            // be the last reference to it.
             const int key = file_data->handle->file_fd.fd();
             const bool path_mode = !file_data->handle->file_fd.path().empty();
             const uint64_t dev_id = file_data->dev_id;
             md.reset(); // Release metadata first (drops this registration's ref).
 
-            auto it = gds_file_map_.find(key);
-            if (it != gds_file_map_.end() && it->second.expired()) {
-                gds_file_map_.erase(it);
+            auto it = ais_file_map_.find(key);
+            if (it != ais_file_map_.end() && it->second.expired()) {
+                ais_file_map_.erase(it);
             }
             // owned fds: closed by ~FileFd (RAII) on last shared_ptr drop.
             if (path_mode) {
@@ -174,7 +185,7 @@ nixlGdsEngine::deregisterMem(nixlBackendMD *meta) {
 }
 
 nixl_status_t
-nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
+nixlAisEngine::prepXfer(const nixl_xfer_op_t &operation,
                         const nixl_meta_dlist_t &local,
                         const nixl_meta_dlist_t &remote,
                         const std::string &remote_agent,
@@ -184,17 +195,18 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
     const size_t file_cnt = remote.descCount();
 
     if ((buf_cnt != file_cnt) || ((operation != NIXL_READ) && (operation != NIXL_WRITE))) {
-        NIXL_ERROR << "GDS: error: incorrect count or operation selection";
+        NIXL_ERROR << "AIS: error: incorrect count or operation selection";
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    // Exactly one side must be the file side; file-to-file has no meaning here.
     const bool is_local_file = (local.getType() == FILE_SEG);
     if (is_local_file == (remote.getType() == FILE_SEG)) {
-        NIXL_ERROR << "GDS: backend only supports I/O between memory and files";
+        NIXL_ERROR << "AIS: backend only supports I/O between memory and files";
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    std::vector<gdsXferReq> reqs;
+    std::vector<aisXferReq> reqs;
     reqs.reserve(buf_cnt);
     for (size_t i = 0; i < buf_cnt; i++) {
         const nixlMetaDesc &mem_desc = is_local_file ? remote[i] : local[i];
@@ -205,22 +217,23 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        const auto *md = static_cast<const nixlGdsMetadata *>(file_desc.metadataP);
+        const auto *md = static_cast<const nixlAisMetadata *>(file_desc.metadataP);
         if (!md) {
-            NIXL_ERROR << "GDS: missing FILE_SEG metadata at xfer time";
+            NIXL_ERROR << "AIS: missing FILE_SEG metadata at xfer time";
             return NIXL_ERR_NOT_FOUND;
         }
         const auto *file_data = std::get_if<fileSegData>(&md->data_);
         if (!file_data || !file_data->handle) {
-            NIXL_ERROR << "GDS: file metadata is not a FILE_SEG variant";
+            NIXL_ERROR << "AIS: file metadata is not a FILE_SEG variant";
             return NIXL_ERR_NOT_FOUND;
         }
 
-        reqs.push_back(gdsXferReq{base_addr,
+        reqs.push_back(aisXferReq{base_addr,
                                   mem_desc.len,
                                   (size_t)file_desc.addr,
-                                  file_data->handle->cu_fhandle,
-                                  (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE});
+                                  file_data->handle->hip_fhandle,
+                                  (operation == NIXL_READ) ? hipFileBatchRead : hipFileBatchWrite,
+                                  static_cast<int>(mem_desc.devId)});
     }
 
     if (reqs.empty()) {
@@ -231,12 +244,12 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
-nixlGdsEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const {
-    // Extract metadata from descriptors which are file names
-    // Different plugins might customize parsing of metaInfo to get the file names
+nixlAisEngine::queryMem(const nixl_reg_dlist_t &descs,
+                        std::vector<nixl_query_resp_t> &resp) const {
     std::vector<nixl_blob_t> metadata(descs.descCount());
-    for (int i = 0; i < descs.descCount(); ++i)
+    for (int i = 0; i < descs.descCount(); ++i) {
         metadata[i] = descs[i].metaInfo;
+    }
 
     return nixl::queryFileInfoList(metadata, resp);
 }
