@@ -241,6 +241,13 @@ kernel_progress(struct docaXferCompletion *completion_list,
             // Check xfer completion and send notif
             const uint8_t completion_state =
                 DOCA_GPUNETIO_VOLATILE(completion_list[index].completed);
+            if (completion_state == DOCA_COMPLETION_ABORTED) {
+                const uint32_t aborted_index = index;
+                index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                DOCA_GPUNETIO_VOLATILE(completion_list[aborted_index].completed) =
+                    DOCA_COMPLETION_RELEASED;
+                continue;
+            }
             if (completion_state == DOCA_COMPLETION_RELEASED) {
                 index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
                 continue;

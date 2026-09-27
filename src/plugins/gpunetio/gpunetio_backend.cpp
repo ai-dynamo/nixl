@@ -1309,8 +1309,8 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     uint32_t completion_start = next_completion;
     uint32_t skipped = 0;
     while (skipped < DOCA_MAX_COMPLETION_INFLIGHT && completionReserved[completion_start] &&
-           ((volatile docaXferCompletion *)completion_list_cpu)[completion_start].completed ==
-               DOCA_COMPLETION_RELEASED) {
+           ((volatile docaXferCompletion *)completion_list_cpu)[completion_start].completed !=
+               DOCA_COMPLETION_PENDING) {
         completion_start = (completion_start + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
         ++skipped;
     }
@@ -1350,10 +1350,12 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
         }
         if (launch_result != DOCA_SUCCESS) {
             completion_list_cpu[completion_id].xferReqRingGpu = nullptr;
-            completion_list_cpu[completion_id].completed = DOCA_COMPLETION_RELEASED;
-            completionReserved[completion_id] = false;
+            completion_list_cpu[completion_id].completed = DOCA_COMPLETION_ABORTED;
+            treq->completion_ids.push_back(completion_id);
+            treq->completion_done.push_back(false);
+            lastPostedReq.store((completion_id + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK);
             treq->result = NIXL_ERR_BACKEND;
-            return treq->completion_ids.empty() ? treq->result : NIXL_IN_PROG;
+            return NIXL_IN_PROG;
         }
         treq->completion_ids.push_back(completion_id);
         treq->completion_done.push_back(false);
