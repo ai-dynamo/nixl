@@ -24,10 +24,7 @@
 #include <algorithm>
 #include <atomic>
 #include <future>
-#include <memory>
 #include <ostream>
-#include <string>
-#include <vector>
 #include <asio.hpp>
 
 #include "absl/container/inlined_vector.h"
@@ -209,14 +206,11 @@ private:
 
 } // namespace
 
-class nixlUcxDedicatedThread : public nixlUcxThread {
+class nixlUcxDedicatedThread final : public nixlUcxThread {
 public:
-    explicit nixlUcxDedicatedThread(nixlUcxEngine *engine) : nixlUcxThread(engine, 1) {}
-
-    ~nixlUcxDedicatedThread() override {
-        io_.stop();
-        join();
-    }
+    nixlUcxDedicatedThread(nixlUcxEngine *engine, nixlUcxWorker *worker)
+        : nixlUcxThread(engine, {worker}),
+          thread_(startThread()) {}
 
     static nixlUcxDedicatedThread *
     getDedicatedThread() {
@@ -242,8 +236,9 @@ public:
 
 protected:
     void
-    run() override {
+    run(std::stop_token token) override {
         const auto guard = asio::make_work_guard(io_);
+        const std::stop_callback stop(token, [this]() { io_.stop(); });
         NIXL_DEBUG << "dedicated " << *this << " running";
 
         while (!io_.stopped()) {
@@ -287,6 +282,7 @@ protected:
 private:
     asio::io_context io_;
     std::vector<nixlUcxChunkBackendReqH *> requests_;
+    std::jthread thread_;
 };
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
@@ -298,9 +294,8 @@ nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &in
     const auto dedicated_workers = getDedicatedWorkers();
     dedicatedThreads_.reserve(dedicated_workers.size());
     for (size_t i = 0; i < dedicated_workers.size(); ++i) {
-        dedicatedThreads_.emplace_back(std::make_unique<nixlUcxDedicatedThread>(this));
-        dedicatedThreads_.back()->addWorker(dedicated_workers[i].get());
-        dedicatedThreads_.back()->start();
+        dedicatedThreads_.emplace_back(
+            std::make_unique<nixlUcxDedicatedThread>(this, dedicated_workers[i].get()));
     }
 }
 
