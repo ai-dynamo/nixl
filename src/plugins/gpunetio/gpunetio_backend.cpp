@@ -1308,8 +1308,7 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     const uint32_t next_completion = lastPostedReq.load();
     uint32_t completion_start = next_completion;
     uint32_t skipped = 0;
-    while (skipped < DOCA_MAX_COMPLETION_INFLIGHT &&
-           completionReserved[completion_start]) {
+    while (skipped < DOCA_MAX_COMPLETION_INFLIGHT && completionReserved[completion_start]) {
         completion_start = (completion_start + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
         ++skipped;
     }
