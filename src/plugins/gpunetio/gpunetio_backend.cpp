@@ -1306,9 +1306,20 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     treq->completion_done.reserve(request_entries);
 
     const uint32_t next_completion = lastPostedReq.load();
+    uint32_t completion_start = next_completion;
+    uint32_t skipped = 0;
+    while (skipped < DOCA_MAX_COMPLETION_INFLIGHT &&
+           completionReserved[completion_start]) {
+        completion_start = (completion_start + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+        ++skipped;
+    }
+    if (skipped == DOCA_MAX_COMPLETION_INFLIGHT) {
+        treq->result = NIXL_ERR_BACKEND;
+        return treq->result;
+    }
     for (uint32_t entry = 0; entry < request_entries; ++entry) {
         const uint32_t completion_id =
-            (next_completion + entry) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+            (completion_start + entry) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
         if (completionReserved[completion_id]) {
             treq->result = NIXL_ERR_BACKEND;
             return treq->result;
@@ -1318,7 +1329,7 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     treq->result = NIXL_SUCCESS;
     for (uint32_t entry = 0; entry < request_entries; ++entry) {
         const uint32_t completion_id =
-            (next_completion + entry) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+            (completion_start + entry) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
         completionReserved[completion_id] = true;
         const uint32_t ring_idx = (treq->start_pos + entry) & DOCA_XFER_REQ_MASK;
         xferReqRingCpu[ring_idx].id = completion_id;
