@@ -295,10 +295,11 @@ kernel_progress(struct docaXferCompletion *completion_list,
 #endif
                         }
 
-                        DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) =
+                        const uint32_t completed_index = index;
+                        DOCA_GPUNETIO_VOLATILE(completion_list[completed_index].completed) =
                             DOCA_COMPLETION_DONE;
                         index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
-                        DOCA_GPUNETIO_VOLATILE(completion_list[(index - 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK].completed) =
+                        DOCA_GPUNETIO_VOLATILE(completion_list[completed_index].completed) =
                             DOCA_COMPLETION_RELEASED;
                     }
                 }
