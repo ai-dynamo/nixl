@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -239,8 +239,14 @@ kernel_progress(struct docaXferCompletion *completion_list,
     if (blockIdx.x == 0) {
         while (DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0) {
             // Check xfer completion and send notif
+            const uint8_t completion_state =
+                DOCA_GPUNETIO_VOLATILE(completion_list[index].completed);
+            if (completion_state == DOCA_COMPLETION_RELEASED) {
+                index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                continue;
+            }
             if (DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu) != nullptr) {
-                if (DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) == 0 &&
+                if (completion_state == DOCA_COMPLETION_PENDING &&
                     DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu->in_use) == 1) {
                     // Wait for final CQE in block of iterations
                     int poll_status = nixl_gpunetio_dev_poll_one_cq_at<
@@ -289,8 +295,11 @@ kernel_progress(struct docaXferCompletion *completion_list,
 #endif
                         }
 
-                        DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) = 1;
+                        DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) =
+                            DOCA_COMPLETION_DONE;
                         index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                        DOCA_GPUNETIO_VOLATILE(completion_list[(index - 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK].completed) =
+                            DOCA_COMPLETION_RELEASED;
                     }
                 }
             }

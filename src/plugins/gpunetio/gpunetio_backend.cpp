@@ -1308,7 +1308,9 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     const uint32_t next_completion = lastPostedReq.load();
     uint32_t completion_start = next_completion;
     uint32_t skipped = 0;
-    while (skipped < DOCA_MAX_COMPLETION_INFLIGHT && completionReserved[completion_start]) {
+    while (skipped < DOCA_MAX_COMPLETION_INFLIGHT && completionReserved[completion_start] &&
+           ((volatile docaXferCompletion *)completion_list_cpu)[completion_start].completed ==
+               DOCA_COMPLETION_RELEASED) {
         completion_start = (completion_start + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
         ++skipped;
     }
@@ -1333,7 +1335,7 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
         const uint32_t ring_idx = (treq->start_pos + entry) & DOCA_XFER_REQ_MASK;
         xferReqRingCpu[ring_idx].id = completion_id;
         completion_list_cpu[completion_id].xferReqRingGpu = xferReqRingGpu + ring_idx;
-        completion_list_cpu[completion_id].completed = 0;
+        completion_list_cpu[completion_id].completed = DOCA_COMPLETION_PENDING;
 
         doca_error_t launch_result = DOCA_SUCCESS;
         switch (operation) {
@@ -1348,7 +1350,7 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
         }
         if (launch_result != DOCA_SUCCESS) {
             completion_list_cpu[completion_id].xferReqRingGpu = nullptr;
-            completion_list_cpu[completion_id].completed = 0;
+            completion_list_cpu[completion_id].completed = DOCA_COMPLETION_RELEASED;
             completionReserved[completion_id] = false;
             treq->result = NIXL_ERR_BACKEND;
             return treq->completion_ids.empty() ? treq->result : NIXL_IN_PROG;
@@ -1377,7 +1379,8 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
         const uint32_t ring_idx = idx & DOCA_XFER_REQ_MASK;
         const uint32_t completion_index = treq->completion_ids[entry];
 
-        if (((volatile docaXferCompletion *)completion_list_cpu)[completion_index].completed == 1) {
+        if (((volatile docaXferCompletion *)completion_list_cpu)[completion_index].completed ==
+            DOCA_COMPLETION_RELEASED) {
             *((volatile uint8_t *)&xferReqRingCpu[ring_idx].in_use) = 0;
             completion_list_cpu[completion_index].xferReqRingGpu = nullptr;
             completionReserved[completion_index] = false;
