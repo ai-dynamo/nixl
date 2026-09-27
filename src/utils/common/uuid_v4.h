@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,10 +18,20 @@
 #define UUID_V4_H
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <string>
-#include <random>
 
 namespace nixl {
+
+/**
+ * @brief Generates cryptographically random bytes from the operating system CSPRNG.
+ * @param output Pointer to the output buffer
+ * @param size Number of bytes to generate
+ * @throws std::system_error if the entropy source fails
+ */
+void
+generateRandomBytes(std::uint8_t *output, std::size_t size);
 
 /**
  * @brief A class that generates RFC 9562 UUID version 4 identifiers
@@ -59,15 +69,7 @@ public:
     }
 
 private:
-    std::array<uint8_t, 16> data;
-
-    /**
-     * @brief Generates cryptographically random bytes for UUID version 4
-     * @param output Pointer to the output buffer
-     * @param size Number of bytes to generate
-     */
-    static void
-    generate_random_bytes(uint8_t *output, size_t size);
+    std::array<std::uint8_t, 16> data;
 };
 
 } // namespace nixl

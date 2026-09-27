@@ -53,7 +53,7 @@ struct nixlLibfabricReq {
     bool in_use; ///< Pool management flag
     size_t chunk_offset; ///< Chunk offset for DATA requests
     size_t chunk_size; ///< Chunk size for DATA requests
-    std::function<void()> completion_callback; ///< Completion callback function
+    std::function<void(nixl_status_t)> completion_callback; ///< Completion callback function
     void *local_addr; ///< Local memory address for transfers
     uint64_t remote_addr; ///< Remote memory address for transfers
     struct fid_mr *local_mr; ///< Local memory registration for transfers
@@ -400,7 +400,10 @@ public:
     struct fid_ep *endpoint; ///< Libfabric endpoint handle
 
     /** Initialize libfabric rail with all resources */
-    nixlLibfabricRail(const std::string &device, const std::string &provider, uint16_t id);
+    nixlLibfabricRail(const std::string &device,
+                      const std::string &provider,
+                      uint16_t id,
+                      enum fi_hmem_iface runtime);
 
     /** Destroy rail and cleanup all libfabric resources */
     ~nixlLibfabricRail();
@@ -545,6 +548,14 @@ public:
     void
     setXferIdCallback(std::function<void(uint64_t, uint16_t)> callback);
 
+    /** Set callback for transfer-error messages from an initiator.
+     *  Signature: (xfer_id, sender_agent_idx_in_our_table, final_completions).
+     *  Called on receipt of a NIXL_LIBFABRIC_MSG_XFER_ERROR control message, which tells us that
+     *  the transfer failed on the initiator and that only final_completions of its writes will
+     *  ever arrive. */
+    void
+    setXferErrorCallback(std::function<void(uint16_t, uint16_t, uint32_t)> callback);
+
     // Optimized resource management methods
     /** Allocate control request with size validation */
     [[nodiscard]] nixlLibfabricReq *
@@ -593,6 +604,7 @@ private:
     std::function<void(const std::string &, uint16_t)> notificationCallback;
     std::function<void(uint64_t, uint16_t)> xferIdCallback;
     std::function<void(const std::string &)> handshakeCallback;
+    std::function<void(uint16_t, uint16_t, uint32_t)> xferErrorCallback;
 
     // Separate request pools for optimal performance
     ControlRequestPool control_request_pool_;
@@ -600,6 +612,9 @@ private:
 
     // Provider capability flags
     bool provider_supports_hmem_;
+
+    // System runtime type (CUDA, NEURON, or SYSTEM) this rail was created for
+    enum fi_hmem_iface runtime_;
 
     void
     pollForCompletions();

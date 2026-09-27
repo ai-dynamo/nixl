@@ -36,6 +36,7 @@ build_doca_tests = enabled_plugins.get('TELEMETRY_DOCA') and doca_telemetry_dep.
 if build_doca_tests
     doca_test_exe = executable('doca_test',
         sources: ['telemetry_doca_test.cpp'],
+        include_directories: [utils_inc_dirs, include_directories('../metrics')],
         dependencies: [gtest_dep, doca_telemetry_dep, doca_common_dep],
         # DOCA telemetry metrics APIs are marked experimental (deprecated
         # attribute); mirror the DOCA sample Makefile and the plugin sources.
@@ -56,6 +57,7 @@ if build_doca_tests
             nixl_inc_dirs,
             utils_inc_dirs,
             include_directories(doca_exporter_dir),
+            include_directories('../metrics'),
             include_directories('../../src/plugins/telemetry/common'),
         ],
         dependencies: [gtest_dep, doca_telemetry_dep, doca_common_dep, nixl_infra, nixl_common_dep, absl_log_dep, absl_strings_dep],
@@ -100,6 +102,7 @@ if build_doca_tests
                 utils_inc_dirs,
                 include_directories(doca_exporter_dir),
                 include_directories(prometheus_exporter_dir),
+                include_directories('../metrics'),
                 include_directories('../../src/plugins/telemetry/common'),
             ],
             dependencies: [

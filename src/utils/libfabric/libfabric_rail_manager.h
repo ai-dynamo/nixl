@@ -28,8 +28,12 @@
 #include "libfabric_rail.h"
 
 #ifdef HAVE_CUDA
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#else
 #include <cuda.h>
 #include <cuda_runtime.h>
+#endif
 #endif
 
 // Forward declarations
@@ -231,7 +235,7 @@ public:
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t agent_idx,
                              uint16_t xfer_id,
-                             std::function<void()> completion_callback,
+                             std::function<void(nixl_status_t)> completion_callback,
                              size_t &submitted_count_out,
                              int desc_idx,
                              size_t base_offset,
@@ -270,6 +274,7 @@ public:
     enum class ControlMessageType : int {
         NOTIFICATION, ///< User notification message
         HANDSHAKE, ///< Peer-idx assignment (NIXL_LIBFABRIC_MSG_HANDSHAKE)
+        XFER_ERROR, ///< Batch had unpostable writes (NIXL_LIBFABRIC_MSG_XFER_ERROR)
     };
     /** Send control message via control rail
      * @param msg_type Type of control message
@@ -284,13 +289,14 @@ public:
                        nixlLibfabricReq *req,
                        fi_addr_t dest_addr,
                        uint16_t agent_idx = 0,
-                       std::function<void()> completion_callback = nullptr);
+                       std::function<void(nixl_status_t)> completion_callback = nullptr);
     // Progress APIs
     /** Process completions on active rails only (optimized for CPU overhead)
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
     progressActiveRails();
+
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
      */

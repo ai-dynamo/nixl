@@ -16,6 +16,16 @@
 
 # LibFabric plugin configuration
 
+# AMD ROCm/HIP support (rocm_dep, hipify_src) is defined once in the root
+# meson.build and consumed here. On ROCm builds (-Drocm_path=<prefix>) the CUDA
+# sources are translated to HIP with hipify-perl; on CUDA-only builds they are
+# used verbatim.
+if rocm_dep.found()
+    libfabric_backend_src = hipify_src.process('libfabric_backend.cpp', extra_args: ['-o'])
+else
+    libfabric_backend_src = files('libfabric_backend.cpp')
+endif
+
 # Enable libfabric utils layer
 libfabric_plugin_deps = [
     nixl_infra,
@@ -28,8 +38,13 @@ libfabric_plugin_deps = [
 
 compile_flags = ['-DHAVE_LIBFABRIC']
 
-# Add CUDA support if available
-if cuda_dep.found()
+# Add GPU support: HIP/ROCm when rocm_path is set, CUDA otherwise. The GPU code
+# paths are guarded by HAVE_CUDA; on ROCm the hipified sources compile those
+# paths against HIP via rocm_dep.
+if rocm_dep.found()
+    libfabric_plugin_deps += [rocm_dep]
+    compile_flags += ['-DHAVE_CUDA']
+elif cuda_dep.found()
     libfabric_plugin_deps += [cuda_dep]
     compile_flags += ['-DHAVE_CUDA']
 endif
@@ -38,7 +53,7 @@ endif
 if 'LIBFABRIC' in static_plugins
     libfabric_backend_lib = static_library(
         'LIBFABRIC',
-        'libfabric_backend.cpp',
+        libfabric_backend_src,
         'libfabric_backend.h',
         'libfabric_connection.cpp',
         'libfabric_connection.h',
@@ -53,7 +68,7 @@ if 'LIBFABRIC' in static_plugins
 else
     libfabric_backend_lib = shared_library(
         'LIBFABRIC',
-        'libfabric_backend.cpp',
+        libfabric_backend_src,
         'libfabric_backend.h',
         'libfabric_connection.cpp',
         'libfabric_connection.h',
