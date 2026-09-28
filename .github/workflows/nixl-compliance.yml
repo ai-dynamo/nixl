@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# nixl release pipeline: wait for Jenkins to publish the release wheels for this
-# commit, stage the Rust crate to Artifactory, then run the centralized
+# nixl release pipeline: wait for Jenkins to publish this commit's wheels, stage
+# the Rust crate to Artifactory, then run the centralized
 # release-automation compliance pipeline — in a single tag-triggered DAG.
 #
 #   prep ─┬─ wait-for-wheels ─┐
@@ -22,16 +22,24 @@
 #
 # On a v* tag:
 #   1. prep            derive rc_tag / wheel_version / sonar_branch / crate_version.
-#   2. wait-for-wheels PASSIVE poll of Artifactory for the folder-level NIXL_SHA
-#                      property that Jenkins' nixl-ci-build-wheel-nightly stamps on
-#                      release/<wheel_version>/<build-number>/ once it finishes a green
-#                      build for this commit (see .ci/docs/ci-overview.md). Jenkins itself
-#                      isn't triggered here — nixl-build-wheel-release-poller already
-#                      picks up new release-branch commits on its own 4-hourly cron, so a
-#                      tag pushed right after a poll cycle can wait up to ~4h + build time
-#                      before this job (and therefore compliance) proceeds. Revisit: have
-#                      this workflow trigger the Jenkins build directly instead of waiting
-#                      on the cron, once Jenkins remote-API credentials are wired up here.
+#   2. wait-for-wheels PASSIVE poll of Artifactory for a nixl_cu12 + nixl_cu13 wheel pair
+#                      under verification/g<nixl-sha8>.ucx*/ (nixl-ci-build-wheel-nightly's
+#                      default PUBLISH_DIR — see .ci/docs/ci-overview.md), keyed by this
+#                      commit's sha alone ($match wildcards the UCX sha, unknown here).
+#                      Checked by name, not by the release/ path's NIXL_SHA property:
+#                      verification/ is shared between builds and is never deleted on
+#                      failure, so both wheels actually being present is the closer proxy
+#                      for "this commit's build finished cleanly." Works for any commit
+#                      (PR branch, release branch, anything), unlike release/<ver>/, which
+#                      only ever gets populated by nixl-build-wheel-release-poller for
+#                      commits it scans on real release/* branches.
+#                      Jenkins itself isn't triggered here — this job only finds a build
+#                      that's already running or already finished (nightly cron, or someone
+#                      manually dispatching nixl-ci-build-wheel-nightly for this sha). If
+#                      nothing has kicked off a build for this commit, wait-for-wheels waits
+#                      the full timeout and never sees one land. Revisit: have this workflow
+#                      trigger the Jenkins build directly, once Jenkins remote-API
+#                      credentials are wired up here.
 #   3. publish-crate   cargo publish nixl-sys -> Artifactory sw-dynamo-nixl-cargo-local.
 #                     Runs on the gitlab_ci_runners group (ubuntu-latest can't resolve
 #                     artifactory.nvidia.com; the self-hosted velonix runners reject
@@ -163,7 +171,7 @@ jobs:
           echo "wheel_sha8=${WS:0:8}" >> "$GITHUB_OUTPUT"
           echo "rc_tag=$RC_TAG  wheel_version=$WV  crate_version=$CV  sonar_branch=release/${BASE}  wheel_sha8=${WS:0:8}"
 
-  # ── tag/manual: wait for Jenkins to publish the release wheels for this commit ──
+  # ── tag/manual: wait for Jenkins to publish this commit's wheels (verification/) ──
   wait-for-wheels:
     if: github.event_name != 'pull_request'
     needs: prep
@@ -179,7 +187,6 @@ jobs:
     env:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
       ARTIFACTORY_PYPI_TOKEN: ${{ secrets.ARTIFACTORY_PYPI_TOKEN }}
-      WHEEL_VERSION: ${{ needs.prep.outputs.wheel_version }}
       WHEEL_SHA8: ${{ needs.prep.outputs.wheel_sha8 }}
     steps:
       - name: Guard secrets
@@ -187,37 +194,40 @@ jobs:
           [ -n "$ARTIFACTORY_PYPI_TOKEN" ] || { echo "::error::ARTIFACTORY_PYPI_TOKEN secret is empty/unavailable for this ref."; exit 1; }
           [ -n "$ARTIFACTORY_URL" ] || { echo "::error::ARTIFACTORY_URL secret is empty."; exit 1; }
 
-      - name: Poll Artifactory for the Jenkins-built release wheels
+      - name: Poll Artifactory for the Jenkins-built wheels
         run: |
           set -euo pipefail
-          # Matches the sha8 nixl-ci-build-wheel-nightly's pipeline_stop stamps as the
-          # release/<ver>/<build-number>/ folder's NIXL_SHA property on a green build
-          # (.ci/jenkins/lib/build-wheel-nightly-matrix.yaml). Failed/partial builds never
-          # get this property — their folder is deleted instead — so its presence alone
-          # means a complete cu12+cu13 set is published for this exact commit.
+          # verification/g<nixl-sha8>.ucx<ucx-sha8>/ (nixl-ci-build-wheel-nightly, PUBLISH_DIR
+          # empty — the nightly-cron path, not the release/<ver> poller path). Keyed by nixl
+          # sha alone here since the UCX sha isn't known on the GitHub side; $match wildcards
+          # it. Folder name only (no NIXL_SHA property, unlike release/): verification/ is
+          # shared between builds and is NEVER deleted on failure, so an empty/partial upload
+          # can leave a folder behind. To not treat that as "published," require both a
+          # nixl_cu12 and a nixl_cu13 wheel file actually present under it, not just the
+          # folder existing.
           SHA8="${WHEEL_SHA8}"
           AQL_URL="${ARTIFACTORY_URL}/api/search/aql"
           MAX_WAIT=21000   # ~5h50m, under the job's 360m timeout-minutes ceiling
           INTERVAL=120
           ELAPSED=0
-          echo "Waiting for release/${WHEEL_VERSION}/<build-number>/ with NIXL_SHA=${SHA8} ..."
+          echo "Waiting for verification/g${SHA8}.ucx*/ with both nixl_cu12 and nixl_cu13 wheels ..."
           while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
-            QUERY="items.find({\"repo\":\"sw-nbu-swx-nixl-pypi-local\",\"type\":\"folder\",\"path\":\"release/${WHEEL_VERSION}\",\"@NIXL_SHA\":\"${SHA8}\"})"
+            QUERY="items.find({\"repo\":\"sw-nbu-swx-nixl-pypi-local\",\"type\":\"file\",\"path\":{\"\$match\":\"verification/g${SHA8}.ucx*\"},\"name\":{\"\$match\":\"nixl_cu1*.whl\"}})"
             RESP=$(curl -sS -H "Authorization: Bearer ${ARTIFACTORY_PYPI_TOKEN}" -H "Content-Type: text/plain" \
               -X POST "${AQL_URL}" -d "${QUERY}")
-            COUNT=$(echo "${RESP}" | jq '.results | length' 2>/dev/null || echo 0)
-            if [ "${COUNT}" -gt 0 ]; then
-              FOLDER=$(echo "${RESP}" | jq -r '.results[0].path + "/" + .results[0].name')
+            NAMES=$(echo "${RESP}" | jq -r '.results[].name' 2>/dev/null || true)
+            if echo "${NAMES}" | grep -q 'nixl_cu12' && echo "${NAMES}" | grep -q 'nixl_cu13'; then
+              FOLDER=$(echo "${RESP}" | jq -r '.results[0].path' | sort -u | paste -sd, -)
               echo "Found Jenkins-published wheels: ${FOLDER}"
-              echo "## Jenkins release wheels" >> "$GITHUB_STEP_SUMMARY"
-              echo "Found: \`${FOLDER}\` (NIXL_SHA=${SHA8})" >> "$GITHUB_STEP_SUMMARY"
+              echo "## Jenkins verification wheels" >> "$GITHUB_STEP_SUMMARY"
+              echo "Found: \`${FOLDER}\` (nixl sha=${SHA8})" >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             echo "[${ELAPSED}s] not yet published; retrying in ${INTERVAL}s"
             sleep "${INTERVAL}"
             ELAPSED=$((ELAPSED + INTERVAL))
           done
-          echo "::error::timed out waiting for Jenkins release wheels (release/${WHEEL_VERSION}, NIXL_SHA=${SHA8})"
+          echo "::error::timed out waiting for Jenkins wheels (verification/g${SHA8}.ucx*, nixl sha=${SHA8})"
           exit 1
 
   # ── tag/manual: stage nixl-sys to Artifactory (dynamo-parity: GitHub pushes, GitLab consumes) ──
