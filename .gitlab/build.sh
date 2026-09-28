@@ -176,28 +176,33 @@ else
         echo "Using PyTorch from system site-packages"
     else
         echo "System torch check failed: ${_torch_check_err}" >&2
-        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
+        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+')
         if [ -z "$cuda_version" ]; then
             echo "ERROR: unable to determine CUDA version from nvcc" >&2
             exit 1
         fi
+        if [ "${cuda_version%%.*}" = "13" ]; then
+            torch_cu_tag="cu130"
+        else
+            torch_cu_tag="cu$(echo "${cuda_version}" | tr -d .)"
+        fi
         $SUDO pip3 --no-cache-dir install --break-system-packages \
-            --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
+            --index-url "https://download.pytorch.org/whl/${torch_cu_tag}" torch
     fi
 
     # DOCA + RDMA build dependencies.
-    #  - Bases without DOCA (cuda-dl-base, nvidia/cuda, ubuntu22.04): add the DOCA
-    #    3.3.0 host repo, install the SDK + headers, then reinstall the RDMA packages
-    #    to repair cuda-dl-base's broken libibverbs-dev.
+    #  - Bases without DOCA (cuda-dl-base, nvidia/cuda, ubuntu22.04): add the pinned
+    #    DOCA host repo (wget below), install the SDK + headers, then reinstall the
+    #    RDMA packages to repair cuda-dl-base's broken libibverbs-dev.
     #  - Bases that already ship DOCA (nvcr.io/nvidia/pytorch bundles >=3.4): use that
-    #    stack as-is. Adding the older 3.3 repo would only downgrade/mismatch it, so
+    #    stack as-is. Adding a second DOCA repo would only downgrade/mismatch it, so
     #    skip the whole repo add + SDK install + RDMA reinstall.
     if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then
-        echo "DOCA $(dpkg-query -W -f='${Version}' doca-sdk-gpunetio) provided by base image; skipping DOCA 3.3 repo, SDK install, and RDMA reinstall"
+        echo "DOCA $(dpkg-query -W -f='${Version}' doca-sdk-gpunetio) provided by base image; skipping DOCA repo add, SDK install, and RDMA reinstall"
     else
         ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
         MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-        wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${BUILD_TMP}/doca-host.deb
+        wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${BUILD_TMP}/doca-host.deb
         $SUDO dpkg -i ${BUILD_TMP}/doca-host.deb
         $SUDO apt-get update
         $SUDO apt-get upgrade -y
