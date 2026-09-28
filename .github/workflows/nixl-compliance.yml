@@ -33,8 +33,9 @@
 #                      this workflow trigger the Jenkins build directly instead of waiting
 #                      on the cron, once Jenkins remote-API credentials are wired up here.
 #   3. publish-crate   cargo publish nixl-sys -> Artifactory sw-dynamo-nixl-cargo-local.
-#                     Runs on GitHub-hosted ubuntu-latest (a --no-verify publish needs no
-#                     builder; the self-hosted velonix runners reject tag/push events).
+#                     Runs on the gitlab_ci_runners group (ubuntu-latest can't resolve
+#                     artifactory.nvidia.com; the self-hosted velonix runners reject
+#                     tag/push events at admission).
 #   4. compliance     trigger the release-automation GitLab pipeline (PROJECT=nixl:
 #                     wheel scan + SonarQube + nSpect register) and poll to completion.
 #                     GATED: only runs if wait-for-wheels AND publish-crate succeeded, so
@@ -50,8 +51,10 @@
 # no upload, no token, no GitLab) as a DRY RUN.
 #
 # PREREQUISITES (before the first real run):
-#   Runner: an internal runner with corp-net reach to gitlab-master.nvidia.com
-#           (the `gitlab_ci_runners` group — same one nixl's other GitLab triggers use).
+#   Runner: an internal runner with corp-net reach to gitlab-master.nvidia.com AND
+#           artifactory.nvidia.com (the `gitlab_ci_runners` group — same one nixl's other
+#           GitLab triggers use; ubuntu-latest cannot resolve either host, confirmed by a
+#           real run — DNS failure, not a secrets/permissions issue).
 #   Secrets:
 #     ARTIFACTORY_URL          - e.g. https://artifactory.nvidia.com/artifactory  (crate, wheels)
 #     ARTIFACTORY_CARGO_TOKEN  - deploy token for the cargo repo                   (crate)
@@ -164,7 +167,12 @@ jobs:
   wait-for-wheels:
     if: github.event_name != 'pull_request'
     needs: prep
-    runs-on: ubuntu-latest
+    # ubuntu-latest can't resolve artifactory.nvidia.com (confirmed via a real run:
+    # "Could not resolve host"). gitlab_ci_runners has corp-net reach (compliance already
+    # uses it against gitlab-master.nvidia.com) and — unlike the velonix builder group —
+    # admits tag/push-triggered jobs.
+    runs-on:
+      group: gitlab_ci_runners
     # nixl-build-wheel-release-poller only runs every 4h; a tag pushed right after a poll
     # cycle can sit here a while. Generous ceiling; keep MAX_WAIT below just under this.
     timeout-minutes: 360
@@ -216,9 +224,12 @@ jobs:
   publish-crate:
     if: github.event_name != 'pull_request'
     needs: prep
-    # Always GitHub-hosted: a --no-verify cargo publish needs no builder image, and the
-    # self-hosted velonix runners reject tag/push events at admission anyway.
-    runs-on: ubuntu-latest
+    # Moved off ubuntu-latest: it can't resolve artifactory.nvidia.com (confirmed via a
+    # real run: "Could not resolve host"). gitlab_ci_runners has corp-net reach and —
+    # unlike the velonix builder group, which rejects tag/push events at admission —
+    # actually accepts this job. No builder image needed either way (--no-verify publish).
+    runs-on:
+      group: gitlab_ci_runners
     env:
       ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
       ARTIFACTORY_CARGO_TOKEN: ${{ secrets.ARTIFACTORY_CARGO_TOKEN }}
@@ -245,7 +256,8 @@ jobs:
       - name: cargo publish -> Artifactory
         run: |
           set -e
-          # ubuntu-latest ships cargo; fall back to rustup just in case.
+          # gitlab_ci_runners builder images aren't guaranteed to ship cargo (ubuntu-latest
+          # did); install via rustup when it's missing.
           if ! command -v cargo >/dev/null 2>&1; then
             echo "cargo not found; installing via rustup"
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
