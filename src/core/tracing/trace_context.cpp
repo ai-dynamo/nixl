@@ -21,6 +21,9 @@
 
 namespace {
 constexpr std::uint8_t supported_trace_flags = 0x03;
+constexpr std::size_t wire_flags_offset = 1;
+constexpr std::size_t wire_trace_id_offset = 2;
+constexpr std::size_t wire_span_id_offset = 18;
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -64,6 +67,19 @@ parseBytes(std::string_view value,
 }
 
 void
+generateInto(nixl::trace::TraceContext &context) {
+    do {
+        nixl::generateRandomBytes(context.traceId.data(), context.traceId.size());
+    } while (isAllZero(context.traceId));
+
+    do {
+        nixl::generateRandomBytes(context.spanId.data(), context.spanId.size());
+    } while (isAllZero(context.spanId));
+
+    context.flags = 0x02;
+}
+
+void
 appendByte(std::string &result, std::uint8_t value) {
     constexpr std::array<char, 16> hex{
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
@@ -71,6 +87,12 @@ appendByte(std::string &result, std::uint8_t value) {
     result.push_back(hex[value & 0x0f]);
 }
 } // namespace
+
+nixl::trace::TraceContext::TraceContext(const nixl::trace::Tracer *tracer) {
+    if (tracer != nullptr) {
+        generateInto(*this);
+    }
+}
 
 bool
 nixl::trace::TraceContext::valid() const noexcept {
@@ -84,9 +106,13 @@ nixl::trace::TraceContext::sampled() const noexcept {
 
 std::uint64_t
 nixl::trace::TraceContext::correlationId64() const noexcept {
+    if (!valid()) {
+        return 0;
+    }
+
     std::uint64_t result = 0;
-    for (std::size_t index = 0; index < sizeof(result); ++index) {
-        result = (result << 8) | traceId[index];
+    for (const auto byte : spanId) {
+        result = (result << 8) | byte;
     }
     return result;
 }
@@ -127,16 +153,54 @@ nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
     return result;
 }
 
+std::optional<std::size_t>
+nixl::trace::encodeTraceContext(const nixl::trace::TraceContext &context,
+                                std::span<std::uint8_t> buffer) {
+    if (!context.valid() || buffer.size() < nixl::trace::traceContextWireSize) {
+        return std::nullopt;
+    }
+
+    buffer[0] = nixl::trace::traceContextWireVersion;
+    buffer[wire_flags_offset] = context.flags & supported_trace_flags;
+    std::copy(context.traceId.begin(),
+              context.traceId.end(),
+              buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset));
+    std::copy(context.spanId.begin(),
+              context.spanId.end(),
+              buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset));
+    return nixl::trace::traceContextWireSize;
+}
+
+nixl::trace::WireDecodeResult
+nixl::trace::decodeTraceContext(std::span<const std::uint8_t> buffer,
+                                nixl::trace::TraceContext &context) {
+    if (buffer.empty()) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+    if (buffer[0] != nixl::trace::traceContextWireVersion) {
+        return nixl::trace::WireDecodeResult::UnknownVersion;
+    }
+    if (buffer.size() != nixl::trace::traceContextWireSize) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+
+    context.flags = buffer[wire_flags_offset] & supported_trace_flags;
+    std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset),
+                context.traceId.size(),
+                context.traceId.begin());
+    std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset),
+                context.spanId.size(),
+                context.spanId.begin());
+    if (!context.valid()) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+
+    return nixl::trace::WireDecodeResult::Ok;
+}
+
 nixl::trace::TraceContext
 nixl::trace::generateTraceContext() {
     nixl::trace::TraceContext context;
-    do {
-        nixl::generateRandomBytes(context.traceId.data(), context.traceId.size());
-    } while (isAllZero(context.traceId));
-    context.flags = 0x02;
-
-    do {
-        nixl::generateRandomBytes(context.spanId.data(), context.spanId.size());
-    } while (isAllZero(context.spanId));
+    generateInto(context);
     return context;
 }

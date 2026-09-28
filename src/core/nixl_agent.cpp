@@ -64,11 +64,13 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
                            const size_t desc_count,
-                           const nixl_remote_section_weak_t &remote_section_ref)
+                           const nixl_remote_section_weak_t &remote_section_ref,
+                           const nixl::trace::TraceContext &trace_context)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
       remoteSection(remote_section_ref),
+      traceContext_(trace_context),
       backendOp(backend_op) {
     initiatorDescs.reserve(desc_count);
     targetDescs.reserve(desc_count);
@@ -783,6 +785,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     }
 
     if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
         if (extra_params->notif) {
             opt_args.notifMsg = *extra_params->notif;
             opt_args.hasNotif = true;
@@ -820,7 +823,8 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
                                                  desc_count,
-                                                 remote_side.remoteSectionRef);
+                                                 remote_side.remoteSectionRef,
+                                                 nixl::trace::TraceContext{data->tracer_.get()});
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -882,8 +886,8 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
         total_bytes += local_desc.len;
     }
 
-    NIXL_DEBUG << "merged " << desc_count << " indices into " << handle->initiatorDescs.descCount()
-               << " descriptors";
+    NIXL_DEBUG << "makeXfer bytes: " << total_bytes
+               << ", descs: " << handle->initiatorDescs.descCount() << ", indices: " << desc_count;
 
     handle->engine = backend;
     handle->notifMsg = opt_args.notifMsg;
@@ -988,7 +992,8 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  local_descs.getType(),
                                                  remote_descs.getType(),
                                                  local_descs.descCount(),
-                                                 rem_sec_it->second);
+                                                 rem_sec_it->second,
+                                                 nixl::trace::TraceContext{data->tracer_.get()});
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1111,9 +1116,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    // Request-handle address is a stable id shared with the completion below,
-    // so the two link even when posted and polled from different threads.
-    NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), reinterpret_cast<std::uint64_t>(req_hndl));
+    NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), req_hndl->traceCorrelationId64());
     NIXL_TRACE_SCOPE(trace_span,
                      data->tracer_.get(),
                      req_hndl->backendOp == NIXL_WRITE ? "nixl::postXferReq.write" :
@@ -1163,6 +1166,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
 
     // Updating the notification based on opt_args
     if (extra_params) {
+        opt_args.customParam = extra_params->customParam;
         if (extra_params->notif) {
             req_hndl->notifMsg = *extra_params->notif;
             opt_args.notifMsg = *extra_params->notif;
@@ -1245,8 +1249,7 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
             }
         }
         if (req_hndl->status == NIXL_SUCCESS) {
-            NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(),
-                                         reinterpret_cast<std::uint64_t>(req_hndl));
+            NIXL_TRACE_CORRELATION_SCOPE(data->tracer_.get(), req_hndl->traceCorrelationId64());
             NIXL_TRACE_MARK(
                 data->tracer_.get(), "nixl::xfer.complete", nixl::trace::Kind::Metadata);
         }
