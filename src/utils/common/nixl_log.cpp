@@ -293,16 +293,9 @@ private:
     }
 
     /**
-     * @brief Reports the first write failure and stops using the file.
-     *
-     * Records after the failure are dropped rather than retried: the process
-     * being described must not be held up by its own log file.
-     *
-     * Goes straight to stderr rather than through NIXL_WARN so that reporting
-     * the failure does not depend on the machinery that just failed.
-     *
-     * @param reason errno from the failed operation, or 0 if it was not set.
-     *               Called with mutex_ held.
+     * @brief Reports the first write failure and stops using the file, going
+     *        to stderr directly rather than through the machinery that failed.
+     * @param reason errno from the failed operation, or 0. Called with mutex_ held.
      */
     void
     reportFailure(int reason) {
@@ -420,10 +413,7 @@ InitializeNixlLogging() {
 
 namespace nixl {
 
-/**
- * @brief Registers the NIXL_LOG_FILE sink; see nixl_log.h for the contract.
- * @return true if a sink is registered on return, including when one already was.
- */
+/** @brief Registers the NIXL_LOG_FILE sink; see nixl_log.h for the contract. */
 bool
 initLogFile() {
     auto &state = getLogFileState();
@@ -520,19 +510,11 @@ namespace {
 /**
  * @brief Tears the log file down at library unload.
  *
- * Placed in .fini_array rather than in a static destructor because a
- * self-destroying sink would unregister itself while later shutdown code could
- * still be logging. On glibc this also runs after the exit-handler queue that
- * __cxa_atexit registers static destructors on, so records emitted late in
- * shutdown still reach the file. That ordering is loader behaviour rather than
- * a language guarantee, so it is covered by a test rather than assumed:
- * nixlLogFileTest.RecordsFromStaticDestructorsReachTheFile.
- *
- * Correctness does not depend on the ordering even so. Send() writes every
- * record directly, so the worst a different order can cost is the few
- * records emitted after this runs; it can never lose an earlier record, and it
- * cannot leave a registered sink dangling, because the sink is removed from
- * Abseil before it is destroyed.
+ * .fini_array runs after the exit-handler queue holding static destructors on
+ * glibc, so late records still reach the file. That ordering is loader
+ * behaviour rather than a language guarantee, so
+ * nixlLogFileTest.RecordsFromStaticDestructorsReachTheFile pins it. The sink
+ * is unregistered before it is destroyed, so no ordering can leave it dangling.
  */
 void
 shutdownNixlLogging() __attribute__((destructor));
