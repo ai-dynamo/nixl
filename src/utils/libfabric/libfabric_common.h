@@ -59,29 +59,46 @@
 #define NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S 60
 
 // Handshake SerDes tag names
-constexpr const char *NIXL_HANDSHAKE_TAG_IDX = "idx";
+constexpr const char *NIXL_HANDSHAKE_TAG_VER = "ver";
 constexpr const char *NIXL_HANDSHAKE_TAG_NAME = "name";
 constexpr const char *NIXL_HANDSHAKE_TAG_HAS_CONN = "has_conn";
 constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 
+// Wire-protocol version of the libfabric plugin's control messages. Exchanged in the
+// handshake so that an incompatible peer is rejected at connection setup instead of
+// silently misinterpreting immediate data. Bump whenever the immediate-data layout or a
+// control-message body changes incompatibly.
+//
+//   1 : imm_data carries an 8-bit peer agent index. Never advertised - agents speaking
+//       version 1 send a "idx" field and no "ver" field at all.
+//   2 : the agent index is gone from imm_data; the receiver resolves senders from the
+//       completion's source address (FI_SOURCE + fi_cq_readfrom).
+#define NIXL_LIBFABRIC_PROTO_VERSION 2u
+
 // The immediate data associated with an RDMA operation is 32 bits and is divided as follows:
-// | 4-bit MSG TYPE flag | 8-bit agent index | 16-bit XFER_ID | 4-bit SEQ_ID |
+// | 4-bit MSG TYPE flag | 8-bit RESERVED | 16-bit XFER_ID | 4-bit SEQ_ID |
+//
+// RESERVED carried an 8-bit peer agent index up to protocol version 1, which capped the
+// number of peers that could send to a single agent at 256. The receiver now recovers the
+// sender from the source address libfabric reports on each completion (FI_SOURCE +
+// fi_cq_readfrom), so the field is unused and must be transmitted as zero. Every other field
+// kept its original position so that this is the only difference from the version-1 layout.
 
 // Optimized bit field constants (compile-time computed)
 #define NIXL_MSG_TYPE_BITS 4
-#define NIXL_AGENT_INDEX_BITS 8
+#define NIXL_IMM_RESERVED_BITS 8
 #define NIXL_XFER_ID_BITS 16
 #define NIXL_SEQ_ID_BITS 4
 
 // Pre-computed shift amounts for better performance
 #define NIXL_MSG_TYPE_SHIFT 0
-#define NIXL_AGENT_INDEX_SHIFT 4
+#define NIXL_IMM_RESERVED_SHIFT 4
 #define NIXL_XFER_ID_SHIFT 12
 #define NIXL_SEQ_ID_SHIFT 28
 
 // Pre-computed masks (compile-time constants)
 #define NIXL_MSG_TYPE_MASK 0xFU // 0x0000000F (4 bits)
-#define NIXL_AGENT_INDEX_MASK 0xFFU // 0x000000FF (8 bits)
+#define NIXL_IMM_RESERVED_MASK 0xFFU // 0x000000FF (8 bits)
 #define NIXL_XFER_ID_MASK 0xFFFFU // 0x0000FFFF (16 bits)
 #define NIXL_SEQ_ID_MASK 0xFU // 0x0000000F (4 bits)
 
@@ -96,16 +113,15 @@ constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";
 
 // Single-operation immediate data extraction (no intermediate shifts)
 #define NIXL_GET_MSG_TYPE_FROM_IMM(data) ((data) & NIXL_MSG_TYPE_MASK)
-#define NIXL_GET_AGENT_INDEX_FROM_IMM(data) \
-    (((data) >> NIXL_AGENT_INDEX_SHIFT) & NIXL_AGENT_INDEX_MASK)
+#define NIXL_GET_IMM_RESERVED(data) (((data) >> NIXL_IMM_RESERVED_SHIFT) & NIXL_IMM_RESERVED_MASK)
 #define NIXL_GET_XFER_ID_FROM_IMM(data) (((data) >> NIXL_XFER_ID_SHIFT) & NIXL_XFER_ID_MASK)
 #define NIXL_GET_SEQ_ID_FROM_IMM(data) (((data) >> NIXL_SEQ_ID_SHIFT) & NIXL_SEQ_ID_MASK)
 
-// Single-operation immediate data creation (minimal bit operations)
-#define NIXL_MAKE_IMM_DATA(msg_type, agent_idx, xfer_id, seq_id)                   \
-    (((uint64_t)(msg_type) & NIXL_MSG_TYPE_MASK) |                                 \
-     (((uint64_t)(agent_idx) & NIXL_AGENT_INDEX_MASK) << NIXL_AGENT_INDEX_SHIFT) | \
-     (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT) |           \
+// Single-operation immediate data creation (minimal bit operations).
+// The reserved field is always zero; see the layout comment above.
+#define NIXL_MAKE_IMM_DATA(msg_type, xfer_id, seq_id)                    \
+    (((uint64_t)(msg_type) & NIXL_MSG_TYPE_MASK) |                       \
+     (((uint64_t)(xfer_id) & NIXL_XFER_ID_MASK) << NIXL_XFER_ID_SHIFT) | \
      (((uint64_t)(seq_id) & NIXL_SEQ_ID_MASK) << NIXL_SEQ_ID_SHIFT))
 
 #define NIXL_LIBFABRIC_CQ_BATCH_SIZE 16

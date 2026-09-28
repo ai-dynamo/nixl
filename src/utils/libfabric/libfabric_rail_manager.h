@@ -181,6 +181,9 @@ public:
     // Connection Management APIs
     /** Insert addresses into address vectors for all rails
      * @param endpoints Remote endpoint addresses to insert
+     * @param agent_idx Local index of the agent owning these endpoints. Recorded per rail
+     *                  so that completions arriving from them can be attributed to that
+     *                  agent; see nixlLibfabricRail::resolveSourceAddress().
      * @param fi_addrs_out Libfabric address handles for inserted endpoints,
      *                     indexed by local rail id.
      * @param ep_names_out Local endpoint names for reference
@@ -188,6 +191,7 @@ public:
      */
     nixl_status_t
     insertAllAddresses(const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
+                       uint32_t agent_idx,
                        std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs_out,
                        std::vector<char *> &ep_names_out);
     /** Clean up connection resources for rails
@@ -208,7 +212,6 @@ public:
      * @param remote_keys Remote access keys
      * @param remote_selected_endpoints Selected remote endpoints, where remote keys are registered
      * @param dest_addrs Destination addresses for each rail
-     * @param agent_idx Remote agent index for immediate data
      * @param xfer_id Transfer ID for tracking
      * @param completion_callback Callback for completion notification
      * @param submitted_count_out Number of requests successfully submitted
@@ -233,7 +236,6 @@ public:
                              const std::vector<uint64_t> &remote_keys,
                              const std::vector<size_t> &remote_selected_endpoints,
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
-                             uint16_t agent_idx,
                              uint16_t xfer_id,
                              std::function<void(nixl_status_t)> completion_callback,
                              size_t &submitted_count_out,
@@ -245,7 +247,6 @@ public:
 
     void
     deferTransferRequest(nixlLibfabricReq::OpType op_type,
-                         uint16_t agent_idx,
                          uint16_t xfer_id,
                          uint64_t fi_flags,
                          fi_addr_t dest_addr,
@@ -280,7 +281,6 @@ public:
      * @param msg_type Type of control message
      * @param req Control request with data buffer
      * @param dest_addr Destination address
-     * @param agent_idx Agent index for message routing
      * @param completion_callback Optional completion callback
      * @return NIXL_SUCCESS on success, error code on failure
      */
@@ -288,7 +288,6 @@ public:
     postControlMessage(ControlMessageType msg_type,
                        nixlLibfabricReq *req,
                        fi_addr_t dest_addr,
-                       uint16_t agent_idx = 0,
                        std::function<void(nixl_status_t)> completion_callback = nullptr);
     // Progress APIs
     /** Process completions on active rails only (optimized for CPU overhead)

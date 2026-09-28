@@ -27,20 +27,28 @@
  *****************************************/
 
 // Wire format for a handshake message body (serialized via nixlSerDes):
-//   "idx"      : uint16 = assigned_idx (the index we have for this peer)
-//   "name"     : string = agent_name of the SENDER (us). The receiver uses
-//                 it to look up its connection record for us in connections_
-//                 and patch local_agent_idx_at_remote_ there.
+//   "ver"      : uint16 = NIXL_LIBFABRIC_PROTO_VERSION of the sender
+//   "name"     : string = agent_name of the SENDER (us). The receiver uses it to look up
+//                 its connection record for us in connections_ and mark the handshake
+//                 received there. This is also why a handshake needs no source-address
+//                 resolution: it is the one control message that can legitimately arrive
+//                 from a peer we have not inserted into our AV yet.
 //   "has_conn" : uint8  = 1 if connection info is included, 0 otherwise
 //   "conn"     : string = serialized connection info (only if has_conn == 1).
 //                 Included when the peer hasn't sent us a handshake yet,
 //                 meaning they likely don't have our endpoint addresses.
 //
+// Protocol version 1 sent an "idx" field here instead of "ver", carrying the 8-bit agent
+// index the peer was to stamp into every imm_data. Senders no longer stamp anything, so a
+// version-1 peer is not interoperable: it would read agent_idx 0 out of every completion
+// and merge all of its senders into one. The version exchange makes that mismatch fail at
+// connection setup instead, before any data moves.
+//
 // Sized to fit inside one libfabric control buffer
 // (NIXL_LIBFABRIC_SEND_RECV_BUFFER_SIZE = 8 KiB).
 nixl_status_t
 nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const {
-    const uint16_t assigned_idx = static_cast<uint16_t>(conn.agent_index_);
+    const uint16_t proto_ver = static_cast<uint16_t>(NIXL_LIBFABRIC_PROTO_VERSION);
     const std::string &my_name = localAgent;
 
     // Include connection info if peer hasn't sent us a handshake yet (meaning
@@ -56,7 +64,7 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     }
 
     nixlSerDes sd;
-    sd.addBuf(NIXL_HANDSHAKE_TAG_IDX, &assigned_idx, sizeof(assigned_idx));
+    sd.addBuf(NIXL_HANDSHAKE_TAG_VER, &proto_ver, sizeof(proto_ver));
     sd.addStr(NIXL_HANDSHAKE_TAG_NAME, my_name);
     uint8_t has_conn = piggybacked_conn_info.empty() ? 0 : 1;
     sd.addBuf(NIXL_HANDSHAKE_TAG_HAS_CONN, &has_conn, sizeof(has_conn));
@@ -83,32 +91,12 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
     std::memcpy(req->buffer, payload.data(), payload.size());
     req->buffer_size = payload.size();
 
-    NIXL_DEBUG << "Sending handshake to '" << conn.remoteAgent_ << "' assigned_idx=" << assigned_idx
+    NIXL_DEBUG << "Sending handshake to '" << conn.remoteAgent_ << "' proto_ver=" << proto_ver
                << " (my agent_name='" << my_name
                << "', piggybacked_conn_info_len=" << piggybacked_conn_info.size() << ")";
     return rail_manager_.postControlMessage(nixlLibfabricRailManager::ControlMessageType::HANDSHAKE,
                                             req,
-                                            conn.rail_remote_addr_list_.at(kRailId)[0],
-                                            /*agent_idx=*/0 /* not used for handshake decode */);
-}
-
-uint16_t
-nixlLibfabricEngine::senderImmDataAgentIdx(nixlLibfabricConnection &conn) const {
-    // Self-connection: same process, no real wire; safe to ship 0, because self connection is
-    // inserted the first.
-    if (conn.remoteAgent_ == localAgent) {
-        return 0;
-    }
-
-    if (conn.handshake_received_.load(std::memory_order_acquire)) {
-        return conn.local_agent_idx_at_remote_;
-    }
-
-    // Should not reach here if establishConnection() completed successfully.
-    NIXL_ERROR << "senderImmDataAgentIdx called before handshake received for '"
-               << conn.remoteAgent_ << "'; establishConnection() was likely not called. "
-               << "See error logs above for connection and handshake.";
-    return UINT16_MAX;
+                                            conn.rail_remote_addr_list_.at(kRailId)[0]);
 }
 
 void
@@ -120,9 +108,23 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
         return;
     }
 
-    uint16_t assigned_idx = 0;
-    if (sd.getBuf(NIXL_HANDSHAKE_TAG_IDX, &assigned_idx, sizeof(assigned_idx)) != NIXL_SUCCESS) {
-        NIXL_ERROR << "Handshake missing 'idx' field";
+    uint16_t peer_proto_ver = 0;
+    if (sd.getBuf(NIXL_HANDSHAKE_TAG_VER, &peer_proto_ver, sizeof(peer_proto_ver)) !=
+        NIXL_SUCCESS) {
+        // A protocol-version-1 peer sends "idx" and no "ver". It stamps an 8-bit agent
+        // index into imm_data and expects us to do the same, which we no longer do, so
+        // refuse the peer here rather than let it misattribute every transfer we send it.
+        NIXL_ERROR << "Handshake has no '" << NIXL_HANDSHAKE_TAG_VER
+                   << "' field; the peer speaks libfabric-plugin protocol version 1, which is "
+                      "not interoperable with version "
+                   << NIXL_LIBFABRIC_PROTO_VERSION
+                   << ". Upgrade both ends of the cluster to the same NIXL version.";
+        return;
+    }
+    if (peer_proto_ver != NIXL_LIBFABRIC_PROTO_VERSION) {
+        NIXL_ERROR << "Handshake protocol version mismatch: peer speaks " << peer_proto_ver
+                   << ", we speak " << NIXL_LIBFABRIC_PROTO_VERSION
+                   << ". Upgrade both ends of the cluster to the same NIXL version.";
         return;
     }
     std::string peer_agent_name = sd.getStr(NIXL_HANDSHAKE_TAG_NAME);
@@ -147,7 +149,7 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
     }
 
     NIXL_DEBUG << "Received handshake from peer '" << peer_agent_name
-               << "' assigned_idx=" << assigned_idx
+               << "' proto_ver=" << peer_proto_ver
                << " piggybacked_conn_info_len=" << piggybacked_conn_info.size();
 
     // Process the decoded handshake.
@@ -163,10 +165,9 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
     if (!conn) {
         {
             std::lock_guard<std::mutex> plk(pending_handshake_mutex_);
-            pending_inbound_handshakes_[peer_agent_name] = assigned_idx;
+            pending_inbound_handshakes_.insert(peer_agent_name);
             NIXL_DEBUG << "Buffered handshake from not-yet-known peer '" << peer_agent_name
-                       << "' (assigned_idx=" << assigned_idx
-                       << "); will apply on createAgentConnection";
+                       << "'; will apply on createAgentConnection";
         }
 
         if (piggybacked_conn_info.empty()) {
@@ -190,12 +191,11 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
     } else {
         {
             std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
-            conn->local_agent_idx_at_remote_ = assigned_idx;
             conn->handshake_received_.store(true, std::memory_order_release);
         }
         conn->handshake_cv_.notify_all();
         NIXL_INFO << "Handshake stored: peer='" << peer_agent_name
-                  << "' assigned_idx=" << assigned_idx
-                  << " — subsequent sends to them will encode this in imm_data.agent_idx";
+                  << "' — it has our endpoints in its address vectors, so it can attribute "
+                     "our transfers and we may start sending";
     }
 }
