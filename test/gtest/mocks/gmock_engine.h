@@ -65,6 +65,8 @@ public:
     static GMockBackendEngine *
     GetFromParams(nixl_b_params_t *params);
 
+    const nixlBackendTraceSink *observedTraceSink = nullptr;
+
     MOCK_METHOD(bool, supportsRemote, (), (const, override));
     MOCK_METHOD(bool, supportsLocal, (), (const, override));
     MOCK_METHOD(bool, supportsNotif, (), (const, override));

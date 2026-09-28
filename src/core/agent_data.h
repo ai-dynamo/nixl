@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_CORE_AGENT_DATA_H
 #define NIXL_SRC_CORE_AGENT_DATA_H
 
+#include "backend/backend_trace.h"
 #include "mem_section.h"
 #include "nixl_md_manager.h"
 #include "nixl_metadata_context.h"
@@ -61,6 +62,7 @@ class nixlAgentData final : public nixlMetadataContext {
             remoteBackends_;
 
         // The order of the following data members is crucial for destruction.
+        std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendTraceSink>> traceSinks_;
         // Bookkeeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;

@@ -235,6 +235,15 @@ namespace agent {
         EXPECT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
     }
 
+    // With no trace backend enabled the agent has no tracer, so a plugin is
+    // handed a null sink and cannot record anything (NIX-1876).
+    TEST_F(singleAgentSessionFixture, TracingOffLeavesTraceSinkNull) {
+        nixl_b_params_t params;
+        nixlBackendH *backend = nullptr;
+        EXPECT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+        EXPECT_EQ(agent_helper_->getGMockEngine().observedTraceSink, nullptr);
+    }
+
     TEST_F(singleAgentSessionFixture, GetNonExistingBackendParamsTest) {
         nixl_mem_list_t mem;
         nixl_b_params_t params;

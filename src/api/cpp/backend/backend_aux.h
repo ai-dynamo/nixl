@@ -19,6 +19,7 @@
 
 #include <mutex>
 #include <string>
+#include "backend/backend_trace.h"
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
@@ -54,6 +55,7 @@ class nixlBackendInitParams {
         nixlTime::us_t pthrDelay = 0;
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_ = false;
+        nixlBackendTraceSink *traceSink = nullptr;
 };
 
 // Pure virtual class to have a common pointer type
