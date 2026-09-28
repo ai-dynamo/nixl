@@ -13,22 +13,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# nixl release pipeline: stage the Rust crate to Artifactory, then run the
-# centralized release-automation compliance pipeline — in a single tag-triggered DAG.
+# nixl release pipeline: wait for Jenkins to publish the release wheels for this
+# commit, stage the Rust crate to Artifactory, then run the centralized
+# release-automation compliance pipeline — in a single tag-triggered DAG.
 #
-#   prep ─┐
-#         ├─ publish-crate ── compliance
-#         └───────────────────┘   (needs prep + publish-crate)
+#   prep ─┬─ wait-for-wheels ─┐
+#         └─ publish-crate ───┴─ compliance   (needs prep + wait-for-wheels + publish-crate)
 #
 # On a v* tag:
-#   1. prep           derive rc_tag / wheel_version / sonar_branch / crate_version.
-#   2. publish-crate  cargo publish nixl-sys -> Artifactory sw-dynamo-nixl-cargo-local.
+#   1. prep            derive rc_tag / wheel_version / sonar_branch / crate_version.
+#   2. wait-for-wheels PASSIVE poll of Artifactory for the folder-level NIXL_SHA
+#                      property that Jenkins' nixl-ci-build-wheel-nightly stamps on
+#                      release/<wheel_version>/<build-number>/ once it finishes a green
+#                      build for this commit (see .ci/docs/ci-overview.md). Jenkins itself
+#                      isn't triggered here — nixl-build-wheel-release-poller already
+#                      picks up new release-branch commits on its own 4-hourly cron, so a
+#                      tag pushed right after a poll cycle can wait up to ~4h + build time
+#                      before this job (and therefore compliance) proceeds. Revisit: have
+#                      this workflow trigger the Jenkins build directly instead of waiting
+#                      on the cron, once Jenkins remote-API credentials are wired up here.
+#   3. publish-crate   cargo publish nixl-sys -> Artifactory sw-dynamo-nixl-cargo-local.
 #                     Runs on GitHub-hosted ubuntu-latest (a --no-verify publish needs no
 #                     builder; the self-hosted velonix runners reject tag/push events).
-#   3. compliance     trigger the release-automation GitLab pipeline (PROJECT=nixl:
+#   4. compliance     trigger the release-automation GitLab pipeline (PROJECT=nixl:
 #                     wheel scan + SonarQube + nSpect register) and poll to completion.
-#                     GATED: only runs if publish-crate succeeded, so a broken crate
-#                     upload fails the run fast rather than after a long compliance scan.
+#                     GATED: only runs if wait-for-wheels AND publish-crate succeeded, so
+#                     the GitLab scan never starts against wheels that aren't there yet
+#                     (or a broken crate upload) rather than failing after a long scan.
 #
 # release-automation lives on GitLab (dl/ai-dynamo/release-automation), not GitHub, so
 # there is no reusable workflow to `uses:` — the trigger+poll logic is inlined here.
@@ -42,8 +53,10 @@
 #   Runner: an internal runner with corp-net reach to gitlab-master.nvidia.com
 #           (the `gitlab_ci_runners` group — same one nixl's other GitLab triggers use).
 #   Secrets:
-#     ARTIFACTORY_URL          - e.g. https://artifactory.nvidia.com/artifactory  (crate)
+#     ARTIFACTORY_URL          - e.g. https://artifactory.nvidia.com/artifactory  (crate, wheels)
 #     ARTIFACTORY_CARGO_TOKEN  - deploy token for the cargo repo                   (crate)
+#     ARTIFACTORY_PYPI_TOKEN   - read/search (AQL) token for sw-nbu-swx-nixl-pypi-local
+#                                (wait-for-wheels) — NOT YET ADDED, TODO before first real run
 #     GITLAB_TRIGGER_TOKEN     - release-automation pipeline trigger token   (compliance)
 #     GITLAB_API_TOKEN         - PAT with read_api scope, for polling        (compliance)
 #     (GITLAB_PROJECT_ID is hardcoded below to 191080 — no secret needed)
@@ -83,6 +96,10 @@ on:
         type: boolean
         required: false
         default: false
+      wheel_sha:
+        description: "Commit sha to check for Jenkins-built wheels (default: this run's own commit). Override to test wait-for-wheels against a commit that's already published, e.g. release/1.4.0's current tip, without waiting on a fresh Jenkins build."
+        required: false
+        default: ""
 
 jobs:
   # ── PR: validate the crate packages cleanly (no upload, no token, no GitLab) ──
@@ -112,6 +129,7 @@ jobs:
       wheel_version: ${{ steps.v.outputs.wheel_version }}
       sonar_branch: ${{ steps.v.outputs.sonar_branch }}
       crate_version: ${{ steps.v.outputs.crate_version }}
+      wheel_sha8: ${{ steps.v.outputs.wheel_sha8 }}
     steps:
       - id: v
         run: |
@@ -131,11 +149,68 @@ jobs:
           # Crate is staged at the full tag version (distinct per RC); overridable by input.
           CV="${{ github.event.inputs.crate_version }}"
           [ -n "$CV" ] || CV="${T}"                # e.g. v1.4.0-rc0 -> 1.4.0-rc0
+          # wait-for-wheels checks this commit by default; override (testing only) to
+          # point it at an already-published commit instead, e.g. release/1.4.0's tip.
+          WS="${{ github.event.inputs.wheel_sha }}"
+          [ -n "$WS" ] || WS="${GITHUB_SHA}"
           echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
           echo "wheel_version=$WV" >> "$GITHUB_OUTPUT"
           echo "sonar_branch=release/${BASE}" >> "$GITHUB_OUTPUT"
           echo "crate_version=$CV" >> "$GITHUB_OUTPUT"
-          echo "rc_tag=$RC_TAG  wheel_version=$WV  crate_version=$CV  sonar_branch=release/${BASE}"
+          echo "wheel_sha8=${WS:0:8}" >> "$GITHUB_OUTPUT"
+          echo "rc_tag=$RC_TAG  wheel_version=$WV  crate_version=$CV  sonar_branch=release/${BASE}  wheel_sha8=${WS:0:8}"
+
+  # ── tag/manual: wait for Jenkins to publish the release wheels for this commit ──
+  wait-for-wheels:
+    if: github.event_name != 'pull_request'
+    needs: prep
+    runs-on: ubuntu-latest
+    # nixl-build-wheel-release-poller only runs every 4h; a tag pushed right after a poll
+    # cycle can sit here a while. Generous ceiling; keep MAX_WAIT below just under this.
+    timeout-minutes: 360
+    env:
+      ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+      ARTIFACTORY_PYPI_TOKEN: ${{ secrets.ARTIFACTORY_PYPI_TOKEN }}
+      WHEEL_VERSION: ${{ needs.prep.outputs.wheel_version }}
+      WHEEL_SHA8: ${{ needs.prep.outputs.wheel_sha8 }}
+    steps:
+      - name: Guard secrets
+        run: |
+          [ -n "$ARTIFACTORY_PYPI_TOKEN" ] || { echo "::error::ARTIFACTORY_PYPI_TOKEN secret is empty/unavailable for this ref."; exit 1; }
+          [ -n "$ARTIFACTORY_URL" ] || { echo "::error::ARTIFACTORY_URL secret is empty."; exit 1; }
+
+      - name: Poll Artifactory for the Jenkins-built release wheels
+        run: |
+          set -euo pipefail
+          # Matches the sha8 nixl-ci-build-wheel-nightly's pipeline_stop stamps as the
+          # release/<ver>/<build-number>/ folder's NIXL_SHA property on a green build
+          # (.ci/jenkins/lib/build-wheel-nightly-matrix.yaml). Failed/partial builds never
+          # get this property — their folder is deleted instead — so its presence alone
+          # means a complete cu12+cu13 set is published for this exact commit.
+          SHA8="${WHEEL_SHA8}"
+          AQL_URL="${ARTIFACTORY_URL}/api/search/aql"
+          MAX_WAIT=21000   # ~5h50m, under the job's 360m timeout-minutes ceiling
+          INTERVAL=120
+          ELAPSED=0
+          echo "Waiting for release/${WHEEL_VERSION}/<build-number>/ with NIXL_SHA=${SHA8} ..."
+          while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
+            QUERY="items.find({\"repo\":\"sw-nbu-swx-nixl-pypi-local\",\"type\":\"folder\",\"path\":\"release/${WHEEL_VERSION}\",\"@NIXL_SHA\":\"${SHA8}\"})"
+            RESP=$(curl -sS -H "Authorization: Bearer ${ARTIFACTORY_PYPI_TOKEN}" -H "Content-Type: text/plain" \
+              -X POST "${AQL_URL}" -d "${QUERY}")
+            COUNT=$(echo "${RESP}" | jq '.results | length' 2>/dev/null || echo 0)
+            if [ "${COUNT}" -gt 0 ]; then
+              FOLDER=$(echo "${RESP}" | jq -r '.results[0].path + "/" + .results[0].name')
+              echo "Found Jenkins-published wheels: ${FOLDER}"
+              echo "## Jenkins release wheels" >> "$GITHUB_STEP_SUMMARY"
+              echo "Found: \`${FOLDER}\` (NIXL_SHA=${SHA8})" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "[${ELAPSED}s] not yet published; retrying in ${INTERVAL}s"
+            sleep "${INTERVAL}"
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          echo "::error::timed out waiting for Jenkins release wheels (release/${WHEEL_VERSION}, NIXL_SHA=${SHA8})"
+          exit 1
 
   # ── tag/manual: stage nixl-sys to Artifactory (dynamo-parity: GitHub pushes, GitLab consumes) ──
   publish-crate:
@@ -190,8 +265,8 @@ jobs:
   # ── tag/manual: trigger + poll the release-automation compliance pipeline ──
   compliance:
     if: github.event_name != 'pull_request'
-    # GATED: run only if the crate staged successfully (and after prep).
-    needs: [prep, publish-crate]
+    # GATED: run only if the Jenkins wheels were found AND the crate staged successfully.
+    needs: [prep, wait-for-wheels, publish-crate]
     # Internal runner with reach to gitlab-master (same group nixl's other triggers use).
     runs-on:
       group: gitlab_ci_runners
