@@ -102,15 +102,19 @@ private:
 
 class MockBackend final : public nixl::trace::TraceBackend {
 public:
-    MockBackend(std::string name, CallLog *log, std::uint64_t span_id)
+    MockBackend(std::string name, CallLog *log, std::uint64_t span_id, bool null_spans = false)
         : name_(std::move(name)),
           log_(log),
-          spanId_(span_id) {}
+          spanId_(span_id),
+          nullSpans_(null_spans) {}
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
     beginSpan(std::string_view name, nixl::trace::Kind) override {
         ++log_->spansBegun;
         log_->spanNames.emplace_back(name);
+        if (nullSpans_) {
+            return nullptr;
+        }
         return std::make_unique<MockSpan>(log_, spanId_);
     }
 
@@ -138,6 +142,7 @@ private:
     std::string name_;
     CallLog *log_;
     std::uint64_t spanId_;
+    bool nullSpans_;
 };
 
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
@@ -558,13 +563,22 @@ TEST(TracePhaseSink, PluginAttributesAreForwarded) {
     EXPECT_EQ(a.strAttrs[2].second, "write");
 }
 
-// With no backend enabled the span is inactive, so a recorded phase costs one
-// branch and records nothing.
-TEST(TracePhaseSink, InertWhenNoBackendIsEnabled) {
-    nixl::trace::Tracer tracer{std::vector<std::unique_ptr<nixl::trace::TraceBackend>>{}};
+// A backend may decline a span; Tracer drops the null, leaving the Span
+// inactive even though the tracer has a backend. Nothing must be recorded and
+// no null span may be dereferenced.
+TEST(TracePhaseSink, InactiveSpanRecordsNothing) {
+    CallLog a;
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    backends.push_back(std::make_unique<MockBackend>("a", &a, 0, /*null_spans=*/true));
+    nixl::trace::Tracer tracer{std::move(backends)};
     nixl::trace::TracerPhaseSink sink{tracer, "UCX"};
 
-    sink.recordPhase(nixl_trace_stage_t::SUBMIT, {}, 1, {});
+    const nixlBackendTraceAttr attrs[] = {{"rail", "0"}};
+    sink.recordPhase(nixl_trace_stage_t::SUBMIT, {}, 1, attrs);
 
-    EXPECT_TRUE(tracer.empty());
+    EXPECT_FALSE(tracer.empty());
+    EXPECT_EQ(a.spansBegun, 1);
+    EXPECT_EQ(a.spansEnded, 0);
+    EXPECT_TRUE(a.strAttrs.empty());
+    EXPECT_TRUE(a.intAttrs.empty());
 }

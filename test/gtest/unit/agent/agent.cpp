@@ -241,7 +241,9 @@ namespace agent {
         nixl_b_params_t params;
         nixlBackendH *backend = nullptr;
         EXPECT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
-        EXPECT_EQ(agent_helper_->getGMockEngine().observedTraceSink, nullptr);
+        const auto &observed = agent_helper_->getGMockEngine().observedTraceSink;
+        ASSERT_TRUE(observed.has_value());
+        EXPECT_EQ(*observed, nullptr);
     }
 
     TEST_F(singleAgentSessionFixture, GetNonExistingBackendParamsTest) {

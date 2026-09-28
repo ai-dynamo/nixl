@@ -19,11 +19,12 @@
 
 #include <mutex>
 #include <string>
-#include "backend/backend_trace.h"
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
+
+class nixlBackendTraceSink;
 
 // Might be removed to be decided by backend, or changed to high
 // level direction or so.

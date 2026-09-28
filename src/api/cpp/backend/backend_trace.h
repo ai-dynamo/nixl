@@ -23,7 +23,7 @@
 
 #include "common/nixl_time.h"
 
-enum class nixl_trace_stage_t : uint8_t {
+enum class nixl_trace_stage_t : std::uint8_t {
     SUBMIT,
     WIRE_SUBMITTED,
     WIRE_COMPLETED,

@@ -404,7 +404,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     bknd_hndl = it->second.get();
 
     if (trace_sink != nullptr) {
-        data->traceSinks_.insert_or_assign(type, std::move(trace_sink));
+        data->traceSinks_.try_emplace(type, std::move(trace_sink));
     }
     data->backendEngines_.try_emplace(type, std::move(backend));
 
