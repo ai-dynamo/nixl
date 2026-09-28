@@ -23,10 +23,8 @@
 
 #include <unistd.h>
 
-#include <cerrno>
 #include <chrono>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -247,18 +245,14 @@ TEST_F(MpStoreTest, LongAgentNameTruncated) {
 }
 
 TEST_F(MpStoreTest, ForeignOwnedStoreIsIgnoredAndNotReapable) {
-    if (::geteuid() != 0) {
-        GTEST_SKIP() << "needs privileges to give a store file another owner";
-    }
     // A name no run of this process has used: the warning is emitted once per
     // path, so a repeated run would otherwise see none.
     static int run = 0;
     const auto path = storePath("agent-foreign-" + std::to_string(++run));
     storeWriter writer(path, "agent-foreign", "host-1", "", 0, kBuckets);
     writer.addCounter(TX_BYTES, 7);
-    constexpr uid_t nobody = 65534;
-    if (::chown(path.c_str(), nobody, static_cast<gid_t>(-1)) != 0) {
-        GTEST_SKIP() << "cannot give a store file another owner: " << strerror(errno);
+    if (const auto why = giveAwayOwnership(path)) {
+        GTEST_SKIP() << *why;
     }
 
     const gtest::LogIgnoreGuard lig("owned by uid");
