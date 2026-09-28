@@ -116,12 +116,13 @@ gtest_sources = [
     'telemetry_stress_test.cpp',
     'telemetry_benchmark.cpp',
     'nixl_duration_test.cpp',
+    'blocking_queue_test.cpp',
     'configuration.cpp'
     ]
 
 if ucx_gpu_device_api_available
     gtest_sources += device_api_test_sources
-    device_api_inc = [nixl_gpu_inc_dirs, include_directories('device_api')]
+    device_api_inc = [nixl_device_inc_dirs, include_directories('device_api')]
     device_api_dep = [ucx_dep, doca_gpunetio_dep]
 else
     device_api_inc = []

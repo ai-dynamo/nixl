@@ -29,7 +29,7 @@
 #include "launch.cuh"
 #include "utils.cuh"
 #include "api.cuh"
-#include "nixl_device.cuh"
+#include <gpu/nixl_device.cuh>
 #include <net/if.h>
 #include <cstdio>
 #include <cstdint>
