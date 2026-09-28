@@ -157,10 +157,13 @@ WORKDIR /workspace
 # Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
 ENV CMAKE_INSTALL_ALWAYS=1
 
+# Retry helper: the github.com fetches below fail transiently under load.
+COPY .ci/scripts/retry.sh /usr/local/bin/retry
+
 # Build Abseil from source (required for absl/log).
-RUN git clone https://github.com/abseil/abseil-cpp.git && \
+RUN retry git clone https://github.com/abseil/abseil-cpp.git && \
     cd abseil-cpp && \
-    git fetch --depth 1 origin ${ABSL_TAG} && \
+    retry git fetch --depth 1 origin ${ABSL_TAG} && \
     git checkout ${ABSL_TAG} && \
     mkdir -p build && cd build && \
     cmake .. \
@@ -174,8 +177,13 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     make install && \
     ldconfig
 
-# Build gRPC from source against system/install-prefix Abseil.
-RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+# Build gRPC against the prefix Abseil. Only the submodules this cmake config uses:
+# protobuf, c-ares, re2 and the xds protos (SSL/Abseil/zlib are packages, tests and OTel off).
+RUN retry git clone -b ${GRPC_TAG} --depth 1 https://github.com/grpc/grpc && \
+    retry git -C grpc submodule update --init --depth 1 \
+        third_party/protobuf third_party/cares/cares third_party/re2 \
+        third_party/xds third_party/envoy-api third_party/googleapis \
+        third_party/protoc-gen-validate third_party/opencensus-proto && \
     cd grpc && \
     mkdir -p cmake/build && \
     cd cmake/build && \
@@ -198,24 +206,25 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
     make install && \
     ldconfig
 
-RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+RUN retry git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 -DCMAKE_PREFIX_PATH=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
 
-RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+RUN retry git clone --depth 1 https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+    retry git -C aws-sdk-cpp submodule update --init --recursive --depth 1 && \
     mkdir aws_sdk_build && cd aws_sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_CXX_STANDARD=20 && \
     make -j${NPROC:-$(nproc)} && make install
 
-RUN git clone https://github.com/nvidia/gusli.git && \
+RUN retry git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
      make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
      cd ..
 
-RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+RUN retry git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
     AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
@@ -247,10 +256,11 @@ RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
 RUN cd /usr/local/src && \
-     git clone "$UCX_REPO" ucx && \
+     retry git clone "$UCX_REPO" ucx && \
      cd ucx && \
      echo "=== Using UCX_REF=$UCX_REF ===" && \
      git checkout $UCX_REF && \
+     retry git submodule update --init && \
      if [ "$BUILD_NIXL_EP" = "true" ]; then EXPERIMENTAL_API_PARAM="--enable-experimental-api"; else EXPERIMENTAL_API_PARAM=""; fi && \
      ./autogen.sh && \
      if [ -n "$UCX_SONAME_SUFFIX" ]; then \
@@ -292,7 +302,7 @@ RUN cd /usr/local/src && \
      ldconfig
 
 RUN cd /tmp && \
-     git clone --depth 1 https://github.com/google/gtest-parallel.git && \
+     retry git clone --depth 1 https://github.com/google/gtest-parallel.git && \
      mkdir -p /usr/local/bin && \
      cp gtest-parallel/gtest-parallel gtest-parallel/gtest_parallel.py /usr/local/bin/
 ENV PATH=/usr/local/bin:$PATH
@@ -416,6 +426,7 @@ RUN rm -rf build && \
     else \
         NIXL_EP_FLAG=""; \
     fi && \
+    retry meson subprojects download taskflow prometheus-cpp && \
     meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \

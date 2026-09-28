@@ -21,6 +21,10 @@ set -e
 set -x
 set -o pipefail
 
+# Retry helper: the github.com fetches below fail transiently under load.
+RETRY_SH=$(readlink -f "$(dirname "$0")/../.ci/scripts/retry.sh")
+retry() { "$RETRY_SH" "$@"; }
+
 # Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
 # File modification timestamp check in CMake uses 1 second resolution.
 # This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
@@ -250,9 +254,9 @@ else
 
     ( \
       cd ${BUILD_TMP} && \
-      git clone https://github.com/abseil/abseil-cpp.git && \
+      retry git clone https://github.com/abseil/abseil-cpp.git && \
       cd abseil-cpp && \
-      git fetch --depth 1 origin "${ABSL_TAG}" && \
+      retry git fetch --depth 1 origin "${ABSL_TAG}" && \
       git checkout "${ABSL_TAG}" && \
       mkdir -p build && cd build && \
       cmake .. \
@@ -273,7 +277,11 @@ else
 
     ( \
       cd ${BUILD_TMP} && \
-      git clone --recurse-submodules -b "${GRPC_TAG}" --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+      retry git clone -b "${GRPC_TAG}" --depth 1 https://github.com/grpc/grpc && \
+      retry git -C grpc submodule update --init --depth 1 \
+          third_party/protobuf third_party/cares/cares third_party/re2 \
+          third_party/xds third_party/envoy-api third_party/googleapis \
+          third_party/protoc-gen-validate third_party/opencensus-proto && \
       cd grpc && \
       mkdir -p cmake/build && \
       cd cmake/build && \
@@ -301,7 +309,7 @@ else
 
     ( \
       cd ${BUILD_TMP} && \
-      git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+      retry git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
       cd etcd-cpp-apiv3 && \
       sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
       mkdir build && cd build && \
@@ -321,7 +329,8 @@ else
 
     ( \
       cd ${BUILD_TMP} && \
-      git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+      retry git clone --depth 1 https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+      retry git -C aws-sdk-cpp submodule update --init --recursive --depth 1 && \
       mkdir aws_sdk_build && \
       cd aws_sdk_build && \
       cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_CXX_STANDARD=20 -DCMAKE_INSTALL_PREFIX=/usr/local && \
@@ -333,7 +342,7 @@ else
 
     ( \
       cd ${BUILD_TMP} && \
-      git clone https://github.com/nvidia/gusli.git && \
+      retry git clone https://github.com/nvidia/gusli.git && \
       cd gusli && \
       $SUDO make all CXX="g++ -std=c++20" BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 && \
       $SUDO ldconfig && \
@@ -345,7 +354,7 @@ else
       cd ${BUILD_TMP} && \
       MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}" && \
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
-      git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
+      retry git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
       sed -i '/liburing-dev/d' dependencies.sh
       $SUDO bash dependencies.sh -y && \
@@ -365,7 +374,7 @@ else
 
     ( \
       cd ${BUILD_TMP} &&
-      git clone --depth 1 https://github.com/google/gtest-parallel.git &&
+      retry git clone --depth 1 https://github.com/google/gtest-parallel.git &&
       mkdir -p ${INSTALL_DIR}/bin &&
       cp ${BUILD_TMP}/gtest-parallel/* ${INSTALL_DIR}/bin/
     )
@@ -374,7 +383,7 @@ else
       cd ${BUILD_TMP} && \
       df -h && \
       curl -sL https://aka.ms/InstallAzureCLIDeb | $SUDO bash && \
-      git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
+      retry git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0 && \
       cd azure-sdk-for-cpp/ && \
       mkdir build && cd build && \
       AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
@@ -392,7 +401,7 @@ else
     if $HAS_GPU && test -d "$CUDA_HOME"; then
        ( \
         cd ${BUILD_TMP} && \
-        git clone https://github.com/uccl-project/uccl.git && \
+        retry git clone https://github.com/uccl-project/uccl.git && \
         cd uccl && git checkout -q "${UCCL_COMMIT_SHA}" && \
         cd p2p && \
         make -j"$NPROC" && \
@@ -402,10 +411,11 @@ else
     else
         echo "No NVIDIA GPU(s) detected. Skipping UCCL installation."
     fi
-    git clone https://github.com/openucx/ucx.git ${BUILD_TMP}/ucx
+    retry git clone https://github.com/openucx/ucx.git ${BUILD_TMP}/ucx
     ( \
     cd ${BUILD_TMP}/ucx && \
     git checkout "${UCX_VERSION}" && \
+    retry git submodule update --init && \
     ./autogen.sh && \
     ./contrib/configure-release-mt \
             --prefix="${UCX_INSTALL_DIR}" \
@@ -453,6 +463,7 @@ else
         printf "[binaries]\npython = '%s'\n" "${NIXL_PYTHON}" > "${NIXL_PYTHON_NATIVE_FILE}"
         NIXL_PYTHON_ARGS=(--native-file "${NIXL_PYTHON_NATIVE_FILE}" -Dpython.install_env=venv)
     fi
+    retry meson subprojects download taskflow prometheus-cpp
     # shellcheck disable=SC2086
     meson setup "${NIXL_PYTHON_ARGS[@]}" ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install

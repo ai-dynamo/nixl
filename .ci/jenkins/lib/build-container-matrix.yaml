@@ -128,7 +128,7 @@ steps:
     containerSelector: "{name: 'podman'}"
     run: |
       # Clone UCX source for nixlbench
-      git clone https://github.com/openucx/ucx.git ucx-src
+      .ci/scripts/retry.sh git clone https://github.com/openucx/ucx.git ucx-src
       git -C ucx-src checkout "${UCX_SHA}"
 
       "benchmark/nixlbench/contrib/build.sh" \
