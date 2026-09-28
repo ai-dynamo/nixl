@@ -387,7 +387,6 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     const std::vector<uint64_t> &remote_keys,
     const std::vector<size_t> &remote_selected_endpoints,
     const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
-    uint16_t agent_idx,
     uint16_t xfer_id,
     std::function<void(nixl_status_t)> completion_callback,
     size_t &submitted_count_out,
@@ -453,7 +452,6 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         if (rails_[rail_id]->isProgressThreadEnabled()) {
             // PT-owns-endpoint: enqueue for progress thread to post
             deferTransferRequest(op_type,
-                                 agent_idx,
                                  xfer_id,
                                  fi_flags,
                                  dest_addrs.at(rail_id)[remote_ep_id],
@@ -466,8 +464,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             // Direct post (PT OFF path)
             // Generate next SEQ_ID for this specific write operation
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
-            uint64_t imm_data =
-                NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
+            uint64_t imm_data = NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, seq_id);
             status = rails_[rail_id]->postWrite(req->local_addr,
                                                 req->chunk_size,
                                                 fi_mr_desc(req->local_mr),
@@ -550,7 +547,6 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             if (rails_[rail_id]->isProgressThreadEnabled()) {
                 // PT-owns-endpoint: enqueue for progress thread to post
                 deferTransferRequest(op_type,
-                                     agent_idx,
                                      xfer_id,
                                      fi_flags,
                                      dest_addrs.at(rail_id)[remote_ep_id],
@@ -563,7 +559,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                 // Generate next SEQ_ID for this specific transfer operation
                 uint8_t seq_id = LibfabricUtils::getNextSeqId();
                 uint64_t imm_data =
-                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
+                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, seq_id);
                 status = rails_[rail_id]->postWrite(req->local_addr,
                                                     req->chunk_size,
                                                     fi_mr_desc(req->local_mr),
@@ -605,7 +601,6 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
 
 void
 nixlLibfabricRailManager::deferTransferRequest(nixlLibfabricReq::OpType op_type,
-                                               uint16_t agent_idx,
                                                uint16_t xfer_id,
                                                uint64_t fi_flags,
                                                fi_addr_t dest_addr,
@@ -615,7 +610,7 @@ nixlLibfabricRailManager::deferTransferRequest(nixlLibfabricReq::OpType op_type,
                                                nixlLibfabricReq *req) {
     uint8_t seq_id = (op_type == nixlLibfabricReq::WRITE) ? LibfabricUtils::getNextSeqId() : 0;
     uint64_t imm_data = (op_type == nixlLibfabricReq::WRITE) ?
-        NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id) :
+        NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, seq_id) :
         0;
     nixlLibfabricPostRequest pr{};
     pr.type = (op_type == nixlLibfabricReq::WRITE) ? nixlLibfabricPostRequest::WRITE :
@@ -932,6 +927,7 @@ nixlLibfabricRailManager::deregisterMemory(const std::vector<size_t> &selected_r
 nixl_status_t
 nixlLibfabricRailManager::insertAllAddresses(
     const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
+    uint32_t agent_idx,
     std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs_out,
     std::vector<char *> &ep_names_out) {
     auto &rails = rails_;
@@ -945,7 +941,8 @@ nixlLibfabricRailManager::insertAllAddresses(
         fi_addrs_out[rail_id].reserve(endpoints.size());
         for (const auto &endpoint : endpoints) {
             fi_addr_t fi_addr;
-            nixl_status_t status = rails[rail_id]->insertAddress(endpoint.data(), &fi_addr);
+            nixl_status_t status =
+                rails[rail_id]->insertAddress(endpoint.data(), agent_idx, &fi_addr);
             if (status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed for rail " << rail_id;
                 return status;
@@ -1000,7 +997,6 @@ nixlLibfabricRailManager::postControlMessage(
     ControlMessageType msg_type,
     nixlLibfabricReq *req,
     fi_addr_t dest_addr,
-    uint16_t agent_idx,
     std::function<void(nixl_status_t)> completion_callback) {
     // Validation - use rail 0 for notifications
     if (rails_.empty()) {
@@ -1032,7 +1028,7 @@ nixlLibfabricRailManager::postControlMessage(
     uint32_t xfer_id = req->xfer_id;
     // For control messages, use SEQ_ID 0 since they don't need sequence tracking
     // TODO: Add sequencing for connection establishment workflow.
-    uint64_t imm_data = NIXL_MAKE_IMM_DATA(msg_type_value, agent_idx, xfer_id, 0);
+    uint64_t imm_data = NIXL_MAKE_IMM_DATA(msg_type_value, xfer_id, 0);
 
     // Set completion callback if provided
     if (completion_callback) {
@@ -1040,8 +1036,8 @@ nixlLibfabricRailManager::postControlMessage(
         NIXL_DEBUG << "Set completion callback for control message request " << req->xfer_id;
     }
 
-    NIXL_DEBUG << "Sending control message type " << msg_type_value << " agent_idx=" << agent_idx
-               << " XFER_ID=" << xfer_id << " imm_data=" << imm_data << " on rail " << rail_id;
+    NIXL_DEBUG << "Sending control message type " << msg_type_value << " XFER_ID=" << xfer_id
+               << " imm_data=" << imm_data << " on rail " << rail_id;
 
     // Use rail 0 for notifications
     nixl_status_t status = rails_[rail_id]->postSend(imm_data, dest_addr, req);
