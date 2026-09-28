@@ -18,6 +18,8 @@
 
 #include <cstdint>
 
+#include "common/nixl_log.h"
+
 namespace nixl::trace {
 
 std::string_view
@@ -63,6 +65,10 @@ TracerPhaseSink::recordPhase(nixl_trace_stage_t stage,
         }
     }
     catch (...) {
+        if (!dropWarned_.test_and_set(std::memory_order_relaxed)) {
+            NIXL_ERROR << "Dropping a trace phase for backend " << backend_
+                       << ": recording threw. Further drops from this sink are not logged.";
+        }
     }
 }
 

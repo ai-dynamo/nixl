@@ -90,9 +90,9 @@ public:
      * @param label     Name for a @ref nixl_trace_stage_t::STAGE phase. Recorded
      *                  as an attribute for every stage, and additionally used as
      *                  the span name for `STAGE`. May be empty.
-     * @param timestamp Reading of the same `nixlTime` microsecond clock telemetry
-     *                  uses (`nixlTime::getUs()`), not a wall clock. Converted at
-     *                  export so the hot path stays a counter read.
+     * @param timestamp Microsecond reading of the monotonic `nixlTime` clock
+     *                  (`std::chrono::steady_clock`), not a wall clock. Recorded
+     *                  verbatim on the span as `nixl.stage.timestamp_us`.
      * @param attrs     Extra attributes; see @ref nixlBackendTraceAttr for the
      *                  lifetime rule, which applies to @p label as well.
      *

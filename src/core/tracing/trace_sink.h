@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_CORE_TRACING_TRACE_SINK_H
 #define NIXL_SRC_CORE_TRACING_TRACE_SINK_H
 
+#include <atomic>
 #include <span>
 #include <string>
 #include <string_view>
@@ -41,6 +42,7 @@ public:
 private:
     Tracer &tracer_;
     const std::string backend_;
+    std::atomic_flag dropWarned_;
 };
 
 [[nodiscard]] std::string_view
