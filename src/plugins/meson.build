@@ -124,7 +124,7 @@ if enabled_plugins.get('GPUNETIO')
         if not cuda_dep.found()
             error('GPUNETIO plugin requested but CUDA dependency not found')
         else
-            error('GPUNETIO plugin requested but doca-gpunetio dependency not found')
+            error('GPUNETIO plugin requested but doca-gpunetio >= 3.5 not found')
         endif
     elif cuda_dep.found() and doca_gpunetio_dep.found()
         subdir('gpunetio')
