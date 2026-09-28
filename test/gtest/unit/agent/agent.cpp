@@ -19,6 +19,7 @@
 #include <gmock/gmock.h>
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <random>
 
 #include "common.h"
@@ -72,8 +73,8 @@ namespace agent {
         std::unique_ptr<nixlAgent> agent_;
 
     public:
-        agentHelper(const std::string &name) {
-            trace_env_.addVar("NIXL_TRACE_BACKENDS", "");
+        agentHelper(const std::string &name, const std::string &trace_backends = "") {
+            trace_env_.addVar("NIXL_TRACE_BACKENDS", trace_backends);
             nixlAgentConfig cfg;
             cfg.useProgThread = true;
             agent_ = std::make_unique<nixlAgent>(name, cfg);
@@ -118,6 +119,40 @@ namespace agent {
             return agent_->registerMem(reg_dlist, &extra_params);
         }
     };
+
+    class tracingEnabledAgentFixture : public testing::Test {
+    protected:
+        static bool nvtxPluginAvailable_;
+        std::unique_ptr<agentHelper> agent_helper_;
+
+        static void
+        SetUpTestSuite() {
+            const std::string dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
+            nvtxPluginAvailable_ = std::filesystem::exists(dir);
+            if (nvtxPluginAvailable_) {
+                nixlPluginManager::getInstance().addPluginDirectory(dir);
+            }
+        }
+
+        void
+        SetUp() override {
+            if (!nvtxPluginAvailable_) {
+                GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
+            }
+            agent_helper_ = std::make_unique<agentHelper>(local_agent_name, "nvtx");
+        }
+    };
+
+    bool tracingEnabledAgentFixture::nvtxPluginAvailable_ = false;
+
+    TEST_F(tracingEnabledAgentFixture, TracingOnHandsPluginARealTraceSink) {
+        nixl_b_params_t params;
+        nixlBackendH *backend = nullptr;
+        EXPECT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+        const auto &observed = agent_helper_->getGMockEngine().observedTraceSink;
+        ASSERT_TRUE(observed.has_value());
+        EXPECT_NE(*observed, nullptr);
+    }
 
     class singleAgentSessionFixture : public testing::Test {
     protected:

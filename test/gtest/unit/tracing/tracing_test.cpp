@@ -547,6 +547,36 @@ TEST(TracePhaseSink, GenericStageUsesPluginLabel) {
     EXPECT_EQ(a.spanNames[1], "nixl::stage");
 }
 
+// A label passed with any stage is recorded, not just the generic one: the
+// span name stays the fixed vocabulary entry, and the label rides along as an
+// attribute so it cannot be silently dropped.
+TEST(TracePhaseSink, LabelIsRecordedForEveryStage) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    nixl::trace::TracerPhaseSink sink{*tracer, "LIBFABRIC"};
+
+    sink.recordPhase(nixl_trace_stage_t::WIRE_SUBMITTED, "rail0", 5, {});
+
+    ASSERT_EQ(a.spanNames.size(), 1u);
+    EXPECT_EQ(a.spanNames[0], "nixl::wire.submitted");
+    ASSERT_EQ(a.strAttrs.size(), 2u);
+    EXPECT_EQ(a.strAttrs[1].first, "nixl.stage.label");
+    EXPECT_EQ(a.strAttrs[1].second, "rail0");
+}
+
+// An unlabelled phase adds no label attribute at all.
+TEST(TracePhaseSink, EmptyLabelAddsNoAttribute) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+
+    sink.recordPhase(nixl_trace_stage_t::SUBMIT, {}, 5, {});
+
+    for (const auto &attr : a.strAttrs) {
+        EXPECT_NE(attr.first, "nixl.stage.label");
+    }
+}
+
 // Plugin-supplied attributes are forwarded after the ones core adds.
 TEST(TracePhaseSink, PluginAttributesAreForwarded) {
     CallLog a, b;

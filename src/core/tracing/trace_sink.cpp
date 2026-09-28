@@ -45,17 +45,24 @@ void
 TracerPhaseSink::recordPhase(nixl_trace_stage_t stage,
                              std::string_view label,
                              nixlTime::us_t timestamp,
-                             std::span<const nixlBackendTraceAttr> attrs) {
-    const bool named = stage == nixl_trace_stage_t::STAGE && !label.empty();
-    Span span = tracer_.beginSpan(named ? label : stageSpanName(stage), Kind::Metadata);
-    if (!span.active()) {
-        return;
-    }
+                             std::span<const nixlBackendTraceAttr> attrs) noexcept {
+    try {
+        const bool named = stage == nixl_trace_stage_t::STAGE && !label.empty();
+        Span span = tracer_.beginSpan(named ? label : stageSpanName(stage), Kind::Metadata);
+        if (!span.active()) {
+            return;
+        }
 
-    span.addAttribute("nixl.backend", backend_);
-    span.addAttribute("nixl.stage.timestamp_us", static_cast<std::int64_t>(timestamp));
-    for (const auto &attr : attrs) {
-        span.addAttribute(attr.key, attr.value);
+        span.addAttribute("nixl.backend", backend_);
+        span.addAttribute("nixl.stage.timestamp_us", static_cast<std::int64_t>(timestamp));
+        if (!label.empty()) {
+            span.addAttribute("nixl.stage.label", label);
+        }
+        for (const auto &attr : attrs) {
+            span.addAttribute(attr.key, attr.value);
+        }
+    }
+    catch (...) {
     }
 }
 

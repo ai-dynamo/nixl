@@ -21,7 +21,7 @@
 #include <string>
 #include <string_view>
 
-#include "backend/backend_trace.h"
+#include "tracing/backend_trace.h"
 #include "tracing/trace.h"
 
 namespace nixl::trace {
@@ -36,7 +36,7 @@ public:
     recordPhase(nixl_trace_stage_t stage,
                 std::string_view label,
                 nixlTime::us_t timestamp,
-                std::span<const nixlBackendTraceAttr> attrs) override;
+                std::span<const nixlBackendTraceAttr> attrs) noexcept override;
 
 private:
     Tracer &tracer_;

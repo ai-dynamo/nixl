@@ -19,5 +19,6 @@ agent_unit_test_dep = declare_dependency(
         'agent.cpp',
     ],
     include_directories: [nixl_inc_dirs, gtest_inc_dirs],
+    compile_args: ['-DBUILD_DIR="' + meson.project_build_root() + '"'],
     dependencies: [gmock_dep, nixl_common_dep],
 )

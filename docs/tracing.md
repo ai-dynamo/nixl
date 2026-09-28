@@ -166,6 +166,30 @@ backends/PRs):
 | `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
 | `nixl::releaseMemView` | `Generic` | - |
 
+### Backend phase spans
+
+A data plugin (UCX, libfabric, ...) can record a phase of its own work through
+the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core turns
+each recorded phase into a momentary span carrying `nixl.backend` (the recording
+backend's type), `nixl.stage.timestamp_us` (the plugin's `nixlTime` reading),
+`nixl.stage.label` when the plugin supplied one, and any plugin-supplied
+attributes. The stage vocabulary is closed so that timelines stay comparable
+across backends:
+
+| Span | Stage enumerator | Meaning |
+| ---- | ---------------- | ------- |
+| `nixl::submit` | `SUBMIT` | the backend accepted the operation |
+| `nixl::wire.submitted` | `WIRE_SUBMITTED` | handed to the transport |
+| `nixl::wire.completed` | `WIRE_COMPLETED` | transport signalled completion |
+| `nixl::notif.sent` | `NOTIF_SENT` | notification put on the wire |
+| `nixl::notif.received` | `NOTIF_RECEIVED` | notification observed locally |
+| `nixl::remote.observed` | `REMOTE_OBSERVED` | the peer's side was observed |
+| `nixl::stage` | `STAGE` | generic escape hatch; the plugin's label becomes the span name |
+
+The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
+installed header), so only in-tree plugins can emit phases. No plugin emits them
+yet; UCX and libfabric map their internals onto the vocabulary in later PRs.
+
 Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
 when `getXferStatus` first observes success. How a backend renders attributes and
 dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
@@ -265,5 +289,6 @@ In NIXL tracing, "correlation" can mean two different things:
   sender and receiver spans can be linked across processes (distributed tracing; a
   separate NIXL-architecture effort).
 
-Backend-engine sub-spans (finer spans inside backends, e.g. UCX
-`prepXfer`/`postXfer`/`checkXfer`) were considered and are currently not planned.
+- **Backend phase emission** — the sink described under "Backend phase spans" exists,
+  but no plugin records a phase yet; UCX and libfabric map onto the stage vocabulary
+  in their own PRs.
