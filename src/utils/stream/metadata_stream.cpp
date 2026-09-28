@@ -64,6 +64,7 @@ nixlMDStreamListener::setupStream(int family) {
         if (family == AF_INET6 &&
             (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT || errno == EACCES ||
              errno == EPERM)) {
+            NIXL_PINFO << "Failed to create IPv6 metadata listener socket, trying IPv4";
             return {};
         }
         NIXL_PERROR << "failed to create stream socket for listener";
@@ -74,6 +75,7 @@ nixlMDStreamListener::setupStream(int family) {
         const int v6only = 0;
         if (setsockopt(fd.get(), IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only)) < 0) {
             if (errno == ENOPROTOOPT) {
+                NIXL_PINFO << "setsockopt(IPV6_V6ONLY) failed for metadata listener, trying IPv4";
                 return {};
             }
             NIXL_PERROR << "setsockopt(IPV6_V6ONLY) failed while setting up listener for MD";
@@ -89,6 +91,7 @@ nixlMDStreamListener::setupStream(int family) {
 
     if (bind(fd.get(), reinterpret_cast<const sockaddr *>(&listener_addr), length) < 0) {
         if (family == AF_INET6) {
+            NIXL_PINFO << "Failed to bind IPv6 metadata listener socket, trying IPv4";
             return {};
         }
         NIXL_PERROR << "Socket Bind failed while setting up listener for MD";
