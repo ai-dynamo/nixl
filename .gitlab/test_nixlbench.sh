@@ -133,4 +133,12 @@ done
 #     done
 # fi
 
+for op_type in READ WRITE; do
+    for initiator in $seg_types; do
+        for target in $seg_types; do
+            run_nixlbench_two_workers_etcd --backend GPUNETIO --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+        done
+    done
+done
+
 kill -9 $ETCD_PID 2>/dev/null || true
