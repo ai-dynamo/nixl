@@ -1,0 +1,365 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# nixl release pipeline: wait for Jenkins to publish this commit's wheels, stage
+# the Rust crate to Artifactory, then run the centralized
+# release-automation compliance pipeline — in a single tag-triggered DAG.
+#
+#   prep ─┬─ wait-for-wheels ─┐
+#         └─ publish-crate ───┴─ compliance   (needs prep + wait-for-wheels + publish-crate)
+#
+# On a v* tag:
+#   1. prep            derive rc_tag / wheel_version / sonar_branch / crate_version.
+#   2. wait-for-wheels PASSIVE poll of Artifactory for a nixl_cu12 + nixl_cu13 wheel pair
+#                      under verification/g<nixl-sha8>.ucx*/ (nixl-ci-build-wheel-nightly's
+#                      default PUBLISH_DIR — see .ci/docs/ci-overview.md), keyed by this
+#                      commit's sha alone ($match wildcards the UCX sha, unknown here).
+#                      Checked by name, not by the release/ path's NIXL_SHA property:
+#                      verification/ is shared between builds and is never deleted on
+#                      failure, so both wheels actually being present is the closer proxy
+#                      for "this commit's build finished cleanly." Works for any commit
+#                      (PR branch, release branch, anything), unlike release/<ver>/, which
+#                      only ever gets populated by nixl-build-wheel-release-poller for
+#                      commits it scans on real release/* branches.
+#                      Jenkins itself isn't triggered here — this job only finds a build
+#                      that's already running or already finished (nightly cron, or someone
+#                      manually dispatching nixl-ci-build-wheel-nightly for this sha). If
+#                      nothing has kicked off a build for this commit, wait-for-wheels waits
+#                      the full timeout and never sees one land. Revisit: have this workflow
+#                      trigger the Jenkins build directly, once Jenkins remote-API
+#                      credentials are wired up here.
+#   3. publish-crate   cargo publish nixl-sys -> Artifactory sw-dynamo-nixl-cargo-local.
+#                     Runs on the gitlab_ci_runners group (ubuntu-latest can't resolve
+#                     artifactory.nvidia.com; the self-hosted velonix runners reject
+#                     tag/push events at admission).
+#   4. compliance     trigger the release-automation GitLab pipeline (PROJECT=nixl:
+#                     wheel scan + SonarQube + nSpect register) and poll to completion.
+#                     GATED: only runs if wait-for-wheels AND publish-crate succeeded, so
+#                     the GitLab scan never starts against wheels that aren't there yet
+#                     (or a broken crate upload) rather than failing after a long scan.
+#
+# release-automation lives on GitLab (dl/ai-dynamo/release-automation), not GitHub, so
+# there is no reusable workflow to `uses:` — the trigger+poll logic is inlined here.
+# The crate is staged from GitHub (dynamo-parity split): GitLab only consumes it — the
+# GA crates.io publish happens later in the GitLab pipeline's promote:crates job.
+#
+# On a pull_request that touches the crate: run crate-validate only (cargo package,
+# no upload, no token, no GitLab) as a DRY RUN.
+#
+# PREREQUISITES (before the first real run):
+#   Runner: an internal runner with corp-net reach to gitlab-master.nvidia.com AND
+#           artifactory.nvidia.com (the `gitlab_ci_runners` group — same one nixl's other
+#           GitLab triggers use; ubuntu-latest cannot resolve either host, confirmed by a
+#           real run — DNS failure, not a secrets/permissions issue).
+#   Secrets:
+#     ARTIFACTORY_URL          - e.g. https://artifactory.nvidia.com/artifactory  (crate, wheels)
+#     ARTIFACTORY_CARGO_TOKEN  - deploy token for the cargo repo                   (crate)
+#     ARTIFACTORY_PYPI_TOKEN   - read/search (AQL) token for sw-nbu-swx-nixl-pypi-local
+#                                (wait-for-wheels) — NOT YET ADDED, TODO before first real run
+#     GITLAB_TRIGGER_TOKEN     - release-automation pipeline trigger token   (compliance)
+#     GITLAB_API_TOKEN         - PAT with read_api scope, for polling        (compliance)
+#     (GITLAB_PROJECT_ID is hardcoded below to 191080 — no secret needed)
+#   release-automation projects/nixl.yml + configs/projects.yml onboard nixl as wheel+crate.
+name: NIXL release (crate + compliance)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # PRs that touch the crate/workflow run crate-validate as a DRY RUN (validate; never publish).
+  pull_request:
+    branches:
+      - 'release/**'
+      - main
+    paths:
+      - '.github/workflows/nixl-compliance.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/bindings/rust/**'
+  workflow_dispatch:
+    inputs:
+      rc_tag:
+        description: "RC tag, e.g. v1.4.0-rc0 (defaults to the pushed tag)."
+        required: false
+        default: ""
+      wheel_version:
+        description: "Wheel version staged in sw-nbu-swx, e.g. 1.4.0 (default: base version from the tag, no rc suffix)."
+        required: false
+        default: ""
+      crate_version:
+        description: "nixl-sys crate version to stage (default: the tag version, e.g. v1.4.0-rc0 -> 1.4.0-rc0)."
+        required: false
+        default: ""
+      crate_dry_run:
+        description: "Crate: package only, do not upload (adds cargo publish --dry-run)."
+        type: boolean
+        required: false
+        default: false
+      wheel_sha:
+        description: "Commit sha to check for Jenkins-built wheels (default: this run's own commit). Override to test wait-for-wheels against a commit that's already published, e.g. release/1.4.0's current tip, without waiting on a fresh Jenkins build."
+        required: false
+        default: ""
+
+jobs:
+  # ── PR: validate the crate packages cleanly (no upload, no token, no GitLab) ──
+  crate-validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: cargo package (dry run)
+        run: |
+          set -e
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            . "$HOME/.cargo/env"
+          fi
+          echo "PR validation: cargo package (no upload)"
+          cargo package --manifest-path src/bindings/rust/Cargo.toml --no-verify --allow-dirty
+
+  # ── tag/manual: derive the versions used by publish-crate and compliance ──
+  prep:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      rc_tag: ${{ steps.v.outputs.rc_tag }}
+      wheel_version: ${{ steps.v.outputs.wheel_version }}
+      sonar_branch: ${{ steps.v.outputs.sonar_branch }}
+      crate_version: ${{ steps.v.outputs.crate_version }}
+      wheel_sha8: ${{ steps.v.outputs.wheel_sha8 }}
+    steps:
+      - id: v
+        run: |
+          set -e
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            RC_TAG="${GITHUB_REF_NAME}"
+          else
+            RC_TAG="${{ github.event.inputs.rc_tag }}"
+          fi
+          [ -n "$RC_TAG" ] || { echo "::error::rc_tag is required (push a v* tag or set the input)"; exit 1; }
+          T="${RC_TAG#v}"                          # 1.4.0-rc0
+          BASE="${T%%-rc*}"                        # 1.4.0
+          WV="${{ github.event.inputs.wheel_version }}"
+          # blossom stages the release wheels in sw-nbu-swx as the PLAIN base version
+          # (nixl_cu12/cu13 == 1.4.0), not rc-suffixed — so the scan/promote can find them.
+          [ -n "$WV" ] || WV="${BASE}"             # e.g. v1.4.0-rc0 -> 1.4.0
+          # Crate is staged at the full tag version (distinct per RC); overridable by input.
+          CV="${{ github.event.inputs.crate_version }}"
+          [ -n "$CV" ] || CV="${T}"                # e.g. v1.4.0-rc0 -> 1.4.0-rc0
+          # wait-for-wheels checks this commit by default; override (testing only) to
+          # point it at an already-published commit instead, e.g. release/1.4.0's tip.
+          WS="${{ github.event.inputs.wheel_sha }}"
+          [ -n "$WS" ] || WS="${GITHUB_SHA}"
+          echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
+          echo "wheel_version=$WV" >> "$GITHUB_OUTPUT"
+          echo "sonar_branch=release/${BASE}" >> "$GITHUB_OUTPUT"
+          echo "crate_version=$CV" >> "$GITHUB_OUTPUT"
+          echo "wheel_sha8=${WS:0:8}" >> "$GITHUB_OUTPUT"
+          echo "rc_tag=$RC_TAG  wheel_version=$WV  crate_version=$CV  sonar_branch=release/${BASE}  wheel_sha8=${WS:0:8}"
+
+  # ── tag/manual: wait for Jenkins to publish this commit's wheels (verification/) ──
+  wait-for-wheels:
+    if: github.event_name != 'pull_request'
+    needs: prep
+    # ubuntu-latest can't resolve artifactory.nvidia.com (confirmed via a real run:
+    # "Could not resolve host"). gitlab_ci_runners has corp-net reach (compliance already
+    # uses it against gitlab-master.nvidia.com) and — unlike the velonix builder group —
+    # admits tag/push-triggered jobs.
+    runs-on:
+      group: gitlab_ci_runners
+    # nixl-build-wheel-release-poller only runs every 4h; a tag pushed right after a poll
+    # cycle can sit here a while. Generous ceiling; keep MAX_WAIT below just under this.
+    timeout-minutes: 360
+    env:
+      ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+      ARTIFACTORY_PYPI_TOKEN: ${{ secrets.ARTIFACTORY_PYPI_TOKEN }}
+      WHEEL_SHA8: ${{ needs.prep.outputs.wheel_sha8 }}
+    steps:
+      - name: Guard secrets
+        run: |
+          [ -n "$ARTIFACTORY_PYPI_TOKEN" ] || { echo "::error::ARTIFACTORY_PYPI_TOKEN secret is empty/unavailable for this ref."; exit 1; }
+          [ -n "$ARTIFACTORY_URL" ] || { echo "::error::ARTIFACTORY_URL secret is empty."; exit 1; }
+
+      - name: Poll Artifactory for the Jenkins-built wheels
+        run: |
+          set -euo pipefail
+          # verification/g<nixl-sha8>.ucx<ucx-sha8>/ (nixl-ci-build-wheel-nightly, PUBLISH_DIR
+          # empty — the nightly-cron path, not the release/<ver> poller path). Keyed by nixl
+          # sha alone here since the UCX sha isn't known on the GitHub side; $match wildcards
+          # it. Folder name only (no NIXL_SHA property, unlike release/): verification/ is
+          # shared between builds and is NEVER deleted on failure, so an empty/partial upload
+          # can leave a folder behind. To not treat that as "published," require both a
+          # nixl_cu12 and a nixl_cu13 wheel file actually present under it, not just the
+          # folder existing.
+          SHA8="${WHEEL_SHA8}"
+          AQL_URL="${ARTIFACTORY_URL}/api/search/aql"
+          MAX_WAIT=21000   # ~5h50m, under the job's 360m timeout-minutes ceiling
+          INTERVAL=120
+          ELAPSED=0
+          echo "Waiting for verification/g${SHA8}.ucx*/ with both nixl_cu12 and nixl_cu13 wheels ..."
+          while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
+            QUERY="items.find({\"repo\":\"sw-nbu-swx-nixl-pypi-local\",\"type\":\"file\",\"path\":{\"\$match\":\"verification/g${SHA8}.ucx*\"},\"name\":{\"\$match\":\"nixl_cu1*.whl\"}})"
+            RESP=$(curl -sS -H "Authorization: Bearer ${ARTIFACTORY_PYPI_TOKEN}" -H "Content-Type: text/plain" \
+              -X POST "${AQL_URL}" -d "${QUERY}")
+            NAMES=$(echo "${RESP}" | jq -r '.results[].name' 2>/dev/null || true)
+            if echo "${NAMES}" | grep -q 'nixl_cu12' && echo "${NAMES}" | grep -q 'nixl_cu13'; then
+              FOLDER=$(echo "${RESP}" | jq -r '.results[0].path' | sort -u | paste -sd, -)
+              echo "Found Jenkins-published wheels: ${FOLDER}"
+              echo "## Jenkins verification wheels" >> "$GITHUB_STEP_SUMMARY"
+              echo "Found: \`${FOLDER}\` (nixl sha=${SHA8})" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "[${ELAPSED}s] not yet published; retrying in ${INTERVAL}s"
+            sleep "${INTERVAL}"
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          echo "::error::timed out waiting for Jenkins wheels (verification/g${SHA8}.ucx*, nixl sha=${SHA8})"
+          exit 1
+
+  # ── tag/manual: stage nixl-sys to Artifactory (dynamo-parity: GitHub pushes, GitLab consumes) ──
+  publish-crate:
+    if: github.event_name != 'pull_request'
+    needs: prep
+    # Moved off ubuntu-latest: it can't resolve artifactory.nvidia.com (confirmed via a
+    # real run: "Could not resolve host"). gitlab_ci_runners has corp-net reach and —
+    # unlike the velonix builder group, which rejects tag/push events at admission —
+    # actually accepts this job. No builder image needed either way (--no-verify publish).
+    runs-on:
+      group: gitlab_ci_runners
+    env:
+      ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+      ARTIFACTORY_CARGO_TOKEN: ${{ secrets.ARTIFACTORY_CARGO_TOKEN }}
+      CARGO_REPO: sw-dynamo-nixl-cargo-local
+      CRATE_VERSION: ${{ needs.prep.outputs.crate_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard secrets
+        run: |
+          echo "ARTIFACTORY_CARGO_TOKEN length: ${#ARTIFACTORY_CARGO_TOKEN}"
+          [ -n "$ARTIFACTORY_CARGO_TOKEN" ] || { echo "::error::ARTIFACTORY_CARGO_TOKEN secret is empty/unavailable for this ref."; exit 1; }
+          [ -n "$ARTIFACTORY_URL" ] || { echo "::error::ARTIFACTORY_URL secret is empty."; exit 1; }
+
+      - name: Set workspace version
+        run: |
+          set -e
+          # Bump the [workspace.package] version (nixl-sys uses version.workspace = true).
+          sed -i -E "s/^(version = \")([^\"]+)(\")/\1${CRATE_VERSION}\3/" Cargo.toml
+          grep -m1 '^version = ' Cargo.toml
+
+      - name: cargo publish -> Artifactory
+        run: |
+          set -e
+          # gitlab_ci_runners builder images aren't guaranteed to ship cargo (ubuntu-latest
+          # did); install via rustup when it's missing.
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "cargo not found; installing via rustup"
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            . "$HOME/.cargo/env"
+          fi
+          DRY=""
+          [ "${{ github.event.inputs.crate_dry_run }}" = "true" ] && DRY="--dry-run"
+          [ -n "$DRY" ] && echo "DRY RUN: packaging only, no upload"
+          # Token passed via env inside the arg; do not enable `set -x` around this line.
+          # --no-verify: source already built + tested by the wheel/CI path (nixl-sys' build.rs
+          # needs c++20 the packager lacks), so package + upload without a full build.
+          cargo publish --manifest-path src/bindings/rust/Cargo.toml \
+            --token "Bearer ${ARTIFACTORY_CARGO_TOKEN}" \
+            --index "sparse+${ARTIFACTORY_URL}/api/cargo/${CARGO_REPO}/index/" \
+            --no-verify --allow-dirty $DRY
+
+  # ── tag/manual: trigger + poll the release-automation compliance pipeline ──
+  compliance:
+    if: github.event_name != 'pull_request'
+    # GATED: run only if the Jenkins wheels were found AND the crate staged successfully.
+    needs: [prep, wait-for-wheels, publish-crate]
+    # Internal runner with reach to gitlab-master (same group nixl's other triggers use).
+    runs-on:
+      group: gitlab_ci_runners
+    environment: automated-release
+    steps:
+      - name: Trigger release-automation compliance pipeline (PROJECT=nixl)
+        id: trigger
+        env:
+          GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+          GITLAB_PROJECT_ID: "191080"   # dl/ai-dynamo/release-automation (project id, not sensitive)
+          RC_TAG: ${{ needs.prep.outputs.rc_tag }}
+          WHEEL_VERSION: ${{ needs.prep.outputs.wheel_version }}
+          CRATE_VERSION: ${{ needs.prep.outputs.crate_version }}
+          SONAR_BRANCH: ${{ needs.prep.outputs.sonar_branch }}
+        run: |
+          set -euo pipefail
+          GITLAB_API="https://gitlab-master.nvidia.com/api/v4"
+          # Trigger token via @file so it never lands in process listings.
+          TF=$(mktemp); trap 'rm -f "$TF"' EXIT; chmod 600 "$TF"
+          printf '%s' "${GITLAB_TRIGGER_TOKEN}" > "$TF"
+          HTTP_CODE=$(curl -sS -o /tmp/gl_response.json -w "%{http_code}" -X POST \
+            "${GITLAB_API}/projects/${GITLAB_PROJECT_ID}/trigger/pipeline" \
+            --form "token=<${TF}" \
+            --form "ref=main" \
+            --form "variables[PIPELINE_TYPE]=rc" \
+            --form "variables[RELEASE_TYPE]=rc" \
+            --form "variables[PROJECT]=nixl" \
+            --form "variables[RC_TAG]=${RC_TAG}" \
+            --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
+            --form "variables[CRATE_VERSION]=${CRATE_VERSION}" \
+            --form "variables[ARTIFACTS]=wheel,crate" \
+            --form "variables[COMMIT_SHA]=${GITHUB_SHA}" \
+            --form "variables[ARTIFACTORY_PYPI_URL]=https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-swx-nixl-pypi-local/simple" \
+            --form "variables[SONAR_BRANCH]=${SONAR_BRANCH}" \
+            --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}")
+          echo "GitLab API HTTP status: ${HTTP_CODE}"
+          jq . /tmp/gl_response.json 2>/dev/null || cat /tmp/gl_response.json
+          if [ "${HTTP_CODE}" -lt 200 ] || [ "${HTTP_CODE}" -ge 300 ]; then
+            echo "::error::Failed to trigger release-automation pipeline (HTTP ${HTTP_CODE})"; exit 1
+          fi
+          PIPELINE_ID=$(jq -r '.id' /tmp/gl_response.json)
+          PIPELINE_URL=$(jq -r '.web_url' /tmp/gl_response.json)
+          echo "pipeline_id=${PIPELINE_ID}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## release-automation compliance (nixl)"
+            echo "Triggered: ${PIPELINE_URL}"
+            echo "Version: ${WHEEL_VERSION} (${RC_TAG}) · crate ${CRATE_VERSION}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Poll pipeline status
+        env:
+          GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
+          GITLAB_PROJECT_ID: "191080"   # dl/ai-dynamo/release-automation (project id, not sensitive)
+        run: |
+          set -euo pipefail
+          PIPELINE_ID="${{ steps.trigger.outputs.pipeline_id }}"
+          GITLAB_API="https://gitlab-master.nvidia.com/api/v4"
+          MAX_WAIT=1800; INTERVAL=30; ELAPSED=0
+          while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
+            STATUS=$(curl -sS -H "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+              "${GITLAB_API}/projects/${GITLAB_PROJECT_ID}/pipelines/${PIPELINE_ID}" | jq -r '.status')
+            echo "[${ELAPSED}s] pipeline status: ${STATUS}"
+            case "${STATUS}" in
+              success)
+                echo "## release-automation compliance: PASSED" >> "$GITHUB_STEP_SUMMARY"; exit 0 ;;
+              failed|canceled|skipped)
+                echo "::error::compliance pipeline ${STATUS}"
+                echo "## release-automation compliance: FAILED (${STATUS})" >> "$GITHUB_STEP_SUMMARY"; exit 1 ;;
+              running|pending|waiting_for_resource|preparing|created) ;;
+              *) echo "::warning::unexpected status: ${STATUS}" ;;
+            esac
+            sleep "${INTERVAL}"; ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          echo "::error::poll timed out after ${MAX_WAIT}s"; exit 1
