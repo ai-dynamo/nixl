@@ -266,7 +266,7 @@ TEST(nixlLogFileHelper, ExpandsTheRunMarkerIntoThePath) {
     }
 
     const auto now = [] {
-        struct timespec ts {};
+        struct timespec ts{};
         ::clock_gettime(CLOCK_REALTIME, &ts);
         return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
     };
