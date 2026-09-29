@@ -25,7 +25,7 @@
 #include "launch.cuh"
 
 #include "api.cuh"
-#include "nixl_device.cuh"
+#include <gpu/nixl_device.cuh>
 #include "utils.cuh"
 #include <cooperative_groups.h>
 namespace cg = cooperative_groups;

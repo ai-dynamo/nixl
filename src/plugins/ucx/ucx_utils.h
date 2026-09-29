@@ -155,10 +155,13 @@ public:
 class nixlUcxContext {
 private:
     /* Local UCX stuff */
-    ucp_context_h ctx;
+    std::unique_ptr<ucp_context, void (*)(ucp_context_h)> ctx{nullptr, &ucp_cleanup};
     const nixl::ucx::mt_mode_t mtType_;
     const unsigned ucpVersion_;
     const std::string name_;
+
+    [[nodiscard]] bool
+    supportsMemoryType(ucs_memory_type_t mem_type) const;
 
 public:
     nixlUcxContext(const std::vector<std::string> &devs,
@@ -168,8 +171,6 @@ public:
                    size_t num_device_channels,
                    const std::string &engine_conf = "",
                    const std::string &name = "");
-    ~nixlUcxContext();
-
     nixlUcxContext(nixlUcxContext &&) = delete;
     nixlUcxContext(const nixlUcxContext &) = delete;
 
