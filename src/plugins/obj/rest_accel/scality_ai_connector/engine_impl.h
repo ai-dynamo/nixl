@@ -120,6 +120,11 @@ private:
     /// requests of at most this, so callers hand down whole tensors and the
     /// backend decides the wire granularity. 0 disables splitting.
     size_t splitSize_ = default_split_size;
+    /// Whether DRAM transfers use RDMA ('dram_rdma', default true). When false,
+    /// DRAM registration pins nothing and reads go over plain HTTP: pinning costs
+    /// about 1 ms per MR on every rail, far more than a small metadata read.
+    /// Applies to the whole backend instance, VRAM excluded.
+    bool dramRdma_ = true;
     std::shared_ptr<iRestClient> connectorClient_;
 };
 

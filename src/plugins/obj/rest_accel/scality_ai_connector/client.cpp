@@ -41,6 +41,54 @@ captureBody(void *ptr, size_t size, size_t nmemb, void *userdata) {
     return size * nmemb;
 }
 
+/// Destination of a plain-HTTP body read: the caller's buffer and its capacity.
+struct httpBodySink {
+    char *dst = nullptr;
+    size_t cap = 0;
+    size_t len = 0; ///< bytes written so far
+    bool overflow = false;
+    /// The range starts past offset 0, so only a 206 carries the requested bytes.
+    bool ranged = false;
+    /// Used to read the response status: error bodies are not written to dst.
+    CURL *easy = nullptr;
+    /// Where an error response's body goes instead of the caller's buffer.
+    std::string *errorBody = nullptr;
+};
+
+/// Write callback for a body read, bounded by the caller's capacity: a server
+/// that ignores the Range header would otherwise overrun the buffer. Returning
+/// short aborts the transfer with CURLE_WRITE_ERROR.
+size_t
+writeToSink(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    auto *sink = static_cast<httpBodySink *>(userdata);
+    const size_t n = size * nmemb;
+
+    // An error response carries a message, not data: keep it for the failure log
+    // instead of writing it into the caller's buffer.
+    long http_code = 0;
+    if (sink->easy != nullptr &&
+        curl_easy_getinfo(sink->easy, CURLINFO_RESPONSE_CODE, &http_code) == CURLE_OK &&
+        http_code != 0 && (http_code < 200 || http_code >= 300)) {
+        if (sink->errorBody != nullptr) {
+            sink->errorBody->append(static_cast<char *>(ptr), n);
+        }
+        return n;
+    }
+
+    // A ranged read answered with the object from offset 0: abort instead of writing it.
+    if (sink->ranged && http_code != 0 && http_code != 206) {
+        return 0;
+    }
+
+    if (n > sink->cap - sink->len) {
+        sink->overflow = true;
+        return 0;
+    }
+    std::memcpy(sink->dst + sink->len, ptr, n);
+    sink->len += n;
+    return n;
+}
+
 std::once_flag curl_init_flag;
 
 /// A customParams integer, or nullopt when it is not one: unlike std::stoul,
@@ -212,6 +260,9 @@ struct restClient::requestCtx {
     rest_method method = rest_method::GET;
     std::function<void(bool)> boolCb; // Put/Get
     std::function<void(std::optional<bool>)> checkCb; // Head
+    /// Set only for a plain-HTTP body read. dst == nullptr means the body is error
+    /// text bound for responseBody, as it is for every RDMA and HEAD request.
+    httpBodySink sink;
     /// libcurl's own description of the failure, which carries the reason as
     /// text even on paths where CURLINFO_OS_ERRNO stays unset.
     char errorBuf[CURL_ERROR_SIZE] = {};
@@ -253,8 +304,13 @@ restClient::buildEasy(requestCtx *ctx) const {
     if (ctx->headers) {
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, ctx->headers);
     }
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, captureBody);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx->responseBody);
+    if (ctx->sink.dst != nullptr) {
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeToSink);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx->sink);
+    } else {
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, captureBody);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx->responseBody);
+    }
     curl_easy_setopt(curl, CURLOPT_PRIVATE, ctx);
     // No signals from libcurl: this process is multi-threaded.
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
@@ -338,6 +394,37 @@ restClient::finishRequest(requestCtx *ctx, CURLcode res, long http_code) {
         if (!success && ctx->pastEndOk && res == CURLE_OK && http_code == 416) {
             NIXL_DEBUG << absl::StrFormat("%s: nothing past the end of %s", ctx->opName, ctx->url);
             success = true;
+        }
+        // A body shorter than requested is a success: a range past the end of the
+        // object is answered with fewer bytes. A body cut short against its own
+        // Content-Length has already failed as CURLE_PARTIAL_FILE.
+        if (ctx->sink.dst != nullptr) {
+            if (ctx->sink.ranged && http_code >= 200 && http_code < 300 && http_code != 206) {
+                // A 200 here is the object from offset 0: the Range was ignored.
+                NIXL_ERROR << absl::StrFormat(
+                    "%s: got HTTP %ld instead of 206 for a range of %s; the endpoint "
+                    "appears to have ignored the Range header",
+                    ctx->opName,
+                    http_code,
+                    ctx->url);
+                success = false;
+            } else if (ctx->sink.overflow) {
+                NIXL_ERROR << absl::StrFormat(
+                    "%s: response exceeds the %zu-byte request for %s (http_code=%ld); the "
+                    "endpoint appears to have ignored the Range header",
+                    ctx->opName,
+                    ctx->sink.cap,
+                    ctx->url,
+                    http_code);
+                success = false;
+            } else if (success && ctx->sink.len < ctx->sink.cap) {
+                NIXL_DEBUG << absl::StrFormat(
+                    "%s: object ended after %zu of %zu requested bytes for %s",
+                    ctx->opName,
+                    ctx->sink.len,
+                    ctx->sink.cap,
+                    ctx->url);
+            }
         }
         // Once descriptor exhaustion is established, further connect failures are
         // counted and reported at teardown instead of logged one by one.
@@ -770,6 +857,62 @@ restClient::getObjectRdmaAsync(std::string_view key,
                       data_len,
                       offset,
                       past_end_ok);
+}
+
+void
+restClient::getObjectBodyAsync(std::string_view key,
+                               void *dst,
+                               size_t data_len,
+                               size_t offset,
+                               get_object_callback_t callback) {
+    NIXL_DEBUG << absl::StrFormat(
+        "getObjectBodyAsync: key=%s, dst=%p, data_len=%zu, offset=%zu", key, dst, data_len, offset);
+
+    if (dst == nullptr || data_len == 0) {
+        NIXL_ERROR << absl::StrFormat(
+            "getObjectBodyAsync: dst=%p data_len=%zu, returning failure", dst, data_len);
+        if (callback) {
+            callback(false);
+        }
+        return;
+    }
+
+    if (offset > (SIZE_MAX - (data_len - 1))) {
+        NIXL_ERROR << "getObjectBodyAsync: offset + data_len would overflow, returning failure";
+        if (callback) {
+            callback(false);
+        }
+        return;
+    }
+
+    auto ctx = std::make_unique<requestCtx>();
+    ctx->client = this;
+    ctx->opName = "getObjectBodyAsync";
+    ctx->method = rest_method::GET;
+    ctx->url = buildUrl(key);
+    ctx->boolCb = std::move(callback);
+    ctx->sink.dst = static_cast<char *>(dst);
+    ctx->sink.cap = data_len;
+    ctx->sink.ranged = offset > 0;
+    ctx->sink.errorBody = &ctx->responseBody;
+
+    ctx->easy = acquireEasy();
+    if (!ctx->easy) {
+        NIXL_ERROR << "getObjectBodyAsync: curl_easy_init failed";
+        if (ctx->boolCb) {
+            ctx->boolCb(false);
+        }
+        return;
+    }
+    ctx->sink.easy = ctx->easy;
+
+    // No x-scal-rdma header: the endpoint then answers with the bytes in the body.
+    std::string range_header =
+        absl::StrFormat("Range: bytes=%zu-%zu", offset, offset + data_len - 1);
+    ctx->headers = curl_slist_append(ctx->headers, range_header.c_str());
+
+    buildEasy(ctx.get());
+    enqueue(std::move(ctx));
 }
 
 void

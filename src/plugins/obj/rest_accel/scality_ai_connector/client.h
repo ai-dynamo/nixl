@@ -83,6 +83,30 @@ public:
                        get_object_callback_t callback) = 0;
 
     /**
+     * Asynchronously get a byte range into host memory over plain HTTP.
+     *
+     * No registration and no RDMA descriptor: the response body is written
+     * straight into the caller's buffer. Cheaper than RDMA for small reads, whose
+     * cost is dominated by pinning. Intended for metadata, not bulk data.
+     *
+     * A response shorter than data_len succeeds: a range reaching past the end of
+     * the object is answered as a complete 206 with fewer bytes. A body cut short
+     * against its own Content-Length fails, as does one exceeding data_len.
+     *
+     * @param key The object key
+     * @param dst Host buffer receiving the bytes; must hold data_len
+     * @param data_len Bytes requested, and the capacity of dst
+     * @param offset Offset within the object to start reading from
+     * @param callback Receives true if the range was delivered
+     */
+    virtual void
+    getObjectBodyAsync(std::string_view key,
+                       void *dst,
+                       size_t data_len,
+                       size_t offset,
+                       get_object_callback_t callback) = 0;
+
+    /**
      * Asynchronously check whether an object exists (HTTP HEAD).
      * @param key The object key
      * @param callback Receives true (exists), false (404), or std::nullopt (error)
@@ -136,6 +160,13 @@ public:
                        size_t offset,
                        std::string_view rdma_desc,
                        bool past_end_ok,
+                       get_object_callback_t callback) override;
+
+    void
+    getObjectBodyAsync(std::string_view key,
+                       void *dst,
+                       size_t data_len,
+                       size_t offset,
                        get_object_callback_t callback) override;
 
     void

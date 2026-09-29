@@ -77,6 +77,7 @@ The engine is selected and configured through the backend's `customParams`.
 
 | Parameter | Default | Meaning |
 |---|---|---|
+| `dram_rdma` | `true` | Whether DRAM transfers use RDMA. With `false`, a DRAM READ uses a plain HTTP GET with nothing pinned: no MR, and no NIC list needed at all. A DRAM WRITE is refused, because there is no plain-HTTP upload. This is for callers whose host buffers hold metadata, where an `ibv_reg_mr` per rail costs more than the read itself. VRAM always uses RDMA. |
 | `split_size` | `8388608` (8 MiB) | Bytes per object request. A READ descriptor of any size is cut into requests of at most this, on boundaries aligned in the object's own offset space. Pieces past the end of a shorter object read nothing. WRITE is never split. `0` disables splitting. |
 
 **RDMA (optional)**
