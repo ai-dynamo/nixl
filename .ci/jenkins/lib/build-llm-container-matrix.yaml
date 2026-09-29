@@ -157,11 +157,30 @@ steps:
       rm -rf "${DEST}"
       mkdir -p "${DEST}"
 
-      BASE="${WHEELS_ARTIFACTORY_URL}/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}"
+      # Normally wheel filenames use NIXL_VERSION. For a release directory
+      # containing mis-versioned wheels, WHEEL_BUILD_ID may be supplied as
+      # "<build-id>@<wheel-version>" (for example, "59bfaa77@1.4.0").
+      case "${WHEEL_BUILD_ID}" in
+        *@*@*|@*|*@)
+          echo "ERROR: invalid WHEEL_BUILD_ID '${WHEEL_BUILD_ID}'"
+          exit 1
+          ;;
+        *@*)
+          BUILD_ID="${WHEEL_BUILD_ID%%@*}"
+          WHEEL_VERSION="${WHEEL_BUILD_ID#*@}"
+          ;;
+        *)
+          BUILD_ID="${WHEEL_BUILD_ID}"
+          WHEEL_VERSION="${NIXL_VERSION}"
+          ;;
+      esac
+
+      BASE="${WHEELS_ARTIFACTORY_URL}/release/${NIXL_VERSION}/${BUILD_ID}"
+      echo "Downloading wheel version ${WHEEL_VERSION} from ${BASE}"
       WHEELS=(
-        "nixl-${NIXL_VERSION}-py3-none-any.whl"
-        "nixl_cu12-${NIXL_VERSION}-${PYTHON_TAG}-${PYTHON_TAG}-manylinux_${MANYLINUX_TAG}_${arch}.whl"
-        "nixl_cu13-${NIXL_VERSION}-${PYTHON_TAG}-${PYTHON_TAG}-manylinux_${MANYLINUX_TAG}_${arch}.whl"
+        "nixl-${WHEEL_VERSION}-py3-none-any.whl"
+        "nixl_cu12-${WHEEL_VERSION}-${PYTHON_TAG}-${PYTHON_TAG}-manylinux_${MANYLINUX_TAG}_${arch}.whl"
+        "nixl_cu13-${WHEEL_VERSION}-${PYTHON_TAG}-${PYTHON_TAG}-manylinux_${MANYLINUX_TAG}_${arch}.whl"
       )
       for whl in "${WHEELS[@]}"; do
         curl -fL --retry 3 --retry-delay 2 \
