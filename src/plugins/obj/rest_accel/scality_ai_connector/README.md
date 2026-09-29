@@ -73,6 +73,12 @@ The engine is selected and configured through the backend's `customParams`.
 | `num_threads` | `max(2, cpu_threads / 4)` | Size of the callback worker pool (see [Concurrency model](#concurrency-model)). |
 | `request_timeout_ms` | `2000` | Limit on each request, connection included (connecting itself is limited to 1 s). A stalled request fails after this instead of holding its transfer; for a cache, falling back is faster than waiting. |
 
+**Transfers (optional)**
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `split_size` | `8388608` (8 MiB) | Bytes per object request. A READ descriptor of any size is cut into requests of at most this, on boundaries aligned in the object's own offset space. Pieces past the end of a shorter object read nothing. WRITE is never split. `0` disables splitting. |
+
 **RDMA (optional)**
 
 | Parameter | Default | Meaning |
@@ -174,7 +180,8 @@ The connector opens one DC target per NIC. It registers each buffer on every
 NIC, with one memory region per NIC that covers the whole buffer. The NIC a
 request travels on is chosen when its RDMA descriptor is built, so consecutive
 requests against one buffer spread across the rails: each request goes to the
-NIC that has carried the fewest so far.
+NIC that has carried the fewest so far. With `split_size`, a single large READ
+descriptor is enough to reach every NIC.
 
 Bonded (LAG) NICs are detected from sysfs; one DCT QP is created per physical
 port and RDMA descriptors cycle through them, so the distinct DCT numbers feed the
@@ -210,6 +217,11 @@ the server's own RoCE settings.
 - **DC transport only**; there is no RC fallback.
 - The cuObject RDMA descriptor's SIZE field is 32 bits, so a single request is
   at most 4 GiB - 1 byte (0xFFFFFFFF == 4294967295).
+  A READ stays below it as long as `split_size` does; a WRITE, which is never
+  split, is limited to 4 GiB - 1 byte per descriptor.
+- A WRITE creates or replaces the whole object; there is no partial-object
+  write. Whether an existing key can be overwritten depends on the endpoint's
+  configuration.
 - A buffer can be registered more than once only with the same address and
   length. A registration that starts at the same address as an existing one but
   has a different length is refused. Register the buffer once, or register

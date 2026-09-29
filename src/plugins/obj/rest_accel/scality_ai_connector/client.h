@@ -69,6 +69,8 @@ public:
      * @param data_len Maximum length of data to read
      * @param offset Offset within the object to start reading from
      * @param rdma_desc RDMA descriptor for the transfer
+     * @param past_end_ok A 416 (range past the end of the object) counts as
+     *                    success: nothing was there to read
      * @param callback Callback function to handle the result
      */
     virtual void
@@ -77,6 +79,7 @@ public:
                        size_t data_len,
                        size_t offset,
                        std::string_view rdma_desc,
+                       bool past_end_ok,
                        get_object_callback_t callback) = 0;
 
     /**
@@ -132,6 +135,7 @@ public:
                        size_t data_len,
                        size_t offset,
                        std::string_view rdma_desc,
+                       bool past_end_ok,
                        get_object_callback_t callback) override;
 
     void
@@ -215,7 +219,8 @@ private:
                       bool is_upload,
                       std::function<void(bool)> callback,
                       size_t data_len = 0,
-                      size_t offset = 0);
+                      size_t offset = 0,
+                      bool past_end_ok = false);
 
     /// Apply URL + method-specific curl options to a request's easy handle.
     void

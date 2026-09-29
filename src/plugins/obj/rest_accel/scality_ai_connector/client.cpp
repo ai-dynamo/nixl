@@ -215,6 +215,8 @@ struct restClient::requestCtx {
     /// libcurl's own description of the failure, which carries the reason as
     /// text even on paths where CURLINFO_OS_ERRNO stays unset.
     char errorBuf[CURL_ERROR_SIZE] = {};
+    /// A 416 (range past the end of the object) means nothing to read: success.
+    bool pastEndOk = false;
 
     ~requestCtx() {
         if (headers) {
@@ -332,7 +334,11 @@ restClient::finishRequest(requestCtx *ctx, CURLcode res, long http_code) {
             }
         });
     } else {
-        const bool success = (res == CURLE_OK) && (http_code >= 200 && http_code < 300);
+        bool success = (res == CURLE_OK) && (http_code >= 200 && http_code < 300);
+        if (!success && ctx->pastEndOk && res == CURLE_OK && http_code == 416) {
+            NIXL_DEBUG << absl::StrFormat("%s: nothing past the end of %s", ctx->opName, ctx->url);
+            success = true;
+        }
         // Once descriptor exhaustion is established, further connect failures are
         // counted and reported at teardown instead of logged one by one.
         const bool redundant = fdExhausted_ && res == CURLE_COULDNT_CONNECT;
@@ -644,10 +650,12 @@ restClient::submitRdmaRequest(const char *op_name,
                               bool is_upload,
                               std::function<void(bool)> callback,
                               size_t data_len,
-                              size_t offset) {
+                              size_t offset,
+                              bool past_end_ok) {
     auto ctx = std::make_unique<requestCtx>();
     ctx->client = this;
     ctx->opName = op_name;
+    ctx->pastEndOk = past_end_ok;
     ctx->method = is_upload ? rest_method::PUT : rest_method::GET;
     ctx->url = buildUrl(key);
     ctx->boolCb = std::move(callback);
@@ -720,6 +728,7 @@ restClient::getObjectRdmaAsync(std::string_view key,
                                size_t data_len,
                                size_t offset,
                                std::string_view rdma_desc,
+                               bool past_end_ok,
                                get_object_callback_t callback) {
     NIXL_DEBUG << absl::StrFormat(
         "getObjectRdmaAsync: key=%s, data_ptr=%p, data_len=%zu, offset=%zu, rdma_desc_len=%zu",
@@ -759,7 +768,8 @@ restClient::getObjectRdmaAsync(std::string_view key,
                       /*is_upload=*/false,
                       std::move(callback),
                       data_len,
-                      offset);
+                      offset,
+                      past_end_ok);
 }
 
 void

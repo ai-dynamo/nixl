@@ -37,6 +37,10 @@ constexpr uint64_t default_dc_key = 0xffeeddccULL;
 constexpr uint8_t default_rdma_sl = 3;
 constexpr uint8_t default_rdma_traffic_class = 106;
 
+/// Default bytes per object request, overridable via the 'split_size' backend
+/// parameter (0 disables splitting).
+constexpr size_t default_split_size = 8 * 1024 * 1024;
+
 /**
  * OBJ engine for the Scality AI Connector.
  *
@@ -112,6 +116,10 @@ private:
     uint64_t dcKey_ = default_dc_key;
     uint8_t rdmaSl_ = default_rdma_sl;
     uint8_t rdmaTrafficClass_ = default_rdma_traffic_class;
+    /// Bytes per object request. A transfer descriptor of any size is cut into
+    /// requests of at most this, so callers hand down whole tensors and the
+    /// backend decides the wire granularity. 0 disables splitting.
+    size_t splitSize_ = default_split_size;
     std::shared_ptr<iRestClient> connectorClient_;
 };
 

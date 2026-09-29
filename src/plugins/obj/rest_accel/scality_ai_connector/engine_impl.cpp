@@ -172,6 +172,8 @@ public:
     size_t offset = 0;
     std::string rdmaDesc;
     std::string objKey;
+    /// A 416 (range past the end of the object) is a success, not a failure.
+    bool pastEndOk = false;
 
     scalityObjTransferRequestH(uintptr_t a, size_t s, size_t off) : addr(a), size(s), offset(off) {}
 };
@@ -319,6 +321,18 @@ ScalityObjEngineImpl::ScalityObjEngineImpl(const nixlBackendInitParams *init_par
     rdmaSl_ = static_cast<uint8_t>(paramInRange(params, "rdma_sl", 15, default_rdma_sl));
     rdmaTrafficClass_ = static_cast<uint8_t>(
         paramInRange(params, "rdma_traffic_class", 255, default_rdma_traffic_class));
+
+    const std::string split = paramOr(params, "split_size", "");
+    if (!split.empty()) {
+        try {
+            splitSize_ = nixl::config::configTraits<size_t>::convert(split);
+        }
+        catch (const std::runtime_error &) {
+            NIXL_WARN << "Ignoring non-numeric split_size: " << split;
+        }
+    }
+    NIXL_INFO << "Object request split_size="
+              << (splitSize_ == 0 ? std::string("disabled") : std::to_string(splitSize_));
 }
 
 nixl_status_t
@@ -449,21 +463,47 @@ ScalityObjEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
             continue;
         }
 
-        scalityObjTransferRequestH req(local[i].addr, local[i].len, remote[i].addr);
-        req.objKey = obj_key_search->second;
-        req.rdmaDesc = descriptorProvider_->makeDescriptor((void *)req.addr, req.size);
-        if (req.rdmaDesc.empty()) {
-            return NIXL_ERR_BACKEND;
-        }
-        // Log only the RDMA descriptor length, never the raw descriptor: it grants buffer access.
-        NIXL_DEBUG << absl::StrFormat(
-            "prepXfer: addr=0x%016x, size=%zu, offset=%zu, rdma_desc_len=%zu",
-            req.addr,
-            req.size,
-            req.offset,
-            req.rdmaDesc.size());
+        // One NIXL descriptor becomes as many ranged requests as split_size
+        // dictates, each with its own RDMA descriptor and NIC. Boundaries are
+        // aligned in the object's own offset space, not to the descriptor start,
+        // so a tensor read from an arbitrary offset of a safetensors blob does not
+        // straddle every backend stripe.
+        //
+        // WRITE is never split: a PUT writes the whole object, and there is no
+        // partial-object write.
+        const size_t total = local[i].len;
+        const size_t base = remote[i].addr;
+        const bool splittable = (operation != NIXL_WRITE) && (splitSize_ != 0);
+        size_t off = 0;
+        while (off < total) {
+            size_t len = total - off;
+            if (splittable) {
+                // Bytes from here to the next split_size boundary in the object.
+                const size_t to_boundary = splitSize_ - ((base + off) % splitSize_);
+                if (to_boundary < len) {
+                    len = to_boundary;
+                }
+            }
+            scalityObjTransferRequestH req(local[i].addr + off, len, base + off);
+            req.objKey = obj_key_search->second;
+            // Only the first piece must exist: a later one may lie past the end of an
+            // object shorter than the descriptor.
+            req.pastEndOk = (off > 0);
+            req.rdmaDesc = descriptorProvider_->makeDescriptor((void *)req.addr, req.size);
+            if (req.rdmaDesc.empty()) {
+                return NIXL_ERR_BACKEND;
+            }
+            // Log only the length: the RDMA descriptor grants access to the buffer.
+            NIXL_DEBUG << absl::StrFormat(
+                "prepXfer: addr=0x%016x, size=%zu, offset=%zu, rdma_desc_len=%zu",
+                req.addr,
+                req.size,
+                req.offset,
+                req.rdmaDesc.size());
 
-        req_h->reqs_.push_back(std::move(req));
+            req_h->reqs_.push_back(std::move(req));
+            off += len;
+        }
     }
 
     handle = req_h.release();
@@ -497,7 +537,7 @@ ScalityObjEngineImpl::postXfer(const nixl_xfer_op_t &operation,
                 req.objKey, req.addr, req.size, req.offset, req.rdmaDesc, on_done);
         } else {
             connectorClient_->getObjectRdmaAsync(
-                req.objKey, req.addr, req.size, req.offset, req.rdmaDesc, on_done);
+                req.objKey, req.addr, req.size, req.offset, req.rdmaDesc, req.pastEndOk, on_done);
         }
     }
 
