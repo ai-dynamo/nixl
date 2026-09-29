@@ -104,12 +104,22 @@ struct cudaDriverApi {
     using cu_init_fn_t = int (*)(unsigned int);
     using cu_device_get_fn_t = int (*)(int *, int);
     using cu_device_get_pci_bus_id_fn_t = int (*)(char *, int, int);
+    using cu_device_get_attribute_fn_t = int (*)(int *, int, int);
+    using cu_mem_get_handle_for_address_range_fn_t =
+        int (*)(void *, unsigned long long, size_t, int, unsigned long long);
 
     cu_init_fn_t init = nullptr;
     cu_device_get_fn_t deviceGet = nullptr;
     cu_device_get_pci_bus_id_fn_t deviceGetPciBusId = nullptr;
+    // Optional, for DMA-BUF export; null on drivers that predate it.
+    cu_device_get_attribute_fn_t deviceGetAttribute = nullptr;
+    cu_mem_get_handle_for_address_range_fn_t memGetHandleForAddressRange = nullptr;
     bool ok = false;
 };
+
+// Values from cuda.h (CUdevice_attribute, CUmemRangeHandleType).
+[[maybe_unused]] constexpr int cu_device_attribute_dma_buf_supported = 124;
+constexpr int cu_mem_range_handle_type_dma_buf_fd = 1;
 
 const cudaDriverApi &
 cudaDriver() {
@@ -127,6 +137,11 @@ cudaDriver() {
             reinterpret_cast<cudaDriverApi::cu_device_get_fn_t>(dlsym(lib, "cuDeviceGet"));
         a.deviceGetPciBusId = reinterpret_cast<cudaDriverApi::cu_device_get_pci_bus_id_fn_t>(
             dlsym(lib, "cuDeviceGetPCIBusId"));
+        a.deviceGetAttribute = reinterpret_cast<cudaDriverApi::cu_device_get_attribute_fn_t>(
+            dlsym(lib, "cuDeviceGetAttribute"));
+        a.memGetHandleForAddressRange =
+            reinterpret_cast<cudaDriverApi::cu_mem_get_handle_for_address_range_fn_t>(
+                dlsym(lib, "cuMemGetHandleForAddressRange"));
         a.ok = a.init && a.deviceGet && a.deviceGetPciBusId && a.init(0) == 0;
         if (!a.ok) {
             NIXL_WARN << "ibverbs_dc: CUDA driver API unavailable; no GPU/NIC affinity";
@@ -154,6 +169,39 @@ gpuBusId(int dev_id) {
         *p = static_cast<char>(std::tolower(static_cast<unsigned char>(*p)));
     }
     return busid;
+}
+
+/// DMA-BUF export of a VRAM buffer: fd -1 when the export failed.
+struct dmabufExport {
+    int fd = -1;
+    uint64_t offset = 0; ///< where the buffer starts in the exported range
+};
+
+/// Export the host-page-aligned range around [ptr, ptr + size) as a DMA-BUF, as
+/// cuMemGetHandleForAddressRange requires. The range must lie within one CUDA
+/// allocation; when it does not, the export fails and the caller falls back.
+dmabufExport
+exportDmabuf(void *ptr, size_t size) {
+    dmabufExport out;
+    const cudaDriverApi &cu = cudaDriver();
+    if (!cu.ok || !cu.memGetHandleForAddressRange) {
+        return out;
+    }
+    const uintptr_t page = static_cast<uintptr_t>(sysconf(_SC_PAGESIZE));
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
+    const uintptr_t base = addr & ~(page - 1);
+    const uintptr_t end = (addr + size + page - 1) & ~(page - 1);
+    int fd = -1;
+    const int rc = cu.memGetHandleForAddressRange(
+        &fd, base, end - base, cu_mem_range_handle_type_dma_buf_fd, 0);
+    if (rc != 0) {
+        NIXL_DEBUG << "ibverbs_dc: DMA-BUF export of " << ptr << " (" << size
+                   << " bytes) failed with CUresult " << rc << "; using ibv_reg_mr";
+        return out;
+    }
+    out.fd = fd;
+    out.offset = addr - base;
+    return out;
 }
 
 /// Canonical /sys PCIe path for a CUDA device, via its PCI bus id. Empty on error.
@@ -699,9 +747,36 @@ dcDescriptorProvider::pickRail(const buffer &buf) {
     return best;
 }
 
+bool
+dcDescriptorProvider::dmabufSupported(int dev_id) {
+    auto it = gpuDmabuf_.find(dev_id);
+    if (it != gpuDmabuf_.end()) {
+        return it->second;
+    }
+    bool supported = false;
+#ifdef HAVE_IBV_REG_DMABUF_MR
+    const cudaDriverApi &cu = cudaDriver();
+    int dev = 0;
+    int attr = 0;
+    supported = cu.ok && cu.deviceGetAttribute && cu.memGetHandleForAddressRange &&
+        cu.deviceGet(&dev, dev_id) == 0 &&
+        cu.deviceGetAttribute(&attr, cu_device_attribute_dma_buf_supported, dev) == 0 && attr != 0;
+#endif
+    NIXL_INFO << "ibverbs_dc: GPU " << visibleToUserGpu(dev_id)
+              << (supported ? ": registering VRAM through DMA-BUF" :
+                              ": no DMA-BUF export; registering VRAM through ibv_reg_mr "
+                              "(nvidia_peermem)");
+    gpuDmabuf_[dev_id] = supported;
+    return supported;
+}
+
 ibv_mr *
-dcDescriptorProvider::registerRail(void *ptr, size_t size, int nic_idx) {
-    const nicCtx &nic = nics_[nic_idx];
+dcDescriptorProvider::registerRail(void *ptr,
+                                   size_t size,
+                                   int nic_idx,
+                                   [[maybe_unused]] int dmabuf_fd,
+                                   [[maybe_unused]] uint64_t dmabuf_offset) {
+    nicCtx &nic = nics_[nic_idx];
     if (nic.maxMrSize != 0 && size > nic.maxMrSize) {
         NIXL_ERROR << "ibverbs_dc: " << size << " bytes exceeds the largest MR " << nic.devName
                    << " accepts (" << nic.maxMrSize << ")";
@@ -715,6 +790,26 @@ dcDescriptorProvider::registerRail(void *ptr, size_t size, int nic_idx) {
     // don't support it silently ignore it.
     unsigned int access = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
         IBV_ACCESS_REMOTE_READ | IBV_ACCESS_RELAXED_ORDERING;
+#ifdef HAVE_IBV_REG_DMABUF_MR
+    if (dmabuf_fd >= 0 && !nic.dmabufUnsupported) {
+        // iova is the buffer's own address, so RDMA descriptors are unchanged.
+        ibv_mr *mr = ibv_reg_dmabuf_mr(
+            nic.pd, dmabuf_offset, size, reinterpret_cast<uint64_t>(ptr), dmabuf_fd, access);
+        if (mr) {
+            regDmabufRails_++;
+            return mr;
+        }
+        const int err = errno;
+        // Unsupported means this NIC's stack will never take DMA-BUF, so stop
+        // trying; any other error falls back for this registration only.
+        if (err == EOPNOTSUPP || err == ENOSYS || err == EPROTONOSUPPORT) {
+            nic.dmabufUnsupported = true;
+        }
+        NIXL_WARN << "ibverbs_dc: ibv_reg_dmabuf_mr failed on " << nic.devName << " ("
+                  << strerror(err) << "); falling back to ibv_reg_mr"
+                  << (nic.dmabufUnsupported ? " for all VRAM on this NIC" : "");
+    }
+#endif
     ibv_mr *mr = ibv_reg_mr(nic.pd, ptr, size, access);
     if (!mr) {
         NIXL_ERROR << "ibverbs_dc: ibv_reg_mr failed on " << nic.devName << " (ptr=" << ptr
@@ -750,10 +845,19 @@ dcDescriptorProvider::registerMemory(void *ptr, size_t size, int dev_id) {
     buffer buf;
     buf.len = size;
     buf.devId = dev_id;
+    // VRAM goes through DMA-BUF when the driver exports it, one export shared by
+    // every rail; each MR keeps its own reference, so the fd is closed after.
+    dmabufExport dmabuf;
+    if (dev_id >= 0 && dmabufSupported(dev_id)) {
+        dmabuf = exportDmabuf(ptr, size);
+    }
     for (int nic_idx : allNics_) {
-        if (ibv_mr *mr = registerRail(ptr, size, nic_idx)) {
+        if (ibv_mr *mr = registerRail(ptr, size, nic_idx, dmabuf.fd, dmabuf.offset)) {
             buf.rails.push_back({mr, nic_idx});
         }
+    }
+    if (dmabuf.fd >= 0) {
+        close(dmabuf.fd);
     }
     if (buf.rails.empty()) {
         NIXL_ERROR << "ibverbs_dc: no NIC accepted the registration of " << size << " bytes at "
@@ -855,10 +959,11 @@ dcDescriptorProvider::logRequestSpread(bool detailed) {
               << "% off the owning GPU's affine rails: " << per_nic;
     if (regCalls_ > 0) {
         NIXL_INFO << "ibverbs_dc: " << regCalls_ << " registration(s) -> " << regRails_
-                  << " MR(s) over " << (regBytes_ >> 20) << " MiB, " << (regUs_ / 1000)
-                  << "ms registering + " << (deregUs_ / 1000) << "ms releasing, "
-                  << ((regUs_ + deregUs_) / regCalls_) << "us per registration ("
-                  << ((regUs_ + deregUs_) / (regRails_ ? regRails_ : 1)) << "us per MR)."
+                  << " MR(s) (" << regDmabufRails_ << " through DMA-BUF) over " << (regBytes_ >> 20)
+                  << " MiB, " << (regUs_ / 1000) << "ms registering + " << (deregUs_ / 1000)
+                  << "ms releasing, " << ((regUs_ + deregUs_) / regCalls_)
+                  << "us per registration (" << ((regUs_ + deregUs_) / (regRails_ ? regRails_ : 1))
+                  << "us per MR)."
                   << " A caller that registers per transfer pays this on the critical path;"
                      " registering a reused pool once would not.";
     }

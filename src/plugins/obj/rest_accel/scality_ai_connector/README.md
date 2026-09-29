@@ -35,8 +35,12 @@ uses neither the AWS SDK nor AWS authentication.
 
 - An RDMA NIC with DC support (NVIDIA ConnectX, `mlx5`), reachable by the
   Scality endpoint.
-- For GPU memory: the `nvidia_peermem` kernel module (GPUDirect RDMA peer
-  memory).
+- For GPU memory, one of:
+  - DMA-BUF, used first: Linux 5.12 or later and an NVIDIA driver that exports
+    DMA-BUF (typically the open kernel modules);
+  - the `nvidia_peermem` kernel module (GPUDirect RDMA peer memory), used when
+    DMA-BUF is not available.
+
 - A reachable Scality AI Connector endpoint.
 - Build dependencies: `libcurl`, `libibverbs` and `libmlx5`.
 
@@ -249,6 +253,7 @@ the server's own RoCE settings.
 | `'endpoint_override' parameter is required` | Set `endpoint_override` in `customParams`. |
 | `RDMA requires a NIC list` | Set `rdma_nics`, or `rdma_dev_addr_list` in `cufile.json`. |
 | `ibverbs_dc: no RDMA device found for NIC` | The IPv4 address or device name matches no local RDMA device. |
+| `ibverbs_dc: ibv_reg_mr failed on <nic>` for VRAM | Neither registration path works for GPU memory: load `nvidia_peermem`, or use a kernel and NVIDIA driver with DMA-BUF support. |
 | `restClient: first connect failure. fds open=...` | Open descriptors close to the soft limit: lower `max_inflight` or raise `ulimit -n`. Far below it: the endpoint could not be reached; see the `curl says` text in the log. |
 | `<op>: failed url=<url> curl_code=<n> http_code=<n>` | The HTTP call failed. A non-2xx `http_code` comes from the server; check the object id and endpoint URL. |
 

@@ -76,6 +76,12 @@ if curl_dep.found() and ibverbs_dep.found() and mlx5_dep.found()
         'rest_accel/scality_ai_connector/rdma_descriptor_provider.h',
     ]
     plugin_deps += [ curl_dep, ibverbs_dep, mlx5_dep, dl_dep ]
+    # DMA-BUF registration of VRAM needs rdma-core 34 or later.
+    if cpp.has_function('ibv_reg_dmabuf_mr',
+                        prefix: '#include <infiniband/verbs.h>',
+                        dependencies: ibverbs_dep)
+        compile_defs += [ '-DHAVE_IBV_REG_DMABUF_MR' ]
+    endif
 else
     message('libcurl, libibverbs or libmlx5 not found. Skipping Scality AI Connector engine')
 endif

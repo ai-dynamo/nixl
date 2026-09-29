@@ -92,6 +92,7 @@ private:
         std::string devName; ///< ib device name (e.g. mlx5_1), for logging
         std::string pciPath; ///< canonical /sys/devices/... PCIe path of the NIC
         int numaNode = -1; ///< NUMA node of the NIC, or -1 if unknown
+        bool dmabufUnsupported = false; ///< ibv_reg_dmabuf_mr refused as unsupported
     };
 
     /// One rail of a registered buffer: an MR covering the WHOLE buffer on that
@@ -125,9 +126,20 @@ private:
     /// memory. Caller must hold mu_.
     size_t
     pickRail(const buffer &buf);
-    /// Register [ptr, ptr+size) on one NIC. Returns nullptr on failure.
+    /// Register [ptr, ptr+size) on one NIC. With a DMA-BUF fd (VRAM), try
+    /// ibv_reg_dmabuf_mr first and fall back to ibv_reg_mr. Returns nullptr on
+    /// failure. Caller must hold mu_.
     ibv_mr *
-    registerRail(void *ptr, size_t size, int nic_idx);
+    registerRail(void *ptr,
+                 size_t size,
+                 int nic_idx,
+                 int dmabuf_fd = -1,
+                 uint64_t dmabuf_offset = 0);
+    /// Whether VRAM of this GPU can be registered through DMA-BUF: the build has
+    /// ibv_reg_dmabuf_mr and the driver exports DMA-BUF for the device. Resolved
+    /// once per GPU and logged. Caller must hold mu_.
+    bool
+    dmabufSupported(int dev_id);
     /// Resolve (and cache) the set of NIC indices affine to a GPU. Prefers NICs
     /// that share a PCIe switch with the GPU (PXB/PIX-local); when no NIC is
     /// switch-local (the RDMA NICs sit on a shared bridge equidistant from every
@@ -150,6 +162,8 @@ private:
     std::vector<int> allNics_;
     /// dev_id -> affine NIC indices, resolved once per GPU.
     std::map<int, std::vector<int>> gpuAffineNics_;
+    /// dev_id -> whether its VRAM is registered through DMA-BUF.
+    std::map<int, bool> gpuDmabuf_;
     /// Requests handed out per NIC; pickRail favours the least used.
     std::vector<uint64_t> nicIssued_;
     /// Requests that left the owning GPU's affine rails.
@@ -165,6 +179,7 @@ private:
     // Registration cost, reported with the rail summary.
     std::size_t regCalls_ = 0;
     std::size_t regRails_ = 0;
+    std::size_t regDmabufRails_ = 0;
     std::size_t regBytes_ = 0;
     std::size_t regUs_ = 0;
     std::size_t deregUs_ = 0;
