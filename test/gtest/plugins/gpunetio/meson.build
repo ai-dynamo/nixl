@@ -9,6 +9,11 @@ gpunetio_oob_endpoint_test = executable(
 )
 test('gpunetio_oob_endpoint', gpunetio_oob_endpoint_test)
 
+if not is_variable('gpunetio_backend_interface')
+    message('GPUNETIO plugin not built, skipping gpunetio_oob_socket test')
+    subdir_done()
+endif
+
 gpunetio_oob_socket_test = executable(
     'gpunetio_oob_socket_test',
     'gpunetio_oob_socket_test.cpp',
