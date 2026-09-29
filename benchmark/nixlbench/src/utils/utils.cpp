@@ -216,6 +216,23 @@ NB_ARG_STRING(infinia_config_file,
               "",
               "Path to INFINIA-specific config file (simple key=value format)");
 
+// DAOS options - data transfers use libdfs directly. The dfuse path is used only by
+// NIXLBench to seed READ tests, validate WRITE tests, and remove benchmark objects.
+NB_ARG_STRING(daos_pool, "", "DAOS pool label or UUID");
+NB_ARG_STRING(daos_container, "", "DAOS POSIX container label or UUID");
+NB_ARG_STRING(daos_system, "", "Optional DAOS system name");
+NB_ARG_STRING(daos_mount_path, "", "dfuse mount of the DAOS container for benchmark setup");
+NB_ARG_STRING(daos_object_class, "", "DAOS object class for newly created files");
+NB_ARG_STRING(daos_object_class_hint, "", "DAOS DFS object-class hint");
+NB_ARG_STRING(daos_progress_cpu_affinity, "", "Comma-separated DAOS progress-thread CPUs");
+NB_ARG_UINT64(daos_chunk_size, 0, "DAOS DFS chunk size for newly created files");
+NB_ARG_UINT64(daos_oclass_id, 0, "Numeric DAOS object-class ID");
+NB_ARG_UINT64(daos_num_event_queues, 1, "Number of DAOS event queues");
+NB_ARG_UINT64(daos_max_inflight_per_queue, 1024, "Maximum in-flight DAOS I/O per event queue");
+NB_ARG_UINT64(daos_submission_batch_size, 32, "DAOS submission batch size");
+NB_ARG_UINT64(daos_completion_batch_size, 128, "DAOS completion batch size");
+NB_ARG_UINT64(daos_progress_poll_timeout_us, 1000, "DAOS progress poll timeout in microseconds");
+
 // HF3FS options - only used when backend is HF3FS
 NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
 
@@ -327,6 +344,20 @@ std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
 std::string xferBenchConfig::infinia_config_file = "";
+std::string xferBenchConfig::daos_pool = "";
+std::string xferBenchConfig::daos_container = "";
+std::string xferBenchConfig::daos_system = "";
+std::string xferBenchConfig::daos_mount_path = "";
+std::string xferBenchConfig::daos_object_class = "";
+std::string xferBenchConfig::daos_object_class_hint = "";
+std::string xferBenchConfig::daos_progress_cpu_affinity = "";
+uint64_t xferBenchConfig::daos_chunk_size = 0;
+uint64_t xferBenchConfig::daos_oclass_id = 0;
+uint64_t xferBenchConfig::daos_num_event_queues = 1;
+uint64_t xferBenchConfig::daos_max_inflight_per_queue = 1024;
+uint64_t xferBenchConfig::daos_submission_batch_size = 32;
+uint64_t xferBenchConfig::daos_completion_batch_size = 128;
+uint64_t xferBenchConfig::daos_progress_poll_timeout_us = 1000;
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -602,6 +633,28 @@ xferBenchConfig::loadParams(void) {
         if (backend == XFERBENCH_BACKEND_INFINIA) {
             infinia_config_file = NB_ARG(infinia_config_file);
         }
+
+        if (backend == XFERBENCH_BACKEND_DAOS) {
+            daos_pool = NB_ARG(daos_pool);
+            daos_container = NB_ARG(daos_container);
+            daos_system = NB_ARG(daos_system);
+            daos_mount_path = NB_ARG(daos_mount_path);
+            daos_object_class = NB_ARG(daos_object_class);
+            daos_object_class_hint = NB_ARG(daos_object_class_hint);
+            daos_progress_cpu_affinity = NB_ARG(daos_progress_cpu_affinity);
+            daos_chunk_size = NB_ARG(daos_chunk_size);
+            daos_oclass_id = NB_ARG(daos_oclass_id);
+            daos_num_event_queues = NB_ARG(daos_num_event_queues);
+            daos_max_inflight_per_queue = NB_ARG(daos_max_inflight_per_queue);
+            daos_submission_batch_size = NB_ARG(daos_submission_batch_size);
+            daos_completion_batch_size = NB_ARG(daos_completion_batch_size);
+            daos_progress_poll_timeout_us = NB_ARG(daos_progress_poll_timeout_us);
+
+            if (daos_pool.empty() || daos_container.empty()) {
+                std::cerr << "DAOS requires --daos_pool and --daos_container" << std::endl;
+                return -1;
+            }
+        }
     }
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
@@ -615,6 +668,11 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
     check_consistency = NB_ARG(check_consistency);
+    if (backend == XFERBENCH_BACKEND_DAOS && daos_mount_path.empty() &&
+        (op_type == XFERBENCH_OP_READ || check_consistency)) {
+        std::cerr << "DAOS READ and consistency checks require --daos_mount_path" << std::endl;
+        return -1;
+    }
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
     num_target_dev = NB_ARG(num_target_dev);
