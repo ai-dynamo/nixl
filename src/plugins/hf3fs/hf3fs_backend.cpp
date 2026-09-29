@@ -401,7 +401,8 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
         HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM, "Error: empty io list");
     }
 
-    if (UINT_MAX - hf3fs_handle->submitted_ios.load(std::memory_order_relaxed) < hf3fs_handle->io_list.size()) {
+    if (UINT_MAX - hf3fs_handle->submitted_ios.load(std::memory_order_relaxed) <
+        hf3fs_handle->io_list.size()) {
         HF3FS_LOG_RETURN(NIXL_ERR_NOT_ALLOWED, "Error: more than UINT_MAX ios");
     }
     for (auto it = hf3fs_handle->io_list.begin(); it != hf3fs_handle->io_list.end(); ++it) {
@@ -441,11 +442,13 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
     nixlH3fsThreadStatus* io_status = &hf3fs_handle->io_status;
     hf3fs_cqe* cqes = new hf3fs_cqe[NUM_CQES];
 
-    while (!io_status->stop_thread.load(std::memory_order_relaxed) && (io_status->error_status == NIXL_SUCCESS)) {
+    while (!io_status->stop_thread.load(std::memory_order_relaxed) &&
+           (io_status->error_status == NIXL_SUCCESS)) {
         // Check if we've processed all IOs
         // Dual loads without joint locking is ok here because only this thread
         // modifies completed_ios.
-        if (hf3fs_handle->completed_ios.load(std::memory_order_relaxed) >= hf3fs_handle->submitted_ios.load(std::memory_order_relaxed)) {
+        if (hf3fs_handle->completed_ios.load(std::memory_order_relaxed) >=
+            hf3fs_handle->submitted_ios.load(std::memory_order_relaxed)) {
             // User may call postXfer multiple times, so we could not exit yet,
             // so we must wait for stop condition
             sched_yield();
@@ -517,7 +520,8 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
     // The following is thread safe under the currently valid assumptions that
     // - error_message is written before error_status is updated, and
     // - error_status and error_message are not changed after the first error.
-    const nixl_status_t error_status = hf3fs_handle->io_status.error_status.load(std::memory_order_acquire);
+    const nixl_status_t error_status =
+        hf3fs_handle->io_status.error_status.load(std::memory_order_acquire);
     if (error_status != NIXL_SUCCESS) {
         const std::string error_message = hf3fs_handle->io_status.error_message;
         cleanupIOThread(hf3fs_handle);
@@ -526,7 +530,8 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
 
     // Dual loads without joing locking is ok here because Agent-level locking does
     // not allow submitted_ios to change via postXfer() concurrently to this function.
-    if (hf3fs_handle->completed_ios.load(std::memory_order_relaxed) < hf3fs_handle->submitted_ios.load(std::memory_order_relaxed)) {
+    if (hf3fs_handle->completed_ios.load(std::memory_order_relaxed) <
+        hf3fs_handle->submitted_ios.load(std::memory_order_relaxed)) {
         return NIXL_IN_PROG;
     }
 
