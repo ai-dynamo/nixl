@@ -17,6 +17,10 @@
 
 #include <gtest/gtest.h>
 
+#include <absl/log/log_sink_registry.h>
+
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -145,6 +149,54 @@ private:
     bool nullSpans_;
 };
 
+class ThrowingBackend final : public nixl::trace::TraceBackend {
+public:
+    [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
+    beginSpan(std::string_view, nixl::trace::Kind) override {
+        throw std::runtime_error("beginSpan failed");
+    }
+
+    void
+    mark(std::string_view, nixl::trace::Kind) override {}
+
+    void
+    pushCorrelationId(std::uint64_t) override {}
+
+    void
+    popCorrelationId() override {}
+
+    [[nodiscard]] std::string_view
+    name() const noexcept override {
+        return "throwing";
+    }
+};
+
+class DropCountingLogSink final : public absl::LogSink {
+public:
+    DropCountingLogSink() {
+        absl::AddLogSink(this);
+    }
+
+    ~DropCountingLogSink() override {
+        absl::RemoveLogSink(this);
+    }
+
+    void
+    Send(const absl::LogEntry &entry) override {
+        if (entry.text_message().find("Dropping a trace phase") != std::string_view::npos) {
+            drops_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    [[nodiscard]] std::size_t
+    drops() const {
+        return drops_.load(std::memory_order_relaxed);
+    }
+
+private:
+    std::atomic<std::size_t> drops_{0};
+};
+
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
 makeMockTracer(CallLog &a,
                CallLog &b,
@@ -155,6 +207,13 @@ makeMockTracer(CallLog &a,
     backends.push_back(std::make_unique<MockBackend>("a", &a, id_a));
     backends.push_back(std::make_unique<MockBackend>("b", &b, id_b));
     return std::make_unique<nixl::trace::Tracer>(std::move(backends), sample_ratio);
+}
+
+[[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
+makeThrowingTracer() {
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    backends.push_back(std::make_unique<ThrowingBackend>());
+    return std::make_unique<nixl::trace::Tracer>(std::move(backends), 0.0);
 }
 
 } // namespace
@@ -611,4 +670,17 @@ TEST(TracePhaseSink, InactiveSpanRecordsNothing) {
     EXPECT_EQ(a.spansEnded, 0);
     EXPECT_TRUE(a.strAttrs.empty());
     EXPECT_TRUE(a.intAttrs.empty());
+}
+
+// recordPhase() is noexcept: a backend that throws must not propagate, and the
+// drop must be reported once per sink however many phases are dropped.
+TEST(TracePhaseSink, ThrowingBackendIsReportedOnce) {
+    const auto tracer = makeThrowingTracer();
+    DropCountingLogSink sink_log;
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+
+    EXPECT_NO_THROW(sink.recordPhase(nixl_trace_stage_t::SUBMIT, {}, 1, {}));
+    EXPECT_NO_THROW(sink.recordPhase(nixl_trace_stage_t::WIRE_SUBMITTED, {}, 2, {}));
+
+    EXPECT_EQ(sink_log.drops(), 1u);
 }
