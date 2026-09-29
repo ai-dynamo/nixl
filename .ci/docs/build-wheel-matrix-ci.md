@@ -8,7 +8,7 @@ The Build Wheel Matrix CI job is a comprehensive continuous integration pipeline
 
 The CI pipeline consists of four main components:
 
-1. **Jenkins Matrix Job** (`.ci/jenkins/lib/build-wheel-matrix.yaml`)
+1. **Jenkins Matrix Job** (`.ci/jenkins/lib/build-wheel-ci-matrix.yaml`)
 2. **Container Build Script** (`contrib/build-container.sh`)
 3. **Docker Build Environment** (`contrib/Dockerfile.manylinux`)
 4. **Wheel Building Script** (`contrib/build-wheel.sh`)
@@ -123,8 +123,8 @@ Users can build the complete image locally without specifying a target:
 
 This builds both stages from scratch without the `--wheel-base-image` override.
 
-#### Nightly Build
-The nightly job (`nixl-ci-build-wheel-nightly`) omits `--wheel-base-image`, so it runs the full two-stage build. It selects `--torch-versions` from its `CUDA_MAJOR` parameter (`13` default or `12`), since torch package availability differs between the two.
+#### Standalone Build
+The standalone job (`nixl-build-wheel`) omits `--wheel-base-image`, so it runs the full two-stage build. It selects `--torch-versions` from its `CUDA_MAJOR` parameter (`13` default or `12`), since torch package availability differs between the two.
 
 #### Optional: UCX spcx external plugin
 `build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir. It works with `contrib/Dockerfile.manylinux` (the wheel build, where `wheel_add_ucx_plugins.py` then bundles the plugin into the wheel like any other UCX module) and with the default `contrib/Dockerfile` (the container build, where the plugin is only installed into the image). It requires two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:
@@ -440,7 +440,7 @@ uv pip install --force-reinstall dist/nixl-*.whl
 
 ### Updating Dependencies
 - Modify `contrib/Dockerfile.manylinux` for system package updates
-- **Bump `CI_IMAGE_TAG`** in all six matrix YAMLs (including `.ci/jenkins/lib/build-wheel-matrix.yaml`) — `Dockerfile.manylinux` is in the `CI_FILES` list, so the `cidemo-init.sh` check will fail the PR otherwise
+- **Bump `CI_IMAGE_TAG`** in all six matrix YAMLs (including `.ci/jenkins/lib/build-wheel-ci-matrix.yaml`) — `Dockerfile.manylinux` is in the `CI_FILES` list, so the `cidemo-init.sh` check will fail the PR otherwise
 - Update Python versions in matrix configuration
 - Test new dependencies in isolated environment
 
@@ -491,7 +491,7 @@ build-backend = "mesonpy"
 
 ## 11. Related Files
 
-- `.ci/jenkins/lib/build-wheel-matrix.yaml` - Main CI configuration
+- `.ci/jenkins/lib/build-wheel-ci-matrix.yaml` - Main CI configuration
 - `contrib/Dockerfile.manylinux` - Docker build environment
 - `contrib/build-wheel.sh` - Wheel building script
 - `contrib/tomlutil.py` - Build configuration utility (supports --build-id)

@@ -1,7 +1,7 @@
 # NIXL verification launcher. Single scheduler for the unattended verification
 # builds: it owns the crons and triggers the build jobs, which carry no
 # schedule of their own. LAUNCH_TARGET selects what a run fires:
-#   wheels     (midnight) -> nixl-ci-build-wheel-nightly, one run per CUDA major
+#   wheels     (midnight) -> nixl-build-wheel, one run per CUDA major
 #   containers (9 PM)     -> nixl-ci-build-container, the 4 nightly variants
 # Fire-and-forget (wait:false): the launcher reports what it spawned, not how
 # the builds ended - each triggered job mails its own failures.
@@ -45,10 +45,10 @@ steps:
       if (target == 'wheels') {
           // PUBLISH_DIR left unset: both CUDA majors publish to verification/.
           for (cu in ['13', '12']) {
-              def label = "build-wheel-nightly CUDA_MAJOR=${cu}"
+              def label = "build-wheel CUDA_MAJOR=${cu}"
               // Per-trigger guard: one bad trigger must not drop the rest.
               try {
-                  build(job: 'nixl-ci-build-wheel-nightly',
+                  build(job: 'nixl-build-wheel',
                         parameters: [
                             string(name: 'NIXL_VERSION', value: 'main'),
                             string(name: 'CUDA_MAJOR', value: cu),

@@ -580,7 +580,7 @@
             keep-system-variables: true
             properties-content: |
               jjb_proj={jjb_proj}-build-wheel
-              conf_file=.ci/jenkins/lib/build-wheel-matrix.yaml
+              conf_file=.ci/jenkins/lib/build-wheel-ci-matrix.yaml
     description: Do NOT edit this job through the Web GUI !
     concurrent: true
     sandbox: true
@@ -888,7 +888,7 @@
 # Wheel verification job: builds and publishes NIXL wheels to Artifactory. Triggered by
 # nixl-verification-launcher (from main), the release poller, and manual runs (any branch/tag/PR/SHA).
 - job-template:
-    name: "{jjb_proj}-build-wheel-nightly"
+    name: "nixl-build-wheel"
     project-type: pipeline
     disabled: false
     properties:
@@ -898,10 +898,10 @@
       - inject:
           keep-system-variables: true
           properties-content: |
-            jjb_proj={jjb_proj}-build-wheel-nightly
-            conf_file=.ci/jenkins/lib/build-wheel-nightly-matrix.yaml
+            jjb_proj=nixl-build-wheel
+            conf_file=.ci/jenkins/lib/build-wheel-matrix.yaml
     description: >
-      <b>NIXL nightly wheel verification build</b><br/>
+      <b>NIXL wheel verification build</b><br/>
       • Builds NIXL wheels (x86_64 &amp; aarch64) for CUDA 13 and CUDA 12, with the UCX spcx
       and Infinia plugins always bundled, and publishes them to the verification (default),
       staging, or release Artifactory space per <code>PUBLISH_DIR</code><br/>
@@ -979,7 +979,7 @@
     description: >
       <b>NIXL verification build launcher</b><br/>
       • <code>LAUNCH_TARGET=wheels</code> (nightly, around midnight): triggers
-      <code>{jjb_proj}-build-wheel-nightly</code> for <code>NIXL_VERSION=main</code>, once each
+      <code>nixl-build-wheel</code> for <code>NIXL_VERSION=main</code>, once each
       for <code>CUDA_MAJOR=13</code> and <code>CUDA_MAJOR=12</code><br/>
       • <code>LAUNCH_TARGET=containers</code> (daily, around 9 PM): triggers
       <code>{jjb_proj}-build-container</code> 4 times &mdash; <b>nixlbench</b> and <b>nixl</b>,
@@ -1004,7 +1004,7 @@
             - "containers"
           description: >
             Which builds to trigger:<br/>
-            • <b>wheels</b>: <code>{jjb_proj}-build-wheel-nightly</code>, one run per CUDA major<br/>
+            • <b>wheels</b>: <code>nixl-build-wheel</code>, one run per CUDA major<br/>
             • <b>containers</b>: <code>{jjb_proj}-build-container</code>, the 4 nightly variants
       - string:
           name: "MAIL_TO"
@@ -1057,7 +1057,7 @@
       • Runs every 4 hours and scans all <code>release/*</code> branches (version &gt;= 1.4.0),
       looking for commits with no
       published wheel set under <code>sw-nbu-swx-nixl-pypi-local/release/</code> in Artifactory<br/>
-      • Triggers <code>nixl-ci-build-wheel-nightly</code> per commit per missing CUDA variant
+      • Triggers <code>nixl-build-wheel</code> per commit per missing CUDA variant
       (wheel-presence check in Artifactory, no markers) &mdash; a failed build is retried on the
       next cycle; delete the folder in Artifactory to force a full rebuild<br/>
       • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -1226,7 +1226,7 @@
         - "{jjb_proj}-dl-gpu"   # Create dl-gpu job for dlcluster.nvidia.com
         - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for NIXL EP on dlcluster.nvidia.com
         - "{jjb_proj}-build-wheel"  # Create build wheel job
-        - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
+        - "nixl-build-wheel"  # Create wheel verification job
         - "nixl-verification-launcher"  # Create verification build launcher job (wheel + container crons)
         - "nixl-build-wheel-release-poller"  # Create release wheel poller job
         - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job
