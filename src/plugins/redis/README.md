@@ -147,7 +147,7 @@ meson devenv -C build-redis-tests \
 ```
 
 The filter runs only the Redis configuration and backend suites. A successful run currently
-reports 11 tests from 2 test suites. These tests inject `mockRedisClient` and do not require a
+reports 21 tests from 2 test suites. These tests inject `mockRedisClient` and do not require a
 running Redis server; use the live smoke test below to exercise hiredis and a real server.
 
 The dynamic plugin is produced at:
@@ -200,8 +200,8 @@ build-nixlbench/nixlbench --help | grep REDIS
 ```
 
 The NIXL build requires the plugin dependencies listed above. The standalone nixlbench build also
-requires the hiredis development package because it seeds Redis before a READ and independently
-checks transferred data when consistency checking is enabled.
+requires the hiredis development package `libhiredis-dev` and `redis-tools` because it seeds Redis
+before a READ and independently checks transferred data when consistency checking is enabled.
 
 Run fixed-size 4 KiB WRITE and READ benchmarks. These commands use one thread, one descriptor per
 batch, one in-flight request, 32 warm-up iterations, and 208 measured iterations:
