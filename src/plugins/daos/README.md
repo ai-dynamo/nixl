@@ -41,15 +41,19 @@ The resulting dynamic plugin is `libplugin_DAOS.so`.
 | `object_class` | empty | Symbolic DAOS object class for new files, for example `RP_2G1` or `EC_4P2G1` |
 | `object_class_hint` | empty | Topology-aware DFS class hint for new files, for example `file:single` or `file:max` |
 | `oclass_id` | `0` | Legacy numeric object-class ID for new files; zero uses the DFS default |
-| `num_event_queues` | `1` | Number of EQ lanes; each creates a DAOS network context and owner thread |
+| `num_event_queues` | `1` | Number of EQ lanes; each creates a DAOS network context |
 | `max_inflight_per_queue` | `1024` | Maximum queued plus active operations admitted to each lane |
 | `submission_batch_size` | `32` | Maximum submissions processed before a lane polls for completions |
 | `completion_batch_size` | `128` | Maximum completed events returned by one EQ poll |
-| `progress_poll_timeout_us` | `1000` | Maximum blocking interval for each event-queue progress poll |
 | `progress_cpu_affinity` | empty | Linux CPU IDs, one per lane, for example `4,5`; empty disables affinity |
 
-Affinity is applied when the backend is created. Recreate the backend with a
-different list when changing CPU placement between experimental runs.
+The agent's `useProgThread`, `pthrDelay`, and `syncMode` settings control DAOS
+progress and synchronization. With progress threads enabled, each EQ lane owns
+one thread and `pthrDelay` paces idle non-blocking progress passes. With them
+disabled, `postXfer` submits directly on the caller thread and `checkXfer` performs
+non-blocking completion polling. CPU affinity applies only to enabled progress
+threads. Recreate the backend with a different affinity list when changing CPU
+placement between experimental runs.
 
 Set at most one of `object_class`, `object_class_hint`, and a nonzero
 `oclass_id`. Symbolic classes are resolved with `daos_oclass_name2id`; hints are
@@ -66,6 +70,12 @@ read completes with `NIXL_ERR_BACKEND`.
 ## C++ usage sketch
 
 ```cpp
+nixlAgentConfig config;
+config.useProgThread = true;
+config.pthrDelay = 1000;
+config.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+nixlAgent agent("daos-agent", config);
+
 nixl_b_params_t params = {
     {"pool", "my-pool"},
     {"container", "kv-cache"},
@@ -87,17 +97,18 @@ auto status = agent.createBackend("DAOS", params, backend);
 
 - Host memory only; there is no direct GPU-memory path yet.
 - `prepXfer` performs the blocking path lookup/open and retains each DFS object.
-  `postXfer` distributes operations round-robin to bounded submission queues.
-- Each lane owns one DAOS event queue, its network context, and a fixed progress
-  thread. The thread alternates bounded submission batches with completion
-  polling, preventing sustained submission load from starving DAOS progress.
+  `postXfer` distributes operations round-robin across bounded EQ lanes.
+- Each lane owns one DAOS event queue and its network context. When NIXL progress
+  threads are enabled, each lane also owns a thread that alternates bounded
+  submission batches with completion polling. Otherwise, caller-driven progress
+  submits directly and polls without blocking.
 - Every in-flight operation retains its event, I/O vector, scatter/gather list,
   read byte count, DFS object, completion callback, and caller buffer address
   until the event is polled and finalized.
 - DAOS event abort does not currently cancel internal operations. `releaseReqH`
   therefore returns `NIXL_ERR_NOT_ALLOWED` until every event completes.
-- If a lane's `max_inflight_per_queue` is exhausted, that descriptor completes
-  with `NIXL_ERR_BACKEND`; already admitted descriptors are drained normally.
+- If every lane's `max_inflight_per_queue` is exhausted, submission is retried
+  as completions free capacity. Already admitted descriptors continue normally.
 - CPU affinity is experimental and non-fatal: an invalid OS affinity operation
   is logged and that lane continues unbound. Configure exactly one CPU ID per
   event queue. The parameter is accepted but cannot bind threads on non-Linux

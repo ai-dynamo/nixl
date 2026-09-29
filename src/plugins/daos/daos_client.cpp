@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <fcntl.h>
@@ -38,6 +39,7 @@
 
 #include "common/backend.h"
 #include "common/nixl_log.h"
+#include "sync.h"
 
 namespace {
 
@@ -172,16 +174,20 @@ private:
     public:
         eventQueueLane(size_t lane_id,
                        dfs_t *dfs,
+                       bool progress_thread_enabled,
+                       nixlTime::us_t progress_thread_delay,
+                       nixl_thread_sync_t sync_mode,
                        size_t max_inflight,
                        size_t submission_batch_size,
                        size_t completion_batch_size,
-                       int64_t poll_timeout_us,
                        std::optional<unsigned> cpu)
             : laneId_(lane_id),
               dfs_(dfs),
+              progressThreadEnabled_(progress_thread_enabled),
+              progressThreadDelay_(static_cast<int64_t>(progress_thread_delay)),
+              dataPathLock_(sync_mode),
               maxInflight_(max_inflight),
               submissionBatchSize_(submission_batch_size),
-              pollTimeoutUs_(poll_timeout_us),
               cpu_(cpu),
               completed_(completion_batch_size) {
             const int rc = daos_eq_create(&eq_);
@@ -189,6 +195,9 @@ private:
                 throw std::runtime_error("daos_eq_create failed: " + std::to_string(rc));
             }
             eqCreated_ = true;
+            if (!progressThreadEnabled_) {
+                return;
+            }
             try {
                 thread_ = std::thread(&eventQueueLane::run, this);
             }
@@ -204,10 +213,21 @@ private:
         operator=(const eventQueueLane &) = delete;
 
         ~eventQueueLane() {
-            stopping_.store(true, std::memory_order_release);
-            queueCv_.notify_all();
-            if (thread_.joinable()) {
-                thread_.join();
+            if (progressThreadEnabled_) {
+                stopping_.store(true, std::memory_order_release);
+                queueCv_.notify_all();
+                if (thread_.joinable()) {
+                    thread_.join();
+                }
+            } else {
+                // Requests should normally be complete before backend teardown.
+                // Drain defensively on the caller thread so no event outlives its EQ.
+                NIXL_LOCK_GUARD(dataPathLock_);
+                while (!pending_.empty()) {
+                    if (poll(progressThreadDelay_ == 0 ? 1000 : progressThreadDelay_) < 0) {
+                        break;
+                    }
+                }
             }
             if (eqCreated_) {
                 const int rc = daos_eq_destroy(eq_, 0);
@@ -219,7 +239,7 @@ private:
 
         int
         enqueue(std::unique_ptr<pendingIo> &io) {
-            if (stopping_.load(std::memory_order_acquire)) {
+            if (progressThreadEnabled_ && stopping_.load(std::memory_order_acquire)) {
                 return ESHUTDOWN;
             }
             size_t outstanding = outstanding_.load(std::memory_order_relaxed);
@@ -232,6 +252,12 @@ private:
                                                          std::memory_order_acq_rel,
                                                          std::memory_order_relaxed));
 
+            if (!progressThreadEnabled_) {
+                NIXL_LOCK_GUARD(dataPathLock_);
+                submitOne(std::move(io));
+                return 0;
+            }
+
             try {
                 std::lock_guard<std::mutex> lock(queueMutex_);
                 submissions_.push_back(std::move(io));
@@ -242,6 +268,15 @@ private:
             }
             queueCv_.notify_one();
             return 0;
+        }
+
+        int
+        progress() {
+            if (progressThreadEnabled_) {
+                return 0;
+            }
+            NIXL_LOCK_GUARD(dataPathLock_);
+            return poll(DAOS_EQ_NOWAIT);
         }
 
     private:
@@ -353,6 +388,23 @@ private:
             finish(std::move(io), event_rc != 0 ? event_rc : fini_rc, bytes_read);
         }
 
+        int
+        poll(int64_t timeout_us) {
+            if (pending_.empty()) {
+                return 0;
+            }
+            const int count = daos_eq_poll(
+                eq_, 1, timeout_us, static_cast<unsigned>(completed_.size()), completed_.data());
+            if (count < 0) {
+                NIXL_ERROR << "daos_eq_poll failed for lane " << laneId_ << ": " << count;
+                return count;
+            }
+            for (int i = 0; i < count; ++i) {
+                complete(completed_[i]);
+            }
+            return count;
+        }
+
         void
         run() {
             bindToCpu();
@@ -369,28 +421,28 @@ private:
                     }
                 }
 
+                bool submitted = false;
                 for (size_t i = 0; i < submissionBatchSize_; ++i) {
                     auto io = popSubmission();
                     if (!io) {
                         break;
                     }
                     submitOne(std::move(io));
+                    submitted = true;
                 }
 
                 if (!pending_.empty()) {
-                    const int64_t timeout = queueEmpty() ? pollTimeoutUs_ : DAOS_EQ_NOWAIT;
-                    const int count = daos_eq_poll(eq_,
-                                                   1,
-                                                   timeout,
-                                                   static_cast<unsigned>(completed_.size()),
-                                                   completed_.data());
-                    if (count < 0) {
-                        NIXL_ERROR << "daos_eq_poll failed for lane " << laneId_ << ": " << count;
+                    const int completed = poll(DAOS_EQ_NOWAIT);
+                    if (completed < 0) {
                         std::this_thread::yield();
-                    } else {
-                        for (int i = 0; i < count; ++i) {
-                            complete(completed_[i]);
-                        }
+                    } else if (!submitted && completed == 0 && queueEmpty() &&
+                               progressThreadDelay_ != 0) {
+                        std::unique_lock<std::mutex> lock(queueMutex_);
+                        queueCv_.wait_for(
+                            lock, std::chrono::microseconds(progressThreadDelay_), [this] {
+                                return stopping_.load(std::memory_order_acquire) ||
+                                    !submissions_.empty();
+                            });
                     }
                 }
             }
@@ -398,9 +450,11 @@ private:
 
         size_t laneId_;
         dfs_t *dfs_;
+        bool progressThreadEnabled_;
+        int64_t progressThreadDelay_;
+        nixlLock dataPathLock_;
         size_t maxInflight_;
         size_t submissionBatchSize_;
-        int64_t pollTimeoutUs_;
         std::optional<unsigned> cpu_;
         daos_handle_t eq_ = DAOS_HDL_INVAL;
         bool eqCreated_ = false;
@@ -415,31 +469,41 @@ private:
     };
 
 public:
-    explicit libDfsClient(const nixl_b_params_t *custom_params)
-        : pool_(nixl::getBackendParamDefaulted(custom_params, "pool", std::string())),
-          container_(nixl::getBackendParamDefaulted(custom_params, "container", std::string())),
-          system_(nixl::getBackendParamDefaulted(custom_params, "system", std::string())),
-          readOnly_(nixl::getBackendParamDefaulted(custom_params, "read_only", false)),
+    explicit libDfsClient(const nixlBackendInitParams *init_params)
+        : progressThreadEnabled_(init_params->enableProgTh),
+          progressThreadDelay_(init_params->pthrDelay),
+          syncMode_(init_params->syncMode),
+          pool_(nixl::getBackendParamDefaulted(init_params->customParams, "pool", std::string())),
+          container_(nixl::getBackendParamDefaulted(init_params->customParams,
+                                                    "container",
+                                                    std::string())),
+          system_(
+              nixl::getBackendParamDefaulted(init_params->customParams, "system", std::string())),
+          readOnly_(nixl::getBackendParamDefaulted(init_params->customParams, "read_only", false)),
           createContainer_(
-              nixl::getBackendParamDefaulted(custom_params, "create_container", false)),
-          chunkSize_(nixl::getBackendParamDefaulted(custom_params, "chunk_size", uint64_t{0})),
-          oclassId_(nixl::getBackendParamDefaulted(custom_params, "oclass_id", uint32_t{0})),
-          objectClass_(
-              nixl::getBackendParamDefaulted(custom_params, "object_class", std::string())),
-          objectClassHint_(
-              nixl::getBackendParamDefaulted(custom_params, "object_class_hint", std::string())),
-          numEventQueues_(
-              nixl::getBackendParamDefaulted(custom_params, "num_event_queues", size_t{1})),
-          maxInflightPerQueue_(nixl::getBackendParamDefaulted(custom_params,
+              nixl::getBackendParamDefaulted(init_params->customParams, "create_container", false)),
+          chunkSize_(
+              nixl::getBackendParamDefaulted(init_params->customParams, "chunk_size", uint64_t{0})),
+          oclassId_(
+              nixl::getBackendParamDefaulted(init_params->customParams, "oclass_id", uint32_t{0})),
+          objectClass_(nixl::getBackendParamDefaulted(init_params->customParams,
+                                                      "object_class",
+                                                      std::string())),
+          objectClassHint_(nixl::getBackendParamDefaulted(init_params->customParams,
+                                                          "object_class_hint",
+                                                          std::string())),
+          numEventQueues_(nixl::getBackendParamDefaulted(init_params->customParams,
+                                                         "num_event_queues",
+                                                         size_t{1})),
+          maxInflightPerQueue_(nixl::getBackendParamDefaulted(init_params->customParams,
                                                               "max_inflight_per_queue",
                                                               size_t{1024})),
-          submissionBatchSize_(
-              nixl::getBackendParamDefaulted(custom_params, "submission_batch_size", size_t{32})),
-          completionBatchSize_(
-              nixl::getBackendParamDefaulted(custom_params, "completion_batch_size", size_t{128})),
-          pollTimeoutUs_(nixl::getBackendParamDefaulted(custom_params,
-                                                        "progress_poll_timeout_us",
-                                                        int64_t{1000})) {
+          submissionBatchSize_(nixl::getBackendParamDefaulted(init_params->customParams,
+                                                              "submission_batch_size",
+                                                              size_t{32})),
+          completionBatchSize_(nixl::getBackendParamDefaulted(init_params->customParams,
+                                                              "completion_batch_size",
+                                                              size_t{128})) {
         if (pool_.empty()) {
             throw std::invalid_argument("DAOS backend requires parameter 'pool'");
         }
@@ -463,13 +527,18 @@ public:
             oclassId_ = static_cast<uint32_t>(class_id);
         }
         if (numEventQueues_ == 0 || maxInflightPerQueue_ == 0 || submissionBatchSize_ == 0 ||
-            completionBatchSize_ == 0 || pollTimeoutUs_ <= 0) {
+            completionBatchSize_ == 0) {
             throw std::invalid_argument(
                 "DAOS queue and batch parameters must be greater than zero");
         }
-        const auto affinity = parseCpuAffinity(
-            nixl::getBackendParamDefaulted(custom_params, "progress_cpu_affinity", std::string()),
-            numEventQueues_);
+        if (progressThreadDelay_ >
+            static_cast<nixlTime::us_t>(std::numeric_limits<int64_t>::max())) {
+            throw std::invalid_argument("DAOS progress thread delay is too large");
+        }
+        const auto affinity =
+            parseCpuAffinity(nixl::getBackendParamDefaulted(
+                                 init_params->customParams, "progress_cpu_affinity", std::string()),
+                             numEventQueues_);
 
         int rc = dfs_init();
         if (rc != 0) {
@@ -507,10 +576,12 @@ public:
             for (size_t i = 0; i < numEventQueues_; ++i) {
                 lanes_.push_back(std::make_unique<eventQueueLane>(i,
                                                                   dfs_,
+                                                                  progressThreadEnabled_,
+                                                                  progressThreadDelay_,
+                                                                  syncMode_,
                                                                   maxInflightPerQueue_,
                                                                   submissionBatchSize_,
                                                                   completionBatchSize_,
-                                                                  pollTimeoutUs_,
                                                                   affinity[i]));
             }
         }
@@ -621,6 +692,20 @@ public:
         return 0;
     }
 
+    int
+    progress() override {
+        if (progressThreadEnabled_) {
+            return 0;
+        }
+        for (auto &lane : lanes_) {
+            const int rc = lane->progress();
+            if (rc < 0) {
+                return rc;
+            }
+        }
+        return 0;
+    }
+
 private:
     int
     submit(const std::shared_ptr<iDfsObject> &object,
@@ -678,6 +763,9 @@ private:
         }
     }
 
+    bool progressThreadEnabled_;
+    nixlTime::us_t progressThreadDelay_;
+    nixl_thread_sync_t syncMode_;
     std::string pool_;
     std::string container_;
     std::string system_;
@@ -691,7 +779,6 @@ private:
     size_t maxInflightPerQueue_;
     size_t submissionBatchSize_;
     size_t completionBatchSize_;
-    int64_t pollTimeoutUs_;
     bool initialized_ = false;
     dfs_t *dfs_ = nullptr;
     std::atomic<size_t> nextLane_{0};
@@ -701,6 +788,6 @@ private:
 } // namespace
 
 std::shared_ptr<iDfsClient>
-makeLibDfsClient(const nixl_b_params_t *custom_params) {
-    return std::make_shared<libDfsClient>(custom_params);
+makeLibDfsClient(const nixlBackendInitParams *init_params) {
+    return std::make_shared<libDfsClient>(init_params);
 }

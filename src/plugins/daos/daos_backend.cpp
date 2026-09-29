@@ -7,7 +7,6 @@
 
 #include <atomic>
 #include <cerrno>
-#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -16,6 +15,7 @@
 
 #include "common/backend.h"
 #include "common/nixl_log.h"
+#include "sync.h"
 
 namespace {
 
@@ -40,8 +40,11 @@ public:
 
 class nixlDaosBackendReqH final : public nixlBackendReqH {
 public:
-    nixlDaosBackendReqH(nixl_xfer_op_t operation, std::vector<daosOperation> operations)
-        : operation_(operation),
+    nixlDaosBackendReqH(nixl_xfer_op_t operation,
+                        std::vector<daosOperation> operations,
+                        nixl_thread_sync_t sync_mode)
+        : submissionLock_(sync_mode),
+          operation_(operation),
           operations_(std::move(operations)) {}
 
     nixl_status_t
@@ -75,7 +78,7 @@ public:
     std::atomic<State> state_{State::Ready};
     std::atomic<size_t> remaining_{0};
     std::atomic<int> final_status_{NIXL_SUCCESS};
-    std::mutex submissionMutex_;
+    nixlLock submissionLock_;
     size_t nextOperation_ = 0;
     nixl_xfer_op_t operation_;
     std::vector<daosOperation> operations_;
@@ -120,7 +123,7 @@ castHandle(nixlBackendReqH *handle) {
 
 void
 submitPending(iDfsClient &client, nixlDaosBackendReqH *request) {
-    std::lock_guard<std::mutex> lock(request->submissionMutex_);
+    NIXL_LOCK_GUARD(request->submissionLock_);
     while (request->nextOperation_ < request->operations_.size()) {
         const auto &op = request->operations_[request->nextOperation_];
         auto completion =
@@ -179,19 +182,20 @@ nixlDaosEngine::getPluginParams() {
             {"max_inflight_per_queue", "1024"},
             {"submission_batch_size", "32"},
             {"completion_batch_size", "128"},
-            {"progress_poll_timeout_us", "1000"},
             {"progress_cpu_affinity", ""}};
 }
 
 nixlDaosEngine::nixlDaosEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
-      client_(makeLibDfsClient(init_params->customParams)) {
+      syncMode_(init_params->syncMode),
+      client_(makeLibDfsClient(init_params)) {
     NIXL_INFO << "DAOS backend initialized with native libdfs events";
 }
 
 nixlDaosEngine::nixlDaosEngine(const nixlBackendInitParams *init_params,
                                std::shared_ptr<iDfsClient> client)
     : nixlBackendEngine(init_params),
+      syncMode_(init_params->syncMode),
       client_(std::move(client)) {
     if (!client_) {
         throw std::invalid_argument("DAOS client must not be null");
@@ -277,7 +281,7 @@ nixlDaosEngine::prepXfer(const nixl_xfer_op_t &operation,
         operations.push_back(
             {local[i].addr, local[i].len, remote[i].addr, metadata->path, std::move(object)});
     }
-    handle = new nixlDaosBackendReqH(operation, std::move(operations));
+    handle = new nixlDaosBackendReqH(operation, std::move(operations), syncMode_);
     return NIXL_SUCCESS;
 }
 
@@ -306,7 +310,7 @@ nixlDaosEngine::postXfer(const nixl_xfer_op_t &operation,
         }
     }
     {
-        std::lock_guard<std::mutex> lock(request->submissionMutex_);
+        NIXL_LOCK_GUARD(request->submissionLock_);
         request->nextOperation_ = 0;
     }
     request->remaining_.store(request->operations_.size(), std::memory_order_relaxed);
@@ -324,6 +328,9 @@ nixlDaosEngine::checkXfer(nixlBackendReqH *handle) const {
     }
     auto *request = castHandle(handle);
     if (request->state_.load(std::memory_order_acquire) == nixlDaosBackendReqH::State::InProgress) {
+        if (client_->progress() != 0) {
+            return NIXL_ERR_BACKEND;
+        }
         submitPending(*client_, request);
     }
     return request->poll();
@@ -338,6 +345,9 @@ nixlDaosEngine::releaseReqH(nixlBackendReqH *handle) const {
     // daos_event_abort does not currently cancel internal DAOS operations. Keep
     // the request, object handles, and caller buffers alive through completion.
     if (request->state_.load(std::memory_order_acquire) == nixlDaosBackendReqH::State::InProgress) {
+        if (client_->progress() != 0) {
+            return NIXL_ERR_BACKEND;
+        }
         submitPending(*client_, request);
     }
     if (request->poll() == NIXL_IN_PROG) {
