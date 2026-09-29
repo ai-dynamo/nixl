@@ -1,6 +1,6 @@
 # Release wheel poller. Runs every 4 hours on main; compares release-branch
 # commits against the wheels already published in Artifactory
-# (sw-nbu-swx-nixl-pypi-local) and triggers nixl-ci-build-wheel-nightly once per
+# (sw-nbu-swx-nixl-pypi-local) and triggers nixl-build-wheel once per
 # release-branch commit whose wheels are still missing.
 #
 # How it works:
@@ -87,7 +87,7 @@ steps:
               // Per-line guard: one bad trigger must not drop the remaining
               // lines; the next poll retries anything missed.
               try {
-                  build(job: 'nixl-ci-build-wheel-nightly',
+                  build(job: 'nixl-build-wheel',
                         parameters: [
                             string(name: 'NIXL_VERSION', value: parts[0]),
                             string(name: 'PUBLISH_DIR', value: "release/${parts[1]}"),
@@ -107,7 +107,7 @@ steps:
           // build-wheel job; each spawned build back-links here as "upstream
           // #${BUILD_NUMBER}", and its per-build downstream link is on this
           // build's page in the classic UI (Blue Ocean hides the widget).
-          def report = ["", "===== poller spawned ${spawned.size()} build(s) -> ${env.JENKINS_URL}job/nixl-ci-build-wheel-nightly/ ====="]
+          def report = ["", "===== poller spawned ${spawned.size()} build(s) -> ${env.JENKINS_URL}job/nixl-build-wheel/ ====="]
           report += spawned.collect { "  + ${it}" }
           if (failed) {
               report << "----- ${failed.size()} failed to trigger (retried next cycle) -----"

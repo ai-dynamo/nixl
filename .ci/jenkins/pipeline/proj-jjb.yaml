@@ -755,7 +755,7 @@
           name: "WHEEL_BUILD_ID"
           default: ""
           description: >
-            Build number of the <code>nixl-ci-build-wheel-nightly</code> run that produced
+            Build number of the <code>nixl-build-wheel</code> run that produced
             the wheels, which is the folder name it publishes under (e.g. <code>312</code>).
             That build's page links the folder directly; its <code>NIXL_SHA</code> property
             says which commit it was built from.<br/>
@@ -964,7 +964,7 @@
 # Wheel verification job: builds and publishes NIXL wheels to Artifactory. Triggered by
 # nixl-verification-launcher (from main), the release poller, and manual runs (any branch/tag/PR/SHA).
 - job-template:
-    name: "{jjb_proj}-build-wheel-nightly"
+    name: "nixl-build-wheel"
     project-type: pipeline
     disabled: false
     properties:
@@ -974,14 +974,14 @@
       - inject:
           keep-system-variables: true
           properties-content: |
-            jjb_proj={jjb_proj}-build-wheel-nightly
-            conf_file=.ci/jenkins/lib/build-wheel-nightly-matrix.yaml
+            jjb_proj=nixl-build-wheel
+            conf_file=.ci/jenkins/lib/build-wheel-publish-matrix.yaml
     description: >
-      <b>NIXL nightly wheel verification build</b><br/>
-      • Builds NIXL wheels (x86_64 &amp; aarch64) from <code>main</code> for CUDA 13
+      <b>NIXL wheel verification build</b><br/>
+      • Builds NIXL wheels (x86_64 &amp; aarch64) nightly from <code>main</code> for CUDA 13
       and CUDA 12 in one run, with the UCX spcx and Infinia plugins always bundled, and
-      and publishes them to the verification (default),
-      staging, or release Artifactory space per <code>PUBLISH_DIR</code><br/>
+      publishes them to the verification (default), staging, or release Artifactory
+      space per <code>PUBLISH_DIR</code><br/>
       • Run manually from any NIXL branch / tag / PR / SHA via <code>NIXL_VERSION</code><br/>
       • Also triggered per missing commit by <code>nixl-build-wheel-release-poller</code>
       with <code>PUBLISH_DIR=release/&lt;ver&gt;</code><br/>
@@ -1060,7 +1060,7 @@
     description: >
       <b>NIXL verification build launcher</b><br/>
       • <code>LAUNCH_TARGET=wheels</code> (nightly, around midnight): triggers
-      <code>{jjb_proj}-build-wheel-nightly</code> once for <code>NIXL_VERSION=main</code>,
+      <code>nixl-build-wheel</code> once for <code>NIXL_VERSION=main</code>,
       covering every CUDA major<br/>
       • <code>LAUNCH_TARGET=containers</code> (daily, around 9 PM): triggers
       <code>{jjb_proj}-build-container</code> 4 times &mdash; <b>nixlbench</b> and <b>nixl</b>,
@@ -1084,7 +1084,7 @@
             - "containers"
           description: >
             Which builds to trigger:<br/>
-            • <b>wheels</b>: <code>{jjb_proj}-build-wheel-nightly</code>, one run covering every CUDA major<br/>
+            • <b>wheels</b>: <code>nixl-build-wheel</code>, one run covering every CUDA major<br/>
             • <b>containers</b>: <code>{jjb_proj}-build-container</code>, the 4 scheduled variants
       - string:
           name: "MAIL_TO"
@@ -1117,8 +1117,8 @@
       script-path: "{jjb_jenkinsfile}"
 
 # Release wheel poller: every 4 hours, compares release/* branch commits against
-# the wheels already published in Artifactory and triggers the nightly wheel
-# builder once per commit per CUDA variant that has no published wheels yet.
+# the wheels already published in Artifactory and triggers nixl-build-wheel
+# once per commit that has no published wheels yet.
 # Named without the nixl-ci- prefix: a scheduled standalone job, not part of CI.
 - job-template:
     name: "nixl-build-wheel-release-poller"
@@ -1138,7 +1138,7 @@
       • Runs every 4 hours and scans all <code>release/*</code> branches (version &gt;= 1.4.0),
       looking for commits with no
       published wheel set under <code>sw-nbu-swx-nixl-pypi-local/release/</code> in Artifactory<br/>
-      • Triggers <code>nixl-ci-build-wheel-nightly</code> once per missing commit (one run
+      • Triggers <code>nixl-build-wheel</code> once per missing commit (one run
       covers every CUDA major) &mdash; a failed build is retried on the next cycle; delete the
       commit's folder in Artifactory to force a full rebuild<br/>
       • A commit counts as published when a folder under <code>release/&lt;ver&gt;/</code>
@@ -1316,7 +1316,7 @@
         - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for NIXL EP on dlcluster.nvidia.com
         - "{jjb_proj}-gpu-vr"  # Create gpu-vr job for the Vera Rubin partition
         - "{jjb_proj}-build-wheel"  # Create build wheel job
-        - "{jjb_proj}-build-wheel-nightly"  # Create nightly wheel verification job
+        - "nixl-build-wheel"  # Create wheel verification job
         - "nixl-verification-launcher"  # Create verification build launcher job (wheel + container crons)
         - "nixl-build-wheel-release-poller"  # Create release wheel poller job
         - "{jjb_proj}-cleanup-artifacts"  # Create Artifactory cleanup job
