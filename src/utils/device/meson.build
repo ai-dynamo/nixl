@@ -13,18 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if get_option('install_headers')
-    install_headers(
-        'nixl_device.cuh',
-        'device_types.cuh',
-        install_dir: prefix_inc + '/gpu',
-    )
-    install_headers('impl/device_dispatch.cuh', install_dir: prefix_inc + '/gpu/impl')
-    install_headers('impl/ucx/device_ucx.cuh', install_dir: prefix_inc + '/gpu/impl/ucx')
-    install_headers(
-        'impl/gpunetio/device_gpunetio_types.h',
-        'impl/gpunetio/device_gpunetio_compat.cuh',
-        'impl/gpunetio/device_gpunetio.cuh',
-        install_dir: prefix_inc + '/gpu/impl/gpunetio',
-    )
+device_allocator_lib = shared_library('nixl_device_allocator',
+           ['device_allocator.cpp', 'device_allocator.h'],
+           include_directories: [nixl_inc_dirs, utils_inc_dirs],
+           dependencies: [dl_dep],
+           install: true)
+
+device_allocator_interface = declare_dependency(link_with: device_allocator_lib)
+
+if cuda_dep.found()
+    shared_library('nixl_device_allocator_cuda',
+               'device_allocator_cuda.cpp',
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               dependencies: [cuda_dep, nixl_common_dep],
+               install: true)
 endif

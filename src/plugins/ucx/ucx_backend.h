@@ -107,6 +107,15 @@ public:
         return true;
     }
 
+    nixl_device_exec_mode_t
+    getDeviceExecMode() const noexcept override {
+#ifdef HAVE_UCX_GPU_DEVICE_API
+        return nixl_device_exec_mode_t::UCX_DIRECT;
+#else
+        return nixl_device_exec_mode_t::NONE;
+#endif
+    }
+
     nixl_mem_list_t
     getSupportedMems() const override;
 

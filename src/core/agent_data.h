@@ -30,6 +30,21 @@
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
 
+[[nodiscard]] inline bool
+nixlRemoteBackendAdmissionAllowed(const nixl_backend_t &type,
+                                  bool supports_remote,
+                                  bool supports_notif,
+                                  nixl_device_exec_mode_t mode) noexcept {
+    return !supports_remote || supports_notif ||
+        (type == "GPUNETIO" && mode == nixl_device_exec_mode_t::GPUNETIO_DIRECT);
+}
+
+struct nixlDeviceMemViewRecord {
+    nixlBackendEngine *engine = nullptr;
+    nixlMemViewH backend_memview = nullptr;
+    int execution_device = -1;
+};
+
 // Implements nixlMetadataContext, which is the whole surface a metadata backend
 // sees of the agent: serialization, cache load and invalidation, nothing else.
 // Preserve the grandfathered 8-space class layout below.
@@ -54,8 +69,8 @@ class nixlAgentData final : public nixlMetadataContext {
         backend_list_t                         notifEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
-        // Bookkeeping from memory view handles to backend engines
-        std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
+        // Bookkeeping from public device-view wrappers to their backend handles.
+        std::unordered_map<nixlMemViewH, nixlDeviceMemViewRecord> mvhToEngine;
 
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
             remoteBackends_;
@@ -98,7 +113,8 @@ class nixlAgentData final : public nixlMetadataContext {
         [[nodiscard]] static backend_set_t
         getBackends(const nixl_opt_args_t *opt_args,
                     const nixlMemSection &section,
-                    nixl_mem_t mem_type);
+                    nixl_mem_t mem_type,
+                    bool require_device_api = false);
         void
         warnAboutEfaHardwareMismatch();
 
