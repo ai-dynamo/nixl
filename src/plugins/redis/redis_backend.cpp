@@ -115,6 +115,7 @@ public:
                 overallStatus_ = status;
             }
         }
+        statusFutures_.clear();
         return overallStatus_;
     }
 
