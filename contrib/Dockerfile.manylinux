@@ -446,9 +446,8 @@ RUN { \
         { \
             echo "NIXL commit: $(git rev-parse HEAD 2>/dev/null || echo unavailable)"; \
             if command -v ucx_info >/dev/null 2>&1; then \
-                ucx_info -v | sed -e 's/^# //' -e '/^Library path:/d' \
-                                  -e 's/^/UCX /' \
-                                  -e 's/^\(UCX Configured with:\) */\1\n/'; \
+                echo "UCX (ucx_info -v):"; \
+                ucx_info -v; \
             else \
                 echo "UCX: ucx_info unavailable"; \
             fi; \
