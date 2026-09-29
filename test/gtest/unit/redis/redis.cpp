@@ -7,6 +7,7 @@
 
 #include "redis_backend.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <deque>
 #include <future>
@@ -224,6 +225,18 @@ public:
     }
 
     void
+    completeNext(nixl_status_t status) {
+        ASSERT_FALSE(pendingPromises_.empty());
+        pendingPromises_.front()->set_value(status);
+        pendingPromises_.erase(pendingPromises_.begin());
+    }
+
+    void
+    abandonPending() {
+        pendingPromises_.clear();
+    }
+
+    void
     setExistsResults(std::deque<std::optional<bool>> results) {
         existsResults_ = std::move(results);
     }
@@ -430,6 +443,78 @@ TEST_F(redisEngineTest, PropagatesAsyncClientFailure) {
     auto *handle = prepareTransfer(NIXL_WRITE, local, remote);
     EXPECT_EQ(engine_->postXfer(NIXL_WRITE, local, remote, initParams_.localAgent, handle, nullptr),
               NIXL_IN_PROG);
+    EXPECT_EQ(engine_->checkXfer(handle), NIXL_ERR_BACKEND);
+    EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
+    EXPECT_EQ(engine_->deregisterMem(metadata), NIXL_SUCCESS);
+}
+
+TEST_F(redisEngineTest, ReleaseWaitsForInFlightOperations) {
+    auto *metadata = registerRemote(22, "read-key");
+    mockClient_->setCompleteImmediately(false);
+    std::vector<char> buffer(16);
+    nixl_meta_dlist_t local(DRAM_SEG);
+    local.addDesc(
+        nixlMetaDesc(reinterpret_cast<uintptr_t>(buffer.data()), buffer.size(), 1, nullptr));
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, nullptr));
+
+    auto *handle = prepareTransfer(NIXL_READ, local, remote);
+    EXPECT_EQ(engine_->postXfer(NIXL_READ, local, remote, initParams_.localAgent, handle, nullptr),
+              NIXL_IN_PROG);
+
+    auto release =
+        std::async(std::launch::async, [this, handle]() { return engine_->releaseReqH(handle); });
+    EXPECT_EQ(release.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+
+    mockClient_->completePending(NIXL_SUCCESS);
+    EXPECT_EQ(release.get(), NIXL_SUCCESS);
+    EXPECT_EQ(engine_->deregisterMem(metadata), NIXL_SUCCESS);
+}
+
+TEST_F(redisEngineTest, FailureIsReportedOnlyAfterAllOperationsComplete) {
+    auto *metadata = registerRemote(22, "read-key");
+    mockClient_->setCompleteImmediately(false);
+    std::vector<char> firstBuffer(16);
+    std::vector<char> secondBuffer(16);
+    nixl_meta_dlist_t local(DRAM_SEG);
+    local.addDesc(nixlMetaDesc(
+        reinterpret_cast<uintptr_t>(firstBuffer.data()), firstBuffer.size(), 1, nullptr));
+    local.addDesc(nixlMetaDesc(
+        reinterpret_cast<uintptr_t>(secondBuffer.data()), secondBuffer.size(), 2, nullptr));
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    remote.addDesc(nixlMetaDesc(0, firstBuffer.size(), 22, nullptr));
+    remote.addDesc(nixlMetaDesc(0, secondBuffer.size(), 22, nullptr));
+
+    auto *handle = prepareTransfer(NIXL_READ, local, remote);
+    EXPECT_EQ(engine_->postXfer(NIXL_READ, local, remote, initParams_.localAgent, handle, nullptr),
+              NIXL_IN_PROG);
+
+    mockClient_->completeNext(NIXL_ERR_BACKEND);
+    EXPECT_EQ(engine_->checkXfer(handle), NIXL_IN_PROG);
+
+    mockClient_->completeNext(NIXL_SUCCESS);
+    EXPECT_EQ(engine_->checkXfer(handle), NIXL_ERR_BACKEND);
+    EXPECT_EQ(engine_->checkXfer(handle), NIXL_ERR_BACKEND);
+
+    EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
+    EXPECT_EQ(engine_->deregisterMem(metadata), NIXL_SUCCESS);
+}
+
+TEST_F(redisEngineTest, AbandonedOperationFailsInsteadOfHanging) {
+    auto *metadata = registerRemote(22, "read-key");
+    mockClient_->setCompleteImmediately(false);
+    std::vector<char> buffer(16);
+    nixl_meta_dlist_t local(DRAM_SEG);
+    local.addDesc(
+        nixlMetaDesc(reinterpret_cast<uintptr_t>(buffer.data()), buffer.size(), 1, nullptr));
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, nullptr));
+
+    auto *handle = prepareTransfer(NIXL_READ, local, remote);
+    EXPECT_EQ(engine_->postXfer(NIXL_READ, local, remote, initParams_.localAgent, handle, nullptr),
+              NIXL_IN_PROG);
+
+    mockClient_->abandonPending();
     EXPECT_EQ(engine_->checkXfer(handle), NIXL_ERR_BACKEND);
     EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
     EXPECT_EQ(engine_->deregisterMem(metadata), NIXL_SUCCESS);

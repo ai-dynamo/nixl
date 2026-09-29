@@ -73,28 +73,65 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
 
 class nixlRedisBackendReqH : public nixlBackendReqH {
 public:
-    std::vector<std::shared_ptr<std::promise<nixl_status_t>>> statusPromises_;
-    std::vector<std::future<nixl_status_t>> statusFutures_;
+    // Redis callbacks write into (GET) or read from (SET) the caller's buffers through raw
+    // pointers, so the handle must not go away while any of them can still run.
+    ~nixlRedisBackendReqH() override {
+        waitForOutstanding();
+    }
+
+    void
+    addOperation(std::future<nixl_status_t> future) {
+        statusFutures_.push_back(std::move(future));
+    }
+
+    void
+    reset() {
+        waitForOutstanding();
+        statusFutures_.clear();
+        overallStatus_ = NIXL_SUCCESS;
+    }
 
     nixl_status_t
     getOverallStatus() {
-        while (!statusFutures_.empty()) {
-            if (statusFutures_.back().wait_for(std::chrono::seconds(0)) !=
-                std::future_status::ready) {
+        for (const auto &future : statusFutures_) {
+            if (future.valid() &&
+                future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
                 return NIXL_IN_PROG;
             }
-
-            auto current_status = statusFutures_.back().get();
-            if (current_status != NIXL_SUCCESS) {
-                statusFutures_.clear();
-                statusPromises_.clear();
-                return current_status;
-            }
-            statusFutures_.pop_back();
-            statusPromises_.pop_back();
         }
-        return NIXL_SUCCESS;
+
+        for (auto &future : statusFutures_) {
+            if (!future.valid()) {
+                continue;
+            }
+            nixl_status_t status = NIXL_ERR_BACKEND;
+            try {
+                status = future.get();
+            }
+            catch (const std::future_error &e) {
+                NIXL_ERROR << "Redis operation completed without a status: " << e.what();
+            }
+            if (status != NIXL_SUCCESS && overallStatus_ == NIXL_SUCCESS) {
+                overallStatus_ = status;
+            }
+        }
+        return overallStatus_;
     }
+
+private:
+    void
+    waitForOutstanding() const {
+        for (const auto &future : statusFutures_) {
+            if (future.valid()) {
+                future.wait();
+            }
+        }
+    }
+
+    // Promises are owned only by the client callbacks; if one is dropped without a value the
+    // future becomes ready with broken_promise instead of blocking the destructor forever.
+    std::vector<std::future<nixl_status_t>> statusFutures_;
+    nixl_status_t overallStatus_ = NIXL_SUCCESS;
 };
 
 class nixlRedisMetadata : public nixlBackendMD {
@@ -224,8 +261,7 @@ nixlRedisKVEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     auto *req_h = static_cast<nixlRedisBackendReqH *>(handle);
-    req_h->statusFutures_.clear();
-    req_h->statusPromises_.clear();
+    req_h->reset();
 
     // Resolve every key before dispatching any command so invalid descriptors cannot
     // produce a partially submitted Redis transfer.
@@ -255,8 +291,7 @@ nixlRedisKVEngine::postXfer(const nixl_xfer_op_t &operation,
     for (int i = 0; i < local.descCount(); ++i) {
         const auto &local_desc = local[i];
         auto status_promise = std::make_shared<std::promise<nixl_status_t>>();
-        req_h->statusPromises_.push_back(status_promise);
-        req_h->statusFutures_.push_back(status_promise->get_future());
+        req_h->addOperation(status_promise->get_future());
 
         if (operation == NIXL_WRITE) {
             redisClient_->putKeyAsync(

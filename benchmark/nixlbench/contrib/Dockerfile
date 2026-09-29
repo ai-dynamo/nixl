@@ -80,7 +80,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     fi
 
 RUN apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install \
     ninja-build \
     pybind11-dev \
     libclang-dev \
@@ -103,8 +103,7 @@ RUN apt-get update -y && \
     build-essential \
     libhiredis-dev \
     libevent-dev \
-    redis-tools && \
-    rm -rf /var/lib/apt/lists/*
+    redis-tools
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
 # Skip only the DOCA SDK install when the base image already ships it.
