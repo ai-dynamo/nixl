@@ -20,6 +20,7 @@
 #include "backend/backend_engine.h"
 #include "backend/backend_plugin.h"
 #include <cassert>
+#include <chrono>
 
 namespace mocks {
 
@@ -77,6 +78,25 @@ public:
       assert(sharedState > 0);
       return gmock_backend_engine->prepMemView(dlist, mvh, opt_args);
   }
+
+  nixl_status_t
+  prepMemView(const nixl_meta_dlist_t &dlist,
+              nixlMemViewH &mvh,
+              const nixl_opt_b_args_t *opt_args) const override;
+  void
+  releaseMemView(nixlMemViewH mvh) const override;
+  nixl_status_t
+  queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
+  nixl_status_t
+  estimateXferCost(const nixl_xfer_op_t &operation,
+                   const nixl_meta_dlist_t &local,
+                   const nixl_meta_dlist_t &remote,
+                   const std::string &remote_agent,
+                   nixlBackendReqH *const &handle,
+                   std::chrono::microseconds &duration,
+                   std::chrono::microseconds &err_margin,
+                   nixl_cost_t &method,
+                   const nixl_opt_args_t *extra_params) const override;
   nixl_status_t getPublicData(const nixlBackendMD *meta, std::string &str) const override {
     assert(sharedState > 0);
     return gmock_backend_engine->getPublicData(meta, str);
