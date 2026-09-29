@@ -915,7 +915,7 @@ Then run a verified write benchmark. This example uses four event queues and pin
 workers to CPUs 4 through 7:
 
 ```bash
-./build-daos-tests/benchmark/nixlbench/nixlbench \
+./build-nixlbench/nixlbench \
   --backend DAOS \
   --daos_pool nixl_pool \
   --daos_container nixl_cont \
