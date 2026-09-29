@@ -333,8 +333,10 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     return ret;
 }
 
-nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
-                                             nixlBackendEngine *backend) {
+nixl_status_t
+nixlLocalSection::remDescList(const nixl_reg_dlist_t &mem_elms,
+                              nixlBackendEngine *backend,
+                              nixlRemoteSection *remote_self) {
     if (!backend) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -358,11 +360,32 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
         indices.push_back(static_cast<size_t>(index));
     }
 
-    for (size_t idx : indices) {
-        backend->deregisterMem(target[idx].metadataP);
+    std::vector<size_t> deregistered;
+    deregistered.reserve(indices.size());
+    nixl_reg_dlist_t deregistered_descs(nixl_mem);
+    std::vector<nixlBackendMD *> deregistered_metadata;
+    deregistered_metadata.reserve(indices.size());
+    nixl_status_t ret = NIXL_SUCCESS;
+    for (size_t i = 0; i < indices.size(); ++i) {
+        const size_t idx = indices[i];
+        nixlBackendMD *metadata = target[idx].metadataP;
+        const nixl_status_t status = backend->deregisterMem(metadata);
+        if (status == NIXL_SUCCESS) {
+            deregistered.push_back(idx);
+            if (remote_self) {
+                deregistered_descs.addDesc(mem_elms[i]);
+                deregistered_metadata.push_back(metadata);
+            }
+        } else if (ret == NIXL_SUCCESS) {
+            ret = status;
+        }
     }
 
-    target.remDescs(std::move(indices));
+    // Keep failed registrations so the caller can retry after the backend is ready.
+    if (remote_self) {
+        remote_self->removeLocalData(deregistered_descs, *backend, deregistered_metadata);
+    }
+    target.remDescs(std::move(deregistered));
 
     if (target.isEmpty()) {
         sectionMap.erase(sec_key); // Invalidates target.
@@ -373,7 +396,7 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
         memToBackend[nixl_mem].erase(backend);
     }
 
-    return NIXL_SUCCESS;
+    return ret;
 }
 
 namespace {
@@ -564,7 +587,9 @@ nixlRemoteSection::loadLocalData(nixlSecDescList mem_elms, nixlBackendEngine *ba
 }
 
 void
-nixlRemoteSection::removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend) {
+nixlRemoteSection::removeLocalData(const nixl_reg_dlist_t &mem_elms,
+                                   nixlBackendEngine &backend,
+                                   const std::vector<nixlBackendMD *> &local_metadata) {
     const nixl_mem_t nixl_mem = mem_elms.getType();
     const section_key_t sec_key(nixl_mem, &backend);
     const auto it = sectionMap.find(sec_key);
@@ -576,15 +601,17 @@ nixlRemoteSection::removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackend
 
     std::vector<size_t> indices;
     indices.reserve(mem_elms.descCount());
-    for (auto &elm : mem_elms) {
+    for (int i = 0; i < mem_elms.descCount(); ++i) {
+        const auto &elm = mem_elms[i];
         const int index = target.getIndex(elm);
         if (index >= 0) {
+            // Some backends use the registered metadata for local transfers too.
+            // The backend already released that object during deregistration.
+            if (target[index].metadataP != local_metadata[i]) {
+                backend.unloadMD(target[index].metadataP);
+            }
             indices.push_back(static_cast<size_t>(index));
         }
-    }
-
-    for (size_t idx : indices) {
-        backend.unloadMD(target[idx].metadataP);
     }
 
     target.remDescs(std::move(indices));

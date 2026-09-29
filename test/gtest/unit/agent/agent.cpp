@@ -90,8 +90,8 @@ namespace agent {
             return agent_.get();
         }
 
-        const mocks::GMockBackendEngine &
-        getGMockEngine() const {
+        mocks::GMockBackendEngine &
+        getGMockEngine() {
             return gmock_engine_;
         }
 
@@ -270,6 +270,74 @@ namespace agent {
         EXPECT_EQ(agent_helper_->initAndRegisterMemory(blob, reg_dlist, extra_params, backend),
                   NIXL_SUCCESS);
         EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+    }
+
+    TEST_F(singleAgentSessionFixture, DeregisterMemBackendErrorCanBeRetried) {
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        nixlBackendMD local_md(true);
+        nixlBackendMD self_md(false);
+        EXPECT_CALL(agent_helper_->getGMockEngine(), registerMem)
+            .WillOnce([&](const nixlBlobDesc &, const nixl_mem_t &, nixlBackendMD *&out) {
+                out = &local_md;
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(agent_helper_->getGMockEngine(), loadLocalMD)
+            .WillOnce([&](nixlBackendMD *, nixlBackendMD *&out) {
+                out = &self_md;
+                return NIXL_SUCCESS;
+            });
+
+        blob memory;
+        nixl_opt_args_t extra_params;
+        nixl_reg_dlist_t reg_dlist(DRAM_SEG);
+        ASSERT_EQ(agent_helper_->initAndRegisterMemory(memory, reg_dlist, extra_params, backend),
+                  NIXL_SUCCESS);
+
+        int unload_calls = 0;
+        EXPECT_CALL(agent_helper_->getGMockEngine(), unloadMD(&self_md))
+            .WillOnce([&](nixlBackendMD *) {
+                ++unload_calls;
+                return NIXL_SUCCESS;
+            });
+        EXPECT_CALL(agent_helper_->getGMockEngine(), deregisterMem(&local_md))
+            .WillOnce(testing::Return(NIXL_ERR_NOT_ALLOWED))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_ERR_NOT_ALLOWED);
+        EXPECT_EQ(unload_calls, 0);
+        EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+        EXPECT_EQ(unload_calls, 1);
+    }
+
+    TEST_F(singleAgentSessionFixture, DeregisterMemKeepsOnlyFailedDescriptors) {
+        nixl_b_params_t params;
+        nixlBackendH *backend;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        blob first;
+        blob second;
+        nixl_opt_args_t extra_params;
+        extra_params.backends.push_back(backend);
+        nixl_reg_dlist_t reg_dlist(DRAM_SEG);
+        reg_dlist.addDesc(first.getDesc());
+        reg_dlist.addDesc(second.getDesc());
+        ASSERT_EQ(agent_->registerMem(reg_dlist, &extra_params), NIXL_SUCCESS);
+
+        EXPECT_CALL(agent_helper_->getGMockEngine(), deregisterMem)
+            .WillOnce(testing::Return(NIXL_SUCCESS))
+            .WillOnce(testing::Return(NIXL_ERR_NOT_ALLOWED))
+            .WillOnce(testing::Return(NIXL_SUCCESS));
+        EXPECT_EQ(agent_->deregisterMem(reg_dlist, &extra_params), NIXL_ERR_NOT_ALLOWED);
+
+        nixl_reg_dlist_t succeeded(DRAM_SEG);
+        succeeded.addDesc(first.getDesc());
+        EXPECT_EQ(agent_->deregisterMem(succeeded, &extra_params), NIXL_ERR_NOT_FOUND);
+
+        nixl_reg_dlist_t failed(DRAM_SEG);
+        failed.addDesc(second.getDesc());
+        EXPECT_EQ(agent_->deregisterMem(failed, &extra_params), NIXL_SUCCESS);
     }
 
     TEST_F(singleAgentSessionFixture, RegisterDeregisterMemRepeatedTest) {

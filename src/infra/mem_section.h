@@ -197,6 +197,8 @@ class nixlMemSection {
 };
 
 
+class nixlRemoteSection;
+
 class nixlLocalSection : public nixlMemSection {
     public:
         nixl_status_t
@@ -205,8 +207,10 @@ class nixlLocalSection : public nixlMemSection {
                     nixlSecDescList &remote_self);
 
         // Each nixlBasicDesc should be same as original registration region
-        nixl_status_t remDescList (const nixl_reg_dlist_t &mem_elms,
-                                   nixlBackendEngine* backend);
+        nixl_status_t
+        remDescList(const nixl_reg_dlist_t &mem_elms,
+                    nixlBackendEngine *backend,
+                    nixlRemoteSection *remote_self = nullptr);
 
         nixl_status_t serialize(nixlSerDes* serializer) const;
 
@@ -235,7 +239,9 @@ class nixlRemoteSection : public nixlMemSection {
         nixl_status_t
         loadLocalData(nixlSecDescList mem_elms, nixlBackendEngine *backend);
         void
-        removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend);
+        removeLocalData(const nixl_reg_dlist_t &mem_elms,
+                        nixlBackendEngine &backend,
+                        const std::vector<nixlBackendMD *> &local_metadata);
         ~nixlRemoteSection();
 };
 
