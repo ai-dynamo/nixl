@@ -206,6 +206,9 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
         runtime_ = FI_HMEM_CUDA;
         NIXL_INFO << "System runtime: CUDA for " << topology->getNumNvidiaAccel()
                   << " NVIDIA GPU(s)";
+    } else if (topology->getNumAmdAccel() > 0) {
+        runtime_ = FI_HMEM_ROCR;
+        NIXL_INFO << "System runtime: ROCr for " << topology->getNumAmdAccel() << " AMD GPU(s)";
     } else if (topology->getNumAwsAccel() > 0) {
         runtime_ = FI_HMEM_NEURON;
         NIXL_INFO << "System runtime: NEURON for " << topology->getNumAwsAccel()
@@ -351,7 +354,7 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
 
         for (size_t i = 0; i < num_rails_; ++i) {
             rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
-                efa_devices[i], provider_name, static_cast<uint16_t>(i)));
+                efa_devices[i], provider_name, static_cast<uint16_t>(i), runtime_));
 
             // Initialize EFA device mapping
             efa_device_to_rail_map[efa_devices[i]] = i;
@@ -386,7 +389,7 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
     uint16_t agent_idx,
     uint16_t xfer_id,
-    std::function<void()> completion_callback,
+    std::function<void(nixl_status_t)> completion_callback,
     size_t &submitted_count_out,
     int desc_idx,
     size_t base_offset,
@@ -993,11 +996,12 @@ nixlLibfabricRailManager::cleanupConnection(const std::vector<fi_addr_t> &fi_add
 }
 
 nixl_status_t
-nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
-                                             nixlLibfabricReq *req,
-                                             fi_addr_t dest_addr,
-                                             uint16_t agent_idx,
-                                             std::function<void()> completion_callback) {
+nixlLibfabricRailManager::postControlMessage(
+    ControlMessageType msg_type,
+    nixlLibfabricReq *req,
+    fi_addr_t dest_addr,
+    uint16_t agent_idx,
+    std::function<void(nixl_status_t)> completion_callback) {
     // Validation - use rail 0 for notifications
     if (rails_.empty()) {
         NIXL_ERROR << "No rails available";
@@ -1016,6 +1020,9 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
         break;
     case ControlMessageType::HANDSHAKE:
         msg_type_value = NIXL_LIBFABRIC_MSG_HANDSHAKE;
+        break;
+    case ControlMessageType::XFER_ERROR:
+        msg_type_value = NIXL_LIBFABRIC_MSG_XFER_ERROR;
         break;
     default:
         NIXL_ERROR << "Unknown message type";

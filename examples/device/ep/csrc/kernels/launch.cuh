@@ -102,6 +102,7 @@ cfg.dynamicSmemBytes = smem_size;
         case 2048: case_macro(2048); \
         case 2560: case_macro(2560); \
         case 3072: case_macro(3072); /*for gpt-oss*/ \
+        case 3584: case_macro(3584); /* For kimi-k3 */ \
         case 4096: case_macro(4096); \
         case 5120: case_macro(5120); \
         case 6144: case_macro(6144); /* For qwen3 coder */ \

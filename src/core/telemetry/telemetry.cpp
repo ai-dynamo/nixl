@@ -273,10 +273,10 @@ nixlTelemetry::startExportTask() {
 
 bool
 nixlTelemetry::flushPendingEvents() {
-    auto pending = stagingQueue_.takePending();
+    const auto pending = stagingQueue_.drainPending();
 
     exporter_->withBatch([&] {
-        for (auto &event : pending) {
+        for (const auto &event : pending) {
             // Deactivated metrics never enter the queue (filtered at the source),
             // so everything here is already exportable.
             exporter_->exportEvent(event);

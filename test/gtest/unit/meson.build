@@ -29,6 +29,9 @@ unit_test_deps += [agent_unit_test_dep]
 subdir('descriptors')
 unit_test_deps += [descriptors_unit_test_dep]
 
+subdir('device_ops')
+unit_test_deps += [device_ops_unit_test_dep]
+
 subdir('util')
 unit_test_deps += [util_unit_test_dep]
 
@@ -37,6 +40,13 @@ unit_test_deps += [tracing_unit_test_dep]
 
 subdir('telemetry')
 unit_test_deps += [telemetry_unit_test_dep]
+
+if is_variable('gds_backend_interface') or is_variable(
+    'gds_mt_backend_interface',
+)
+    subdir('gds')
+    unit_test_deps += [gds_unit_test_dep]
+endif
 
 cpp = meson.get_compiler('cpp')
 azure_storage_blobs = cpp.find_library('azure-storage-blobs', required: false)
@@ -50,7 +60,7 @@ unit_test_exe = executable('unit',
         'main.cpp',
         '../common.cpp',
     ],
-    cpp_args : cpp_args,
+    cpp_args : cpp_flags,
     dependencies : unit_test_deps,
     include_directories: [
         nixl_inc_dirs,

@@ -28,8 +28,8 @@
 
 #include <gtest/gtest.h>
 
-using nixl::doca_test::loopbackConnection;
-using nixl::doca_test::scrapeUntilValue;
+using nixl::metrics_test::loopbackConnection;
+using nixl::metrics_test::scrapeUntilValue;
 using nixl::telemetry_test::histogramSeriesLines;
 
 namespace {
@@ -92,7 +92,7 @@ TEST_F(histogramExporterParityTest, XferDurationHistogramPayloadMatchesAcrossExp
 
     ASSERT_EQ(doca_exporter.flush(), NIXL_SUCCESS);
 
-    const nixl::doca_test::labelSet labels{{"agent_name", agentName}};
+    const nixl::metrics_test::labelSet labels{{"agent_name", agentName}};
     const auto doca_metrics = scrapeUntilValue(
         doca_port_, "agent_xfer_time_us_count", 4.0, std::chrono::seconds(12), labels);
     ASSERT_EQ(doca_metrics.latestValue("agent_xfer_time_us_count", labels),
@@ -101,8 +101,8 @@ TEST_F(histogramExporterParityTest, XferDurationHistogramPayloadMatchesAcrossExp
     const std::string prometheus_body = loopbackConnection::httpGet(prometheus_port_, "/metrics");
     ASSERT_FALSE(prometheus_body.empty()) << "empty Prometheus /metrics body";
 
-    const auto prometheus_metrics =
-        nixl::doca_test::timeSeries(nixl::doca_test::open_metrics_text::parse(prometheus_body));
+    const auto prometheus_metrics = nixl::metrics_test::timeSeries(
+        nixl::metrics_test::open_metrics_text::parse(prometheus_body));
     const auto prometheus_histograms = histogramSeriesLines(prometheus_metrics, agentName);
     const auto doca_histograms = histogramSeriesLines(doca_metrics, agentName);
 

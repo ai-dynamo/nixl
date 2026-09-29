@@ -41,8 +41,10 @@ class TrafficPattern:
         xfer_op: Transfer operation type
         shards: Number of shards for distributed processing
         dtype: PyTorch data type for the buffers
-        sleep_before_launch_sec: Number of seconds to sleep before launch
-        sleep_after_launch_sec: Number of seconds to sleep after RDMA
+        sleep_before_launch_sec: Prefill compute simulation. Seconds to sleep
+            after the storage READ and before the RDMA transfer.
+        decode_compute_sec: Decode compute simulation. Seconds to sleep after
+            the RDMA transfer and before the storage WRITE.
         storage_ops: Per-rank storage operations (loaded from external config)
         id: Unique identifier for this traffic pattern
     """
@@ -53,7 +55,7 @@ class TrafficPattern:
     shards: int = 1
     dtype: torch.dtype = torch.int8
     sleep_before_launch_sec: Optional[float] = None
-    sleep_after_launch_sec: Optional[float] = None
+    decode_compute_sec: Optional[float] = None
     storage_ops: Optional[Dict[int, StorageOp]] = None  # rank -> StorageOp
 
     id: int = field(default_factory=lambda: TrafficPattern._get_next_id())
