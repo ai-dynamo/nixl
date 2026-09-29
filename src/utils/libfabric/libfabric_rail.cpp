@@ -29,6 +29,21 @@
 #include <stdexcept>
 #include <stack>
 
+namespace {
+
+// Whether libfabric's shared memory (shm) provider can move data for an HMEM runtime.
+//
+// shm has no Neuron HMEM support. Every other runtime keeps shm, so that intra-node
+// transfers retain its acceleration.
+//
+// Update this when a runtime's shm support changes.
+bool
+shmProviderSupportsRuntime(enum fi_hmem_iface runtime) {
+    return runtime != FI_HMEM_NEURON;
+}
+
+} // namespace
+
 // RequestPool Base Class Implementation
 
 RequestPool::RequestPool(size_t pool_size, size_t rail_id)
@@ -391,13 +406,15 @@ DataRequestPool::allocate(nixlLibfabricReq::OpType op_type, uint32_t req_id) {
 
 nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
                                      const std::string &provider,
-                                     uint16_t id)
+                                     uint16_t id,
+                                     enum fi_hmem_iface runtime)
     : rail_id(id),
       device_name(device),
       provider_name(provider),
       control_request_pool_(NIXL_LIBFABRIC_CONTROL_REQUESTS_PER_RAIL, id),
       data_request_pool_(NIXL_LIBFABRIC_DATA_REQUESTS_PER_RAIL, id),
-      provider_supports_hmem_(false) {
+      provider_supports_hmem_(false),
+      runtime_(runtime) {
     // Initialize all pointers to nullptr
     info = nullptr;
     fabric = nullptr;
@@ -527,6 +544,26 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         if (ret) {
             NIXL_ERROR << "fi_ep_bind av failed for rail " << rail_id << ": " << fi_strerror(-ret);
             throw std::runtime_error("fi_ep_bind av failed for rail " + std::to_string(rail_id));
+        }
+
+        // On runtimes the shm provider cannot serve, disable it so that intra-node
+        // transfers stay on the EFA path.
+        if (!shmProviderSupportsRuntime(runtime_)) {
+            const bool shared_memory_permitted = false;
+            ret = fi_setopt(&endpoint->fid,
+                            FI_OPT_ENDPOINT,
+                            FI_OPT_SHARED_MEMORY_PERMITTED,
+                            &shared_memory_permitted,
+                            sizeof(shared_memory_permitted));
+            if (ret) {
+                NIXL_ERROR << "fi_setopt FI_OPT_SHARED_MEMORY_PERMITTED failed for rail " << rail_id
+                           << " (provider: " << provider_name << "): " << fi_strerror(-ret);
+                throw std::runtime_error(
+                    "fi_setopt FI_OPT_SHARED_MEMORY_PERMITTED failed for rail " +
+                    std::to_string(rail_id));
+            }
+            NIXL_INFO << "Disabled shared memory provider for rail " << rail_id
+                      << " (runtime has no shm support)";
         }
 
         if (provider_name == "efa") {
@@ -727,6 +764,12 @@ nixlLibfabricRail::setXferIdCallback(std::function<void(uint64_t, uint16_t)> cal
     xferIdCallback = callback;
 }
 
+void
+nixlLibfabricRail::setXferErrorCallback(
+    std::function<void(uint16_t, uint16_t, uint32_t)> callback) {
+    xferErrorCallback = callback;
+}
+
 // Per-rail completion processing - handles one rail's CQ with configurable blocking behavior
 nixl_status_t
 nixlLibfabricRail::progressCompletionQueue() {
@@ -839,7 +882,7 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) co
         return processRecvCompletion(comp);
 
     } else if (flags & FI_WRITE) {
-        // Local write completions (fi_writedata) - use context
+        // Local write completions (fi_writemsg with remote completion) - use context
         return processLocalTransferCompletion(comp, "write");
 
     } else if (flags & FI_READ) {
@@ -847,7 +890,7 @@ nixlLibfabricRail::processCompletionQueueEntry(struct fi_cq_data_entry *comp) co
         return processLocalTransferCompletion(comp, "read");
 
     } else if (flags & FI_REMOTE_WRITE || flags & FI_REMOTE_CQ_DATA) {
-        // Remote write completions (from fi_writedata) - use immediate data
+        // Remote write completions (from fi_writemsg with remote completion) - use immediate data
         return processRemoteWriteCompletion(comp);
 
     } else {
@@ -974,6 +1017,22 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp) const {
             NIXL_TRACE << "Notification stored via callback";
         } else {
             NIXL_ERROR << "No notification callback set!";
+            result = NIXL_ERR_BACKEND;
+        }
+    } else if (msg_type == NIXL_LIBFABRIC_MSG_XFER_ERROR) {
+        if (comp->len < sizeof(XferErrorPayload)) {
+            NIXL_ERROR << "Transfer-error message too short on rail " << rail_id
+                       << " (len=" << comp->len << ")";
+            result = NIXL_ERR_BACKEND;
+        } else if (xferErrorCallback) {
+            XferErrorPayload payload;
+            memcpy(&payload, req->buffer, sizeof(payload));
+            NIXL_DEBUG << "Received transfer-error message on rail " << rail_id
+                       << " XFER_ID=" << xfer_id << " agent_idx=" << agent_idx
+                       << " final_completions=" << payload.final_completions;
+            xferErrorCallback(static_cast<uint16_t>(xfer_id), agent_idx, payload.final_completions);
+        } else {
+            NIXL_ERROR << "No transfer-error callback set on rail " << rail_id;
             result = NIXL_ERR_BACKEND;
         }
     } else if (msg_type == NIXL_LIBFABRIC_MSG_HANDSHAKE) {
@@ -1371,10 +1430,10 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
 
             // Log every N attempts to avoid log spam
             if (attempt % NIXL_LIBFABRIC_LOG_INTERVAL_ATTEMPTS == 0) {
-                NIXL_DEBUG << "fi_writedata still retrying EAGAIN on rail " << rail_id << " after "
+                NIXL_DEBUG << "fi_writemsg still retrying EAGAIN on rail " << rail_id << " after "
                            << attempt << " attempts";
             } else {
-                NIXL_TRACE << "fi_writedata returned EAGAIN on rail " << rail_id
+                NIXL_TRACE << "fi_writemsg returned EAGAIN on rail " << rail_id
                            << ", retrying (attempt " << attempt << ")";
             }
 
@@ -1383,7 +1442,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
                 nixl_status_t progress_status = progressCompletionQueue();
                 if (progress_status != NIXL_SUCCESS && progress_status != NIXL_IN_PROG) {
                     NIXL_ERROR << "progressCompletionQueue failed on rail " << rail_id
-                               << " during fi_writedata retry";
+                               << " during fi_writemsg retry";
                     return progress_status;
                 }
                 if (progress_status == NIXL_SUCCESS) {
@@ -1398,7 +1457,7 @@ nixlLibfabricRail::postWrite(const void *local_buffer,
         }
     }
 
-    NIXL_ERROR << "fi_writedata failed on rail " << rail_id << ": " << fi_strerror(-ret);
+    NIXL_ERROR << "fi_writemsg failed on rail " << rail_id << ": " << fi_strerror(-ret);
     return NIXL_ERR_BACKEND;
 }
 
@@ -1510,6 +1569,9 @@ nixlLibfabricRail::registerMemory(void *buffer,
         // TCP provider has more limited memory registration capabilities
         // Use basic flags that are commonly supported
         provider_access_flags = FI_READ | FI_WRITE | FI_REMOTE_READ | FI_REMOTE_WRITE;
+    } else if (provider_name == "cxi") {
+        // CXI requires FI_RMA_EVENT to allow fi_writedata/fi_writemsg with target events.
+        provider_access_flags = FI_REMOTE_WRITE | FI_REMOTE_READ | FI_RMA_EVENT;
     } else {
         // EFA and other providers use standard remote access flags
         provider_access_flags = FI_REMOTE_WRITE | FI_REMOTE_READ;
@@ -1548,6 +1610,19 @@ nixlLibfabricRail::registerMemory(void *buffer,
             if (iface == FI_HMEM_CUDA) {
                 mr_attr.device.cuda = device_id;
                 NIXL_DEBUG << "CUDA memory registration - iface: FI_HMEM_CUDA, device.cuda: "
+                           << device_id;
+            } else if (iface == FI_HMEM_ROCR) {
+                // AMD ROCr memory registration
+                // ROCr uses HSA agent handles for device identification.
+                // The device_id corresponds to the GPU index (0-based).
+                // The device.rocr union member was added in libfabric v2.3; on
+                // older libfabric the union has no rocr member (and the EFA
+                // provider ignores the device handle for ROCr), so the
+                // zero-initialized union is sufficient.
+#if FI_VERSION(FI_MAJOR_VERSION, FI_MINOR_VERSION) >= FI_VERSION(2, 3)
+                mr_attr.device.rocr = device_id;
+#endif
+                NIXL_DEBUG << "ROCr memory registration - iface: FI_HMEM_ROCR, device_id: "
                            << device_id;
             } else if (iface == FI_HMEM_NEURON) {
                 /*

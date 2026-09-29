@@ -28,12 +28,8 @@
 
 #include <prometheus/exposer.h>
 
-#include <unistd.h>
-
-#include <cerrno>
 #include <chrono>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -177,14 +173,10 @@ TEST_F(MpExporterTest, LeftoverLockFileIsNotASecondOwner) {
 }
 
 TEST_F(MpExporterTest, ForeignOwnedLockFileCannotSilenceTheRun) {
-    if (::geteuid() != 0) {
-        GTEST_SKIP() << "needs privileges to give the lock file another owner";
-    }
     const auto lock = dir_ / ownerLockFileName("127.0.0.1:" + std::to_string(port_));
     { std::ofstream(lock).put('\0'); }
-    constexpr uid_t nobody = 65534;
-    if (::chown(lock.c_str(), nobody, static_cast<gid_t>(-1)) != 0) {
-        GTEST_SKIP() << "cannot give the lock file another owner: " << strerror(errno);
+    if (const auto why = giveAwayOwnership(lock)) {
+        GTEST_SKIP() << *why;
     }
 
     // A planted lock must not read as a sibling win, or every rank of a shared
@@ -237,6 +229,48 @@ TEST_F(MpExporterTest, LoadsThroughPluginManager) {
     const gtest::LogIgnoreGuard lig("Plugin file does not exist");
     nixlTelemetry telemetry("agent-loader", "prometheus_mp");
     EXPECT_FALSE(singleStoreFile().empty());
+}
+
+TEST_F(MpExporterTest, CreatedTelemetryDirIsPrivate) {
+    const auto sub = dir_ / "created";
+    ASSERT_FALSE(std::filesystem::exists(sub));
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", sub.string());
+
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-private"));
+
+    ASSERT_TRUE(std::filesystem::is_directory(sub));
+    EXPECT_EQ(std::filesystem::status(sub).permissions() & std::filesystem::perms::mask,
+              std::filesystem::perms::owner_all);
+}
+
+TEST_F(MpExporterTest, GroupWritableTelemetryDirWarns) {
+    const auto sub = dir_ / "group-loose";
+    std::filesystem::create_directory(sub);
+    std::filesystem::permissions(sub,
+                                 std::filesystem::perms::owner_all |
+                                     std::filesystem::perms::group_write,
+                                 std::filesystem::perm_options::replace);
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", sub.string());
+
+    const gtest::LogIgnoreGuard lig("is writable by group or other");
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-group-loose"));
+    EXPECT_TRUE(exporter.isExporter());
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
+}
+
+TEST_F(MpExporterTest, WorldWritableTelemetryDirWarns) {
+    const auto sub = dir_ / "world-loose";
+    std::filesystem::create_directory(sub);
+    std::filesystem::permissions(sub,
+                                 std::filesystem::perms::owner_all |
+                                     std::filesystem::perms::others_write,
+                                 std::filesystem::perm_options::replace);
+    env_.addVar("NIXL_TELEMETRY_MULTIPROC_DIR", sub.string());
+
+    const gtest::LogIgnoreGuard lig("is writable by group or other");
+    nixlTelemetryPrometheusMpExporter exporter(initParams("agent-world-loose"));
+    EXPECT_TRUE(exporter.isExporter());
+    EXPECT_EQ(lig.getIgnoredCount(), 1);
 }
 
 TEST(MpExporterStandaloneTest, MissingMultiprocDirThrows) {

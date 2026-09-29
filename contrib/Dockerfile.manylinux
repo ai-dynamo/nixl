@@ -75,6 +75,15 @@ ENV PATH=/opt/rh/gcc-toolset-14/root/usr/bin:${PATH} \
 # cmake_minimum_required(VERSION < 3.5). Some bundled deps (e.g. gRPC's c-ares)
 # still declare ancient minimums. This tells CMake 4.x to accept them.
 ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
+
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+# Inherited by the wheel stage below via FROM $wheel_base.
+ENV CMAKE_INSTALL_ALWAYS=1
+
 # === end Option B header ======================================================
 ARG LIBFABRIC_VERSION="v1.21.0"
 ARG HWLOC_VERSION="2.12.2"
@@ -278,10 +287,10 @@ RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.
     rm rustup-init && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-RUN wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host-3.3.0-088000_26.01_rhel8.${ARCH}.rpm -O doca-host.rpm && \
+RUN wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host-3.5.0-082000_26.07_rhel8.${ARCH}.rpm -O doca-host.rpm && \
     rpm -i doca-host.rpm && \
     dnf install -y libnl3-devel && \
-    cd /usr/share/doca-host-3.3.0/repo/Packages/ && \
+    cd /usr/share/doca-host-3.5.0/repo/Packages/ && \
     rpm -ivh --nodeps doca-sdk-common-*rpm && \
     rpm -ivh --nodeps doca-sdk-rdma-*rpm && \
     rpm -ivh --nodeps doca-sdk-verbs-*rpm && \
@@ -289,8 +298,8 @@ RUN wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3
     rpm -ivh --nodeps doca-sdk-telemetry-exporter-*rpm && \
     # CollectX provides libclx-api.pc, required (Requires.private) by
     # doca-telemetry-exporter.pc and needed to link the telemetry exporter plugin.
-    # These RPMs use a different naming scheme: collectx_<ver>-...-clxapi[dev].rpm
-    rpm -ivh --nodeps collectx_*rpm && \
+    # Pulls both collectx-clxapi and collectx-clxapidev.
+    rpm -ivh --nodeps collectx-clxapi*rpm && \
     # Check that gpunetio and telemetry-exporter development packages are installed correctly
     pkg-config --cflags --libs doca-gpunetio && \
     pkg-config --cflags --libs doca-telemetry-exporter
@@ -361,7 +370,7 @@ RUN export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | c
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
-ARG UCX_REF="v1.22.x"
+ARG UCX_REF="v1.23.x"
 ARG UCX_SONAME_SUFFIX=""
 RUN cd /usr/local/src && \
      git clone "$UCX_REPO" ucx && \
@@ -392,6 +401,7 @@ RUN cd /usr/local/src && \
          --disable-doxygen-doc       \
          --enable-experimental-api   \
          --enable-optimizations      \
+         --without-avx               \
          --enable-cma                \
          --enable-devel-headers      \
          --with-cuda=/usr/local/cuda \
@@ -464,8 +474,8 @@ RUN if [ "$BUILD_INFINIA" = "true" ]; then \
 # gcc. Drop this once the plugin splits the compiler from its flags.
 ARG BUILD_UCX_SPCX_PLUGIN=false
 RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
-        rpm -ivh --nodeps /usr/share/doca-host-3.3.0/repo/Packages/flexio-sdk-*rpm && \
-        rpm -ivh --nodeps /usr/share/doca-host-3.3.0/repo/Packages/dpacc-[0-9]*rpm && \
+        rpm -ivh --nodeps /usr/share/doca-host-3.5.0/repo/Packages/flexio-sdk-*rpm && \
+        rpm -ivh --nodeps /usr/share/doca-host-3.5.0/repo/Packages/dpacc-[0-9]*rpm && \
         ldconfig && \
         cd ucx-spcx-plugin-src && \
         export ACLOCAL_PATH="/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}" && \
@@ -516,9 +526,10 @@ RUN echo "/usr/local/nixl/lib/$ARCH-linux-gnu" > /etc/ld.so.conf.d/nixl.conf && 
 # Create the wheel
 # No need to specifically add path to libcuda.so here, meson finds the stubs and links them
 ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
-# Default includes 2.11 for CUDA 12 builds; CUDA 13 CI passes
-# --build-arg WHL_TORCH_VERSIONS=2.12,2.13 since 2.11 is not on the cu13 index.
-ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13"
+# Default is the union of what both CUDA majors can build: 2.11 is only on the
+# cu12 index, 2.14 only on the cu13 (nightly) one. build-wheel.sh skips the
+# versions it cannot resolve, so the same list works for either.
+ARG WHL_TORCH_VERSIONS="2.11,2.12,2.13,2.14"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
     if [ "$BUILD_NIXL_EP" = "true" ]; then \

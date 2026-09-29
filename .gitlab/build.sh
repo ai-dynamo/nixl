@@ -21,6 +21,13 @@ set -e
 set -x
 set -o pipefail
 
+# Force CMake to always copy files in install directives, rather than skip based on file modification timestamp.
+# File modification timestamp check in CMake uses 1 second resolution.
+# This causes problems for fast builds that install, patch then reinstall the same file, as the final install step
+# may be incorrectly skipped.
+# Seen in CI as flaky ASAN failure due to inconsistent Azure SDK headers causing memory corruption.
+export CMAKE_INSTALL_ALWAYS=1
+
 # Parse commandline arguments with first argument being the install directory
 # and second argument being the UCX installation directory.
 INSTALL_DIR=$1
@@ -29,9 +36,9 @@ EXTRA_BUILD_ARGS=${3:-""}
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
 # UCX_VERSION is the version of UCX to build override default with env variable.
-UCX_VERSION=${UCX_VERSION:-v1.22.x}
+UCX_VERSION=${UCX_VERSION:-v1.23.x}
 # LIBFABRIC_VERSION is the version of libfabric to build override default with env variable.
-LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v1.21.0}
+LIBFABRIC_VERSION=${LIBFABRIC_VERSION:-v2.7.0}
 # Abseil and gRPC versions for consistent toolchain build.
 ABSL_TAG=${ABSL_TAG:-lts_2025_08_14}
 GRPC_TAG=${GRPC_TAG:-v1.73.0}
@@ -169,28 +176,33 @@ else
         echo "Using PyTorch from system site-packages"
     else
         echo "System torch check failed: ${_torch_check_err}" >&2
-        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+' | tr -d .)
+        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+')
         if [ -z "$cuda_version" ]; then
             echo "ERROR: unable to determine CUDA version from nvcc" >&2
             exit 1
         fi
+        if [ "${cuda_version%%.*}" = "13" ]; then
+            torch_cu_tag="cu130"
+        else
+            torch_cu_tag="cu$(echo "${cuda_version}" | tr -d .)"
+        fi
         $SUDO pip3 --no-cache-dir install --break-system-packages \
-            --index-url "https://download.pytorch.org/whl/cu${cuda_version}" torch
+            --index-url "https://download.pytorch.org/whl/${torch_cu_tag}" torch
     fi
 
     # DOCA + RDMA build dependencies.
-    #  - Bases without DOCA (cuda-dl-base, nvidia/cuda, ubuntu22.04): add the DOCA
-    #    3.3.0 host repo, install the SDK + headers, then reinstall the RDMA packages
-    #    to repair cuda-dl-base's broken libibverbs-dev.
+    #  - Bases without DOCA (cuda-dl-base, nvidia/cuda, ubuntu22.04): add the pinned
+    #    DOCA host repo (wget below), install the SDK + headers, then reinstall the
+    #    RDMA packages to repair cuda-dl-base's broken libibverbs-dev.
     #  - Bases that already ship DOCA (nvcr.io/nvidia/pytorch bundles >=3.4): use that
-    #    stack as-is. Adding the older 3.3 repo would only downgrade/mismatch it, so
+    #    stack as-is. Adding a second DOCA repo would only downgrade/mismatch it, so
     #    skip the whole repo add + SDK install + RDMA reinstall.
     if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then
-        echo "DOCA $(dpkg-query -W -f='${Version}' doca-sdk-gpunetio) provided by base image; skipping DOCA 3.3 repo, SDK install, and RDMA reinstall"
+        echo "DOCA $(dpkg-query -W -f='${Version}' doca-sdk-gpunetio) provided by base image; skipping DOCA repo add, SDK install, and RDMA reinstall"
     else
         ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
         MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"
-        wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${BUILD_TMP}/doca-host.deb
+        wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O ${BUILD_TMP}/doca-host.deb
         $SUDO dpkg -i ${BUILD_TMP}/doca-host.deb
         $SUDO apt-get update
         $SUDO apt-get upgrade -y
@@ -406,6 +418,7 @@ else
             --disable-static \
             --disable-doxygen-doc \
             --enable-optimizations \
+            --without-avx \
             --enable-cma \
             --enable-devel-headers \
             --with-verbs \
@@ -430,9 +443,27 @@ else
     if [ "${BUILD_NIXL_EP}" = "true" ]; then
         EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
     fi
+    # When NIXL_PYTHON is set (currently only by test-dl-ep-matrix.yaml), build and
+    # install NIXL EP against vLLM's Python/Torch venv to prevent ABI mismatches.
+    # Only NIXL's Meson build uses this venv; dependency builds keep system Python.
+    # Other jobs leave NIXL_PYTHON_ARGS empty and keep the existing build behavior.
+    NIXL_PYTHON_ARGS=()
+    NIXL_PYTHON_NATIVE_FILE=""
+    if [ -n "${NIXL_PYTHON:-}" ]; then
+        if [ ! -x "${NIXL_PYTHON}" ]; then
+            echo "ERROR: NIXL_PYTHON is not executable: ${NIXL_PYTHON}" >&2
+            exit 1
+        fi
+        NIXL_PYTHON_NATIVE_FILE=$(mktemp)
+        printf "[binaries]\npython = '%s'\n" "${NIXL_PYTHON}" > "${NIXL_PYTHON_NATIVE_FILE}"
+        NIXL_PYTHON_ARGS=(--native-file "${NIXL_PYTHON_NATIVE_FILE}" -Dpython.install_env=venv)
+    fi
     # shellcheck disable=SC2086
-    meson setup ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
+    meson setup "${NIXL_PYTHON_ARGS[@]}" ${NIXL_BUILD_DIR} --prefix=${INSTALL_DIR} -Ducx_path=${UCX_INSTALL_DIR} -Dbuild_docs=true -Drust=false ${EXTRA_BUILD_ARGS} -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" --buildtype=debug
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXL_BUILD_DIR} install
+    if [ -n "${NIXL_PYTHON_NATIVE_FILE}" ]; then
+        rm -f "${NIXL_PYTHON_NATIVE_FILE}"
+    fi
     mkdir -p dist && cp ${NIXL_BUILD_DIR}/src/bindings/python/nixl-meta/nixl-*.whl dist/
 
     # TODO(kapila): Copy the nixl.pc file to the install directory if needed.

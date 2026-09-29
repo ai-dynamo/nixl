@@ -493,6 +493,20 @@ fn test_make_connection_success() {
     );
 }
 
+/// The payload is a blob, not a C string, so embedded zero bytes must survive.
+#[test]
+fn test_opt_args_custom_param_round_trip() {
+    let mut opt_args = OptArgs::new().expect("Failed to create opt args");
+    assert!(opt_args.get_custom_param().expect("Failed to get custom param").is_empty());
+
+    let param = [0x01u8, 0x00, 0x02, 0x00, 0x03];
+    opt_args.set_custom_param(&param).expect("Failed to set custom param");
+    assert_eq!(
+        opt_args.get_custom_param().expect("Failed to get custom param"),
+        param
+    );
+}
+
 #[test]
 fn test_make_connection_invalid_param() {
     let agent = Agent::new("test_agent").expect("Failed to create agent");
@@ -1277,8 +1291,8 @@ fn test_prep_xfer_dlist_invalid_agent() {
         let result = agent.prepare_xfer_dlist("invalid_agent", &dlist, None);
 
         assert!(
-            result.is_err_and(|e| matches!(e, NixlError::BackendError)),
-            "Expected InvalidParam for invalid agent name"
+            result.is_err_and(|e| matches!(e, NixlError::NotFound)),
+            "Expected NotFound for invalid agent name"
         );
     }
 }
@@ -1360,7 +1374,7 @@ fn test_make_xfer_req_invalid_indices() {
             &invalid_indices,    // Out-of-bounds remote index
             None
         );
-        assert!(result.is_err_and(|e| matches!(e, NixlError::BackendError)), "Expected InvalidParam for out-of-bounds indices");
+        assert!(result.is_err_and(|e| matches!(e, NixlError::InvalidParam)), "Expected InvalidParam for out-of-bounds indices");
     }
 }
 
@@ -1383,10 +1397,9 @@ fn test_get_local_partial_md_success() {
             println!("Partial metadata size: {}", metadata.len());
         }
         Err(e) => {
-            // May fail if no partial metadata exists yet, which is acceptable
             assert!(
-                matches!(e, NixlError::BackendError) || matches!(e, NixlError::InvalidParam),
-                "Expected BackendError or InvalidParam, got: {:?}", e
+                matches!(e, NixlError::NotFound),
+                "Expected NotFound, got: {:?}", e
             );
         }
     }
