@@ -19,7 +19,6 @@
 
 #include <atomic>
 #include <memory>
-#include <optional>
 #include <string_view>
 #include <type_traits>
 
@@ -173,7 +172,7 @@ private:
     const std::string name_;
     const nixl_ucx_vram_memtype_hint_t vramMemTypeHintPolicy_;
     uint64_t supportedMemoryTypesMask_{0};
-    std::optional<ucs_memory_type_t> vramMemTypeHint_;
+    ucs_memory_type_t vramMemTypeHint_{UCS_MEMORY_TYPE_UNKNOWN};
 
     void
     resolveMemoryTypeConfig();

@@ -56,11 +56,11 @@ UCP transport lane selection in addition to error reporting.
 
 For `ucx_vram_memtype_hint`:
 
-- `auto` is the recommended default.
-- `none` disables NIXL memory-type hinting and leaves detection to UCX.
+- `auto` is the recommended default. It hints `ze-device` when the UCX context supports `ze-device` and none of `cuda`, `cuda-managed` or `rocm`, and otherwise leaves detection to UCX.
+- `none` never hints and always leaves detection to UCX. It differs from `auto` only on those contexts, where it turns the `ze-device` hint off.
 - Explicit accelerator hints are also supported for advanced tuning: `cuda`, `cuda-managed`, `rocm`, `ze-device`.
 - Values are case-sensitive, so `CUDA` is rejected.
-- An explicit hint fails backend creation when the UCX context memory types cannot be queried, or when the queried UCX context does not advertise the requested memtype. `auto` and `none` skip hinting instead of failing.
+- An explicit hint fails backend creation when the UCX context does not support the requested memory type.
 
 ## Examples
 

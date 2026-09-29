@@ -197,16 +197,15 @@ eligibility in the transport over changing this option in deployments that need 
 reporting.
 
 `ucx_vram_memtype_hint` controls the memory type NIXL passes to `ucp_mem_map` when registering
-VRAM. `auto` is the recommended default: it hints `ze-device` on ZE-only accelerator stacks and
-otherwise leaves detection to UCX. `none` always leaves detection to UCX. The explicit values
+VRAM. `auto` is the recommended default: it hints `ze-device` when the UCX context supports
+`ze-device` and none of `cuda`, `cuda-managed` or `rocm`, and otherwise leaves detection to UCX.
+`none` never hints, so the two differ only on those contexts, where `none` turns the `ze-device`
+hint off. The explicit values
 (`cuda`, `cuda-managed`, `rocm`, `ze-device`) force the corresponding memory type.
 
 Value matching is case-sensitive, so `CUDA` is rejected and backend creation fails with an
 invalid-argument error. The same happens when an explicit hint is not supported by the UCX context
-the backend was created with. Explicit hints also require the UCX context memory types to be
-queryable and fail backend creation when they are not; `auto` and `none` skip hinting instead of
-failing in that case, although the backend still needs that query to succeed for its
-hardware-support check.
+the backend was created with.
 
 ### Make connections (optional):
 
