@@ -21,8 +21,8 @@ public:
 
 /**
  * Small interface around libdfs. The concrete implementation owns configurable
- * DAOS event-queue lanes and progress threads; tests can provide a client
- * without a DAOS system.
+ * DAOS event-queue lanes and optionally owns progress threads; tests can provide
+ * a client without a DAOS system.
  */
 class iDfsClient {
 public:
@@ -58,9 +58,19 @@ public:
 
     virtual int
     exists(std::string_view path, bool &result) = 0;
+
+    /**
+     * Make non-blocking progress when the NIXL progress thread is disabled.
+     * Implementations with internal progress threads may leave this as a no-op.
+     * Returns a negative DAOS error code on failure.
+     */
+    virtual int
+    progress() = 0;
 };
 
+class nixlBackendInitParams;
+
 std::shared_ptr<iDfsClient>
-makeLibDfsClient(const nixl_b_params_t *custom_params);
+makeLibDfsClient(const nixlBackendInitParams *init_params);
 
 #endif // NIXL_SRC_PLUGINS_DAOS_DAOS_CLIENT_H

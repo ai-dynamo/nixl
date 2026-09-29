@@ -88,6 +88,7 @@ public:
     releaseReqH(nixlBackendReqH *handle) const override;
 
 private:
+    nixl_thread_sync_t syncMode_;
     std::shared_ptr<iDfsClient> client_;
 };
 

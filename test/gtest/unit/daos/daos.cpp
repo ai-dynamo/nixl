@@ -102,6 +102,12 @@ public:
         return 0;
     }
 
+    int
+    progress() override {
+        progressCount_.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
+
     void
     put(std::string path, std::vector<char> value) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -122,6 +128,11 @@ public:
     size_t
     submissionCount() const {
         return submissionCount_.load(std::memory_order_relaxed);
+    }
+
+    size_t
+    progressCount() const {
+        return progressCount_.load(std::memory_order_relaxed);
     }
 
     void
@@ -158,6 +169,7 @@ private:
     bool defer_ = false;
     std::atomic<size_t> submissionCount_{0};
     std::atomic<size_t> eagainSubmission_{0};
+    std::atomic<size_t> progressCount_{0};
     std::mutex pendingMutex_;
     std::deque<std::function<void()>> pending_;
 };
@@ -181,6 +193,7 @@ protected:
         init_.localAgent = "daos-test-agent";
         init_.type = "DAOS";
         init_.customParams = &params_;
+        init_.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE;
         client_ = std::make_shared<MockDfsClient>();
         engine_ = std::make_unique<nixlDaosEngine>(&init_, client_);
     }
@@ -207,8 +220,29 @@ TEST_F(DaosEngineTest, ReportsEventQueueTuningParameters) {
     EXPECT_EQ(params.at("max_inflight_per_queue"), "1024");
     EXPECT_EQ(params.at("submission_batch_size"), "32");
     EXPECT_EQ(params.at("completion_batch_size"), "128");
-    EXPECT_EQ(params.at("progress_poll_timeout_us"), "1000");
     EXPECT_EQ(params.at("progress_cpu_affinity"), "");
+}
+
+TEST_F(DaosEngineTest, CheckXferDrivesClientProgress) {
+    nixlBlobDesc registration(0, 4, 1, "manual-progress");
+    nixlBackendMD *metadata = nullptr;
+    ASSERT_EQ(engine_->registerMem(registration, OBJ_SEG, metadata), NIXL_SUCCESS);
+
+    std::array<char, 4> source{'d', 'a', 'o', 's'};
+    nixl_meta_dlist_t local(DRAM_SEG);
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    local.addDesc(nixlMetaDesc(reinterpret_cast<uintptr_t>(source.data()), source.size(), 0));
+    remote.addDesc(nixlMetaDesc(0, source.size(), 1, metadata));
+
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(engine_->prepXfer(NIXL_WRITE, local, remote, init_.localAgent, handle), NIXL_SUCCESS);
+    ASSERT_EQ(engine_->postXfer(NIXL_WRITE, local, remote, init_.localAgent, handle), NIXL_IN_PROG);
+    EXPECT_EQ(client_->progressCount(), 0);
+    EXPECT_EQ(engine_->checkXfer(handle), NIXL_SUCCESS);
+    EXPECT_EQ(client_->progressCount(), 1);
+
+    EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
+    EXPECT_EQ(engine_->deregisterMem(metadata), NIXL_SUCCESS);
 }
 
 TEST_F(DaosEngineTest, WritesAndReadsAtOffset) {
