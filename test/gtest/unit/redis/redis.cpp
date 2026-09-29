@@ -83,6 +83,7 @@ TEST(redisConfigTest, UsesUnauthenticatedDefaultsWhenCredentialsAreAbsent) {
     EXPECT_TRUE(config.username.empty());
     EXPECT_TRUE(config.password.empty());
     EXPECT_EQ(config.db, 0);
+    EXPECT_EQ(config.pool_size, 8);
 }
 
 TEST(redisConfigTest, BackendParametersOverrideEnvironmentFallbacks) {
@@ -115,22 +116,6 @@ TEST(redisConfigTest, RejectsAclUsernameWithoutPassword) {
     nixl_b_params_t params = {{"username", "acl-user"}};
 
     EXPECT_THROW(RedisConfig::fromBackendParams(&params), std::invalid_argument);
-}
-
-TEST(redisConfigTest, UsesDefaultPoolSizeWhenAbsent) {
-    scopedRedisEnvironment environment;
-    environment.clear();
-    nixl_b_params_t params;
-    const auto config = RedisConfig::fromBackendParams(&params);
-    EXPECT_EQ(config.pool_size, 8);
-}
-
-TEST(redisConfigTest, BackendParamOverridesPoolSize) {
-    scopedRedisEnvironment environment;
-    environment.clear();
-    nixl_b_params_t params = {{"pool_size", "4"}};
-    const auto config = RedisConfig::fromBackendParams(&params);
-    EXPECT_EQ(config.pool_size, 4);
 }
 
 TEST(redisConfigTest, EnvVarSetsPoolSize) {
@@ -167,10 +152,10 @@ TEST(redisConfigTest, ZeroPoolSizeFallsBackToDefault) {
     EXPECT_EQ(config.pool_size, 8);
 }
 
-TEST(redisConfigTest, NegativePoolSizeFallsBackToDefault) {
+TEST(redisConfigTest, TrailingGarbagePoolSizeFallsBackToDefault) {
     scopedRedisEnvironment environment;
     environment.clear();
-    nixl_b_params_t params = {{"pool_size", "-1"}};
+    nixl_b_params_t params = {{"pool_size", "4x"}};
     const auto config = RedisConfig::fromBackendParams(&params);
     EXPECT_EQ(config.pool_size, 8);
 }
@@ -179,19 +164,23 @@ class mockRedisClient : public iRedisClient {
 public:
     void
     putKeyAsync(std::string_view key,
-                uintptr_t,
-                size_t,
+                uintptr_t addr,
+                size_t len,
                 std::shared_ptr<std::promise<nixl_status_t>> promise) override {
         putKeys_.emplace_back(key);
+        putAddrs_.push_back(addr);
+        putLens_.push_back(len);
         completeOrQueue(std::move(promise));
     }
 
     void
     getKeyAsync(std::string_view key,
-                uintptr_t,
-                size_t,
+                uintptr_t addr,
+                size_t len,
                 std::shared_ptr<std::promise<nixl_status_t>> promise) override {
         getKeys_.emplace_back(key);
+        getAddrs_.push_back(addr);
+        getLens_.push_back(len);
         completeOrQueue(std::move(promise));
     }
 
@@ -246,9 +235,29 @@ public:
         return putKeys_;
     }
 
+    const std::vector<uintptr_t> &
+    putAddrs() const {
+        return putAddrs_;
+    }
+
+    const std::vector<size_t> &
+    putLens() const {
+        return putLens_;
+    }
+
     const std::vector<std::string> &
     getKeys() const {
         return getKeys_;
+    }
+
+    const std::vector<uintptr_t> &
+    getAddrs() const {
+        return getAddrs_;
+    }
+
+    const std::vector<size_t> &
+    getLens() const {
+        return getLens_;
     }
 
     const std::vector<std::string> &
@@ -270,9 +279,13 @@ private:
     bool completeImmediately_ = true;
     std::deque<std::optional<bool>> existsResults_;
     std::vector<std::shared_ptr<std::promise<nixl_status_t>>> pendingPromises_;
-    std::vector<std::string> putKeys_;
-    std::vector<std::string> getKeys_;
-    std::vector<std::string> checkedKeys_;
+    std::vector<std::string>  putKeys_;
+    std::vector<uintptr_t>    putAddrs_;
+    std::vector<size_t>       putLens_;
+    std::vector<std::string>  getKeys_;
+    std::vector<uintptr_t>    getAddrs_;
+    std::vector<size_t>       getLens_;
+    std::vector<std::string>  checkedKeys_;
 };
 
 class redisEngineTest : public ::testing::Test {
@@ -348,6 +361,10 @@ TEST_F(redisEngineTest, RegistersMetadataKeyAndDevIdFallback) {
                   NIXL_WRITE, localDescs, remoteDescs, initParams_.localAgent, handle, nullptr),
               NIXL_IN_PROG);
     EXPECT_EQ(mockClient_->putKeys(), (std::vector<std::string>{"registered-key", "22"}));
+    EXPECT_EQ(mockClient_->putAddrs()[0], reinterpret_cast<uintptr_t>(firstBuffer.data()));
+    EXPECT_EQ(mockClient_->putLens()[0], firstBuffer.size());
+    EXPECT_EQ(mockClient_->putAddrs()[1], reinterpret_cast<uintptr_t>(secondBuffer.data()));
+    EXPECT_EQ(mockClient_->putLens()[1], secondBuffer.size());
     EXPECT_EQ(engine_->checkXfer(handle), NIXL_SUCCESS);
 
     EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
