@@ -6,15 +6,19 @@
 import argparse
 import ipaddress
 import json
+import logging
 import os
 import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def checked(argv, env=None, stdin=None):
@@ -194,15 +198,14 @@ def run(args):
     workers, files, membership = [], [], []
     started, verified = False, False
     status, failure = "FAIL", None
-    print(f"Results: {out}", flush=True)
-    print(
+    logger.info("Results: %s", out)
+    logger.info(
         f"GPUNETIO: two local workers share GPU {args.gpu}; MPS={args.mps}. "
         + (
             "Enabling private MPS to avoid cross-process CUDA scheduling delays."
             if args.mps == "auto"
             else "MPS disabled explicitly for the control run."
         ),
-        flush=True,
     )
     try:
         if args.mps == "auto":
@@ -284,14 +287,14 @@ def run(args):
             "workers_drained": drained,
         }
         (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
-    print(
+    logger.info(
         f"{status}: {failure or 'both workers exited and validation was enabled'}",
-        flush=True,
     )
     return 0 if status == "PASS" else 1
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--gpu", required=True, help="full UUID of an allocated, idle GPU"
@@ -319,7 +322,7 @@ def main():
     try:
         return run(args)
     except (Exception, KeyboardInterrupt) as error:
-        print(f"FAIL: {error}", flush=True)
+        logger.error("FAIL: %s", error)
         return 1
 
 

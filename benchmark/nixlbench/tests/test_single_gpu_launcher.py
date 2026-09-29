@@ -20,17 +20,17 @@ name = Path(sys.argv[0]).name
 root = Path(os.environ['FAKE_ROOT'])
 if name == 'ps':
     if os.environ.get('FAKE_MPS_EXISTS'):
-        print('S nvidia-cuda-mps-control')
+        sys.stdout.write('S nvidia-cuda-mps-control\n')
     if os.environ.get('FAKE_MPS_ZOMBIE'):
-        print('Z nvidia-cuda-mps')
+        sys.stdout.write('Z nvidia-cuda-mps\n')
 elif name == 'ip':
     address = '192.0.2.1' if sys.argv[-1] == 'net0' or os.environ.get('FAKE_SAME_IP') else '192.0.2.2'
-    print(json.dumps([{'flags': ['UP'], 'addr_info': [{'family': 'inet', 'local': address}]}]))
+    sys.stdout.write(json.dumps([{'flags': ['UP'], 'addr_info': [{'family': 'inet', 'local': address}]}]) + '\n')
 elif name == 'nvidia-smi':
     if '--query-gpu=uuid' in sys.argv:
-        print('GPU-00000000-0000-0000-0000-000000000001')
+        sys.stdout.write('GPU-00000000-0000-0000-0000-000000000001\n')
     elif os.environ.get('FAKE_BUSY'):
-        print('1234')
+        sys.stdout.write('1234\n')
 elif name == 'nvidia-cuda-mps-control':
     command = '-d' if '-d' in sys.argv else sys.stdin.read().strip()
     with (root / 'control').open('a') as stream:
@@ -38,11 +38,11 @@ elif name == 'nvidia-cuda-mps-control':
     if command == '-d' and os.environ.get('FAKE_START_FAIL'):
         sys.exit(1)
     if command == 'get_server_list':
-        print('9999')
+        sys.stdout.write('9999\n')
     elif command.startswith('get_client_list'):
         if not os.environ.get('FAKE_NO_CLIENTS'):
             clients = root / 'clients'
-            print(clients.read_text() if clients.exists() else '')
+            sys.stdout.write(clients.read_text() if clients.exists() else '')
 else:
     assert os.environ['CUDA_VISIBLE_DEVICES'].startswith('GPU-')
     assert os.environ['CUDA_MPS_PIPE_DIRECTORY'].startswith(str(root))
@@ -53,7 +53,7 @@ else:
         sys.exit(2)
     if os.environ.get('FAKE_NO_ROW'):
         sys.exit(0)
-    print('4096 1 0.15 26.0')
+    sys.stdout.write('4096 1 0.15 26.0\n')
 """
 
 
