@@ -8,6 +8,7 @@
 #endif
 
 #include "daos_client.h"
+#include "backend/backend_aux.h"
 
 #include <daos_event.h>
 #include <daos_fs.h>
