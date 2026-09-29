@@ -273,10 +273,7 @@ nixlRedisKVEngine::postXfer(const nixl_xfer_op_t &operation,
         std::string redis_key;
 
         if (remote_desc.metadataP) {
-            auto *redis_md = dynamic_cast<nixlRedisMetadata *>(remote_desc.metadataP);
-            if (redis_md) {
-                redis_key = redis_md->redisKey;
-            }
+            redis_key = static_cast<nixlRedisMetadata *>(remote_desc.metadataP)->redisKey;
         }
 
         if (redis_key.empty()) {
