@@ -1,5 +1,5 @@
 #!/bin/bash -eE
-# Build Wheel step of build-wheel-nightly-matrix.yaml: builds one matrix
+# Build Wheel step of build-wheel-publish-matrix.yaml: builds one matrix
 # cell's wheel image from nixl-src. Env: the matrix axes (manylinux, arch,
 # python_version, cuda) and env block, registry_host/registry_path,
 # BUILD_NUMBER, NIXL_VERSION, plus /tmp/ghconfig and wheel_build_ids.env

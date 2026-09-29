@@ -1,4 +1,4 @@
-# Nightly NIXL wheel verification build. Pipeline and this config run from
+# NIXL wheel verification build. Pipeline and this config run from
 # main; the source ref (NIXL_VERSION) is cloned into nixl-src, so built refs
 # carry no CI config. Wheels publish to
 # WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default), or
@@ -10,7 +10,7 @@
 # it on failure and mark it, only on SUCCESS, for the release poller.
 
 ---
-job: nixl-ci-build-wheel-nightly
+job: nixl-build-wheel
 
 failFast: false
 timeout_minutes: 180

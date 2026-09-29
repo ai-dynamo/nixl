@@ -2,7 +2,7 @@
 """Merge the nightly wheel build's per-cell fragments into build-manifest.json.
 
 Run by .ci/scripts/wheel-nightly/publish-manifest.sh in a plain Python image
-at the end of nixl-ci-build-wheel-nightly. Reads the fragment directories the
+at the end of nixl-build-wheel. Reads the fragment directories the
 cells deposited (cell.env, wheel_build_ids.env, build_options.env and the
 wheel's build-info sidecar from extract_build_info.py), cross-checks them against each other and against
 the Artifactory folder listing, writes the manifest and uploads it next to

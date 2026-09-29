@@ -1,5 +1,5 @@
 #!/bin/bash -eE
-# Extract Build Info step of build-wheel-nightly-matrix.yaml: pulls the
+# Extract Build Info step of build-wheel-publish-matrix.yaml: pulls the
 # cell's wheels out of the built image into dist/ and writes the wheel's
 # build-info sidecar into build-info/ for Publish to upload alongside the
 # manifest fragment. Env: as build-wheel.sh.

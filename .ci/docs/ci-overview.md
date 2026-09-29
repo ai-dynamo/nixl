@@ -32,7 +32,7 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 
 > **Note on Jenkins jobs:** `proj-jjb.yaml` defines 17 Jenkins jobs: the
 > dispatcher, the 8 jobs it fans out to (the PR CI flow), and 8 standalone jobs
-> (`build-container`, `build-wheel-nightly`, `verification-launcher`,
+> (`build-container`, `build-wheel`, `verification-launcher`,
 > `build-wheel-release-poller`, `build-llm-container`, `test-llm-container`,
 > `cleanup-artifacts`, `nightly`). The standalone ones run only on their own
 > cron, when someone triggers them manually from the Jenkins UI, or when
@@ -155,7 +155,7 @@ their own nightly/manual trigger. They split into two groups:
   the 7 jobs it fans out to. This is the *only* way any Jenkins job runs
   against a PR, triggered by a PR push or a `/build` comment.
 - **Standalone (never run against a PR):** `nixl-ci-build-container`,
-  `nixl-ci-build-wheel-nightly`, `nixl-verification-launcher`,
+  `nixl-build-wheel`, `nixl-verification-launcher`,
   `nixl-build-wheel-release-poller`,
   `nixl-ci-build-llm-container`, `nixl-ci-test-llm-container`,
   `nixl-ci-cleanup-artifacts`, `nixl-ci-nightly` — each has its own cron, manual
@@ -219,8 +219,8 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 
 ### `nixl-build-wheel-release-poller` (standalone)
 
-- **Trigger:** 4-hourly cron (`H H/4 * * *`) or manual run. The pipeline and matrix config (`.ci/jenkins/lib/build-wheel-release-poller-matrix.yaml`) run from `ci_refspec` (default `main`). The builds it triggers get `ci_refspec` = the release commit they build, not the poller's own, so a release run is pinned end to end; a pre-merge test run of the poller exercises the poller only, and nightly changes are tested by running the nightly manually.
-- **What it does:** Builds release wheels for every `release/*` branch with version >= 1.6.0 whose `contrib/build-container.sh` accepts `--build-options-file` and `--ucx-spcx-plugin-install` (the nightly always passes both, and `build-container.sh` silently drops everything after an option it does not know) - new release branches are picked up automatically, with no CI config anywhere. `.ci/scripts/scan-missing-release-wheels.sh` takes the newest 10 first-parent commits past the merge-base with `main` per release and triggers [`nixl-ci-build-wheel-nightly`](#nixl-ci-build-wheel-nightly-standalone) once per missing commit, passing the commit sha and `PUBLISH_DIR=release/<ver>`. There is no CUDA dimension here — one wheel build covers every CUDA major — so the job has no matrix axes. UCX and the bundled plugins are not passed either: each release builds against the `UCX_REF` and plugin versions pinned in its own `contrib/build-container.sh`.
+- **Trigger:** 4-hourly cron (`H H/4 * * *`) or manual run. The pipeline and matrix config (`.ci/jenkins/lib/build-wheel-release-poller-matrix.yaml`) run from `ci_refspec` (default `main`). The builds it triggers get `ci_refspec` = the release commit they build, not the poller's own, so a release run is pinned end to end; a pre-merge test run of the poller exercises the poller only, and wheel-job changes are tested by running `nixl-build-wheel` manually.
+- **What it does:** Builds release wheels for every `release/*` branch with version >= 1.6.0 whose `contrib/build-container.sh` accepts `--build-options-file` and `--ucx-spcx-plugin-install` (`nixl-build-wheel` always passes both, and `build-container.sh` silently drops everything after an option it does not know) - new release branches are picked up automatically, with no CI config anywhere. `.ci/scripts/scan-missing-release-wheels.sh` takes the newest 10 first-parent commits past the merge-base with `main` per release and triggers [`nixl-build-wheel`](#nixl-build-wheel-standalone) once per missing commit, passing the commit sha and `PUBLISH_DIR=release/<ver>`. There is no CUDA dimension here — one wheel build covers every CUDA major — so the job has no matrix axes. UCX and the bundled plugins are not passed either: each release builds against the `UCX_REF` and plugin versions pinned in its own `contrib/build-container.sh`.
 - **Published check:** One AQL query per release branch, not one HTTP GET per commit: it collects the `NIXL_SHA` folder property of every completed build folder under `release/<ver>/` and tests the candidate commits against that set locally. Only HTTP 200 is conclusive (an empty result set is a valid 200); anything else skips that release until the next cycle, so an Artifactory hiccup cannot fan out a build for every commit at once. Because the wheel job stamps that property only after a fully green build — and deletes its folder otherwise — a partial upload no longer reads as published, which the old "does `release/<ver>/<sha8>/` list a `nixl_cuNN` wheel" check could not tell apart. A failed build is retried on later cycles while its commit stays within the newest-10 window; to force a rebuild, delete the commit's folder in Artifactory (or just its `NIXL_SHA` property).
 - **In-flight reservations:** Because the marker only appears when a build *ends*, a build still running at the next poll would be triggered a second time — Jenkins does not deduplicate parameterized builds, and the old check was masked from this only because partial uploads used to look complete. Before triggering, the poller writes `release/<ver>/.inflight/<sha8>` and skips any commit whose reservation is newer than `RESERVE_TTL_MIN`. Ageing is done in the scan against the storage API's `lastModified` (AQL rejected the relative date operators this instance offers), so stale reservations need no cleanup and nothing has to release one: `RESERVE_TTL_MIN` is one poll interval, so a build that failed or vanished simply lets its reservation lapse and the commit is retried a cycle later. Keep `RESERVE_TTL_MIN` in step with the cron if either changes.
 - **Automatic on every PR:** No — standalone cron + manual only, never part of the PR CI path.
@@ -281,7 +281,7 @@ When adding a Slurm pipeline, add this step after the allocation and keep its `d
 
 - **Full Jenkins pipeline for a PR:** comment `/build` on the PR (requires authorization — see `Authorization` step in `blossom-ci.yml`).
 - **Re-run a single Jenkins job with different parameters:** use `workflow_dispatch` on `blossom-ci.yml`, or trigger the Jenkins job directly if you have Jenkins access.
-- **Container/wheel builds outside the launcher schedule:** run `nixl-ci-build-container` or `nixl-ci-build-wheel-nightly` manually from the Jenkins UI with custom parameters.
+- **Container/wheel builds outside the launcher schedule:** run `nixl-ci-build-container` or `nixl-build-wheel` manually from the Jenkins UI with custom parameters.
 
 ## CI_IMAGE_TAG management
 
@@ -350,7 +350,7 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `il.artifactory.nvidia.com` allows anonymous pulls. A pipeline whose own steps
 never push an image therefore does not log in to it, and does not bind
 `svc-nixl-il-artifactory-token`, before its podman builds. Two pipelines qualify:
-`build-container-pr` (`Setup docker`) and `build-wheel-nightly` (`Prepare`).
+`build-container-pr` (`Setup docker`) and `nixl-build-wheel` (`Prepare`).
 `build-container-pr` still logs in to `gitlab-master.nvidia.com:5005`, which
 needs auth to pull. Pipelines whose steps push keep their login where it was.
 ci-demo's own login for `registry_auth` image builds is separate and unchanged.
@@ -410,7 +410,7 @@ CI supplies it through `DOCKER_BUILD_EXTRA_ARGS`, a generic passthrough that
 `contrib/build-container.sh` and `benchmark/nixlbench/contrib/build.sh` append to their
 `docker build` command (empty by default; word-split, so no paths with spaces). In
 `build-container-pr-matrix.yaml`, `build-container-matrix.yaml`,
-`build-wheel-nightly-matrix.yaml` and `build-wheel-matrix.yaml`:
+`build-wheel-publish-matrix.yaml` and `build-wheel-matrix.yaml`:
 
 - the setup step binds the token and calls `write_github_gitconfig /tmp/ghconfig`
   (`.ci/scripts/common.sh`), which writes the config with tracing off and mode 600, or an

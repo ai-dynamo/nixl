@@ -1,5 +1,5 @@
 #!/bin/bash -eE
-# Publish step of build-wheel-nightly-matrix.yaml: uploads the wheels
+# Publish step of build-wheel-publish-matrix.yaml: uploads the wheels
 # Extract Build Info left in dist/ with their properties and deposits this
 # cell's build-manifest fragment on the PVC. Env: as build-wheel.sh, plus
 # PUBLISH_DIR, WHEEL_REPO_URL/WHEEL_REPO_API, MANIFEST_STAGING_ROOT and
