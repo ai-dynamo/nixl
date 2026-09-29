@@ -15,12 +15,25 @@
  * limitations under the License.
  */
 #include <algorithm>
+#include <cmath>
+#include <stdexcept>
 
+#include <absl/strings/numbers.h>
+
+#include "common/configuration.h"
+#include "common/nixl_log.h"
 #include "common/uuid_v4.h"
+#include "trace.h"
 #include "trace_context.h"
 
 namespace {
 constexpr std::uint8_t supported_trace_flags = 0x03;
+constexpr std::size_t wire_flags_offset = 1;
+constexpr std::size_t wire_trace_id_offset = 2;
+constexpr std::size_t wire_span_id_offset = 18;
+constexpr std::size_t trace_id_randomness_bytes = 7;
+constexpr double two_pow_56 = 0x1p56;
+constexpr double min_sample_ratio = 0x1p-56;
 
 template<std::size_t Size>
 [[nodiscard]] bool
@@ -63,6 +76,45 @@ parseBytes(std::string_view value,
     return true;
 }
 
+[[nodiscard]] std::optional<double>
+parseSampleRatio(const std::string &value) {
+    double ratio = 0.0;
+    if (!absl::SimpleAtod(value, &ratio) || !std::isfinite(ratio) || ratio < 0.0 || ratio > 1.0) {
+        return std::nullopt;
+    }
+    if (ratio > 0.0 && ratio < min_sample_ratio) {
+        return std::nullopt;
+    }
+    return ratio;
+}
+
+[[nodiscard]] std::uint64_t
+traceIdRandomness(const nixl::trace::TraceContext &context) noexcept {
+    std::uint64_t result = 0;
+    for (auto index = context.traceId.size() - trace_id_randomness_bytes;
+         index < context.traceId.size();
+         ++index) {
+        result = (result << 8) | context.traceId[index];
+    }
+    return result;
+}
+
+void
+generateInto(nixl::trace::TraceContext &context, double sample_ratio) {
+    do {
+        nixl::generateRandomBytes(context.traceId.data(), context.traceId.size());
+    } while (isAllZero(context.traceId));
+
+    do {
+        nixl::generateRandomBytes(context.spanId.data(), context.spanId.size());
+    } while (isAllZero(context.spanId));
+
+    context.flags = 0x02;
+    if (nixl::trace::sampledByRatio(context, sample_ratio)) {
+        context.flags |= 0x01;
+    }
+}
+
 void
 appendByte(std::string &result, std::uint8_t value) {
     constexpr std::array<char, 16> hex{
@@ -71,6 +123,12 @@ appendByte(std::string &result, std::uint8_t value) {
     result.push_back(hex[value & 0x0f]);
 }
 } // namespace
+
+nixl::trace::TraceContext::TraceContext(const nixl::trace::Tracer *tracer) {
+    if (tracer != nullptr) {
+        generateInto(*this, tracer->sampleRatio());
+    }
+}
 
 bool
 nixl::trace::TraceContext::valid() const noexcept {
@@ -131,16 +189,104 @@ nixl::trace::formatTraceparent(const nixl::trace::TraceContext &context) {
     return result;
 }
 
-nixl::trace::TraceContext
-nixl::trace::generateTraceContext() {
-    nixl::trace::TraceContext context;
-    do {
-        nixl::generateRandomBytes(context.traceId.data(), context.traceId.size());
-    } while (isAllZero(context.traceId));
-    context.flags = 0x02;
+std::optional<std::size_t>
+nixl::trace::encodeTraceContext(const nixl::trace::TraceContext &context,
+                                std::span<std::uint8_t> buffer) {
+    if (!context.valid() || buffer.size() < nixl::trace::traceContextWireSize) {
+        return std::nullopt;
+    }
 
-    do {
-        nixl::generateRandomBytes(context.spanId.data(), context.spanId.size());
-    } while (isAllZero(context.spanId));
+    buffer[0] = nixl::trace::traceContextWireVersion;
+    buffer[wire_flags_offset] = context.flags & supported_trace_flags;
+    std::copy(context.traceId.begin(),
+              context.traceId.end(),
+              buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset));
+    std::copy(context.spanId.begin(),
+              context.spanId.end(),
+              buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset));
+    return nixl::trace::traceContextWireSize;
+}
+
+nixl::trace::WireDecodeResult
+nixl::trace::decodeTraceContext(std::span<const std::uint8_t> buffer,
+                                nixl::trace::TraceContext &context) {
+    if (buffer.empty()) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+    if (buffer[0] != nixl::trace::traceContextWireVersion) {
+        return nixl::trace::WireDecodeResult::UnknownVersion;
+    }
+    if (buffer.size() != nixl::trace::traceContextWireSize) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+
+    context.flags = buffer[wire_flags_offset] & supported_trace_flags;
+    std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_trace_id_offset),
+                context.traceId.size(),
+                context.traceId.begin());
+    std::copy_n(buffer.begin() + static_cast<std::ptrdiff_t>(wire_span_id_offset),
+                context.spanId.size(),
+                context.spanId.begin());
+    if (!context.valid()) {
+        return nixl::trace::WireDecodeResult::Malformed;
+    }
+
+    return nixl::trace::WireDecodeResult::Ok;
+}
+
+bool
+nixl::trace::sampledByRatio(const nixl::trace::TraceContext &context, double ratio) noexcept {
+    if (!context.valid() || !(ratio > 0.0)) {
+        return false;
+    }
+
+    if (ratio >= 1.0) {
+        return true;
+    }
+
+    const double kept = std::round(ratio * two_pow_56);
+    // Subtract in integers: (1 - ratio) * two_pow_56 rounds to two_pow_56 for
+    // every ratio below 2^-53, which would turn small probabilities into never.
+    const auto threshold =
+        static_cast<std::uint64_t>(two_pow_56) - static_cast<std::uint64_t>(kept);
+    return traceIdRandomness(context) >= threshold;
+}
+
+double
+nixl::trace::resolveTraceSampleRatio() {
+    const auto spec =
+        nixl::config::getValueOptional<std::string>(std::string(nixl::trace::traceSampleRatioVar));
+    if (spec) {
+        if (spec->empty()) {
+            return 0.0;
+        }
+
+        const auto ratio = parseSampleRatio(*spec);
+        if (!ratio) {
+            throw std::invalid_argument(std::string(nixl::trace::traceSampleRatioVar) + "='" +
+                                        *spec + "' must be 0 or a number in [2^-56, 1]");
+        }
+        return *ratio;
+    }
+
+    const auto otel_spec = nixl::config::getValueOptional<std::string>(
+        std::string(nixl::trace::otelTracesSampleRatioVar));
+    if (!otel_spec || otel_spec->empty()) {
+        return 0.0;
+    }
+
+    const auto ratio = parseSampleRatio(*otel_spec);
+    if (!ratio) {
+        NIXL_WARN << "nixl::trace: ignoring " << nixl::trace::otelTracesSampleRatioVar << "='"
+                  << *otel_spec << "': not 0 or a number in [2^-56, 1]";
+        return 0.0;
+    }
+    return *ratio;
+}
+
+nixl::trace::TraceContext
+nixl::trace::generateTraceContext(double sample_ratio) {
+    nixl::trace::TraceContext context;
+    generateInto(context, sample_ratio);
     return context;
 }

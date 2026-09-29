@@ -287,10 +287,10 @@ RUN wget --tries=3 --waitretry=5 "https://static.rust-lang.org/rustup/archive/1.
     rm rustup-init && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-RUN wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host-3.3.0-088000_26.01_rhel8.${ARCH}.rpm -O doca-host.rpm && \
+RUN wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host-3.5.0-082000_26.07_rhel8.${ARCH}.rpm -O doca-host.rpm && \
     rpm -i doca-host.rpm && \
     dnf install -y libnl3-devel && \
-    cd /usr/share/doca-host-3.3.0/repo/Packages/ && \
+    cd /usr/share/doca-host-3.5.0/repo/Packages/ && \
     rpm -ivh --nodeps doca-sdk-common-*rpm && \
     rpm -ivh --nodeps doca-sdk-rdma-*rpm && \
     rpm -ivh --nodeps doca-sdk-verbs-*rpm && \
@@ -298,8 +298,8 @@ RUN wget --tries=3 --waitretry=5 https://www.mellanox.com/downloads/DOCA/DOCA_v3
     rpm -ivh --nodeps doca-sdk-telemetry-exporter-*rpm && \
     # CollectX provides libclx-api.pc, required (Requires.private) by
     # doca-telemetry-exporter.pc and needed to link the telemetry exporter plugin.
-    # These RPMs use a different naming scheme: collectx_<ver>-...-clxapi[dev].rpm
-    rpm -ivh --nodeps collectx_*rpm && \
+    # Pulls both collectx-clxapi and collectx-clxapidev.
+    rpm -ivh --nodeps collectx-clxapi*rpm && \
     # Check that gpunetio and telemetry-exporter development packages are installed correctly
     pkg-config --cflags --libs doca-gpunetio && \
     pkg-config --cflags --libs doca-telemetry-exporter
@@ -474,8 +474,8 @@ RUN if [ "$BUILD_INFINIA" = "true" ]; then \
 # gcc. Drop this once the plugin splits the compiler from its flags.
 ARG BUILD_UCX_SPCX_PLUGIN=false
 RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
-        rpm -ivh --nodeps /usr/share/doca-host-3.3.0/repo/Packages/flexio-sdk-*rpm && \
-        rpm -ivh --nodeps /usr/share/doca-host-3.3.0/repo/Packages/dpacc-[0-9]*rpm && \
+        rpm -ivh --nodeps /usr/share/doca-host-3.5.0/repo/Packages/flexio-sdk-*rpm && \
+        rpm -ivh --nodeps /usr/share/doca-host-3.5.0/repo/Packages/dpacc-[0-9]*rpm && \
         ldconfig && \
         cd ucx-spcx-plugin-src && \
         export ACLOCAL_PATH="/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}" && \
