@@ -49,7 +49,7 @@ namespace {
     };
 
     bool
-    initializeManagedFile(int fd, uint64_t size, size_t alignment, bool direct, std::ostream &err) {
+    initializeManagedFile(int fd, uint64_t size, bool direct, std::ostream &err) {
         if (ftruncate(fd, static_cast<off_t>(size)) != 0) {
             err << "Failed to resize managed file: " << strerror(errno) << '\n';
             return false;
@@ -57,11 +57,26 @@ namespace {
 
         const size_t chunk_size = std::min<size_t>(allocate_once_initialization_chunk, size);
         void *storage = nullptr;
-        const int allocation_status = posix_memalign(&storage, alignment, chunk_size);
-        if (allocation_status != 0 || storage == nullptr) {
-            err << "Failed to allocate managed-file initialization buffer: "
-                << strerror(allocation_status) << '\n';
-            return false;
+        if (direct) {
+            const long page_size = sysconf(_SC_PAGESIZE);
+            if (page_size <= 0) {
+                err << "Could not determine system page size for direct I/O\n";
+                return false;
+            }
+            const int allocation_status =
+                posix_memalign(&storage, static_cast<size_t>(page_size), chunk_size);
+            if (allocation_status != 0) {
+                err << "Failed to allocate managed-file initialization buffer: "
+                    << strerror(allocation_status) << '\n';
+                return false;
+            }
+        } else {
+            storage = malloc(chunk_size);
+            if (storage == nullptr) {
+                err << "Failed to allocate managed-file initialization buffer: " << strerror(errno)
+                    << '\n';
+                return false;
+            }
         }
         std::unique_ptr<void, decltype(&free)> chunk(storage, &free);
         memset(chunk.get(), XFERBENCH_TARGET_BUFFER_ELEMENT, chunk_size);
@@ -160,12 +175,6 @@ offsetSequence::next() {
 
 bool
 prepareAllocateOnceFiles(allocateOnceRequest &request, std::ostream &err) {
-    const long page_size_value = sysconf(_SC_PAGESIZE);
-    if (page_size_value <= 0) {
-        err << "Could not determine system page size\n";
-        return false;
-    }
-    const size_t alignment = static_cast<size_t>(page_size_value);
     std::set<std::pair<dev_t, ino_t>> identities;
     request.initializeFiles.assign(request.files.size(), false);
 
@@ -211,8 +220,7 @@ prepareAllocateOnceFiles(allocateOnceRequest &request, std::ostream &err) {
                         return false;
                     }
                     request.initializeFiles[index] = true;
-                } else if (!initializeManagedFile(
-                               fd, request.fileSize, alignment, request.direct, err)) {
+                } else if (!initializeManagedFile(fd, request.fileSize, request.direct, err)) {
                     return false;
                 }
             }
