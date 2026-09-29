@@ -5,7 +5,9 @@ description: Multi-threaded GPUDirect Storage backend for higher throughput on p
 
 ## Overview
 
-GDS_MT is the multi-threaded variant of the GDS backend. It uses the same NVIDIA cuFile API and hardware requirements as GDS but distributes I/O across multiple threads for higher throughput on parallel file operations.
+GDS_MT is a compatibility name for the same multi-threaded engine selected by `GDS` with `mode=mt`. It uses the same NVIDIA cuFile API and hardware requirements as GDS but distributes I/O across multiple threads for higher throughput on parallel file operations. The default behavior of `createBackend("GDS_MT")` remains unchanged.
+
+`GDS_MT` will be removed in a future update. New integrations should use `GDS` with `mode=mt`.
 
 | Property | Value |
 |----------|-------|
@@ -18,6 +20,14 @@ GDS_MT is the multi-threaded variant of the GDS backend. It uses the same NVIDIA
 GDS_MT shares the same prerequisites and installation requirements as the [GDS](/nixl/user-guide/backend-selection/gds) backend. See the [GDS Installation](/nixl/user-guide/backend-selection/gds#installation) section for prerequisites, cuFile verification, and build options.
 
 ## Configuration
+
+`GDS_MT` accepts only the multi-threaded engine configuration. The batch parameters documented for `GDS` do not apply.
+
+### Backend Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `thread_count` | `max(1, hardware concurrency / 2)` | Number of persistent TaskFlow workers. |
 
 ### Environment Variables
 
@@ -32,6 +42,5 @@ GDS_MT shares the same prerequisites and installation requirements as the [GDS](
 
 ## When to Use
 
-- **Parallel file operations** -- Distribute GPU-to-file I/O across multiple threads for higher aggregate throughput.
-- **Concurrent checkpoint writes** -- Write multiple GPU tensors to storage simultaneously.
-- **When single-threaded GDS does not saturate storage bandwidth** -- Switch to GDS_MT when a single I/O thread leaves storage bandwidth underutilized.
+- **Existing integrations using the compatibility name** -- `GDS_MT` continues to select the multi-threaded engine until the compatibility name is removed.
+- **New multi-threaded integrations** -- Use `GDS` with `mode=mt` instead of adopting `GDS_MT`.

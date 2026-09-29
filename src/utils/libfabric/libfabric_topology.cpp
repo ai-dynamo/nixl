@@ -30,12 +30,17 @@
 #include <rdma/fi_domain.h>
 
 #ifdef HAVE_CUDA
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#else
 #include <cuda_runtime.h>
+#endif
 #endif
 
 nixlLibfabricTopology::nixlLibfabricTopology()
     : num_aws_accel(0),
       num_nvidia_accel(0),
+      num_amd_accel(0),
       num_numa_nodes(0),
       num_devices(0),
       topology_discovered(false),
@@ -72,6 +77,18 @@ nixlLibfabricTopology::discoverTopology() {
         return status;
     }
 
+    // Discover accelerators from hwloc early, before provider selection. This lets
+    // the Neuron/EFA preflight (below) fire even when the libfabric provider falls
+    // back to tcp/sockets (see PR discussion on ai-dynamo/nixl#1994). The EFA path
+    // relies on num_aws_accel / num_nvidia_accel being populated for the preflight
+    // check; discoverHwlocTopology() skips its own discoverAccelWithHwloc() call
+    // because it was already made here.
+    status = discoverAccelWithHwloc();
+    if (status != NIXL_SUCCESS) {
+        NIXL_ERROR << "Failed to discover accelerators from hwloc";
+        return status;
+    }
+
     status = discoverProviderWithDevices();
     if (status != NIXL_SUCCESS) {
         return status;
@@ -100,8 +117,10 @@ nixlLibfabricTopology::discoverTopology() {
         // build nic info map regardless of accelerator to EFA / CXI mapping
         buildNicInfoMap();
 
+        neuronEfaPreflightForEfaProvider();
+
         // Build nVidia accelerator to EFA / CXI mapping based on PCIe topology
-        if (num_nvidia_accel > 0) {
+        if (num_nvidia_accel > 0 || num_amd_accel > 0) {
             status = buildAccelToEfaMapping();
             if (status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed to build accelerator to EFA / CXI mapping";
@@ -112,6 +131,8 @@ nixlLibfabricTopology::discoverTopology() {
         // For TCP/sockets devices, bypass complex topology discovery
         NIXL_INFO << "Using simplified topology for " << provider_name
                   << " devices (no topology mapping needed)";
+
+        neuronEfaPreflightForNonEfaProvider();
 
         // Set basic values without hwloc discovery
         num_nvidia_accel = 0; // TCP doesn't need accelerator topology
@@ -124,6 +145,90 @@ nixlLibfabricTopology::discoverTopology() {
     topology_discovered = true;
     NIXL_TRACE << "Topology discovery completed successfully";
     return NIXL_SUCCESS;
+}
+
+// Preflight: warn on Neuron-accelerator vs EFA-NIC count mismatches when the
+// libfabric EFA provider is selected. AWS Trainium instances that support DI
+// need one EFA NIC per Neuron device (e.g. 16 per-device EFA NICs on
+// trn2.48xlarge). Some smaller Neuron instance types (e.g. trn2.3xlarge) expose
+// only a single host-level EFA NIC and are not sufficient for FI_HMEM_NEURON
+// memory registration on all Neuron devices. Also, EFA-typed NICs must be
+// attached explicitly at instance launch time via
+// `--network-interfaces InterfaceType=efa`; the AWS default only attaches an
+// ENA NIC. Warn here so users see a clear diagnostic at plugin init rather than
+// a mysterious fi_mr_reg -EINVAL later during memory registration.
+//
+// Called from the EFA / CXI branch of discoverTopology(); returns without any
+// log message on CXI hosts, since Neuron devices don't coexist with CXI
+// (HPE Slingshot) interconnects.
+void
+nixlLibfabricTopology::neuronEfaPreflightForEfaProvider() {
+    if (provider_name != "efa") {
+        return;
+    }
+    if (!(num_aws_accel > 0 && num_nvidia_accel == 0)) {
+        return;
+    }
+    const size_t efa_nic_count = nic_info_map.size();
+    if (efa_nic_count == 0) {
+        NIXL_WARN << "Discovered " << num_aws_accel
+                  << " Neuron accelerator(s) but 0 EFA NIC(s) with usable PCIe topology; "
+                     "FI_HMEM_NEURON memory registration will fail. On AWS, launch the instance "
+                     "with EFA network interfaces attached (e.g. `--network-interfaces "
+                     "InterfaceType=efa` per NetworkCardIndex). On trn2.48xlarge attach 16 "
+                     "EFA NICs (one per Neuron device); on Trn3 attach the count matching the "
+                     "instance size. Instance types without any per-Neuron-device EFA "
+                     "(e.g. trn2.3xlarge, which exposes only a single host-level EFA) are not "
+                     "supported by the libfabric plugin for VRAM_SEG memory transfers.";
+    } else if (static_cast<int>(efa_nic_count) < num_aws_accel) {
+        NIXL_WARN << "Discovered " << num_aws_accel << " Neuron accelerator(s) but only "
+                  << efa_nic_count
+                  << " EFA NIC(s) with usable PCIe topology. Three cases: "
+                     "(1) trn1.32xlarge has 16 Neuron devices and 8 EFA NICs by design "
+                     "(2 Neurons share each EFA); if this is trn1.32xlarge, the plugin "
+                     "works and this warning can be ignored. "
+                     "(2) trn2.3xlarge (or a similar smaller Trn2 with only a single "
+                     "host-level EFA and no per-device EFA) cannot register Neuron device "
+                     "memory for RDMA; use trn2.48xlarge instead. "
+                     "(3) trn2.48xlarge or a larger Trn2/Trn3 instance launched without "
+                     "all EFA NICs attached: verify that all EFA network interfaces were "
+                     "attached at launch time via `--network-interfaces InterfaceType=efa` "
+                     "for each NetworkCardIndex (the AWS default attaches only an ENA NIC, "
+                     "not EFA). FI_HMEM_NEURON memory registration will fail for Neuron "
+                     "devices without a paired EFA NIC.";
+    } else if (static_cast<int>(efa_nic_count) > num_aws_accel &&
+               (static_cast<int>(efa_nic_count) % num_aws_accel) != 0) {
+        NIXL_WARN << "Discovered " << num_aws_accel << " Neuron accelerator(s) and "
+                  << efa_nic_count
+                  << " EFA NIC(s); NIC count is not a multiple of Neuron count, "
+                     "rail selection policy may be sub-optimal";
+    } else {
+        NIXL_INFO << "Neuron/EFA preflight: " << num_aws_accel << " Neuron device(s), "
+                  << efa_nic_count << " EFA NIC(s) (" << (efa_nic_count / num_aws_accel)
+                  << " NIC(s) per Neuron device)";
+    }
+}
+
+// Preflight for the TCP/sockets fallback with Neuron accelerators present: this
+// typically means the instance has Neuron devices but no EFA NIC was found
+// (either the instance type has no per-Neuron-device EFA, or it was launched
+// without any EFA-typed network interfaces). Called before num_aws_accel is
+// cleared in the TCP branch of discoverTopology().
+void
+nixlLibfabricTopology::neuronEfaPreflightForNonEfaProvider() {
+    if (!(num_aws_accel > 0 && num_nvidia_accel == 0)) {
+        return;
+    }
+    NIXL_WARN << "Discovered " << num_aws_accel
+              << " Neuron accelerator(s) but the libfabric provider selected `" << provider_name
+              << "` (no EFA). FI_HMEM_NEURON memory registration is not available on the `"
+              << provider_name
+              << "` provider. On AWS, launch the instance with EFA network interfaces attached "
+                 "(e.g. `--network-interfaces InterfaceType=efa` per NetworkCardIndex). On "
+                 "trn2.48xlarge attach 16 EFA NICs (one per Neuron device); on Trn3 attach the "
+                 "count matching the instance size. Instance types without any per-Neuron-device "
+                 "EFA (e.g. trn2.3xlarge, which exposes only a single host-level EFA) are not "
+                 "supported by the libfabric plugin for VRAM_SEG memory transfers.";
 }
 
 nixl_status_t
@@ -260,13 +365,14 @@ nixlLibfabricTopology::getNumaRailCount() const {
 void
 nixlLibfabricTopology::printTopologyInfo() const {
     NIXL_INFO << "Topology: " << num_numa_nodes << " NUMA nodes, " << num_devices << " NICs, "
-              << num_nvidia_accel << " NVIDIA GPUs, " << num_aws_accel << " AWS accelerators";
+              << num_nvidia_accel << " NVIDIA GPUs, " << num_amd_accel << " AMD GPUs, "
+              << num_aws_accel << " AWS accelerators";
     if (avg_nic_speed > 0) {
         NIXL_INFO << "Avg NIC bandwidth: " << avg_nic_speed << " Gbps";
     }
     NIXL_TRACE << "=== Libfabric Topology Information ===";
     NIXL_TRACE << "Topology discovered: " << (topology_discovered ? "Yes" : "No");
-    NIXL_TRACE << "Number of AWS accelerators: " << num_aws_accel;
+    NIXL_TRACE << "Number of AWS Neuron accelerators: " << num_aws_accel;
     NIXL_TRACE << "Number of NUMA nodes: " << num_numa_nodes;
     NIXL_TRACE << "Number of EFA devices: " << num_devices;
     NIXL_TRACE << "EFA devices: ";
@@ -383,13 +489,11 @@ nixlLibfabricTopology::discoverHwlocTopology() {
         NIXL_ERROR << "hwloc topology not initialized";
         return NIXL_ERR_BACKEND;
     }
-    // Discover accelerators and EFA devices using hwloc
-    nixl_status_t status = discoverAccelWithHwloc();
-    if (status != NIXL_SUCCESS) {
-        NIXL_ERROR << "Failed to discover accelerators with hwloc";
-        return status;
-    }
-    status = discoverRDMADevicesWithHwloc();
+    // Note: discoverAccelWithHwloc() is intentionally NOT called here. It is
+    // called earlier from discoverTopology(), before provider selection, so
+    // that num_aws_accel / num_nvidia_accel are available for the Neuron/EFA
+    // preflight in both the EFA and TCP-fallback paths.
+    nixl_status_t status = discoverRDMADevicesWithHwloc();
     if (status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to discover EFA devices with hwloc";
         return status;
@@ -408,33 +512,43 @@ nixl_status_t
 nixlLibfabricTopology::discoverAccelWithHwloc() {
     num_aws_accel = 0;
     num_nvidia_accel = 0;
+    num_amd_accel = 0;
     // Find all PCI devices and log detailed information
-    static const char *vendor_names[2] = {"NEURON", "NVIDIA"};
     hwloc_obj_t pci_obj = nullptr;
     while ((pci_obj = hwloc_get_next_pcidev(hwloc_topology, pci_obj)) != nullptr) {
         const bool is_nvidia_accel = isNvidiaAccel(pci_obj);
-        if (is_nvidia_accel || isNeuronAccel(pci_obj)) {
+        const bool is_neuron_accel = isNeuronAccel(pci_obj);
+        const bool is_amd_accel = isAmdAccel(pci_obj);
+
+        if (is_nvidia_accel || is_neuron_accel || is_amd_accel) {
             std::string pcie_addr = getPcieAddressFromHwlocObj(pci_obj);
             // Get device and vendor info
             uint16_t vendor_id = pci_obj->attr->pcidev.vendor_id;
             uint16_t device_id = pci_obj->attr->pcidev.device_id;
             uint16_t class_id = pci_obj->attr->pcidev.class_id;
 
-            NIXL_TRACE << "Found " << vendor_names[is_nvidia_accel] << " accelerator "
-                       << num_aws_accel << ": " << pcie_addr << " (vendor=" << std::hex << vendor_id
-                       << ", device=" << device_id << ", class=" << class_id << std::dec << ")";
+            const char *vendor_name = is_nvidia_accel ? "NVIDIA" : is_amd_accel ? "AMD" : "NEURON";
 
-            num_aws_accel++;
-            num_nvidia_accel += is_nvidia_accel;
+            NIXL_TRACE << "Found " << vendor_name << " accelerator: " << pcie_addr
+                       << " (vendor=" << std::hex << vendor_id << ", device=" << device_id
+                       << ", class=" << class_id << std::dec << ")";
+
+            if (is_nvidia_accel) {
+                num_nvidia_accel++;
+            } else if (is_amd_accel) {
+                num_amd_accel++;
+            } else {
+                num_aws_accel++;
+            }
         }
     }
 
-    NIXL_TRACE << "Discovered " << num_aws_accel << " "
-               << vendor_names[num_aws_accel == num_nvidia_accel] << " devices via hwloc";
+    NIXL_TRACE << "Discovered " << num_nvidia_accel << " NVIDIA, " << num_amd_accel << " AMD, and "
+               << num_aws_accel << " Neuron accelerators via hwloc";
 
     // If we found more than 8 NVIDIA accelerators on P5en, investigate further
     if (num_nvidia_accel > 8) {
-        NIXL_WARN << "Found " << num_aws_accel
+        NIXL_WARN << "Found " << num_nvidia_accel
                   << " NVIDIA accelerators, but P5en should have 8. Investigating...";
 
         // List all NVIDIA devices to understand what we're seeing
@@ -581,10 +695,10 @@ nixlLibfabricTopology::buildTopologyAwareGrouping() {
         discovered_nics.push_back(entry.second);
     }
 
-    // Step 2: Discover accelerators
+    // Step 2: Discover accelerators (NVIDIA and AMD)
     hwloc_obj_t pci_obj = nullptr;
     while ((pci_obj = hwloc_get_next_pcidev(hwloc_topology, pci_obj)) != nullptr) {
-        if (isNvidiaAccel(pci_obj)) {
+        if (isNvidiaAccel(pci_obj) || isAmdAccel(pci_obj)) {
             AccelInfo accel;
             accel.hwloc_node = pci_obj;
             accel.domain_id = pci_obj->attr->pcidev.domain;
@@ -764,6 +878,22 @@ nixlLibfabricTopology::isNeuronAccel(hwloc_obj_t obj) const {
     return std::find(std::begin(NEURON_DEVICE_IDS),
                      std::end(NEURON_DEVICE_IDS),
                      obj->attr->pcidev.device_id) != std::end(NEURON_DEVICE_IDS);
+}
+
+bool
+nixlLibfabricTopology::isAmdAccel(hwloc_obj_t obj) const {
+    if (!obj || obj->type != HWLOC_OBJ_PCI_DEVICE) {
+        return false;
+    }
+    // AMD vendor ID is 0x1002
+    if (obj->attr->pcidev.vendor_id != 0x1002) {
+        return false;
+    }
+    // Only count devices with GPU class (0x300-0x3ff for display controllers)
+    // Class 0x302 is 3D controller (GPU), 0x680 is other devices (network, etc.)
+    // MI300X uses class 0x1200 (Processing accelerators), consumer GPUs use 0x300-0x3ff
+    uint16_t class_id = obj->attr->pcidev.class_id;
+    return (class_id >= 0x300 && class_id < 0x400) || (class_id >= 0x1200 && class_id < 0x1300);
 }
 
 size_t

@@ -48,20 +48,28 @@ void ScopedEnv::addVar(const std::string &name, const std::string &value)
 }
 
 void
+ScopedEnv::unsetVar(const std::string &name) {
+    m_vars.emplace(name, std::nullopt);
+}
+
+void
 ScopedEnv::popVar() {
     m_vars.pop();
 }
 
-ScopedEnv::Variable::Variable(const std::string &name, const std::string &value)
-    : m_name(name)
-{
+ScopedEnv::Variable::Variable(const std::string &name, const std::optional<std::string> &value)
+    : m_name(name) {
     const char* backup = getenv(name.c_str());
 
     if (backup != nullptr) {
         m_prev_value = backup;
     }
 
-    setenv(name.c_str(), value.c_str(), 1);
+    if (value) {
+        setenv(name.c_str(), value->c_str(), 1);
+    } else {
+        unsetenv(name.c_str());
+    }
 }
 
 ScopedEnv::Variable::Variable(Variable &&other)

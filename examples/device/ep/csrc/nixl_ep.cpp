@@ -367,8 +367,7 @@ void Buffer::destroy() {
 }
 
 void Buffer::barrier() {
-    auto compute_stream = at::cuda::getCurrentCUDAStream();
-    ep_kernels::barrier(gpu_ctx_ptr, mask_buffer_ptr, timeout_cycles, compute_stream);
+    ep_kernels::barrier(gpu_ctx_ptr, mask_buffer_ptr, timeout_cycles, cuda_stream::get_current());
 }
 
 void Buffer::_nixl_agents_connect(const std::vector<int>& ranks, const std::vector<nixl_blob_t>& remote_mds) {
@@ -554,7 +553,7 @@ Buffer::get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts,
     auto compute_stream = at::cuda::getCurrentCUDAStream();
     if (allocate_on_comm_stream) {
         EP_HOST_ASSERT(previous_event.has_value() and async);
-        at::cuda::setCurrentCUDAStream(comm_stream);
+        cuda_stream::set_current(comm_stream);
     }
 
     // Wait previous tasks to be finished
@@ -601,7 +600,7 @@ Buffer::get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts,
 
     // Switch back compute stream
     if (allocate_on_comm_stream)
-        at::cuda::setCurrentCUDAStream(compute_stream);
+        cuda_stream::set_current(compute_stream);
 
     return {num_tokens_per_rank, num_tokens_per_rdma_rank, num_tokens_per_expert, is_token_in_rank, event};
 }
@@ -710,7 +709,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
     auto compute_stream = at::cuda::getCurrentCUDAStream();
     if (allocate_on_comm_stream) {
         EP_HOST_ASSERT(previous_event.has_value() and async);
-        at::cuda::setCurrentCUDAStream(comm_stream);
+        cuda_stream::set_current(comm_stream);
     }
 
     // Wait previous tasks to be finished
@@ -881,7 +880,7 @@ Buffer::ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& 
 
     // Switch back compute stream
     if (allocate_on_comm_stream)
-        at::cuda::setCurrentCUDAStream(compute_stream);
+        cuda_stream::set_current(compute_stream);
 
     // Return values
     return {recv_x, recv_x_scales, recv_topk_idx, recv_topk_weights, num_recv_tokens_per_expert_list,
@@ -930,7 +929,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
     auto compute_stream = at::cuda::getCurrentCUDAStream();
     if (allocate_on_comm_stream) {
         EP_HOST_ASSERT(previous_event.has_value() and async);
-        at::cuda::setCurrentCUDAStream(comm_stream);
+        cuda_stream::set_current(comm_stream);
     }
 
     // Wait previous tasks to be finished
@@ -1015,7 +1014,7 @@ Buffer::ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& t
 
     // Switch back compute stream
     if (allocate_on_comm_stream)
-        at::cuda::setCurrentCUDAStream(compute_stream);
+        cuda_stream::set_current(compute_stream);
 
     // Return values
     return {combined_x, combined_topk_weights, event};
@@ -1064,8 +1063,8 @@ Buffer::dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,
 
     // Wait previous tasks to be finished
     // NOTES: the hook mode will always use the default stream
-    auto compute_stream = at::cuda::getCurrentCUDAStream();
-    auto launch_stream = return_recv_hook ? compute_stream : comm_stream;
+    cudaStream_t compute_stream = cuda_stream::get_current();
+    cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream.stream();
     EP_HOST_ASSERT(not (async and return_recv_hook));
     if (not return_recv_hook)
         stream_wait(launch_stream, compute_stream);
@@ -1184,8 +1183,8 @@ Buffer::combine(const torch::Tensor& x, const torch::Tensor& topk_idx, const tor
 
     // Wait previous tasks to be finished
     // NOTES: the hook mode will always use the default stream
-    auto compute_stream = at::cuda::getCurrentCUDAStream();
-    auto launch_stream = return_recv_hook ? compute_stream : comm_stream;
+    cudaStream_t compute_stream = cuda_stream::get_current();
+    cudaStream_t launch_stream = return_recv_hook ? compute_stream : comm_stream.stream();
     EP_HOST_ASSERT(not (async and return_recv_hook));
     if (not return_recv_hook)
         stream_wait(launch_stream, compute_stream);
@@ -1274,7 +1273,7 @@ void Buffer::update_mask_buffer(int rank_to_mask, bool mask) {
     _nixl_ep_memory_views_commit();
     active_ranks[rank_to_mask] = !mask;
     _refresh_active_rank_bound();
-    ep_kernels::update_mask_buffer(mask_buffer_ptr, rank_to_mask, mask, at::cuda::getCurrentCUDAStream());
+    ep_kernels::update_mask_buffer(mask_buffer_ptr, rank_to_mask, mask, cuda_stream::get_current());
 }
 
 void
@@ -1286,7 +1285,7 @@ Buffer::query_mask_buffer(const torch::Tensor &mask_status) const {
     ep_kernels::query_mask_buffer(mask_buffer_ptr,
                                   max_num_ranks,
                                   mask_status.data_ptr<int>(),
-                                  at::cuda::getCurrentCUDAStream());
+                                  cuda_stream::get_current());
 }
 
 void Buffer::clean_mask_buffer() {
@@ -1301,7 +1300,7 @@ void Buffer::clean_mask_buffer() {
     _refresh_active_rank_bound();
     CUDA_CHECK(cudaMemcpyAsync(mask_buffer_ptr, mask.data(),
                                max_num_ranks * sizeof(int), cudaMemcpyHostToDevice,
-                               at::cuda::getCurrentCUDAStream()));
+                               cuda_stream::get_current()));
 }
 
 std::string Buffer::get_local_metadata() const {
