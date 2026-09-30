@@ -15,10 +15,16 @@
  * limitations under the License.
  */
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <cerrno>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <thread>
 #include <random>
 #include "nixl.h"
 #include "common.h"
+#include "common/scoped_fd.h"
 
 // Used to avoid failures when etcd is not available
 #if HAVE_ETCD
@@ -138,11 +144,9 @@ protected:
 
     void TearDown() override
     {
-        for (auto &agent : agents_) {
-            if (agent.agent) {
-                agent.agent->invalidateLocalMD(nullptr);
-            }
-        }
+        // Destroying an agent does not require invalidating its metadata, so the
+        // fixture does not do it: a test that publishes metadata invalidates it
+        // through the same route it published on.
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         agents_.clear();
     }
@@ -443,6 +447,60 @@ TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
     ASSERT_NE(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 }
 
+TEST_F(MetadataExchangeTestFixture, SocketExchangeIPv6) {
+    nixl::scopedFd fd(socket(AF_INET6, SOCK_STREAM, 0));
+    if (!fd.valid() &&
+        (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT || errno == EACCES || errno == EPERM)) {
+        GTEST_SKIP() << "IPv6 is unavailable";
+    }
+    ASSERT_TRUE(fd.valid());
+    const int v6only = 0;
+    const int option_result =
+        setsockopt(fd.get(), IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
+    if (option_result < 0 && errno == ENOPROTOOPT) {
+        GTEST_SKIP() << "Dual-stack IPv6 sockets are unavailable";
+    }
+    ASSERT_EQ(option_result, 0);
+
+    sockaddr_in6 loopback{};
+    loopback.sin6_family = AF_INET6;
+    loopback.sin6_addr = in6addr_loopback;
+    const int bind_result =
+        bind(fd.get(), reinterpret_cast<sockaddr *>(&loopback), sizeof(loopback));
+    const int bind_error = errno;
+    fd.reset();
+    if (bind_result < 0 &&
+        (bind_error == EADDRNOTAVAIL || bind_error == EADDRINUSE || bind_error == EACCES ||
+         bind_error == EPERM)) {
+        GTEST_SKIP() << "IPv6 loopback is unavailable";
+    }
+    ASSERT_EQ(bind_result, 0);
+
+    initAgentsDefault();
+
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+    nixl_opt_args_t args;
+    args.ipAddr = "::1";
+    args.port = src.port;
+
+    ASSERT_EQ(dst.agent->fetchRemoteMD(src.name, &args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+    const auto scope_id = if_nametoindex("lo");
+    ASSERT_NE(scope_id, 0);
+    args.ipAddr = "::1%" + std::to_string(scope_id);
+    ASSERT_EQ(dst.agent->sendLocalMD(&args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ASSERT_EQ(src.agent->checkRemoteMD(dst.name, {DRAM_SEG}), NIXL_SUCCESS);
+
+    args.port = dst.port;
+    ASSERT_EQ(src.agent->invalidateLocalMD(&args), NIXL_SUCCESS);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
+}
+
 TEST_F(MetadataExchangeTestFixture, SocketSendPartialLocal) {
     initAgentsDefault();
 
@@ -497,6 +555,12 @@ TEST_F(MetadataExchangeTestFixture, SocketSendPartialLocal) {
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, valid_descs.trim()), NIXL_SUCCESS);
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, invalid_descs.trim()), NIXL_ERR_NOT_FOUND);
+
+    ASSERT_EQ(src.agent->invalidateLocalMD(&send_args), NIXL_SUCCESS);
+
+    std::this_thread::sleep_for(sleep_time);
+
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
@@ -550,11 +614,21 @@ TEST_F(MetadataExchangeTestFixture, LocalNonLocalMDExchange) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
 
+    std::vector<nixl_backend_t> plugins;
+    ASSERT_EQ(src.agent->getAvailPlugins(plugins), NIXL_SUCCESS);
+
     nixl_status_t status = NIXL_ERR_NOT_FOUND;
     nixlBackendH *backend;
     std::string backend_name;
     for (const auto& name : std::set<std::string>{"GDS", "POSIX"}) {
-        const LogIgnoreGuard lig1("Error initializing GPU Direct Storage driver");
+        // Requesting a backend the plugin manager does not list warns once per
+        // plugin directory and then reports an unsupported backend, so only ask
+        // for the local-only plugins it actually found.
+        if (std::find(plugins.begin(), plugins.end(), name) == plugins.end()) {
+            continue;
+        }
+
+        const LogIgnoreGuard lig1("GDS: error initializing GPU Direct Storage driver");
         const LogIgnoreGuard lig2("createBackend: backend initialization error for 'GDS'");
         status = src.agent->createBackend(name, {}, backend);
         if (status == NIXL_SUCCESS) {
@@ -632,10 +706,6 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalAndFetchRemote) {
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
         EXPECT_EQ(lig2.getIgnoredCount(), 1);
     }
-
-    // Prevent invalidateLocalMD() from begin called again in TearDown()
-    // (which would generate more undesired warning/error log messages).
-    src.agent.reset();
 }
 
 TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemote) {
@@ -725,10 +795,6 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemote) {
     std::this_thread::sleep_for(sleep_time);
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, valid_descs.trim()), NIXL_ERR_NOT_FOUND);
-
-    // Prevent invalidateLocalMD() from begin called again in TearDown()
-    // (which would generate more undesired warning/error log messages).
-    src.agent.reset();
 }
 
 TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors) {
@@ -789,6 +855,9 @@ TEST_F(MetadataExchangeTestFixture, EtcdSendLocalPartialAndFetchRemoteWithErrors
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
         EXPECT_EQ(lig2.getIgnoredCount(), 1);
     }
+
+    // Remove the label published in case 2, so the agent name is reusable.
+    ASSERT_EQ(src.agent->invalidateLocalMD(), NIXL_SUCCESS);
 }
 
 } // namespace metadata_exchange

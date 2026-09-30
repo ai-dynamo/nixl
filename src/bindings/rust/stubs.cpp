@@ -397,6 +397,20 @@ nixl_capi_opt_args_get_notif_msg(nixl_capi_opt_args_t args, void **data, size_t 
 }
 
 nixl_capi_status_t
+nixl_capi_opt_args_set_custom_param(nixl_capi_opt_args_t args, const void *data, size_t len) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_opt_args_t, const void *, size_t);
+    static fn_t real = (fn_t)resolve("nixl_capi_opt_args_set_custom_param");
+    return real(args, data, len);
+}
+
+nixl_capi_status_t
+nixl_capi_opt_args_get_custom_param(nixl_capi_opt_args_t args, void **data, size_t *len) {
+    using fn_t = nixl_capi_status_t (*)(nixl_capi_opt_args_t, void **, size_t *);
+    static fn_t real = (fn_t)resolve("nixl_capi_opt_args_get_custom_param");
+    return real(args, data, len);
+}
+
+nixl_capi_status_t
 nixl_capi_opt_args_set_has_notif(nixl_capi_opt_args_t args, bool has_notif) {
     using fn_t = nixl_capi_status_t (*)(nixl_capi_opt_args_t, bool);
     static fn_t real = (fn_t)resolve("nixl_capi_opt_args_set_has_notif");

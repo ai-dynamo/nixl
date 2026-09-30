@@ -846,7 +846,9 @@ class Buffer:
         Arguments:
             remote_ranks: List of remote rank IDs to establish connections with.
                          The current rank will be automatically filtered out.
-            activate: in low-latency mode, if False, keep newly connected ranks masked until update_mask_buffer(..., False).
+            activate: in low-latency mode, if False, keep newly connected ranks
+                masked until update_mask_buffer(..., False). Concurrent execution
+                is supported only with dispatch and combine.
         """
         if self.low_latency_mode:
             if self.tcp_store_group is not None:
