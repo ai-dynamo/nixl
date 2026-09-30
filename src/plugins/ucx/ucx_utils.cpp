@@ -21,6 +21,7 @@
 #include <array>
 #include <cstring>
 #include <exception>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -43,92 +44,91 @@ get_ucx_backend_common_options() {
     return params;
 }
 
+namespace {
+
+template<typename E> struct EnumName {
+    E value;
+    std::string_view name;
+};
+
+constexpr auto ucx_err_handling_mode_names = std::to_array<EnumName<ucp_err_handling_mode_t>>({
+    {UCP_ERR_HANDLING_MODE_NONE, "none"},
+    {UCP_ERR_HANDLING_MODE_PEER, "peer"},
+});
+
+constexpr auto ucx_vram_memtype_hint_names = std::to_array<EnumName<nixl_ucx_vram_memtype_hint_t>>({
+    {nixl_ucx_vram_memtype_hint_t::AUTO, "auto"},
+    {nixl_ucx_vram_memtype_hint_t::NONE, "none"},
+    {nixl_ucx_vram_memtype_hint_t::CUDA, "cuda"},
+    {nixl_ucx_vram_memtype_hint_t::CUDA_MANAGED, "cuda-managed"},
+    {nixl_ucx_vram_memtype_hint_t::ROCM, "rocm"},
+    {nixl_ucx_vram_memtype_hint_t::ZE_DEVICE, "ze-device"},
+});
+
+template<typename E, std::size_t N>
+[[nodiscard]] constexpr std::optional<E>
+enumFromString(const std::array<EnumName<E>, N> &table, std::string_view s) {
+    const auto it = std::ranges::find(table, s, &EnumName<E>::name);
+    return it != table.end() ? std::optional<E>(it->value) : std::nullopt;
+}
+
+template<typename E, std::size_t N>
+[[nodiscard]] constexpr std::optional<std::string_view>
+enumToString(const std::array<EnumName<E>, N> &table, E v) {
+    const auto it = std::ranges::find(table, v, &EnumName<E>::value);
+    return it != table.end() ? std::optional<std::string_view>(it->name) : std::nullopt;
+}
+
+// Formats the names in a table as "<a|b|c>" for error messages.
+template<typename E, std::size_t N>
+[[nodiscard]] std::string
+enumNames(const std::array<EnumName<E>, N> &table) {
+    std::string names = "<";
+    for (const auto &entry : table) {
+        if (names.size() > 1) {
+            names += '|';
+        }
+        names += entry.name;
+    }
+    return names + '>';
+}
+
+} // namespace
+
 [[nodiscard]] std::string_view
 ucx_err_mode_to_string(ucp_err_handling_mode_t t) {
-    switch (t) {
-    case UCP_ERR_HANDLING_MODE_NONE:
-        return "none";
-    case UCP_ERR_HANDLING_MODE_PEER:
-        return "peer";
-    default:
-        throw std::invalid_argument(std::to_string(t));
+    if (const auto name = enumToString(ucx_err_handling_mode_names, t)) {
+        return *name;
     }
+    throw std::invalid_argument(std::to_string(t));
 }
 
 [[nodiscard]] ucp_err_handling_mode_t
 ucx_err_mode_from_string(std::string_view s) {
-    constexpr std::array<ucp_err_handling_mode_t, 2> nixl_ucx_err_handling_modes = {
-        UCP_ERR_HANDLING_MODE_NONE,
-        UCP_ERR_HANDLING_MODE_PEER,
-    };
-
-    for (const auto mode : nixl_ucx_err_handling_modes) {
-        if (ucx_err_mode_to_string(mode) == s) {
-            return mode;
-        }
+    if (const auto mode = enumFromString(ucx_err_handling_mode_names, s)) {
+        return *mode;
     }
-
-    std::stringstream err_msg;
-    err_msg << "Invalid error handling mode: " << s << ". Valid values are: <";
-    for (size_t i = 0; i < nixl_ucx_err_handling_modes.size(); ++i) {
-        err_msg << ucx_err_mode_to_string(nixl_ucx_err_handling_modes[i]);
-        if (i < nixl_ucx_err_handling_modes.size() - 1) {
-            err_msg << "|";
-        }
-    }
-
-    err_msg << ">";
-    throw std::invalid_argument(err_msg.str());
+    throw std::invalid_argument("Invalid error handling mode: " + std::string(s) +
+                                ". Valid values are: " + enumNames(ucx_err_handling_mode_names));
 }
 
 [[nodiscard]] std::string_view
 ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t t) {
-    switch (t) {
-    case nixl_ucx_vram_memtype_hint_t::AUTO:
-        return "auto";
-    case nixl_ucx_vram_memtype_hint_t::NONE:
-        return "none";
-    case nixl_ucx_vram_memtype_hint_t::CUDA:
-        return ucs_memory_type_names[UCS_MEMORY_TYPE_CUDA];
-    case nixl_ucx_vram_memtype_hint_t::CUDA_MANAGED:
-        return ucs_memory_type_names[UCS_MEMORY_TYPE_CUDA_MANAGED];
-    case nixl_ucx_vram_memtype_hint_t::ROCM:
-        return ucs_memory_type_names[UCS_MEMORY_TYPE_ROCM];
-    case nixl_ucx_vram_memtype_hint_t::ZE_DEVICE:
-        return ucs_memory_type_names[UCS_MEMORY_TYPE_ZE_DEVICE];
+    if (const auto name = enumToString(ucx_vram_memtype_hint_names, t)) {
+        return *name;
     }
     throw std::invalid_argument(std::to_string(static_cast<int>(t)));
 }
 
 [[nodiscard]] nixl_ucx_vram_memtype_hint_t
 ucx_vram_memtype_hint_from_string(std::string_view s) {
-    constexpr std::array<nixl_ucx_vram_memtype_hint_t, 6> hint_modes = {
-        nixl_ucx_vram_memtype_hint_t::AUTO,
-        nixl_ucx_vram_memtype_hint_t::NONE,
-        nixl_ucx_vram_memtype_hint_t::CUDA,
-        nixl_ucx_vram_memtype_hint_t::CUDA_MANAGED,
-        nixl_ucx_vram_memtype_hint_t::ROCM,
-        nixl_ucx_vram_memtype_hint_t::ZE_DEVICE,
-    };
-
-    for (const auto hint_mode : hint_modes) {
-        const auto mode_name = ucx_vram_memtype_hint_to_string(hint_mode);
-        if (mode_name == s) {
-            return hint_mode;
-        }
+    if (const auto hint = enumFromString(ucx_vram_memtype_hint_names, s)) {
+        return *hint;
     }
-
-    std::stringstream err_msg;
-    err_msg << "Invalid VRAM memtype hint mode: " << s
-            << ". Matching is case-sensitive; use exact values. Valid values are: <";
-    for (size_t i = 0; i < hint_modes.size(); ++i) {
-        err_msg << ucx_vram_memtype_hint_to_string(hint_modes[i]);
-        if (i < hint_modes.size() - 1) {
-            err_msg << "|";
-        }
-    }
-    err_msg << ">";
-    throw std::invalid_argument(err_msg.str());
+    throw std::invalid_argument(
+        "Invalid VRAM memtype hint mode: " + std::string(s) +
+        ". Matching is case-sensitive; use exact values. Valid values are: " +
+        enumNames(ucx_vram_memtype_hint_names));
 }
 
 static void
@@ -634,8 +634,6 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
     }
 
     ctx.reset(new_ctx);
-
-    // ctx is released by its deleter if this throws, so no manual cleanup is needed here.
     resolveMemoryTypeConfig();
 }
 
@@ -665,20 +663,8 @@ nixlUcxContext::resolveMemoryTypeConfig() {
     };
 
     const auto status = ucp_context_query(ctx.get(), &context_attr);
-    if (status != UCS_OK) {
-        if (vramMemTypeHintPolicy_ != nixl_ucx_vram_memtype_hint_t::AUTO &&
-            vramMemTypeHintPolicy_ != nixl_ucx_vram_memtype_hint_t::NONE) {
-            throw std::runtime_error(
-                "Failed to query UCX context memory types: " +
-                std::string(ucs_status_string(status)) +
-                ". This query is required for explicit ucx_vram_memtype_hint='" +
-                std::string(ucx_vram_memtype_hint_to_string(vramMemTypeHintPolicy_)) + "'");
-        }
-
-        NIXL_WARN << "Failed to query UCX context memory types: " << ucs_status_string(status)
-                  << ", VRAM memory type hinting will be disabled";
-        return;
-    }
+    NIXL_ASSERT_ALWAYS(status == UCS_OK)
+        << "Failed to query UCX context memory types: " << ucs_status_string(status);
 
     supportedMemoryTypesMask_ = context_attr.memory_types;
 

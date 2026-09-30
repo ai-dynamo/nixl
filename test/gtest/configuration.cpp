@@ -347,7 +347,6 @@ namespace {
         env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
 
         nixlAgentConfig cfg;
-        cfg.useProgThread = true;
         nixlAgent agent("ucx_vram_memtype_hint_" + hint, cfg);
 
         std::vector<nixl_backend_t> plugins;
