@@ -41,15 +41,17 @@ for ver in ${branches}; do
     continue
   fi
 
-  # The nightly always passes --build-options-file (and the plugin flags), so a
-  # release whose build-container.sh predates them fails at option parsing.
-  # Skip it rather than fan out builds that cannot succeed; release branches cut
-  # from main after that change pass on their own.
-  if ! git show "origin/release/${ver}:contrib/build-container.sh" 2>/dev/null \
-       | grep -q -- '--build-options-file'; then
-    echo "release/${ver}: build-container.sh predates --build-options-file, skipping"
-    continue
-  fi
+  # The nightly always passes --build-options-file and --ucx-spcx-plugin-install,
+  # so a release whose build-container.sh predates either fails at option
+  # parsing. Skip it rather than fan out builds that cannot succeed; release
+  # branches cut from main after each change pass on their own.
+  release_bcs="$(git show "origin/release/${ver}:contrib/build-container.sh" 2>/dev/null || true)"
+  for opt in --build-options-file --ucx-spcx-plugin-install; do
+    if ! printf '%s' "${release_bcs}" | grep -q -- "${opt}"; then
+      echo "release/${ver}: build-container.sh predates ${opt}, skipping"
+      continue 2
+    fi
+  done
 
   # repo/path/name are mandatory in any items .include() - Artifactory rejects
   # the query without them ("for permissions reasons").
