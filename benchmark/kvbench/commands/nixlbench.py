@@ -13,8 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import shlex
+
 from models.model_config import ModelConfig
 from models.models import BaseModelArch
+
+
+def _flag_args(name, value):
+    # gflags reads a boolean flag without a value: "--flag false" would enable it.
+    if isinstance(value, bool):
+        return [f"--{name}"] if value else [f"--no{name}"]
+    return [f"--{name}", f"{value}"]
 
 
 class NIXLBench:
@@ -74,6 +83,9 @@ class NIXLBench:
         obj_use_virtual_addressing=False,
         obj_endpoint_override="",
         obj_req_checksum="supported",
+        obj_accelerated_enable=False,
+        obj_accelerated_type="",
+        backend_params="",
         # Additional nixlbench arguments
         large_blk_iter_ftr=16,
         recreate_xfer=False,
@@ -128,6 +140,10 @@ class NIXLBench:
             obj_use_virtual_addressing (bool, optional): Use virtual addressing for OBJ/S3. Defaults to False.
             obj_endpoint_override (str, optional): Endpoint override for OBJ/S3. Defaults to "".
             obj_req_checksum (str, optional): Required checksum for OBJ/S3. Defaults to "supported".
+            obj_accelerated_enable (bool, optional): Use an accelerated OBJ engine. Defaults to False.
+            obj_accelerated_type (str, optional): Accelerated OBJ engine to use. Defaults to "".
+            backend_params (str, optional): Backend parameters as "key=value;key=value", applied over
+                the ones nixlbench sets. Defaults to "".
             large_blk_iter_ftr (int, optional): Factor to reduce iterations for large blocks. Defaults to 16.
         """
         self.model = model
@@ -176,6 +192,9 @@ class NIXLBench:
         self.obj_use_virtual_addressing = obj_use_virtual_addressing
         self.obj_endpoint_override = obj_endpoint_override
         self.obj_req_checksum = obj_req_checksum
+        self.obj_accelerated_enable = obj_accelerated_enable
+        self.obj_accelerated_type = obj_accelerated_type
+        self.backend_params = backend_params
         self.large_blk_iter_ftr = large_blk_iter_ftr
         self.recreate_xfer = recreate_xfer
         self._override_defaults()
@@ -354,6 +373,9 @@ class NIXLBench:
             "obj_use_virtual_addressing": self.obj_use_virtual_addressing,
             "obj_endpoint_override": self.obj_endpoint_override,
             "obj_req_checksum": self.obj_req_checksum,
+            "obj_accelerated_enable": self.obj_accelerated_enable,
+            "obj_accelerated_type": self.obj_accelerated_type,
+            "backend_params": self.backend_params,
             # Additional nixlbench parameters
             "large_blk_iter_ftr": self.large_blk_iter_ftr,
             "recreate_xfer": self.recreate_xfer,
@@ -415,6 +437,9 @@ class NIXLBench:
             "obj_use_virtual_addressing": False,
             "obj_endpoint_override": "",
             "obj_req_checksum": "supported",
+            "obj_accelerated_enable": False,
+            "obj_accelerated_type": "",
+            "backend_params": "",
             # Additional nixlbench defaults
             "large_blk_iter_ftr": 16,
             "recreate_xfer": False,
@@ -455,7 +480,9 @@ class NIXLBench:
         else:  # for text format, exclude defaults to keep command concise
             for name, value in params.items():
                 if should_include(name, value):
-                    command_parts.append(f"--{name} {value}")
+                    command_parts.append(
+                        " ".join(shlex.quote(arg) for arg in _flag_args(name, value))
+                    )
 
             command = " \\\n    ".join(command_parts)
             return command
@@ -485,6 +512,5 @@ class NIXLBench:
         params = self._params()
         for name, value in params.items():
             if should_include(name, value):
-                command_parts.append(f"--{name}")
-                command_parts.append(f"{value}")
+                command_parts.extend(_flag_args(name, value))
         return subprocess.run(command_parts, capture_output=False, env=env)

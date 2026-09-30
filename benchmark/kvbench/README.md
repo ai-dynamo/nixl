@@ -311,6 +311,9 @@ These arguments are used by both `plan` and `profile` commands:
 | `--storage_enable_direct` | Enable direct I/O for storage operations |
 | `--filepath` | File path for storage operations |
 | `--enable_vmm` | Enable VMM memory allocation when DRAM is requested |
+| `--obj_accelerated_enable` | Use an accelerated OBJ engine (only used with OBJ backend) |
+| `--obj_accelerated_type` | Accelerated OBJ engine to use, e.g. `scality_ai_connector` (only used with OBJ backend) |
+| `--backend_params` | Backend parameters passed to the plugin as given, over the ones nixlbench sets: `'key=value;key=value'` |
 
 ### CTP Command Arguments
 
