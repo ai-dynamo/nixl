@@ -639,9 +639,7 @@ isTcpPortOpen(const std::string &host, int port) {
         return false;
     }
 
-    struct timeval tv {
-        0, 200000
-    };
+    struct timeval tv{0, 200000};
 
     ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     sockaddr_in addr{};
