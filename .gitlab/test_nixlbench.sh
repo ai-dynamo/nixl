@@ -133,14 +133,30 @@ done
 #     done
 # fi
 
+run_nixlbench_two_workers_gpunetio() {
+    local benchmark_group port0 port1 command_line
+    benchmark_group=$(get_random_tcp_port)-$$
+    port0=$(get_random_tcp_port)
+    port1=$(get_random_tcp_port)
+    while [ "$port0" = "$port1" ]; do
+        port1=$(get_random_tcp_port)
+    done
+    command_line="timeout --signal=INT --kill-after=15s 180s ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
+    # Each local worker owns its listener; never share an SO_REUSEPORT endpoint.
+    # Bound a failed case even if its peer is still waiting for a notification.
+    parallel --line-buffer --halt now,fail=1 ::: \
+        "$command_line --gpunetio_oob_port=$port0" \
+        "sleep 4 ; $command_line --gpunetio_oob_port=$port1"
+}
+
 if $HAS_GPU ; then
-	for op_type in READ WRITE; do
-	    for initiator in $seg_types; do
-	        for target in $seg_types; do
-	            run_nixlbench_two_workers_etcd --backend GPUNETIO --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
-	        done
-	    done
-	done
+    for op_type in READ WRITE; do
+        for initiator in $seg_types; do
+            for target in $seg_types; do
+                run_nixlbench_two_workers_gpunetio --backend GPUNETIO --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+            done
+        done
+    done
 fi
 
 kill -9 $ETCD_PID 2>/dev/null || true
