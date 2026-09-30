@@ -249,14 +249,6 @@ nixlRedisKVEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    if (local.descCount() == 0 || local.descCount() != remote.descCount()) {
-        NIXL_ERROR << absl::StrFormat(
-            "Invalid transfer descriptor counts for Redis postXfer (%d local, %d remote)",
-            local.descCount(),
-            remote.descCount());
-        return NIXL_ERR_INVALID_PARAM;
-    }
-
     if (!redisClient_) {
         return NIXL_ERR_BACKEND;
     }
