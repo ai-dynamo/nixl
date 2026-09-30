@@ -54,13 +54,16 @@ public:
     explicit ScalityObjEngineImpl(const nixlBackendInitParams *init_params);
 
     /**
-     * Constructor that accepts an injected REST client (for testing).
+     * Constructor that accepts injected clients (for testing).
      *
      * @param init_params Backend initialization parameters
-     * @param connector_client Pre-configured client (can be mock for testing)
+     * @param connector_client Pre-configured REST client (can be mock for testing)
+     * @param descriptor_provider RDMA descriptor provider used instead of the DC one
+     *                            built from the NIC list; null builds the DC one
      */
     ScalityObjEngineImpl(const nixlBackendInitParams *init_params,
-                         std::shared_ptr<iRestClient> connector_client);
+                         std::shared_ptr<iRestClient> connector_client,
+                         std::shared_ptr<iRdmaDescriptorProvider> descriptor_provider = nullptr);
 
     nixl_mem_list_t
     getSupportedMems() const override {

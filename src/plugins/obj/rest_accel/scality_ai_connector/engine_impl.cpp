@@ -277,8 +277,11 @@ public:
 ScalityObjEngineImpl::ScalityObjEngineImpl(const nixlBackendInitParams *init_params)
     : ScalityObjEngineImpl(init_params, nullptr) {}
 
-ScalityObjEngineImpl::ScalityObjEngineImpl(const nixlBackendInitParams *init_params,
-                                           std::shared_ptr<iRestClient> connector_client) {
+ScalityObjEngineImpl::ScalityObjEngineImpl(
+    const nixlBackendInitParams *init_params,
+    std::shared_ptr<iRestClient> connector_client,
+    std::shared_ptr<iRdmaDescriptorProvider> descriptor_provider)
+    : descriptorProvider_(std::move(descriptor_provider)) {
     if (connector_client) {
         connectorClient_ = connector_client;
     } else {
