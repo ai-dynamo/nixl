@@ -1209,8 +1209,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 
             len = iov.len;
 
-            if (xferBenchConfig::isStorageBackend() ||
-                xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO) {
+            if (xferBenchConfig::isStorageBackend()) {
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
                         if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
