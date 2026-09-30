@@ -474,6 +474,8 @@ TEST_F(redisEngineTest, PollsReadUntilClientCompletes) {
     EXPECT_EQ(engine_->postXfer(NIXL_READ, local, remote, initParams_.localAgent, handle, nullptr),
               NIXL_IN_PROG);
     EXPECT_EQ(mockClient_->getKeys(), (std::vector<std::string>{"read-key"}));
+    EXPECT_EQ(mockClient_->getAddrs()[0], reinterpret_cast<uintptr_t>(buffer.data()));
+    EXPECT_EQ(mockClient_->getLens()[0], buffer.size());
     EXPECT_EQ(engine_->checkXfer(handle), NIXL_IN_PROG);
     mockClient_->completePending(NIXL_SUCCESS);
     EXPECT_EQ(engine_->checkXfer(handle), NIXL_SUCCESS);
