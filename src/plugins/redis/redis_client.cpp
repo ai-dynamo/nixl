@@ -208,11 +208,11 @@ struct CallbackContext {
 // Slot: one async TCP connection on the shared event loop.
 struct RedisConnectionPool::Slot {
     RedisConnectionPool *pool = nullptr;
-    redisAsyncContext   *asyncCtx = nullptr;
-    std::atomic<bool>    connected{false};
-    std::atomic<bool>    initDone{false};
-    std::atomic<bool>    initSucceeded{false};
-    std::atomic<int>     inFlight{0};
+    redisAsyncContext *asyncCtx = nullptr;
+    std::atomic<bool> connected{false};
+    std::atomic<bool> initDone{false};
+    std::atomic<bool> initSucceeded{false};
+    std::atomic<int> inFlight{0};
     // asyncCtx is freed by RedisConnectionPool::stopEventLoop on the event loop thread
 };
 
@@ -268,9 +268,10 @@ RedisConnectionPool::RedisConnectionPool(RedisConfig config) : config_(std::move
         }
     }
 
-    const bool allOk = std::all_of(slots_.begin(), slots_.end(), [](const std::unique_ptr<Slot> &s) {
-        return s->initSucceeded.load();
-    });
+    const bool allOk =
+        std::all_of(slots_.begin(), slots_.end(), [](const std::unique_ptr<Slot> &s) {
+            return s->initSucceeded.load();
+        });
     if (!allOk) {
         stopEventLoop();
         throw std::runtime_error("Failed to initialize one or more Redis connections in pool");
@@ -288,11 +289,15 @@ RedisConnectionPool::RedisConnectionPool(RedisConfig config) : config_(std::move
 
     NIXL_INFO << absl::StrFormat(
         "Redis connection pool ready: %d connections at %s:%d (db=%d, workers=%d)",
-        N, config_.host, config_.port, config_.db, N);
+        N,
+        config_.host,
+        config_.port,
+        config_.db,
+        N);
 }
 
 RedisConnectionPool::~RedisConnectionPool() {
-    stopEventLoop();  // no new callbacks after this; no new work enters the queue
+    stopEventLoop(); // no new callbacks after this; no new work enters the queue
     {
         std::lock_guard<std::mutex> lock(workMutex_);
         stopWorkers_.store(true);
@@ -357,14 +362,10 @@ RedisConnectionPool::connectSyncContext() {
     }
 
     if (!config_.password.empty()) {
-        redisReply *reply =
-            config_.username.empty() ?
-                static_cast<redisReply *>(
-                    redisCommand(syncCtx_, "AUTH %s", config_.password.c_str())) :
-                static_cast<redisReply *>(redisCommand(syncCtx_,
-                                                       "AUTH %s %s",
-                                                       config_.username.c_str(),
-                                                       config_.password.c_str()));
+        redisReply *reply = config_.username.empty() ?
+            static_cast<redisReply *>(redisCommand(syncCtx_, "AUTH %s", config_.password.c_str())) :
+            static_cast<redisReply *>(redisCommand(
+                syncCtx_, "AUTH %s %s", config_.username.c_str(), config_.password.c_str()));
         if (!checkRedisReplyOk(reply, "AUTH")) {
             freeReplyObject(reply);
             redisFree(syncCtx_);
@@ -489,16 +490,14 @@ RedisConnectionPool::startSlotAuth(Slot &slot) {
         startSlotSelect(slot);
         return;
     }
-    const int ret =
-        config_.username.empty() ?
-            redisAsyncCommand(
-                slot.asyncCtx, authCallback, &slot, "AUTH %s", config_.password.c_str()) :
-            redisAsyncCommand(slot.asyncCtx,
-                              authCallback,
-                              &slot,
-                              "AUTH %s %s",
-                              config_.username.c_str(),
-                              config_.password.c_str());
+    const int ret = config_.username.empty() ?
+        redisAsyncCommand(slot.asyncCtx, authCallback, &slot, "AUTH %s", config_.password.c_str()) :
+        redisAsyncCommand(slot.asyncCtx,
+                          authCallback,
+                          &slot,
+                          "AUTH %s %s",
+                          config_.username.c_str(),
+                          config_.password.c_str());
     if (ret != REDIS_OK) {
         NIXL_ERROR << "Failed to queue Redis AUTH command";
         completeSlotInit(slot, false);
@@ -610,7 +609,8 @@ RedisConnectionPool::getCallback(redisAsyncContext *c, void *reply, void *privda
         if (!size_ok) {
             NIXL_ERROR << absl::StrFormat(
                 "Redis GET size mismatch: expected %zu bytes, got %zu bytes",
-                ctx->data_len, reply_len);
+                ctx->data_len,
+                reply_len);
         }
         // zero-length success or null data_ptr: resolve on event loop (no copy needed)
         auto promise_ptr = ctx->promise_ptr;
@@ -649,8 +649,9 @@ RedisConnectionPool::leastLoadedHealthySlot() {
         if (!s->connected.load()) {
             continue;
         }
-        if (!best || s->inFlight.load(std::memory_order_relaxed) <
-                         best->inFlight.load(std::memory_order_relaxed)) {
+        if (!best ||
+            s->inFlight.load(std::memory_order_relaxed) <
+                best->inFlight.load(std::memory_order_relaxed)) {
             best = s.get();
         }
     }
@@ -773,8 +774,8 @@ RedisConnectionPool::checkKeyExistsSync(std::string_view key) {
         return std::nullopt;
     }
 
-    redisReply *reply = static_cast<redisReply *>(
-        redisCommand(syncCtx_, "EXISTS %b", key.data(), key.size()));
+    redisReply *reply =
+        static_cast<redisReply *>(redisCommand(syncCtx_, "EXISTS %b", key.data(), key.size()));
 
     if (!reply) {
         NIXL_ERROR << "Redis EXISTS: no reply";

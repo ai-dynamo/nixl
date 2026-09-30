@@ -96,7 +96,7 @@ public:
     checkKeyExistsSync(std::string_view key) override;
 
 private:
-    struct Slot;  // defined in redis_client.cpp
+    struct Slot; // defined in redis_client.cpp
 
     bool
     scheduleOnEventLoop(std::function<void()> task);
@@ -135,17 +135,17 @@ private:
     static void
     getCallback(redisAsyncContext *c, void *reply, void *privdata);
 
-    event_base              *eventBase_ = nullptr;
-    std::thread              eventLoopThread_;
+    event_base *eventBase_ = nullptr;
+    std::thread eventLoopThread_;
     std::vector<std::unique_ptr<Slot>> slots_;
-    redisContext            *syncCtx_ = nullptr;
-    mutable std::mutex       syncMutex_;
+    redisContext *syncCtx_ = nullptr;
+    mutable std::mutex syncMutex_;
     std::vector<std::thread> workers_;
     std::queue<std::function<void()>> workQueue_;
-    std::mutex               workMutex_;
-    std::condition_variable  workCv_;
-    std::atomic<bool>        stopWorkers_{false};
-    RedisConfig              config_;
+    std::mutex workMutex_;
+    std::condition_variable workCv_;
+    std::atomic<bool> stopWorkers_{false};
+    RedisConfig config_;
 };
 
 #endif // NIXL_SRC_PLUGINS_REDIS_REDIS_CLIENT_H
