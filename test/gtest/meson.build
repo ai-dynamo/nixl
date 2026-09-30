@@ -204,6 +204,17 @@ if nixl_trace_nvtx_enabled
     endif
 endif
 
+if enabled_plugins.get('GPUNETIO') and cuda_dep.found()
+    gpunetio_cuda_context_test = executable(
+        'gpunetio_cuda_context_test',
+        'plugins/gpunetio/gpunetio_cuda_context_test.cpp',
+        include_directories: include_directories('../../src/plugins/gpunetio'),
+        dependencies: [cuda_dep, dependency('threads')],
+        install: true,
+    )
+    test('gpunetio_cuda_context', gpunetio_cuda_context_test, is_parallel: false)
+endif
+
 if get_option('b_sanitize').split(',').contains('thread')
     test_env = environment()
     test_env.set('TSAN_OPTIONS', 'halt_on_error=1')

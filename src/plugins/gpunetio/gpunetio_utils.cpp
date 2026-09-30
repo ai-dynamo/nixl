@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -384,11 +384,13 @@ threadProgressFunc(void *arg) {
         NIXL_INFO << "Server: client connected at IP: " << inet_ntoa(client_addr.sin_addr)
                   << " and port: " << ntohs(client_addr.sin_port) << std::endl;
 
-        // cuCtxSetCurrent(eng->main_cuda_ctx);
-
         eng->recvRemoteAgentName(oob_sock_client, remote_agent);
 
-        eng->addRdmaQp(remote_agent);
+        const auto qp_status = eng->addRdmaQp(remote_agent);
+        if (qp_status != NIXL_SUCCESS && qp_status != NIXL_IN_PROG) {
+            close(oob_sock_client);
+            continue;
+        }
         eng->nixlDocaInitNotif(remote_agent, eng->ddev, eng->gdevs[0].second);
         eng->connectServerRdmaQp(oob_sock_client, remote_agent);
         close(oob_sock_client);
