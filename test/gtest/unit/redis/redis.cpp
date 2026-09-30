@@ -6,15 +6,21 @@
 #include <gtest/gtest.h>
 
 #include "redis_backend.h"
+#include "redis_client.h"
 
+#include <arpa/inet.h>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <deque>
 #include <future>
 #include <memory>
+#include <netinet/in.h>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -599,6 +605,92 @@ TEST_F(redisEngineTest, PostXferDoesNotDispatchPartialCommandsWhenLaterKeyIsMiss
 
     EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
     EXPECT_EQ(engine_->deregisterMem(registeredMetadata), NIXL_SUCCESS);
+}
+
+// ---------------------------------------------------------------------------
+// RedisConnectionPool tests
+// ---------------------------------------------------------------------------
+
+static bool isTcpPortOpen(const char *host, int port) {
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return false;
+    }
+    struct timeval tv{0, 200000};
+    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    ::inet_pton(AF_INET, host, &addr.sin_addr);
+    bool ok = (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
+    ::close(fd);
+    return ok;
+}
+
+TEST(redisPoolTest, ConstructorThrowsWhenServerUnavailable) {
+    // Port 19379 is unlikely to have anything listening; connection-refused fires
+    // immediately on loopback so the 1-second init timeout is not needed.
+    RedisConfig config;
+    config.host = "127.0.0.1";
+    config.port = 19379;
+    config.pool_size = 1;
+    EXPECT_THROW(RedisConnectionPool(std::move(config)), std::runtime_error);
+}
+
+TEST(redisPoolTest, PutGetRoundtrip) {
+    if (!isTcpPortOpen("127.0.0.1", 6379)) {
+        GTEST_SKIP() << "No Redis server at 127.0.0.1:6379";
+    }
+    RedisConfig config;
+    config.host = "127.0.0.1";
+    config.port = 6379;
+    config.pool_size = 2;
+    RedisConnectionPool pool(std::move(config));
+
+    constexpr std::string_view kKey = "nixl-pool-test-roundtrip";
+    constexpr size_t kLen = 64;
+    std::array<uint8_t, kLen> src{}, dst{};
+    for (size_t i = 0; i < kLen; ++i) {
+        src[i] = static_cast<uint8_t>(i);
+    }
+
+    auto put_p = std::make_shared<std::promise<nixl_status_t>>();
+    auto put_f = put_p->get_future();
+    pool.putKeyAsync(kKey, reinterpret_cast<uintptr_t>(src.data()), kLen, put_p);
+    ASSERT_EQ(put_f.get(), NIXL_SUCCESS);
+
+    auto get_p = std::make_shared<std::promise<nixl_status_t>>();
+    auto get_f = get_p->get_future();
+    pool.getKeyAsync(kKey, reinterpret_cast<uintptr_t>(dst.data()), kLen, get_p);
+    ASSERT_EQ(get_f.get(), NIXL_SUCCESS);
+
+    EXPECT_EQ(src, dst);
+}
+
+TEST(redisPoolTest, CheckKeyExistsSyncAfterPut) {
+    if (!isTcpPortOpen("127.0.0.1", 6379)) {
+        GTEST_SKIP() << "No Redis server at 127.0.0.1:6379";
+    }
+    RedisConfig config;
+    config.host = "127.0.0.1";
+    config.port = 6379;
+    config.pool_size = 1;
+    RedisConnectionPool pool(std::move(config));
+
+    constexpr std::string_view kKey = "nixl-pool-test-exists";
+    const uint8_t val = 42;
+    auto p = std::make_shared<std::promise<nixl_status_t>>();
+    auto f = p->get_future();
+    pool.putKeyAsync(kKey, reinterpret_cast<uintptr_t>(&val), sizeof(val), p);
+    ASSERT_EQ(f.get(), NIXL_SUCCESS);
+
+    auto present = pool.checkKeyExistsSync(kKey);
+    ASSERT_TRUE(present.has_value());
+    EXPECT_TRUE(*present);
+
+    auto absent = pool.checkKeyExistsSync("nixl-pool-test-definitely-absent-xyz");
+    ASSERT_TRUE(absent.has_value());
+    EXPECT_FALSE(*absent);
 }
 
 } // namespace gtest::redis
