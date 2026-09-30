@@ -63,11 +63,16 @@ binarySizeTransform() {
 
 void
 addFileOptions(CLI::App &command, fileOptions &options) {
-    command.add_option("--path", options.path, "Directory for automatically named files")
-        ->group("FILE_SEG resource options");
-    command.add_option("--filenames", options.filenames, "Comma-separated explicit file names")
-        ->group("FILE_SEG resource options");
+    auto *path =
+        command.add_option("--path", options.path, "Directory for automatically named files")
+            ->group("FILE_SEG resource options");
+    auto *filenames =
+        command.add_option("--filenames", options.filenames, "Comma-separated explicit file names")
+            ->group("FILE_SEG resource options");
+    path->excludes(filenames);
+    filenames->excludes(path);
     command.add_option("--num-files", options.numFiles, "Number of backing files")
+        ->check(CLI::PositiveNumber)
         ->group("FILE_SEG resource options");
     command.add_flag("--direct", options.direct, "Use direct file opening")
         ->group("FILE_SEG resource options");

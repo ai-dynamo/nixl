@@ -293,7 +293,7 @@ namespace {
                                       "/tmp",
                                       "--filenames",
                                       "/tmp/a"};
-        expect_failure(mixed_ownership, "mutually exclusive");
+        expect_failure(mixed_ownership, "--path excludes --filenames");
 
         testArguments unsupported_memory{"nixlbench",
                                          "scenario",
