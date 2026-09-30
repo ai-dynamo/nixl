@@ -43,18 +43,31 @@ env:
   UCX_TLS: "^shm"
   STORAGE_DRIVER: 'overlay'
   CI_IMAGE_TAG: "CI_MANAGED"
+  # Lets the image builds clone third-party deps from github.com as svc-nixl:
+  # anonymous clones get an intermittent HTTP 401. ci-demo builds these images
+  # outside any step, so the token is bound around matrix.main() in the Jenkinsfile.
+  DOCKER_BUILDKIT: 1
+
+# ci-demo builds the images below outside any step, so a per-step `credentials:`
+# entry never reaches them. This hook does run as a real `sh` step inside the
+# withCredentials block wrapping matrix.main(), which is the only place the token
+# is reliably visible; the secret is then handed to `docker build` as a file.
+pipeline_on_image_build:
+  run: |
+    . .ci/scripts/common.sh
+    write_github_gitconfig "${WORKSPACE}/.ghconfig"
 
 runs_on_dockers:
   # TSan-instrumented dependency image for the tsan build (DEPS_SANITIZE=thread
   # so abseil's absl::Mutex annotations are visible to ThreadSanitizer).
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-ci-test-sanitizers-base-tsan", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=thread'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=thread --secret id=ghconfig,src=${WORKSPACE}/.ghconfig --build-arg REQUIRE_GITHUB_AUTH=1'
     }
   # ASan-instrumented dependency image for the asan_ubsan build.
   - {
      file: '.ci/dockerfiles/Dockerfile.base', name: "nixl-ci-test-sanitizers-base-asan", tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=address'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --pull --no-cache --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg DEPS_SANITIZE=address --secret id=ghconfig,src=${WORKSPACE}/.ghconfig --build-arg REQUIRE_GITHUB_AUTH=1'
     }
 
 matrix:

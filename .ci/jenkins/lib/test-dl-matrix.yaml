@@ -57,6 +57,10 @@ env:
   # Auto-derived and patched by cidemo-init.sh at CI time from the CI source files;
   # the "CI_MANAGED" placeholder must not be hand-edited.
   CI_IMAGE_TAG: "CI_MANAGED"
+  # Lets the image builds clone third-party deps from github.com as svc-nixl:
+  # anonymous clones get an intermittent HTTP 401. ci-demo builds these images
+  # outside any step, so the token is bound around matrix.main() in the Jenkinsfile.
+  DOCKER_BUILDKIT: 1
 
 empty_volumes:
   - {mountPath: /var/lib/containers/storage, memory: false}
@@ -65,13 +69,22 @@ pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
 # Docker images for DL testing
+# ci-demo builds the images below outside any step, so a per-step `credentials:`
+# entry never reaches them. This hook does run as a real `sh` step inside the
+# withCredentials block wrapping matrix.main(), which is the only place the token
+# is reliably visible; the secret is then handed to `docker build` as a file.
+pipeline_on_image_build:
+  run: |
+    . .ci/scripts/common.sh
+    write_github_gitconfig "${WORKSPACE}/.ghconfig"
+
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
      name: 'nixl-ci-dl-gpu-base',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghconfig,src=${WORKSPACE}/.ghconfig --build-arg REQUIRE_GITHUB_AUTH=1'
     }
 
   - {

@@ -243,6 +243,20 @@ if [ -n "$EFA_VERSION" ]; then
 fi
 BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
 
+# Authenticate the third-party github.com clones in the Dockerfiles. github.com
+# answers anonymous clones with an intermittent HTTP 401, and unauthenticated
+# requests are budgeted per source IP, which CI shares with the whole cluster.
+# Passed as an env-sourced build secret, mounted only for the RUN steps that clone
+# and never reaching a layer. url.insteadOf rather than a netrc: git only consults
+# ~/.netrc from 2.35 onwards, so on git 2.34 a netrc is ignored outright.
+# Unset, those clones stay anonymous.
+GITHUB_SECRET_ARGS=""
+if [ -n "${NIXL_GITHUB_TOKEN:-}" ]; then
+    export NIXL_GITHUB_GITCONFIG="[url \"https://${NIXL_GITHUB_USER:-x-access-token}:${NIXL_GITHUB_TOKEN}@github.com/\"]
+	insteadOf = https://github.com/"
+    GITHUB_SECRET_ARGS="--secret id=ghconfig,env=NIXL_GITHUB_GITCONFIG"
+fi
+
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $GITHUB_SECRET_ARGS $TAG $NO_CACHE $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain

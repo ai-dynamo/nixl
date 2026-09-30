@@ -51,6 +51,12 @@ credentials:
     usernameVariable: 'NIXL_GITLAB_USER'
     passwordVariable: 'NIXL_GITLAB_TOKEN'
   # Paired with NIXL_GITLAB_TOKEN; only read on the spcx path.
+  # Authenticates the third-party github.com clones inside the image builds;
+  # anonymous clones get an intermittent 401 and share a per-IP budget with the
+  # whole cluster. Public-repo read only.
+  - credentialsId: 'svc-nixl-github-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
   - credentialsId: 'ucx-plugin-gitlab-url'
     type: 'string'
     variable: 'NIXL_SPCX_PLUGIN_REPO_URL'
@@ -126,7 +132,13 @@ steps:
   - name: Build NIXLBench
     enable: ${ENABLE_NIXLBENCH_BUILD}
     containerSelector: "{name: 'podman'}"
+    credentialsId:
+      - 'svc-nixl-github-token'
     run: |
+      # Authenticate this clone too: it runs on the agent, outside the image build
+      # that mounts the token as a build secret.
+      . .ci/scripts/common.sh
+      setup_github_auth
       # Clone UCX source for nixlbench
       git clone https://github.com/openucx/ucx.git ucx-src
       git -C ucx-src checkout "${UCX_SHA}"
@@ -147,6 +159,7 @@ steps:
     credentialsId:
       - 'svc-nixl-gitlab-token'
       - 'ucx-plugin-gitlab-url'
+      - 'svc-nixl-github-token'
     run: |
       export UCX_REF="${UCX_SHA}"
 

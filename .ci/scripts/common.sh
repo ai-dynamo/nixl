@@ -152,3 +152,67 @@ start_etcd_server() {
 
     wait_for_etcd
 }
+
+# github.com answers anonymous clones with an intermittent HTTP 401
+# (www-authenticate: Basic realm="GitHub"). Without a credential git cannot act on
+# it: it tries to prompt, finds no TTY, and dies as "could not read Username".
+# Given one it just retries the request authenticated.
+#
+# Write a git config that authenticates github.com to $1, empty when no token is
+# available. Used by the ci-demo `pipeline_on_image_build` hook: that hook runs as a
+# real `sh` step, where a withCredentials binding is reliably present, unlike
+# ci-demo's Groovy-level `env:` templating which cannot see one.
+#
+# url.insteadOf rather than a netrc because git only consults ~/.netrc from 2.35
+# onwards - on git 2.34 (Ubuntu 22.04, which build-matrix.yaml still builds) a netrc
+# is ignored outright and the clone stays anonymous.
+write_github_gitconfig() {
+    local dest="$1"
+
+    # Tracing goes off before the token is ever expanded.
+    local restore_xtrace=""
+    case "$-" in
+        *x*) restore_xtrace=1; set +x ;;
+    esac
+
+    : > "${dest}"
+    chmod 600 "${dest}"
+    if [ -n "${NIXL_GITHUB_TOKEN:-}" ]; then
+        printf '[url "https://%s:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' \
+            "${NIXL_GITHUB_USER:-x-access-token}" "${NIXL_GITHUB_TOKEN}" > "${dest}"
+    fi
+
+    if [ -n "${restore_xtrace}" ]; then
+        set -x
+    fi
+
+    if [ -s "${dest}" ]; then
+        echo "write_github_gitconfig: wrote credential to ${dest}"
+    else
+        echo "write_github_gitconfig: no NIXL_GITHUB_TOKEN; ${dest} left empty (clones stay anonymous)"
+    fi
+}
+
+# The CI-agent path, where the token arrives as an env var rather than a mounted
+# secret. Uses GIT_CONFIG_COUNT/KEY/VALUE (git 2.31+) rather than writing
+# ~/.gitconfig: it is additive, so it neither misses auth when a config already
+# exists nor destroys one that does - CI writes `git config --global --add
+# safe.directory` on the agent, which a file-based helper would skip behind or
+# delete. Exported with tracing off so the token never reaches the log.
+setup_github_auth() {
+    local restore_xtrace=""
+    case "$-" in
+        *x*) restore_xtrace=1; set +x ;;
+    esac
+
+    if [ -n "${NIXL_GITHUB_TOKEN:-}" ]; then
+        local n="${GIT_CONFIG_COUNT:-0}"
+        export "GIT_CONFIG_KEY_${n}=url.https://${NIXL_GITHUB_USER:-x-access-token}:${NIXL_GITHUB_TOKEN}@github.com/.insteadOf"
+        export "GIT_CONFIG_VALUE_${n}=https://github.com/"
+        export GIT_CONFIG_COUNT=$((n + 1))
+    fi
+
+    if [ -n "${restore_xtrace}" ]; then
+        set -x
+    fi
+}
