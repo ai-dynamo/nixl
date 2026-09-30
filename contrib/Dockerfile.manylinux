@@ -110,6 +110,9 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     gcc-toolset-14 \
     libaio \
     libaio-devel \
+    hiredis-devel \
+    libevent-devel \
+    redis \
     libtool-ltdl \
     ninja-build \
     openssl \
