@@ -393,6 +393,10 @@ private:
     buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
+    // Whether NIXL_LOG_LEVEL is DEBUG or TRACE, the levels at which nixlbench
+    // prints a line per object.
+    static bool
+    debugEnabled();
     static void
     setRT(xferBenchRT *rt);
     static void
