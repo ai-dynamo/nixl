@@ -30,6 +30,7 @@
 #else
 struct event_base;
 struct redisAsyncContext;
+struct redisContext;
 #endif
 
 /** Resolved Redis connection settings. Explicit backend parameters override environment values. */

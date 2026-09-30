@@ -80,14 +80,36 @@ getRedisPort(const nixl_b_params_t *custom_params) {
     return 6379;
 }
 
+std::optional<int>
+parseRedisDB(const std::string &value, const char *source) {
+    try {
+        size_t parsed = 0;
+        int val = std::stoi(value, &parsed);
+        if (parsed != value.size() || val < 0) {
+            NIXL_WARN << absl::StrFormat("Invalid %s value '%s', using default 0", source, value);
+            return std::nullopt;
+        }
+        return val;
+    }
+    catch (const std::exception &) {
+        NIXL_WARN << absl::StrFormat("Invalid %s value '%s', using default 0", source, value);
+        return std::nullopt;
+    }
+}
+
 int
 getRedisDB(const nixl_b_params_t *custom_params) {
     if (custom_params && custom_params->count("db") > 0) {
-        try {
-            return std::stoi(custom_params->at("db"));
+        auto val = parseRedisDB(custom_params->at("db"), "db");
+        if (val) {
+            return *val;
         }
-        catch (const std::exception &) {
-            NIXL_WARN << "Invalid db value, using default 0";
+    }
+    const char *env_val = std::getenv("REDIS_DB");
+    if (env_val) {
+        auto val = parseRedisDB(env_val, "REDIS_DB");
+        if (val) {
+            return *val;
         }
     }
     return 0;
@@ -195,7 +217,9 @@ struct RedisConnectionPool::Slot {
 };
 
 RedisConnectionPool::RedisConnectionPool(RedisConfig config) : config_(std::move(config)) {
-    evthread_use_pthreads();
+    if (evthread_use_pthreads() != 0) {
+        throw std::runtime_error("evthread_use_pthreads() failed");
+    }
 
     eventBase_ = event_base_new();
     if (!eventBase_) {

@@ -77,8 +77,9 @@ Each setting is resolved in this precedence order:
 
 An explicitly provided string value, including an empty username or password, takes precedence
 over its environment fallback. Port values that fail validation fall through to `REDIS_PORT` and
-then to `6379`; database parse failures fall back to `0`. The logical database currently has no
-environment fallback. Invalid `pool_size` values fall back to `8`.
+then to `6379`; database parse failures fall back to `REDIS_DB` and then to `0`; trailing
+garbage (e.g. `"2x"`) and negative values are rejected at each stage. Invalid `pool_size`
+values fall back to `8`.
 
 | Parameter | Environment fallback | Default | Description |
 |-----------|----------------------|---------|-------------|
@@ -86,7 +87,7 @@ environment fallback. Invalid `pool_size` values fall back to `8`.
 | `port` | `REDIS_PORT` | `6379` | Redis TCP port |
 | `username` | `REDIS_USERNAME` | empty | Redis ACL username |
 | `password` | `REDIS_PASSWORD` | empty | Redis AUTH password |
-| `db` | none | `0` | Redis logical database |
+| `db` | `REDIS_DB` | `0` | Redis logical database (must be ≥ 0) |
 | `pool_size` | `REDIS_POOL_SIZE` | `8` | Number of concurrent Redis connections |
 
 Authentication behavior is determined by the resolved credentials:

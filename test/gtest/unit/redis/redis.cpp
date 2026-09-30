@@ -27,6 +27,7 @@ public:
         save("REDIS_PORT", port_);
         save("REDIS_USERNAME", username_);
         save("REDIS_PASSWORD", password_);
+        save("REDIS_DB", db_);
         save("REDIS_POOL_SIZE", pool_size_);
     }
 
@@ -35,6 +36,7 @@ public:
         restore("REDIS_PORT", port_);
         restore("REDIS_USERNAME", username_);
         restore("REDIS_PASSWORD", password_);
+        restore("REDIS_DB", db_);
         restore("REDIS_POOL_SIZE", pool_size_);
     }
 
@@ -44,6 +46,7 @@ public:
         unsetenv("REDIS_PORT");
         unsetenv("REDIS_USERNAME");
         unsetenv("REDIS_PASSWORD");
+        unsetenv("REDIS_DB");
         unsetenv("REDIS_POOL_SIZE");
     }
 
@@ -68,6 +71,7 @@ private:
     std::optional<std::string> port_;
     std::optional<std::string> username_;
     std::optional<std::string> password_;
+    std::optional<std::string> db_;
     std::optional<std::string> pool_size_;
 };
 
@@ -158,6 +162,31 @@ TEST(redisConfigTest, TrailingGarbagePoolSizeFallsBackToDefault) {
     nixl_b_params_t params = {{"pool_size", "4x"}};
     const auto config = RedisConfig::fromBackendParams(&params);
     EXPECT_EQ(config.pool_size, 8);
+}
+
+TEST(redisConfigTest, EnvVarSetsDB) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    setenv("REDIS_DB", "3", 1);
+    nixl_b_params_t params;
+    const auto config = RedisConfig::fromBackendParams(&params);
+    EXPECT_EQ(config.db, 3);
+}
+
+TEST(redisConfigTest, TrailingGarbageDBFallsBackToDefault) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    nixl_b_params_t params = {{"db", "2x"}};
+    const auto config = RedisConfig::fromBackendParams(&params);
+    EXPECT_EQ(config.db, 0);
+}
+
+TEST(redisConfigTest, NegativeDBFallsBackToDefault) {
+    scopedRedisEnvironment environment;
+    environment.clear();
+    nixl_b_params_t params = {{"db", "-1"}};
+    const auto config = RedisConfig::fromBackendParams(&params);
+    EXPECT_EQ(config.db, 0);
 }
 
 class mockRedisClient : public iRedisClient {
