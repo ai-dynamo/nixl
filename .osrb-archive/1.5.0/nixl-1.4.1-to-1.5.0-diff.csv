@@ -1,5 +1,0 @@
-change_type,Language,package,old_version,new_version,old_license,License,source_url,license_url,Branch
-VERSION_CHANGED,Python,nixl,1.4.1,1.5.0,Apache-2.0,Apache-2.0,https://github.com/ai-dynamo/nixl,https://github.com/ai-dynamo/nixl/blob/HEAD/LICENSE,release/1.5.0
-VERSION_CHANGED,Python,nixl-cu12,1.4.1,1.5.0,Apache-2.0,Apache-2.0,https://github.com/ai-dynamo/nixl,https://github.com/ai-dynamo/nixl/blob/HEAD/LICENSE,release/1.5.0
-VERSION_CHANGED,Python,nixl-cu13,1.4.1,1.5.0,Apache-2.0,Apache-2.0,https://github.com/ai-dynamo/nixl,https://github.com/ai-dynamo/nixl/blob/HEAD/LICENSE,release/1.5.0
-VERSION_CHANGED,cpp,ucx,1.22.x,1.23.x,BSD3,BSD3,https://github.com/openucx/ucx/,https://github.com/openucx/ucx/blob/master/LICENSE,release/1.5.0
