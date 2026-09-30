@@ -369,7 +369,29 @@ credential is bound.
 
 `build-wheel-matrix.yaml` needs nothing: it passes `--wheel-base-image`, which skips the
 `wheel_base` stage that holds the manylinux clones. That base, and `Dockerfile.base`,
-are built by ci-demo and are not covered here.
+are built by ci-demo; see the next section.
+
+## Authenticated clones in ci-demo-built images
+
+ci-demo builds the images declared with `file:` in a matrix (`Dockerfile.base`,
+the manylinux `wheel_base`) outside any step. github.com intermittently answers
+anonymous clones with an HTTP 401, which git reports as `could not read Username for
+'https://github.com'` — the missing terminal git tried to prompt on, not DNS.
+
+- Each such `runs_on_dockers` entry sets `credentialsId: 'svc-nixl-github-read-only-token'`,
+  which ci-demo binds around that image's build.
+- `pipeline_on_image_build` calls `write_github_gitconfig /tmp/ghconfig`
+  (`.ci/scripts/common.sh`) in the build pod: a git config whose
+  `http.https://github.com/.extraheader` authenticates every github.com request
+  (tracing off, mode 600), or an empty file when nothing is bound.
+- The entry's `build_args` pass it as `--secret id=ghconfig,src=/tmp/ghconfig`, and
+  `Dockerfile.base` mounts it at `${_HOME}/.gitconfig` (`mode=0444`, non-root user)
+  on the `build.sh` and vLLM `RUN`s. It never lands in a layer or `podman history`.
+  `GIT_TERMINAL_PROMPT=0` is an `ARG`, so it does not persist into the image.
+
+An unbound or empty secret leaves the clones anonymous, as before. A revoked, expired
+or org-blocked token, however, fails every github.com clone in these builds, since the
+header is sent on every request.
 
 ## Related docs
 
