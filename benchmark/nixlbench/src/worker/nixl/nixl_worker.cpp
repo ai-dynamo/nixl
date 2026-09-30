@@ -1045,6 +1045,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         gettimeofday(&tv, nullptr);
         uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
 
+        std::cout << "Using " << num_threads * num_devices << " objects of " << buffer_size
+                  << " bytes" << std::endl;
+
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
@@ -1062,7 +1065,9 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                 int obj_dev_id = list_idx * num_devices + i;
                 basic_desc = initBasicDescObj(buffer_size, obj_dev_id, unique_name);
                 if (basic_desc) {
-                    std::cout << "Creating obj: " << unique_name << std::endl;
+                    if (xferBenchUtils::debugEnabled()) {
+                        std::cout << "Creating obj: " << unique_name << std::endl;
+                    }
                     iov_list.push_back(basic_desc.value());
                 }
             }
@@ -1225,6 +1230,13 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
 void
 xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
+    if (xferBenchConfig::isObjStorageBackend()) {
+        size_t num_objs = 0;
+        for (const auto &region : remote_regs_) {
+            num_objs += region.iovs().size();
+        }
+        std::cout << "Removing " << num_objs << " objects" << std::endl;
+    }
     // Ordering: deregister remote regions before local ones
     // (remote registrations may reference local buffers).
     // NixlMemRegion::release() handles deregisterMem + per-IOV cleanup.
