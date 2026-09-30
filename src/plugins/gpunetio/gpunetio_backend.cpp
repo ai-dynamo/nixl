@@ -16,6 +16,7 @@
  */
 
 #include "gpunetio_backend.h"
+#include "gpunetio_cuda_device_guard.h"
 #include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <cassert>
@@ -584,6 +585,13 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
 
     NIXL_DEBUG << "DOCA addRdmaQp for remote " << remote_agent << std::endl;
 
+    nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
+    if (cuda_device.status() != cudaSuccess) {
+        NIXL_ERROR << "Failed to select CUDA device " << gdevs[0].first
+                   << " for QP setup: " << cudaGetErrorString(cuda_device.status());
+        return NIXL_ERR_BACKEND;
+    }
+
     rdma_qp = new struct nixlDocaRdmaQp;
 
     try {
@@ -971,7 +979,12 @@ nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
     NIXL_INFO << "loadRemoteConnInfo calling addRdmaQp for " << remote_agent.c_str();
     sendLocalAgentName(oob_sock_client);
-    addRdmaQp(remote_agent);
+    const auto qp_status = addRdmaQp(remote_agent);
+    if (qp_status != NIXL_SUCCESS && qp_status != NIXL_IN_PROG) {
+        close(oob_sock_client);
+        delete[] addr;
+        return qp_status;
+    }
     nixlDocaInitNotif(remote_agent, ddev, gdevs[0].second);
     connectClientRdmaQp(oob_sock_client, remote_agent);
 
