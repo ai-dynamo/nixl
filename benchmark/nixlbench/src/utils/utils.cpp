@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <utility>
 #include <iomanip>
+#include <limits>
 #include <omp.h>
 #include <set>
 
@@ -618,6 +619,15 @@ xferBenchConfig::loadParams(void) {
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
     num_target_dev = NB_ARG(num_target_dev);
+    if (num_initiator_dev < 1 || num_target_dev < 1) {
+        std::cerr << "num_initiator_dev and num_target_dev must both be >= 1" << std::endl;
+        return -1;
+    }
+    if (mode == XFERBENCH_MODE_SG && scheme == XFERBENCH_SCHEME_MANY_TO_ONE &&
+        num_target_dev != 1) {
+        std::cerr << "SG manytoone requires exactly one target" << std::endl;
+        return -1;
+    }
     start_block_size = NB_ARG(start_block_size);
     max_block_size = NB_ARG(max_block_size);
     start_batch_size = NB_ARG(start_batch_size);
@@ -630,6 +640,10 @@ xferBenchConfig::loadParams(void) {
     large_blk_iter_ftr = NB_ARG(large_blk_iter_ftr);
     warmup_iter = NB_ARG(warmup_iter);
     num_threads = NB_ARG(num_threads);
+    if (num_threads < 1) {
+        std::cerr << "num_threads must be >= 1" << std::endl;
+        return -1;
+    }
     pipeline_depth = NB_ARG(pipeline_depth);
     if (pipeline_depth < 1) {
         std::cerr << "pipeline_depth must be >= 1" << std::endl;
@@ -659,6 +673,17 @@ xferBenchConfig::loadParams(void) {
         std::cout << "Rounding total_buffer_size from " << total_buffer_size << " to "
                   << hugepage_aligned_size << " for 2MB hugepage alignment." << std::endl;
         total_buffer_size = hugepage_aligned_size;
+    }
+    if (use_hugepages && mode == XFERBENCH_MODE_SG && scheme == XFERBENCH_SCHEME_MANY_TO_ONE) {
+        const size_t slice_count =
+            static_cast<size_t>(num_initiator_dev) * static_cast<size_t>(num_threads);
+        if (total_buffer_size % slice_count != 0 ||
+            (total_buffer_size / slice_count) % HUGEPAGE_SIZE != 0) {
+            std::cerr << "SG manytoone with hugepages requires total_buffer_size / "
+                         "(num_initiator_dev * num_threads) to be 2MB-aligned"
+                      << std::endl;
+            return -1;
+        }
     }
     if (!recreate_xfer && XFERBENCH_BACKEND_GUSLI == backend) {
         std::cout << "GUSLI backend requires per-iteration request creation due to library bug."
@@ -778,6 +803,24 @@ xferBenchConfig::loadParams(void) {
     }
     const int workers = workerNum();
     const char *worker_kind = use_device_api ? "groups" : "threads";
+
+    if (XFERBENCH_MODE_SG == mode && XFERBENCH_SCHEME_MANY_TO_ONE == scheme) {
+        if (max_batch_size >
+            std::numeric_limits<size_t>::max() / static_cast<size_t>(pipeline_depth)) {
+            std::cerr << "Batch size and pipeline depth are too large" << std::endl;
+            return -1;
+        }
+        const size_t effective_batch = max_batch_size * static_cast<size_t>(pipeline_depth);
+        const size_t bytes_per_peer = total_buffer_size /
+            (static_cast<size_t>(workers) * static_cast<size_t>(num_initiator_dev));
+        if (effective_batch == 0 || max_block_size > bytes_per_peer / effective_batch) {
+            std::cerr << "Incorrect buffer size configuration: SG manytoone requires "
+                         "(max_block_size * max_batch_size * pipeline_depth) <= "
+                         "(total_buffer_size / (workers * num_initiator_dev))"
+                      << std::endl;
+            return -1;
+        }
+    }
 
     if ((max_block_size * max_batch_size) > (total_buffer_size / workers)) {
         std::cerr << "Incorrect buffer size configuration "

@@ -101,6 +101,8 @@ class xferBenchNixlWorker: public xferBenchWorker {
                                        uint64_t expected_value,
                                        const char *phase,
                                        const std::function<void()> &checkLiveness);
+        std::vector<int>
+        exchangePeerRanks();
 
         std::mt19937_64 default_rng_;
 };
