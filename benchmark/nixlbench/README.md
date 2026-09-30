@@ -563,7 +563,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --gds_max_request_size NUM # Max bytes per cuFile batch entry, larger requests are split (default: 16777216)
 ```
 
-If `cuFileBatchIOSubmit` rejects a block size with `err=5040`, lower `--gds_max_request_size` below the cuFile per-entry limit of your system. On a P2PDMA-only setup that limit is 983040 bytes. Split entries past the first go through cuFile bounce buffers, so expect lower throughput than with whole entries.
+If `cuFileBatchIOSubmit` rejects a block size with `err=5040`, lower `--gds_max_request_size` below the cuFile per-entry limit of your system. In the tested B200, Gen5 NVMe, cuFile 1.15.1.6, ext4, and O_DIRECT configuration, that limit was 983040 bytes. Other P2PDMA-only configurations may differ. Split entries past the first go through cuFile bounce buffers, so expect lower throughput than with whole entries.
 
 **GDS_MT Backend:**
 ```
