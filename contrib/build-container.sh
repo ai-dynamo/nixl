@@ -391,6 +391,7 @@ show_help() {
     echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
     echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
     echo "  [--build-options-file path to write the resolved build options as KEY=VALUE lines]"
+    echo "  [DOCKER_BUILD_EXTRA_ARGS env var: extra arguments passed through to docker build, e.g. --secret id=ghconfig,src=<file>; word-split, so paths with spaces are not supported]"
     exit 0
 }
 
@@ -507,4 +508,7 @@ fi
 show_build_options
 [ -n "$BUILD_OPTIONS_FILE" ] && write_build_options_file
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT
+# The Dockerfiles use RUN --mount, which the legacy builder rejects. Default to
+# BuildKit for Docker releases that do not already (pre-23); podman ignores this.
+export DOCKER_BUILDKIT=${DOCKER_BUILDKIT:-1}
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS ${DOCKER_BUILD_EXTRA_ARGS:-} $TAG $NO_CACHE ${DOCKER_BUILD_TARGET:-} $BUILD_CONTEXT
