@@ -255,15 +255,30 @@ RedisConnectionPool::RedisConnectionPool(RedisConfig config) : config_(std::move
     // Shared sync connection for EXISTS (queryMem is single-threaded, one connection suffices).
     connectSyncContext();
 
-    NIXL_INFO << absl::StrFormat("Redis connection pool ready: %d connections at %s:%d (db=%d)",
-                                 N,
-                                 config_.host,
-                                 config_.port,
-                                 config_.db);
+    // Worker threads perform the GET reply memcpy off the event loop thread so that
+    // large transfers do not stall other pending callbacks.
+    workers_.reserve(N);
+    for (int i = 0; i < N; ++i) {
+        workers_.emplace_back([this]() { workerLoop(); });
+    }
+
+    NIXL_INFO << absl::StrFormat(
+        "Redis connection pool ready: %d connections at %s:%d (db=%d, workers=%d)",
+        N, config_.host, config_.port, config_.db, N);
 }
 
 RedisConnectionPool::~RedisConnectionPool() {
-    stopEventLoop();
+    stopEventLoop();  // no new callbacks after this; no new work enters the queue
+    {
+        std::lock_guard<std::mutex> lock(workMutex_);
+        stopWorkers_.store(true);
+    }
+    workCv_.notify_all();
+    for (auto &w : workers_) {
+        if (w.joinable()) {
+            w.join();
+        }
+    }
     if (syncCtx_) {
         redisFree(syncCtx_);
         syncCtx_ = nullptr;
@@ -348,6 +363,32 @@ RedisConnectionPool::connectSyncContext() {
         }
         freeReplyObject(reply);
     }
+}
+
+void
+RedisConnectionPool::workerLoop() {
+    while (true) {
+        std::function<void()> task;
+        {
+            std::unique_lock<std::mutex> lock(workMutex_);
+            workCv_.wait(lock, [this] { return stopWorkers_.load() || !workQueue_.empty(); });
+            if (stopWorkers_.load() && workQueue_.empty()) {
+                return;
+            }
+            task = std::move(workQueue_.front());
+            workQueue_.pop();
+        }
+        task();
+    }
+}
+
+void
+RedisConnectionPool::postToWorker(std::function<void()> task) {
+    {
+        std::lock_guard<std::mutex> lock(workMutex_);
+        workQueue_.push(std::move(task));
+    }
+    workCv_.notify_one();
 }
 
 bool
@@ -513,21 +554,54 @@ RedisConnectionPool::getCallback(redisAsyncContext *c, void *reply, void *privda
     auto *ctx = static_cast<CallbackContext *>(privdata);
     auto *r = static_cast<redisReply *>(reply);
 
-    bool success = false;
     if (r && r->type == REDIS_REPLY_STRING) {
         const size_t reply_len = static_cast<size_t>(r->len);
-        if (reply_len != ctx->data_len) {
+        const bool size_ok = (reply_len == ctx->data_len);
+
+        if (size_ok && ctx->data_len > 0 && ctx->data_ptr) {
+            // Steal ownership of the reply buffer so the memcpy runs on a worker thread
+            // instead of blocking the shared event loop. hiredis skips free() when
+            // reply->str is null, so this is safe with the default hiredis allocator.
+            auto *slot = static_cast<Slot *>(c->data);
+            char *str = r->str;
+            r->str = nullptr;
+            uintptr_t dst = ctx->data_ptr;
+            size_t len = ctx->data_len;
+            auto promise = ctx->promise_ptr;
+            auto *inFlight = ctx->inFlight;
+            delete ctx;
+            slot->pool->postToWorker([str, dst, len, promise, inFlight]() {
+                std::memcpy(reinterpret_cast<void *>(dst), str, len);
+                free(str);
+                if (inFlight) {
+                    inFlight->fetch_sub(1, std::memory_order_relaxed);
+                }
+                if (promise) {
+                    promise->set_value(NIXL_SUCCESS);
+                }
+            });
+            return;
+        }
+
+        if (!size_ok) {
             NIXL_ERROR << absl::StrFormat(
                 "Redis GET size mismatch: expected %zu bytes, got %zu bytes",
-                ctx->data_len,
-                reply_len);
-        } else if (ctx->data_len == 0) {
-            success = true;
-        } else if (ctx->data_ptr) {
-            std::memcpy(reinterpret_cast<void *>(ctx->data_ptr), r->str, ctx->data_len);
-            success = true;
+                ctx->data_len, reply_len);
         }
-    } else if (r && r->type == REDIS_REPLY_NIL) {
+        // zero-length success or null data_ptr: resolve on event loop (no copy needed)
+        auto promise_ptr = ctx->promise_ptr;
+        auto *inFlight = ctx->inFlight;
+        delete ctx;
+        if (inFlight) {
+            inFlight->fetch_sub(1, std::memory_order_relaxed);
+        }
+        if (promise_ptr) {
+            promise_ptr->set_value(size_ok ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
+        }
+        return;
+    }
+
+    if (r && r->type == REDIS_REPLY_NIL) {
         NIXL_WARN << "Redis GET: key not found";
     } else if (r && r->type == REDIS_REPLY_ERROR) {
         NIXL_ERROR << absl::StrFormat("Redis GET error: %s", r->str);
@@ -540,7 +614,7 @@ RedisConnectionPool::getCallback(redisAsyncContext *c, void *reply, void *privda
         inFlight->fetch_sub(1, std::memory_order_relaxed);
     }
     if (promise_ptr) {
-        promise_ptr->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
+        promise_ptr->set_value(NIXL_ERR_BACKEND);
     }
 }
 

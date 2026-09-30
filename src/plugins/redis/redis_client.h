@@ -8,12 +8,14 @@
 
 #include "nixl_types.h"
 
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <queue>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -68,7 +70,9 @@ public:
  * Connection pool over N async TCP connections sharing one libevent thread.
  * Dispatch routes to the healthy slot with the fewest in-flight commands;
  * commands fail immediately when no healthy slot is available.
- * Resource cost: 1 OS thread + N async TCP connections + 1 shared sync TCP connection.
+ * GET reply buffers are transferred off the event loop thread to a worker
+ * pool so large memcpy calls do not block other async callbacks.
+ * Resource cost: (N+1) OS threads + N async TCP connections + 1 shared sync TCP connection.
  */
 class RedisConnectionPool : public iRedisClient {
 public:
@@ -112,6 +116,10 @@ private:
     freeSlotAsyncCtx(Slot &slot);
     void
     connectSyncContext();
+    void
+    workerLoop();
+    void
+    postToWorker(std::function<void()> task);
 
     static void
     connectCallback(const redisAsyncContext *c, int status);
@@ -126,12 +134,17 @@ private:
     static void
     getCallback(redisAsyncContext *c, void *reply, void *privdata);
 
-    event_base         *eventBase_ = nullptr;
-    std::thread         eventLoopThread_;
+    event_base              *eventBase_ = nullptr;
+    std::thread              eventLoopThread_;
     std::vector<std::unique_ptr<Slot>> slots_;
-    redisContext       *syncCtx_ = nullptr;
-    mutable std::mutex  syncMutex_;
-    RedisConfig         config_;
+    redisContext            *syncCtx_ = nullptr;
+    mutable std::mutex       syncMutex_;
+    std::vector<std::thread> workers_;
+    std::queue<std::function<void()>> workQueue_;
+    std::mutex               workMutex_;
+    std::condition_variable  workCv_;
+    std::atomic<bool>        stopWorkers_{false};
+    RedisConfig              config_;
 };
 
 #endif // NIXL_SRC_PLUGINS_REDIS_REDIS_CLIENT_H
