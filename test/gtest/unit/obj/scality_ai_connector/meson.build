@@ -14,6 +14,7 @@
 # limitations under the License.
 
 obj_test_sources += files(
+    'engine.cpp',
     'rest_client.cpp',
     'rest_client_concurrency.cpp',
     'utils.cpp',
