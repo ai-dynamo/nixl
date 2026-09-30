@@ -25,6 +25,10 @@ git fetch --no-tags "${NIXL_REPO_URL}" \
 
 : > triggers.txt
 
+# build-container.sh options the nightly always passes: a ref whose copy
+# predates any of them dies at option parsing, so such commits are never queued.
+REQUIRED_BUILD_OPTS="--build-options-file --ucx-spcx-plugin-install"
+
 branches="$(git for-each-ref --format='%(refname:lstrip=4)' 'refs/remotes/origin/release/*' | sort -V)"
 
 # Keep the Artifactory token out of the log (also under CI debug -x).
@@ -42,11 +46,12 @@ for ver in ${branches}; do
   fi
 
   # The nightly always passes --build-options-file and --ucx-spcx-plugin-install,
-  # so a release whose build-container.sh predates either fails at option
-  # parsing. Skip it rather than fan out builds that cannot succeed; release
-  # branches cut from main after each change pass on their own.
+  # so a build-container.sh predating either fails at option parsing. Skip those
+  # rather than fan out builds that cannot succeed. This is only an early filter
+  # on the branch tip - each candidate commit is checked again below, since a
+  # branch that backports the options still has older commits without them.
   release_bcs="$(git show "origin/release/${ver}:contrib/build-container.sh" 2>/dev/null || true)"
-  for opt in --build-options-file --ucx-spcx-plugin-install; do
+  for opt in ${REQUIRED_BUILD_OPTS}; do
     if ! printf '%s' "${release_bcs}" | grep -q -- "${opt}"; then
       echo "release/${ver}: build-container.sh predates ${opt}, skipping"
       continue 2
@@ -104,6 +109,16 @@ for ver in ${branches}; do
     if printf '%s\n' "${published}" | grep -qx "${sha:0:8}"; then
       continue
     fi
+    sha_bcs="$(git show "${sha}:contrib/build-container.sh" 2>/dev/null || true)"
+    skip_sha=""
+    for opt in ${REQUIRED_BUILD_OPTS}; do
+      if ! printf '%s' "${sha_bcs}" | grep -q -- "${opt}"; then
+        echo "release/${ver}: ${sha:0:8} predates ${opt}, skipping"
+        skip_sha=1
+        break
+      fi
+    done
+    [ -n "${skip_sha}" ] && continue
     if printf '%s\n' "${reserved}" | grep -qx "${sha:0:8}"; then
       echo "release/${ver}: ${sha:0:8} already has a build in flight"
       n_flight=$((n_flight+1))
