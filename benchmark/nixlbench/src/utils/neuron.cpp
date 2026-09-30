@@ -17,14 +17,20 @@
  */
 
 #include "neuron.h"
+#include "utils.h"
 
+#include <cstdlib>
 #include <dlfcn.h>
 
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <system_error>
 #include <tuple>
 #include <vector>
 
@@ -136,6 +142,18 @@ struct NrtAllocation {
 std::map<uintptr_t, NrtAllocation> allocation_tracker;
 std::mutex allocation_tracker_mutex;
 
+// Parse NEURON_RT_NUM_CORES; return -1 if the value is not a plain integer.
+int
+parseCoreCount(const char *value) {
+    int count = 0;
+    const char *end = value + std::strlen(value);
+    auto [ptr, ec] = std::from_chars(value, end, count);
+    if (ec != std::errc{} || ptr != end) {
+        return -1;
+    }
+    return count;
+}
+
 // Find the allocation containing the given VA. Caller must hold allocation_tracker_mutex.
 // Returns {tensor, offset, alloc_size} or {nullptr, 0, 0}.
 std::tuple<nrt_tensor *, size_t, size_t>
@@ -162,6 +180,30 @@ findTensorForVA(const void *va) {
 int
 neuronCoreCount() {
     static const int core_count = []() {
+        // Scope this process to the minimum number of NeuronCores it needs,
+        // analogous to cudaSetDevice() scoping a CUDA process to one GPU.
+        // Without this, nrt_init() claims ALL visible cores by default,
+        // preventing sibling processes on the same host from initializing.
+        if (XFERBENCH_MODE_SG == xferBenchConfig::mode) {
+            const char *num_cores = getenv("NEURON_RT_NUM_CORES");
+            const char *visible_cores = getenv("NEURON_RT_VISIBLE_CORES");
+            if (!num_cores && !visible_cores) {
+                if (setenv("NEURON_RT_NUM_CORES", "1", 0) != 0) {
+                    std::cerr << "nixlbench: failed to set NEURON_RT_NUM_CORES" << std::endl;
+                    return -1;
+                }
+                std::cerr << "nixlbench: SG mode — set NEURON_RT_NUM_CORES=1" << std::endl;
+            } else if ((visible_cores &&
+                        (std::strchr(visible_cores, ',') || std::strchr(visible_cores, '-'))) ||
+                       (!visible_cores && num_cores && parseCoreCount(num_cores) > 1)) {
+                // NEURON_RT_VISIBLE_CORES takes precedence over NEURON_RT_NUM_CORES.
+                std::cerr << "nixlbench: SG mode uses only the first core (vnc=0), but "
+                          << (visible_cores ? "NEURON_RT_VISIBLE_CORES=" : "NEURON_RT_NUM_CORES=")
+                          << (visible_cores ? visible_cores : num_cores)
+                          << " scopes more cores; extras will be unused" << std::endl;
+            }
+        }
+
         uint32_t vnc_count;
         if (nrt_init(1 /* framework_type=NO_FW */, "nixl_bench", "nixl_bench") == 0 &&
             nrt_get_visible_vnc_count(&vnc_count) == 0) {
@@ -178,7 +220,11 @@ neuronMalloc(void **addr, size_t buffer_size, int devid) {
     nrt_tensor *tensor;
     int status;
 
-    status = nrt_tensor_allocate(0 /* placement=device */, devid, buffer_size, nullptr, &tensor);
+    // VNC index is relative to the process's allocated core set.
+    // In SG mode each process owns 1 core, so always use vnc=0.
+    int vnc = (XFERBENCH_MODE_SG == xferBenchConfig::mode) ? 0 : devid;
+
+    status = nrt_tensor_allocate(0 /* placement=device */, vnc, buffer_size, nullptr, &tensor);
     if (status != 0) {
         return status;
     }

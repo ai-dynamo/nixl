@@ -28,8 +28,12 @@
 #include "libfabric_rail.h"
 
 #ifdef HAVE_CUDA
+#ifdef __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime.h>
+#else
 #include <cuda.h>
 #include <cuda_runtime.h>
+#endif
 #endif
 
 // Forward declarations
@@ -214,6 +218,8 @@ public:
      *        (posted with FI_MORE); false flushes the rail's batch. The caller passes false for
      *        a rail's last post and when a batch reaches NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE.
      *        Defaults to false so an unmarked descriptor flushes safely.
+     * @param device_id Device id when multi-GPU is enabled.
+     * @param is_cuda_device Specifies whether this is CUDA-VRAM transfer.
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
@@ -229,11 +235,24 @@ public:
                              const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
                              uint16_t agent_idx,
                              uint16_t xfer_id,
-                             std::function<void()> completion_callback,
+                             std::function<void(nixl_status_t)> completion_callback,
                              size_t &submitted_count_out,
                              int desc_idx,
                              size_t base_offset,
-                             bool apply_fi_more = false);
+                             bool apply_fi_more = false,
+                             int device_id = -1,
+                             bool is_cuda_vram = false);
+
+    void
+    deferTransferRequest(nixlLibfabricReq::OpType op_type,
+                         uint16_t agent_idx,
+                         uint16_t xfer_id,
+                         uint64_t fi_flags,
+                         fi_addr_t dest_addr,
+                         int device_id,
+                         bool is_cuda_vram,
+                         size_t rail_id,
+                         nixlLibfabricReq *req);
 
     /** Reserve a base offset for a transfer to ensure stable rail assignment
      *  across all descriptors in the transfer. Call once per postXfer. */
@@ -255,6 +274,7 @@ public:
     enum class ControlMessageType : int {
         NOTIFICATION, ///< User notification message
         HANDSHAKE, ///< Peer-idx assignment (NIXL_LIBFABRIC_MSG_HANDSHAKE)
+        XFER_ERROR, ///< Batch had unpostable writes (NIXL_LIBFABRIC_MSG_XFER_ERROR)
     };
     /** Send control message via control rail
      * @param msg_type Type of control message
@@ -269,13 +289,14 @@ public:
                        nixlLibfabricReq *req,
                        fi_addr_t dest_addr,
                        uint16_t agent_idx = 0,
-                       std::function<void()> completion_callback = nullptr);
+                       std::function<void(nixl_status_t)> completion_callback = nullptr);
     // Progress APIs
     /** Process completions on active rails only (optimized for CPU overhead)
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
     progressActiveRails();
+
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
      */

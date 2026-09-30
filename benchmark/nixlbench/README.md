@@ -314,7 +314,7 @@ cmake --install sdk/identity
 **DOCA (Optional):**
 ```bash
 # Add Mellanox repository and install DOCA
-wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-ubuntu2404_amd64.deb -O doca-host.deb
+wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-ubuntu2404_amd64.deb -O doca-host.deb
 sudo dpkg -i doca-host.deb
 sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 ```
@@ -366,6 +366,7 @@ cd /path/to/nixlbench
 rm -rf build && mkdir build
 uv run meson setup build \
   -Dnixl_path=/usr/local/nixl/ \
+  -Dbuild_raw_cli=true \
   -Dprefix=/usr/local/nixlbench \
   --buildtype=release
 cd build && ninja && sudo ninja install
@@ -384,10 +385,75 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 - `etcd_lib_path`: Path to ETCD C++ client library
 - `nvshmem_inc_path`: Path to NVSHMEM include directory
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
+- `build_raw_cli`: Build the experimental CLI11-based raw command path (default: false)
+- `build_tests`: Build NIXLBench tests for non-release builds (default: true)
 - `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)
 - `prefix`: Installation prefix (default: /usr/local)
 
 ## Usage
+
+### Verb-based interface
+
+When configured with `-Dbuild_raw_cli=true`, NIXLBench also provides a
+verb-based interface. The first available command is `raw posix`, which runs
+the existing NIXLBench worker with three explicit ownership layers:
+
+- `raw` owns benchmark controls such as operation, transfer sizes, iterations,
+  threads, and consistency checking.
+- NIXLBench owns shared `FILE_SEG` resource controls such as path, filenames,
+  file count, and direct file opening, and exposes them only when advertised by
+  the selected plugin.
+- The installed plugin owns its initialization parameters. NIXLBench forwards
+  `--plugin-param KEY VALUE` overrides without interpreting names, values,
+  ranges, or relationships.
+
+Raw and `FILE_SEG` options are accepted before or after the backend subcommand.
+Sizes accept `KB`, `MB`, `GB`, and `TB`, using 1024-based multipliers.
+
+```bash
+# Create the directory used by the examples below
+mkdir -p /tmp/nixlbench-data
+
+# Inspect backend-neutral raw benchmark controls
+nixlbench raw --help
+
+# Inspect POSIX configuration exposed by this plugin build
+nixlbench raw posix --help
+
+# Print the resolved configuration without creating a worker or touching files
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --dry-run
+
+# Run a checked write using the same existing benchmark execution machinery
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --operation write \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --check-consistency
+
+# Override exact initialization keys advertised by this plugin build
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --plugin-param ios_pool_size 4096 \
+  --plugin-param use_uring true
+```
+
+Plugin keys and values retain their published spelling and exact string values.
+Only keys advertised by the selected plugin may be overridden. The plugin
+interprets and validates the resolved values during backend creation rather than
+through copied NIXLBench rules, so the `use_uring` example depends on that
+parameter being advertised by the installed POSIX plugin.
+
+The existing flags-only interface remains available for all other commands.
 
 ### ETCD Coordination Setup
 
@@ -480,6 +546,12 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --filepath PATH            # File path for storage operations
 --num_files NUM            # Number of files used by benchmark (default: 1)
 --storage_enable_direct    # Enable direct I/O for storage operations
+--randomize_location_mode MODE    # Controls block location randomization [none, blockaligned, bytealigned] (default: none)
+                                  # blockaligned: randomizes the order of the otherwise sequentially block aligned iov's in the batch, also works on object plugins
+                                  # bytealigned: randomizes the offset per iov scrambling the block order instead of being sequential.
+--randomize_location_mode_seed NUM  # random seed used for randomized location mode (default: 0)
+                                    # 0 signals using the random_device for the seed
+
 ```
 
 #### Backend-Specific Options
@@ -963,6 +1035,42 @@ nvidia-smi topo -m
 # Check CUDA driver
 cat /proc/driver/nvidia/version
 ```
+
+#### GDS Compat Mode Hangs
+
+When running the GDS backend in cuFile compatible mode (e.g. `CUFILE_FORCE_COMPAT_MODE=true`
+for comparing GDS on/off), benchmarks with large batch sizes can hang indefinitely with
+no output and no error:
+
+```bash
+# Completes fine up to batch 64, hangs forever at batch 128 with the default cufile.json
+CUFILE_ALLOW_COMPAT_MODE=true CUFILE_FORCE_COMPAT_MODE=true \
+nixlbench --backend GDS --initiator_seg_type VRAM --filepath /mnt/storage/testdir \
+  --storage_enable_direct --start_batch_size 1 --max_batch_size 128
+```
+
+In compat mode every in-flight batch entry takes a CPU bounce buffer from the cuFile
+POSIX pool (`posix_pool_slab_count`, default 64 buffers for the 1MiB slab class). When
+the number of concurrent batch entries exceeds the pool size, `cuFileBatchIOSubmit`
+blocks forever waiting for a free buffer. To confirm, set `"logging": {"level": "DEBUG"}`
+in cufile.json and look for:
+
+```
+Waiting for free buffer pool_is_full: 0 gpuid: 0 available slots 0 wait 1
+```
+
+Fix: increase the slab count for the slab class matching your block size so it covers
+the maximum number of concurrent batch entries, e.g. in cufile.json:
+
+```json
+"properties": {
+    "posix_pool_slab_size_kb": [4, 1024, 16384],
+    "posix_pool_slab_count": [128, 256, 64]
+}
+```
+
+See the [GDS plugin README](../../src/plugins/cuda_gds/README.md#cufilejson-configuration)
+for the full recommended compat mode configuration.
 
 #### Network Backend Issues
 ```bash

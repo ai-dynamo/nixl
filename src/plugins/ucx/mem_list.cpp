@@ -147,10 +147,10 @@ createElements(const T &dlist, size_t worker_id = 0) {
 }
 
 void *
-createMemList(const nixl_remote_meta_dlist_t &dlist, size_t worker_id, nixlUcxWorker &worker) {
+createMemList(const nixl_remote_meta_dlist_t &dlist, nixlUcxWorker &worker) {
     using namespace std::chrono_literals;
 
-    const device_mem_vector_t elements = createElements(dlist, worker_id);
+    const device_mem_vector_t elements = createElements(dlist, worker.getId());
     const memListParams params{elements};
 
     ucp_device_remote_mem_list_h handle{nullptr};
@@ -206,7 +206,7 @@ const std::string error_message{"UCX GPU device API is not supported"};
 
 namespace nixl::ucx {
 void *
-createMemList(const nixl_remote_meta_dlist_t &, size_t, nixlUcxWorker &) {
+createMemList(const nixl_remote_meta_dlist_t &, nixlUcxWorker &) {
     throw std::runtime_error(error_message);
 }
 
