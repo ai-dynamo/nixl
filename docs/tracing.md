@@ -129,7 +129,7 @@ context for a request, and derives from that context's own trace id, so it is
 stable per request and every peer inspecting the same context agrees with it.
 A request is sampled when the random part of its trace id falls in the top
 `ratio` of the range, which is the OpenTelemetry consistent-probability rule: a
-later stage sampling at a lower ratio thins what NIXL kept instead of discarding
+later phase sampling at a lower ratio thins what NIXL kept instead of discarding
 all of it. No backend consumes the sampled flag yet — it is the gate the first
 cross-process carrier will use to decide whether to propagate a context.
 
@@ -168,23 +168,23 @@ backends/PRs):
 
 ### Backend phase spans
 
-A data plugin (UCX, libfabric, ...) can record a phase of its own work through
+A backend plugin can record a phase of its own work through
 the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core turns
 each recorded phase into a momentary span carrying `nixl.backend` (the recording
-backend's type), `nixl.stage.timestamp_us` (the plugin's `nixlTime` reading),
-`nixl.stage.label` when the plugin supplied one, and any plugin-supplied
-attributes. The stage vocabulary is closed so that timelines stay comparable
+backend's type), `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
+`nixl.phase.label` when the plugin supplied one, and any plugin-supplied
+attributes. The phase vocabulary is closed so that timelines stay comparable
 across backends:
 
-| Span | Stage enumerator | Meaning |
+| Span | Phase enumerator | Meaning |
 | ---- | ---------------- | ------- |
 | `nixl::submit` | `SUBMIT` | the backend accepted the operation |
 | `nixl::wire.submitted` | `WIRE_SUBMITTED` | handed to the transport |
 | `nixl::wire.completed` | `WIRE_COMPLETED` | transport signalled completion |
-| `nixl::notif.sent` | `NOTIF_SENT` | notification put on the wire |
+| `nixl::notif.sent` | `NOTIF_SENT` | notification posted to the wire |
 | `nixl::notif.received` | `NOTIF_RECEIVED` | notification observed locally |
 | `nixl::remote.observed` | `REMOTE_OBSERVED` | the peer's side was observed |
-| `nixl::stage` | `STAGE` | generic escape hatch; the plugin's label becomes the span name |
+| `nixl::phase` | `OTHER` | generic escape hatch; the plugin's label becomes the span name |
 
 The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. No plugin emits them
@@ -290,5 +290,4 @@ In NIXL tracing, "correlation" can mean two different things:
   separate NIXL-architecture effort).
 
 - **Backend phase emission** — the sink described under "Backend phase spans" exists,
-  but no plugin records a phase yet; UCX and libfabric map onto the stage vocabulary
-  in their own PRs.
+  but no plugin records a phase yet.

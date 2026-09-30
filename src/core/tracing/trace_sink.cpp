@@ -23,42 +23,42 @@
 namespace nixl::trace {
 
 std::string_view
-stageSpanName(nixl_trace_stage_t stage) noexcept {
-    switch (stage) {
-    case nixl_trace_stage_t::SUBMIT:
+toStringView(nixl_trace_phase_t phase) noexcept {
+    switch (phase) {
+    case nixl_trace_phase_t::SUBMIT:
         return "nixl::submit";
-    case nixl_trace_stage_t::WIRE_SUBMITTED:
+    case nixl_trace_phase_t::WIRE_SUBMITTED:
         return "nixl::wire.submitted";
-    case nixl_trace_stage_t::WIRE_COMPLETED:
+    case nixl_trace_phase_t::WIRE_COMPLETED:
         return "nixl::wire.completed";
-    case nixl_trace_stage_t::NOTIF_SENT:
+    case nixl_trace_phase_t::NOTIF_SENT:
         return "nixl::notif.sent";
-    case nixl_trace_stage_t::NOTIF_RECEIVED:
+    case nixl_trace_phase_t::NOTIF_RECEIVED:
         return "nixl::notif.received";
-    case nixl_trace_stage_t::REMOTE_OBSERVED:
+    case nixl_trace_phase_t::REMOTE_OBSERVED:
         return "nixl::remote.observed";
-    case nixl_trace_stage_t::STAGE:
-        return "nixl::stage";
+    case nixl_trace_phase_t::OTHER:
+        return "nixl::phase";
     }
-    return "nixl::stage";
+    return "nixl::phase";
 }
 
 void
-TracerPhaseSink::recordPhase(nixl_trace_stage_t stage,
+TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
                              std::string_view label,
                              nixlTime::us_t timestamp,
                              std::span<const nixlBackendTraceAttr> attrs) noexcept {
     try {
-        const bool named = stage == nixl_trace_stage_t::STAGE && !label.empty();
-        Span span = tracer_.beginSpan(named ? label : stageSpanName(stage), Kind::Metadata);
+        const bool named = (phase == nixl_trace_phase_t::OTHER) && !label.empty();
+        Span span = tracer_.beginSpan(named ? label : toStringView(phase), Kind::Metadata);
         if (!span.active()) {
             return;
         }
 
         span.addAttribute("nixl.backend", backend_);
-        span.addAttribute("nixl.stage.timestamp_us", static_cast<std::int64_t>(timestamp));
+        span.addAttribute("nixl.phase.timestamp_us", static_cast<std::int64_t>(timestamp));
         if (!label.empty()) {
-            span.addAttribute("nixl.stage.label", label);
+            span.addAttribute("nixl.phase.label", label);
         }
         for (const auto &attr : attrs) {
             span.addAttribute(attr.key, attr.value);

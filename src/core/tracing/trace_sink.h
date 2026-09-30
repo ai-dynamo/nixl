@@ -34,7 +34,7 @@ public:
           backend_(std::move(backend)) {}
 
     void
-    recordPhase(nixl_trace_stage_t stage,
+    recordPhase(nixl_trace_phase_t phase,
                 std::string_view label,
                 nixlTime::us_t timestamp,
                 std::span<const nixlBackendTraceAttr> attrs) noexcept override;
@@ -46,7 +46,7 @@ private:
 };
 
 [[nodiscard]] std::string_view
-stageSpanName(nixl_trace_stage_t stage) noexcept;
+toStringView(nixl_trace_phase_t phase) noexcept;
 
 } // namespace nixl::trace
 

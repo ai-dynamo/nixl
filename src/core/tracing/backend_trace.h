@@ -33,21 +33,21 @@
 #include "common/nixl_time.h"
 
 /**
- * @brief Closed vocabulary of backend phases.
+ * @brief Fixed set of backend phases.
  *
- * Closed on purpose: a fixed set is what lets timelines from different
- * backends be compared. Backend authors map their internals onto it rather
- * than inventing names, e.g. libfabric's post_write/post_read/post_send all
- * report as @ref WIRE_SUBMITTED.
+ * Closed on purpose, so timelines from different backends stay comparable.
+ * Backend authors map their internals onto it rather than inventing names,
+ * e.g. libfabric's post_write/post_read/post_send all report as
+ * @ref WIRE_SUBMITTED.
  */
-enum class nixl_trace_stage_t : std::uint8_t {
+enum class nixl_trace_phase_t : std::uint8_t {
     /** @brief The backend accepted the operation and owns it from here. */
     SUBMIT,
     /** @brief Handed to the transport (queued on the wire). */
     WIRE_SUBMITTED,
     /** @brief The transport signalled completion (e.g. a CQ entry was reaped). */
     WIRE_COMPLETED,
-    /** @brief A notification was put on the wire. */
+    /** @brief A notification was posted to the wire. */
     NOTIF_SENT,
     /** @brief A notification from a peer was observed locally. */
     NOTIF_RECEIVED,
@@ -56,15 +56,14 @@ enum class nixl_trace_stage_t : std::uint8_t {
     /** @brief Anything the vocabulary above does not cover; name it with the
      *         `label` argument of @ref nixlBackendTraceSink::recordPhase. Meant
      *         to be the rare escape hatch, not the default. */
-    STAGE,
+    OTHER,
 };
 
 /**
  * @brief One key/value attribute on a recorded phase.
  *
- * Both views are borrowed: they must stay valid for the duration of the
- * @ref nixlBackendTraceSink::recordPhase call only. The sink copies whatever
- * it needs to retain.
+ * Both views must stay valid only for the duration of the
+ * @ref nixlBackendTraceSink::recordPhase call; the sink copies what it retains.
  */
 struct nixlBackendTraceAttr {
     std::string_view key;
@@ -84,16 +83,16 @@ public:
     virtual ~nixlBackendTraceSink() = default;
 
     /**
-     * @brief Record that @p stage happened at @p timestamp.
+     * @brief Record that @p phase happened at @p timestamp.
      *
-     * @param stage     Which phase; see @ref nixl_trace_stage_t.
-     * @param label     Name for a @ref nixl_trace_stage_t::STAGE phase. Recorded
-     *                  as an attribute for every stage, and additionally used as
-     *                  the span name for `STAGE`. May be empty.
+     * @param phase     Which phase; see @ref nixl_trace_phase_t.
+     * @param label     Name for a @ref nixl_trace_phase_t::OTHER phase. Recorded
+     *                  as an attribute for every phase, and additionally used as
+     *                  the span name for `OTHER`. May be empty.
      * @param timestamp Microsecond reading of the monotonic `nixlTime` clock
      *                  (`nixlTime::getUs()`, backed by `std::chrono::steady_clock`),
      *                  not a wall clock. Recorded verbatim on the span as
-     *                  `nixl.stage.timestamp_us`.
+     *                  `nixl.phase.timestamp_us`.
      * @param attrs     Extra attributes; see @ref nixlBackendTraceAttr for the
      *                  lifetime rule, which applies to @p label as well.
      *
@@ -104,10 +103,10 @@ public:
      * than propagated, since tracing must never break a transfer.
      */
     virtual void
-    recordPhase(nixl_trace_stage_t stage,
+    recordPhase(nixl_trace_phase_t phase,
                 std::string_view label,
                 nixlTime::us_t timestamp,
-                std::span<const nixlBackendTraceAttr> attrs) noexcept = 0;
+                std::span<const nixlBackendTraceAttr> attrs = {}) noexcept = 0;
 };
 
 #endif // NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H

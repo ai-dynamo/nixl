@@ -30,7 +30,7 @@ namespace {
         "nixl::xfer.complete",    "nixl::loadRemoteMD",    "nixl::fetchRemoteMD",
         "nixl::prepMemView",      "nixl::releaseMemView",  "nixl::submit",
         "nixl::wire.submitted",   "nixl::wire.completed",  "nixl::notif.sent",
-        "nixl::notif.received",   "nixl::remote.observed", "nixl::stage",
+        "nixl::notif.received",   "nixl::remote.observed", "nixl::phase",
     };
 
     [[nodiscard]] constexpr std::uint32_t
