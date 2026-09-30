@@ -467,7 +467,11 @@ hiredisAsyncClient::setCallback(redisAsyncContext *c, void *reply, void *privdat
     }
 
     auto promise_ptr = ctx->promise_ptr;
+    auto *inFlight = ctx->inFlight;
     delete ctx;
+    if (inFlight) {
+        inFlight->fetch_sub(1, std::memory_order_relaxed);
+    }
     setPromiseStatus(promise_ptr, success);
 }
 
@@ -497,7 +501,11 @@ hiredisAsyncClient::getCallback(redisAsyncContext *c, void *reply, void *privdat
     }
 
     auto promise_ptr = ctx->promise_ptr;
+    auto *inFlight = ctx->inFlight;
     delete ctx;
+    if (inFlight) {
+        inFlight->fetch_sub(1, std::memory_order_relaxed);
+    }
     setPromiseStatus(promise_ptr, success);
 }
 
@@ -506,7 +514,10 @@ hiredisAsyncClient::putKeyAsync(std::string_view key,
                                 uintptr_t data_ptr,
                                 size_t data_len,
                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
+    inFlight_.fetch_add(1, std::memory_order_relaxed);
+
     if (!connected_.load()) {
+        inFlight_.fetch_sub(1, std::memory_order_relaxed);
         setPromiseStatus(promise, false);
         return;
     }
@@ -515,12 +526,14 @@ hiredisAsyncClient::putKeyAsync(std::string_view key,
     bool scheduled = scheduleOnEventLoop(
         [this, key = std::move(key_copy), data_ptr, data_len, promise]() mutable {
             if (!connected_.load() || !asyncContext_) {
+                inFlight_.fetch_sub(1, std::memory_order_relaxed);
                 setPromiseStatus(promise, false);
                 return;
             }
 
             auto *ctx = new CallbackContext;
             ctx->promise_ptr = promise;
+            ctx->inFlight = &inFlight_;
 
             int ret = redisAsyncCommand(asyncContext_,
                                         setCallback,
@@ -534,11 +547,13 @@ hiredisAsyncClient::putKeyAsync(std::string_view key,
             if (ret != REDIS_OK) {
                 auto promise_ptr = ctx->promise_ptr;
                 delete ctx;
+                inFlight_.fetch_sub(1, std::memory_order_relaxed);
                 setPromiseStatus(promise_ptr, false);
             }
         });
 
     if (!scheduled) {
+        inFlight_.fetch_sub(1, std::memory_order_relaxed);
         setPromiseStatus(promise, false);
     }
 }
@@ -548,7 +563,10 @@ hiredisAsyncClient::getKeyAsync(std::string_view key,
                                 uintptr_t data_ptr,
                                 size_t data_len,
                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
+    inFlight_.fetch_add(1, std::memory_order_relaxed);
+
     if (!connected_.load()) {
+        inFlight_.fetch_sub(1, std::memory_order_relaxed);
         setPromiseStatus(promise, false);
         return;
     }
@@ -557,6 +575,7 @@ hiredisAsyncClient::getKeyAsync(std::string_view key,
     bool scheduled = scheduleOnEventLoop(
         [this, key = std::move(key_copy), data_ptr, data_len, promise]() mutable {
             if (!connected_.load() || !asyncContext_) {
+                inFlight_.fetch_sub(1, std::memory_order_relaxed);
                 setPromiseStatus(promise, false);
                 return;
             }
@@ -565,6 +584,7 @@ hiredisAsyncClient::getKeyAsync(std::string_view key,
             ctx->data_ptr = data_ptr;
             ctx->data_len = data_len;
             ctx->promise_ptr = promise;
+            ctx->inFlight = &inFlight_;
 
             int ret = redisAsyncCommand(
                 asyncContext_, getCallback, ctx, "GET %b", key.data(), key.size());
@@ -572,11 +592,13 @@ hiredisAsyncClient::getKeyAsync(std::string_view key,
             if (ret != REDIS_OK) {
                 auto promise_ptr = ctx->promise_ptr;
                 delete ctx;
+                inFlight_.fetch_sub(1, std::memory_order_relaxed);
                 setPromiseStatus(promise_ptr, false);
             }
         });
 
     if (!scheduled) {
+        inFlight_.fetch_sub(1, std::memory_order_relaxed);
         setPromiseStatus(promise, false);
     }
 }
@@ -657,9 +679,18 @@ RedisConnectionPool::RedisConnectionPool(RedisConfig config) {
     }
 }
 
-iRedisClient &
-RedisConnectionPool::nextSlot() {
-    return *clients_[nextSlot_.fetch_add(1, std::memory_order_relaxed) % clients_.size()];
+hiredisAsyncClient *
+RedisConnectionPool::leastLoadedHealthySlot() {
+    hiredisAsyncClient *best = nullptr;
+    for (auto &c : clients_) {
+        if (!c->connected()) {
+            continue;
+        }
+        if (!best || c->inFlight() < best->inFlight()) {
+            best = c.get();
+        }
+    }
+    return best;
 }
 
 void
@@ -667,7 +698,14 @@ RedisConnectionPool::putKeyAsync(std::string_view key,
                                  uintptr_t data_ptr,
                                  size_t data_len,
                                  std::shared_ptr<std::promise<nixl_status_t>> promise) {
-    nextSlot().putKeyAsync(key, data_ptr, data_len, std::move(promise));
+    auto *slot = leastLoadedHealthySlot();
+    if (!slot) {
+        if (promise) {
+            promise->set_value(NIXL_ERR_BACKEND);
+        }
+        return;
+    }
+    slot->putKeyAsync(key, data_ptr, data_len, std::move(promise));
 }
 
 void
@@ -675,10 +713,21 @@ RedisConnectionPool::getKeyAsync(std::string_view key,
                                  uintptr_t data_ptr,
                                  size_t data_len,
                                  std::shared_ptr<std::promise<nixl_status_t>> promise) {
-    nextSlot().getKeyAsync(key, data_ptr, data_len, std::move(promise));
+    auto *slot = leastLoadedHealthySlot();
+    if (!slot) {
+        if (promise) {
+            promise->set_value(NIXL_ERR_BACKEND);
+        }
+        return;
+    }
+    slot->getKeyAsync(key, data_ptr, data_len, std::move(promise));
 }
 
 std::optional<bool>
 RedisConnectionPool::checkKeyExistsSync(std::string_view key) {
-    return nextSlot().checkKeyExistsSync(key);
+    auto *slot = leastLoadedHealthySlot();
+    if (!slot) {
+        return std::nullopt;
+    }
+    return slot->checkKeyExistsSync(key);
 }

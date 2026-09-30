@@ -86,11 +86,22 @@ public:
     std::optional<bool>
     checkKeyExistsSync(std::string_view key) override;
 
+    int
+    inFlight() const {
+        return inFlight_.load(std::memory_order_relaxed);
+    }
+
+    bool
+    connected() const {
+        return connected_.load(std::memory_order_relaxed);
+    }
+
 private:
     struct CallbackContext {
         uintptr_t data_ptr;
         size_t data_len;
         std::shared_ptr<std::promise<nixl_status_t>> promise_ptr;
+        std::atomic<int> *inFlight;
     };
 
     static void
@@ -131,12 +142,16 @@ private:
     std::atomic<bool> connected_;
     std::atomic<bool> initDone_;
     std::atomic<bool> initSucceeded_;
+    std::atomic<int> inFlight_{0};
     mutable std::mutex syncMutex_;
 };
 
 /**
- * Round-robin connection pool over multiple hiredisAsyncClient instances.
- * Each slot has its own event loop thread and TCP connections.
+ * Least-loaded connection pool over multiple hiredisAsyncClient slots.
+ * Each slot has its own event loop thread and TCP connections. Dispatch routes
+ * to the healthy slot with the fewest in-flight async commands; unhealthy
+ * (disconnected) slots are skipped and commands fail immediately when no
+ * healthy slot is available.
  */
 class RedisConnectionPool : public iRedisClient {
 public:
@@ -159,11 +174,10 @@ public:
     checkKeyExistsSync(std::string_view key) override;
 
 private:
-    iRedisClient &
-    nextSlot();
+    hiredisAsyncClient *
+    leastLoadedHealthySlot();
 
     std::vector<std::unique_ptr<hiredisAsyncClient>> clients_;
-    std::atomic<size_t> nextSlot_{0};
 };
 
 #endif // NIXL_SRC_PLUGINS_REDIS_REDIS_CLIENT_H
