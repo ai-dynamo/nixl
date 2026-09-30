@@ -89,7 +89,12 @@ for ver in ${branches}; do
           ts="$(printf '%s' "${rec}" | grep -oE '"lastModified"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/')"
           if [ -z "${name}" ] || [ -z "${ts}" ]; then continue; fi
           ts_epoch="$(date -u -d "${ts}" +%s 2>/dev/null)" || continue
-          [ $(( (now_epoch - ts_epoch) / 60 )) -lt "${RESERVE_TTL_MIN}" ] && printf '%s\n' "${name}"
+          # An `if`, not `[ ... ] && ...`: as the loop body's last command the
+          # latter returns 1 on a stale reservation, which propagates out of the
+          # command substitution and kills the scan under set -e.
+          if [ $(( (now_epoch - ts_epoch) / 60 )) -lt "${RESERVE_TTL_MIN}" ]; then
+            printf '%s\n' "${name}"
+          fi
         done)"
   fi
 
