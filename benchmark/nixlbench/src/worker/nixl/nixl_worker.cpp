@@ -207,8 +207,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         std::cout << "GDS backend" << std::endl;
         backend_params["batch_pool_size"] = std::to_string(xferBenchConfig::gds_batch_pool_size);
         backend_params["batch_limit"] = std::to_string(xferBenchConfig::gds_batch_limit);
+        backend_params["max_request_size"] = std::to_string(xferBenchConfig::gds_max_request_size);
         std::cout << "GDS batch pool size: " << xferBenchConfig::gds_batch_pool_size << std::endl;
         std::cout << "GDS batch limit: " << xferBenchConfig::gds_batch_limit << std::endl;
+        std::cout << "GDS max request size: " << xferBenchConfig::gds_max_request_size << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS_MT)) {
         std::cout << "GDS_MT backend" << std::endl;
         backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
