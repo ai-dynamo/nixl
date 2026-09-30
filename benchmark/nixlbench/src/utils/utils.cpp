@@ -213,6 +213,9 @@ NB_ARG_STRING(obj_accelerated_type,
               "",
               "S3 Accelerated client vendor type to use. "
               "Only used when obj_accelerated_enable=true");
+NB_ARG_BOOL(obj_unique_keys,
+            false,
+            "Write every posted WRITE to a new object key; the objects are removed at the end");
 
 // AZURE BLOB options - only used when backend is AZURE_BLOB
 NB_ARG_STRING(azure_blob_account_url, "", "Account URL for Azure Blob backend");
@@ -334,6 +337,7 @@ std::string xferBenchConfig::obj_ca_bundle = "";
 size_t xferBenchConfig::obj_crt_min_limit = 0;
 bool xferBenchConfig::obj_accelerated_enable = false;
 std::string xferBenchConfig::obj_accelerated_type = "";
+bool xferBenchConfig::obj_unique_keys = false;
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
@@ -594,6 +598,7 @@ xferBenchConfig::loadParams(void) {
             obj_crt_min_limit = NB_ARG(obj_crt_min_limit);
             obj_accelerated_enable = NB_ARG(obj_accelerated_enable);
             obj_accelerated_type = NB_ARG(obj_accelerated_type);
+            obj_unique_keys = NB_ARG(obj_unique_keys);
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -693,6 +698,17 @@ xferBenchConfig::loadParams(void) {
     if (prepared_xfer && reregister_mem) {
         std::cerr << "prepared_xfer is incompatible with reregister_mem: the prepared "
                      "descriptor list handles pin the registration."
+                  << std::endl;
+        return -1;
+    }
+    if (obj_unique_keys && (!usesRestConnector() || op_type != XFERBENCH_OP_WRITE)) {
+        std::cout << "obj_unique_keys applies to WRITE with a REST connector; ignoring it"
+                  << std::endl;
+        obj_unique_keys = false;
+    }
+    if (obj_unique_keys && reregister_mem) {
+        std::cerr << "obj_unique_keys is incompatible with reregister_mem: both re-register "
+                     "the object descriptors."
                   << std::endl;
         return -1;
     }
@@ -936,6 +952,8 @@ xferBenchConfig::printConfig() {
                                                  "false (Accelerated disabled)");
             printOption("OBJ S3 Accelerated type (--obj_accelerated_type=type)",
                         obj_accelerated_type.empty() ? "(default)" : obj_accelerated_type);
+            printOption("OBJ unique keys (--obj_unique_keys=[0,1])",
+                        std::to_string(obj_unique_keys));
         }
 
         if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {
@@ -1755,11 +1773,13 @@ restHandle() {
     return handle.get();
 }
 
-// PUT an object of `size` bytes, or DELETE it when `put` is false, at the URL
-// the connector itself uses: <endpoint>/<name>.
+// Sends `method` to <endpoint>/<name>, the URL the connector itself uses: a PUT
+// uploads `size` bytes, a POST sends `body` as JSON.
 bool
-restRequest(bool put, const std::string &name, size_t size) {
-    const char *method = put ? "PUT" : "DELETE";
+restRequest(const std::string &method,
+            const std::string &name,
+            size_t size = 0,
+            const std::string &body = "") {
     if (xferBenchConfig::obj_endpoint_override.empty()) {
         std::cerr << "Error: --obj_endpoint_override is required for the Scality AI Connector"
                   << std::endl;
@@ -1774,15 +1794,28 @@ restRequest(bool put, const std::string &name, size_t size) {
 
     size_t remaining = size;
     std::string response;
+    std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(nullptr,
+                                                                        &curl_slist_free_all);
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    if (put) {
+    if (method == "PUT") {
         curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
         curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(size));
         curl_easy_setopt(curl, CURLOPT_READFUNCTION, fillRestUpload);
         curl_easy_setopt(curl, CURLOPT_READDATA, &remaining);
+    } else if (method == "POST") {
+        // The body must go out whole with a Content-Length: the endpoint reads
+        // a chunked body, or one held back for "Expect: 100-continue", as
+        // something other than a JSON object.
+        curl_slist *list = curl_slist_append(nullptr, "Content-Type: application/json");
+        list = curl_slist_append(list, "Expect:");
+        list = curl_slist_append(list, "Transfer-Encoding:");
+        headers.reset(list);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.get());
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
     } else {
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method.c_str());
     }
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, captureRestResponse);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
@@ -1796,7 +1829,8 @@ restRequest(bool put, const std::string &name, size_t size) {
     long http_code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     // A missing object is already removed, as "aws s3 rm" treats it.
-    if (res == CURLE_OK && ((http_code >= 200 && http_code < 300) || (!put && http_code == 404))) {
+    if (res == CURLE_OK &&
+        ((http_code >= 200 && http_code < 300) || (method == "DELETE" && http_code == 404))) {
         return true;
     }
     std::cerr << "Error: " << method << " " << url << " failed: "
@@ -1813,7 +1847,7 @@ xferBenchUtils::putObjRest(size_t buffer_size, const std::string &name) {
         std::cout << "Putting object: " << name << " (size: " << buffer_size << " bytes)"
                   << std::endl;
     }
-    return restRequest(true, name, buffer_size);
+    return restRequest("PUT", name, buffer_size);
 }
 
 bool
@@ -1821,7 +1855,27 @@ xferBenchUtils::rmObjRest(const std::string &name) {
     if (debugEnabled()) {
         std::cout << "Removing object: " << name << std::endl;
     }
-    return restRequest(false, name, 0);
+    return restRequest("DELETE", name);
+}
+
+// The endpoint's batch delete takes at most 1000 keys per request.
+bool
+xferBenchUtils::rmObjScalityBatch(const std::vector<std::string> &names) {
+    constexpr size_t max_keys = 1000;
+    bool all_removed = true;
+    for (size_t start = 0; start < names.size(); start += max_keys) {
+        const size_t end = std::min(start + max_keys, names.size());
+        // nixlbench keys are [A-Za-z0-9_], so they need no JSON escaping.
+        std::string body = "{\"keys\":[";
+        for (size_t i = start; i < end; i++) {
+            body += (i == start ? "\"" : ",\"") + names[i] + "\"";
+        }
+        body += "]}";
+        if (!restRequest("POST", ".batch_delete", 0, body)) {
+            all_removed = false;
+        }
+    }
+    return all_removed;
 }
 #else
 bool
@@ -1838,6 +1892,11 @@ xferBenchUtils::rmObjRest(const std::string &) {
                  "needs to remove objects"
               << std::endl;
     return false;
+}
+
+bool
+xferBenchUtils::rmObjScalityBatch(const std::vector<std::string> &) {
+    return rmObjRest("");
 }
 #endif
 

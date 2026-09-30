@@ -223,6 +223,7 @@ public:
     static size_t obj_crt_min_limit;
     static bool obj_accelerated_enable;
     static std::string obj_accelerated_type;
+    static bool obj_unique_keys;
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
@@ -429,6 +430,8 @@ public:
     putObjRest(size_t buffer_size, const std::string &name);
     static bool
     rmObjRest(const std::string &name);
+    static bool
+    rmObjScalityBatch(const std::vector<std::string> &names);
 
     static bool
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);

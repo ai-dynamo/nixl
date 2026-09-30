@@ -609,6 +609,7 @@ list, and each key may be given once:
 --obj_req_checksum TYPE    # Required checksum for S3 backend [supported, required] (default: supported)
 --obj_accelerated_enable   # Use an accelerated OBJ engine
 --obj_accelerated_type TYPE # Accelerated OBJ engine to use, e.g. scality_ai_connector
+--obj_unique_keys          # Write every posted WRITE to a new object key; the objects are removed at the end
 ```
 
 **AZURE_BLOB Backend:**
@@ -948,6 +949,12 @@ The engine's other parameters, such as `max_inflight`, `request_timeout_ms` or
 `rdma_sl`, are set through `--backend_params` as well; the connector README lists
 them. Without `--mode MG`, a process uses a single GPU, and so only that GPU's
 NICs.
+
+Each WRITE iteration writes the same objects again. `--obj_unique_keys` sends
+every posted WRITE to new keys instead, so the run measures the creation of new
+objects rather than overwrites, and removes those objects at the end with the
+endpoint's batch delete. Changing keys takes a new transfer request per WRITE,
+as `--recreate_xfer` does.
 
 ### Azure Blob Storage Backend
 For AZURE_BLOB plugin benchmarking, ETCD is optional for single instances.
