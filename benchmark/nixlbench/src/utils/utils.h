@@ -267,6 +267,8 @@ public:
     static bool
     isObjStorageBackend();
     static bool
+    usesRestConnector();
+    static bool
     parseBackendParams(const std::string &spec, nixl_b_params_t &params, std::string &error);
 
 protected:
@@ -399,6 +401,10 @@ private:
     buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
+    // Whether NIXL_LOG_LEVEL is DEBUG or TRACE, the levels at which nixlbench
+    // prints a line per object.
+    static bool
+    debugEnabled();
     static void
     setRT(xferBenchRT *rt);
     static void
@@ -419,6 +425,10 @@ public:
     getObjS3(const std::string &name);
     static bool
     rmObjS3(const std::string &name);
+    static bool
+    putObjRest(size_t buffer_size, const std::string &name);
+    static bool
+    rmObjRest(const std::string &name);
 
     static bool
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);

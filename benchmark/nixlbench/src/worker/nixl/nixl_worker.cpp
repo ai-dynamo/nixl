@@ -277,7 +277,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                       << xferBenchConfig::obj_crt_min_limit << " bytes" << std::endl;
         } else if (xferBenchConfig::obj_accelerated_enable) {
             backend_params["accelerated"] = "true";
-            std::cout << "OBJ backend with S3 Accelerated client enabled";
+            std::cout << "OBJ backend with " << (xferBenchConfig::usesRestConnector() ? "" : "S3 ")
+                      << "Accelerated client enabled";
             if (!xferBenchConfig::obj_accelerated_type.empty()) {
                 backend_params["type"] = xferBenchConfig::obj_accelerated_type;
                 std::cout << " (type: " << xferBenchConfig::obj_accelerated_type << ")";

@@ -142,6 +142,10 @@ etcd_dep = dependency('etcd-cpp-api', required : false)
 # GFlags
 gflags_dep = dependency('gflags', required: true)
 
+# libcurl creates and removes the objects the REST OBJ engines read and write;
+# without it those engines cannot be benchmarked.
+curl_dep = dependency('libcurl', required: false)
+
 # CLI11 is used only by the opt-in `raw` command hierarchy. Legacy invocations
 # continue to use gflags unchanged when CLI11 is unavailable or raw is disabled.
 cli11_dep = disabler()
@@ -320,6 +324,7 @@ summary(
         'UCX GPU Device API': ucx_gpu_device_api_available,
         'nvcc available': nvcc_prog.found(),
         'DOCA GPUNETIO found': doca_gpunetio_dep.found(),
+        'libcurl found': curl_dep.found(),
     },
     section: 'Optional features',
     bool_yn: true)
@@ -340,6 +345,7 @@ configure_file(
         'HAVE_ROCM': rocm_available ? '1' : '0',
         'HAVE_CUDA_FABRIC': cuda_fabric_available ? '1' : '0',
         'HAVE_RAW_CLI': raw_cli_available ? '1' : '0',
+        'HAVE_LIBCURL': curl_dep.found() ? '1' : '0',
     },
     install: true,
     install_dir: get_option('includedir') / 'nixlbench'

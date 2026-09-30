@@ -34,6 +34,10 @@ if raw_cli_available
   utils_deps += [cli11_dep]
 endif
 
+if curl_dep.found()
+  utils_deps += [curl_dep]
+endif
+
 if cuda_available
   utils_deps += [cuda_dep]
 elif rocm_available
