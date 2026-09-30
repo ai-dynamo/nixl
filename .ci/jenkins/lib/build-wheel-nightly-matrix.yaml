@@ -24,6 +24,9 @@ credentials:
     usernameVariable: 'NIXL_GITLAB_USER'
     passwordVariable: 'NIXL_GITLAB_TOKEN'
   # Paired with NIXL_GITLAB_TOKEN; only read on the spcx path.
+  - credentialsId: 'svc-nixl-github-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
   - credentialsId: 'ucx-plugin-gitlab-url'
     type: 'string'
     variable: 'NIXL_SPCX_PLUGIN_REPO_URL'
@@ -84,13 +87,19 @@ env:
 
 steps:
   - name: Prepare
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId:
+      - 'svc-nixl-new-artifactory-token'
+      - 'svc-nixl-github-token'
     parallel: false
     run: |
       # Set up podman and log in to Artifactory (base image pull)
       rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
       podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
+      # github.com credential for the Dockerfiles' clones; the build step passes it
+      # to docker build as the "ghconfig" secret.
+      (set +x; umask 077; printf '[url "https://%s:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' \
+        "$NIXL_GITHUB_USER" "$NIXL_GITHUB_TOKEN" > /tmp/ghconfig)
       echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
 
   - name: Checkout Source
@@ -152,6 +161,7 @@ steps:
           exit 1
           ;;
       esac
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       cd nixl-src
       ./contrib/build-container.sh \
         ${BASE_IMAGE_FLAGS} \

@@ -312,6 +312,40 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `manylinux` runner. Check the step's `containerSelector` against
 `runs_on_dockers`, not just whether `docker` is podman.
 
+## Authenticated dependency clones in image builds
+
+`contrib/Dockerfile`, `contrib/Dockerfile.manylinux` and
+`benchmark/nixlbench/contrib/Dockerfile` clone their third-party dependencies from
+github.com. github.com intermittently answers anonymous clones with an HTTP 401, which
+git reports as `could not read Username for 'https://github.com'` — it refers to the
+missing terminal git tried to prompt on, not to DNS or connectivity.
+
+Every cloning `RUN` mounts an optional build secret,
+`--mount=type=secret,id=ghconfig,target=/root/.gitconfig`, holding a
+`url."https://<user>:<token>@github.com/".insteadOf` rewrite. When nothing supplies
+the secret the mount is empty and the clone is anonymous, so local and external builds
+are unchanged. `url.insteadOf` rather than a netrc because a rejected or expired
+token then fails as `Authentication failed`; with a netrc git falls back to its prompt
+and reports the same `could not read Username` as an anonymous clone.
+
+CI supplies it through `DOCKER_BUILD_EXTRA_ARGS`, a generic passthrough that
+`contrib/build-container.sh` and `benchmark/nixlbench/contrib/build.sh` append to their
+`docker build` command (empty by default, so their behaviour is unchanged). In
+`build-container-pr-matrix.yaml`, `build-container-matrix.yaml` and
+`build-wheel-nightly-matrix.yaml`:
+
+- the setup step binds `svc-nixl-github-token` and writes the git config to
+  `/tmp/ghconfig` in the podman container, with tracing off and mode 600;
+- each build step sets
+  `DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"` before calling
+  the build script.
+
+The token never lands in an image layer or in `podman history`.
+
+`build-wheel-matrix.yaml` needs nothing: it passes `--wheel-base-image`, which skips the
+`wheel_base` stage that holds the manylinux clones. That base, and `Dockerfile.base`,
+are built by ci-demo and are not covered here.
+
 ## Related docs
 
 - [Build Wheel Matrix CI Job Documentation](build-wheel-matrix-ci.md) — deep dive into `nixl-ci-build-wheel`.

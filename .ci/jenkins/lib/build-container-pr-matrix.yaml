@@ -47,6 +47,9 @@ credentials:
   - credentialsId: 'nixl-gitlab-registry-token'
     type: 'string'
     variable: 'GITLAB_REGISTRY_TOKEN'
+  - credentialsId: 'svc-nixl-github-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
 
 steps:
   - name: Setup docker
@@ -54,12 +57,17 @@ steps:
     credentialsId:
       - 'svc-nixl-new-artifactory-token'
       - 'nixl-gitlab-registry-token'
+      - 'svc-nixl-github-token'
     run: |
       set -e
       # Prepare podman and log in so the base images can be pulled.
       rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
       podman system reset -f || true
       ln -sfT "$(type -p podman)" /usr/bin/docker
+      # github.com credential for the Dockerfiles' clones; the build step passes it
+      # to docker build as the "ghconfig" secret.
+      (set +x; umask 077; printf '[url "https://%s:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' \
+        "$NIXL_GITHUB_USER" "$NIXL_GITHUB_TOKEN" > /tmp/ghconfig)
       echo "$ARTIFACTORY_PASSWORD" | docker login artifactory.nvidia.com -u "$ARTIFACTORY_USERNAME" --password-stdin
       if [ -n "${GITLAB_REGISTRY_TOKEN:-}" ]; then
         echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 -u nixl-ci --password-stdin
@@ -80,6 +88,7 @@ steps:
     containerSelector: "{name: 'podman'}"
     run: |
       set -e
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       case "$target" in
         nixl)
           # nixl container, debug build. build-container.sh enables EP by default.

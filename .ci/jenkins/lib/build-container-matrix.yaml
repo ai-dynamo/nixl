@@ -51,6 +51,9 @@ credentials:
     usernameVariable: 'NIXL_GITLAB_USER'
     passwordVariable: 'NIXL_GITLAB_TOKEN'
   # Paired with NIXL_GITLAB_TOKEN; only read on the spcx path.
+  - credentialsId: 'svc-nixl-github-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
   - credentialsId: 'ucx-plugin-gitlab-url'
     type: 'string'
     variable: 'NIXL_SPCX_PLUGIN_REPO_URL'
@@ -104,6 +107,7 @@ steps:
     credentialsId:
       - 'svc-nixl-new-artifactory-token'
       - 'nixl-gitlab-registry-token'
+      - 'svc-nixl-github-token'
     run: |
       # Setup podman and dependencies
       set -x
@@ -119,6 +123,10 @@ steps:
       if [ -n "${GITLAB_REGISTRY_TOKEN:-}" ]; then
         echo "$GITLAB_REGISTRY_TOKEN" | docker login gitlab-master.nvidia.com:5005 -u nixl-ci --password-stdin
       fi
+      # github.com credential for the Dockerfiles' clones; the build step passes it
+      # to docker build as the "ghconfig" secret.
+      (set +x; umask 077; printf '[url "https://%s:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' \
+        "$NIXL_GITHUB_USER" "$NIXL_GITHUB_TOKEN" > /tmp/ghconfig)
       set +v -x
 
       yum install -y gettext
@@ -127,6 +135,7 @@ steps:
     enable: ${ENABLE_NIXLBENCH_BUILD}
     containerSelector: "{name: 'podman'}"
     run: |
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       # Clone UCX source for nixlbench
       git clone https://github.com/openucx/ucx.git ucx-src
       git -C ucx-src checkout "${UCX_SHA}"
@@ -148,6 +157,7 @@ steps:
       - 'svc-nixl-gitlab-token'
       - 'ucx-plugin-gitlab-url'
     run: |
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       export UCX_REF="${UCX_SHA}"
 
       NIXL_EP_FLAG=""

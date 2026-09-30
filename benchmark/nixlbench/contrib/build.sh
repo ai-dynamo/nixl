@@ -217,6 +217,7 @@ show_help() {
     echo "  [--tag tag for image]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
+    echo "  [DOCKER_BUILD_EXTRA_ARGS env var: extra arguments passed through to docker build, e.g. --secret id=ghconfig,src=<file>]"
     exit 0
 }
 
@@ -245,4 +246,4 @@ BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
 
 show_build_options
 
-docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain
+docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS ${DOCKER_BUILD_EXTRA_ARGS:-} $TAG $NO_CACHE $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain
