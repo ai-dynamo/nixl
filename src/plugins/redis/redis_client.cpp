@@ -183,23 +183,15 @@ struct CallbackContext {
 
 } // namespace
 
-// Slot: one async TCP connection + one sync TCP connection, both on the shared event loop.
+// Slot: one async TCP connection on the shared event loop.
 struct RedisConnectionPool::Slot {
     RedisConnectionPool *pool = nullptr;
     redisAsyncContext   *asyncCtx = nullptr;
-    redisContext        *syncCtx  = nullptr;
-    std::mutex           syncMutex;
     std::atomic<bool>    connected{false};
     std::atomic<bool>    initDone{false};
     std::atomic<bool>    initSucceeded{false};
     std::atomic<int>     inFlight{0};
-
-    ~Slot() {
-        if (syncCtx) {
-            redisFree(syncCtx);
-        }
-        // asyncCtx is freed by RedisConnectionPool::stopEventLoop on the event loop thread
-    }
+    // asyncCtx is freed by RedisConnectionPool::stopEventLoop on the event loop thread
 };
 
 RedisConnectionPool::RedisConnectionPool(RedisConfig config) : config_(std::move(config)) {
@@ -260,10 +252,8 @@ RedisConnectionPool::RedisConnectionPool(RedisConfig config) : config_(std::move
         throw std::runtime_error("Failed to initialize one or more Redis connections in pool");
     }
 
-    // Sync (blocking EXISTS) connections: one per slot, connected in the constructor thread.
-    for (auto &s : slots_) {
-        connectSlotSync(*s);
-    }
+    // Shared sync connection for EXISTS (queryMem is single-threaded, one connection suffices).
+    connectSyncContext();
 
     NIXL_INFO << absl::StrFormat("Redis connection pool ready: %d connections at %s:%d (db=%d)",
                                  N,
@@ -274,7 +264,10 @@ RedisConnectionPool::RedisConnectionPool(RedisConfig config) : config_(std::move
 
 RedisConnectionPool::~RedisConnectionPool() {
     stopEventLoop();
-    // Slot destructors free syncCtx; asyncCtx was already freed by stopEventLoop.
+    if (syncCtx_) {
+        redisFree(syncCtx_);
+        syncCtx_ = nullptr;
+    }
 }
 
 void
@@ -307,14 +300,14 @@ RedisConnectionPool::initSlotAsyncCtx(Slot &slot) {
 }
 
 void
-RedisConnectionPool::connectSlotSync(Slot &slot) {
+RedisConnectionPool::connectSyncContext() {
     struct timeval timeout = {5, 0};
-    slot.syncCtx = redisConnectWithTimeout(config_.host.c_str(), config_.port, timeout);
-    if (!slot.syncCtx || slot.syncCtx->err) {
-        std::string err_msg = slot.syncCtx ? slot.syncCtx->errstr : "allocation failed";
-        if (slot.syncCtx) {
-            redisFree(slot.syncCtx);
-            slot.syncCtx = nullptr;
+    syncCtx_ = redisConnectWithTimeout(config_.host.c_str(), config_.port, timeout);
+    if (!syncCtx_ || syncCtx_->err) {
+        std::string err_msg = syncCtx_ ? syncCtx_->errstr : "allocation failed";
+        if (syncCtx_) {
+            redisFree(syncCtx_);
+            syncCtx_ = nullptr;
         }
         NIXL_WARN << absl::StrFormat(
             "Sync Redis connection failed (%s:%d): %s; queryMem will return errors",
@@ -328,15 +321,15 @@ RedisConnectionPool::connectSlotSync(Slot &slot) {
         redisReply *reply =
             config_.username.empty() ?
                 static_cast<redisReply *>(
-                    redisCommand(slot.syncCtx, "AUTH %s", config_.password.c_str())) :
-                static_cast<redisReply *>(redisCommand(slot.syncCtx,
-                                                        "AUTH %s %s",
-                                                        config_.username.c_str(),
-                                                        config_.password.c_str()));
+                    redisCommand(syncCtx_, "AUTH %s", config_.password.c_str())) :
+                static_cast<redisReply *>(redisCommand(syncCtx_,
+                                                       "AUTH %s %s",
+                                                       config_.username.c_str(),
+                                                       config_.password.c_str()));
         if (!checkRedisReplyOk(reply, "AUTH")) {
             freeReplyObject(reply);
-            redisFree(slot.syncCtx);
-            slot.syncCtx = nullptr;
+            redisFree(syncCtx_);
+            syncCtx_ = nullptr;
             NIXL_WARN << "Sync Redis AUTH failed; queryMem will return errors";
             return;
         }
@@ -345,11 +338,11 @@ RedisConnectionPool::connectSlotSync(Slot &slot) {
 
     if (config_.db != 0) {
         redisReply *reply =
-            static_cast<redisReply *>(redisCommand(slot.syncCtx, "SELECT %d", config_.db));
+            static_cast<redisReply *>(redisCommand(syncCtx_, "SELECT %d", config_.db));
         if (!checkRedisReplyOk(reply, "SELECT")) {
             freeReplyObject(reply);
-            redisFree(slot.syncCtx);
-            slot.syncCtx = nullptr;
+            redisFree(syncCtx_);
+            syncCtx_ = nullptr;
             NIXL_WARN << "Sync Redis SELECT failed; queryMem will return errors";
             return;
         }
@@ -676,19 +669,14 @@ RedisConnectionPool::getKeyAsync(std::string_view key,
 
 std::optional<bool>
 RedisConnectionPool::checkKeyExistsSync(std::string_view key) {
-    auto *slot = leastLoadedHealthySlot();
-    if (!slot) {
-        return std::nullopt;
-    }
-
-    std::lock_guard<std::mutex> lock(slot->syncMutex);
-    if (!slot->syncCtx || slot->syncCtx->err) {
+    std::lock_guard<std::mutex> lock(syncMutex_);
+    if (!syncCtx_ || syncCtx_->err) {
         NIXL_ERROR << "Sync Redis connection unavailable for EXISTS";
         return std::nullopt;
     }
 
     redisReply *reply = static_cast<redisReply *>(
-        redisCommand(slot->syncCtx, "EXISTS %b", key.data(), key.size()));
+        redisCommand(syncCtx_, "EXISTS %b", key.data(), key.size()));
 
     if (!reply) {
         NIXL_ERROR << "Redis EXISTS: no reply";

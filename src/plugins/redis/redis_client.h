@@ -12,6 +12,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -67,7 +68,7 @@ public:
  * Connection pool over N async TCP connections sharing one libevent thread.
  * Dispatch routes to the healthy slot with the fewest in-flight commands;
  * commands fail immediately when no healthy slot is available.
- * Resource cost: 1 OS thread + N async TCP connections + N sync TCP connections.
+ * Resource cost: 1 OS thread + N async TCP connections + 1 shared sync TCP connection.
  */
 class RedisConnectionPool : public iRedisClient {
 public:
@@ -110,7 +111,7 @@ private:
     void
     freeSlotAsyncCtx(Slot &slot);
     void
-    connectSlotSync(Slot &slot);
+    connectSyncContext();
 
     static void
     connectCallback(const redisAsyncContext *c, int status);
@@ -125,10 +126,12 @@ private:
     static void
     getCallback(redisAsyncContext *c, void *reply, void *privdata);
 
-    event_base *eventBase_ = nullptr;
-    std::thread eventLoopThread_;
+    event_base         *eventBase_ = nullptr;
+    std::thread         eventLoopThread_;
     std::vector<std::unique_ptr<Slot>> slots_;
-    RedisConfig config_;
+    redisContext       *syncCtx_ = nullptr;
+    mutable std::mutex  syncMutex_;
+    RedisConfig         config_;
 };
 
 #endif // NIXL_SRC_PLUGINS_REDIS_REDIS_CLIENT_H

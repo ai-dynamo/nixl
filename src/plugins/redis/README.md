@@ -28,12 +28,11 @@ interface isolates hiredis/libevent and permits Redis-free unit tests; it is not
 extension API.
 
 The production client uses a `RedisConnectionPool` (default: 8 connections). All connections
-share one libevent event loop thread. Each connection slot holds:
+share one libevent event loop thread. Each connection slot holds one hiredis/libevent async
+connection for `SET` and `GET`. A single shared blocking hiredis connection handles `EXISTS`
+for all slots; `queryMem` calls EXISTS serially, so one connection is sufficient.
 
-- One hiredis/libevent async connection for `SET` and `GET`.
-- One blocking hiredis connection for `EXISTS`.
-
-Resource cost: **1 OS thread** + N async TCP connections + N sync TCP connections for a pool
+Resource cost: **1 OS thread** + N async TCP connections + 1 sync TCP connection for a pool
 of size N. A single hiredis async connection already pipelines many outstanding commands, so
 increasing pool size helps primarily when the Redis server runs with `--io-threads` and
 multiple connections saturate more server threads. Decrease pool size to 1 for
