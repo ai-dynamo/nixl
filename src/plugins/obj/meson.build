@@ -62,7 +62,8 @@ endif
 curl_dep = dependency('libcurl', required: false)
 ibverbs_dep = dependency('libibverbs', required: false)
 mlx5_dep = dependency('libmlx5', required: false)
-if curl_dep.found() and ibverbs_dep.found() and mlx5_dep.found()
+have_scality_ai_connector = curl_dep.found() and ibverbs_dep.found() and mlx5_dep.found()
+if have_scality_ai_connector
     message('Enabling Scality AI Connector engine')
     obj_sources += [
         'rest_accel/scality_ai_connector/client.cpp',
