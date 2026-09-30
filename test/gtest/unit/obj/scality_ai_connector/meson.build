@@ -14,5 +14,7 @@
 # limitations under the License.
 
 obj_test_sources += files(
+    'rest_client.cpp',
     'utils.cpp',
 )
+obj_test_deps += [curl_dep]
