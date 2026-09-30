@@ -613,7 +613,23 @@ TEST_F(redisEngineTest, PostXferDoesNotDispatchPartialCommandsWhenLaterKeyIsMiss
 // RedisConnectionPool tests
 // ---------------------------------------------------------------------------
 
-static bool isTcpPortOpen(const char *host, int port) {
+static std::string redisTestHost() {
+    const char *env = std::getenv("REDIS_HOST");
+    return env ? env : "127.0.0.1";
+}
+
+static int redisTestPort() {
+    const char *env = std::getenv("REDIS_PORT");
+    if (env) {
+        try {
+            return std::stoi(env);
+        }
+        catch (...) {}
+    }
+    return 6379;
+}
+
+static bool isTcpPortOpen(const std::string &host, int port) {
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         return false;
@@ -623,7 +639,7 @@ static bool isTcpPortOpen(const char *host, int port) {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(static_cast<uint16_t>(port));
-    ::inet_pton(AF_INET, host, &addr.sin_addr);
+    ::inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
     bool ok = (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
     ::close(fd);
     return ok;
@@ -640,12 +656,14 @@ TEST(redisPoolTest, ConstructorThrowsWhenServerUnavailable) {
 }
 
 TEST(redisPoolTest, PutGetRoundtrip) {
-    if (!isTcpPortOpen("127.0.0.1", 6379)) {
-        GTEST_SKIP() << "No Redis server at 127.0.0.1:6379";
+    const std::string host = redisTestHost();
+    const int port = redisTestPort();
+    if (!isTcpPortOpen(host, port)) {
+        GTEST_SKIP() << "No Redis server at " << host << ":" << port;
     }
     RedisConfig config;
-    config.host = "127.0.0.1";
-    config.port = 6379;
+    config.host = host;
+    config.port = port;
     config.pool_size = 2;
     RedisConnectionPool pool(std::move(config));
 
@@ -670,12 +688,14 @@ TEST(redisPoolTest, PutGetRoundtrip) {
 }
 
 TEST(redisPoolTest, CheckKeyExistsSyncAfterPut) {
-    if (!isTcpPortOpen("127.0.0.1", 6379)) {
-        GTEST_SKIP() << "No Redis server at 127.0.0.1:6379";
+    const std::string host = redisTestHost();
+    const int port = redisTestPort();
+    if (!isTcpPortOpen(host, port)) {
+        GTEST_SKIP() << "No Redis server at " << host << ":" << port;
     }
     RedisConfig config;
-    config.host = "127.0.0.1";
-    config.port = 6379;
+    config.host = host;
+    config.port = port;
     config.pool_size = 1;
     RedisConnectionPool pool(std::move(config));
 
