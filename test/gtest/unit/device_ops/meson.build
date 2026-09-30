@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,22 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Standalone workspace: not a member of the root workspace.
-[workspace]
-
-[package]
-name = "nixl-examples"
-version = "0.1.1"
-edition = "2021"
-
-[dependencies]
-nixl-sys = { path = "../../src/bindings/rust" }
-clap = { version = "4.5.38", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-tokio = { version = "1.45", features = ["full"] }
-chrono = "0.4"
-
-[[bin]]
-name = "single_process_example"
-path = "src/single_process_example.rs"
+device_ops_unit_test_dep = declare_dependency(
+    sources: ['device_ops.cpp'],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
+    dependencies: [nixl_common_dep, device_utils_interface, gpu_dependencies],
+)

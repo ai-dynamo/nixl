@@ -17,11 +17,9 @@
 #ifndef __BACKEND_ENGINE_H
 #define __BACKEND_ENGINE_H
 
-#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <mutex>
 
 #include "nixl_types.h"
 #include "backend_aux.h"
