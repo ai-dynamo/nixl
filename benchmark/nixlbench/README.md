@@ -385,7 +385,7 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 - `etcd_lib_path`: Path to ETCD C++ client library
 - `nvshmem_inc_path`: Path to NVSHMEM include directory
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
-- `build_raw_cli`: Build the experimental CLI11-based raw command path (default: false)
+- `build_raw_cli`: Build the experimental CLI11-based raw and scenario command paths (default: false)
 - `build_tests`: Build NIXLBench tests for non-release builds (default: true)
 - `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)
 - `prefix`: Installation prefix (default: /usr/local)
@@ -394,9 +394,20 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 
 ### Verb-based interface
 
-When configured with `-Dbuild_raw_cli=true`, NIXLBench also provides a
-verb-based interface. The first available command is `raw posix`, which runs
-the existing NIXLBench worker with three explicit ownership layers:
+When configured with `-Dbuild_raw_cli=true` and built with the CLI11 dependency
+available, NIXLBench also provides a verb-based interface with `raw` and
+`scenario` command hierarchies.
+
+#### Scenario commands
+
+`scenario allocate-once` models a fixed file-backed dataset with changing
+block-aligned transfer offsets. See [SCENARIOS.md](SCENARIOS.md) for its usage,
+file ownership, registration modes, offset selection, and extension boundary.
+
+#### Raw POSIX command
+
+`raw posix` runs the existing NIXLBench worker with three explicit ownership
+layers:
 
 - `raw` owns benchmark controls such as operation, transfer sizes, iterations,
   threads, and consistency checking.
@@ -453,7 +464,8 @@ interprets and validates the resolved values during backend creation rather than
 through copied NIXLBench rules, so the `use_uring` example depends on that
 parameter being advertised by the installed POSIX plugin.
 
-The existing flags-only interface remains available for all other commands.
+Only explicit `raw` and `scenario` commands use CLI11. All existing flags-only
+commands keep their gflags syntax and behavior.
 
 ### ETCD Coordination Setup
 

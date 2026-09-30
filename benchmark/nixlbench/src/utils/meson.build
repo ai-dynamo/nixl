@@ -30,7 +30,7 @@ utils_deps = [
 ]
 
 if raw_cli_available
-  utils_sources += ['raw_cli.cpp', 'raw_cli.h']
+  utils_sources += ['cli_common.cpp', 'cli_common.h', 'raw_cli.cpp', 'raw_cli.h']
   utils_deps += [cli11_dep]
 endif
 
