@@ -314,13 +314,13 @@ private:
     bool completeImmediately_ = true;
     std::deque<std::optional<bool>> existsResults_;
     std::vector<std::shared_ptr<std::promise<nixl_status_t>>> pendingPromises_;
-    std::vector<std::string>  putKeys_;
-    std::vector<uintptr_t>    putAddrs_;
-    std::vector<size_t>       putLens_;
-    std::vector<std::string>  getKeys_;
-    std::vector<uintptr_t>    getAddrs_;
-    std::vector<size_t>       getLens_;
-    std::vector<std::string>  checkedKeys_;
+    std::vector<std::string> putKeys_;
+    std::vector<uintptr_t> putAddrs_;
+    std::vector<size_t> putLens_;
+    std::vector<std::string> getKeys_;
+    std::vector<uintptr_t> getAddrs_;
+    std::vector<size_t> getLens_;
+    std::vector<std::string> checkedKeys_;
 };
 
 class redisEngineTest : public ::testing::Test {
@@ -613,28 +613,36 @@ TEST_F(redisEngineTest, PostXferDoesNotDispatchPartialCommandsWhenLaterKeyIsMiss
 // RedisConnectionPool tests
 // ---------------------------------------------------------------------------
 
-static std::string redisTestHost() {
+static std::string
+redisTestHost() {
     const char *env = std::getenv("REDIS_HOST");
     return env ? env : "127.0.0.1";
 }
 
-static int redisTestPort() {
+static int
+redisTestPort() {
     const char *env = std::getenv("REDIS_PORT");
     if (env) {
         try {
             return std::stoi(env);
         }
-        catch (...) {}
+        catch (...) {
+        }
     }
     return 6379;
 }
 
-static bool isTcpPortOpen(const std::string &host, int port) {
+static bool
+isTcpPortOpen(const std::string &host, int port) {
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         return false;
     }
-    struct timeval tv{0, 200000};
+
+    struct timeval tv {
+        0, 200000
+    };
+
     ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
