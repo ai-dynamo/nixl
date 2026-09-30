@@ -37,6 +37,9 @@ kubernetes:
   privileged: true
 
 credentials:
+  - credentialsId: 'svc-nixl-github-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
   - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 env:
@@ -67,13 +70,25 @@ empty_volumes:
 pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
+# ci-demo builds the images below outside any step; an entry's credentialsId binds
+# the token around its build, and this hook turns it into the git config the
+# Dockerfile mounts as the "ghconfig" secret. Left empty when nothing is bound.
+pipeline_on_image_build:
+  run: |
+    (set +x; umask 077; : > /tmp/ghconfig
+     if [ -n "${NIXL_GITHUB_TOKEN:-}" ]; then
+       printf '[url "https://%s:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' \
+         "${NIXL_GITHUB_USER}" "${NIXL_GITHUB_TOKEN}" > /tmp/ghconfig
+     fi)
+
 # label is defined at jenkins slave configuration, we want to run the job on a gpu agent and be able to esaly replace it without having to change this file
 runs_on_dockers:
   - {
      file: '.ci/dockerfiles/Dockerfile.base',
      name: 'nixl-ci-gpu-base',
      tag: "${CI_IMAGE_TAG}",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR}  --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghconfig,src=/tmp/ghconfig',
+     credentialsId: 'svc-nixl-github-token'
     }
   - {
      file: '.ci/dockerfiles/Dockerfile.build_helper',
