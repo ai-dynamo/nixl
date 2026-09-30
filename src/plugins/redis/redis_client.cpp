@@ -18,6 +18,7 @@
 #include "redis_client.h"
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -173,24 +174,35 @@ checkRedisReplyOk(redisReply *reply, const char *command) {
     return true;
 }
 
-void
-setPromiseStatus(const std::shared_ptr<std::promise<nixl_status_t>> &promise, bool success) {
-    if (!promise) {
-        return;
-    }
-    promise->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
-}
+struct CallbackContext {
+    uintptr_t data_ptr;
+    size_t data_len;
+    std::shared_ptr<std::promise<nixl_status_t>> promise_ptr;
+    std::atomic<int> *inFlight;
+};
 
 } // namespace
 
-hiredisAsyncClient::hiredisAsyncClient(RedisConfig config)
-    : config_(std::move(config)),
-      asyncContext_(nullptr),
-      syncContext_(nullptr),
-      eventBase_(nullptr),
-      connected_(false),
-      initDone_(false),
-      initSucceeded_(false) {
+// Slot: one async TCP connection + one sync TCP connection, both on the shared event loop.
+struct RedisConnectionPool::Slot {
+    RedisConnectionPool *pool = nullptr;
+    redisAsyncContext   *asyncCtx = nullptr;
+    redisContext        *syncCtx  = nullptr;
+    std::mutex           syncMutex;
+    std::atomic<bool>    connected{false};
+    std::atomic<bool>    initDone{false};
+    std::atomic<bool>    initSucceeded{false};
+    std::atomic<int>     inFlight{0};
+
+    ~Slot() {
+        if (syncCtx) {
+            redisFree(syncCtx);
+        }
+        // asyncCtx is freed by RedisConnectionPool::stopEventLoop on the event loop thread
+    }
+};
+
+RedisConnectionPool::RedisConnectionPool(RedisConfig config) : config_(std::move(config)) {
     evthread_use_pthreads();
 
     eventBase_ = event_base_new();
@@ -198,62 +210,114 @@ hiredisAsyncClient::hiredisAsyncClient(RedisConfig config)
         throw std::runtime_error("Failed to create event base");
     }
 
-    asyncContext_ = redisAsyncConnect(config_.host.c_str(), config_.port);
-    if (!asyncContext_ || asyncContext_->err) {
-        if (asyncContext_) {
-            std::string err_msg =
-                absl::StrFormat("Failed to connect to Redis: %s", asyncContext_->errstr);
-            redisAsyncFree(asyncContext_);
-            event_base_free(eventBase_);
-            throw std::runtime_error(err_msg);
+    const int N = config_.pool_size;
+    slots_.reserve(N);
+    for (int i = 0; i < N; ++i) {
+        slots_.push_back(std::make_unique<Slot>());
+        slots_.back()->pool = this;
+    }
+
+    // Attach all async connections to the shared event base before starting the thread.
+    // On error, free whatever was created before re-throwing.
+    try {
+        for (auto &s : slots_) {
+            initSlotAsyncCtx(*s);
+        }
+    }
+    catch (...) {
+        for (auto &s : slots_) {
+            if (s->asyncCtx) {
+                redisAsyncFree(s->asyncCtx);
+                s->asyncCtx = nullptr;
+            }
         }
         event_base_free(eventBase_);
-        throw std::runtime_error("Failed to allocate Redis async context");
+        eventBase_ = nullptr;
+        throw;
     }
 
-    asyncContext_->data = this;
+    // Start the single shared event loop thread.
+    // All N async connect/auth/select sequences run concurrently on this one thread.
+    eventLoopThread_ = std::thread([this]() { event_base_dispatch(eventBase_); });
 
-    if (redisLibeventAttach(asyncContext_, eventBase_) != REDIS_OK) {
-        std::string err_msg =
-            absl::StrFormat("Failed to attach Redis to event base: %s", asyncContext_->errstr);
-        redisAsyncFree(asyncContext_);
-        event_base_free(eventBase_);
-        throw std::runtime_error(err_msg);
+    // Wait for every slot to complete initialization (parallel: ~1 RTT regardless of N).
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    for (auto &s : slots_) {
+        while (!s->initDone.load()) {
+            if (std::chrono::steady_clock::now() > deadline) {
+                stopEventLoop();
+                throw std::runtime_error("Redis connection pool initialization timed out");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
     }
 
-    redisAsyncSetConnectCallback(asyncContext_, connectCallback);
-    redisAsyncSetDisconnectCallback(asyncContext_, disconnectCallback);
-
-    eventLoopThread_ = std::thread(&hiredisAsyncClient::processEventLoop, this);
-
-    int retries = 100;
-    while (!initDone_.load() && retries-- > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    if (!initSucceeded_.load()) {
+    const bool allOk = std::all_of(slots_.begin(), slots_.end(), [](const std::unique_ptr<Slot> &s) {
+        return s->initSucceeded.load();
+    });
+    if (!allOk) {
         stopEventLoop();
-        throw std::runtime_error("Failed to connect to Redis within timeout");
+        throw std::runtime_error("Failed to initialize one or more Redis connections in pool");
     }
 
-    connectSyncContext();
+    // Sync (blocking EXISTS) connections: one per slot, connected in the constructor thread.
+    for (auto &s : slots_) {
+        connectSlotSync(*s);
+    }
 
-    NIXL_INFO << absl::StrFormat(
-        "Connected to Redis at %s:%d (db=%d)", config_.host, config_.port, config_.db);
+    NIXL_INFO << absl::StrFormat("Redis connection pool ready: %d connections at %s:%d (db=%d)",
+                                 N,
+                                 config_.host,
+                                 config_.port,
+                                 config_.db);
+}
+
+RedisConnectionPool::~RedisConnectionPool() {
+    stopEventLoop();
+    // Slot destructors free syncCtx; asyncCtx was already freed by stopEventLoop.
 }
 
 void
-hiredisAsyncClient::connectSyncContext() {
+RedisConnectionPool::initSlotAsyncCtx(Slot &slot) {
+    slot.asyncCtx = redisAsyncConnect(config_.host.c_str(), config_.port);
+    if (!slot.asyncCtx || slot.asyncCtx->err) {
+        std::string msg;
+        if (slot.asyncCtx) {
+            msg = absl::StrFormat("Failed to connect to Redis: %s", slot.asyncCtx->errstr);
+            redisAsyncFree(slot.asyncCtx);
+            slot.asyncCtx = nullptr;
+        } else {
+            msg = "Failed to allocate Redis async context";
+        }
+        throw std::runtime_error(msg);
+    }
+
+    slot.asyncCtx->data = &slot;
+
+    if (redisLibeventAttach(slot.asyncCtx, eventBase_) != REDIS_OK) {
+        std::string msg =
+            absl::StrFormat("Failed to attach Redis to event base: %s", slot.asyncCtx->errstr);
+        redisAsyncFree(slot.asyncCtx);
+        slot.asyncCtx = nullptr;
+        throw std::runtime_error(msg);
+    }
+
+    redisAsyncSetConnectCallback(slot.asyncCtx, connectCallback);
+    redisAsyncSetDisconnectCallback(slot.asyncCtx, disconnectCallback);
+}
+
+void
+RedisConnectionPool::connectSlotSync(Slot &slot) {
     struct timeval timeout = {5, 0};
-    syncContext_ = redisConnectWithTimeout(config_.host.c_str(), config_.port, timeout);
-    if (!syncContext_ || syncContext_->err) {
-        std::string err_msg = syncContext_ ? syncContext_->errstr : "allocation failed";
-        if (syncContext_) {
-            redisFree(syncContext_);
-            syncContext_ = nullptr;
+    slot.syncCtx = redisConnectWithTimeout(config_.host.c_str(), config_.port, timeout);
+    if (!slot.syncCtx || slot.syncCtx->err) {
+        std::string err_msg = slot.syncCtx ? slot.syncCtx->errstr : "allocation failed";
+        if (slot.syncCtx) {
+            redisFree(slot.syncCtx);
+            slot.syncCtx = nullptr;
         }
         NIXL_WARN << absl::StrFormat(
-            "Sync Redis connection for EXISTS failed (%s:%d): %s; queryMem will return errors",
+            "Sync Redis connection failed (%s:%d): %s; queryMem will return errors",
             config_.host,
             config_.port,
             err_msg);
@@ -261,15 +325,18 @@ hiredisAsyncClient::connectSyncContext() {
     }
 
     if (!config_.password.empty()) {
-        redisReply *reply = config_.username.empty() ?
-            static_cast<redisReply *>(
-                redisCommand(syncContext_, "AUTH %s", config_.password.c_str())) :
-            static_cast<redisReply *>(redisCommand(
-                syncContext_, "AUTH %s %s", config_.username.c_str(), config_.password.c_str()));
+        redisReply *reply =
+            config_.username.empty() ?
+                static_cast<redisReply *>(
+                    redisCommand(slot.syncCtx, "AUTH %s", config_.password.c_str())) :
+                static_cast<redisReply *>(redisCommand(slot.syncCtx,
+                                                        "AUTH %s %s",
+                                                        config_.username.c_str(),
+                                                        config_.password.c_str()));
         if (!checkRedisReplyOk(reply, "AUTH")) {
             freeReplyObject(reply);
-            redisFree(syncContext_);
-            syncContext_ = nullptr;
+            redisFree(slot.syncCtx);
+            slot.syncCtx = nullptr;
             NIXL_WARN << "Sync Redis AUTH failed; queryMem will return errors";
             return;
         }
@@ -278,42 +345,23 @@ hiredisAsyncClient::connectSyncContext() {
 
     if (config_.db != 0) {
         redisReply *reply =
-            static_cast<redisReply *>(redisCommand(syncContext_, "SELECT %d", config_.db));
+            static_cast<redisReply *>(redisCommand(slot.syncCtx, "SELECT %d", config_.db));
         if (!checkRedisReplyOk(reply, "SELECT")) {
             freeReplyObject(reply);
-            redisFree(syncContext_);
-            syncContext_ = nullptr;
+            redisFree(slot.syncCtx);
+            slot.syncCtx = nullptr;
             NIXL_WARN << "Sync Redis SELECT failed; queryMem will return errors";
             return;
         }
         freeReplyObject(reply);
     }
-
-    NIXL_INFO << absl::StrFormat("Sync Redis connection ready for EXISTS at %s:%d (db=%d)",
-                                 config_.host,
-                                 config_.port,
-                                 config_.db);
-}
-
-hiredisAsyncClient::~hiredisAsyncClient() {
-    stopEventLoop();
-    if (syncContext_) {
-        redisFree(syncContext_);
-        syncContext_ = nullptr;
-    }
-}
-
-void
-hiredisAsyncClient::processEventLoop() {
-    event_base_dispatch(eventBase_);
 }
 
 bool
-hiredisAsyncClient::scheduleOnEventLoop(std::function<void()> task) {
+RedisConnectionPool::scheduleOnEventLoop(std::function<void()> task) {
     if (!eventBase_) {
         return false;
     }
-
     auto *owned_task = new redis_event_task_t(std::move(task));
     timeval immediate = {0, 0};
     if (event_base_once(eventBase_, -1, EV_TIMEOUT, runEventTask, owned_task, &immediate) != 0) {
@@ -324,21 +372,19 @@ hiredisAsyncClient::scheduleOnEventLoop(std::function<void()> task) {
 }
 
 void
-hiredisAsyncClient::freeAsyncContextInEventLoop() {
-    redisAsyncContext *ctx = asyncContext_;
-    asyncContext_ = nullptr;
-    if (ctx) {
-        redisAsyncFree(ctx);
+RedisConnectionPool::stopEventLoop() {
+    if (!eventBase_) {
+        return;
     }
-}
-
-void
-hiredisAsyncClient::stopEventLoop() {
-    connected_.store(false);
-
-    if (eventBase_ && eventLoopThread_.joinable()) {
+    if (eventLoopThread_.joinable()) {
         bool scheduled = scheduleOnEventLoop([this]() {
-            freeAsyncContextInEventLoop();
+            for (auto &s : slots_) {
+                if (s->asyncCtx) {
+                    s->connected.store(false);
+                    redisAsyncFree(s->asyncCtx);
+                    s->asyncCtx = nullptr;
+                }
+            }
             event_base_loopbreak(eventBase_);
         });
         if (!scheduled) {
@@ -346,116 +392,108 @@ hiredisAsyncClient::stopEventLoop() {
         }
         eventLoopThread_.join();
     }
+    event_base_free(eventBase_);
+    eventBase_ = nullptr;
+}
 
-    if (eventBase_) {
-        event_base_free(eventBase_);
-        eventBase_ = nullptr;
+void
+RedisConnectionPool::freeSlotAsyncCtx(Slot &slot) {
+    if (slot.asyncCtx) {
+        redisAsyncFree(slot.asyncCtx);
+        slot.asyncCtx = nullptr;
     }
-    asyncContext_ = nullptr;
 }
 
 void
-hiredisAsyncClient::completeAsyncInitialization(bool success) {
-    connected_.store(success);
-    initSucceeded_.store(success);
-    initDone_.store(true);
+RedisConnectionPool::completeSlotInit(Slot &slot, bool success) {
+    slot.connected.store(success);
+    slot.initSucceeded.store(success);
+    slot.initDone.store(true);
 }
 
 void
-hiredisAsyncClient::startAsyncSelect() {
+RedisConnectionPool::startSlotSelect(Slot &slot) {
     if (config_.db == 0) {
-        completeAsyncInitialization(true);
+        completeSlotInit(slot, true);
         return;
     }
-
-    int ret = redisAsyncCommand(asyncContext_, selectCallback, this, "SELECT %d", config_.db);
+    int ret = redisAsyncCommand(slot.asyncCtx, selectCallback, &slot, "SELECT %d", config_.db);
     if (ret != REDIS_OK) {
         NIXL_ERROR << "Failed to queue Redis SELECT command";
-        completeAsyncInitialization(false);
-        freeAsyncContextInEventLoop();
-        event_base_loopbreak(eventBase_);
+        completeSlotInit(slot, false);
+        freeSlotAsyncCtx(slot);
     }
 }
 
 void
-hiredisAsyncClient::startAsyncInitialization() {
-    if (!config_.password.empty()) {
-        const int ret = config_.username.empty() ?
+RedisConnectionPool::startSlotAuth(Slot &slot) {
+    if (config_.password.empty()) {
+        startSlotSelect(slot);
+        return;
+    }
+    const int ret =
+        config_.username.empty() ?
             redisAsyncCommand(
-                asyncContext_, authCallback, this, "AUTH %s", config_.password.c_str()) :
-            redisAsyncCommand(asyncContext_,
+                slot.asyncCtx, authCallback, &slot, "AUTH %s", config_.password.c_str()) :
+            redisAsyncCommand(slot.asyncCtx,
                               authCallback,
-                              this,
+                              &slot,
                               "AUTH %s %s",
                               config_.username.c_str(),
                               config_.password.c_str());
-        if (ret != REDIS_OK) {
-            NIXL_ERROR << "Failed to queue Redis AUTH command";
-            completeAsyncInitialization(false);
-            freeAsyncContextInEventLoop();
-            event_base_loopbreak(eventBase_);
-        }
-        return;
+    if (ret != REDIS_OK) {
+        NIXL_ERROR << "Failed to queue Redis AUTH command";
+        completeSlotInit(slot, false);
+        freeSlotAsyncCtx(slot);
     }
-
-    // An empty password means the Redis deployment permits unauthenticated access.
-    startAsyncSelect();
 }
 
 void
-hiredisAsyncClient::connectCallback(const redisAsyncContext *c, int status) {
-    auto *client = static_cast<hiredisAsyncClient *>(c->data);
+RedisConnectionPool::connectCallback(const redisAsyncContext *c, int status) {
+    auto *slot = static_cast<Slot *>(c->data);
     if (status != REDIS_OK) {
         NIXL_ERROR << absl::StrFormat("Redis connection error: %s", c->errstr);
-        client->completeAsyncInitialization(false);
-        client->freeAsyncContextInEventLoop();
-        event_base_loopbreak(client->eventBase_);
+        slot->pool->completeSlotInit(*slot, false);
     } else {
-        client->startAsyncInitialization();
+        slot->pool->startSlotAuth(*slot);
     }
 }
 
 void
-hiredisAsyncClient::disconnectCallback(const redisAsyncContext *c, int status) {
-    auto *client = static_cast<hiredisAsyncClient *>(c->data);
+RedisConnectionPool::disconnectCallback(const redisAsyncContext *c, int status) {
+    auto *slot = static_cast<Slot *>(c->data);
     if (status != REDIS_OK) {
-        NIXL_WARN << absl::StrFormat("Redis disconnection error: %s", c->errstr);
+        NIXL_WARN << absl::StrFormat("Redis disconnected with error: %s", c->errstr);
     }
-    client->connected_.store(false);
+    slot->connected.store(false);
 }
 
 void
-hiredisAsyncClient::authCallback(redisAsyncContext *c, void *reply, void *privdata) {
-    auto *client = static_cast<hiredisAsyncClient *>(privdata);
+RedisConnectionPool::authCallback(redisAsyncContext *c, void *reply, void *privdata) {
+    auto *slot = static_cast<Slot *>(privdata);
     auto *r = static_cast<redisReply *>(reply);
-
     if (!checkRedisReplyOk(r, "AUTH")) {
-        client->completeAsyncInitialization(false);
-        client->freeAsyncContextInEventLoop();
-        event_base_loopbreak(client->eventBase_);
+        slot->pool->completeSlotInit(*slot, false);
+        slot->pool->freeSlotAsyncCtx(*slot);
         return;
     }
-
-    client->startAsyncSelect();
+    slot->pool->startSlotSelect(*slot);
 }
 
 void
-hiredisAsyncClient::selectCallback(redisAsyncContext *c, void *reply, void *privdata) {
-    auto *client = static_cast<hiredisAsyncClient *>(privdata);
+RedisConnectionPool::selectCallback(redisAsyncContext *c, void *reply, void *privdata) {
+    auto *slot = static_cast<Slot *>(privdata);
     auto *r = static_cast<redisReply *>(reply);
-
     if (!checkRedisReplyOk(r, "SELECT")) {
-        client->completeAsyncInitialization(false);
-        client->freeAsyncContextInEventLoop();
-        event_base_loopbreak(client->eventBase_);
+        slot->pool->completeSlotInit(*slot, false);
+        slot->pool->freeSlotAsyncCtx(*slot);
         return;
     }
-
-    client->completeAsyncInitialization(true);
+    slot->pool->completeSlotInit(*slot, true);
 }
 
 void
-hiredisAsyncClient::setCallback(redisAsyncContext *c, void *reply, void *privdata) {
+RedisConnectionPool::setCallback(redisAsyncContext *c, void *reply, void *privdata) {
     auto *ctx = static_cast<CallbackContext *>(privdata);
     auto *r = static_cast<redisReply *>(reply);
 
@@ -472,11 +510,13 @@ hiredisAsyncClient::setCallback(redisAsyncContext *c, void *reply, void *privdat
     if (inFlight) {
         inFlight->fetch_sub(1, std::memory_order_relaxed);
     }
-    setPromiseStatus(promise_ptr, success);
+    if (promise_ptr) {
+        promise_ptr->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
+    }
 }
 
 void
-hiredisAsyncClient::getCallback(redisAsyncContext *c, void *reply, void *privdata) {
+RedisConnectionPool::getCallback(redisAsyncContext *c, void *reply, void *privdata) {
     auto *ctx = static_cast<CallbackContext *>(privdata);
     auto *r = static_cast<redisReply *>(reply);
 
@@ -506,188 +546,21 @@ hiredisAsyncClient::getCallback(redisAsyncContext *c, void *reply, void *privdat
     if (inFlight) {
         inFlight->fetch_sub(1, std::memory_order_relaxed);
     }
-    setPromiseStatus(promise_ptr, success);
-}
-
-void
-hiredisAsyncClient::putKeyAsync(std::string_view key,
-                                uintptr_t data_ptr,
-                                size_t data_len,
-                                std::shared_ptr<std::promise<nixl_status_t>> promise) {
-    inFlight_.fetch_add(1, std::memory_order_relaxed);
-
-    if (!connected_.load()) {
-        inFlight_.fetch_sub(1, std::memory_order_relaxed);
-        setPromiseStatus(promise, false);
-        return;
-    }
-
-    std::string key_copy(key);
-    bool scheduled = scheduleOnEventLoop(
-        [this, key = std::move(key_copy), data_ptr, data_len, promise]() mutable {
-            if (!connected_.load() || !asyncContext_) {
-                inFlight_.fetch_sub(1, std::memory_order_relaxed);
-                setPromiseStatus(promise, false);
-                return;
-            }
-
-            auto *ctx = new CallbackContext;
-            ctx->promise_ptr = promise;
-            ctx->inFlight = &inFlight_;
-
-            int ret = redisAsyncCommand(asyncContext_,
-                                        setCallback,
-                                        ctx,
-                                        "SET %b %b",
-                                        key.data(),
-                                        key.size(),
-                                        reinterpret_cast<const char *>(data_ptr),
-                                        data_len);
-
-            if (ret != REDIS_OK) {
-                auto promise_ptr = ctx->promise_ptr;
-                delete ctx;
-                inFlight_.fetch_sub(1, std::memory_order_relaxed);
-                setPromiseStatus(promise_ptr, false);
-            }
-        });
-
-    if (!scheduled) {
-        inFlight_.fetch_sub(1, std::memory_order_relaxed);
-        setPromiseStatus(promise, false);
+    if (promise_ptr) {
+        promise_ptr->set_value(success ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
     }
 }
 
-void
-hiredisAsyncClient::getKeyAsync(std::string_view key,
-                                uintptr_t data_ptr,
-                                size_t data_len,
-                                std::shared_ptr<std::promise<nixl_status_t>> promise) {
-    inFlight_.fetch_add(1, std::memory_order_relaxed);
-
-    if (!connected_.load()) {
-        inFlight_.fetch_sub(1, std::memory_order_relaxed);
-        setPromiseStatus(promise, false);
-        return;
-    }
-
-    std::string key_copy(key);
-    bool scheduled = scheduleOnEventLoop(
-        [this, key = std::move(key_copy), data_ptr, data_len, promise]() mutable {
-            if (!connected_.load() || !asyncContext_) {
-                inFlight_.fetch_sub(1, std::memory_order_relaxed);
-                setPromiseStatus(promise, false);
-                return;
-            }
-
-            auto *ctx = new CallbackContext;
-            ctx->data_ptr = data_ptr;
-            ctx->data_len = data_len;
-            ctx->promise_ptr = promise;
-            ctx->inFlight = &inFlight_;
-
-            int ret = redisAsyncCommand(
-                asyncContext_, getCallback, ctx, "GET %b", key.data(), key.size());
-
-            if (ret != REDIS_OK) {
-                auto promise_ptr = ctx->promise_ptr;
-                delete ctx;
-                inFlight_.fetch_sub(1, std::memory_order_relaxed);
-                setPromiseStatus(promise_ptr, false);
-            }
-        });
-
-    if (!scheduled) {
-        inFlight_.fetch_sub(1, std::memory_order_relaxed);
-        setPromiseStatus(promise, false);
-    }
-}
-
-std::optional<bool>
-hiredisAsyncClient::checkKeyExistsSync(std::string_view key) {
-    std::lock_guard<std::mutex> lock(syncMutex_);
-
-    if (!syncContext_ || syncContext_->err) {
-        NIXL_ERROR << "Sync Redis connection unavailable for EXISTS";
-        return std::nullopt;
-    }
-
-    redisReply *reply =
-        static_cast<redisReply *>(redisCommand(syncContext_, "EXISTS %b", key.data(), key.size()));
-
-    if (!reply) {
-        NIXL_ERROR << "Redis EXISTS: no reply";
-        return std::nullopt;
-    }
-
-    if (reply->type == REDIS_REPLY_ERROR) {
-        NIXL_ERROR << absl::StrFormat("Redis EXISTS error: %s", reply->str);
-        freeReplyObject(reply);
-        return std::nullopt;
-    }
-
-    if (reply->type != REDIS_REPLY_INTEGER) {
-        NIXL_ERROR << absl::StrFormat("Redis EXISTS unexpected reply type: %d", reply->type);
-        freeReplyObject(reply);
-        return std::nullopt;
-    }
-
-    bool exists = (reply->integer == 1);
-    freeReplyObject(reply);
-    return exists;
-}
-
-#else // HAVE_HIREDIS_ASYNC
-
-hiredisAsyncClient::hiredisAsyncClient(RedisConfig config) {
-    throw std::runtime_error("hiredis-async not available");
-}
-
-hiredisAsyncClient::~hiredisAsyncClient() {}
-
-void
-hiredisAsyncClient::putKeyAsync(std::string_view key,
-                                uintptr_t data_ptr,
-                                size_t data_len,
-                                std::shared_ptr<std::promise<nixl_status_t>> promise) {
-    if (promise) {
-        promise->set_value(NIXL_ERR_BACKEND);
-    }
-}
-
-void
-hiredisAsyncClient::getKeyAsync(std::string_view key,
-                                uintptr_t data_ptr,
-                                size_t data_len,
-                                std::shared_ptr<std::promise<nixl_status_t>> promise) {
-    if (promise) {
-        promise->set_value(NIXL_ERR_BACKEND);
-    }
-}
-
-std::optional<bool>
-hiredisAsyncClient::checkKeyExistsSync(std::string_view key) {
-    return std::nullopt;
-}
-
-#endif // HAVE_HIREDIS_ASYNC
-
-RedisConnectionPool::RedisConnectionPool(RedisConfig config) {
-    clients_.reserve(static_cast<size_t>(config.pool_size));
-    for (int i = 0; i < config.pool_size; ++i) {
-        clients_.push_back(std::make_unique<hiredisAsyncClient>(config));
-    }
-}
-
-hiredisAsyncClient *
+RedisConnectionPool::Slot *
 RedisConnectionPool::leastLoadedHealthySlot() {
-    hiredisAsyncClient *best = nullptr;
-    for (auto &c : clients_) {
-        if (!c->connected()) {
+    Slot *best = nullptr;
+    for (auto &s : slots_) {
+        if (!s->connected.load()) {
             continue;
         }
-        if (!best || c->inFlight() < best->inFlight()) {
-            best = c.get();
+        if (!best || s->inFlight.load(std::memory_order_relaxed) <
+                         best->inFlight.load(std::memory_order_relaxed)) {
+            best = s.get();
         }
     }
     return best;
@@ -705,7 +578,48 @@ RedisConnectionPool::putKeyAsync(std::string_view key,
         }
         return;
     }
-    slot->putKeyAsync(key, data_ptr, data_len, std::move(promise));
+
+    slot->inFlight.fetch_add(1, std::memory_order_relaxed);
+
+    std::string key_copy(key);
+    const bool scheduled = scheduleOnEventLoop(
+        [slot, key = std::move(key_copy), data_ptr, data_len, promise]() mutable {
+            if (!slot->connected.load() || !slot->asyncCtx) {
+                slot->inFlight.fetch_sub(1, std::memory_order_relaxed);
+                if (promise) {
+                    promise->set_value(NIXL_ERR_BACKEND);
+                }
+                return;
+            }
+
+            auto *ctx = new CallbackContext;
+            ctx->promise_ptr = promise;
+            ctx->inFlight = &slot->inFlight;
+
+            const int ret = redisAsyncCommand(slot->asyncCtx,
+                                              setCallback,
+                                              ctx,
+                                              "SET %b %b",
+                                              key.data(),
+                                              key.size(),
+                                              reinterpret_cast<const char *>(data_ptr),
+                                              data_len);
+            if (ret != REDIS_OK) {
+                slot->inFlight.fetch_sub(1, std::memory_order_relaxed);
+                auto p = ctx->promise_ptr;
+                delete ctx;
+                if (p) {
+                    p->set_value(NIXL_ERR_BACKEND);
+                }
+            }
+        });
+
+    if (!scheduled) {
+        slot->inFlight.fetch_sub(1, std::memory_order_relaxed);
+        if (promise) {
+            promise->set_value(NIXL_ERR_BACKEND);
+        }
+    }
 }
 
 void
@@ -720,7 +634,44 @@ RedisConnectionPool::getKeyAsync(std::string_view key,
         }
         return;
     }
-    slot->getKeyAsync(key, data_ptr, data_len, std::move(promise));
+
+    slot->inFlight.fetch_add(1, std::memory_order_relaxed);
+
+    std::string key_copy(key);
+    const bool scheduled = scheduleOnEventLoop(
+        [slot, key = std::move(key_copy), data_ptr, data_len, promise]() mutable {
+            if (!slot->connected.load() || !slot->asyncCtx) {
+                slot->inFlight.fetch_sub(1, std::memory_order_relaxed);
+                if (promise) {
+                    promise->set_value(NIXL_ERR_BACKEND);
+                }
+                return;
+            }
+
+            auto *ctx = new CallbackContext;
+            ctx->data_ptr = data_ptr;
+            ctx->data_len = data_len;
+            ctx->promise_ptr = promise;
+            ctx->inFlight = &slot->inFlight;
+
+            const int ret = redisAsyncCommand(
+                slot->asyncCtx, getCallback, ctx, "GET %b", key.data(), key.size());
+            if (ret != REDIS_OK) {
+                slot->inFlight.fetch_sub(1, std::memory_order_relaxed);
+                auto p = ctx->promise_ptr;
+                delete ctx;
+                if (p) {
+                    p->set_value(NIXL_ERR_BACKEND);
+                }
+            }
+        });
+
+    if (!scheduled) {
+        slot->inFlight.fetch_sub(1, std::memory_order_relaxed);
+        if (promise) {
+            promise->set_value(NIXL_ERR_BACKEND);
+        }
+    }
 }
 
 std::optional<bool>
@@ -729,5 +680,69 @@ RedisConnectionPool::checkKeyExistsSync(std::string_view key) {
     if (!slot) {
         return std::nullopt;
     }
-    return slot->checkKeyExistsSync(key);
+
+    std::lock_guard<std::mutex> lock(slot->syncMutex);
+    if (!slot->syncCtx || slot->syncCtx->err) {
+        NIXL_ERROR << "Sync Redis connection unavailable for EXISTS";
+        return std::nullopt;
+    }
+
+    redisReply *reply = static_cast<redisReply *>(
+        redisCommand(slot->syncCtx, "EXISTS %b", key.data(), key.size()));
+
+    if (!reply) {
+        NIXL_ERROR << "Redis EXISTS: no reply";
+        return std::nullopt;
+    }
+    if (reply->type == REDIS_REPLY_ERROR) {
+        NIXL_ERROR << absl::StrFormat("Redis EXISTS error: %s", reply->str);
+        freeReplyObject(reply);
+        return std::nullopt;
+    }
+    if (reply->type != REDIS_REPLY_INTEGER) {
+        NIXL_ERROR << absl::StrFormat("Redis EXISTS unexpected reply type: %d", reply->type);
+        freeReplyObject(reply);
+        return std::nullopt;
+    }
+
+    const bool exists = (reply->integer == 1);
+    freeReplyObject(reply);
+    return exists;
 }
+
+#else // HAVE_HIREDIS_ASYNC
+
+struct RedisConnectionPool::Slot {};
+
+RedisConnectionPool::RedisConnectionPool(RedisConfig) {
+    throw std::runtime_error("hiredis-async not available");
+}
+
+RedisConnectionPool::~RedisConnectionPool() {}
+
+void
+RedisConnectionPool::putKeyAsync(std::string_view,
+                                 uintptr_t,
+                                 size_t,
+                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
+    if (promise) {
+        promise->set_value(NIXL_ERR_BACKEND);
+    }
+}
+
+void
+RedisConnectionPool::getKeyAsync(std::string_view,
+                                 uintptr_t,
+                                 size_t,
+                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
+    if (promise) {
+        promise->set_value(NIXL_ERR_BACKEND);
+    }
+}
+
+std::optional<bool>
+RedisConnectionPool::checkKeyExistsSync(std::string_view) {
+    return std::nullopt;
+}
+
+#endif // HAVE_HIREDIS_ASYNC

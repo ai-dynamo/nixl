@@ -27,14 +27,20 @@ src/plugins/redis/
 interface isolates hiredis/libevent and permits Redis-free unit tests; it is not a generic KV
 extension API.
 
-The production client uses a `RedisConnectionPool` (default: 8 slots). Each slot holds:
+The production client uses a `RedisConnectionPool` (default: 8 connections). All connections
+share one libevent event loop thread. Each connection slot holds:
 
 - One hiredis/libevent async connection for `SET` and `GET`.
 - One blocking hiredis connection for `EXISTS`.
-- One libevent thread. Hiredis callbacks complete NIXL request promises directly.
 
-Operations are dispatched round-robin across pool slots to saturate multiple Redis server
-threads and reduce per-slot head-of-line blocking.
+Resource cost: **1 OS thread** + N async TCP connections + N sync TCP connections for a pool
+of size N. A single hiredis async connection already pipelines many outstanding commands, so
+increasing pool size helps primarily when the Redis server runs with `--io-threads` and
+multiple connections saturate more server threads. Decrease pool size to 1 for
+memory-constrained environments.
+
+Operations are dispatched to the healthy slot with the fewest in-flight async commands
+(least-connection routing). Commands fail immediately if all slots are disconnected.
 
 ## Dependencies
 
