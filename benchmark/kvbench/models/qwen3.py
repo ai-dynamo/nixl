@@ -81,7 +81,7 @@ class Qwen3(BaseModelArch):
             * self.num_kv_heads
             * self.query_head_dimension
             * 2  # key and value
-            * get_precision_size(self.model_config.model.model_quant_mode)
+            * get_precision_size(self.model_config.model.kvcache_quant_mode)
             * token_count
         )
 
