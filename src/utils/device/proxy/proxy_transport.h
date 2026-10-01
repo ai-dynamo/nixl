@@ -28,32 +28,24 @@
 
 namespace nixl {
 
-/** One side of a transfer, resolved from the registry against a ring record. */
-struct proxyBackendXferDesc {
-    nixl_mem_t mem_type = VRAM_SEG;
-    /** nixlMetaDesc() leaves addr, len and devId unset, so zero them explicitly. */
-    nixlMetaDesc desc{0, 0, 0, nullptr};
-};
-
-/** A ring record with its view tokens resolved into transport descriptors. */
+/** A ring command with its view tokens resolved into transport descriptors. */
 struct proxyBackendSubmission {
     uint64_t op_idx = 0;
     nixl_proxy_opcode_t opcode = nixl_proxy_opcode_t::PUT;
     uint32_t channel_id = 0;
     uint32_t peer_index = 0;
-    uint64_t flags = 0;
 
-    proxyBackendXferDesc local;
-    proxyBackendXferDesc remote;
+    /** nixlMetaDesc() leaves addr, len and devId unset, so zero them explicitly. */
+    nixlMetaDesc local{0, 0, 0, nullptr};
+    nixlMetaDesc remote{0, 0, 0, nullptr};
 
     size_t size = 0;
     uint64_t value = 0;
 };
 
-/** Opaque backend handle for one in-flight transfer. */
+/** One in-flight transfer, named by a single token. */
 struct proxyBackendRequest {
     uint64_t token = 0;
-    size_t context = 0;
 
     explicit
     operator bool() const noexcept {
@@ -81,10 +73,10 @@ public:
     [[nodiscard]] virtual nixl_status_t
     submit(const proxyBackendSubmission &submission, proxyBackendRequest &request) = 0;
 
-    /** Polled in submission order per ring; a terminal status releases the request, which is not
-     *  passed again. */
+    /** Polled in submission order per ring. `channel` and `peer` select that ring. A terminal
+     *  status releases the request, which is not passed again. */
     [[nodiscard]] virtual nixl_status_t
-    checkCompletion(const proxyBackendRequest &request) = 0;
+    checkCompletion(uint32_t channel, uint32_t peer, const proxyBackendRequest &request) = 0;
 
     /** Once per ring per worker pass, busy or idle; an idle ring should return quickly.
      *  Transfer errors surface through checkCompletion(). */

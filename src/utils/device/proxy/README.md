@@ -18,8 +18,9 @@ limitations under the License.
 # Device proxy
 
 The host side of the CPU proxy. Where a transport has no device-callable submission path, GPU
-kernels write fixed-layout records (`proxy_protocol.h`) into per-channel rings, and host threads
-turn each record into an ordinary backend transfer through a `nixl::proxyTransport`.
+kernels write fixed-layout commands (`proxy_protocol.h`) into per-channel rings, and host threads
+turn each command into an ordinary backend transfer through a `nixl::proxyTransport`. The proxy
+ignores `nixl::gpu::flags::defer`; a command carries no flags until a consumer exists.
 
 ## Transport contract
 

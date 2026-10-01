@@ -72,18 +72,21 @@ nixlProxyDeviceMemViewBytes(size_t count) {
  *
  * What each field means, by opcode:
  *
- *   field        PUT                       ATOMIC_ADD
- *   operand      source offset             value to add
- *   dst_offset   destination offset        counter offset
- *   size         bytes                     8
- *   src_view     source view token         unused
- *   src_index    source descriptor         unused
- *   dst_view     destination view token    counter view token
- *   dst_index    destination descriptor    counter descriptor
+ *   | field      | PUT                     | ATOMIC_ADD          |
+ *   |------------|-------------------------|---------------------|
+ *   | operand    | source offset           | value to add        |
+ *   | dst_offset | destination offset      | counter offset      |
+ *   | size       | bytes                   | unused              |
+ *   | src_view   | source view token       | unused              |
+ *   | src_index  | source descriptor       | unused              |
+ *   | dst_view   | destination view token  | counter view token  |
+ *   | dst_index  | destination descriptor  | counter descriptor  |
  *
- * The destination descriptor index is also the peer slot the record goes to.
+ * The destination descriptor index is also the peer slot the command goes to.
+ * The ring the command is written into implies its channel.
+ * For ATOMIC_ADD the size field is unused and the host uses 8 bytes.
  */
-struct alignas(64) nixlProxySubmission {
+struct alignas(64) nixlProxyCommand {
     uint64_t op_idx = 0;
     uint64_t operand = 0; // PUT: source offset; ATOMIC_ADD: value.
     uint64_t dst_offset = 0;
@@ -93,9 +96,8 @@ struct alignas(64) nixlProxySubmission {
     uint32_t src_index = 0;
     uint32_t dst_index = 0;
     nixl_proxy_opcode_t opcode = nixl_proxy_opcode_t::PUT;
-    uint8_t flags = 0;
-    uint16_t channel_id = 0;
-    uint32_t reserved = 0;
+    /** Reserved. Keeps the command 64 bytes. */
+    uint8_t reserved[7] = {};
 
     /** PUT: byte offset into the source descriptor. */
     NIXL_PROXY_PROTO_FN uint64_t
@@ -109,7 +111,7 @@ struct alignas(64) nixlProxySubmission {
         return operand;
     }
 
-    /** The peer slot the record goes to. */
+    /** The peer slot the command goes to. */
     NIXL_PROXY_PROTO_FN uint32_t
     peerIndex() const {
         return dst_index;
@@ -117,8 +119,8 @@ struct alignas(64) nixlProxySubmission {
 };
 
 struct nixlProxyWorkRing {
-    /** Mapped host records: GPU writes via device alias; CPU worker reads host alias. */
-    nixlProxySubmission *records = nullptr;
+    /** Mapped host commands: GPU writes via device alias; CPU worker reads host alias. */
+    nixlProxyCommand *commands = nullptr;
     /** Device-resident producer index; only the GPU updates it. */
     uint64_t *producer_idx = nullptr;
     /** Authoritative consumer index; CPU publishes through GDRCopy or mapped host memory. */
@@ -135,23 +137,23 @@ struct alignas(16) nixlProxyCompletionSlot {
     nixl_status_t completion_status = NIXL_IN_PROG;
 };
 
-struct nixlProxyChannelView {
+struct nixlProxyRingDesc {
     nixlProxyWorkRing *work_ring = nullptr;
     /** Mapped pinned host memory (device alias); host writes via host pointer with atomics. */
     nixlProxyCompletionSlot *completion_slot = nullptr;
 };
 
 struct nixlProxyDeviceContextData {
-    nixlProxyChannelView *channels = nullptr;
+    nixlProxyRingDesc *rings = nullptr;
     uint32_t max_peers = 0;
     uint32_t num_channels = 0;
     uint64_t *shutdown_word = nullptr;
 };
 
-static_assert(sizeof(nixlProxySubmission) == 64, "nixlProxySubmission must be 64 bytes");
-static_assert(offsetof(nixlProxySubmission, op_idx) == 0,
-              "op_idx must be the first word because it publishes record readiness");
-static_assert(alignof(nixlProxySubmission) == 64, "nixlProxySubmission must be cache-line aligned");
+static_assert(sizeof(nixlProxyCommand) == 64, "nixlProxyCommand must be 64 bytes");
+static_assert(offsetof(nixlProxyCommand, op_idx) == 0,
+              "op_idx must be the first word because it publishes command readiness");
+static_assert(alignof(nixlProxyCommand) == 64, "nixlProxyCommand must be cache-line aligned");
 
 static_assert(sizeof(nixlProxyDeviceMemView) == 24, "nixlProxyDeviceMemView layout changed");
 static_assert(offsetof(nixlProxyDeviceMemView, host_view) == 0,
@@ -163,10 +165,11 @@ static_assert(sizeof(nixlProxyWorkRing) == 40, "nixlProxyWorkRing layout changed
 static_assert(sizeof(nixlProxyCompletionSlot) == 16, "nixlProxyCompletionSlot layout changed");
 static_assert(offsetof(nixlProxyCompletionSlot, completed_idx) == 0,
               "nixlProxyCompletionSlot layout changed");
-static_assert(sizeof(nixlProxyChannelView) == 16, "nixlProxyChannelView layout changed");
+static_assert(sizeof(nixl_status_t) == 4, "nixl_status_t must be 4 bytes in a completion slot");
+static_assert(sizeof(nixlProxyRingDesc) == 16, "nixlProxyRingDesc layout changed");
 static_assert(sizeof(nixlProxyDeviceContextData) == 24,
               "nixlProxyDeviceContextData layout changed");
-static_assert(offsetof(nixlProxyDeviceContextData, channels) == 0,
+static_assert(offsetof(nixlProxyDeviceContextData, rings) == 0,
               "nixlProxyDeviceContextData layout changed");
 
 #endif // NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_PROTOCOL_H
