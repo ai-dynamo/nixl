@@ -372,6 +372,11 @@ nixlTelemetry::updateMemoryDeregistered(uint64_t memory_deregistered) {
 }
 
 void
+nixlTelemetry::updateTracePhasesDropped(uint64_t trace_phases_dropped) {
+    updateData(nixl_telemetry_event_type_t::AGENT_TRACE_PHASES_DROPPED, trace_phases_dropped);
+}
+
+void
 nixlTelemetry::addXferStats(std::chrono::microseconds xfer_time,
                             bool is_write,
                             uint64_t bytes,

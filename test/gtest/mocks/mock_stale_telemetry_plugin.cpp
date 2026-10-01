@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,23 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#include "prometheus_exporter.h"
 #include "telemetry/telemetry_plugin.h"
-#include "telemetry/telemetry_exporter.h"
 
-// Plugin type alias for convenience
-using prometheus_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryPrometheusExporter>;
-
-// Plugin initialization function - must be extern "C" for dynamic loading
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
-    return prometheus_exporter_plugin_t::create(
-        nixl_telemetry_plugin_api_version::V3, "prometheus", "1.0.0");
+    static nixlTelemetryPlugin plugin(
+        nixl_telemetry_plugin_api_version::V2, "mock_stale", "0.0.1", nullptr);
+    return &plugin;
 }
 
-// Plugin cleanup function
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT void
-nixl_telemetry_plugin_fini() {
-    // Nothing to clean up for prometheus exporter
-}
+nixl_telemetry_plugin_fini() {}

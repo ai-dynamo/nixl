@@ -37,6 +37,7 @@ NIXL generates the following telemetry events:
 | `agent_rx_requests_num` | Counter | Number of receive requests |
 | `agent_xfer_time` | Counter, Gauge, Histogram | Transfer time (start->completion) in microseconds; also a latency histogram `agent_xfer_time_us` |
 | `agent_xfer_post_time` | Counter, Gauge, Histogram | Post time (start->backend-post) in microseconds; also a latency histogram `agent_xfer_post_time_us` |
+| `agent_trace_phases_dropped` | Counter | Backend trace phases dropped because recording them failed |
 | `agent_telemetry_events_dropped` | Counter | Telemetry events dropped at the producer-side staging queue |
 
 The `NIXL_TELEMETRY_ENABLED_METRICS` environment variable is a comma-separated glob allowlist of the event names above, plus the built-in `agent_err_*` error events (unset exports everything). Events whose name is not activated are skipped at the source before they enter the staging queue, so they never reach the exporter and cost nothing on the hot path.
@@ -122,7 +123,7 @@ using csv_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryCsvExporte
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
     return csv_exporter_plugin_t::create(
-        nixl_telemetry_plugin_api_version::V2,
+        nixl_telemetry_plugin_api_version::V3,
         "csv",      // Plugin name
         "1.0.0"     // Plugin version
     );

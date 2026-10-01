@@ -23,5 +23,5 @@ using nop_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryNopExporte
 
 nixlTelemetryPlugin *
 createStaticNOPPlugin() {
-    return nop_exporter_plugin_t::create(nixl_telemetry_plugin_api_version::V2, "nop", "1.0.0");
+    return nop_exporter_plugin_t::create(nixl_telemetry_plugin_api_version::V3, "nop", "1.0.0");
 }

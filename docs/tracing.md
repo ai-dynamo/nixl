@@ -197,6 +197,11 @@ The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. No plugin emits them
 yet; UCX and libfabric map their internals onto the vocabulary in later PRs.
 
+Recording a phase never fails the transfer: if the trace backend throws, the
+phase is dropped and the first drop per backend is logged. With telemetry
+enabled, every drop is also counted as `agent_trace_phases_dropped_total` (see
+[telemetry](telemetry.md)).
+
 A backend also sees the trace context of the request it is executing, as
 `traceContext` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive.
 It is the same context at prep and at every post of that request, reposts

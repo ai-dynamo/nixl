@@ -84,6 +84,8 @@ public:
     updateMemoryRegistered(uint64_t memory_registered);
     void
     updateMemoryDeregistered(uint64_t memory_deregistered);
+    void
+    updateTracePhasesDropped(uint64_t trace_phases_dropped);
     /**
      * @brief Records one completed transfer's stats as a single telemetry batch.
      *

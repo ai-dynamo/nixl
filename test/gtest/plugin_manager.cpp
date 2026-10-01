@@ -196,6 +196,14 @@ TEST_F(LoadedPluginTestFixture, DeferredDiscoveryTest) {
     EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
 }
 
+TEST_F(LoadedPluginTestFixture, StaleTelemetryPluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+    const LogIgnoreGuard lig_missing("Plugin file does not exist");
+
+    EXPECT_EQ(plugin_manager_.loadTelemetryPlugin("mock_stale"), nullptr);
+    EXPECT_GE(lig_mismatch.getIgnoredCount(), 1u);
+}
+
 TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
     const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
     const LogIgnoreGuard lig_missing("Plugin file does not exist");

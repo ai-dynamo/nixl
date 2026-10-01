@@ -27,6 +27,7 @@
 enum class nixl_telemetry_plugin_api_version : unsigned int {
     V1 = 1,
     V2 = 2,
+    V3 = 3,
 };
 
 // Type alias for exporter creation function
