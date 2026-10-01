@@ -7,7 +7,7 @@
 #
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.08-py3
-ARG INFINIA_LIBS_IMAGE=harbor.mellanox.com/nixl/infinia-libs:v2.4.0-beta.1
+ARG INFINIA_LIBS_IMAGE=harbor.mellanox.com/nixl/infinia-libs:v2.5.0-rcx.1
 
 # Stage that just holds the pre-fetched DDN Infinia libraries.
 # See .ci/dockerfiles/Dockerfile.infinia-libs for how this image is produced.
