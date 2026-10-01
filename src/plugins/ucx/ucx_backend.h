@@ -97,9 +97,13 @@ public:
         return true;
     }
 
+    /* Intra-agent (loopback) transfers require a UCX connection from the agent
+     * to itself, which costs an endpoint per worker per device at agent
+     * creation plus an rkey unpack per registered descriptor. Follows
+     * nixlAgentConfig::useLoopback. */
     bool
     supportsLocal() const override {
-        return true;
+        return loopbackEnabled_;
     }
 
     bool
@@ -293,6 +297,7 @@ private:
     size_t numSharedWorkers_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
+    const bool loopbackEnabled_;
     const bool sglEnabled_;
 
     // Map of agent name to saved nixlUcxConnection info

@@ -56,6 +56,12 @@ See [Configuration](#configuration) for build options.
 
 <Markdown src="/snippets/env-vars-ucx.mdx" />
 
+### Agent Configuration
+
+| Field | Default | Description |
+|---|---|---|
+| `useLoopback` (`enable_loopback` in Python) | `true` | Enables intra-agent (loopback) transfers. Set to `false` when the agent only transfers with other agents, to drop the self endpoints from agent creation and the self remote-key unpack from every memory registration. |
+
 ### Build Options
 
 | Option | Default | Description |

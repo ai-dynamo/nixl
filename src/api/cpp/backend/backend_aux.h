@@ -54,6 +54,9 @@ class nixlBackendInitParams {
         nixlTime::us_t pthrDelay = 0;
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_ = false;
+        // Whether the agent wants intra-agent (loopback) transfers. A backend that needs a
+        // connection to itself to serve them should report supportsLocal() accordingly.
+        bool enableLoopback = true;
 };
 
 // Pure virtual class to have a common pointer type
