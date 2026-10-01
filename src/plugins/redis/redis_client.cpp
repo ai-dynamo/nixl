@@ -542,7 +542,14 @@ RedisConnectionPool::authCallback(redisAsyncContext *c, void *reply, void *privd
     auto *r = static_cast<redisReply *>(reply);
     if (!checkRedisReplyOk(r, "AUTH")) {
         slot->pool->completeSlotInit(*slot, false);
-        slot->pool->freeSlotAsyncCtx(*slot);
+        if (r == nullptr) {
+            // Connection dropped: hiredis fires disconnectCallback and frees c itself.
+            // Null asyncCtx now so disconnectCallback and stopEventLoop don't double-free.
+            slot->asyncCtx = nullptr;
+        } else {
+            // Server rejected AUTH while connection is still live; close it explicitly.
+            slot->pool->freeSlotAsyncCtx(*slot);
+        }
         return;
     }
     slot->pool->startSlotSelect(*slot);
@@ -554,7 +561,11 @@ RedisConnectionPool::selectCallback(redisAsyncContext *c, void *reply, void *pri
     auto *r = static_cast<redisReply *>(reply);
     if (!checkRedisReplyOk(r, "SELECT")) {
         slot->pool->completeSlotInit(*slot, false);
-        slot->pool->freeSlotAsyncCtx(*slot);
+        if (r == nullptr) {
+            slot->asyncCtx = nullptr;
+        } else {
+            slot->pool->freeSlotAsyncCtx(*slot);
+        }
         return;
     }
     slot->pool->completeSlotInit(*slot, true);
