@@ -178,9 +178,11 @@ runEventTask(evutil_socket_t, short, void *arg) {
     std::unique_ptr<redis_event_task_t> task(static_cast<redis_event_task_t *>(arg));
     try {
         (*task)();
-    } catch (const std::exception &e) {
+    }
+    catch (const std::exception &e) {
         NIXL_ERROR << "Redis: event task threw: " << e.what();
-    } catch (...) {
+    }
+    catch (...) {
         NIXL_ERROR << "Redis: event task threw unknown exception";
     }
 }
@@ -417,9 +419,11 @@ RedisConnectionPool::workerLoop() {
         }
         try {
             task();
-        } catch (const std::exception &e) {
+        }
+        catch (const std::exception &e) {
             NIXL_ERROR << "Redis: worker task threw: " << e.what();
-        } catch (...) {
+        }
+        catch (...) {
             NIXL_ERROR << "Redis: worker task threw unknown exception";
         }
     }

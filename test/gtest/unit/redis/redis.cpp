@@ -668,9 +668,9 @@ TEST_F(redisEngineTest, PostXferRequiresMetadataPForNamedDramSeg) {
     nixl_meta_dlist_t remoteWithout(DRAM_SEG);
     remoteWithout.addDesc(nixlMetaDesc(kAddr, localBuf.size(), 0, nullptr));
     auto *handle = prepareTransfer(NIXL_WRITE, local, remoteWithout);
-    EXPECT_EQ(
-        engine_->postXfer(NIXL_WRITE, local, remoteWithout, initParams_.localAgent, handle, nullptr),
-        NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(engine_->postXfer(
+                  NIXL_WRITE, local, remoteWithout, initParams_.localAgent, handle, nullptr),
+              NIXL_ERR_INVALID_PARAM);
     EXPECT_TRUE(mockClient_->putKeys().empty());
 
     // With metadataP, key is resolved from the stored redisKey

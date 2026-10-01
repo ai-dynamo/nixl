@@ -137,8 +137,7 @@ private:
 
 class nixlRedisMetadata : public nixlBackendMD {
 public:
-    nixlRedisMetadata(nixl_mem_t nixl_mem, uintptr_t addr,
-                      std::string redis_key, bool use_addr_map)
+    nixlRedisMetadata(nixl_mem_t nixl_mem, uintptr_t addr, std::string redis_key, bool use_addr_map)
         : nixlBackendMD(true),
           nixlMem(nixl_mem),
           addr(addr),
