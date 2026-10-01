@@ -181,6 +181,12 @@ nixlRedisKVEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
+    if (nixl_mem == OBJ_SEG && mem.metaInfo.empty()) {
+        NIXL_ERROR << "Redis registerMem: OBJ_SEG requires non-empty metaInfo as Redis key";
+        out = nullptr;
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     const bool use_addr_map = mem.metaInfo.empty();
     std::string redis_key = use_addr_map ? std::to_string(mem.addr) : mem.metaInfo;
     auto redis_md =
