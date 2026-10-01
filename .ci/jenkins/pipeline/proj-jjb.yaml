@@ -64,6 +64,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -125,6 +126,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -186,6 +188,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -242,6 +245,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -305,6 +309,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -370,6 +375,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -435,6 +441,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -500,6 +507,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -627,6 +635,7 @@
       scm:
         - git:
             url: "{jjb_git}"
+            credentials-id: "{jjb_git_credentials}"
             branches: ['$NIXL_VERSION']
             shallow-clone: false
             do-not-fetch-tags: false
@@ -683,6 +692,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -870,7 +880,7 @@
       scm:
         - git:
             url: "{jjb_git}"
-            credentials-id: "svc-nixl-ssh_key"
+            credentials-id: "{jjb_git_credentials}"
             branches: ['${{ci_refspec}}']
             shallow-clone: false
             do-not-fetch-tags: false
@@ -948,7 +958,7 @@
       scm:
         - git:
             url: "{jjb_git}"
-            credentials-id: "svc-nixl-ssh_key"
+            credentials-id: "{jjb_git_credentials}"
             branches: ['${{ci_refspec}}']
             shallow-clone: false
             do-not-fetch-tags: false
@@ -1037,6 +1047,7 @@
       scm:
         - git:
             url: "{jjb_git}"
+            credentials-id: "{jjb_git_credentials}"
             branches: ['${{ci_refspec}}']
             shallow-clone: false
             do-not-fetch-tags: false
@@ -1106,6 +1117,7 @@
       scm:
         - git:
             url: "{jjb_git}"
+            credentials-id: "{jjb_git_credentials}"
             branches: ['${{ci_refspec}}']
             shallow-clone: false
             do-not-fetch-tags: false
@@ -1152,6 +1164,7 @@
         scm:
             - git:
                 url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
                 branches: ['$sha1']
                 shallow-clone: false
                 do-not-fetch-tags: false
@@ -1209,6 +1222,7 @@
       scm:
         - git:
             url: "{jjb_git}"
+            credentials-id: "{jjb_git_credentials}"
             branches: ['{jjb_branch}']
             shallow-clone: false
             do-not-fetch-tags: false
@@ -1228,6 +1242,7 @@
     name: nixl
     jjb_proj: 'nixl-ci'           # Project prefix for job names
     jjb_git: 'https://github.com/ai-dynamo/nixl.git'  # Repository URL
+    jjb_git_credentials: 'svc-nixl-github-token'  # Authenticated checkout; anonymous github.com clones get intermittent 401s
     jjb_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile'  # Main pipeline definition
     jjb_dispatcher_jenkinsfile: '.ci/jenkins/pipeline/Jenkinsfile.dispatcher'  # Dispatcher pipeline definition
     jjb_branch: 'main'            # Default branch
