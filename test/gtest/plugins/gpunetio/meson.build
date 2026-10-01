@@ -26,3 +26,13 @@ gpunetio_oob_socket_test = executable(
     install: true,
 )
 test('gpunetio_oob_socket', gpunetio_oob_socket_test)
+
+# Synthetic GPU CQ contents: no NIC, MR registration or network peer required.
+gpunetio_cq_poll_test = executable(
+    'gpunetio_cq_poll_test',
+    'gpunetio_cq_poll_test.cu',
+    include_directories: include_directories('../../../../src/plugins/gpunetio'),
+    dependencies: [cuda_dep] + plugin_gpunetio_deps,
+    install: true,
+)
+test('gpunetio_cq_poll', gpunetio_cq_poll_test, timeout: 30)
