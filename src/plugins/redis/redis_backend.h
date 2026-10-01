@@ -104,7 +104,6 @@ public:
 private:
     std::shared_ptr<iRedisClient> redisClient_;
     std::unordered_map<uintptr_t, std::string> addrToRedisKey_;
-    std::unordered_map<uint64_t, std::string> devIdToRedisKey_;
 };
 
 #endif // NIXL_SRC_PLUGINS_REDIS_REDIS_BACKEND_H

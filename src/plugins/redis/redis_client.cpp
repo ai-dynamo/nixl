@@ -594,8 +594,8 @@ RedisConnectionPool::getCallback(redisAsyncContext *c, void *reply, void *privda
 
         if (size_ok && ctx->data_len > 0 && ctx->data_ptr) {
             // Steal ownership of the reply buffer so the memcpy runs on a worker thread
-            // instead of blocking the shared event loop. hiredis skips free() when
-            // reply->str is null, so this is safe with the default hiredis allocator.
+            // instead of blocking the shared event loop. hiredis skips hi_free() when
+            // reply->str is null; the worker uses hi_free() to match the hiredis allocator.
             auto *slot = static_cast<Slot *>(c->data);
             char *str = r->str;
             r->str = nullptr;
@@ -606,7 +606,7 @@ RedisConnectionPool::getCallback(redisAsyncContext *c, void *reply, void *privda
             delete ctx;
             slot->pool->postToWorker([str, dst, len, promise, inFlight]() {
                 std::memcpy(reinterpret_cast<void *>(dst), str, len);
-                free(str);
+                hi_free(str);
                 if (inFlight) {
                     inFlight->fetch_sub(1, std::memory_order_relaxed);
                 }

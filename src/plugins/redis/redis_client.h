@@ -25,6 +25,7 @@
 #include <event2/event.h>
 #include <event2/thread.h>
 #include <hiredis/adapters/libevent.h>
+#include <hiredis/alloc.h>
 #include <hiredis/async.h>
 #include <hiredis/hiredis.h>
 #else
