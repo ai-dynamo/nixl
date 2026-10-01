@@ -14,6 +14,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -185,6 +186,7 @@ nixlRedisKVEngine::registerMem(const nixlBlobDesc &mem,
     auto redis_md =
         std::make_unique<nixlRedisMetadata>(nixl_mem, mem.devId, mem.addr, redis_key, use_addr_map);
     if (use_addr_map) {
+        std::unique_lock lock(mapMutex_);
         addrToRedisKey_[mem.addr] = redis_key;
     }
     out = redis_md.release();
@@ -197,6 +199,7 @@ nixlRedisKVEngine::deregisterMem(nixlBackendMD *meta) {
     if (redis_md) {
         std::unique_ptr<nixlRedisMetadata> redis_md_ptr(redis_md);
         if (redis_md->useAddrMap) {
+            std::unique_lock lock(mapMutex_);
             addrToRedisKey_.erase(redis_md->addr);
         }
     }
@@ -274,22 +277,25 @@ nixlRedisKVEngine::postXfer(const nixl_xfer_op_t &operation,
     // produce a partially submitted Redis transfer.
     std::vector<std::string> redis_keys;
     redis_keys.reserve(remote.descCount());
-    for (int i = 0; i < remote.descCount(); ++i) {
-        const auto &remote_desc = remote[i];
-        std::string redis_key;
+    {
+        std::shared_lock lock(mapMutex_);
+        for (int i = 0; i < remote.descCount(); ++i) {
+            const auto &remote_desc = remote[i];
+            std::string redis_key;
 
-        if (remote_desc.metadataP) {
-            redis_key = static_cast<nixlRedisMetadata *>(remote_desc.metadataP)->redisKey;
-        }
-
-        if (redis_key.empty()) {
-            auto it = addrToRedisKey_.find(remote_desc.addr);
-            if (it == addrToRedisKey_.end()) {
-                return NIXL_ERR_INVALID_PARAM;
+            if (remote_desc.metadataP) {
+                redis_key = static_cast<nixlRedisMetadata *>(remote_desc.metadataP)->redisKey;
             }
-            redis_key = it->second;
+
+            if (redis_key.empty()) {
+                auto it = addrToRedisKey_.find(remote_desc.addr);
+                if (it == addrToRedisKey_.end()) {
+                    return NIXL_ERR_INVALID_PARAM;
+                }
+                redis_key = it->second;
+            }
+            redis_keys.push_back(std::move(redis_key));
         }
-        redis_keys.push_back(std::move(redis_key));
     }
 
     for (int i = 0; i < local.descCount(); ++i) {

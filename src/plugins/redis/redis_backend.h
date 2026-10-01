@@ -10,6 +10,7 @@
 #include "redis_client.h"
 
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -103,6 +104,7 @@ public:
 
 private:
     std::shared_ptr<iRedisClient> redisClient_;
+    mutable std::shared_mutex mapMutex_;
     std::unordered_map<uintptr_t, std::string> addrToRedisKey_;
 };
 
