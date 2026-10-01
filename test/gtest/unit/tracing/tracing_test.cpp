@@ -586,7 +586,7 @@ TEST(TracePhaseSink, PhaseVocabularyIsDistinct) {
 
     std::set<std::string_view> names;
     for (const auto phase : kPhases) {
-        names.insert(nixl::trace::toStringView(phase));
+        names.insert(toStringView(phase));
     }
     EXPECT_EQ(names.size(), std::size(kPhases));
 }

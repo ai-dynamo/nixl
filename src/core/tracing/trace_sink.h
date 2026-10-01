@@ -45,9 +45,6 @@ private:
     std::atomic_flag dropWarned_;
 };
 
-[[nodiscard]] std::string_view
-toStringView(nixl_trace_phase_t phase) noexcept;
-
 } // namespace nixl::trace
 
 #endif // NIXL_SRC_CORE_TRACING_TRACE_SINK_H

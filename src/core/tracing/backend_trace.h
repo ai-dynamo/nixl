@@ -59,6 +59,27 @@ enum class nixl_trace_phase_t : std::uint8_t {
     OTHER,
 };
 
+[[nodiscard]] constexpr std::string_view
+toStringView(nixl_trace_phase_t phase) noexcept {
+    switch (phase) {
+    case nixl_trace_phase_t::SUBMIT:
+        return "nixl::submit";
+    case nixl_trace_phase_t::WIRE_SUBMITTED:
+        return "nixl::wire.submitted";
+    case nixl_trace_phase_t::WIRE_COMPLETED:
+        return "nixl::wire.completed";
+    case nixl_trace_phase_t::NOTIF_SENT:
+        return "nixl::notif.sent";
+    case nixl_trace_phase_t::NOTIF_RECEIVED:
+        return "nixl::notif.received";
+    case nixl_trace_phase_t::REMOTE_OBSERVED:
+        return "nixl::remote.observed";
+    case nixl_trace_phase_t::OTHER:
+        return "nixl::phase";
+    }
+    return "nixl::phase";
+}
+
 /**
  * @brief One key/value attribute on a recorded phase.
  *
