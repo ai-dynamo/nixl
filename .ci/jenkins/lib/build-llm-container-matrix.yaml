@@ -14,8 +14,11 @@
 #
 # Wheels are pulled from Artifactory at:
 #   sw-nbu-swx-nixl-pypi-local/release/${NIXL_VERSION}/${WHEEL_BUILD_ID}/
-# The directory is flat - both architectures share it, the arch is part of the
-# wheel filename. Reads need the svc-nixl Artifactory credentials.
+# WHEEL_BUILD_ID is the build number of the nixl-ci-build-wheel-nightly run that
+# produced them. The directory is flat and holds one complete set - both
+# architectures and both CUDA majors, distinguished by the wheel filename - which
+# is why that job builds every CUDA major in a single run. Reads need the
+# svc-nixl Artifactory credentials.
 #
 # Runtime: podman (no docker). Cross-arch aarch64 builds on x86_64 hosts use
 # `podman build --platform linux/arm64` with QEMU registered via
