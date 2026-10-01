@@ -119,7 +119,8 @@ agent.createBackend("REDIS", params);
 | `queryMem` | `EXISTS key` | Reports whether the key exists |
 
 Local descriptors must be `DRAM_SEG`; remote descriptors may be `DRAM_SEG` or `OBJ_SEG`. A Redis
-key comes from descriptor `metaInfo` when present, otherwise from the decimal `devId`. `postXfer()`
+key comes from descriptor `metaInfo` when present, otherwise from the decimal `addr`. OBJ_SEG
+descriptors must always supply a non-empty `metaInfo`. `postXfer()`
 resolves every remote key before dispatching commands, so an invalid descriptor cannot produce a
 partially submitted transfer.
 

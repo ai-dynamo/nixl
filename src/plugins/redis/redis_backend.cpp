@@ -297,9 +297,7 @@ nixlRedisKVEngine::postXfer(const nixl_xfer_op_t &operation,
 
             if (remote_desc.metadataP) {
                 redis_key = static_cast<nixlRedisMetadata *>(remote_desc.metadataP)->redisKey;
-            }
-
-            if (redis_key.empty()) {
+            } else {
                 auto it = addrToRedisKey_.find(remote_desc.addr);
                 if (it == addrToRedisKey_.end()) {
                     return NIXL_ERR_INVALID_PARAM;
