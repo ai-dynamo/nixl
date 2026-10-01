@@ -103,6 +103,7 @@ public:
 
 private:
     std::shared_ptr<iRedisClient> redisClient_;
+    std::unordered_map<uintptr_t, std::string> addrToRedisKey_;
     std::unordered_map<uint64_t, std::string> devIdToRedisKey_;
 };
 

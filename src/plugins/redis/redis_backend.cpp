@@ -137,14 +137,16 @@ private:
 
 class nixlRedisMetadata : public nixlBackendMD {
 public:
-    nixlRedisMetadata(nixl_mem_t nixl_mem, uint64_t dev_id, std::string redis_key)
+    nixlRedisMetadata(nixl_mem_t nixl_mem, uint64_t dev_id, uintptr_t addr, std::string redis_key)
         : nixlBackendMD(true),
           nixlMem(nixl_mem),
           devId(dev_id),
+          addr(addr),
           redisKey(std::move(redis_key)) {}
 
     nixl_mem_t nixlMem;
     uint64_t devId;
+    uintptr_t addr;
     std::string redisKey;
 };
 
@@ -172,9 +174,13 @@ nixlRedisKVEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
-    std::string redis_key = mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo;
-    auto redis_md = std::make_unique<nixlRedisMetadata>(nixl_mem, mem.devId, redis_key);
-    devIdToRedisKey_[mem.devId] = redis_key;
+    std::string redis_key = mem.metaInfo.empty() ? std::to_string(mem.addr) : mem.metaInfo;
+    auto redis_md = std::make_unique<nixlRedisMetadata>(nixl_mem, mem.devId, mem.addr, redis_key);
+    if (mem.metaInfo.empty()) {
+        addrToRedisKey_[mem.addr] = redis_key;
+    } else {
+        devIdToRedisKey_[mem.devId] = redis_key;
+    }
     out = redis_md.release();
     return NIXL_SUCCESS;
 }
@@ -184,7 +190,9 @@ nixlRedisKVEngine::deregisterMem(nixlBackendMD *meta) {
     auto *redis_md = static_cast<nixlRedisMetadata *>(meta);
     if (redis_md) {
         std::unique_ptr<nixlRedisMetadata> redis_md_ptr(redis_md);
-        devIdToRedisKey_.erase(redis_md->devId);
+        if (addrToRedisKey_.erase(redis_md->addr) == 0) {
+            devIdToRedisKey_.erase(redis_md->devId);
+        }
     }
     return NIXL_SUCCESS;
 }
@@ -205,7 +213,7 @@ nixlRedisKVEngine::queryMem(const nixl_reg_dlist_t &descs,
         for (int i = 0; i < descs.descCount(); ++i) {
             const auto &desc = descs[i];
             const std::string key =
-                desc.metaInfo.empty() ? std::to_string(desc.devId) : desc.metaInfo;
+                desc.metaInfo.empty() ? std::to_string(desc.addr) : desc.metaInfo;
             const auto exists = redisClient_->checkKeyExistsSync(key);
             if (!exists.has_value()) {
                 resp.emplace_back(std::nullopt);
@@ -269,11 +277,16 @@ nixlRedisKVEngine::postXfer(const nixl_xfer_op_t &operation,
         }
 
         if (redis_key.empty()) {
-            auto it = devIdToRedisKey_.find(remote_desc.devId);
-            if (it == devIdToRedisKey_.end()) {
-                return NIXL_ERR_INVALID_PARAM;
+            auto it = addrToRedisKey_.find(remote_desc.addr);
+            if (it != addrToRedisKey_.end()) {
+                redis_key = it->second;
+            } else {
+                auto it2 = devIdToRedisKey_.find(remote_desc.devId);
+                if (it2 == devIdToRedisKey_.end()) {
+                    return NIXL_ERR_INVALID_PARAM;
+                }
+                redis_key = it2->second;
             }
-            redis_key = it->second;
         }
         redis_keys.push_back(std::move(redis_key));
     }
