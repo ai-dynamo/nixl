@@ -617,13 +617,16 @@ RedisConnectionPool::getCallback(redisAsyncContext *c, void *reply, void *privda
             return;
         }
 
+        const bool null_dst = (ctx->data_len > 0 && !ctx->data_ptr);
         if (!size_ok) {
             NIXL_ERROR << absl::StrFormat(
                 "Redis GET size mismatch: expected %zu bytes, got %zu bytes",
                 ctx->data_len,
                 reply_len);
+        } else if (null_dst) {
+            NIXL_ERROR << "Redis GET: data_ptr is null with non-zero data_len";
         }
-        // zero-length success or null data_ptr: resolve on event loop (no copy needed)
+        // zero-length success: resolve on event loop (no copy needed)
         auto promise_ptr = ctx->promise_ptr;
         auto *inFlight = ctx->inFlight;
         delete ctx;
@@ -631,7 +634,7 @@ RedisConnectionPool::getCallback(redisAsyncContext *c, void *reply, void *privda
             inFlight->fetch_sub(1, std::memory_order_relaxed);
         }
         if (promise_ptr) {
-            promise_ptr->set_value(size_ok ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
+            promise_ptr->set_value((size_ok && !null_dst) ? NIXL_SUCCESS : NIXL_ERR_BACKEND);
         }
         return;
     }
@@ -782,8 +785,14 @@ RedisConnectionPool::getKeyAsync(std::string_view key,
 std::optional<bool>
 RedisConnectionPool::checkKeyExistsSync(std::string_view key) {
     std::lock_guard<std::mutex> lock(syncMutex_);
-    if (!syncCtx_ || syncCtx_->err) {
+    if (!syncCtx_) {
         NIXL_ERROR << "Sync Redis connection unavailable for EXISTS";
+        return std::nullopt;
+    }
+    if (syncCtx_->err) {
+        NIXL_ERROR << "Sync Redis connection unavailable for EXISTS";
+        redisFree(syncCtx_);
+        syncCtx_ = nullptr;
         return std::nullopt;
     }
 

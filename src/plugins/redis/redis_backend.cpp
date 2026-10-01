@@ -137,17 +137,23 @@ private:
 
 class nixlRedisMetadata : public nixlBackendMD {
 public:
-    nixlRedisMetadata(nixl_mem_t nixl_mem, uint64_t dev_id, uintptr_t addr, std::string redis_key)
+    nixlRedisMetadata(nixl_mem_t nixl_mem,
+                      uint64_t dev_id,
+                      uintptr_t addr,
+                      std::string redis_key,
+                      bool use_addr_map)
         : nixlBackendMD(true),
           nixlMem(nixl_mem),
           devId(dev_id),
           addr(addr),
-          redisKey(std::move(redis_key)) {}
+          redisKey(std::move(redis_key)),
+          useAddrMap(use_addr_map) {}
 
     nixl_mem_t nixlMem;
     uint64_t devId;
     uintptr_t addr;
     std::string redisKey;
+    bool useAddrMap; // true when registered without metaInfo (keyed by addr), false otherwise
 };
 
 } // namespace
@@ -174,9 +180,11 @@ nixlRedisKVEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
-    std::string redis_key = mem.metaInfo.empty() ? std::to_string(mem.addr) : mem.metaInfo;
-    auto redis_md = std::make_unique<nixlRedisMetadata>(nixl_mem, mem.devId, mem.addr, redis_key);
-    if (mem.metaInfo.empty()) {
+    const bool use_addr_map = mem.metaInfo.empty();
+    std::string redis_key = use_addr_map ? std::to_string(mem.addr) : mem.metaInfo;
+    auto redis_md =
+        std::make_unique<nixlRedisMetadata>(nixl_mem, mem.devId, mem.addr, redis_key, use_addr_map);
+    if (use_addr_map) {
         addrToRedisKey_[mem.addr] = redis_key;
     } else {
         devIdToRedisKey_[mem.devId] = redis_key;
@@ -190,7 +198,9 @@ nixlRedisKVEngine::deregisterMem(nixlBackendMD *meta) {
     auto *redis_md = static_cast<nixlRedisMetadata *>(meta);
     if (redis_md) {
         std::unique_ptr<nixlRedisMetadata> redis_md_ptr(redis_md);
-        if (addrToRedisKey_.erase(redis_md->addr) == 0) {
+        if (redis_md->useAddrMap) {
+            addrToRedisKey_.erase(redis_md->addr);
+        } else {
             devIdToRedisKey_.erase(redis_md->devId);
         }
     }
