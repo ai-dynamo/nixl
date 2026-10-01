@@ -183,8 +183,6 @@ ARG LIBFABRIC_VERSION="v1.21.0"
 ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
-ARG NIXL_ENABLE_PLUGINS=""
-ARG NIXL_STATIC_PLUGINS=""
 
 WORKDIR /workspace
 
@@ -321,9 +319,7 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
-    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE \
-        -Denable_plugins=${NIXL_ENABLE_PLUGINS} \
-        -Dstatic_plugins=${NIXL_STATIC_PLUGINS} && \
+    meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
