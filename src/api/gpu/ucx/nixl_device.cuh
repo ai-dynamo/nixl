@@ -22,6 +22,14 @@
 
 #include <cassert>
 
+// nvcc -G (Meson buildtype=debug) skips inlining and blows the register budget.
+// Force those helpers inline only in that build. Release keeps normal inlining.
+#if DEBUG
+#define NIXL_DEBUG_FORCEINLINE __forceinline__
+#else
+#define NIXL_DEBUG_FORCEINLINE
+#endif
+
 struct nixlGpuXferStatusH {
     ucp_device_request_t device_request;
 };
@@ -117,7 +125,7 @@ nixlGpuGetXferStatus(nixlGpuXferStatusH &xfer_status) {
  * @return NIXL_ERR_BACKEND An error occurred in UCX backend.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
-__device__ nixl_status_t __forceinline__
+__device__ NIXL_DEBUG_FORCEINLINE nixl_status_t
 nixlPut(const nixlMemViewElem &src,
         const nixlMemViewElem &dst,
         size_t size,
@@ -157,7 +165,7 @@ nixlPut(const nixlMemViewElem &src,
  * @return NIXL_ERR_BACKEND An error occurred in UCX backend.
  */
 template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
-__device__ nixl_status_t __forceinline__
+__device__ NIXL_DEBUG_FORCEINLINE nixl_status_t
 nixlAtomicAdd(uint64_t value,
               const nixlMemViewElem &counter,
               unsigned channel_id = 0,
@@ -188,7 +196,7 @@ nixlAtomicAdd(uint64_t value,
 
  * @return Pointer to the mapped memory, or nullptr if not available.
  */
-__device__ __forceinline__ void *
+__device__ NIXL_DEBUG_FORCEINLINE void *
 nixlGetPtr(nixlMemViewH mvh, size_t index) {
     auto mem_list = static_cast<ucp_device_remote_mem_list_h>(mvh);
     void *ptr = nullptr;
