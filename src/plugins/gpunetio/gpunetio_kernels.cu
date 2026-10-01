@@ -21,80 +21,9 @@
 #include <cuda/atomic>
 
 #include "gpunetio_backend.h"
+#include "gpunetio_completion.cuh"
 
 #define ENABLE_DEBUG 0
-
-__device__ inline void
-nixl_gpunetio_dev_cq_print_cqe_err(struct mlx5_cqe64 *cqe64) {
-    struct mlx5_err_cqe_ex *err_cqe = (struct mlx5_err_cqe_ex *)cqe64;
-
-    printf("got completion with err: "
-           "syndrome=%#x, vendor_err_synd=%#x, "
-           "hw_err_synd=%#x, hw_synd_type=%#x, wqe_counter=%u wqe_qpn=%x\n",
-           err_cqe->syndrome,
-           err_cqe->vendor_err_synd,
-           err_cqe->hw_err_synd,
-           err_cqe->hw_synd_type,
-           err_cqe->wqe_counter,
-           err_cqe->s_wqe_opcode_qpn);
-}
-
-/**
- * @brief [Internal] Poll the Completion Queue (CQ) at a specific index respecting NIXL
- * requirements. Non-blocking polling, just one-time CQE check.
- *
- * @param qp - Queue Pair (QP)
- * @param cons_index - Index of the Completion Queue (CQ) to be polled
- */
-template<enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode =
-             DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-         enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
-__device__ int
-nixl_gpunetio_dev_priv_poll_one_cq_at(doca_gpu_dev_verbs_cq *cq, uint64_t cons_index) {
-    uint8_t *cqe = (uint8_t *)__ldg((uintptr_t *)&cq->cqe_daddr);
-    const uint32_t cqe_num = __ldg(&cq->cqe_num);
-    uint32_t idx = cons_index & (cqe_num - 1);
-    struct mlx5_cqe64 *cqe64 = (struct mlx5_cqe64 *)(cqe + (idx * DOCA_GPUNETIO_VERBS_CQE_SIZE));
-
-    uint8_t opown = doca_gpu_dev_verbs_load_relaxed_sys_global((uint8_t *)&cqe64->op_own);
-    uint8_t opcode = opown >> DOCA_GPUNETIO_VERBS_MLX5_CQE_OPCODE_SHIFT;
-
-    bool observed_completion = !((opown & MLX5_CQE_OWNER_MASK) ^ !!(cons_index & cqe_num));
-    observed_completion = observed_completion && (opcode != MLX5_CQE_INVALID);
-    if (!observed_completion) {
-        return EBUSY;
-    }
-
-    if ((opcode == MLX5_CQE_REQ_ERR || opcode == MLX5_CQE_RESP_ERR) * -EIO) {
-        nixl_gpunetio_dev_cq_print_cqe_err(cqe64);
-    }
-
-    return ((opcode == MLX5_CQE_REQ_ERR || opcode == MLX5_CQE_RESP_ERR) * -EIO);
-}
-
-/**
- * @brief Poll the Completion Queue (CQ) at a specific index.
- * Non-blocking polling, just one-time CQE check.
- *
- * @param qp - Queue Pair (QP)
- * @param cons_index - Index of the Completion Queue (CQ) to be polled
- * @return On success, nixl_gpunetio_dev_poll_one_cq_at() returns 0. If the completion is
- * not available, returns EBUSY. If it is a completion with error, returns a
- * negative value.
- */
-template<enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode =
-             DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-         enum doca_gpu_dev_verbs_qp_type qp_type = DOCA_GPUNETIO_VERBS_QP_SQ>
-__device__ int
-nixl_gpunetio_dev_poll_one_cq_at(doca_gpu_dev_verbs_cq *cq, uint64_t cons_index) {
-    int status =
-        nixl_gpunetio_dev_priv_poll_one_cq_at<resource_sharing_mode, qp_type>(cq, cons_index);
-    if (status == 0) {
-        doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
-        doca_gpu_dev_verbs_atomic_max<uint64_t, resource_sharing_mode>(&cq->cqe_ci, cons_index + 1);
-    }
-    return status;
-}
 
 __global__ void
 kernel_read(doca_gpu_dev_verbs_qp *qp, struct docaXferReqGpu *xferReqRing, uint32_t pos) {
