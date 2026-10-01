@@ -97,7 +97,6 @@ fn build_nixl(cc_builder: &mut cc::Build) -> anyhow::Result<()> {
         "../../api/cpp",
         "../../infra",
         "../../core",
-        "/usr/include",
     ];
 
     let arch = get_arch();
