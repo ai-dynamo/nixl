@@ -84,6 +84,12 @@ public:
     updateMemoryRegistered(uint64_t memory_registered);
     void
     updateMemoryDeregistered(uint64_t memory_deregistered);
+    /**
+     * @brief Adds @p trace_phases_dropped to the trace-phase drops emitted as one
+     *        AGENT_TRACE_PHASES_DROPPED delta per flush, outside the staging queue.
+     *
+     * Lock-free; safe to call from any thread.
+     */
     void
     updateTracePhasesDropped(uint64_t trace_phases_dropped) noexcept;
     /**
@@ -133,6 +139,8 @@ private:
     // synthetic AGENT_TELEMETRY_EVENTS_DROPPED event.
     void
     exportDroppedEvents();
+    // Emits the trace-phase drops accumulated since the last flush as one
+    // AGENT_TRACE_PHASES_DROPPED event.
     void
     exportTracePhasesDropped();
 
@@ -153,6 +161,8 @@ private:
     // resets the drop count and publishes it as an AGENT_TELEMETRY_EVENTS_DROPPED
     // event.
     nixlTelemetryStagingQueue stagingQueue_;
+    // Trace-phase drops since the last flush. Outside the staging queue, so a
+    // failing trace backend can neither crowd out other events nor lose its own.
     std::atomic<uint64_t> tracePhasesDropped_{0};
     asio::thread_pool pool_;
     periodicTask writeTask_;
