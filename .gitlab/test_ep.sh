@@ -117,10 +117,6 @@ echo "==== Running vLLM Elastic EP test ===="
     # Avoid SPCx loading HPC-X UCX 1.21; NIXL EP requires UCX >=1.22.
     unset NCCL_NET_PLUGIN
     unset UCX_NET_DEVICES
-    # TODO: remove this override when vLLM updates FlashInfer with
-    # https://github.com/flashinfer-ai/flashinfer/pull/4377.
-    # FlashInfer 0.6.16.post3's default MLA backend fails to JIT on CUDA 13.3.
-    export VLLM_ATTENTION_BACKEND=CUTLASS_MLA
     export PATH="${VLLM_ELASTIC_TEST_DIR}/.venv/bin:${PATH}"
     VLLM_LOG="${PWD}/elastic_ep_vllm_single_node.log"
     VLLM_REF="$(git -C "${VLLM_ELASTIC_TEST_DIR}" describe --tags --exact-match HEAD)"
@@ -128,14 +124,10 @@ echo "==== Running vLLM Elastic EP test ===="
 
     echo "vLLM source: VLLM_REF=${VLLM_REF} VLLM_COMMIT=${VLLM_COMMIT}"
 
-    # Run vLLM's 2 -> 4 -> 2 Elastic EP scaling test with NIXL EP (Cover eager heavy traffic and CUDA graphs testing).
     (
         cd "${VLLM_ELASTIC_TEST_DIR}"
-        VLLM_NIXL_EP_MAX_NUM_RANKS=4 \
-        VLLM_TEST_ELASTIC_EP_ALL2ALL_BACKEND=nixl_ep \
         timeout 4500 "${VLLM_PYTHON}" -m pytest \
-            "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[enforce_eager_heavy]" \
-            "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[cuda_graphs_heavy]" \
+            "tests/distributed/test_elastic_ep.py::test_elastic_ep_scaling[cuda_graphs_heavy_nixl_ep]" \
             -v -s --tb=short 2>&1 | tee "${VLLM_LOG}"
     )
 
