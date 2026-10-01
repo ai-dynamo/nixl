@@ -319,6 +319,24 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `manylinux` runner. Check the step's `containerSelector` against
 `runs_on_dockers`, not just whether `docker` is podman.
 
+## Authenticated clones in ci-demo-built images
+
+ci-demo builds the images declared with `file:` in a matrix (`Dockerfile.base`,
+the manylinux `wheel_base`) outside any step. github.com intermittently answers
+anonymous clones with an HTTP 401, which git reports as `could not read Username for
+'https://github.com'` — the missing terminal git tried to prompt on, not DNS.
+
+- Each such `runs_on_dockers` entry sets `credentialsId: 'svc-nixl-github-token'`,
+  which ci-demo binds around that image's build.
+- `pipeline_on_image_build` turns the bound token into a
+  `url."https://<user>:<token>@github.com/".insteadOf` git config at `/tmp/ghconfig`
+  in the build pod (tracing off, mode 600), or an empty file when nothing is bound.
+- The entry's `build_args` pass it as `--secret id=ghconfig,src=/tmp/ghconfig`, and
+  `Dockerfile.base` mounts it at `${_HOME}/.gitconfig` (`mode=0444`, non-root user)
+  on the `build.sh` and vLLM `RUN`s. It never lands in a layer or `podman history`.
+
+An unbound or empty secret leaves the clones anonymous, as before.
+
 ## Related docs
 
 - [Build Wheel Matrix CI Job Documentation](build-wheel-matrix-ci.md) — deep dive into `nixl-ci-build-wheel`.
