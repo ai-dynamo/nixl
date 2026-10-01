@@ -26,6 +26,7 @@
 #include "nixl.h"
 #include "plugin_manager.h"
 #include "transfer_request.h"
+#include "tracing/trace_context.h"
 #include "mocks/gmock_engine.h"
 
 namespace gtest {
@@ -41,6 +42,13 @@ namespace agent {
         std::mt19937 gen(rd());
         std::uniform_int_distribution<unsigned int> distr(0, 255);
         return static_cast<unsigned char>(distr(gen));
+    }
+
+    [[nodiscard]] auto
+    sameTraceContextAs(const nixl::trace::TraceContext &expected) {
+        return testing::AllOf(testing::Field(&nixl::trace::TraceContext::traceId, expected.traceId),
+                              testing::Field(&nixl::trace::TraceContext::spanId, expected.spanId),
+                              testing::Field(&nixl::trace::TraceContext::flags, expected.flags));
     }
 
     class blob {
@@ -66,14 +74,23 @@ namespace agent {
         }
     };
 
+    struct selfXferSetup {
+        nixlBackendH *backend = nullptr;
+        blob localBlob;
+        nixl_reg_dlist_t regDlist{DRAM_SEG};
+        nixl_opt_args_t extraParams;
+        nixl_xfer_dlist_t xferDlist{DRAM_SEG};
+    };
+
     class agentHelper {
     protected:
         ScopedEnv trace_env_;
         testing::NiceMock<mocks::GMockBackendEngine> gmock_engine_;
         std::unique_ptr<nixlAgent> agent_;
+        const std::string name_;
 
     public:
-        agentHelper(const std::string &name, const std::string &trace_backends = "") {
+        agentHelper(const std::string &name, const std::string &trace_backends = "") : name_(name) {
             trace_env_.addVar("NIXL_TRACE_BACKENDS", trace_backends);
             nixlAgentConfig cfg;
             cfg.useProgThread = true;
@@ -118,6 +135,22 @@ namespace agent {
             extra_params.backends.push_back(backend);
             return agent_->registerMem(reg_dlist, &extra_params);
         }
+
+        void
+        setupSelfXfer(selfXferSetup &setup) {
+            nixl_b_params_t params;
+            EXPECT_EQ(createBackendWithGMock(params, setup.backend), NIXL_SUCCESS);
+            EXPECT_EQ(initAndRegisterMemory(
+                          setup.localBlob, setup.regDlist, setup.extraParams, setup.backend),
+                      NIXL_SUCCESS);
+            setup.xferDlist.addDesc(setup.localBlob.getDesc());
+        }
+
+        nixl_status_t
+        createSelfXferReq(selfXferSetup &setup, nixlXferReqH *&req) {
+            return agent_->createXferReq(
+                NIXL_WRITE, setup.xferDlist, setup.xferDlist, name_, req, &setup.extraParams);
+        }
     };
 
     class tracingEnabledAgentFixture : public testing::Test {
@@ -152,6 +185,60 @@ namespace agent {
         const auto &observed = agent_helper_->getGMockEngine().observedTraceSink;
         ASSERT_TRUE(observed.has_value());
         EXPECT_NE(*observed, nullptr);
+    }
+
+    TEST_F(tracingEnabledAgentFixture, TracingOnHandsPluginEachRequestsContext) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+
+        nixlXferReqH *first = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, first), NIXL_SUCCESS);
+        EXPECT_TRUE(first->traceContext().valid());
+        EXPECT_THAT(engine.observedTraceContext(),
+                    testing::Optional(sameTraceContextAs(first->traceContext())));
+
+        nixlXferReqH *second = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, second), NIXL_SUCCESS);
+        ASSERT_NE(first->traceCorrelationId64(), second->traceCorrelationId64());
+        EXPECT_THAT(engine.observedTraceContext(),
+                    testing::Optional(sameTraceContextAs(second->traceContext())));
+
+        for (nixlXferReqH *req : {first, second, first}) {
+            EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+            EXPECT_THAT(engine.observedTraceContext(),
+                        testing::Optional(sameTraceContextAs(req->traceContext())));
+        }
+
+        EXPECT_EQ(agent->releaseXferReq(first), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releaseXferReq(second), NIXL_SUCCESS);
+    }
+
+    TEST_F(tracingEnabledAgentFixture, TracingOnHandsPluginThePreppedRequestsContext) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        nixlAgent *agent = agent_helper_->getAgent();
+
+        nixlDlistH *local_side = nullptr;
+        nixlDlistH *remote_side = nullptr;
+        ASSERT_EQ(agent->prepXferDlist(setup.xferDlist, local_side), NIXL_SUCCESS);
+        ASSERT_EQ(agent->prepXferDlist(local_agent_name, setup.xferDlist, remote_side),
+                  NIXL_SUCCESS);
+
+        const std::vector<int> indices{0};
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(
+            agent->makeXferReq(
+                NIXL_WRITE, *local_side, indices, *remote_side, indices, req, &setup.extraParams),
+            NIXL_SUCCESS);
+        EXPECT_TRUE(req->traceContext().valid());
+        EXPECT_THAT(agent_helper_->getGMockEngine().observedTraceContext(),
+                    testing::Optional(sameTraceContextAs(req->traceContext())));
+
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
     }
 
     class singleAgentSessionFixture : public testing::Test {
@@ -279,6 +366,24 @@ namespace agent {
         const auto &observed = agent_helper_->getGMockEngine().observedTraceSink;
         ASSERT_TRUE(observed.has_value());
         EXPECT_EQ(*observed, nullptr);
+    }
+
+    TEST_F(singleAgentSessionFixture, TracingOffHandsPluginTheZeroedRequestContext) {
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        const auto &engine = agent_helper_->getGMockEngine();
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
+        EXPECT_THAT(req->traceContext(), sameTraceContextAs(nixl::trace::TraceContext{}));
+        EXPECT_THAT(engine.observedTraceContext(),
+                    testing::Optional(sameTraceContextAs(req->traceContext())));
+
+        EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(engine.observedTraceContext(),
+                    testing::Optional(sameTraceContextAs(req->traceContext())));
+
+        EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
     }
 
     TEST_F(singleAgentSessionFixture, GetNonExistingBackendParamsTest) {
