@@ -833,39 +833,4 @@ RedisConnectionPool::checkKeyExistsSync(std::string_view key) {
     return exists;
 }
 
-#else // HAVE_HIREDIS_ASYNC
-
-struct RedisConnectionPool::Slot {};
-
-RedisConnectionPool::RedisConnectionPool(RedisConfig) {
-    throw std::runtime_error("hiredis-async not available");
-}
-
-RedisConnectionPool::~RedisConnectionPool() {}
-
-void
-RedisConnectionPool::putKeyAsync(std::string_view,
-                                 uintptr_t,
-                                 size_t,
-                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
-    if (promise) {
-        promise->set_value(NIXL_ERR_BACKEND);
-    }
-}
-
-void
-RedisConnectionPool::getKeyAsync(std::string_view,
-                                 uintptr_t,
-                                 size_t,
-                                 std::shared_ptr<std::promise<nixl_status_t>> promise) {
-    if (promise) {
-        promise->set_value(NIXL_ERR_BACKEND);
-    }
-}
-
-std::optional<bool>
-RedisConnectionPool::checkKeyExistsSync(std::string_view) {
-    return std::nullopt;
-}
-
 #endif // HAVE_HIREDIS_ASYNC
