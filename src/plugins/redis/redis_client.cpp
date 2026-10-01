@@ -176,7 +176,13 @@ using redis_event_task_t = std::function<void()>;
 void
 runEventTask(evutil_socket_t, short, void *arg) {
     std::unique_ptr<redis_event_task_t> task(static_cast<redis_event_task_t *>(arg));
-    (*task)();
+    try {
+        (*task)();
+    } catch (const std::exception &e) {
+        NIXL_ERROR << "Redis: event task threw: " << e.what();
+    } catch (...) {
+        NIXL_ERROR << "Redis: event task threw unknown exception";
+    }
 }
 
 bool
@@ -349,7 +355,9 @@ RedisConnectionPool::initSlotAsyncCtx(Slot &slot) {
 
 void
 RedisConnectionPool::connectSyncContext() {
-    struct timeval timeout = {5, 0};
+    // 1 s: short enough not to stall queryMem callers on reconnect while
+    // still giving a slow server a reasonable chance to accept.
+    struct timeval timeout = {1, 0};
     syncCtx_ = redisConnectWithTimeout(config_.host.c_str(), config_.port, timeout);
     if (!syncCtx_ || syncCtx_->err) {
         std::string err_msg = syncCtx_ ? syncCtx_->errstr : "allocation failed";
@@ -407,7 +415,13 @@ RedisConnectionPool::workerLoop() {
             task = std::move(workQueue_.front());
             workQueue_.pop();
         }
-        task();
+        try {
+            task();
+        } catch (const std::exception &e) {
+            NIXL_ERROR << "Redis: worker task threw: " << e.what();
+        } catch (...) {
+            NIXL_ERROR << "Redis: worker task threw unknown exception";
+        }
     }
 }
 
@@ -443,17 +457,31 @@ RedisConnectionPool::stopEventLoop() {
         bool scheduled = scheduleOnEventLoop([this]() {
             for (auto &s : slots_) {
                 if (s->asyncCtx) {
+                    // Mark disconnected before freeing so concurrent
+                    // leastLoadedHealthySlot() callers stop routing here
+                    // before pending callbacks fire (slot still alive at this point).
                     s->connected.store(false);
-                    redisAsyncFree(s->asyncCtx);
+                    redisAsyncFree(s->asyncCtx); // fires pending callbacks with null reply
                     s->asyncCtx = nullptr;
                 }
             }
-            event_base_loopbreak(eventBase_);
+            // loopexit (vs loopbreak) lets any pending EV_TIMEOUT(0,0) tasks
+            // posted by concurrent putKeyAsync/getKeyAsync calls fire first,
+            // so their promises are resolved before the loop exits.
+            event_base_loopexit(eventBase_, nullptr);
         });
         if (!scheduled) {
             event_base_loopbreak(eventBase_);
         }
         eventLoopThread_.join();
+        // Sweep: if the cleanup lambda didn't run (scheduling failure), free any
+        // remaining asyncCtx now that the event loop is stopped and no callbacks fire.
+        for (auto &s : slots_) {
+            if (s->asyncCtx) {
+                redisAsyncFree(s->asyncCtx);
+                s->asyncCtx = nullptr;
+            }
+        }
     }
     event_base_free(eventBase_);
     eventBase_ = nullptr;
@@ -577,9 +605,11 @@ RedisConnectionPool::setCallback(redisAsyncContext *c, void *reply, void *privda
     auto *r = static_cast<redisReply *>(reply);
 
     bool success = false;
-    if (r && r->type == REDIS_REPLY_STATUS) {
+    if (!r) {
+        NIXL_ERROR << "Redis SET: connection lost (no reply)";
+    } else if (r->type == REDIS_REPLY_STATUS) {
         success = (strcmp(r->str, "OK") == 0);
-    } else if (r && r->type == REDIS_REPLY_ERROR) {
+    } else if (r->type == REDIS_REPLY_ERROR) {
         NIXL_ERROR << absl::StrFormat("Redis SET error: %s", r->str);
     }
 
@@ -637,7 +667,7 @@ RedisConnectionPool::getCallback(redisAsyncContext *c, void *reply, void *privda
         } else if (null_dst) {
             NIXL_ERROR << "Redis GET: data_ptr is null with non-zero data_len";
         }
-        // zero-length success: resolve on event loop (no copy needed)
+        // Resolve on event loop: size mismatch, null dst, or zero-length success (no copy needed).
         auto promise_ptr = ctx->promise_ptr;
         auto *inFlight = ctx->inFlight;
         delete ctx;

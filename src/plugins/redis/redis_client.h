@@ -75,6 +75,9 @@ public:
  * GET reply buffers are transferred off the event loop thread to a worker
  * pool so large memcpy calls do not block other async callbacks.
  * Resource cost: (N+1) OS threads + N async TCP connections + 1 shared sync TCP connection.
+ *
+ * Note: slots that disconnect after initialization are not automatically reconnected;
+ * the pool permanently loses that slot's capacity until it is destroyed and recreated.
  */
 class RedisConnectionPool : public iRedisClient {
 public:
