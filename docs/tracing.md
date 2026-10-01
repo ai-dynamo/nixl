@@ -166,6 +166,13 @@ backends/PRs):
 | `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
 | `nixl::releaseMemView` | `Generic` | - |
 
+Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
+when `getXferStatus` first observes success. How a backend renders attributes and
+dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
+backend (e.g. NVTX attaches attributes as typed payloads on the range via
+`nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
+record them).
+
 ### Backend phase spans
 
 A backend plugin can record a phase of its own work through
@@ -200,13 +207,6 @@ needs the context later, at completion or when building a notification, copies
 the value onto its own request handle. A carrier that puts it on the wire calls
 `encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
 in-tree plugins can read it; none does yet.
-
-Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
-when `getXferStatus` first observes success. How a backend renders attributes and
-dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
-backend (e.g. NVTX attaches attributes as typed payloads on the range via
-`nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
-record them).
 
 ## Profiling with NVTX / Nsight Systems
 
