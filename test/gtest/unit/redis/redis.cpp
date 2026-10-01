@@ -376,9 +376,22 @@ TEST_F(redisEngineTest, ReportsRedisBackendCapabilities) {
     EXPECT_EQ(engine_->disconnect(initParams_.localAgent), NIXL_SUCCESS);
 }
 
-TEST_F(redisEngineTest, RegistersMetadataKeyAndDevIdFallback) {
+TEST_F(redisEngineTest, RegistersMetadataKeyAndAddrFallback) {
+    // Named OBJ_SEG: key comes from metaInfo stored in metadataP
     auto *namedMetadata = registerRemote(11, "registered-key");
-    auto *fallbackMetadata = registerRemote(22, "");
+
+    // Unnamed DRAM_SEG: key comes from addr lookup in addrToRedisKey_
+    constexpr uintptr_t kFakeAddr = 0x100000;
+    nixlBackendMD *addrMetadata = nullptr;
+    EXPECT_EQ(engine_->registerMem(nixlBlobDesc(kFakeAddr, 16, 22, ""), DRAM_SEG, addrMetadata),
+              NIXL_SUCCESS);
+    EXPECT_NE(addrMetadata, nullptr);
+
+    // Unnamed OBJ_SEG is rejected
+    nixlBackendMD *rejected = reinterpret_cast<nixlBackendMD *>(1);
+    EXPECT_EQ(engine_->registerMem(nixlBlobDesc(0, 16, 33, ""), OBJ_SEG, rejected),
+              NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(rejected, nullptr);
 
     std::vector<char> firstBuffer(16, 'a');
     std::vector<char> secondBuffer(16, 'b');
@@ -388,14 +401,17 @@ TEST_F(redisEngineTest, RegistersMetadataKeyAndDevIdFallback) {
     localDescs.addDesc(nixlMetaDesc(
         reinterpret_cast<uintptr_t>(secondBuffer.data()), secondBuffer.size(), 2, nullptr));
     nixl_meta_dlist_t remoteDescs(OBJ_SEG);
-    remoteDescs.addDesc(nixlMetaDesc(0, firstBuffer.size(), 11, nullptr));
-    remoteDescs.addDesc(nixlMetaDesc(0, secondBuffer.size(), 22, nullptr));
+    // Named: resolve key via metadataP
+    remoteDescs.addDesc(nixlMetaDesc(0, firstBuffer.size(), 11, namedMetadata));
+    // Addr-based: resolve key via addrToRedisKey_[kFakeAddr]
+    remoteDescs.addDesc(nixlMetaDesc(kFakeAddr, secondBuffer.size(), 22, nullptr));
 
     auto *handle = prepareTransfer(NIXL_WRITE, localDescs, remoteDescs);
     EXPECT_EQ(engine_->postXfer(
                   NIXL_WRITE, localDescs, remoteDescs, initParams_.localAgent, handle, nullptr),
               NIXL_IN_PROG);
-    EXPECT_EQ(mockClient_->putKeys(), (std::vector<std::string>{"registered-key", "22"}));
+    EXPECT_EQ(mockClient_->putKeys(),
+              (std::vector<std::string>{"registered-key", std::to_string(kFakeAddr)}));
     EXPECT_EQ(mockClient_->putAddrs()[0], reinterpret_cast<uintptr_t>(firstBuffer.data()));
     EXPECT_EQ(mockClient_->putLens()[0], firstBuffer.size());
     EXPECT_EQ(mockClient_->putAddrs()[1], reinterpret_cast<uintptr_t>(secondBuffer.data()));
@@ -404,7 +420,7 @@ TEST_F(redisEngineTest, RegistersMetadataKeyAndDevIdFallback) {
 
     EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
     EXPECT_EQ(engine_->deregisterMem(namedMetadata), NIXL_SUCCESS);
-    EXPECT_EQ(engine_->deregisterMem(fallbackMetadata), NIXL_SUCCESS);
+    EXPECT_EQ(engine_->deregisterMem(addrMetadata), NIXL_SUCCESS);
 
     nixlBackendMD *unsupported = reinterpret_cast<nixlBackendMD *>(1);
     EXPECT_EQ(engine_->registerMem(nixlBlobDesc(), VRAM_SEG, unsupported), NIXL_ERR_NOT_SUPPORTED);
@@ -412,10 +428,11 @@ TEST_F(redisEngineTest, RegistersMetadataKeyAndDevIdFallback) {
 }
 
 TEST_F(redisEngineTest, QueryMemPreservesFoundMissingAndErrorResponses) {
-    mockClient_->setExistsResults({true, false, std::nullopt});
+    mockClient_->setExistsResults({true, false});
     nixl_reg_dlist_t descs(OBJ_SEG);
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(0, 0, 1), "found"));
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(0, 0, 2), "missing"));
+    // Unnamed OBJ_SEG: rejected without consulting Redis (same rule as registerMem)
     descs.addDesc(nixlBlobDesc(nixlBasicDesc(0, 0, 3), ""));
 
     std::vector<nixl_query_resp_t> responses;
@@ -424,7 +441,7 @@ TEST_F(redisEngineTest, QueryMemPreservesFoundMissingAndErrorResponses) {
     EXPECT_TRUE(responses[0].has_value());
     EXPECT_FALSE(responses[1].has_value());
     EXPECT_FALSE(responses[2].has_value());
-    EXPECT_EQ(mockClient_->checkedKeys(), (std::vector<std::string>{"found", "missing", "3"}));
+    EXPECT_EQ(mockClient_->checkedKeys(), (std::vector<std::string>{"found", "missing"}));
 }
 
 TEST_F(redisEngineTest, PrepXferRejectsInvalidRequests) {
@@ -468,7 +485,7 @@ TEST_F(redisEngineTest, PollsReadUntilClientCompletes) {
     local.addDesc(
         nixlMetaDesc(reinterpret_cast<uintptr_t>(buffer.data()), buffer.size(), 1, nullptr));
     nixl_meta_dlist_t remote(OBJ_SEG);
-    remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, nullptr));
+    remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, metadata));
 
     auto *handle = prepareTransfer(NIXL_READ, local, remote);
     EXPECT_EQ(engine_->postXfer(NIXL_READ, local, remote, initParams_.localAgent, handle, nullptr),
@@ -492,7 +509,7 @@ TEST_F(redisEngineTest, PropagatesAsyncClientFailure) {
     local.addDesc(
         nixlMetaDesc(reinterpret_cast<uintptr_t>(buffer.data()), buffer.size(), 1, nullptr));
     nixl_meta_dlist_t remote(OBJ_SEG);
-    remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, nullptr));
+    remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, metadata));
 
     auto *handle = prepareTransfer(NIXL_WRITE, local, remote);
     EXPECT_EQ(engine_->postXfer(NIXL_WRITE, local, remote, initParams_.localAgent, handle, nullptr),
@@ -510,7 +527,7 @@ TEST_F(redisEngineTest, ReleaseWaitsForInFlightOperations) {
     local.addDesc(
         nixlMetaDesc(reinterpret_cast<uintptr_t>(buffer.data()), buffer.size(), 1, nullptr));
     nixl_meta_dlist_t remote(OBJ_SEG);
-    remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, nullptr));
+    remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, metadata));
 
     auto *handle = prepareTransfer(NIXL_READ, local, remote);
     EXPECT_EQ(engine_->postXfer(NIXL_READ, local, remote, initParams_.localAgent, handle, nullptr),
@@ -536,8 +553,8 @@ TEST_F(redisEngineTest, FailureIsReportedOnlyAfterAllOperationsComplete) {
     local.addDesc(nixlMetaDesc(
         reinterpret_cast<uintptr_t>(secondBuffer.data()), secondBuffer.size(), 2, nullptr));
     nixl_meta_dlist_t remote(OBJ_SEG);
-    remote.addDesc(nixlMetaDesc(0, firstBuffer.size(), 22, nullptr));
-    remote.addDesc(nixlMetaDesc(0, secondBuffer.size(), 22, nullptr));
+    remote.addDesc(nixlMetaDesc(0, firstBuffer.size(), 22, metadata));
+    remote.addDesc(nixlMetaDesc(0, secondBuffer.size(), 22, metadata));
 
     auto *handle = prepareTransfer(NIXL_READ, local, remote);
     EXPECT_EQ(engine_->postXfer(NIXL_READ, local, remote, initParams_.localAgent, handle, nullptr),
@@ -562,7 +579,7 @@ TEST_F(redisEngineTest, AbandonedOperationFailsInsteadOfHanging) {
     local.addDesc(
         nixlMetaDesc(reinterpret_cast<uintptr_t>(buffer.data()), buffer.size(), 1, nullptr));
     nixl_meta_dlist_t remote(OBJ_SEG);
-    remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, nullptr));
+    remote.addDesc(nixlMetaDesc(0, buffer.size(), 22, metadata));
 
     auto *handle = prepareTransfer(NIXL_READ, local, remote);
     EXPECT_EQ(engine_->postXfer(NIXL_READ, local, remote, initParams_.localAgent, handle, nullptr),
@@ -587,7 +604,7 @@ TEST_F(redisEngineTest, PostXferDoesNotDispatchPartialCommandsWhenLaterKeyIsMiss
     std::vector<char> firstBuffer(16, 'a');
     std::vector<char> secondBuffer(16, 'b');
 
-    auto *registeredMetadata = registerRemote(11, "registered-key", DRAM_SEG);
+    auto *registeredMetadata = registerRemote(11, "registered-key");
 
     nixl_meta_dlist_t localDescs(DRAM_SEG);
     localDescs.addDesc(nixlMetaDesc(
@@ -595,8 +612,9 @@ TEST_F(redisEngineTest, PostXferDoesNotDispatchPartialCommandsWhenLaterKeyIsMiss
     localDescs.addDesc(nixlMetaDesc(
         reinterpret_cast<uintptr_t>(secondBuffer.data()), secondBuffer.size(), 2, nullptr));
 
-    nixl_meta_dlist_t remoteDescs(DRAM_SEG);
-    remoteDescs.addDesc(nixlMetaDesc(0, firstBuffer.size(), 11, nullptr));
+    // First remote has metadata (key resolves); second has no metadata and addr=0 not in map
+    nixl_meta_dlist_t remoteDescs(OBJ_SEG);
+    remoteDescs.addDesc(nixlMetaDesc(0, firstBuffer.size(), 11, registeredMetadata));
     remoteDescs.addDesc(nixlMetaDesc(0, secondBuffer.size(), 22, nullptr));
 
     auto *handle = prepareTransfer(NIXL_WRITE, localDescs, remoteDescs);
