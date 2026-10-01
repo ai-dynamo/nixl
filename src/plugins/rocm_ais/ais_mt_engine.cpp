@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
-#include <exception>
 #include <string>
 #include <thread>
 #include <utility>
@@ -48,7 +47,7 @@ getThreadCount(const nixlBackendInitParams *init_params) {
 // -1 means a system error in errno, any other negative value is the negated
 // hipFileOpError_t. Reading errno for the second case prints whatever was left
 // there -- typically "Success", which is worse than no message at all.
-std::string
+[[nodiscard]] std::string
 describeHipFileIoError(ssize_t rc) {
     if (rc == -1) {
         return "system error: " + nixl_strerror(errno);
@@ -98,7 +97,7 @@ runHipFileOp(const aisXferReq *req, std::atomic<nixl_status_t> *overall_status) 
         return;
     }
 
-    if ((size_t)nbytes != req->size) {
+    if (static_cast<size_t>(nbytes) != req->size) {
         NIXL_ERROR << "AIS_MT: error: short "
                    << ((req->op == hipFileBatchRead) ? "read: " : "write: ") << nbytes << " out of "
                    << req->size << " bytes - address=" << req->addr;
@@ -118,21 +117,8 @@ nixlAisMtReqH::~nixlAisMtReqH() {
 
 nixlAisMtEngine::nixlAisMtEngine(const nixlBackendInitParams *init_params)
     : nixlAisEngine(init_params),
-      thread_count_(getThreadCount(init_params)) {
-    // Base ctor opened the hipFile driver; bail if that failed.
-    if (this->initErr) {
-        return;
-    }
-
-    try {
-        executor_ = std::make_unique<tf::Executor>(thread_count_);
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "AIS_MT: failed to create executor: " << e.what();
-        this->initErr = true;
-        return;
-    }
-    NIXL_DEBUG << "AIS_MT: thread count=" << thread_count_;
+      executor_(std::make_unique<tf::Executor>(getThreadCount(init_params))) {
+    NIXL_DEBUG << "AIS_MT: thread count=" << executor_->num_workers();
 }
 
 nixl_status_t

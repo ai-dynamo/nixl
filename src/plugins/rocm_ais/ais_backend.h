@@ -63,20 +63,15 @@ struct aisXferReq {
 class nixlAisEngine : public FileEngineBase {
 public:
     explicit nixlAisEngine(const nixlBackendInitParams *init_params);
-    ~nixlAisEngine() override = default;
 
-    nixlAisEngine(const nixlAisEngine &) = delete;
-    nixlAisEngine &
-    operator=(const nixlAisEngine &) = delete;
-
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     deregisterMem(nixlBackendMD *meta) override;
 
     // Shared: validates the request and translates descriptors into an
     // aisXferReq list, then defers the concrete handle creation to finalizePrep.
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     prepXfer(const nixl_xfer_op_t &operation,
              const nixl_meta_dlist_t &local,
              const nixl_meta_dlist_t &remote,
@@ -84,7 +79,7 @@ public:
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
 
     // postXfer / checkXfer / releaseReqH remain pure virtual here (inherited from
@@ -93,15 +88,15 @@ public:
 protected:
     // The single backend-specific step of preparation: build a concrete,
     // posted-ready request handle from the validated logical request list.
-    virtual nixl_status_t
+    [[nodiscard]] virtual nixl_status_t
     finalizePrep(std::vector<aisXferReq> &&reqs, nixlBackendReqH *&handle) const = 0;
 
 private:
-    std::unique_ptr<aisDriverHandle> driver_;
+    nixl::rocm::ais::aisDriverHandle driver_;
     // Keyed on the open fd (FileFd::fd()), not on the descriptor's devId: in
     // path-mode devId is a caller-chosen key with no relation to any fd. Holds
     // weak refs so the last registration of an fd drops the hipFile handle.
-    std::unordered_map<int, std::weak_ptr<aisFileHandle>> ais_file_map_;
+    std::unordered_map<int, std::weak_ptr<nixl::rocm::ais::aisFileHandle>> ais_file_map_;
     nixl::PathModeDevIdRegistry path_mode_devids_;
 };
 

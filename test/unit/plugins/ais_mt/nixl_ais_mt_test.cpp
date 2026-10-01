@@ -140,7 +140,7 @@ validateBuffer(void *expected, void *actual, size_t size, const char *operation)
 
 void
 fill_test_pattern(void *buffer, size_t size) {
-    char *buf = (char *)buffer;
+    char *buf = static_cast<char *>(buffer);
     size_t phrase_len = TEST_PHRASE_LEN;
     size_t offset = 0;
 
@@ -154,7 +154,7 @@ fill_test_pattern(void *buffer, size_t size) {
 
 hipError_t
 fill_gpu_test_pattern(void *gpu_buffer, size_t size) {
-    char *host_buffer = (char *)malloc(size);
+    char *host_buffer = static_cast<char *>(malloc(size));
     if (!host_buffer) {
         return hipErrorOutOfMemory;
     }
@@ -177,8 +177,8 @@ clear_gpu_buffer(void *gpu_buffer, size_t size) {
 
 bool
 validate_gpu_buffer(void *gpu_buffer, size_t size) {
-    char *host_buffer = (char *)malloc(size);
-    char *expected_buffer = (char *)malloc(size);
+    char *host_buffer = static_cast<char *>(malloc(size));
+    char *expected_buffer = static_cast<char *>(malloc(size));
     if (!host_buffer || !expected_buffer) {
         free(host_buffer);
         free(expected_buffer);
@@ -489,14 +489,14 @@ main(int argc, char *argv[]) {
         file_names[i] = name;
 
         if (use_vram) {
-            vram_buf[i].addr = (uintptr_t)(vram_addr[i]);
+            vram_buf[i].addr = reinterpret_cast<uintptr_t>(vram_addr[i]);
             vram_buf[i].len = transfer_size;
             vram_buf[i].devId = devId;
             vram_for_ais_mt.addDesc(vram_buf[i]);
         }
 
         if (use_dram) {
-            dram_buf[i].addr = (uintptr_t)(dram_addr[i]);
+            dram_buf[i].addr = reinterpret_cast<uintptr_t>(dram_addr[i]);
             dram_buf[i].len = transfer_size;
             dram_buf[i].devId = devId;
             dram_for_ais_mt.addDesc(dram_buf[i]);
@@ -761,7 +761,7 @@ main(int argc, char *argv[]) {
                     }
                 }
                 if (use_dram) {
-                    char *expected_buffer = (char *)malloc(transfer_size);
+                    char *expected_buffer = static_cast<char *>(malloc(transfer_size));
                     if (!expected_buffer) {
                         std::cerr << "Failed to allocate validation buffer\n";
                         goto cleanup;

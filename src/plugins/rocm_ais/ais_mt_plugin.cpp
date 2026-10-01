@@ -21,7 +21,7 @@
 #include "backend/backend_plugin.h"
 
 namespace {
-nixl_b_params_t
+[[nodiscard]] nixl_b_params_t
 getAisMtBackendOptions() {
     return {{"thread_count", std::to_string(defaultAisMtThreadCount())}};
 }

@@ -28,6 +28,8 @@
 
 #include "file/file_path_mode.h"
 
+namespace nixl::rocm::ais {
+
 // RAII wrappers around the hipFile resources shared by the AIS engines. Each
 // type registers in its constructor and deregisters in its destructor, so the
 // engines never hand-manage hipFile lifetimes.
@@ -78,5 +80,7 @@ public:
     aisDriverHandle &
     operator=(const aisDriverHandle &) = delete;
 };
+
+} // namespace nixl::rocm::ais
 
 #endif // NIXL_SRC_PLUGINS_ROCM_AIS_AIS_UTILS_H

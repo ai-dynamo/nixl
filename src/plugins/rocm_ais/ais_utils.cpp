@@ -14,28 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <cstdlib>
-#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
-#include <strings.h>
-
 #include "ais_utils.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
+
+namespace nixl::rocm::ais {
 
 namespace {
 // hipFile buffer registration fails on setups without the AIS fast path. Opting
 // in lets the transfer fall back to the compatibility path instead of aborting
 // registration outright.
-bool
+[[nodiscard]] bool
 aisCompatModeAllowed() {
-    const char *v = std::getenv("HIPFILE_ALLOW_COMPAT_MODE");
-    if (v == nullptr || v[0] == '\0') {
-        return false;
-    }
-    return std::strcmp(v, "1") == 0 || strcasecmp(v, "true") == 0 || strcasecmp(v, "yes") == 0;
+    return nixl::config::getValueDefaulted<bool>("HIPFILE_ALLOW_COMPAT_MODE", false);
 }
 } // namespace
 
@@ -92,3 +87,5 @@ aisFileHandle::~aisFileHandle() {
     (void)hipFileHandleDeregister(hip_fhandle);
     // ~FileFd closes the fd if path-mode owned it.
 }
+
+} // namespace nixl::rocm::ais

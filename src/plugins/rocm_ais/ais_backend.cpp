@@ -29,6 +29,9 @@
 
 namespace {
 
+using nixl::rocm::ais::aisFileHandle;
+using nixl::rocm::ais::aisMemBuf;
+
 struct fileSegData {
     std::shared_ptr<aisFileHandle> handle;
     // The devId this descriptor registered under. Kept so deregisterMem can
@@ -41,10 +44,10 @@ struct fileSegData {
 };
 
 struct memSegData {
-    std::unique_ptr<aisMemBuf> buf;
+    aisMemBuf buf;
 
     memSegData(void *address, size_t buffer_size, int registration_flags)
-        : buf(std::make_unique<aisMemBuf>(address, buffer_size, registration_flags)) {}
+        : buf(address, buffer_size, registration_flags) {}
 };
 
 // Registered-descriptor state. FILE_SEG descriptors share a refcounted hipFile
@@ -71,15 +74,7 @@ public:
 } // namespace
 
 nixlAisEngine::nixlAisEngine(const nixlBackendInitParams *init_params)
-    : FileEngineBase(init_params) {
-    try {
-        driver_ = std::make_unique<aisDriverHandle>();
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << e.what();
-        this->initErr = true;
-    }
-}
+    : FileEngineBase(init_params) {}
 
 nixl_status_t
 nixlAisEngine::registerMem(const nixlBlobDesc &mem,
@@ -143,7 +138,7 @@ nixlAisEngine::registerMem(const nixlBlobDesc &mem,
 
     case DRAM_SEG: {
         try {
-            out = new nixlAisMetadata((void *)mem.addr, mem.len, 0);
+            out = new nixlAisMetadata(reinterpret_cast<void *>(mem.addr), mem.len, 0);
             return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
@@ -212,7 +207,7 @@ nixlAisEngine::prepXfer(const nixl_xfer_op_t &operation,
         const nixlMetaDesc &mem_desc = is_local_file ? remote[i] : local[i];
         const nixlMetaDesc &file_desc = is_local_file ? local[i] : remote[i];
 
-        void *base_addr = (void *)mem_desc.addr;
+        void *base_addr = reinterpret_cast<void *>(mem_desc.addr);
         if (!base_addr) {
             return NIXL_ERR_INVALID_PARAM;
         }
@@ -230,7 +225,7 @@ nixlAisEngine::prepXfer(const nixl_xfer_op_t &operation,
 
         reqs.push_back(aisXferReq{base_addr,
                                   mem_desc.len,
-                                  (size_t)file_desc.addr,
+                                  static_cast<size_t>(file_desc.addr),
                                   file_data->handle->hip_fhandle,
                                   (operation == NIXL_READ) ? hipFileBatchRead : hipFileBatchWrite,
                                   static_cast<int>(mem_desc.devId)});
