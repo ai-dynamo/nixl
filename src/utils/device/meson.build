@@ -14,7 +14,8 @@
 # limitations under the License.
 
 device_utils_lib = shared_library('device_utils',
-           ['device_ops.cpp', 'device_ops.h'],
+           ['device_ops.cpp', 'device_ops.h',
+            'host_published_mem.cpp', 'host_published_mem.h'],
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            dependencies: [nixl_common_dep, dl_dep],
            install: true)

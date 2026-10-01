@@ -22,9 +22,9 @@
 #include <memory>
 
 #include "device/device_ops.h"
+#include "device/host_published_mem.h"
 #include "nixl_types.h"
 #include "proxy_protocol.h"
-#include "proxy_published_mem.h"
 
 namespace nixl {
 

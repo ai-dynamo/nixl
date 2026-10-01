@@ -37,7 +37,7 @@ proxyControlBuffer::create(deviceOps &ops,
 
     std::unique_ptr<hostPublishedDeviceMem> mem;
     const nixl_status_t status =
-        hostPublishedDeviceMem::create(ops, sizeof(uint64_t) * ringSlot(ring_count), mem);
+        ops.allocHostPublishedMem(sizeof(uint64_t) * ringSlot(ring_count), mem);
     if (status != NIXL_SUCCESS) {
         return status;
     }
