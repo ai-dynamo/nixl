@@ -8,15 +8,16 @@
 #include "redis_backend.h"
 #include "redis_client.h"
 
-#include <arpa/inet.h>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <deque>
 #include <future>
 #include <memory>
-#include <netinet/in.h>
+#include <netdb.h>
 #include <optional>
+#include <poll.h>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
@@ -627,6 +628,89 @@ TEST_F(redisEngineTest, PostXferDoesNotDispatchPartialCommandsWhenLaterKeyIsMiss
     EXPECT_EQ(engine_->deregisterMem(registeredMetadata), NIXL_SUCCESS);
 }
 
+TEST_F(redisEngineTest, PostXferResolvesKeyFromAddrMapForDramSegRemote) {
+    constexpr uintptr_t kAddr = 0x200000;
+    nixlBackendMD *addrMetadata = nullptr;
+    EXPECT_EQ(engine_->registerMem(nixlBlobDesc(kAddr, 16, 0, ""), DRAM_SEG, addrMetadata),
+              NIXL_SUCCESS);
+
+    std::vector<char> localBuf(16, 'x');
+    nixl_meta_dlist_t local(DRAM_SEG);
+    local.addDesc(
+        nixlMetaDesc(reinterpret_cast<uintptr_t>(localBuf.data()), localBuf.size(), 1, nullptr));
+    nixl_meta_dlist_t remote(DRAM_SEG);
+    // No metadataP: key must be resolved from addrToRedisKey_
+    remote.addDesc(nixlMetaDesc(kAddr, localBuf.size(), 0, nullptr));
+
+    auto *handle = prepareTransfer(NIXL_WRITE, local, remote);
+    EXPECT_EQ(engine_->postXfer(NIXL_WRITE, local, remote, initParams_.localAgent, handle, nullptr),
+              NIXL_IN_PROG);
+    EXPECT_EQ(mockClient_->putKeys(), (std::vector<std::string>{std::to_string(kAddr)}));
+
+    EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
+    EXPECT_EQ(engine_->deregisterMem(addrMetadata), NIXL_SUCCESS);
+}
+
+TEST_F(redisEngineTest, PostXferRequiresMetadataPForNamedDramSeg) {
+    constexpr uintptr_t kAddr = 0x300000;
+    // Named DRAM_SEG: key is "named-dram-key", NOT stored in addrToRedisKey_
+    nixlBackendMD *namedMetadata = nullptr;
+    EXPECT_EQ(
+        engine_->registerMem(nixlBlobDesc(kAddr, 16, 0, "named-dram-key"), DRAM_SEG, namedMetadata),
+        NIXL_SUCCESS);
+
+    std::vector<char> localBuf(16, 'y');
+    nixl_meta_dlist_t local(DRAM_SEG);
+    local.addDesc(
+        nixlMetaDesc(reinterpret_cast<uintptr_t>(localBuf.data()), localBuf.size(), 1, nullptr));
+
+    // Without metadataP, addr lookup fails (named buffers skip addrToRedisKey_)
+    nixl_meta_dlist_t remoteWithout(DRAM_SEG);
+    remoteWithout.addDesc(nixlMetaDesc(kAddr, localBuf.size(), 0, nullptr));
+    auto *handle = prepareTransfer(NIXL_WRITE, local, remoteWithout);
+    EXPECT_EQ(
+        engine_->postXfer(NIXL_WRITE, local, remoteWithout, initParams_.localAgent, handle, nullptr),
+        NIXL_ERR_INVALID_PARAM);
+    EXPECT_TRUE(mockClient_->putKeys().empty());
+
+    // With metadataP, key is resolved from the stored redisKey
+    nixl_meta_dlist_t remoteWith(DRAM_SEG);
+    remoteWith.addDesc(nixlMetaDesc(kAddr, localBuf.size(), 0, namedMetadata));
+    EXPECT_EQ(
+        engine_->postXfer(NIXL_WRITE, local, remoteWith, initParams_.localAgent, handle, nullptr),
+        NIXL_IN_PROG);
+    EXPECT_EQ(mockClient_->putKeys(), (std::vector<std::string>{"named-dram-key"}));
+
+    EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
+    EXPECT_EQ(engine_->deregisterMem(namedMetadata), NIXL_SUCCESS);
+}
+
+TEST_F(redisEngineTest, PostXferFailsAfterDeregisterRemovesAddrFromMap) {
+    constexpr uintptr_t kAddr = 0x400000;
+    nixlBackendMD *addrMetadata = nullptr;
+    EXPECT_EQ(engine_->registerMem(nixlBlobDesc(kAddr, 16, 0, ""), DRAM_SEG, addrMetadata),
+              NIXL_SUCCESS);
+
+    std::vector<char> localBuf(16, 'z');
+    nixl_meta_dlist_t local(DRAM_SEG);
+    local.addDesc(
+        nixlMetaDesc(reinterpret_cast<uintptr_t>(localBuf.data()), localBuf.size(), 1, nullptr));
+    nixl_meta_dlist_t remote(DRAM_SEG);
+    remote.addDesc(nixlMetaDesc(kAddr, localBuf.size(), 0, nullptr));
+
+    auto *handle = prepareTransfer(NIXL_WRITE, local, remote);
+    EXPECT_EQ(engine_->postXfer(NIXL_WRITE, local, remote, initParams_.localAgent, handle, nullptr),
+              NIXL_IN_PROG);
+    EXPECT_EQ(mockClient_->putKeys(), (std::vector<std::string>{std::to_string(kAddr)}));
+
+    // Deregister removes the addr entry; subsequent postXfer must fail
+    EXPECT_EQ(engine_->deregisterMem(addrMetadata), NIXL_SUCCESS);
+    EXPECT_EQ(engine_->postXfer(NIXL_WRITE, local, remote, initParams_.localAgent, handle, nullptr),
+              NIXL_ERR_INVALID_PARAM);
+
+    EXPECT_EQ(engine_->releaseReqH(handle), NIXL_SUCCESS);
+}
+
 // ---------------------------------------------------------------------------
 // RedisConnectionPool tests
 // ---------------------------------------------------------------------------
@@ -652,20 +736,37 @@ redisTestPort() {
 
 static bool
 isTcpPortOpen(const std::string &host, int port) {
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
+    const std::string port_str = std::to_string(port);
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo *res = nullptr;
+    if (::getaddrinfo(host.c_str(), port_str.c_str(), &hints, &res) != 0 || !res) {
         return false;
     }
 
-    struct timeval tv{0, 200000};
+    int fd = ::socket(res->ai_family, res->ai_socktype | SOCK_NONBLOCK, res->ai_protocol);
+    if (fd < 0) {
+        ::freeaddrinfo(res);
+        return false;
+    }
 
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<uint16_t>(port));
-    ::inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
-    bool ok = (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
+    bool ok = false;
+    int rc = ::connect(fd, res->ai_addr, res->ai_addrlen);
+    if (rc == 0) {
+        ok = true;
+    } else if (errno == EINPROGRESS) {
+        pollfd pfd{fd, POLLOUT, 0};
+        if (::poll(&pfd, 1, 200) > 0) {
+            int err = 0;
+            socklen_t len = sizeof(err);
+            ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
+            ok = (err == 0);
+        }
+    }
+
     ::close(fd);
+    ::freeaddrinfo(res);
     return ok;
 }
 
