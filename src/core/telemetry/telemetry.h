@@ -85,7 +85,7 @@ public:
     void
     updateMemoryDeregistered(uint64_t memory_deregistered);
     void
-    updateTracePhasesDropped(uint64_t trace_phases_dropped);
+    updateTracePhasesDropped(uint64_t trace_phases_dropped) noexcept;
     /**
      * @brief Records one completed transfer's stats as a single telemetry batch.
      *
@@ -133,6 +133,8 @@ private:
     // synthetic AGENT_TELEMETRY_EVENTS_DROPPED event.
     void
     exportDroppedEvents();
+    void
+    exportTracePhasesDropped();
 
     // Declared in initialization order: agentName_ and maxBufferedEvents_ are
     // consumed by makeExporter() when constructing exporter_.
@@ -151,6 +153,7 @@ private:
     // resets the drop count and publishes it as an AGENT_TELEMETRY_EVENTS_DROPPED
     // event.
     nixlTelemetryStagingQueue stagingQueue_;
+    std::atomic<uint64_t> tracePhasesDropped_{0};
     asio::thread_pool pool_;
     periodicTask writeTask_;
 };

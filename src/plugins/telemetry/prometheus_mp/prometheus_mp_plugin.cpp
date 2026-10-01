@@ -25,7 +25,7 @@ using prometheus_mp_exporter_plugin_t =
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
 nixl_telemetry_plugin_init() {
     return prometheus_mp_exporter_plugin_t::create(
-        nixl_telemetry_plugin_api_version::V3, "prometheus_mp", "1.0.0");
+        NIXL_TELEMETRY_PLUGIN_API_VERSION, "prometheus_mp", "1.0.0");
 }
 
 extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT void

@@ -46,11 +46,7 @@ TracerPhaseSink::recordPhase(nixl_trace_phase_t phase,
     }
     catch (...) {
         if (telemetry_ != nullptr) {
-            try {
-                telemetry_->updateTracePhasesDropped(1);
-            }
-            catch (...) {
-            }
+            telemetry_->updateTracePhasesDropped(1);
         }
         if (!dropWarned_.test_and_set(std::memory_order_relaxed)) {
             try {

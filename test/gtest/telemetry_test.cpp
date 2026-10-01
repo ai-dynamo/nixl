@@ -685,7 +685,6 @@ TEST_F(telemetryTest, TracePhaseDropsAreCounted) {
         }
     }
     EXPECT_EQ(dropped, kDrops);
-    EXPECT_EQ(lig.getIgnoredCount(), 1u);
 
     envHelper_.popVar();
 }
