@@ -8,7 +8,6 @@
 #include "common/nixl_log.h"
 
 #include <absl/strings/str_format.h>
-#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <future>
@@ -138,20 +137,15 @@ private:
 
 class nixlRedisMetadata : public nixlBackendMD {
 public:
-    nixlRedisMetadata(nixl_mem_t nixl_mem,
-                      uint64_t dev_id,
-                      uintptr_t addr,
-                      std::string redis_key,
-                      bool use_addr_map)
+    nixlRedisMetadata(nixl_mem_t nixl_mem, uintptr_t addr,
+                      std::string redis_key, bool use_addr_map)
         : nixlBackendMD(true),
           nixlMem(nixl_mem),
-          devId(dev_id),
           addr(addr),
           redisKey(std::move(redis_key)),
           useAddrMap(use_addr_map) {}
 
     nixl_mem_t nixlMem;
-    uint64_t devId;
     uintptr_t addr;
     std::string redisKey;
     bool useAddrMap; // true when registered without metaInfo (keyed by addr), false otherwise
@@ -175,8 +169,7 @@ nixl_status_t
 nixlRedisKVEngine::registerMem(const nixlBlobDesc &mem,
                                const nixl_mem_t &nixl_mem,
                                nixlBackendMD *&out) {
-    const auto supported_mems = getSupportedMems();
-    if (std::find(supported_mems.begin(), supported_mems.end(), nixl_mem) == supported_mems.end()) {
+    if (nixl_mem != OBJ_SEG && nixl_mem != DRAM_SEG) {
         out = nullptr;
         return NIXL_ERR_NOT_SUPPORTED;
     }
@@ -190,7 +183,7 @@ nixlRedisKVEngine::registerMem(const nixlBlobDesc &mem,
     const bool use_addr_map = mem.metaInfo.empty();
     std::string redis_key = use_addr_map ? std::to_string(mem.addr) : mem.metaInfo;
     auto redis_md =
-        std::make_unique<nixlRedisMetadata>(nixl_mem, mem.devId, mem.addr, redis_key, use_addr_map);
+        std::make_unique<nixlRedisMetadata>(nixl_mem, mem.addr, redis_key, use_addr_map);
     if (use_addr_map) {
         std::unique_lock lock(mapMutex_);
         addrToRedisKey_[mem.addr] = redis_key;
@@ -201,13 +194,15 @@ nixlRedisKVEngine::registerMem(const nixlBlobDesc &mem,
 
 nixl_status_t
 nixlRedisKVEngine::deregisterMem(nixlBackendMD *meta) {
+    if (!meta) {
+        NIXL_WARN << "Redis deregisterMem: called with null metadata";
+        return NIXL_SUCCESS;
+    }
     auto *redis_md = static_cast<nixlRedisMetadata *>(meta);
-    if (redis_md) {
-        std::unique_ptr<nixlRedisMetadata> redis_md_ptr(redis_md);
-        if (redis_md->useAddrMap) {
-            std::unique_lock lock(mapMutex_);
-            addrToRedisKey_.erase(redis_md->addr);
-        }
+    std::unique_ptr<nixlRedisMetadata> guard(redis_md);
+    if (redis_md->useAddrMap) {
+        std::unique_lock lock(mapMutex_);
+        addrToRedisKey_.erase(redis_md->addr);
     }
     return NIXL_SUCCESS;
 }
