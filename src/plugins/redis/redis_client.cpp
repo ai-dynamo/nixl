@@ -196,6 +196,8 @@ checkRedisReplyOk(redisReply *reply, const char *command) {
     return true;
 }
 
+std::once_flag evthreadOnce;
+
 struct CallbackContext {
     uintptr_t data_ptr;
     size_t data_len;
@@ -217,9 +219,11 @@ struct RedisConnectionPool::Slot {
 };
 
 RedisConnectionPool::RedisConnectionPool(RedisConfig config) : config_(std::move(config)) {
-    if (evthread_use_pthreads() != 0) {
-        throw std::runtime_error("evthread_use_pthreads() failed");
-    }
+    std::call_once(evthreadOnce, [] {
+        if (evthread_use_pthreads() != 0) {
+            throw std::runtime_error("evthread_use_pthreads() failed");
+        }
+    });
 
     eventBase_ = event_base_new();
     if (!eventBase_) {
@@ -510,6 +514,10 @@ RedisConnectionPool::connectCallback(const redisAsyncContext *c, int status) {
     auto *slot = static_cast<Slot *>(c->data);
     if (status != REDIS_OK) {
         NIXL_ERROR << absl::StrFormat("Redis connection error: %s", c->errstr);
+        // hiredis frees c after this callback returns (REDIS_CONNECTED was never set,
+        // so disconnectCallback is NOT called). Null asyncCtx now so stopEventLoop
+        // does not call redisAsyncFree on already-freed memory.
+        slot->asyncCtx = nullptr;
         slot->pool->completeSlotInit(*slot, false);
     } else {
         slot->pool->startSlotAuth(*slot);
@@ -522,6 +530,9 @@ RedisConnectionPool::disconnectCallback(const redisAsyncContext *c, int status) 
     if (status != REDIS_OK) {
         NIXL_WARN << absl::StrFormat("Redis disconnected with error: %s", c->errstr);
     }
+    // hiredis frees c after this callback returns. Null asyncCtx now so stopEventLoop
+    // does not call redisAsyncFree on already-freed memory (double-free).
+    slot->asyncCtx = nullptr;
     slot->connected.store(false);
 }
 
@@ -685,6 +696,8 @@ RedisConnectionPool::putKeyAsync(std::string_view key,
             }
 
             auto *ctx = new CallbackContext;
+            ctx->data_ptr = 0;
+            ctx->data_len = 0;
             ctx->promise_ptr = promise;
             ctx->inFlight = &slot->inFlight;
 
@@ -779,6 +792,8 @@ RedisConnectionPool::checkKeyExistsSync(std::string_view key) {
 
     if (!reply) {
         NIXL_ERROR << "Redis EXISTS: no reply";
+        redisFree(syncCtx_);
+        syncCtx_ = nullptr;
         return std::nullopt;
     }
     if (reply->type == REDIS_REPLY_ERROR) {
