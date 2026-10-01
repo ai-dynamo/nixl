@@ -457,9 +457,15 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
     hints->domain_attr->name = strdup(device_name.c_str());
     hints->domain_attr->threading = FI_THREAD_COMPLETION;
 
+    // The EFA provider accepts FI_MR_DMABUF from libfabric API 1.20 on, so request 1.20
+    // where the library provides it and 1.18 elsewhere. The fabric carries the requested
+    // version, and canRegisterWithDmabuf() checks it.
+    const uint32_t requested_api_version =
+        FI_VERSION_GE(fi_version(), FI_VERSION(1, 20)) ? FI_VERSION(1, 20) : FI_VERSION(1, 18);
+
     try {
         // Get fabric info for this specific device - first try with FI_HMEM
-        int ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
+        int ret = fi_getinfo(requested_api_version, NULL, NULL, 0, hints, &info);
 
         // If no provider found with FI_HMEM, retry without it
         if (ret || !info) {
@@ -470,7 +476,7 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             hints->caps = FI_MSG | FI_RMA;
             hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
 
-            ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
+            ret = fi_getinfo(requested_api_version, NULL, NULL, 0, hints, &info);
             if (ret) {
                 NIXL_ERROR << "fi_getinfo failed for rail " << rail_id << ": " << fi_strerror(-ret);
                 throw std::runtime_error("fi_getinfo failed for rail " + std::to_string(rail_id));
@@ -1546,6 +1552,39 @@ nixlLibfabricRail::postRead(void *local_buffer,
 
 // Memory Registration Methods
 
+bool
+nixlLibfabricRail::canRegisterWithDmabuf(nixl_mem_t mem_type, enum fi_hmem_iface iface) const {
+#ifdef FI_MR_DMABUF
+    // The CUDA driver exports the dmabuf, so the registration covers VRAM_SEG memory
+    // whose iface is FI_HMEM_CUDA.
+    if (mem_type != VRAM_SEG || iface != FI_HMEM_CUDA) {
+        return false;
+    }
+
+    // The provider registers device memory through its FI_HMEM support.
+    if (!provider_supports_hmem_) {
+        return false;
+    }
+
+    // The EFA provider accepts FI_MR_DMABUF, and the prefix match also covers efa-direct.
+    if (provider_name.rfind("efa", 0) != 0) {
+        return false;
+    }
+
+    // The provider accepts the flag on a fabric carrying api_version 1.20 or newer.
+    if (info == nullptr || info->fabric_attr == nullptr ||
+        !FI_VERSION_GE(info->fabric_attr->api_version, FI_VERSION(1, 20))) {
+        return false;
+    }
+
+    return true;
+#else
+    (void)mem_type;
+    (void)iface;
+    return false;
+#endif
+}
+
 nixl_status_t
 nixlLibfabricRail::registerMemory(void *buffer,
                                   size_t length,
@@ -1553,7 +1592,8 @@ nixlLibfabricRail::registerMemory(void *buffer,
                                   int device_id,
                                   enum fi_hmem_iface iface,
                                   struct fid_mr **mr_out,
-                                  uint64_t *key_out) const {
+                                  uint64_t *key_out,
+                                  const LibfabricUtils::CudaDmabufExport *dmabuf) const {
     if (!buffer || !mr_out || !key_out) {
         NIXL_ERROR << "Invalid parameters on rail " << rail_id;
         return NIXL_ERR_INVALID_PARAM;
@@ -1646,19 +1686,59 @@ nixlLibfabricRail::registerMemory(void *buffer,
         NIXL_DEBUG << "System memory registration - iface: FI_HMEM_SYSTEM";
     }
 
+    // mr_iov and dmabuf share a union in fi_mr_attr, and the FI_MR_DMABUF flag selects the
+    // member the provider reads.
     struct iovec iov;
-    iov.iov_base = buffer;
-    iov.iov_len = length;
-    mr_attr.mr_iov = &iov;
-    mr_attr.iov_count = 1;
+    uint64_t regattr_flags = 0;
+    const bool use_dmabuf =
+        dmabuf != nullptr && dmabuf->fd >= 0 && canRegisterWithDmabuf(mem_type, iface);
 
-    int ret = fi_mr_regattr(domain, &mr_attr, 0, &mr);
+#ifdef FI_MR_DMABUF
+    struct fi_mr_dmabuf dmabuf_desc = {};
+    if (use_dmabuf) {
+        // The provider registers len bytes at base_addr + offset, where base_addr is the
+        // page-aligned start of the exported range.
+        dmabuf_desc.fd = dmabuf->fd;
+        dmabuf_desc.offset = dmabuf->offset;
+        dmabuf_desc.len = length;
+        dmabuf_desc.base_addr = dmabuf->base_addr;
+        mr_attr.dmabuf = &dmabuf_desc;
+        mr_attr.iov_count = 1;
+        regattr_flags = FI_MR_DMABUF;
+    } else
+#endif
+    {
+        iov.iov_base = buffer;
+        iov.iov_len = length;
+        mr_attr.mr_iov = &iov;
+        mr_attr.iov_count = 1;
+    }
+
+    int ret = fi_mr_regattr(domain, &mr_attr, regattr_flags, &mr);
+
+    if (ret && use_dmabuf) {
+        // The retry registers the same region by virtual address, which libfabric exports
+        // as a dmabuf of its own.
+        NIXL_WARN << "fi_mr_regattr with FI_MR_DMABUF failed on rail " << rail_id << ": "
+                  << fi_strerror(-ret) << " (buffer=" << buffer << ", length=" << length
+                  << ", fd=" << dmabuf->fd
+                  << "); retrying as a virtual-address registration";
+        mr_attr.mr_iov = &iov;
+        iov.iov_base = buffer;
+        iov.iov_len = length;
+        mr_attr.iov_count = 1;
+        ret = fi_mr_regattr(domain, &mr_attr, 0, &mr);
+    }
+
     if (ret) {
         NIXL_ERROR << "fi_mr_reg failed on rail " << rail_id << ": " << fi_strerror(-ret)
                    << " (buffer=" << buffer << ", length=" << length
                    << ", requested_key=" << requested_key << ")";
         return NIXL_ERR_BACKEND;
     }
+
+    NIXL_DEBUG << "Registered on rail " << rail_id << " via "
+               << (regattr_flags == 0 ? "virtual address" : "FI_MR_DMABUF");
 
     if (info->domain_attr->mr_mode & FI_MR_ENDPOINT) {
         ret = fi_mr_bind(mr, &endpoint->fid, 0);

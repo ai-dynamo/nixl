@@ -23,6 +23,7 @@
 #include "serdes/serdes.h"
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 #include <numaif.h>
 
 #include <numa.h>
@@ -241,6 +242,31 @@ nixlLibfabricRailManager::~nixlLibfabricRailManager() {
 
 nixl_status_t
 nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
+    // get the CUDA dmabuf mapping type for VRAM_SEG registrations from configuration or
+    // environment variable, and convert it to the mapping mode used during registration
+    // NOTE: corresponding env var is NIXL_LIBFABRIC_DMABUF_MAPPING, and it overrides the
+    // value passed in the custom parameter map (see DmabufMappingMode for the modes)
+    std::string dmabuf_mapping = "auto";
+    LibfabricUtils::getCustomStringParam(custom_params, "dmabuf_mapping", dmabuf_mapping);
+    std::transform(dmabuf_mapping.begin(),
+                   dmabuf_mapping.end(),
+                   dmabuf_mapping.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    if (dmabuf_mapping == "auto") {
+        dmabuf_mapping_mode_ = DmabufMappingMode::Auto;
+    } else if (dmabuf_mapping == "pcie") {
+        dmabuf_mapping_mode_ = DmabufMappingMode::ForcePcie;
+    } else if (dmabuf_mapping == "default") {
+        dmabuf_mapping_mode_ = DmabufMappingMode::ForceDefault;
+    } else if (dmabuf_mapping == "off") {
+        dmabuf_mapping_mode_ = DmabufMappingMode::Off;
+    } else {
+        NIXL_WARN << "Unknown dmabuf_mapping value \"" << dmabuf_mapping
+                  << "\"; expected auto|pcie|default|off. Falling back to auto.";
+        dmabuf_mapping_mode_ = DmabufMappingMode::Auto;
+    }
+    NIXL_INFO << "CUDA dmabuf mapping mode: " << dmabuf_mapping;
+
     // load from config or compute bandwidth limit per NUMA node
     // then from that deduce rail count limit
     // finally choose appropriate rail selection policy:
@@ -833,6 +859,19 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         iface = topology->getMrAttrIface(device_id);
     }
 
+    // Dmabufs exported for this registration, indexed by mapping type
+    // [0]: platform default mapping, [1]: PCIe (BAR1) mapping
+    // The destructor closes both fds on every return from registerMemory, and the local
+    // scope keeps concurrent registrations separate
+    struct DmabufExports {
+        LibfabricUtils::CudaDmabufExport entries[2];
+        ~DmabufExports() {
+            for (auto &entry : entries) {
+                LibfabricUtils::cudaDmabufExportClose(entry);
+            }
+        }
+    } dmabuf_exports;
+
     // Resize output vectors to match all rails
     mr_list_out.resize(rails_.size(), nullptr);
     key_list_out.clear();
@@ -860,9 +899,47 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
 
         struct fid_mr *mr;
         uint64_t key;
+
+        // Export a dmabuf when this rail registers with one, which carries the mapping type
+        // into the registration; rails sharing a mapping type share one export, so a
+        // registration holds at most two
+        const LibfabricUtils::CudaDmabufExport *dmabuf = nullptr;
+        if (dmabuf_mapping_mode_ != DmabufMappingMode::Off &&
+            rails_[rail_idx]->canRegisterWithDmabuf(mem_type, iface) &&
+            LibfabricUtils::cudaDmabufExportSupported(device_id)) {
+            bool want_pcie_mapping = false;
+            switch (dmabuf_mapping_mode_) {
+            case DmabufMappingMode::ForcePcie:
+                want_pcie_mapping = true;
+                break;
+            case DmabufMappingMode::ForceDefault:
+                want_pcie_mapping = false;
+                break;
+            case DmabufMappingMode::Auto:
+            default:
+                // Decide per device, since a platform can attach NICs on both routes to GPU
+                // memory (e.g. GB200)
+                want_pcie_mapping =
+                    topology->nicSharesPcieSwitchWithAccel(rails_[rail_idx]->device_name);
+                break;
+            }
+
+            const size_t slot = want_pcie_mapping ? 1 : 0;
+            if (dmabuf_exports.entries[slot].fd < 0) {
+                LibfabricUtils::cudaDmabufExportRange(buffer,
+                                                      length,
+                                                      device_id,
+                                                      want_pcie_mapping,
+                                                      dmabuf_exports.entries[slot]);
+            }
+            if (dmabuf_exports.entries[slot].fd >= 0) {
+                dmabuf = &dmabuf_exports.entries[slot];
+            }
+        }
+
         // Pass device_id parameter to individual rail's registerMemory calls
-        nixl_status_t status =
-            rails_[rail_idx]->registerMemory(buffer, length, mem_type, device_id, iface, &mr, &key);
+        nixl_status_t status = rails_[rail_idx]->registerMemory(
+            buffer, length, mem_type, device_id, iface, &mr, &key, dmabuf);
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to register memory on rail " << rail_idx;
             // Cleanup already registered MRs
