@@ -796,14 +796,15 @@ RedisConnectionPool::getKeyAsync(std::string_view key,
 std::optional<bool>
 RedisConnectionPool::checkKeyExistsSync(std::string_view key) {
     std::lock_guard<std::mutex> lock(syncMutex_);
+    if (!syncCtx_ || syncCtx_->err) {
+        if (syncCtx_) {
+            redisFree(syncCtx_);
+            syncCtx_ = nullptr;
+        }
+        connectSyncContext();
+    }
     if (!syncCtx_) {
         NIXL_ERROR << "Sync Redis connection unavailable for EXISTS";
-        return std::nullopt;
-    }
-    if (syncCtx_->err) {
-        NIXL_ERROR << "Sync Redis connection unavailable for EXISTS";
-        redisFree(syncCtx_);
-        syncCtx_ = nullptr;
         return std::nullopt;
     }
 
