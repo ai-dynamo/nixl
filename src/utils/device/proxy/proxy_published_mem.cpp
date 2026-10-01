@@ -16,6 +16,7 @@
  */
 #include "proxy_published_mem.h"
 
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -180,6 +181,9 @@ hostPublishedDeviceMem::publish(size_t offset, uint64_t value) noexcept {
     }
 #ifdef HAVE_GDRCOPY
     if (gdr_) {
+        // gdr_copy_to_mapping is not a release store. Order the caller's earlier slot writes
+        // before the published word becomes visible to a GPU acquire load.
+        std::atomic_thread_fence(std::memory_order_release);
         if (gdr_copy_to_mapping(gdr_->handle, cpu_write_ptr_ + offset, &value, sizeof(value)) !=
             0) {
             return NIXL_ERR_BACKEND;
@@ -188,7 +192,7 @@ hostPublishedDeviceMem::publish(size_t offset, uint64_t value) noexcept {
     }
 #endif
     __atomic_store_n(
-        reinterpret_cast<uint64_t *>(cpu_write_ptr_ + offset), value, __ATOMIC_RELAXED);
+        reinterpret_cast<uint64_t *>(cpu_write_ptr_ + offset), value, __ATOMIC_RELEASE);
     return NIXL_SUCCESS;
 }
 

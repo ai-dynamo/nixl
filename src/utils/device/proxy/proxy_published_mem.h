@@ -60,6 +60,11 @@ public:
 
     /**
      * @brief Publish one 8-byte word at `offset`.
+     *
+     * Release-orders the caller's earlier writes to the slot, including clearing `op_idx` to 0,
+     * before a GPU acquire load can observe this word and refill the slot. The release is required
+     * on Arm and free on x86.
+     *
      * @retval NIXL_ERR_INVALID_PARAM offset is not word-aligned or the word does not fit.
      * @retval NIXL_ERR_BACKEND The GDRCopy write failed.
      */
