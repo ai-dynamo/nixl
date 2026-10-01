@@ -17,9 +17,14 @@
 
 #include <gtest/gtest.h>
 
+#include <absl/log/log_sink_registry.h>
+
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -31,6 +36,7 @@
 #include "transfer_request.h"
 #include "tracing/trace.h"
 #include "tracing/trace_context.h"
+#include "tracing/trace_sink.h"
 
 namespace nixl::trace {
 // Agent-wiring backend-selection policy, defined in nixl_agent.cpp (not exposed
@@ -51,6 +57,7 @@ struct CallLog {
     int spansBegun = 0;
     int spansEnded = 0;
     int marks = 0;
+    std::vector<std::string> spanNames;
     std::vector<std::pair<std::string, std::string>> strAttrs;
     std::vector<std::pair<std::string, std::int64_t>> intAttrs;
     std::vector<std::pair<std::string, double>> dblAttrs;
@@ -99,14 +106,19 @@ private:
 
 class MockBackend final : public nixl::trace::TraceBackend {
 public:
-    MockBackend(std::string name, CallLog *log, std::uint64_t span_id)
+    MockBackend(std::string name, CallLog *log, std::uint64_t span_id, bool null_spans = false)
         : name_(std::move(name)),
           log_(log),
-          spanId_(span_id) {}
+          spanId_(span_id),
+          nullSpans_(null_spans) {}
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
-    beginSpan(std::string_view, nixl::trace::Kind) override {
+    beginSpan(std::string_view name, nixl::trace::Kind) override {
         ++log_->spansBegun;
+        log_->spanNames.emplace_back(name);
+        if (nullSpans_) {
+            return nullptr;
+        }
         return std::make_unique<MockSpan>(log_, spanId_);
     }
 
@@ -134,6 +146,55 @@ private:
     std::string name_;
     CallLog *log_;
     std::uint64_t spanId_;
+    bool nullSpans_;
+};
+
+class ThrowingBackend final : public nixl::trace::TraceBackend {
+public:
+    [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
+    beginSpan(std::string_view, nixl::trace::Kind) override {
+        throw std::runtime_error("beginSpan failed");
+    }
+
+    void
+    mark(std::string_view, nixl::trace::Kind) override {}
+
+    void
+    pushCorrelationId(std::uint64_t) override {}
+
+    void
+    popCorrelationId() override {}
+
+    [[nodiscard]] std::string_view
+    name() const noexcept override {
+        return "throwing";
+    }
+};
+
+class DropCountingLogSink final : public absl::LogSink {
+public:
+    DropCountingLogSink() {
+        absl::AddLogSink(this);
+    }
+
+    ~DropCountingLogSink() override {
+        absl::RemoveLogSink(this);
+    }
+
+    void
+    Send(const absl::LogEntry &entry) override {
+        if (entry.text_message().find("Dropping a trace phase") != std::string_view::npos) {
+            drops_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    [[nodiscard]] std::size_t
+    drops() const {
+        return drops_.load(std::memory_order_relaxed);
+    }
+
+private:
+    std::atomic<std::size_t> drops_{0};
 };
 
 [[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
@@ -146,6 +207,13 @@ makeMockTracer(CallLog &a,
     backends.push_back(std::make_unique<MockBackend>("a", &a, id_a));
     backends.push_back(std::make_unique<MockBackend>("b", &b, id_b));
     return std::make_unique<nixl::trace::Tracer>(std::move(backends), sample_ratio);
+}
+
+[[nodiscard]] std::unique_ptr<nixl::trace::Tracer>
+makeThrowingTracer() {
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    backends.push_back(std::make_unique<ThrowingBackend>());
+    return std::make_unique<nixl::trace::Tracer>(std::move(backends), 0.0);
 }
 
 } // namespace
@@ -480,4 +548,139 @@ TEST(Tracing, TracerSampleRatioReachesGeneratedContexts) {
     const nixl::trace::TraceContext context{sampled_tracer.get()};
     EXPECT_TRUE(context.valid());
     EXPECT_TRUE(context.sampled());
+}
+
+// A phase recorded through the plugin-facing sink reaches every enabled trace
+// backend, tagged with the recording backend and the plugin's timestamp.
+TEST(TracePhaseSink, RecordedPhaseReachesEveryBackend) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+
+    sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 1234, {});
+
+    for (const CallLog *log : {&a, &b}) {
+        EXPECT_EQ(log->spansBegun, 1);
+        EXPECT_EQ(log->spansEnded, 1);
+        ASSERT_EQ(log->spanNames.size(), 1u);
+        EXPECT_EQ(log->spanNames[0], "nixl::wire.submitted");
+        ASSERT_EQ(log->strAttrs.size(), 1u);
+        EXPECT_EQ(log->strAttrs[0].first, "nixl.backend");
+        EXPECT_EQ(log->strAttrs[0].second, "UCX");
+        ASSERT_EQ(log->intAttrs.size(), 1u);
+        EXPECT_EQ(log->intAttrs[0].first, "nixl.phase.timestamp_us");
+        EXPECT_EQ(log->intAttrs[0].second, 1234);
+    }
+}
+
+// Every enumerator maps to a distinct span name, so timelines stay comparable
+// across plugins.
+TEST(TracePhaseSink, PhaseVocabularyIsDistinct) {
+    constexpr nixl_trace_phase_t kPhases[] = {nixl_trace_phase_t::SUBMIT,
+                                              nixl_trace_phase_t::WIRE_SUBMITTED,
+                                              nixl_trace_phase_t::WIRE_COMPLETED,
+                                              nixl_trace_phase_t::NOTIF_SENT,
+                                              nixl_trace_phase_t::NOTIF_RECEIVED,
+                                              nixl_trace_phase_t::REMOTE_OBSERVED,
+                                              nixl_trace_phase_t::OTHER};
+
+    std::set<std::string_view> names;
+    for (const auto phase : kPhases) {
+        names.insert(toStringView(phase));
+    }
+    EXPECT_EQ(names.size(), std::size(kPhases));
+}
+
+// The generic phase carries a plugin-supplied label as the span name; an empty
+// label falls back to the enum's own name.
+TEST(TracePhaseSink, GenericPhaseUsesPluginLabel) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    nixl::trace::TracerPhaseSink sink{*tracer, "LIBFABRIC"};
+
+    sink.recordPhase(nixl_trace_phase_t::OTHER, "post_write", 1, {});
+    sink.recordPhase(nixl_trace_phase_t::OTHER, {}, 2, {});
+
+    ASSERT_EQ(a.spanNames.size(), 2u);
+    EXPECT_EQ(a.spanNames[0], "post_write");
+    EXPECT_EQ(a.spanNames[1], "nixl::phase");
+}
+
+// A label passed with any phase is recorded, not just the generic one: the
+// span name stays the fixed vocabulary entry, and the label rides along as an
+// attribute so it cannot be silently dropped.
+TEST(TracePhaseSink, LabelIsRecordedForEveryPhase) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    nixl::trace::TracerPhaseSink sink{*tracer, "LIBFABRIC"};
+
+    sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, "rail0", 5, {});
+
+    ASSERT_EQ(a.spanNames.size(), 1u);
+    EXPECT_EQ(a.spanNames[0], "nixl::wire.submitted");
+    ASSERT_EQ(a.strAttrs.size(), 2u);
+    EXPECT_EQ(a.strAttrs[1].first, "nixl.phase.label");
+    EXPECT_EQ(a.strAttrs[1].second, "rail0");
+}
+
+// An unlabelled phase adds no label attribute at all.
+TEST(TracePhaseSink, EmptyLabelAddsNoAttribute) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+
+    sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 5, {});
+
+    for (const auto &attr : a.strAttrs) {
+        EXPECT_NE(attr.first, "nixl.phase.label");
+    }
+}
+
+// Plugin-supplied attributes are forwarded after the ones core adds.
+TEST(TracePhaseSink, PluginAttributesAreForwarded) {
+    CallLog a, b;
+    const auto tracer = makeMockTracer(a, b);
+    nixl::trace::TracerPhaseSink sink{*tracer, "LIBFABRIC"};
+
+    const nixlBackendTraceAttr attrs[] = {{"rail", "0"}, {"op", "write"}};
+    sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 7, attrs);
+
+    ASSERT_EQ(a.strAttrs.size(), 3u);
+    EXPECT_EQ(a.strAttrs[1].first, "rail");
+    EXPECT_EQ(a.strAttrs[1].second, "0");
+    EXPECT_EQ(a.strAttrs[2].first, "op");
+    EXPECT_EQ(a.strAttrs[2].second, "write");
+}
+
+// A backend may decline a span; Tracer drops the null, leaving the Span
+// inactive even though the tracer has a backend. Nothing must be recorded and
+// no null span may be dereferenced.
+TEST(TracePhaseSink, InactiveSpanRecordsNothing) {
+    CallLog a;
+    std::vector<std::unique_ptr<nixl::trace::TraceBackend>> backends;
+    backends.push_back(std::make_unique<MockBackend>("a", &a, 0, /*null_spans=*/true));
+    nixl::trace::Tracer tracer{std::move(backends)};
+    nixl::trace::TracerPhaseSink sink{tracer, "UCX"};
+
+    const nixlBackendTraceAttr attrs[] = {{"rail", "0"}};
+    sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 1, attrs);
+
+    EXPECT_FALSE(tracer.empty());
+    EXPECT_EQ(a.spansBegun, 1);
+    EXPECT_EQ(a.spansEnded, 0);
+    EXPECT_TRUE(a.strAttrs.empty());
+    EXPECT_TRUE(a.intAttrs.empty());
+}
+
+// recordPhase() is noexcept: a backend that throws must not propagate, and the
+// drop must be reported once per sink however many phases are dropped.
+TEST(TracePhaseSink, ThrowingBackendIsReportedOnce) {
+    const auto tracer = makeThrowingTracer();
+    DropCountingLogSink sink_log;
+    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
+
+    EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::SUBMIT, {}, 1, {}));
+    EXPECT_NO_THROW(sink.recordPhase(nixl_trace_phase_t::WIRE_SUBMITTED, {}, 2, {}));
+
+    EXPECT_EQ(sink_log.drops(), 1u);
 }
