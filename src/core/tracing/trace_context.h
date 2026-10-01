@@ -72,6 +72,9 @@ struct TraceContext {
 
     [[nodiscard]] std::uint64_t
     correlationId64() const noexcept;
+
+    [[nodiscard]] bool
+    operator==(const TraceContext &) const = default;
 };
 
 [[nodiscard]] std::optional<TraceContext>

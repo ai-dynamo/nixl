@@ -69,10 +69,14 @@ public:
     static GMockBackendEngine *
     GetFromParams(nixl_b_params_t *params);
 
-    std::optional<const nixlBackendTraceSink *> observedTraceSink;
+    void
+    observeTraceSink(const nixlBackendTraceSink *sink);
 
     void
     observeTraceContext(const nixl_opt_b_args_t *opt_args);
+
+    [[nodiscard]] std::optional<const nixlBackendTraceSink *>
+    observedTraceSink() const;
 
     [[nodiscard]] std::optional<nixl::trace::TraceContext>
     observedTraceContext() const;
@@ -170,7 +174,8 @@ private:
     void
     setOptionalDefaults();
 
-    mutable std::mutex observedTraceContextMutex_;
+    mutable std::mutex observedMutex_;
+    std::optional<const nixlBackendTraceSink *> observedTraceSink_;
     std::optional<nixl::trace::TraceContext> observedTraceContext_;
 };
 

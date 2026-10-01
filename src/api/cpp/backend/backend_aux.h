@@ -40,8 +40,9 @@ struct nixlBackendOptionalArgs {
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
-    // The request's trace context in prepXfer/postXfer, valid for the call
-    // only; copy it to keep it. Null when no request is involved (prepMemView).
+    // The request's trace context, the same in prepXfer and in every postXfer of
+    // that request: valid for the call only, so copy it once at prep to keep it.
+    // Null when no request is involved (prepMemView).
     const nixl::trace::TraceContext *traceContext = nullptr;
 };
 
