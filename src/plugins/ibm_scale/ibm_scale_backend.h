@@ -19,6 +19,7 @@
 #define NIXL_SRC_PLUGINS_IBM_SCALE_IBM_SCALE_BACKEND_H
 
 #include <atomic>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -44,34 +45,37 @@ inline constexpr const char *IBM_SCALE_PLUGIN_VERSION = "0.2.0";
 // number of io_uring SQEs submitted per transfer.
 // ---------------------------------------------------------------------------
 struct nixlScaleFileMD : public nixlFilePathMD {
-    long long regOffset;
-    long long regLength;
+    std::size_t regOffset;
+    std::size_t regLength;
     // Filesystem block size (fstatfs f_bsize).  On IBM Storage Scale this
     // matches the NSD block size (e.g. 4 MiB or 8 MiB).  Falls back to 4 MiB
     // if fstatfs() fails.
-    long long blksize;
+    std::size_t blksize;
 
     // Constructor: opens the file via nixlFilePathMD(devid, metaInfo), then
     // samples the filesystem block size via fstatfs() for coalescing.
-    nixlScaleFileMD(uint64_t devid, const std::string &metaInfo, long long offset, long long length)
+    nixlScaleFileMD(uint64_t devid,
+                    const std::string &metaInfo,
+                    std::size_t offset,
+                    std::size_t length)
         : nixlFilePathMD(devid, metaInfo),
           regOffset(offset),
           regLength(length),
           blksize(sampleBlksize(file_fd.fd())) {}
 
 private:
-    static long long
+    static std::size_t
     sampleBlksize(int fd) noexcept {
         if (fd < 0) {
-            return 4194304LL;
+            return 4194304;
         }
 
         struct statfs sfs{};
 
         if (fstatfs(fd, &sfs) == 0 && sfs.f_bsize > 0) {
-            return (long long)sfs.f_bsize;
+            return (std::size_t)sfs.f_bsize;
         }
-        return 4194304LL; // 4 MiB fallback
+        return 4194304; // 4 MiB fallback
     }
 };
 
@@ -87,7 +91,7 @@ struct nixlScaleIODesc {
     void *buf;
     size_t len;
     off_t offset;
-    long long blksize; // filesystem block size for coalescing arithmetic
+    std::size_t blksize; // filesystem block size for coalescing arithmetic
     size_t done; // bytes completed so far (for short-I/O retry)
 };
 
@@ -125,42 +129,42 @@ public:
         }
     }
 
-    nixl_xfer_op_t
+    [[nodiscard]] nixl_xfer_op_t
     operation() const noexcept {
         return operation_;
     }
 
-    std::vector<nixlScaleIODesc> &
+    [[nodiscard]] std::vector<nixlScaleIODesc> &
     descs() noexcept {
         return descs_;
     }
 
-    const std::vector<nixlScaleIODesc> &
+    [[nodiscard]] const std::vector<nixlScaleIODesc> &
     descs() const noexcept {
         return descs_;
     }
 
-    bool
+    [[nodiscard]] bool
     ringOk() const noexcept {
         return ringOk_;
     }
 
-    int
+    [[nodiscard]] std::optional<int>
     ringInitErr() const noexcept {
         return ringInitErr_;
     }
 
-    struct io_uring *
+    [[nodiscard]] struct io_uring *
     ring() noexcept {
         return &ring_;
     }
 
-    bool
+    [[nodiscard]] bool
     hasError() const noexcept {
         return error_.load(std::memory_order_relaxed);
     }
 
-    bool
+    [[nodiscard]] bool
     allDone() const noexcept {
         return completed_.load(std::memory_order_relaxed) >= (int)expected_;
     }
@@ -175,7 +179,7 @@ public:
         error_.store(true, std::memory_order_relaxed);
     }
 
-    int
+    [[nodiscard]] int
     inFlight() const noexcept {
         return inFlight_.load(std::memory_order_relaxed);
     }
@@ -205,7 +209,7 @@ private:
     std::atomic<int> completed_;
     std::atomic<bool> error_;
     bool ringOk_;
-    int ringInitErr_ = 0;
+    std::optional<int> ringInitErr_;
 
     struct io_uring ring_{};
 
@@ -235,10 +239,6 @@ class nixlScaleEngine : public nixlBackendEngine {
 public:
     explicit nixlScaleEngine(const nixlBackendInitParams *init_params);
     ~nixlScaleEngine() override;
-
-    nixlScaleEngine(const nixlScaleEngine &) = delete;
-    nixlScaleEngine &
-    operator=(const nixlScaleEngine &) = delete;
 
     // ---- capability flags --------------------------------------------------
     [[nodiscard]] bool
@@ -314,6 +314,9 @@ public:
         return NIXL_SUCCESS;
     }
 
+    [[nodiscard]] nixl_status_t
+    queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
+
 private:
     bool initialized_ = false;
 
@@ -324,6 +327,8 @@ private:
 
     // Skip per-descriptor GPFS hints (default: true, i.e., skip them)
     bool disableMarHints_ = true;
+
+    nixl::PathModeDevIdRegistry path_mode_devids_;
 };
 
 #endif // NIXL_SRC_PLUGINS_IBM_SCALE_IBM_SCALE_BACKEND_H

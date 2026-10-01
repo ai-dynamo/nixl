@@ -172,10 +172,17 @@ nixlScaleEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
+    auto resv = path_mode_devids_.reserve(mem.devId, mem.metaInfo);
+    if (!resv.ok()) {
+        NIXL_ERROR << "IBM_SCALE path-mode requires a unique devId per file (devId=" << mem.devId
+                   << " already registered)";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
     nixlScaleFileMD *fmd = nullptr;
     try {
-        long long offset = static_cast<long long>(mem.addr);
-        long long length = static_cast<long long>(mem.len);
+        std::size_t offset = static_cast<std::size_t>(mem.addr);
+        std::size_t length = static_cast<std::size_t>(mem.len);
         fmd = new nixlScaleFileMD(static_cast<uint64_t>(mem.devId), mem.metaInfo, offset, length);
 #ifdef HAVE_GPFS_FCNTL
         if (fmd->file_fd.fd() >= 0) {
@@ -207,6 +214,7 @@ nixlScaleEngine::registerMem(const nixlBlobDesc &mem,
             }
         }
 #endif
+        resv.commit();
     }
     catch (const std::exception &e) {
         NIXL_ERROR << "IBM_SCALE: registerMem failed: " << e.what();
@@ -229,6 +237,9 @@ nixlScaleEngine::deregisterMem(nixlBackendMD *meta) {
         return NIXL_SUCCESS;
     }
     auto *fmd = static_cast<nixlScaleFileMD *>(meta);
+    if (!fmd->file_fd.path().empty()) {
+        path_mode_devids_.release(fmd->devId);
+    }
 #ifdef HAVE_GPFS_FCNTL
     if (fmd && fmd->file_fd.fd() >= 0) {
         struct {
@@ -343,10 +354,10 @@ nixlScaleEngine::prepXfer(const nixl_xfer_op_t &operation,
     for (const nixlScaleIODesc &cur : raw) {
         if (!coalesced.empty()) {
             nixlScaleIODesc &prev = coalesced.back();
-            long long blksz = (prev.blksize > 0) ? prev.blksize : 4194304LL;
-            long long prevFileEnd = prev.offset + static_cast<long long>(prev.len);
-            long long blkEnd = (prev.offset / blksz + 1) * blksz;
-            long long mergedEnd = prevFileEnd + static_cast<long long>(cur.len);
+            std::size_t blksz = (prev.blksize > 0) ? prev.blksize : 4194304;
+            off_t prevFileEnd = prev.offset + static_cast<off_t>(prev.len);
+            off_t blkEnd = (prev.offset / blksz + 1) * blksz;
+            off_t mergedEnd = prevFileEnd + static_cast<off_t>(cur.len);
 
             if (prev.fd == cur.fd &&
                 static_cast<char *>(prev.buf) + prev.len == static_cast<char *>(cur.buf) &&
@@ -372,7 +383,7 @@ nixlScaleEngine::prepXfer(const nixl_xfer_op_t &operation,
     auto *req = new nixlScaleBackendReqH(operation, coalesced.size(), ringDepth);
     if (!req->ringOk()) {
         NIXL_WARN << "IBM_SCALE: ring init failed (depth=" << ringDepth
-                  << " err=" << req->ringInitErr() << ") — using sync fallback";
+                  << " err=" << req->ringInitErr().value_or(0) << ") — using sync fallback";
     }
     req->descs() = std::move(coalesced);
 
@@ -683,4 +694,14 @@ nixlScaleEngine::releaseReqH(nixlBackendReqH *handle) const {
     }
     delete handle;
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlScaleEngine::queryMem(const nixl_reg_dlist_t &descs,
+                          std::vector<nixl_query_resp_t> &resp) const {
+    std::vector<nixl_blob_t> metadata(descs.descCount());
+    for (int i = 0; i < descs.descCount(); ++i) {
+        metadata[i] = descs[i].metaInfo;
+    }
+    return nixl::queryFileInfoList(metadata, resp);
 }
