@@ -224,9 +224,15 @@ nixlRedisKVEngine::queryMem(const nixl_reg_dlist_t &descs,
     resp.reserve(descs.descCount());
     bool has_error = false;
 
+    const bool is_obj_seg = descs.getType() == OBJ_SEG;
     try {
         for (int i = 0; i < descs.descCount(); ++i) {
             const auto &desc = descs[i];
+            if (is_obj_seg && desc.metaInfo.empty()) {
+                resp.emplace_back(std::nullopt);
+                has_error = true;
+                continue;
+            }
             const std::string key =
                 desc.metaInfo.empty() ? std::to_string(desc.addr) : desc.metaInfo;
             const auto exists = redisClient_->checkKeyExistsSync(key);
