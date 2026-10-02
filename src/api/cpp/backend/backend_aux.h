@@ -26,6 +26,10 @@
 
 class nixlBackendTraceSink;
 
+namespace nixl::trace {
+struct TraceContext;
+}
+
 // Might be removed to be decided by backend, or changed to high
 // level direction or so.
 typedef std::vector<std::pair<std::string, std::string>> notif_list_t;
@@ -36,6 +40,10 @@ struct nixlBackendOptionalArgs {
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
+    // The request's trace context, the same in prepXfer and in every postXfer of
+    // that request: valid for the call only, so copy it once at prep to keep it.
+    // Null when no request is involved (prepMemView).
+    const nixl::trace::TraceContext *traceContext = nullptr;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
