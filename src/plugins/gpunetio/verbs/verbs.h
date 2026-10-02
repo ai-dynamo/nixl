@@ -146,7 +146,12 @@ private:
 
 class mr {
 public:
-    mr(doca_gpu *gpu_dev, void *addr, uint32_t elem_num, size_t elem_size, struct ibv_pd *pd);
+    mr(doca_gpu *gpu_dev,
+       void *addr,
+       uint32_t elem_num,
+       size_t elem_size,
+       struct ibv_pd *pd,
+       bool use_dmabuf);
     mr(void *addr, size_t tot_size, uint32_t rkey);
     ~mr();
 

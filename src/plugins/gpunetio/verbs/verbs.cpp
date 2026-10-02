@@ -585,7 +585,12 @@ qp::destroyQp() {
     }
 }
 
-mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, struct ibv_pd *pd_)
+mr::mr(doca_gpu *gpu_dev_,
+       void *addr_,
+       uint32_t elem_num_,
+       size_t elem_size_,
+       struct ibv_pd *pd_,
+       bool use_dmabuf)
     : gpu_dev(gpu_dev_),
       addr(addr_),
       elem_num(elem_num_),
@@ -608,28 +613,30 @@ mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, s
     remote = false;
     ibmr = nullptr;
 
-    /* Try to map GPU memory with dmabuf.
+    /* Try to map GPU memory with dmabuf (host memory can't be exported as GPU dmabuf).
      * The dmabuf range must be aligned to host page size, so export the enclosing
      * page-aligned range and register the requested region at an offset into it.
      */
-    uintptr_t start = reinterpret_cast<uintptr_t>(addr);
-    uintptr_t aligned_start = start & ~(host_page_size - 1);
-    uintptr_t aligned_end = (start + tot_size + host_page_size - 1) & ~(host_page_size - 1);
-    status = doca_gpu_dmabuf_fd(gpu_dev,
-                                reinterpret_cast<void *>(aligned_start),
-                                aligned_end - aligned_start,
-                                &dmabuf_fd);
-    if (status == DOCA_SUCCESS) {
-        ibmr = ibv_reg_dmabuf_mr(pd,
-                                 start - aligned_start,
-                                 tot_size,
-                                 (uint64_t)addr,
-                                 dmabuf_fd,
-                                 IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
-                                     IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
-        if (ibmr == nullptr) {
-            close(dmabuf_fd);
-            dmabuf_fd = -1;
+    if (use_dmabuf) {
+        uintptr_t start = reinterpret_cast<uintptr_t>(addr);
+        uintptr_t aligned_start = start & ~(host_page_size - 1);
+        uintptr_t aligned_end = (start + tot_size + host_page_size - 1) & ~(host_page_size - 1);
+        status = doca_gpu_dmabuf_fd(gpu_dev,
+                                    reinterpret_cast<void *>(aligned_start),
+                                    aligned_end - aligned_start,
+                                    &dmabuf_fd);
+        if (status == DOCA_SUCCESS) {
+            ibmr = ibv_reg_dmabuf_mr(pd,
+                                     start - aligned_start,
+                                     tot_size,
+                                     (uint64_t)addr,
+                                     dmabuf_fd,
+                                     IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
+                                         IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+            if (ibmr == nullptr) {
+                close(dmabuf_fd);
+                dmabuf_fd = -1;
+            }
         }
     }
 

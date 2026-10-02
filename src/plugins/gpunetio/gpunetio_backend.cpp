@@ -569,7 +569,7 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
 
     try {
         notif->send_mr = std::make_unique<nixl::doca::verbs::mr>(
-            gpu, (void *)notif->send_addr, notif->elems_num, notif->elems_size, pd);
+            gpu, (void *)notif->send_addr, notif->elems_num, notif->elems_size, pd, false);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
@@ -588,7 +588,7 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
 
     try {
         notif->recv_mr = std::make_unique<nixl::doca::verbs::mr>(
-            gpu, (void *)notif->recv_addr, notif->elems_num, notif->elems_size, pd);
+            gpu, (void *)notif->recv_addr, notif->elems_num, notif->elems_size, pd, false);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
@@ -1299,7 +1299,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
 
     try {
         priv->mr = std::make_unique<nixl::doca::verbs::mr>(
-            it->second, (void *)mem.addr, 1, (size_t)mem.len, pd);
+            it->second, (void *)mem.addr, 1, (size_t)mem.len, pd, nixl_mem == VRAM_SEG);
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
