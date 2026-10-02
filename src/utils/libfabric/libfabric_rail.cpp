@@ -474,6 +474,23 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
 
             ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &info);
             if (ret) {
+                // A provider that cannot support FI_SOURCE fails fi_getinfo rather than returning
+                // info without it. Probe once without FI_SOURCE to check whether it caused the
+                // failure.
+                hints->caps &= ~FI_SOURCE;
+                struct fi_info *probe = nullptr;
+                const int probe_ret = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, hints, &probe);
+                if (probe) {
+                    fi_freeinfo(probe);
+                }
+                if (probe_ret == 0) {
+                    NIXL_ERROR << "Provider " << provider << " does not support FI_SOURCE on rail "
+                               << rail_id
+                               << "; the libfabric backend cannot attribute incoming transfers "
+                                  "to a sender without it";
+                    throw std::runtime_error("FI_SOURCE not supported for rail " +
+                                             std::to_string(rail_id));
+                }
                 NIXL_ERROR << "fi_getinfo failed for rail " << rail_id << ": " << fi_strerror(-ret);
                 throw std::runtime_error("fi_getinfo failed for rail " + std::to_string(rail_id));
             }
@@ -484,16 +501,6 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             // Provider found with FI_HMEM
             provider_supports_hmem_ = true;
             NIXL_INFO << "Using provider with FI_HMEM support for rail " << rail_id;
-        }
-
-        // Fail here rather than silently lose sender attribution: without FI_SOURCE every
-        // fi_cq_readfrom() source address is FI_ADDR_NOTAVAIL, so the receiver cannot tell
-        // which peer a notification or remote write came from.
-        if (!(info->caps & FI_SOURCE)) {
-            NIXL_ERROR << "Provider " << provider << " did not grant FI_SOURCE on rail " << rail_id
-                       << "; the libfabric backend cannot attribute incoming transfers to a "
-                          "sender without it";
-            throw std::runtime_error("FI_SOURCE not available for rail " + std::to_string(rail_id));
         }
 
         // Create fabric for this rail

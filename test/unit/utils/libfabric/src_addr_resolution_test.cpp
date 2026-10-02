@@ -51,13 +51,35 @@ __wrap_numa_num_configured_nodes() {
     return 2;
 }
 
+// When set, behave like a provider without FI_SOURCE: a requested secondary capability it
+// cannot support makes fi_getinfo fail with FI_ENODATA.
+static bool mock_reject_fi_source = false;
+
+// When set, behave like a provider without FI_HMEM, so the rail takes its retry path.
+static bool mock_reject_fi_hmem = false;
+
+// When set, every fi_getinfo call appends hints->caps here.
+static bool record_hint_caps = false;
+static std::vector<uint64_t> recorded_hint_caps;
+
 extern "C" int
 __wrap_fi_getinfo(uint32_t /*version*/,
                   const char * /*node*/,
                   const char * /*service*/,
                   uint64_t /*flags*/,
-                  const struct fi_info * /*hints*/,
+                  const struct fi_info *hints,
                   struct fi_info **info) {
+    if (record_hint_caps && hints) {
+        recorded_hint_caps.push_back(hints->caps);
+    }
+    if (mock_reject_fi_hmem && hints && (hints->caps & FI_HMEM)) {
+        *info = nullptr;
+        return -FI_ENODATA;
+    }
+    if (mock_reject_fi_source && hints && (hints->caps & FI_SOURCE)) {
+        *info = nullptr;
+        return -FI_ENODATA;
+    }
     *info = mock_fi_info_chain(NUM_FAKE_RAILS, 100ull * NIXL_LIBFABRIC_GIGA);
     return 0;
 }
@@ -391,6 +413,57 @@ testRecvCompletionAttribution(nixlLibfabricRailManager &mgr) {
     return 0;
 }
 
+static int
+testProviderWithoutFiSource() {
+    NIXL_INFO << "  testProviderWithoutFiSource";
+
+    // Both fi_getinfo attempts fail with FI_ENODATA. The rail must name FI_SOURCE as the
+    // cause instead of reporting a generic fi_getinfo failure.
+    mock_reject_fi_source = true;
+    std::string what;
+    try {
+        nixlLibfabricRail rail("efa_0", "efa", 0, FI_HMEM_SYSTEM);
+    }
+    catch (const std::runtime_error &e) {
+        what = e.what();
+    }
+    mock_reject_fi_source = false;
+
+    TEST_ASSERT(what.find("FI_SOURCE not supported") != std::string::npos,
+                "provider without FI_SOURCE is reported as such, got: '" + what + "'");
+    return 0;
+}
+
+// Builds a rail and returns the hints->caps of every fi_getinfo call it made.
+static std::vector<uint64_t>
+hintCapsOfRailInit() {
+    recorded_hint_caps.clear();
+    record_hint_caps = true;
+    nixlLibfabricRail rail("efa_0", "efa", 0, FI_HMEM_SYSTEM);
+    record_hint_caps = false;
+    return recorded_hint_caps;
+}
+
+static int
+testFiSourceRequested() {
+    NIXL_INFO << "  testFiSourceRequested";
+
+    // Both fi_getinfo paths must request FI_SOURCE. If one drops it, a provider can return
+    // info without it, and every completion then reports FI_ADDR_NOTAVAIL as its source.
+    std::vector<uint64_t> caps = hintCapsOfRailInit();
+    TEST_ASSERT(caps.size() == 1, "FI_HMEM path: expected 1 fi_getinfo call");
+    TEST_ASSERT((caps[0] & FI_HMEM) && (caps[0] & FI_SOURCE),
+                "FI_HMEM path requests FI_HMEM and FI_SOURCE");
+
+    mock_reject_fi_hmem = true;
+    caps = hintCapsOfRailInit();
+    mock_reject_fi_hmem = false;
+    TEST_ASSERT(caps.size() == 2, "retry path: expected 2 fi_getinfo calls");
+    TEST_ASSERT(!(caps[1] & FI_HMEM) && (caps[1] & FI_SOURCE),
+                "retry path requests FI_SOURCE without FI_HMEM");
+    return 0;
+}
+
 int
 main() {
     NIXL_INFO << "=== Source Address Resolution Test ===";
@@ -426,6 +499,12 @@ main() {
         return res;
     }
     if ((res = testRecvCompletionAttribution(mgr)) != 0) {
+        return res;
+    }
+    if ((res = testFiSourceRequested()) != 0) {
+        return res;
+    }
+    if ((res = testProviderWithoutFiSource()) != 0) {
         return res;
     }
 

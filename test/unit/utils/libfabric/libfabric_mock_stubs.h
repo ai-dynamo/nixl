@@ -318,9 +318,7 @@ mock_fabric_create() {
 }
 
 // Helper: build a chain of `count` fake EFA fi_info entries, as __wrap_fi_getinfo would
-// return. Shared by the tests so that the advertised caps stay in one place: the rail
-// constructor rejects a provider that does not grant FI_SOURCE, since without it
-// fi_cq_readfrom() cannot identify the sender of a completion.
+// return. The caps include FI_SOURCE because the rail requests it.
 static struct fi_info *
 mock_fi_info_chain(size_t count, uint64_t link_speed) {
     fi_info *head = nullptr;
