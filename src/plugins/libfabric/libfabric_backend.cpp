@@ -860,9 +860,20 @@ nixlLibfabricEngine::createAgentConnection(
     // them locally.
     if (agent_name != localAgent) {
         bool buffered = false;
+        std::optional<uint16_t> rejected_ver;
         {
             std::lock_guard<std::mutex> plk(pending_handshake_mutex_);
             buffered = (pending_inbound_handshakes_.erase(agent_name) > 0);
+            auto rejected = pending_rejected_handshakes_.find(agent_name);
+            if (rejected != pending_rejected_handshakes_.end()) {
+                rejected_ver = rejected->second;
+                pending_rejected_handshakes_.erase(rejected);
+            }
+        }
+        if (rejected_ver) {
+            std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
+            conn->rejected_peer_proto_ver_ = *rejected_ver;
+            conn->handshake_rejected_.store(true, std::memory_order_release);
         }
         if (buffered) {
             {
@@ -909,14 +920,16 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
         const auto deadline = std::chrono::steady_clock::now() +
             std::chrono::seconds(NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S);
 
+        auto handshake_done = [&] {
+            return conn->handshake_received_.load(std::memory_order_acquire) ||
+                conn->handshake_rejected_.load(std::memory_order_acquire);
+        };
         if (progress_thread_enabled_) {
             std::unique_lock<std::mutex> lk(conn->handshake_mutex_);
-            conn->handshake_cv_.wait_until(lk, deadline, [&] {
-                return conn->handshake_received_.load(std::memory_order_acquire);
-            });
+            conn->handshake_cv_.wait_until(lk, deadline, handshake_done);
         } else {
             while (std::chrono::steady_clock::now() < deadline) {
-                if (conn->handshake_received_.load(std::memory_order_acquire)) {
+                if (handshake_done()) {
                     break;
                 }
                 nixl_status_t progress_status = rail_manager_.progressActiveRails();
@@ -928,10 +941,24 @@ nixlLibfabricEngine::establishConnection(const std::string &remote_agent) const 
             }
         }
 
+        if (conn->handshake_rejected_.load(std::memory_order_acquire)) {
+            uint16_t peer_ver;
+            {
+                std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
+                peer_ver = conn->rejected_peer_proto_ver_;
+            }
+            NIXL_ERROR << "Peer '" << remote_agent << "' speaks libfabric-plugin protocol version "
+                       << peer_ver << ", we speak " << NIXL_LIBFABRIC_PROTO_VERSION
+                       << "; connection cannot be established. Upgrade both ends of the cluster "
+                          "to the same NIXL version.";
+            return NIXL_ERR_MISMATCH;
+        }
         if (!conn->handshake_received_.load(std::memory_order_acquire)) {
             NIXL_ERROR << "Handshake from peer '" << remote_agent << "' not received after "
                        << NIXL_LIBFABRIC_HANDSHAKE_TIMEOUT_S
-                       << "s; connection cannot be established.";
+                       << "s; connection cannot be established. The peer may be unreachable, "
+                          "or speak a different libfabric-plugin protocol version (we speak "
+                       << NIXL_LIBFABRIC_PROTO_VERSION << "); check the peer's log.";
             return NIXL_ERR_REMOTE_DISCONNECT;
         }
     }

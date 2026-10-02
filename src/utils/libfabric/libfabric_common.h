@@ -60,6 +60,8 @@
 
 // Handshake SerDes tag names
 constexpr const char *NIXL_HANDSHAKE_TAG_VER = "ver";
+// Sent by protocol-version-1 peers in place of "ver"; only read to recognise such a peer.
+constexpr const char *NIXL_HANDSHAKE_TAG_V1_IDX = "idx";
 constexpr const char *NIXL_HANDSHAKE_TAG_NAME = "name";
 constexpr const char *NIXL_HANDSHAKE_TAG_HAS_CONN = "has_conn";
 constexpr const char *NIXL_HANDSHAKE_TAG_CONN = "conn";

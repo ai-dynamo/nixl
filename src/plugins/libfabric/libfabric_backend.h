@@ -275,6 +275,8 @@ private:
     // Agents whose handshake arrived before the local createAgentConnection had registered
     // them in connections_. Drained inside createAgentConnection.
     std::unordered_set<std::string> pending_inbound_handshakes_;
+    // Same, for handshakes rejected for their protocol version: agent name -> peer's version.
+    std::unordered_map<std::string, uint16_t> pending_rejected_handshakes_;
     std::mutex pending_handshake_mutex_;
 
     // Connection management helpers
@@ -349,6 +351,9 @@ private:
     // Will load the peer's connection info from the handshake payload, if it's a new peer.
     void
     handleHandshake(const std::string &raw_payload);
+    // Marks a peer rejected for its protocol version; establishConnection() then fails fast.
+    void
+    rejectHandshake(const std::string &peer_agent_name, uint16_t peer_proto_ver);
     nixl_status_t
     loadMetadataHelper(const std::vector<uint64_t> &rail_keys,
                        void *buffer,

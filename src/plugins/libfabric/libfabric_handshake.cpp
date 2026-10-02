@@ -94,6 +94,33 @@ nixlLibfabricEngine::sendHandshakeTo(const nixlLibfabricConnection &conn) const 
 }
 
 void
+nixlLibfabricEngine::rejectHandshake(const std::string &peer_agent_name, uint16_t peer_proto_ver) {
+    std::shared_ptr<nixlLibfabricConnection> conn;
+    {
+        std::lock_guard<std::mutex> lock(connection_state_mutex_);
+        auto it = connections_.find(peer_agent_name);
+        if (it != connections_.end() && it->second) {
+            conn = it->second;
+        }
+    }
+
+    if (!conn) {
+        // Not registered yet: createAgentConnection applies it, like a buffered handshake.
+        // The piggybacked connection info of an incompatible peer is deliberately not loaded.
+        std::lock_guard<std::mutex> plk(pending_handshake_mutex_);
+        pending_rejected_handshakes_[peer_agent_name] = peer_proto_ver;
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> hlk(conn->handshake_mutex_);
+        conn->rejected_peer_proto_ver_ = peer_proto_ver;
+        conn->handshake_rejected_.store(true, std::memory_order_release);
+    }
+    conn->handshake_cv_.notify_all();
+}
+
+void
 nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
     // Decode and validate the handshake wire format.
     nixlSerDes sd;
@@ -102,28 +129,30 @@ nixlLibfabricEngine::handleHandshake(const std::string &raw_payload) {
         return;
     }
 
+    // nixlSerDes reads fields in order. A version-1 peer sends "idx" where we send "ver", so
+    // consume either one, then "name", to identify the peer before rejecting it.
     uint16_t peer_proto_ver = 0;
     if (sd.getBuf(NIXL_HANDSHAKE_TAG_VER, &peer_proto_ver, sizeof(peer_proto_ver)) !=
         NIXL_SUCCESS) {
-        // A protocol-version-1 peer sends "idx" and no "ver". It stamps an 8-bit agent
-        // index into imm_data and expects us to do the same, which we no longer do, so
-        // refuse the peer here rather than let it misattribute every transfer we send it.
-        NIXL_ERROR << "Handshake has no '" << NIXL_HANDSHAKE_TAG_VER
-                   << "' field; the peer speaks libfabric-plugin protocol version 1, which is "
-                      "not interoperable with version "
-                   << NIXL_LIBFABRIC_PROTO_VERSION
-                   << ". Upgrade both ends of the cluster to the same NIXL version.";
-        return;
-    }
-    if (peer_proto_ver != NIXL_LIBFABRIC_PROTO_VERSION) {
-        NIXL_ERROR << "Handshake protocol version mismatch: peer speaks " << peer_proto_ver
-                   << ", we speak " << NIXL_LIBFABRIC_PROTO_VERSION
-                   << ". Upgrade both ends of the cluster to the same NIXL version.";
-        return;
+        uint16_t v1_idx = 0;
+        if (sd.getBuf(NIXL_HANDSHAKE_TAG_V1_IDX, &v1_idx, sizeof(v1_idx)) != NIXL_SUCCESS) {
+            NIXL_ERROR << "Handshake has neither a '" << NIXL_HANDSHAKE_TAG_VER << "' nor an '"
+                       << NIXL_HANDSHAKE_TAG_V1_IDX << "' field; dropping it";
+            return;
+        }
+        peer_proto_ver = 1;
     }
     std::string peer_agent_name = sd.getStr(NIXL_HANDSHAKE_TAG_NAME);
     if (peer_agent_name.empty()) {
         NIXL_ERROR << "Handshake missing or empty 'name' field";
+        return;
+    }
+    if (peer_proto_ver != NIXL_LIBFABRIC_PROTO_VERSION) {
+        NIXL_ERROR << "Handshake from '" << peer_agent_name << "' speaks libfabric-plugin protocol "
+                   << "version " << peer_proto_ver << ", which is not interoperable with version "
+                   << NIXL_LIBFABRIC_PROTO_VERSION
+                   << ". Upgrade both ends of the cluster to the same NIXL version.";
+        rejectHandshake(peer_agent_name, peer_proto_ver);
         return;
     }
     uint8_t has_conn = 0;

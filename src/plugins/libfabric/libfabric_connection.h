@@ -49,6 +49,10 @@ struct nixlLibfabricConnection : public nixlBackendConnMD {
     // Set once the peer holds our endpoints in its AV, so it can attribute our traffic.
     // establishConnection() blocks on handshake_cv_ until this or handshake_rejected_ is set.
     std::atomic<bool> handshake_received_{false};
+    // Set when the peer's protocol version is incompatible, so establishConnection() fails with
+    // NIXL_ERR_MISMATCH. rejected_peer_proto_ver_ is written under handshake_mutex_ first.
+    std::atomic<bool> handshake_rejected_{false};
+    uint16_t rejected_peer_proto_ver_ = 0;
     std::mutex handshake_mutex_;
     std::condition_variable handshake_cv_;
 };
