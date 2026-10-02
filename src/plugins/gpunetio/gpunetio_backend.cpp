@@ -95,7 +95,8 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     if (custom_params->count("cuda_streams") != 0 && (*custom_params)["cuda_streams"] != "")
         nstreams = std::stoi((*custom_params)["cuda_streams"]);
     if (nstreams == 0) nstreams = DOCA_POST_STREAM_NUM;
-    if (nstreams < 0 || nstreams > DOCA_POST_STREAM_NUM || (nstreams & (nstreams - 1)) != 0) {
+    if (nstreams < 0 || nstreams > static_cast<int>(DOCA_POST_STREAM_NUM) ||
+        (nstreams & (nstreams - 1)) != 0) {
         throw std::invalid_argument("cuda_streams must be a power of two up to four");
     }
 
