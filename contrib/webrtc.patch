@@ -1,0 +1,100 @@
+diff --git a/build.sh b/build.sh
+index ea94157..6753b83 100755
+--- a/build.sh
++++ b/build.sh
+@@ -77,8 +77,11 @@ REPO_URL="https://webrtc.googlesource.com/src"
+ DEPOT_TOOLS_URL="https://chromium.googlesource.com/chromium/tools/depot_tools.git"
+ DEPOT_TOOLS_DIR=$DIR/depot_tools
+ DEPOT_TOOLS_WIN_TOOLCHAIN=0
++DEPOT_TOOLS_REV="4a978d8f1f3567d5bd729aec018bfc345a14e1cd"
+ PATH=$DEPOT_TOOLS_DIR:$DEPOT_TOOLS_DIR/python276_bin:$PATH
+ 
++export DEPOT_TOOLS_UPDATE=0
++
+ [ "$DEBUG" = 1 ] && set -x
+ 
+ mkdir -p $OUTDIR
+@@ -97,7 +100,7 @@ echo Checking webrtcbuilds dependencies
+ check::webrtcbuilds::deps $PLATFORM
+ 
+ echo Checking depot-tools
+-check::depot-tools $PLATFORM $DEPOT_TOOLS_URL $DEPOT_TOOLS_DIR
++check::depot-tools $PLATFORM $DEPOT_TOOLS_URL $DEPOT_TOOLS_DIR $DEPOT_TOOLS_REV
+ 
+ if [ ! -z $BRANCH ]; then
+   REVISION=$(git ls-remote $REPO_URL --heads $BRANCH | head -n1 | cut -f1) || \
+diff --git a/util.sh b/util.sh
+index d889fb4..686bed5 100644
+--- a/util.sh
++++ b/util.sh
+@@ -42,9 +42,10 @@ function check::depot-tools() {
+   local platform="$1"
+   local depot_tools_url="$2"
+   local depot_tools_dir="$3"
++  local depot_tools_rev="$4"
+ 
+   if [ ! -d $depot_tools_dir ]; then
+     git clone -q $depot_tools_url $depot_tools_dir
+     if [ $platform = 'win' ]; then
+       # run gclient.bat to get python
+       pushd $depot_tools_dir >/dev/null
+@@ -56,6 +57,10 @@ function check::depot-tools() {
+       git reset --hard -q
+     popd >/dev/null
+   fi
++
++  git -C "$depot_tools_dir" fetch -q origin "$depot_tools_rev"
++  git -C "$depot_tools_dir" checkout -q "$depot_tools_rev"
++  "$depot_tools_dir/ensure_bootstrap"
+ }
+ 
+ # Makes sure package is installed. Depends on sudo to be installed first.
+@@ -92,7 +97,7 @@ function check::webrtcbuilds::deps() {
+     fi
+     ensure-package curl
+     ensure-package git
+-    ensure-package python
++    ensure-package python-is-python3
+     ensure-package lbzip2
+     ensure-package lsb-release lsb_release
+     ;;
+@@ -235,10 +240,12 @@ function compile-unix() {
+   local blacklist="unittest|examples|/yasm|protobuf_lite|main.o|\
+ video_capture_external.o|device_info_external.o"
+ 
++  sed -i '/complete_static_lib.*/d' BUILD.gn
++  sed -i 's/use_debug_fission = *$/use_debug_fission = \!is_linux \&\&/g' build/config/compiler/compiler.gni
+   gn gen $outputdir --args="$gn_args"
+   pushd $outputdir >/dev/null
+-  ninja -C .
+ 
++  ninja -C . :dcsctp
+   rm -f libwebrtc_full.a
+   # Produce an ordered objects list by parsing .ninja_deps for strings
+   # matching .o files.
+@@ -254,6 +260,8 @@ video_capture_external.o|device_info_external.o"
+   cat libwebrtc_full.list | xargs ar -crs libwebrtc_full.a
+   # generate an index list
+   ranlib libwebrtc_full.a
++
++
+   popd >/dev/null
+ }
+ 
+@@ -278,6 +286,7 @@ function compile() {
+   pushd $outdir/src >/dev/null
+   for cfg in $configs; do
+     [ "$cfg" = 'Release' ] && common_args+=' is_debug=false'
++    [ "$cfg" = 'Debug' ] && common_args+=' is_debug=true'
+     case $platform in
+     win)
+       # 32-bit build
+@@ -291,7 +300,7 @@ function compile() {
+       # On Linux when not cross-compiling, use clang = false and sysroot = false
+       # to build using gcc. Comment this out to use clang.
+       if [[ $platform = 'linux' && $target_os != 'android' && $target_cpu != amd* ]]; then
+-        target_args+=" is_clang=false use_sysroot=false"
++        target_args+=" is_clang=false use_sysroot=false use_custom_libcxx=false"
+       fi
+ 
+       # Debug builds are component builds (shared libraries) by default unless

@@ -1,0 +1,9 @@
+[wrap-file]
+directory = fastrak-rxdm
+source_filename = fastrak-rxdm/fastrak-rxdm.tar.gz
+patch_directory = fastrak-rxdm/patch
+diff_files = fastrak-rxdm/rxdm.patch, fastrak-rxdm/dxs.patch
+
+[provide]
+tcpxo_dxs_client_types = tcpxo_dxs_client_types_dep
+tcpxo_buffer_mgr_client_interface = tcpxo_buffer_mgr_client_interface_dep

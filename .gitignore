@@ -6,6 +6,11 @@
 # AWS EFA test files
 contrib/aws-efa/aws_vars.json
 
+# RxDM
+contrib/build_temp/
+subprojects/fastrak-rxdm
+subprojects/packagefiles/fastrak-rxdm/.fastrak-rxdm-dxs.hash
+
 # CuFile Logs
 cufile.log
 
@@ -26,3 +31,19 @@ subprojects/*
 
 # ucx-spcx-plugin source fetched into the build context by build-container.sh
 ucx-spcx-plugin-src/
+
+# Local dev overrides
+.env
+.devcontainer/devcontainer-lock.json
+
+# logging
+*.log
+logs/
+
+# perf/FlameGraph
+*.perf
+*.svg
+*.folded
+
+*.pyc
+

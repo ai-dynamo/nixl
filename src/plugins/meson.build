@@ -131,6 +131,14 @@ if enabled_plugins.get('GPUNETIO')
     endif
 endif
 
+if enabled_plugins.get('TCPXO')
+    if not cuda_dep.found() and not get_option('disable_gpudirect_tcpxo_cuda') and is_explicit_enable
+        error('TCPXO plugin requested but CUDA dependency not found')
+    elif cuda_dep.found() or get_option('disable_gpudirect_tcpxo_cuda')
+        subdir('gpudirect_tcpxo')
+    endif
+endif
+
 subdir('telemetry')
 
 if nixl_trace_enabled

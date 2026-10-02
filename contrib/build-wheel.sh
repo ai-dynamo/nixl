@@ -23,6 +23,8 @@ NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
 BUILD_NIXL_EP="false"
 TORCH_VERSIONS=""
+DISABLE_RXDM_DXS="false"
+DISABLE_GPUDIRECT_TCPXO_CUDA="false"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -51,6 +53,16 @@ while [[ $# -gt 0 ]]; do
             shift
             shift
             ;;
+        --disable-rxdm-dxs)
+            DISABLE_RXDM_DXS=$2
+            shift
+            shift
+            ;;
+        --disable-gpudirect-tcpxo-cuda)
+            DISABLE_GPUDIRECT_TCPXO_CUDA=$2
+            shift
+            shift
+            ;;
         --help)
             echo "Usage: $0 [--python-version <python-version>] [--platform <platform>] [--output-dir <output-dir>] [--ucx-plugins-dir <ucx-plugins-dir>] [--nixl-plugins-dir <nixl-plugins-dir>]"
             echo "  --python-version: Python version to build the wheel for (default: $PYTHON_VERSION)"
@@ -60,6 +72,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
             echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
             echo "  --torch-versions: Comma-separated list of torch versions to build the wheel for (default: $TORCH_VERSIONS)"
+            echo "  --disable-rxdm-dxs: Whether or not to stub out RxDM/DXS and disable that functionality in GPUDirect TCPXO (default: $DISABLE_RXDM_DXS)"
+            echo "  --disable-gpudirect-tcpxo-cuda: Whether or not to disable CUDA support in GPUDirect TCPXO (default: $DISABLE_GPUDIRECT_TCPXO_CUDA)"
             echo "  --help: Show this help message"
             echo ""
             echo "Must be executed from the root of the NIXL repository."
@@ -259,6 +273,12 @@ build_wheel() {
             -Csetup-args=-Dbuild_nixl_ep=true
             -Csetup-args=-Dbuild_examples=true
         )
+    fi
+    if [ "$DISABLE_RXDM_DXS" = "true" ]; then
+    	BUILD_ARGS+=(-Csetup-args=-Ddisable_rxdm_dxs=true)
+    fi
+    if [ "$DISABLE_GPUDIRECT_TCPXO_CUDA" = "true" ]; then
+        BUILD_ARGS+=(-Csetup-args=-Ddisable_gpudirect_tcpxo_cuda=true)
     fi
     uv build "${BUILD_ARGS[@]}"
 

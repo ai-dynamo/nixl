@@ -1,0 +1,12 @@
+diff --git a/meson.build b/meson.build
+index 78be774a..1067cb8c 100644
+--- a/meson.build
++++ b/meson.build
+@@ -91,6 +91,7 @@ absl_base_sources = files(
+   'absl/base/internal/sysinfo.cc',
+   'absl/base/internal/thread_identity.cc',
+   'absl/base/internal/throw_delegate.cc',
++  'absl/base/internal/tracing.cc',
+   'absl/base/internal/unscaledcycleclock.cc',
+   'absl/base/log_severity.cc',
+ )

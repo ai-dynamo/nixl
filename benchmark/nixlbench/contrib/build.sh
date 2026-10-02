@@ -22,6 +22,8 @@ NIXL_SRC=$(readlink -f "${SOURCE_DIR}/../../..")
 NIXL_BUILD_CONTEXT_ARGS="--build-context nixl=$NIXL_SRC"
 NIXL_BENCH_BUILD_CONTEXT_ARGS="--build-context nixlbench=$BUILD_CONTEXT/"
 DOCKER_FILE="${SOURCE_DIR}/Dockerfile"
+WEBRTC_DOCKER_FILE="${NIXL_SRC}/contrib/Dockerfile.webrtc"
+PREPARE_SOURCE_FILE="${NIXL_SRC}/contrib/prepare_source.sh"
 UCX_SRC=""
 UCX_BUILD_CONTEXT_ARGS=""
 BUILD_TYPE="release"
@@ -46,6 +48,8 @@ WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS="3.12"
 NPROC=${NPROC:-$(nproc)}
 APT_MIRROR=""
+FASTRAK_RXDM_URI=""
+DXS_CLIENT_URI=""
 
 get_options() {
     while :; do
@@ -126,6 +130,15 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
+        --webrtc-tag)
+            if [ "$2" ]; then
+                WEBRTC_IMAGE_REF="$2"
+                WEBRTC_TAG=("--tag" "$2")
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
         --ucx)
             if [ "$2" ]; then
                 UCX_SRC=$2
@@ -147,6 +160,22 @@ get_options() {
         --apt-mirror)
             if [ "$2" ]; then
                 APT_MIRROR=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --rxdm-uri)
+            if [ "$2" ]; then
+                FASTRAK_RXDM_URI=$2
+                shift
+            else
+                missing_requirement $1
+            fi
+            ;;
+        --dxs-uri)
+            if [ "$2" ]; then
+                DXS_CLIENT_URI=$2
                 shift
             else
                 missing_requirement $1
@@ -180,6 +209,10 @@ get_options() {
         TAG="--tag nixlbench:${VERSION}"
         echo $TAG
     fi
+    if [ "${#WEBRTC_TAG[@]}" -eq 0 ]; then
+        WEBRTC_IMAGE_REF="webrtc:${BASE_IMAGE_TAG:-26.08-cuda13.4-devel-ubuntu24.04}"
+        WEBRTC_TAG=("--tag" "${WEBRTC_IMAGE_REF}")
+    fi
 }
 
 show_build_options() {
@@ -201,6 +234,8 @@ show_build_options() {
     echo "Container arch: ${ARCH}"
     echo "Python Versions for wheel build: ${WHL_PYTHON_VERSIONS}"
     echo "Wheel Platform: ${WHL_PLATFORM}"
+    echo "RxDM URI: ${FASTRAK_RXDM_URI}"
+    echo "DXS URI: ${DXS_CLIENT_URI}"
 }
 
 show_help() {
@@ -229,10 +264,12 @@ error() {
     exit 1
 }
 
+WEBRTC_TAG=()
 get_options "$@"
 
 BUILD_ARGS+="${BASE_IMAGE:+ --build-arg BASE_IMAGE=$BASE_IMAGE}"
 BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
+BUILD_ARGS+=" --build-arg WEBRTC_IMAGE=$WEBRTC_IMAGE_REF"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
@@ -242,7 +279,25 @@ if [ -n "$EFA_VERSION" ]; then
     BUILD_ARGS+=" --build-arg EFA_VERSION=$EFA_VERSION"
 fi
 BUILD_ARGS+="${APT_MIRROR:+ --build-arg APT_MIRROR=$APT_MIRROR}"
+WEBRTC_BUILD_ARGS=()
+if [ -n "$BASE_IMAGE" ]; then
+    WEBRTC_BUILD_ARGS+=(--build-arg "BASE_IMAGE=$BASE_IMAGE")
+fi
+if [ -n "$BASE_IMAGE_TAG" ]; then
+    WEBRTC_BUILD_ARGS+=(--build-arg "BASE_IMAGE_TAG=$BASE_IMAGE_TAG")
+fi
 
 show_build_options
 
+# Ensure cleanup happens even on failure
+trap '"${PREPARE_SOURCE_FILE}" -c' EXIT
+
+if [[ "$FASTRAK_RXDM_URI" == "" || "$DXS_CLIENT_URI" == "" ]]; then
+  "${PREPARE_SOURCE_FILE}" -p -n
+else
+  "${PREPARE_SOURCE_FILE}" -p -r "$FASTRAK_RXDM_URI" -d "$DXS_CLIENT_URI"
+fi
+
+echo "Building WebRTC tagged: $WEBRTC_TAG"
+docker build --platform linux/$ARCH -f "$WEBRTC_DOCKER_FILE" "${WEBRTC_BUILD_ARGS[@]}" "${WEBRTC_TAG[@]}" $NO_CACHE "${NIXL_SRC}" --progress plain
 docker build --platform linux/$ARCH -f $DOCKER_FILE $BUILD_ARGS $TAG $NO_CACHE $BUILD_CONTEXT_ARGS $BUILD_CONTEXT --progress plain

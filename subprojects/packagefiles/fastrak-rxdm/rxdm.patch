@@ -1,0 +1,75 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 0100bb2..98e1689 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -86,7 +86,7 @@ bazel_dep(
+
+ bazel_dep(
+     name = "abseil-cpp",
+-    version = "20260107.0",
++    version = "20250814.1",
+     repo_name = "com_google_absl",
+ )
+
+diff --git a/buffer_mgmt_daemon/BUILD b/buffer_mgmt_daemon/BUILD
+index 9a2a6ec..5926bc3 100644
+--- a/buffer_mgmt_daemon/BUILD
++++ b/buffer_mgmt_daemon/BUILD
+@@ -336,3 +336,57 @@ cc_library(
+         "@com_google_absl//absl/strings:string_view",
+     ],
+ )
++
++# Combine all necessary .a files into librxdm_dxs.a
++cc_static_library(
++    name = "rxdm_dxs",
++    # List all the top-level cc_library targets you want to bundle
++    deps = [
++        ":pci_utils",
++        "//buffer_mgmt_daemon/client:buffer_mgr_client",
++        "//buffer_mgmt_daemon/client:buffer_mgr_client-interface",
++        "//buffer_mgmt_daemon/client:unix_socket_client",
++        "//buffer_mgmt_daemon/common:uds_helpers",
++        "//buffer_mgmt_daemon/common:unix_socket_connection",
++        "//buffer_mgmt_daemon/proto:tcpfastrak_buffer_mgmt_message_cc_proto",
++        "//dxs:clock-interface",
++        "//dxs:sctp-timeout-queue-base",
++        "//dxs/client:atomic-future",
++        "//dxs/client:base-interface",
++        "//dxs/client:control-command",
++        "//dxs/client:control_command_cc_proto",
++        "//dxs/client:control-message-handler-interface",
++        "//dxs/client:data-sock",
++        "//dxs/client:derive_dxs_address",
++        "//dxs/client:dxs-client",
++        "//dxs/client:dxs-client-interface",
++        "//dxs/client:dxs-client-types",
++        "//dxs/client:guest-clock",
++        "//dxs/client:guest-llcm-device",
++        "//dxs/client:linearized-recv-op",
++        "//dxs/client:listen-socket",
++        "//dxs/client:llcm-memory-interface",
++        "//dxs/client:llcm-handler",
++        "//dxs/client:make-unique-with-cleanup",
++        "//dxs/client:monotonic-timestamp",
++        "//dxs/client:mtu_utils",
++        "//dxs/client:recv-socket",
++        "//dxs/client:relaxed-atomic",
++        "//dxs/client:sctp-handler",
++        "//dxs/client:send-op",
++        "//dxs/client:send-socket",
++        "//dxs/client:sequence-number",
++        "//dxs/client:thread-shim",
++        "//dxs/client:thread-shim-external",
++        "//dxs/client:wire-version",
++        "//dxs/client/guest_llcm",
++        "//dxs/client/oss:barrier",
++        "//dxs/client/oss:htonl",
++        "//dxs/client/oss:mmio",
++        "//dxs/client/oss:status_macros",
++        "//dxs/client/spsc_queue:spsc_queue_pair",
++        "//dxs/client/spsc_queue:spsc_queue_pair_cc_proto",
++        "//dxs/client/spsc_queue:spsc_messaging_queue_pair",
++        "//webrtc",
++    ],
++)

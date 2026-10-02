@@ -1,0 +1,140 @@
+diff --git a/dxs/client/BUILD b/dxs/client/BUILD
+index 76e67d1..d69be58 100644
+--- a/dxs/client/BUILD
++++ b/dxs/client/BUILD
+@@ -407,6 +407,7 @@ cc_library(
+ cc_library(
+     name = "atomic-future",
+     hdrs = ["atomic-future.h"],
++    srcs = ["atomic-future.cc"],
+     deps = ["@com_google_absl//absl/log:check"],
+ )
+
+diff --git a/dxs/client/atomic-future.cc b/dxs/client/atomic-future.cc
+new file mode 100644
+index 0000000..496345f
+--- /dev/null
++++ b/dxs/client/atomic-future.cc
+@@ -0,0 +1,28 @@
++#include "dxs/client/atomic-future.h"
++
++#include <atomic>
++#include <optional>
++
++#include "absl/log/check.h"
++
++namespace dxs {
++
++// Retrieves the value, or nullopt if unset.
++template <class T>
++std::optional<T> AtomicFuture<T>::Get() const {
++  // value_ is only guaranteed to be set once Prepare makes a release store.
++  if (!flag_.test(std::memory_order_acquire)) return std::nullopt;
++  return value_;
++}
++
++// Sets the value, returns true if successful.
++template <class T>
++bool AtomicFuture<T>::Prepare(T t) {
++  if (flag_.test(std::memory_order_relaxed)) return false;
++  value_ = std::move(t);
++  bool value_set = flag_.test_and_set(std::memory_order_release);
++  DCHECK(!value_set);
++  return true;
++}
++
++}  // namespace dxs
+diff --git a/dxs/client/atomic-future.h b/dxs/client/atomic-future.h
+index edc06d7..5aa932e 100644
+--- a/dxs/client/atomic-future.h
++++ b/dxs/client/atomic-future.h
+@@ -12,8 +12,6 @@
+ #include <atomic>
+ #include <optional>
+
+-#include "absl/log/check.h"
+-
+ namespace dxs {
+
+ // A testable future which can be Prepared once and tested an unlimited number
+@@ -24,19 +22,9 @@ template <class T>
+ class AtomicFuture {
+  public:
+   // Retrieves the value, or nullopt if unset.
+-  std::optional<T> Get() const {
+-    // value_ is only guaranteed to be set once Prepare makes a release store.
+-    if (!flag_.test(std::memory_order_acquire)) return std::nullopt;
+-    return value_;
+-  }
++  std::optional<T> Get() const;
+   // Sets the value, returns true if successful.
+-  bool Prepare(T t) {
+-    if (flag_.test(std::memory_order_relaxed)) return false;
+-    value_ = std::move(t);
+-    bool value_set = flag_.test_and_set(std::memory_order_release);
+-    DCHECK(!value_set);
+-    return true;
+-  }
++  bool Prepare(T t);
+
+  private:
+   std::atomic_flag flag_;
+diff --git a/dxs/client/control-command.cc b/dxs/client/control-command.cc
+index 4e50816..6ecbd4b 100644
+--- a/dxs/client/control-command.cc
++++ b/dxs/client/control-command.cc
+@@ -40,6 +40,11 @@ std::string DumpStatusProto(const MessageT& msg) {
+
+ }  // namespace
+
++bool WireSocketAddr::operator==(const WireSocketAddr& other) const {
++  return is_ipv6 == other.is_ipv6 &&
++         std::memcmp(addr, other.addr, sizeof(addr)) == 0 && port == other.port;
++}
++
+ std::string ToString(ControlCommand cmd) {
+   switch (cmd) {
+     case ControlCommand::kInvalid:
+diff --git a/dxs/client/control-command.h b/dxs/client/control-command.h
+index 62557e4..34e497a 100644
+--- a/dxs/client/control-command.h
++++ b/dxs/client/control-command.h
+@@ -75,7 +75,7 @@ enum class OpStatus : uint8_t {
+ };
+
+ struct __attribute__((__packed__)) WireSocketAddr {
+-  bool operator==(const WireSocketAddr& other) const = default;
++  bool operator==(const WireSocketAddr& other) const;
+
+   bool is_ipv6;
+   uint8_t addr[16];  // An IP address packed with inet_pton
+diff --git a/dxs/client/control-message-handler-interface.h b/dxs/client/control-message-handler-interface.h
+index f0f2d04..2ac25b7 100644
+--- a/dxs/client/control-message-handler-interface.h
++++ b/dxs/client/control-message-handler-interface.h
+@@ -12,10 +12,10 @@
+ #include <netinet/ip6.h>
+ #include <netinet/udp.h>
+
+-#include <concepts>
+ #include <cstdint>
+ #include <cstring>
+ #include <string>
++#include <type_traits>
+
+ #include "absl/container/fixed_array.h"
+ #include "absl/log/check.h"
+@@ -48,10 +48,11 @@ class ControlMessageHandlerInterface {
+   }
+
+   // Sends a typed message with a trailer.
+-  template <class MessageT,
+-            std::derived_from<google::protobuf::Message> PayloadT>
++  template <class MessageT, class PayloadT>
+   absl::Status SendMessageWithPayload(const MessageT& message,
+                                       const PayloadT& payload) {
++    static_assert(std::is_base_of_v<google::protobuf::Message, PayloadT>,
++                  "PayloadT must be derived from google::protobuf::Message");
+     size_t payload_size = payload.ByteSizeLong();
+     absl::FixedArray<uint8_t> msg_space(sizeof(MessageT) + payload_size);
+     auto* msg = new (msg_space.data()) MessageT(message);

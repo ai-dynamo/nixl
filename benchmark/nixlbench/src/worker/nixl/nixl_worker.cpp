@@ -146,6 +146,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GPUNETIO) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE) ||
         0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCCL) ||
+        0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_TCPXO) ||
         xferBenchConfig::isStorageBackend()) {
         backend_name = xferBenchConfig::backend;
     } else {
@@ -350,6 +351,8 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                       << std::endl;
             std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_TCPXO)) {
+        std::cout << "TCPXO backend" << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
