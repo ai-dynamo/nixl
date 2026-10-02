@@ -387,9 +387,11 @@ RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
 
 # Opt-in: place the pre-staged DDN Infinia libs (from infinia-libs/ in the build
 # context, populated by build-container.sh --build-infinia) into /opt/ddn/red, the
-# infinia_path meson default, so meson auto-detects red_client and builds
-# libplugin_INFINIA.so. No registry pull here: the libs arrive via the COPY above.
-# uuid/uuid.h, included by the DDN red_client headers, comes from the uuid-dev
+# infinia_path meson default, so meson auto-detects red_async (Infinia SDK 2.5+) and
+# builds libplugin_INFINIA.so. No registry pull here: the libs arrive via the COPY
+# above. libred_sdk, which libred_async needs at runtime, comes from the DDN SDK
+# installation and is not required at build time.
+# uuid/uuid.h, included by the DDN SDK headers, comes from the uuid-dev
 # installed with the aws-sdk-cpp deps above.
 ARG BUILD_INFINIA=false
 RUN if [ "$BUILD_INFINIA" = "true" ]; then \

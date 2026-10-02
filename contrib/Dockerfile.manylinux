@@ -438,12 +438,13 @@ WORKDIR /workspace/nixl
 
 # Opt-in: place the pre-staged DDN Infinia libs (from infinia-libs/ in the build
 # context, populated by build-container.sh --build-infinia) into /opt/ddn/red so
-# meson auto-detects red_client and builds libplugin_INFINIA.so into the wheel.
-# libred_client/libred_async are excluded from the final wheel by auditwheel
+# meson auto-detects red_async (Infinia SDK 2.5+) and builds libplugin_INFINIA.so
+# into the wheel. The libred_* libs are excluded from the final wheel by auditwheel
 # (build-wheel.sh AUDITWHEEL_EXCLUDES) — only libplugin_INFINIA.so is bundled;
-# the DDN libs are loaded at runtime from the customer's installation.
+# libred_async and its libred_sdk dependency are loaded at runtime from the
+# customer's DDN SDK installation, so libred_sdk is not needed at build time.
 # No external registry pull here: libs arrive via COPY . /workspace/nixl above.
-# libuuid-devel provides uuid/uuid.h, included by the DDN red_client headers;
+# libuuid-devel provides uuid/uuid.h, included by the DDN SDK headers;
 # it is the only extra build-time system dep the plugin needs (the DDN libs'
 # own runtime deps are provided by the customer's install and excluded by auditwheel).
 ARG BUILD_INFINIA=false
