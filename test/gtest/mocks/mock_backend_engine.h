@@ -19,6 +19,7 @@
 
 #include "backend/backend_engine.h"
 #include "backend/backend_plugin.h"
+#include "gmock_engine.h"
 #include <cassert>
 #include <chrono>
 
@@ -26,7 +27,7 @@ namespace mocks {
 
 class MockBackendEngine : public nixlBackendEngine {
 private:
-    nixlBackendEngine *gmock_backend_engine;
+    GMockBackendEngine *gmock_backend_engine;
 
 public:
     MockBackendEngine(const nixlBackendInitParams *init_params);

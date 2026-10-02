@@ -166,6 +166,13 @@ backends/PRs):
 | `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
 | `nixl::releaseMemView` | `Generic` | - |
 
+Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
+when `getXferStatus` first observes success. How a backend renders attributes and
+dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
+backend (e.g. NVTX attaches attributes as typed payloads on the range via
+`nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
+record them).
+
 ### Backend phase spans
 
 A backend plugin can record a phase of its own work through
@@ -190,12 +197,16 @@ The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
 installed header), so only in-tree plugins can emit phases. No plugin emits them
 yet; UCX and libfabric map their internals onto the vocabulary in later PRs.
 
-Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
-when `getXferStatus` first observes success. How a backend renders attributes and
-dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
-backend (e.g. NVTX attaches attributes as typed payloads on the range via
-`nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
-record them).
+A backend also sees the trace context of the request it is executing, as
+`traceContext` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive.
+It is the same context at prep and at every post of that request, reposts
+included, and the zeroed, invalid context when tracing is off. It is null in
+`prepMemView`, which has no request, and `opt_args` itself may be null when an
+engine is called directly. The pointer is valid only for the call: a plugin that
+needs the context later, at completion or when building a notification, copies
+the value onto its own request handle. A carrier that puts it on the wire calls
+`encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
+in-tree plugins can read it; none does yet.
 
 ## Profiling with NVTX / Nsight Systems
 
@@ -287,7 +298,9 @@ In NIXL tracing, "correlation" can mean two different things:
   recording the span attributes and dependencies the NVTX backend ignores.
 - **Cross-rank correlation** — propagate a globally unique request id on the wire so
   sender and receiver spans can be linked across processes (distributed tracing; a
-  separate NIXL-architecture effort).
+  separate NIXL-architecture effort). Backends already receive each request's trace
+  context (see "Backend phase spans"); the per-plugin carriers that put it on the
+  wire come next.
 
 - **Backend phase emission** — the sink described under "Backend phase spans" exists,
   but no plugin records a phase yet.
