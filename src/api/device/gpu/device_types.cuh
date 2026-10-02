@@ -28,11 +28,38 @@ struct xferStatusH {
     alignas(16) unsigned char storage[64] = {};
 };
 
-constexpr size_t xfer_status_payload_size = 64;
+/**
+ * How much of xferStatusH::storage a backend implementation may use. The
+ * remaining bytes hold the execution-mode tag written by the dispatch layer,
+ * which is what lets a later poll on this handle find its way back to the
+ * implementation that produced it.
+ */
+constexpr size_t xfer_status_payload_size = 60;
+constexpr size_t xfer_status_mode_size = 4;
 
-static_assert(xfer_status_payload_size == sizeof(xferStatusH));
+static_assert(xfer_status_payload_size + xfer_status_mode_size == sizeof(xferStatusH));
 
 enum class level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
+
+/**
+ * Which implementation executes a prepared memory view. Chosen per view by
+ * the backend that prepared it, not per build: one agent can hold direct and
+ * proxied views at the same time. Zero is deliberately not a valid mode, so
+ * an untagged handle reads as invalid rather than as the first backend.
+ */
+enum class exec_mode_t : uint8_t {
+    UCX_DIRECT = 1,
+    PROXY = 2,
+};
+
+/**
+ * What a prepared memory-view handle actually points at: the mode, plus the
+ * backend's own handle. Device code unwraps it on the dispatch path.
+ */
+struct memViewWrapper {
+    exec_mode_t execution_mode;
+    nixlMemViewH backend_memview;
+};
 
 namespace flags {
     constexpr uint64_t defer = 1;
@@ -49,7 +76,10 @@ struct memViewElem {
 using nixlGpuXferStatusH = nixl::gpu::xferStatusH;
 using nixl_gpu_level_t = nixl::gpu::level_t;
 using nixlMemViewElem = nixl::gpu::memViewElem;
+using nixl_device_exec_mode_t = nixl::gpu::exec_mode_t;
+using nixlDeviceMemViewWrapper = nixl::gpu::memViewWrapper;
 constexpr size_t nixl_gpu_xfer_status_payload_size = nixl::gpu::xfer_status_payload_size;
+constexpr size_t nixl_gpu_xfer_status_mode_size = nixl::gpu::xfer_status_mode_size;
 
 namespace nixl_gpu_flags {
 constexpr uint64_t defer = nixl::gpu::flags::defer;
