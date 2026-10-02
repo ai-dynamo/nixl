@@ -23,7 +23,9 @@
 // Plugin type alias for convenience
 using obj_plugin_t = nixlBackendPluginCreator<nixlObjEngine>;
 
-static const nixl_mem_list_t supported_segments = {DRAM_SEG, OBJ_SEG};
+// VRAM_SEG is advertised by the accelerated (S3-over-RDMA) engine's
+// getSupportedMems(); list it here too so plugin-level discovery agrees.
+static const nixl_mem_list_t supported_segments = {DRAM_SEG, OBJ_SEG, VRAM_SEG};
 
 #ifdef STATIC_PLUGIN_OBJ
 nixlBackendPlugin *

@@ -88,10 +88,14 @@ awsS3AccelClient::putObjectAsync(std::string_view key,
         ctx.object = k;
         const ssize_t r = nixl_obj_rdma::rdmaPutWithRetry(
             *rdma, *cp, ctx, reinterpret_cast<void *>(data_ptr), data_len);
-        if (r < 0) {
-            NIXL_ERROR << "S3 RDMA put failed (accelerated=true; no HTTP fallback), key=" << k;
+        // Success is a complete transfer: the descriptor length is a promise, so a
+        // short count is a failure, not a partially-written object.
+        const bool ok = (r == static_cast<ssize_t>(data_len));
+        if (!ok) {
+            NIXL_ERROR << "S3 RDMA put failed (" << r << " of " << data_len
+                       << "; accelerated=true, no HTTP fallback), key=" << k;
         }
-        callback(r >= 0);
+        callback(ok);
     });
     // A rejected submission never runs the task, so fire the callback here or the
     // transfer's future would never complete.
@@ -127,10 +131,15 @@ awsS3AccelClient::getObjectAsync(std::string_view key,
         ctx.object = k;
         const ssize_t r = nixl_obj_rdma::rdmaGetWithRetry(
             *rdma, *cp, ctx, reinterpret_cast<void *>(data_ptr), data_len, offset);
-        if (r < 0) {
-            NIXL_ERROR << "S3 RDMA get failed (accelerated=true; no HTTP fallback), key=" << k;
+        // A full read is required: the server clamps to min(requested, servable),
+        // so a short count (r < data_len) leaves the buffer tail unfilled and must
+        // not be reported as success.
+        const bool ok = (r == static_cast<ssize_t>(data_len));
+        if (!ok) {
+            NIXL_ERROR << "S3 RDMA get failed (" << r << " of " << data_len
+                       << "; accelerated=true, no HTTP fallback), key=" << k;
         }
-        callback(r >= 0);
+        callback(ok);
     });
     // A rejected submission never runs the task, so fire the callback here or the
     // transfer's future would never complete.

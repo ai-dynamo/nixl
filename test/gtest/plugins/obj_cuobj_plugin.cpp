@@ -59,6 +59,7 @@ const nixlBackendInitParams obj_dell_test_params = {.localAgent = dell_agent_nam
 class setupObjAccelTestFixture : public setupBackendTestFixture {
 protected:
     nixl_b_params_t localParams_;
+    std::string skipReason_;
 
     setupObjAccelTestFixture() {
         localParams_ = *GetParam().customParams;
@@ -69,7 +70,23 @@ protected:
         }
         nixlBackendInitParams initParams = GetParam();
         initParams.customParams = &localParams_;
-        localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
+        // accelerated=true has no HTTP fallback, so the engine throws when the RDMA
+        // fast path is unavailable (e.g. a cuObject build with no RDMA NIC, as the
+        // CI container produces). Skip these tests there rather than fail.
+        try {
+            localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
+        }
+        catch (const std::exception &e) {
+            skipReason_ = e.what();
+        }
+    }
+
+    void
+    SetUp() override {
+        if (!localBackendEngine_) {
+            GTEST_SKIP() << "S3 accelerated engine unavailable: " << skipReason_;
+        }
+        setupBackendTestFixture::SetUp();
     }
 };
 
