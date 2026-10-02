@@ -279,6 +279,22 @@ def nixl_bench_args(func):
         type=str,
         help="Path to CA bundle for S3 backend (only used with OBJ backend)",
     )(func)
+    func = click.option(
+        "--obj_accelerated_enable",
+        is_flag=True,
+        help="Use an accelerated OBJ engine (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--obj_accelerated_type",
+        type=str,
+        help="Accelerated OBJ engine to use, e.g. scality_ai_connector (only used with OBJ backend)",
+    )(func)
+    func = click.option(
+        "--backend_params",
+        type=str,
+        help="Backend parameters passed to the plugin as given, over the ones nixlbench sets: "
+        "'key=value;key=value'",
+    )(func)
     return func
 
 

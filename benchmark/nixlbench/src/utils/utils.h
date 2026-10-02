@@ -223,6 +223,7 @@ public:
     static size_t obj_crt_min_limit;
     static bool obj_accelerated_enable;
     static std::string obj_accelerated_type;
+    static bool obj_unique_keys;
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
@@ -236,6 +237,10 @@ public:
     static bool gusli_try_use_uring;
     // Opaque plugin parameters are populated only by the raw CLI path.
     static std::optional<nixl_b_params_t> plugin_parameters;
+    // --backend_params as given, and parsed: applied over the backend parameters
+    // nixlbench sets.
+    static std::string backend_params;
+    static nixl_b_params_t parsed_backend_params;
     static bool use_device_api;
     static int block_threads;
     static int device_channel_num;
@@ -262,6 +267,10 @@ public:
     isStorageBackend();
     static bool
     isObjStorageBackend();
+    static bool
+    usesRestConnector();
+    static bool
+    parseBackendParams(const std::string &spec, nixl_b_params_t &params, std::string &error);
 
 protected:
     static int
@@ -393,6 +402,10 @@ private:
     buildCommonAzCliBlobParams(const std::string &blob_name);
 
 public:
+    // Whether NIXL_LOG_LEVEL is DEBUG or TRACE, the levels at which nixlbench
+    // prints a line per object.
+    static bool
+    debugEnabled();
     static void
     setRT(xferBenchRT *rt);
     static void
@@ -413,6 +426,12 @@ public:
     getObjS3(const std::string &name);
     static bool
     rmObjS3(const std::string &name);
+    static bool
+    putObjRest(size_t buffer_size, const std::string &name);
+    static bool
+    rmObjRest(const std::string &name);
+    static bool
+    rmObjScalityBatch(const std::vector<std::string> &names);
 
     static bool
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);
