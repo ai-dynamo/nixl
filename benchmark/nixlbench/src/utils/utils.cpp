@@ -16,9 +16,12 @@
  */
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <mutex>
 #include <numeric>
 #include <sstream>
 #include <sys/time.h>
@@ -35,6 +38,10 @@
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
 #include "utils/utils.h"
+
+#if HAVE_LIBCURL
+#include <curl/curl.h>
+#endif
 
 // Define command line parameters
 #define NB_ARG_STRING(param_name, def_val, help_text) DEFINE_string(param_name, def_val, help_text)
@@ -103,6 +110,10 @@ NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worke
 NB_ARG_UINT64(progress_threads, 0, "Number of progress threads");
 NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
 NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
+NB_ARG_STRING(backend_params,
+              "",
+              "Backend parameters passed to the plugin as given, over the ones nixlbench sets: "
+              "'key=value;key=value' (only used with nixl worker)");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
 NB_ARG_STRING(filepath, "", "File path for storage operations");
@@ -202,6 +213,9 @@ NB_ARG_STRING(obj_accelerated_type,
               "",
               "S3 Accelerated client vendor type to use. "
               "Only used when obj_accelerated_enable=true");
+NB_ARG_BOOL(obj_unique_keys,
+            false,
+            "Write every posted WRITE to a new object key; the objects are removed at the end");
 
 // AZURE BLOB options - only used when backend is AZURE_BLOB
 NB_ARG_STRING(azure_blob_account_url, "", "Account URL for Azure Blob backend");
@@ -323,6 +337,7 @@ std::string xferBenchConfig::obj_ca_bundle = "";
 size_t xferBenchConfig::obj_crt_min_limit = 0;
 bool xferBenchConfig::obj_accelerated_enable = false;
 std::string xferBenchConfig::obj_accelerated_type = "";
+bool xferBenchConfig::obj_unique_keys = false;
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
@@ -335,6 +350,8 @@ std::string xferBenchConfig::gusli_device_byte_offsets = "";
 std::string xferBenchConfig::gusli_device_security = "";
 bool xferBenchConfig::gusli_try_use_uring = false;
 std::optional<nixl_b_params_t> xferBenchConfig::plugin_parameters = std::nullopt;
+std::string xferBenchConfig::backend_params = "";
+nixl_b_params_t xferBenchConfig::parsed_backend_params = {};
 bool xferBenchConfig::use_device_api = false;
 int xferBenchConfig::block_threads = 1;
 int xferBenchConfig::device_channel_num = 0;
@@ -502,6 +519,13 @@ xferBenchConfig::loadParams(void) {
         progress_threads = NB_ARG(progress_threads);
         device_list = NB_ARG(device_list);
         enable_vmm = NB_ARG(enable_vmm);
+        backend_params = NB_ARG(backend_params);
+
+        std::string backend_params_error;
+        if (!parseBackendParams(backend_params, parsed_backend_params, backend_params_error)) {
+            std::cerr << "Invalid --backend_params: " << backend_params_error << std::endl;
+            return -1;
+        }
 
         if (enable_vmm) {
 #if HAVE_ROCM
@@ -574,6 +598,7 @@ xferBenchConfig::loadParams(void) {
             obj_crt_min_limit = NB_ARG(obj_crt_min_limit);
             obj_accelerated_enable = NB_ARG(obj_accelerated_enable);
             obj_accelerated_type = NB_ARG(obj_accelerated_type);
+            obj_unique_keys = NB_ARG(obj_unique_keys);
 
             // Validate OBJ S3 scheme
             if (obj_scheme != XFERBENCH_OBJ_SCHEME_HTTP &&
@@ -673,6 +698,17 @@ xferBenchConfig::loadParams(void) {
     if (prepared_xfer && reregister_mem) {
         std::cerr << "prepared_xfer is incompatible with reregister_mem: the prepared "
                      "descriptor list handles pin the registration."
+                  << std::endl;
+        return -1;
+    }
+    if (obj_unique_keys && (!usesRestConnector() || op_type != XFERBENCH_OP_WRITE)) {
+        std::cout << "obj_unique_keys applies to WRITE with a REST connector; ignoring it"
+                  << std::endl;
+        obj_unique_keys = false;
+    }
+    if (obj_unique_keys && reregister_mem) {
+        std::cerr << "obj_unique_keys is incompatible with reregister_mem: both re-register "
+                     "the object descriptors."
                   << std::endl;
         return -1;
     }
@@ -869,6 +905,7 @@ xferBenchConfig::printConfig() {
                     std::to_string(prepared_xfer));
         printOption("Pipeline depth (--pipeline_depth=N)", std::to_string(pipeline_depth));
         printOption("Use hugepages (--use_hugepages=[0,1])", std::to_string(use_hugepages));
+        printOption("Backend params (--backend_params=key=value;...)", backend_params);
 
         // Print GDS options if backend is GDS
         if (backend == XFERBENCH_BACKEND_GDS) {
@@ -915,6 +952,8 @@ xferBenchConfig::printConfig() {
                                                  "false (Accelerated disabled)");
             printOption("OBJ S3 Accelerated type (--obj_accelerated_type=type)",
                         obj_accelerated_type.empty() ? "(default)" : obj_accelerated_type);
+            printOption("OBJ unique keys (--obj_unique_keys=[0,1])",
+                        std::to_string(obj_unique_keys));
         }
 
         if (backend == XFERBENCH_BACKEND_AZURE_BLOB) {
@@ -1038,6 +1077,41 @@ xferBenchConfig::isObjStorageBackend() {
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 };
 
+// Mirrors the worker's engine choice, where the CRT client takes precedence
+// over an accelerated one.
+bool
+xferBenchConfig::usesRestConnector() {
+    return XFERBENCH_BACKEND_OBJ == backend && obj_crt_min_limit == 0 && obj_accelerated_enable &&
+        obj_accelerated_type == "scality_ai_connector";
+}
+
+// Entries are separated by ';' rather than ',' so a value can itself be a
+// comma-separated list. Keys and values are kept exactly as written; the
+// plugin validates them when the backend is created.
+bool
+xferBenchConfig::parseBackendParams(const std::string &spec,
+                                    nixl_b_params_t &params,
+                                    std::string &error) {
+    params.clear();
+    std::stringstream entries(spec);
+    std::string entry;
+    while (std::getline(entries, entry, ';')) {
+        if (entry.empty()) {
+            continue;
+        }
+        const size_t eq = entry.find('=');
+        if (eq == std::string::npos || eq == 0) {
+            error = "'" + entry + "' is not key=value";
+            return false;
+        }
+        const std::string key = entry.substr(0, eq);
+        if (!params.emplace(key, entry.substr(eq + 1)).second) {
+            error = "'" + key + "' is given twice";
+            return false;
+        }
+    }
+    return true;
+}
 
 /**********
  * xferBench Utils
@@ -1488,6 +1562,22 @@ xferBenchUtils::printStats(bool is_target,
     }
 }
 
+bool
+xferBenchUtils::debugEnabled() {
+    static const bool enabled = [] {
+        const char *env = std::getenv("NIXL_LOG_LEVEL");
+        if (env == nullptr) {
+            return false;
+        }
+        std::string level(env);
+        std::transform(level.begin(), level.end(), level.begin(), [](unsigned char c) {
+            return static_cast<char>(std::toupper(c));
+        });
+        return level == "DEBUG" || level == "TRACE";
+    }();
+    return enabled;
+}
+
 std::string
 xferBenchUtils::buildAwsCredentials() {
     std::string env_setup = "";
@@ -1515,6 +1605,9 @@ xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        if (xferBenchConfig::usesRestConnector()) {
+            return putObjRest(buffer_size, name);
+        }
         return putObjS3(buffer_size, name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
         return putObjAzure(buffer_size, name);
@@ -1548,6 +1641,9 @@ xferBenchUtils::rmObj(const std::string &name) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
+        if (xferBenchConfig::usesRestConnector()) {
+            return rmObjRest(name);
+        }
         return rmObjS3(name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
         return rmObjAzure(name);
@@ -1644,6 +1740,165 @@ xferBenchUtils::rmObjS3(const std::string &name) {
     }
     return true;
 }
+
+#if HAVE_LIBCURL
+namespace {
+
+size_t
+fillRestUpload(char *buffer, size_t size, size_t nitems, void *userdata) {
+    auto *remaining = static_cast<size_t *>(userdata);
+    const size_t n = std::min(size * nitems, *remaining);
+    std::memset(buffer, XFERBENCH_TARGET_BUFFER_ELEMENT, n);
+    *remaining -= n;
+    return n;
+}
+
+size_t
+captureRestResponse(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    static_cast<std::string *>(userdata)->append(ptr, size * nmemb);
+    return size * nmemb;
+}
+
+// One handle per thread, reset between requests, so consecutive requests reuse
+// its connection.
+CURL *
+restHandle() {
+    static std::once_flag global_init;
+    std::call_once(global_init, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+    thread_local std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle(curl_easy_init(),
+                                                                            &curl_easy_cleanup);
+    if (handle) {
+        curl_easy_reset(handle.get());
+    }
+    return handle.get();
+}
+
+// Sends `method` to <endpoint>/<name>, the URL the connector itself uses: a PUT
+// uploads `size` bytes, a POST sends `body` as JSON.
+bool
+restRequest(const std::string &method,
+            const std::string &name,
+            size_t size = 0,
+            const std::string &body = "") {
+    if (xferBenchConfig::obj_endpoint_override.empty()) {
+        std::cerr << "Error: --obj_endpoint_override is required for the Scality AI Connector"
+                  << std::endl;
+        return false;
+    }
+    const std::string url = xferBenchConfig::obj_endpoint_override + "/" + name;
+    CURL *curl = restHandle();
+    if (curl == nullptr) {
+        std::cerr << "Error: " << method << " " << url << ": no curl handle" << std::endl;
+        return false;
+    }
+
+    size_t remaining = size;
+    std::string response;
+    std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(nullptr,
+                                                                        &curl_slist_free_all);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    if (method == "PUT") {
+        curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+        curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(size));
+        curl_easy_setopt(curl, CURLOPT_READFUNCTION, fillRestUpload);
+        curl_easy_setopt(curl, CURLOPT_READDATA, &remaining);
+    } else if (method == "POST") {
+        // The body must go out whole with a Content-Length: the endpoint reads
+        // a chunked body, or one held back for "Expect: 100-continue", as
+        // something other than a JSON object.
+        curl_slist *list = curl_slist_append(nullptr, "Content-Type: application/json");
+        list = curl_slist_append(list, "Expect:");
+        list = curl_slist_append(list, "Transfer-Encoding:");
+        headers.reset(list);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.get());
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+    } else {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method.c_str());
+    }
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, captureRestResponse);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    // Give up on an endpoint that stops answering, without capping how long a
+    // large upload that is still moving may take.
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 30000L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
+
+    const CURLcode res = curl_easy_perform(curl);
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    // A missing object is already removed, as "aws s3 rm" treats it.
+    if (res == CURLE_OK &&
+        ((http_code >= 200 && http_code < 300) || (method == "DELETE" && http_code == 404))) {
+        return true;
+    }
+    std::cerr << "Error: " << method << " " << url << " failed: "
+              << (res != CURLE_OK ? curl_easy_strerror(res) : "HTTP " + std::to_string(http_code))
+              << (response.empty() ? "" : ": " + response) << std::endl;
+    return false;
+}
+
+} // namespace
+
+bool
+xferBenchUtils::putObjRest(size_t buffer_size, const std::string &name) {
+    if (debugEnabled()) {
+        std::cout << "Putting object: " << name << " (size: " << buffer_size << " bytes)"
+                  << std::endl;
+    }
+    return restRequest("PUT", name, buffer_size);
+}
+
+bool
+xferBenchUtils::rmObjRest(const std::string &name) {
+    if (debugEnabled()) {
+        std::cout << "Removing object: " << name << std::endl;
+    }
+    return restRequest("DELETE", name);
+}
+
+// The endpoint's batch delete takes at most 1000 keys per request.
+bool
+xferBenchUtils::rmObjScalityBatch(const std::vector<std::string> &names) {
+    constexpr size_t max_keys = 1000;
+    bool all_removed = true;
+    for (size_t start = 0; start < names.size(); start += max_keys) {
+        const size_t end = std::min(start + max_keys, names.size());
+        // nixlbench keys are [A-Za-z0-9_], so they need no JSON escaping.
+        std::string body = "{\"keys\":[";
+        for (size_t i = start; i < end; i++) {
+            body += (i == start ? "\"" : ",\"") + names[i] + "\"";
+        }
+        body += "]}";
+        if (!restRequest("POST", ".batch_delete", 0, body)) {
+            all_removed = false;
+        }
+    }
+    return all_removed;
+}
+#else
+bool
+xferBenchUtils::putObjRest(size_t, const std::string &) {
+    std::cerr << "Error: nixlbench was built without libcurl, which the Scality AI Connector "
+                 "needs to create objects"
+              << std::endl;
+    return false;
+}
+
+bool
+xferBenchUtils::rmObjRest(const std::string &) {
+    std::cerr << "Error: nixlbench was built without libcurl, which the Scality AI Connector "
+                 "needs to remove objects"
+              << std::endl;
+    return false;
+}
+
+bool
+xferBenchUtils::rmObjScalityBatch(const std::vector<std::string> &) {
+    return rmObjRest("");
+}
+#endif
 
 int
 xferBenchUtils::createFile(size_t buffer_size, const std::string &filename) {

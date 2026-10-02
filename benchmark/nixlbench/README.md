@@ -298,6 +298,11 @@ cmake ../aws-sdk-cpp/ \
 make -j$(nproc) && sudo make install
 ```
 
+**libcurl (for the REST OBJ engines):**
+```bash
+sudo apt install libcurl4-openssl-dev
+```
+
 **Azure SDK for C++ (for Azure Blob Storage backend):**
 ```bash
 git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch  azure-storage-blobs_12.15.0
@@ -533,6 +538,18 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --enable_pt                # Enable progress thread (only used with nixl worker)
 --progress_threads NUM     # Number of progress threads (default: 0)
 --enable_vmm               # Enable VMM memory allocation when DRAM is requested
+--backend_params LIST       # Backend parameters passed to the plugin as given, over the ones nixlbench sets:
+                           # 'key=value;key=value' (only used with nixl worker)
+```
+
+`--backend_params` reaches any backend parameter, including those nixlbench has
+no flag for. A key nixlbench also sets takes the given value; the others it
+sets are kept. Entries are separated by `;` so a value can be a comma-separated
+list, and each key may be given once:
+
+```bash
+./nixlbench --backend POSIX --filepath /tmp/nixlbench-data \
+    --backend_params 'ios_pool_size=4096;kernel_queue_size=512'
 ```
 
 #### Device and Network Configuration
@@ -590,6 +607,9 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --obj_use_virtual_addressing # Use virtual addressing for S3 backend
 --obj_endpoint_override URL # Endpoint override for S3 backend
 --obj_req_checksum TYPE    # Required checksum for S3 backend [supported, required] (default: supported)
+--obj_accelerated_enable   # Use an accelerated OBJ engine
+--obj_accelerated_type TYPE # Accelerated OBJ engine to use, e.g. scality_ai_connector
+--obj_unique_keys          # Write every posted WRITE to a new object key; the objects are removed at the end
 ```
 
 **AZURE_BLOB Backend:**
@@ -899,6 +919,42 @@ Transfer times are higher than local storage, so consider reducing iterations:
 **Testing Options:**
 - Test read operations: `--op_type READ`
 - Validate data consistency: `--check_consistency`
+
+### Scality AI Connector
+
+The OBJ plugin's `scality_ai_connector` engine moves object bytes by RDMA
+between local DRAM or VRAM and a Scality AI Connector endpoint; see
+`src/plugins/obj/rest_accel/scality_ai_connector/README.md`. nixlbench creates
+the objects a READ needs, and removes the objects of the run, with plain HTTP
+PUT and DELETE requests to `<endpoint>/<key>`. This needs nixlbench built with
+libcurl.
+
+```bash
+# VRAM WRITE from all 8 GPUs, each on its own NICs, NICs from cufile.json
+./nixlbench --backend OBJ \
+  --obj_accelerated_enable --obj_accelerated_type scality_ai_connector \
+  --obj_endpoint_override http://10.0.0.1:10000 \
+  --initiator_seg_type VRAM --mode MG --num_initiator_dev 8 \
+  --op_type WRITE
+
+# DRAM READ over two NICs, in 4 MiB requests
+./nixlbench --backend OBJ \
+  --obj_accelerated_enable --obj_accelerated_type scality_ai_connector \
+  --obj_endpoint_override http://10.0.0.1:10000 \
+  --op_type READ \
+  --backend_params 'rdma_nics=mlx5_1,mlx5_2;split_size=4194304'
+```
+
+The engine's other parameters, such as `max_inflight`, `request_timeout_ms` or
+`rdma_sl`, are set through `--backend_params` as well; the connector README lists
+them. Without `--mode MG`, a process uses a single GPU, and so only that GPU's
+NICs.
+
+Each WRITE iteration writes the same objects again. `--obj_unique_keys` sends
+every posted WRITE to new keys instead, so the run measures the creation of new
+objects rather than overwrites, and removes those objects at the end with the
+endpoint's batch delete. Changing keys takes a new transfer request per WRITE,
+as `--recreate_xfer` does.
 
 ### Azure Blob Storage Backend
 For AZURE_BLOB plugin benchmarking, ETCD is optional for single instances.
