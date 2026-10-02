@@ -239,8 +239,7 @@ nixlAisEngine::prepXfer(const nixl_xfer_op_t &operation,
 }
 
 nixl_status_t
-nixlAisEngine::queryMem(const nixl_reg_dlist_t &descs,
-                        std::vector<nixl_query_resp_t> &resp) const {
+nixlAisEngine::queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const {
     std::vector<nixl_blob_t> metadata(descs.descCount());
     for (int i = 0; i < descs.descCount(); ++i) {
         metadata[i] = descs[i].metaInfo;

@@ -234,8 +234,8 @@ static const char *DEFAULT_AIS_MT_PATH_MODE_FILE = "/tmp/nixl_ais_mt_path_mode_s
 static int
 runPathModeSmoke() {
     const char *env = std::getenv("NIXL_AIS_MT_PATH_MODE_FILE");
-    const char *file_path = (env != nullptr && env[0] != '\0') ? env :
-                                                                 DEFAULT_AIS_MT_PATH_MODE_FILE;
+    const char *file_path =
+        (env != nullptr && env[0] != '\0') ? env : DEFAULT_AIS_MT_PATH_MODE_FILE;
     const int rc = nixl_test::runPathModeSmoke("AIS_MTPathModeSmoke", "AIS_MT", file_path, 4096);
     if (rc != 0) {
         // The harness reports which phase failed, not why AIS_MT cannot pass it.
@@ -410,8 +410,7 @@ main(int argc, char *argv[]) {
     std::vector<std::string> file_names(num_transfers);
 
     std::cout << "\n============================================================" << std::endl;
-    std::cout << "                 NIXL STORAGE TEST STARTING (AIS_MT PLUGIN)   "
-              << std::endl;
+    std::cout << "                 NIXL STORAGE TEST STARTING (AIS_MT PLUGIN)   " << std::endl;
     std::cout << "============================================================" << std::endl;
     std::cout << "Configuration:" << std::endl;
     std::cout << "- Mode: " << (use_dram ? "DRAM" : "VRAM") << std::endl;
@@ -547,8 +546,7 @@ main(int argc, char *argv[]) {
 
     {
         nixl_xfer_dlist_t file_for_ais_mt_list = file_for_ais_mt.trim();
-        nixl_xfer_dlist_t src_list =
-            use_dram ? dram_for_ais_mt.trim() : vram_for_ais_mt.trim();
+        nixl_xfer_dlist_t src_list = use_dram ? dram_for_ais_mt.trim() : vram_for_ais_mt.trim();
 
         using namespace nixlTime;
 
@@ -579,8 +577,7 @@ main(int argc, char *argv[]) {
             nixl_xfer_dlist_t src_list = src_reg.trim();
             nixl_xfer_dlist_t file_list = file_reg.trim();
 
-            ret = agent.createXferReq(
-                NIXL_WRITE, src_list, file_list, "AisMtTester", write_req);
+            ret = agent.createXferReq(NIXL_WRITE, src_list, file_list, "AisMtTester", write_req);
             if (ret != NIXL_SUCCESS) {
                 std::cerr << "Failed to create write transfer request" << std::endl;
                 goto cleanup;
@@ -698,8 +695,7 @@ main(int argc, char *argv[]) {
             nixl_xfer_dlist_t src_list = src_reg.trim();
             nixl_xfer_dlist_t file_list = file_reg.trim();
 
-            ret =
-                agent.createXferReq(NIXL_READ, src_list, file_list, "AisMtTester", read_req);
+            ret = agent.createXferReq(NIXL_READ, src_list, file_list, "AisMtTester", read_req);
             if (ret != NIXL_SUCCESS) {
                 std::cerr << "Failed to create read transfer request" << std::endl;
                 goto cleanup;
