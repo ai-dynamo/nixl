@@ -721,6 +721,12 @@ $ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --back
 ```
 
 **GPUNETIO Backend:**
+
+For two workers sharing one physical GPU, see
+[single-GPU scheduling and the opt-in MPS procedure](docs/gpunetio-single-gpu.md).
+Separate CUDA contexts can otherwise make small transfers appear much slower
+than the underlying transport.
+
 ```bash
 # DOCA GPUNetIO with specific GPU devices
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GPUNETIO --gpunetio_device_list 0,1
