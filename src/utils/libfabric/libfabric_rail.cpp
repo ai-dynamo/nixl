@@ -1848,7 +1848,7 @@ nixlLibfabricRail::removeAddress(fi_addr_t fi_addr) const {
 
 void
 nixlLibfabricRail::mapSourceAddress(fi_addr_t fi_addr, uint32_t agent_idx) const {
-    if (fi_addr == FI_ADDR_NOTAVAIL || fi_addr == FI_ADDR_UNSPEC) {
+    if (fi_addr == FI_ADDR_NOTAVAIL) {
         NIXL_ERROR << "Refusing to map invalid fi_addr " << fi_addr << " on rail " << rail_id;
         return;
     }
