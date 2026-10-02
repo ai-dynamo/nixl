@@ -318,7 +318,8 @@ testRemoteWriteCompletionAttribution(nixlLibfabricRailManager &mgr) {
     seen.clear();
     pending_completions.push_back(make_write(44, FI_ADDR_NOTAVAIL));
     st = rail.progressCompletionQueue();
-    TEST_ASSERT(st == NIXL_ERR_NOT_FOUND, "unattributable write completion reports an error");
+    // Dropped locally; reporting it would fail whichever API call progressed the CQ.
+    TEST_ASSERT(st == NIXL_SUCCESS, "unattributable write completion is dropped, not an error");
     TEST_ASSERT(seen.empty(), "unattributable write completion is not credited to any peer");
 
     rail.setXferIdCallback(nullptr);
@@ -382,7 +383,7 @@ testRecvCompletionAttribution(nixlLibfabricRailManager &mgr) {
     pending_completions.push_back(
         make_recv(NIXL_LIBFABRIC_MSG_NOTIFICTION, FI_ADDR_NOTAVAIL, std::string(64, 'n')));
     st = rail.progressCompletionQueue();
-    TEST_ASSERT(st == NIXL_ERR_NOT_FOUND, "unattributable notification reports an error");
+    TEST_ASSERT(st == NIXL_SUCCESS, "unattributable notification is dropped, not an error");
     TEST_ASSERT(notif_senders.empty(), "unattributable notification is not delivered");
 
     rail.setNotificationCallback(nullptr);

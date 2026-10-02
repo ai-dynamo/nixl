@@ -1046,9 +1046,7 @@ nixlLibfabricRail::processRecvCompletion(struct fi_cq_data_entry *comp, fi_addr_
                    << " on rail " << rail_id << " to a peer: src_addr=" << src_addr
                    << " is not a known sender. Dropping the message; the initiator will not "
                       "see this transfer complete.";
-        // Deliberately not an early return: the tail of this function reposts the receive
-        // buffer, and skipping it would leak a control request out of the pool.
-        result = NIXL_ERR_NOT_FOUND;
+        // Handled by dropping it; not an error for whichever caller progressed the CQ.
     } else if (msg_type == NIXL_LIBFABRIC_MSG_NOTIFICTION) {
         NIXL_TRACE << "Processing notification request on rail " << rail_id
                    << " Xfer_id :" << xfer_id;
@@ -1135,7 +1133,8 @@ nixlLibfabricRail::processRemoteWriteCompletion(struct fi_cq_data_entry *comp,
             NIXL_ERROR << "Remote write completion on rail " << rail_id
                        << " from unknown src_addr=" << src_addr << " XFER_ID=" << xfer_id
                        << "; cannot credit it to a pending notification";
-            return NIXL_ERR_NOT_FOUND;
+            // Handled by dropping it; not an error for whichever caller progressed the CQ.
+            return NIXL_SUCCESS;
         }
 
         NIXL_TRACE << "Remote write completion on rail " << rail_id << " - received " << comp->len
