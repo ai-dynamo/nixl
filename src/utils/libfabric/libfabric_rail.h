@@ -584,7 +584,15 @@ private:
     struct fid_cq *cq; // from rail_cqs[rail_id]
     struct fid_av *av; // from rail_avs[rail_id]
 
-    // EP mutex to protect endpoint and CQ operations
+    // Serializes every libfabric call on this rail's endpoint, CQ and AV. The rail opens its
+    // domain with FI_THREAD_COMPLETION, under which the provider takes no locks for these
+    // objects and the application must serialize them. With the progress thread enabled the
+    // PT posts data transfers and reads the CQ while the caller's thread still posts control
+    // messages (postSend), so both paths must hold this lock.
+    //  - Hold it only around the fi_* call itself, never around an FI_EAGAIN retry loop:
+    //    the thread that reaps completions (and so clears EAGAIN) needs the lock too.
+    //  - Keep it innermost: never run completion handling or callbacks while holding it,
+    //    they take other locks and may re-enter (e.g. postRecv from a recv completion).
     mutable std::mutex ep_mutex_;
 
     // Lock-free MPSC ring: main thread pushes, PT pops and posts
