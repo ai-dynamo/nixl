@@ -86,6 +86,8 @@ nixlGdsIOBatch::addToBatch(CUfileHandle_t fh,
     return NIXL_SUCCESS;
 }
 
+// Teardown only. cuFile keeps running the I/O of a canceled batch, so a batch
+// is never canceled to be reused
 nixl_status_t
 nixlGdsIOBatch::cancelBatch() {
     if (!active) {
@@ -131,14 +133,13 @@ nixlGdsIOBatch::checkStatus() {
 
     const unsigned int entries_remaining = batch_size - entries_completed;
     unsigned int nr = entries_remaining;
-    // TODO: A follow-up should make status polling and active release
-    // nonblocking. min_nr intentionally remains equal to nr here to preserve
-    // the pre-consolidation GDS completion behavior; changing it needs separate
-    // API and performance validation.
+    // Poll without blocking: min_nr 0 with a zero timeout returns what is ready
+    struct timespec poll_timeout = {0, 0};
     const CUfileError_t errBatch =
-        cuFileBatchIOGetStatus(batch_handle, nr, &nr, io_batch_events.get(), nullptr);
+        cuFileBatchIOGetStatus(batch_handle, 0, &nr, io_batch_events.get(), &poll_timeout);
     if (errBatch.err != 0) {
         NIXL_ERROR << "Error in IO Batch Get Status";
+        poll_broken = true;
         current_status = NIXL_ERR_BACKEND;
         return current_status;
     }
@@ -148,39 +149,101 @@ nixlGdsIOBatch::checkStatus() {
         return current_status;
     }
 
-    const bool all_entries_reported = (nr == entries_remaining);
+    // Every entry that reported counts as done, failed or not, so a failed
+    // batch can still be seen to finish
+    nixl_status_t failure = NIXL_SUCCESS;
     for (unsigned int i = 0; i < nr; ++i) {
         const CUfileIOEvents_t &event = io_batch_events[i];
+        if (event.status == CUFILE_WAITING || event.status == CUFILE_PENDING) {
+            continue;
+        }
+        entries_completed++;
+        if (failure != NIXL_SUCCESS) {
+            continue;
+        }
+
         if (event.status != CUFILE_COMPLETE || event.cookie == nullptr) {
             NIXL_ERROR << "GDS batch entry failed with status " << event.status;
-            if (all_entries_reported) {
-                active = false;
-            }
-            current_status = NIXL_ERR_BACKEND;
-            return current_status;
+            failure = NIXL_ERR_BACKEND;
+            continue;
         }
 
         const auto *params = static_cast<const CUfileIOParams_t *>(event.cookie);
         if (event.ret != params->u.batch.size) {
             NIXL_ERROR << "GDS batch entry completed " << event.ret << " of "
                        << params->u.batch.size << " bytes";
-            if (all_entries_reported) {
-                active = false;
-            }
-            current_status = NIXL_ERR_BACKEND;
-            return current_status;
+            failure = NIXL_ERR_BACKEND;
         }
     }
 
-    entries_completed += nr;
     if (entries_completed == batch_size) {
         active = false;
-        current_status = NIXL_SUCCESS;
+    }
+    if (failure != NIXL_SUCCESS) {
+        current_status = failure;
     } else {
-        current_status = NIXL_IN_PROG;
+        current_status = active ? NIXL_IN_PROG : NIXL_SUCCESS;
     }
 
     return current_status;
+}
+
+// Count the entries that have reported without acting on the results. Once
+// every submitted entry has reported, cuFile is done with the batch
+bool
+nixlGdsIOBatch::drain() {
+    if (!active) {
+        return true;
+    }
+    if (poll_broken) {
+        return false;
+    }
+
+    unsigned int nr = batch_size - entries_completed;
+    struct timespec poll_timeout = {0, 0};
+    const CUfileError_t errBatch =
+        cuFileBatchIOGetStatus(batch_handle, 0, &nr, io_batch_events.get(), &poll_timeout);
+    if (errBatch.err != 0) {
+        NIXL_ERROR << "Error in IO Batch Get Status";
+        poll_broken = true;
+        return false;
+    }
+
+    for (unsigned int i = 0; i < nr; ++i) {
+        const CUfileIOEvents_t &event = io_batch_events[i];
+        if (event.status != CUFILE_WAITING && event.status != CUFILE_PENDING) {
+            entries_completed++;
+        }
+    }
+    if (entries_completed >= batch_size) {
+        active = false;
+    }
+    return !active;
+}
+
+// Replace the cuFile context of a batch whose poll failed. Destroying the
+// context is what makes the batch reusable: nothing can still complete into it
+bool
+nixlGdsIOBatch::recycle() {
+    cuFileBatchIODestroy(batch_handle);
+    batch_handle = nullptr;
+    active = false;
+    poll_broken = false;
+
+    const CUfileError_t err = cuFileBatchIOSetUp(&batch_handle, max_reqs);
+    if (err.err != 0) {
+        NIXL_ERROR << "Error in setting up Batch";
+        init_err = err;
+        return false;
+    }
+    reset();
+    return true;
+}
+
+// Test hook: destroy the context under a submitted batch so the next poll fails
+void
+nixlGdsIOBatch::breakContextForTest() {
+    cuFileBatchIODestroy(batch_handle);
 }
 
 void
@@ -191,6 +254,7 @@ nixlGdsIOBatch::reset() {
     }
     entries_completed = 0;
     batch_size = 0;
+    poll_broken = false;
     current_status = NIXL_ERR_NOT_POSTED;
 }
 
@@ -209,6 +273,8 @@ nixlGdsBatchEngine::nixlGdsBatchEngine(const nixlBackendInitParams *init_params)
             nixl::getBackendParamDefaulted(custom_params, "batch_limit", DEFAULT_BATCH_LIMIT);
         max_request_size_ = nixl::getBackendParamDefaulted(
             custom_params, "max_request_size", DEFAULT_MAX_REQUEST_SIZE);
+        break_first_batch_poll_ =
+            nixl::getBackendParamDefaulted(custom_params, "test_break_first_batch_poll", 0u) != 0;
 
         if (batch_pool_size_ == 0 || batch_limit_ == 0 || max_request_size_ == 0) {
             throw std::invalid_argument(
@@ -352,31 +418,13 @@ nixlGdsBatchEngine::createAndSubmitBatch(const std::vector<gdsXferReq> &requests
         return NIXL_ERR_BACKEND;
     }
 
-    batch_out = batch;
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
-nixlGdsBatchEngine::cancelAndReclaimBatches(std::vector<nixlGdsIOBatch *> &batch_list) const {
-    nixl_status_t status = NIXL_SUCCESS;
-    auto keep = batch_list.begin();
-
-    for (nixlGdsIOBatch *batch : batch_list) {
-        if (batch == nullptr) {
-            continue;
-        }
-        if (batch->cancelBatch() == NIXL_SUCCESS) {
-            // TODO: Establish and test cancel-to-resubmit semantics for every
-            // cuFile I/O path before immediately reusing a batch handle.
-            returnBatchToPool(batch);
-        } else {
-            *keep++ = batch;
-            status = NIXL_ERR_BACKEND;
-        }
+    if (break_first_batch_poll_) {
+        break_first_batch_poll_ = false;
+        batch->breakContextForTest();
     }
 
-    batch_list.erase(keep, batch_list.end());
-    return status;
+    batch_out = batch;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -412,11 +460,11 @@ nixlGdsBatchEngine::postXfer(const nixl_xfer_op_t &operation,
         const nixl_status_t status = createAndSubmitBatch(
             request_list, current_req, batch_size, gds_handle->batch_io_list[batch_index]);
         if (status != NIXL_SUCCESS) {
+            // The batches already submitted stay in the list and are polled
+            // until cuFile is done with them, then the request reports the failure
             gds_handle->overall_status = status;
-            if (cancelAndReclaimBatches(gds_handle->batch_io_list) != NIXL_SUCCESS) {
-                return NIXL_ERR_BACKEND;
-            }
-            return status;
+            gds_handle->batch_io_list.resize(batch_index);
+            return batch_index == 0 ? status : NIXL_IN_PROG;
         }
         current_req += batch_size;
     }
@@ -427,46 +475,59 @@ nixlGdsBatchEngine::postXfer(const nixl_xfer_op_t &operation,
 nixl_status_t
 nixlGdsBatchEngine::checkXfer(nixlBackendReqH *handle) const {
     auto *gds_handle = static_cast<nixlGdsBatchReqH *>(handle);
+    auto &batches = gds_handle->batch_io_list;
 
-    if (gds_handle->batch_io_list.empty()) {
-        return gds_handle->overall_status;
-    }
-
-    auto current = gds_handle->batch_io_list.begin();
-    while (current != gds_handle->batch_io_list.end()) {
-        nixlGdsIOBatch *batch = *current;
-        const nixl_status_t status = batch->checkStatus();
-
-        if (status == NIXL_IN_PROG) {
-            ++current;
-            continue;
+    // Batches still in flight are packed to the front, so the list shrinks
+    // with one resize per call
+    size_t in_flight = 0;
+    for (nixlGdsIOBatch *batch : batches) {
+        bool done;
+        if (gds_handle->overall_status != NIXL_SUCCESS) {
+            // The request has already failed, wait for cuFile to finish with the batch
+            done = batch->drain();
+        } else {
+            const nixl_status_t status = batch->checkStatus();
+            if (status < 0) {
+                gds_handle->overall_status = status;
+                done = batch->drain();
+            } else {
+                done = (status == NIXL_SUCCESS);
+            }
         }
-        if (status == NIXL_SUCCESS) {
+
+        if (done) {
             returnBatchToPool(batch);
-            current = gds_handle->batch_io_list.erase(current);
-            continue;
+        } else if (batch->pollBroken()) {
+            // The poll itself failed, so waiting for completions cannot end.
+            // Give the batch a fresh context and return it, or give it up
+            if (batch->recycle()) {
+                returnBatchToPool(batch);
+            } else {
+                NIXL_ERROR << "GDS batch context could not be recreated, the pool loses one";
+            }
+            if (gds_handle->overall_status == NIXL_SUCCESS) {
+                gds_handle->overall_status = NIXL_ERR_BACKEND;
+            }
+        } else {
+            batches[in_flight++] = batch;
         }
-        if (gds_handle->overall_status == NIXL_SUCCESS) {
-            gds_handle->overall_status = status;
-        }
-        ++current;
     }
+    batches.resize(in_flight);
 
-    if (gds_handle->overall_status != NIXL_SUCCESS) {
-        if (cancelAndReclaimBatches(gds_handle->batch_io_list) != NIXL_SUCCESS) {
-            gds_handle->overall_status = NIXL_ERR_BACKEND;
-        }
-        return gds_handle->overall_status;
+    if (!batches.empty()) {
+        return NIXL_IN_PROG;
     }
-
-    return gds_handle->batch_io_list.empty() ? NIXL_SUCCESS : NIXL_IN_PROG;
+    return gds_handle->overall_status;
 }
 
 nixl_status_t
 nixlGdsBatchEngine::releaseReqH(nixlBackendReqH *handle) const {
     auto *gds_handle = static_cast<nixlGdsBatchReqH *>(handle);
-    // Preserve the pre-consolidation abort behavior: checked-out batches are
-    // not returned to the pool for reuse. They remain owned by batch_storage_.
+    // cuFile keeps the batches until every entry has reported, so a request
+    // with batches in flight cannot be released yet. The caller keeps polling
+    if (!gds_handle->batch_io_list.empty()) {
+        return NIXL_ERR_NOT_ALLOWED;
+    }
     delete gds_handle;
     return NIXL_SUCCESS;
 }

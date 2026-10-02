@@ -98,6 +98,8 @@ void print_usage(const char* program_name) {
         << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
         << "  -P, --no-path-mode-smoke Skip the path-mode smoke (enabled by default)\n"
         << "  -S, --path-mode-only    Run only the path-mode smoke\n"
+        << "  -F, --no-failure-checks Skip the poll failure recovery check (batch mode only,\n"
+        << "                          enabled by default)\n"
         << "  -h, --help              Show this help message\n"
         << "\nExample:\n"
         << "  " << program_name << " -d -n 100 -s 2M -p 16 -b 256 -m 32M -t 5 -D /path/to/dir\n";
@@ -226,6 +228,122 @@ runPathModeSmoke(const std::string &backend_name,
         agent_name.c_str(), backend_name.c_str(), file_path.c_str(), 4096, params);
 }
 
+// Run one transfer with a backend test hook set, on a pool of one, and check
+// what the recovery path must guarantee: the request reaches a terminal
+// status, releases, and the single pool slot serves the next transfer.
+static int
+runRecoveryCase(const char *name, const char *hook, const std::string &dir) {
+    const size_t size = 512 * 1024;
+    const std::string path = dir + "/nixl_gds_" + name + ".bin";
+    int rc = 1;
+
+    std::cout << "\n============================================================" << std::endl;
+    std::cout << name << std::endl;
+    std::cout << "============================================================" << std::endl;
+
+    nixlAgentConfig cfg(false);
+    nixlAgent agent(name, cfg);
+    nixl_b_params_t params;
+    params["batch_pool_size"] = "1";
+    params[hook] = "1";
+    nixlBackendH *gds = nullptr;
+    if (agent.createBackend("GDS", params, gds) != NIXL_SUCCESS || !gds) {
+        std::cerr << "createBackend failed" << std::endl;
+        return 1;
+    }
+
+    unlink(path.c_str());
+    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_DIRECT, 0644);
+    if (fd < 0 || ftruncate(fd, size) != 0) {
+        std::cerr << "cannot create " << path << ": " << strerror(errno) << std::endl;
+        return 1;
+    }
+
+    void *gpu = nullptr;
+    if (cudaMalloc(&gpu, size) != cudaSuccess) {
+        std::cerr << "cudaMalloc failed" << std::endl;
+        close(fd);
+        return 1;
+    }
+    cudaMemset(gpu, 0x5a, size);
+
+    nixl_reg_dlist_t vram_reg(VRAM_SEG), file_reg(FILE_SEG);
+    vram_reg.addDesc(nixlBlobDesc((uintptr_t)gpu, size, 0));
+    file_reg.addDesc(nixlBlobDesc(0, size, fd));
+    if (agent.registerMem(vram_reg) != NIXL_SUCCESS ||
+        agent.registerMem(file_reg) != NIXL_SUCCESS) {
+        std::cerr << "registerMem failed" << std::endl;
+        goto out;
+    }
+
+    {
+        nixl_xfer_dlist_t vram = vram_reg.trim(), file = file_reg.trim();
+
+        // 1. the hooked transfer must still reach a terminal status
+        nixlXferReqH *req = nullptr;
+        if (agent.createXferReq(NIXL_READ, vram, file, name, req) != NIXL_SUCCESS) {
+            std::cerr << "createXferReq failed" << std::endl;
+            goto out_dereg;
+        }
+        nixl_status_t st = agent.postXferReq(req);
+        int polls = 0;
+        while (st == NIXL_IN_PROG && polls < 100000) {
+            st = agent.getXferStatus(req);
+            polls++;
+        }
+        if (st == NIXL_IN_PROG) {
+            std::cerr << "FAIL: request stayed NIXL_IN_PROG after " << polls << " polls"
+                      << std::endl;
+            goto out_dereg;
+        }
+        if (st >= 0) {
+            std::cerr << "FAIL: request reported " << st << ", expected an error" << std::endl;
+            goto out_dereg;
+        }
+        std::cout << "terminal status " << st << " after " << polls << " polls" << std::endl;
+
+        // 2. the request must release
+        if (agent.releaseXferReq(req) != NIXL_SUCCESS) {
+            std::cerr << "FAIL: releaseXferReq refused a finished request" << std::endl;
+            goto out_dereg;
+        }
+        std::cout << "release ok" << std::endl;
+
+        // 3. the pool has one batch, so this only works if it came back
+        req = nullptr;
+        if (agent.createXferReq(NIXL_WRITE, vram, file, name, req) != NIXL_SUCCESS) {
+            std::cerr << "FAIL: createXferReq failed after recovery" << std::endl;
+            goto out_dereg;
+        }
+        st = agent.postXferReq(req);
+        while (st == NIXL_IN_PROG) {
+            st = agent.getXferStatus(req);
+        }
+        agent.releaseXferReq(req);
+        if (st != NIXL_SUCCESS) {
+            std::cerr << "FAIL: transfer after recovery returned " << st << std::endl;
+            goto out_dereg;
+        }
+        std::cout << "pool reuse ok" << std::endl;
+        rc = 0;
+    }
+
+out_dereg:
+    agent.deregisterMem(file_reg);
+    agent.deregisterMem(vram_reg);
+out:
+    cudaFree(gpu);
+    close(fd);
+    unlink(path.c_str());
+    return rc;
+}
+
+// cuFileBatchIOGetStatus fails on the first batch
+static int
+runPollFailureRecovery(const std::string &dir) {
+    return runRecoveryCase("GDSPollFailure", "test_break_first_batch_poll", dir);
+}
+
 int main(int argc, char *argv[])
 {
     nixl_status_t               ret = NIXL_SUCCESS;
@@ -257,6 +375,7 @@ int main(int argc, char *argv[])
     unsigned int iterations = DEFAULT_ITERATIONS;
     bool run_path_mode_smoke = true;
     bool path_mode_only = false;
+    bool run_failure_checks = true;
 
     // Parse command line options
     static struct option long_options[] = {{"dram", no_argument, 0, 'd'},
@@ -276,10 +395,11 @@ int main(int argc, char *argv[])
                                            {"direct", no_argument, 0, 'D'},
                                            {"no-path-mode-smoke", no_argument, 0, 'P'},
                                            {"path-mode-only", no_argument, 0, 'S'},
+                                           {"no-failure-checks", no_argument, 0, 'F'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwB:M:p:b:m:G:N:t:DPSh", long_options, NULL)) !=
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwB:M:p:b:m:G:N:t:DPSFh", long_options, NULL)) !=
            -1) {
         switch (opt) {
             case 'd':
@@ -370,6 +490,9 @@ int main(int argc, char *argv[])
             case 'S':
                 path_mode_only = true;
                 break;
+            case 'F':
+                run_failure_checks = false;
+                break;
             case 'h':
                 print_usage(argv[0]);
                 return 0;
@@ -419,6 +542,12 @@ int main(int argc, char *argv[])
         return 1;
     }
     dir_path = argv[optind];
+
+    if (run_failure_checks && !use_mt_engine) {
+        if (int rc = runPollFailureRecovery(dir_path); rc != 0) {
+            return rc;
+        }
+    }
 
     // If neither is specified, default to VRAM
     if (!use_dram && !use_vram) {
