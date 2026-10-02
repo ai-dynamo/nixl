@@ -128,35 +128,23 @@ static inline std::string nixl_strerror(int err) {
     return std::error_code(err, std::generic_category()).message();
 }
 
-/*-----------------------------------------------------------------------------*
- * Optional Per-Process Log File
- *-----------------------------------------------------------------------------*/
-
 namespace nixl {
 
 /**
- * @brief Mirrors records passing NIXL_LOG_LEVEL into the file named by
- *        NIXL_LOG_FILE, in addition to stderr. Unset or empty registers no
- *        sink. The file is appended to, not truncated. Each process should use
- *        its own path (see the per-process path escapes).
- *
- * Called during library initialization; exposed for tests. To write to a
- * different path, call shutdownLogFile() first and then initLogFile() again:
- * once a sink is registered this returns early, without reading NIXL_LOG_FILE.
- *
- * @return true if a sink is registered on return, including when one already
- *         was. A setup failure is logged and returns false, unless
- *         NIXL_LOG_FILE_ERROR_IS_FATAL is set, which makes the failure fatal.
+ * @brief Mirrors records into NIXL_LOG_FILE as well as stderr. Unset or empty
+ *        registers no sink, and the file is appended to. Call shutdownLogFile()
+ *        before changing the path. A setup failure returns false unless
+ *        NIXL_LOG_FILE_ERROR_IS_FATAL is set.
+ * @return true when a sink is registered.
  */
 bool
 initLogFile();
 
 /**
- * @brief Unregisters and destroys the NIXL_LOG_FILE sink; idempotent.
+ * @brief Unregisters and destroys the NIXL_LOG_FILE sink. Idempotent.
  *
  * Runs at library unload, which on glibc is after static destructors, so late
- * records still reach the file. That ordering is loader behaviour rather than a
- * guarantee; nixlLogFileTest.RecordsFromStaticDestructorsReachTheFile covers it.
+ * records still reach the file. That ordering is loader behaviour.
  */
 void
 shutdownLogFile();
