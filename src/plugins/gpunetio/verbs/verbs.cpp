@@ -609,25 +609,33 @@ mr::mr(doca_gpu *gpu_dev_, void *addr_, uint32_t elem_num_, size_t elem_size_, s
     ibmr = nullptr;
 
     /* Try to map GPU memory with dmabuf.
-     * Input size and address should be aliegned to host page size.
+     * The dmabuf range must be aligned to host page size, so export the enclosing
+     * page-aligned range and register the requested region at an offset into it.
      */
-    if ((tot_size % host_page_size) == 0 &&
-        ((reinterpret_cast<uintptr_t>(addr) % host_page_size) == 0)) {
-        status = doca_gpu_dmabuf_fd(gpu_dev, addr, tot_size, &dmabuf_fd);
-        if (status == DOCA_SUCCESS) {
-            ibmr = ibv_reg_dmabuf_mr(pd,
-                                     0,
-                                     tot_size,
-                                     (uint64_t)addr,
-                                     dmabuf_fd,
-                                     IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
-                                         IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+    uintptr_t start = reinterpret_cast<uintptr_t>(addr);
+    uintptr_t aligned_start = start & ~(host_page_size - 1);
+    uintptr_t aligned_end = (start + tot_size + host_page_size - 1) & ~(host_page_size - 1);
+    status = doca_gpu_dmabuf_fd(gpu_dev,
+                                reinterpret_cast<void *>(aligned_start),
+                                aligned_end - aligned_start,
+                                &dmabuf_fd);
+    if (status == DOCA_SUCCESS) {
+        ibmr = ibv_reg_dmabuf_mr(pd,
+                                 start - aligned_start,
+                                 tot_size,
+                                 (uint64_t)addr,
+                                 dmabuf_fd,
+                                 IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
+                                     IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+        if (ibmr == nullptr) {
+            close(dmabuf_fd);
+            dmabuf_fd = -1;
         }
     }
 
     /* Possible failure due to:
      * - GPU not supporting dmabuf mapping
-     * - memory address or size not aligned to host page size
+     * - page-aligned range not fully backed by the GPU allocation
      * - linux kernel doesn't have the dmabuf capability
      * Fallback mechanism using legacy mode with nvidia-peermem module and ibv_reg_mr.
      */
@@ -660,6 +668,9 @@ mr::~mr() {
         if (ret != 0) {
             NIXL_ERROR << "ibv_dereg_mr failed with error " << ret;
         }
+    }
+    if (dmabuf_fd >= 0) {
+        close(dmabuf_fd);
     }
 }
 

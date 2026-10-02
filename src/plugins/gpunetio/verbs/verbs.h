@@ -186,7 +186,7 @@ private:
     uint32_t lkey;
     uint32_t rkey;
     bool remote;
-    int dmabuf_fd;
+    int dmabuf_fd = -1;
 };
 
 } // namespace nixl::doca::verbs
