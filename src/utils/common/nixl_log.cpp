@@ -66,8 +66,9 @@ constexpr const char *log_file_size_env_var = "NIXL_LOG_FILE_SIZE";
 // report the failure and carry on without the file.
 constexpr const char *log_file_error_is_fatal_env_var = "NIXL_LOG_FILE_ERROR_IS_FATAL";
 
-// Smaller limits are unlikely to hold even one useful diagnostic record.
-constexpr std::uintmax_t min_log_file_size = 4096;
+// A fatal stack trace is the largest record this sink writes. Abseil keeps up
+// to 64 frames; 16 KiB holds a typical symbolized trace.
+constexpr std::uintmax_t min_log_file_size = 16 * 1024;
 
 // Appended to the log file's name to hold the records rotated out of it.
 constexpr const char *rotated_suffix = ".1";
@@ -236,7 +237,9 @@ public:
         }
 
         if (limit_ != 0) {
+            // Report the first oversized record, then keep accepting others.
             if (payload.size() > limit_) {
+                reportOversizedRecord();
                 return;
             }
 
@@ -309,6 +312,22 @@ private:
                      detail.c_str());
     }
 
+    /** @brief Reports the first oversized record. Called with mutex_ held. */
+    void
+    reportOversizedRecord() {
+        if (reported_oversize_) {
+            return;
+        }
+        reported_oversize_ = true;
+
+        std::fprintf(stderr,
+                     "NIXL: a record exceeded %s (%ju bytes) for '%s'; "
+                     "omitting records larger than the limit\n",
+                     log_file_size_env_var,
+                     limit_,
+                     path_.c_str());
+    }
+
     /**
      * @brief Reports a failed rotation and stops using the file, leaving it as
      *        it is: those records are all there will be. Reports once, since
@@ -334,6 +353,7 @@ private:
     std::uintmax_t limit_ = 0;
     std::uintmax_t written_ = 0;
     bool failed_ = false;
+    bool reported_oversize_ = false;
 };
 
 struct logFileState {

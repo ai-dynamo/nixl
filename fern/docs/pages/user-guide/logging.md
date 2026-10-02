@@ -56,7 +56,7 @@ Paths containing `%p` and `%t` create a file for every process and run. Manage r
 
 ## Bounding the size
 
-Without a limit the log file grows indefinitely. `NIXL_LOG_FILE_SIZE` caps it at 4 KiB or greater, in bytes, optionally suffixed with `K`, `M` or `G`:
+Without a limit the log file grows indefinitely. `NIXL_LOG_FILE_SIZE` caps it at 16 KiB or greater, in bytes, optionally suffixed with `K`, `M` or `G`. The floor is 16 KiB so a typical fatal stack trace fits in the file:
 
 ```bash
 export NIXL_LOG_FILE=/var/log/nixl/agent.log
@@ -67,7 +67,7 @@ On reaching the limit, the file is renamed with a `.1` suffix, replacing the pre
 
 Existing files are not truncated when a limit is enabled or reduced. An oversized active file or `.1` backup can exceed the total bound until subsequent rotations replace it. Use a previously unused path if the bound must hold immediately.
 
-A record larger than the entire limit cannot fit in either generation. It is still written to stderr, but is omitted from the log file.
+A record larger than the entire limit cannot fit in either generation. It is still written to stderr, but is omitted from the log file. The first such omission is reported once on stderr; later records that fit continue to be written.
 
 Without `NIXL_LOG_FILE_SIZE`, manage file growth externally or give each run a fresh path.
 
@@ -80,7 +80,8 @@ File logging failures do not terminate the process by default:
 | The file cannot be opened | Reported at error severity; file logging is disabled. |
 | A later write fails | Reported once on stderr; further file records are dropped. |
 | A rotation cannot be done | Reported on stderr; file logging stops. |
-| `NIXL_LOG_FILE_SIZE` is below 4 KiB or cannot be parsed | Reported at error severity; file logging is disabled. |
+| A record is larger than the limit | Reported once on stderr; that record is omitted. Later records that fit are still written. |
+| `NIXL_LOG_FILE_SIZE` is below 16 KiB or cannot be parsed | Reported at error severity; file logging is disabled. |
 
 Set `NIXL_LOG_FILE_ERROR_IS_FATAL` to make a setup failure fatal instead: if the log file cannot be initialized -- an unopenable path or an invalid setting -- the process terminates with the report rather than running without its log. Failures after setup, such as a failed write or rotation, remain non-fatal.
 

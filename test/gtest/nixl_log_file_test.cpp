@@ -829,15 +829,15 @@ TEST_F(nixlLogFileTest, RejectsUnknownAndIncompleteEscapes) {
  *        generation is kept, which bounds the total.
  */
 TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
-    constexpr std::uintmax_t limit = 4096;
+    constexpr std::uintmax_t limit = 16 * 1024;
     const std::filesystem::path rotated = path_.string() + ".1";
     std::filesystem::remove(rotated);
 
     env_.addVar("NIXL_LOG_FILE", path_.string());
-    env_.addVar("NIXL_LOG_FILE_SIZE", "4K");
+    env_.addVar("NIXL_LOG_FILE_SIZE", "16K");
     ASSERT_TRUE(nixl::initLogFile());
 
-    for (unsigned i = 0; i < 200; ++i) {
+    for (unsigned i = 0; i < 400; ++i) {
         NIXL_INFO << "rotation record " << i;
     }
 
@@ -845,12 +845,12 @@ TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
     EXPECT_LE(std::filesystem::file_size(path_), limit) << "the live file outgrew the limit";
 
     // Newest in the live file, earlier ones in the rotated file.
-    EXPECT_THAT(readLogFile(), HasSubstr("rotation record 199"));
+    EXPECT_THAT(readLogFile(), HasSubstr("rotation record 399"));
 
     std::ifstream previous(rotated);
     std::ostringstream contents;
     contents << previous.rdbuf();
-    EXPECT_THAT(contents.str(), testing::Not(HasSubstr("rotation record 199")));
+    EXPECT_THAT(contents.str(), testing::Not(HasSubstr("rotation record 399")));
 
     // One generation only, so the total on disk stays bounded.
     EXPECT_FALSE(std::filesystem::exists(path_.string() + ".2"));
@@ -860,7 +860,7 @@ TEST_F(nixlLogFileTest, RotatesAtTheLimitAndKeepsTheNewestRecords) {
 
 /** @brief Existing oversized files survive until bounded generations replace them. */
 TEST_F(nixlLogFileTest, PreservesExistingOversizedFilesUntilRotationReplacesThem) {
-    constexpr std::uintmax_t limit = 4096;
+    constexpr std::uintmax_t limit = 16 * 1024;
     const std::filesystem::path rotated = path_.string() + ".1";
 
     for (const bool oversized_active : {false, true}) {
@@ -871,7 +871,7 @@ TEST_F(nixlLogFileTest, PreservesExistingOversizedFilesUntilRotationReplacesThem
         std::ofstream(rotated) << initial_backup;
 
         env_.addVar("NIXL_LOG_FILE", path_.string());
-        env_.addVar("NIXL_LOG_FILE_SIZE", "4K");
+        env_.addVar("NIXL_LOG_FILE_SIZE", "16K");
         ASSERT_TRUE(nixl::initLogFile());
         EXPECT_EQ(readLogFile(), initial_active);
         EXPECT_EQ(readFile(rotated), initial_backup);
@@ -880,14 +880,14 @@ TEST_F(nixlLogFileTest, PreservesExistingOversizedFilesUntilRotationReplacesThem
         EXPECT_THAT(readLogFile(), HasSubstr("first record under the new limit"));
         EXPECT_EQ(readFile(rotated), oversized_active ? initial_active : initial_backup);
 
-        for (unsigned i = 0; i < 200; ++i) {
+        for (unsigned i = 0; i < 400; ++i) {
             NIXL_INFO << "bounded replacement record " << i;
         }
         nixl::shutdownLogFile();
 
         EXPECT_LE(std::filesystem::file_size(path_), limit);
         EXPECT_LE(std::filesystem::file_size(rotated), limit);
-        EXPECT_THAT(readLogFile(), HasSubstr("bounded replacement record 199"));
+        EXPECT_THAT(readLogFile(), HasSubstr("bounded replacement record 399"));
 
         env_.popVar();
         env_.popVar();
@@ -925,19 +925,19 @@ TEST_F(nixlLogFileTest, KeepsRelativePathAcrossWorkingDirectoryChanges) {
         scopedCurrentPath current_path;
         std::filesystem::current_path(directory_a);
         env_.addVar("NIXL_LOG_FILE", std::string(relative_name));
-        env_.addVar("NIXL_LOG_FILE_SIZE", "4K");
+        env_.addVar("NIXL_LOG_FILE_SIZE", "16K");
         ASSERT_TRUE(nixl::initLogFile());
         NIXL_INFO << "record opened in directory A";
 
         std::filesystem::current_path(directory_b);
-        for (unsigned i = 0; i < 200; ++i) {
+        for (unsigned i = 0; i < 400; ++i) {
             NIXL_INFO << "relative-path rotation record " << i;
         }
         nixl::shutdownLogFile();
         ASSERT_TRUE(current_path.restore()) << "could not restore the working directory";
 
         ASSERT_TRUE(std::filesystem::exists(rotated_a)) << "rotation did not stay in directory A";
-        EXPECT_THAT(readFile(log_a), HasSubstr("relative-path rotation record 199"));
+        EXPECT_THAT(readFile(log_a), HasSubstr("relative-path rotation record 399"));
 
         if (populate_destination) {
             EXPECT_EQ(readFile(log_b), live_sentinel);
@@ -954,9 +954,9 @@ TEST_F(nixlLogFileTest, KeepsRelativePathAcrossWorkingDirectoryChanges) {
     }
 }
 
-/** @brief A record too large for an empty file remains on stderr but is omitted here. */
-TEST_F(nixlLogFileTest, DropsRecordLargerThanLimit) {
-    constexpr std::uintmax_t limit = 4096;
+/** @brief A large record fits at the minimum limit. */
+TEST_F(nixlLogFileTest, KeepsALargeRecordAtTheMinimumLimit) {
+    constexpr std::uintmax_t limit = 16 * 1024;
     const std::filesystem::path rotated = path_.string() + ".1";
     std::filesystem::remove(rotated);
 
@@ -964,11 +964,19 @@ TEST_F(nixlLogFileTest, DropsRecordLargerThanLimit) {
     env_.addVar("NIXL_LOG_FILE_SIZE", std::to_string(limit));
     ASSERT_TRUE(nixl::initLogFile());
 
-    const std::string payload(5000, 'x');
-    NIXL_INFO << "oversized record " << payload;
+    const std::string payload(12000, 'x');
+    testing::internal::CaptureStderr();
+    NIXL_INFO << "large record " << payload;
+    NIXL_INFO << "record that fits";
+    const std::string captured = testing::internal::GetCapturedStderr();
 
-    EXPECT_EQ(std::filesystem::file_size(path_), 0u);
-    EXPECT_THAT(readLogFile(), testing::Not(HasSubstr(payload)));
+    EXPECT_THAT(captured, testing::Not(HasSubstr("omitting records larger than the limit")))
+        << "stderr was:\n"
+        << captured;
+
+    const std::string contents = readLogFile();
+    EXPECT_THAT(contents, HasSubstr(payload));
+    EXPECT_THAT(contents, HasSubstr("record that fits"));
     EXPECT_FALSE(std::filesystem::exists(rotated));
 
     std::filesystem::remove(rotated);
@@ -983,7 +991,7 @@ TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
     if (::geteuid() == 0) {
         GTEST_SKIP() << "root bypasses the directory permission this relies on";
     }
-    constexpr std::uintmax_t limit = 4096;
+    constexpr std::uintmax_t limit = 16 * 1024;
 
     // Writable first so the file can be created, then searchable but not
     // writable: rename needs the directory, writing only needs the file.
@@ -993,7 +1001,7 @@ TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
     const std::filesystem::path log = directory / "log";
 
     env_.addVar("NIXL_LOG_FILE", log.string());
-    env_.addVar("NIXL_LOG_FILE_SIZE", "4K");
+    env_.addVar("NIXL_LOG_FILE_SIZE", "16K");
     ASSERT_TRUE(nixl::initLogFile());
     NIXL_INFO << "record that creates the file";
 
@@ -1001,7 +1009,7 @@ TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
         directory, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
 
     testing::internal::CaptureStderr();
-    for (unsigned i = 0; i < 200; ++i) {
+    for (unsigned i = 0; i < 400; ++i) {
         NIXL_INFO << "unrenamable record " << i;
     }
     const std::string captured = testing::internal::GetCapturedStderr();
@@ -1022,7 +1030,7 @@ TEST_F(nixlLogFileTest, StopsLoggingWhenItCannotRotate) {
     std::ostringstream contents;
     contents << kept.rdbuf();
     EXPECT_THAT(contents.str(), HasSubstr("unrenamable record 0"));
-    EXPECT_THAT(contents.str(), testing::Not(HasSubstr("unrenamable record 199")));
+    EXPECT_THAT(contents.str(), testing::Not(HasSubstr("unrenamable record 399")));
 
     nixl::shutdownLogFile();
     std::filesystem::permissions(directory, std::filesystem::perms::owner_all);
@@ -1068,14 +1076,14 @@ TEST_F(nixlLogFileTest, RejectsAnUnparsableSizeAndSaysSo) {
     }
 }
 
-/** @brief A parseable limit below 4096 bytes is rejected with a specific error. */
+/** @brief A parseable limit below 16384 bytes is rejected with a specific error. */
 TEST_F(nixlLogFileTest, RejectsSizeBelowMinimumAndSaysSo) {
-    const std::string report = "value is below the minimum of 4096 bytes";
+    const std::string report = "value is below the minimum of 16384 bytes";
     const gtest::LogIgnoreGuard lig(report);
 
     env_.addVar("NIXL_LOG_FILE", path_.string());
 
-    for (const std::string bad : {"0", "4095", "3K"}) {
+    for (const std::string bad : {"0", "16383", "4K", "15K"}) {
         countingSink watcher;
 
         env_.addVar("NIXL_LOG_FILE_SIZE", bad);
