@@ -65,18 +65,6 @@ int main(int argc, char** argv) {
     char *plugindir = NULL;
     std::set<nixl_backend_t> staticPlugs;
 
-    std::set<std::string> plugins = {"UCX",
-                                     "GDS",
-                                     "POSIX",
-                                     "MOCK_BACKEND",
-                                     "GPUNETIO",
-                                     "OBJ",
-                                     "GDS_MT",
-                                     "LIBFABRIC",
-                                     "GUSLI",
-                                     "UCCL",
-                                     "AZURE_BLOB"};
-
     if (argc > 1 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
         print_usage(argv[0]);
         return 0;
@@ -94,6 +82,11 @@ int main(int argc, char** argv) {
         plugin_manager.addPluginDirectory(plugindir);
     }
 
+    std::set<std::string> plugins;
+    for (const auto &plugin : plugin_manager.getAvailBackendPluginNames()) {
+        plugins.insert(plugin);
+    }
+
     // Print list of static plugins available
     std::cout << "Available static plugins:" << std::endl;
     for (const auto &plugin : plugin_manager.getBackendStaticPlugins()) {
@@ -107,7 +100,9 @@ int main(int argc, char** argv) {
     }
 
     for (const auto& plugin : plugins) {
-        verify_plugin(plugin, plugin_manager);
+        if (verify_plugin(plugin, plugin_manager) != 0) {
+            return -1;
+        }
     }
 
     // List all loaded plugins

@@ -102,6 +102,7 @@
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
+#define XFERBENCH_BACKEND_DAOS "DAOS"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -227,6 +228,20 @@ public:
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
     static std::string infinia_config_file;
+    static std::string daos_pool;
+    static std::string daos_container;
+    static std::string daos_system;
+    static std::string daos_mount_path;
+    static std::string daos_object_class;
+    static std::string daos_object_class_hint;
+    static std::string daos_progress_cpu_affinity;
+    static uint64_t daos_chunk_size;
+    static uint64_t daos_oclass_id;
+    static uint64_t daos_num_event_queues;
+    static uint64_t daos_max_inflight_per_queue;
+    static uint64_t daos_submission_batch_size;
+    static uint64_t daos_completion_batch_size;
+    static uint64_t daos_progress_poll_timeout_us;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
@@ -413,6 +428,12 @@ public:
     getObjS3(const std::string &name);
     static bool
     rmObjS3(const std::string &name);
+    static bool
+    putObjDaos(size_t buffer_size, const std::string &name);
+    static bool
+    getObjDaos(const std::string &name);
+    static bool
+    rmObjDaos(const std::string &name);
 
     static bool
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);

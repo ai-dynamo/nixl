@@ -29,6 +29,36 @@ if enabled_plugins.get('OBJ')
     subdir('obj')
 endif
 
+if 'DAOS' in static_plugins and not enabled_plugins.get('DAOS')
+    error('DAOS listed in static_plugins must also be enabled')
+endif
+
+if enabled_plugins.get('DAOS')
+    daos_dfs_dep = dependency('dfs', required: false)
+    daos_client_dep = dependency('daos', required: false)
+    if not daos_dfs_dep.found()
+        daos_dfs_lib = cpp.find_library('dfs', required: false)
+        if daos_dfs_lib.found() and cpp.has_header('daos_fs.h')
+            daos_dfs_dep = daos_dfs_lib
+        endif
+    endif
+    if not daos_client_dep.found()
+        daos_client_dep = cpp.find_library('daos', required: false)
+    endif
+    daos_headers_found = false
+    if daos_dfs_dep.found() and daos_client_dep.found()
+        daos_headers_found = cpp.has_header(
+            'daos_fs.h', dependencies: [daos_dfs_dep]) and cpp.has_header(
+            'daos_obj_class.h', dependencies: [daos_client_dep])
+    endif
+    daos_deps_missing = not daos_dfs_dep.found() or not daos_client_dep.found() or not daos_headers_found
+    if daos_deps_missing and (is_explicit_enable or 'DAOS' in static_plugins)
+        error('DAOS plugin requested but libdfs, libdaos, or their development headers were not found')
+    elif not daos_deps_missing
+        subdir('daos')
+    endif
+endif
+
 if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif

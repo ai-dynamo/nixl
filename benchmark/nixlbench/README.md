@@ -33,7 +33,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA for storage operations
+- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA, DAOS for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -490,6 +490,9 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 # S3 object storage benchmark
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend OBJ --obj_bucket_name my-bucket --obj_access_key $AWS_ACCESS_KEY_ID --obj_secret_key $AWS_SECRET_ACCESS_KEY
 
+# DAOS object storage benchmark (single process, no ETCD required)
+./nixlbench --backend DAOS --daos_pool nixl_pool --daos_container nixl_cont --daos_mount_path /mnt/dfuse
+
 # Multi-threaded benchmark with progress threads
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --num_threads 4 --enable_pt --progress_threads 2
 ```
@@ -501,7 +504,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --config_file PATH         # Configuraion file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA, DAOS] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
@@ -541,7 +544,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --etcd_endpoints URL       # ETCD server URL for coordination (optional for storage backends)
 ```
 
-#### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
+#### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB, DAOS)
 ```
 --filepath PATH            # File path for storage operations
 --num_files NUM            # Number of files used by benchmark (default: 1)
@@ -597,6 +600,24 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --azure_blob_account_url ACCOUNT_URL              # Account URL for Azure Blob backend
 --azure_blob_container_name CONTAINER_NAME        # Container name for Azure Blob backend
 --azure_blob_connection_string CONNECTION_STRING  # Connection string for Azure Blob backend
+```
+
+**DAOS Backend:**
+```
+--daos_pool NAME                       # DAOS pool label or UUID (required)
+--daos_container NAME                  # DAOS POSIX container label or UUID (required)
+--daos_system NAME                     # Optional DAOS system name
+--daos_mount_path PATH                 # dfuse mount used for setup, validation, and cleanup
+--daos_object_class NAME               # DAOS object class for newly created files
+--daos_object_class_hint HINT           # DAOS DFS object-class hint
+--daos_chunk_size BYTES                # DFS chunk size for newly created files (default: 0)
+--daos_oclass_id ID                    # Numeric DAOS object-class ID (default: 0)
+--daos_num_event_queues NUM            # Independent DAOS EQ/progress workers (default: 1)
+--daos_max_inflight_per_queue NUM      # Maximum in-flight I/O per EQ (default: 1024)
+--daos_submission_batch_size NUM       # Operations submitted per worker pass (default: 32)
+--daos_completion_batch_size NUM       # Completions reaped per progress call (default: 128)
+--daos_progress_poll_timeout_us NUM     # NIXL progress wait timeout in microseconds (default: 1000)
+--daos_progress_cpu_affinity LIST       # Comma-separated CPUs, one entry per progress worker
 ```
 
 **GUSLI Backend:**
@@ -677,7 +698,7 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 
 **ETCD Requirements:**
 - **Required**: Network backends (UCX, GPUNETIO, Mooncake, Libfabric) and multi-node setups
-- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances
+- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI, DAOS) running as single instances
 - **Required**: Storage backends when `--etcd_endpoints` is explicitly specified
 
 **For multi-node benchmarks:**
@@ -866,6 +887,48 @@ EOF
 # NVSHMEM (GPU-only, VRAM required)
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --worker_type nvshmem --initiator_seg_type VRAM --target_seg_type VRAM
 ```
+
+### DAOS Backend
+
+The timed transfers use the DAOS plugin's native asynchronous `libdfs` path. A dfuse mount is
+used only to create input objects for READ tests, verify WRITE results, and remove benchmark
+objects; it is not part of the measured data path. Set `NIXL_PLUGIN_DIR` to the directory that
+contains `libplugin_DAOS.so` before running either test.
+
+First run the focused real-cluster correctness test:
+
+```bash
+export NIXL_PLUGIN_DIR="$PWD/build-daos-tests/src/plugins/daos"
+./build-daos-tests/test/unit/plugins/daos/nixl_daos_test \
+  nixl_pool nixl_cont 1048576 32 10
+```
+
+Then run a verified write benchmark. This example uses four event queues and pins their progress
+workers to CPUs 4 through 7:
+
+```bash
+./build-nixlbench/nixlbench \
+  --backend DAOS \
+  --daos_pool nixl_pool \
+  --daos_container nixl_cont \
+  --daos_mount_path /home/rladmin/daos/mnt \
+  --op_type WRITE \
+  --check_consistency \
+  --max_block_size $((16 * 1024 * 1024)) \
+  --start_block_size $((1 * 1024 * 1024)) \
+  --num_threads 4 \
+  --pipeline_depth 8 \
+  --enable_pt \
+  --num_iter 100 \
+  --warmup_iter 10 \
+  --daos_num_event_queues 4 \
+  --daos_progress_cpu_affinity 4,5,6,7
+```
+
+For a READ benchmark, use the same command with `--op_type READ`. NIXLBench creates the source
+objects through the supplied dfuse mount before starting the timed reads. A WRITE run without
+`--check_consistency` may omit `--daos_mount_path`, but NIXLBench then cannot remove the generated
+objects and prints their names so they can be cleaned up separately.
 
 ### S3 Object Storage Backend
 
