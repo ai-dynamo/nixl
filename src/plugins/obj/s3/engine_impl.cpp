@@ -338,10 +338,7 @@ DefaultObjEngineImpl::checkXfer(nixlBackendReqH *handle) const {
 
 nixl_status_t
 DefaultObjEngineImpl::releaseReqH(nixlBackendReqH *handle) const {
-    if (!handle) {
-        NIXL_ERROR << "transfer request handle is null";
-        return NIXL_ERR_INVALID_PARAM;
-    }
+    NIXL_ASSERT(handle != nullptr);
     nixlObjBackendReqH *req_h = static_cast<nixlObjBackendReqH *>(handle);
     delete req_h;
     return NIXL_SUCCESS;

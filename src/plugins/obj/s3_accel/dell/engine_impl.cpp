@@ -616,10 +616,7 @@ S3DellObsObjEngineImpl::checkXfer(nixlBackendReqH *handle) const {
  */
 nixl_status_t
 S3DellObsObjEngineImpl::releaseReqH(nixlBackendReqH *handle) const {
-    if (handle == nullptr) {
-        NIXL_ERROR << "transfer request handle is null";
-        return NIXL_ERR_INVALID_PARAM;
-    }
+    NIXL_ASSERT(handle != nullptr);
     nixlObsObjBackendReqH *req_h = static_cast<nixlObsObjBackendReqH *>(handle);
     delete req_h;
     return NIXL_SUCCESS;
