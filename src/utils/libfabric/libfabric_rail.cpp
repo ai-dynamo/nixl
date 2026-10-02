@@ -1835,6 +1835,7 @@ nixlLibfabricRail::removeAddress(fi_addr_t fi_addr) const {
     }
 
     // Clear the mapping so a reused fi_addr is not misattributed to a different peer.
+    // Not reachable yet: cleanupConnection() has no callers; disconnect() never removes AV entries.
     {
         std::unique_lock<std::shared_mutex> lk(src_addr_mutex_);
         if (fi_addr < src_addr_to_agent_.size()) {
