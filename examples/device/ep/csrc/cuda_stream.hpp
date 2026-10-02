@@ -21,6 +21,9 @@
 
 namespace nixl_ep::cuda_stream {
 [[nodiscard]] cudaStream_t
+get_from_pool();
+
+[[nodiscard]] cudaStream_t
 get_current();
 
 void
