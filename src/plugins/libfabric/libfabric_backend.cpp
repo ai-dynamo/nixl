@@ -831,6 +831,10 @@ nixlLibfabricEngine::createAgentConnection(
         return NIXL_ERR_BACKEND;
     }
 
+    // Claim the index first, so a partial insertAllAddresses() failure can't hand it to the
+    // next peer. The dead name a failure leaves is harmless: agent_names_ is used for its size.
+    agent_names_.push_back(agent_name);
+
     conn->rail_remote_addr_list_.reserve(rail_manager_.getNumRails());
 
     // Process all rails in one operation
@@ -846,7 +850,6 @@ nixlLibfabricEngine::createAgentConnection(
         return data_status;
     }
 
-    agent_names_.push_back(agent_name);
     for (size_t i = 0; i < agent_names_.size(); ++i) {
         NIXL_DEBUG << "Index " << i << ": " << agent_names_[i];
     }
