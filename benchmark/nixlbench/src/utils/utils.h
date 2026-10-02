@@ -159,6 +159,9 @@
 #define IS_PAIRWISE_AND_MG()                                 \
     (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_MG == xferBenchConfig::mode)
+#define IS_MANY_TO_ONE_AND_MG()                                 \
+    (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme && \
+     XFERBENCH_MODE_MG == xferBenchConfig::mode)
 
 class xferBenchConfig {
 public:

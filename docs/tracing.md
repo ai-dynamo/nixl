@@ -113,6 +113,37 @@ So `nsys profile ... ./app` needs no NIXL-specific flags to get an NVTX timeline
 (and still records any other backend you asked for), while `NIXL_TRACE_BACKENDS=`
 force-disables tracing even under a profiler.
 
+#### Sampling
+
+| Source | Description |
+| ------ | ----------- |
+| `NIXL_TRACE_SAMPLE_RATIO` env var | Fraction of requests marked as sampled: `0` (off) or a number in `[2^-56, 1]`. Empty is an explicit off; when unset, the variable below decides |
+| `OTEL_TRACES_SAMPLE_RATIO` env var | Fallback used only when the NIXL variable is unset; Dynamo's variable, read so a NIXL inside Dynamo inherits its ratio. Unset means the opposite in each: Dynamo samples everything, NIXL samples nothing |
+
+The ratio applies to the trace contexts the agent generates, so it does nothing
+on its own: with no backend active — no `NIXL_TRACE_BACKENDS`, no nsys — the
+agent creates no contexts, and setting only the ratio produces nothing to see.
+
+The decision is head-based: it is taken once, when the agent creates the trace
+context for a request, and derives from that context's own trace id, so it is
+stable per request and every peer inspecting the same context agrees with it.
+A request is sampled when the random part of its trace id falls in the top
+`ratio` of the range, which is the OpenTelemetry consistent-probability rule: a
+later phase sampling at a lower ratio thins what NIXL kept instead of discarding
+all of it. No backend consumes the sampled flag yet — it is the gate the first
+cross-process carrier will use to decide whether to propagate a context.
+
+A value that is neither `0` nor a number in `[2^-56, 1]` makes agent
+construction fail, whether or not tracing is otherwise enabled, rather than
+silently sampling nothing. `2^-56` is OpenTelemetry's minimum probability and
+means one trace in every value 56 bits can express; anything smaller and
+nonzero cannot be represented, so it is rejected instead of quietly behaving
+like `0`. The
+same is not true of `OTEL_TRACES_SAMPLE_RATIO`, which NIXL does not own: a bad
+value there is warned about and ignored. Note that in a `.nixl.cfg` file the
+value must be quoted (`NIXL_TRACE_SAMPLE_RATIO = "0.25"`), since it is read as a
+string.
+
 ## Instrumented operations
 
 The following Agent operations emit spans/markers (more will be added in later
@@ -134,6 +165,30 @@ backends/PRs):
 | `nixl::fetchRemoteMD` | `Metadata` | `remote_agent` |
 | `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
 | `nixl::releaseMemView` | `Generic` | - |
+
+### Backend phase spans
+
+A backend plugin can record a phase of its own work through
+the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core turns
+each recorded phase into a momentary span carrying `nixl.backend` (the recording
+backend's type), `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
+`nixl.phase.label` when the plugin supplied one, and any plugin-supplied
+attributes. The phase vocabulary is closed so that timelines stay comparable
+across backends:
+
+| Span | Phase enumerator | Meaning |
+| ---- | ---------------- | ------- |
+| `nixl::submit` | `SUBMIT` | the backend accepted the operation |
+| `nixl::wire.submitted` | `WIRE_SUBMITTED` | handed to the transport |
+| `nixl::wire.completed` | `WIRE_COMPLETED` | transport signalled completion |
+| `nixl::notif.sent` | `NOTIF_SENT` | notification posted to the wire |
+| `nixl::notif.received` | `NOTIF_RECEIVED` | notification observed locally |
+| `nixl::remote.observed` | `REMOTE_OBSERVED` | the peer's side was observed |
+| `nixl::phase` | `OTHER` | generic escape hatch; the plugin's label becomes the span name |
+
+The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
+installed header), so only in-tree plugins can emit phases. No plugin emits them
+yet; UCX and libfabric map their internals onto the vocabulary in later PRs.
 
 Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
 when `getXferStatus` first observes success. How a backend renders attributes and
@@ -234,5 +289,5 @@ In NIXL tracing, "correlation" can mean two different things:
   sender and receiver spans can be linked across processes (distributed tracing; a
   separate NIXL-architecture effort).
 
-Backend-engine sub-spans (finer spans inside backends, e.g. UCX
-`prepXfer`/`postXfer`/`checkXfer`) were considered and are currently not planned.
+- **Backend phase emission** — the sink described under "Backend phase spans" exists,
+  but no plugin records a phase yet.

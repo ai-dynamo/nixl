@@ -17,8 +17,12 @@
 #ifndef TEST_GTEST_GMOCK_ENGINE_H
 #define TEST_GTEST_GMOCK_ENGINE_H
 
+#include <chrono>
+
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+
+#include <optional>
 
 #include "backend/backend_engine.h"
 
@@ -56,13 +60,14 @@ class GMockBackendEngine : public nixlBackendEngine {
 public:
     GMockBackendEngine();
 
-    GMockBackendEngine(const nixlBackendInitParams *init_params) : nixlBackendEngine(init_params) {}
-
+    explicit GMockBackendEngine(const nixlBackendInitParams *init_params);
 
     void
     SetToParams(nixl_b_params_t &params) const;
     static GMockBackendEngine *
     GetFromParams(nixl_b_params_t *params);
+
+    std::optional<const nixlBackendTraceSink *> observedTraceSink;
 
     MOCK_METHOD(bool, supportsRemote, (), (const, override));
     MOCK_METHOD(bool, supportsLocal, (), (const, override));
@@ -103,6 +108,13 @@ public:
                  const nixl_opt_b_args_t *opt_args),
                 (const, override));
     MOCK_METHOD(nixl_status_t,
+                prepMemView,
+                (const nixl_meta_dlist_t &dlist,
+                 nixlMemViewH &mvh,
+                 const nixl_opt_b_args_t *opt_args),
+                (const, override));
+    MOCK_METHOD(void, releaseMemView, (nixlMemViewH mvh), (const, override));
+    MOCK_METHOD(nixl_status_t,
                 getPublicData,
                 (const nixlBackendMD *input, std::string &str),
                 (const, override));
@@ -127,6 +139,28 @@ public:
                 genNotif,
                 (const std::string &remote_agent, const std::string &msg),
                 (const, override));
+    MOCK_METHOD(nixl_status_t,
+                queryMem,
+                (const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp),
+                (const, override));
+    MOCK_METHOD(nixl_status_t,
+                estimateXferCost,
+                (const nixl_xfer_op_t &operation,
+                 const nixl_meta_dlist_t &local,
+                 const nixl_meta_dlist_t &remote,
+                 const std::string &remote_agent,
+                 nixlBackendReqH *const &handle,
+                 std::chrono::microseconds &duration,
+                 std::chrono::microseconds &err_margin,
+                 nixl_cost_t &method,
+                 const nixl_opt_args_t *extra_params),
+                (const, override));
+
+private:
+    void
+    setDefaults();
+    void
+    setOptionalDefaults();
 };
 
 } // namespace mocks
