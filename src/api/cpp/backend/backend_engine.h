@@ -247,5 +247,10 @@ class nixlBackendEngine {
                          const nixl_opt_args_t *extra_params = nullptr) const {
             return NIXL_ERR_NOT_SUPPORTED;
         }
+
+        [[nodiscard]] virtual bool
+        supportsTraceContext() const noexcept {
+            return false;
+        }
 };
 #endif

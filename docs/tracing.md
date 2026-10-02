@@ -208,6 +208,15 @@ the value onto its own request handle. A carrier that puts it on the wire calls
 `encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
 in-tree plugins can read it; none does yet.
 
+A backend that carries the context to its peer says so by overriding
+`supportsTraceContext()`, which defaults to `false`; core reads it once, when
+the backend is created. Tracing never fails a transfer over it. A sampled
+request on a backend that supports remote transfers but not trace contexts runs
+as usual, its trace just does not reach the remote agent, and core logs a
+warning once per backend; backends without remote transfers are not reported.
+Likewise, if generating a request's context fails, the request runs with the
+zeroed context and core logs the first such failure as an error.
+
 ## Profiling with NVTX / Nsight Systems
 
 NVTX is a lazy, online API: when no profiler is attached, ranges are near-zero-cost
