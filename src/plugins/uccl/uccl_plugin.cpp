@@ -33,19 +33,16 @@ get_uccl_options() {
 // Plugin type alias for convenience
 using uccl_plugin_t = nixlBackendPluginCreator<nixlUcclEngine>;
 
-#ifdef STATIC_PLUGIN_UCCL
+namespace {
 nixlBackendPlugin *
-createStaticUCCLPlugin() {
+createUcclPluginInstance() {
     return uccl_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "UCCL", "0.1.0", get_uccl_options(), {DRAM_SEG, VRAM_SEG});
 }
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return uccl_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "UCCL", "0.1.0", get_uccl_options(), {DRAM_SEG, VRAM_SEG});
-}
+} // namespace
 
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+#ifdef STATIC_PLUGIN_UCCL
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticUCCLPlugin, createUcclPluginInstance)
+#else
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createUcclPluginInstance)
 #endif

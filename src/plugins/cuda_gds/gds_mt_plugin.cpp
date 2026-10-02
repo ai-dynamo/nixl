@@ -27,27 +27,19 @@ getGdsMtBackendOptions() {
 }
 
 using gds_mt_plugin_t = nixlBackendPluginCreator<nixlGdsMtEngine>;
+
+nixlBackendPlugin *
+createGdsMtPluginInstance() {
+    return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
+                                   "GDS_MT",
+                                   "0.1.0",
+                                   getGdsMtBackendOptions(),
+                                   {DRAM_SEG, VRAM_SEG, FILE_SEG});
+}
 } // namespace
 
 #ifdef STATIC_PLUGIN_GDS_MT
-nixlBackendPlugin *
-createStaticGDS_MTPlugin() {
-    return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                   "GDS_MT",
-                                   "0.1.0",
-                                   getGdsMtBackendOptions(),
-                                   {DRAM_SEG, VRAM_SEG, FILE_SEG});
-}
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticGDS_MTPlugin, createGdsMtPluginInstance)
 #else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return gds_mt_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                   "GDS_MT",
-                                   "0.1.0",
-                                   getGdsMtBackendOptions(),
-                                   {DRAM_SEG, VRAM_SEG, FILE_SEG});
-}
-
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createGdsMtPluginInstance)
 #endif

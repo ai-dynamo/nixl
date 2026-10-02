@@ -24,19 +24,16 @@
 // Plugin type alias for convenience
 using azure_blob_plugin_t = nixlBackendPluginCreator<nixlAzureBlobEngine>;
 
-#ifdef STATIC_PLUGIN_AZURE
+namespace {
 nixlBackendPlugin *
-createStaticAZUREPlugin() {
+createAzureBlobPluginInstance() {
     return azure_blob_plugin_t::create(
         NIXL_PLUGIN_API_VERSION, "AZURE_BLOB", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
 }
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return azure_blob_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "AZURE_BLOB", "0.1.0", {}, {DRAM_SEG, OBJ_SEG});
-}
+} // namespace
 
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+#ifdef STATIC_PLUGIN_AZURE
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticAZUREPlugin, createAzureBlobPluginInstance)
+#else
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createAzureBlobPluginInstance)
 #endif

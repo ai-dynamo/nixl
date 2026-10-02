@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,25 +30,19 @@ get_gusli_backend_options() {
     return params;
 }
 
-#ifdef STATIC_PLUGIN_GUSLI
+namespace {
 nixlBackendPlugin *
-createStaticGusliPlugin() {
+createGusliPluginInstance() {
     return gusli_plugin_t::create(NIXL_PLUGIN_API_VERSION,
                                   "GUSLI",
                                   "0.1.0",
                                   get_gusli_backend_options(),
                                   {BLK_SEG, DRAM_SEG});
 }
-#else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return gusli_plugin_t::create(NIXL_PLUGIN_API_VERSION,
-                                  "GUSLI",
-                                  "0.1.0",
-                                  get_gusli_backend_options(),
-                                  {BLK_SEG, DRAM_SEG});
-}
+} // namespace
 
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+#ifdef STATIC_PLUGIN_GUSLI
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticGusliPlugin, createGusliPluginInstance)
+#else
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createGusliPluginInstance)
 #endif

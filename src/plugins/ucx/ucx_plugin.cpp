@@ -80,16 +80,7 @@ createUcxPlugin() {
 } // namespace
 
 #ifdef STATIC_PLUGIN_UCX
-nixlBackendPlugin *
-createStaticUCXPlugin() {
-    return createUcxPlugin();
-}
+NIXL_STATIC_PLUGIN_ENTRYPOINT(createStaticUCXPlugin, createUcxPlugin)
 #else
-extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
-nixl_plugin_init() {
-    return createUcxPlugin();
-}
-
-extern "C" NIXL_PLUGIN_EXPORT void
-nixl_plugin_fini() {}
+NIXL_DYNAMIC_PLUGIN_ENTRYPOINT(createUcxPlugin)
 #endif
