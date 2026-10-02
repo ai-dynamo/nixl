@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <absl/log/globals.h>
 #include <absl/log/log_sink_registry.h>
 #include <dlfcn.h>
 #include <algorithm>
@@ -60,12 +61,16 @@ namespace agent {
 
     class logCounter final : public absl::LogSink {
     public:
-        explicit logCounter(std::string_view needle) : needle_(needle) {
+        explicit logCounter(std::string_view needle)
+            : needle_(needle),
+              minLogLevel_(absl::MinLogLevel()) {
+            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
             absl::AddLogSink(this);
         }
 
         ~logCounter() override {
             absl::RemoveLogSink(this);
+            absl::SetMinLogLevel(minLogLevel_);
         }
 
         logCounter(const logCounter &) = delete;
@@ -86,6 +91,7 @@ namespace agent {
 
     private:
         const std::string needle_;
+        const absl::LogSeverityAtLeast minLogLevel_;
         std::atomic<size_t> count_ = 0;
     };
 

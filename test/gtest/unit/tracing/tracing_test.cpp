@@ -477,6 +477,22 @@ TEST(Tracing, CorrelationScopeNullTracerIsInert) {
     SUCCEED();
 }
 
+TEST(Tracing, CorrelationScopeZeroIdIsInert) {
+    CallLog a, b;
+    auto tracer = makeMockTracer(a, b);
+
+    {
+        const nixl::trace::CorrelationScope scope(tracer.get(), 0);
+        const auto span = tracer->beginSpan("op");
+    }
+
+    EXPECT_EQ(a.spansBegun, 1);
+    EXPECT_TRUE(a.pushedCorrelationIds.empty());
+    EXPECT_EQ(a.correlationPops, 0);
+    EXPECT_TRUE(b.pushedCorrelationIds.empty());
+    EXPECT_EQ(b.correlationPops, 0);
+}
+
 TEST(Tracing, RequestStoresFixedCorrelationContext) {
     nixl::trace::TraceContext context;
     context.traceId = {0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6};

@@ -338,7 +338,7 @@ nixlAgentData::warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
     logOnce(it->second, [&backend] {
         NIXL_WARN << "nixl::trace: backend '" << backend.getType()
                   << "' cannot carry trace contexts, so sampled transfers through it reach "
-                     "remote agents untraced; logged once per backend";
+                     "remote agents untraced; logged once per backend and agent";
     });
 }
 
