@@ -17,10 +17,17 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <absl/log/globals.h>
+#include <absl/log/log_sink_registry.h>
+#include <dlfcn.h>
 #include <algorithm>
+#include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <random>
+#include <string_view>
 
 #include "common.h"
 #include "nixl.h"
@@ -29,11 +36,79 @@
 #include "tracing/trace_context.h"
 #include "mocks/gmock_engine.h"
 
+namespace {
+constinit std::atomic<bool> entropy_fails{false};
+} // namespace
+
+extern "C" int
+getentropy(void *buffer, size_t length) {
+    if (entropy_fails.load()) {
+        errno = ENOSYS;
+        return -1;
+    }
+    static const auto next =
+        reinterpret_cast<int (*)(void *, size_t)>(dlsym(RTLD_NEXT, "getentropy"));
+    return next(buffer, length);
+}
+
 namespace gtest {
 namespace agent {
     static constexpr const char *local_agent_name = "LocalAgent";
     static constexpr const char *remote_agent_name = "RemoteAgent";
     static constexpr const char *nonexisting_plugin = "NonExistingPlugin";
+    static constexpr const char *untraced_log = "cannot carry trace contexts";
+    static constexpr const char *context_failure_log = "could not generate a trace context";
+
+    class logCounter final : public absl::LogSink {
+    public:
+        explicit logCounter(std::string_view needle)
+            : needle_(needle),
+              minLogLevel_(absl::MinLogLevel()) {
+            absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+            absl::AddLogSink(this);
+        }
+
+        ~logCounter() override {
+            absl::RemoveLogSink(this);
+            absl::SetMinLogLevel(minLogLevel_);
+        }
+
+        logCounter(const logCounter &) = delete;
+        logCounter &
+        operator=(const logCounter &) = delete;
+
+        void
+        Send(const absl::LogEntry &entry) override {
+            if (entry.text_message().find(needle_) != std::string_view::npos) {
+                count_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
+        [[nodiscard]] size_t
+        count() const noexcept {
+            return count_.load(std::memory_order_relaxed);
+        }
+
+    private:
+        const std::string needle_;
+        const absl::LogSeverityAtLeast minLogLevel_;
+        std::atomic<size_t> count_ = 0;
+    };
+
+    class failingEntropy {
+    public:
+        failingEntropy() noexcept {
+            entropy_fails.store(true);
+        }
+
+        ~failingEntropy() {
+            entropy_fails.store(false);
+        }
+
+        failingEntropy(const failingEntropy &) = delete;
+        failingEntropy &
+        operator=(const failingEntropy &) = delete;
+    };
 
     /* Generates a random number in [0,255] (byte range). */
     unsigned char
@@ -83,8 +158,12 @@ namespace agent {
         const std::string name_;
 
     public:
-        agentHelper(const std::string &name, const std::string &trace_backends = "") : name_(name) {
+        agentHelper(const std::string &name,
+                    const std::string &trace_backends = "",
+                    const std::string &sample_ratio = "0")
+            : name_(name) {
             trace_env_.addVar("NIXL_TRACE_BACKENDS", trace_backends);
+            trace_env_.addVar("NIXL_TRACE_SAMPLE_RATIO", sample_ratio);
             nixlAgentConfig cfg;
             cfg.useProgThread = true;
             agent_ = std::make_unique<nixlAgent>(name, cfg);
@@ -153,6 +232,9 @@ namespace agent {
 
         static void
         SetUpTestSuite() {
+            if (nvtxPluginAvailable_) {
+                return;
+            }
             const std::string dir = std::string(BUILD_DIR) + "/src/plugins/tracing/nvtx";
             nvtxPluginAvailable_ = std::filesystem::exists(dir);
             if (nvtxPluginAvailable_) {
@@ -160,16 +242,29 @@ namespace agent {
             }
         }
 
+        [[nodiscard]] virtual std::string
+        sampleRatio() const {
+            return "0";
+        }
+
         void
         SetUp() override {
             if (!nvtxPluginAvailable_) {
                 GTEST_SKIP() << "NVTX trace plugin (libtrace_backend_nvtx.so) was not built";
             }
-            agent_helper_ = std::make_unique<agentHelper>(local_agent_name, "nvtx");
+            agent_helper_ = std::make_unique<agentHelper>(local_agent_name, "nvtx", sampleRatio());
         }
     };
 
     bool tracingEnabledAgentFixture::nvtxPluginAvailable_ = false;
+
+    class sampledTracingAgentFixture : public tracingEnabledAgentFixture {
+    protected:
+        [[nodiscard]] std::string
+        sampleRatio() const override {
+            return "1";
+        }
+    };
 
     TEST_F(tracingEnabledAgentFixture, TracingOnHandsPluginARealTraceSink) {
         nixl_b_params_t params;
@@ -229,6 +324,153 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
         EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
         EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
+    }
+
+    TEST_F(tracingEnabledAgentFixture, UnsampledRequestsAreNotReportedUntraced) {
+        logCounter untraced(untraced_log);
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        nixlAgent *agent = agent_helper_->getAgent();
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
+        EXPECT_TRUE(req->traceContext().valid());
+        EXPECT_FALSE(req->traceContext().sampled());
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(untraced.count(), 0u);
+    }
+
+    TEST_F(tracingEnabledAgentFixture, EntropyFailureLeavesRequestsUntraced) {
+        logCounter failures(context_failure_log);
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+
+        nixlDlistH *local_side = nullptr;
+        nixlDlistH *remote_side = nullptr;
+        ASSERT_EQ(agent->prepXferDlist(setup.xferDlist, local_side), NIXL_SUCCESS);
+        ASSERT_EQ(agent->prepXferDlist(local_agent_name, setup.xferDlist, remote_side),
+                  NIXL_SUCCESS);
+        const std::vector<int> indices{0};
+
+        nixlXferReqH *created = nullptr;
+        nixlXferReqH *made = nullptr;
+        {
+            const failingEntropy entropy;
+            ASSERT_EQ(agent_helper_->createSelfXferReq(setup, created), NIXL_SUCCESS);
+            ASSERT_EQ(agent->makeXferReq(NIXL_WRITE,
+                                         *local_side,
+                                         indices,
+                                         *remote_side,
+                                         indices,
+                                         made,
+                                         &setup.extraParams),
+                      NIXL_SUCCESS);
+        }
+        EXPECT_EQ(failures.count(), 1u);
+
+        for (nixlXferReqH *req : {created, made}) {
+            EXPECT_EQ(req->traceContext(), nixl::trace::TraceContext{});
+            EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+            EXPECT_THAT(engine.observedTraceContext(),
+                        testing::Optional(nixl::trace::TraceContext{}));
+            EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        }
+
+        nixlXferReqH *recovered = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, recovered), NIXL_SUCCESS);
+        EXPECT_TRUE(recovered->traceContext().valid());
+        EXPECT_EQ(agent->releaseXferReq(recovered), NIXL_SUCCESS);
+        EXPECT_EQ(failures.count(), 1u);
+
+        EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
+    }
+
+    TEST_F(sampledTracingAgentFixture, UnsupportedBackendIsReportedOnce) {
+        logCounter untraced(untraced_log);
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        nixlAgent *agent = agent_helper_->getAgent();
+        const auto &engine = agent_helper_->getGMockEngine();
+
+        for (int i = 0; i < 3; ++i) {
+            nixlXferReqH *req = nullptr;
+            ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
+            EXPECT_TRUE(req->traceContext().sampled());
+            EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+            EXPECT_THAT(engine.observedTraceContext(), testing::Optional(req->traceContext()));
+            EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        }
+        EXPECT_EQ(untraced.count(), 1u);
+    }
+
+    TEST_F(sampledTracingAgentFixture, UnsupportedBackendIsReportedOnceForPreppedRequests) {
+        logCounter untraced(untraced_log);
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        nixlAgent *agent = agent_helper_->getAgent();
+
+        nixlDlistH *local_side = nullptr;
+        nixlDlistH *remote_side = nullptr;
+        ASSERT_EQ(agent->prepXferDlist(setup.xferDlist, local_side), NIXL_SUCCESS);
+        ASSERT_EQ(agent->prepXferDlist(local_agent_name, setup.xferDlist, remote_side),
+                  NIXL_SUCCESS);
+
+        const std::vector<int> indices{0};
+        for (int i = 0; i < 2; ++i) {
+            nixlXferReqH *req = nullptr;
+            ASSERT_EQ(agent->makeXferReq(NIXL_WRITE,
+                                         *local_side,
+                                         indices,
+                                         *remote_side,
+                                         indices,
+                                         req,
+                                         &setup.extraParams),
+                      NIXL_SUCCESS);
+            EXPECT_TRUE(req->traceContext().sampled());
+            EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        }
+        EXPECT_EQ(untraced.count(), 1u);
+
+        EXPECT_EQ(agent->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releasedDlistH(remote_side), NIXL_SUCCESS);
+    }
+
+    TEST_F(sampledTracingAgentFixture, SupportingBackendSeesTheSampledContextUnchanged) {
+        logCounter untraced(untraced_log);
+        const auto &engine = agent_helper_->getGMockEngine();
+        ON_CALL(engine, supportsTraceContext()).WillByDefault(testing::Return(true));
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        nixlAgent *agent = agent_helper_->getAgent();
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
+        ASSERT_TRUE(req->traceContext().sampled());
+        EXPECT_THAT(engine.observedTraceContext(), testing::Optional(req->traceContext()));
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_THAT(engine.observedTraceContext(), testing::Optional(req->traceContext()));
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(untraced.count(), 0u);
+    }
+
+    TEST_F(sampledTracingAgentFixture, LocalOnlyBackendIsNotReportedUntraced) {
+        logCounter untraced(untraced_log);
+        ON_CALL(agent_helper_->getGMockEngine(), supportsRemote())
+            .WillByDefault(testing::Return(false));
+        selfXferSetup setup;
+        agent_helper_->setupSelfXfer(setup);
+        nixlAgent *agent = agent_helper_->getAgent();
+
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(agent_helper_->createSelfXferReq(setup, req), NIXL_SUCCESS);
+        EXPECT_TRUE(req->traceContext().sampled());
+        EXPECT_EQ(agent->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(untraced.count(), 0u);
     }
 
     class singleAgentSessionFixture : public testing::Test {

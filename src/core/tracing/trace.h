@@ -199,13 +199,15 @@ private:
 /**
  * @brief RAII guard that keeps a correlation id active on the tracer for its
  *        lifetime, so every span/mark created while it is in scope is tagged
- *        with that id. Null-tracer-safe. Used to link spans emitted on different
+ *        with that id. Null-tracer-safe; an id of 0, which an invalid context
+ *        projects to, pushes nothing. Used to link spans emitted on different
  *        threads (e.g. postXferReq on the caller thread vs. the completion on
  *        the polling thread) to the same logical request.
  */
 class CorrelationScope {
 public:
-    [[nodiscard]] CorrelationScope(Tracer *tracer, std::uint64_t id) : tracer_(tracer) {
+    [[nodiscard]] CorrelationScope(Tracer *tracer, std::uint64_t id)
+        : tracer_(id == 0 ? nullptr : tracer) {
         if (tracer_ != nullptr) {
             tracer_->pushCorrelationId(id);
         }
