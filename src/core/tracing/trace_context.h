@@ -74,7 +74,7 @@ struct TraceContext {
     correlationId64() const noexcept;
 
     [[nodiscard]] bool
-    operator==(const TraceContext &) const = default;
+    operator==(const TraceContext &) const noexcept = default;
 };
 
 [[nodiscard]] std::optional<TraceContext>
