@@ -1037,7 +1037,7 @@ nixlLibfabricRailManager::postControlMessage(
     }
 
     NIXL_DEBUG << "Sending control message type " << msg_type_value << " XFER_ID=" << xfer_id
-               << " imm_data=" << imm_data << " on rail " << rail_id;
+               << " imm_data=" << imm_data << " dest_addr=" << dest_addr << " on rail " << rail_id;
 
     // Use rail 0 for notifications
     nixl_status_t status = rails_[rail_id]->postSend(imm_data, dest_addr, req);
