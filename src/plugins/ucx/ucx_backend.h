@@ -225,6 +225,11 @@ protected:
         return numSharedWorkers_;
     }
 
+    [[nodiscard]] bool
+    isSglEnabled() const noexcept {
+        return sglEnabled_;
+    }
+
     virtual void
     appendNotif(std::string &&remote_name, std::string &&msg);
 

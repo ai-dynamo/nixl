@@ -288,8 +288,8 @@ private:
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
                                                  size_t num_threads)
     : nixlUcxThreadEngine(init_params, num_threads) {
-    splitBatchSize_ =
-        nixl::getBackendParamDefaulted(init_params.customParams, "split_batch_size", 1024u);
+    splitBatchSize_ = nixl::getBackendParamDefaulted(
+        init_params.customParams, "split_batch_size", isSglEnabled() ? 4096u : 1024u);
 
     const auto dedicated_workers = getDedicatedWorkers();
     dedicatedThreads_.reserve(dedicated_workers.size());
