@@ -689,7 +689,7 @@ class nixl_agent:
 
     def get_xfer_telemetry(
         self, handle: nixl_xfer_handle
-    ) -> nixlBind.nixlXferTelemetry:
+    ) -> Optional[nixlBind.nixlXferTelemetry]:
         """Get telemetry information of a transfer request.
         The output object has three time values fields in microseconds
         (startTime, postDuration, xferDuration), as well as integer totalBytes transferred
@@ -700,7 +700,10 @@ class nixl_agent:
             handle: Handle to the transfer operation, from make_prepped_xfer or initialize_xfer.
 
         Returns:
-            nixlXferTelemetry object
+            nixlXferTelemetry object, or None if telemetry is unavailable because capture
+            is disabled (e.g., nixl_agent_config(capture_telemetry=False), which is the
+            default, and the NIXL_TELEMETRY_ENABLE environment variable is not set) or
+            the active backend does not support telemetry.
         """
         return self.agent.getXferTelemetry(handle._handle)
 

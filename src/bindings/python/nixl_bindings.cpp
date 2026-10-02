@@ -862,9 +862,16 @@ PYBIND11_MODULE(_bindings, m) {
             py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferTelemetry",
-            [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_telem_t {
+            [](nixlAgent &agent, uintptr_t reqh) -> std::optional<nixl_xfer_telem_t> {
                 nixl_xfer_telem_t telemetry;
                 nixl_status_t ret = agent.getXferTelemetry((nixlXferReqH *)reqh, telemetry);
+
+                // Telemetry being unavailable is an expected state (capture is
+                // opt-in), not an error; report it as None instead of throwing.
+                if (ret == NIXL_ERR_NO_TELEMETRY) {
+                    return std::nullopt;
+                }
+
                 throw_nixl_exception(ret);
                 return telemetry;
             },
