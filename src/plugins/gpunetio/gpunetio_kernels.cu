@@ -240,8 +240,21 @@ kernel_progress(struct docaXferCompletion *completion_list,
     if (blockIdx.x == 0) {
         while (DOCA_GPUNETIO_VOLATILE(*exit_flag) == 0) {
             // Check xfer completion and send notif
+            const uint8_t completion_state =
+                DOCA_GPUNETIO_VOLATILE(completion_list[index].completed);
+            if (completion_state == DOCA_COMPLETION_ABORTED) {
+                const uint32_t aborted_index = index;
+                index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                DOCA_GPUNETIO_VOLATILE(completion_list[aborted_index].completed) =
+                    DOCA_COMPLETION_RELEASED;
+                continue;
+            }
+            if (completion_state == DOCA_COMPLETION_RELEASED) {
+                index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                continue;
+            }
             if (DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu) != nullptr) {
-                if (DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) == 0 &&
+                if (completion_state == DOCA_COMPLETION_PENDING &&
                     DOCA_GPUNETIO_VOLATILE(completion_list[index].xferReqRingGpu->in_use) == 1) {
                     // Wait for final CQE in block of iterations
                     int poll_status = nixl_gpunetio_dev_poll_one_cq_at<
@@ -290,8 +303,12 @@ kernel_progress(struct docaXferCompletion *completion_list,
 #endif
                         }
 
-                        DOCA_GPUNETIO_VOLATILE(completion_list[index].completed) = 1;
+                        const uint32_t completed_index = index;
+                        DOCA_GPUNETIO_VOLATILE(completion_list[completed_index].completed) =
+                            DOCA_COMPLETION_DONE;
                         index = (index + 1) & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+                        DOCA_GPUNETIO_VOLATILE(completion_list[completed_index].completed) =
+                            DOCA_COMPLETION_RELEASED;
                     }
                 }
             }
