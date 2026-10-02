@@ -118,6 +118,9 @@ RUN apt-get update -y && \
     flex \
     libgtest-dev \
     build-essential \
+    libhiredis-dev \
+    libevent-dev \
+    redis-tools \
     python3.12-dev \
     clang \
     hwloc \

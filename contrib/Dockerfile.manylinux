@@ -91,6 +91,7 @@ ARG BUILD_TYPE="release"
 ARG BUILD_NIXL_EP="true"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG HIREDIS_VERSION="1.4.0"
 ARG NPROC
 
 RUN yum groupinstall -y 'Development Tools' &&  \
@@ -110,6 +111,7 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     gcc-toolset-14 \
     libaio \
     libaio-devel \
+    libevent-devel \
     libtool-ltdl \
     ninja-build \
     openssl \
@@ -155,6 +157,21 @@ RUN cd /tmp && \
     echo "/usr/local/openssl3/lib" >> /etc/ld.so.conf.d/openssl3.conf && \
     ldconfig && \
     rm -rf /tmp/openssl-3.0.16*
+
+# Build hiredis from source: EPEL8's hiredis-devel is 0.13, which is affected by
+# CVE-2021-32765 (fixed in 1.0.1). The libevent adapter is header-only, so only
+# the core library is built.
+RUN cd /tmp && \
+    wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+        -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    cd "hiredis-${HIREDIS_VERSION}" && \
+    make -j"${NPROC:-$(nproc)}" PREFIX=/usr/local && \
+    make install PREFIX=/usr/local && \
+    ldconfig && \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --atleast-version=1.0.1 hiredis && \
+    rm -rf "/tmp/hiredis-${HIREDIS_VERSION}" "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz"
+ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
 
 # Set environment variables to use the new OpenSSL
 ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:/usr/local/openssl3/lib/pkgconfig:$PKG_CONFIG_PATH"
