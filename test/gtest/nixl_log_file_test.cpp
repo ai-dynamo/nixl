@@ -1064,6 +1064,7 @@ TEST_F(nixlLogFileTest, RejectsAnUnparsableSizeAndSaysSo) {
              " 64",
              "+64",
              "184467440737095516160",
+             "17179869185G",
          }) {
         countingSink watcher;
 
