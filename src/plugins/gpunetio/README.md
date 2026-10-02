@@ -34,11 +34,12 @@ Stream pool mode instead is when applications mostly wants to process data on th
 
 ## Input parameters
 
-DOCA GPUNetIO backend takes 3 input parameters:
+DOCA GPUNetIO backend takes 5 input parameters:
 - network_devices: network device to be used during the execution (e.g. mlx5_0). Current release supports only 1 network device.
-- oob_interface: network interface to be used when exchanging control info during initiator/target connection. Optional parameter, not needed if the network device is set in Ethernet mode.
+- oob_interface: network interface to be used when exchanging control info during initiator/target connection. Set this explicitly for bonded network devices whose IPv4 address cannot be obtained from DOCA.
 - gpu_devices: GPU CUDA ID to be used during the execution (e.g. 0). Current release supports only 1 GPU device.
 - cuda_streams: how many CUDA streams the backend should created at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. If this parameter is not specified, default value is `DOCA_POST_STREAM_NUM`.
+- gid_index: RoCE GID table index. Defaults to 0; use the GID corresponding to the selected RoCE path.
 
 ## Example
 
