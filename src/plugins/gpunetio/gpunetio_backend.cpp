@@ -16,15 +16,52 @@
  */
 
 #include "gpunetio_backend.h"
-#include "serdes/serdes.h"
 #include <arpa/inet.h>
 #include <cassert>
+#include <cstring>
+#include <cerrno>
 #include <stdexcept>
 #include <unistd.h>
 #include "common/nixl_log.h"
 #include <absl/strings/str_split.h>
 
 const char info_delimiter = '-';
+
+namespace {
+bool
+sendAll(int fd, const void *buffer, size_t size) {
+    const auto *cursor = static_cast<const uint8_t *>(buffer);
+    while (size > 0) {
+        const ssize_t sent = send(fd, cursor, size, MSG_NOSIGNAL);
+        if (sent < 0 && errno == EINTR) {
+            continue;
+        }
+        if (sent <= 0) {
+            return false;
+        }
+        cursor += sent;
+        size -= static_cast<size_t>(sent);
+    }
+    return true;
+}
+
+bool
+recvAll(int fd, void *buffer, size_t size) {
+    auto *cursor = static_cast<uint8_t *>(buffer);
+    while (size > 0) {
+        const ssize_t received = recv(fd, cursor, size, 0);
+        if (received < 0 && errno == EINTR) {
+            continue;
+        }
+        if (received <= 0) {
+            return false;
+        }
+        cursor += received;
+        size -= static_cast<size_t>(received);
+    }
+    return true;
+}
+} // namespace
 
 /****************************************
  * Constructor/Destructor
@@ -98,6 +135,8 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
+    local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
+    NIXL_INFO << "OOB listen port: " << local_port;
     /* Open DOCA device */
     verbs_context = open_ib_device((char *)(ndevs[0].c_str()));
     if (verbs_context == nullptr) {
@@ -340,7 +379,9 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     lastPostedReq = 0;
     xferRingPos = 0;
 
-    progressThreadStart();
+    if (progressThreadStart() != NIXL_SUCCESS) {
+        throw std::runtime_error("Failed to start GPUNETIO connection thread");
+    }
 }
 
 nixl_mem_list_t
@@ -397,8 +438,6 @@ nixlDocaEngine::~nixlDocaEngine() {
 
 nixl_status_t
 nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev, doca_gpu *gpu) {
-    struct nixlDocaNotif *notif;
-
     std::lock_guard<std::mutex> lock(notifLock);
     // Same peer can be server or client
     if (notifMap.find(remote_agent) != notifMap.end()) {
@@ -406,7 +445,7 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
         return NIXL_SUCCESS;
     }
 
-    notif = new struct nixlDocaNotif;
+    auto notif = std::make_unique<nixlDocaNotif>();
 
     notif->elems_num = DOCA_MAX_NOTIF_INFLIGHT;
     notif->elems_size = DOCA_MAX_NOTIF_MESSAGE_SIZE;
@@ -445,16 +484,29 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
     notif->send_pi = 0;
     notif->recv_pi = 0;
 
+    doca_gpu_dev_verbs_qp *notif_qp_gpu;
+    {
+        std::lock_guard<std::mutex> qp_lock(qpLock);
+        auto qp = qpMap.find(remote_agent);
+        if (qp == qpMap.end()) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        notif_qp_gpu = qp->second->qp_notif->get_qp_gpu_dev();
+    }
     // Ensure notif list is not added twice for the same peer
-    notifMap[remote_agent] = notif;
     ((volatile struct docaNotif *)notif_fill_cpu)->msg_buf = (uintptr_t)notif->recv_addr;
     ((volatile struct docaNotif *)notif_fill_cpu)->msg_lkey = notif->recv_mr->get_lkey();
     ((volatile struct docaNotif *)notif_fill_cpu)->msg_size = notif->elems_size;
     std::atomic_thread_fence(std::memory_order_seq_cst);
-    ((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu =
-        qpMap[remote_agent]->qp_notif->get_qp_gpu_dev();
+    ((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu = notif_qp_gpu;
     while (((volatile struct docaNotif *)notif_fill_cpu)->qp_gpu != nullptr)
         ;
+
+    const bool inserted = notifMap.emplace(remote_agent, notif.get()).second;
+    if (!inserted) {
+        return NIXL_ERR_BACKEND;
+    }
+    notif.release();
 
     NIXL_INFO << "nixlDocaInitNotif added new qp for " << remote_agent << std::endl;
 
@@ -484,41 +536,43 @@ nixlDocaEngine::progressThreadStart() {
     oob_sock_server = socket(AF_INET, SOCK_STREAM, 0);
     if (oob_sock_server < 0) {
         NIXL_ERROR << "Error while creating socket " << oob_sock_server;
+        free((void *)pthrStop);
+        pthrStop = nullptr;
         return NIXL_ERR_NOT_SUPPORTED;
     }
     NIXL_INFO << "DOCA Server socket created successfully";
 
-    if (setsockopt(oob_sock_server, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(enable))) {
-        NIXL_ERROR << "Error setting socket options";
-        close(oob_sock_server);
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-
     if (setsockopt(oob_sock_server, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable))) {
         NIXL_ERROR << "Error setting socket options";
         close(oob_sock_server);
+        free((void *)pthrStop);
+        pthrStop = nullptr;
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
     if (oobdev.size() > 0 && oobdev[0] != "") {
         struct sockaddr_in *addr_in = (struct sockaddr_in *)&oob_saddr;
         /* Bind to the set port and IP: */
-        addr_in->sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
+        addr_in->sin_port = htons(local_port);
         if (bind(oob_sock_server, (struct sockaddr *)addr_in, sizeof(struct sockaddr_in)) < 0) {
-            NIXL_ERROR << "Couldn't bind to the port " << DOCA_RDMA_CM_LOCAL_PORT_SERVER;
+            NIXL_ERROR << "Couldn't bind to the port " << local_port;
             close(oob_sock_server);
+            free((void *)pthrStop);
+            pthrStop = nullptr;
             return NIXL_ERR_NOT_SUPPORTED;
         }
     } else {
         /* Set port and IP: */
         server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(DOCA_RDMA_CM_LOCAL_PORT_SERVER);
+        server_addr.sin_port = htons(local_port);
         server_addr.sin_addr.s_addr = INADDR_ANY; /* listen on any interface */
 
         /* Bind to the set port and IP: */
         if (bind(oob_sock_server, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-            NIXL_ERROR << "Couldn't bind to the port " << DOCA_RDMA_CM_LOCAL_PORT_SERVER;
+            NIXL_ERROR << "Couldn't bind to the port " << local_port;
             close(oob_sock_server);
+            free((void *)pthrStop);
+            pthrStop = nullptr;
             return NIXL_ERR_NOT_SUPPORTED;
         }
     }
@@ -526,9 +580,11 @@ nixlDocaEngine::progressThreadStart() {
     NIXL_INFO << "Done with binding";
 
     /* Listen for clients: */
-    if (listen(oob_sock_server, 1) < 0) {
+    if (listen(oob_sock_server, SOMAXCONN) < 0) {
         NIXL_ERROR << "Error while listening";
         close(oob_sock_server);
+        free((void *)pthrStop);
+        pthrStop = nullptr;
         return NIXL_ERR_NOT_SUPPORTED;
     }
     NIXL_INFO << "Listening for incoming connections";
@@ -542,26 +598,35 @@ nixlDocaEngine::progressThreadStart() {
     result = pthread_create(&server_thread_id, nullptr, threadProgressFunc, (void *)this);
     if (result != 0) {
         NIXL_ERROR << "Failed to create threadProgressFunc thread";
+        close(oob_sock_server);
+        free((void *)pthrStop);
+        pthrStop = nullptr;
         return NIXL_ERR_BACKEND;
     }
+    serverThreadStarted = true;
 
     return NIXL_SUCCESS;
 }
 
 void
 nixlDocaEngine::progressThreadStop() {
-    int fake_sock_fd;
-    std::stringstream ss;
+    if (!serverThreadStarted) {
+        return;
+    }
 
     ACCESS_ONCE(*pthrStop) = 1;
-    ss << (int)ipv4_addr[0] << "." << (int)ipv4_addr[1] << "." << (int)ipv4_addr[2] << "."
-       << (int)ipv4_addr[3];
     std::atomic_thread_fence(std::memory_order_seq_cst);
-    oob_connection_client_setup(ss.str().c_str(), &fake_sock_fd);
-    // pthr.join();
+
+    const int active_socket = activeOobSocket.exchange(-1);
+    if (active_socket >= 0) {
+        shutdown(active_socket, SHUT_RDWR);
+    }
+    shutdown(oob_sock_server, SHUT_RDWR);
     pthread_join(server_thread_id, nullptr);
+    serverThreadStarted = false;
     close(oob_sock_server);
-    close(fake_sock_fd);
+    free((void *)pthrStop);
+    pthrStop = nullptr;
 }
 
 uint32_t
@@ -631,31 +696,42 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
 nixl_status_t
 nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remote_agent) {
     doca_error_t result;
-    struct nixlDocaRdmaQp *rdma_qp = qpMap[remote_agent];
+    struct nixlDocaRdmaQp *rdma_qp;
     uint32_t lack = 0, rack = 1;
+    uint32_t remote_qpn_data = 0, remote_qpn_notif = 0, remote_lid = 0;
+    doca_verbs_gid remote_gid{};
+
+    {
+        std::lock_guard<std::mutex> lock(qpLock);
+        auto qp = qpMap.find(remote_agent);
+        if (qp == qpMap.end()) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        rdma_qp = qp->second;
+    }
 
     NIXL_DEBUG << "connectClientRdmaQp: Send to server data qp connection details";
     // Data QP
-    if (send(oob_sock_client, &rdma_qp->qpn_data, sizeof(uint32_t), 0) < 0) {
+    if (!sendAll(oob_sock_client, &rdma_qp->qpn_data, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to send connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
     // Notif QP
-    if (send(oob_sock_client, &rdma_qp->qpn_notif, sizeof(uint32_t), 0) < 0) {
+    if (!sendAll(oob_sock_client, &rdma_qp->qpn_notif, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to send connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
-    if (send(oob_sock_client, &gid.raw, sizeof(gid.raw), 0) < 0) {
+    if (!sendAll(oob_sock_client, &gid.raw, sizeof(gid.raw))) {
         NIXL_ERROR << "Failed to send local GID raw address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
-    if (send(oob_sock_client, &lid, sizeof(uint32_t), 0) < 0) {
+    if (!sendAll(oob_sock_client, &lid, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to send LID address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -663,7 +739,7 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
 
     // Data QP
     NIXL_DEBUG << "connectClientRdmaQp: Receive client remote data qp connection details";
-    if (recv(oob_sock_client, &rdma_qp->rqpn_data, sizeof(uint32_t), 0) < 0) {
+    if (!recvAll(oob_sock_client, &remote_qpn_data, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to receive remote connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -671,19 +747,19 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
 
     // Notif QP
     NIXL_INFO << "Receive remote notif qp connection details";
-    if (recv(oob_sock_client, &rdma_qp->rqpn_notif, sizeof(uint32_t), 0) < 0) {
+    if (!recvAll(oob_sock_client, &remote_qpn_notif, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to receive remote connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
-    if (recv(oob_sock_client, &remote_gid.raw, sizeof(gid.raw), 0) < 0) {
+    if (!recvAll(oob_sock_client, &remote_gid.raw, sizeof(gid.raw))) {
         NIXL_ERROR << "Failed to receive remote GID raw address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
-    if (recv(oob_sock_client, &dlid, sizeof(uint32_t), 0) < 0) {
+    if (!recvAll(oob_sock_client, &remote_lid, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to receive remote GID address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -692,37 +768,57 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
     // Avoid duplicating RDMA connection to the same QP by client/server threads
     NIXL_DEBUG << "connectClientRdmaQp: before lock";
     // std::lock_guard<std::mutex> lock(connectLock);
-    connectLock.lock();
+    std::unique_lock<std::mutex> lock(connectLock);
+    if (rdma_qp->dataProgrammed || rdma_qp->notifProgrammed) {
+        if (rdma_qp->rqpn_data != remote_qpn_data || rdma_qp->rqpn_notif != remote_qpn_notif ||
+            rdma_qp->remote_lid != remote_lid ||
+            memcmp(rdma_qp->remote_gid.raw, remote_gid.raw, sizeof(remote_gid.raw)) != 0) {
+            NIXL_ERROR << "Remote QP route changed during retry";
+            return NIXL_ERR_BACKEND;
+        }
+    } else {
+        rdma_qp->rqpn_data = remote_qpn_data;
+        rdma_qp->rqpn_notif = remote_qpn_notif;
+        rdma_qp->remote_gid = remote_gid;
+        rdma_qp->remote_lid = remote_lid;
+    }
     if (connMap.find(remote_agent) != connMap.end()) {
         NIXL_INFO << "QP for " << remote_agent << " already connected" << std::endl;
         goto sync;
-        // return NIXL_SUCCESS;
     }
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- data";
-    result = connect_verbs_qp(
-        this, rdma_qp->qp_data->get_qp(), rdma_qp->rqpn_data, rdma_qp->remote_gid_data);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
-        connectLock.unlock();
-        return NIXL_ERR_BACKEND;
+    if (!rdma_qp->dataProgrammed) {
+        result = connect_verbs_qp(
+            this, rdma_qp->qp_data->get_qp(), remote_qpn_data, remote_gid, remote_lid);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
+            return NIXL_ERR_BACKEND;
+        }
+        rdma_qp->dataProgrammed = true;
     }
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- notif";
-    result = connect_verbs_qp(
-        this, rdma_qp->qp_notif->get_qp(), rdma_qp->rqpn_notif, rdma_qp->remote_gid_data);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
-        connectLock.unlock();
-        return NIXL_ERR_BACKEND;
+    if (!rdma_qp->notifProgrammed) {
+        result = connect_verbs_qp(
+            this, rdma_qp->qp_notif->get_qp(), remote_qpn_notif, remote_gid, remote_lid);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
+            return NIXL_ERR_BACKEND;
+        }
+        rdma_qp->notifProgrammed = true;
     }
 
+    // QP programming is complete even if the final ACK exchange later fails.
+    // A retry must skip another QP state transition and repeat only the handshake.
+    connMap[remote_agent] = 1;
+
 sync:
-    connectLock.unlock();
+    lock.unlock();
     NIXL_DEBUG << "Client recv lack";
-    if (recv(oob_sock_client, &lack, sizeof(uint32_t), 0) < 0) {
+    if (!recvAll(oob_sock_client, &lack, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to receive remote ACK connection";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -736,13 +832,11 @@ sync:
     }
 
     NIXL_DEBUG << "Client sending rack" << rack;
-    if (send(oob_sock_client, &rack, sizeof(uint32_t), 0) < 0) {
+    if (!sendAll(oob_sock_client, &rack, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to send connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
-
-    connMap[remote_agent] = 1;
 
     return NIXL_SUCCESS;
 }
@@ -752,23 +846,20 @@ nixlDocaEngine::recvRemoteAgentName(int oob_sock_client, std::string &remote_age
     size_t msg_size;
 
     // Msg
-    if (recv(oob_sock_client, &msg_size, sizeof(size_t), 0) < 0) {
+    if (!recvAll(oob_sock_client, &msg_size, sizeof(size_t))) {
         NIXL_ERROR << "Failed to recv msg details";
-        close(oob_sock_client);
         return NIXL_ERR_BACKEND;
     }
 
-    if (msg_size == 0) {
-        NIXL_ERROR << "recvRemoteAgentName received msg size 0";
-        close(oob_sock_client);
+    if (!isValidGpunetioAgentNameSize(msg_size)) {
+        NIXL_ERROR << "recvRemoteAgentName received invalid msg size " << msg_size;
         return NIXL_ERR_BACKEND;
     }
 
     remote_agent.resize(msg_size);
 
-    if (recv(oob_sock_client, remote_agent.data(), msg_size, 0) < 0) {
+    if (!recvAll(oob_sock_client, remote_agent.data(), msg_size)) {
         NIXL_ERROR << "Failed to recv msg details";
-        close(oob_sock_client);
         return NIXL_ERR_BACKEND;
     }
 
@@ -779,12 +870,17 @@ nixl_status_t
 nixlDocaEngine::sendLocalAgentName(int oob_sock_client) {
     size_t agent_size = localAgent.size();
 
-    if (send(oob_sock_client, &agent_size, sizeof(size_t), 0) < 0) {
+    if (!isValidGpunetioAgentNameSize(agent_size)) {
+        NIXL_ERROR << "sendLocalAgentName has invalid msg size " << agent_size;
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    if (!sendAll(oob_sock_client, &agent_size, sizeof(size_t))) {
         NIXL_ERROR << "Failed to send connection details";
         return NIXL_ERR_BACKEND;
     }
 
-    if (send(oob_sock_client, localAgent.c_str(), localAgent.size(), 0) < 0) {
+    if (!sendAll(oob_sock_client, localAgent.c_str(), localAgent.size())) {
         NIXL_ERROR << "Failed to send connection details";
         return NIXL_ERR_BACKEND;
     }
@@ -797,14 +893,25 @@ nixlDocaEngine::sendLocalAgentName(int oob_sock_client) {
 nixl_status_t
 nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remote_agent) {
     doca_error_t result;
-    struct nixlDocaRdmaQp *rdma_qp = qpMap[remote_agent]; // validate
+    struct nixlDocaRdmaQp *rdma_qp;
     uint32_t lack = 0, rack = 1;
+    uint32_t remote_qpn_data = 0, remote_qpn_notif = 0, remote_lid = 0;
+    doca_verbs_gid remote_gid{};
+
+    {
+        std::lock_guard<std::mutex> lock(qpLock);
+        auto qp = qpMap.find(remote_agent);
+        if (qp == qpMap.end()) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        rdma_qp = qp->second;
+    }
 
     NIXL_DEBUG << "DOCA connectServerRdmaQp for agent " << remote_agent.c_str();
 
     // Data QP
     NIXL_DEBUG << "Server Receive client remote data qp connection details";
-    if (recv(oob_sock_client, &rdma_qp->rqpn_data, sizeof(uint32_t), 0) < 0) {
+    if (!recvAll(oob_sock_client, &remote_qpn_data, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to receive remote connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -812,19 +919,19 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
 
     // Notif QP
     NIXL_DEBUG << "Server Receive remote notif qp connection details";
-    if (recv(oob_sock_client, &rdma_qp->rqpn_notif, sizeof(uint32_t), 0) < 0) {
+    if (!recvAll(oob_sock_client, &remote_qpn_notif, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to receive remote connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
-    if (recv(oob_sock_client, &remote_gid.raw, sizeof(gid.raw), 0) < 0) {
+    if (!recvAll(oob_sock_client, &remote_gid.raw, sizeof(gid.raw))) {
         NIXL_ERROR << "Failed to receive remote GID raw address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
-    if (recv(oob_sock_client, &dlid, sizeof(uint32_t), 0) < 0) {
+    if (!recvAll(oob_sock_client, &remote_lid, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to receive remote GID address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -832,7 +939,7 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
 
     // Data QP
     NIXL_DEBUG << "Server Send remote notif qp connection details";
-    if (send(oob_sock_client, &rdma_qp->qpn_data, sizeof(uint32_t), 0) < 0) {
+    if (!sendAll(oob_sock_client, &rdma_qp->qpn_data, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to send connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -840,20 +947,20 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
 
     // Notif QP
     NIXL_DEBUG << "Server Send remote notif qp connection details";
-    if (send(oob_sock_client, &rdma_qp->qpn_notif, sizeof(uint32_t), 0) < 0) {
+    if (!sendAll(oob_sock_client, &rdma_qp->qpn_notif, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to send connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
-    if (send(oob_sock_client, &gid.raw, sizeof(gid.raw), 0) < 0) {
+    if (!sendAll(oob_sock_client, &gid.raw, sizeof(gid.raw))) {
         NIXL_ERROR << "Failed to send local GID raw address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
     NIXL_DEBUG << "Server Send remote notif qp connection details 4";
-    if (send(oob_sock_client, &lid, sizeof(uint32_t), 0) < 0) {
+    if (!sendAll(oob_sock_client, &lid, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to send local GID address";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -862,48 +969,65 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
     // Avoid duplicating RDMA connection to the same QP by client/server threads
     NIXL_DEBUG << "connectServerRdmaQp: before lock";
     // std::lock_guard<std::mutex> lock(connectLock);
-    connectLock.lock();
+    std::unique_lock<std::mutex> lock(connectLock);
+    if (rdma_qp->dataProgrammed || rdma_qp->notifProgrammed) {
+        if (rdma_qp->rqpn_data != remote_qpn_data || rdma_qp->rqpn_notif != remote_qpn_notif ||
+            rdma_qp->remote_lid != remote_lid ||
+            memcmp(rdma_qp->remote_gid.raw, remote_gid.raw, sizeof(remote_gid.raw)) != 0) {
+            NIXL_ERROR << "Remote QP route changed during retry";
+            return NIXL_ERR_BACKEND;
+        }
+    } else {
+        rdma_qp->rqpn_data = remote_qpn_data;
+        rdma_qp->rqpn_notif = remote_qpn_notif;
+        rdma_qp->remote_gid = remote_gid;
+        rdma_qp->remote_lid = remote_lid;
+    }
     if (connMap.find(remote_agent) != connMap.end()) {
         NIXL_DEBUG << "QP for " << remote_agent << " already connected";
         goto sync;
-        // return NIXL_SUCCESS;
     }
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- data";
-    result = connect_verbs_qp(
-        this, rdma_qp->qp_data->get_qp(), rdma_qp->rqpn_data, rdma_qp->remote_gid_data);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
-        connectLock.unlock();
-        return NIXL_ERR_BACKEND;
+    if (!rdma_qp->dataProgrammed) {
+        result = connect_verbs_qp(
+            this, rdma_qp->qp_data->get_qp(), remote_qpn_data, remote_gid, remote_lid);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Function connect_verbs_qp data failed " << doca_error_get_descr(result);
+            return NIXL_ERR_BACKEND;
+        }
+        rdma_qp->dataProgrammed = true;
     }
 
     /* Connect local rdma to the remote rdma */
     NIXL_DEBUG << "Connect DOCA RDMA to remote RDMA -- notif";
-    result = connect_verbs_qp(
-        this, rdma_qp->qp_notif->get_qp(), rdma_qp->rqpn_notif, rdma_qp->remote_gid_data);
-    if (result != DOCA_SUCCESS) {
-        NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
-        connectLock.unlock();
-        return NIXL_ERR_BACKEND;
+    if (!rdma_qp->notifProgrammed) {
+        result = connect_verbs_qp(
+            this, rdma_qp->qp_notif->get_qp(), remote_qpn_notif, remote_gid, remote_lid);
+        if (result != DOCA_SUCCESS) {
+            NIXL_ERROR << "Function connect_verbs_qp notif failed " << doca_error_get_descr(result);
+            return NIXL_ERR_BACKEND;
+        }
+        rdma_qp->notifProgrammed = true;
     }
 
+    // QP programming is complete even if the final ACK exchange later fails.
+    // A retry must skip another QP state transition and repeat only the handshake.
     connMap[remote_agent] = 1;
 
 sync:
-
-    connectLock.unlock();
+    lock.unlock();
 
     NIXL_DEBUG << "Server send rack " << rack;
-    if (send(oob_sock_client, &rack, sizeof(uint32_t), 0) < 0) {
+    if (!sendAll(oob_sock_client, &rack, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to send connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
     }
 
     NIXL_DEBUG << "Server recv lack";
-    if (recv(oob_sock_client, &lack, sizeof(uint32_t), 0) < 0) {
+    if (!recvAll(oob_sock_client, &lack, sizeof(uint32_t))) {
         NIXL_ERROR << "Failed to receive remote ACK connection";
         result = DOCA_ERROR_CONNECTION_ABORTED;
         return NIXL_ERR_BACKEND;
@@ -928,7 +1052,7 @@ nixlDocaEngine::getConnInfo(std::string &str) const {
     std::stringstream ss;
     ss << (int)ipv4_addr[0] << "." << (int)ipv4_addr[1] << "." << (int)ipv4_addr[2] << "."
        << (int)ipv4_addr[3];
-    str = ss.str();
+    str = formatGpunetioOobEndpoint(ss.str(), local_port);
     return NIXL_SUCCESS;
 }
 
@@ -951,43 +1075,70 @@ nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
 
     int oob_sock_client;
 
-    // TODO: Connect part should be moved into connect() method
-    nixlDocaConnection conn;
-    size_t size = remote_conn_info.size();
-    // TODO: eventually std::byte?
-    char *addr = new char[size];
-
-    if (remoteConnMap.find(remote_agent) != remoteConnMap.end()) {
+    GpunetioOobEndpoint endpoint;
+    try {
+        endpoint = parseGpunetioOobEndpoint(remote_conn_info);
+    }
+    catch (const std::invalid_argument &error) {
+        NIXL_ERROR << error.what();
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixlSerDes::_stringToBytes((void *)addr, remote_conn_info, size);
+    // TODO: Connect part should be moved into connect() method
+    nixlDocaConnection conn;
+    conn.remoteAgent = remote_agent;
+    conn.connected = false;
+    {
+        std::lock_guard<std::mutex> lock(remoteConnLock);
+        if (!remoteConnMap.emplace(remote_agent, conn).second) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
+    auto clear_pending = [&]() {
+        std::lock_guard<std::mutex> lock(remoteConnLock);
+        auto pending = remoteConnMap.find(remote_agent);
+        if (pending != remoteConnMap.end() && !pending->second.connected) {
+            remoteConnMap.erase(pending);
+        }
+    };
 
-    int ret = oob_connection_client_setup(addr, &oob_sock_client);
+    int ret = oob_connection_client_setup(endpoint.ipv4.c_str(), &oob_sock_client, endpoint.port);
     if (ret < 0) {
         NIXL_ERROR << "Can't connect to server " << ret;
+        clear_pending();
         return NIXL_ERR_BACKEND;
     }
 
     NIXL_INFO << "loadRemoteConnInfo calling addRdmaQp for " << remote_agent.c_str();
-    sendLocalAgentName(oob_sock_client);
-    addRdmaQp(remote_agent);
-    nixlDocaInitNotif(remote_agent, ddev, gdevs[0].second);
-    connectClientRdmaQp(oob_sock_client, remote_agent);
+    nixl_status_t status = sendLocalAgentName(oob_sock_client);
+    if (status == NIXL_SUCCESS) {
+        status = addRdmaQp(remote_agent);
+    }
+    if (status == NIXL_IN_PROG) {
+        status = NIXL_SUCCESS;
+    }
+    if (status == NIXL_SUCCESS) {
+        status = nixlDocaInitNotif(remote_agent, ddev, gdevs[0].second);
+    }
+    if (status == NIXL_SUCCESS) {
+        status = connectClientRdmaQp(oob_sock_client, remote_agent);
+    }
+    if (status != NIXL_SUCCESS) {
+        close(oob_sock_client);
+        clear_pending();
+        return status;
+    }
 
-    conn.remoteAgent = remote_agent;
     conn.connected = true;
-    // if client or server already created this QP, no need to re-create
-    if (remoteConnMap.find(remote_agent) == remoteConnMap.end()) {
+    {
+        std::lock_guard<std::mutex> lock(remoteConnLock);
         remoteConnMap[remote_agent] = conn;
-        NIXL_INFO << "remoteConnMap extended with remote agent " << remote_agent << std::endl;
+        NIXL_INFO << "remoteConnMap connected remote agent " << remote_agent << std::endl;
     }
 
     NIXL_INFO << "DOCA loadRemoteConnInfo connected agent " << remote_agent;
 
     close(oob_sock_client);
-
-    delete[] addr;
 
     return NIXL_SUCCESS;
 }
@@ -1056,14 +1207,16 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     std::vector<std::string> tokens;
     std::string token;
     nixlDocaPublicMetadata *md = new nixlDocaPublicMetadata;
-    auto search = remoteConnMap.find(remote_agent);
-
-    if (search == remoteConnMap.end()) {
-        NIXL_ERROR << "err: remote connection not found remote_agent " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
+    {
+        std::lock_guard<std::mutex> lock(remoteConnLock);
+        auto search = remoteConnMap.find(remote_agent);
+        if (search == remoteConnMap.end() || !search->second.connected) {
+            NIXL_ERROR << "err: remote connection not found remote_agent " << remote_agent;
+            delete md;
+            return NIXL_ERR_NOT_FOUND;
+        }
+        conn = search->second;
     }
-
-    conn = (nixlDocaConnection)search->second;
 
     // directly copy underlying conn struct
     md->conn = conn;
@@ -1106,7 +1259,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
     uint32_t pos;
-    nixlDocaBckndReq *treq = new nixlDocaBckndReq;
+    auto treq = std::make_unique<nixlDocaBckndReq>();
     nixlDocaPrivateMetadata *lmd;
     nixlDocaPublicMetadata *rmd;
     uint32_t lcnt = (uint32_t)local.descCount();
@@ -1122,13 +1275,15 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         if (lmd->devId != gdevs[0].first) return NIXL_ERR_INVALID_PARAM;
     }
 
-    auto search = qpMap.find(remote_agent);
-    if (search == qpMap.end()) {
-        NIXL_ERROR << "Can't find remote_agent " << remote_agent;
-        return NIXL_ERR_INVALID_PARAM;
+    {
+        std::lock_guard<std::mutex> lock(qpLock);
+        auto search = qpMap.find(remote_agent);
+        if (search == qpMap.end()) {
+            NIXL_ERROR << "Can't find remote_agent " << remote_agent;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        rdma_qp = search->second;
     }
-
-    rdma_qp = search->second;
 
     if (lcnt != rcnt) return NIXL_ERR_INVALID_PARAM;
 
@@ -1180,13 +1335,15 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     if (opt_args && opt_args->hasNotif) {
         struct nixlDocaNotif *notif;
 
-        auto search = notifMap.find(remote_agent);
-        if (search == notifMap.end()) {
-            NIXL_ERROR << "Can't find notif for remote_agent " << remote_agent;
-            return NIXL_ERR_INVALID_PARAM;
+        {
+            std::lock_guard<std::mutex> lock(notifLock);
+            auto search = notifMap.find(remote_agent);
+            if (search == notifMap.end()) {
+                NIXL_ERROR << "Can't find notif for remote_agent " << remote_agent;
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            notif = search->second;
         }
-
-        notif = search->second;
 
         // Check notifMsg size
         std::string newMsg = msg_tag_start + std::to_string(opt_args->notifMsg.size()) +
@@ -1216,7 +1373,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
 
     treq->backendHandleGpu = 0;
 
-    handle = treq;
+    handle = treq.release();
 
     return NIXL_SUCCESS;
 }
@@ -1291,8 +1448,16 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
     // while getNotifs is running
     std::lock_guard<std::mutex> lock(notifLock);
     for (auto &notif : notifMap) {
-        ((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu =
-            qpMap[notif.first]->qp_notif->get_qp_gpu_dev();
+        doca_gpu_dev_verbs_qp *notif_qp_gpu;
+        {
+            std::lock_guard<std::mutex> qp_lock(qpLock);
+            auto qp = qpMap.find(notif.first);
+            if (qp == qpMap.end()) {
+                return NIXL_ERR_BACKEND;
+            }
+            notif_qp_gpu = qp->second->qp_notif->get_qp_gpu_dev();
+        }
+        ((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu = notif_qp_gpu;
         std::atomic_thread_fence(std::memory_order_seq_cst);
         while (((volatile struct docaNotif *)notif_progress_cpu)->qp_gpu != nullptr)
             ;
@@ -1346,10 +1511,15 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     uint32_t buf_idx;
     uintptr_t msg_buf;
 
-    auto searchNotif = notifMap.find(remote_agent);
-    if (searchNotif == notifMap.end()) {
-        NIXL_ERROR << "genNotif: can't find notif for remote_agent " << remote_agent << std::endl;
-        return NIXL_ERR_INVALID_PARAM;
+    {
+        std::lock_guard<std::mutex> lock(notifLock);
+        auto searchNotif = notifMap.find(remote_agent);
+        if (searchNotif == notifMap.end()) {
+            NIXL_ERROR << "genNotif: can't find notif for remote_agent " << remote_agent
+                       << std::endl;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        notif = searchNotif->second;
     }
 
     // 16B is uint16_t msg size
@@ -1360,12 +1530,15 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    notif = searchNotif->second;
-
-    auto searchQp = qpMap.find(remote_agent);
-    if (searchQp == qpMap.end()) {
-        NIXL_ERROR << "Can't find QP for remote_agent " << remote_agent;
-        return NIXL_ERR_INVALID_PARAM;
+    doca_gpu_dev_verbs_qp *notif_qp_gpu;
+    {
+        std::lock_guard<std::mutex> lock(qpLock);
+        auto searchQp = qpMap.find(remote_agent);
+        if (searchQp == qpMap.end()) {
+            NIXL_ERROR << "Can't find QP for remote_agent " << remote_agent;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        notif_qp_gpu = searchQp->second->qp_notif->get_qp_gpu_dev();
     }
 
     std::string newMsg = msg_tag_start + std::to_string((int)msg.size()) + msg_tag_end + msg;
@@ -1381,8 +1554,7 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     ((volatile struct docaNotif *)notif_send_cpu)->msg_lkey = notif->send_mr->get_lkey();
     ((volatile struct docaNotif *)notif_send_cpu)->msg_size = newMsg.size();
     std::atomic_thread_fence(std::memory_order_seq_cst);
-    ((volatile struct docaNotif *)notif_send_cpu)->qp_gpu =
-        searchQp->second->qp_notif->get_qp_gpu_dev();
+    ((volatile struct docaNotif *)notif_send_cpu)->qp_gpu = notif_qp_gpu;
     while (((volatile struct docaNotif *)notif_send_cpu)->qp_gpu != nullptr)
         ;
 
