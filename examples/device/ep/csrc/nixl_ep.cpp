@@ -514,7 +514,11 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
     EP_HOST_ASSERT(!remote_ranks_list.empty());
     EP_HOST_ASSERT(remote_ranks_list.size() <= remote_ranks.size());
 
+    pybind11::gil_scoped_release release;
     CUDA_CHECK(cudaDeviceSynchronize());
+    // Retire queued work before removing its peer metadata or resources.
+    _nixl_ep_memory_views_destroy(staged_memory_views);
+    _nixl_ep_memory_views_destroy(active_memory_views);
 
     // Update mask buffer to mark ranks as inactive
     for (int removed_rank : remote_ranks_list) {

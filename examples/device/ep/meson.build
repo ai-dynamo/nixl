@@ -73,7 +73,7 @@ nixl_ep_sources = [
 
 nixl_ep_inc_dirs = [
     nixl_inc_dirs,
-    nixl_device_inc_dirs,
+    nixl_device_api_inc_dirs,
     include_directories('csrc'),
     include_directories('csrc/kernels'),
     torch_inc_dirs,

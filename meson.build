@@ -267,6 +267,7 @@ else
 endif
 
 if cuda_dep.found()
+    add_project_arguments('-DHAVE_NIXL_DEVICE_API', language: ['cpp', 'cuda'])
     add_languages('CUDA')
     cuda = import('unstable-cuda')
     nvcc = meson.get_compiler('cuda')
@@ -604,6 +605,10 @@ nixl_inc_dirs = include_directories('src/api/cpp', 'src/api/cpp/backend', 'src/i
 nixl_device_inc_dirs = include_directories('src/api/device')
 plugins_inc_dirs = include_directories('src/plugins')
 utils_inc_dirs = include_directories('src/utils')
+# The generic GPU API includes the proxy wire protocol as
+# <device/proxy/proxy_protocol.h>. Keep the narrower device include set for
+# consumers that only need headers such as <gpu/device_types.cuh>.
+nixl_device_api_inc_dirs = [nixl_device_inc_dirs, utils_inc_dirs]
 
 subdir('src')
 if get_option('build_tests') and get_option('buildtype') != 'release'
