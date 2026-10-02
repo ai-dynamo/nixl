@@ -19,6 +19,7 @@
 #include "common.h"
 
 #include <memory>
+#include <tuple>
 #include <gtest/gtest.h>
 
 namespace gtest::nixl::gpu::single_write {
@@ -35,9 +36,10 @@ __global__ void
 putKernel(putParams put_params,
           size_t num_iters,
           unsigned long long *start_time,
-          unsigned long long *end_time) {
+          unsigned long long *end_time,
+          nixl_status_t *error) {
     __shared__ nixlGpuXferStatusH xfer_statuses[MAX_THREADS];
-    nixlGpuXferStatusH xfer_status = xfer_statuses[GetReqIdx<level>()];
+    nixlGpuXferStatusH &xfer_status = xfer_statuses[GetReqIdx<level>()];
 
     assert(GetReqIdx<level>() < MAX_THREADS);
 
@@ -55,6 +57,7 @@ putKernel(putParams put_params,
                                      put_params.flags,
                                      &xfer_status);
         if (status != NIXL_IN_PROG) {
+            atomicExch(reinterpret_cast<int *>(error), static_cast<int>(status));
             printf("Thread %d: nixlPut failed iteration %zu: status=%d (0x%x)\n",
                    threadIdx.x,
                    i,
@@ -68,6 +71,7 @@ putKernel(putParams put_params,
         } while (status == NIXL_IN_PROG);
 
         if (status != NIXL_SUCCESS) {
+            atomicExch(reinterpret_cast<int *>(error), static_cast<int>(status));
             printf("Thread %d: Transfer completion failed iteration %zu: status=%d\n",
                    threadIdx.x,
                    i,
@@ -137,7 +141,9 @@ launchPutKernel(const putParams &put_params,
         start_time = gpu_timer->start_.get();
         end_time = gpu_timer->end_.get();
     }
-    putKernel<level><<<1, num_threads>>>(put_params, num_iters, start_time, end_time);
+    gpuVar<nixl_status_t> kernel_error;
+    putKernel<level>
+        <<<1, num_threads>>>(put_params, num_iters, start_time, end_time, kernel_error.get());
 
     auto err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
@@ -151,17 +157,24 @@ launchPutKernel(const putParams &put_params,
         return NIXL_ERR_BACKEND;
     }
 
-    return NIXL_SUCCESS;
+    return *kernel_error;
 }
 
-class SingleWriteTest : public DeviceApiTestBase {
+using TestParams = std::tuple<bool, nixl_gpu_level_t>;
+
+class SingleWriteTest : public testing::TestWithParam<TestParams> {
 protected:
     std::string getBackendName() const { return "UCX"; }
 
-    static nixlAgentConfig
+    bool
+    isProxy() const {
+        return std::get<0>(GetParam());
+    }
+
+    nixlAgentConfig
     getConfig() {
         nixlAgentConfig cfg;
-        cfg.useProgThread = true;
+        cfg.useProgThread = !isProxy();
         cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
         cfg.pthrDelay = 100000;
         return cfg;
@@ -169,17 +182,23 @@ protected:
 
     nixl_b_params_t
     getBackendParams() {
-        nixl_b_params_t params;
-
-        if (getBackendName() == "UCX") {
-            params["num_workers"] = std::to_string(numWorkers);
+        if (isProxy()) {
+            return {{"device_proxy", "true"},
+                    {"proxy_channel_count", std::to_string(numWorkers)},
+                    {"proxy_thread_count", "4"},
+                    {"proxy_max_peers", "2"},
+                    {"ucx_error_handling_mode", "none"}};
         }
-
-        return params;
+        return {{"num_workers", std::to_string(numWorkers)}};
     }
 
     void
     SetUp() override {
+#ifndef HAVE_UCX_GPU_DEVICE_API
+        if (!isProxy()) {
+            GTEST_SKIP() << "UCX direct GPU API is unavailable";
+        }
+#endif
         if (!hasCudaGpu()) {
             GTEST_SKIP() << "No CUDA-capable GPU is available, skipping test.";
         }
@@ -287,10 +306,11 @@ protected:
     }
 
     nixl_status_t
-    dispatchLaunchPutKernel(nixl_gpu_level_t level,
+    dispatchLaunchPutKernel(const TestParams &params,
                             const putParams &put_params,
                             size_t num_iters,
                             gpuTimer *gpu_timer = nullptr) {
+        const auto level = std::get<1>(params);
         switch (level) {
         case nixl_gpu_level_t::BLOCK:
             return launchPutKernel<nixl_gpu_level_t::BLOCK>(put_params, num_iters, gpu_timer);
@@ -558,7 +578,8 @@ using gtest::nixl::gpu::single_write::SingleWriteTest;
 INSTANTIATE_TEST_SUITE_P(
     ucxDeviceApi,
     SingleWriteTest,
-    testing::ValuesIn(gtest::gpu::_test_levels),
-    [](const testing::TestParamInfo<nixl_gpu_level_t> &info) {
-        return std::string("UCX_") + gtest::gpu::GetGpuXferLevelStr(info.param);
+    testing::Combine(testing::Bool(), testing::ValuesIn(gtest::gpu::_test_levels)),
+    [](const testing::TestParamInfo<gtest::nixl::gpu::single_write::TestParams> &info) {
+        return std::string(std::get<0>(info.param) ? "PROXY_" : "UCX_") +
+            gtest::gpu::GetGpuXferLevelStr(std::get<1>(info.param));
     });
