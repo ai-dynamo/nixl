@@ -226,32 +226,30 @@ format_duration(nixlTime::us_t us) {
 // The raw-fd benchmark body below is separate: it takes its directory as a
 // positional argument and opens the files itself.
 //
-// Does not pass on hipFile: the harness registers host DRAM buffers, which
-// hipFileBufRegister rejects (5013, device memory only). Registration of the
-// files themselves works. Use the benchmark body's -v (VRAM) with -P instead.
+// The harness registers host DRAM buffers, so the smoke is skipped while
+// AIS_MT does not advertise DRAM_SEG (hipFile does not yet support host
+// buffers). It runs again once DRAM_SEG is re-advertised. To exercise AIS_MT
+// today, use the benchmark body's -v (VRAM) with -P.
 static const char *DEFAULT_AIS_MT_PATH_MODE_FILE = "/tmp/nixl_ais_mt_path_mode_smoke.bin";
 
 static int
 runPathModeSmoke() {
+    {
+        nixlAgentConfig cfg;
+        nixlAgent agent("AIS_MTPluginQuery", cfg);
+        nixl_mem_list_t mems;
+        nixl_b_params_t params;
+        if (agent.getPluginParams("AIS_MT", mems, params) == NIXL_SUCCESS &&
+            std::find(mems.begin(), mems.end(), DRAM_SEG) == mems.end()) {
+            std::cout << "SKIP: AIS_MT does not advertise DRAM_SEG" << std::endl;
+            return 0;
+        }
+    }
+
     const char *env = std::getenv("NIXL_AIS_MT_PATH_MODE_FILE");
     const char *file_path =
         (env != nullptr && env[0] != '\0') ? env : DEFAULT_AIS_MT_PATH_MODE_FILE;
-    const int rc = nixl_test::runPathModeSmoke("AIS_MTPathModeSmoke", "AIS_MT", file_path, 4096);
-    if (rc != 0) {
-        // The harness reports which phase failed, not why AIS_MT cannot pass it.
-        // Say so here rather than leaving a bare FAILED for the reader to chase.
-        std::cerr << "\nAIS_MT: this failure is EXPECTED on current hipFile.\n"
-                     "The shared harness registers host DRAM buffers, and "
-                     "hipFileBufRegister accepts\n"
-                     "device memory only (error 5013, hipFileHipMemoryTypeInvalid). "
-                     "Path-mode file\n"
-                     "registration itself works; only the transfer cannot.\n"
-                     "To exercise AIS_MT, skip this smoke test and run the VRAM "
-                     "transfers instead:\n"
-                     "  nixl_ais_mt_test -P -v <directory_path>\n"
-                  << std::endl;
-    }
-    return rc;
+    return nixl_test::runPathModeSmoke("AIS_MTPathModeSmoke", "AIS_MT", file_path, 4096);
 }
 
 int
@@ -272,12 +270,12 @@ main(int argc, char *argv[]) {
     int num_transfers = DEFAULT_NUM_TRANSFERS;
     bool skip_read = false;
     bool skip_write = false;
-    size_t num_threads = 0;
+    int num_threads = 0;
     nixlTime::us_t total_time(0);
     double total_data_gb = 0;
     bool use_direct = false;
-    unsigned int iterations = DEFAULT_ITERATIONS;
-    unsigned int num_gpus = DEFAULT_NUM_GPUS;
+    int iterations = DEFAULT_ITERATIONS;
+    int num_gpus = DEFAULT_NUM_GPUS;
     bool run_path_mode_smoke = true;
 
     static struct option long_options[] = {{"dram", no_argument, 0, 'd'},
@@ -512,7 +510,7 @@ main(int argc, char *argv[]) {
     // Ensure the initialization IO has completed on the device.
     // Failing to do so introduces a race condition with hipFile in Phase 2.
     if (use_vram) {
-        for (unsigned int dev = 0; dev < num_gpus; dev++) {
+        for (int dev = 0; dev < num_gpus; dev++) {
             (void)hipSetDevice(dev);
             if (hipDeviceSynchronize() != hipSuccess) {
                 std::cerr << "Failed to synchronize device " << dev << " after fill\n";
@@ -584,7 +582,7 @@ main(int argc, char *argv[]) {
             }
             std::cout << "Write transfer request created." << std::endl;
 
-            for (unsigned int iter = 0; iter < iterations; iter++) {
+            for (int iter = 0; iter < iterations; iter++) {
                 us_t iter_start = getUs();
 
                 status = agent.postXferReq(write_req);
@@ -658,7 +656,7 @@ main(int argc, char *argv[]) {
             // Failing to do so introduces a race condition with hipFile in
             // Phase 4, silently zeroing data that NIXL reads.
             if (use_vram) {
-                for (unsigned int dev = 0; dev < num_gpus; dev++) {
+                for (int dev = 0; dev < num_gpus; dev++) {
                     (void)hipSetDevice(dev);
                     if (hipDeviceSynchronize() != hipSuccess) {
                         std::cerr << "Failed to synchronize device " << dev << " after clear\n";
@@ -702,7 +700,7 @@ main(int argc, char *argv[]) {
             }
             std::cout << "Read transfer request created." << std::endl;
 
-            for (unsigned int iter = 0; iter < iterations; iter++) {
+            for (int iter = 0; iter < iterations; iter++) {
                 us_t iter_start = getUs();
 
                 status = agent.postXferReq(read_req);
@@ -786,6 +784,8 @@ success:
     std::cout << "PHASE 6: Cleanup" << std::endl;
     std::cout << "============================================================" << std::endl;
 
+    agent.deregisterMem(file_for_ais_mt);
+
     std::cout << "Deleting test files..." << std::endl;
     for (i = 0; i < num_transfers; i++) {
         if (fd[i] < 0) {
@@ -800,7 +800,6 @@ success:
     }
     printProgress(1.0);
 
-    agent.deregisterMem(file_for_ais_mt);
     if (use_vram) {
         agent.deregisterMem(vram_for_ais_mt);
         for (i = 0; i < num_transfers; i++) {

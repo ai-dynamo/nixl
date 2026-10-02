@@ -36,7 +36,7 @@ createStaticAIS_MTPlugin() {
                                    "AIS_MT",
                                    "0.1.0",
                                    getAisMtBackendOptions(),
-                                   {DRAM_SEG, VRAM_SEG, FILE_SEG});
+                                   {VRAM_SEG, FILE_SEG});
 }
 #else
 extern "C" NIXL_PLUGIN_EXPORT nixlBackendPlugin *
@@ -45,7 +45,7 @@ nixl_plugin_init() {
                                    "AIS_MT",
                                    "0.1.0",
                                    getAisMtBackendOptions(),
-                                   {DRAM_SEG, VRAM_SEG, FILE_SEG});
+                                   {VRAM_SEG, FILE_SEG});
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

@@ -147,9 +147,11 @@ nixlAisEngine::registerMem(const nixlBlobDesc &mem,
         }
     }
 
-    default:
+    case BLK_SEG:
+    case OBJ_SEG:
         return NIXL_ERR_BACKEND;
     }
+    return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t

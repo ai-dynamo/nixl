@@ -64,6 +64,13 @@ class nixlAisEngine : public FileEngineBase {
 public:
     explicit nixlAisEngine(const nixlBackendInitParams *init_params);
 
+    // DRAM_SEG is not advertised until hipFile supports host buffers; the
+    // DRAM_SEG registration path is kept so it only needs re-advertising.
+    nixl_mem_list_t
+    getSupportedMems() const override {
+        return {VRAM_SEG, FILE_SEG};
+    }
+
     [[nodiscard]] nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
     [[nodiscard]] nixl_status_t

@@ -68,11 +68,8 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 - **Git**: For source code management
 - **CUDA Toolkit**: 12.8+ (for GPU features)
 - **ROCm / HIP** (optional): when CUDA is absent, Meson can build VRAM paths
-  with HIP. A single build targets one GPU stack: `-Dnixlbench_gpu=auto` (the
-  default) picks CUDA when present and otherwise ROCm, while `cuda` / `rocm`
-  force a stack. To cover both on one machine, run two Meson configures in
-  separate build directories. See `benchmark/nixlbench/meson_options.txt`
-  (`nixlbench_gpu`).
+  with HIP. A single build can target one GPU stack. See
+  [Building NIXL and NIXLBench with ROCm](#building-nixl-and-nixlbench-with-rocm).
 - **Python**: 3.12+ (for benchmark utilities)
 
 ## Quick Start
@@ -383,6 +380,29 @@ export PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 ```
 
+#### Building NIXL and NIXLBench with ROCm
+
+ROCm is never detected automatically. Pass `-Drocm_path=<prefix>` (the ROCm
+install root, e.g. `/opt/rocm`) to both the NIXL and NIXLBench configures:
+
+```bash
+# NIXL (builds the AIS_MT plugin when hipFile is found under rocm_path)
+uv run meson setup build --prefix=/usr/local/nixl --buildtype=release \
+  -Drocm_path=/opt/rocm
+
+# NIXLBench
+uv run meson setup build -Dnixl_path=/usr/local/nixl/ --buildtype=release \
+  -Drocm_path=/opt/rocm -Dnixlbench_gpu=rocm
+```
+
+A single NIXLBench build targets one GPU stack, selected by `nixlbench_gpu`:
+- `auto` (default): CUDA when present, otherwise ROCm. Without `rocm_path`, an
+  AMD-only machine silently gets a CPU-only (DRAM) build.
+- `cuda` / `rocm`: force that stack; configure fails if it is not found.
+
+To build for both stacks on one machine, run two Meson configures in separate
+build directories.
+
 #### Available Meson Build Options
 - `nixl_path`: Path to NIXL installation (default: /usr/local)
 - `cudapath_inc`: Include path for CUDA
@@ -392,6 +412,9 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 - `etcd_lib_path`: Path to ETCD C++ client library
 - `nvshmem_inc_path`: Path to NVSHMEM include directory
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
+- `rocm_path`: Path to ROCm installation; required for any ROCm build (default: empty, ROCm not used)
+- `nixlbench_gpu`: GPU stack to build against: `auto`, `cuda`, or `rocm` (default: auto)
+- `use_rocm`: Deprecated alias for `nixlbench_gpu=rocm` (default: false)
 - `build_raw_cli`: Build the experimental CLI11-based raw command path (default: false)
 - `build_tests`: Build NIXLBench tests for non-release builds (default: true)
 - `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)

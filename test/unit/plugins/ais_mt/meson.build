@@ -23,6 +23,6 @@ nixl_ais_mt_app = executable('nixl_ais_mt_test',
     include_directories: [nixl_inc_dirs, utils_inc_dirs, include_directories('..')],
     install: true)
 
-# Fails on hipFile: the shared harness registers host DRAM buffers, and
-# hipFileBufRegister takes device memory only (5013, hipFileHipMemoryTypeInvalid).
+# Skips (exit 0) while AIS_MT does not advertise DRAM_SEG: the shared harness
+# registers host DRAM buffers. Runs again once DRAM_SEG is re-advertised.
 test('ais_mt_path_mode_smoke', nixl_ais_mt_app)

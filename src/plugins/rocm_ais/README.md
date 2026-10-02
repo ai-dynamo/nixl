@@ -88,9 +88,9 @@ silent skip.
 
 ### Supported memory types
 
-`DRAM_SEG`, `VRAM_SEG`, and `FILE_SEG`, shared with the other local file
-backends via `FileEngineBase`. See the note on host DRAM under
-[Limitations](#limitations).
+`VRAM_SEG` and `FILE_SEG`, shared with the other local file
+backends via `FileEngineBase`. `DRAM_SEG` support to come soon.
+See the note on host DRAM under [Limitations](#limitations).
 
 The backend is local-only: it supports local transfers, and does not support
 remote transfers or notifications. Exactly one side of a transfer must be the
@@ -109,10 +109,7 @@ Path-mode requires a unique `devId` per registration, since in path-mode the
 
 - **Host DRAM buffer registration.** `hipFileBufRegister` rejects host memory
   with error 5013 (`hipFileHipMemoryTypeInvalid`); current ROCm hipFile
-  supports device memory only, so VRAM is the supported path today. Setting
-  `HIPFILE_ALLOW_COMPAT_MODE=true` is the escape hatch: registration then logs a
-  warning and continues instead of failing, though the subsequent transfer may
-  still fail on stacks without host-buffer support.
+  supports device memory only, so VRAM is the supported path today.
 - **Filesystem support.** hipFile refuses filesystems it does not recognise as
   AIS-capable. Set `HIPFILE_UNSUPPORTED_FILE_SYSTEMS=true` to allow them, for
   example when running the unit test against a scratch directory that is not on
