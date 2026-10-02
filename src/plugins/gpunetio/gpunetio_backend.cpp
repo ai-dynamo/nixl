@@ -445,7 +445,6 @@ nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev
         return NIXL_ERR_BACKEND;
     }
 
-    notif->send_pi = 0;
     notif->recv_pi = 0;
 
     // Ensure notif list is not added twice for the same peer
@@ -1150,7 +1149,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     }
 
     auto treq = std::make_unique<nixlDocaBckndReq>();
-    std::lock_guard<std::mutex> lock(xferRingLock);
+    const std::lock_guard lock(xferRingLock);
     uint32_t start_pos = xferRingPos.load();
     uint32_t available_entries = 0;
     for (uint32_t offset = 0; offset < DOCA_XFER_REQ_MAX + request_entries - 1; ++offset) {
@@ -1246,7 +1245,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         }
 
         const uint32_t last_pos = (treq->end_pos - 1) & DOCA_XFER_REQ_MASK;
-        const uint32_t notif_idx = notif->send_pi.fetch_add(1) & (notif->elems_num - 1);
+        const uint32_t notif_idx = last_pos;
         notif_addr = (uintptr_t)(notif->send_addr + notif_idx * notif->elems_size);
         xferReqRingCpu[last_pos].has_notif_msg_idx = notif_idx;
         xferReqRingCpu[last_pos].msg_sz = newMsg.size();
@@ -1292,7 +1291,6 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    std::lock_guard<std::mutex> lock(xferRingLock);
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
     for (bool done : treq->completion_done) {
         if (!done) {
@@ -1305,6 +1303,7 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     treq->completion_done.clear();
     treq->completion_done.reserve(request_entries);
 
+    const std::lock_guard lock(xferRingLock);
     const uint32_t next_completion = lastPostedReq.load();
     uint32_t completion_start = next_completion;
     uint32_t skipped = 0;
@@ -1370,7 +1369,7 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
     if (handle == nullptr) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    std::lock_guard<std::mutex> lock(xferRingLock);
+    const std::lock_guard lock(xferRingLock);
     nixlDocaBckndReq *treq = (nixlDocaBckndReq *)handle;
     bool complete = true;
     for (uint32_t entry = 0; entry < treq->completion_ids.size(); ++entry) {
@@ -1409,7 +1408,7 @@ nixlDocaEngine::releaseReqH(nixlBackendReqH *handle) const {
     if (checkXfer(handle) == NIXL_IN_PROG) {
         return NIXL_ERR_BACKEND;
     }
-    std::lock_guard<std::mutex> lock(xferRingLock);
+    const std::lock_guard lock(xferRingLock);
     auto *treq = static_cast<nixlDocaBckndReq *>(handle);
     for (bool done : treq->completion_done) {
         if (!done) {
@@ -1488,7 +1487,6 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
 nixl_status_t
 nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
     struct nixlDocaNotif *notif;
-    uint32_t buf_idx;
     uintptr_t msg_buf;
 
     auto searchNotif = notifMap.find(remote_agent);
@@ -1514,14 +1512,14 @@ nixlDocaEngine::genNotif(const std::string &remote_agent, const std::string &msg
     }
 
     std::string newMsg = msg_tag_start + std::to_string((int)msg.size()) + msg_tag_end + msg;
-    buf_idx = (notif->send_pi.fetch_add(1) & (notif->elems_num - 1));
+    const std::lock_guard lock(notifSendLock);
+    const uint32_t buf_idx = DOCA_XFER_REQ_MAX;
     msg_buf = (uintptr_t)notif->send_addr + (buf_idx * notif->elems_size);
     memcpy((void *)msg_buf, newMsg.c_str(), newMsg.size());
 
     NIXL_DEBUG << "genNotif to " << remote_agent << " msg size " << std::to_string((int)msg.size())
                << " msg " << newMsg << " at " << buf_idx << " msg_buf " << msg_buf << "\n";
 
-    std::lock_guard<std::mutex> lock(notifSendLock);
     ((volatile struct docaNotif *)notif_send_cpu)->msg_buf = msg_buf;
     ((volatile struct docaNotif *)notif_send_cpu)->msg_lkey = notif->send_mr->get_lkey();
     ((volatile struct docaNotif *)notif_send_cpu)->msg_size = newMsg.size();

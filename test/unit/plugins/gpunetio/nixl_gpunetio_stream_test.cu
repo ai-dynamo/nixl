@@ -178,10 +178,13 @@ cyclePreparedRequests(nixlAgent &agent,
                       const nixl_xfer_dlist_t &remote,
                       const std::string &remote_agent,
                       const nixl_opt_args_t &params) {
-    for (uint32_t iteration = 0; iteration < 64; ++iteration) {
+    nixl_opt_args_t notification_params = params;
+    for (uint32_t iteration = 0; iteration < 4096; ++iteration) {
+        notification_params.notif = "prepared-" + std::to_string(iteration);
         nixlXferReqH *request = nullptr;
         nixl_exit_on_failure(
-            agent.createXferReq(NIXL_WRITE, local, remote, remote_agent, request, &params),
+            agent.createXferReq(
+                NIXL_WRITE, local, remote, remote_agent, request, &notification_params),
             "Failed to prepare ring lifecycle request");
         nixl_exit_on_failure(agent.releaseXferReq(request),
                              "Failed to release prepared ring lifecycle request");

@@ -18,7 +18,7 @@
 #ifndef GPUNETIO_BACKEND_H
 #define GPUNETIO_BACKEND_H
 
-#include <array>
+#include <bitset>
 #include "gpunetio_backend_aux.h"
 
 class nixlDocaEngine : public nixlBackendEngine {
@@ -168,11 +168,11 @@ private:
     struct docaXferReqGpu *xferReqRingCpu;
     mutable std::atomic<uint32_t> xferRingPos;
     mutable std::mutex xferRingLock;
-    mutable std::array<bool, DOCA_XFER_REQ_MAX> xferRingReserved{};
+    mutable std::bitset<DOCA_XFER_REQ_MAX> xferRingReserved;
+    mutable std::bitset<DOCA_MAX_COMPLETION_INFLIGHT> completionReserved;
 
     struct docaXferCompletion *completion_list_gpu;
     struct docaXferCompletion *completion_list_cpu;
-    mutable std::array<bool, DOCA_MAX_COMPLETION_INFLIGHT> completionReserved{};
     uint32_t *wait_exit_gpu;
     uint32_t *wait_exit_cpu;
     struct docaNotif *notif_fill_gpu;
