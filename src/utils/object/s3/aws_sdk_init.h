@@ -15,10 +15,12 @@
  * limitations under the License.
  */
 
-#ifndef OBJ_PLUGIN_AWS_SDK_INIT_H
-#define OBJ_PLUGIN_AWS_SDK_INIT_H
+#ifndef NIXL_SRC_UTILS_OBJECT_S3_AWS_SDK_INIT_H
+#define NIXL_SRC_UTILS_OBJECT_S3_AWS_SDK_INIT_H
 
 #include <aws/core/Aws.h>
+#include "aws_sdk_log.h"
+#include <memory>
 #include <mutex>
 #include <cstdlib>
 
@@ -39,6 +41,15 @@ initAWSSDK() {
 
     std::call_once(aws_init_flag, []() {
         aws_options = new Aws::SDKOptions();
+        const auto log_level = getNixlAwsLogLevel();
+        // Required: InitAPI only calls logger_create_fn when logLevel != Off.
+        aws_options->loggingOptions.logLevel = log_level;
+        aws_options->loggingOptions.logger_create_fn = [log_level]() {
+            return std::make_shared<NixlAwsLogger>(log_level);
+        };
+        aws_options->loggingOptions.crt_logger_create_fn = [log_level]() {
+            return std::make_shared<NixlCrtLogSystem>(log_level);
+        };
         Aws::InitAPI(*aws_options);
 
         // Register cleanup at program exit
@@ -51,4 +62,4 @@ initAWSSDK() {
 
 } // namespace nixl_s3_utils
 
-#endif // OBJ_PLUGIN_AWS_SDK_INIT_H
+#endif // NIXL_SRC_UTILS_OBJECT_S3_AWS_SDK_INIT_H
