@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL GDS Direct Storage — Phase 1: Initialization
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  class: controller
+}
+agent: "NIXL Agent\n(\"GDSTester\")" {
+  class: agent
+}
+storage: "Local Storage\n(NVMe / File)" {
+  class: external
+}
+
+conductor -> agent: "1.1 create_agent(\"GDSTester\", backends=[])" {
+  class: call
+}
+agent -> agent: "1.2 get_plugin_list() — verify GDS available" {
+  class: internal
+}
+conductor -> agent: "1.3 create_backend(\"GDS\")" {
+  class: call
+}
+conductor -> agent: "1.4 allocate DRAM buf1 (16*4096 B, fill 0xba)" {
+  class: call
+}
+conductor -> agent: "1.5 allocate DRAM buf2 (16*4096 B, empty)" {
+  class: call
+}
+agent -> agent: "1.6 register_memory(DRAM: buf1, buf2)" {
+  class: call
+}
+conductor -> storage: "1.7 open/create file (O_RDWR | O_CREAT)" {
+  class: internal
+}
+agent -> agent: "1.8 register_memory(FILE: fd, size)" {
+  class: call
+}

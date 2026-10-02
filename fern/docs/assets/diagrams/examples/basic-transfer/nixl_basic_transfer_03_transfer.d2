@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# NIXL Basic Two Peers Transfer — Phase 3: Transfer Execution
+
+shape: sequence_diagram
+
+conductor: Conductor {
+  class: controller
+}
+initiator: "Initiator Agent\n(Auto Port)" {
+  class: agent
+}
+target: "Target Agent\n(Port 5555)" {
+  class: agent
+}
+
+conductor -> initiator: "3.1 initialize_xfer(..., notif_msg=\"Done_reading\")" {
+  class: call
+}
+initiator -> initiator: "3.2 resolve backend (UCX auto-select)" {
+  class: call
+}
+conductor -> initiator: "3.3 transfer(xfer_handle)" {
+  class: call
+}
+initiator -> target: "3.4 RDMA read — data transfer (ones tensor)" {
+  class: call
+}
+conductor -> initiator: "3.5 check_xfer_state(handle) [poll]" {
+  class: call
+}
+initiator -> target: "3.6 transfer complete\nnotification delivered: \"Done_reading\"" {
+  class: notification
+  style: {
+    stroke-dash: 3
+  }
+}
+initiator -> conductor: "3.7 state: DONE" {
+  class: call
+}
