@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #define _NIXL_CYCLIC_BUFFER_HPP
 
 #include <atomic>
+#include <cstddef>
 #include <cstring>
 #include <stdexcept>
 #include <iostream>
@@ -50,13 +51,21 @@ public:
     capacity() const;
 
 private:
+    // Hardcoded value instead of std::hardware_destructive_interference_size due to ABI;
+    // needs to be consistent across build and compilers.
+    // Conservatively set to 256 similar to GCC std::hardware_destructive_interference_size for ARM.
+    static constexpr size_t DESTRUCTIVE_INTERFERENCE_SIZE = 256;
+
     struct bufferHeader {
-        std::atomic<size_t> write_pos{0};
-        std::atomic<size_t> read_pos{0};
+        // version stays at byte offset 16 across layout versions, so a reader
+        // on a mismatched file always reads a real version field instead of
+        // arbitrary bytes.
+        alignas(DESTRUCTIVE_INTERFERENCE_SIZE) std::atomic<size_t> write_pos{0};
+        const size_t capacity;
         std::atomic<int> version{0};
         int expected_version{0};
-        const size_t capacity;
-        size_t mask;
+        const size_t mask;
+        alignas(DESTRUCTIVE_INTERFERENCE_SIZE) std::atomic<size_t> read_pos{0};
 
         bufferHeader(size_t size);
     };
@@ -71,6 +80,9 @@ private:
     bufferHeader *header_;
     T *data_;
     size_t bufferSize_;
+    size_t cachedWritePos_ = 0;
+    size_t cachedReadPos_ = 0;
+    size_t cachedMask_ = 0;
 };
 
 #include "cyclic_buffer.tpp"
