@@ -451,6 +451,7 @@ if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
     if [ -z "${NIXL_SPCX_PLUGIN_REPO_URL:-}" ]; then
         error "ERROR:" "--build-ucx-spcx-plugin requires the NIXL_SPCX_PLUGIN_REPO_URL environment variable"
     fi
+    SPCX_SHA_FILE=$(mktemp)
     trap 'rm -rf "$SPCX_SRC_DIR"' EXIT
     mkdir -p "$SPCX_SRC_DIR"
     (
@@ -464,8 +465,11 @@ if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then
             fetch -q --depth 1 origin "$UCX_SPCX_PLUGIN_REF"
         git checkout -q FETCH_HEAD
         echo "ucx-spcx-plugin ref ${UCX_SPCX_PLUGIN_REF} -> commit $(git rev-parse HEAD)"
+        git rev-parse HEAD > "$SPCX_SHA_FILE"
         rm -rf .git
     ) || error "ERROR:" "failed to fetch ucx-spcx-plugin at ref ${UCX_SPCX_PLUGIN_REF}"
+    BUILD_ARGS+=" --build-arg UCX_SPCX_PLUGIN_VERSION=$(cat "$SPCX_SHA_FILE")"
+    rm -f "$SPCX_SHA_FILE"
 fi
 
 if [ -n "$WHEEL_BASE_IMAGE" ]; then
@@ -502,6 +506,12 @@ if [ "$BUILD_INFINIA" = "true" ]; then
     # the wheel would silently build without libplugin_INFINIA.so.
     [ -n "$(ls -A "$INFINIA_LIBS_DIR")" ] || \
         error "ERROR:" "no Infinia libs found for arch $ARCH in ${INFINIA_LIBS_IMAGE}"
+    INFINIA_PLUGIN_VERSION="${INFINIA_LIBS_IMAGE##*:}"
+    infinia_digest=$(docker image inspect --format '{{index .RepoDigests 0}}' \
+        "$INFINIA_LIBS_IMAGE" 2>/dev/null | sed -n 's/.*@//p')
+    [ -n "$infinia_digest" ] && \
+        INFINIA_PLUGIN_VERSION="${INFINIA_PLUGIN_VERSION}@${infinia_digest}"
+    BUILD_ARGS+=" --build-arg INFINIA_PLUGIN_VERSION=$INFINIA_PLUGIN_VERSION"
 fi
 
 show_build_options

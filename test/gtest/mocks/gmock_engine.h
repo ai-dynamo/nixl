@@ -22,6 +22,8 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
+#include <optional>
+
 #include "backend/backend_engine.h"
 
 namespace mocks {
@@ -64,6 +66,8 @@ public:
     SetToParams(nixl_b_params_t &params) const;
     static GMockBackendEngine *
     GetFromParams(nixl_b_params_t *params);
+
+    std::optional<const nixlBackendTraceSink *> observedTraceSink;
 
     MOCK_METHOD(bool, supportsRemote, (), (const, override));
     MOCK_METHOD(bool, supportsLocal, (), (const, override));
