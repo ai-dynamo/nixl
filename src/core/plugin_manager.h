@@ -184,6 +184,9 @@ public:
     const std::vector<nixlTelemetryStaticPluginInfo> &
     getTelemetryStaticPlugins();
 
+    void
+    reinitializeForUnitTest();
+
 private:
     std::map<nixl_backend_t, std::shared_ptr<const nixlBackendPluginHandle>>
         loaded_backend_plugins_;
@@ -236,6 +239,11 @@ private:
 
     // Private constructor for singleton pattern
     nixlPluginManager();
+
+    void
+    processPluginDir();
+    void
+    processPluginFile();
 };
 
 #endif
