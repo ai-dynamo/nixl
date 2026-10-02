@@ -333,7 +333,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
     std::unique_ptr<nixlBackendTraceSink> trace_sink;
     if (data->tracer_ != nullptr) {
-        trace_sink = std::make_unique<nixl::trace::TracerPhaseSink>(*data->tracer_, type);
+        trace_sink = std::make_unique<nixl::trace::TracerPhaseSink>(
+            *data->tracer_, type, data->telemetry_.get());
         init_params.traceSink = trace_sink.get();
     }
 

@@ -24,6 +24,5 @@ using buffer_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryBufferE
 
 nixlTelemetryPlugin *
 createStaticBUFFERPlugin() {
-    return buffer_exporter_plugin_t::create(
-        nixl_telemetry_plugin_api_version::V2, "buffer", "1.0.0");
+    return buffer_exporter_plugin_t::create(NIXL_TELEMETRY_PLUGIN_API_VERSION, "buffer", "1.0.0");
 }
