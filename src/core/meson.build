@@ -51,6 +51,18 @@ if 'GDS_MT' in static_plugins
     nixl_lib_deps += [ gds_mt_backend_interface, taskflow_proj, cuda_dep ]
 endif
 
+# AIS_MT mirrors GDS_MT. The interface only exists once rocm_ais/meson.build has
+# resolved HIP, hipFile and Taskflow; without all three it returns early via
+# subdir_done(), so guard on the variable rather than assuming it is defined.
+disable_rocm_ais_backend = get_option('disable_rocm_ais_backend')
+if not disable_rocm_ais_backend and 'AIS_MT' in static_plugins
+    if not is_variable('ais_mt_backend_interface')
+        error('AIS_MT requested in static_plugins but the AIS plugin was not built; ' +
+              'set -Drocm_path=<prefix> to a ROCm install providing hipFile.')
+    endif
+    nixl_lib_deps += [ ais_mt_backend_interface, taskflow_proj, rocm_dep ]
+endif
+
 cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
 disable_mooncake_backend = get_option('disable_mooncake_backend')

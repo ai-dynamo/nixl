@@ -16,6 +16,7 @@
 file_utils_lib = library('file_utils',
            'file_utils.cpp', 'file_utils.h',
            'file_path_mode.cpp', 'file_path_mode.h',
+           'file_engine_base.h',
            include_directories: [nixl_inc_dirs, utils_inc_dirs],
            dependencies: [nixl_common_dep],
            install: true)
