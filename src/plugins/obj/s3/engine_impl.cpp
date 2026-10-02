@@ -22,7 +22,8 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
                       const nixl_meta_dlist_t &local,
                       const nixl_meta_dlist_t &remote,
                       const std::string &remote_agent,
-                      const std::string &local_agent) {
+                      const std::string &local_agent,
+                      const nixl_mem_list_t &supported_mems) {
     if (operation != NIXL_WRITE && operation != NIXL_READ) {
         NIXL_ERROR << absl::StrFormat("Error: Invalid operation type: %d", operation);
         return false;
@@ -34,8 +35,13 @@ isValidPrepXferParams(const nixl_xfer_op_t &operation,
             local_agent,
             remote_agent);
 
-    if (local.getType() != DRAM_SEG) {
-        NIXL_ERROR << absl::StrFormat("Error: Local memory type must be DRAM_SEG, got %d",
+    // The local buffer type must be one the engine advertises (OBJ_SEG is the
+    // remote side). This keeps VRAM_SEG out of the base HTTP engine, which does
+    // not list it, while the accelerated engine accepts it.
+    if (local.getType() == OBJ_SEG ||
+        std::find(supported_mems.begin(), supported_mems.end(), local.getType()) ==
+            supported_mems.end()) {
+        NIXL_ERROR << absl::StrFormat("Error: Local memory type %d is not supported",
                                       local.getType());
         return false;
     }
@@ -264,8 +270,10 @@ DefaultObjEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
                                const std::string &local_agent,
                                nixlBackendReqH *&handle,
                                const nixl_opt_b_args_t *opt_args) const {
-    if (!isValidPrepXferParams(operation, local, remote, remote_agent, local_agent))
+    if (!isValidPrepXferParams(
+            operation, local, remote, remote_agent, local_agent, getSupportedMems())) {
         return NIXL_ERR_INVALID_PARAM;
+    }
 
     auto req_h = std::make_unique<nixlObjBackendReqH>();
     handle = req_h.release();
