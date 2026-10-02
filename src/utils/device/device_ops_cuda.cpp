@@ -17,9 +17,12 @@
 #include "device/device_ops.h"
 
 #include <cuda_runtime.h>
+
+#include <memory>
 #include <string>
 
 #include "common/nixl_log.h"
+#include "device/device_ops_cuda_gdrcopy.h"
 
 namespace {
 
@@ -135,6 +138,12 @@ public:
     nixl_status_t
     setActiveDevice(int device_id) noexcept override {
         return cudaStatus(cudaSetDevice(device_id), "cudaSetDevice");
+    }
+
+    nixl_status_t
+    doAllocHostPublishedMem(size_t size,
+                            std::unique_ptr<nixl::hostPublishedDeviceMem> &out) noexcept override {
+        return nixl::allocGdrCopyPublishedMem(size, out);
     }
 };
 
