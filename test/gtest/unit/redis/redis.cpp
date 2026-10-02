@@ -147,28 +147,25 @@ TEST(redisConfigTest, BackendParamOverridesPoolSizeEnvVar) {
     EXPECT_EQ(config.pool_size, 2);
 }
 
-TEST(redisConfigTest, InvalidPoolSizeFallsBackToDefault) {
+TEST(redisConfigTest, NonNumericPoolSizeThrows) {
     scopedRedisEnvironment environment;
     environment.clear();
     nixl_b_params_t params = {{"pool_size", "bad"}};
-    const auto config = RedisConfig::fromBackendParams(&params);
-    EXPECT_EQ(config.pool_size, 8);
+    EXPECT_THROW(RedisConfig::fromBackendParams(&params), std::runtime_error);
 }
 
-TEST(redisConfigTest, ZeroPoolSizeFallsBackToDefault) {
+TEST(redisConfigTest, ZeroPoolSizeThrows) {
     scopedRedisEnvironment environment;
     environment.clear();
     nixl_b_params_t params = {{"pool_size", "0"}};
-    const auto config = RedisConfig::fromBackendParams(&params);
-    EXPECT_EQ(config.pool_size, 8);
+    EXPECT_THROW(RedisConfig::fromBackendParams(&params), std::invalid_argument);
 }
 
-TEST(redisConfigTest, TrailingGarbagePoolSizeFallsBackToDefault) {
+TEST(redisConfigTest, TrailingGarbagePoolSizeThrows) {
     scopedRedisEnvironment environment;
     environment.clear();
     nixl_b_params_t params = {{"pool_size", "4x"}};
-    const auto config = RedisConfig::fromBackendParams(&params);
-    EXPECT_EQ(config.pool_size, 8);
+    EXPECT_THROW(RedisConfig::fromBackendParams(&params), std::runtime_error);
 }
 
 TEST(redisConfigTest, EnvVarSetsDB) {
@@ -180,20 +177,18 @@ TEST(redisConfigTest, EnvVarSetsDB) {
     EXPECT_EQ(config.db, 3);
 }
 
-TEST(redisConfigTest, TrailingGarbageDBFallsBackToDefault) {
+TEST(redisConfigTest, TrailingGarbageDBThrows) {
     scopedRedisEnvironment environment;
     environment.clear();
     nixl_b_params_t params = {{"db", "2x"}};
-    const auto config = RedisConfig::fromBackendParams(&params);
-    EXPECT_EQ(config.db, 0);
+    EXPECT_THROW(RedisConfig::fromBackendParams(&params), std::runtime_error);
 }
 
-TEST(redisConfigTest, NegativeDBFallsBackToDefault) {
+TEST(redisConfigTest, NegativeDBThrows) {
     scopedRedisEnvironment environment;
     environment.clear();
     nixl_b_params_t params = {{"db", "-1"}};
-    const auto config = RedisConfig::fromBackendParams(&params);
-    EXPECT_EQ(config.db, 0);
+    EXPECT_THROW(RedisConfig::fromBackendParams(&params), std::invalid_argument);
 }
 
 class mockRedisClient : public iRedisClient {

@@ -16,154 +16,60 @@
  */
 
 #include "redis_client.h"
+#include "common/backend.h"
+#include "common/configuration.h"
 #include "common/nixl_log.h"
 #include <absl/strings/str_format.h>
 #include <algorithm>
 #include <chrono>
-#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
 
-namespace {
-
-std::string
-getStringSetting(const nixl_b_params_t *custom_params,
-                 const char *param_name,
-                 const char *env_name,
-                 const char *default_value = "") {
-    if (custom_params) {
-        const auto it = custom_params->find(param_name);
-        if (it != custom_params->end()) {
-            return it->second;
-        }
-    }
-    const char *env_value = std::getenv(env_name);
-    return env_value ? std::string(env_value) : default_value;
-}
-
-std::optional<int>
-parseRedisPort(const std::string &value, const char *source) {
-    try {
-        size_t parsed = 0;
-        int port = std::stoi(value, &parsed);
-        if (parsed != value.size() || port <= 0 || port > 65535) {
-            NIXL_WARN << absl::StrFormat(
-                "Invalid %s value '%s', using default 6379", source, value);
-            return std::nullopt;
-        }
-        return port;
-    }
-    catch (const std::exception &) {
-        NIXL_WARN << absl::StrFormat("Invalid %s value '%s', using default 6379", source, value);
-        return std::nullopt;
-    }
-}
-
-int
-getRedisPort(const nixl_b_params_t *custom_params) {
-    if (custom_params && custom_params->count("port") > 0) {
-        auto port = parseRedisPort(custom_params->at("port"), "Redis port");
-        if (port) {
-            return *port;
-        }
-    }
-    const char *env_port = std::getenv("REDIS_PORT");
-    if (env_port) {
-        auto port = parseRedisPort(env_port, "REDIS_PORT");
-        if (port) {
-            return *port;
-        }
-    }
-    return 6379;
-}
-
-std::optional<int>
-parseRedisDB(const std::string &value, const char *source) {
-    try {
-        size_t parsed = 0;
-        int val = std::stoi(value, &parsed);
-        if (parsed != value.size() || val < 0) {
-            NIXL_WARN << absl::StrFormat("Invalid %s value '%s', using default 0", source, value);
-            return std::nullopt;
-        }
-        return val;
-    }
-    catch (const std::exception &) {
-        NIXL_WARN << absl::StrFormat("Invalid %s value '%s', using default 0", source, value);
-        return std::nullopt;
-    }
-}
-
-int
-getRedisDB(const nixl_b_params_t *custom_params) {
-    if (custom_params && custom_params->count("db") > 0) {
-        auto val = parseRedisDB(custom_params->at("db"), "db");
-        if (val) {
-            return *val;
-        }
-    }
-    const char *env_val = std::getenv("REDIS_DB");
-    if (env_val) {
-        auto val = parseRedisDB(env_val, "REDIS_DB");
-        if (val) {
-            return *val;
-        }
-    }
-    return 0;
-}
-
-std::optional<int>
-parseRedisPoolSize(const std::string &value, const char *source) {
-    try {
-        size_t parsed = 0;
-        int val = std::stoi(value, &parsed);
-        if (parsed != value.size() || val <= 0) {
-            NIXL_WARN << absl::StrFormat("Invalid %s value '%s', using default 8", source, value);
-            return std::nullopt;
-        }
-        return val;
-    }
-    catch (const std::exception &) {
-        NIXL_WARN << absl::StrFormat("Invalid %s value '%s', using default 8", source, value);
-        return std::nullopt;
-    }
-}
-
-int
-getRedisPoolSize(const nixl_b_params_t *custom_params) {
-    if (custom_params && custom_params->count("pool_size") > 0) {
-        auto val = parseRedisPoolSize(custom_params->at("pool_size"), "pool_size");
-        if (val) {
-            return *val;
-        }
-    }
-    const char *env_val = std::getenv("REDIS_POOL_SIZE");
-    if (env_val) {
-        auto val = parseRedisPoolSize(env_val, "REDIS_POOL_SIZE");
-        if (val) {
-            return *val;
-        }
-    }
-    return 8;
-}
-
-} // namespace
-
 RedisConfig
 RedisConfig::fromBackendParams(const nixl_b_params_t *custom_params) {
+    using nixl::getBackendParamOptional;
+    using nixl::config::getValueOptional;
+
+    auto resolve = [&]<typename T>(const char *param, const char *env) -> std::optional<T> {
+        if (auto v = getBackendParamOptional<T>(custom_params, param)) {
+            return v;
+        }
+        return getValueOptional<T>(env);
+    };
+
     RedisConfig config;
-    config.host = getStringSetting(custom_params, "host", "REDIS_HOST", "localhost");
-    config.port = getRedisPort(custom_params);
-    config.username = getStringSetting(custom_params, "username", "REDIS_USERNAME");
-    config.password = getStringSetting(custom_params, "password", "REDIS_PASSWORD");
-    config.db = getRedisDB(custom_params);
-    config.pool_size = getRedisPoolSize(custom_params);
+    config.host = resolve.operator()<std::string>("host", "REDIS_HOST").value_or("localhost");
+    config.username = resolve.operator()<std::string>("username", "REDIS_USERNAME").value_or("");
+    config.password = resolve.operator()<std::string>("password", "REDIS_PASSWORD").value_or("");
+
+    if (const auto port = resolve.operator()<int>("port", "REDIS_PORT")) {
+        if (*port <= 0 || *port > 65535) {
+            throw std::invalid_argument("Redis port out of range [1,65535]: " +
+                                        std::to_string(*port));
+        }
+        config.port = *port;
+    }
+    if (const auto db = resolve.operator()<int>("db", "REDIS_DB")) {
+        if (*db < 0) {
+            throw std::invalid_argument("Redis db must be >= 0, got: " + std::to_string(*db));
+        }
+        config.db = *db;
+    }
+    if (const auto pool = resolve.operator()<int>("pool_size", "REDIS_POOL_SIZE")) {
+        if (*pool <= 0) {
+            throw std::invalid_argument("Redis pool_size must be > 0, got: " +
+                                        std::to_string(*pool));
+        }
+        config.pool_size = *pool;
+    }
+
     if (!config.username.empty() && config.password.empty()) {
         throw std::invalid_argument("Redis username requires a password");
     }
+
     return config;
 }
 

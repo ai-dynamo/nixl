@@ -17,6 +17,10 @@ hiredis_async_dep = dependency('hiredis_async', required: false, version: '>=1.0
 libevent_dep = dependency('libevent', required: false)
 libevent_pthreads_dep = dependency('libevent_pthreads', required: false)
 
+if not hiredis_async_dep.found()
+    hiredis_async_dep = dependency('hiredis', required: false, version: '>=1.0.0')
+endif
+
 if not libevent_dep.found() or not libevent_pthreads_dep.found()
     cc = meson.get_compiler('cpp')
     libevent_lib = cc.find_library('event', required: false)
