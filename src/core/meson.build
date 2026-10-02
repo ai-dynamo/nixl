@@ -81,6 +81,7 @@ nixl_lib_sources = [
     'telemetry/buffer_plugin.cpp',
     'telemetry/nop_plugin.cpp',
     'tracing/trace_context.cpp',
+    'tracing/trace_sink.cpp',
     'tracing/tracer.cpp',
 ]
 

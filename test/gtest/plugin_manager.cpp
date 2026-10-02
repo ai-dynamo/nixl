@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include "backend/backend_plugin.h"
 #include "common.h"
 #include "nixl.h"
 #include "plugin_manager.h"
@@ -193,6 +194,24 @@ TEST_F(LoadedPluginTestFixture, DeferredDiscoveryTest) {
     EXPECT_EQ(std::find(loaded.begin(), loaded.end(), mock), loaded.end());
     avail = plugin_manager_.getAvailBackendPluginNames();
     EXPECT_NE(std::find(avail.begin(), avail.end(), mock), avail.end());
+}
+
+TEST_F(LoadedPluginTestFixture, StalePluginApiVersionIsRejected) {
+    const LogIgnoreGuard lig_mismatch("Plugin API version mismatch");
+    const LogIgnoreGuard lig_missing("Plugin file does not exist");
+
+    const auto avail = plugin_manager_.getAvailBackendPluginNames();
+    ASSERT_NE(std::find(avail.begin(), avail.end(), "MOCK_STALE_BACKEND"), avail.end());
+
+    EXPECT_EQ(plugin_manager_.loadBackendPlugin("MOCK_STALE_BACKEND"), nullptr);
+
+    const auto loaded = plugin_manager_.getLoadedBackendPluginNames();
+    EXPECT_EQ(std::find(loaded.begin(), loaded.end(), "MOCK_STALE_BACKEND"), loaded.end());
+}
+
+TEST_F(LoadedPluginTestFixture, CurrentPluginApiVersionIsAccepted) {
+    EXPECT_TRUE(LoadPlugin(GetMockBackendName()));
+    EXPECT_EQ(NIXL_PLUGIN_API_VERSION, 2);
 }
 
 TEST_F(LoadedPluginTestFixture, LoadSinglePluginTest) {
