@@ -1220,6 +1220,21 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
                          "registerMem failed for completion counter");
     }
 
+    // In pairwise SG mode with one process, only the device of the rank gets a VRAM
+    // buffer. But printStats() multiplies the result by the requested number of
+    // devices. So use the number of devices that registered a buffer.
+    if (seg_type == VRAM_SEG && IS_PAIRWISE_AND_SG() && rt->getSize() == 1 && !iov_lists.empty()) {
+        const int registered = static_cast<int>(iov_lists.front().size());
+        int &requested =
+            isInitiator() ? xferBenchConfig::num_initiator_dev : xferBenchConfig::num_target_dev;
+        if (registered > 0 && registered != requested) {
+            std::cout << "Warning: " << requested << " devices requested but " << registered
+                      << " registered a buffer; reporting bandwidth for " << registered
+                      << std::endl;
+            requested = registered;
+        }
+    }
+
     return iov_lists;
 }
 
