@@ -84,6 +84,25 @@ TEST(UcxTraceContextWire, SampledContextRoundTrips) {
     EXPECT_EQ(notif.traceContext, context);
 }
 
+TEST(UcxTraceContextWire, UndecodableContextKeepsTheMessage) {
+    const std::string later_version(nixl::trace::traceContextWireSize, '\x02');
+    const std::string malformed(nixl::trace::traceContextWireSize - 1, '\x01');
+    for (const auto &record : {later_version, malformed}) {
+        nixlSerDes sender;
+        sender.addStr("name", sender_name);
+        sender.addStr("msg", "msg");
+        sender.addStr("tctx", record);
+        const size_t problems = gtest::LogProblemCounter::getProblemCount();
+
+        const auto notif = nixl::ucx::deserializeNotif(sender.exportStr());
+
+        EXPECT_EQ(notif.agent, sender_name);
+        EXPECT_EQ(notif.msg, "msg");
+        EXPECT_FALSE(notif.traceContext.has_value());
+        EXPECT_EQ(gtest::LogProblemCounter::getProblemCount(), problems);
+    }
+}
+
 TEST(UcxTraceContextWire, OlderSenderNotificationParsesWithoutLogging) {
     const size_t problems = gtest::LogProblemCounter::getProblemCount();
     const auto notif = nixl::ucx::deserializeNotif(olderSenderNotif(sender_name, "msg"));

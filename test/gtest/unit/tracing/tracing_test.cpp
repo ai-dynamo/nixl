@@ -665,7 +665,7 @@ TEST(TracePhaseSink, PluginAttributesAreForwarded) {
     EXPECT_EQ(a.strAttrs[2].second, "write");
 }
 
-TEST(TracePhaseSink, ValidContextCorrelatesAndParentsThePhase) {
+TEST(TracePhaseSink, ValidContextCorrelatesAndRecordsTraceparent) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
     nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
