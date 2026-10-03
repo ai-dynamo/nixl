@@ -1819,7 +1819,14 @@ nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd
     // TODO: can be more graceful, if just the new MD blob was improper
     if (ret != NIXL_SUCCESS) {
         remoteSections_.erase(it);
-        remoteBackends_.erase(remote_name);
+        // Disconnect the backends as well, so that a later load connects to this remote again
+        const auto rb_it = remoteBackends_.find(remote_name);
+        if (rb_it != remoteBackends_.end()) {
+            for (const auto &entry : rb_it->second) {
+                backendEngines_[entry.first]->disconnect(remote_name);
+            }
+            remoteBackends_.erase(rb_it);
+        }
         return ret;
     }
 
