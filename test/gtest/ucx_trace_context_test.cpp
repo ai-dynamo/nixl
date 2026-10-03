@@ -85,7 +85,8 @@ TEST(UcxTraceContextWire, SampledContextRoundTrips) {
 }
 
 TEST(UcxTraceContextWire, UndecodableContextKeepsTheMessage) {
-    const std::string later_version(nixl::trace::traceContextWireSize, '\x02');
+    const std::string later_version(nixl::trace::traceContextWireSize,
+                                    static_cast<char>(nixl::trace::traceContextWireVersion + 1));
     const std::string malformed(nixl::trace::traceContextWireSize - 1, '\x01');
     for (const auto &record : {later_version, malformed}) {
         nixlSerDes sender;
