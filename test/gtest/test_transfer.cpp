@@ -120,8 +120,8 @@ protected:
         return ports.at(i);
     }
 
-    nixl_b_params_t getBackendParams()
-    {
+    virtual nixl_b_params_t
+    getBackendParams() {
         nixl_b_params_t params;
 
         if (getBackendName() == "UCX") {
@@ -641,6 +641,89 @@ TEST_P(TestTransfer, EmptyNotificationPayload) {
     doNotificationTest(
         getAgent(0), getAgentName(0), getAgent(1), getAgentName(1), repeat, num_threads, "");
 }
+
+// Every lane of a UCX tcp endpoint holds a socket, so with UCX_TLS=tcp the number of open
+// sockets tracks the UCX endpoints alive on either side of a connection.
+static size_t
+countOpenSockets() {
+    size_t count = 0;
+    for (const auto &entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+        std::error_code ec;
+        const auto target = std::filesystem::read_symlink(entry.path(), ec);
+        if (!ec && target.native().starts_with("socket:")) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+class TestEndpointRelease : public TestTransfer {
+protected:
+    nixl_b_params_t
+    getBackendParams() override {
+        nixl_b_params_t params = TestTransfer::getBackendParams();
+        params["ucx_ep_close_force"] = "yes";
+        return params;
+    }
+};
+
+TEST_P(TestEndpointRelease, InvalidateRemoteMD) {
+    constexpr size_t size = 1024;
+    constexpr size_t count = 16;
+    constexpr size_t cycles = 32;
+    std::vector<MemBuffer> src_buffers, dst_buffers;
+
+    createRegisteredMem(getAgent(0), size, count, DRAM_SEG, src_buffers);
+    createRegisteredMem(getAgent(1), size, count, DRAM_SEG, dst_buffers);
+
+    // Both agents load each other's metadata, so that every UCX endpoint between them is owned
+    // by NIXL. UCX releases an endpoint that it creates on its own for a remote peer only after
+    // the transport reports a failure of that peer.
+    nixl_blob_t md0, md1;
+    ASSERT_EQ(NIXL_SUCCESS, getAgent(0).getLocalMD(md0));
+    ASSERT_EQ(NIXL_SUCCESS, getAgent(1).getLocalMD(md1));
+
+    const size_t initial_sockets = countOpenSockets();
+    for (size_t i = 0; i < cycles; ++i) {
+        std::string remote_name;
+        ASSERT_EQ(NIXL_SUCCESS, getAgent(0).loadRemoteMD(md1, remote_name));
+        ASSERT_EQ(NIXL_SUCCESS, getAgent(1).loadRemoteMD(md0, remote_name));
+        doTransfer(getAgent(0),
+                   getAgentName(0),
+                   getAgent(1),
+                   getAgentName(1),
+                   NIXL_READ,
+                   size,
+                   count,
+                   1,
+                   1,
+                   DRAM_SEG,
+                   src_buffers,
+                   DRAM_SEG,
+                   dst_buffers);
+        ASSERT_EQ(NIXL_SUCCESS, getAgent(0).invalidateRemoteMD(getAgentName(1)));
+        ASSERT_EQ(NIXL_SUCCESS, getAgent(1).invalidateRemoteMD(getAgentName(0)));
+    }
+
+    // Endpoint release completes as each agent progresses its workers
+    const bool released = wait_until_true(
+        [&]() {
+            nixl_notifs_t notifs;
+            EXPECT_EQ(NIXL_SUCCESS, getAgent(0).getNotifs(notifs));
+            EXPECT_EQ(NIXL_SUCCESS, getAgent(1).getNotifs(notifs));
+            return countOpenSockets() <= initial_sockets;
+        },
+        100);
+    Logger() << "open sockets: " << initial_sockets << " before, " << countOpenSockets()
+             << " after " << cycles << " load/transfer/invalidate cycles";
+    EXPECT_TRUE(released);
+
+    deregisterMem(getAgent(0), src_buffers, DRAM_SEG);
+    deregisterMem(getAgent(1), dst_buffers, DRAM_SEG);
+}
+
+NIXL_INSTANTIATE_TEST(ucx_tcp, TestEndpointRelease, "UCX", true, 1, 0, "TLS=tcp");
+NIXL_INSTANTIATE_TEST(ucx_tcp_no_pt, TestEndpointRelease, "UCX", false, 1, 0, "TLS=tcp");
 
 class TestListener : public TestTransfer {};
 
