@@ -79,6 +79,12 @@ std::string nixlSerDes::getStr(const std::string &tag){
     return ret;
 }
 
+bool
+nixlSerDes::nextTagIs(const std::string &tag) const noexcept {
+    return workingStr.size() >= des_offset + tag.size() + sizeof(size_t) &&
+        std::memcmp(workingStr.data() + des_offset, tag.data(), tag.size()) == 0;
+}
+
 // Byte buffers serialization
 nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_t len){
 

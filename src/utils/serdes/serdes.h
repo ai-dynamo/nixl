@@ -37,6 +37,9 @@ public:
     nixl_status_t addStr(const std::string &tag, const std::string &str);
     std::string getStr(const std::string &tag);
 
+    [[nodiscard]] bool
+    nextTagIs(const std::string &tag) const noexcept;
+
     /* Ser/Des for Byte buffers */
     nixl_status_t addBuf(const std::string &tag, const void* buf, ssize_t len);
     ssize_t getBufLen(const std::string &tag) const;
