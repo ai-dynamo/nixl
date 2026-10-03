@@ -165,6 +165,7 @@ protected:
         std::filesystem::remove(mdFile);
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
         env.unsetVar("NIXL_ETCD_ENDPOINTS");
+        env.unsetVar("NIXL_TCPSTORE_ENDPOINT");
         env.addVar("NIXL_TRACE_BACKENDS", "recorder");
         env.addVar("NIXL_TRACE_SAMPLE_RATIO", "1");
         env.addVar("NIXL_TEST_TRACE_FILE", traceFile.string());

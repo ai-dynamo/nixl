@@ -178,7 +178,7 @@ test_exe = executable('gtest',
 # still runs in the normal (non-sanitizer) CI.
 # ucxTraceContextPropagation forks a second agent, and UCX's CMA wireup probe
 # (process_vm_readv) crashes the ASan/TSan interceptors across the two processes;
-# it too runs in the normal CI.
+# it still runs in the normal CI and in UBSan-only builds.
 gtest_args = [plugin_dirs_arg]
 if sanitizer_opts.contains('address') or sanitizer_opts.contains('thread')
     gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*:ucxTraceContextPropagation.*'
