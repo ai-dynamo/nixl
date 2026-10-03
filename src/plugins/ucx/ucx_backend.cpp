@@ -96,6 +96,12 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
         err_handling_mode = ucx_err_mode_from_string(*opt);
     }
 
+    const bool ep_close_force =
+        nixl::getBackendParamDefaulted(custom_params, "ucx_ep_close_force", false);
+    if (ep_close_force && (err_handling_mode != UCP_ERR_HANDLING_MODE_PEER)) {
+        throw std::invalid_argument("ucx_ep_close_force requires ucx_error_handling_mode=peer");
+    }
+
     const auto engine_config =
         nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
 
@@ -111,7 +117,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
 
     workers_.reserve(num_workers);
     for (size_t i = 0; i < num_workers; i++) {
-        workers_.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, i));
+        workers_.emplace_back(
+            std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, i, ep_close_force));
     }
 
     auto &worker = workers_.front();

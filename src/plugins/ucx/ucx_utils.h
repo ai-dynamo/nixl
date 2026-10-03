@@ -44,6 +44,8 @@ class nixlUcxMem;
 
 class nixlUcxEp {
 private:
+    const ucp_worker_h worker_;
+    const bool forceClose_;
     ucp_ep_h eph{nullptr};
     std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::UNINITIALIZED};
 
@@ -68,7 +70,10 @@ public:
         return nixl::ucx::toNixlStatus(state_);
     }
 
-    nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode);
+    nixlUcxEp(ucp_worker_h worker,
+              void *addr,
+              ucp_err_handling_mode_t err_handling_mode,
+              bool force_close = false);
     ~nixlUcxEp();
     nixlUcxEp(const nixlUcxEp &) = delete;
     nixlUcxEp &
@@ -209,7 +214,8 @@ public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
-        size_t id = 0);
+        size_t id = 0,
+        bool ep_close_force = false);
 
     nixlUcxWorker(nixlUcxWorker &&) = delete;
     nixlUcxWorker(const nixlUcxWorker &) = delete;
@@ -276,6 +282,7 @@ private:
     const std::unique_ptr<ucp_worker, void (*)(ucp_worker *)> worker;
     const ucp_err_handling_mode_t err_handling_mode_;
     const size_t id_;
+    const bool epCloseForce_;
 };
 
 std::ostream &

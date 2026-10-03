@@ -142,6 +142,26 @@ nixlUcxEp::closeImpl() {
         return NIXL_ERR_REMOTE_DISCONNECT;
     }
     case nixl::ucx::ep_state_t::CONNECTED: {
+        if (forceClose_) {
+            ucs_status_ptr_t request = ucpEpClose(eph, UCP_EP_CLOSE_FLAG_FORCE);
+            eph = nullptr;
+            if (UCS_PTR_IS_ERR(request)) {
+                return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+            }
+
+            if (UCS_PTR_IS_PTR(request)) {
+                ucp_request_free(request);
+            }
+
+            // UCX destroys the transport endpoints from the progress of this worker, which a
+            // dedicated worker does not get while it is idle
+            while (ucp_worker_progress(worker_) != 0)
+                ;
+            return NIXL_SUCCESS;
+        }
+
+        // UCX keeps an endpoint that a remote peer connected to, with its transport resources,
+        // until the peer fails or the worker is destroyed
         ucs_status_ptr_t request = ucpEpClose(eph, 0);
         if (request == nullptr) {
             eph = nullptr;
@@ -162,7 +182,12 @@ nixlUcxEp::closeImpl() {
     std::terminate();
 }
 
-nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode) {
+nixlUcxEp::nixlUcxEp(ucp_worker_h worker,
+                     void *addr,
+                     ucp_err_handling_mode_t err_handling_mode,
+                     bool force_close)
+    : worker_(worker),
+      forceClose_(force_close) {
     ucp_ep_params_t ep_params;
     nixl_status_t status;
 
@@ -601,11 +626,13 @@ operator<<(std::ostream &os, const nixlUcxWorker &worker) {
 
 nixlUcxWorker::nixlUcxWorker(const nixlUcxContext &ctx,
                              ucp_err_handling_mode_t err_handling_mode,
-                             size_t id)
+                             size_t id,
+                             bool ep_close_force)
     : name_(ctx.getName() + ":" + std::to_string(id)),
       worker(createUcpWorker(ctx), &ucp_worker_destroy),
       err_handling_mode_(err_handling_mode),
-      id_(id) {
+      id_(id),
+      epCloseForce_(ep_close_force) {
     NIXL_DEBUG << *this << ": created ucp worker " << worker.get();
 }
 
@@ -628,7 +655,8 @@ nixlUcxWorker::epAddr() {
 std::unique_ptr<nixlUcxEp>
 nixlUcxWorker::connect(void *addr) {
     try {
-        auto ep = std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_);
+        auto ep =
+            std::make_unique<nixlUcxEp>(worker.get(), addr, err_handling_mode_, epCloseForce_);
         NIXL_DEBUG << *this << ": created ep " << ep->getEp();
         return ep;
     }
