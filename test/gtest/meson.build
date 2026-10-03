@@ -180,8 +180,10 @@ test_exe = executable('gtest',
 # (process_vm_readv) crashes the ASan/TSan interceptors across the two processes;
 # it too runs in the normal CI.
 gtest_args = [plugin_dirs_arg]
-if get_option('sanitizer') != 'none'
+if sanitizer_opts.contains('address') or sanitizer_opts.contains('thread')
     gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*:ucxTraceContextPropagation.*'
+elif get_option('sanitizer') != 'none'
+    gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*'
 endif
 test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
 

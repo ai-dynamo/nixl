@@ -52,8 +52,8 @@ constexpr const char *untagged_msg = "untagged";
 constexpr const char *efa_warning =
     "Amazon EFA\\(s\\) were detected, but the UCX backend was configured";
 constexpr size_t buffer_size = 4096;
-constexpr int pipe_timeout_ms = 30000;
 constexpr std::chrono::seconds wait_timeout{30};
+constexpr int wait_timeout_ms = static_cast<int>(std::chrono::milliseconds(wait_timeout).count());
 constexpr std::chrono::milliseconds poll_interval{10};
 
 [[nodiscard]] std::string
@@ -74,7 +74,7 @@ sendByte(int fd) {
 awaitByte(int fd) {
     pollfd pfd{fd, POLLIN, 0};
     char byte = 0;
-    return (::poll(&pfd, 1, pipe_timeout_ms) > 0) && (::read(fd, &byte, 1) == 1);
+    return (::poll(&pfd, 1, wait_timeout_ms) > 0) && (::read(fd, &byte, 1) == 1);
 }
 
 [[nodiscard]] nixlAgentConfig
@@ -137,18 +137,20 @@ runReceiver(int up_fd,
         }
         const std::multiset<std::string> received(notifs[sender_name].begin(),
                                                   notifs[sender_name].end());
-        if ((received != std::multiset<std::string>{tagged_msg, untagged_msg}) ||
-            !sendByte(up_fd)) {
+        if (received != std::multiset<std::string>{tagged_msg, untagged_msg}) {
             return 4;
+        }
+        if (!sendByte(up_fd)) {
+            return 5;
         }
 
         char quit = 0;
         while (::read(down_fd, &quit, 1) > 0) {}
         if (receiver.deregisterMem(regs) != NIXL_SUCCESS) {
-            return 5;
+            return 6;
         }
     }
-    return (gtest::LogProblemCounter::getProblemCount() == problems) ? 0 : 6;
+    return (gtest::LogProblemCounter::getProblemCount() == problems) ? 0 : 7;
 }
 
 class ucxTraceContextPropagation : public testing::Test {
@@ -159,6 +161,8 @@ protected:
             ("nixl_trace_recorder_" + std::to_string(::getpid()));
         traceFile = prefix.string() + ".spans";
         mdFile = prefix.string() + ".md";
+        std::filesystem::remove(traceFile);
+        std::filesystem::remove(mdFile);
         env.addVar("NIXL_TELEMETRY_ENABLE", "n");
         env.unsetVar("NIXL_ETCD_ENDPOINTS");
         env.addVar("NIXL_TRACE_BACKENDS", "recorder");
@@ -307,6 +311,8 @@ TEST_F(ucxTraceContextPropagation, OneTraceIdIsObservedOnBothAgents) {
     nixl::scopedFd down_read(down[0]);
     nixl::scopedFd down_write(down[1]);
 
+    // Fork before creating any agent, while this process is still single-threaded;
+    // the child registers receiver_buffer at the address the parent writes to.
     receiverPid = ::fork();
     ASSERT_GE(receiverPid, 0);
     if (receiverPid == 0) {
