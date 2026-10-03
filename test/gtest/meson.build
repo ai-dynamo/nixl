@@ -176,9 +176,12 @@ test_exe = executable('gtest',
 # the ASan/TSan runtime on thread create/destroy -- a toolchain bug, not a NIXL
 # issue). Exclude it from the sanitizer run until the CI toolchain is bumped; it
 # still runs in the normal (non-sanitizer) CI.
+# ucxTraceContextPropagation forks a second agent, and UCX's CMA wireup probe
+# (process_vm_readv) crashes the ASan/TSan interceptors across the two processes;
+# it too runs in the normal CI.
 gtest_args = [plugin_dirs_arg]
 if get_option('sanitizer') != 'none'
-    gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*'
+    gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*:ucxTraceContextPropagation.*'
 endif
 test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
 
