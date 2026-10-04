@@ -306,8 +306,8 @@ namespace proxy_runtime {
         nixlMemViewH src = nullptr, dst = nullptr;
         prepMemViews(src, dst);
         EXPECT_EQ(static_cast<const nixlProxyDeviceMemView *>(src)->context, context);
-        EXPECT_EQ(runtime_->unregisterProxyMemView(dst), NIXL_SUCCESS);
-        EXPECT_EQ(runtime_->unregisterProxyMemView(src), NIXL_SUCCESS);
+        EXPECT_EQ(runtime_->releaseMemView(dst), NIXL_SUCCESS);
+        EXPECT_EQ(runtime_->releaseMemView(src), NIXL_SUCCESS);
         EXPECT_EQ(backend_.submissionCount(), 0u);
 
         EXPECT_EQ(runtime_->shutdown(), NIXL_SUCCESS);
@@ -574,7 +574,7 @@ namespace proxy_runtime {
             publish(access, i, makePut(src, dst), i + 1);
         }
         ASSERT_EQ(runtime_->startWorkers(), NIXL_SUCCESS);
-        ASSERT_EQ(runtime_->unregisterProxyMemView(dst), NIXL_SUCCESS);
+        ASSERT_EQ(runtime_->releaseMemView(dst), NIXL_SUCCESS);
         EXPECT_EQ(backend_.submissionCount(), size_t{kRingDepth});
         for (const auto &submission : backend_.submissions()) {
             EXPECT_EQ(submission.remote.addr, 0x2008u);
@@ -598,13 +598,13 @@ namespace proxy_runtime {
         ASSERT_TRUE(waitFor([&]() { return backend_.submissionCount() == 1; }));
 
         backend_.complete(backend_.token(0), NIXL_ERR_BACKEND);
-        ASSERT_EQ(runtime_->unregisterProxyMemView(dst), NIXL_SUCCESS);
+        ASSERT_EQ(runtime_->releaseMemView(dst), NIXL_SUCCESS);
         EXPECT_TRUE(allocator_.wasFreed(dst));
-        EXPECT_EQ(runtime_->unregisterProxyMemView(dst), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(runtime_->releaseMemView(dst), NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(consumerIdx(access), 0u);
         EXPECT_EQ(completedIdx(access), 0u);
         EXPECT_EQ(access.completion->completion_status, NIXL_IN_PROG);
-        ASSERT_EQ(runtime_->unregisterProxyMemView(src), NIXL_SUCCESS);
+        ASSERT_EQ(runtime_->releaseMemView(src), NIXL_SUCCESS);
 
         nixlMemViewH new_src = nullptr, new_dst = nullptr;
         ASSERT_EQ(runtime_->prepMemView(makeLocalDlist(0x1000, 64, 0, &local_md_), &new_src),
@@ -638,7 +638,7 @@ namespace proxy_runtime {
         }
         std::atomic<bool> done{false};
         std::thread release([&] {
-            EXPECT_EQ(runtime_->unregisterProxyMemView(dst), NIXL_SUCCESS);
+            EXPECT_EQ(runtime_->releaseMemView(dst), NIXL_SUCCESS);
             done.store(true, std::memory_order_release);
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -706,7 +706,7 @@ namespace proxy_runtime {
                 publish(channel(), 0, makePut(src, dst), 1);
                 publish(channel(), 2, makePut(src, dst), 3);
                 ASSERT_EQ(runtime_->startWorkers(), NIXL_SUCCESS);
-                static_cast<void>(runtime_->unregisterProxyMemView(dst));
+                static_cast<void>(runtime_->releaseMemView(dst));
             },
             "unpublished producer tickets");
     }
@@ -785,7 +785,7 @@ namespace proxy_runtime {
             if (replacement == 0) {
                 ASSERT_EQ(runtime_->startWorkers(), NIXL_SUCCESS);
             }
-            ASSERT_EQ(runtime_->unregisterProxyMemView(dst), NIXL_SUCCESS);
+            ASSERT_EQ(runtime_->releaseMemView(dst), NIXL_SUCCESS);
             for (const auto &peer : destinations) {
                 for (unsigned channel_id = 0; channel_id < 2; ++channel_id) {
                     EXPECT_EQ(peer[channel_id * 2], source);
@@ -793,7 +793,7 @@ namespace proxy_runtime {
                 }
             }
         }
-        EXPECT_EQ(runtime_->unregisterProxyMemView(src), NIXL_SUCCESS);
+        EXPECT_EQ(runtime_->releaseMemView(src), NIXL_SUCCESS);
         EXPECT_EQ(runtime_->shutdown(), NIXL_SUCCESS);
     }
 

@@ -210,7 +210,7 @@ namespace proxy_mocks {
         std::map<uintptr_t, size_t> mapped_;
     };
 
-    /** The registry stores backend metadata by pointer and never looks inside. */
+    /** The memory-view manager stores backend metadata by pointer and never looks inside. */
     class DummyBackendMD : public nixlBackendMD {
     public:
         DummyBackendMD() : nixlBackendMD(false) {}
