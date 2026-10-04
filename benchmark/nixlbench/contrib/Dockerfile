@@ -100,7 +100,10 @@ RUN apt-get update -y && \
     libgtest-dev \
     hwloc \
     libhwloc-dev \
-    build-essential
+    build-essential \
+    libhiredis-dev \
+    libevent-dev \
+    redis-tools
 
 # Add DOCA repo + upgrade always so the RDMA reinstall below resolves MLNX/DOCA versions.
 # Skip only the DOCA SDK install when the base image already ships it.
