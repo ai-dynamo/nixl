@@ -32,7 +32,7 @@
 #include "proxy_config.h"
 #include "proxy_transport.h"
 #include "proxy_control_buffer.h"
-#include "proxy_registry.h"
+#include "proxy_memview_manager.h"
 #include "proxy_channel.h"
 #include "proxy_worker.h"
 
@@ -67,14 +67,14 @@ public:
            deviceOps &allocator);
 
     [[nodiscard]] nixl_status_t
-    prepMemView(const nixl_meta_dlist_t &dlist, proxyViewHandle *proxy_memview);
+    prepMemView(const nixl_meta_dlist_t &dlist, proxy_view_handle_t *proxy_memview);
 
     /** Resolves the transport's direct pointers first; it may offer none. */
     [[nodiscard]] nixl_status_t
-    prepMemView(const nixl_remote_meta_dlist_t &dlist, proxyViewHandle *proxy_memview);
+    prepMemView(const nixl_remote_meta_dlist_t &dlist, proxy_view_handle_t *proxy_memview);
 
     [[nodiscard]] nixl_status_t
-    unregisterProxyMemView(proxyViewHandle proxy_memview);
+    releaseMemView(proxy_view_handle_t proxy_memview);
 
     [[nodiscard]] nixl_status_t
     startWorkers();
@@ -116,7 +116,7 @@ private:
      */
     enum class state { created, initialized, built, running, stopped };
 
-    /** First member, so it is destroyed after the workers, rings and registry. */
+    /** First member, so it is destroyed after the workers, rings and memory views. */
     std::unique_ptr<proxyTransport> transport_;
     deviceOps &allocator_;
     proxyConfig config_;
@@ -130,7 +130,7 @@ private:
     std::unique_ptr<const proxyWorkerContext> worker_context_;
     std::vector<std::unique_ptr<proxyWorker>> workers_;
     /** Created after the device context; destroyed after workers stop. */
-    std::unique_ptr<proxyMemViewRegistry> memview_registry_;
+    std::unique_ptr<proxyMemViewManager> memview_manager_;
     std::stop_source stop_source_;
     /** Bumped once per drain; each worker acks it when it has applied it. */
     alignas(64) std::atomic<uint64_t> drain_requested_{0};

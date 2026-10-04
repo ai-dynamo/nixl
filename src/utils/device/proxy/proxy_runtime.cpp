@@ -134,7 +134,7 @@ proxyRuntime::build() {
                         deviceOps::copyDirection::HostToDevice) != NIXL_SUCCESS) {
         return NIXL_ERR_BACKEND;
     }
-    memview_registry_ = std::make_unique<proxyMemViewRegistry>(allocator_, deviceContext());
+    memview_manager_ = std::make_unique<proxyMemViewManager>(allocator_, deviceContext());
 
     worker_context_ = std::make_unique<const proxyWorkerContext>(proxyWorkerContext{
         *transport_, channels_, worker_count, drain_requested_, stop_source_.get_token()});
@@ -148,18 +148,19 @@ proxyRuntime::build() {
 }
 
 nixl_status_t
-proxyRuntime::prepMemView(const nixl_meta_dlist_t &dlist, proxyViewHandle *proxy_memview) {
+proxyRuntime::prepMemView(const nixl_meta_dlist_t &dlist, proxy_view_handle_t *proxy_memview) {
     const std::lock_guard lock(control_mutex_);
-    if (proxy_memview == nullptr || memview_registry_ == nullptr) {
+    if (proxy_memview == nullptr || memview_manager_ == nullptr) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    return memview_registry_->prepLocal(dlist, *proxy_memview);
+    return memview_manager_->prepLocal(dlist, *proxy_memview);
 }
 
 nixl_status_t
-proxyRuntime::prepMemView(const nixl_remote_meta_dlist_t &dlist, proxyViewHandle *proxy_memview) {
+proxyRuntime::prepMemView(const nixl_remote_meta_dlist_t &dlist,
+                          proxy_view_handle_t *proxy_memview) {
     const std::lock_guard lock(control_mutex_);
-    if (proxy_memview == nullptr || memview_registry_ == nullptr) {
+    if (proxy_memview == nullptr || memview_manager_ == nullptr) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
@@ -174,19 +175,19 @@ proxyRuntime::prepMemView(const nixl_remote_meta_dlist_t &dlist, proxyViewHandle
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    return memview_registry_->prepRemote(dlist, direct_ptrs, *proxy_memview);
+    return memview_manager_->prepRemote(dlist, direct_ptrs, *proxy_memview);
 }
 
 nixl_status_t
-proxyRuntime::unregisterProxyMemView(proxyViewHandle proxy_memview) {
+proxyRuntime::releaseMemView(proxy_view_handle_t proxy_memview) {
     const std::lock_guard lock(control_mutex_);
-    if (memview_registry_ == nullptr) {
+    if (memview_manager_ == nullptr) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
     // Queued records still borrow the view being retired.
     drainChannels();
-    return memview_registry_->unregister(proxy_memview);
+    return memview_manager_->release(proxy_memview);
 }
 
 void
@@ -267,7 +268,7 @@ proxyRuntime::shutdown() {
     joinWorkerThreads();
     workers_.clear();
     worker_context_.reset();
-    memview_registry_.reset();
+    memview_manager_.reset();
     device_context_mem_.reset();
     shutdown_word_dev_ = nullptr;
     device_channel_views_mem_.reset();
