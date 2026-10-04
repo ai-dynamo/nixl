@@ -13,8 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-device_ops_unit_test_dep = declare_dependency(
-    sources: ['device_ops.cpp', 'host_published_mem.cpp'],
-    include_directories: [nixl_inc_dirs, utils_inc_dirs, gtest_inc_dirs],
-    dependencies: [nixl_common_dep, device_utils_interface, gpu_dependencies],
+redis_unit_test_dep = declare_dependency(
+    sources: [
+        'redis.cpp',
+    ],
+    include_directories: [
+        nixl_inc_dirs, utils_inc_dirs,
+        '../../../../src/plugins/redis',
+    ],
+    dependencies: [
+        redis_backend_interface,
+    ],
 )
