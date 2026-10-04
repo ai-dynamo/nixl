@@ -79,11 +79,19 @@ proxyChannel::submitRecord(proxyTransport &transport,
         return;
     }
 
-    NIXL_DEBUG << "proxyChannel::submitRecord: op_idx=" << submission.op_idx
-               << " opcode=" << static_cast<int>(submission.opcode) << " channel=" << id_
-               << " local_addr=0x" << std::hex << prepared_submission.local.addr
-               << " remote_addr=0x" << prepared_submission.remote.addr << std::dec
-               << " size=" << submission.size << " peer=" << peer;
+    // An atomic add has no source, so its local descriptor is not set.
+    if (prepared_submission.opcode == nixl_proxy_opcode_t::PUT) {
+        NIXL_DEBUG << "proxyChannel::submitRecord: PUT op_idx=" << submission.op_idx
+                   << " channel=" << id_ << " peer=" << peer << " local_addr=" << std::hex
+                   << prepared_submission.local.addr
+                   << " remote_addr=" << prepared_submission.remote.addr << std::dec
+                   << " size=" << prepared_submission.size;
+    } else {
+        NIXL_DEBUG << "proxyChannel::submitRecord: ATOMIC_ADD op_idx=" << submission.op_idx
+                   << " channel=" << id_ << " peer=" << peer << " remote_addr=" << std::hex
+                   << prepared_submission.remote.addr << std::dec
+                   << " value=" << prepared_submission.value;
+    }
 
     status = transport.submit(prepared_submission, inflight.backend_request);
     inflight.status = status;
