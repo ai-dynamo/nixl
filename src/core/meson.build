@@ -26,7 +26,7 @@ if 'LIBFABRIC' in static_plugins
 endif
 
 if 'UCX' in static_plugins
-    nixl_lib_deps += [ ucx_backend_interface, asio_dep, cuda_dep ]
+    nixl_lib_deps += [ ucx_backend_interface, cuda_dep ]
 endif
 
 if 'POSIX' in static_plugins

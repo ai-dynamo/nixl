@@ -37,6 +37,9 @@ public:
      */
     struct node {
         T *next = nullptr;
+
+    protected:
+        ~node() = default;
     };
 
     blockingQueue() = default;
