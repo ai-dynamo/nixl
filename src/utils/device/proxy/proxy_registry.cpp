@@ -133,9 +133,9 @@ proxyMemViewRegistry::fillDescs(const DlistT &dlist, std::vector<registryEntry::
     for (const auto &desc : dlist) {
         registryEntry::storedDesc stored{desc};
         if constexpr (std::is_same_v<DlistT, nixl_remote_meta_dlist_t>) {
-            // A hole is the null agent's descriptor. One without metadata cannot be posted
-            // either, so it is unusable too (the direct path rejects it outright).
-            stored.usable = desc.remoteAgent != nixl_null_agent && desc.metadataP != nullptr;
+            // A hole (the null agent's descriptor) has no metadata, and nothing without metadata
+            // can be posted, so the metadata alone decides.
+            stored.usable = desc.metadataP != nullptr;
         }
         out.push_back(std::move(stored));
     }
