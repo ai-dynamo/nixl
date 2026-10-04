@@ -20,7 +20,7 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | [Claude Code Review](#claude-code-review-claude-reviewyml) | GitHub Actions | `pull_request` (opened/synchronize/reopened) | Yes |
 | [External Contributor](#external-contributor-external_contributoryaml) | GitHub Actions | `pull_request_target` (opened, fork only) | Yes (fork PRs only) |
 | [Blossom-CI](#blossom-ci-blossom-ciyml) | GitHub Actions | `/build` PR comment, or `workflow_dispatch` | No — manual |
-| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | No — only after `/build`, but these 7 are the *only* Jenkins jobs in the PR CI path |
+| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | No — only after `/build`, but these 8 are the *only* Jenkins jobs in the PR CI path |
 | `nixl-ci-build-container` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
 | `nixl-ci-build-wheel-nightly` | Jenkins (standalone) | Nightly cron, triggered by `build-wheel-release-poller`, or manual | No — never runs as part of PR CI |
 | `nixl-build-wheel-release-poller` | Jenkins (standalone) | 4-hourly cron + manual | No — never runs as part of PR CI |
@@ -102,7 +102,7 @@ sequenceDiagram
     participant Scan as Vulnerability-scan (Black Duck)
     participant Trigger as Job-trigger
     participant Jenkins as nixl-ci-dispatcher
-    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, build-wheel,<br/>test-sanitizers, build-container-pr)
+    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, gpu-vr, build-wheel,<br/>test-sanitizers, build-container-pr)
 
     User->>GH: comment "/build"
     GH->>Blossom: issue_comment event
@@ -132,8 +132,8 @@ Step by step, matching the jobs in `blossom-ci.yml`:
    Duck-based vulnerability scan via the `NVIDIA/blossom-action`.
 5. **Job-trigger** calls `blossom-ci` with `OPERATION: START-CI-JOB`, which
    triggers the Jenkins `nixl-ci-dispatcher` job.
-6. `nixl-ci-dispatcher` fans out in parallel to its seven child jobs
-   (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`,
+6. `nixl-ci-dispatcher` fans out in parallel to its eight child jobs
+   (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`,
    `test-sanitizers`, `build-container-pr` — see [Jenkins jobs](#jenkins-jobs) below).
 7. Each child job reports its own status back as an individual GitHub PR
    check, so the PR shows per-job pass/fail rather than one aggregate check.
@@ -159,18 +159,24 @@ their own nightly/manual trigger. They split into two groups:
   trigger, and/or upstream standalone job, and is invoked independently of PRs
   and of the dispatcher.
 
+Every job checks out the repository authenticated as `svc-nixl-github-token`
+(`jjb_git_credentials`, applied to each `git:` SCM block and inherited by
+submodules through `parent-credentials`). github.com intermittently answers
+anonymous clones with an HTTP 401, which git reports as `could not read Username`.
+
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
 
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
-- **What it does:** Fans out in parallel to seven downstream Jenkins jobs, waiting on all of them:
+- **What it does:** Fans out in parallel to eight downstream Jenkins jobs, waiting on all of them:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com)
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (NIXL EP tests on dlcluster.nvidia.com)
+  - `nixl-ci-gpu-vr` — `.ci/jenkins/lib/test-vr-matrix.yaml` (same tests as `nixl-ci-dl-gpu`, on the Vera Rubin `vrnvl72` partition / `rubin` account)
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
   - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
-- **UCX version:** The three GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.23.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all three with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
+- **UCX version:** The four GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.23.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all four with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
 - **Automatic on every PR:** No — only runs after a `/build` comment triggers Blossom-CI. The dispatcher also aborts any stale in-flight dispatcher run for the same PR (and the leaf builds it started) before starting.
 
 ### `nixl-ci-build-container-pr` (dispatcher-triggered)
@@ -226,7 +232,7 @@ their own nightly/manual trigger. They split into two groups:
 ### `nixl-ci-nightly` (standalone)
 
 - **Trigger:** Nightly cron (`H 0 * * *`), or manual run (`UCX_REF`, `MAIL_TO` parameters).
-- **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep` with `UCX_VER=${UCX_REF}` (default `master`), waits for all three, and emails one consolidated report to `MAIL_TO` (default `nixl-ci-alerts@exchange.nvidia.com`) **only when a leg fails** — a green night is silent. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
+- **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr` with `UCX_VER=${UCX_REF}` (default `master`), waits for all four, and emails one consolidated report to `MAIL_TO` (default `nixl-ci-alerts@exchange.nvidia.com`) **only when a leg fails** — a green night is silent. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
 - **Matrix:** `.ci/jenkins/lib/nightly-matrix.yaml` — a lightweight ci-demo orchestrator (one groovy step: fan out, wait, mail), no GPU of its own.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.
 
@@ -239,6 +245,7 @@ Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-${BUILD_NUMB
 | `nixl-ci-gpu` | `nixl-ci-gpu-<build>` |
 | `nixl-ci-dl-gpu` | `nixl-ci-dl-gpu-<build>` |
 | `nixl-ci-dl-gpu-ep` | `nixl-ci-dl-gpu-ep-<build>` |
+| `nixl-ci-gpu-vr` | `nixl-ci-gpu-vr-<build>` |
 | `nixl-ci-build-wheel` | `nixl-ci-build-wheel-<fw>-<build>` (`fw`: `vllm` or `sglang`) |
 | `nixl-ci-test-llm-container` | `nixl-ci-test-llm-container-<build>` |
 
@@ -266,7 +273,7 @@ NEW_TAG=$(git log -1 --format=%h -- "${CI_FILES[@]}")
 
 This returns the short git commit hash of the most recent commit that touched
 any of the CI source files (`Dockerfile.base`, `Dockerfile.gpu-test`,
-`Dockerfile.build_helper`, `nixl_ep_vllm_release_test.patch`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
+`Dockerfile.build_helper`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
 then patches all six YAML files in the Jenkins workspace with `sed` before the
 matrix library reads them. No commit or push is made — the patch exists only in
 the workspace.
