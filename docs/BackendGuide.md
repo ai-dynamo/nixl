@@ -175,6 +175,7 @@ overridden before passing it to `createBackend` in C++ or `create_backend` in Py
 | Option key | Default | Description |
 | ---------- | ------- | ----------- |
 | `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy. `peer` requests peer failure reporting; `none` disables it. |
+| `ucx_ep_close_force` | `no` | Force close UCX endpoints on disconnect to release their transport resources at once. Requires `ucx_error_handling_mode` `peer`. Without it, UCX keeps an endpoint that a peer connected to, with its transport resources, until the peer fails or the worker is destroyed. With it, `genNotif` messages still in flight to the disconnected agent are dropped, and a peer that loaded the metadata of this agent gets `NIXL_ERR_REMOTE_DISCONNECT` on its endpoint to this agent. |
 
 `ucx_error_handling_mode` affects UCP transport lane selection, not only error reporting.
 NIXL creates endpoints with `err_mode` set from this option, and UCP only selects lanes whose
