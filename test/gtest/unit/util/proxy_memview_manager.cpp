@@ -22,19 +22,19 @@
 #include <string>
 #include <vector>
 
-#include "device/proxy/proxy_registry.h"
+#include "device/proxy/proxy_memview_manager.h"
 #include "device/proxy/proxy_submission.h"
 #include "mocks/proxy_mocks.h"
 
 namespace gtest {
-namespace proxy_memview_registry {
+namespace proxy_memview_manager {
 
     using proxy_mocks::DummyBackendMD;
     using proxy_mocks::makeLocalDlist;
     using proxy_mocks::makeRemoteDesc;
     using proxy_mocks::MockDeviceOps;
 
-    class ProxyMemViewRegistryTest : public testing::Test {
+    class ProxyMemViewManagerTest : public testing::Test {
     protected:
         /** Device memory is host memory under the mock: the view is readable in place. */
         static const nixlProxyDeviceMemView &
@@ -50,7 +50,7 @@ namespace proxy_memview_registry {
         nixlMemViewH
         prepLocal(uintptr_t addr, size_t len = 64, uint64_t dev_id = 0) {
             nixlMemViewH handle = nullptr;
-            EXPECT_EQ(registry_.prepLocal(makeLocalDlist(addr, len, dev_id, &local_md_), handle),
+            EXPECT_EQ(manager_.prepLocal(makeLocalDlist(addr, len, dev_id, &local_md_), handle),
                       NIXL_SUCCESS);
             return handle;
         }
@@ -59,7 +59,7 @@ namespace proxy_memview_registry {
         prepRemote(const nixl_remote_meta_dlist_t &dlist,
                    const std::vector<void *> &direct_ptrs = {}) {
             nixlMemViewH handle = nullptr;
-            EXPECT_EQ(registry_.prepRemote(dlist, direct_ptrs, handle), NIXL_SUCCESS);
+            EXPECT_EQ(manager_.prepRemote(dlist, direct_ptrs, handle), NIXL_SUCCESS);
             return handle;
         }
 
@@ -109,12 +109,12 @@ namespace proxy_memview_registry {
 
         MockDeviceOps allocator_;
         nixlProxyDeviceContextData context_{};
-        nixl::proxyMemViewRegistry registry_{allocator_, &context_};
+        nixl::proxyMemViewManager manager_{allocator_, &context_};
         DummyBackendMD local_md_;
         DummyBackendMD remote_md_;
     };
 
-    TEST_F(ProxyMemViewRegistryTest, PrepareSubmissionResolvesAndValidates) {
+    TEST_F(ProxyMemViewManagerTest, PrepareSubmissionResolvesAndValidates) {
         const uint64_t src = tokenOf(prepLocal(0x1000, 64, /*dev_id=*/7));
         const uint64_t dst = tokenOf(prepRemote("remote-agent", 0x2000, 64, /*dev_id=*/11));
         const uint64_t empty = tokenOf(prepRemote(nixl_remote_meta_dlist_t(VRAM_SEG)));
@@ -181,7 +181,7 @@ namespace proxy_memview_registry {
         }
     }
 
-    TEST_F(ProxyMemViewRegistryTest, ViewsPreserveContextPointersAndDescriptorOrder) {
+    TEST_F(ProxyMemViewManagerTest, ViewsPreserveContextPointersAndDescriptorOrder) {
         const nixlMemViewH src = prepLocal(0x1000);
         EXPECT_EQ(view(src).direct_ptr_count, 0u);
         EXPECT_EQ(view(src).context, &context_);
@@ -213,25 +213,25 @@ namespace proxy_memview_registry {
         }
     }
 
-    TEST_F(ProxyMemViewRegistryTest, FailedPreparationRollsBack) {
+    TEST_F(ProxyMemViewManagerTest, FailedPreparationRollsBack) {
         nixl_remote_meta_dlist_t dlist(VRAM_SEG);
         dlist.addDesc(makeRemoteDesc("peer", 0x2000, 64, 0, &remote_md_));
         nixlMemViewH handle = &context_;
         for (int fail_after : {0, 1, 2}) { // Allocation, header copy, direct-pointer copy.
             SCOPED_TRACE(fail_after);
             allocator_.fail_after = fail_after;
-            EXPECT_EQ(registry_.prepRemote(dlist, {nullptr}, handle), NIXL_ERR_BACKEND);
+            EXPECT_EQ(manager_.prepRemote(dlist, {nullptr}, handle), NIXL_ERR_BACKEND);
             EXPECT_EQ(handle, &context_);
             EXPECT_EQ(allocator_.liveAllocations(), 0u);
         }
         nixl_remote_meta_dlist_t dram(DRAM_SEG);
         dram.addDesc(dlist[0]);
-        EXPECT_EQ(registry_.prepRemote(dram, {}, handle), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(manager_.prepRemote(dram, {}, handle), NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(handle, &context_);
         EXPECT_EQ(allocator_.liveAllocations(), 0u);
     }
 
-    TEST_F(ProxyMemViewRegistryTest, RemoteHolesKeepTheirIndices) {
+    TEST_F(ProxyMemViewManagerTest, RemoteHolesKeepTheirIndices) {
         nixl_remote_meta_dlist_t dlist(VRAM_SEG);
         dlist.addDesc(nixlRemoteMetaDesc(nixl_null_agent));
         dlist.addDesc(makeRemoteDesc("peer", 0x2000, 64, 7, &remote_md_));
@@ -251,5 +251,5 @@ namespace proxy_memview_registry {
         EXPECT_EQ(prepared.remote, nixlMetaDesc(0x2010, 8, 7, &remote_md_));
     }
 
-} // namespace proxy_memview_registry
+} // namespace proxy_memview_manager
 } // namespace gtest

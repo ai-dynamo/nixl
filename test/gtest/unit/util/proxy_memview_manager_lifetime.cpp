@@ -8,23 +8,23 @@
 #include <cstring>
 #include <thread>
 #include <vector>
-#include "device/proxy/proxy_registry.h"
+#include "device/proxy/proxy_memview_manager.h"
 #include "device/proxy/proxy_submission.h"
 #include "mocks/proxy_mocks.h"
 
 using namespace gtest::proxy_mocks;
 
-TEST(ProxyRegistryLifetimeTest, ConcurrentGrowthAndUnusedRetirementPreserveLiveTokens) {
+TEST(ProxyMemViewManagerLifetimeTest, ConcurrentGrowthAndUnusedRetirementPreserveLiveTokens) {
     MockDeviceOps allocator;
     DummyBackendMD md;
     nixlProxyDeviceContextData context;
-    nixl::proxyMemViewRegistry registry(allocator, &context);
+    nixl::proxyMemViewManager manager(allocator, &context);
     auto local = makeLocalDlist(0x1000, 64, 0, &md);
     nixl_remote_meta_dlist_t remote(VRAM_SEG);
     remote.addDesc(makeRemoteDesc("peer", 0x2000, 64, 0, &md));
     nixlMemViewH src = nullptr, dst = nullptr;
-    ASSERT_EQ(registry.prepLocal(local, src), NIXL_SUCCESS);
-    ASSERT_EQ(registry.prepRemote(remote, {}, dst), NIXL_SUCCESS);
+    ASSERT_EQ(manager.prepLocal(local, src), NIXL_SUCCESS);
+    ASSERT_EQ(manager.prepRemote(remote, {}, dst), NIXL_SUCCESS);
     nixlProxyCommand record;
     record.src_view = static_cast<nixlProxyDeviceMemView *>(src)->host_view;
     record.dst_view = static_cast<nixlProxyDeviceMemView *>(dst)->host_view;
@@ -56,11 +56,11 @@ TEST(ProxyRegistryLifetimeTest, ConcurrentGrowthAndUnusedRetirementPreserveLiveT
     std::vector<nixlMemViewH> added;
     for (size_t i = 0; i < 5000; ++i) {
         nixlMemViewH handle = nullptr;
-        EXPECT_EQ(registry.prepRemote(remote, {nullptr}, handle), NIXL_SUCCESS);
+        EXPECT_EQ(manager.prepRemote(remote, {nullptr}, handle), NIXL_SUCCESS);
         added.push_back(handle);
     }
     for (auto handle : added) {
-        EXPECT_EQ(registry.unregister(handle), NIXL_SUCCESS);
+        EXPECT_EQ(manager.release(handle), NIXL_SUCCESS);
     }
     stop.store(true, std::memory_order_release);
     for (auto &reader : readers) {
@@ -71,21 +71,21 @@ TEST(ProxyRegistryLifetimeTest, ConcurrentGrowthAndUnusedRetirementPreserveLiveT
         EXPECT_GT(count, 0u);
     }
     EXPECT_EQ(allocator.liveAllocations(), 2u);
-    EXPECT_EQ(registry.unregister(src), NIXL_SUCCESS);
-    EXPECT_EQ(registry.unregister(dst), NIXL_SUCCESS);
+    EXPECT_EQ(manager.release(src), NIXL_SUCCESS);
+    EXPECT_EQ(manager.release(dst), NIXL_SUCCESS);
     EXPECT_EQ(allocator.liveAllocations(), 0u);
 }
 
-TEST(ProxyRegistryLifetimeTest, RepeatedViewReplacementReclaimsAllocations) {
+TEST(ProxyMemViewManagerLifetimeTest, RepeatedViewReplacementReclaimsAllocations) {
     MockDeviceOps allocator;
     DummyBackendMD md;
     nixlProxyDeviceContextData context;
-    nixl::proxyMemViewRegistry registry(allocator, &context);
+    nixl::proxyMemViewManager manager(allocator, &context);
     for (uint64_t i = 0; i < 500; ++i) {
         nixl_remote_meta_dlist_t remote(VRAM_SEG);
         remote.addDesc(makeRemoteDesc("peer", 0x2000 + i * 128, 64, 0, &md));
         nixlMemViewH handle = nullptr;
-        ASSERT_EQ(registry.prepRemote(remote, {}, handle), NIXL_SUCCESS);
+        ASSERT_EQ(manager.prepRemote(remote, {}, handle), NIXL_SUCCESS);
         nixlProxyCommand record;
         record.dst_view = static_cast<nixlProxyDeviceMemView *>(handle)->host_view;
         record.opcode = nixl_proxy_opcode_t::ATOMIC_ADD;
@@ -95,9 +95,9 @@ TEST(ProxyRegistryLifetimeTest, RepeatedViewReplacementReclaimsAllocations) {
                   NIXL_SUCCESS);
         EXPECT_EQ(prepared.remote.addr, 0x2000 + i * 128);
         EXPECT_EQ(prepared.value, record.operand);
-        ASSERT_EQ(registry.unregister(handle), NIXL_SUCCESS);
+        ASSERT_EQ(manager.release(handle), NIXL_SUCCESS);
         EXPECT_TRUE(allocator.wasFreed(handle));
-        EXPECT_EQ(registry.unregister(handle), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(manager.release(handle), NIXL_ERR_INVALID_PARAM);
         EXPECT_EQ(allocator.liveAllocations(), 0u);
     }
 }
