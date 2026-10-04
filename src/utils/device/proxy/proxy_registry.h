@@ -17,8 +17,6 @@
 #ifndef NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_REGISTRY_H
 #define NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_REGISTRY_H
 
-#include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -31,8 +29,10 @@
 namespace nixl {
 
 /**
- * Owns views until retirement; workers borrow live tokens without accessing the map.
- * The caller serializes every call (the runtime's control mutex).
+ * Creates, owns and releases the proxy's prepared memory views. A view is a host-side entry
+ * (its descriptors) plus a device memview that the GPU reads and that carries the entry's
+ * address as its token. Entries never move, so a token stays valid until its view is
+ * released. Not thread-safe: the caller serializes every call.
  */
 class proxyMemViewRegistry {
 public:

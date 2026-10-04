@@ -34,9 +34,7 @@ namespace {
                size_t offset,
                size_t size,
                bool want_remote,
-               const registryEntry *&entry_out,
                const registryEntry::storedDesc *&desc_out) {
-        entry_out = nullptr;
         desc_out = nullptr;
 
         const char *const role = want_remote ? "dst" : "src";
@@ -60,7 +58,6 @@ namespace {
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        entry_out = entry;
         desc_out = &desc;
         return NIXL_SUCCESS;
     }
@@ -71,31 +68,34 @@ nixl_status_t
 resolveSubmission(const nixlProxyCommand &command,
                   uint32_t channel,
                   uint32_t peer,
-                  proxyBackendSubmission &prepared_submission) noexcept {
+                  proxyBackendSubmission &out) noexcept {
+    bool known_opcode = false;
     bool needs_source = false;
     size_t transfer_size = 0;
     switch (command.opcode) {
     case nixl_proxy_opcode_t::PUT:
+        known_opcode = true;
         needs_source = true;
         transfer_size = command.size;
         break;
     case nixl_proxy_opcode_t::ATOMIC_ADD:
+        known_opcode = true;
         transfer_size = sizeof(uint64_t);
         break;
-    default:
+    }
+    // The GPU writes the opcode, so a value outside the enum can still arrive here.
+    if (!known_opcode) {
         NIXL_ERROR << "resolveSubmission: unsupported opcode: "
                    << static_cast<uint32_t>(command.opcode);
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
-    const registryEntry *dst_entry = nullptr;
     const registryEntry::storedDesc *dst_desc = nullptr;
     nixl_status_t status = lookupDesc(command.dst_view,
                                       command.dst_index,
                                       command.dst_offset,
                                       transfer_size,
                                       /*want_remote=*/true,
-                                      dst_entry,
                                       dst_desc);
     if (status != NIXL_SUCCESS) {
         return status;
@@ -113,14 +113,12 @@ resolveSubmission(const nixlProxyCommand &command,
     prepared.remote.len = transfer_size;
 
     if (needs_source) {
-        const registryEntry *src_entry = nullptr;
         const registryEntry::storedDesc *src_desc = nullptr;
         status = lookupDesc(command.src_view,
                             command.src_index,
                             command.sourceOffset(),
                             transfer_size,
                             /*want_remote=*/false,
-                            src_entry,
                             src_desc);
         if (status != NIXL_SUCCESS) {
             return status;
@@ -131,7 +129,7 @@ resolveSubmission(const nixlProxyCommand &command,
         prepared.local.len = transfer_size;
     }
 
-    prepared_submission = prepared;
+    out = prepared;
     return NIXL_SUCCESS;
 }
 

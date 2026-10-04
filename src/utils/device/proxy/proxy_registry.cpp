@@ -16,6 +16,8 @@
  */
 #include "proxy_registry.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <type_traits>
 #include <utility>
 
@@ -36,25 +38,24 @@ proxyMemViewRegistry::createEntry(const DlistT &dlist,
                                   registryEntry *&out) {
     out = nullptr;
 
+    // CPU: the host-side entry, and the device memview's contents, which name the entry by
+    // its address.
     auto entry = std::make_unique<registryEntry>();
     entry->remote = std::is_same_v<DlistT, nixl_remote_meta_dlist_t>;
-    entry->mem_type = dlist.getType();
     fillDescs(dlist, entry->descs);
-
-    const size_t direct_ptr_bytes = direct_ptrs.size() * sizeof(void *);
-    const size_t allocation_size = nixlProxyDeviceMemViewBytes(direct_ptrs.size());
-
-    deviceMem device_memview_mem;
-    if (allocator_.allocDeviceMem(allocation_size, device_memview_mem) != NIXL_SUCCESS) {
-        NIXL_ERROR << "proxyMemViewRegistry: failed to allocate device memview";
-        return NIXL_ERR_BACKEND;
-    }
-    auto *device_memview = static_cast<nixlProxyDeviceMemView *>(device_memview_mem.get());
-
     const nixlProxyDeviceMemView host_memview{
         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(entry.get())),
         device_context_,
         static_cast<uint32_t>(direct_ptrs.size())};
+
+    // GPU: allocate the device memview and copy the contents and direct pointers into it.
+    deviceMem device_memview_mem;
+    if (allocator_.allocDeviceMem(nixlProxyDeviceMemViewBytes(direct_ptrs.size()),
+                                  device_memview_mem) != NIXL_SUCCESS) {
+        NIXL_ERROR << "proxyMemViewRegistry: failed to allocate device memview";
+        return NIXL_ERR_BACKEND;
+    }
+    auto *device_memview = static_cast<nixlProxyDeviceMemView *>(device_memview_mem.get());
     nixl_status_t copy_status = allocator_.copy(device_memview,
                                                 &host_memview,
                                                 sizeof(host_memview),
@@ -62,7 +63,7 @@ proxyMemViewRegistry::createEntry(const DlistT &dlist,
     if (copy_status == NIXL_SUCCESS && !direct_ptrs.empty()) {
         copy_status = allocator_.copy(nixlProxyDeviceMemViewDirectPtrs(device_memview),
                                       direct_ptrs.data(),
-                                      direct_ptr_bytes,
+                                      direct_ptrs.size() * sizeof(void *),
                                       deviceOps::copyDirection::HostToDevice);
     }
     if (copy_status != NIXL_SUCCESS) {
@@ -70,6 +71,7 @@ proxyMemViewRegistry::createEntry(const DlistT &dlist,
         return NIXL_ERR_BACKEND;
     }
 
+    // Link: the entry owns its device memview, and the map owns the entry.
     entry->proxy_memview = device_memview;
     entry->proxy_memview_mem = std::move(device_memview_mem);
     out = entry.get();

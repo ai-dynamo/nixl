@@ -46,7 +46,6 @@ struct registryEntry {
     proxyViewHandle proxy_memview = nullptr;
     deviceMem proxy_memview_mem;
     bool remote = false;
-    nixl_mem_t mem_type = DRAM_SEG;
     std::vector<storedDesc> descs;
 };
 
