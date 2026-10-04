@@ -24,20 +24,13 @@ namespace nixl::trace::nvtx_internal {
 namespace {
 
     constexpr const char *kRegisteredSpanNames[] = {
-        "nixl::registerMem",
-        "nixl::deregisterMem",
-        "nixl::makeConnection",
-        "nixl::makeXferReq",
-        "nixl::createXferReq",
-        "nixl::postXferReq.write",
-        "nixl::postXferReq.read",
-        "nixl::genNotif",
-        "nixl::getNotifs",
-        "nixl::xfer.complete",
-        "nixl::loadRemoteMD",
-        "nixl::fetchRemoteMD",
-        "nixl::prepMemView",
-        "nixl::releaseMemView",
+        "nixl::registerMem",      "nixl::deregisterMem",   "nixl::makeConnection",
+        "nixl::makeXferReq",      "nixl::createXferReq",   "nixl::postXferReq.write",
+        "nixl::postXferReq.read", "nixl::genNotif",        "nixl::getNotifs",
+        "nixl::xfer.complete",    "nixl::loadRemoteMD",    "nixl::fetchRemoteMD",
+        "nixl::prepMemView",      "nixl::releaseMemView",  "nixl::submit",
+        "nixl::wire.submitted",   "nixl::wire.completed",  "nixl::notif.sent",
+        "nixl::notif.received",   "nixl::remote.observed", "nixl::phase",
     };
 
     [[nodiscard]] constexpr std::uint32_t

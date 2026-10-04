@@ -60,6 +60,10 @@ RUN set -e; \
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
+# PyTorch publishes wheels for only some CUDA minors, and the base image's own
+# CUDA_VERSION (13.4) has no index. Deliberately not named CUDA_VERSION: the base
+# exports that as ENV, which wins over an ARG of the same name.
+ARG TORCH_CUDA_INDEX="cu130"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
 ARG UCX_REF="v1.23.x"
@@ -114,6 +118,9 @@ RUN apt-get update -y && \
     flex \
     libgtest-dev \
     build-essential \
+    libhiredis-dev \
+    libevent-dev \
+    redis-tools \
     python3.12-dev \
     clang \
     hwloc \
@@ -128,7 +135,7 @@ RUN apt-get update -y && \
 # Skip only the DOCA SDK install when the base image already ships it.
 RUN ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)" && \
-    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
+    wget --tries=3 --waitretry=5 --no-verbose https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-${MELLANOX_OS}_${ARCH_SUFFIX}.deb -O doca-host.deb && \
     dpkg -i doca-host.deb && \
     apt-get update && \
     apt-get upgrade -y && \
@@ -330,10 +337,11 @@ ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
 RUN uv pip install --system --upgrade \
     meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Use system torch if present (>=2.7), else install it.
-RUN if /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>/dev/null; then \
+RUN if TORCH_CHECK_ERR=$(/usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then \
         echo "Using PyTorch from system site-packages"; \
     else \
-        export UV_INDEX="https://download.pytorch.org/whl/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d .)" && \
+        echo "System torch check failed: ${TORCH_CHECK_ERR}" >&2; \
+        export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
         uv pip install --system torch torchvision torchaudio; \
     fi
 # setuptools for PEP 639 license metadata
