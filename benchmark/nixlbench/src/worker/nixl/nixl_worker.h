@@ -19,7 +19,9 @@
 #define NIXL_BENCHMARK_NIXLBENCH_SRC_WORKER_NIXL_NIXL_WORKER_H
 
 #include "config.h"
+#include <atomic>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <variant>
@@ -37,6 +39,14 @@
 
 // Use shared GusliDeviceConfig and parseGusliDeviceList declared in utils.h
 
+// --obj_unique_keys: numbers the object keys the WRITEs go to, and records them
+// for removal at teardown.
+struct xferBenchUniqueObjKeys {
+    std::atomic<uint64_t> next{0};
+    std::mutex mutex;
+    std::vector<std::string> written;
+};
+
 class xferBenchNixlWorker: public xferBenchWorker {
     private:
         nixlAgent* agent;
@@ -48,6 +58,7 @@ class xferBenchNixlWorker: public xferBenchWorker {
         std::vector<GusliDeviceConfig> gusli_devices;
         std::string remote_agent_name;
         std::optional<xferBenchIOV> completion_counter_iov;
+        xferBenchUniqueObjKeys unique_obj_keys_;
 
     public:
         explicit xferBenchNixlWorker(const std::vector<std::string> &devices);
