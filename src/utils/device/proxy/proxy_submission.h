@@ -28,9 +28,9 @@ namespace nixl {
 /**
  * @brief Resolve a ring command's view tokens into the submission a backend posts to `peer`.
  *
- * Reads the registry entries the command names through their tokens and never
- * touches the registry's map, so it runs on worker threads without a lock. The
- * caller keeps those views registered until the command completes. `channel` is the
+ * Reads the host views the command names through their tokens and never touches
+ * the manager's map, so it runs on worker threads without a lock. The caller
+ * releases none of those views until the command completes. `channel` is the
  * ring's channel; the command does not carry one.
  *
  * @param[out] out Unchanged on failure.

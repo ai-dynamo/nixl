@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_REGISTRY_ENTRY_H
-#define NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_REGISTRY_ENTRY_H
+#ifndef NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_HOST_VIEW_H
+#define NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_HOST_VIEW_H
 
 #include <vector>
 
@@ -26,24 +26,24 @@
 namespace nixl {
 
 /**
- * The registry's device memview: kernels read the token and direct pointers through
+ * The manager's device memview: kernels read the token and direct pointers through
  * it. The same type as nixlMemViewH; the name says which of its meanings is meant.
  */
-using proxyViewHandle = nixlMemViewH;
+using proxy_view_handle_t = nixlMemViewH;
 
 /**
- * One prepared memory view. The registry creates and owns entries; a ring command
- * names one by its address (the 64-bit host token), and resolveSubmission() reads
- * it through that token without a lookup.
+ * The host side of one prepared memory view. The manager creates and owns host views;
+ * a ring command names one by its address (the 64-bit host token), and
+ * resolveSubmission() reads it through that token without a lookup.
  */
-struct registryEntry {
+struct proxyHostView {
     struct storedDesc {
         /** metadataP is borrowed and must outlive submissions. */
         nixlMetaDesc desc;
         bool usable = true;
     };
 
-    proxyViewHandle proxy_memview = nullptr;
+    proxy_view_handle_t proxy_memview = nullptr;
     deviceMem proxy_memview_mem;
     bool remote = false;
     std::vector<storedDesc> descs;
@@ -51,4 +51,4 @@ struct registryEntry {
 
 } // namespace nixl
 
-#endif // NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_REGISTRY_ENTRY_H
+#endif // NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_HOST_VIEW_H

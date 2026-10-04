@@ -17,7 +17,7 @@
 #include "proxy_submission.h"
 
 #include "nixl_log.h"
-#include "proxy_registry_entry.h"
+#include "proxy_host_view.h"
 
 namespace nixl {
 
@@ -34,26 +34,26 @@ namespace {
                size_t offset,
                size_t size,
                bool want_remote,
-               const registryEntry::storedDesc *&desc_out) {
+               const proxyHostView::storedDesc *&desc_out) {
         desc_out = nullptr;
 
         const char *const role = want_remote ? "dst" : "src";
-        const auto *entry =
-            reinterpret_cast<const registryEntry *>(static_cast<uintptr_t>(host_view));
-        if (entry == nullptr) {
+        const auto *view =
+            reinterpret_cast<const proxyHostView *>(static_cast<uintptr_t>(host_view));
+        if (view == nullptr) {
             NIXL_DEBUG << "resolveSubmission: " << role << " not ready, host_view=" << host_view;
             return NIXL_ERR_NOT_FOUND;
         }
-        if (entry->remote != want_remote) {
+        if (view->remote != want_remote) {
             NIXL_DEBUG << "resolveSubmission: " << role
                        << " has the wrong role, host_view=" << host_view;
             return NIXL_ERR_INVALID_PARAM;
         }
-        if (index >= entry->descs.size()) {
+        if (index >= view->descs.size()) {
             return NIXL_ERR_INVALID_PARAM;
         }
 
-        const registryEntry::storedDesc &desc = entry->descs[index];
+        const proxyHostView::storedDesc &desc = view->descs[index];
         if (!desc.usable || !rangeFits(desc.desc, offset, size)) {
             return NIXL_ERR_INVALID_PARAM;
         }
@@ -90,7 +90,7 @@ resolveSubmission(const nixlProxyCommand &command,
         return NIXL_ERR_NOT_SUPPORTED;
     }
 
-    const registryEntry::storedDesc *dst_desc = nullptr;
+    const proxyHostView::storedDesc *dst_desc = nullptr;
     nixl_status_t status = lookupDesc(command.dst_view,
                                       command.dst_index,
                                       command.dst_offset,
@@ -113,7 +113,7 @@ resolveSubmission(const nixlProxyCommand &command,
     prepared.remote.len = transfer_size;
 
     if (needs_source) {
-        const registryEntry::storedDesc *src_desc = nullptr;
+        const proxyHostView::storedDesc *src_desc = nullptr;
         status = lookupDesc(command.src_view,
                             command.src_index,
                             command.sourceOffset(),
