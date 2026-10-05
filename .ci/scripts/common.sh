@@ -152,3 +152,27 @@ start_etcd_server() {
 
     wait_for_etcd
 }
+
+# Write a git config that authenticates every github.com request with
+# NIXL_GITHUB_USER/NIXL_GITHUB_TOKEN to $1, or an empty file when no token is bound.
+# Used by the CI matrices for image builds (as a build secret) and agent-side clones
+# (via git -c include.path). The token is a fine-grained PAT (github_pat_ followed
+# by letters, digits and underscores); it only ever appears base64-encoded in a header.
+write_github_gitconfig() {
+    local dest="$1"
+    local restore_xtrace=""
+    case "$-" in
+        *x*) restore_xtrace=1; set +x ;;
+    esac
+
+    (umask 077; : > "${dest}")
+    if [ -n "${NIXL_GITHUB_TOKEN:-}" ]; then
+        printf '[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic %s\n' \
+            "$(printf '%s:%s' "${NIXL_GITHUB_USER:-x-access-token}" "${NIXL_GITHUB_TOKEN}" | base64 -w0)" \
+            > "${dest}"
+    fi
+
+    if [ -n "${restore_xtrace}" ]; then
+        set -x
+    fi
+}
