@@ -72,7 +72,7 @@ steps:
       # nixlbench builds against a UCX source tree; nixl consumes UCX_VERSION directly.
       if [ "$target" = "nixlbench" ]; then
         rm -rf ucx-src
-        git clone https://github.com/openucx/ucx.git ucx-src
+        .ci/scripts/retry.sh git clone https://github.com/openucx/ucx.git ucx-src
         git -C ucx-src checkout "$UCX_VERSION"
       fi
 

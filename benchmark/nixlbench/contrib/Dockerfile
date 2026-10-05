@@ -37,6 +37,9 @@ RUN set -e; \
 # --- Stage 1: Common OS setup ---
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS os_setup_stage
 
+# Retry helper: the github.com fetches below fail transiently under load.
+COPY --from=nixl .ci/scripts/retry.sh /usr/local/bin/retry
+
 # Install them only when the base has a matching runtime and no dev files of
 # its own, so bases that are already correct or have no cuObject are untouched.
 COPY --from=cuobj_dev /cuobj /tmp/cuobj
@@ -152,6 +155,7 @@ RUN echo "INFO: Starting custom UCX build..." && \
     echo "INFO: Removing pre-existing UCX installations..." && \
     rm -rf /usr/lib/ucx /opt/hpcx/ucx && \
     cd /workspace/ucx && \
+    retry git submodule update --init && \
     ./autogen.sh && \
     echo "INFO: Building UCX..." && \
     ./contrib/configure-release --with-cuda=/usr/local/cuda \
@@ -187,9 +191,9 @@ ARG GRPC_TAG="v1.73.0"
 WORKDIR /workspace
 
 # Build Abseil from source (required for absl/log).
-RUN git clone https://github.com/abseil/abseil-cpp.git && \
+RUN retry git clone https://github.com/abseil/abseil-cpp.git && \
     cd abseil-cpp && \
-    git fetch --depth 1 origin ${ABSL_TAG} && \
+    retry git fetch --depth 1 origin ${ABSL_TAG} && \
     git checkout ${ABSL_TAG} && \
     mkdir -p build && cd build && \
     cmake .. \
@@ -203,8 +207,13 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     make install && \
     ldconfig
 
-# Build gRPC from source against /usr/local Abseil.
-RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+# Build gRPC against /usr/local Abseil. Only the submodules this cmake config uses:
+# protobuf, c-ares, re2 and the xds protos (SSL/Abseil/zlib are packages, tests and OTel off).
+RUN retry git clone -b ${GRPC_TAG} --depth 1 https://github.com/grpc/grpc && \
+    retry git -C grpc submodule update --init --depth 1 \
+        third_party/protobuf third_party/cares/cares third_party/re2 \
+        third_party/xds third_party/envoy-api third_party/googleapis \
+        third_party/protoc-gen-validate third_party/opencensus-proto && \
     cd grpc && \
     mkdir -p cmake/build && \
     cd cmake/build && \
@@ -248,7 +257,7 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     make install && \
     ldconfig
 
-RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+RUN retry git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
     mkdir build && cd build && \
@@ -258,7 +267,8 @@ RUN git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && 
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev
 
-RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+RUN retry git clone --depth 1 https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760 && \
+    retry git -C aws-sdk-cpp submodule update --init --recursive --depth 1 && \
     mkdir sdk_build && \
     cd sdk_build && \
     cmake ../aws-sdk-cpp/ -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;s3-crt" -DENABLE_TESTING=OFF -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_CXX_STANDARD=20 && \
@@ -267,7 +277,7 @@ RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github
 
 # Install install Azure SDK for C++ dependencies and build
 RUN apt-get update && apt-get install -y libxml2-dev
-RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+RUN retry git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
     AZURE_SDK_DISABLE_AUTO_VCPKG=1 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DDISABLE_AMQP=ON -DDISABLE_AZURE_CORE_OPENTELEMETRY=ON -DCMAKE_CXX_STANDARD=20 && \
@@ -277,7 +287,7 @@ RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch 
     cmake --install sdk/storage/azure-storage-blobs && \
     cmake --install sdk/identity
 
-RUN git clone https://github.com/nvidia/gusli.git && \
+RUN retry git clone https://github.com/nvidia/gusli.git && \
     cd gusli && \
     make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
     cd ..
@@ -319,6 +329,7 @@ WORKDIR /workspace/nixl
 
 RUN rm -rf build && \
     mkdir build && \
+    retry meson subprojects download taskflow prometheus-cpp && \
     meson setup build --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
