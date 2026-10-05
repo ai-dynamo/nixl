@@ -121,11 +121,9 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
     // Poll the completion slot recorded by enqueue().
     //
     // The completion slot implements collapsed-CQ semantics:
-    // - completed_idx > op_idx  => this op completed earlier, so it succeeded
-    // - completed_idx == op_idx => completion_status is this op's terminal status
-    // - completed_idx < op_idx  => this op is still pending, unless an earlier
-    //                              completion published a terminal error and
-    //                              latched the channel
+    // - op_idx >= failed_idx != 0 => the first failure latched the channel; report its status
+    // - completed_idx >= op_idx   => this op completed, so it succeeded
+    // - otherwise                 => this op is still pending
     __device__ inline static nixl_status_t
     pollXferStatus(const xferStatusH &xfer_status) {
         const ProxyXferStatus *pxs = reinterpret_cast<const ProxyXferStatus *>(xfer_status.storage);
@@ -134,20 +132,14 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
         }
 
         cuda::atomic_ref<uint64_t, cuda::thread_scope_system> comp_idx(pxs->slot->completed_idx);
-
+        cuda::atomic_ref<uint64_t, cuda::thread_scope_system> fail_idx(pxs->slot->failed_idx);
         const uint64_t completed_idx = comp_idx.load(cuda::memory_order_acquire);
-        if (completed_idx > pxs->op_idx) {
-            return NIXL_SUCCESS;
-        }
-        const nixl_status_t current_status = pxs->slot->completion_status;
-        if (completed_idx == pxs->op_idx) {
-            return current_status;
-        }
-        if (current_status < 0) {
-            return current_status;
-        }
+        const uint64_t failed_idx = fail_idx.load(cuda::memory_order_acquire);
 
-        return NIXL_IN_PROG;
+        if (failed_idx != 0 && pxs->op_idx >= failed_idx) {
+            return pxs->slot->completion_status;
+        }
+        return completed_idx >= pxs->op_idx ? NIXL_SUCCESS : NIXL_IN_PROG;
     }
 };
 

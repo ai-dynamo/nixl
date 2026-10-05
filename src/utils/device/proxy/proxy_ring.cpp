@@ -106,6 +106,7 @@ proxyRing::rearm() noexcept {
     inflight_.assign(depth_, proxyRequestState{});
     // Clear the old completion latch before reusing the ring.
     completionSlotHost()->completion_status = NIXL_IN_PROG;
+    __atomic_store_n(&completionSlotHost()->failed_idx, uint64_t{0}, __ATOMIC_RELEASE);
     __atomic_store_n(&completionSlotHost()->completed_idx, uint64_t{0}, __ATOMIC_RELEASE);
     return NIXL_SUCCESS;
 }
@@ -114,9 +115,13 @@ void
 proxyRing::retireOldest(nixl_status_t status) noexcept {
     const uint64_t consumer_idx = consumer_idx_shadow_;
     proxyRequestState &front = inflight_[consumer_idx % depth_];
-    if (completionSlotHost()->completion_status >= 0) {
-        completionSlotHost()->completion_status = status;
-        __atomic_store_n(&completionSlotHost()->completed_idx, front.op_idx, __ATOMIC_RELEASE);
+    nixlProxyCompletionSlot *slot = completionSlotHost();
+    if (__atomic_load_n(&slot->failed_idx, __ATOMIC_RELAXED) == 0) {
+        slot->completion_status = status;
+        if (status < 0) {
+            __atomic_store_n(&slot->failed_idx, front.op_idx, __ATOMIC_RELEASE);
+        }
+        __atomic_store_n(&slot->completed_idx, front.op_idx, __ATOMIC_RELEASE);
     }
     if (publishConsumerIdx(consumer_idx + 1) != NIXL_SUCCESS) {
         NIXL_FATAL << "proxyRing::retireOldest: failed to publish CI"
