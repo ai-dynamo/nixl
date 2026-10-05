@@ -56,6 +56,8 @@ env:
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: 'rubin'
+  # Nodes whose configuration differs from the rest of the partition
+  SLURM_EXCLUDE: 'vr-nvl72-ts3-l06-comp137,vr-nvl72-ts3-l06-comp139,vr-nvl72-ts3-l06-comp141,vr-nvl72-ts2b-l10-comp102'
   SLURM_JOB_TIMEOUT: '02:20:00'
   SLURM_IMMEDIATE_TIMEOUT: 3600
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
@@ -143,7 +145,8 @@ steps:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
-        "--account=${SLURM_ACCOUNT}"
+        "--account=${SLURM_ACCOUNT}",
+        "--exclude=${SLURM_EXCLUDE}"
       ]
 
   - name: Run Python tests
