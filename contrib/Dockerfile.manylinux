@@ -91,6 +91,7 @@ ARG BUILD_TYPE="release"
 ARG BUILD_NIXL_EP="true"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG HIREDIS_VERSION="1.4.0"
 ARG NPROC
 
 RUN yum groupinstall -y 'Development Tools' &&  \
@@ -110,6 +111,7 @@ RUN yum groupinstall -y 'Development Tools' &&  \
     gcc-toolset-14 \
     libaio \
     libaio-devel \
+    libevent-devel \
     libtool-ltdl \
     ninja-build \
     openssl \
@@ -156,6 +158,21 @@ RUN cd /tmp && \
     ldconfig && \
     rm -rf /tmp/openssl-3.0.16*
 
+# Build hiredis from source: EPEL8's hiredis-devel is 0.13, which is affected by
+# CVE-2021-32765 (fixed in 1.0.1). The libevent adapter is header-only, so only
+# the core library is built.
+RUN cd /tmp && \
+    wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+        -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    cd "hiredis-${HIREDIS_VERSION}" && \
+    make -j"${NPROC:-$(nproc)}" PREFIX=/usr/local && \
+    make install PREFIX=/usr/local && \
+    ldconfig && \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --atleast-version=1.0.1 hiredis && \
+    rm -rf "/tmp/hiredis-${HIREDIS_VERSION}" "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz"
+ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+
 # Set environment variables to use the new OpenSSL
 ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:/usr/local/openssl3/lib/pkgconfig:$PKG_CONFIG_PATH"
 ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:/usr/local/openssl3/lib:$LD_LIBRARY_PATH"
@@ -165,8 +182,12 @@ ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
 
 WORKDIR /workspace
 
+# CI supplies a github.com credential as the optional "ghconfig" build secret;
+# without it these clones stay anonymous. RUN --mount needs BuildKit or podman.
+ARG GIT_TERMINAL_PROMPT=0
+
 # Build Abseil from source (required for absl/log).
-RUN git clone https://github.com/abseil/abseil-cpp.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/abseil/abseil-cpp.git && \
     cd abseil-cpp && \
     git fetch --depth 1 origin ${ABSL_TAG} && \
     git checkout ${ABSL_TAG} && \
@@ -183,7 +204,7 @@ RUN git clone https://github.com/abseil/abseil-cpp.git && \
     ldconfig
 
 ARG GRPC_NPROC
-RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules https://github.com/grpc/grpc && \
     cd grpc && \
     mkdir -p cmake/build && \
     cd cmake/build && \
@@ -207,7 +228,7 @@ RUN git clone --recurse-submodules -b ${GRPC_TAG} --depth 1 --shallow-submodules
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
 
-RUN cd /workspace && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /workspace && \
     git clone --depth 1 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
     cd etcd-cpp-apiv3 && \
     sed -i '/^find_dependency(cpprestsdk)$/d' etcd-cpp-api-config.in.cmake && \
@@ -222,7 +243,7 @@ RUN wget --tries=3 --waitretry=5 https://curl.se/download/curl-8.19.0.tar.gz && 
     ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl3 --without-libpsl --enable-shared && \
     make -j${NPROC:-$(nproc)} && make install
 
-RUN git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --recurse-submodules --depth 1 --shallow-submodules https://github.com/aws/aws-sdk-cpp.git --branch 1.11.760
 RUN mkdir aws_sdk_build && cd aws_sdk_build && \
     export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
     export CFLAGS="-I/usr/local/openssl3/include" && \
@@ -237,19 +258,19 @@ RUN mkdir aws_sdk_build && cd aws_sdk_build && \
 
 ENV PKG_CONFIG_PATH=/usr/lib64/pkgconfig:/usr/lib/pkgconfig:$PKG_CONFIG_PATH
 
-RUN git clone https://github.com/nvidia/gusli.git && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone https://github.com/nvidia/gusli.git && \
      cd gusli && \
      sed -i '/^LFLAGS_ALL =/{/-lrt/ b; s/$/ -lrt/}' Makefile && \
      make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1 CXX="g++ -std=c++20" && \
      cd ..
 
 # Required for Azure SDK
-RUN git clone --depth 1 https://github.com/GNOME/libxml2.git --branch 2.15 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/GNOME/libxml2.git --branch 2.15 && \
     cd libxml2 && \
     ACLOCAL_PATH=/usr/share/aclocal ./autogen.sh && make -j${NPROC:-$(nproc)} && \
     make install
 
-RUN git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 https://github.com/Azure/azure-sdk-for-cpp.git --branch azure-storage-blobs_12.15.0 && \
     cd azure-sdk-for-cpp/ && \
     mkdir build && cd build && \
     export LDFLAGS="-L/usr/local/openssl3/lib64 -L/usr/local/openssl3/lib" && \
@@ -313,7 +334,7 @@ WORKDIR /workspace
 RUN rm -rf /usr/lib/ucx
 RUN rm -rf /opt/hpcx/ucx
 
-RUN cd /workspace && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /workspace && \
     git clone --depth 1 https://github.com/NVIDIA/gdrcopy.git && \
     cd gdrcopy && \
     git fetch --tags --depth=1 && \
@@ -372,7 +393,7 @@ RUN uv pip install --upgrade 'setuptools>=80.9.0'
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
 ARG UCX_REF="v1.23.x"
 ARG UCX_SONAME_SUFFIX=""
-RUN cd /usr/local/src && \
+RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src && \
      git clone "$UCX_REPO" ucx && \
      cd ucx &&                       \
      git checkout "${UCX_REF}" &&    \
