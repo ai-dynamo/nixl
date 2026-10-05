@@ -1,15 +1,16 @@
-# Nightly NIXL wheel verification build. Pipeline and this config run from
+# NIXL wheel verification build. Pipeline and this config run from
 # main; the source ref (NIXL_VERSION) is cloned into nixl-src, so built refs
 # carry no CI config. Wheels publish to
-# WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default) or
-# WHEEL_REPO_URL/<PUBLISH_DIR>/<build-number> for release runs.
+# WHEEL_REPO_URL/verification/g<nixl-sha>.ucx<ucx-sha> (default), or
+# WHEEL_REPO_URL/staging/g<nixl-sha>.ucx<ucx-sha> for manual staging runs, or
+# WHEEL_REPO_URL/<PUBLISH_DIR>/<build-number> for manual release runs.
 #
 # One run builds every CUDA major, so a release folder holds a complete wheel
 # set and is owned by this build alone - which is what lets pipeline_stop delete
 # it on failure and mark it, only on SUCCESS, for the release poller.
 
 ---
-job: nixl-ci-build-wheel-nightly
+job: nixl-build-wheel
 
 failFast: false
 timeout_minutes: 180
@@ -36,7 +37,7 @@ kubernetes:
   requests: '{memory: 24Gi, cpu: 16000m}'
 
 # podman-in-container runner; build-container.sh runs docker/podman inside it.
-# The nightly builds wheel_base from scratch on every run — no caching.
+# This job builds wheel_base from scratch on every run — no caching.
 runs_on_dockers:
   - { name: "manylinux", url: "quay.io/podman/stable:v5.7.1", privileged: true }
 
@@ -131,7 +132,7 @@ steps:
       # Build the wheel image from the checked-out nixl-src. --tag pins the
       # image so Publish extracts dist/. Plugin creds bind only here.
       set -x
-      # spcx and Infinia are always bundled in the nightly; the built source
+      # spcx and Infinia are always bundled here; the built source
       # ref's build-container.sh pins the plugin ref/image.
       # The two CUDA majors have different torch coverage: 2.11 is not available
       # on the cu13 index, and 2.14 is not available on the cu12 one.
@@ -177,12 +178,13 @@ steps:
       docker rm -f "${cid}" || true
       ls -l dist/
 
-      # Nightly runs leave PUBLISH_DIR empty and publish to verification/;
-      # manual release runs can pass release/<ver>. Allowlist it - the URL is
-      # PUT with the service token, and a path like ../<other-repo> would
-      # normalize into a different Artifactory repo.
+      # Scheduled runs leave PUBLISH_DIR empty and publish to verification/;
+      # manual staging runs can pass staging, manual release runs can pass
+      # release/<ver>. Allowlist it - the URL is PUT with the service token,
+      # and a path like ../<other-repo> would normalize into a different
+      # Artifactory repo.
       PUBLISH_DIR="${PUBLISH_DIR:-verification}"
-      [[ "${PUBLISH_DIR}" =~ ^(verification|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
+      [[ "${PUBLISH_DIR}" =~ ^(verification|staging|release/[A-Za-z0-9][A-Za-z0-9._-]*)$ ]] \
         || { echo "ERROR: invalid PUBLISH_DIR '${PUBLISH_DIR}'"; exit 1; }
       . ./wheel_build_ids.env
 
@@ -212,10 +214,10 @@ steps:
       fi
 
       # verification/ keeps its g<nixl-sha>.ucx<ucx-sha> schema (consumed by the
-      # build-llm-container verification pipeline) and is shared between builds;
-      # release/<ver> gets one folder per build.
-      if [ "${PUBLISH_DIR}" = "verification" ]; then
-        [ -n "${UCX_SHA:-}" ] || { echo "ERROR: verification publish needs UCX_SHA from build_options.env"; exit 1; }
+      # build-llm-container verification pipeline).
+      # staging/ mirrors it. release/<ver> gets one folder per build.
+      if [ "${PUBLISH_DIR}" = "verification" ] || [ "${PUBLISH_DIR}" = "staging" ]; then
+        [ -n "${UCX_SHA:-}" ] || { echo "ERROR: ${PUBLISH_DIR} publish needs UCX_SHA from build_options.env"; exit 1; }
         FOLDER="g${NIXL_SHA}.ucx${UCX_SHA}"
       else
         FOLDER="${BUILD_NUMBER}"
@@ -247,7 +249,7 @@ pipeline_start:
     currentBuild.displayName += "-${src}"
 
 # Settles the release folder - mark on SUCCESS, delete otherwise - then mails
-# the unattended nightly only when it fails. A partial wheel set has to be
+# unattended runs only when they fail. A partial wheel set has to be
 # rebuilt anyway, so publishing it would only mislead the poller. verification/
 # folders are shared between builds and are left alone either way.
 pipeline_stop:
