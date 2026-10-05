@@ -65,6 +65,7 @@ $pip3 install --break-system-packages pytest
 $pip3 install --break-system-packages pytest-timeout
 $pip3 install --break-system-packages zmq
 
+check_rdma_env
 start_etcd_server "/nixl/python_ci"
 
 NIXL_TCPSTORE_PORT=$(get_next_tcp_port)
