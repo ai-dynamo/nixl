@@ -32,6 +32,7 @@
 
 #ifdef HAVE_NIXL_DEVICE_API
 #include "device/device_memview.h"
+#include "device/device_ops.h"
 #endif
 
 namespace {
@@ -763,6 +764,12 @@ nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
                                nixlMemViewH &mvh,
                                const nixl_opt_b_args_t *opt_args,
                                const char *kind) const {
+    nixl::deviceOps *ops = nixl::getDeviceOps();
+    if (ops == nullptr) {
+        NIXL_ERROR << "No device operations implementation is loaded";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
     nixlMemViewH backend_mvh = nullptr;
     const size_t worker_id = getSharedWorkerId(opt_args);
     try {
@@ -777,7 +784,7 @@ nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
     // build-time choice, so what leaves here is a tagged wrapper rather than
     // the bare backend handle.
     const nixl_status_t status =
-        nixlDeviceMemViewAllocate(nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
+        nixlDeviceMemViewAllocate(*ops, nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
     if (status != NIXL_SUCCESS) {
         nixl::ucx::releaseMemList(backend_mvh);
     }
@@ -790,15 +797,17 @@ nixlUcxEngine::releaseMemView(nixlMemViewH mem_view) const {
         return;
     }
 
+    // prepMemView allocated the wrapper through the same process-wide instance.
+    nixl::deviceOps &ops = *nixl::getDeviceOps();
     nixlMemViewH backend_mvh = nullptr;
-    if (nixlDeviceMemViewGetBackend(mem_view, backend_mvh) != NIXL_SUCCESS) {
+    if (nixlDeviceMemViewGetBackend(ops, mem_view, backend_mvh) != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to read device memview wrapper for handle " << mem_view;
-        nixlDeviceMemViewFree(mem_view);
+        nixlDeviceMemViewFree(ops, mem_view);
         return;
     }
 
     nixl::ucx::releaseMemList(backend_mvh);
-    nixlDeviceMemViewFree(mem_view);
+    nixlDeviceMemViewFree(ops, mem_view);
 }
 #else
 template<typename DlistT>
