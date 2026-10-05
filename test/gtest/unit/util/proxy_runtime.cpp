@@ -136,7 +136,8 @@ namespace proxy_runtime {
             return predicate();
         }
 
-        /** A local source view and a remote view with one 64-byte descriptor per agent. */
+        /** A local source view, and a remote view with a 64-byte descriptor at 0x2000 + 0x1000 * i
+         *  for agent i. */
         void
         prepMemViews(nixlMemViewH &src,
                      nixlMemViewH &dst,
@@ -144,8 +145,8 @@ namespace proxy_runtime {
             ASSERT_EQ(runtime_->prepMemView(makeLocalDlist(0x1000, 64, 0, &local_md_), &src),
                       NIXL_SUCCESS);
             nixl_remote_meta_dlist_t remote(VRAM_SEG);
-            for (const auto &agent : agents) {
-                remote.addDesc(makeRemoteDesc(agent, 0x2000, 64, 0, &remote_md_));
+            for (size_t i = 0; i < agents.size(); ++i) {
+                remote.addDesc(makeRemoteDesc(agents[i], 0x2000 + 0x1000 * i, 64, 0, &remote_md_));
             }
             ASSERT_EQ(runtime_->prepMemView(remote, &dst), NIXL_SUCCESS);
         }
@@ -209,6 +210,9 @@ namespace proxy_runtime {
              NIXL_ERR_INVALID_PARAM},
             {"zero ring depth",
              [](nixl::proxyConfig &config, mockTransportPtr &) { config.ring_depth = 0; },
+             NIXL_ERR_INVALID_PARAM},
+            {"ring depth not a power of two",
+             [](nixl::proxyConfig &config, mockTransportPtr &) { config.ring_depth = 6; },
              NIXL_ERR_INVALID_PARAM},
             {"backend init failure",
              [](nixl::proxyConfig &, mockTransportPtr &transport) {
@@ -280,11 +284,7 @@ namespace proxy_runtime {
         std::set<const void *> record_arrays;
         for (uint32_t channel_id = 0; channel_id < 3; ++channel_id) {
             for (uint32_t peer = 0; peer < 2; ++peer) {
-                const size_t slot = channel_id * 2 + peer;
                 const ChannelAccess access = channel(channel_id, peer);
-                EXPECT_EQ(context->rings[slot].work_ring, access.ring);
-                EXPECT_EQ(context->rings[slot].completion_slot,
-                          runtime_->deviceChannelViews()[slot].completion_slot);
                 EXPECT_EQ(access.ring->depth, kRingDepth);
                 EXPECT_EQ(*access.ring->producer_idx, 0u);
                 EXPECT_EQ(*access.ring->consumer_idx_cache, 0u);
@@ -468,50 +468,6 @@ namespace proxy_runtime {
     }
 
     TEST_F(ProxyRuntimeTest, ChannelsAndPeersKeepToTheirOwnRings) {
-        ASSERT_EQ(createRuntime(/*channel_count=*/3, /*max_peers=*/2, /*thread_count=*/2),
-                  NIXL_SUCCESS);
-        nixlMemViewH src = nullptr, dst = nullptr;
-        ASSERT_EQ(runtime_->prepMemView(makeLocalDlist(0x1000, 64, 0, &local_md_), &src),
-                  NIXL_SUCCESS);
-        nixl_remote_meta_dlist_t remote(VRAM_SEG);
-        remote.addDesc(makeRemoteDesc("peer0", 0x2000, 64, 0, &remote_md_));
-        remote.addDesc(makeRemoteDesc("peer1", 0x3000, 64, 0, &remote_md_));
-        ASSERT_EQ(runtime_->prepMemView(remote, &dst), NIXL_SUCCESS);
-        ASSERT_EQ(runtime_->startWorkers(), NIXL_SUCCESS);
-
-        const ChannelAccess striped = channel(2, 1);
-        const ChannelAccess middle = channel(1, 0);
-        const ChannelAccess idle = channel(0, 0);
-        publish(striped, 0, makePut(src, dst, /*dst_index=*/1), 5);
-        publish(middle, 0, makePut(src, dst), 6);
-        ASSERT_TRUE(waitFor([&]() { return backend_.submissionCount() == 2; }));
-
-        for (const auto &submission : backend_.submissions()) {
-            if (submission.op_idx == 5) {
-                EXPECT_EQ(submission.channel_id, 2u);
-                EXPECT_EQ(submission.peer_index, 1u);
-                EXPECT_EQ(submission.remote.addr, 0x3008u);
-            } else {
-                EXPECT_EQ(submission.op_idx, 6u);
-                EXPECT_EQ(submission.channel_id, 1u);
-                EXPECT_EQ(submission.peer_index, 0u);
-                EXPECT_EQ(submission.remote.addr, 0x2008u);
-            }
-        }
-
-        backend_.complete(backend_.token(0));
-        backend_.complete(backend_.token(1));
-        ASSERT_TRUE(
-            waitFor([&]() { return consumerIdx(striped) == 1u && consumerIdx(middle) == 1u; }));
-        EXPECT_EQ(completedIdx(striped), 5u);
-        EXPECT_EQ(completedIdx(middle), 6u);
-        EXPECT_EQ(consumerIdx(striped), 1u);
-        EXPECT_EQ(consumerIdx(middle), 1u);
-        EXPECT_EQ(consumerIdx(idle), 0u);
-        EXPECT_EQ(completedIdx(idle), 0u);
-    }
-
-    TEST_F(ProxyRuntimeTest, DeviceChannelViewsAreChannelMajor) {
         constexpr uint32_t kChannels = 3;
         constexpr uint32_t kPeers = 2;
         ASSERT_EQ(createRuntime(kChannels, kPeers, /*thread_count=*/2), NIXL_SUCCESS);
@@ -535,19 +491,48 @@ namespace proxy_runtime {
         nixlMemViewH src = nullptr, dst = nullptr;
         prepMemViews(src, dst, {"peer0", "peer1"});
         ASSERT_EQ(runtime_->startWorkers(), NIXL_SUCCESS);
+        // Every ring but (0, 0) carries one PUT to its own peer.
+        const auto op_idx = [](uint32_t channel_id, uint32_t peer) {
+            return 1 + channel_id * kPeers + peer;
+        };
         for (uint32_t channel_id = 0; channel_id < kChannels; ++channel_id) {
             for (uint32_t peer = 0; peer < kPeers; ++peer) {
-                publish(channel(channel_id, peer),
-                        0,
-                        makePut(src, dst, peer),
-                        1 + channel_id * kPeers + peer);
+                if (channel_id != 0 || peer != 0) {
+                    publish(channel(channel_id, peer),
+                            0,
+                            makePut(src, dst, peer),
+                            op_idx(channel_id, peer));
+                }
             }
         }
-        ASSERT_TRUE(waitFor([&] { return backend_.submissionCount() == kChannels * kPeers; }));
+        ASSERT_TRUE(waitFor([&] { return backend_.submissionCount() == kChannels * kPeers - 1; }));
         for (const auto &submission : backend_.submissions()) {
-            EXPECT_EQ(submission.op_idx,
-                      1 + submission.channel_id * kPeers + submission.peer_index);
+            EXPECT_EQ(submission.op_idx, op_idx(submission.channel_id, submission.peer_index));
+            EXPECT_EQ(submission.remote.addr, 0x2008u + 0x1000 * submission.peer_index);
         }
+
+        backend_.completeEverything();
+        for (uint32_t channel_id = 0; channel_id < kChannels; ++channel_id) {
+            for (uint32_t peer = 0; peer < kPeers; ++peer) {
+                const ChannelAccess access = channel(channel_id, peer);
+                const bool idle = channel_id == 0 && peer == 0;
+                ASSERT_TRUE(waitFor([&] { return consumerIdx(access) == (idle ? 0u : 1u); }));
+                EXPECT_EQ(completedIdx(access), idle ? 0u : op_idx(channel_id, peer));
+            }
+        }
+    }
+
+    TEST_F(ProxyRuntimeTest, CommandForAnotherPeerIsNotPosted) {
+        ASSERT_EQ(createRuntime(1, 2), NIXL_SUCCESS);
+        nixlMemViewH src = nullptr, dst = nullptr;
+        prepMemViews(src, dst, {"peer0", "peer1"});
+        ASSERT_EQ(runtime_->startWorkers(), NIXL_SUCCESS);
+        const ChannelAccess access = channel(0, 0);
+        publish(access, 0, makePut(src, dst, /*dst_index=*/1), 1);
+        // completed_idx is published after completion_status.
+        ASSERT_TRUE(waitFor([&] { return completedIdx(access) == 1u; }));
+        EXPECT_EQ(access.completion->completion_status, NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(backend_.submissionCount(), 0u);
     }
 
     TEST_F(ProxyRuntimeTest, DrainSubmitsQueuedRecordsBeforeRetire) {
@@ -622,7 +607,7 @@ namespace proxy_runtime {
         EXPECT_EQ(backend_.submissions().back().remote.addr, 0x9008u);
     }
 
-    TEST_F(ProxyRuntimeTest, ReleaseWaitsForTerminalErrorsBeyondOldDeadline) {
+    TEST_F(ProxyRuntimeTest, ReleaseWaitsForEveryOutstandingRequest) {
         ASSERT_EQ(createRuntime(1, 2), NIXL_SUCCESS);
         nixlMemViewH src = nullptr, dst = nullptr;
         prepMemViews(src, dst, {"slow", "healthy"});
