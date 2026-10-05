@@ -642,6 +642,36 @@ namespace proxy_runtime {
         EXPECT_EQ(backend_.quiesceCalls(), 2u);
     }
 
+    TEST_F(ProxyRuntimeTest, RetirementSelectsTheOwningDevice) {
+        struct DeviceAllocator : MockDeviceOps {
+            std::atomic<int> selected{-1};
+
+            nixl_status_t
+            getActiveDevice(int &id) noexcept override {
+                id = 3;
+                return NIXL_SUCCESS;
+            }
+
+            nixl_status_t
+            setActiveDevice(int id) noexcept override {
+                selected = id;
+                return NIXL_SUCCESS;
+            }
+        } allocator;
+
+        auto transport = backend_.transport();
+        transport->hooks.quiesce = [&](uint32_t, uint32_t) {
+            EXPECT_EQ(allocator.selected.load(), 3);
+            return NIXL_SUCCESS;
+        };
+        ASSERT_EQ(nixl::proxyRuntime::create(
+                      std::move(transport), makeConfig(1, 1, 1), runtime_, allocator),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(runtime_->startWorkers(), NIXL_SUCCESS);
+        EXPECT_EQ(runtime_->shutdown(), NIXL_SUCCESS);
+        runtime_.reset();
+    }
+
     TEST_F(ProxyRuntimeTest, ShutdownRetiresCompletedAndPendingWork) {
         for (bool pending : {false, true}) {
             SCOPED_TRACE(pending);
