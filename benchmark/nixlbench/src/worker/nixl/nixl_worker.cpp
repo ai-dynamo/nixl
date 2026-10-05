@@ -628,9 +628,8 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
         prop.allocFlags.gpuDirectRDMACapable = xferBenchConfig::vmm_gdr_capable ? 1 : 0;
         prop.location.id = devid;
         prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-        std::cout << "VMM allocation: GPU " << devid
-                  << ", non-localized, gpuDirectRDMACapable="
-                  << static_cast<int>(prop.allocFlags.gpuDirectRDMACapable)<< std::endl;
+        std::cout << "VMM allocation: GPU " << devid << ", non-localized, gpuDirectRDMACapable="
+                  << static_cast<int>(prop.allocFlags.gpuDirectRDMACapable) << std::endl;
     }
 
     // Get the allocation granularity

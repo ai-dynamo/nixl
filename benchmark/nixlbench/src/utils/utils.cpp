@@ -185,9 +185,7 @@ NB_ARG_INT32(num_target_dev, 1, "Number of device in target process");
 NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 NB_ARG_UINT64(progress_threads, 0, "Number of progress threads");
 NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation for VRAM buffers");
-NB_ARG_BOOL(vmm_gdr_capable,
-            true,
-            "Set gpuDirectRDMACapable for non-localized VMM allocations");
+NB_ARG_BOOL(vmm_gdr_capable, true, "Set gpuDirectRDMACapable for non-localized VMM allocations");
 NB_ARG_INT32(use_localized,
              -1,
              "VMM locality domain: -1 disables programmatic localization, while 0 or 1 selects "
@@ -609,7 +607,7 @@ xferBenchConfig::loadParams(void) {
 
         if (use_localized >= 0) {
 #if !HAVE_CUDA_LOCALITY_DOMAIN
-            std::cerr << "Localized VMM allocation is not supported by thisCUDA version"
+            std::cerr << "Localized VMM allocation is not supported by this CUDA version"
                       << std::endl;
             return -1;
 #endif
@@ -718,7 +716,7 @@ xferBenchConfig::loadParams(void) {
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
     target_seg_type = NB_ARG(target_seg_type);
-    if (use_localized >= 0 && initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM&&
+    if (use_localized >= 0 && initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM &&
         target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
         std::cerr << "--use_localized requires at least one VRAM segment" << std::endl;
         return -1;
