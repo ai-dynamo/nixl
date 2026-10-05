@@ -236,6 +236,10 @@ nixlAgentData::~nixlAgentData() {
     // Runs before any member is destroyed, so no metadata backend thread can
     // still be in the caches below.
     md_.stop();
+    for (const auto &[view, engine] : mvhToEngine) {
+        engine.releaseMemView(view);
+    }
+    mvhToEngine.clear();
 }
 
 /*** nixlAgent implementation ***/
