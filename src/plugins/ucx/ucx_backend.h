@@ -304,7 +304,7 @@ private:
     std::unique_ptr<nixlUcxContext> uc;
     std::vector<std::unique_ptr<nixlUcxWorker>> workers_;
     size_t numSharedWorkers_;
-    ucp_err_handling_mode_t errHandlingMode_;
+    const ucp_err_handling_mode_t errHandlingMode_;
     std::string workerAddr;
     mutable std::atomic<size_t> sharedWorkerIndex_;
     const bool sglEnabled_;

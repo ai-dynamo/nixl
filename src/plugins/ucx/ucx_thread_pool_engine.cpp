@@ -271,8 +271,6 @@ private:
     std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
 };
 
-} // namespace
-
 class nixlUcxDedicatedThread final : public nixlUcxThread {
 public:
     nixlUcxDedicatedThread(nixlUcxEngine *engine, nixlUcxDedicatedWorker &worker);
@@ -348,8 +346,6 @@ private:
     std::jthread thread_;
 };
 
-namespace {
-
 /**
  * @brief UCX worker that owns its dedicated thread.
  */
@@ -376,13 +372,13 @@ private:
     std::optional<nixlUcxDedicatedThread> thread_;
 };
 
-} // namespace
-
 nixlUcxDedicatedThread::nixlUcxDedicatedThread(nixlUcxEngine *engine,
                                                nixlUcxDedicatedWorker &worker)
     : nixlUcxThread(engine, {&worker}),
       worker_(worker),
       thread_(startThread()) {}
+
+} // namespace
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
                                                  size_t num_threads)

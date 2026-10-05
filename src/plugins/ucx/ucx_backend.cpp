@@ -44,6 +44,13 @@ sglEnabledFromConfig() {
     return false;
 #endif
 }
+
+[[nodiscard]] ucp_err_handling_mode_t
+errHandlingModeFromParams(const nixl_b_params_t *custom_params) {
+    const auto opt = nixl::getBackendParamOptional<std::string>(
+        custom_params, std::string(nixl_ucx_err_handling_param_name));
+    return opt ? ucx_err_mode_from_string(*opt) : UCP_ERR_HANDLING_MODE_PEER;
+}
 } // namespace
 
 /****************************************
@@ -67,6 +74,7 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
 
 nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
     : nixlBackendEngine(&init_params),
+      errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()) {
     std::vector<std::string> devs; /* Empty vector */
@@ -84,14 +92,6 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
 
     const size_t num_device_channels =
         nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
-
-
-    if (const auto opt = nixl::getBackendParamOptional<std::string>(
-            custom_params, std::string(nixl_ucx_err_handling_param_name))) {
-        errHandlingMode_ = ucx_err_mode_from_string(*opt);
-    } else {
-        errHandlingMode_ = UCP_ERR_HANDLING_MODE_PEER;
-    }
 
     const auto engine_config =
         nixl::getBackendParamDefaulted(custom_params, "engine_config", std::string());
