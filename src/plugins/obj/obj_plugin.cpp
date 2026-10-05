@@ -23,17 +23,17 @@
 // Plugin type alias for convenience
 using obj_plugin_t = nixlBackendPluginCreator<nixlObjEngine>;
 
-// VRAM_SEG is advertised by the accelerated (S3-over-RDMA) engine's
-// getSupportedMems(); list it here too so plugin-level discovery agrees.
 // VRAM_SEG is served only by the accelerated (S3-over-RDMA) engine, which is
 // compiled in only when cuObject is present, so advertise it on the same
 // condition. Whether a given engine actually accepts VRAM is decided at run
 // time by S3AccelObjEngineImpl::getSupportedMems().
-static const nixl_mem_list_t supported_segments = {DRAM_SEG,
-                                                   OBJ_SEG,
+static const nixl_mem_list_t supported_segments = {
+    DRAM_SEG,
+    OBJ_SEG,
 #ifdef HAVE_CUOBJ_CLIENT
-                                                   VRAM_SEG,
+    VRAM_SEG,
 #endif
+};
 
 #ifdef STATIC_PLUGIN_OBJ
 nixlBackendPlugin *

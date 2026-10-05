@@ -55,7 +55,7 @@ namespace {
     // server only skips content-sha256 validation when the header is exactly
     // UNSIGNED-PAYLOAD, and the data here travels out-of-band over RDMA. This
     // mirrors the standard S3 SigV4 signing. All non-signed headers (host,
-    // x-amz-rdma-token, content-*, checksum) must already be set on the request
+    // x-amz-rdma-token, content-*) must already be set on the request
     // before calling.
     void
     signV4(Aws::Http::HttpRequest &req,
@@ -178,7 +178,7 @@ struct S3RdmaControlPlane::Impl {
     // Build the token-carrying control-plane request, apply the op-specific
     // headers, SigV4-sign it, and send it. The common prologue (rdma token +
     // content-sha256 sentinel) is shared by PUT and GET; @p set_op_headers adds
-    // whatever else the op needs (content-length/checksum for PUT, range for
+    // whatever else the op needs (content-length for PUT, range for
     // GET) before signing, since the signer canonicalizes the final header set.
     std::shared_ptr<Aws::Http::HttpResponse>
     sendRdmaRequest(Aws::Http::HttpMethod method,
@@ -304,14 +304,9 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t si
         }
 
         auto resp = impl_->sendRdmaRequest(
-            Aws::Http::HttpMethod::HTTP_PUT, uri, token, [&ctx](Aws::Http::HttpRequest &req) {
+            Aws::Http::HttpMethod::HTTP_PUT, uri, token, [](Aws::Http::HttpRequest &req) {
                 req.SetHeaderValue("content-type", "application/octet-stream");
                 req.SetContentLength("0");
-                // Have the server compute and validate a full-object checksum over the RDMA data.
-                req.SetHeaderValue("x-amz-checksum-algorithm", "CRC64NVME");
-                if (!ctx.checksumCrc64nvme.empty()) {
-                    req.SetHeaderValue("x-amz-checksum-crc64nvme", ctx.checksumCrc64nvme.c_str());
-                }
             });
         if (!resp) {
             NIXL_ERROR << "rdmaPut: MakeRequest returned null for key=" << ctx.object;
@@ -334,9 +329,6 @@ S3RdmaControlPlane::rdmaPut(S3RdmaClientCtx &ctx, const char *token, uint64_t si
         // header.)
         if (http_status == 200 && !etag.empty() && reply_code == rdma_reply_success) {
             ctx.etag = etag;
-            if (resp->HasHeader("x-amz-checksum-crc64nvme")) {
-                ctx.checksumCrc64nvme = resp->GetHeader("x-amz-checksum-crc64nvme").c_str();
-            }
             return static_cast<ssize_t>(size);
         }
 
