@@ -45,18 +45,21 @@ TEST(ProxyConfigTest, AcceptsParameters) {
     EXPECT_EQ(config.thread_count, nixl::kDefaultProxyChannelCount);
     EXPECT_EQ(config.max_peers, nixl::kDefaultProxyMaxPeers);
     EXPECT_EQ(config.ring_depth, nixl::kDefaultProxyRingDepth);
+    EXPECT_EQ(config.drain_timeout_ms, nixl::kDefaultProxyDrainTimeoutMs);
 
     ASSERT_EQ(parse({{"device_proxy", "true"},
                      {"proxy_channel_count", "3"},
                      {"proxy_thread_count", "8"},
                      {"proxy_max_peers", "5"},
-                     {"proxy_ring_depth", "512"}},
+                     {"proxy_ring_depth", "512"},
+                     {"proxy_drain_timeout_ms", "0"}},
                     config),
               NIXL_SUCCESS);
     EXPECT_EQ(config.channel_count, 3u);
     EXPECT_EQ(config.thread_count, 8u);
     EXPECT_EQ(config.max_peers, 5u);
     EXPECT_EQ(config.ring_depth, 512u);
+    EXPECT_EQ(config.drain_timeout_ms, 0u);
     EXPECT_EQ(config.ringCount(), 15u);
     EXPECT_EQ(config.effectiveThreadCount(), 3u);
 }
