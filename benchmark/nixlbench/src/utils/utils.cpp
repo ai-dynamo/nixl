@@ -184,7 +184,14 @@ NB_ARG_INT32(num_initiator_dev, 1, "Number of device in initiator process");
 NB_ARG_INT32(num_target_dev, 1, "Number of device in target process");
 NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 NB_ARG_UINT64(progress_threads, 0, "Number of progress threads");
-NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
+NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation for VRAM buffers");
+NB_ARG_BOOL(vmm_gdr_capable,
+            true,
+            "Set gpuDirectRDMACapable for non-localized VMM allocations");
+NB_ARG_INT32(use_localized,
+             -1,
+             "VMM locality domain: -1 disables programmatic localization, while 0 or 1 selects "
+             "one locality domain (requires enable_vmm)");
 NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
@@ -368,6 +375,8 @@ int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
 size_t xferBenchConfig::progress_threads = 0;
 bool xferBenchConfig::enable_vmm = false;
+bool xferBenchConfig::vmm_gdr_capable = true;
+int xferBenchConfig::use_localized = -1;
 bool xferBenchConfig::use_hugepages = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
@@ -585,6 +594,26 @@ xferBenchConfig::loadParams(void) {
         progress_threads = NB_ARG(progress_threads);
         device_list = NB_ARG(device_list);
         enable_vmm = NB_ARG(enable_vmm);
+        vmm_gdr_capable = NB_ARG(vmm_gdr_capable);
+        use_localized = NB_ARG(use_localized);
+
+        if (use_localized < -1 || use_localized > 1) {
+            std::cerr << "--use_localized must be -1, 0, or 1" << std::endl;
+            return -1;
+        }
+
+        if (use_localized >= 0 && !enable_vmm) {
+            std::cerr << "--use_localized requires --enable_vmm" << std::endl;
+            return -1;
+        }
+
+        if (use_localized >= 0) {
+#if !HAVE_CUDA_LOCALITY_DOMAIN
+            std::cerr << "Localized VMM allocation is not supported by thisCUDA version"
+                      << std::endl;
+            return -1;
+#endif
+        }
 
         if (enable_vmm) {
 #if HAVE_ROCM
@@ -689,6 +718,11 @@ xferBenchConfig::loadParams(void) {
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
     target_seg_type = NB_ARG(target_seg_type);
+    if (use_localized >= 0 && initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM&&
+        target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
+        std::cerr << "--use_localized requires at least one VRAM segment" << std::endl;
+        return -1;
+    }
     scheme = NB_ARG(scheme);
     mode = NB_ARG(mode);
     op_type = NB_ARG(op_type);
@@ -945,6 +979,10 @@ xferBenchConfig::printConfig() {
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption("Enable VMM (--enable_vmm=[0,1])", std::to_string(enable_vmm));
+        printOption("VMM GPUDirect RDMA capable (--vmm_gdr_capable=[0,1])",
+                    std::to_string(vmm_gdr_capable));
+        printOption("VMM locality domain (--use_localized=[-1,0,1])",
+                    std::to_string(use_localized));
         printOption("Recreate xfer each iteration (--recreate_xfer=[0,1])",
                     std::to_string(recreate_xfer));
         printOption("Re-register memory each iteration (--reregister_mem=[0,1])",
