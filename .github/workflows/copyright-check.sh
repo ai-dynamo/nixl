@@ -14,10 +14,12 @@ AUTHORS=(
 
 # Base defaults to the PR merge ref's first parent; locally pass e.g. upstream/main.
 base=${1:-HEAD^1}
-changed_files=$(git diff --name-only --diff-filter=d "$base"...HEAD)
+changed_files=$(mktemp)
+trap 'rm -f "$changed_files"' EXIT
+git diff -z --name-only --diff-filter=d "$base"...HEAD > "$changed_files"
 current_year=$(date -u +%Y)
 
-for f in $changed_files; do
+while IFS= read -r -d '' f; do
   # Normalize path
   f=${f#./}
 
@@ -72,8 +74,8 @@ for f in $changed_files; do
   end_year=$(echo "$copyright_years" | sed -E 's/.*-//' | sort -n | tail -1)
 
   # Validate date
-  if (( end_year < current_year )); then
-    failures+=("$f (copyright year $end_year < current year $current_year)")
+  if (( end_year != current_year )); then
+    failures+=("$f (copyright year $end_year != current year $current_year)")
     continue
   fi
 
@@ -82,7 +84,7 @@ for f in $changed_files; do
     failures+=("$f (missing license)")
     continue
   fi
-done
+done < "$changed_files"
 
 if ((${#failures[@]} > 0)); then
   echo "❌ SPDX header check failed:"
