@@ -90,10 +90,11 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
         nixl::getBackendParamDefaulted(custom_params, "ucx_num_device_channels", 4u);
 
 
-    ucp_err_handling_mode_t err_handling_mode = UCP_ERR_HANDLING_MODE_PEER;
     if (const auto opt = nixl::getBackendParamOptional<std::string>(
             custom_params, std::string(nixl_ucx_err_handling_param_name))) {
-        err_handling_mode = ucx_err_mode_from_string(*opt);
+        errHandlingMode_ = ucx_err_mode_from_string(*opt);
+    } else {
+        errHandlingMode_ = UCP_ERR_HANDLING_MODE_PEER;
     }
 
     const auto engine_config =
@@ -110,8 +111,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
     uc->warnAboutHardwareSupportMismatch();
 
     workers_.reserve(num_workers);
-    for (size_t i = 0; i < num_workers; i++) {
-        workers_.emplace_back(std::make_unique<nixlUcxWorker>(*uc, err_handling_mode, i));
+    for (size_t i = 0; i < numSharedWorkers_; i++) {
+        addWorker<nixlUcxWorker>();
     }
 
     auto &worker = workers_.front();
