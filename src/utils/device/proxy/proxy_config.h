@@ -34,12 +34,15 @@ inline constexpr std::string_view kProxyChannelCountParam = "proxy_channel_count
 inline constexpr std::string_view kProxyThreadCountParam = "proxy_thread_count";
 inline constexpr std::string_view kProxyMaxPeersParam = "proxy_max_peers";
 inline constexpr std::string_view kProxyRingDepthParam = "proxy_ring_depth";
+inline constexpr std::string_view kProxyDrainTimeoutParam = "proxy_drain_timeout_ms";
 
 inline constexpr uint32_t kDefaultProxyChannelCount = 4;
 /** Deliberately small: each peer costs a ring per channel; pass the real peer capacity. */
 inline constexpr uint32_t kDefaultProxyMaxPeers = 8;
 /** Work-ring slots per (channel, peer); the GPU masks indices, so a power of two. */
 inline constexpr uint32_t kDefaultProxyRingDepth = 256;
+/** A drain that takes longer aborts the process; 0 waits forever. */
+inline constexpr uint32_t kDefaultProxyDrainTimeoutMs = 60000;
 
 struct proxyConfig {
     bool enabled = false;
@@ -49,6 +52,8 @@ struct proxyConfig {
     uint32_t max_peers = kDefaultProxyMaxPeers;
     /** Work-ring depth per (channel, peer) slot; power of two. */
     uint32_t ring_depth = kDefaultProxyRingDepth;
+    /** Drain deadline in milliseconds; 0 disables it. */
+    uint32_t drain_timeout_ms = kDefaultProxyDrainTimeoutMs;
 
     [[nodiscard]] size_t
     ringCount() const noexcept {

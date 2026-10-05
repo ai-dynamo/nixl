@@ -23,6 +23,9 @@ credentials:
   - credentialsId: 'svc-nixl-gitlab-token'
     usernameVariable: 'NIXL_GITLAB_USER'
     passwordVariable: 'NIXL_GITLAB_TOKEN'
+  - credentialsId: 'svc-nixl-github-read-only-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
   # Paired with NIXL_GITLAB_TOKEN; only read on the spcx path.
   - credentialsId: 'ucx-plugin-gitlab-url'
     type: 'string'
@@ -84,13 +87,19 @@ env:
 
 steps:
   - name: Prepare
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId:
+      - 'svc-nixl-new-artifactory-token'
+      - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
       # Set up podman and log in to Artifactory (base image pull)
       rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
       podman system reset -f || true
       ln -sfT $(type -p podman) /usr/bin/docker
+      # github.com credential, used as the "ghconfig" build secret and by the
+      # agent-side clones below.
+      . .ci/scripts/common.sh
+      write_github_gitconfig /tmp/ghconfig
       echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
 
   - name: Checkout Source
@@ -105,7 +114,7 @@ steps:
       # Full clone: build-container.sh derives a version label via
       # `git describe --tags`, which needs history + tags, not just the tree.
       rm -rf nixl-src
-      git clone "${NIXL_REPO_URL}" nixl-src
+      git -c include.path=/tmp/ghconfig clone "${NIXL_REPO_URL}" nixl-src
       # fetch covers branch/tag/PR refs; the fallback covers raw shas. Fail
       # loud if neither resolves, so we never silently build the clone default.
       if git -C nixl-src fetch origin "${NIXL_VERSION}" 2>/dev/null; then
@@ -152,6 +161,7 @@ steps:
           exit 1
           ;;
       esac
+      export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
       cd nixl-src
       ./contrib/build-container.sh \
         ${BASE_IMAGE_FLAGS} \
