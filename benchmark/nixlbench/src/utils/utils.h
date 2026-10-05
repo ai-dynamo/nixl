@@ -214,6 +214,8 @@ public:
     static int gds_batch_pool_size;
     static int gds_batch_limit;
     static int gds_mt_num_threads;
+    static std::string gds_mt_vector_io;
+    static int gds_mt_vector_max_entries;
     static std::string gpunetio_device_list;
     static std::string gpunetio_oob_list;
     static std::string gpunetio_gid_index;

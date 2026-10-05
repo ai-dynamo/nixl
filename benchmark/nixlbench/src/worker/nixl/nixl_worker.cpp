@@ -230,7 +230,13 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GDS_MT)) {
         std::cout << "GDS_MT backend" << std::endl;
         backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
+        backend_params["vector_io"] = xferBenchConfig::gds_mt_vector_io;
+        backend_params["vector_max_entries"] =
+            std::to_string(xferBenchConfig::gds_mt_vector_max_entries);
         std::cout << "GDS MT Num threads: " << xferBenchConfig::gds_mt_num_threads << std::endl;
+        std::cout << "GDS MT vector I/O mode: " << xferBenchConfig::gds_mt_vector_io << std::endl;
+        std::cout << "GDS MT vector max entries: " << xferBenchConfig::gds_mt_vector_max_entries
+                  << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
         if (!xferBenchConfig::plugin_parameters) {
             // Preserve the existing flags-only POSIX parameter assembly.

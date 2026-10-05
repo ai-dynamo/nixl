@@ -632,7 +632,9 @@ devices can differ between the initiator and target processes.
 
 **GDS_MT Backend:**
 ```
---gds_mt_num_threads NUM   # Number of threads used by GDS MT plugin (default: 1)
+--gds_mt_num_threads NUM          # Number of threads used by GDS MT plugin (default: 1)
+--gds_mt_vector_io MODE           # Vector I/O mode [auto, off, on] (default: auto)
+--gds_mt_vector_max_entries NUM   # Maximum entries per vector I/O call (default: 32)
 ```
 
 **POSIX Backend:**
