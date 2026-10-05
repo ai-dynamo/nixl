@@ -711,6 +711,26 @@ namespace proxy_runtime {
             "unpublished producer tickets");
     }
 
+    TEST_F(ProxyRuntimeTest, DrainPastItsDeadlineAborts) {
+        EXPECT_DEATH(
+            {
+                auto config = makeConfig(1, 1, 1);
+                config.drain_timeout_ms = 100;
+                ASSERT_EQ(
+                    nixl::proxyRuntime::create(backend_.transport(), config, runtime_, allocator_),
+                    NIXL_SUCCESS);
+                nixlMemViewH src = nullptr;
+                nixlMemViewH dst = nullptr;
+                prepMemViews(src, dst);
+                ASSERT_EQ(runtime_->startWorkers(), NIXL_SUCCESS);
+                // The transport never completes this request.
+                publish(channel(), 0, makePut(src, dst), 1);
+                ASSERT_TRUE(waitFor([&] { return backend_.submissionCount() == 1; }));
+                static_cast<void>(runtime_->releaseMemView(dst));
+            },
+            "Proxy drain did not finish within 100 ms");
+    }
+
     TEST_F(ProxyRuntimeTest, UnstartedRuntimeCannotDiscardQueuedWork) {
         EXPECT_DEATH(
             {
