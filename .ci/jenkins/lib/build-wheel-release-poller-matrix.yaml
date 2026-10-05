@@ -27,17 +27,16 @@ job: nixl-build-wheel-release-poller
 
 timeout_minutes: 30
 
-registry_host: artifactory.nvidia.com
+registry_host: il.artifactory.nvidia.com
 
 credentials:
-  - credentialsId: 'svc-nixl-new-artifactory-token'
+  - credentialsId: 'svc-nixl-il-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
 
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   limits: '{memory: 2Gi, cpu: 2000m}'
   requests: '{memory: 2Gi, cpu: 2000m}'
 
@@ -52,10 +51,10 @@ env:
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
   # The published check is a property query, so AQL needs the repo by name; the
   # URL is for writing .inflight reservations.
-  AQL_API_URL: "https://artifactory.nvidia.com/artifactory/api/search/aql"
+  AQL_API_URL: "https://il.artifactory.nvidia.com/artifactory/api/search/aql"
   WHEEL_REPO_NAME: "sw-nbu-swx-nixl-pypi-local"
-  WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
-  WHEEL_REPO_API: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
+  WHEEL_REPO_URL: "https://il.artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
+  WHEEL_REPO_API: "https://il.artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
   # One poll interval, so a build that died without publishing is retried on the
   # next cycle rather than needing the wheel job to release its reservation.
   RESERVE_TTL_MIN: "240"
@@ -63,7 +62,7 @@ env:
 
 steps:
   - name: Discover Missing Wheels
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       # Writes triggers.txt for the next step.

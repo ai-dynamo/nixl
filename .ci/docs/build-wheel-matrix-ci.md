@@ -91,7 +91,7 @@ ARG UCX_SONAME_SUFFIX=""
 # ... builds NIXL and generates wheels
 ```
 
-**Base Image**: `artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09`
+**Base Image**: `il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda:13.0-devel-manylinux--25.09`
 
 ### Stage Usage Patterns
 
@@ -100,7 +100,7 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
 
 ```bash
 ./contrib/build-container.sh \
-  --base-image 'artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda' \
+  --base-image 'il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/base/cuda' \
   --base-image-tag '13.0-devel-manylinux--25.09' \
   --wheel-base "manylinux_2_28" \
   --python-versions "${python_version}" \
@@ -340,12 +340,12 @@ This is handled by `contrib/tomlutil.py` which modifies `pyproject.toml` during 
 ### PyPI Repository Configuration
 ```yaml
 credentials:
-  - credentialsId: 'svc-nixl-new-artifactory-token'
+  - credentialsId: 'svc-nixl-il-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
 
 env:
-  ARTIFACTORY_PYPI_URL: https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
+  ARTIFACTORY_PYPI_URL: https://il.artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
 ```
 
 ### Wheel Upload Process
@@ -373,11 +373,11 @@ Users can install wheels from Artifactory:
 ```bash
 # Using pip with extra index
 pip install nixl-cu12 \
-  --extra-index-url https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
+  --extra-index-url https://il.artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
 
 # Or configure in pip.conf
 [global]
-extra-index-url = https://artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
+extra-index-url = https://il.artifactory.nvidia.com/artifactory/api/pypi/sw-nbu-sxw-nixl-pypi-local
 ```
 
 ## 8. Troubleshooting

@@ -14,10 +14,10 @@ job: nixl-ci-build-wheel-nightly
 failFast: false
 timeout_minutes: 180
 
-registry_host: artifactory.nvidia.com
+registry_host: il.artifactory.nvidia.com
 
 credentials:
-  - credentialsId: 'svc-nixl-new-artifactory-token'
+  - credentialsId: 'svc-nixl-il-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
   - credentialsId: 'svc-nixl-gitlab-token'
@@ -34,7 +34,6 @@ credentials:
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
 
@@ -76,11 +75,11 @@ env:
   CU12_CUDA_VERSION: "12.9"
   WHEEL_IMAGE_TAG: "nixl-wheel:build"   # constant: each matrix cell is its own pod
   # SWX team's NIXL pypi repo (publish target).
-  WHEEL_REPO_URL: "https://artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
+  WHEEL_REPO_URL: "https://il.artifactory.nvidia.com/artifactory/sw-nbu-swx-nixl-pypi-local"
   # Properties API (same repo, different endpoint) for tagging published wheels.
-  WHEEL_REPO_API: "https://artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
+  WHEEL_REPO_API: "https://il.artifactory.nvidia.com/artifactory/api/storage/sw-nbu-swx-nixl-pypi-local"
   # Browsable tree view of the same repo, for the per-build link in the UI.
-  WHEEL_REPO_UI: "https://artifactory.nvidia.com/ui/repos/tree/General/sw-nbu-swx-nixl-pypi-local"
+  WHEEL_REPO_UI: "https://il.artifactory.nvidia.com/ui/repos/tree/General/sw-nbu-swx-nixl-pypi-local"
   # Source repo cloned in Build Wheel.
   NIXL_REPO_URL: "https://github.com/ai-dynamo/nixl.git"
   MAIL_FROM: "jenkins@nvidia.com"
@@ -88,7 +87,7 @@ env:
 steps:
   - name: Prepare
     credentialsId:
-      - 'svc-nixl-new-artifactory-token'
+      - 'svc-nixl-il-artifactory-token'
       - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |
@@ -176,7 +175,7 @@ steps:
         --build-options-file ../build_options.env
 
   - name: Publish
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       set -x
@@ -280,7 +279,7 @@ pipeline_stop:
 
     if (isRelease) {
         withCredentials([usernamePassword(
-                credentialsId: 'svc-nixl-new-artifactory-token',
+                credentialsId: 'svc-nixl-il-artifactory-token',
                 usernameVariable: 'ARTIFACTORY_USER',
                 passwordVariable: 'ARTIFACTORY_TOKEN')]) {
             // Checks the status code, not curl's exit status: without -f curl
