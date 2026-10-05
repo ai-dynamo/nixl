@@ -454,6 +454,12 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     const auto comp_handle = static_cast<nixlUcxCompositeBackendReqH *>(int_handle);
     comp_handle->startXfer();
+
+    // Notifications of the composite request are sent over its shared worker
+    const ucx_connection_ptr_t &conn =
+        static_cast<nixlUcxPublicMetadata *>(remote[start_idx].metadataP)->conn;
+    comp_handle->init(conn, *conn->getEp(comp_handle->getWorkerId()));
+
     const size_t batch_size = local.descCount();
     const size_t num_chunks = comp_handle->getNumChunks();
     NIXL_TRACE << "sending " << *comp_handle;

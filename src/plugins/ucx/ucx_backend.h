@@ -268,11 +268,11 @@ private:
               size_t length,
               const ucp_am_recv_param_t *param);
 
-    [[nodiscard]] std::unique_ptr<std::string>
+    [[nodiscard]] std::string
     buildNotif(const std::string &msg) const;
 
     [[nodiscard]] static nixl_status_t
-    sendNotif(std::unique_ptr<std::string> &&msg, const nixlUcxEp &ep, nixlUcxReq *req);
+    sendNotif(std::string &&msg, const nixlUcxEp &ep, nixlUcxReq *req);
 
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,
