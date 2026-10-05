@@ -54,9 +54,6 @@ class nixlAgentData final : public nixlMetadataContext {
         backend_list_t                         notifEngines;
         std::array<backend_list_t, FILE_SEG+1> memToBackend;
 
-        // Bookkeeping from memory view handles to backend engines
-        std::unordered_map<nixlMemViewH, nixlBackendEngine &> mvhToEngine;
-
         std::unordered_map<std::string, std::unordered_map<nixl_backend_t, nixl_blob_t>>
             remoteBackends_;
 
@@ -69,9 +66,29 @@ class nixlAgentData final : public nixlMetadataContext {
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
         backend_map_t backendEngines_;
-        // Owning shared_ptr per registration generation; weak refs in handles expire on
-        // invalidation or re-registration.
+        // Discoverable remote sections; pinned views may retain invalidated sections.
         std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
+        struct MemViewBinding {
+            nixlBackendEngine &engine;
+            std::vector<std::shared_ptr<nixlRemoteSection>> owners;
+        };
+        // Owners outlive backend release; engines outlive all bindings.
+        std::unordered_map<nixlMemViewH, MemViewBinding> memViews_;
+        // A request handle's section is usable until the agent dropped it, even if a view
+        // still keeps it alive.
+        static bool sectionValid(const std::weak_ptr<nixlRemoteSection> &section) {
+            const auto s = section.lock();
+            return s && !s->isInvalidated();
+        }
+        // A prepared view still uses metadata of this agent, current or already dropped.
+        bool viewReferences(const std::string &agent) const {
+            for (const auto &[view, binding] : memViews_) {
+                for (const auto &owner : binding.owners) {
+                    if (owner->getAgentName() == agent) return true;
+                }
+            }
+            return false;
+        }
         std::unique_ptr<nixlTelemetry> telemetry_;
         nixlLocalSection localSection_;
 
@@ -90,6 +107,9 @@ class nixlAgentData final : public nixlMetadataContext {
         loadRemoteMD(const nixl_blob_t &blob, std::string &out_name) override;
         nixl_status_t
         invalidateRemoteMD(const std::string &remote_name) override;
+        // Caller holds `lock`.
+        nixl_status_t
+        evictRemoteAgent(const std::string &remote_agent);
         nixl_status_t
         loadConnInfo(const std::string &remote_name,
                      const nixl_backend_t &backend,
