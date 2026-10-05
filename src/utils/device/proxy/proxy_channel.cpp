@@ -154,6 +154,15 @@ proxyChannel::drained() const noexcept {
     return true;
 }
 
+bool
+proxyChannel::skipAbandonedTickets() noexcept {
+    bool skipped = false;
+    for (proxyRing &ring : rings_) {
+        skipped = ring.skipAbandonedTickets() || skipped;
+    }
+    return skipped;
+}
+
 void
 proxyChannel::drainAndRearm(proxyTransport &transport) noexcept {
     for (uint32_t peer = 0; peer < rings_.size(); ++peer) {

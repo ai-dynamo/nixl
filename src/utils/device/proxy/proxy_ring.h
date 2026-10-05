@@ -114,6 +114,10 @@ public:
     [[nodiscard]] bool
     drained() const noexcept;
 
+    /** At shutdown, retire the unpublished tickets at the head of a drained ring; whether any. */
+    [[nodiscard]] bool
+    skipAbandonedTickets() noexcept;
+
     /**
      * Whether every producer ticket has reached terminal completion, as reclamation requires.
      * The caller treats false as fatal.
@@ -142,6 +146,11 @@ public:
     }
 
 private:
+    [[nodiscard]] bool
+    published(uint64_t ticket) const noexcept {
+        return __atomic_load_n(&commandsHost()[ticket % depth_].op_idx, __ATOMIC_ACQUIRE) != 0;
+    }
+
     [[nodiscard]] nixl_status_t
     publishConsumerIdx(uint64_t value) noexcept;
 

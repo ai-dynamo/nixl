@@ -121,14 +121,27 @@ proxyWorker::logUndrainedRings() {
     });
 }
 
+bool
+proxyWorker::skipOwnedAbandonedTickets() {
+    bool skipped = false;
+    forEachOwnedChannel(
+        [&](proxyChannel &channel) { skipped = channel.skipAbandonedTickets() || skipped; });
+    return skipped;
+}
+
 void
 proxyWorker::drainOwnedChannels() {
     auto next_warning = std::chrono::steady_clock::now() + proxy_drain_warning_interval;
-    while (!ownedChannelsDrained()) {
-        passOwnedChannels();
-        if (std::chrono::steady_clock::now() >= next_warning) {
-            logUndrainedRings();
-            next_warning += proxy_drain_warning_interval;
+    for (;;) {
+        while (!ownedChannelsDrained()) {
+            passOwnedChannels();
+            if (std::chrono::steady_clock::now() >= next_warning) {
+                logUndrainedRings();
+                next_warning += proxy_drain_warning_interval;
+            }
+        }
+        if (!ctx_.shutting_down.load(std::memory_order_acquire) || !skipOwnedAbandonedTickets()) {
+            break;
         }
     }
 
