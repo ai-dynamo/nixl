@@ -69,6 +69,15 @@ proxyChannel::submitRecord(proxyTransport &transport,
     proxyRequestState inflight{};
     inflight.op_idx = submission.op_idx;
 
+    // dst_index is also the peer slot; this ring's quiesce covers no other peer.
+    if (submission.peerIndex() != peer) {
+        NIXL_ERROR << "proxyChannel::submitRecord: command for peer " << submission.peerIndex()
+                   << " on the ring of peer " << peer << " op_idx=" << submission.op_idx;
+        inflight.status = NIXL_ERR_INVALID_PARAM;
+        ring.recordInflight(slot, inflight);
+        return;
+    }
+
     proxyBackendSubmission prepared_submission;
     nixl_status_t status = resolveSubmission(submission, id_, peer, prepared_submission);
     if (status != NIXL_SUCCESS) {

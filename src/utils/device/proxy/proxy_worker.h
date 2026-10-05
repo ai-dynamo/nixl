@@ -46,8 +46,9 @@ public:
     proxyWorker(const proxyWorkerContext &ctx, uint32_t worker_index) noexcept;
     ~proxyWorker();
 
-    void
-    start();
+    /** @return NIXL_ERR_BACKEND, having started nothing, if the thread cannot be created. */
+    [[nodiscard]] nixl_status_t
+    start() noexcept;
 
     void
     join() noexcept;

@@ -17,6 +17,8 @@
 #include "proxy_worker.h"
 #include "nixl_log.h"
 
+#include <exception>
+
 namespace nixl {
 
 proxyWorker::proxyWorker(const proxyWorkerContext &ctx, uint32_t worker_index) noexcept
@@ -27,13 +29,20 @@ proxyWorker::~proxyWorker() {
     join();
 }
 
-void
-proxyWorker::start() {
-    thread_ = std::jthread([this]() {
-        while (!ctx_.stop.stop_requested()) {
-            runOnce();
-        }
-    });
+nixl_status_t
+proxyWorker::start() noexcept {
+    try {
+        thread_ = std::jthread([this]() {
+            while (!ctx_.stop.stop_requested()) {
+                runOnce();
+            }
+        });
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "proxyWorker::start: " << e.what();
+        return NIXL_ERR_BACKEND;
+    }
+    return NIXL_SUCCESS;
 }
 
 void

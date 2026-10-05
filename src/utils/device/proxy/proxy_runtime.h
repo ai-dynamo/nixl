@@ -93,13 +93,16 @@ public:
     }
 
 private:
-    /** Ask owning workers to drain and reset, then wait for their acknowledgments. */
-    void
-    drainChannels() noexcept;
+    /** INITIALIZED: the transport's init() succeeded, so shutdown() must call its shutdown(). */
+    enum class state_t { CREATED, INITIALIZED, BUILT, RUNNING, STOPPED };
 
     proxyRuntime(std::unique_ptr<proxyTransport> transport,
                  const proxyConfig &config,
                  deviceOps &allocator) noexcept;
+
+    /** Ask owning workers to drain and reset, then wait for their acknowledgments. */
+    void
+    drainChannels() noexcept;
 
     /** Allocate rings, device context and workers; see create(). */
     nixl_status_t
@@ -107,14 +110,6 @@ private:
 
     void
     joinWorkerThreads() noexcept;
-
-    /**
-     * create() yields a built runtime; startWorkers() and shutdown() are the only
-     * transitions after that, and the only writers of the device shutdown word and
-     * the workers' stop signal. `initialized` records that the transport's init()
-     * succeeded, which is what obliges shutdown() to call its shutdown().
-     */
-    enum class state { created, initialized, built, running, stopped };
 
     /** First member, so it is destroyed after the workers, rings and memory views. */
     std::unique_ptr<proxyTransport> transport_;
@@ -135,7 +130,7 @@ private:
     /** Bumped once per drain; each worker acks it when it has applied it. */
     alignas(64) std::atomic<uint64_t> drain_requested_{0};
     uint64_t *shutdown_word_dev_ = nullptr;
-    state state_ = state::created;
+    state_t state_ = state_t::CREATED;
 };
 
 } // namespace nixl

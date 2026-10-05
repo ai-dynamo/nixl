@@ -20,6 +20,7 @@
 #include "nixl_log.h"
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <thread>
 #include <utility>
 
@@ -68,6 +69,12 @@ proxyRuntime::create(std::unique_ptr<proxyTransport> transport,
         NIXL_ERROR << "ProxyRuntime::create: invalid config";
         return NIXL_ERR_INVALID_PARAM;
     }
+    // The GPU masks ring indices.
+    if ((config.ring_depth & (config.ring_depth - 1)) != 0) {
+        NIXL_ERROR << "ProxyRuntime::create: ring_depth must be a power of two: "
+                   << config.ring_depth;
+        return NIXL_ERR_INVALID_PARAM;
+    }
 
     std::unique_ptr<proxyRuntime> runtime(
         new proxyRuntime(std::move(transport), config, allocator));
@@ -91,9 +98,15 @@ proxyRuntime::build() {
         NIXL_ERROR << "ProxyRuntime::build: transport init failed: " << rc;
         return rc;
     }
-    state_ = state::initialized;
+    state_ = state_t::INITIALIZED;
 
     const size_t channel_slots = config_.ringCount();
+    if (channel_slots > std::numeric_limits<size_t>::max() / sizeof(nixlProxyRingDesc)) {
+        NIXL_ERROR << "ProxyRuntime::build: invalid ring-view size: " << channel_slots
+                   << " ring(s)";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    const size_t device_channel_views_bytes = sizeof(nixlProxyRingDesc) * channel_slots;
     rc = proxyControlBuffer::create(allocator_, channel_slots, control_slots_);
     if (rc != NIXL_SUCCESS) {
         NIXL_ERROR << "ProxyRuntime::build: failed to create GPU-visible control slab";
@@ -112,11 +125,11 @@ proxyRuntime::build() {
         channels_.back().appendDeviceViews(device_channel_views_);
     }
 
-    if (allocator_.allocDeviceMem(sizeof(nixlProxyRingDesc) * channel_slots,
-                                  device_channel_views_mem_) != NIXL_SUCCESS ||
+    if (allocator_.allocDeviceMem(device_channel_views_bytes, device_channel_views_mem_) !=
+            NIXL_SUCCESS ||
         allocator_.copy(device_channel_views_mem_.get(),
                         device_channel_views_.data(),
-                        sizeof(nixlProxyRingDesc) * channel_slots,
+                        device_channel_views_bytes,
                         deviceOps::copyDirection::HostToDevice) != NIXL_SUCCESS) {
         return NIXL_ERR_BACKEND;
     }
@@ -143,7 +156,7 @@ proxyRuntime::build() {
         workers_.push_back(std::make_unique<proxyWorker>(*worker_context_, worker_idx));
     }
 
-    state_ = state::built;
+    state_ = state_t::BUILT;
     return NIXL_SUCCESS;
 }
 
@@ -192,7 +205,7 @@ proxyRuntime::releaseMemView(proxy_view_handle_t proxy_memview) {
 
 void
 proxyRuntime::drainChannels() noexcept {
-    if (state_ != state::running) {
+    if (state_ != state_t::RUNNING) {
         for (auto &channel : channels_) {
             for (const proxyRing &ring : channel.rings()) {
                 if (!ring.assertDrained()) {
@@ -218,11 +231,11 @@ nixl_status_t
 proxyRuntime::startWorkers() {
     const std::lock_guard lock(control_mutex_);
     NIXL_INFO << "ProxyRuntime::startWorkers: launching " << workers_.size() << " worker thread(s)";
-    if (state_ == state::running) {
+    if (state_ == state_t::RUNNING) {
         NIXL_ERROR << "ProxyRuntime::startWorkers: workers already started";
         return NIXL_ERR_INVALID_PARAM;
     }
-    if (state_ != state::built) {
+    if (state_ != state_t::BUILT || stop_source_.stop_requested()) {
         NIXL_ERROR << "ProxyRuntime::startWorkers: runtime not initialized";
         return NIXL_ERR_NOT_SUPPORTED;
     }
@@ -235,9 +248,19 @@ proxyRuntime::startWorkers() {
     }
 
     for (auto &worker : workers_) {
-        worker->start();
+        if (worker->start() != NIXL_SUCCESS) {
+            // Stop the workers already started; shutdown() then releases the runtime as built.
+            NIXL_ERROR << "ProxyRuntime::startWorkers: failed to start a worker thread";
+            if (control_slots_->publishShutdown(nixl_proxy_control_state_t::SHUTDOWN) !=
+                NIXL_SUCCESS) {
+                NIXL_FATAL << "Failed to publish proxy shutdown";
+            }
+            stop_source_.request_stop();
+            joinWorkerThreads();
+            return NIXL_ERR_BACKEND;
+        }
     }
-    state_ = state::running;
+    state_ = state_t::RUNNING;
 
     return NIXL_SUCCESS;
 }
@@ -252,18 +275,18 @@ proxyRuntime::joinWorkerThreads() noexcept {
 nixl_status_t
 proxyRuntime::shutdown() {
     const std::lock_guard lock(control_mutex_);
-    if (state_ == state::stopped) {
+    if (state_ == state_t::STOPPED) {
         return NIXL_SUCCESS;
     }
-    if (state_ == state::running &&
+    if (state_ == state_t::RUNNING &&
         control_slots_->publishShutdown(nixl_proxy_control_state_t::SHUTDOWN) != NIXL_SUCCESS) {
         NIXL_FATAL << "Failed to publish proxy shutdown";
     }
     // A failed build has never handed a context to a producer.
-    if (state_ == state::built || state_ == state::running) {
+    if (state_ == state_t::BUILT || state_ == state_t::RUNNING) {
         drainChannels();
     }
-    const bool transport_initialized = state_ != state::created;
+    const bool transport_initialized = state_ != state_t::CREATED;
     stop_source_.request_stop();
     joinWorkerThreads();
     workers_.clear();
@@ -275,7 +298,7 @@ proxyRuntime::shutdown() {
     device_channel_views_.clear();
     channels_.clear();
     control_slots_.reset();
-    state_ = state::stopped;
+    state_ = state_t::STOPPED;
     return transport_initialized ? transport_->shutdown() : NIXL_SUCCESS;
 }
 
