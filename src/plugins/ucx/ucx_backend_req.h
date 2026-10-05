@@ -167,7 +167,10 @@ private:
         return (conn_status != NIXL_SUCCESS) ? conn_status : status;
     }
 
+    // Keeps the connection (which owns the endpoint) alive for the lifetime
+    // of the request handle.
     ucx_connection_ptr_t conn_;
+    // Resolved endpoint over which data and notifications are sent.
     const nixlUcxEp *ep_ = nullptr;
     std::vector<nixlUcxReq> requests_;
     nixlUcxWorker *worker_ = nullptr;
