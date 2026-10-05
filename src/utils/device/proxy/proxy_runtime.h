@@ -51,15 +51,9 @@ public:
 
     /**
      * Build without starting workers. The runtime owns the transport; the allocator
-     * must outlive the runtime. This overload uses getDeviceOps().
+     * must outlive the runtime.
      * @retval NIXL_ERR_INVALID_PARAM No transport, or an invalid config.
-     * @retval NIXL_ERR_NOT_SUPPORTED No device operations implementation is loaded.
      */
-    [[nodiscard]] static nixl_status_t
-    create(std::unique_ptr<proxyTransport> transport,
-           const proxyConfig &config,
-           std::unique_ptr<proxyRuntime> &out);
-
     [[nodiscard]] static nixl_status_t
     create(std::unique_ptr<proxyTransport> transport,
            const proxyConfig &config,

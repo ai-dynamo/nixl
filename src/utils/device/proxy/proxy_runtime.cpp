@@ -43,17 +43,6 @@ proxyRuntime::~proxyRuntime() {
 nixl_status_t
 proxyRuntime::create(std::unique_ptr<proxyTransport> transport,
                      const proxyConfig &config,
-                     std::unique_ptr<proxyRuntime> &out) {
-    deviceOps *ops = getDeviceOps();
-    if (ops == nullptr) {
-        return NIXL_ERR_NOT_SUPPORTED;
-    }
-    return create(std::move(transport), config, out, *ops);
-}
-
-nixl_status_t
-proxyRuntime::create(std::unique_ptr<proxyTransport> transport,
-                     const proxyConfig &config,
                      std::unique_ptr<proxyRuntime> &out,
                      deviceOps &allocator) {
     NIXL_INFO << "ProxyRuntime::create: max_peers=" << config.max_peers
