@@ -153,8 +153,35 @@ proxyRing::drained() const noexcept {
         return false;
     }
     // Include published records that have not been submitted yet.
-    const uint32_t slot = static_cast<uint32_t>(submit_idx_ % depth_);
-    return __atomic_load_n(&commandsHost()[slot].op_idx, __ATOMIC_ACQUIRE) == 0;
+    return !published(submit_idx_);
+}
+
+bool
+proxyRing::skipAbandonedTickets() noexcept {
+    if (!allocated() || !drained()) {
+        return false;
+    }
+    uint64_t produced = 0;
+    if (ops_->copy(&produced,
+                   producer_idx_mem_.get(),
+                   sizeof(produced),
+                   deviceOps::copyDirection::DeviceToHost) != NIXL_SUCCESS) {
+        NIXL_FATAL << "proxyRing::skipAbandonedTickets: failed to read the producer index";
+    }
+    const uint64_t first = submit_idx_;
+    while (submit_idx_ < produced && !published(submit_idx_)) {
+        ++submit_idx_;
+    }
+    if (submit_idx_ == first) {
+        return false;
+    }
+    NIXL_DEBUG << "proxyRing::skipAbandonedTickets: ring=" << ring_index_ << " skipped "
+               << submit_idx_ - first << " ticket(s) from " << first;
+    if (publishConsumerIdx(submit_idx_) != NIXL_SUCCESS) {
+        NIXL_FATAL << "proxyRing::skipAbandonedTickets: failed to publish CI"
+                   << " consumer_idx=" << submit_idx_;
+    }
+    return true;
 }
 
 nixl_status_t

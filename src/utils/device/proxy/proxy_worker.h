@@ -41,6 +41,8 @@ struct proxyWorkerContext {
     uint32_t worker_count;
     /** Bumped by an application thread per drain; each worker acknowledges it. */
     const std::atomic<uint64_t> &drain_requested;
+    /** Set before the shutdown drain. */
+    const std::atomic<bool> &shutting_down;
     /** From the runtime's stop source; requested once, after the final drain. */
     std::stop_token stop;
 };
@@ -86,6 +88,9 @@ private:
     /** Log each owned ring that still has work, for a drain that is taking long. */
     void
     logUndrainedRings();
+
+    [[nodiscard]] bool
+    skipOwnedAbandonedTickets();
 
     /** Drain, quiesce and reset on the rings' owning thread. */
     void
