@@ -114,6 +114,7 @@ done
 
 # shellcheck disable=SC2154
 gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+./bin/unit --gtest_filter='TransferCompletion/invalidatedTransferFixture.*:dualAgentBridgeFixture.RetainedRegistrationDoesNotMakeStaleHandlesValid'
 ./bin/test_plugin
 
 # DOCA telemetry exporter tests: present only when built with the DOCA SDK

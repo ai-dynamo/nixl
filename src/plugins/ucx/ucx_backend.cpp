@@ -624,6 +624,11 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
+    // Cancelling a UCX request does not establish that its RMA has stopped.
+    if (int_handle->status() == NIXL_IN_PROG) {
+        NIXL_DEBUG << "Cannot release an in-progress UCX transfer";
+        return NIXL_ERR_REPOST_ACTIVE;
+    }
     int_handle->release();
 
     /* TODO: return to a pool instead. */

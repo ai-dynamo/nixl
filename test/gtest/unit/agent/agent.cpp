@@ -101,8 +101,8 @@ namespace agent {
             return agent_.get();
         }
 
-        const mocks::GMockBackendEngine &
-        getGMockEngine() const {
+        mocks::GMockBackendEngine &
+        getGMockEngine() {
             return gmock_engine_;
         }
 
@@ -579,6 +579,106 @@ namespace agent {
         EXPECT_EQ(notif_map[local_agent_name].front(), msg);
 
         EXPECT_EQ(local_agent_->releaseXferReq(xfer_req), NIXL_SUCCESS);
+    }
+
+    class invalidatedTransferFixture : public dualAgentBridgeFixture,
+                                       public testing::WithParamInterface<nixl_status_t> {};
+
+    TEST_P(invalidatedTransferFixture, KeepsMetadataUntilRelease) {
+        using testing::_;
+        using testing::Return;
+
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+        auto &engine = local_agent_helper_->getGMockEngine();
+        nixl_xfer_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+        local.addDesc(s.local_blob.getDesc());
+        remote.addDesc(s.remote_blob.getDesc());
+        nixlBackendReqH backend_request;
+        EXPECT_CALL(engine, prepXfer(_, _, _, _, _, _))
+            .WillOnce(
+                testing::DoAll(testing::SetArgReferee<4>(&backend_request), Return(NIXL_SUCCESS)));
+        nixlXferReqH *request = nullptr;
+        ASSERT_EQ(
+            local_agent_->createXferReq(NIXL_READ, local, remote, s.remote_agent_name, request),
+            NIXL_SUCCESS);
+        EXPECT_CALL(engine, postXfer(_, _, _, _, _, _)).WillOnce(Return(NIXL_IN_PROG));
+        ASSERT_EQ(local_agent_->postXferReq(request), NIXL_IN_PROG);
+
+        EXPECT_CALL(engine, unloadMD(_)).Times(0);
+        EXPECT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_SUCCESS);
+        EXPECT_CALL(engine, checkXfer(&backend_request))
+            .WillOnce(Return(NIXL_IN_PROG))
+            .WillOnce(Return(NIXL_IN_PROG))
+            .WillOnce(Return(NIXL_IN_PROG))
+            .WillOnce(Return(GetParam()));
+        EXPECT_EQ(local_agent_->getXferStatus(request), NIXL_IN_PROG);
+        EXPECT_CALL(engine, releaseReqH(&backend_request)).WillOnce(Return(NIXL_ERR_REPOST_ACTIVE));
+        {
+            const LogIgnoreGuard lig("could not release transfer request");
+            EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_ERR_REPOST_ACTIVE);
+        }
+        EXPECT_EQ(local_agent_->getXferStatus(request), NIXL_IN_PROG);
+        EXPECT_EQ(local_agent_->getXferStatus(request), GetParam());
+        EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&engine));
+
+        testing::Sequence cleanup;
+        EXPECT_CALL(engine, releaseReqH(&backend_request))
+            .InSequence(cleanup)
+            .WillOnce(Return(NIXL_SUCCESS));
+        EXPECT_CALL(engine, unloadMD(_)).InSequence(cleanup).WillOnce(Return(NIXL_SUCCESS));
+        EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
+        EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&engine));
+    }
+
+    INSTANTIATE_TEST_SUITE_P(TransferCompletion,
+                             invalidatedTransferFixture,
+                             testing::Values(NIXL_SUCCESS, NIXL_ERR_REMOTE_DISCONNECT));
+
+    TEST_F(dualAgentBridgeFixture, RetainedRegistrationDoesNotMakeStaleHandlesValid) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+        nixl_xfer_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+        local.addDesc(s.local_blob.getDesc());
+        remote.addDesc(s.remote_blob.getDesc());
+        nixlDlistH *local_side = nullptr, *remote_side = nullptr;
+        ASSERT_EQ(local_agent_->prepXferDlist(local, local_side), NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->prepXferDlist(s.remote_agent_name, remote, remote_side),
+                  NIXL_SUCCESS);
+        const std::vector<int> indices{0};
+        nixlXferReqH *request = nullptr;
+        ASSERT_EQ(local_agent_->makeXferReq(
+                      NIXL_READ, *local_side, indices, *remote_side, indices, request),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_SUCCESS);
+        ASSERT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, s.remote_agent_name),
+                  NIXL_SUCCESS);
+
+        {
+            const LogIgnoreGuard lig("invalidated or re-registered after");
+            EXPECT_EQ(local_agent_->postXferReq(request), NIXL_ERR_NOT_FOUND);
+            std::chrono::microseconds duration, margin;
+            nixl_cost_t method;
+            EXPECT_EQ(local_agent_->estimateXferCost(request, duration, margin, method),
+                      NIXL_ERR_NOT_FOUND);
+            nixlXferReqH *stale = nullptr;
+            EXPECT_EQ(local_agent_->makeXferReq(
+                          NIXL_READ, *local_side, indices, *remote_side, indices, stale),
+                      NIXL_ERR_NOT_FOUND);
+            EXPECT_EQ(stale, nullptr);
+            if (stale) {
+                EXPECT_EQ(local_agent_->releaseXferReq(stale), NIXL_SUCCESS);
+            }
+        }
+        EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releasedDlistH(remote_side), NIXL_SUCCESS);
+
+        ASSERT_EQ(
+            local_agent_->createXferReq(NIXL_READ, local, remote, s.remote_agent_name, request),
+            NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->postXferReq(request), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->releaseXferReq(request), NIXL_SUCCESS);
     }
 
     TEST_F(dualAgentBridgeFixture, PrepMemViewRemoteDRAM) {

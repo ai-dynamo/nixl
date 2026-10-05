@@ -69,11 +69,18 @@ class nixlAgentData final : public nixlMetadataContext {
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
         backend_map_t backendEngines_;
-        // Owning shared_ptr per registration generation; weak refs in handles expire on
-        // invalidation or re-registration.
+        // Discoverable registrations; transfer requests can retain retired generations.
         std::unordered_map<std::string, std::shared_ptr<nixlRemoteSection>> remoteSections_;
         std::unique_ptr<nixlTelemetry> telemetry_;
         nixlLocalSection localSection_;
+
+        // Caller holds lock. Lifetime alone does not make a registration current.
+        [[nodiscard]] bool
+        isRemoteSectionValid(const std::string &remote_agent,
+                             const std::shared_ptr<nixlRemoteSection> &section) const {
+            const auto it = remoteSections_.find(remote_agent);
+            return it != remoteSections_.end() && it->second == section;
+        }
 
         // nixlMetadataContext impl; private as before (backends call via the interface).
         [[nodiscard]] nixl_status_t
