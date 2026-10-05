@@ -90,9 +90,34 @@ proxyWorker::ownedChannelsDrained() {
 }
 
 void
+proxyWorker::logUndrainedRings() {
+    forEachOwnedChannel([this](proxyChannel &channel) {
+        auto rings = channel.rings();
+        for (size_t peer = 0; peer < rings.size(); ++peer) {
+            if (rings[peer].drained()) {
+                continue;
+            }
+            const proxyRequestState *oldest = rings[peer].oldestInflight();
+            if (oldest != nullptr) {
+                NIXL_WARN << "Proxy worker " << index_ << " still draining channel " << channel.id()
+                          << " peer " << peer << ": oldest outstanding op_idx=" << oldest->op_idx;
+            } else {
+                NIXL_WARN << "Proxy worker " << index_ << " still draining channel " << channel.id()
+                          << " peer " << peer << ": a command is not yet submitted";
+            }
+        }
+    });
+}
+
+void
 proxyWorker::drainOwnedChannels() {
+    auto next_warning = std::chrono::steady_clock::now() + proxy_drain_warning_interval;
     while (!ownedChannelsDrained()) {
         passOwnedChannels();
+        if (std::chrono::steady_clock::now() >= next_warning) {
+            logUndrainedRings();
+            next_warning += proxy_drain_warning_interval;
+        }
     }
 
     forEachOwnedChannel([this](proxyChannel &channel) { channel.drainAndRearm(ctx_.transport); });

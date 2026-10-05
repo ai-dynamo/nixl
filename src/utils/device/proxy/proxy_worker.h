@@ -18,6 +18,7 @@
 #define NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_WORKER_H
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -28,6 +29,9 @@
 #include "proxy_channel.h"
 
 namespace nixl {
+
+/** How often a drain that has not finished logs what it is waiting for. */
+inline constexpr std::chrono::seconds proxy_drain_warning_interval{10};
 
 /** State every worker shares; owned by the runtime and immutable while workers exist. */
 struct proxyWorkerContext {
@@ -74,6 +78,10 @@ private:
 
     [[nodiscard]] bool
     ownedChannelsDrained();
+
+    /** Log each owned ring that still has work, for a drain that is taking long. */
+    void
+    logUndrainedRings();
 
     /** Drain, quiesce and reset on the rings' owning thread. */
     void

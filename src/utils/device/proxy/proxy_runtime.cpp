@@ -19,6 +19,7 @@
 #include "proxy_worker.h"
 #include "nixl_log.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <thread>
@@ -217,10 +218,23 @@ proxyRuntime::drainChannels() noexcept {
     }
 
     const uint64_t requested = drain_requested_.fetch_add(1, std::memory_order_acq_rel) + 1;
-    for (const auto &worker : workers_) {
-        while (worker->drainAcked() < requested) {
+    const auto start = std::chrono::steady_clock::now();
+    const std::chrono::milliseconds timeout(config_.drain_timeout_ms);
+    auto next_warning = start + proxy_drain_warning_interval;
+    for (size_t worker_idx = 0; worker_idx < workers_.size(); ++worker_idx) {
+        while (workers_[worker_idx]->drainAcked() < requested) {
             if (stop_source_.stop_requested()) {
                 NIXL_FATAL << "Proxy runtime stopped during drain";
+            }
+            const auto now = std::chrono::steady_clock::now();
+            // Freeing views the transport may still use is unsafe, so abort instead of returning.
+            if (timeout.count() != 0 && now - start >= timeout) {
+                NIXL_FATAL << "Proxy drain did not finish within " << timeout.count()
+                           << " ms; waiting for worker " << worker_idx;
+            }
+            if (now >= next_warning) {
+                NIXL_WARN << "Proxy drain waiting for worker " << worker_idx;
+                next_warning += proxy_drain_warning_interval;
             }
             std::this_thread::yield();
         }
