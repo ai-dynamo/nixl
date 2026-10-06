@@ -26,6 +26,7 @@
 #include "common/configuration.h"
 #include <algorithm>
 #include <cctype>
+#include <type_traits>
 #include <unistd.h> // for close()
 
 #ifdef HAVE_CUDA
@@ -111,45 +112,28 @@ splitTenantSubtenant(const char *s,
     return true;
 }
 
-// Helper for simple string-valued environment or config-file overrides
-void
-applyStringOverrideFromConfig(const char *key, std::string &target) {
-    if (auto cfg = nixl::config::getValueOptional<std::string>(key)) {
-        if (!cfg->empty()) {
-            target = *cfg;
-        }
-    }
-}
-
-// Helper for string TOML overrides that also track an explicit "set" flag
-void
-applyStringTomlOverrideIfNotSet(const char *key, std::string &target, bool &was_set_flag) {
-    if (!was_set_flag) {
-        if (auto v = nixl::config::getValueOptional<std::string>(key)) {
-            target = *v;
-            was_set_flag = true;
-        }
-    }
-}
-
-// Helper for TOML overrides of numeric values that also track an explicit "set" flag
+// Helper for environment or config-file overrides of string, numeric or bool values.
+// - was_set_flag: if given, the override is skipped when *was_set_flag is already true
+//   (value explicitly set via backend params), and the flag is set when the override is applied.
+// - skip_empty: for string values, ignore an empty config value instead of applying it.
 template<typename ConfigType, typename ValueType>
 void
-applyNumericTomlOverrideIfNotSet(const char *key, ValueType &target, bool &was_set_flag) {
-    if (!was_set_flag) {
-        if (auto v = nixl::config::getValueOptional<ConfigType>(key)) {
-            target = static_cast<ValueType>(*v);
-        }
+applyConfigOverride(const char *key,
+                    ValueType &target,
+                    bool *was_set_flag = nullptr,
+                    bool skip_empty = false) {
+    if (was_set_flag && *was_set_flag) {
+        return;
     }
-}
-
-// Helper for boolean TOML overrides that also track an explicit "set" flag
-void
-applyBoolTomlOverrideIfNotSet(const char *key, bool &target, bool &was_set_flag) {
-    if (!was_set_flag) {
-        if (auto v = nixl::config::getValueOptional<bool>(key)) {
-            target = *v;
-            was_set_flag = true;
+    if (auto v = nixl::config::getValueOptional<ConfigType>(key)) {
+        if constexpr (std::is_same_v<ConfigType, std::string>) {
+            if (skip_empty && v->empty()) {
+                return;
+            }
+        }
+        target = static_cast<ValueType>(*v);
+        if (was_set_flag) {
+            *was_set_flag = true;
         }
     }
 }
@@ -317,7 +301,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
     }
 
     // Environment or config-file override for cluster
-    applyStringOverrideFromConfig(RED_CLUSTER_ENV, infinia_cluster_);
+    applyConfigOverride<std::string>(RED_CLUSTER_ENV, infinia_cluster_, nullptr, true);
 
     // Environment or config-file override for tenant/subtenant
     if (auto tenant_cfg = nixl::config::getValueOptional<std::string>(RED_TENANT_ENV)) {
@@ -336,28 +320,26 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
     }
 
     // Environment or config-file override for dataset
-    applyStringOverrideFromConfig(RED_DATASET_ENV, infinia_dataset_);
+    applyConfigOverride<std::string>(RED_DATASET_ENV, infinia_dataset_, nullptr, true);
 
     // TOML [infinia] overrides for tuning parameters only if not explicitly set via backend params
-    applyNumericTomlOverrideIfNotSet<uint32_t, uint32_t>(
-        "infinia.sthreads", infinia_sthreads_, infinia_sthreads_set_);
+    applyConfigOverride<uint32_t>("infinia.sthreads", infinia_sthreads_, &infinia_sthreads_set_);
 
-    applyNumericTomlOverrideIfNotSet<uint32_t, uint32_t>(
-        "infinia.num_buffers", infinia_num_buffers_, infinia_num_buffers_set_);
+    applyConfigOverride<uint32_t>(
+        "infinia.num_buffers", infinia_num_buffers_, &infinia_num_buffers_set_);
 
-    applyNumericTomlOverrideIfNotSet<uint32_t, uint32_t>(
-        "infinia.num_ring_entries", infinia_num_ring_entries_, infinia_num_ring_entries_set_);
+    applyConfigOverride<uint32_t>(
+        "infinia.num_ring_entries", infinia_num_ring_entries_, &infinia_num_ring_entries_set_);
 
-    applyStringTomlOverrideIfNotSet(
-        "infinia.coremasks", infinia_coremasks_, infinia_coremasks_set_);
+    applyConfigOverride<std::string>(
+        "infinia.coremasks", infinia_coremasks_, &infinia_coremasks_set_);
 
-    applyNumericTomlOverrideIfNotSet<uint32_t, decltype(batch_config_.max_retries)>(
-        "infinia.max_retries", batch_config_.max_retries, batch_max_retries_set_);
+    applyConfigOverride<uint32_t>(
+        "infinia.max_retries", batch_config_.max_retries, &batch_max_retries_set_);
 
-    applyNumericTomlOverrideIfNotSet<uint32_t, decltype(batch_config_.batch_size)>(
-        "infinia.batch_size", batch_config_.batch_size, batch_size_set_);
+    applyConfigOverride<uint32_t>("infinia.batch_size", batch_config_.batch_size, &batch_size_set_);
 
-    applyBoolTomlOverrideIfNotSet("infinia.use_dmabuf", use_dmabuf_, use_dmabuf_set_);
+    applyConfigOverride<bool>("infinia.use_dmabuf", use_dmabuf_, &use_dmabuf_set_);
 
     // Set default params if not provided
     if (infinia_cluster_.empty()) {
