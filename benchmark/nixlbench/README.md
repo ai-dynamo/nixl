@@ -484,6 +484,9 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 # Basic UCX benchmark with VRAM transfers
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 
+# UCX benchmark with VMM memory localized to locality domain 0 (use 1 for domain 1)
+./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM --enable_vmm --use_localized=0
+
 # Storage benchmark with GDS backend
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile
 
@@ -532,8 +535,21 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --num_target_dev NUM       # Number of devices in target processes (default: 1)
 --enable_pt                # Enable progress thread (only used with nixl worker)
 --progress_threads NUM     # Number of progress threads (default: 0)
---enable_vmm               # Enable VMM memory allocation when DRAM is requested
+--enable_vmm               # Enable VMM memory allocation for VRAM buffers
+--vmm_gdr_capable BOOL     # Set gpuDirectRDMACapable for non-localized VMM(default: true)
+--use_localized DOMAIN     # VMM locality: -1 disabled, 0 domain 0, 1 domain 1; requires --enable_vmm
 ```
+
+`--vmm_gdr_capable` only controls non-localized VMM allocations. Explicit
+locality-domain allocations always use `gpuDirectRDMACapable=0`. Use
+`--enable_vmm --use_localized=-1 --vmm_gdr_capable=0` when placement is
+provided by CUDA MPS locality-domain devices; setting the GDR-capable flag opts
+such allocations out of that placement.
+
+To transfer from both locality domains concurrently, launch two two-worker benchmark groups with
+distinct `--benchmark_group` values. Select domain 0 in one group and domain 1 in the other.
+Each process then has one memory location and one independent backend worker. Physical CUDA
+devices can differ between the initiator and target processes.
 
 #### Device and Network Configuration
 ```

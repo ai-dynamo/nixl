@@ -196,6 +196,8 @@ public:
     static std::string filepath;
     static std::string filenames;
     static bool enable_vmm;
+    static bool vmm_gdr_capable;
+    static int use_localized;
     static bool use_hugepages;
     static int num_files;
     static std::string posix_api_type;
