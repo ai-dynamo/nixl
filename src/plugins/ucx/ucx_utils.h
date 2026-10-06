@@ -211,6 +211,8 @@ public:
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
         size_t id = 0);
 
+    virtual ~nixlUcxWorker() = default;
+
     nixlUcxWorker(nixlUcxWorker &&) = delete;
     nixlUcxWorker(const nixlUcxWorker &) = delete;
     void

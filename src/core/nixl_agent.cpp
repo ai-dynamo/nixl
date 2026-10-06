@@ -38,6 +38,7 @@
 #include "telemetry_event.h"
 #include "tracing/trace.h"
 #include "tracing/trace_macros.h"
+#include "tracing/trace_sink.h"
 
 namespace {
 
@@ -173,10 +174,12 @@ makeAgentTracer(const std::string &name) {
     const auto trace_env = nixl::config::getValueOptional<std::string>("NIXL_TRACE_BACKENDS");
     auto requested_backends =
         nixl::trace::resolveTraceBackends(trace_env, nixl::trace::runningUnderNsys());
+    const auto sample_ratio = nixl::trace::resolveTraceSampleRatio();
     if (requested_backends.empty()) {
         return nullptr;
     }
-    return nixl::trace::makeTracer(nixl::trace::TracerConfig{name, std::move(requested_backends)});
+    return nixl::trace::makeTracer(
+        nixl::trace::TracerConfig{name, std::move(requested_backends), sample_ratio});
 }
 
 // The settings the manager and its backends need, taken at construction so they
@@ -328,6 +331,12 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
 
+    std::unique_ptr<nixlBackendTraceSink> trace_sink;
+    if (data->tracer_ != nullptr) {
+        trace_sink = std::make_unique<nixl::trace::TracerPhaseSink>(*data->tracer_, type);
+        init_params.traceSink = trace_sink.get();
+    }
+
     // First, try to load the backend as a plugin
     auto& plugin_manager = nixlPluginManager::getInstance();
     auto plugin_handle = plugin_manager.loadBackendPlugin(type);
@@ -394,6 +403,9 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     NIXL_ASSERT(inserted);
     bknd_hndl = it->second.get();
 
+    if (trace_sink != nullptr) {
+        data->traceSinks_.insert_or_assign(type, std::move(trace_sink));
+    }
     data->backendEngines_.try_emplace(type, std::move(backend));
 
     // TODO: Check if backend supports ProgThread
@@ -898,6 +910,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     handle->telemetry.totalBytes = total_bytes;
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
+    opt_args.traceContext = &handle->traceContext();
     ret = handle->engine->prepXfer(handle->backendOp,
                                    handle->initiatorDescs,
                                    handle->targetDescs,
@@ -1044,6 +1057,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     handle->telemetry.totalBytes = total_bytes;
     handle->telemetry.descCount = handle->initiatorDescs.descCount();
 
+    opt_args.traceContext = &handle->traceContext();
     ret1 = handle->engine->prepXfer(handle->backendOp,
                                     handle->initiatorDescs,
                                     handle->targetDescs,
@@ -1188,6 +1202,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         data->addErrorTelemetry(NIXL_ERR_BACKEND);
         return NIXL_ERR_BACKEND;
     }
+
+    opt_args.traceContext = &req_hndl->traceContext();
 
     // If status is not NIXL_IN_PROG we can repost,
     req_hndl->status = req_hndl->engine->postXfer(req_hndl->backendOp,
