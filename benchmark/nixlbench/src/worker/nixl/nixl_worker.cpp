@@ -53,7 +53,9 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) return VRAM_SEG;
+    if (neuronCoreCount() > 0) {
+        return VRAM_SEG;
+    }
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
@@ -290,8 +292,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         // getPluginParams() pre-fills the plugin's advertised defaults, which take
         // precedence over REDIS_* env vars in fromBackendParams. Clear them so
         // REDIS_HOST, REDIS_PORT, etc. are honoured.
-        for (const char *k : {"host", "port", "username", "password", "db", "pool_size"})
+        for (const char *k : {"host", "port", "username", "password", "db", "pool_size"}) {
             backend_params.erase(k);
+        }
         std::cout << "REDIS backend configured (using REDIS_* environment variables or defaults)"
                   << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
