@@ -23,7 +23,11 @@ endif
 
 infinia_path = get_option('infinia_path')
 if infinia_path == ''
-  error('INFINIA backend requires -Dinfinia_path to point to Infinia SDK (libred_async.so) installation')
+    if is_explicit_enable
+        error('INFINIA plugin requested but -Dinfinia_path is empty; point it to the Infinia SDK (libred_async.so) installation')
+    endif
+    warning('INFINIA plugin disabled: -Dinfinia_path is empty')
+    subdir_done()
 endif
 
 infinia_lib_path = infinia_path + '/lib'
