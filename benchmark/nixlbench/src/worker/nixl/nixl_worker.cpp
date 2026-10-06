@@ -53,7 +53,9 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) return VRAM_SEG;
+    if (neuronCoreCount() > 0) {
+        return VRAM_SEG;
+    }
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
@@ -91,8 +93,7 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     for (const auto &dev : devices) {
         // Format: "id type access_mode direct_io path security_flags"
         // Example: "11 F W D ./store0.bin sec=0x3"
-        config << dev.device_id << " " << dev.device_type << " "
-               << "W D " // Write mode, Direct I/O
+        config << dev.device_id << " " << dev.device_type << " " << "W D " // Write mode, Direct I/O
                << dev.device_path << " " << dev.security_flags << "\n";
     }
 
@@ -340,16 +341,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INFINIA)) {
-        // INFINIA backend - configuration via config file
-        if (!xferBenchConfig::infinia_config_file.empty()) {
-            backend_params["config_file"] = xferBenchConfig::infinia_config_file;
-            std::cout << "INFINIA backend with config file: "
-                      << xferBenchConfig::infinia_config_file << std::endl;
-        } else {
-            std::cout << "INFINIA backend (plugin will use environment variables or defaults)"
-                      << std::endl;
-            std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
-        }
+        // INFINIA backend - configuration via RED_* environment variables or NIXL_CONFIG_FILE
+        std::cout << "INFINIA backend (plugin will use RED_* environment variables, "
+                     "NIXL_CONFIG_FILE, or defaults)"
+                  << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -2127,8 +2122,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
         const size_t local_regions = local_iovs.front().size();
         const size_t remote_regions = remote_iovs.front().size();
         if (__builtin_expect(local_regions != remote_regions, 0)) {
-            std::cerr << "NIXL Device API requires equal local/remote region counts: "
-                      << "local=" << local_regions << ", remote=" << remote_regions << std::endl;
+            std::cerr << "NIXL Device API requires equal local/remote region counts: " << "local="
+                      << local_regions << ", remote=" << remote_regions << std::endl;
             return std::variant<xferBenchStats, int>(-1);
         }
         num_regions = remote_regions;

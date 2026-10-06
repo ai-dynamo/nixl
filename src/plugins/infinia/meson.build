@@ -14,6 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if get_option('disable_infinia_backend')
+    if is_explicit_enable
+        error('INFINIA plugin requested but Infinia backend is disabled')
+    endif
+    subdir_done()
+endif
+
 infinia_path = get_option('infinia_path')
 if infinia_path == ''
   error('INFINIA backend requires -Dinfinia_path to point to Infinia SDK (libred_async.so) installation')
@@ -41,6 +48,13 @@ infinia_symbol_found = cpp.compiles('''
 
 infinia_sdk_ok = infinia_symbol_found and infinia_lib_found.found()
 if (not infinia_sdk_ok)
+    if is_explicit_enable
+        if not infinia_lib_found.found()
+            error('INFINIA plugin requested but red_async library not found')
+        else
+            error('INFINIA plugin requested but Infinia SDK is too old: needs release 2.5.0 or above')
+        endif
+    endif
     if not infinia_lib_found.found()
         warning('INFINIA plugin requested but red_async library not found')
     endif

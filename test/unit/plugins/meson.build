@@ -69,8 +69,7 @@ if enabled_plugins.get('HF3FS')
     endif
 endif
 
-disable_infinia_backend = get_option('disable_infinia_backend')
-if enabled_plugins.get('INFINIA')
+if is_variable('infinia_backend_interface')
     subdir('infinia')
 endif
 

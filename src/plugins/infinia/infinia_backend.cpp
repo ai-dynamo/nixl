@@ -31,7 +31,10 @@
 #ifdef HAVE_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
+#endif
 
+namespace {
+#ifdef HAVE_CUDA
 class cudaDeviceGuard {
 public:
     cudaDeviceGuard() : saved_device_(-1), should_restore_(false) {
@@ -59,7 +62,6 @@ private:
 };
 #endif
 
-namespace {
 // Helper function to convert memory type to string
 const char *
 memTypeToStr(nixl_mem_t mem) {
@@ -272,12 +274,17 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         // Look for DMA-BUF enable/disable configuration
         auto use_dmabuf_it = params->find("use_dmabuf");
         if (use_dmabuf_it != params->end() && !use_dmabuf_it->second.empty()) {
-            std::string val = use_dmabuf_it->second;
-            std::transform(val.begin(), val.end(), val.begin(), ::tolower);
-            use_dmabuf_ = (val == "true");
-            use_dmabuf_set_ = true;
-            NIXL_DEBUG << absl::StrFormat("DMA-BUF support %s",
-                                          use_dmabuf_ ? "enabled" : "disabled");
+            try {
+                use_dmabuf_ = nixl::config::configTraits<bool>::convert(use_dmabuf_it->second);
+                use_dmabuf_set_ = true;
+                NIXL_DEBUG << absl::StrFormat("DMA-BUF support %s",
+                                              use_dmabuf_ ? "enabled" : "disabled");
+            }
+            catch (const std::exception &) {
+                NIXL_WARN << absl::StrFormat("Invalid use_dmabuf value '%s', using default %s",
+                                             use_dmabuf_it->second.c_str(),
+                                             use_dmabuf_ ? "true" : "false");
+            }
         }
 
         // Look for Infinia max_retries configuration
@@ -639,6 +646,10 @@ infinia_engine::registerMem(const nixlBlobDesc &mem,
                 if (dmabuf_status == NIXL_SUCCESS) {
                     out = metadata.release();
                     return NIXL_SUCCESS;
+                }
+
+                if (dmabuf_status != NIXL_ERR_NOT_SUPPORTED) {
+                    return dmabuf_status;
                 }
             }
 #endif

@@ -93,7 +93,6 @@ if enabled_plugins.get('HF3FS')
     endif
 endif
 
-disable_infinia_backend = get_option('disable_infinia_backend')
 if enabled_plugins.get('INFINIA')
     # Leave the Library and Header files check inside the subdir
     subdir('infinia')

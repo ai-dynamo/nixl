@@ -211,11 +211,6 @@ NB_ARG_STRING(azure_blob_connection_string,
               "Connection string for Azure Blob backend (alternative to connect to Azurite for "
               "local testing)");
 
-// INFINIA options - only used when backend is INFINIA
-NB_ARG_STRING(infinia_config_file,
-              "",
-              "Path to INFINIA-specific config file (simple key=value format)");
-
 // HF3FS options - only used when backend is HF3FS
 NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
 
@@ -326,7 +321,6 @@ std::string xferBenchConfig::obj_accelerated_type = "";
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
-std::string xferBenchConfig::infinia_config_file = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -597,11 +591,6 @@ xferBenchConfig::loadParams(void) {
             azure_blob_container_name = NB_ARG(azure_blob_container_name);
             azure_blob_connection_string = NB_ARG(azure_blob_connection_string);
         }
-
-        // Load INFINIA-specific configurations if backend is INFINIA
-        if (backend == XFERBENCH_BACKEND_INFINIA) {
-            infinia_config_file = NB_ARG(infinia_config_file);
-        }
     }
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
@@ -780,8 +769,7 @@ xferBenchConfig::loadParams(void) {
     const char *worker_kind = use_device_api ? "groups" : "threads";
 
     if ((max_block_size * max_batch_size) > (total_buffer_size / workers)) {
-        std::cerr << "Incorrect buffer size configuration "
-                  << "(max_block_size * max_batch_size) "
+        std::cerr << "Incorrect buffer size configuration " << "(max_block_size * max_batch_size) "
                   << "(" << (max_block_size * max_batch_size) << ")"
                   << " is > (total_buffer_size / " << workers << " " << worker_kind << ") ("
                   << (total_buffer_size / workers) << ")" << std::endl;
@@ -809,16 +797,14 @@ xferBenchConfig::loadParams(void) {
     partition = (num_initiator_dev * workers);
     if (total_buffer_size % partition) {
         std::cerr << "Total_buffer_size must be divisible by the product of " << workers << " "
-                  << worker_kind << " and num_initiator_dev"
-                  << ", next such value is "
+                  << worker_kind << " and num_initiator_dev" << ", next such value is "
                   << total_buffer_size + partition - (total_buffer_size % partition) << std::endl;
         return -1;
     }
     partition = (num_target_dev * workers);
     if (total_buffer_size % partition) {
         std::cerr << "Total_buffer_size must be divisible by the product of " << workers << " "
-                  << worker_kind << " and num_target_dev"
-                  << ", next such value is "
+                  << worker_kind << " and num_target_dev" << ", next such value is "
                   << total_buffer_size + partition - (total_buffer_size % partition) << std::endl;
         return -1;
     }
@@ -1037,7 +1023,6 @@ xferBenchConfig::isObjStorageBackend() {
             XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
             XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
 };
-
 
 /**********
  * xferBench Utils

@@ -69,7 +69,7 @@ Configuration precedence is slightly different for connection settings vs. tunin
 1. **Environment / NIXL TOML**: `RED_CLUSTER`, `RED_TENANT`, `RED_DATASET`
    - If the environment variable is set, it wins.
    - Otherwise, NIXL looks for the same key in the active TOML config
-     (e.g., `RED_CLUSTER` in `nixl-infinia.cfg`).
+     (e.g., `RED_CLUSTER` in `infinia_example.conf`).
 2. **Backend Parameters**: Values passed directly in the backend parameter map.
 3. **Built-in Defaults**: `cluster1` / `red` / `red` / `red`.
 
@@ -124,15 +124,16 @@ tuning table.
 To use it, point `NIXL_CONFIG_FILE` at the example (or a copy of it):
 
 ```bash
-export NIXL_CONFIG_FILE=/path/to/src/plugins/infinia/nixl-infinia.cfg
+export NIXL_CONFIG_FILE=/path/to/src/plugins/infinia/infinia_example.conf
 ```
 
-You can also pass the same path via higher-level tools:
+The plugin does not accept a configuration file path as a backend parameter.
+Tools such as `nixlbench` pick up the file through `NIXL_CONFIG_FILE`.
+`infinia_nixl_test` also accepts the path directly:
 
-- `nixlbench --infinia_config_file /path/to/src/plugins/infinia/nixl-infinia.cfg`
-- `infinia_nixl_test -F /path/to/src/plugins/infinia/nixl-infinia.cfg [...options...]`
+- `infinia_nixl_test -F /path/to/src/plugins/infinia/infinia_example.conf [...options...]`
 
-The example `nixl-infinia.cfg` shows how to set:
+The example `infinia_example.conf` shows how to set:
 
 - `RED_CLUSTER`, `RED_TENANT`, `RED_DATASET` (fixed after shared configuration resolution)
 - `[infinia].sthreads`, `num_buffers`, `num_ring_entries`, `coremasks`, `use_dmabuf`, `max_retries`, `batch_size` (tuning settings)

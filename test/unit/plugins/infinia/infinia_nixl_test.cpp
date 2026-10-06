@@ -421,7 +421,7 @@ main(int argc, char *argv[]) {
     unsigned int num_ring_entries = 512;
     std::string coremask = "0x2";
     unsigned int max_retries = 3;
-    unsigned int batch_size = 512;
+    nixl_b_params_t params;
     nixlTime::us_t total_time(0);
     nixlTime::us_t alloc_duration(0);
     nixlTime::us_t write_duration_total(0);
@@ -505,6 +505,7 @@ main(int argc, char *argv[]) {
                 std::cerr << "Error: Service threads must be between 1 and 64\n";
                 return -1;
             }
+            params["sthreads"] = std::to_string(sthreads);
             break;
         case 'B':
             num_buffers = atoi(optarg);
@@ -512,6 +513,7 @@ main(int argc, char *argv[]) {
                 std::cerr << "Error: Number of buffers must be between 1 and 4096\n";
                 return -1;
             }
+            params["num_buffers"] = std::to_string(num_buffers);
             break;
         case 'R':
             num_ring_entries = atoi(optarg);
@@ -519,9 +521,11 @@ main(int argc, char *argv[]) {
                 std::cerr << "Error: Number of ring entries must be between 1 and 4096\n";
                 return -1;
             }
+            params["num_ring_entries"] = std::to_string(num_ring_entries);
             break;
         case 'C':
             coremask = optarg;
+            params["coremasks"] = coremask;
             break;
         case 'M':
             max_retries = atoi(optarg);
@@ -529,6 +533,7 @@ main(int argc, char *argv[]) {
                 std::cerr << "Error: Max retries must be between 0 and 100\n";
                 return -1;
             }
+            params["max_retries"] = std::to_string(max_retries);
             break;
         case 'F':
             nixl_config_file = optarg;
@@ -600,7 +605,6 @@ main(int argc, char *argv[]) {
 
     // Initialize NIXL components
     nixlAgentConfig cfg(true);
-    nixl_b_params_t params;
     nixlBlobDesc *vram_buf = use_vram ? new nixlBlobDesc[num_transfers] : NULL;
     nixlBlobDesc *dram_buf = use_dram ? new nixlBlobDesc[num_transfers] : NULL;
     nixlBlobDesc *ftrans = new nixlBlobDesc[num_transfers];
@@ -631,12 +635,17 @@ main(int argc, char *argv[]) {
     }
     std::cout << std::endl;
     std::cout << "\nINFINIA Backend Configuration:" << std::endl;
-    std::cout << "- Service threads: " << sthreads << std::endl;
-    std::cout << "- Async buffers: " << num_buffers << std::endl;
-    std::cout << "- Ring entries: " << num_ring_entries << std::endl;
-    std::cout << "- Core mask: " << coremask << std::endl;
-    std::cout << "- Max retries: " << max_retries << std::endl;
-    std::cout << "- Batch size: " << batch_size << std::endl;
+    std::cout << "- NIXL config file: "
+              << (nixl_config_file.empty() ? "(not set)" : nixl_config_file) << std::endl;
+    for (const auto &[label, key] : {std::pair{"Service threads", "sthreads"},
+                                     std::pair{"Async buffers", "num_buffers"},
+                                     std::pair{"Ring entries", "num_ring_entries"},
+                                     std::pair{"Core mask", "coremasks"},
+                                     std::pair{"Max retries", "max_retries"}}) {
+        auto it = params.find(key);
+        std::cout << "- " << label << ": "
+                  << (it != params.end() ? it->second : "(NIXL config or default)") << std::endl;
+    }
     std::cout << "============================================================\n" << std::endl;
 
     // Check memory requirements before starting
@@ -659,14 +668,7 @@ main(int argc, char *argv[]) {
 
     nixlAgent agent("INFINIA_Tester", cfg);
 
-    // Set INFINIA backend parameters
-    params["sthreads"] = std::to_string(sthreads);
-    params["num_buffers"] = std::to_string(num_buffers);
-    params["num_ring_entries"] = std::to_string(num_ring_entries);
-    params["coremasks"] = coremask;
-    params["max_retries"] = std::to_string(max_retries);
-    params["batch_size"] = std::to_string(batch_size);
-
+    // Only parameters given on the command line are passed; the rest come from the NIXL config
     // To also test the decision making of createXferReq
     ret = agent.createBackend("INFINIA", params, infinia);
 
@@ -819,7 +821,6 @@ main(int argc, char *argv[]) {
         std::cout << "============================================================" << std::endl;
 
         us_t write_duration(0);
-        nixlXferReqH *write_req = nullptr;
 
         // Create descriptor lists for all transfers
         nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
@@ -987,7 +988,6 @@ main(int argc, char *argv[]) {
         std::cout << "============================================================" << std::endl;
 
         us_t read_duration(0);
-        nixlXferReqH *read_req = nullptr;
 
         // Create descriptor lists for all transfers
         nixl_reg_dlist_t src_reg(use_dram ? DRAM_SEG : VRAM_SEG);
