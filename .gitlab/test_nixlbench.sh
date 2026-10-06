@@ -62,6 +62,7 @@ done
 
 
 # REDIS storage backend: single-process, no peer, no runtime coordinator needed
+trap 'kill -9 ${REDIS_PID:-} 2>/dev/null || true' EXIT
 start_redis_server
 
 for op_type in READ WRITE; do

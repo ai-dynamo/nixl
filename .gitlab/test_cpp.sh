@@ -75,6 +75,7 @@ fi
 
 start_etcd_server "/nixl/cpp_ci"
 
+trap 'kill -9 ${REDIS_PID:-} 2>/dev/null || true' EXIT
 start_redis_server
 
 echo "==== Running C++ tests ===="

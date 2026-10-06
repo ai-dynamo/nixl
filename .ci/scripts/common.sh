@@ -139,6 +139,7 @@ wait_for_redis_server() {
         timeout=$((timeout - 1))
         if [ $timeout -eq 0 ]; then
             echo "Redis failed to start"
+            kill -9 "${REDIS_PID:-}" 2>/dev/null || true
             exit 1
         fi
         sleep 1
