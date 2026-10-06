@@ -271,8 +271,6 @@ private:
     std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
 };
 
-} // namespace
-
 class nixlUcxDedicatedThread final : public nixlUcxThread {
 public:
     nixlUcxDedicatedThread(nixlUcxEngine *engine, nixlUcxDedicatedWorker &worker);
@@ -348,8 +346,6 @@ private:
     std::jthread thread_;
 };
 
-namespace {
-
 /**
  * @brief UCX worker that owns its dedicated thread.
  */
@@ -376,13 +372,13 @@ private:
     std::optional<nixlUcxDedicatedThread> thread_;
 };
 
-} // namespace
-
 nixlUcxDedicatedThread::nixlUcxDedicatedThread(nixlUcxEngine *engine,
                                                nixlUcxDedicatedWorker &worker)
     : nixlUcxThread(engine, {&worker}),
       worker_(worker),
       thread_(startThread()) {}
+
+} // namespace
 
 nixlUcxThreadPoolEngine::nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
                                                  size_t num_threads)
@@ -454,6 +450,12 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     const auto comp_handle = static_cast<nixlUcxCompositeBackendReqH *>(int_handle);
     comp_handle->startXfer();
+
+    // Notifications of the composite request are sent over its shared worker
+    const ucx_connection_ptr_t &conn =
+        static_cast<nixlUcxPublicMetadata *>(remote[start_idx].metadataP)->conn;
+    comp_handle->init(conn, *conn->getEp(comp_handle->getWorkerId()));
+
     const size_t batch_size = local.descCount();
     const size_t num_chunks = comp_handle->getNumChunks();
     NIXL_TRACE << "sending " << *comp_handle;
