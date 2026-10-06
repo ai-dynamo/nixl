@@ -59,6 +59,8 @@ __wrap_fi_getinfo(uint32_t /*version*/,
         fi->domain_attr = malloc_zero<fi_domain_attr>();
         std::string name = "efa_" + std::to_string(i);
         fi->domain_attr->name = strdup(name.c_str());
+        // Real EFA reports 4 bytes; rail init requires enough to hold the immediate data fields.
+        fi->domain_attr->cq_data_size = NIXL_IMM_DATA_BITS / 8;
 
         fi->fabric_attr = malloc_zero<fi_fabric_attr>();
         fi->fabric_attr->prov_name = strdup("efa");
