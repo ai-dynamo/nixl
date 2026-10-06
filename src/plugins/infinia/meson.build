@@ -15,7 +15,7 @@
 # limitations under the License.
 
 if get_option('disable_infinia_backend')
-    if is_explicit_enable
+    if is_explicit_enable or 'INFINIA' in static_plugins
         error('INFINIA plugin requested but Infinia backend is disabled')
     endif
     subdir_done()
@@ -23,7 +23,7 @@ endif
 
 infinia_path = get_option('infinia_path')
 if infinia_path == ''
-    if is_explicit_enable
+    if is_explicit_enable or 'INFINIA' in static_plugins
         error('INFINIA plugin requested but -Dinfinia_path is empty; point it to the Infinia SDK (libred_async.so) installation')
     endif
     warning('INFINIA plugin disabled: -Dinfinia_path is empty')
@@ -52,7 +52,7 @@ infinia_symbol_found = cpp.compiles('''
 
 infinia_sdk_ok = infinia_symbol_found and infinia_lib_found.found()
 if (not infinia_sdk_ok)
-    if is_explicit_enable
+    if is_explicit_enable or 'INFINIA' in static_plugins
         if not infinia_lib_found.found()
             error('INFINIA plugin requested but red_async library not found')
         else

@@ -53,9 +53,7 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) {
-        return VRAM_SEG;
-    }
+    if (neuronCoreCount() > 0) return VRAM_SEG;
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
@@ -93,7 +91,8 @@ generateGusliConfigFile(const std::vector<GusliDeviceConfig> &devices) {
     for (const auto &dev : devices) {
         // Format: "id type access_mode direct_io path security_flags"
         // Example: "11 F W D ./store0.bin sec=0x3"
-        config << dev.device_id << " " << dev.device_type << " " << "W D " // Write mode, Direct I/O
+        config << dev.device_id << " " << dev.device_type << " "
+               << "W D " // Write mode, Direct I/O
                << dev.device_path << " " << dev.security_flags << "\n";
     }
 
@@ -2122,8 +2121,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
         const size_t local_regions = local_iovs.front().size();
         const size_t remote_regions = remote_iovs.front().size();
         if (__builtin_expect(local_regions != remote_regions, 0)) {
-            std::cerr << "NIXL Device API requires equal local/remote region counts: " << "local="
-                      << local_regions << ", remote=" << remote_regions << std::endl;
+            std::cerr << "NIXL Device API requires equal local/remote region counts: "
+                      << "local=" << local_regions << ", remote=" << remote_regions << std::endl;
             return std::variant<xferBenchStats, int>(-1);
         }
         num_regions = remote_regions;
