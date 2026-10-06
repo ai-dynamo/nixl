@@ -364,6 +364,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             backend_params[name] = value;
         }
     }
+    for (const auto &[name, value] : xferBenchConfig::parsed_backend_params) {
+        backend_params[name] = value;
+    }
 
     CHECK_NIXL_ERROR(agent->createBackend(backend_name, backend_params, backend_engine),
                      "createBackend failed!");
