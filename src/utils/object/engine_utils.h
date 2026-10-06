@@ -14,23 +14,23 @@
 #include <thread>
 
 [[nodiscard]] inline std::size_t
-getNumThreads(nixl_b_params_t *custom_params) {
+getNumThreads(const nixl_b_params_t *custom_params) {
     const std::size_t fallback = std::max(1u, std::thread::hardware_concurrency() / 2);
     return nixl::getBackendParamDefaulted(custom_params, "num_threads", fallback);
 }
 
 [[nodiscard]] inline size_t
-getCrtMinLimit(nixl_b_params_t *custom_params) {
+getCrtMinLimit(const nixl_b_params_t *custom_params) {
     return nixl::getBackendParamDefaulted(custom_params, "crtMinLimit", size_t(0));
 }
 
 [[nodiscard]] inline bool
-isAcceleratedRequested(nixl_b_params_t *custom_params) {
+isAcceleratedRequested(const nixl_b_params_t *custom_params) {
     return nixl::getBackendParamDefaulted(custom_params, "accelerated", false);
 }
 
 [[nodiscard]] inline std::string
-getAccelType(nixl_b_params_t *custom_params) {
+getAccelType(const nixl_b_params_t *custom_params) {
     return nixl::getBackendParamDefaulted(custom_params, "type", std::string());
 }
 
@@ -44,7 +44,7 @@ getAccelType(nixl_b_params_t *custom_params) {
 // caller must opt in; on a decline/failure the transfer errors rather than
 // silently falling back to HTTP.
 [[nodiscard]] inline bool
-isGenericAccelRequested(nixl_b_params_t *custom_params) {
+isGenericAccelRequested(const nixl_b_params_t *custom_params) {
     const std::string type = getAccelType(custom_params);
     return isAcceleratedRequested(custom_params) && (type.empty() || type == "s3");
 }
