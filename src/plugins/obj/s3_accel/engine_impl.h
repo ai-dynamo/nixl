@@ -7,7 +7,6 @@
 #define OBJ_PLUGIN_S3_ACCEL_ENGINE_IMPL_H
 
 #include "s3/engine_impl.h"
-#include "s3_accel/client.h"
 
 /**
  * Generic, protocol-compliant S3-over-RDMA engine (selected by `accelerated=true`

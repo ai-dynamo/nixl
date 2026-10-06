@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 
+#include "client.h"
 #include "object/rdma/rdma.h"
 #include "obj_engine_registry.h"
 #include "common/nixl_log.h"
