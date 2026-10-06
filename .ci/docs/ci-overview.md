@@ -58,7 +58,7 @@ All files below live in `.github/workflows/`.
 
 ### Copyright Checks (`copyright-checks.yml`)
 - **Trigger:** `pull_request`.
-- **What it does:** Runs `.github/workflows/copyright-check.sh` inside the `dynamo/helm-tester` container to verify SPDX/copyright headers.
+- **What it does:** Runs `.github/workflows/copyright-check.sh` inside the `dynamo/helm-tester` container to verify SPDX/copyright headers of the files changed in the PR; their copyright end year must be the current year.
 - **Automatic on every PR:** Yes.
 
 ### PR Size Check (`pr-size-check.yml`)
