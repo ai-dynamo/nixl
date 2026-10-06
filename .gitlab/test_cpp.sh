@@ -118,6 +118,9 @@ done
 gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
+# Redis unit tests
+./bin/unit --gtest_filter='redis*:redisPool*'
+
 # DOCA telemetry exporter tests: present only when built with the DOCA SDK
 # (TELEMETRY_DOCA). Self-contained - each binds a free loopback port via
 # findFreePort(); the DOCA telemetry exporter libs resolve through ldconfig.
