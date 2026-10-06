@@ -59,6 +59,7 @@ const nixlBackendInitParams obj_dell_test_params = {.localAgent = dell_agent_nam
 class setupObjAccelTestFixture : public setupBackendTestFixture {
 protected:
     nixl_b_params_t localParams_;
+    std::string skipReason_;
 
     setupObjAccelTestFixture() {
         localParams_ = *GetParam().customParams;
@@ -69,7 +70,23 @@ protected:
         }
         nixlBackendInitParams initParams = GetParam();
         initParams.customParams = &localParams_;
-        localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
+        // accelerated=true has no HTTP fallback, so the engine throws when the RDMA
+        // fast path is unavailable (e.g. a cuObject build with no RDMA NIC, as the
+        // CI container produces). Skip these tests there rather than fail.
+        try {
+            localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
+        }
+        catch (const std::exception &e) {
+            skipReason_ = e.what();
+        }
+    }
+
+    void
+    SetUp() override {
+        if (!localBackendEngine_) {
+            GTEST_SKIP() << "S3 accelerated engine unavailable: " << skipReason_;
+        }
+        setupBackendTestFixture::SetUp();
     }
 };
 
@@ -111,6 +128,27 @@ TEST_P(setupObjAccelTestFixture, AccelQueryMemTest) {
     EXPECT_EQ(resp[1].has_value(), true);
     EXPECT_EQ(resp[2].has_value(), false);
 }
+
+#ifdef HAVE_CUDA
+// GPU-direct (VRAM_SEG) transfer test for the generic standard-protocol
+// S3-over-RDMA engine. Exercises the accel-layer VRAM paths: buffer pinning in
+// registerMem(), VRAM advertisement in getSupportedMems(), and the RDMA
+// putObjectAsync/getObjectAsync data path.
+TEST_P(setupObjAccelTestFixture, AccelVramXferTest) {
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
+    transferHandler<VRAM_SEG, OBJ_SEG> transfer(
+        localBackendEngine_, localBackendEngine_, accel_agent_name, accel_agent_name, false, 1);
+    transfer.setLocalMem();
+    transfer.testTransfer(NIXL_WRITE);
+    transfer.resetLocalMem();
+    transfer.testTransfer(NIXL_READ);
+    transfer.checkLocalMem();
+}
+#endif // HAVE_CUDA
 
 INSTANTIATE_TEST_SUITE_P(ObjAccelTests,
                          setupObjAccelTestFixture,
