@@ -553,7 +553,7 @@ RUN rm -rf build && \
     -Dcudapath_inc="/usr/local/cuda/include" \
     -Drelease_wheel=true && \
     cd build && \
-    ninja && \
+    ninja -j"${NPROC}" && \
     ninja install
 
 ENV LD_LIBRARY_PATH=/usr/local/nixl/lib64/:$LD_LIBRARY_PATH

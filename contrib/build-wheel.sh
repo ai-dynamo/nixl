@@ -253,6 +253,7 @@ build_wheel() {
         --no-build-isolation
         --out-dir "$OUT_DIR"
         --python "$VENV_PATH/bin/python"
+        -Ccompile-args=-j"${NPROC:-$(nproc)}"
     )
     if [ "$BUILD_NIXL_EP" = "true" ]; then
         BUILD_ARGS+=(
