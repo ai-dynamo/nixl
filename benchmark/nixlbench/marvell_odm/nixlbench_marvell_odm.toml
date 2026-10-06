@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 Marvell Technology, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Complete nixlbench configuration for MARVELL_ODM backend
+#
+# Usage from nixlbench build directory:
+#   export LD_LIBRARY_PATH=.../build/src/core:.../build/src/plugins/marvell_odm
+#   export NIXL_PLUGIN_DIR=.../build/src/plugins/marvell_odm
+#   ./nixlbench --config_file ../marvell_odm/nixlbench_marvell_odm.toml
+
+backend = "MARVELL_ODM"
+device_list = "odm0"
+initiator_seg_type = "VRAM"
+target_seg_type = "DRAM"
+op_type = "WRITE"
+check_consistency = false
+total_buffer_size = 8589934592
+start_block_size = 4096
+max_block_size = 33554432
+start_batch_size = 64
+max_batch_size = 64
+num_iter = 112
+warmup_iter = 16
+large_blk_iter_ftr = 16
+recreate_xfer = true
+odm_use_io_uring = true
+odm_qid_start = 0
+odm_qid_end = 15
+num_threads = 8

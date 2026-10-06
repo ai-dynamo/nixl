@@ -103,6 +103,7 @@
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
+#define XFERBENCH_BACKEND_MARVELL_ODM "MARVELL_ODM"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -172,6 +173,8 @@ public:
     static std::string mode;
     static std::string op_type;
     static bool check_consistency;
+    static int check_value;
+    static int fill_value;
     static size_t total_buffer_size;
     static bool recreate_xfer;
     static int num_initiator_dev;
@@ -250,6 +253,11 @@ public:
     /* Parallel workers split iterations across both CPU and Device API. */
     static int
     workerNum();
+
+    static std::string odm_device_path;
+    static bool odm_use_io_uring;
+    static int odm_qid_start;
+    static int odm_qid_end;
 
     static int
     parseConfig(int argc, char *argv[]);
@@ -430,5 +438,12 @@ public:
     static void
     printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
 };
+
+inline uint8_t
+xferBenchInitiatorFillByte() {
+    return (xferBenchConfig::fill_value >= 0) ?
+        static_cast<uint8_t>(xferBenchConfig::fill_value) :
+        static_cast<uint8_t>(XFERBENCH_INITIATOR_BUFFER_ELEMENT);
+}
 
 #endif
