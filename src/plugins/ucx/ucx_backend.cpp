@@ -601,19 +601,18 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
     const nixl_status_t handle_status = int_handle->status();
 
-    if ((handle_status == NIXL_IN_PROG) || !int_handle->notif) {
+    if ((handle_status == NIXL_IN_PROG) || int_handle->notif.empty()) {
         return handle_status;
     }
 
-    std::string msg = std::move(*int_handle->notif);
-    int_handle->notif.reset();
-
     if (handle_status != NIXL_SUCCESS) [[unlikely]] {
+        int_handle->notif.clear();
         return handle_status;
     }
 
     nixlUcxReq req;
-    const nixl_status_t status = sendNotif(std::move(msg), int_handle->getEp(), &req);
+    const nixl_status_t status = sendNotif(std::move(int_handle->notif), int_handle->getEp(), &req);
+    int_handle->notif.clear();
 
     if (int_handle->append(status, req) != NIXL_SUCCESS) {
         return status;

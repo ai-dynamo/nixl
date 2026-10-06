@@ -31,8 +31,9 @@
 
 class nixlUcxBackendReqH : public nixlBackendReqH {
 public:
-    // Notification to be sent over the bound connection after completion of all requests
-    std::optional<std::string> notif;
+    // Notification to be sent over the bound connection after completion of all requests.
+    // Empty if there is no pending notification.
+    std::string notif;
 
 #ifdef HAVE_UCX_SGL_API
     std::optional<nixl::ucx::sglXfer> sgl;
