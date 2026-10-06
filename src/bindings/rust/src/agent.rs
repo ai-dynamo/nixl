@@ -455,7 +455,7 @@ impl Agent {
                 let bytes = unsafe {
                     let slice = std::slice::from_raw_parts(data, len);
                     let vec = slice.to_vec();
-                    libc::free(data as *mut libc::c_void);
+                    crate::bindings::nixl_capi_mem_free(data as *mut std::ffi::c_void);
                     vec
                 };
                 tracing::trace!(metadata.size = len, "Successfully retrieved local metadata");
@@ -505,7 +505,7 @@ impl Agent {
                 let bytes = unsafe {
                     let slice = std::slice::from_raw_parts(data as *const u8, len);
                     let vec = slice.to_vec();
-                    libc::free(data as *mut libc::c_void);
+                    crate::bindings::nixl_capi_mem_free(data as *mut std::ffi::c_void);
                     vec
                 };
                 tracing::trace!(metadata.size = len, "Successfully retrieved local partial metadata");
@@ -545,7 +545,7 @@ impl Agent {
                 let name = unsafe {
                     let c_str = std::ffi::CStr::from_ptr(agent_name);
                     let s = c_str.to_str().unwrap().to_string();
-                    libc::free(agent_name as *mut libc::c_void);
+                    crate::bindings::nixl_capi_mem_free(agent_name as *mut std::ffi::c_void);
                     s
                 };
                 self.inner.write().unwrap().remotes.insert(name.clone());
@@ -1189,13 +1189,13 @@ pub enum ThreadSync {
 }
 
 // Must match `default_comm_port` in nixl_types.h
-pub const DEFAULT_COMM_PORT: i32 = 8888;
+pub const DEFAULT_COMM_PORT: u16 = 8888;
 
 #[derive(Clone, Debug)]
 pub struct AgentConfig {
     pub enable_prog_thread: bool,
     pub enable_listen_thread: bool,
-    pub listen_port: i32,
+    pub listen_port: u16,
     pub thread_sync: ThreadSync,
     pub num_workers: u32,
     pub pthr_delay_us: u64,
