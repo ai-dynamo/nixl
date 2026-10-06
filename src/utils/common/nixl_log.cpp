@@ -86,18 +86,7 @@ processRunMarker() {
     return marker;
 }
 
-/**
- * @brief Expands the escapes in a log file path:
- *
- *   %h  host name
- *   %p  process id
- *   %t  this process's run marker, in nanoseconds
- *   %%  a literal percent
- *
- * Lets one NIXL_LOG_FILE serve every worker of a run and still give each its
- * own file.
- * @return The expanded path, or nullopt for an unknown or incomplete escape.
- */
+/** @brief Expands %h, %p, %t and %%. nullopt if an escape is unknown. */
 [[nodiscard]] std::optional<std::string>
 expandLogPath(const std::string &pattern) {
     std::string expanded;
@@ -230,7 +219,12 @@ public:
         const auto payload = entry.stacktrace().empty() ?
             entry.text_message_with_prefix_and_newline() :
             entry.stacktrace();
+        writePayload(payload);
+    }
 
+    /** @brief Writes one payload. Takes mutex_. */
+    void
+    writePayload(std::string_view payload) {
         const std::lock_guard lock(mutex_);
         if (failed_) {
             return;
@@ -433,6 +427,15 @@ InitializeNixlLogging() {
 
 namespace nixl {
 
+/** @brief Test-only path to the file sink, so a record can exceed Abseil's cap. */
+void
+submitLogPayloadForTest(std::string_view payload) {
+    auto &state = getLogFileState();
+    if (state.sink != nullptr) {
+        state.sink->writePayload(payload);
+    }
+}
+
 /** @brief Registers the NIXL_LOG_FILE sink; see nixl_log.h for the contract. */
 bool
 initLogFile() {
@@ -527,15 +530,7 @@ shutdownLogFile() {
 
 namespace {
 
-/**
- * @brief Tears the log file down at library unload.
- *
- * .fini_array runs after the exit-handler queue holding static destructors on
- * glibc, so late records still reach the file. That ordering is loader
- * behaviour rather than a language guarantee, so
- * nixlLogFileTest.RecordsFromStaticDestructorsReachTheFile pins it. The sink
- * is unregistered before it is destroyed, so no ordering can leave it dangling.
- */
+/** @brief Unload hook. On glibc this runs after static destructors. */
 void
 shutdownNixlLogging() __attribute__((destructor));
 

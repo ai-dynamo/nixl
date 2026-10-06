@@ -54,6 +54,11 @@
 // so it refers to the process environment and not a new internal symbol.
 extern "C" char **environ;
 
+namespace nixl {
+void
+submitLogPayloadForTest(std::string_view payload);
+} // namespace nixl
+
 namespace {
 
 using testing::HasSubstr;
@@ -977,6 +982,41 @@ TEST_F(nixlLogFileTest, KeepsALargeRecordAtTheMinimumLimit) {
     const std::string contents = readLogFile();
     EXPECT_THAT(contents, HasSubstr(payload));
     EXPECT_THAT(contents, HasSubstr("record that fits"));
+    EXPECT_FALSE(std::filesystem::exists(rotated));
+
+    std::filesystem::remove(rotated);
+}
+
+/** @brief A record larger than the limit is reported once, then smaller ones remain. */
+TEST_F(nixlLogFileTest, ReportsAnOversizedRecordOnce) {
+    constexpr std::uintmax_t limit = 16 * 1024;
+    const std::filesystem::path rotated = path_.string() + ".1";
+    std::filesystem::remove(rotated);
+
+    env_.addVar("NIXL_LOG_FILE", path_.string());
+    env_.addVar("NIXL_LOG_FILE_SIZE", std::to_string(limit));
+    ASSERT_TRUE(nixl::initLogFile());
+
+    const std::string payload(limit + 1, 'x');
+    testing::internal::CaptureStderr();
+    nixl::submitLogPayloadForTest(payload);
+    nixl::submitLogPayloadForTest(payload);
+    nixl::submitLogPayloadForTest("record that fits\n");
+    const std::string captured = testing::internal::GetCapturedStderr();
+
+    const std::string report = "omitting records larger than the limit";
+    size_t reports = 0;
+    for (size_t at = captured.find(report); at != std::string::npos;
+         at = captured.find(report, at + 1)) {
+        ++reports;
+    }
+    EXPECT_EQ(reports, 1u) << "stderr was:\n" << captured;
+    EXPECT_THAT(captured, HasSubstr(path_.string()));
+    EXPECT_THAT(captured, HasSubstr("16384"));
+
+    const std::string contents = readLogFile();
+    EXPECT_THAT(contents, HasSubstr("record that fits"));
+    EXPECT_THAT(contents, testing::Not(HasSubstr(payload.substr(0, 64))));
     EXPECT_FALSE(std::filesystem::exists(rotated));
 
     std::filesystem::remove(rotated);
