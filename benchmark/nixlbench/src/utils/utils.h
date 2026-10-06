@@ -98,6 +98,7 @@
 #define XFERBENCH_BACKEND_MOONCAKE "Mooncake"
 #define XFERBENCH_BACKEND_HF3FS "HF3FS"
 #define XFERBENCH_BACKEND_OBJ "OBJ"
+#define XFERBENCH_BACKEND_REDIS "REDIS"
 #define XFERBENCH_BACKEND_GUSLI "GUSLI"
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
@@ -195,6 +196,8 @@ public:
     static std::string filepath;
     static std::string filenames;
     static bool enable_vmm;
+    static bool vmm_gdr_capable;
+    static int use_localized;
     static bool use_hugepages;
     static int num_files;
     static std::string posix_api_type;
@@ -402,6 +405,8 @@ public:
     buildAwsCredentials();
     static bool
     putObj(size_t buffer_size, const std::string &name);
+    static bool
+    putRedis(size_t buffer_size, const std::string &key);
     static bool
     getObj(const std::string &name);
     static bool

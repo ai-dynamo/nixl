@@ -129,7 +129,7 @@ context for a request, and derives from that context's own trace id, so it is
 stable per request and every peer inspecting the same context agrees with it.
 A request is sampled when the random part of its trace id falls in the top
 `ratio` of the range, which is the OpenTelemetry consistent-probability rule: a
-later stage sampling at a lower ratio thins what NIXL kept instead of discarding
+later phase sampling at a lower ratio thins what NIXL kept instead of discarding
 all of it. No backend consumes the sampled flag yet — it is the gate the first
 cross-process carrier will use to decide whether to propagate a context.
 
@@ -172,6 +172,41 @@ dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with
 backend (e.g. NVTX attaches attributes as typed payloads on the range via
 `nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
 record them).
+
+### Backend phase spans
+
+A backend plugin can record a phase of its own work through
+the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core turns
+each recorded phase into a momentary span carrying `nixl.backend` (the recording
+backend's type), `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
+`nixl.phase.label` when the plugin supplied one, and any plugin-supplied
+attributes. The phase vocabulary is closed so that timelines stay comparable
+across backends:
+
+| Span | Phase enumerator | Meaning |
+| ---- | ---------------- | ------- |
+| `nixl::submit` | `SUBMIT` | the backend accepted the operation |
+| `nixl::wire.submitted` | `WIRE_SUBMITTED` | handed to the transport |
+| `nixl::wire.completed` | `WIRE_COMPLETED` | transport signalled completion |
+| `nixl::notif.sent` | `NOTIF_SENT` | notification posted to the wire |
+| `nixl::notif.received` | `NOTIF_RECEIVED` | notification observed locally |
+| `nixl::remote.observed` | `REMOTE_OBSERVED` | the peer's side was observed |
+| `nixl::phase` | `OTHER` | generic escape hatch; the plugin's label becomes the span name |
+
+The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
+installed header), so only in-tree plugins can emit phases. No plugin emits them
+yet; UCX and libfabric map their internals onto the vocabulary in later PRs.
+
+A backend also sees the trace context of the request it is executing, as
+`traceContext` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive.
+It is the same context at prep and at every post of that request, reposts
+included, and the zeroed, invalid context when tracing is off. It is null in
+`prepMemView`, which has no request, and `opt_args` itself may be null when an
+engine is called directly. The pointer is valid only for the call: a plugin that
+needs the context later, at completion or when building a notification, copies
+the value onto its own request handle. A carrier that puts it on the wire calls
+`encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
+in-tree plugins can read it; none does yet.
 
 ## Profiling with NVTX / Nsight Systems
 
@@ -263,7 +298,9 @@ In NIXL tracing, "correlation" can mean two different things:
   recording the span attributes and dependencies the NVTX backend ignores.
 - **Cross-rank correlation** — propagate a globally unique request id on the wire so
   sender and receiver spans can be linked across processes (distributed tracing; a
-  separate NIXL-architecture effort).
+  separate NIXL-architecture effort). Backends already receive each request's trace
+  context (see "Backend phase spans"); the per-plugin carriers that put it on the
+  wire come next.
 
-Backend-engine sub-spans (finer spans inside backends, e.g. UCX
-`prepXfer`/`postXfer`/`checkXfer`) were considered and are currently not planned.
+- **Backend phase emission** — the sink described under "Backend phase spans" exists,
+  but no plugin records a phase yet.

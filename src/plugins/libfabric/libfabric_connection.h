@@ -46,11 +46,13 @@ struct nixlLibfabricConnection : public nixlBackendConnMD {
     std::vector<char *> src_ep_names_; // Rail endpoint names
     std::atomic<ConnectionState> overall_state_; // Current connection state
 
-    // Handshake received state.
-    // Read on the data path, block on handshake_cv_ until handshake_received_ is true.
-    // The atomic gives lock-free fast-path checks for postXfer/notifSendPriv.
+    // Set once the peer holds our endpoints in its AV, so it can attribute our traffic.
+    // establishConnection() blocks on handshake_cv_ until this or handshake_rejected_ is set.
     std::atomic<bool> handshake_received_{false};
-    uint16_t local_agent_idx_at_remote_ = 0; // valid only when handshake_received_
+    // Set when the peer's protocol version is incompatible, so establishConnection() fails with
+    // NIXL_ERR_MISMATCH. rejected_peer_proto_ver_ is written under handshake_mutex_ first.
+    std::atomic<bool> handshake_rejected_{false};
+    uint16_t rejected_peer_proto_ver_ = 0;
     std::mutex handshake_mutex_;
     std::condition_variable handshake_cv_;
 };

@@ -58,7 +58,7 @@ All files below live in `.github/workflows/`.
 
 ### Copyright Checks (`copyright-checks.yml`)
 - **Trigger:** `pull_request`.
-- **What it does:** Runs `.github/workflows/copyright-check.sh` inside the `dynamo/helm-tester` container to verify SPDX/copyright headers.
+- **What it does:** Runs `.github/workflows/copyright-check.sh` inside the `dynamo/helm-tester` container to verify SPDX/copyright headers of the files changed in the PR; their copyright end year must be the current year.
 - **Automatic on every PR:** Yes.
 
 ### PR Size Check (`pr-size-check.yml`)
@@ -159,6 +159,11 @@ their own nightly/manual trigger. They split into two groups:
   trigger, and/or upstream standalone job, and is invoked independently of PRs
   and of the dispatcher.
 
+Every job checks out the repository authenticated as `svc-nixl-github-token`
+(`jjb_git_credentials`, applied to each `git:` SCM block and inherited by
+submodules through `parent-credentials`). github.com intermittently answers
+anonymous clones with an HTTP 401, which git reports as `could not read Username`.
+
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
 
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
@@ -167,7 +172,7 @@ their own nightly/manual trigger. They split into two groups:
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com)
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (NIXL EP tests on dlcluster.nvidia.com)
-  - `nixl-ci-gpu-vr` — `.ci/jenkins/lib/test-vr-matrix.yaml` (same tests as `nixl-ci-dl-gpu`, on the Vera Rubin `vrnvl72` partition / `rubin` account)
+  - `nixl-ci-gpu-vr` — `.ci/jenkins/lib/test-vr-matrix.yaml` (same tests as `nixl-ci-dl-gpu`, on the Vera Rubin `vrnvl72` partition / `rubin` account; nodes with a differing configuration are excluded via `SLURM_EXCLUDE`)
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
   - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
@@ -268,7 +273,7 @@ NEW_TAG=$(git log -1 --format=%h -- "${CI_FILES[@]}")
 
 This returns the short git commit hash of the most recent commit that touched
 any of the CI source files (`Dockerfile.base`, `Dockerfile.gpu-test`,
-`Dockerfile.build_helper`, `nixl_ep_vllm_release_test.patch`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
+`Dockerfile.build_helper`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
 then patches all six YAML files in the Jenkins workspace with `sed` before the
 matrix library reads them. No commit or push is made — the patch exists only in
 the workspace.
@@ -313,6 +318,58 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `Build sanity image` runs in the `build_helper_(vllm|sglang)` one, not the
 `manylinux` runner. Check the step's `containerSelector` against
 `runs_on_dockers`, not just whether `docker` is podman.
+
+## Authenticated dependency clones in image builds
+
+`contrib/Dockerfile`, `contrib/Dockerfile.manylinux` and
+`benchmark/nixlbench/contrib/Dockerfile` clone their third-party dependencies from
+github.com. github.com intermittently answers anonymous clones with an HTTP 401, which
+git reports as `could not read Username for 'https://github.com'` — it refers to the
+missing terminal git tried to prompt on, not to DNS or connectivity.
+
+Every cloning `RUN` mounts an optional build secret,
+`--mount=type=secret,id=ghconfig,target=/root/.gitconfig`, holding
+`http.https://github.com/.extraheader = AUTHORIZATION: basic <base64 user:token>`, so
+every request to github.com is authenticated rather than anonymous.
+`GIT_TERMINAL_PROMPT=0` is an `ARG`, so it applies to these builds without persisting
+into the shipped images.
+
+When nothing supplies the secret the target file is not created (an empty secret gives
+an empty file) and the clone is anonymous — verified on podman 4.4.4, 4.9.4, 5.0.3 and
+5.7.1 and Docker 29 BuildKit. `RUN --mount` needs BuildKit or podman/buildah: Docker's
+legacy builder (`DOCKER_BUILDKIT=0`) rejects it, so `build-container.sh` defaults
+`DOCKER_BUILDKIT=1` for pre-23 Docker.
+
+The credential, `svc-nixl-github-read-only-token`, is a fine-grained token (format
+`github_pat_` plus letters, digits and underscores) with read-only access to public
+repositories and no other permissions. PR builds run PR-controlled code with it
+available, so it must stay that way. Because the header is sent on every request, a
+revoked, expired or org-blocked token fails **every** github.com clone in these jobs,
+not only the ones GitHub would have challenged — rotate it before it lapses.
+
+CI supplies it through `DOCKER_BUILD_EXTRA_ARGS`, a generic passthrough that
+`contrib/build-container.sh` and `benchmark/nixlbench/contrib/build.sh` append to their
+`docker build` command (empty by default; word-split, so no paths with spaces). In
+`build-container-pr-matrix.yaml`, `build-container-matrix.yaml` and
+`build-wheel-nightly-matrix.yaml`:
+
+- the setup step binds the token and calls `write_github_gitconfig /tmp/ghconfig`
+  (`.ci/scripts/common.sh`), which writes the config with tracing off and mode 600, or an
+  empty file when no token is bound;
+- each build step sets
+  `DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"` before calling
+  the build script;
+- the agent-side clones (`ucx-src`, the nightly's `nixl-src`) use the same file
+  additively via `git -c include.path=/tmp/ghconfig clone ...`, leaving any existing
+  global git config (e.g. `safe.directory`) intact.
+
+The token never lands in an image layer or in `podman history`. Still anonymous: the UCX
+ref lookup in `build-container-matrix.yaml`'s Groovy pre-step, which runs before any
+credential is bound.
+
+`build-wheel-matrix.yaml` needs nothing: it passes `--wheel-base-image`, which skips the
+`wheel_base` stage that holds the manylinux clones. That base, and `Dockerfile.base`,
+are built by ci-demo and are not covered here.
 
 ## Related docs
 
