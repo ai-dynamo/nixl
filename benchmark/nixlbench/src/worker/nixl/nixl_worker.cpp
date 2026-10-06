@@ -1346,6 +1346,13 @@ xferBenchNixlWorker::exchangeMetadata() {
     return ret;
 }
 
+/**
+ * Build remote transfer IOV lists for storage backends, or exchange them with the peer.
+ *
+ * @param local_iovs Per-thread local transfer IOV lists, including batched descriptors.
+ * @param block_size Transfer block size in bytes for storage backends.
+ * @return Remote IOV lists for storage backends or the initiator; empty on peer targets.
+ */
 std::vector<std::vector<xferBenchIOV>>
 xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iovs,
                                  size_t block_size) {
