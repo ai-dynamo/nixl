@@ -120,7 +120,10 @@ static int processBatchSizes(xferBenchWorker &worker,
          !worker.signaled() &&
              batch_size <= xferBenchConfig::max_batch_size;
          batch_size *= 2) {
-        size_t effective_batch = batch_size * xferBenchConfig::pipeline_depth;
+        const int descriptor_depth = xferBenchConfig::worker_type == XFERBENCH_WORKER_NIXL ?
+            xferBenchConfig::iterationPlan(block_size).descriptor_depth :
+            xferBenchConfig::pipeline_depth;
+        size_t effective_batch = batch_size * descriptor_depth;
         auto local_trans_lists =
             createTransferDescLists(worker, iov_lists, block_size, effective_batch, num_threads);
 

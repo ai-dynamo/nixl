@@ -161,6 +161,12 @@
     (XFERBENCH_SCHEME_MANY_TO_ONE == xferBenchConfig::scheme && \
      XFERBENCH_MODE_MG == xferBenchConfig::mode)
 
+struct xferBenchIterationPlan {
+    int warmup_iter;
+    int num_iter;
+    int descriptor_depth;
+};
+
 class xferBenchConfig {
 public:
     static std::string runtime_type;
@@ -249,6 +255,10 @@ public:
     /* Parallel workers split iterations across both CPU and Device API. */
     static int
     workerNum();
+
+    /* Per-worker iterations and descriptor slots needed by either execution phase. */
+    static xferBenchIterationPlan
+    iterationPlan(size_t block_size);
 
     static int
     parseConfig(int argc, char *argv[]);

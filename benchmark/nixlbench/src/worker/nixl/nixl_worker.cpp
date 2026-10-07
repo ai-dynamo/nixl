@@ -1795,23 +1795,29 @@ execTransferLoop(nixlAgent *agent,
                  const std::string &target,
                  nixl_opt_args_t &params,
                  const int num_iter,
+                 const int descriptor_depth,
                  xferBenchStats &thread_stats,
                  const std::vector<xferBenchIOV> &local_iov,
                  const std::vector<xferBenchIOV> &remote_iov,
                  const std::atomic<int> *terminate_ptr = nullptr) {
-    const int depth = std::min(xferBenchConfig::pipeline_depth, num_iter);
+    if (num_iter == 0) {
+        return 0;
+    }
+    const int depth = std::min(descriptor_depth, num_iter);
     if (depth < xferBenchConfig::pipeline_depth) {
         std::cout << "Warning: pipeline_depth (" << xferBenchConfig::pipeline_depth
                   << ") exceeds num_iter (" << num_iter << "), capping to " << depth << std::endl;
     }
     const bool recreate = xferBenchConfig::recreate_xfer;
 
-    if (local_iov.size() % depth != 0) {
+    if (local_iov.size() % descriptor_depth != 0) {
         std::cerr << "Error: descriptor count (" << local_iov.size()
-                  << ") is not evenly divisible by pipeline depth (" << depth << ")" << std::endl;
+                  << ") is not evenly divisible by descriptor depth (" << descriptor_depth << ")"
+                  << std::endl;
         return -1;
     }
-    const size_t entries_per_slot = local_iov.size() / depth;
+    // Capping concurrency must preserve each request's original descriptor group.
+    const size_t entries_per_slot = local_iov.size() / descriptor_depth;
 
     std::vector<slotState> slots(depth);
     for (int s = 0; s < depth; s++) {
@@ -1922,6 +1928,7 @@ execTransfer(nixlAgent *agent,
              const nixl_xfer_op_t op,
              const int num_iter,
              const int num_threads,
+             const int descriptor_depth,
              xferBenchStats &stats,
              const std::atomic<int> *terminate_ptr = nullptr) {
     int ret = 0;
@@ -1949,6 +1956,7 @@ execTransfer(nixlAgent *agent,
                                       target,
                                       params,
                                       num_iter,
+                                      descriptor_depth,
                                       thread_stats,
                                       local_iov,
                                       remote_iov,
@@ -2159,9 +2167,9 @@ std::variant<xferBenchStats, int>
 xferBenchNixlWorker::transfer(size_t block_size,
                               const std::vector<std::vector<xferBenchIOV>> &local_iovs,
                               const std::vector<std::vector<xferBenchIOV>> &remote_iovs) {
-    const int workers = xferBenchConfig::workerNum();
-    int num_iter = xferBenchConfig::num_iter / workers;
-    int skip = xferBenchConfig::warmup_iter / workers;
+    const auto plan = xferBenchConfig::iterationPlan(block_size);
+    const int num_iter = plan.num_iter;
+    const int skip = plan.warmup_iter;
     xferBenchStats stats;
     int ret = 0;
     nixl_xfer_op_t xfer_op = XFERBENCH_OP_READ == xferBenchConfig::op_type ? NIXL_READ : NIXL_WRITE;
@@ -2169,12 +2177,6 @@ xferBenchNixlWorker::transfer(size_t block_size,
     if (!rt->checkKeepAlive()) { // also refreshes the lease internally.
         std::cerr << "nixlbench: keepalive failed before transfer — aborting" << std::endl;
         return std::variant<xferBenchStats, int>(-1);
-    }
-
-    // Reduce skip by 10x for large block sizes
-    if (block_size > LARGE_BLOCK_SIZE) {
-        skip /= xferBenchConfig::large_blk_iter_ftr;
-        num_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
     nixlMemViewH local_mvh = nullptr;
@@ -2226,6 +2228,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                xfer_op,
                                skip,
                                xferBenchConfig::num_threads,
+                               plan.descriptor_depth,
                                stats,
                                &terminate);
         }
@@ -2255,6 +2258,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            xfer_op,
                            num_iter,
                            xferBenchConfig::num_threads,
+                           plan.descriptor_depth,
                            stats,
                            &terminate);
     }

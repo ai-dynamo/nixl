@@ -1171,6 +1171,18 @@ xferBenchConfig::workerNum() {
                                              xferBenchConfig::num_threads;
 }
 
+xferBenchIterationPlan
+xferBenchConfig::iterationPlan(size_t block_size) {
+    const int workers = workerNum();
+    int warmup = warmup_iter / workers;
+    int iterations = num_iter / workers;
+    if (block_size > LARGE_BLOCK_SIZE) {
+        warmup /= large_blk_iter_ftr;
+        iterations /= large_blk_iter_ftr;
+    }
+    return {warmup, iterations, std::min(pipeline_depth, std::max(warmup, iterations))};
+}
+
 bool
 xferBenchConfig::isStorageBackend() {
     return (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
