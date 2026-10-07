@@ -66,9 +66,6 @@ nixl_ep_sources = [
     'csrc/nixl_ep.cpp',
     'csrc/vmm.cpp',
     'csrc/kernels/nixl_ep_ll.cu',
-    'csrc/kernels/nixl_ep_ht.cu',
-    'csrc/kernels/layout.cu',
-    'csrc/kernels/runtime.cu',
 ]
 
 nixl_ep_inc_dirs = [
@@ -139,12 +136,6 @@ nixl_ep_override_options = []
 if get_option('buildtype') == 'debug'
     nixl_ep_override_options = ['buildtype=release', 'optimization=3', 'debug=false']
     nixl_ep_cpp_args += ['-g']
-endif
-
-enable_fast_debug = get_option('buildtype') != 'release'
-
-if enable_fast_debug
-    nixl_ep_cuda_args += ['-DENABLE_FAST_DEBUG']
 endif
 
 nixl_ep_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
