@@ -860,6 +860,10 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
     // scope keeps concurrent registrations separate
     struct DmabufExports {
         LibfabricUtils::CudaDmabufExport entries[2];
+        // Whether an export was tried for this mapping type. A failed export leaves its fd
+        // negative, so without this every later rail taking the same mapping type repeats the
+        // same failing call into the CUDA driver.
+        bool attempted[2] = {false, false};
 
         ~DmabufExports() {
             for (auto &entry : entries) {
@@ -922,7 +926,8 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
             }
 
             const size_t slot = want_pcie_mapping ? 1 : 0;
-            if (dmabuf_exports.entries[slot].fd < 0) {
+            if (!dmabuf_exports.attempted[slot]) {
+                dmabuf_exports.attempted[slot] = true;
                 LibfabricUtils::cudaDmabufExportRange(
                     buffer, length, device_id, want_pcie_mapping, dmabuf_exports.entries[slot]);
             }

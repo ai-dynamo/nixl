@@ -95,7 +95,9 @@ cudaDmabufExportRange(void *buffer,
                       int device_id,
                       bool pcie_mapping,
                       CudaDmabufExport &out) {
-    out = CudaDmabufExport{};
+    // Closed rather than overwritten: the fd is the caller's only handle on the export, so
+    // resetting a populated one would leave it open with nothing left to close it.
+    cudaDmabufExportClose(out);
 
     if (buffer == nullptr) {
         return false;
@@ -186,7 +188,7 @@ cudaDmabufExportRange(void *buffer,
     (void)length;
     (void)device_id;
     (void)pcie_mapping;
-    out = CudaDmabufExport{};
+    cudaDmabufExportClose(out);
     return false;
 }
 

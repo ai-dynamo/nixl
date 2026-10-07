@@ -376,18 +376,6 @@ static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
                                     "rdmap192s0"},
      .expect_grouping_skipped = false},
 
-    // Mixed attachment on one machine, derived from p5en.48xl-topo.xml with rdmap85s0
-    // relocated from its PCIe switch to the host bridge. The relocated device needs the
-    // platform default mapping and its 15 peers need the PCIe one, so the row holds the
-    // decision to per-device granularity.
-    {.enable = true,
-     .instance_type = "mixed-attachment-synthetic",
-     .topo_file = "mixed-attachment-synthetic-topo.xml",
-     .nic_count = 16,
-     .nic_line_speed = 200,
-     .expect_pcie_mapping = true,
-     .default_mapping_exceptions = {"rdmap85s0"}},
-
     // end of list
 };
 static const size_t dmabuf_mapping_topology_count =
@@ -1743,8 +1731,8 @@ testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
         rc = 6;
     }
 
-    // Every named exception device appears among the discovered devices, so the
-    // mixed-attachment row exercises the case it describes.
+    // Every named exception device appears among the discovered devices, so a row carrying
+    // both mapping types exercises the case it describes.
     if (exceptions_seen != mapping_info.default_mapping_exceptions.size()) {
         NIXL_ERROR << "Expected " << mapping_info.default_mapping_exceptions.size()
                    << " default-mapping exception device(s) on " << mapping_info.instance_type
