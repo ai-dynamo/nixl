@@ -49,9 +49,8 @@ fileLogSink::isOpen() const noexcept {
 
 void
 fileLogSink::Send(const absl::LogEntry &entry) {
-    const auto payload = entry.stacktrace().empty() ?
-        entry.text_message_with_prefix_and_newline() :
-        entry.stacktrace();
+    const auto payload = entry.stacktrace().empty() ? entry.text_message_with_prefix_and_newline() :
+                                                      entry.stacktrace();
     writePayload(payload);
 }
 
@@ -80,8 +79,7 @@ fileLogSink::writePayload(std::string_view payload) {
 
     size_t offset = 0;
     while (offset < payload.size()) {
-        const ssize_t result =
-            ::write(fd_.get(), payload.data() + offset, payload.size() - offset);
+        const ssize_t result = ::write(fd_.get(), payload.data() + offset, payload.size() - offset);
         if (result > 0) {
             offset += static_cast<size_t>(result);
         } else if (result < 0 && errno == EINTR) {
