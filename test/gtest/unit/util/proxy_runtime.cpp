@@ -726,6 +726,23 @@ namespace proxy_runtime {
             "unpublished producer tickets");
     }
 
+    TEST_F(ProxyRuntimeTest, ShutdownRetiresAbandonedTicketsAndSubmitsWhatFollows) {
+        ASSERT_EQ(createRuntime(), NIXL_SUCCESS);
+        nixlMemViewH src = nullptr;
+        nixlMemViewH dst = nullptr;
+        prepMemViews(src, dst);
+        backend_.completeEverything();
+        ASSERT_EQ(runtime_->startWorkers(), NIXL_SUCCESS);
+        // Ticket 1 is claimed but never published, as a producer that gives up at shutdown leaves
+        // it; ticket 2 behind it is published.
+        publish(channel(), 0, makePut(src, dst), 1);
+        publish(channel(), 2, makePut(src, dst), 3);
+        ASSERT_TRUE(waitFor([&] { return backend_.submissionCount() == 1; }));
+        EXPECT_EQ(runtime_->shutdown(), NIXL_SUCCESS);
+        ASSERT_EQ(backend_.submissionCount(), 2u);
+        EXPECT_EQ(backend_.submissions()[1].op_idx, 3u);
+    }
+
     TEST_F(ProxyRuntimeTest, DrainPastItsDeadlineAborts) {
         EXPECT_DEATH(
             {
