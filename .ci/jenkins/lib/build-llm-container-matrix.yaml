@@ -59,7 +59,7 @@ matrix:
 
 # Configuration
 env:
-  REGISTRY_HOST_NAME: "artifactory.nvidia.com"
+  REGISTRY_HOST_NAME: "il.artifactory.nvidia.com"
   REGISTRY_REPO_NAME: "sw-nbu-swx-nixl-docker-local"
   REGISTRY_REPO_PATH: "verification/llm"
   ARTIFACTORY_REGISTRY_URL: "${REGISTRY_HOST_NAME}/${REGISTRY_REPO_NAME}/${REGISTRY_REPO_PATH}"
@@ -76,7 +76,7 @@ env:
 taskName: "${arch}"
 
 credentials:
-  - credentialsId: 'svc-nixl-new-artifactory-token'
+  - credentialsId: 'svc-nixl-il-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USERNAME'
     passwordVariable: 'ARTIFACTORY_PASSWORD'
 
@@ -116,7 +116,7 @@ pipeline_start:
 steps:
   - name: Prepare
     containerSelector: "{name: 'podman'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     run: |
       set -e
       rm -f /etc/containers/storage.conf /usr/share/containers/storage.conf
@@ -153,7 +153,7 @@ steps:
 
   - name: Download Wheels
     containerSelector: "{name: 'podman'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     run: |
       set -eu
       DEST="${WHEELS_DIR}/${arch}"
@@ -341,7 +341,7 @@ pipeline_stop:
     def publishSucceeded = false
 
     withCredentials([usernamePassword(
-        credentialsId: 'svc-nixl-new-artifactory-token',
+        credentialsId: 'svc-nixl-il-artifactory-token',
         usernameVariable: 'ARTIFACTORY_USER',
         passwordVariable: 'ARTIFACTORY_TOKEN')]) {
 

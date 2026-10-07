@@ -34,7 +34,7 @@ kubernetes:
 
 credentials:
   - {credentialsId: 'nixl_harbor_credentials', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
-  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USERNAME', passwordVariable: 'ARTIFACTORY_PASSWORD'}
+  - {credentialsId: 'svc-nixl-il-artifactory-token', usernameVariable: 'ARTIFACTORY_USERNAME', passwordVariable: 'ARTIFACTORY_PASSWORD'}
   - {credentialsId: 'svc-nixl-scctl', usernameVariable: 'SERVICE_USER_USERNAME', passwordVariable: 'SERVICE_USER_PASSWORD'}
 
 env:

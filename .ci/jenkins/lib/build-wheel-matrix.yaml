@@ -68,12 +68,12 @@ timeout_minutes: 240
 # Container Registry Configuration
 # =============================================================================
 # Artifactory registry for storing build artifacts and base images
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 credentials:
-  - credentialsId: 'svc-nixl-new-artifactory-token'
+  - credentialsId: 'svc-nixl-il-artifactory-token'
     usernameVariable: 'ARTIFACTORY_USER'
     passwordVariable: 'ARTIFACTORY_TOKEN'
 
@@ -84,7 +84,6 @@ credentials:
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   # 24GB memory and 16 CPU cores for parallel compilation and large builds
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'
@@ -229,7 +228,7 @@ steps:
   # egress workaround is needed here.
   - name: Prepare
     containerSelector: "{name: 'manylinux'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       # Setup podman and dependencies
@@ -247,7 +246,7 @@ steps:
   # to the pod's host network.
   - name: Prepare
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       # Setup podman and dependencies
@@ -295,7 +294,7 @@ steps:
   # Tagged by BUILD_NUMBER.
   - name: Build sanity image
     containerSelector: "{name: 'build_helper_(vllm|sglang)'}"
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     parallel: false
     run: |
       set -eux

@@ -14,10 +14,10 @@ runs_on_dockers:
   - { name: "ubuntu", url: "docker.io/library/ubuntu:24.04", arch: "x86_64" }
 
 env:
-  ARTIFACTORY_URL: "https://artifactory.nvidia.com/artifactory"
+  ARTIFACTORY_URL: "https://il.artifactory.nvidia.com/artifactory"
 
 credentials:
-  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN'}
+  - {credentialsId: 'svc-nixl-il-artifactory-token', usernameVariable: 'ARTIFACTORY_USER', passwordVariable: 'ARTIFACTORY_TOKEN'}
 
 pipeline_start:
   shell: action
@@ -31,7 +31,7 @@ pipeline_start:
 steps:
   - name: Cleanup Artifactory artifacts
     parallel: false
-    credentialsId: 'svc-nixl-new-artifactory-token'
+    credentialsId: 'svc-nixl-il-artifactory-token'
     run: |
       apt-get update -qq && apt-get install -y -qq jq curl > /dev/null
       curl -fsSL "https://releases.jfrog.io/artifactory/jfrog-cli/v2-jf/2.72.2/jfrog-cli-linux-amd64/jf" -o /usr/local/bin/jf && chmod +x /usr/local/bin/jf
