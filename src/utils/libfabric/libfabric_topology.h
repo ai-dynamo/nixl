@@ -112,6 +112,9 @@ private:
         uint16_t parent_switch_domain;
         uint8_t parent_switch_bus_id;
         size_t parent_switch_link_speed; // Gbps (decimal, as multiple of 10^9, not 2^30)
+        // True when this NIC and the accelerator paired with it sit under a common PCIe
+        // switch. buildTopologyAwareGrouping() sets it from NicGroup::common_ancestor.
+        bool accel_via_pcie_switch;
     };
 
     struct AccelInfo {
@@ -209,6 +212,29 @@ public:
     // Accelerator-based queries (main interface)
     std::vector<std::string>
     getEfaDevicesForPci(const std::string &pci_bus_id) const;
+
+    // True when obj is a PCIe switch, that is a bridge whose upstream side is PCI.
+    // Applied to the common ancestor of two devices, it reports whether a PCIe path runs
+    // between them.
+    static bool
+    isPcieSwitch(hwloc_obj_t obj);
+
+    // True when this EFA device and the accelerator paired with it sit under a common
+    // PCIe switch, so the device reaches GPU memory over PCIe.
+    //
+    // A caller exporting a CUDA dmabuf combines this with the registration's
+    // iface == FI_HMEM_CUDA: it requests the GPU's PCIe aperture (BAR1) mapping when both
+    // hold, and the platform default mapping otherwise. The two mappings differ on a
+    // platform where GPU memory carries several address windows, such as GB200, where HBM
+    // is also mapped into the Grace CPU's coherent space and a device reaching HBM through
+    // the CPU addresses it through that window.
+    //
+    // Grouping pairs NICs with NVIDIA and AMD accelerators, so an AMD/ROCr host answers
+    // true here as well, and every device on a Trainium host answers false. An unknown
+    // device, a device grouping leaves unpaired, and a host where grouping stays idle all
+    // answer false.
+    bool
+    nicSharesPcieSwitchWithAccel(const std::string &efa_device) const;
 
     // System information
     int
