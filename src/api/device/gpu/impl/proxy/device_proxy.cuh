@@ -25,25 +25,15 @@ namespace nixl::gpu::impl::proxy {
 template<level_t level>
 __device__ __forceinline__ nixl_status_t
 getXferStatus(xferStatusH &xfer_status) {
+    if constexpr (level == level_t::GRID) {
+        return ProxyDeviceContext::pollXferStatus(xfer_status);
+    }
 
     nixl_status_t status = NIXL_IN_PROG;
     if (isLeader<level>()) {
         status = ProxyDeviceContext::pollXferStatus(xfer_status);
     }
-
-    if constexpr (level == level_t::WARP) {
-        status = static_cast<nixl_status_t>(__shfl_sync(0xffffffff, static_cast<int>(status), 0));
-    } else if constexpr (level == level_t::BLOCK) {
-        __shared__ nixl_status_t s_status;
-        if (threadIdx.x == 0) {
-            s_status = status;
-        }
-        __syncthreads();
-        status = s_status;
-        __syncthreads();
-    }
-
-    return status;
+    return broadcastStatus<level>(status);
 }
 
 template<level_t level>
@@ -75,8 +65,7 @@ put(const memViewElem &src,
                                   xfer_status);
         }
     }
-    sync<level>();
-    return status;
+    return broadcastStatus<level>(status);
 }
 
 template<level_t level>
@@ -104,8 +93,7 @@ atomicAdd(uint64_t value,
                              xfer_status);
         }
     }
-    sync<level>();
-    return status;
+    return broadcastStatus<level>(status);
 }
 
 __device__ __forceinline__ void *

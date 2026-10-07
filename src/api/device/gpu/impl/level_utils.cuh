@@ -58,6 +58,26 @@ sync() {
     }
 }
 
+/** A barrier that also hands every thread the leader's status; only a barrier at grid level. */
+template<level_t level>
+__device__ __forceinline__ nixl_status_t
+broadcastStatus(nixl_status_t status) {
+    if constexpr (level == level_t::WARP) {
+        status = static_cast<nixl_status_t>(__shfl_sync(0xffffffff, static_cast<int>(status), 0));
+    } else if constexpr (level == level_t::BLOCK) {
+        __shared__ nixl_status_t s_status;
+        if (threadIdx.x == 0) {
+            s_status = status;
+        }
+        __syncthreads();
+        status = s_status;
+        __syncthreads();
+    } else if constexpr (level == level_t::GRID) {
+        sync<level>();
+    }
+    return status;
+}
+
 } // namespace nixl::gpu::impl
 
 #endif // NIXL_SRC_API_DEVICE_GPU_IMPL_LEVEL_UTILS_CUH
