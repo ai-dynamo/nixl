@@ -73,28 +73,28 @@ parse_size(const char *size_str) {
 
 void
 print_usage(const char *program_name) {
-    std::cerr
-        << "Usage: " << program_name << " [options] <directory_path>\n"
-        << "Options:\n"
-        << "  -d, --dram              Use DRAM for memory operations\n"
-        << "  -v, --vram              Use VRAM for memory operations (default)\n"
-        << "  -n, --num-transfers N   Number of transfers to perform (default: "
-        << DEFAULT_NUM_TRANSFERS << ")\n"
-        << "  -s, --size SIZE         Size of each transfer (default: " << DEFAULT_TRANSFER_SIZE
-        << " bytes)\n"
-        << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
-        << "  -r, --no-read           Skip read test\n"
-        << "  -w, --no-write          Skip write test\n"
-        << "  -t, --iterations N      Number of iterations for each transfer (default: "
-        << DEFAULT_ITERATIONS << ")\n"
-        << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
-        << "  -G, --num-gpus          Number of GPUs to use (default: " << DEFAULT_NUM_GPUS << ")\n"
-        << "  -P, --skip-path-smoke   Skip the path-mode smoke test and run only the\n"
-        << "                          DRAM/VRAM transfer against <directory_path>\n"
-        << "  -N, --num-threads N     Number of CPU Threads to use (default: all CPUs detected)\n"
-        << "  -h, --help              Show this help message\n"
-        << "\nExample:\n"
-        << "  " << program_name << " -d -n 100 -s 2M -t 5 -D /path/to/dir\n";
+    std::cerr << "Usage: " << program_name << " [options] <directory_path>\n"
+              << "Options:\n"
+              << "  -d, --dram              Use DRAM for memory operations\n"
+              << "  -v, --vram              Use VRAM for memory operations (default)\n"
+              << "  -n, --num-transfers N   Number of transfers to perform (default: "
+              << DEFAULT_NUM_TRANSFERS << ")\n"
+              << "  -s, --size SIZE         Size of each transfer (default: "
+              << DEFAULT_TRANSFER_SIZE << " bytes)\n"
+              << "                          Can use K, M, or G suffix (e.g., 1K, 2M, 3G)\n"
+              << "  -r, --no-read           Skip read test\n"
+              << "  -w, --no-write          Skip write test\n"
+              << "  -t, --iterations N      Number of iterations for each transfer (default: "
+              << DEFAULT_ITERATIONS << ")\n"
+              << "  -D, --direct            Use O_DIRECT for file operations (bypass page cache)\n"
+              << "  -G, --num-gpus          Number of GPUs to use (default: " << DEFAULT_NUM_GPUS
+              << ")\n"
+              << "  -P, --skip-path-smoke   Skip the path-mode smoke test and run only the\n"
+              << "                          DRAM/VRAM transfer against <directory_path>\n"
+              << "  -N, --num-threads N     Number of CPU Threads to use (default: auto)\n"
+              << "  -h, --help              Show this help message\n"
+              << "\nExample:\n"
+              << "  " << program_name << " -d -n 100 -s 2M -t 5 -D /path/to/dir\n";
 }
 
 void
@@ -418,7 +418,8 @@ main(int argc, char *argv[]) {
               << ((transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0)) << " GB"
               << std::endl;
     std::cout << "- Directory: " << dir_path << std::endl;
-    std::cout << "- Num Threads: " << num_threads << std::endl;
+    std::cout << "- Num Threads: " << (num_threads == 0 ? "auto" : std::to_string(num_threads))
+              << std::endl;
     std::cout << "- Num GPUs to use: " << num_gpus << std::endl;
     std::cout << "- Number of iterations: " << iterations << std::endl;
     std::cout << "- Use O_DIRECT: " << (use_direct ? "Yes" : "No") << std::endl;

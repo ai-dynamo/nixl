@@ -88,8 +88,7 @@ silent skip.
 
 ### Supported memory types
 
-`VRAM_SEG` and `FILE_SEG`, shared with the other local file
-backends via `FileEngineBase`. `DRAM_SEG` support to come soon.
+`VRAM_SEG` and `FILE_SEG`. `DRAM_SEG` support to come soon.
 See the note on host DRAM under [Limitations](#limitations).
 
 The backend is local-only: it supports local transfers, and does not support
@@ -130,10 +129,12 @@ nixlBackendH *ais_mt;
 nixl_status_t ret = agent.createBackend("AIS_MT", params, ais_mt);
 ```
 
-A fuller end-to-end example, covering VRAM and DRAM buffers, path-mode
-registration, and read/write verification, lives in
+A fuller end-to-end example, covering path-mode registration and read/write
+verification, lives in
 [`test/unit/plugins/ais_mt/nixl_ais_mt_test.cpp`](../../../test/unit/plugins/ais_mt/nixl_ais_mt_test.cpp).
-The path-mode smoke target can be overridden with the
+Only its VRAM mode (`-v`, the default) works today. DRAM mode (`-d`) and the
+path-mode smoke test, which registers host buffers and skips for now, need
+`DRAM_SEG` support. The path-mode smoke target can be overridden with the
 `NIXL_AIS_MT_PATH_MODE_FILE` environment variable; it must name a regular file
 on a writable filesystem, never a raw block device.
 

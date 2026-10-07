@@ -10,7 +10,7 @@ This directory contains shared C++ utilities for NIXL file-aware backends:
 - `file_engine_base.h`: `FileEngineBase`, a shared `nixlBackendEngine` base for
   local-only file backends over {DRAM, VRAM, FILE}. It supplies the constant
   connection, metadata, and capability overrides. CUDA GDS and ROCm AIS derive
-  from it.
+  from it; ROCm AIS overrides the memory set to {VRAM, FILE}.
 
 All file-aware plugins (POSIX, HF3FS, CUDA GDS, which provides both the `GDS`
 and `GDS_MT` backend names, and ROCm AIS, which provides the `AIS_MT` backend
