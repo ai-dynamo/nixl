@@ -153,6 +153,7 @@ The following table summarizes briefly the plugin's runtime configuration:
 | max_bw_per_dram_seg | Controls the bandwidth limit on DRAM_SEG memory type buffers per NUMA node | Backend init param or `NIXL_LIBFABRIC_MAX_BW_PER_DRAM_SEG` environment variable | integer | 100, 200 | Units are Gbps (Gigabits per second), auto-computed by PCIe topology, normally does not require user override |
 | num_threads | Enables a thread pool for parallel descriptor posting in postXfer | Backend init param | integer | 4, 8 | Default 0 keeps the serial posting path |
 | split_batch_size | Minimum descriptor count before postXfer uses the posting thread pool | Backend init param | integer | 1024, 4096 | Default 1024; only applies when num_threads is greater than 0 |
+| dmabuf_mapping | Selects the CUDA dmabuf mapping type a VRAM_SEG registration exports for an EFA rail | Backend init param or `NIXL_LIBFABRIC_DMABUF_MAPPING` environment variable | auto, pcie, default, off | auto, off | Default auto takes a per-NIC verdict from the PCIe-path topology; pcie and default force the GPU's PCIe aperture (BAR1) or the platform default mapping on every device; off registers by virtual address. Only applies to CUDA device memory on an EFA provider whose fabric carries libfabric API 1.20 or newer |
 
 ## API Reference
 

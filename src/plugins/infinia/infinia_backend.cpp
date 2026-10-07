@@ -17,25 +17,52 @@
  */
 
 #include "infinia_backend.h"
-#include <iostream>
 #include <string.h>
 #include <unordered_set>
 #include <unordered_map>
 #include <absl/log/log.h>
 #include <absl/strings/str_format.h>
 #include "common/nixl_log.h"
-#include <cstdlib> // for std::getenv
-#include <thread>
-#include <fstream>
-#include <sstream>
-#include <map>
-#include <filesystem>
-#include <string_view>
-#include <ranges>
+#include "common/configuration.h"
 #include <algorithm>
 #include <cctype>
+#include <type_traits>
+#include <unistd.h> // for close()
+
+#ifdef HAVE_CUDA
+#include <cuda.h>
+#include <cuda_runtime.h>
+#endif
 
 namespace {
+#ifdef HAVE_CUDA
+class cudaDeviceGuard {
+public:
+    cudaDeviceGuard() : saved_device_(-1), should_restore_(false) {
+        if (cudaGetDevice(&saved_device_) == cudaSuccess) {
+            should_restore_ = true;
+        }
+    }
+
+    ~cudaDeviceGuard() {
+        if (should_restore_ && saved_device_ >= 0) {
+            cudaSetDevice(saved_device_);
+        }
+    }
+
+    cudaDeviceGuard(const cudaDeviceGuard &) = delete;
+    cudaDeviceGuard &
+    operator=(const cudaDeviceGuard &) = delete;
+    cudaDeviceGuard(cudaDeviceGuard &&) = delete;
+    cudaDeviceGuard &
+    operator=(cudaDeviceGuard &&) = delete;
+
+private:
+    int saved_device_;
+    bool should_restore_;
+};
+#endif
+
 // Helper function to convert memory type to string
 const char *
 memTypeToStr(nixl_mem_t mem) {
@@ -53,71 +80,6 @@ memTypeToStr(nixl_mem_t mem) {
     default:
         return "UNKNOWN_SEG";
     }
-}
-
-// Helper function to trim whitespace from string_view (C++20)
-constexpr std::string_view
-trim(std::string_view sv) noexcept {
-    const auto start = sv.find_first_not_of(" \t\r\n");
-    if (start == std::string_view::npos) {
-        return {};
-    }
-    const auto end = sv.find_last_not_of(" \t\r\n");
-    return sv.substr(start, end - start + 1);
-}
-
-// Modern C++20 config file parser using <filesystem> and <string_view>
-// Supports comments (#) and blank lines in key=value format
-[[nodiscard]] static std::map<std::string, std::string>
-parseConfigFile(const std::string &filepath) {
-    namespace fs = std::filesystem;
-
-    // Use filesystem to check if file exists
-    const fs::path config_path{filepath};
-    if (!fs::exists(config_path)) {
-        throw std::runtime_error("Config file not found: " + filepath);
-    }
-
-    if (!fs::is_regular_file(config_path)) {
-        throw std::runtime_error("Config path is not a file: " + filepath);
-    }
-
-    std::ifstream file(config_path);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open config file: " + filepath);
-    }
-
-    std::map<std::string, std::string> config;
-    std::string line;
-    int line_num = 0;
-
-    while (std::getline(file, line)) {
-        ++line_num;
-
-        // Use string_view for efficient string operations
-        const std::string_view line_view = trim(line);
-
-        // Skip empty lines and comments
-        if (line_view.empty() || line_view.starts_with('#')) {
-            continue;
-        }
-
-        // Parse key=value using string_view
-        const auto eq_pos = line_view.find('=');
-        if (eq_pos == std::string_view::npos) {
-            NIXL_WARN << absl::StrFormat(
-                "Skipping invalid line %d in %s: %s", line_num, filepath, line_view);
-            continue;
-        }
-
-        const auto key = trim(line_view.substr(0, eq_pos));
-        const auto value = trim(line_view.substr(eq_pos + 1));
-
-        // Convert string_view to string for storage
-        config.emplace(std::string{key}, std::string{value});
-    }
-
-    return config;
 }
 
 // Helper function to cast generic handle to Infinia-specific handle
@@ -149,6 +111,32 @@ splitTenantSubtenant(const char *s,
     subtenant_ptr = backing_storage.c_str() + idx + 1;
     return true;
 }
+
+// Helper for environment or config-file overrides of string, numeric or bool values.
+// - was_set_flag: if given, the override is skipped when *was_set_flag is already true
+//   (value explicitly set via backend params), and the flag is set when the override is applied.
+// - skip_empty: for string values, ignore an empty config value instead of applying it.
+template<typename ConfigType, typename ValueType>
+void
+applyConfigOverride(const char *key,
+                    ValueType &target,
+                    bool *was_set_flag = nullptr,
+                    bool skip_empty = false) {
+    if (was_set_flag && *was_set_flag) {
+        return;
+    }
+    if (auto v = nixl::config::getValueOptional<ConfigType>(key)) {
+        if constexpr (std::is_same_v<ConfigType, std::string>) {
+            if (skip_empty && v->empty()) {
+                return;
+            }
+        }
+        target = static_cast<ValueType>(*v);
+        if (was_set_flag) {
+            *was_set_flag = true;
+        }
+    }
+}
 } // namespace
 
 // -----------------------------------------------------------------------------
@@ -165,7 +153,14 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
       infinia_num_buffers_(INFINIA_DEFAULT_BUFFERS),
       infinia_num_ring_entries_(INFINIA_DEFAULT_RING_ENTRIES),
       infinia_coremasks_(INFINIA_DEFAULT_COREMASK),
+      use_dmabuf_(true), // Enable by default
+      infinia_sthreads_set_(false),
+      infinia_num_buffers_set_(false),
+      infinia_num_ring_entries_set_(false),
       infinia_coremasks_set_(false),
+      use_dmabuf_set_(false),
+      batch_max_retries_set_(false),
+      batch_size_set_(false),
       initialized_(false) {
 
     red_status_t rs;
@@ -180,96 +175,12 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
 
     // Initialize batch task configuration with defaults
     batch_config_.max_retries = red_async::RED_ASYNC_DEFAULT_MAX_RETRIES;
+    batch_config_.batch_size = red_async::RED_ASYNC_DEFAULT_BATCH_SIZE;
 
     // Extract Infinia-specific configuration from custom parameters
     if (init_params->customParams) {
         auto params = init_params->customParams;
 
-        // Check if a config file is specified
-        auto config_file_it = params->find("config_file");
-        if (config_file_it != params->end() && !config_file_it->second.empty()) {
-            // Load parameters from simple key=value config file
-            try {
-                auto config = parseConfigFile(config_file_it->second);
-
-                // Read configuration parameters
-                auto it = config.find("cluster");
-                if (it != config.end()) {
-                    infinia_cluster_ = it->second;
-                }
-
-                it = config.find("tenant");
-                if (it != config.end()) {
-                    infinia_tenant_ = it->second;
-                }
-
-                it = config.find("subtenant");
-                if (it != config.end()) {
-                    infinia_subtenant_ = it->second;
-                }
-
-                it = config.find("dataset");
-                if (it != config.end()) {
-                    infinia_dataset_ = it->second;
-                }
-
-                it = config.find("sthreads");
-                if (it != config.end()) {
-                    try {
-                        infinia_sthreads_ = std::stoul(it->second);
-                    }
-                    catch (...) {
-                        NIXL_WARN << "Invalid sthreads value: " << it->second;
-                    }
-                }
-
-                it = config.find("num_buffers");
-                if (it != config.end()) {
-                    try {
-                        infinia_num_buffers_ = std::stoul(it->second);
-                    }
-                    catch (...) {
-                        NIXL_WARN << "Invalid num_buffers value: " << it->second;
-                    }
-                }
-
-                it = config.find("num_ring_entries");
-                if (it != config.end()) {
-                    try {
-                        infinia_num_ring_entries_ = std::stoul(it->second);
-                    }
-                    catch (...) {
-                        NIXL_WARN << "Invalid num_ring_entries value: " << it->second;
-                    }
-                }
-
-                it = config.find("coremasks");
-                if (it != config.end()) {
-                    infinia_coremasks_ = it->second;
-                    infinia_coremasks_set_ = true;
-                }
-
-                it = config.find("max_retries");
-                if (it != config.end()) {
-                    try {
-                        batch_config_.max_retries = std::stoull(it->second);
-                    }
-                    catch (...) {
-                        NIXL_WARN << "Invalid max_retries value: " << it->second;
-                    }
-                }
-
-                NIXL_INFO << "Loaded INFINIA configuration from: " << config_file_it->second;
-            }
-            catch (const std::exception &err) {
-                NIXL_ERROR << "Failed to parse INFINIA config file '" << config_file_it->second
-                           << "': " << err.what();
-                initErr = true;
-                return;
-            }
-        }
-
-        // Individual parameters override config file values
         // Look for Infinia cluster configuration
         auto cluster_it = params->find("cluster");
         if (cluster_it != params->end()) {
@@ -299,6 +210,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         if (sthreads_it != params->end() && !sthreads_it->second.empty()) {
             try {
                 infinia_sthreads_ = std::stoul(sthreads_it->second);
+                infinia_sthreads_set_ = true;
             }
             catch (const std::exception &e) {
                 NIXL_WARN << absl::StrFormat("Invalid sthreads value '%s', using default %u",
@@ -312,6 +224,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         if (num_buffers_it != params->end() && !num_buffers_it->second.empty()) {
             try {
                 infinia_num_buffers_ = std::stoul(num_buffers_it->second);
+                infinia_num_buffers_set_ = true;
             }
             catch (const std::exception &e) {
                 NIXL_WARN << absl::StrFormat("Invalid num_buffers value '%s', using default %u",
@@ -325,6 +238,7 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
         if (num_ring_entries_it != params->end() && !num_ring_entries_it->second.empty()) {
             try {
                 infinia_num_ring_entries_ = std::stoul(num_ring_entries_it->second);
+                infinia_num_ring_entries_set_ = true;
             }
             catch (const std::exception &e) {
                 NIXL_WARN << absl::StrFormat(
@@ -341,11 +255,28 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
             infinia_coremasks_set_ = true;
         }
 
+        // Look for DMA-BUF enable/disable configuration
+        auto use_dmabuf_it = params->find("use_dmabuf");
+        if (use_dmabuf_it != params->end() && !use_dmabuf_it->second.empty()) {
+            try {
+                use_dmabuf_ = nixl::config::configTraits<bool>::convert(use_dmabuf_it->second);
+                use_dmabuf_set_ = true;
+                NIXL_DEBUG << absl::StrFormat("DMA-BUF support %s",
+                                              use_dmabuf_ ? "enabled" : "disabled");
+            }
+            catch (const std::exception &) {
+                NIXL_WARN << absl::StrFormat("Invalid use_dmabuf value '%s', using default %s",
+                                             use_dmabuf_it->second.c_str(),
+                                             use_dmabuf_ ? "true" : "false");
+            }
+        }
+
         // Look for Infinia max_retries configuration
         auto max_retries_it = params->find("max_retries");
         if (max_retries_it != params->end() && !max_retries_it->second.empty()) {
             try {
                 batch_config_.max_retries = std::stoull(max_retries_it->second);
+                batch_max_retries_set_ = true;
             }
             catch (const std::exception &) {
                 NIXL_WARN << absl::StrFormat("Invalid max_retries value '%s', using default %zu",
@@ -353,35 +284,62 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
                                              red_async::RED_ASYNC_DEFAULT_MAX_RETRIES);
             }
         }
-    }
 
-    // Environment override for cluster
-    if (const char *env_cluster = std::getenv(RED_CLUSTER_ENV)) {
-        if (*env_cluster) {
-            infinia_cluster_ = env_cluster;
-        }
-    }
-
-    if (const char *env_tenant = std::getenv(RED_TENANT_ENV)) {
-        if (*env_tenant) {
-            const char *tenant_ptr = nullptr;
-            const char *subtenant_ptr = nullptr;
-            std::string tenant_buf; // holds split strings' storage
-            if (splitTenantSubtenant(env_tenant, tenant_ptr, subtenant_ptr, tenant_buf)) {
-                infinia_tenant_ = tenant_ptr;
-                infinia_subtenant_ = subtenant_ptr;
-            } else {
-                infinia_tenant_ = env_tenant; // only tenant provided
+        // Look for Infinia batch_size configuration
+        auto batch_size_it = params->find("batch_size");
+        if (batch_size_it != params->end() && !batch_size_it->second.empty()) {
+            try {
+                batch_config_.batch_size = std::stoull(batch_size_it->second);
+                batch_size_set_ = true;
+            }
+            catch (const std::exception &) {
+                NIXL_WARN << absl::StrFormat("Invalid batch_size value '%s', using default %zu",
+                                             batch_size_it->second.c_str(),
+                                             red_async::RED_ASYNC_DEFAULT_BATCH_SIZE);
             }
         }
     }
 
-    // Environment override for dataset
-    if (const char *env_dataset = std::getenv(RED_DATASET_ENV)) {
-        if (*env_dataset) {
-            infinia_dataset_ = env_dataset;
+    // Environment or config-file override for cluster
+    applyConfigOverride<std::string>(RED_CLUSTER_ENV, infinia_cluster_, nullptr, true);
+
+    // Environment or config-file override for tenant/subtenant
+    if (auto tenant_cfg = nixl::config::getValueOptional<std::string>(RED_TENANT_ENV)) {
+        if (!tenant_cfg->empty()) {
+            const char *tenant_ptr = nullptr;
+            const char *subtenant_ptr = nullptr;
+            std::string tenant_buf; // holds split strings' storage
+            if (splitTenantSubtenant(tenant_cfg->c_str(), tenant_ptr, subtenant_ptr, tenant_buf)) {
+                infinia_tenant_ = tenant_ptr;
+                infinia_subtenant_ = subtenant_ptr;
+            } else {
+                // Only tenant provided; keep subtenant as configured earlier
+                infinia_tenant_ = *tenant_cfg;
+            }
         }
     }
+
+    // Environment or config-file override for dataset
+    applyConfigOverride<std::string>(RED_DATASET_ENV, infinia_dataset_, nullptr, true);
+
+    // TOML [infinia] overrides for tuning parameters only if not explicitly set via backend params
+    applyConfigOverride<uint32_t>("infinia.sthreads", infinia_sthreads_, &infinia_sthreads_set_);
+
+    applyConfigOverride<uint32_t>(
+        "infinia.num_buffers", infinia_num_buffers_, &infinia_num_buffers_set_);
+
+    applyConfigOverride<uint32_t>(
+        "infinia.num_ring_entries", infinia_num_ring_entries_, &infinia_num_ring_entries_set_);
+
+    applyConfigOverride<std::string>(
+        "infinia.coremasks", infinia_coremasks_, &infinia_coremasks_set_);
+
+    applyConfigOverride<uint32_t>(
+        "infinia.max_retries", batch_config_.max_retries, &batch_max_retries_set_);
+
+    applyConfigOverride<uint32_t>("infinia.batch_size", batch_config_.batch_size, &batch_size_set_);
+
+    applyConfigOverride<bool>("infinia.use_dmabuf", use_dmabuf_, &use_dmabuf_set_);
 
     // Set default params if not provided
     if (infinia_cluster_.empty()) {
@@ -405,6 +363,22 @@ infinia_engine::infinia_engine(const nixlBackendInitParams *init_params)
     if (!infinia_coremasks_set_ && infinia_coremasks_.empty()) {
         infinia_coremasks_ = INFINIA_DEFAULT_COREMASK;
     }
+
+    NIXL_DEBUG << absl::StrFormat(
+        "INFINIA effective config: cluster=%s tenant=%s subtenant=%s dataset=%s "
+        "sthreads=%u num_buffers=%u num_ring_entries=%u coremasks=%s use_dmabuf=%s "
+        "max_retries=%zu batch_size=%zu",
+        infinia_cluster_.c_str(),
+        infinia_tenant_.c_str(),
+        infinia_subtenant_.c_str(),
+        infinia_dataset_.c_str(),
+        infinia_sthreads_,
+        infinia_num_buffers_,
+        infinia_num_ring_entries_,
+        infinia_coremasks_.c_str(),
+        use_dmabuf_ ? "true" : "false",
+        batch_config_.max_retries,
+        batch_config_.batch_size);
 
     client_ = std::make_shared<InfiniaClient>(infinia_cluster_,
                                               infinia_tenant_,
@@ -440,6 +414,126 @@ infinia_engine::~infinia_engine() {
 
     NIXL_DEBUG << "Infinia backend destroyed";
 }
+
+#ifdef HAVE_CUDA
+nixl_status_t
+infinia_engine::registerGpuMemoryDmabuf(const nixlBlobDesc &mem, nixlInfiniaMetadata *metadata) {
+    if (!use_dmabuf_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    cudaDeviceGuard device_guard;
+
+    CUdeviceptr dev_ptr = (CUdeviceptr)mem.addr;
+    int dmabuf_fd = -1;
+    void *buffer = reinterpret_cast<void *>(mem.addr);
+
+    cudaError_t cuda_err = cudaSetDevice(mem.devId);
+    if (cuda_err != cudaSuccess) {
+        NIXL_WARN << absl::StrFormat("Failed to set CUDA device %d: %s, "
+                                     "falling back to traditional registration",
+                                     (int)mem.devId,
+                                     cudaGetErrorString(cuda_err));
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    int supported = 0;
+    CUdevice cuda_dev;
+    CUresult cu_res = cuDeviceGet(&cuda_dev, mem.devId);
+    if (cu_res == CUDA_SUCCESS) {
+        cu_res = cuDeviceGetAttribute(&supported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, cuda_dev);
+    }
+    if (cu_res != CUDA_SUCCESS || !supported) {
+        NIXL_DEBUG << "DMA-BUF not supported on this GPU, using traditional registration";
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    static size_t host_page_size = sysconf(_SC_PAGESIZE);
+    bool is_aligned = (mem.len % host_page_size) == 0 && ((mem.addr % host_page_size) == 0);
+
+    if (!is_aligned) {
+        NIXL_WARN << absl::StrFormat(
+            "GPU memory not page-aligned (addr=0x%lx, size=%zu, page_size=%zu), "
+            "falling back to traditional registration",
+            mem.addr,
+            mem.len,
+            host_page_size);
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    cu_res = cuMemGetHandleForAddressRange(
+        &dmabuf_fd, dev_ptr, mem.len, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
+
+    if (cu_res != CUDA_SUCCESS || dmabuf_fd < 0) {
+        NIXL_WARN << absl::StrFormat("Failed to export GPU memory to DMA-BUF (CUDA error=%d), "
+                                     "falling back to traditional registration",
+                                     (int)cu_res);
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+
+    NIXL_DEBUG << absl::StrFormat("Exported GPU memory to DMA-BUF: fd=%d, addr=0x%lx, size=%zu",
+                                  dmabuf_fd,
+                                  mem.addr,
+                                  mem.len);
+
+    red_status_t rs =
+        red_async::red_config_t::register_user_dmabuf(dmabuf_fd, // DMA-BUF file descriptor
+                                                      0, // offset
+                                                      buffer, // IOVA (GPU virtual address)
+                                                      mem.len, // length
+                                                      &metadata->iomem_handle // output handle
+        );
+
+    if (rs == RED_SUCCESS) {
+        metadata->dmabuf_fd = dmabuf_fd;
+        NIXL_DEBUG << absl::StrFormat("Successfully registered GPU memory via DMA-BUF "
+                                      "(fd=%d devId=0x%lx addr=%p len=%zu key=\'%s\'",
+                                      dmabuf_fd,
+                                      metadata->devId,
+                                      metadata->buffer,
+                                      metadata->length,
+                                      metadata->objKey.c_str());
+        return NIXL_SUCCESS;
+    } else {
+        NIXL_ERROR << absl::StrFormat(
+            "Failed to register DMA-BUF memory (fd=%d, addr=%p, size=%zu): status=%d",
+            dmabuf_fd,
+            buffer,
+            mem.len,
+            static_cast<int>(rs));
+        close(dmabuf_fd);
+        return NIXL_ERR_BACKEND;
+    }
+}
+
+nixl_status_t
+infinia_engine::unregisterDmabuf(nixlInfiniaMetadata *metadata) {
+    if (metadata->dmabuf_fd < 0) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    red_status_t rs = red_async::red_config_t::unregister_user_iomem(metadata->iomem_handle);
+    nixl_status_t result = NIXL_SUCCESS;
+
+    if (rs != RED_SUCCESS) {
+        NIXL_ERROR << absl::StrFormat("Failed to unregister DMA-BUF memory (fd=%d): status=%d",
+                                      metadata->dmabuf_fd,
+                                      static_cast<int>(rs));
+        result = NIXL_ERR_BACKEND;
+    } else {
+        NIXL_DEBUG << absl::StrFormat("Successfully unregistered DMA-BUF memory (fd=%d)",
+                                      metadata->dmabuf_fd);
+    }
+
+    if (close(metadata->dmabuf_fd) != 0) {
+        NIXL_WARN << absl::StrFormat(
+            "Failed to close DMA-BUF fd=%d: %s", metadata->dmabuf_fd, strerror(errno));
+    }
+    metadata->dmabuf_fd = -1;
+
+    return result;
+}
+#endif
 
 bool
 infinia_engine::validateTransferParams(const nixl_xfer_op_t &operation,
@@ -524,19 +618,35 @@ infinia_engine::registerMem(const nixlBlobDesc &mem,
         // Only register if not a probe call (addr/len are valid)
         if (mem.addr != 0 && mem.len != 0) {
             void *buffer = reinterpret_cast<void *>(mem.addr);
+            red_status_t rs;
 
-            // Determine memory type based on nixl_mem
+#ifdef HAVE_CUDA
+            // Try DMA-BUF registration for GPU memory if enabled
+            if (nixl_mem == VRAM_SEG) {
+                nixl_status_t dmabuf_status = registerGpuMemoryDmabuf(mem, metadata.get());
+
+                if (dmabuf_status == NIXL_SUCCESS) {
+                    out = metadata.release();
+                    return NIXL_SUCCESS;
+                }
+
+                if (dmabuf_status != NIXL_ERR_NOT_SUPPORTED) {
+                    return dmabuf_status;
+                }
+            }
+#endif
+            // Traditional registration for DRAM or non-DMA-BUF GPU memory
             red_memory_types_e mem_type =
                 (nixl_mem == VRAM_SEG) ? RED_MEMORY_TYPE_GPU : RED_MEMORY_TYPE_CPU;
 
-            red_status_t rs = red_async::red_config_t::register_user_memory(
+            rs = red_async::red_config_t::register_user_memory(
                 buffer, mem.len, &metadata->iomem_handle, mem_type);
 
             if (rs != RED_SUCCESS) {
-                NIXL_ERROR << absl::StrFormat("Failed to register memory (%p, size=%zu): %s",
+                NIXL_ERROR << absl::StrFormat("Failed to register memory (%p, size=%zu): status=%d",
                                               buffer,
                                               mem.len,
-                                              red_strerror(rs));
+                                              static_cast<int>(rs));
                 return NIXL_ERR_BACKEND;
             }
         }
@@ -573,22 +683,34 @@ infinia_engine::deregisterMem(nixlBackendMD *meta) {
     // Remove from mapping (thread-safe)
     devid_to_key_map_.erase(infinia_meta->devId);
 
+    nixl_status_t deregister_status = NIXL_SUCCESS;
+
     if ((infinia_meta->nixlMem == VRAM_SEG || infinia_meta->nixlMem == DRAM_SEG) &&
         infinia_meta->buffer != nullptr) {
 
-        red_status_t rs = red_async::red_config_t::unregister_user_memory(infinia_meta->buffer);
-        if (rs != RED_SUCCESS) {
-            NIXL_ERROR << absl::StrFormat(
-                "Failed to unregister memory (%p): %s", infinia_meta->buffer, red_strerror(rs));
-            // Continue with cleanup even if unregistration fails
-        } else {
-            NIXL_DEBUG << absl::StrFormat("Successfully unregistered memory (%p)",
-                                          infinia_meta->buffer);
+#ifdef HAVE_CUDA
+        // If registered via DMA-BUF, use helper function
+        if (infinia_meta->dmabuf_fd >= 0) {
+            deregister_status = unregisterDmabuf(infinia_meta.get());
+        } else
+#endif
+        {
+            // Traditional unregistration for DRAM or non-DMA-BUF GPU memory
+            red_status_t rs = red_async::red_config_t::unregister_user_memory(infinia_meta->buffer);
+            if (rs != RED_SUCCESS) {
+                NIXL_ERROR << absl::StrFormat("Failed to unregister memory (%p): status=%d",
+                                              infinia_meta->buffer,
+                                              static_cast<int>(rs));
+                deregister_status = NIXL_ERR_BACKEND;
+            } else {
+                NIXL_DEBUG << absl::StrFormat("Successfully unregistered memory (%p)",
+                                              infinia_meta->buffer);
+            }
         }
     }
 
     // Smart pointer automatically deletes the object.
-    return NIXL_SUCCESS;
+    return deregister_status;
 }
 
 nixl_status_t
@@ -639,7 +761,7 @@ infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
 
         // Build HEAD operation with stat buffer
         red_async::red_batch_operation_t op;
-        op.operation_type = red_async::RED_ASYNC_OP_HEAD;
+        op.operation_type = red_async::RED_ASYNC_OP_CACHE_HEAD;
         op.key = keys.back().c_str();
         op.key_len = static_cast<uint32_t>(keys.back().length());
         op.offset = 0;
@@ -657,7 +779,7 @@ infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
     // Execute the batch ops in parallel
     red_status_t rs = batch_task.start();
     if (rs != RED_SUCCESS) {
-        NIXL_ERROR << "Failed to start HEAD batch: " << red_strerror(rs);
+        NIXL_ERROR << "Failed to start HEAD batch: status=" << static_cast<int>(rs);
         return NIXL_ERR_BACKEND;
     }
 
@@ -684,9 +806,9 @@ infinia_engine::queryMem(const nixl_reg_dlist_t &descs,
                                           keys[op_idx].c_str());
         } else {
             // Other error - treat as key not found
-            NIXL_WARN << absl::StrFormat("HEAD operation for key '%s' failed: %s",
+            NIXL_WARN << absl::StrFormat("HEAD operation for key '%s' failed: status=%d",
                                          keys[op_idx].c_str(),
-                                         red_strerror(op_result.status));
+                                         static_cast<int>(op_result.status));
             resp[desc_idx] = std::nullopt;
         }
     }
@@ -835,8 +957,8 @@ infinia_engine::prepXfer(const nixl_xfer_op_t &operation,
 
             // Determine operation type
             red_async::red_async_op_type_t op_type = (operation == NIXL_READ) ?
-                red_async::RED_ASYNC_OP_GET :
-                red_async::RED_ASYNC_OP_PUT;
+                red_async::RED_ASYNC_OP_CACHE_GET :
+                red_async::RED_ASYNC_OP_CACHE_PUT;
 
             // Add operation directly to the batch task
             backend_handle->addOperation(
@@ -844,7 +966,7 @@ infinia_engine::prepXfer(const nixl_xfer_op_t &operation,
 
             NIXL_DEBUG << absl::StrFormat(
                 "INFINIA: ADDED OPERATION op=%s key='%s' addr=%p size=%zu mem_type=%s",
-                op_type == red_async::RED_ASYNC_OP_GET ? "GET" : "PUT",
+                op_type == red_async::RED_ASYNC_OP_CACHE_GET ? "GET" : "PUT",
                 key.c_str(),
                 val,
                 local_it->len,
@@ -932,54 +1054,6 @@ infinia_engine::releaseReqH(nixlBackendReqH *handle) const {
 
     // Futures are automatically released when handle is deleted
     delete handle;
-    return NIXL_SUCCESS;
-}
-
-// Remote operation methods
-nixl_status_t
-infinia_engine::getPublicData(const nixlBackendMD *meta, std::string &str) const {
-    if (!initialized_) {
-        return NIXL_ERR_BACKEND;
-    }
-
-    // TODO: Serialize metadata for remote access
-    str = "infinia_metadata_placeholder";
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
-infinia_engine::getConnInfo(std::string &str) const {
-    if (!initialized_) {
-        return NIXL_ERR_BACKEND;
-    }
-
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
-infinia_engine::loadRemoteConnInfo(const std::string &remote_agent,
-                                   const std::string &remote_conn_info) {
-    if (!initialized_) {
-        return NIXL_ERR_BACKEND;
-    }
-
-    // TODO: Parse and store remote connection information
-    NIXL_DEBUG << "Ignoring remote connection info for " << remote_agent;
-    return NIXL_SUCCESS;
-}
-
-nixl_status_t
-infinia_engine::loadRemoteMD(const nixlBlobDesc &input,
-                             const nixl_mem_t &nixl_mem,
-                             const std::string &remote_agent,
-                             nixlBackendMD *&output) {
-    if (!initialized_) {
-        return NIXL_ERR_BACKEND;
-    }
-
-    // TODO: Create remote metadata object
-    NIXL_DEBUG << "Ignoring remote metadata for " << remote_agent;
-    output = nullptr;
     return NIXL_SUCCESS;
 }
 
@@ -1153,7 +1227,7 @@ nixlInfiniaBackendReqH::postTransfer() {
             NIXL_ERROR << "BatchTask already started or invalid state";
             return NIXL_ERR_INVALID_PARAM;
         } else {
-            NIXL_ERROR << "Failed to start batch: " << red_strerror(rs);
+            NIXL_ERROR << "Failed to start batch: status=" << static_cast<int>(rs);
             return NIXL_ERR_BACKEND;
         }
     }
@@ -1193,9 +1267,8 @@ nixlInfiniaBackendReqH::checkTransfer() {
 
         if (failed_operations > 0) {
             NIXL_WARN << absl::StrFormat(
-                "INFINIA: ERROR rs=%d (%s) total=%zu success=%zu failed=%zu",
+                "INFINIA: TRANSFER ERROR rs=%d total=%zu success=%zu failed=%zu",
                 result.overall_status,
-                red_strerror(result.overall_status),
                 total_operations,
                 successful_operations,
                 failed_operations);
@@ -1210,12 +1283,12 @@ nixlInfiniaBackendReqH::checkTransfer() {
                         idx < result.operation_results.size()) {
                         const auto &op_result = result.operation_results[idx];
                         NIXL_WARN << absl::StrFormat(
-                            "  Failed op[%zu]: key=\"%s\", operation=%s, status=%d (%s)",
+                            "  Failed op[%zu]: key=\"%s\", operation=%s, status=%d",
                             idx,
                             op_result.key.c_str(),
-                            op_result.operation_type == red_async::RED_ASYNC_OP_GET ? "GET" : "PUT",
-                            op_result.status,
-                            red_strerror(op_result.status));
+                            op_result.operation_type == red_async::RED_ASYNC_OP_CACHE_GET ? "GET" :
+                                                                                            "PUT",
+                            op_result.status);
                         logged_failures++;
                     }
                 }
@@ -1234,7 +1307,7 @@ nixlInfiniaBackendReqH::checkTransfer() {
         // Reset BatchTask state for potential reuse (allows reposting)
         red_status_t reset_rs = batch_task_.reset_state();
         if (reset_rs != RED_SUCCESS) {
-            NIXL_WARN << "Failed to reset BatchTask state: " << red_strerror(reset_rs);
+            NIXL_WARN << "Failed to reset BatchTask state: status=" << static_cast<int>(reset_rs);
         }
 
         // Mark transfer as completed (allows reposting)

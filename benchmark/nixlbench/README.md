@@ -514,6 +514,9 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 # Basic UCX benchmark with VRAM transfers
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 
+# UCX benchmark with VMM memory localized to locality domain 0 (use 1 for domain 1)
+./nixlbench --etcd_endpoints http://etcd-server:2379 --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM --enable_vmm --use_localized=0
+
 # Storage benchmark with GDS backend
 ./nixlbench --etcd_endpoints http://etcd-server:2379 --backend GDS --filepath /mnt/storage/testfile
 
@@ -562,8 +565,21 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --num_target_dev NUM       # Number of devices in target processes (default: 1)
 --enable_pt                # Enable progress thread (only used with nixl worker)
 --progress_threads NUM     # Number of progress threads (default: 0)
---enable_vmm               # Enable VMM memory allocation when DRAM is requested
+--enable_vmm               # Enable VMM memory allocation for VRAM buffers
+--vmm_gdr_capable BOOL     # Set gpuDirectRDMACapable for non-localized VMM(default: true)
+--use_localized DOMAIN     # VMM locality: -1 disabled, 0 domain 0, 1 domain 1; requires --enable_vmm
 ```
+
+`--vmm_gdr_capable` only controls non-localized VMM allocations. Explicit
+locality-domain allocations always use `gpuDirectRDMACapable=0`. Use
+`--enable_vmm --use_localized=-1 --vmm_gdr_capable=0` when placement is
+provided by CUDA MPS locality-domain devices; setting the GDR-capable flag opts
+such allocations out of that placement.
+
+To transfer from both locality domains concurrently, launch two two-worker benchmark groups with
+distinct `--benchmark_group` values. Select domain 0 in one group and domain 1 in the other.
+Each process then has one memory location and one independent backend worker. Physical CUDA
+devices can differ between the initiator and target processes.
 
 #### Device and Network Configuration
 ```
@@ -650,32 +666,24 @@ Note: storage_enable_direct is automatically enabled for GUSLI backend
 
 **INFINIA Backend:**
 ```
---infinia_config_file PATH             # Path to INFINIA plugin configuration file (simple key=value format)
+No INFINIA-specific command-line options. The plugin is configured through
+RED_* environment variables or NIXL's common TOML configuration (NIXL_CONFIG_FILE).
 
-INFINIA Config File Format:
-  Simple key=value format (one parameter per line, comments start with #)
+  Environment / top-level TOML keys:
+    RED_CLUSTER=NAME                   # Infinia cluster name
+    RED_TENANT=NAME[/SUBTENANT]        # Tenant name, optionally with subtenant
+    RED_DATASET=NAME                   # Dataset name
 
-  Required Parameters:
-    cluster=NAME                       # Infinia cluster name
-    tenant=NAME                        # Tenant name
-    dataset=NAME                       # Dataset name
+  [infinia] TOML table (optional tuning):
+    sthreads = NUM                     # Number of service threads (default: 8)
+    num_buffers = NUM                  # Pre-allocated deferred operation buffers for async ops (default: 512)
+    num_ring_entries = NUM             # Depth of the asynchronous I/O ring buffer (default: 512)
+    coremasks = "VALUE"                # CPU affinity: hex ("0x0F") or list ("0-3,8") (default: "0x2")
+    use_dmabuf = BOOL                  # Use DMA-BUF for GPU memory registration (default: true)
+    max_retries = NUM                  # BatchTask retry limit (default: library default)
+    batch_size = NUM                   # Async operations per batch (default: library default)
 
-  Optional Parameters:
-    subtenant=NAME                     # Subtenant (default: "red")
-    sthreads=NUM                       # Number of service threads (default: 8, limited by CPU cores)
-    num_buffers=NUM                    # Pre-allocated deferred operation buffers for async ops (default: 512)
-    num_ring_entries=NUM               # Depth of the asynchronous I/O ring buffer (default: 512)
-    coremasks=VALUE                    # CPU affinity: hex ("0x0F"), list ("[0-3,8]"), or empty disables (default: "")
-    max_retries=NUM                    # BatchTask retry limit (default: 3)
-
-Example INFINIA config file:
-  # INFINIA configuration
-  cluster=my_cluster
-  tenant=my_tenant
-  dataset=my_dataset
-  sthreads=8
-  num_buffers=512
-  num_ring_entries=512
+See src/plugins/infinia/infinia_example.conf for a complete example.
 ```
 
 ### Configuration File
@@ -868,27 +876,28 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 
 **INFINIA Backend:**
 
-INFINIA uses a simple key=value configuration file passed via the `--infinia_config_file` parameter.
+INFINIA reads its settings from `RED_*` environment variables or from NIXL's common TOML configuration file pointed to by `NIXL_CONFIG_FILE`.
 
 ```bash
-# Step 1: Create INFINIA plugin config file (infinia.conf)
-cat > infinia.conf << EOF
-# INFINIA configuration
-cluster=my_cluster
-tenant=my_tenant
-dataset=my_dataset
-sthreads=8
-num_buffers=512
-num_ring_entries=512
+# Step 1: Create a NIXL TOML config file for the INFINIA plugin (nixl-infinia.toml)
+cat > nixl-infinia.toml << EOF
+RED_CLUSTER = "my_cluster"
+RED_TENANT = "my_tenant"
+RED_DATASET = "my_dataset"
+
+[infinia]
+sthreads = 8
+num_buffers = 512
+num_ring_entries = 512
 EOF
+export NIXL_CONFIG_FILE=$PWD/nixl-infinia.toml
 
 # Step 2: Run basic INFINIA benchmark (no ETCD needed for single instance)
-./nixlbench --backend INFINIA --infinia_config_file infinia.conf
+./nixlbench --backend INFINIA
 
 # Step 3: Or use a nixlbench TOML config file
 cat > nixlbench.toml << EOF
 backend = "INFINIA"
-infinia_config_file = "infinia.conf"
 initiator_seg_type = "DRAM"
 target_seg_type = "DRAM"
 total_buffer_size = 67108864
@@ -900,7 +909,6 @@ EOF
 # Command-line only approach
 ./nixlbench \
   --backend INFINIA \
-  --infinia_config_file infinia.conf \
   --initiator_seg_type DRAM \
   --target_seg_type DRAM \
   --num_iter 16

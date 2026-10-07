@@ -290,6 +290,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         } else {
             std::cout << "OBJ backend with standard S3 enabled" << std::endl;
         }
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_REDIS)) {
+        // REDIS backend: host/port/password via REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
+        std::cout << "REDIS backend configured (using defaults or environment variables)"
+                  << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
         if (!xferBenchConfig::storage_enable_direct) {
@@ -344,16 +348,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INFINIA)) {
-        // INFINIA backend - configuration via config file
-        if (!xferBenchConfig::infinia_config_file.empty()) {
-            backend_params["config_file"] = xferBenchConfig::infinia_config_file;
-            std::cout << "INFINIA backend with config file: "
-                      << xferBenchConfig::infinia_config_file << std::endl;
-        } else {
-            std::cout << "INFINIA backend (plugin will use environment variables or defaults)"
-                      << std::endl;
-            std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
-        }
+        // INFINIA backend - configuration via RED_* environment variables or NIXL_CONFIG_FILE
+        std::cout << "INFINIA backend (plugin will use RED_* environment variables, "
+                     "NIXL_CONFIG_FILE, or defaults)"
+                  << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -607,10 +605,30 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
     CUmemAccessDesc access = {};
 
     prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-    prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
-    prop.allocFlags.gpuDirectRDMACapable = 1;
-    prop.location.id = devid;
-    prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+#if HAVE_CUDA_LOCALITY_DOMAIN
+    if (xferBenchConfig::use_localized >= 0) {
+        // Locality-domain allocations cannot also request GPUDirect RDMA
+        // capability. Match UCX perftest's cuda-localized allocator.
+        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE_LOCALITY_DOMAIN;
+        prop.location.localized.deviceId = static_cast<unsigned char>(devid);
+        prop.location.localized.localityDomainId =
+            static_cast<unsigned char>(xferBenchConfig::use_localized);
+        // NIXLBench uses this allocation across nodes, so it must remain
+        // exportable through CUDA fabric even though it is not GDR-capable.
+        prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+        prop.allocFlags.gpuDirectRDMACapable = 0;
+        std::cout << "VMM allocation: GPU " << devid << ", locality domain "
+                  << xferBenchConfig::use_localized << std::endl;
+    } else
+#endif
+    {
+        prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+        prop.allocFlags.gpuDirectRDMACapable = xferBenchConfig::vmm_gdr_capable ? 1 : 0;
+        prop.location.id = devid;
+        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        std::cout << "VMM allocation: GPU " << devid << ", non-localized, gpuDirectRDMACapable="
+                  << static_cast<int>(prop.allocFlags.gpuDirectRDMACapable) << std::endl;
+    }
 
     // Get the allocation granularity
     size_t granularity = 0;
@@ -1042,7 +1060,37 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
     opt_args.backends.push_back(backend_engine);
 
-    if (xferBenchConfig::isObjStorageBackend()) {
+    // REDIS stays an independent backend (putRedis seeding), but remote values
+    // use OBJ_SEG addressing semantics. Handle it before isObjStorageBackend()
+    // so REDIS does not enter the S3/Azure putObj registration path.
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        uint64_t timestamp = tv.tv_sec * 1000000ULL + tv.tv_usec;
+
+        for (int list_idx = 0; list_idx < num_threads; list_idx++) {
+            std::vector<xferBenchIOV> iov_list;
+            for (i = 0; i < num_devices; i++) {
+                std::string unique_name = "nixlbench_redis" + std::to_string(list_idx) + "_" +
+                    std::to_string(i) + "_" + std::to_string(timestamp);
+
+                if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+                    const size_t seed_size = xferBenchConfig::max_block_size;
+                    if (!xferBenchUtils::putRedis(seed_size, unique_name)) {
+                        std::cerr << "Failed to seed Redis key: " << unique_name << std::endl;
+                        exit(EXIT_FAILURE);
+                    }
+                }
+
+                xferBenchIOV redis_desc(0, buffer_size, i, unique_name);
+                std::cout << "Creating Redis key: " << unique_name << std::endl;
+                iov_list.push_back(redis_desc);
+            }
+            nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, OBJ_SEG);
+            CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem failed");
+            remote_regs_.emplace_back(*agent, backend_engine, OBJ_SEG, std::move(iov_list));
+        }
+    } else if (xferBenchConfig::isObjStorageBackend()) {
         buffer_size = xferBenchConfig::max_block_size;
 
         struct timeval tv;
@@ -1316,6 +1364,13 @@ xferBenchNixlWorker::exchangeMetadata() {
     return ret;
 }
 
+/**
+ * Build remote transfer IOV lists for storage backends, or exchange them with the peer.
+ *
+ * @param local_iovs Per-thread local transfer IOV lists, including batched descriptors.
+ * @param block_size Transfer block size in bytes for storage backends.
+ * @return Remote IOV lists for storage backends or the initiator; empty on peer targets.
+ */
 std::vector<std::vector<xferBenchIOV>>
 xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iovs,
                                  size_t block_size) {
@@ -1331,9 +1386,14 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
             size_t num_devices = iov_list.size();
             for (size_t devidx = 0; devidx < num_devices; devidx++) {
                 const auto &iov = iov_list[devidx];
-                if (xferBenchConfig::isObjStorageBackend()) {
+                if (XFERBENCH_BACKEND_REDIS == xferBenchConfig::backend) {
+                    xferBenchIOV redis_remote(iov);
+                    redis_remote.addr = 0;
+                    redis_remote.len = block_size;
+                    remote_iov_list.push_back(redis_remote);
+                } else if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
-                    int obj_dev_id = list_idx * num_devices + devidx;
+                    int obj_dev_id = list_idx * xferBenchConfig::num_initiator_dev + iov.devId;
                     basic_desc = initBasicDescObj(iov.len, obj_dev_id, iov.metaInfo);
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
