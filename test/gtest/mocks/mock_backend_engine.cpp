@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +22,9 @@ namespace mocks {
 MockBackendEngine::MockBackendEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params),
       gmock_backend_engine(GMockBackendEngine::GetFromParams(init_params->customParams)),
-      sharedState(1) {}
+      sharedState(1) {
+    gmock_backend_engine->observeTraceSink(init_params->traceSink);
+}
 
 nixl_status_t
 MockBackendEngine::registerMem(const nixlBlobDesc &mem,
@@ -64,6 +66,7 @@ MockBackendEngine::prepXfer(const nixl_xfer_op_t &operation,
                             nixlBackendReqH *&handle,
                             const nixl_opt_b_args_t *opt_args) const {
     assert(sharedState > 0);
+    gmock_backend_engine->observeTraceContext(opt_args);
     return gmock_backend_engine->prepXfer(operation, local, remote, remote_agent, handle, opt_args);
 }
 
@@ -75,6 +78,7 @@ MockBackendEngine::postXfer(const nixl_xfer_op_t &operation,
                             nixlBackendReqH *&handle,
                             const nixl_opt_b_args_t *opt_args) const {
     assert(sharedState > 0);
+    gmock_backend_engine->observeTraceContext(opt_args);
     return gmock_backend_engine->postXfer(operation, local, remote, remote_agent, handle, opt_args);
 }
 
@@ -88,6 +92,20 @@ nixl_status_t
 MockBackendEngine::releaseReqH(nixlBackendReqH *handle) const {
     assert(sharedState > 0);
     return gmock_backend_engine->releaseReqH(handle);
+}
+
+nixl_status_t
+MockBackendEngine::prepMemView(const nixl_meta_dlist_t &dlist,
+                               nixlMemViewH &mvh,
+                               const nixl_opt_b_args_t *opt_args) const {
+    assert(sharedState > 0);
+    return gmock_backend_engine->prepMemView(dlist, mvh, opt_args);
+}
+
+void
+MockBackendEngine::releaseMemView(nixlMemViewH mvh) const {
+    assert(sharedState > 0);
+    gmock_backend_engine->releaseMemView(mvh);
 }
 
 nixl_status_t
@@ -122,6 +140,28 @@ nixl_status_t
 MockBackendEngine::genNotif(const std::string &remote_agent, const std::string &msg) const {
     assert(sharedState > 0);
     return gmock_backend_engine->genNotif(remote_agent, msg);
+}
+
+nixl_status_t
+MockBackendEngine::queryMem(const nixl_reg_dlist_t &descs,
+                            std::vector<nixl_query_resp_t> &resp) const {
+    assert(sharedState > 0);
+    return gmock_backend_engine->queryMem(descs, resp);
+}
+
+nixl_status_t
+MockBackendEngine::estimateXferCost(const nixl_xfer_op_t &operation,
+                                    const nixl_meta_dlist_t &local,
+                                    const nixl_meta_dlist_t &remote,
+                                    const std::string &remote_agent,
+                                    nixlBackendReqH *const &handle,
+                                    std::chrono::microseconds &duration,
+                                    std::chrono::microseconds &err_margin,
+                                    nixl_cost_t &method,
+                                    const nixl_opt_args_t *extra_params) const {
+    assert(sharedState > 0);
+    return gmock_backend_engine->estimateXferCost(
+        operation, local, remote, remote_agent, handle, duration, err_margin, method, extra_params);
 }
 
 } // namespace mocks

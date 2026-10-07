@@ -19,13 +19,22 @@
 
 namespace mocks {
 
-nixl_b_params_t custom_params;
+nixl_b_params_t custom_params{};
 const nixlBackendInitParams init_params{.customParams = &custom_params};
 const std::string gmock_engine_key = "gmock_engine_key";
 char gmock_dummy_mvh;
 
-GMockBackendEngine::GMockBackendEngine() : nixlBackendEngine(&init_params) {
+GMockBackendEngine::GMockBackendEngine() : GMockBackendEngine(&init_params) {}
+
+GMockBackendEngine::GMockBackendEngine(const nixlBackendInitParams *init_params)
+    : nixlBackendEngine(init_params) {
+    setDefaults();
+}
+
+void
+GMockBackendEngine::setDefaults() {
     using testing::Return;
+    using testing::A;
     using testing::_;
 
     ON_CALL(*this, supportsRemote()).WillByDefault(Return(true));
@@ -41,7 +50,7 @@ GMockBackendEngine::GMockBackendEngine() : nixlBackendEngine(&init_params) {
     ON_CALL(*this, postXfer(_, _, _, _, _, _)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, checkXfer(_)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, releaseReqH(_)).WillByDefault(Return(NIXL_SUCCESS));
-    ON_CALL(*this, prepMemView(_, _, _))
+    ON_CALL(*this, prepMemView(A<const nixl_remote_meta_dlist_t &>(), _, _))
         .WillByDefault(
             [](const nixl_remote_meta_dlist_t &, nixlMemViewH &mvh, const nixl_opt_b_args_t *) {
                 mvh = &gmock_dummy_mvh;
@@ -57,11 +66,53 @@ GMockBackendEngine::GMockBackendEngine() : nixlBackendEngine(&init_params) {
     ON_CALL(*this, loadLocalMD(_, _)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, getNotifs(_)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, genNotif(_, _)).WillByDefault(Return(NIXL_SUCCESS));
+    setOptionalDefaults();
+}
+
+void
+GMockBackendEngine::setOptionalDefaults() {
+    using testing::A;
+    using testing::Return;
+    using testing::_;
+
+    ON_CALL(*this, prepMemView(A<const nixl_meta_dlist_t &>(), _, _))
+        .WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
+    ON_CALL(*this, queryMem(_, _)).WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
+    ON_CALL(*this, estimateXferCost(_, _, _, _, _, _, _, _, _))
+        .WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
 }
 
 void
 GMockBackendEngine::SetToParams(nixl_b_params_t &params) const {
     params[gmock_engine_key] = std::to_string(reinterpret_cast<uintptr_t>(this));
+}
+
+void
+GMockBackendEngine::observeTraceSink(const nixlBackendTraceSink *sink) {
+    const std::lock_guard lock(observedMutex_);
+    observedTraceSink_ = sink;
+}
+
+void
+GMockBackendEngine::observeTraceContext(const nixl_opt_b_args_t *opt_args) {
+    const std::lock_guard lock(observedMutex_);
+    if (opt_args != nullptr && opt_args->traceContext != nullptr) {
+        observedTraceContext_ = *opt_args->traceContext;
+    } else {
+        observedTraceContext_.reset();
+    }
+}
+
+std::optional<const nixlBackendTraceSink *>
+GMockBackendEngine::observedTraceSink() const {
+    const std::lock_guard lock(observedMutex_);
+    return observedTraceSink_;
+}
+
+std::optional<nixl::trace::TraceContext>
+GMockBackendEngine::observedTraceContext() const {
+    const std::lock_guard lock(observedMutex_);
+    return observedTraceContext_;
 }
 
 GMockBackendEngine *

@@ -20,9 +20,11 @@
 
 #include <vector>
 #include <deque>
+#include <limits>
 #include <string>
 #include <functional>
 #include <mutex>
+#include <shared_mutex>
 #include <atomic>
 #include <thread>
 #include <ostream>
@@ -439,14 +441,22 @@ public:
     nixl_status_t
     deregisterMemory(struct fid_mr *mr) const;
 
-    // Address vector management methods
-    /** Insert remote endpoint address into address vector */
-    nixl_status_t
-    insertAddress(const void *addr, fi_addr_t *fi_addr_out) const;
+    /** Sentinel for "no agent is mapped to this fi_addr". */
+    static constexpr uint32_t kUnknownAgentIdx = std::numeric_limits<uint32_t>::max();
 
-    /** Remove address from address vector */
+    // Address vector management methods
+    /** Insert remote endpoint address into address vector, and map it to agent_idx */
+    nixl_status_t
+    insertAddress(const void *addr, uint32_t agent_idx, fi_addr_t *fi_addr_out) const;
+
+    /** Remove address from address vector, and drop its source-address mapping */
     nixl_status_t
     removeAddress(fi_addr_t fi_addr) const;
+
+    /** Resolve a fi_cq_readfrom() source address to a local agent index. Returns
+     *  kUnknownAgentIdx if it is FI_ADDR_NOTAVAIL or unmapped; callers must then drop it. */
+    [[nodiscard]] uint32_t
+    resolveSourceAddress(fi_addr_t src_addr) const;
 
     // Memory descriptor helper methods
     /** Get libfabric memory descriptor for MR */
@@ -503,11 +513,10 @@ public:
     // Callback registration methods
     /** Set callback for notification message processing.
      *  Signature: (serialized_notif, sender_agent_idx_in_our_table).
-     *  sender_agent_idx is the agent_idx field decoded from the fi_senddata's
-     *  imm_data — the sender's local index in our agent_names_ table, which
-     *  the sender learned via NIXL_LIBFABRIC_MSG_HANDSHAKE. */
+     *  sender_agent_idx is the sender's local index in our agent_names_ table,
+     *  resolved from the completion's source address via resolveSourceAddress(). */
     void
-    setNotificationCallback(std::function<void(const std::string &, uint16_t)> callback);
+    setNotificationCallback(std::function<void(const std::string &, uint32_t)> callback);
 
     /** Set callback for handshake-message processing.
      *  Called with the serialized handshake payload on receipt of a
@@ -542,11 +551,11 @@ public:
     initPostQueue(size_t post_queue_size);
 
     /** Set callback for XFER_ID tracking.
-     *  Signature: (imm_data, sender_agent_idx_in_our_table). sender_agent_idx
-     *  is decoded from the imm_data the sender shipped with fi_writemsg (with remote completion),
-     *  via the handshake-negotiated agent_idx encoding. */
+     *  Signature: (imm_data, sender_agent_idx_in_our_table). sender_agent_idx is
+     *  resolved from the source address of the fi_writemsg (with remote completion)
+     *  completion; imm_data supplies only the message type and XFER_ID. */
     void
-    setXferIdCallback(std::function<void(uint64_t, uint16_t)> callback);
+    setXferIdCallback(std::function<void(uint64_t, uint32_t)> callback);
 
     /** Set callback for transfer-error messages from an initiator.
      *  Signature: (xfer_id, sender_agent_idx_in_our_table, final_completions).
@@ -554,7 +563,7 @@ public:
      *  the transfer failed on the initiator and that only final_completions of its writes will
      *  ever arrive. */
     void
-    setXferErrorCallback(std::function<void(uint16_t, uint16_t, uint32_t)> callback);
+    setXferErrorCallback(std::function<void(uint16_t, uint32_t, uint32_t)> callback);
 
     // Optimized resource management methods
     /** Allocate control request with size validation */
@@ -584,7 +593,15 @@ private:
     struct fid_cq *cq; // from rail_cqs[rail_id]
     struct fid_av *av; // from rail_avs[rail_id]
 
-    // EP mutex to protect endpoint and CQ operations
+    // Serializes every libfabric call on this rail's endpoint, CQ and AV. The rail opens its
+    // domain with FI_THREAD_COMPLETION, under which the provider takes no locks for these
+    // objects and the application must serialize them. With the progress thread enabled the
+    // PT posts data transfers and reads the CQ while the caller's thread still posts control
+    // messages (postSend), so both paths must hold this lock.
+    //  - Hold it only around the fi_* call itself, never around an FI_EAGAIN retry loop:
+    //    the thread that reaps completions (and so clears EAGAIN) needs the lock too.
+    //  - Keep it innermost: never run completion handling or callbacks while holding it,
+    //    they take other locks and may re-enter (e.g. postRecv from a recv completion).
     mutable std::mutex ep_mutex_;
 
     // Lock-free MPSC ring: main thread pushes, PT pops and posts
@@ -598,13 +615,17 @@ private:
     // Whether a progress thread is handling CQ draining
     bool progress_thread_enabled_ = false;
 
-    // Callback functions. Receive completions carry the sender's agent_idx
-    // (its index in OUR table, as told to it via the handshake) decoded from
-    // the imm_data the sender shipped.
-    std::function<void(const std::string &, uint16_t)> notificationCallback;
-    std::function<void(uint64_t, uint16_t)> xferIdCallback;
+    // Callback functions. Receive completions carry the sender's index in OUR table,
+    // resolved from the completion's source address (see resolveSourceAddress()).
+    std::function<void(const std::string &, uint32_t)> notificationCallback;
+    std::function<void(uint64_t, uint32_t)> xferIdCallback;
     std::function<void(const std::string &)> handshakeCallback;
-    std::function<void(uint16_t, uint16_t, uint32_t)> xferErrorCallback;
+    std::function<void(uint16_t, uint32_t, uint32_t)> xferErrorCallback;
+
+    // fi_addr_t -> local agent index, indexed directly by fi_addr_t (dense, as the AV is
+    // FI_AV_TABLE). Written at connection setup, read on the completion path.
+    mutable std::vector<uint32_t> src_addr_to_agent_;
+    mutable std::shared_mutex src_addr_mutex_;
 
     // Separate request pools for optimal performance
     ControlRequestPool control_request_pool_;
@@ -619,16 +640,21 @@ private:
     void
     pollForCompletions();
 
+    /** Record that fi_addr belongs to agent_idx. Called from insertAddress(). */
+    void
+    mapSourceAddress(fi_addr_t fi_addr, uint32_t agent_idx) const;
+
+    // src_addr is FI_ADDR_NOTAVAIL when the provider has none (always for local completions).
     nixl_status_t
-    processCompletionQueueEntry(struct fi_cq_data_entry *comp) const;
+    processCompletionQueueEntry(struct fi_cq_data_entry *comp, fi_addr_t src_addr) const;
     nixl_status_t
     processLocalSendCompletion(struct fi_cq_data_entry *comp) const;
     nixl_status_t
     processLocalTransferCompletion(struct fi_cq_data_entry *comp, const char *operation_type) const;
     nixl_status_t
-    processRecvCompletion(struct fi_cq_data_entry *comp) const;
+    processRecvCompletion(struct fi_cq_data_entry *comp, fi_addr_t src_addr) const;
     nixl_status_t
-    processRemoteWriteCompletion(struct fi_cq_data_entry *comp) const;
+    processRemoteWriteCompletion(struct fi_cq_data_entry *comp, fi_addr_t src_addr) const;
 };
 
 

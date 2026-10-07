@@ -31,8 +31,6 @@ extern "C" {
 #include "rkey.h"
 #include "ucx_enums.h"
 
-#include "absl/strings/numbers.h"
-
 enum class nixl_ucx_vram_memtype_hint_t {
     AUTO,
     NONE,
@@ -85,18 +83,17 @@ public:
     nixlUcxEp &
     operator=(const nixlUcxEp &) = delete;
 
-    using am_cleanup_t = std::function<void(void *request, void *buffer)>;
-
-    /* Active message handling */
+    /**
+     * @brief Send an active message that owns its payload
+     * @param payload Data released once the send completes
+     * @param req Receives the UCX request of an in-progress send; if null, the request is
+     *            released on completion
+     */
     nixl_status_t
     sendAm(nixl::ucx::am_cb_op_t msg_id,
-           void *hdr,
-           size_t hdr_len,
-           void *buffer,
-           size_t len,
+           std::string &&payload,
            uint32_t flags,
-           nixlUcxReq *req = nullptr,
-           am_cleanup_t &&cleanup = nullptr) const;
+           nixlUcxReq *req = nullptr) const;
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -229,6 +226,8 @@ public:
         const nixlUcxContext &,
         ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
         size_t id = 0);
+
+    virtual ~nixlUcxWorker() = default;
 
     nixlUcxWorker(nixlUcxWorker &&) = delete;
     nixlUcxWorker(const nixlUcxWorker &) = delete;
