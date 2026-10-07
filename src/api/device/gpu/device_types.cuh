@@ -42,10 +42,10 @@ static_assert(xfer_status_payload_size + xfer_status_mode_size == sizeof(xferSta
 enum class level_t : uint64_t { THREAD = 0, WARP = 1, BLOCK = 2, GRID = 3 };
 
 /**
- * Which implementation executes a prepared memory view. Chosen per view by
- * the backend that prepared it, not per build: one agent can hold direct and
- * proxied views at the same time. Zero is deliberately not a valid mode, so
- * an untagged handle reads as invalid rather than as the first backend.
+ * Which implementation executes a prepared memory view, chosen per view by
+ * the backend that prepared it, not per build. Zero is deliberately not a
+ * valid mode, so an untagged handle reads as invalid rather than as the first
+ * backend.
  */
 enum class exec_mode_t : uint8_t {
     UCX_DIRECT = 1,
