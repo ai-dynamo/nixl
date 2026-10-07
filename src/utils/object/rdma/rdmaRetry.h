@@ -27,7 +27,7 @@ namespace nixl_obj_rdma {
  * already be registered via SharedCuObjClient::registerBuffer().
  * @param rdma Shared cuObject client used to mint/release the token.
  * @param cp Control plane that issues the signed request.
- * @param ctx Request context (bucket/object, multipart, checksum, etag out).
+ * @param ctx Request context (bucket/object, multipart, etag out).
  * @param buf Source buffer.
  * @param size Number of bytes to transfer.
  * @return >0 bytes transferred (success), rdma_not_supported (server declined),
@@ -48,7 +48,7 @@ rdmaPutWithRetry(SharedCuObjClient &rdma,
  * registered via SharedCuObjClient::registerBuffer().
  * @param rdma Shared cuObject client used to mint/release the token.
  * @param cp Control plane that issues the signed request.
- * @param ctx Request context (bucket/object, checksum, etag out).
+ * @param ctx Request context (bucket/object, etag out).
  * @param buf Destination buffer.
  * @param size Number of bytes to fetch.
  * @param offset Byte offset into the object.
