@@ -7,8 +7,9 @@
 # images are shared with nixl-ci-dl-gpu (identical build args), so only the
 # per-build PR image and Slurm container names are namespaced with -vr.
 #
-# Per-test timeouts mirror test-matrix.yaml, which runs the same four scripts;
-# SLURM_JOB_TIMEOUT is kept above their sum so the allocation outlives the tests.
+# Per-test timeouts are sized to the observed VR runtimes (cpp ~25 min, the rest
+# a few minutes each); SLURM_JOB_TIMEOUT is kept above their sum so the
+# allocation outlives the tests.
 #
 # Key Components:
 # - Job Configuration: Defines timeout, failure behavior, and server resources
@@ -45,6 +46,9 @@ kubernetes:
   privileged: true
 
 credentials:
+  - credentialsId: 'svc-nixl-github-read-only-token'
+    usernameVariable: 'NIXL_GITHUB_USER'
+    passwordVariable: 'NIXL_GITHUB_TOKEN'
   - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 env:
@@ -56,9 +60,13 @@ env:
   SLURM_HEAD_NODE: dlcluster.nvidia.com
   SLURM_HEAD_USER: svc-nixl
   SLURM_ACCOUNT: 'rubin'
+  # Without a GPU count the site plugin forces exclusive mode (whole idle node)
+  SLURM_GRES: gpu:2
+  SLURM_MEM: 128G
+  SLURM_MINCPUS: 24
   # Nodes whose configuration differs from the rest of the partition
   SLURM_EXCLUDE: 'vr-nvl72-ts3-l06-comp137,vr-nvl72-ts3-l06-comp139,vr-nvl72-ts3-l06-comp141,vr-nvl72-ts2b-l10-comp102'
-  SLURM_JOB_TIMEOUT: '02:20:00'
+  SLURM_JOB_TIMEOUT: '01:30:00'
   SLURM_IMMEDIATE_TIMEOUT: 3600
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
@@ -73,6 +81,15 @@ empty_volumes:
 pvc_volumes:
   - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
 
+# ci-demo builds the images below outside any step; an entry's credentialsId binds
+# the token around its build, and this hook writes the git config the Dockerfile
+# mounts as the "ghconfig" secret. Left empty when nothing is bound.
+pipeline_on_image_build:
+  run: |
+    #!/bin/bash -e
+    . .ci/scripts/common.sh
+    write_github_gitconfig /tmp/ghconfig
+
 # Docker images for DL testing
 runs_on_dockers:
   - {
@@ -80,7 +97,8 @@ runs_on_dockers:
      name: 'nixl-ci-dl-gpu-base',
      tag: "${CI_IMAGE_TAG}",
      arch: "aarch64",
-     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache'
+     build_args: '--build-arg NIXL_INSTALL_DIR=${NIXL_INSTALL_DIR} --build-arg PRE_INSTALLED_UCX_ENV=true --build-arg PRE_INSTALLED_NIXL_ENV=true --build-arg ARCH=${arch} --pull --no-cache --secret id=ghconfig,src=/tmp/ghconfig',
+     credentialsId: 'svc-nixl-github-read-only-token'
     }
 
   - {
@@ -146,12 +164,15 @@ steps:
       credentialsId: "${SSH_CREDENTIALS_ID}"
       extraArgs: [
         "--account=${SLURM_ACCOUNT}",
+        "--gres=${SLURM_GRES}",
+        "--mem=${SLURM_MEM}",
+        "--mincpus=${SLURM_MINCPUS}",
         "--exclude=${SLURM_EXCLUDE}"
       ]
 
   - name: Run Python tests
     containerSelector: "{name: 'build_helper_dl'}"
-    timeout: 20
+    timeout: 15
     parallel: false
     shell: action
     module: slurmCI
@@ -167,7 +188,7 @@ steps:
 
   - name: Run Rust tests
     containerSelector: "{name: 'build_helper_dl'}"
-    timeout: 15
+    timeout: 10
     parallel: false
     shell: action
     module: slurmCI
@@ -183,7 +204,7 @@ steps:
 
   - name: Run CPP tests
     containerSelector: "{name: 'build_helper_dl'}"
-    timeout: 60
+    timeout: 45
     parallel: false
     shell: action
     module: slurmCI
@@ -202,7 +223,7 @@ steps:
 
   - name: Run Nixlbench tests
     containerSelector: "{name: 'build_helper_dl'}"
-    timeout: 25
+    timeout: 10
     parallel: false
     shell: action
     module: slurmCI
