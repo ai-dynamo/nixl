@@ -21,6 +21,7 @@
 #include <atomic>
 #include <stop_token>
 #include <thread>
+#include <vector>
 
 #include "blocking_queue.h"
 

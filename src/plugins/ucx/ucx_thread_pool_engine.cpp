@@ -311,7 +311,7 @@ protected:
                 task = queue_.pop(token, std::chrono::seconds(1));
             }
 
-            if (task != nullptr) [[unlikely]] {
+            if (task != nullptr) {
                 task->run(worker_);
             }
 
