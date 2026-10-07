@@ -314,7 +314,6 @@ NB_ARG_UINT64(daos_num_event_queues, 1, "Number of DAOS event queues");
 NB_ARG_UINT64(daos_max_inflight_per_queue, 1024, "Maximum in-flight DAOS I/O per event queue");
 NB_ARG_UINT64(daos_submission_batch_size, 32, "DAOS submission batch size");
 NB_ARG_UINT64(daos_completion_batch_size, 128, "DAOS completion batch size");
-NB_ARG_UINT64(daos_progress_poll_timeout_us, 1000, "DAOS progress poll timeout in microseconds");
 
 // HF3FS options - only used when backend is HF3FS
 NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
@@ -441,7 +440,6 @@ uint64_t xferBenchConfig::daos_num_event_queues = 1;
 uint64_t xferBenchConfig::daos_max_inflight_per_queue = 1024;
 uint64_t xferBenchConfig::daos_submission_batch_size = 32;
 uint64_t xferBenchConfig::daos_completion_batch_size = 128;
-uint64_t xferBenchConfig::daos_progress_poll_timeout_us = 1000;
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -746,7 +744,6 @@ xferBenchConfig::loadParams(void) {
             daos_max_inflight_per_queue = NB_ARG(daos_max_inflight_per_queue);
             daos_submission_batch_size = NB_ARG(daos_submission_batch_size);
             daos_completion_batch_size = NB_ARG(daos_completion_batch_size);
-            daos_progress_poll_timeout_us = NB_ARG(daos_progress_poll_timeout_us);
 
             if (daos_pool.empty() || daos_container.empty()) {
                 std::cerr << "DAOS requires --daos_pool and --daos_container" << std::endl;
@@ -1114,8 +1111,6 @@ xferBenchConfig::printConfig() {
                         std::to_string(daos_submission_batch_size));
             printOption("DAOS completion batch size (--daos_completion_batch_size=N)",
                         std::to_string(daos_completion_batch_size));
-            printOption("DAOS progress timeout (--daos_progress_poll_timeout_us=N)",
-                        std::to_string(daos_progress_poll_timeout_us));
         }
 
         if (xferBenchConfig::isStorageBackend()) {

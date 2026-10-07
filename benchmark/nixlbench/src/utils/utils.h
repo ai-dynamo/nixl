@@ -243,7 +243,6 @@ public:
     static uint64_t daos_max_inflight_per_queue;
     static uint64_t daos_submission_batch_size;
     static uint64_t daos_completion_batch_size;
-    static uint64_t daos_progress_poll_timeout_us;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;

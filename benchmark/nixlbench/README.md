@@ -632,7 +632,6 @@ devices can differ between the initiator and target processes.
 --daos_max_inflight_per_queue NUM      # Maximum in-flight I/O per EQ (default: 1024)
 --daos_submission_batch_size NUM       # Operations submitted per worker pass (default: 32)
 --daos_completion_batch_size NUM       # Completions reaped per progress call (default: 128)
---daos_progress_poll_timeout_us NUM     # NIXL progress wait timeout in microseconds (default: 1000)
 --daos_progress_cpu_affinity LIST       # Comma-separated CPUs, one entry per progress worker
 ```
 

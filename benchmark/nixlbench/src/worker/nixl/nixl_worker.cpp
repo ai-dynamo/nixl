@@ -136,9 +136,6 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     nixlAgentConfig dev_meta;
     dev_meta.useProgThread = enable_pt;
     dev_meta.syncMode = sync_mode;
-    if (xferBenchConfig::backend == XFERBENCH_BACKEND_DAOS) {
-        dev_meta.pthrDelay = xferBenchConfig::daos_progress_poll_timeout_us;
-    }
 
     agent = new nixlAgent(name, dev_meta);
 
