@@ -20,7 +20,7 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | [Claude Code Review](#claude-code-review-claude-reviewyml) | GitHub Actions | `pull_request` (opened/synchronize/reopened) | Yes |
 | [External Contributor](#external-contributor-external_contributoryaml) | GitHub Actions | `pull_request_target` (opened, fork only) | Yes (fork PRs only) |
 | [Blossom-CI](#blossom-ci-blossom-ciyml) | GitHub Actions | `/build` PR comment, or `workflow_dispatch` | No — manual |
-| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | No — only after `/build`, but these 7 are the *only* Jenkins jobs in the PR CI path |
+| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | No — only after `/build`, but these 8 are the *only* Jenkins jobs in the PR CI path |
 | `nixl-ci-build-container` | Jenkins (standalone) | Nightly cron + manual | No — never runs as part of PR CI |
 | `nixl-ci-build-wheel-nightly` | Jenkins (standalone) | Nightly cron, triggered by `build-wheel-release-poller`, or manual | No — never runs as part of PR CI |
 | `nixl-build-wheel-release-poller` | Jenkins (standalone) | 4-hourly cron + manual | No — never runs as part of PR CI |
@@ -58,7 +58,7 @@ All files below live in `.github/workflows/`.
 
 ### Copyright Checks (`copyright-checks.yml`)
 - **Trigger:** `pull_request`.
-- **What it does:** Runs `.github/workflows/copyright-check.sh` inside the `dynamo/helm-tester` container to verify SPDX/copyright headers.
+- **What it does:** Runs `.github/workflows/copyright-check.sh` inside the `dynamo/helm-tester` container to verify SPDX/copyright headers of the files changed in the PR; their copyright end year must be the current year.
 - **Automatic on every PR:** Yes.
 
 ### PR Size Check (`pr-size-check.yml`)
@@ -102,7 +102,7 @@ sequenceDiagram
     participant Scan as Vulnerability-scan (Black Duck)
     participant Trigger as Job-trigger
     participant Jenkins as nixl-ci-dispatcher
-    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, build-wheel,<br/>test-sanitizers, build-container-pr)
+    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, gpu-vr, build-wheel,<br/>test-sanitizers, build-container-pr)
 
     User->>GH: comment "/build"
     GH->>Blossom: issue_comment event
@@ -132,8 +132,8 @@ Step by step, matching the jobs in `blossom-ci.yml`:
    Duck-based vulnerability scan via the `NVIDIA/blossom-action`.
 5. **Job-trigger** calls `blossom-ci` with `OPERATION: START-CI-JOB`, which
    triggers the Jenkins `nixl-ci-dispatcher` job.
-6. `nixl-ci-dispatcher` fans out in parallel to its seven child jobs
-   (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `build-wheel`,
+6. `nixl-ci-dispatcher` fans out in parallel to its eight child jobs
+   (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`,
    `test-sanitizers`, `build-container-pr` — see [Jenkins jobs](#jenkins-jobs) below).
 7. Each child job reports its own status back as an individual GitHub PR
    check, so the PR shows per-job pass/fail rather than one aggregate check.
@@ -159,18 +159,24 @@ their own nightly/manual trigger. They split into two groups:
   trigger, and/or upstream standalone job, and is invoked independently of PRs
   and of the dispatcher.
 
+Every job checks out the repository authenticated as `svc-nixl-github-token`
+(`jjb_git_credentials`, applied to each `git:` SCM block and inherited by
+submodules through `parent-credentials`). github.com intermittently answers
+anonymous clones with an HTTP 401, which git reports as `could not read Username`.
+
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
 
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
-- **What it does:** Fans out in parallel to seven downstream Jenkins jobs, waiting on all of them:
+- **What it does:** Fans out in parallel to eight downstream Jenkins jobs, waiting on all of them:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com)
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (NIXL EP tests on dlcluster.nvidia.com)
+  - `nixl-ci-gpu-vr` — `.ci/jenkins/lib/test-vr-matrix.yaml` (same tests as `nixl-ci-dl-gpu`, on the Vera Rubin `vrnvl72` partition / `rubin` account; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node, so it can run on a partly used node of the busy partition; nodes with a differing configuration are excluded via `SLURM_EXCLUDE`)
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
   - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
-- **UCX version:** The three GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.23.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all three with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
+- **UCX version:** The four GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.23.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all four with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
 - **Automatic on every PR:** No — only runs after a `/build` comment triggers Blossom-CI. The dispatcher also aborts any stale in-flight dispatcher run for the same PR (and the leaf builds it started) before starting.
 
 ### `nixl-ci-build-container-pr` (dispatcher-triggered)
@@ -226,7 +232,7 @@ their own nightly/manual trigger. They split into two groups:
 ### `nixl-ci-nightly` (standalone)
 
 - **Trigger:** Nightly cron (`H 0 * * *`), or manual run (`UCX_REF`, `MAIL_TO` parameters).
-- **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep` with `UCX_VER=${UCX_REF}` (default `master`), waits for all three, and emails one consolidated report to `MAIL_TO` (default `nixl-ci-alerts@exchange.nvidia.com`) **only when a leg fails** — a green night is silent. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
+- **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr` with `UCX_VER=${UCX_REF}` (default `master`), waits for all four, and emails one consolidated report to `MAIL_TO` (default `nixl-ci-alerts@exchange.nvidia.com`) **only when a leg fails** — a green night is silent. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
 - **Matrix:** `.ci/jenkins/lib/nightly-matrix.yaml` — a lightweight ci-demo orchestrator (one groovy step: fan out, wait, mail), no GPU of its own.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.
 
@@ -239,6 +245,7 @@ Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-${BUILD_NUMB
 | `nixl-ci-gpu` | `nixl-ci-gpu-<build>` |
 | `nixl-ci-dl-gpu` | `nixl-ci-dl-gpu-<build>` |
 | `nixl-ci-dl-gpu-ep` | `nixl-ci-dl-gpu-ep-<build>` |
+| `nixl-ci-gpu-vr` | `nixl-ci-gpu-vr-<build>` |
 | `nixl-ci-build-wheel` | `nixl-ci-build-wheel-<fw>-<build>` (`fw`: `vllm` or `sglang`) |
 | `nixl-ci-test-llm-container` | `nixl-ci-test-llm-container-<build>` |
 
@@ -266,7 +273,7 @@ NEW_TAG=$(git log -1 --format=%h -- "${CI_FILES[@]}")
 
 This returns the short git commit hash of the most recent commit that touched
 any of the CI source files (`Dockerfile.base`, `Dockerfile.gpu-test`,
-`Dockerfile.build_helper`, `nixl_ep_vllm_release_test.patch`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
+`Dockerfile.build_helper`, `build.sh`, `common.sh`, `Dockerfile.manylinux`). It
 then patches all six YAML files in the Jenkins workspace with `sed` before the
 matrix library reads them. No commit or push is made — the patch exists only in
 the workspace.
@@ -311,6 +318,80 @@ symlinks `docker` to `podman` in two different containers, and the push in
 `Build sanity image` runs in the `build_helper_(vllm|sglang)` one, not the
 `manylinux` runner. Check the step's `containerSelector` against
 `runs_on_dockers`, not just whether `docker` is podman.
+
+## Authenticated dependency clones in image builds
+
+`contrib/Dockerfile`, `contrib/Dockerfile.manylinux` and
+`benchmark/nixlbench/contrib/Dockerfile` clone their third-party dependencies from
+github.com. github.com intermittently answers anonymous clones with an HTTP 401, which
+git reports as `could not read Username for 'https://github.com'` — it refers to the
+missing terminal git tried to prompt on, not to DNS or connectivity.
+
+Every cloning `RUN` mounts an optional build secret,
+`--mount=type=secret,id=ghconfig,target=/root/.gitconfig`, holding
+`http.https://github.com/.extraheader = AUTHORIZATION: basic <base64 user:token>`, so
+every request to github.com is authenticated rather than anonymous.
+`GIT_TERMINAL_PROMPT=0` is an `ARG`, so it applies to these builds without persisting
+into the shipped images.
+
+When nothing supplies the secret the target file is not created (an empty secret gives
+an empty file) and the clone is anonymous — verified on podman 4.4.4, 4.9.4, 5.0.3 and
+5.7.1 and Docker 29 BuildKit. `RUN --mount` needs BuildKit or podman/buildah: Docker's
+legacy builder (`DOCKER_BUILDKIT=0`) rejects it, so `build-container.sh` defaults
+`DOCKER_BUILDKIT=1` for pre-23 Docker.
+
+The credential, `svc-nixl-github-read-only-token`, is a fine-grained token (format
+`github_pat_` plus letters, digits and underscores) with read-only access to public
+repositories and no other permissions. PR builds run PR-controlled code with it
+available, so it must stay that way. Because the header is sent on every request, a
+revoked, expired or org-blocked token fails **every** github.com clone in these jobs,
+not only the ones GitHub would have challenged — rotate it before it lapses.
+
+CI supplies it through `DOCKER_BUILD_EXTRA_ARGS`, a generic passthrough that
+`contrib/build-container.sh` and `benchmark/nixlbench/contrib/build.sh` append to their
+`docker build` command (empty by default; word-split, so no paths with spaces). In
+`build-container-pr-matrix.yaml`, `build-container-matrix.yaml` and
+`build-wheel-nightly-matrix.yaml`:
+
+- the setup step binds the token and calls `write_github_gitconfig /tmp/ghconfig`
+  (`.ci/scripts/common.sh`), which writes the config with tracing off and mode 600, or an
+  empty file when no token is bound;
+- each build step sets
+  `DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"` before calling
+  the build script;
+- the agent-side clones (`ucx-src`, the nightly's `nixl-src`) use the same file
+  additively via `git -c include.path=/tmp/ghconfig clone ...`, leaving any existing
+  global git config (e.g. `safe.directory`) intact.
+
+The token never lands in an image layer or in `podman history`. Still anonymous: the UCX
+ref lookup in `build-container-matrix.yaml`'s Groovy pre-step, which runs before any
+credential is bound.
+
+`build-wheel-matrix.yaml` needs nothing: it passes `--wheel-base-image`, which skips the
+`wheel_base` stage that holds the manylinux clones. That base, and `Dockerfile.base`,
+are built by ci-demo; see the next section.
+
+## Authenticated clones in ci-demo-built images
+
+ci-demo builds the images declared with `file:` in a matrix (`Dockerfile.base`,
+the manylinux `wheel_base`) outside any step. github.com intermittently answers
+anonymous clones with an HTTP 401, which git reports as `could not read Username for
+'https://github.com'` — the missing terminal git tried to prompt on, not DNS.
+
+- Each such `runs_on_dockers` entry sets `credentialsId: 'svc-nixl-github-read-only-token'`,
+  which ci-demo binds around that image's build.
+- `pipeline_on_image_build` calls `write_github_gitconfig /tmp/ghconfig`
+  (`.ci/scripts/common.sh`) in the build pod: a git config whose
+  `http.https://github.com/.extraheader` authenticates every github.com request
+  (tracing off, mode 600), or an empty file when nothing is bound.
+- The entry's `build_args` pass it as `--secret id=ghconfig,src=/tmp/ghconfig`, and
+  `Dockerfile.base` mounts it at `${_HOME}/.gitconfig` (`mode=0444`, non-root user)
+  on the `build.sh` and vLLM `RUN`s. It never lands in a layer or `podman history`.
+  `GIT_TERMINAL_PROMPT=0` is an `ARG`, so it does not persist into the image.
+
+An unbound or empty secret leaves the clones anonymous, as before. A revoked, expired
+or org-blocked token, however, fails every github.com clone in these builds, since the
+header is sent on every request.
 
 ## Related docs
 

@@ -22,7 +22,11 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
+#include <mutex>
+#include <optional>
+
 #include "backend/backend_engine.h"
+#include "tracing/trace_context.h"
 
 namespace mocks {
 
@@ -64,6 +68,18 @@ public:
     SetToParams(nixl_b_params_t &params) const;
     static GMockBackendEngine *
     GetFromParams(nixl_b_params_t *params);
+
+    void
+    observeTraceSink(const nixlBackendTraceSink *sink);
+
+    void
+    observeTraceContext(const nixl_opt_b_args_t *opt_args);
+
+    [[nodiscard]] std::optional<const nixlBackendTraceSink *>
+    observedTraceSink() const;
+
+    [[nodiscard]] std::optional<nixl::trace::TraceContext>
+    observedTraceContext() const;
 
     MOCK_METHOD(bool, supportsRemote, (), (const, override));
     MOCK_METHOD(bool, supportsLocal, (), (const, override));
@@ -157,6 +173,10 @@ private:
     setDefaults();
     void
     setOptionalDefaults();
+
+    mutable std::mutex observedMutex_;
+    std::optional<const nixlBackendTraceSink *> observedTraceSink_;
+    std::optional<nixl::trace::TraceContext> observedTraceContext_;
 };
 
 } // namespace mocks
