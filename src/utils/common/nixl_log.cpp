@@ -18,6 +18,7 @@
 #include "configuration.h"
 #include "hostname.h"
 #include "nixl_log.h"
+#include "nixl_log_file_sink.h"
 #include "scoped_fd.h"
 #include "absl/base/no_destructor.h"
 #include "absl/log/initialize.h"
@@ -57,10 +58,10 @@ struct LogLevelSettings {
 constexpr std::string_view kDefaultLogLevel = "WARN";
 
 // Names the file that log records are mirrored into. Unset disables the sink.
-constexpr const char *log_file_env_var = "NIXL_LOG_FILE";
+constexpr const char *log_file_env_var = nixl::fileLogSink::log_file_env_var;
 
 // Bounds that file. Unset or empty lets it grow without limit.
-constexpr const char *log_file_size_env_var = "NIXL_LOG_FILE_SIZE";
+constexpr const char *log_file_size_env_var = nixl::fileLogSink::log_file_size_env_var;
 
 // Makes a log file setup failure fatal. Unset or false keeps the default:
 // report the failure and carry on without the file.
@@ -69,9 +70,6 @@ constexpr const char *log_file_error_is_fatal_env_var = "NIXL_LOG_FILE_ERROR_IS_
 // A fatal stack trace is the largest record this sink writes. Abseil keeps up
 // to 64 frames; 16 KiB holds a typical symbolized trace.
 constexpr std::uintmax_t min_log_file_size = 16 * 1024;
-
-// Appended to the log file's name to hold the records rotated out of it.
-constexpr const char *rotated_suffix = ".1";
 
 /**
  * @brief Nanoseconds since the epoch, sampled once, for %t.
@@ -181,178 +179,9 @@ reportSetupFailure(const std::string &reason) {
     NIXL_ERROR << reason << ", continuing without a log file";
 }
 
-/** @brief Appends log records to a file, formatted exactly as on stderr. */
-class fileLogSink final : public absl::LogSink {
-public:
-    /**
-     * @brief Opens @p path for append; check isOpen() rather than catching.
-     * @param path  Where to write, already expanded and made absolute.
-     * @param limit Bytes before rotating, 0 for none. Counted from the current
-     *              size, since appending inherits whatever the file holds.
-     */
-    fileLogSink(const std::string &path, std::uintmax_t limit)
-        : path_(path),
-          fd_(::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0666)),
-          limit_(limit) {
-        if (!fd_.valid()) {
-            return;
-        }
-
-        struct stat st;
-        if (::fstat(fd_.get(), &st) == 0) {
-            written_ = st.st_size;
-        }
-    }
-
-    /** @brief False if the sink cannot write, and must not be registered. */
-    [[nodiscard]] bool
-    isOpen() const noexcept {
-        return fd_.valid();
-    }
-
-    /**
-     * @brief Writes one record directly to the file descriptor.
-     * @param entry Borrowed; valid only for this call.
-     */
-    void
-    Send(const absl::LogEntry &entry) override {
-        const auto payload = entry.stacktrace().empty() ?
-            entry.text_message_with_prefix_and_newline() :
-            entry.stacktrace();
-        writePayload(payload);
-    }
-
-    /** @brief Writes one payload. Takes mutex_. */
-    void
-    writePayload(std::string_view payload) {
-        const std::lock_guard lock(mutex_);
-        if (failed_) {
-            return;
-        }
-
-        if (limit_ != 0) {
-            // Report the first oversized record, then keep accepting others.
-            if (payload.size() > limit_) {
-                reportOversizedRecord();
-                return;
-            }
-
-            // Rotate before adding a record that would exceed the limit.
-            if (written_ > limit_ - payload.size()) {
-                rotate();
-                if (failed_) {
-                    return;
-                }
-            }
-        }
-
-        size_t offset = 0;
-        while (offset < payload.size()) {
-            const ssize_t result =
-                ::write(fd_.get(), payload.data() + offset, payload.size() - offset);
-            if (result > 0) {
-                offset += static_cast<size_t>(result);
-            } else if (result < 0 && errno == EINTR) {
-                continue;
-            } else {
-                reportFailure(result < 0 ? errno : EIO);
-                return;
-            }
-        }
-        written_ += payload.size();
-    }
-
-private:
-    /**
-     * @brief Moves the full file aside and starts a new one, keeping the newest
-     *        records. Existing oversized files are preserved until a later
-     *        rotation replaces them. A failed rotation stops the sink.
-     *        Called with mutex_ held.
-     */
-    void
-    rotate() {
-        fd_.reset();
-
-        std::error_code ec;
-        std::filesystem::rename(path_, path_ + rotated_suffix, ec);
-        if (ec) {
-            reportRotateFailure(ec);
-            return;
-        }
-
-        fd_ =
-            nixl::scopedFd(::open(path_.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0666));
-        if (!fd_.valid()) {
-            reportFailure(errno);
-            return;
-        }
-        written_ = 0;
-    }
-
-    /**
-     * @brief Reports the first write failure and stops using the file, going
-     *        to stderr directly rather than through the machinery that failed.
-     * @param reason errno from the failed operation, or 0. Called with mutex_ held.
-     */
-    void
-    reportFailure(int reason) {
-        failed_ = true;
-
-        const std::string detail = (reason != 0) ? (": " + nixl_strerror(reason)) : "";
-        std::fprintf(stderr,
-                     "NIXL: could not write to %s '%s'%s; dropping further records\n",
-                     log_file_env_var,
-                     path_.c_str(),
-                     detail.c_str());
-    }
-
-    /** @brief Reports the first oversized record. Called with mutex_ held. */
-    void
-    reportOversizedRecord() {
-        if (reported_oversize_) {
-            return;
-        }
-        reported_oversize_ = true;
-
-        std::fprintf(stderr,
-                     "NIXL: a record exceeded %s (%ju bytes) for '%s'; "
-                     "omitting records larger than the limit\n",
-                     log_file_size_env_var,
-                     limit_,
-                     path_.c_str());
-    }
-
-    /**
-     * @brief Reports a failed rotation and stops using the file, leaving it as
-     *        it is: those records are all there will be. Reports once, since
-     *        failed_ stops Send() rotating again.
-     * @param reason Why the rename failed. Called with mutex_ held.
-     */
-    void
-    reportRotateFailure(const std::error_code &reason) {
-        failed_ = true;
-
-        std::fprintf(stderr,
-                     "NIXL: could not rotate %s '%s' at its %s (%s); "
-                     "dropping further records\n",
-                     log_file_env_var,
-                     path_.c_str(),
-                     log_file_size_env_var,
-                     reason.message().c_str());
-    }
-
-    std::mutex mutex_;
-    std::string path_;
-    nixl::scopedFd fd_;
-    std::uintmax_t limit_ = 0;
-    std::uintmax_t written_ = 0;
-    bool failed_ = false;
-    bool reported_oversize_ = false;
-};
-
 struct logFileState {
     std::mutex mutex;
-    fileLogSink *sink = nullptr;
+    nixl::fileLogSink *sink = nullptr;
 };
 
 /**
@@ -427,15 +256,6 @@ InitializeNixlLogging() {
 
 namespace nixl {
 
-/** @brief Test-only path to the file sink, so a record can exceed Abseil's cap. */
-void
-submitLogPayloadForTest(std::string_view payload) {
-    auto &state = getLogFileState();
-    if (state.sink != nullptr) {
-        state.sink->writePayload(payload);
-    }
-}
-
 /** @brief Registers the NIXL_LOG_FILE sink; see nixl_log.h for the contract. */
 bool
 initLogFile() {
@@ -491,7 +311,7 @@ initLogFile() {
         return false;
     }
 
-    auto sink = new fileLogSink(resolved_path.string(), *limit);
+    auto sink = new nixl::fileLogSink(resolved_path.string(), *limit);
     if (!sink->isOpen()) {
         const int open_errno = errno;
         delete sink;

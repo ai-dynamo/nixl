@@ -47,17 +47,13 @@
 
 #include "common.h"
 #include "common/nixl_log.h"
+#include "nixl_log_file_sink.h"
 
 // POSIX leaves this to the application to declare, and glibc only exposes it
 // from unistd.h under _GNU_SOURCE, so declare it rather than depend on which
 // feature macros happen to be set. At global scope, not in the namespace below,
 // so it refers to the process environment and not a new internal symbol.
 extern "C" char **environ;
-
-namespace nixl {
-void
-submitLogPayloadForTest(std::string_view payload);
-} // namespace nixl
 
 namespace {
 
@@ -993,15 +989,14 @@ TEST_F(nixlLogFileTest, ReportsAnOversizedRecordOnce) {
     const std::filesystem::path rotated = path_.string() + ".1";
     std::filesystem::remove(rotated);
 
-    env_.addVar("NIXL_LOG_FILE", path_.string());
-    env_.addVar("NIXL_LOG_FILE_SIZE", std::to_string(limit));
-    ASSERT_TRUE(nixl::initLogFile());
+    nixl::fileLogSink sink(path_.string(), limit);
+    ASSERT_TRUE(sink.isOpen());
 
     const std::string payload(limit + 1, 'x');
     testing::internal::CaptureStderr();
-    nixl::submitLogPayloadForTest(payload);
-    nixl::submitLogPayloadForTest(payload);
-    nixl::submitLogPayloadForTest("record that fits\n");
+    sink.writePayload(payload);
+    sink.writePayload(payload);
+    sink.writePayload("record that fits\n");
     const std::string captured = testing::internal::GetCapturedStderr();
 
     const std::string report = "omitting records larger than the limit";

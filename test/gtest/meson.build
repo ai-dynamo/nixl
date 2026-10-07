@@ -119,7 +119,9 @@ gtest_sources = [
     'nixl_duration_test.cpp',
     'blocking_queue_test.cpp',
     'nixl_log_file_test.cpp',
-    'configuration.cpp'
+    'configuration.cpp',
+    # Hidden in libnixl_common, so the oversized-record test links its own copy.
+    '../../src/utils/common/nixl_log_file_sink.cpp',
     ]
 
 if ucx_gpu_device_api_available
