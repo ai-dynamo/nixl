@@ -71,7 +71,7 @@ namespace detail {
         return static_cast<exec_mode_t>(execution_mode);
     }
 
-    /** Tag accepted submissions, including inline success, for later dispatch by getXferStatus. */
+    /** Tag accepted (NIXL_IN_PROG) submissions for later dispatch by getXferStatus. */
     template<level_t level>
     __device__ __forceinline__ void
     writeExecutionMode(xferStatusH *status,
@@ -81,10 +81,8 @@ namespace detail {
             const uint32_t mode = static_cast<uint32_t>(execution_mode);
             memcpy(status->storage + xfer_status_payload_size, &mode, sizeof(mode));
         }
-        // Collective pollers share the leader's tag; a grid-level call is not a barrier here.
-        if constexpr (level != level_t::GRID) {
-            sync<level>();
-        }
+        // Collective pollers share the leader's tag.
+        sync<level>();
     }
 
 } // namespace detail
