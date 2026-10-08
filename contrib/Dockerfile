@@ -99,7 +99,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     fi
 
 # On Ubuntu 22.04, python3.12-dev is not in the default apt repos; add the deadsnakes PPA.
-RUN if [ "${OS}" = "ubuntu22" ]; then \
+RUN if [ "${OS}" = "ubuntu22" ] || grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then \
         apt-get update -y && \
         apt-get install -y software-properties-common && \
         add-apt-repository -y ppa:deadsnakes/ppa && \
