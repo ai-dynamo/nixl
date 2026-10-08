@@ -68,4 +68,33 @@ if get_option('buildtype') != 'release'
 
     test('rail_active_refcount_test', rail_active_refcount_test_bin)
 
+    src_addr_resolution_test_link_args = [
+        '-Wl,--wrap=fi_getinfo',
+        '-Wl,--wrap=numa_max_node',
+        '-Wl,--wrap=numa_num_configured_nodes',
+        '-Wl,--wrap=fi_fabric' ]
+
+    src_addr_resolution_test_bin = executable('src_addr_resolution_test',
+               'src_addr_resolution_test.cpp',
+               dependencies: libfabric_utils_dep,
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with: libfabric_utils_lib,
+               cpp_args: libfabric_test_cpp_args,
+               link_args: src_addr_resolution_test_link_args,
+               install: true)
+
+    test('src_addr_resolution_test', src_addr_resolution_test_bin)
+
+    # Alignment arithmetic of the CUDA dmabuf export. The helper under test is
+    # header-inline and free of CUDA types, so the test runs on any host.
+    libfabric_dmabuf_test_bin = executable('libfabric_dmabuf_test',
+               'libfabric_dmabuf_test.cpp',
+               dependencies: libfabric_utils_dep,
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with: libfabric_utils_lib,
+               cpp_args: libfabric_test_cpp_args,
+               install: true)
+
+    test('libfabric_dmabuf_test', libfabric_dmabuf_test_bin)
+
 endif

@@ -58,7 +58,6 @@ namespace nixl_ep {
 struct NixlPeerInfo {
     void* rdma_buffer_ptr;
     int* sync_buffer_ptr;
-    uint64_t* ht_barrier_ptr;
     int device_id;
     int rank;
 };
@@ -78,7 +77,6 @@ struct NixlAgentInfo
     nixl_reg_dlist_t rdma_reg_descs{VRAM_SEG};
     nixl_reg_dlist_t sync_reg_descs{VRAM_SEG};
     nixl_reg_dlist_t sync_count_reg_descs{VRAM_SEG};
-    nixl_reg_dlist_t ht_barrier_reg_descs{VRAM_SEG};
     std::vector<bool> wire_up_done; // [num_peers]
 };
 
@@ -86,21 +84,12 @@ struct NixlMemoryViews {
     nixlMemViewH local = nullptr;
     nixlMemViewH remote = nullptr;
     nixlMemViewH barrier = nullptr;
-    nixlMemViewH ht_barrier = nullptr;
 };
 
 struct Buffer {
-    EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS == 8, "The number of maximum NVLink peers must be 8");
-
 private:
     int buffer_idx = 0; // Double buffering index
-    bool low_latency_mode = false;
     uint64_t timeout_ms = 30000;
-
-    // NVLink Buffer
-    int64_t num_nvl_bytes;
-    void* buffer_ptrs[NUM_MAX_NVL_PEERS] = {nullptr};
-    void** buffer_ptrs_gpu = nullptr;
 
     // RDMA Buffer
     int64_t num_rdma_bytes;
@@ -121,7 +110,7 @@ private:
     int device_id;
     int num_device_sms;
     uint64_t timeout_cycles = 0;
-    int rank, rdma_rank, nvl_rank;
+    int rank;
     int max_num_ranks;
     std::vector<int> remote_ranks; /* global ranks */
     // Host-side active rank state over max_num_ranks. This can differ from
@@ -131,9 +120,7 @@ private:
     // Upper bound for active rank ids. Ranks may be sparse;
     // masked holes inside [0, active_rank_bound) are skipped by LL kernels.
     int active_rank_bound = 0;
-    int num_rdma_ranks = 0, num_nvl_ranks = 0;
     int num_experts_per_rank = 0;
-    cudaIpcMemHandle_t ipc_handles[NUM_MAX_NVL_PEERS];
 
     // Stream for communication
     at::cuda::CUDAStream comm_stream;
@@ -146,24 +133,8 @@ private:
     // After `destroy()` be called, this flag will be true
     bool destroyed = false;
 
-    // Barrier signals
-    int* barrier_signal_ptrs[NUM_MAX_NVL_PEERS] = {nullptr};
-    int** barrier_signal_ptrs_gpu = nullptr;
-
     // Workspace
     void* workspace = nullptr;
-
-    // Host-side MoE info
-    volatile int* moe_recv_counter = nullptr;
-    int* moe_recv_counter_mapped = nullptr;
-
-    // Host-side expert-level MoE info
-    volatile int* moe_recv_expert_counter = nullptr;
-    int* moe_recv_expert_counter_mapped = nullptr;
-
-    // Host-side RDMA-level MoE info
-    volatile int* moe_recv_rdma_counter = nullptr;
-    int* moe_recv_rdma_counter_mapped = nullptr;
 
     std::unique_ptr<NixlAgentInfo> nixl_agent_info;
     std::vector<NixlPeerInfo> nixl_peer_info;
@@ -172,8 +143,6 @@ private:
     NixlMemoryViews active_memory_views;
     NixlMemoryViews staged_memory_views;
     nixl_ep::gpu_nixl_ctx* gpu_ctx_ptr = nullptr;
-    uint64_t* last_ht_barrier_counter = nullptr;
-    uint64_t* local_ht_barrier_counter = nullptr;
 
     /* Common private funcs */
     void _nixl_agent_init();
@@ -192,64 +161,29 @@ private:
     void _refresh_active_rank_bound();
     int get_rank_bound(std::optional<int> num_experts) const;
 
-    /* high-throughput mode private funcs */
-    void _ipc_handles_sync(const std::vector<std::optional<pybind11::bytearray>> &all_gathered_handles);
-
 public:
-    Buffer(int rank, bool explicitly_destroy, bool low_latency_mode, int timeout_ms);
+    Buffer(int rank, bool explicitly_destroy, int timeout_ms);
 
-    void update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes, int64_t num_nvl_bytes = 0);
+    void update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes);
 
-    void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, const std::vector<std::optional<pybind11::bytearray>>& all_gathered_handles = {}, bool activate = true);
+    void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, bool activate = true);
 
     void disconnect_ranks(const std::vector<int>& remote_ranks_list);
 
-    void init(int num_ranks, int num_experts_per_rank, int64_t num_nvl_bytes, int64_t num_rdma_bytes);
+    void init(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes);
 
     ~Buffer() noexcept;
 
     bool is_available() const;
 
-    bool is_ht_available() const;
-
-    int get_num_rdma_ranks() const;
-
-    int get_rdma_rank() const;
-
-    int get_root_rdma_rank(bool global) const;
-
     int get_local_device_id() const;
 
-    pybind11::bytearray get_local_ipc_handle() const;
-
-    torch::Tensor get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset, bool use_rdma_buffer = false) const;
+    torch::Tensor get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset) const;
 
     torch::Stream get_comm_stream() const;
 
 
     void destroy();
-
-    std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, std::optional<EventHandle>>
-    get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts, std::optional<EventHandle>& previous_event,
-                        bool async, bool allocate_on_comm_stream);
-
-    std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::vector<int>, torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<EventHandle>>
-    ht_dispatch(const torch::Tensor& x, const std::optional<torch::Tensor>& x_scales,
-                        const std::optional<torch::Tensor>& topk_idx, const std::optional<torch::Tensor>& topk_weights,
-                        const std::optional<torch::Tensor>& num_tokens_per_rank, const std::optional<torch::Tensor>& num_tokens_per_rdma_rank,
-                        const torch::Tensor& is_token_in_rank, const std::optional<torch::Tensor>& num_tokens_per_expert,
-                        int cached_num_recv_tokens, int cached_num_rdma_recv_tokens,
-                        const std::optional<torch::Tensor>& cached_rdma_channel_prefix_matrix, const std::optional<torch::Tensor>& cached_recv_rdma_rank_prefix_sum,
-                        const std::optional<torch::Tensor>& cached_gbl_channel_prefix_matrix, const std::optional<torch::Tensor>& cached_recv_gbl_rank_prefix_sum,
-                        int expert_alignment, const Config& config, std::optional<EventHandle>& previous_event, bool async, bool allocate_on_comm_stream);
-
-    std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandle>>
-    ht_combine(const torch::Tensor& x, const std::optional<torch::Tensor>& topk_weights,
-                        const std::optional<torch::Tensor>& bias_0, const std::optional<torch::Tensor>& bias_1,
-                        const torch::Tensor& src_meta, const torch::Tensor& is_combined_token_in_rank,
-                        const torch::Tensor& rdma_channel_prefix_matrix, const torch::Tensor& rdma_rank_prefix_sum, const torch::Tensor& gbl_channel_prefix_matrix,
-                        const torch::Tensor& combined_rdma_head, const torch::Tensor& combined_nvl_head,
-                        const Config& config, std::optional<EventHandle>& previous_event, bool async, bool allocate_on_comm_stream);
 
     std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>>
     dispatch(const torch::Tensor& x, const torch::Tensor& topk_idx,

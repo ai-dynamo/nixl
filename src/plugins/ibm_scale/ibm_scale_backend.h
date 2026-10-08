@@ -64,7 +64,7 @@ struct nixlScaleFileMD : public nixlFilePathMD {
           blksize(sampleBlksize(file_fd.fd())) {}
 
 private:
-    static std::size_t
+    [[nodiscard]] static std::size_t
     sampleBlksize(int fd) noexcept {
         if (fd < 0) {
             return 4194304;
