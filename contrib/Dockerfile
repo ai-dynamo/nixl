@@ -98,6 +98,14 @@ RUN if [ -n "$APT_MIRROR" ]; then \
         grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
     fi
 
+# On Ubuntu 22.04, python3.12-dev is not in the default apt repos; add the deadsnakes PPA.
+RUN if [ "${OS}" = "ubuntu22" ]; then \
+        apt-get update -y && \
+        apt-get install -y software-properties-common && \
+        add-apt-repository -y ppa:deadsnakes/ppa && \
+        apt-get update -y; \
+    fi
+
 # Install build dependencies from Ubuntu repository
 RUN apt-get update -y && \
     apt-get install -y ubuntu-keyring && \
