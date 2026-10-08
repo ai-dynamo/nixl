@@ -16,6 +16,7 @@
 ARG BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 ARG BASE_IMAGE_TAG="26.08-cuda13.4-devel-ubuntu24.04"
 ARG OS
+ARG APT_MIRROR=""
 # 3FS revision to build the client library from.
 ARG HF3FS_REF="22fca04564c7cc230fd8b9523b8b92864e1dad47"
 # libcuobjclient dev image used by the cuobj_dev stage below.
@@ -27,6 +28,20 @@ ARG CUOBJ_DEV_IMAGE="nvcr.io/nvidia/cuda-dl-base:26.08-cuda13.4-inference-devel-
 # folly transitive prereqs) stay confined to this stage.
 FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS hf3fs-builder
 ARG HF3FS_REF
+ARG APT_MIRROR
+
+# Apply the same optional Ubuntu mirror used by the final build stage before
+# installing the 3FS build dependencies.
+RUN if [ -n "$APT_MIRROR" ]; then \
+        . /etc/os-release && \
+        printf '%s\n' \
+            'Types: deb' \
+            "URIs: $APT_MIRROR" \
+            "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
+            'Components: main restricted universe multiverse' \
+            'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
+        grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f; \
+    fi
 
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -135,7 +150,7 @@ ARG LIBFABRIC_INSTALL_PATH="/usr/local"
 ARG BUILD_TYPE="release"
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
-ARG APT_MIRROR=""
+ARG APT_MIRROR
 
 # Optional apt mirror override, e.g. for CI environments with an internal
 # Ubuntu mirror. Empty (default) keeps the public archive/ports.ubuntu.com.
