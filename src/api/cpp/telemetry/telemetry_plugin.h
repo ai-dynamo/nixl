@@ -83,6 +83,9 @@ private:
         try {
             return std::make_unique<exporterType>(init_params);
         }
+        catch (const nixlTelemetryBindFailed &) {
+            throw;
+        }
         catch (const std::exception &e) {
             NIXL_ERROR << "Failed to create exporter: " << e.what();
             return nullptr;

@@ -23,6 +23,7 @@
 #include "serdes/serdes.h"
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 #include <numaif.h>
 
 #include <numa.h>
@@ -206,6 +207,9 @@ nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
         runtime_ = FI_HMEM_CUDA;
         NIXL_INFO << "System runtime: CUDA for " << topology->getNumNvidiaAccel()
                   << " NVIDIA GPU(s)";
+    } else if (topology->getNumAmdAccel() > 0) {
+        runtime_ = FI_HMEM_ROCR;
+        NIXL_INFO << "System runtime: ROCr for " << topology->getNumAmdAccel() << " AMD GPU(s)";
     } else if (topology->getNumAwsAccel() > 0) {
         runtime_ = FI_HMEM_NEURON;
         NIXL_INFO << "System runtime: NEURON for " << topology->getNumAwsAccel()
@@ -238,6 +242,31 @@ nixlLibfabricRailManager::~nixlLibfabricRailManager() {
 
 nixl_status_t
 nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
+    // get the CUDA dmabuf mapping type for VRAM_SEG registrations from configuration or
+    // environment variable, and convert it to the mapping mode used during registration
+    // NOTE: corresponding env var is NIXL_LIBFABRIC_DMABUF_MAPPING, and it overrides the
+    // value passed in the custom parameter map (see DmabufMappingMode for the modes)
+    std::string dmabuf_mapping = "auto";
+    LibfabricUtils::getCustomStringParam(custom_params, "dmabuf_mapping", dmabuf_mapping);
+    std::transform(dmabuf_mapping.begin(),
+                   dmabuf_mapping.end(),
+                   dmabuf_mapping.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    if (dmabuf_mapping == "auto") {
+        dmabuf_mapping_mode_ = DmabufMappingMode::Auto;
+    } else if (dmabuf_mapping == "pcie") {
+        dmabuf_mapping_mode_ = DmabufMappingMode::ForcePcie;
+    } else if (dmabuf_mapping == "default") {
+        dmabuf_mapping_mode_ = DmabufMappingMode::ForceDefault;
+    } else if (dmabuf_mapping == "off") {
+        dmabuf_mapping_mode_ = DmabufMappingMode::Off;
+    } else {
+        NIXL_WARN << "Unknown dmabuf_mapping value \"" << dmabuf_mapping
+                  << "\"; expected auto|pcie|default|off. Falling back to auto.";
+        dmabuf_mapping_mode_ = DmabufMappingMode::Auto;
+    }
+    NIXL_INFO << "CUDA dmabuf mapping mode: " << dmabuf_mapping;
+
     // load from config or compute bandwidth limit per NUMA node
     // then from that deduce rail count limit
     // finally choose appropriate rail selection policy:
@@ -351,7 +380,7 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
 
         for (size_t i = 0; i < num_rails_; ++i) {
             rails_.emplace_back(std::make_unique<nixlLibfabricRail>(
-                efa_devices[i], provider_name, static_cast<uint16_t>(i)));
+                efa_devices[i], provider_name, static_cast<uint16_t>(i), runtime_));
 
             // Initialize EFA device mapping
             efa_device_to_rail_map[efa_devices[i]] = i;
@@ -365,11 +394,6 @@ nixlLibfabricRailManager::createRails(const std::vector<std::string> &efa_device
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;
-}
-
-bool
-nixlLibfabricRailManager::shouldUseStriping(size_t transfer_size) const {
-    return transfer_size >= striping_threshold_;
 }
 
 size_t
@@ -389,13 +413,14 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     const std::vector<uint64_t> &remote_keys,
     const std::vector<size_t> &remote_selected_endpoints,
     const std::unordered_map<size_t, std::vector<fi_addr_t>> &dest_addrs,
-    uint16_t agent_idx,
     uint16_t xfer_id,
-    std::function<void()> completion_callback,
+    std::function<void(nixl_status_t)> completion_callback,
     size_t &submitted_count_out,
     int desc_idx,
-    int desc_count,
-    size_t base_offset) {
+    size_t base_offset,
+    bool apply_fi_more,
+    int device_id,
+    bool is_cuda_vram) {
     // Initialize output parameter
     submitted_count_out = 0;
 
@@ -405,22 +430,22 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     }
 
     // Determine striping strategy
-    bool use_striping = shouldUseStriping(transfer_size) && selected_rails.size() > 1;
+    bool use_striping = usesStriping(transfer_size, selected_rails.size());
     NIXL_DEBUG << "use_striping=" << use_striping;
     if (!use_striping) {
-        // WRITE: group 16 consecutive descs to same rail for FI_MORE batching.
-        // READ: per-descriptor round-robin (FI_MORE has no benefit for reads).
-        constexpr int FI_MORE_BATCH_SIZE = 16;
+        // WRITE: group NIXL_LIBFABRIC_FI_MORE_BATCH_SIZE consecutive descriptors on one rail
+        // for FI_MORE batching. READ: per-descriptor round-robin (FI_MORE has no benefit).
+        // apply_fi_more is precomputed by the caller, which leaves it false for the last post
+        // on each rail so that every rail's FI_MORE batch is flushed.
         const bool batch_write = (op_type == nixlLibfabricReq::WRITE);
-        const size_t rr_idx =
-            batch_write ? (base_offset + desc_idx / FI_MORE_BATCH_SIZE) : (base_offset + desc_idx);
-        const size_t rail_id = selected_rails[rr_idx % selected_rails.size()];
-        const size_t remote_ep_id =
-            remote_selected_endpoints[rr_idx % remote_selected_endpoints.size()];
-        const int pos_in_group = desc_idx % FI_MORE_BATCH_SIZE;
-        const bool is_last_in_group =
-            (pos_in_group == FI_MORE_BATCH_SIZE - 1) || (desc_idx == desc_count - 1);
-        const uint64_t fi_flags = (batch_write && !is_last_in_group) ? FI_MORE : 0;
+        const size_t rail_sel_idx =
+            railSelectionIndex(base_offset, desc_idx, batch_write, selected_rails.size());
+        const size_t rail_id = selected_rails[rail_sel_idx];
+        // The remote endpoint round-robins over its own count, which can differ from the
+        // local rail count.
+        const size_t remote_ep_id = remote_selected_endpoints[railSelectionIndex(
+            base_offset, desc_idx, batch_write, remote_selected_endpoints.size())];
+        const uint64_t fi_flags = (batch_write && apply_fi_more) ? FI_MORE : 0;
         NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id " << remote_ep_id;
         // Allocate request
         nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
@@ -448,13 +473,24 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
         req->local_mr = local_mrs[rail_id];
         req->remote_key = remote_keys[remote_ep_id];
         req->rail_id = rail_id;
-        // Submit immediately
+        // Submit: either enqueue for PT, or post directly
         nixl_status_t status;
-        if (op_type == nixlLibfabricReq::WRITE) {
+        if (rails_[rail_id]->isProgressThreadEnabled()) {
+            // PT-owns-endpoint: enqueue for progress thread to post
+            deferTransferRequest(op_type,
+                                 xfer_id,
+                                 fi_flags,
+                                 dest_addrs.at(rail_id)[remote_ep_id],
+                                 device_id,
+                                 is_cuda_vram,
+                                 rail_id,
+                                 req);
+            status = NIXL_SUCCESS;
+        } else if (op_type == nixlLibfabricReq::WRITE) {
+            // Direct post (PT OFF path)
             // Generate next SEQ_ID for this specific write operation
             uint8_t seq_id = LibfabricUtils::getNextSeqId();
-            uint64_t imm_data =
-                NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
+            uint64_t imm_data = NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, seq_id);
             status = rails_[rail_id]->postWrite(req->local_addr,
                                                 req->chunk_size,
                                                 fi_mr_desc(req->local_mr),
@@ -500,7 +536,9 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
                 remote_selected_endpoints[i % remote_selected_endpoints.size()];
             NIXL_DEBUG << "rail " << rail_id << ", remote_ep_id=" << remote_ep_id;
             size_t current_chunk_size = chunk_size + (i == num_rails - 1 ? remainder : 0);
-            if (current_chunk_size == 0) break;
+            if (current_chunk_size == 0) {
+                break;
+            }
             // Allocate request
             nixlLibfabricReq *req = rails_[rail_id]->allocateDataRequest(op_type, xfer_id);
             if (!req) {
@@ -532,11 +570,22 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
             req->remote_key = remote_keys[remote_ep_id];
             req->rail_id = rail_id;
             nixl_status_t status;
-            if (op_type == nixlLibfabricReq::WRITE) {
+            if (rails_[rail_id]->isProgressThreadEnabled()) {
+                // PT-owns-endpoint: enqueue for progress thread to post
+                deferTransferRequest(op_type,
+                                     xfer_id,
+                                     fi_flags,
+                                     dest_addrs.at(rail_id)[remote_ep_id],
+                                     device_id,
+                                     is_cuda_vram,
+                                     rail_id,
+                                     req);
+                status = NIXL_SUCCESS;
+            } else if (op_type == nixlLibfabricReq::WRITE) {
                 // Generate next SEQ_ID for this specific transfer operation
                 uint8_t seq_id = LibfabricUtils::getNextSeqId();
                 uint64_t imm_data =
-                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, agent_idx, xfer_id, seq_id);
+                    NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, seq_id);
                 status = rails_[rail_id]->postWrite(req->local_addr,
                                                     req->chunk_size,
                                                     fi_mr_desc(req->local_mr),
@@ -574,6 +623,36 @@ nixlLibfabricRailManager::prepareAndSubmitTransfer(
     NIXL_DEBUG << "Successfully submitted requests for " << transfer_size << " bytes";
 
     return NIXL_SUCCESS;
+}
+
+void
+nixlLibfabricRailManager::deferTransferRequest(nixlLibfabricReq::OpType op_type,
+                                               uint16_t xfer_id,
+                                               uint64_t fi_flags,
+                                               fi_addr_t dest_addr,
+                                               int device_id,
+                                               bool is_cuda_vram,
+                                               size_t rail_id,
+                                               nixlLibfabricReq *req) {
+    uint8_t seq_id = (op_type == nixlLibfabricReq::WRITE) ? LibfabricUtils::getNextSeqId() : 0;
+    uint64_t imm_data = (op_type == nixlLibfabricReq::WRITE) ?
+        NIXL_MAKE_IMM_DATA(NIXL_LIBFABRIC_MSG_TRANSFER, xfer_id, seq_id) :
+        0;
+    nixlLibfabricPostRequest pr{};
+    pr.type = (op_type == nixlLibfabricReq::WRITE) ? nixlLibfabricPostRequest::WRITE :
+                                                     nixlLibfabricPostRequest::READ;
+    pr.local_addr = req->local_addr;
+    pr.length = req->chunk_size;
+    pr.local_desc = fi_mr_desc(req->local_mr);
+    pr.immediate_data = imm_data;
+    pr.dest_addr = dest_addr;
+    pr.remote_addr = req->remote_addr;
+    pr.remote_key = req->remote_key;
+    pr.req = req;
+    pr.fi_flags = fi_flags;
+    pr.device_id = device_id;
+    pr.is_cuda_vram = is_cuda_vram;
+    rails_[rail_id]->enqueuePost(pr);
 }
 
 bool
@@ -775,6 +854,24 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
         iface = topology->getMrAttrIface(device_id);
     }
 
+    // Dmabufs exported for this registration, indexed by mapping type
+    // [0]: platform default mapping, [1]: PCIe (BAR1) mapping
+    // The destructor closes both fds on every return from registerMemory, and the local
+    // scope keeps concurrent registrations separate
+    struct DmabufExports {
+        LibfabricUtils::CudaDmabufExport entries[2];
+        // Whether an export was tried for this mapping type. A failed export leaves its fd
+        // negative, so without this every later rail taking the same mapping type repeats the
+        // same failing call into the CUDA driver.
+        bool attempted[2] = {false, false};
+
+        ~DmabufExports() {
+            for (auto &entry : entries) {
+                LibfabricUtils::cudaDmabufExportClose(entry);
+            }
+        }
+    } dmabuf_exports;
+
     // Resize output vectors to match all rails
     mr_list_out.resize(rails_.size(), nullptr);
     key_list_out.clear();
@@ -802,9 +899,52 @@ nixlLibfabricRailManager::registerMemory(void *buffer,
 
         struct fid_mr *mr;
         uint64_t key;
+
+        // Export a dmabuf when this rail registers with one, which carries the mapping type
+        // into the registration; rails sharing a mapping type share one export, so a
+        // registration holds at most two
+        const LibfabricUtils::CudaDmabufExport *dmabuf = nullptr;
+        if (dmabuf_mapping_mode_ != DmabufMappingMode::Off &&
+            rails_[rail_idx]->canRegisterWithDmabuf(mem_type, iface) &&
+            LibfabricUtils::cudaDmabufExportSupported(device_id)) {
+            bool want_pcie_mapping = false;
+            switch (dmabuf_mapping_mode_) {
+            case DmabufMappingMode::ForcePcie:
+                want_pcie_mapping = true;
+                break;
+            case DmabufMappingMode::ForceDefault:
+                want_pcie_mapping = false;
+                break;
+            case DmabufMappingMode::Auto:
+                // Decide per device, since a platform can attach NICs on both routes to GPU
+                // memory (e.g. GB200)
+                want_pcie_mapping =
+                    topology->nicSharesPcieSwitchWithAccel(rails_[rail_idx]->device_name);
+                break;
+            case DmabufMappingMode::Off:
+                break;
+            }
+
+            const size_t slot = want_pcie_mapping ? 1 : 0;
+            if (!dmabuf_exports.attempted[slot]) {
+                dmabuf_exports.attempted[slot] = true;
+                LibfabricUtils::cudaDmabufExportRange(
+                    buffer, length, device_id, want_pcie_mapping, dmabuf_exports.entries[slot]);
+            }
+            // A PCIe mapping the platform refused leaves the export carrying the one window
+            // that platform offers, which is the window a virtual-address registration
+            // reaches anyway. Registering by virtual address instead keeps the GDRCopy
+            // mapping the EFA RDM provider skips for an FI_MR_DMABUF registration, so the
+            // dmabuf serves only the registrations whose mapping type it changes.
+            if (dmabuf_exports.entries[slot].fd >= 0 &&
+                want_pcie_mapping == dmabuf_exports.entries[slot].pcie_mapping) {
+                dmabuf = &dmabuf_exports.entries[slot];
+            }
+        }
+
         // Pass device_id parameter to individual rail's registerMemory calls
-        nixl_status_t status =
-            rails_[rail_idx]->registerMemory(buffer, length, mem_type, device_id, iface, &mr, &key);
+        nixl_status_t status = rails_[rail_idx]->registerMemory(
+            buffer, length, mem_type, device_id, iface, &mr, &key, dmabuf);
         if (status != NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to register memory on rail " << rail_idx;
             // Cleanup already registered MRs
@@ -874,6 +1014,7 @@ nixlLibfabricRailManager::deregisterMemory(const std::vector<size_t> &selected_r
 nixl_status_t
 nixlLibfabricRailManager::insertAllAddresses(
     const std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &endpoints,
+    uint32_t agent_idx,
     std::unordered_map<size_t, std::vector<fi_addr_t>> &fi_addrs_out,
     std::vector<char *> &ep_names_out) {
     auto &rails = rails_;
@@ -887,7 +1028,8 @@ nixlLibfabricRailManager::insertAllAddresses(
         fi_addrs_out[rail_id].reserve(endpoints.size());
         for (const auto &endpoint : endpoints) {
             fi_addr_t fi_addr;
-            nixl_status_t status = rails[rail_id]->insertAddress(endpoint.data(), &fi_addr);
+            nixl_status_t status =
+                rails[rail_id]->insertAddress(endpoint.data(), agent_idx, &fi_addr);
             if (status != NIXL_SUCCESS) {
                 NIXL_ERROR << "Failed for rail " << rail_id;
                 return status;
@@ -938,11 +1080,11 @@ nixlLibfabricRailManager::cleanupConnection(const std::vector<fi_addr_t> &fi_add
 }
 
 nixl_status_t
-nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
-                                             nixlLibfabricReq *req,
-                                             fi_addr_t dest_addr,
-                                             uint16_t agent_idx,
-                                             std::function<void()> completion_callback) {
+nixlLibfabricRailManager::postControlMessage(
+    ControlMessageType msg_type,
+    nixlLibfabricReq *req,
+    fi_addr_t dest_addr,
+    std::function<void(nixl_status_t)> completion_callback) {
     // Validation - use rail 0 for notifications
     if (rails_.empty()) {
         NIXL_ERROR << "No rails available";
@@ -959,6 +1101,12 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     case ControlMessageType::NOTIFICATION:
         msg_type_value = NIXL_LIBFABRIC_MSG_NOTIFICTION;
         break;
+    case ControlMessageType::HANDSHAKE:
+        msg_type_value = NIXL_LIBFABRIC_MSG_HANDSHAKE;
+        break;
+    case ControlMessageType::XFER_ERROR:
+        msg_type_value = NIXL_LIBFABRIC_MSG_XFER_ERROR;
+        break;
     default:
         NIXL_ERROR << "Unknown message type";
         return NIXL_ERR_INVALID_PARAM;
@@ -967,7 +1115,7 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
     uint32_t xfer_id = req->xfer_id;
     // For control messages, use SEQ_ID 0 since they don't need sequence tracking
     // TODO: Add sequencing for connection establishment workflow.
-    uint64_t imm_data = NIXL_MAKE_IMM_DATA(msg_type_value, agent_idx, xfer_id, 0);
+    uint64_t imm_data = NIXL_MAKE_IMM_DATA(msg_type_value, xfer_id, 0);
 
     // Set completion callback if provided
     if (completion_callback) {
@@ -975,8 +1123,8 @@ nixlLibfabricRailManager::postControlMessage(ControlMessageType msg_type,
         NIXL_DEBUG << "Set completion callback for control message request " << req->xfer_id;
     }
 
-    NIXL_DEBUG << "Sending control message type " << msg_type_value << " agent_idx=" << agent_idx
-               << " XFER_ID=" << xfer_id << " imm_data=" << imm_data << " on rail " << rail_id;
+    NIXL_DEBUG << "Sending control message type " << msg_type_value << " XFER_ID=" << xfer_id
+               << " imm_data=" << imm_data << " dest_addr=" << dest_addr << " on rail " << rail_id;
 
     // Use rail 0 for notifications
     nixl_status_t status = rails_[rail_id]->postSend(imm_data, dest_addr, req);
@@ -1082,7 +1230,11 @@ nixlLibfabricRailManager::deserializeMemoryKeys(const std::string &serialized_da
                                                 std::vector<uint64_t> &keys_out,
                                                 uint64_t &remote_addr_out) const {
     nixlSerDes ser_des;
-    ser_des.importStr(serialized_data);
+    const nixl_status_t import_status = ser_des.importStr(serialized_data);
+    if (import_status != NIXL_SUCCESS) {
+        NIXL_ERROR << "deserializeMemoryKeys: importStr failed, status=" << import_status;
+        return import_status;
+    }
     // Load all rail keys instead of just one
     keys_out.clear();
     keys_out.reserve(num_keys);
@@ -1129,7 +1281,11 @@ nixlLibfabricRailManager::deserializeConnectionInfo(
     std::vector<std::array<char, LF_EP_NAME_MAX_LEN>> &data_endpoints_out) const {
 
     nixlSerDes ser_des;
-    ser_des.importStr(serialized_data);
+    const nixl_status_t import_status = ser_des.importStr(serialized_data);
+    if (import_status != NIXL_SUCCESS) {
+        NIXL_ERROR << "deserializeConnectionInfo: importStr failed, status=" << import_status;
+        return import_status;
+    }
 
     // Use user prefix with standard suffixes
     std::string data_prefix = user_prefix + "_data_ep_";

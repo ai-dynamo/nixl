@@ -1,0 +1,306 @@
+# NIXL Tracing System
+
+## Overview
+
+The NIXL tracing system (`nixl::trace`) records **named, timed spans** around NIXL
+operations and routes them to one or more tracing backends. A single set of call
+sites inside NIXL fans out to **every active backend at runtime**, so adding a new
+backend never changes the call sites.
+
+Tracing **backends ship as separate, on-demand `.so` plugins** — loaded by
+`nixlPluginManager` exactly like NIXL's data backends and telemetry exporters. Only
+the tracing **facade** is compiled into `libnixl`; a backend's (often heavy) optional
+dependency stays out of `libnixl` and is `dlopen`'d only when the backend is actually
+requested.
+
+The first backend is **NVTX** (NVIDIA Tools Extension), which makes NIXL operations
+visible as ranges on an [NVIDIA Nsight Systems](https://docs.nvidia.com/nsight-systems/)
+timeline; it ships as `libtrace_backend_nvtx.so`. Additional backends (e.g. MLCommons
+**Chakra** execution traces) are planned and plug into the same call sites.
+
+Tracing is independent of the [telemetry](telemetry.md) system: telemetry collects
+numeric metrics/events, while tracing records spans/markers for profiling and
+execution-trace tools.
+
+## Architecture
+
+- **`nixl::trace::Tracer`** — a composite tracer **owned by each `nixlAgent`** (no
+  singleton; injected into call sites). One `beginSpan()`/`mark()` call fans out to
+  every active backend.
+- **`nixl::trace::Span`** — a move-only handle returned by `beginSpan()`. It forwards
+  attributes/dependencies to each backend span and **ends them all on destruction**
+  (RAII), so a span covers the scope in which it is declared.
+- **`TraceBackend` / `SpanBackend`** — the backend interfaces. Each backend
+  implementation provides them.
+- **Backend plugins** — each backend is a `libtrace_backend_<name>.so` that exports
+  `nixl_trace_plugin_init()` returning a `nixlTracePlugin` (a `create_backend`
+  factory + api version). `nixlPluginManager::loadTracePlugin()` discovers and
+  `dlopen`s them on demand by the `libtrace_backend_` prefix — the same machinery used
+  for data backends and telemetry exporters. The plugin contract lives in
+  `src/core/tracing/trace_plugin.h`.
+- **`Kind`** — the operation kind attached to a span. It selects an NVTX color and
+  maps 1:1 onto the Chakra `NodeType` vocabulary:
+  `Generic`, `Compute`, `MemoryR`, `MemoryW`, `CommSend`, `CommRecv`, `CommColl`,
+  `Metadata`.
+
+`nixl::trace` is an **internal NIXL core API**: it is compiled into `libnixl` but its
+headers (`tracing/trace.h`, `tracing/trace_macros.h`, `tracing/trace_plugin.h`, under
+`src/core/tracing/`) are not installed as public headers. Only NIXL core instruments
+it today; because internal→public is a non-breaking change, it can be promoted to a
+public header later if an external consumer appears.
+
+## Two gates: build/packaging and runtime
+
+A backend is active only when its plugin is **both built (packaged) and requested at
+runtime**.
+
+### Build / packaging (which backend plugins are built)
+
+| Meson option | Description | Default |
+| ------------ | ----------- | ------- |
+| `with_trace` | Build the tracing facade (defines `NIXL_TRACE_ENABLED`) | `true` |
+| `trace_backends` | Comma-separated backend plugins to build, e.g. `nvtx` | `nvtx` |
+
+- With `-Dwith_trace=false`, the call-site macros expand to `do {} while (0)` — zero overhead.
+- Each requested backend builds a `libtrace_backend_<name>.so` under
+  `src/plugins/tracing/<name>/`, installed alongside the other NIXL plugins. A
+  backend with an unmet dependency (e.g. NVTX without the CUDA-toolkit `nvtx3`
+  headers) is silently skipped so the build stays green.
+
+### Runtime (which installed backends the caller activates)
+
+Runtime selection is **environment-only**, via the `NIXL_TRACE_BACKENDS` variable.
+There is intentionally **no** `nixlAgentConfig` field for it, so adding tracing does
+not change the public config struct's size/layout (ABI safety).
+
+| Source | Description |
+| ------ | ----------- |
+| `NIXL_TRACE_BACKENDS` env var | Comma-separated backends to activate, e.g. `NIXL_TRACE_BACKENDS=nvtx` (empty/unset = tracing off) |
+
+```bash
+# Activate the NVTX backend (affects every nixlAgent created afterwards):
+export NIXL_TRACE_BACKENDS=nvtx
+```
+
+The variable is read when the agent is constructed, so set it before creating the
+`nixlAgent`. Each requested name is loaded as `libtrace_backend_<name>.so` through
+`nixlPluginManager`. If the requested set is empty (or no requested plugin is found),
+the agent holds no tracer and call sites take a cheap null-check branch — no `dlopen`,
+no allocation.
+
+#### Auto-enable under Nsight Systems
+
+When `NIXL_TRACE_BACKENDS` is **unset**, NIXL auto-enables the **NVTX** backend if it
+detects that the process is running under Nsight Systems — so a profiled run produces a
+timeline without anyone setting the variable by hand. Detection keys off
+`NVTX_INJECTION64_PATH`, which `nsys` injects into the environment of the process it
+profiles (it is **not** set merely because `nsys` is installed). Outside an `nsys` run
+the agent stays inert (no plugin load, no NVTX domain).
+
+Auto-enabling NVTX under nsys is **additive**: it never suppresses a backend you
+requested explicitly. The only hard override is a set-but-empty value, which
+forces tracing off. Selection when the agent is constructed:
+
+| `NIXL_TRACE_BACKENDS` | Running under nsys | Active backends |
+| --------------------- | ------------------ | --------------- |
+| set, non-empty (e.g. `chakra`) | no | as listed (`chakra`) |
+| set, non-empty (e.g. `chakra`) | yes | as listed **plus** `nvtx` (`chakra,nvtx`; deduplicated) |
+| set but empty (`NIXL_TRACE_BACKENDS=`) | either | none (explicit "off" beats auto-enable) |
+| unset | yes | `nvtx` |
+| unset | no | none |
+
+So `nsys profile ... ./app` needs no NIXL-specific flags to get an NVTX timeline
+(and still records any other backend you asked for), while `NIXL_TRACE_BACKENDS=`
+force-disables tracing even under a profiler.
+
+#### Sampling
+
+| Source | Description |
+| ------ | ----------- |
+| `NIXL_TRACE_SAMPLE_RATIO` env var | Fraction of requests marked as sampled: `0` (off) or a number in `[2^-56, 1]`. Empty is an explicit off; when unset, the variable below decides |
+| `OTEL_TRACES_SAMPLE_RATIO` env var | Fallback used only when the NIXL variable is unset; Dynamo's variable, read so a NIXL inside Dynamo inherits its ratio. Unset means the opposite in each: Dynamo samples everything, NIXL samples nothing |
+
+The ratio applies to the trace contexts the agent generates, so it does nothing
+on its own: with no backend active — no `NIXL_TRACE_BACKENDS`, no nsys — the
+agent creates no contexts, and setting only the ratio produces nothing to see.
+
+The decision is head-based: it is taken once, when the agent creates the trace
+context for a request, and derives from that context's own trace id, so it is
+stable per request and every peer inspecting the same context agrees with it.
+A request is sampled when the random part of its trace id falls in the top
+`ratio` of the range, which is the OpenTelemetry consistent-probability rule: a
+later phase sampling at a lower ratio thins what NIXL kept instead of discarding
+all of it. No backend consumes the sampled flag yet — it is the gate the first
+cross-process carrier will use to decide whether to propagate a context.
+
+A value that is neither `0` nor a number in `[2^-56, 1]` makes agent
+construction fail, whether or not tracing is otherwise enabled, rather than
+silently sampling nothing. `2^-56` is OpenTelemetry's minimum probability and
+means one trace in every value 56 bits can express; anything smaller and
+nonzero cannot be represented, so it is rejected instead of quietly behaving
+like `0`. The
+same is not true of `OTEL_TRACES_SAMPLE_RATIO`, which NIXL does not own: a bad
+value there is warned about and ignored. Note that in a `.nixl.cfg` file the
+value must be quoted (`NIXL_TRACE_SAMPLE_RATIO = "0.25"`), since it is read as a
+string.
+
+## Instrumented operations
+
+The following Agent operations emit spans/markers (more will be added in later
+backends/PRs):
+
+| Span / marker | Kind | Attributes |
+| ------------- | ---- | ---------- |
+| `nixl::registerMem` | `MemoryW` | `mem_type` |
+| `nixl::deregisterMem` | `Generic` | `mem_type` |
+| `nixl::makeXferReq` | `Generic` | `desc_count` |
+| `nixl::createXferReq` | `Generic` | `remote_agent`, `desc_count` |
+| `nixl::postXferReq.write` | `CommSend` | `remote_agent`, `bytes` |
+| `nixl::postXferReq.read` | `CommRecv` | `remote_agent`, `bytes` |
+| `nixl::xfer.complete` | `Metadata` (marker) | - |
+| `nixl::makeConnection` | `Generic` | `remote_agent` |
+| `nixl::genNotif` | `Metadata` | `remote_agent` |
+| `nixl::getNotifs` | `Metadata` | - |
+| `nixl::loadRemoteMD` | `Metadata` | - |
+| `nixl::fetchRemoteMD` | `Metadata` | `remote_agent` |
+| `nixl::prepMemView` | `MemoryR` | `mem_type`, `desc_count` |
+| `nixl::releaseMemView` | `Generic` | - |
+
+Spans cover the synchronous call only; the `nixl::xfer.complete` marker is emitted
+when `getXferStatus` first observes success. How a backend renders attributes and
+dependencies (`addCtrlDep`/`addDataDep`) is backend-specific and documented with each
+backend (e.g. NVTX attaches attributes as typed payloads on the range via
+`nvtxRangePopPayload` and ignores dependencies; offline backends such as Chakra
+record them).
+
+### Backend phase spans
+
+A backend plugin can record a phase of its own work through
+the `nixlBackendTraceSink` it receives in `nixlBackendInitParams`. Core turns
+each recorded phase into a momentary span carrying `nixl.backend` (the recording
+backend's type), `nixl.phase.timestamp_us` (the plugin's `nixlTime` reading),
+`nixl.phase.label` when the plugin supplied one, and any plugin-supplied
+attributes. The phase vocabulary is closed so that timelines stay comparable
+across backends:
+
+| Span | Phase enumerator | Meaning |
+| ---- | ---------------- | ------- |
+| `nixl::submit` | `SUBMIT` | the backend accepted the operation |
+| `nixl::wire.submitted` | `WIRE_SUBMITTED` | handed to the transport |
+| `nixl::wire.completed` | `WIRE_COMPLETED` | transport signalled completion |
+| `nixl::notif.sent` | `NOTIF_SENT` | notification posted to the wire |
+| `nixl::notif.received` | `NOTIF_RECEIVED` | notification observed locally |
+| `nixl::remote.observed` | `REMOTE_OBSERVED` | the peer's side was observed |
+| `nixl::phase` | `OTHER` | generic escape hatch; the plugin's label becomes the span name |
+
+The sink interface is internal (`src/core/tracing/backend_trace.h`, not an
+installed header), so only in-tree plugins can emit phases. No plugin emits them
+yet; UCX and libfabric map their internals onto the vocabulary in later PRs.
+
+A backend also sees the trace context of the request it is executing, as
+`traceContext` in the `nixl_opt_b_args_t` that `prepXfer` and `postXfer` receive.
+It is the same context at prep and at every post of that request, reposts
+included, and the zeroed, invalid context when tracing is off. It is null in
+`prepMemView`, which has no request, and `opt_args` itself may be null when an
+engine is called directly. The pointer is valid only for the call: a plugin that
+needs the context later, at completion or when building a notification, copies
+the value onto its own request handle. A carrier that puts it on the wire calls
+`encodeTraceContext` itself. `TraceContext` is internal like the sink, so only
+in-tree plugins can read it; none does yet.
+
+## Profiling with NVTX / Nsight Systems
+
+NVTX is a lazy, online API: when no profiler is attached, ranges are near-zero-cost
+no-op stubs. Run the process under `nsys` to capture the ranges into a `.nsys-rep`
+you can open in the Nsight Systems GUI.
+
+The NVTX backend plugin is **optional at build time**: it is built only when the CUDA
+toolkit's header-only `nvtx3` headers are present, and is silently skipped otherwise
+(there is no separate non-CUDA NVTX build). When it isn't built, requesting it at
+runtime (`NIXL_TRACE_BACKENDS=nvtx`) just logs a warning and tracing stays off — the
+rest of NIXL is unaffected.
+
+```bash
+# Build with tracing + the NVTX backend plugin (both on by default; the NVTX
+# plugin is built when the CUDA-toolkit nvtx3 headers are found, else skipped)
+meson setup build -Dbuildtype=debug -Dwith_trace=true -Dtrace_backends=nvtx
+ninja -C build
+
+# Profile a tracing-enabled run (here: the tracing gtest). Running under nsys
+# auto-enables NVTX (see "Auto-enable under Nsight Systems"), so the explicit
+# NIXL_TRACE_BACKENDS=nvtx below is optional — kept here to be explicit.
+NIXL_TRACE_BACKENDS=nvtx nsys profile --trace=nvtx,cuda,osrt --force-overwrite true \
+    --output /tmp/nixl_nvtx \
+    ./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
+    --gtest_filter='*Tracing*'
+
+# Summarize from the CLI, or open /tmp/nixl_nvtx.nsys-rep in Nsight Systems:
+nsys stats --report nvtx_sum --format csv /tmp/nixl_nvtx.nsys-rep | grep 'nixl::'
+```
+
+Each agent uses its **own NVTX domain named after the agent**, so ranges appear as
+`<agent_name>:<span_name>`, e.g.:
+
+```text
+agent_0:nixl::postXferReq.write
+agent_0:nixl::createXferReq
+agent_0:nixl::registerMem
+agent_1:nixl::registerMem
+```
+
+For GPU transfers the host-side NVTX ranges line up on the Nsight timeline with the
+GPU activity Nsight captures via CUDA tracing (`--trace=cuda,nvtx`), i.e. a GPU-aware
+view by correlation. In-kernel / device-side tracing is out of scope (NVTX cannot run
+in `__device__` code).
+
+## Running the tracing tests
+
+The facade unit tests run against mock backends (no plugin needed); the real-agent
+`TestTransferTracing` tests load the NVTX plugin and exercise live UCX transfers with
+NVTX active:
+
+```bash
+ninja -C build test/gtest/unit/unit test/gtest/gtest
+# facade unit suite (no backend plugin needed):
+./build/test/gtest/unit/unit --gtest_filter='Tracing.*'
+# real-agent NVTX suite (loads libtrace_backend_nvtx.so from the build tree):
+./build/test/gtest/gtest --tests_plugin_dirs=build/test/gtest/mocks \
+    --gtest_filter='*TestTransferTracing*'
+```
+
+When `nsys` is available, a `tracing_nsys` CTest additionally profiles the real-agent
+test and writes `build/test/gtest/artifacts/nixl_nvtx.nsys-rep` (skipped automatically
+if profiling is not permitted in the environment).
+
+## Correlation
+
+In NIXL tracing, "correlation" can mean two different things:
+
+- **Cross-rank / cross-agent** -- linking the sender's span to the receiver's span across
+  processes. NVTX has **no** native cross-process linkage: each process is its own
+  timeline that Nsight aligns best-effort by clock, so the only aid today is matching a
+  `request_id`-style attribute by hand. Structured linking is a **Chakra** capability (one
+  trace per rank, joined offline by `chakra_trace_link` from matching send/recv) and
+  requires a globally unique id propagated on the wire. It is planned, and not part of the
+  NVTX backend.
+- **Cross-thread within a process** -- attributing spans emitted on different threads
+  (e.g. `postXferReq` on the caller thread vs. the completion polled on another) to the
+  same request. Implemented via the backend-agnostic `pushCorrelationId()` /
+  `popCorrelationId()` API: NIXL wraps `postXferReq` and the `xfer.complete` marker in a
+  correlation scope keyed on the transfer-request handle's address, and the NVTX backend
+  records that id as the event's `uint64` payload -- so a post and its completion carry
+  the same id on the timeline regardless of which thread emitted each. (The id is a
+  process-local diagnostic handle, not a globally unique on-the-wire id.)
+
+## Planned work
+
+- **Chakra backend** — serialize MLCommons Chakra execution traces (one ET per rank),
+  recording the span attributes and dependencies the NVTX backend ignores.
+- **Cross-rank correlation** — propagate a globally unique request id on the wire so
+  sender and receiver spans can be linked across processes (distributed tracing; a
+  separate NIXL-architecture effort). Backends already receive each request's trace
+  context (see "Backend phase spans"); the per-plugin carriers that put it on the
+  wire come next.
+
+- **Backend phase emission** — the sink described under "Backend phase spans" exists,
+  but no plugin records a phase yet.

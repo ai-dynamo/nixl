@@ -70,6 +70,7 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 | `resp_checksum` | Response checksum validation (`required`/`supported`) | - | No |
 | `ca_bundle` | path to a custom certificate bundle | - | No |
 | `crtMinLimit` | Minimum object size (bytes) to use S3 CRT client for high-performance transfers | Disabled**** | No |
+| `throughput_target_gbps` | Target throughput for the S3 CRT client in **whole Gbps** (integer); sizes its parallel connection count | `10` | No |
 | `accelerated` | Enable S3 Accelerated engine (`true`/`false`) | `false` | No |
 | `type` | Accelerated engine type (`dell`, etc.) | - | No |
 
@@ -82,6 +83,8 @@ Backend parameters are passed as a key-value map (`nixl_b_params_t`) when creati
 \**** If `crtMinLimit` is not provided, the S3 CRT client is disabled and all transfers use the standard S3 client. When set, objects with size >= `crtMinLimit` will use the high-performance CRT client, while smaller objects continue to use the standard client. Recommended value: 10485760 (10 MB) or higher for optimal performance on large objects.
 
 Setting `crtMinLimit` also configures the CRT client's `partSize` and `multipartUploadThreshold` to the same value, ensuring multipart upload (MPU) is always used for transfers routed to the CRT client. Note that AWS S3 enforces a **5 MiB minimum part size** for all parts except the last: if `crtMinLimit` is set below 5 MiB (5,242,880 bytes), the CRT SDK will silently clamp the part size to 5 MiB and log a warning, but MPU still activates at `crtMinLimit`. Objects smaller than 5 MiB uploaded via MPU will be sent as a single-part multipart upload, which S3 allows. To avoid the silent clamp and warning, use `crtMinLimit >= 5242880`.
+
+`throughput_target_gbps` (default: 10 Gbps, whole numbers only) sets the CRT client's target throughput, which the CRT scheduler uses to size how many parallel connections it opens. On high-bandwidth links (e.g., 25 GbE, InfiniBand), raise this value to allow more concurrency.
 
 ### Environment Variables
 
@@ -202,7 +205,8 @@ agent.createBackend("obj", params);
 nixl_b_params_t params = {
     {"bucket", "large-model-storage"},
     {"region", "us-west-2"},
-    {"crtMinLimit", "10485760"}  // Use CRT client for objects >= 10 MB
+    {"crtMinLimit", "10485760"},        // Use CRT client for objects >= 10 MB
+    {"throughput_target_gbps", "25"}    // increase on high-bandwidth links, e.g. 25 GbE
 };
 agent.createBackend("obj", params);
 ```
@@ -320,10 +324,10 @@ Each engine implementation defines its own supported memory segment types via `g
 |--------|----------------------|-------------|
 | `DefaultObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | Standard S3 client - CPU memory only |
 | `S3CrtObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | S3 CRT client - CPU memory only |
-| `S3AccelObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG` | S3 Accelerated base - CPU memory by default |
+| `S3AccelObjEngineImpl` | `OBJ_SEG`, `DRAM_SEG`, `VRAM_SEG` | Generic S3-over-RDMA - advertises `VRAM_SEG` when the RDMA fast path is ready |
 | Vendor engines | `OBJ_SEG`, `DRAM_SEG`, `VRAM_SEG` | Vendor-specific - override to add GPU support |
 
-**Important:** Vendor engines that support GPU-direct transfers should override `getSupportedMems()` to include `VRAM_SEG`. The base `S3AccelObjEngineImpl` does not include `VRAM_SEG` by default - each vendor must explicitly expose this capability.
+**Important:** `S3AccelObjEngineImpl` advertises `VRAM_SEG` only when the generic S3-over-RDMA fast path is ready (cuObject fabric + control plane). Under `accelerated=true` there is no HTTP fallback: the backend fails to initialize if the fast path is unavailable, and a transfer the server declines is a hard error. `putObjectAsync` rejects a non-zero offset (a single-shot RDMA PUT writes the whole object); `getObjectAsync` honours the offset as a ranged read.
 
 ### Adding a Vendor Implementation
 

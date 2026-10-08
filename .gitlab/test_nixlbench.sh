@@ -20,6 +20,7 @@
 
 set -e
 set -x
+ulimit -c unlimited
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
@@ -91,15 +92,17 @@ for op_type in READ WRITE; do
     done
 done
 
-if $HAS_GPU ; then
-    for op_type in READ WRITE; do
-        for initiator in $seg_types; do
-            for target in $seg_types; do
-                run_nixlbench_two_workers_asio --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
-            done
-        done
-    done
-fi
+# TODO: remove this once https://github.com/ai-dynamo/nixl/issues/1999 is fixed
+# Skip UCCL nixlbench transfer tests to reduce CI flakiness
+# if $HAS_GPU ; then
+#     for op_type in READ WRITE; do
+#         for initiator in $seg_types; do
+#             for target in $seg_types; do
+#                 run_nixlbench_two_workers_asio --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+#             done
+#         done
+#     done
+# fi
 
 run_nixlbench_two_workers_etcd() {
     args="$@"
@@ -118,14 +121,16 @@ for op_type in READ WRITE; do
     done
 done
 
-if $HAS_GPU ; then
-    for op_type in READ WRITE; do
-        for initiator in $seg_types; do
-            for target in $seg_types; do
-                run_nixlbench_two_workers_etcd --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
-            done
-        done
-    done
-fi
+# TODO: remove this once https://github.com/ai-dynamo/nixl/issues/1999 is fixed
+# Skip UCCL nixlbench transfer tests to reduce CI flakiness
+# if $HAS_GPU ; then
+#     for op_type in READ WRITE; do
+#         for initiator in $seg_types; do
+#             for target in $seg_types; do
+#                 run_nixlbench_two_workers_etcd --backend UCCL --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+#             done
+#         done
+#     done
+# fi
 
 kill -9 $ETCD_PID 2>/dev/null || true

@@ -22,20 +22,12 @@
 # Set initial port number for client/server applications to be updated with
 # function below
 #
-tcp_port_range=1000
+tcp_port_range=300
 min_port_number=10500
-max_port_number=65535
+max_port_number=32500
 
-# GITLAB CI
-if [ -n "$CI_CONCURRENT_ID" ]; then
-    nixl_concurrent_id=$CI_CONCURRENT_ID
-# Jenkins CI
-elif [ -n "$EXECUTOR_NUMBER" ]; then
-    nixl_concurrent_id=$EXECUTOR_NUMBER
-else
-    # Fallback to random number if both CI_CONCURRENT_ID and EXECUTOR_NUMBER are not set
-    nixl_concurrent_id=$((RANDOM % $(((max_port_number - min_port_number) / tcp_port_range))))
-fi
+tcp_port_slots=$(((max_port_number - min_port_number) / tcp_port_range))
+nixl_concurrent_id=$(( ${CI_CONCURRENT_ID:-${EXECUTOR_NUMBER:-$RANDOM}} % tcp_port_slots ))
 
 echo nixl_concurrent_id="$nixl_concurrent_id"
 
@@ -77,7 +69,13 @@ max_gtest_port=$((tcp_port_max + gtest_offset))
 
 # Check if a GPU is present
 if [ -z "${HAS_GPU}" ]; then
-    nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+    if command -v nvidia-smi > /dev/null 2>&1; then
+        nvidia-smi -L | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+    elif command -v amd-smi > /dev/null 2>&1; then
+        amd-smi static -a | grep -q '^GPU' && HAS_GPU=true || HAS_GPU=false
+    else
+        HAS_GPU=false
+    fi
 fi
 
 # Ensure CUDA_HOME is set if CUDA is installed (cuda-dl-base images don't set it by default)
@@ -153,4 +151,28 @@ start_etcd_server() {
     ETCD_PID=$!
 
     wait_for_etcd
+}
+
+# Write a git config that authenticates every github.com request with
+# NIXL_GITHUB_USER/NIXL_GITHUB_TOKEN to $1, or an empty file when no token is bound.
+# Used by the CI matrices for image builds (as a build secret) and agent-side clones
+# (via git -c include.path). The token is a fine-grained PAT (github_pat_ followed
+# by letters, digits and underscores); it only ever appears base64-encoded in a header.
+write_github_gitconfig() {
+    local dest="$1"
+    local restore_xtrace=""
+    case "$-" in
+        *x*) restore_xtrace=1; set +x ;;
+    esac
+
+    (umask 077; : > "${dest}")
+    if [ -n "${NIXL_GITHUB_TOKEN:-}" ]; then
+        printf '[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic %s\n' \
+            "$(printf '%s:%s' "${NIXL_GITHUB_USER:-x-access-token}" "${NIXL_GITHUB_TOKEN}" | base64 -w0)" \
+            > "${dest}"
+    fi
+
+    if [ -n "${restore_xtrace}" ]; then
+        set -x
+    fi
 }

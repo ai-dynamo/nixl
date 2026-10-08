@@ -14,12 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# GPU support: HIP/ROCm when rocm_path is set, CUDA otherwise. The test uses the
+# gpu_utils.h abstraction (HAVE_CUDA / HAVE_ROCM), so no hipify translation is
+# needed here -- the HIP headers are consumed directly via rocm_dep.
 libfabric_utils_dep = [ libfabric_dep, nixl_common_deps, serdes_interface ]
 libfabric_test_cpp_args = []
 
-if cuda_dep.found()
+if rocm_dep.found()
+    libfabric_utils_dep += [ rocm_dep ]
+    libfabric_test_cpp_args += [ '-DHAVE_GPU', '-DHAVE_ROCM' ]
+elif cuda_dep.found()
     libfabric_utils_dep += [ cuda_dep ]
-    libfabric_test_cpp_args += [ '-DCUDA_FOUND' ]
+    libfabric_test_cpp_args += [ '-DHAVE_GPU', '-DHAVE_CUDA' ]
 endif
 
 if get_option('buildtype') != 'release'
@@ -61,5 +67,34 @@ if get_option('buildtype') != 'release'
                install: true)
 
     test('rail_active_refcount_test', rail_active_refcount_test_bin)
+
+    src_addr_resolution_test_link_args = [
+        '-Wl,--wrap=fi_getinfo',
+        '-Wl,--wrap=numa_max_node',
+        '-Wl,--wrap=numa_num_configured_nodes',
+        '-Wl,--wrap=fi_fabric' ]
+
+    src_addr_resolution_test_bin = executable('src_addr_resolution_test',
+               'src_addr_resolution_test.cpp',
+               dependencies: libfabric_utils_dep,
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with: libfabric_utils_lib,
+               cpp_args: libfabric_test_cpp_args,
+               link_args: src_addr_resolution_test_link_args,
+               install: true)
+
+    test('src_addr_resolution_test', src_addr_resolution_test_bin)
+
+    # Alignment arithmetic of the CUDA dmabuf export. The helper under test is
+    # header-inline and free of CUDA types, so the test runs on any host.
+    libfabric_dmabuf_test_bin = executable('libfabric_dmabuf_test',
+               'libfabric_dmabuf_test.cpp',
+               dependencies: libfabric_utils_dep,
+               include_directories: [nixl_inc_dirs, utils_inc_dirs],
+               link_with: libfabric_utils_lib,
+               cpp_args: libfabric_test_cpp_args,
+               install: true)
+
+    test('libfabric_dmabuf_test', libfabric_dmabuf_test_bin)
 
 endif

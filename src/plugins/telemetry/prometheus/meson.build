@@ -47,7 +47,7 @@ if prometheus_found
         'libtelemetry_exporter_prometheus',
         'prometheus_plugin.cpp',
         'prometheus_exporter.cpp',
-        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, include_directories('../common')],
         dependencies: [nixl_infra, nixl_common_dep, absl_log_dep, prometheus_core_dep, prometheus_pull_dep],
         install: true,
         install_dir: plugin_install_dir,

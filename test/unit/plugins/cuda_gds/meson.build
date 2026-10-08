@@ -17,9 +17,38 @@ if cuda_dep.found() == false
     subdir_done()
 endif
 
-nixl_gds_app = executable('nixl_gds_test', 'nixl_gds_test.cpp',
-                          dependencies: [nixl_dep, nixl_infra, cuda_dep, nixl_common_dep],
-                          include_directories: [nixl_inc_dirs, utils_inc_dirs,
-                                                include_directories('..')],
-                          install: true)
-test('gds_path_mode_smoke', nixl_gds_app)
+if is_variable('gds_backend_interface')
+    nixl_gds_app = executable(
+        'nixl_gds_test',
+        'nixl_gds_test.cpp',
+        dependencies: [nixl_dep, nixl_infra, cuda_dep, nixl_common_dep],
+        include_directories: [
+            nixl_inc_dirs,
+            utils_inc_dirs,
+            include_directories('..'),
+        ],
+        install: true,
+    )
+    test('gds_path_mode_smoke', nixl_gds_app)
+    test(
+        'gds_mt_mode_path_mode_smoke',
+        nixl_gds_app,
+        args: ['--gds-mode', 'mt', '--path-mode-only'],
+    )
+endif
+
+if is_variable('gds_mt_backend_interface')
+    nixl_gds_mt_app = executable(
+        'nixl_gds_mt_test',
+        'nixl_gds_test.cpp',
+        dependencies: [nixl_dep, nixl_infra, cuda_dep, nixl_common_dep],
+        include_directories: [
+            nixl_inc_dirs,
+            utils_inc_dirs,
+            include_directories('..'),
+        ],
+        cpp_args: ['-DDEFAULT_GDS_MT'],
+        install: true,
+    )
+    test('gds_mt_path_mode_smoke', nixl_gds_mt_app)
+endif

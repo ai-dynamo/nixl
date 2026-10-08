@@ -30,184 +30,21 @@
 
 namespace nixl_ep {
 
-namespace intranode {
-
-void barrier(int** barrier_signal_ptrs, int rank, int num_nvl_ranks, uint64_t timeout_cycles, cudaStream_t stream);
-
-}  // namespace intranode
-
 struct gpu_nixl_ctx {
     nixlMemViewH local_mvh;
     nixlMemViewH barrier_mvh;
     nixlMemViewH remote_mvh;
-    nixlMemViewH ht_barrier_mvh;
     int *sync_buffer_ptr; // [src_rank]
     int *sync_count_ptr; // [dst_rank]
-    uint64_t *last_ht_barrier_counter;
-    uint64_t *local_ht_barrier_counter_ptr;
     void *rdma_buffer_ptr;
     void **p2p_ptrs;
     int max_num_ranks;
-    int num_rdma_ranks;
     int rank;
 
     __device__ inline uint64_t offset_get(uint64_t ptr) {
         return ptr - reinterpret_cast<uint64_t>(rdma_buffer_ptr);
     }
 };
-
-
-// Layout kernels
-namespace layout {
-
-void get_dispatch_layout(const topk_idx_t* topk_idx,
-                         int* num_tokens_per_rank,
-                         int* num_tokens_per_rdma_rank,
-                         int* num_tokens_per_expert,
-                         bool* is_token_in_rank,
-                         int num_tokens,
-                         int num_topk,
-                         int num_ranks,
-                         int num_experts,
-                         cudaStream_t stream);
-
-} // namespace layout
-
-// High-throughput kernels
-namespace ht {
-
-int get_source_meta_bytes();
-
-void notify_dispatch(const int* num_tokens_per_rank,
-                     int* moe_recv_counter_mapped,
-                     int num_ranks,
-                     const int* num_tokens_per_rdma_rank,
-                     int* moe_recv_rdma_counter_mapped,
-                     const int* num_tokens_per_expert,
-                     int* moe_recv_expert_counter_mapped,
-                     int num_experts,
-                     const bool* is_token_in_rank,
-                     int num_tokens,
-                     int num_channels,
-                     int hidden_int4,
-                     int num_scales,
-                     int num_topk,
-                     int expert_alignment,
-                     int* rdma_channel_prefix_matrix,
-                     int* recv_rdma_rank_prefix_sum,
-                     int* gbl_channel_prefix_matrix,
-                     int* recv_gbl_rank_prefix_sum,
-                     void* rdma_buffer_ptr,
-                     int num_max_rdma_chunked_recv_tokens,
-                     void** buffer_ptrs,
-                     int num_max_nvl_chunked_recv_tokens,
-                     int** barrier_signal_ptrs,
-                     int rank,
-                     cudaStream_t stream,
-                     int64_t num_rdma_bytes,
-                     int64_t num_nvl_bytes,
-                     uint64_t timeout_cycles,
-                     bool low_latency_mode,
-                     gpu_nixl_ctx nixl_ctx);
-
-void dispatch(void* recv_x,
-              float* recv_x_scales,
-              topk_idx_t* recv_topk_idx,
-              float* recv_topk_weights,
-              void* recv_src_meta,
-              const void* x,
-              const float* x_scales,
-              const topk_idx_t* topk_idx,
-              const float* topk_weights,
-              int* send_rdma_head,
-              int* send_nvl_head,
-              int* recv_rdma_channel_prefix_matrix,
-              int* recv_gbl_channel_prefix_matrix,
-              const int* rdma_channel_prefix_matrix,
-              const int* recv_rdma_rank_prefix_sum,
-              const int* gbl_channel_prefix_matrix,
-              const int* recv_gbl_rank_prefix_sum,
-              const bool* is_token_in_rank,
-              int num_tokens,
-              int hidden_int4,
-              int num_scales,
-              int num_topk,
-              int num_experts,
-              int scale_token_stride,
-              int scale_hidden_stride,
-              void* rdma_buffer_ptr,
-              int num_max_rdma_chunked_send_tokens,
-              int num_max_rdma_chunked_recv_tokens,
-              void** buffer_ptrs,
-              int num_max_nvl_chunked_send_tokens,
-              int num_max_nvl_chunked_recv_tokens,
-              int rank,
-              int num_ranks,
-              bool is_cached_dispatch,
-              cudaStream_t stream,
-              int num_channels,
-              uint64_t timeout_cycles,
-              bool low_latency_mode,
-              gpu_nixl_ctx nixl_ctx);
-
-void cached_notify(int hidden_int4,
-                   int num_scales,
-                   int num_topk_idx,
-                   int num_topk_weights,
-                   int num_ranks,
-                   int num_channels,
-                   int num_combined_tokens,
-                   int* combined_rdma_head,
-                   const int* rdma_channel_prefix_matrix,
-                   const int* rdma_rank_prefix_sum,
-                   int* combined_nvl_head,
-                   void* rdma_buffer_ptr,
-                   int num_max_rdma_chunked_recv_tokens,
-                   void** buffer_ptrs,
-                   int num_max_nvl_chunked_recv_tokens,
-                   int** barrier_signal_ptrs,
-                   int rank,
-                   cudaStream_t stream,
-                   int64_t num_rdma_bytes,
-                   int64_t num_nvl_bytes,
-                   uint64_t timeout_cycles,
-                   bool is_cached_dispatch,
-                   bool low_latency_mode,
-                   gpu_nixl_ctx nixl_ctx);
-
-void combine(cudaDataType_t type,
-             void* combined_x,
-             float* combined_topk_weights,
-             const bool* is_combined_token_in_rank,
-             const void* x,
-             const float* topk_weights,
-             const void* bias_0,
-             const void* bias_1,
-             const int* combined_rdma_head,
-             const int* combined_nvl_head,
-             const void* src_meta,
-             const int* rdma_channel_prefix_matrix,
-             const int* rdma_rank_prefix_sum,
-             const int* gbl_channel_prefix_matrix,
-             int num_tokens,
-             int num_combined_tokens,
-             int hidden,
-             int num_topk,
-             void* rdma_buffer_ptr,
-             int num_max_rdma_chunked_send_tokens,
-             int num_max_rdma_chunked_recv_tokens,
-             void** buffer_ptrs,
-             int num_max_nvl_chunked_send_tokens,
-             int num_max_nvl_chunked_recv_tokens,
-             int rank,
-             int num_ranks,
-             cudaStream_t stream,
-             int num_channels,
-             uint64_t timeout_cycles,
-             bool low_latency_mode,
-             gpu_nixl_ctx nixl_ctx);
-
-} // namespace ht
 
 
 // EP kernels
@@ -244,7 +81,11 @@ void combine(void* combined_x,
 
 void barrier(gpu_nixl_ctx* nixl_ctx, int* mask_buffer_ptr, uint64_t timeout_cycles, cudaStream_t stream);
 
-void query_mask_buffer(int* mask_buffer_ptr, int num_ranks, int* output_mask_tensor, cudaStream_t stream);
+void
+query_mask_buffer(const int *mask_buffer_ptr,
+                  int num_ranks,
+                  int *output_mask_tensor,
+                  cudaStream_t stream);
 
 void update_mask_buffer(int* mask_buffer_ptr, int rank_to_mask, bool mask, cudaStream_t stream);
 

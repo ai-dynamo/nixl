@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -95,6 +95,11 @@ public:
 
 private:
     std::unique_ptr<gusli::global_clnt_context> lib_;
+    // Backing storage for gusli::init_params const char* fields, which must
+    // outlive lib_ construction.
+    std::string client_name_;
+    std::string config_file_;
+    bool try_use_uring_ = false;
 
     void
     parseInitParams(const nixlBackendInitParams *nixl_init,

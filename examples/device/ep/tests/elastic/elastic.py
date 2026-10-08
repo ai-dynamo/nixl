@@ -43,11 +43,20 @@ from utils import (  # noqa: E402
     bench_kineto,
     calc_diff,
     hash_tensor,
+    kineto_cuda_available,
     per_token_cast_back,
 )
 
 TCP_STORE_PORT = 9999
 RANK_SERVER_PORT = 10000
+
+TMA_TOKEN_ALIGNMENT = 4
+
+
+def tma_aligned_max_tokens(num_tokens: int) -> int:
+    return (
+        (num_tokens + TMA_TOKEN_ALIGNMENT - 1) // TMA_TOKEN_ALIGNMENT
+    ) * TMA_TOKEN_ALIGNMENT
 
 
 def non_negative_int(value: str) -> int:
@@ -90,6 +99,7 @@ def self_kill():
 
 def test_main(
     num_tokens: int,
+    max_tokens_per_rank: int,
     hidden: int,
     num_experts: int,
     num_topk: int,
@@ -208,7 +218,7 @@ def test_main(
                                 buffer.dispatch(
                                     current_x,
                                     topk_idx,
-                                    num_tokens,
+                                    max_tokens_per_rank,
                                     num_experts,
                                     use_fp8=dispatch_use_fp8,
                                     round_scale=round_scale,
@@ -389,7 +399,7 @@ def test_main(
         recv_x, recv_count, handle, event, hook = buffer.dispatch(
             current_x,
             topk_idx,
-            num_tokens,
+            max_tokens_per_rank,
             num_experts,
             cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
             use_fp8=True,
@@ -491,8 +501,9 @@ def worker(torch_rank: int, args: argparse.Namespace):
     )
 
     # Initialize nixl_ep buffer
+    max_tokens_per_rank = tma_aligned_max_tokens(args.num_tokens)
     num_rdma_bytes = nixl_ep.Buffer.get_rdma_size_hint(
-        args.num_tokens,
+        max_tokens_per_rank,
         args.hidden_dim,
         max_num_ranks,
         args.num_experts_per_rank * max_num_ranks,
@@ -567,6 +578,7 @@ def worker(torch_rank: int, args: argparse.Namespace):
 
         test_main(
             args.num_tokens,
+            max_tokens_per_rank,
             args.hidden_dim,
             current_num_experts,
             args.num_topk,
@@ -577,16 +589,27 @@ def worker(torch_rank: int, args: argparse.Namespace):
             kineto=args.kineto,
             fault_tolerance_test=kill_rank,
         )
-        # Query mask buffer to detect any unexpected rank failures and clean them up
+        # Query mask buffer to detect rank failures and clean them up
         buffer.query_mask_buffer(mask_status)
         newly_failed_ranks = set()
         for r in range(current_num_ranks):
             if mask_status[r].item() != 0 and r in remote_ranks:
                 newly_failed_ranks.add(r)
 
+        if args.validate_phase_failures:
+            expected_failed_ranks = set(ranks_to_kill) & remote_ranks
+            unexpected_failures = newly_failed_ranks - expected_failed_ranks
+            assert (
+                not unexpected_failures
+            ), f"rank {global_rank}, local_rank={local_rank} phase {plan.get_phase()}: unexpected failures {unexpected_failures}"
+            missing_failures = expected_failed_ranks - newly_failed_ranks
+            assert (
+                not missing_failures
+            ), f"rank {global_rank}, local_rank={local_rank} phase {plan.get_phase()}: missing expected failures {missing_failures}"
+
         if len(newly_failed_ranks) > 0:
             print(
-                f"global_rank={global_rank}, local_rank={local_rank} -> detected unexpected rank failures: {newly_failed_ranks}, cleaning up...",
+                f"global_rank={global_rank}, local_rank={local_rank} -> detected rank failures: {newly_failed_ranks}, cleaning up...",
                 flush=True,
             )
             remote_ranks.difference_update(newly_failed_ranks)
@@ -645,6 +668,11 @@ def main():
         default=DEFAULT_TIMEOUT_MS,
         help="GPU timeout in milliseconds (non-negative integer)",
     )
+    parser.add_argument(
+        "--validate-phase-failures",
+        action="store_true",
+        help="Enable strict phase-local validation of observed rank failures against the plan",
+    )
 
     args = parser.parse_args()
 
@@ -653,6 +681,9 @@ def main():
         server_process = torch.multiprocessing.Process(target=run_server, daemon=True)
         server_process.start()
         time.sleep(0.5)
+
+    if args.kineto and not kineto_cuda_available(0):
+        raise SystemExit("Kineto profiling was requested but is not supported")
 
     if args.num_processes == 1:
         worker(0, args)

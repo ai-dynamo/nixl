@@ -317,7 +317,7 @@ cmake --install sdk/identity
 **DOCA (Optional):**
 ```bash
 # Add Mellanox repository and install DOCA
-wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-ubuntu2404_amd64.deb -O doca-host.deb
+wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.5.0/host/doca-host_3.5.0-082000-26.07-ubuntu2404_amd64.deb -O doca-host.deb
 sudo dpkg -i doca-host.deb
 sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpunetio-dev libdoca-sdk-telemetry-exporter-dev collectx-clxapidev
 ```
@@ -327,7 +327,7 @@ sudo apt-get update && sudo apt-get install -y doca-sdk-gpunetio libdoca-sdk-gpu
 # Clone and build GUSLI
 git clone https://github.com/nvidia/gusli.git
 cd gusli
-make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=0
+make all BUILD_RELEASE=1 BUILD_FOR_UNITEST=0 VERBOSE=1 ALLOW_USE_URING=1
 
 # Install library and headers
 sudo cp libgusli_clnt.so /usr/lib/
@@ -369,6 +369,7 @@ cd /path/to/nixlbench
 rm -rf build && mkdir build
 uv run meson setup build \
   -Dnixl_path=/usr/local/nixl/ \
+  -Dbuild_raw_cli=true \
   -Dprefix=/usr/local/nixlbench \
   --buildtype=release
 cd build && ninja && sudo ninja install
@@ -387,10 +388,76 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 - `etcd_lib_path`: Path to ETCD C++ client library
 - `nvshmem_inc_path`: Path to NVSHMEM include directory
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
+- `build_raw_cli`: Build the experimental CLI11-based raw command path (default: false)
+- `build_tests`: Build NIXLBench tests for non-release builds (default: true)
 - `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)
 - `prefix`: Installation prefix (default: /usr/local)
 
 ## Usage
+
+### Verb-based interface
+
+When configured with `-Dbuild_raw_cli=true`, NIXLBench also provides a
+verb-based interface. The first available command is `raw posix`, which runs
+the existing NIXLBench worker with three explicit ownership layers:
+
+- `raw` owns benchmark controls such as operation, transfer sizes, iterations,
+  threads, and consistency checking.
+- NIXLBench owns shared `FILE_SEG` resource controls such as path, filenames,
+  file count, and direct file opening, and exposes them only when advertised by
+  the selected plugin.
+- The installed plugin owns its initialization parameters. NIXLBench forwards
+  `--plugin-param KEY VALUE` overrides without interpreting names, values,
+  ranges, or relationships.
+
+Raw and `FILE_SEG` options are accepted before or after the backend subcommand.
+Sizes accept `KB`, `MB`, `GB`, and `TB`, using 1024-based multipliers.
+
+```bash
+# Create the directory used by the examples below
+mkdir -p /tmp/nixlbench-data
+
+# Inspect backend-neutral raw benchmark controls
+nixlbench raw --help
+
+# Inspect POSIX configuration exposed by this plugin build
+nixlbench raw posix --help
+
+# Print the resolved configuration without creating a worker or touching files
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --dry-run
+
+# Run a checked write using the same existing benchmark execution machinery
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --operation write \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --check-consistency
+
+# Override exact initialization keys advertised by this plugin build
+nixlbench raw posix \
+  --path /tmp/nixlbench-data \
+  --total-buffer-size 64MB \
+  --start-block-size 4KB \
+  --max-block-size 1MB \
+  --plugin-param ios_pool_size 4096 \
+  --plugin-param use_uring true
+```
+
+Plugin keys and values retain their published spelling and exact string values.
+Only keys advertised by the selected plugin may be overridden. The plugin
+interprets and validates the resolved values during backend creation rather than
+through copied NIXLBench rules, so the `use_uring` example depends on that
+parameter being advertised by the installed POSIX plugin.
+
+The existing flags-only interface remains available for all other commands.
+
 
 ### ASIO Runtime Setup (Recommended - No External Dependencies)
 
@@ -452,6 +519,10 @@ wait
 # same ASIO address and port as shown above.
 ./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
   --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
+  
+# UCX benchmark with VMM memory localized to locality domain 0 (use 1 for domain 1)
+./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
+  --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM --enable_vmm --use_localized=0
 
 # Single-instance POSIX storage benchmark
 ./nixlbench --backend POSIX --filepath /mnt/storage/testfile
@@ -506,8 +577,21 @@ wait
 --num_target_dev NUM       # Number of devices in target processes (default: 1)
 --enable_pt                # Enable progress thread (only used with nixl worker)
 --progress_threads NUM     # Number of progress threads (default: 0)
---enable_vmm               # Enable VMM memory allocation when DRAM is requested
+--enable_vmm               # Enable VMM memory allocation for VRAM buffers
+--vmm_gdr_capable BOOL     # Set gpuDirectRDMACapable for non-localized VMM(default: true)
+--use_localized DOMAIN     # VMM locality: -1 disabled, 0 domain 0, 1 domain 1; requires --enable_vmm
 ```
+
+`--vmm_gdr_capable` only controls non-localized VMM allocations. Explicit
+locality-domain allocations always use `gpuDirectRDMACapable=0`. Use
+`--enable_vmm --use_localized=-1 --vmm_gdr_capable=0` when placement is
+provided by CUDA MPS locality-domain devices; setting the GDR-capable flag opts
+such allocations out of that placement.
+
+To transfer from both locality domains concurrently, launch two two-worker benchmark groups with
+distinct `--benchmark_group` values. Select domain 0 in one group and domain 1 in the other.
+Each process then has one memory location and one independent backend worker. Physical CUDA
+devices can differ between the initiator and target processes.
 
 #### Device and Network Configuration
 ```
@@ -522,6 +606,12 @@ wait
 --filepath PATH            # File path for storage operations
 --num_files NUM            # Number of files used by benchmark (default: 1)
 --storage_enable_direct    # Enable direct I/O for storage operations
+--randomize_location_mode MODE    # Controls block location randomization [none, blockaligned, bytealigned] (default: none)
+                                  # blockaligned: randomizes the order of the otherwise sequentially block aligned iov's in the batch, also works on object plugins
+                                  # bytealigned: randomizes the offset per iov scrambling the block order instead of being sequential.
+--randomize_location_mode_seed NUM  # random seed used for randomized location mode (default: 0)
+                                    # 0 signals using the random_device for the seed
+
 ```
 
 #### Backend-Specific Options
@@ -578,38 +668,31 @@ wait
 --gusli_device_security LIST           # Comma-separated security flags per device (e.g., 'sec=0x3,sec=0x71')
 --gusli_device_byte_offsets LIST       # Comma-separated LBA offset in bytes per device (default: 1048576)
 --gusli_config_file CONTENT            # Custom config file content (auto-generated if not provided)
+--gusli_try_use_uring                  # Try to use io_uring engine in GUSLI backend (default: false)
 
 Note: storage_enable_direct is automatically enabled for GUSLI backend
 ```
 
 **INFINIA Backend:**
 ```
---infinia_config_file PATH             # Path to INFINIA plugin configuration file (simple key=value format)
+No INFINIA-specific command-line options. The plugin is configured through
+RED_* environment variables or NIXL's common TOML configuration (NIXL_CONFIG_FILE).
 
-INFINIA Config File Format:
-  Simple key=value format (one parameter per line, comments start with #)
+  Environment / top-level TOML keys:
+    RED_CLUSTER=NAME                   # Infinia cluster name
+    RED_TENANT=NAME[/SUBTENANT]        # Tenant name, optionally with subtenant
+    RED_DATASET=NAME                   # Dataset name
 
-  Required Parameters:
-    cluster=NAME                       # Infinia cluster name
-    tenant=NAME                        # Tenant name
-    dataset=NAME                       # Dataset name
+  [infinia] TOML table (optional tuning):
+    sthreads = NUM                     # Number of service threads (default: 8)
+    num_buffers = NUM                  # Pre-allocated deferred operation buffers for async ops (default: 512)
+    num_ring_entries = NUM             # Depth of the asynchronous I/O ring buffer (default: 512)
+    coremasks = "VALUE"                # CPU affinity: hex ("0x0F") or list ("0-3,8") (default: "0x2")
+    use_dmabuf = BOOL                  # Use DMA-BUF for GPU memory registration (default: true)
+    max_retries = NUM                  # BatchTask retry limit (default: library default)
+    batch_size = NUM                   # Async operations per batch (default: library default)
 
-  Optional Parameters:
-    subtenant=NAME                     # Subtenant (default: "red")
-    sthreads=NUM                       # Number of service threads (default: 8, limited by CPU cores)
-    num_buffers=NUM                    # Pre-allocated deferred operation buffers for async ops (default: 512)
-    num_ring_entries=NUM               # Depth of the asynchronous I/O ring buffer (default: 512)
-    coremasks=VALUE                    # CPU affinity: hex ("0x0F"), list ("[0-3,8]"), or empty disables (default: "")
-    max_retries=NUM                    # BatchTask retry limit (default: 3)
-
-Example INFINIA config file:
-  # INFINIA configuration
-  cluster=my_cluster
-  tenant=my_tenant
-  dataset=my_dataset
-  sthreads=8
-  num_buffers=512
-  num_ring_entries=512
+See src/plugins/infinia/infinia_example.conf for a complete example.
 ```
 
 ### Configuration File
@@ -815,6 +898,7 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 - `--gusli_device_security`: Comma-separated security flags per device (default: "sec=0x3" for each device)
 - `--gusli_device_byte_offsets`: Comma-separated LBA offset in bytes per device (default: 1MB for each device)
 - `--gusli_config_file`: Custom config file content override
+- `--gusli_try_use_uring`: Try to use io_uring engine (default: false); can also be set via `--config_file` as `gusli_try_use_uring=true`
 
 **Notes**:
 - Number of devices in `--device_list` must match `--num_initiator_dev` and `--num_target_dev`
@@ -822,27 +906,28 @@ GUSLI provides direct user-space access to block storage devices, supporting loc
 
 **INFINIA Backend:**
 
-INFINIA uses a simple key=value configuration file passed via the `--infinia_config_file` parameter.
+INFINIA reads its settings from `RED_*` environment variables or from NIXL's common TOML configuration file pointed to by `NIXL_CONFIG_FILE`.
 
 ```bash
-# Step 1: Create INFINIA plugin config file (infinia.conf)
-cat > infinia.conf << EOF
-# INFINIA configuration
-cluster=my_cluster
-tenant=my_tenant
-dataset=my_dataset
-sthreads=8
-num_buffers=512
-num_ring_entries=512
+# Step 1: Create a NIXL TOML config file for the INFINIA plugin (nixl-infinia.toml)
+cat > nixl-infinia.toml << EOF
+RED_CLUSTER = "my_cluster"
+RED_TENANT = "my_tenant"
+RED_DATASET = "my_dataset"
+
+[infinia]
+sthreads = 8
+num_buffers = 512
+num_ring_entries = 512
 EOF
+export NIXL_CONFIG_FILE=$PWD/nixl-infinia.toml
 
 # Step 2: Run basic INFINIA benchmark (no ETCD needed for single instance)
-./nixlbench --backend INFINIA --infinia_config_file infinia.conf
+./nixlbench --backend INFINIA
 
 # Step 3: Or use a nixlbench TOML config file
 cat > nixlbench.toml << EOF
 backend = "INFINIA"
-infinia_config_file = "infinia.conf"
 initiator_seg_type = "DRAM"
 target_seg_type = "DRAM"
 total_buffer_size = 67108864
@@ -854,7 +939,6 @@ EOF
 # Command-line only approach
 ./nixlbench \
   --backend INFINIA \
-  --infinia_config_file infinia.conf \
   --initiator_seg_type DRAM \
   --target_seg_type DRAM \
   --num_iter 16
@@ -1036,6 +1120,42 @@ nvidia-smi topo -m
 # Check CUDA driver
 cat /proc/driver/nvidia/version
 ```
+
+#### GDS Compat Mode Hangs
+
+When running the GDS backend in cuFile compatible mode (e.g. `CUFILE_FORCE_COMPAT_MODE=true`
+for comparing GDS on/off), benchmarks with large batch sizes can hang indefinitely with
+no output and no error:
+
+```bash
+# Completes fine up to batch 64, hangs forever at batch 128 with the default cufile.json
+CUFILE_ALLOW_COMPAT_MODE=true CUFILE_FORCE_COMPAT_MODE=true \
+nixlbench --backend GDS --initiator_seg_type VRAM --filepath /mnt/storage/testdir \
+  --storage_enable_direct --start_batch_size 1 --max_batch_size 128
+```
+
+In compat mode every in-flight batch entry takes a CPU bounce buffer from the cuFile
+POSIX pool (`posix_pool_slab_count`, default 64 buffers for the 1MiB slab class). When
+the number of concurrent batch entries exceeds the pool size, `cuFileBatchIOSubmit`
+blocks forever waiting for a free buffer. To confirm, set `"logging": {"level": "DEBUG"}`
+in cufile.json and look for:
+
+```
+Waiting for free buffer pool_is_full: 0 gpuid: 0 available slots 0 wait 1
+```
+
+Fix: increase the slab count for the slab class matching your block size so it covers
+the maximum number of concurrent batch entries, e.g. in cufile.json:
+
+```json
+"properties": {
+    "posix_pool_slab_size_kb": [4, 1024, 16384],
+    "posix_pool_slab_count": [128, 256, 64]
+}
+```
+
+See the [GDS plugin README](../../src/plugins/cuda_gds/README.md#cufilejson-configuration)
+for the full recommended compat mode configuration.
 
 #### Network Backend Issues
 ```bash
