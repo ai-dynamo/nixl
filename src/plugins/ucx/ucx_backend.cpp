@@ -456,8 +456,11 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
     int_handle->init(conn, *ep);
 
     nixlUcxReq req = nullptr;
-    int_handle->requireRemoteCompletion();
-    const nixl_status_t post_ret = sgl.post(*ep, req);
+    bool put_attempted = false;
+    const nixl_status_t post_ret = sgl.post(*ep, req, put_attempted);
+    if (put_attempted) {
+        int_handle->requireRemoteCompletion();
+    }
     if (int_handle->append(post_ret, req) != NIXL_SUCCESS) {
         return post_ret;
     }
@@ -498,6 +501,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
     int_handle->init(conn, *ep);
 
     nixl_status_t status = NIXL_SUCCESS;
+    bool any_put_attempted = false;
 
     try {
         for (size_t i = start_idx; i < end_idx; ++i) {
@@ -511,12 +515,16 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
             NIXL_ASSERT(rmd->conn->getEp(worker_id).get() == ep.get());
 
             nixlUcxReq req = nullptr;
-            if (operation == NIXL_WRITE) {
-                int_handle->requireRemoteCompletion();
-            }
+            bool put_attempted = false;
             const nixl_status_t ret = operation == NIXL_READ ?
                 ep->read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
-                ep->write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
+                ep->write(
+                    laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req, put_attempted);
+
+            if (put_attempted) {
+                any_put_attempted = true;
+                int_handle->requireRemoteCompletion();
+            }
 
             if (int_handle->append(ret, req) != NIXL_SUCCESS) {
                 status = ret;
@@ -528,6 +536,10 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
         NIXL_ERROR << "Failed to post UCX transfer range: " << e.what();
         status = NIXL_ERR_BACKEND;
         int_handle->setError(status);
+    }
+
+    if (operation == NIXL_WRITE && !any_put_attempted) {
+        return status;
     }
 
     const nixl_status_t flush_ret = int_handle->flush();

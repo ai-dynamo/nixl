@@ -22,6 +22,7 @@
 #include <chrono>
 #include <functional>
 
+#include "common.h"
 #include "ucx_backend.h"
 #include "ucx_backend_req.h"
 
@@ -226,38 +227,30 @@ TEST_F(UcxRequestDrain, EmptyAndImmediateSuccess) {
     EXPECT_EQ(post(), NIXL_SUCCESS);
 }
 
-TEST_F(UcxRequestDrain, LoopbackReadWriteAndRepost) {
-    for (const auto operation : {NIXL_READ, NIXL_WRITE}) {
-        for (int round = 0; round < 2; ++round) {
-            std::fill_n(memory_.begin(), 32, 'x');
-            std::fill(memory_.begin() + 32, memory_.end(), 0);
-            nixl_meta_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
-            for (size_t i = 0; i < 4; ++i) {
-                nixlMetaDesc local_desc, remote_desc;
-                local_desc.addr = reinterpret_cast<uintptr_t>(memory_.data() + i * 8 +
-                                                              (operation == NIXL_READ ? 32 : 0));
-                local_desc.len = 8;
-                local_desc.devId = 0;
-                local_desc.metadataP = local_md_;
-                remote_desc.addr = reinterpret_cast<uintptr_t>(memory_.data() + i * 8 +
-                                                               (operation == NIXL_WRITE ? 32 : 0));
-                remote_desc.len = 8;
-                remote_desc.devId = 0;
-                remote_desc.metadataP = remote_md_;
-                local.addDesc(local_desc);
-                remote.addDesc(remote_desc);
-            }
-            nixlBackendReqH *handle = request_.get();
-            auto status = engine_->postXfer(operation, local, remote, "RequestDrain", handle);
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-            while (status == NIXL_IN_PROG && std::chrono::steady_clock::now() < deadline) {
-                status = engine_->checkXfer(handle);
-            }
-            ASSERT_EQ(status, NIXL_SUCCESS);
-            EXPECT_TRUE(std::all_of(
-                memory_.begin() + 32, memory_.end(), [](char value) { return value == 'x'; }));
-        }
-    }
+TEST_F(UcxRequestDrain, FailedEndpointDoesNotAttemptPut) {
+    auto &ep = *connection_->getEp(engine_->worker()->getId());
+    ep.err_cb(ep.getEp(), UCS_ERR_CONNECTION_RESET);
+    nixlUcxMem memory{};
+    nixlUcxReq req = nullptr;
+    bool put_attempted = true;
+    const auto &rkey =
+        static_cast<nixlUcxPublicMetadata *>(remote_md_)->getRkey(engine_->worker()->getId());
+    EXPECT_EQ(ep.write(memory_.data(),
+                       memory,
+                       reinterpret_cast<uintptr_t>(memory_.data()),
+                       rkey,
+                       1,
+                       req,
+                       put_attempted),
+              NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_FALSE(put_attempted);
+    EXPECT_EQ(req, nullptr);
+#ifdef HAVE_UCX_SGL_API
+    put_attempted = true;
+    EXPECT_EQ(ep.postSgl({}, {}, 0, req, put_attempted), NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_FALSE(put_attempted);
+    EXPECT_EQ(req, nullptr);
+#endif
 }
 
 TEST_F(UcxRequestDrain, RepostClearsPreviousError) {
@@ -347,5 +340,172 @@ TEST_P(UcxRequestDrain, AsyncFailureWaitsForEveryOtherRequest) {
 }
 
 INSTANTIATE_TEST_SUITE_P(ErrorPosition, UcxRequestDrain, testing::Values(0, 1, 2));
+
+struct UcxTransferConfig {
+    size_t threads;
+    bool sgl;
+};
+
+class UcxTransferLifecycle : public testing::TestWithParam<UcxTransferConfig> {
+protected:
+    gtest::ScopedEnv env_;
+    std::array<char, 64> memory_{};
+    std::unique_ptr<nixlUcxEngine> engine_;
+    nixlBackendMD *local_md_ = nullptr;
+    nixlBackendMD *remote_md_ = nullptr;
+    nixlBackendReqH *handle_ = nullptr;
+    nixl_meta_dlist_t local_{DRAM_SEG}, remote_{DRAM_SEG};
+
+    void
+    SetUp() override {
+        env_.addVar("NIXL_UCX_SGL_ENABLE", GetParam().sgl ? "1" : "0");
+        nixl_b_params_t params{{"num_threads", std::to_string(GetParam().threads)},
+                               {"num_workers", std::to_string(GetParam().threads + 1)},
+                               {"split_batch_size", "0"}};
+        nixlBackendInitParams init;
+        init.localAgent = "TransferLifecycle";
+        init.type = "UCX";
+        init.enableProgTh = false;
+        init.syncMode = NIXL_THREAD_SYNC_STRICT;
+        init.customParams = &params;
+        engine_ = nixlUcxEngine::create(init);
+        ASSERT_FALSE(engine_->getInitErr());
+        ASSERT_EQ(engine_->connect(init.localAgent), NIXL_SUCCESS);
+        const nixlBlobDesc memory(
+            reinterpret_cast<uintptr_t>(memory_.data()), memory_.size(), 0, "");
+        ASSERT_EQ(engine_->registerMem(memory, DRAM_SEG, local_md_), NIXL_SUCCESS);
+        ASSERT_EQ(engine_->loadLocalMD(local_md_, remote_md_), NIXL_SUCCESS);
+    }
+
+    void
+    prepare(nixl_xfer_op_t operation) {
+        local_.clear();
+        remote_.clear();
+        for (size_t i = 0; i < 4; ++i) {
+            nixlMetaDesc local, remote;
+            local.addr = reinterpret_cast<uintptr_t>(memory_.data() + i * 8 +
+                                                     (operation == NIXL_READ ? 32 : 0));
+            local.len = 8;
+            local.devId = 0;
+            local.metadataP = local_md_;
+            remote.addr = reinterpret_cast<uintptr_t>(memory_.data() + i * 8 +
+                                                      (operation == NIXL_WRITE ? 32 : 0));
+            remote.len = 8;
+            remote.devId = 0;
+            remote.metadataP = remote_md_;
+            local_.addDesc(local);
+            remote_.addDesc(remote);
+        }
+        ASSERT_EQ(engine_->prepXfer(operation, local_, remote_, "TransferLifecycle", handle_),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(static_cast<nixlUcxBackendReqH *>(handle_)->isComposite(),
+                  GetParam().threads != 0);
+    }
+
+    nixl_status_t
+    wait() {
+        auto status = engine_->checkXfer(handle_);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (status == NIXL_IN_PROG && std::chrono::steady_clock::now() < deadline) {
+            status = engine_->checkXfer(handle_);
+        }
+        return status;
+    }
+
+    void
+    release() {
+        ASSERT_EQ(engine_->releaseReqH(handle_), NIXL_SUCCESS);
+        handle_ = nullptr;
+    }
+
+    void
+    TearDown() override {
+        if (handle_) {
+            ASSERT_NE(wait(), NIXL_IN_PROG);
+            ASSERT_NO_FATAL_FAILURE(release());
+        }
+        if (remote_md_) {
+            EXPECT_EQ(engine_->unloadMD(remote_md_), NIXL_SUCCESS);
+        }
+        if (local_md_) {
+            EXPECT_EQ(engine_->deregisterMem(local_md_), NIXL_SUCCESS);
+        }
+        engine_.reset();
+    }
+};
+
+TEST_P(UcxTransferLifecycle, LoopbackReadWriteAndRepost) {
+    for (const auto operation : {NIXL_READ, NIXL_WRITE}) {
+        ASSERT_NO_FATAL_FAILURE(prepare(operation));
+        for (int round = 0; round < 32; ++round) {
+            const char value = static_cast<char>('a' + round % 26);
+            std::fill_n(memory_.begin(), 32, value);
+            std::fill(memory_.begin() + 32, memory_.end(), 0);
+            const auto status =
+                engine_->postXfer(operation, local_, remote_, "TransferLifecycle", handle_);
+            ASSERT_TRUE(status == NIXL_SUCCESS || status == NIXL_IN_PROG);
+            ASSERT_EQ(wait(), NIXL_SUCCESS);
+            EXPECT_TRUE(std::all_of(
+                memory_.begin() + 32, memory_.end(), [=](char byte) { return byte == value; }));
+        }
+        ASSERT_NO_FATAL_FAILURE(release());
+    }
+}
+
+TEST_P(UcxTransferLifecycle, FailedEndpointDoesNotStrandChunksOrRepost) {
+    ASSERT_NO_FATAL_FAILURE(prepare(NIXL_WRITE));
+    const size_t failed_worker = GetParam().threads ? 1 : 0;
+    auto &ep = *static_cast<nixlUcxPublicMetadata *>(remote_md_)->conn->getEp(failed_worker);
+    ep.err_cb(ep.getEp(), UCS_ERR_CONNECTION_RESET);
+    for (int round = 0; round < 2; ++round) {
+        std::fill_n(memory_.begin(), 32, 'x');
+        std::fill(memory_.begin() + 32, memory_.end(), 0);
+        const auto status =
+            engine_->postXfer(NIXL_WRITE, local_, remote_, "TransferLifecycle", handle_);
+        ASSERT_TRUE(status == NIXL_ERR_REMOTE_DISCONNECT || status == NIXL_IN_PROG);
+        ASSERT_EQ(wait(), NIXL_ERR_REMOTE_DISCONNECT);
+        const auto failed_end = memory_.begin() + (GetParam().threads ? 48 : 64);
+        EXPECT_TRUE(
+            std::all_of(memory_.begin() + 32, failed_end, [](char value) { return value == 0; }));
+        EXPECT_TRUE(
+            std::all_of(failed_end, memory_.end(), [](char value) { return value == 'x'; }));
+    }
+    ASSERT_NO_FATAL_FAILURE(release());
+}
+
+TEST_P(UcxTransferLifecycle, ReleaseAfterPostingRequiresCompletedData) {
+    ASSERT_NO_FATAL_FAILURE(prepare(NIXL_WRITE));
+    std::fill_n(memory_.begin(), 32, 'x');
+    const auto status =
+        engine_->postXfer(NIXL_WRITE, local_, remote_, "TransferLifecycle", handle_);
+    ASSERT_TRUE(status == NIXL_SUCCESS || status == NIXL_IN_PROG);
+    const auto release_status = engine_->releaseReqH(handle_);
+    if (release_status == NIXL_ERR_REPOST_ACTIVE) {
+        ASSERT_EQ(wait(), NIXL_SUCCESS);
+        ASSERT_NO_FATAL_FAILURE(release());
+    } else {
+        ASSERT_EQ(release_status, NIXL_SUCCESS);
+        handle_ = nullptr;
+    }
+    EXPECT_TRUE(
+        std::all_of(memory_.begin() + 32, memory_.end(), [](char value) { return value == 'x'; }));
+}
+
+constexpr UcxTransferConfig transfer_configs[] = {
+    {0, false},
+    {2, false},
+#ifdef HAVE_UCX_SGL_API
+    {0, true},
+    {2, true},
+#endif
+};
+
+INSTANTIATE_TEST_SUITE_P(Engines,
+                         UcxTransferLifecycle,
+                         testing::ValuesIn(transfer_configs),
+                         [](const testing::TestParamInfo<UcxTransferConfig> &info) {
+                             return std::string(info.param.threads ? "ThreadPool" : "Base") +
+                                 (info.param.sgl ? "Sgl" : "Scalar");
+                         });
 
 } // namespace

@@ -98,7 +98,8 @@ public:
           uint64_t raddr,
           const nixl::ucx::rkey &rkey,
           size_t size,
-          nixlUcxReq &req);
+          nixlUcxReq &req,
+          bool &put_attempted);
     nixl_status_t
     estimateCost(size_t size,
                  std::chrono::microseconds &duration,
@@ -113,7 +114,8 @@ public:
     postSgl(const ucp_dt_local_sgl_t &local,
             const ucp_dt_remote_sgl_t &remote,
             size_t count,
-            nixlUcxReq &req);
+            nixlUcxReq &req,
+            bool &put_attempted);
 #endif
 
     [[nodiscard]] ucp_ep_h
