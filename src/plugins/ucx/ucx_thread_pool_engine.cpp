@@ -199,14 +199,15 @@ public:
     startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
-        sharedState_->pendingReqs.store(getNumChunks());
     }
 
     [[nodiscard]] nixlUcxChunkBackendReqH *
     startChunk(size_t idx, nixlUcxWorker *worker) {
         nixlUcxChunkBackendReqH *chunk = &sharedState_->chunks[idx];
-        chunk->startXfer(sharedState_, worker);
         NIXL_TRACE << "dedicated " << *nixlUcxThread::tlsThread() << " starting " << *chunk;
+        chunk->startXfer(sharedState_, worker);
+        // execute() waits for all posting tasks before the caller can observe completion.
+        sharedState_->pendingReqs.fetch_add(1);
         return chunk;
     }
 
@@ -279,7 +280,7 @@ public:
 
     void
     addRequest(nixlUcxChunkBackendReqH *handle) {
-        NIXL_TRACE << "dedicated " << *this << " sent " << *handle;
+        NIXL_TRACE << "dedicated " << *this << " tracking " << *handle;
         requests_.push_back(handle);
     }
 
@@ -455,17 +456,23 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
         const size_t chunk_start = i * batch_size / num_chunks;
         const size_t chunk_end = (i + 1) * batch_size / num_chunks;
         try {
+            // Allocate the polling slot before any operation can access transfer buffers.
+            worker.getThread().addRequest(chunk_handle);
+        }
+        catch (const std::exception &) {
+            chunk_handle->complete(NIXL_ERR_BACKEND);
+            throw;
+        }
+        try {
             const nixl_status_t ret = nixlUcxEngine::sendXferRange(
                 operation, local, remote, remote_agent, chunk_handle, chunk_start, chunk_end);
             if (ret != NIXL_SUCCESS) {
                 chunk_handle->setError(ret);
             }
-            worker.getThread().addRequest(chunk_handle);
             return ret;
         }
         catch (const std::exception &) {
             chunk_handle->setError(NIXL_ERR_BACKEND);
-            worker.getThread().addRequest(chunk_handle);
             throw;
         }
     });

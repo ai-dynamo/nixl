@@ -66,7 +66,9 @@ See [Configuration](#configuration) for build options.
 
 A failed operation does not complete other operations in the same transfer. UCX keeps the transfer in `NIXL_IN_PROG` until its outstanding requests have finished, then reports the recorded error.
 
-Invalidating remote metadata is not cancellation. Keep the transfer buffers and handle alive, continue polling, and retry `releaseXferReq` if it returns `NIXL_ERR_REPOST_ACTIVE`. This does not guarantee bounded completion for a stalled peer.
+For WRITEs, local PUT completion is not remote completion. Every attempted WRITE must be flushed, including a PUT that returns an immediate error after partially posting. A failed endpoint flush is retried during polling, and the transfer remains in progress until a flush succeeds. The original error is still reported after draining; no success notification is sent for a failed transfer.
+
+Invalidating remote metadata is not cancellation. Keep the transfer buffers and handle alive, continue polling, and retry `releaseXferReq` if it returns `NIXL_ERR_REPOST_ACTIVE`. This does not guarantee bounded completion for a stalled peer. If a WRITE's endpoint cannot be flushed successfully, it remains in progress and cannot be released; an endpoint error alone is not proof that remote buffers are safe to reuse.
 
 ## When to Use
 

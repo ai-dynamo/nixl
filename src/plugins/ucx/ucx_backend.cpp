@@ -456,18 +456,13 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
     int_handle->init(conn, *ep);
 
     nixlUcxReq req = nullptr;
+    int_handle->requireRemoteCompletion();
     const nixl_status_t post_ret = sgl.post(*ep, req);
     if (int_handle->append(post_ret, req) != NIXL_SUCCESS) {
         return post_ret;
     }
 
-    nixlUcxReq flush_req = nullptr;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
-    if (int_handle->append(flush_ret, flush_req) != NIXL_SUCCESS) {
-        return flush_ret;
-    }
-
-    return NIXL_SUCCESS;
+    return int_handle->flush();
 }
 #endif
 
@@ -516,6 +511,9 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
             NIXL_ASSERT(rmd->conn->getEp(worker_id).get() == ep.get());
 
             nixlUcxReq req = nullptr;
+            if (operation == NIXL_WRITE) {
+                int_handle->requireRemoteCompletion();
+            }
             const nixl_status_t ret = operation == NIXL_READ ?
                 ep->read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
                 ep->write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
@@ -532,13 +530,8 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
         int_handle->setError(status);
     }
 
-    /*
-     * Flush keeps int_handle non-empty until the operation is actually
-     * completed, which can happen after local requests completion.
-     */
-    nixlUcxReq flush_req = nullptr;
-    const nixl_status_t flush_ret = ep->flushEp(flush_req);
-    if (int_handle->append(flush_ret, flush_req) != NIXL_SUCCESS) {
+    const nixl_status_t flush_ret = int_handle->flush();
+    if (flush_ret != NIXL_SUCCESS) {
         return flush_ret;
     }
 

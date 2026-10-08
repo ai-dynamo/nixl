@@ -153,7 +153,7 @@ protected:
     }
 
     void
-    addPending(size_t index) {
+    addPending(size_t index, bool flush = false) {
         auto &receive = receives_[index];
         ucp_request_param_t params{};
         params.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA;
@@ -164,7 +164,9 @@ protected:
         receive.request =
             ucp_tag_recv_nbx(worker_, &receive.buffer, 1, index + 1, ~ucp_tag_t{0}, &params);
         ASSERT_TRUE(UCS_PTR_IS_PTR(receive.request));
-        ASSERT_EQ(request_->append(NIXL_IN_PROG, receive.request), NIXL_SUCCESS);
+        const auto status = flush ? request_->appendFlush(NIXL_IN_PROG, receive.request) :
+                                    request_->append(NIXL_IN_PROG, receive.request);
+        ASSERT_EQ(status, NIXL_SUCCESS);
     }
 
     void
@@ -280,6 +282,53 @@ TEST_F(UcxRequestDrain, PostingFailureWaitsForPreviouslyPostedWork) {
     ASSERT_NO_FATAL_FAILURE(cancel(0));
     EXPECT_EQ(engine_->checkXfer(request_.get()), NIXL_ERR_BACKEND);
     EXPECT_EQ(engine_->checkXfer(request_.get()), NIXL_ERR_BACKEND);
+}
+
+TEST_F(UcxRequestDrain, FailedWriteFlushWaitsForRetryCompletion) {
+    request_->requireRemoteCompletion();
+    ASSERT_EQ(request_->appendFlush(NIXL_ERR_BACKEND, nullptr), NIXL_ERR_BACKEND);
+    ASSERT_NO_FATAL_FAILURE(addPending(0, true));
+    EXPECT_EQ(engine_->checkXfer(request_.get()), NIXL_IN_PROG);
+    EXPECT_EQ(engine_->releaseReqH(request_.get()), NIXL_ERR_REPOST_ACTIVE);
+
+    ASSERT_NO_FATAL_FAILURE(cancel(0));
+    EXPECT_EQ(engine_->checkXfer(request_.get()), NIXL_IN_PROG);
+
+    // Retry the flush on the bound loopback endpoint; preserve the original error.
+    auto status = engine_->checkXfer(request_.get());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (status == NIXL_IN_PROG && std::chrono::steady_clock::now() < deadline) {
+        status = engine_->checkXfer(request_.get());
+    }
+    EXPECT_EQ(status, NIXL_ERR_BACKEND);
+    EXPECT_EQ(engine_->checkXfer(request_.get()), NIXL_ERR_BACKEND);
+    EXPECT_EQ(engine_->releaseReqH(request_.release()), NIXL_SUCCESS);
+}
+
+TEST_F(UcxRequestDrain, SuccessfulFlushDoesNotSkipPendingData) {
+    request_->requireRemoteCompletion();
+    ASSERT_NO_FATAL_FAILURE(addPending(0));
+    ASSERT_EQ(request_->appendFlush(NIXL_SUCCESS, nullptr), NIXL_SUCCESS);
+    EXPECT_EQ(engine_->checkXfer(request_.get()), NIXL_IN_PROG);
+    EXPECT_EQ(engine_->releaseReqH(request_.get()), NIXL_ERR_REPOST_ACTIVE);
+    ASSERT_NO_FATAL_FAILURE(cancel(0));
+    EXPECT_EQ(engine_->checkXfer(request_.get()), NIXL_ERR_REMOTE_DISCONNECT);
+}
+
+TEST_F(UcxRequestDrain, AsyncFlushFailureRetriesWithoutChangingFirstError) {
+    request_->requireRemoteCompletion();
+    ASSERT_NO_FATAL_FAILURE(addPending(0, true));
+    ASSERT_NO_FATAL_FAILURE(cancel(0));
+    EXPECT_EQ(engine_->checkXfer(request_.get()), NIXL_IN_PROG);
+    ASSERT_NO_FATAL_FAILURE(addPending(1, true));
+    EXPECT_EQ(engine_->releaseReqH(request_.get()), NIXL_ERR_REPOST_ACTIVE);
+    ASSERT_NO_FATAL_FAILURE(cancel(1));
+    EXPECT_EQ(engine_->checkXfer(request_.get()), NIXL_IN_PROG);
+    ASSERT_EQ(request_->appendFlush(NIXL_SUCCESS, nullptr), NIXL_SUCCESS);
+    EXPECT_EQ(engine_->checkXfer(request_.get()), NIXL_ERR_REMOTE_DISCONNECT);
+
+    engine_->post = [](nixlUcxBackendReqH *) { return NIXL_SUCCESS; };
+    EXPECT_EQ(post(), NIXL_SUCCESS);
 }
 
 TEST_P(UcxRequestDrain, AsyncFailureWaitsForEveryOtherRequest) {
