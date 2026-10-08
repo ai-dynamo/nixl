@@ -293,10 +293,9 @@ if cuda_dep.found()
     # Build all CUDA targets with C++20 to match the core's standard and ABI.
     add_project_arguments('-std=c++20', language: 'cuda')
 
-    # Meson passes nvcc -G only for buildtype=debug. Define DEBUG in that same
-    # case so device-debug-only code (extra __syncthreads, forced inlines) is
-    # compiled in only then. debugoptimized, release, minsize, and custom do not.
-    if get_option('buildtype') == 'debug'
+    # Meson passes nvcc -G exactly when the debug option is true. Define DEBUG
+    # in that same case so the extra __syncthreads and forced inlines follow -G.
+    if get_option('debug')
         add_project_arguments('-DDEBUG=1', language: 'cuda')
     endif
 

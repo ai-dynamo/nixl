@@ -22,8 +22,8 @@
 
 #include <cassert>
 
-// nvcc -G (Meson buildtype=debug) skips inlining and blows the register budget.
-// Force those helpers inline only in that build. Release keeps normal inlining.
+// nvcc -G (Meson debug=true) skips inlining and blows the register budget.
+// Force those helpers inline only when that option is on.
 #if DEBUG
 #define NIXL_DEBUG_FORCEINLINE __forceinline__
 #else
@@ -196,7 +196,7 @@ nixlAtomicAdd(uint64_t value,
 
  * @return Pointer to the mapped memory, or nullptr if not available.
  */
-__device__ NIXL_DEBUG_FORCEINLINE void *
+__device__ __forceinline__ void *
 nixlGetPtr(nixlMemViewH mvh, size_t index) {
     auto mem_list = static_cast<ucp_device_remote_mem_list_h>(mvh);
     void *ptr = nullptr;
