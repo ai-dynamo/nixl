@@ -61,10 +61,10 @@ inline constexpr long rdma_timeout_secs = 10;
 /**
  * @brief Map the server's x-amz-rdma-reply header value to a transfer outcome.
  *
- * This drives the GET path and decline detection. A GET success carries
- * x-amz-rdma-reply: 200/206; its absence (a non-RDMA server never sets it) is
- * read as a decline. PUT success is determined separately by HTTP 200 + ETag
- * (the server does not set this header on the PUT success path).
+ * This drives both the GET and PUT paths and decline detection. A GET success
+ * carries x-amz-rdma-reply: 200/206 and a PUT success carries 200; its absence
+ * (a non-RDMA server never sets it) is read as a decline, which stops a server
+ * that ignored the token from being mistaken for a completed transfer.
  * @param reply The raw x-amz-rdma-reply header value (may be empty/absent).
  * @return The reply code (200/204/206) on RDMA success; 0 for an unparsable or
  *         out-of-range value (caller treats as failure); rdma_not_supported (-2)

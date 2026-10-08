@@ -64,7 +64,7 @@ for sub_name in submodules:
         if not attr.startswith("_"):
             setattr(sys.modules[__name__], attr, getattr(module, attr))
 
-# Expose public symbols from the backend __init__ (Config, topk_idx_t, etc.)
+# Expose public symbols from the backend __init__ (topk_idx_t, etc.)
 for attr in dir(_pkg):
     if not attr.startswith("_"):
         setattr(sys.modules[__name__], attr, getattr(_pkg, attr))
