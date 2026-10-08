@@ -5,15 +5,16 @@
 
 #include "obj_engine_registry.h"
 #include "obj_backend.h"
+#include "engine_utils.h"
 #include "common/nixl_log.h"
 #include <stdexcept>
 
 namespace {
 // An empty `type` means the standard, protocol-compliant engine, registered
-// under "s3".
+// under default_accel_engine_type.
 std::string
 resolveType(const std::string &type) {
-    return type.empty() ? std::string("s3") : type;
+    return type.empty() ? std::string(default_accel_engine_type) : type;
 }
 } // namespace
 

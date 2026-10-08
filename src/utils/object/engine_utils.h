@@ -29,6 +29,10 @@ isAcceleratedRequested(const nixl_b_params_t *custom_params) {
     return nixl::getBackendParamDefaulted(custom_params, "accelerated", false);
 }
 
+// Accelerated engine type used when `type` is unset: the standard,
+// protocol-compliant S3-over-RDMA engine.
+inline constexpr const char *default_accel_engine_type = "s3";
+
 [[nodiscard]] inline std::string
 getAccelType(const nixl_b_params_t *custom_params) {
     return nixl::getBackendParamDefaulted(custom_params, "type", std::string());
@@ -46,7 +50,8 @@ getAccelType(const nixl_b_params_t *custom_params) {
 [[nodiscard]] inline bool
 isGenericAccelRequested(const nixl_b_params_t *custom_params) {
     const std::string type = getAccelType(custom_params);
-    return isAcceleratedRequested(custom_params) && (type.empty() || type == "s3");
+    return isAcceleratedRequested(custom_params) &&
+        (type.empty() || type == default_accel_engine_type);
 }
 
 #endif

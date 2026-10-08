@@ -10,6 +10,7 @@
 #include <string>
 
 #include "client.h"
+#include "object/engine_utils.h"
 #include "object/rdma/rdma.h"
 #include "obj_engine_registry.h"
 #include "common/nixl_log.h"
@@ -41,10 +42,11 @@ public:
     bool rdmaRegistered = false;
 };
 
-// Register the standard-S3 engine under "s3"; obj_backend normalizes a missing
-// `type` to "s3", so `accelerated=true` with no type resolves here too.
+// Register the standard-S3 engine as the default accelerated engine; the
+// registry resolves a missing `type` to it, so `accelerated=true` with no type
+// lands here too.
 objAccelEngineRegistrar reg_s3_accel(
-    "s3",
+    default_accel_engine_type,
     [](const nixlBackendInitParams *p) { return std::make_unique<S3AccelObjEngineImpl>(p); },
     [](const nixlBackendInitParams *p, std::shared_ptr<iS3Client> s3, std::shared_ptr<iS3Client>) {
         return std::make_unique<S3AccelObjEngineImpl>(p, std::move(s3));
