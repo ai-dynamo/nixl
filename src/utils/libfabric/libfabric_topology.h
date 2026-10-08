@@ -149,6 +149,16 @@ private:
                        const std::vector<AccelInfo> &discovered_accel,
                        std::vector<NicGroup> &nic_groups);
 
+    // The node where a NIC sharing no PCIe switch with any accelerator meets the
+    // accelerators it reaches through the CPU, or nullptr when its own socket holds none.
+    //
+    // The search stops at the NIC's Package: every accelerator on the host appears under
+    // the Machine object, so a climb that accepted it would pair a NIC with accelerators
+    // on another socket, which it reaches only across the inter-socket link.
+    static hwloc_obj_t
+    findHostRouteNode(hwloc_obj_t nic_node,
+                      const std::unordered_map<hwloc_obj_t, std::vector<AccelInfo>> &subtree_accel);
+
     // hwloc helper methods
     std::string
     getPcieAddressFromHwlocPcidev(const hwloc_obj_attr_u::hwloc_pcidev_attr_s &pcidev) const;
