@@ -62,6 +62,12 @@ See [Configuration](#configuration) for build options.
 |--------|---------|-------------|
 | `ucx_path` | System path | Path to UCX installation. |
 
+## Transfer Completion and Buffer Lifetime
+
+A failed operation does not complete other operations in the same transfer. UCX keeps the transfer in `NIXL_IN_PROG` until its outstanding requests have finished, then reports the recorded error.
+
+Invalidating remote metadata is not cancellation. Keep the transfer buffers and handle alive, continue polling, and retry `releaseXferReq` if it returns `NIXL_ERR_REPOST_ACTIVE`. This does not guarantee bounded completion for a stalled peer.
+
 ## When to Use
 
 - **GPU-to-GPU transfers via RDMA** -- UCX leverages RoCE or InfiniBand for high-bandwidth, low-latency GPU memory transfers.

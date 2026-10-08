@@ -57,13 +57,34 @@ public:
         return *ep_;
     }
 
+    void
+    resetStatus() {
+        NIXL_ASSERT(requests_.empty());
+        error_ = NIXL_SUCCESS;
+        notif.clear();
+    }
+
+    void
+    setError(nixl_status_t status) {
+        NIXL_ASSERT(status < 0);
+        if (error_ == NIXL_SUCCESS) {
+            error_ = status;
+        }
+    }
+
+    void
+    reserve(size_t size) {
+        NIXL_ASSERT(requests_.empty());
+        requests_.reserve(size);
+    }
+
     [[nodiscard]] nixl_status_t
     append(nixl_status_t status, nixlUcxReq req) {
         if (status == NIXL_IN_PROG) [[likely]] {
             requests_.push_back(req);
         } else if (status != NIXL_SUCCESS) {
-            // Error. Release all previously initiated ops and exit:
-            release();
+            // Previously posted operations must finish before this error is reported.
+            setError(status);
             return status;
         }
 
@@ -94,7 +115,7 @@ public:
     status() {
         if (requests_.empty()) {
             /* No pending transmissions */
-            return NIXL_SUCCESS;
+            return error_;
         }
 
         worker_->progressLoop();
@@ -105,31 +126,26 @@ public:
         const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
         if (ret == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
-        } else if (ret != NIXL_SUCCESS) {
-            return checkConnection(ret);
         }
 
-        /* Last request completed successfully, all the others must be in the
-         * same state. TODO: remove extra checks? */
         size_t incomplete_reqs = 0;
-        nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxReq req : requests_) {
             const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-            if (ret == NIXL_SUCCESS) [[likely]] {
-                worker_->reqRelease(req);
-            } else if (ret == NIXL_IN_PROG) {
-                if (out_ret == NIXL_SUCCESS) {
-                    out_ret = NIXL_IN_PROG;
-                }
+            if (ret == NIXL_IN_PROG) {
                 requests_[incomplete_reqs++] = req;
             } else {
-                // Any other ret value is ERR and will be returned
-                out_ret = checkConnection(ret);
+                if (ret != NIXL_SUCCESS) [[unlikely]] {
+                    setError(checkConnection(ret));
+                }
+                worker_->reqRelease(req);
             }
         }
 
         requests_.resize(incomplete_reqs);
-        return out_ret;
+        if (!requests_.empty()) {
+            return NIXL_IN_PROG;
+        }
+        return error_;
     }
 
     [[nodiscard]] nixlUcxWorker *
@@ -150,8 +166,7 @@ protected:
     }
 
 private:
-    // A post to a single endpoint issues at most three requests:
-    // one data request, one flush request, and one notification request.
+    // Initial reservation for SGL transfers; scalar batches reserve more.
     static constexpr size_t max_requests = 3;
 
     void
@@ -175,6 +190,7 @@ private:
     const nixlUcxEp *ep_ = nullptr;
     std::vector<nixlUcxReq> requests_;
     nixlUcxWorker *worker_ = nullptr;
+    nixl_status_t error_ = NIXL_SUCCESS;
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H
