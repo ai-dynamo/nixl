@@ -24,6 +24,7 @@ ulimit -c unlimited
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
+GPUNETIO_DIAGNOSTIC_SCRIPT=$(realpath "$(dirname "$0")/capture_gpunetio_hang.py")
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir>"
@@ -141,7 +142,7 @@ run_nixlbench_two_workers_gpunetio() {
     while [ "$port0" = "$port1" ]; do
         port1=$(get_random_tcp_port)
     done
-    command_line="timeout --signal=INT --kill-after=15s 180s ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
+    command_line="timeout --signal=INT --kill-after=15s 180s python3 '$GPUNETIO_DIAGNOSTIC_SCRIPT' -- ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
     # Each local worker owns its listener; never share an SO_REUSEPORT endpoint.
     # Bound a failed case even if its peer is still waiting for a notification.
     parallel --line-buffer --halt now,fail=1 ::: \
