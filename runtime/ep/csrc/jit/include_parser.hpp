@@ -8,7 +8,7 @@
 #include "../utils/format.hpp"
 #include "../utils/system.hpp"
 
-namespace deep_ep::jit {
+namespace nixl_ep_v2::jit {
 
 class IncludeParser {
     std::unordered_map<std::string, std::optional<std::string>> cache;
@@ -25,7 +25,7 @@ class IncludeParser {
             const int len = include_str.length();
             if (include_str.substr(0, 10) == "#include <" and include_str[len - 1] == '>' and include_str[10] != ' ' and include_str[len - 2] != ' ') {
                 std::string filename = include_str.substr(10, len - 11);
-                if (filename.substr(0, 7) == "deep_ep")  // We only parse `<deep_ep/*>`
+                if (filename.rfind("nixl_ep_v2/", 0) == 0)  // We only parse `<nixl_ep_v2/*>`
                     includes.push_back(filename);
             } else {
                 std::string error_info = fmt::format("Non-standard include: {}", include_str);
@@ -77,4 +77,4 @@ EP_DECLARE_STATIC_VAR_IN_CLASS(IncludeParser, library_include_path);
 
 static auto include_parser = std::make_shared<IncludeParser>();
 
-}  // namespace deep_ep::jit
+}  // namespace nixl_ep_v2::jit

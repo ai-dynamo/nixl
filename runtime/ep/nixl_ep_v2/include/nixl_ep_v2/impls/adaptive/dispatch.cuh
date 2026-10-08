@@ -1,16 +1,16 @@
 #pragma once
 
-#include <deep_ep/common/comm.cuh>
-#include <deep_ep/common/compiled.cuh>
-#include <deep_ep/common/exception.cuh>
-#include <deep_ep/common/layout.cuh>
-#include <deep_ep/common/math.cuh>
-#include <deep_ep/common/nixl_transport.cuh>
-#include <deep_ep/common/ptx.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/comm.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
+#include <nixl_ep_v2/common/layout.cuh>
+#include <nixl_ep_v2/common/math.cuh>
+#include <nixl_ep_v2/common/nixl_transport.cuh>
+#include <nixl_ep_v2/common/ptx.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
 
-namespace deep_ep::elastic::adaptive {
+namespace nixl_ep_v2::elastic::adaptive {
 
 // DeepSeek's hybrid dispatch on a fixed grid; rank decomposition and active block count come from the topology descriptor (`EPTopology`)
 // Elastic on the NIXL transport: the live world is the mask product of `topology.cuh`; masked peers are not counted, written, signalled or waited for
@@ -241,7 +241,7 @@ adaptive_dispatch_impl(
                     }
 
                     if (is_last_check) {
-                        printf("DeepEP adaptive notify (GPU reduction) timeout, scale-out: %d/%d, scale-up: %d/%d, "
+                        printf("NIXL EP V2 adaptive notify (GPU reduction) timeout, scale-out: %d/%d, scale-up: %d/%d, "
                                "thread: %d, status: %d | %d, expected: %d\n",
                                scaleout_rank_idx, num_scaleout_ranks, scaleup_rank_idx, num_scaleup_ranks, thread_idx,
                                static_cast<int>(status >> 32), static_cast<int>(status & 0xffffffff), num_active_sms);
@@ -300,7 +300,7 @@ adaptive_dispatch_impl(
                         }
 
                         if (is_last_check)
-                            printf("DeepEP adaptive notify (direct) timeout, rank: %d, slot: %d, count: %d\n", rank_idx, i, decoded);
+                            printf("NIXL EP V2 adaptive notify (direct) timeout, rank: %d, slot: %d, count: %d\n", rank_idx, i, decoded);
                         return false;
                     }, start_clock);
                 }
@@ -368,7 +368,7 @@ adaptive_dispatch_impl(
                                 return true;
 
                             if (is_last_check) {
-                                printf("DeepEP adaptive notify (scale-out %s reduction) timeout, "
+                                printf("NIXL EP V2 adaptive notify (scale-out %s reduction) timeout, "
                                        "scale-out: %d, scale-up: %d, "
                                        "thread: %d, wait scale-out: %d, decoded: %d\n",
                                        is_expert_reduction ? "expert" : "rank",
@@ -465,7 +465,7 @@ adaptive_dispatch_impl(
                     }
 
                     if (is_last_check) {
-                        printf("DeepEP adaptive notify (scale-up reduction) timeout, "
+                        printf("NIXL EP V2 adaptive notify (scale-up reduction) timeout, "
                                "scale-out: %d/%d, scale-up: %d/%d, "
                                "slot: %d, status: %d | %d, expected: %d\n",
                                scaleout_rank_idx, num_scaleout_ranks, scaleup_rank_idx, num_scaleup_ranks, i,
@@ -826,7 +826,7 @@ adaptive_dispatch_impl(
                     return true;
 
                 if (is_last_check and lane_tracks_live_domain) {
-                    printf("DeepEP hybrid dispatch (forwarding) timeout, scale-out: %d, scale-up: %d, "
+                    printf("NIXL EP V2 hybrid dispatch (forwarding) timeout, scale-out: %d, scale-up: %d, "
                            "channel: %d, lane: %d, records: %d, consumed: %d\n",
                            scaleout_rank_idx, scaleup_rank_idx, channel_idx, lane_idx,
                            stored_num_records, stored_num_consumed);
@@ -994,4 +994,4 @@ adaptive_dispatch_impl(
         workspace_layout.get_scaleup_atomic_sender_counter()[thread_idx] = 0;
 }
 
-}  // namespace deep_ep::elastic::adaptive
+}  // namespace nixl_ep_v2::elastic::adaptive

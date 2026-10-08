@@ -1,14 +1,14 @@
 #pragma once
 
-#include <deep_ep/common/compiled.cuh>
-#include <deep_ep/common/exception.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
 #include "../../../jit/compiler.hpp"
 #include "../../../jit/launch_runtime.hpp"
 #include "dispatch.hpp"
 
-namespace deep_ep::elastic::adaptive {
+namespace nixl_ep_v2::elastic::adaptive {
 
 class CombineRuntime final : public jit::LaunchRuntime<CombineRuntime> {
 public:
@@ -40,9 +40,9 @@ public:
 
     static std::string generate_impl(const Args& args) {
         return fmt::format(R"(
-#include <deep_ep/impls/adaptive/combine.cuh>
+#include <nixl_ep_v2/impls/adaptive/combine.cuh>
 
-using namespace deep_ep::elastic::adaptive;
+using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
@@ -153,9 +153,9 @@ public:
 
     static std::string generate_impl(const Args& args) {
         return fmt::format(R"(
-#include <deep_ep/impls/adaptive/combine_reduce_epilogue.cuh>
+#include <nixl_ep_v2/impls/adaptive/combine_reduce_epilogue.cuh>
 
-using namespace deep_ep::elastic::adaptive;
+using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}>);
@@ -222,4 +222,4 @@ static void launch_combine_reduce_epilogue(void* combined_x,
     CombineReduceEpilogueRuntime::launch(runtime, args, stream);
 }
 
-}  // namespace deep_ep::elastic::adaptive
+}  // namespace nixl_ep_v2::elastic::adaptive

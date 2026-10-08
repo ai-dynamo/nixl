@@ -2,15 +2,15 @@
 
 #include <cstdlib>
 
-#include <deep_ep/common/exception.cuh>
-#include <deep_ep/common/nixl_transport.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
+#include <nixl_ep_v2/common/nixl_transport.cuh>
 
-namespace deep_ep::elastic::topology {
+namespace nixl_ep_v2::elastic::topology {
 
 // The adaptive EP kernels are launched with a FIXED grid so that a captured CUDA graph survives a change of
 // topology. Blocks with `blockIdx.x >= num_active_sms` exit at once.
-// Even, because the kernels are launched in clusters of two. DeepEP V2 runs its EP kernels on 24 SMs; 26 measured
-// slightly faster for the adaptive kernels and is a tentative value.
+// Even, because the kernels are launched in clusters of two. 26 measured slightly faster than 24 for the adaptive
+// kernels and is a tentative value.
 constexpr int kNumLaunchSMs = 26;
 // Hard cap used for buffer sizing (the launch grid may be raised up to this with EP_ADAPTIVE_NUM_LAUNCH_SMS)
 constexpr int kNumMaxLaunchSMs = 64;
@@ -161,4 +161,4 @@ __device__ __forceinline__ EPTopology load(const EPTopology* ptr) {
 #endif
 }
 
-}  // namespace deep_ep::elastic::topology
+}  // namespace nixl_ep_v2::elastic::topology

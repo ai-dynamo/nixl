@@ -8,16 +8,16 @@
 #include <pybind11/functional.h>
 #include <c10/cuda/CUDAGraphsC10Utils.h>
 
-#include <deep_ep/common/layout.cuh>
-#include <deep_ep/common/compiled.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/layout.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
 #include "../kernels/backend/nixl.hpp"
 #include "../kernels/elastic/api.hpp"
 #include "../utils/event.hpp"
 #include "utils.hpp"
 
-namespace deep_ep::elastic {
+namespace nixl_ep_v2::elastic {
 
 using namespace adaptive;
 class ElasticBuffer {
@@ -147,7 +147,7 @@ public:
             destroy();
 
         if (not destroyed) {
-            printf("`destroy()` is not called before DeepEP elastic buffer destruction, which can leak resources.\n");
+            printf("`destroy()` is not called before NIXL EP V2 elastic buffer destruction, which can leak resources.\n");
             fflush(stdout);
         }
     }
@@ -1090,4 +1090,4 @@ static void register_apis(pybind11::module_& m) {
     });
 }
 
-}  // namespace deep_ep
+}  // namespace nixl_ep_v2

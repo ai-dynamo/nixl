@@ -11,7 +11,7 @@
 #error "UCX's device API was built without CUDA IPC (UCT_CUDA_IPC_SUPPORTED is unset): rebuild UCX with CUDA"
 #endif
 
-namespace deep_ep::elastic::nixl {
+namespace nixl_ep_v2::elastic::nixl {
 namespace {
 
 __global__ void cache_peer_pointers_kernel(const NIXLDeviceContext context, const int* connected) {
@@ -34,4 +34,4 @@ cudaError_t cache_peer_pointers(const NIXLDeviceContext& context, const int* con
     return cudaGetLastError();
 }
 
-}  // namespace deep_ep::elastic::nixl
+}  // namespace nixl_ep_v2::elastic::nixl

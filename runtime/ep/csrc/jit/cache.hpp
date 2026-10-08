@@ -6,7 +6,7 @@
 
 #include "kernel_runtime.hpp"
 
-namespace deep_ep::jit {
+namespace nixl_ep_v2::jit {
 
 class KernelRuntimeCache {
     std::unordered_map<std::string, std::shared_ptr<KernelRuntime>> cache;
@@ -31,4 +31,4 @@ public:
 
 static auto kernel_runtime_cache = std::make_shared<KernelRuntimeCache>();
 
-} // namespace deep_ep::jit
+} // namespace nixl_ep_v2::jit

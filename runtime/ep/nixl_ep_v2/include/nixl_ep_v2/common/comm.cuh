@@ -1,11 +1,11 @@
 #pragma once
 
-#include <deep_ep/common/ptx.cuh>
-#include <deep_ep/common/layout.cuh>
-#include <deep_ep/common/nixl_transport.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/ptx.cuh>
+#include <nixl_ep_v2/common/layout.cuh>
+#include <nixl_ep_v2/common/nixl_transport.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
-namespace deep_ep::elastic::comm {
+namespace nixl_ep_v2::elastic::comm {
 
 static constexpr int64_t kNumOneSecCycles = 2000000000;  // An approximation of the GPU clock at 2000 MHz
 
@@ -77,7 +77,7 @@ __device__ __forceinline__ void active_grid_sync(unsigned* barrier_ptr, const in
                 if (ptx::ld_acquire_gpu(barrier_ptr + 1) != round)
                     return true;
                 if (is_last_check)
-                    printf("DeepEP adaptive grid barrier timeout, block: %d, active blocks: %d, round: %u, arrived: %u\n",
+                    printf("NIXL EP V2 adaptive grid barrier timeout, block: %d, active blocks: %d, round: %u, arrived: %u\n",
                            static_cast<int>(blockIdx.x), num_active_blocks, round, ptx::ld_acquire_gpu(barrier_ptr));
                 return false;
             });
@@ -142,7 +142,7 @@ __device__ __forceinline__ void peer_barrier_leg_rt(const nixl::NIXLTransport& t
                 if (signal >= expected)
                     return true;
                 if (is_last_check) {
-                    printf("DeepEP adaptive peer barrier timeout, tag: %d, leg: %s, scale-out: %d/%d, scale-up: %d/%d, "
+                    printf("NIXL EP V2 adaptive peer barrier timeout, tag: %d, leg: %s, scale-out: %d/%d, scale-up: %d/%d, "
                            "peer position: %d (id %d), signal: %lld, expected: %lld\n", kTag, scaleout_leg ? "scale-out" : "scale-up",
                            topo.scaleout_rank_idx, topo.num_scaleout_ranks, topo.scaleup_rank_idx, topo.num_scaleup_ranks, thread_idx, rid, static_cast<long long>(signal), static_cast<long long>(expected));
                 }
@@ -212,4 +212,4 @@ __device__ __forceinline__ void gpu_barrier_rt(const nixl::NIXLTransport& transp
         active_grid_sync<kNumTimeoutCycles>(grid_barrier_ptr, num_active_sms);
 }
 
-}  // namespace deep_ep::elastic::comm
+}  // namespace nixl_ep_v2::elastic::comm

@@ -2,13 +2,13 @@
 
 #include <ATen/cuda/CUDAContext.h>
 
-#include <deep_ep/common/exception.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
 
 #include "../utils/format.hpp"
 #include "../utils/lazy_init.hpp"
 #include "handle.hpp"
 
-namespace deep_ep::jit {
+namespace nixl_ep_v2::jit {
 
 class KernelRuntime final {
 public:
@@ -84,4 +84,4 @@ public:
 
 EP_DECLARE_STATIC_VAR_IN_CLASS(KernelRuntime, cuda_home);
 
-} // namespace deep_ep::jit
+} // namespace nixl_ep_v2::jit

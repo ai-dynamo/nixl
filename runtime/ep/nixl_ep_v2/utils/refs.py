@@ -19,7 +19,7 @@ def dispatch(x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
     - `x`: Input tokens, `[num_tokens, hidden]` or (`[num_tokens, hidden], [num_tokens, hidden_sf]`)
     - `topk_idx`: Top-k expert indices for each token, `[num_tokens, num_topk]`
     - `topk_weights`: Top-k weights for each token, can be None, `[num_tokens, num_topk]`
-    - `num_max_tokens_per_rank`: Maximum number of tokens per rank, must >= actual number of tokens per rank and aligned with DeepEP's `num_max_tokens_per_rank` since we're going to calculate `src_token_global_idx = src_rank_idx*num_max_tokens_per_rank + src_token_local_idx`
+    - `num_max_tokens_per_rank`: Maximum number of tokens per rank, must >= actual number of tokens per rank and match the value used by `ElasticBuffer` since we're going to calculate `src_token_global_idx = src_rank_idx*num_max_tokens_per_rank + src_token_local_idx`
     - `num_experts`: Total number of experts across all ranks
 
     Returns:

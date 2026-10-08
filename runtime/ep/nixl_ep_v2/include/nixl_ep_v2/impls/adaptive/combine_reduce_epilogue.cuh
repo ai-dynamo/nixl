@@ -1,15 +1,15 @@
 #pragma once
 
-#include <deep_ep/common/comm.cuh>
-#include <deep_ep/common/compiled.cuh>
-#include <deep_ep/common/ptx.cuh>
-#include <deep_ep/common/layout.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/comm.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
+#include <nixl_ep_v2/common/ptx.cuh>
+#include <nixl_ep_v2/common/layout.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
-#include <deep_ep/impls/combine_utils.cuh>
+#include <nixl_ep_v2/impls/combine_utils.cuh>
 
 
-namespace deep_ep::elastic::adaptive {
+namespace nixl_ep_v2::elastic::adaptive {
 
 // Reduce epilogue of the adaptive combine: given the buffer base, it derives the rows to reduce from the topology descriptor (`EPTopology`)
 template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
@@ -126,7 +126,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                 if (lane_row.are_flags_set())
                     return true;
                 if (is_last_check) {
-                    printf("DeepEP adaptive combine (reduce epilogue) timeout, scale-out: %d/%d, scale-up: %d/%d, "
+                    printf("NIXL EP V2 adaptive combine (reduce epilogue) timeout, scale-out: %d/%d, scale-up: %d/%d, "
                            "token: %d, row: %d\n",
                            topo.scaleout_rank_idx, num_scaleout_ranks, topo.scaleup_rank_idx, num_scaleup_ranks,
                            token_idx, use_rank_layout ? stored_dst_rank_idx : lane_idx);
@@ -217,4 +217,4 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
 #endif
 }
 
-}  // namespace deep_ep::elastic::adaptive
+}  // namespace nixl_ep_v2::elastic::adaptive

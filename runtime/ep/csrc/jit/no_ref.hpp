@@ -1,10 +1,10 @@
 #pragma once
 
-namespace deep_ep::jit {
+namespace nixl_ep_v2::jit {
 
 // The pointer itself is the kernel argument storage; do not take its address when launching.
 struct NoRefPtr {
     void* ptr = nullptr;
 };
 
-}  // namespace deep_ep::jit
+}  // namespace nixl_ep_v2::jit

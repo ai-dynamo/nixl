@@ -23,7 +23,7 @@ class NixlBootstrap:
         self.timeout = timedelta(seconds=timeout_seconds)
         self._rounds = {}
         cohort = hashlib.sha256(namespace.encode()).hexdigest()
-        root = f'deep_ep/nixl/bootstrap/{cohort}'
+        root = f'nixl_ep_v2/nixl/bootstrap/{cohort}'
         sequence = store.add(f'{root}/sequence/{rank}', 1)
         nonce_key = f'{root}/session/{sequence}'
         if rank == 0:

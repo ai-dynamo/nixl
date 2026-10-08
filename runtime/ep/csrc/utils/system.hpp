@@ -9,11 +9,11 @@
 #include <memory>
 #include <unistd.h>
 
-#include <deep_ep/common/exception.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
 
 #include "format.hpp"
 
-namespace deep_ep {
+namespace nixl_ep_v2 {
 
 // ReSharper disable once CppNotAllPathsReturnValue
 template <typename dtype_t>
@@ -108,4 +108,4 @@ static void safe_remove_all(const std::filesystem::path& path) {
     std::filesystem::remove(path, ec);
 }
 
-} // deep_ep
+} // nixl_ep_v2

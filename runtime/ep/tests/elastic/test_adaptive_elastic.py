@@ -32,11 +32,11 @@ import torch
 import torch.distributed as dist
 from typing import Callable, Dict, List, Optional, Tuple
 
-import deep_ep
-from deep_ep.utils.nixl_bootstrap import NixlBootstrap
-from deep_ep.utils.refs import combine as ref_combine, generate_pre_combine_data, ordered_accumulate
-from deep_ep.utils.math import calc_diff, per_token_cast_to_fp8
-from deep_ep.utils.testing import bench, bench_kineto
+import nixl_ep_v2
+from nixl_ep_v2.utils.nixl_bootstrap import NixlBootstrap
+from nixl_ep_v2.utils.refs import combine as ref_combine, generate_pre_combine_data, ordered_accumulate
+from nixl_ep_v2.utils.math import calc_diff, per_token_cast_to_fp8
+from nixl_ep_v2.utils.testing import bench, bench_kineto
 
 from test_adaptive_modes import combine_recipe
 
@@ -57,8 +57,8 @@ def init_test_environment(local_rank: int, num_local_ranks: int, seed: int) -> T
     return rank_idx, num_ranks
 
 
-def make_buffer(args: argparse.Namespace, rank_idx: int, num_ranks: int, store: dist.Store, **placement) -> deep_ep.ElasticBuffer:
-    return deep_ep.ElasticBuffer(rank_idx=rank_idx, num_ranks=num_ranks, store=store,
+def make_buffer(args: argparse.Namespace, rank_idx: int, num_ranks: int, store: dist.Store, **placement) -> nixl_ep_v2.ElasticBuffer:
+    return nixl_ep_v2.ElasticBuffer(rank_idx=rank_idx, num_ranks=num_ranks, store=store,
                                  num_max_tokens_per_rank=args.num_tokens, hidden=args.hidden,
                                  allow_multiple_reduction=bool(args.allow_multiple_reduction),
                                  prefer_overlap_with_compute=bool(args.prefer_overlap_with_compute),
@@ -103,7 +103,7 @@ class Case:
     """Deterministic data: rank `r` in phase `p` routes by `seed(p, r)` over the live experts and token `t` carries
     `payload(global idx)`, so every rank can rebuild what it should have received from whom."""
 
-    def __init__(self, buffer: deep_ep.ElasticBuffer, args: argparse.Namespace):
+    def __init__(self, buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
         self.buffer = buffer
         self.args = args
         self.max_so, self.max_su = buffer.max_num_scaleout_ranks, buffer.max_num_scaleup_ranks
@@ -150,7 +150,7 @@ class Case:
         if num_selected < self.num_topk:
             idx = torch.nn.functional.pad(idx, (0, self.num_topk - num_selected), value=-1)
             weights = torch.nn.functional.pad(weights, (0, self.num_topk - num_selected), value=0)
-        return idx.to(deep_ep.topk_idx_t), weights.float().contiguous()
+        return idx.to(nixl_ep_v2.topk_idx_t), weights.float().contiguous()
 
     def global_idx(self, rank_id: int, phase: List[int]) -> torch.Tensor:
         num_tokens = max(1, self.num_max_tokens_per_rank - rank_id)
@@ -385,7 +385,7 @@ class GraphCase:
         torch.cuda.synchronize()
 
 
-def switch_world(buffer: deep_ep.ElasticBuffer, infos: Dict[int, Tuple[bytes, Tuple[int, int, int, int]]],
+def switch_world(buffer: nixl_ep_v2.ElasticBuffer, infos: Dict[int, Tuple[bytes, Tuple[int, int, int, int]]],
                  phase: List[int], mode: str, num_active_sms: int, barrier_fn: Callable[[], None],
                  reconnect_on_leave: bool = False, timings: Optional[Dict[str, float]] = None) -> None:
     """

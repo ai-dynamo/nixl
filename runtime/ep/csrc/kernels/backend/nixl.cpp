@@ -8,18 +8,18 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include <cuda_runtime.h>  // before the deep_ep headers: under g++ their `__device__` annotations are macros from here
+#include <cuda_runtime.h>  // before the nixl_ep_v2 headers: under g++ their `__device__` annotations are macros from here
 #include <nixl.h>
 
-#include <deep_ep/common/exception.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
 #include "nixl.hpp"
 #include "nixl_device.cuh"
 #include "../../utils/lazy_driver.hpp"
 #include "../../utils/system.hpp"
 
-namespace deep_ep::elastic::nixl {
+namespace nixl_ep_v2::elastic::nixl {
 
 bool is_fabric_handle_supported(const int& device_id) {
     // The caller has initialised the CUDA runtime on this device (torch's current device)
@@ -47,7 +47,7 @@ struct NIXLAgentState {
     std::unordered_map<std::string, std::vector<int>> pending_hellos;
 };
 
-static const std::string kHelloPrefix = "deep_ep_hello:";
+static const std::string kHelloPrefix = "nixl_ep_v2_hello:";
 
 NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& rank_id, const int& num_rank_ids,
                              const int& num_scaleup_ranks_per_domain, const int64_t& num_region_bytes, const int& num_channels):
@@ -454,4 +454,4 @@ const NIXLDeviceContext* NIXLEPContext::get_device_context_ptr() const {
     return ctx_device;
 }
 
-}  // namespace deep_ep::elastic::nixl
+}  // namespace nixl_ep_v2::elastic::nixl

@@ -46,7 +46,7 @@ def init_jit():
     Initialize the JIT compilation runtime. Sets up the CUDA, NIXL and UCX root paths for the JIT compiler.
     """
     # noinspection PyUnresolvedReferences
-    import deep_ep._C as _C
+    import nixl_ep_v2._C as _C
     library_root_path = os.path.dirname(os.path.abspath(__file__))
     _C.init_jit(library_root_path,  # Library root directory path
                 find_cuda_home(),   # CUDA home
@@ -64,6 +64,6 @@ from .utils.event import EventOverlap, EventHandle
 from .utils.envs import get_physical_domain_size, get_logical_domain_size
 
 # noinspection PyUnresolvedReferences
-from deep_ep._C import topk_idx_t
+from nixl_ep_v2._C import topk_idx_t
 
 __version__ = '2.1.0'

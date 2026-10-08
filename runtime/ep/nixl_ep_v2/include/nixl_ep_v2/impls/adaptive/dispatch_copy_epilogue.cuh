@@ -1,13 +1,13 @@
 #pragma once
 
-#include <deep_ep/common/compiled.cuh>
-#include <deep_ep/common/layout.cuh>
-#include <deep_ep/common/math.cuh>
-#include <deep_ep/common/ptx.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
+#include <nixl_ep_v2/common/layout.cuh>
+#include <nixl_ep_v2/common/math.cuh>
+#include <nixl_ep_v2/common/ptx.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
 
-namespace deep_ep::elastic::adaptive {
+namespace nixl_ep_v2::elastic::adaptive {
 
 // DeepSeek's hybrid copy epilogue with the rank and channel counts from the topology descriptor (`EPTopology`); launched on the whole device
 template <bool kDoExpand, bool kDoZeroPadding,
@@ -330,4 +330,4 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
 #endif
 }
 
-}  // namespace deep_ep::elastic::adaptive
+}  // namespace nixl_ep_v2::elastic::adaptive

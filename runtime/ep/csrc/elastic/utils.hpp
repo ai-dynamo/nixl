@@ -1,9 +1,9 @@
 #pragma once
 
 #include <torch/python.h>
-#include <deep_ep/common/exception.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
 
-namespace deep_ep::elastic {
+namespace nixl_ep_v2::elastic {
 
 static at::cuda::CUDAStream get_global_comm_stream() {
     static std::optional<at::cuda::CUDAStream> comm_stream = std::nullopt;
@@ -25,4 +25,4 @@ static dtype_t* get_data_ptr(const std::optional<torch::Tensor>& t) {
     return t.has_value() ? t->data_ptr<dtype_t>() : nullptr;
 }
 
-}  // deep_ep::elastic
+}  // nixl_ep_v2::elastic

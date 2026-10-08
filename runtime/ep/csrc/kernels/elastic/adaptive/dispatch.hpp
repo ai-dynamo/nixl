@@ -1,13 +1,13 @@
 #pragma once
 
-#include <deep_ep/common/compiled.cuh>
-#include <deep_ep/common/exception.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
 #include "../../../jit/compiler.hpp"
 #include "../../../jit/launch_runtime.hpp"
 
-namespace deep_ep::elastic::adaptive {
+namespace nixl_ep_v2::elastic::adaptive {
 
 // Hard caps of the rank decomposition; they size the per-lane register arrays and the notify smem region
 using topology::kNumMaxScaleoutRanksCap;
@@ -15,7 +15,7 @@ using topology::kNumMaxScaleupRanksCap;
 // Compile-time channel maxima: the block shape and the channel slack of the buffers follow the fixed grid.
 constexpr int kNumMaxChannelsPerSM = 8;
 constexpr int kNumMaxChannels = kNumMaxChannelsPerSM * topology::kNumMaxLaunchSMs;
-EP_STATIC_ASSERT(kNumMaxChannels <= deep_ep::kNumMaxChannels, "The workspace channel arrays are sized by `deep_ep::kNumMaxChannels`");
+EP_STATIC_ASSERT(kNumMaxChannels <= nixl_ep_v2::kNumMaxChannels, "The workspace channel arrays are sized by `nixl_ep_v2::kNumMaxChannels`");
 
 class DispatchRuntime final : public jit::LaunchRuntime<DispatchRuntime> {
 public:
@@ -48,9 +48,9 @@ public:
 
     static std::string generate_impl(const Args& args) {
         return fmt::format(R"(
-#include <deep_ep/impls/adaptive/dispatch.cuh>
+#include <nixl_ep_v2/impls/adaptive/dispatch.cuh>
 
-using namespace deep_ep::elastic::adaptive;
+using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
@@ -208,9 +208,9 @@ public:
 
     static std::string generate_impl(const Args& args) {
         return fmt::format(R"(
-#include <deep_ep/impls/adaptive/dispatch_copy_epilogue.cuh>
+#include <nixl_ep_v2/impls/adaptive/dispatch_copy_epilogue.cuh>
 
-using namespace deep_ep::elastic::adaptive;
+using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
@@ -286,4 +286,4 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
     DispatchCopyEpilogueRuntime::launch(runtime, args, stream);
 }
 
-}  // namespace deep_ep::elastic::adaptive
+}  // namespace nixl_ep_v2::elastic::adaptive

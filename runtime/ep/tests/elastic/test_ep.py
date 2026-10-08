@@ -4,18 +4,18 @@ import torch
 import torch.distributed as dist
 from typing import Union, Tuple, Optional
 
-import deep_ep
-from deep_ep.utils.math import (
+import nixl_ep_v2
+from nixl_ep_v2.utils.math import (
     align, count_bytes, calc_diff,
     per_token_cast_back, per_token_cast_to_fp8,
     safe_div
 )
-from deep_ep.utils.gate import get_unbalanced_scores
-from deep_ep.utils.envs import init_dist, init_seed, dist_print
-from deep_ep.utils.refs import dispatch as ref_dispatch
-from deep_ep.utils.refs import combine as ref_combine
-from deep_ep.utils.refs import generate_pre_combine_data, ordered_accumulate
-from deep_ep.utils.testing import bench_kineto
+from nixl_ep_v2.utils.gate import get_unbalanced_scores
+from nixl_ep_v2.utils.envs import init_dist, init_seed, dist_print
+from nixl_ep_v2.utils.refs import dispatch as ref_dispatch
+from nixl_ep_v2.utils.refs import combine as ref_combine
+from nixl_ep_v2.utils.refs import generate_pre_combine_data, ordered_accumulate
+from nixl_ep_v2.utils.testing import bench_kineto
 
 
 # noinspection PyUnusedLocal,PyShadowingNames
@@ -33,7 +33,7 @@ def enumerate_ep_modes():
                                        with_previous_event, async_with_compute_stream, allocate_on_comm_stream)
 
 
-def launch(buffer: deep_ep.ElasticBuffer, name: str,
+def launch(buffer: nixl_ep_v2.ElasticBuffer, name: str,
            with_previous_event: int, async_with_compute_stream: int,
            params: dict):
     if with_previous_event:
@@ -58,7 +58,7 @@ def fold_expanded(expanded: Union[Tuple[torch.Tensor], torch.Tensor],
 
 
 # noinspection PyUnboundLocalVariable,PyShadowingNames
-def test_dispatch_combine(buffer: deep_ep.ElasticBuffer, args: argparse.Namespace):
+def test_dispatch_combine(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
     # Settings
     num_scaleout_ranks, num_scaleup_ranks = buffer.get_topology_ranks()
     num_max_tokens_per_rank, num_tokens, hidden = args.num_tokens, max(1, args.num_tokens - dist.get_rank()), args.hidden
@@ -77,7 +77,7 @@ def test_dispatch_combine(buffer: deep_ep.ElasticBuffer, args: argparse.Namespac
     # Construct expert selections first (may have an unbalanced ratio here)
     scores = get_unbalanced_scores(num_tokens, num_experts, num_scaleout_ranks * num_scaleup_ranks, num_topk, args.unbalanced_ratio, args.precise_unbalanced_ratio)
     topk_weights, topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=False)
-    topk_idx = topk_idx.to(deep_ep.topk_idx_t)
+    topk_idx = topk_idx.to(nixl_ep_v2.topk_idx_t)
     if args.masked_ratio > 0:
         rand_mask = torch.rand_like(topk_idx, dtype=torch.float)
         topk_idx.masked_fill_(rand_mask < args.masked_ratio, -1)
@@ -168,7 +168,7 @@ def test_dispatch_combine(buffer: deep_ep.ElasticBuffer, args: argparse.Namespac
                'Expand should not affect the number of received tokens.'
         num_expanded_tokens = expanded_handle.psum_num_recv_tokens_per_expert[-1].item()
 
-        # Construction the input data for DeepEP combine
+        # Construction the input data for combine
         src_token_global_idx = handle.recv_src_metadata[:num_recv_tokens, 0]
         if not args.skip_check:
             sorted_src_token_global_idx = torch.sort(src_token_global_idx).values
@@ -480,7 +480,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     # `--num-experts` is the expert count of the cohort's world; the slots per rank are fixed from it
     assert args.num_experts % num_ranks == 0, f'{args.num_experts} experts do not divide by {num_ranks} ranks'
     def construct_elastic_buffer():
-        return deep_ep.ElasticBuffer(group,
+        return nixl_ep_v2.ElasticBuffer(group,
                                      num_experts_per_rank=args.num_experts // num_ranks,
                                      num_max_tokens_per_rank=args.num_tokens, hidden=args.hidden,
                                      deterministic=args.deterministic,

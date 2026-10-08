@@ -8,7 +8,7 @@
 #include <regex>
 #include <string>
 
-#include <deep_ep/common/exception.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
 
 #include "../utils/format.hpp"
 #include "../utils/hash.hpp"
@@ -17,7 +17,7 @@
 #include "cache.hpp"
 #include "device_runtime.hpp"
 
-namespace deep_ep::jit {
+namespace nixl_ep_v2::jit {
 
 class Compiler {
 public:
@@ -50,7 +50,7 @@ public:
         EP_HOST_ASSERT(not cuobjdump_path.empty());
 
         // Cache settings
-        cache_dir_path = std::filesystem::path(get_env<std::string>("HOME")) / ".deep_ep";
+        cache_dir_path = std::filesystem::path(get_env<std::string>("HOME")) / ".nixl_ep_v2";
         if (const auto env_cache_dir_path = get_env<std::string>("EP_JIT_CACHE_DIR"); not env_cache_dir_path.empty())
             cache_dir_path = env_cache_dir_path;
 
@@ -272,4 +272,4 @@ static auto compiler = LazyInit<Compiler>([]() -> std::shared_ptr<Compiler> {
     return std::make_shared<NVCCCompiler>();
 });
 
-} // namespace deep_ep::jit
+} // namespace nixl_ep_v2::jit

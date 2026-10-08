@@ -1,12 +1,12 @@
 #pragma once
 
-#include <deep_ep/common/comm.cuh>
-#include <deep_ep/common/layout.cuh>
-#include <deep_ep/common/math.cuh>
-#include <deep_ep/common/nixl_transport.cuh>
-#include <deep_ep/common/ptx.cuh>
-#include <deep_ep/common/topology.cuh>
-#include <deep_ep/impls/combine_utils.cuh>
+#include <nixl_ep_v2/common/comm.cuh>
+#include <nixl_ep_v2/common/layout.cuh>
+#include <nixl_ep_v2/common/math.cuh>
+#include <nixl_ep_v2/common/nixl_transport.cuh>
+#include <nixl_ep_v2/common/ptx.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
+#include <nixl_ep_v2/impls/combine_utils.cuh>
 
 // Doorbell interval of the RDMA rows to a domain; overridable at JIT time (`EP_JIT_EXTRA_FLAGS=-DEP_COMBINE_RING_INTERVAL=...`)
 #ifndef EP_COMBINE_RING_INTERVAL
@@ -16,7 +16,7 @@
 #error "EP_COMBINE_RING_INTERVAL must be at least 1"
 #endif
 
-namespace deep_ep::elastic::adaptive {
+namespace nixl_ep_v2::elastic::adaptive {
 
 // DeepSeek's hybrid combine on a fixed grid; rank decomposition and active block count come from the topology descriptor (`EPTopology`)
 // Elastic on the NIXL transport: masked positions have no linked list and get no tails, masked domains are not sent to (see `topology.cuh`)
@@ -704,7 +704,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                 if (is_last_check) {
                     #pragma unroll
                     for (int j = 0; j < kNumScaleupRanksPerLane; ++ j) {
-                        printf("DeepEP combine (scale-up wait) timeout, scale-out: %d/%d, scale-up: %d/%d, "
+                        printf("NIXL EP V2 combine (scale-up wait) timeout, scale-out: %d/%d, scale-up: %d/%d, "
                                "channel: %d, lane: %d, recv: %d, tail: %d (wait=%d)\n",
                                scaleout_rank_idx, num_scaleout_ranks, scaleup_rank_idx, num_scaleup_ranks,
                                channel_idx, j * 32 + lane_idx,
@@ -883,4 +883,4 @@ adaptive_combine_impl(nv_bfloat16* x,
     EP_PROFILE_STAMP_LAST(workspace_layout, 15);  // combine main: last block done
 }
 
-}  // namespace deep_ep::elastic::adaptive
+}  // namespace nixl_ep_v2::elastic::adaptive

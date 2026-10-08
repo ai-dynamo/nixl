@@ -3,7 +3,7 @@
 #include <stdexcept>
 
 
-namespace deep_ep::elastic {
+namespace nixl_ep_v2::elastic {
 
 template <bool kAllowMultipleReduction, int kNumRanks, int kNumTopk>
 constexpr bool use_rank_layout() {
@@ -169,4 +169,4 @@ void combine_reduce(const int& lane_idx, int (&topk_slot_idx)[kNumValidTopk],
     }
 }
 
-}  // namespace deep_ep::elastic
+}  // namespace nixl_ep_v2::elastic

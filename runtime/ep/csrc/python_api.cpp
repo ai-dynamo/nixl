@@ -1,7 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <torch/python.h>
 
-#include <deep_ep/common/compiled.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
 
 #include "jit/api.hpp"
 #include "elastic/buffer.hpp"
@@ -19,19 +19,19 @@ bool is_sm90_compiled() {
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.doc() = "DeepEP: an efficient expert-parallel communication library";
+    m.doc() = "NIXL EP V2: an efficient expert-parallel communication library";
 
     // Whether support FP8 and TMA features
-    m.def("is_sm90_compiled", []() { return deep_ep::kEnableSM90Features; });
-    m.def("get_adaptive_num_launch_sms", []() { return deep_ep::elastic::topology::get_num_launch_sms(); });
-    m.def("is_fabric_handle_supported", &deep_ep::elastic::nixl::is_fabric_handle_supported);
+    m.def("is_sm90_compiled", []() { return nixl_ep_v2::kEnableSM90Features; });
+    m.def("get_adaptive_num_launch_sms", []() { return nixl_ep_v2::elastic::topology::get_num_launch_sms(); });
+    m.def("is_fabric_handle_supported", &nixl_ep_v2::elastic::nixl::is_fabric_handle_supported);
 
     // The integer type of top-k indices
-    m.attr("topk_idx_t") = py::cast(c10::CppTypeToScalarType<deep_ep::topk_idx_t>::value);
+    m.attr("topk_idx_t") = py::cast(c10::CppTypeToScalarType<nixl_ep_v2::topk_idx_t>::value);
 
     // JIT API
-    deep_ep::jit::register_apis(m);
+    nixl_ep_v2::jit::register_apis(m);
 
-    // Register elastic buffer (DeepEP V2) APIs
-    deep_ep::elastic::register_apis(m);
+    // Register elastic buffer APIs
+    nixl_ep_v2::elastic::register_apis(m);
 }

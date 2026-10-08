@@ -3,12 +3,12 @@
 #include <cuda.h>
 #include <filesystem>
 #include <type_traits>
-#include <deep_ep/common/exception.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
 
 #include "../utils/lazy_driver.hpp"
 #include "no_ref.hpp"
 
-namespace deep_ep::jit {
+namespace nixl_ep_v2::jit {
 
 template <typename arg_t>
 static void* get_kernel_arg_ptr(arg_t& arg) {
@@ -161,4 +161,4 @@ static auto launch_kernel(const KernelHandle& kernel, const LaunchConfigHandle& 
 
 #endif
 
-} // namespace deep_ep::jit
+} // namespace nixl_ep_v2::jit

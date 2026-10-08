@@ -3,9 +3,9 @@
 #include <cuda.h>
 #include <dlfcn.h>
 
-#include <deep_ep/common/exception.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
 
-namespace deep_ep {
+namespace nixl_ep_v2 {
 
 // Lazy loading all driver symbols
 static void* get_driver_handle() {
@@ -53,4 +53,4 @@ DECL_LAZY_CUDA_DRIVER_FUNCTION(cuMemGetAllocationGranularity);
 DECL_LAZY_CUDA_DRIVER_FUNCTION(cuDeviceGet);
 DECL_LAZY_CUDA_DRIVER_FUNCTION(cuDeviceGetAttribute);
 
-}  // namespace deep_ep
+}  // namespace nixl_ep_v2

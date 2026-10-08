@@ -8,9 +8,9 @@ from datetime import timedelta
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 # noinspection PyUnresolvedReferences
-import deep_ep._C as _C
+import nixl_ep_v2._C as _C
 # noinspection PyUnresolvedReferences
-from deep_ep._C import EventHandle
+from nixl_ep_v2._C import EventHandle
 
 from ..utils.event import EventOverlap
 from ..utils.math import align
@@ -852,7 +852,7 @@ class ElasticBuffer:
                 `[num_tokens, hidden]`, and type must be `torch.bfloat16`; for the second type (FP8 mode),
                 the first element of the tuple must be `[num_tokens, hidden]` with type `torch.float8_e4m3fn`,
                 the second is the scale factors.
-            topk_idx: `[num_tokens, num_topk]` with `deep_ep.topk_idx_t` (typically `torch.int64`), the expert
+            topk_idx: `[num_tokens, num_topk]` with `nixl_ep_v2.topk_idx_t` (typically `torch.int64`), the expert
                 indices selected by each token, `-1` means no selections.
             topk_weights: `[num_tokens, num_topk]` with `torch.float`, the expert weights of each token to dispatch.
             cumulative_local_expert_recv_stats: `[num_experts_per_rank]` with `torch.int`, a cumulative expert count

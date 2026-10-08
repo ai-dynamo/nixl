@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace deep_ep::elastic::nixl {
+namespace nixl_ep_v2::elastic::nixl {
 
 // Host-written at every commit, device-read; lives at a fixed device address for the life of the buffer (graphs replay)
 struct alignas(16) NIXLDeviceContext {
@@ -16,7 +16,7 @@ struct alignas(16) NIXLDeviceContext {
 };
 static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context size");
 
-}  // namespace deep_ep::elastic::nixl
+}  // namespace nixl_ep_v2::elastic::nixl
 
 // NIXL's GPU-initiated API (`nixlPut`, `nixlAtomicAdd` over memory views) and UCX's device API under it, for the
 // JIT-compiled kernels only (`EP_NIXL_DEVICE_API`, a JIT flag); the extension sees the context struct alone
@@ -27,15 +27,15 @@ static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context siz
 #error "UCX device header <ucp/api/device/ucp_device_impl.h> not on the include path: set EP_UCX_ROOT_DIR (-I <EP_UCX_ROOT_DIR>/include)"
 #endif
 
-#include <deep_ep/common/exception.cuh>
-#include <deep_ep/common/ptx.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
+#include <nixl_ep_v2/common/ptx.cuh>
 
 // The transport of the adaptive EP kernels. Every rank registers ONE symmetric region (workspace, then the token
 // buffer) with NIXL, all with the identical layout, so one byte offset names the same word on every rank; a peer is
 // its dense rank id (`d * max_num_scaleup_ranks + k`). A peer mapped into our address space (UCX's CUDA IPC lane,
 // `p2p_ptrs[rid] != nullptr`) gets loads, stores and system-scope atomics on `base + offset`; any other peer gets
 // RDMA through the memory views. The context lives at a fixed device address, so a captured graph replays across commits.
-namespace deep_ep::elastic::nixl {
+namespace nixl_ep_v2::elastic::nixl {
 
 // The kernels copy the transport context once per block, field by field through the read-only path into registers
 // (a whole-struct copy is materialised in local memory, as for the topology descriptor (`EPTopology`))
@@ -146,5 +146,5 @@ struct NIXLTransport {
     }
 };
 
-}  // namespace deep_ep::elastic::nixl
+}  // namespace nixl_ep_v2::elastic::nixl
 #endif  // __CUDACC__ && EP_NIXL_DEVICE_API

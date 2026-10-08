@@ -5,7 +5,7 @@
 
 #define EP_DECLARE_STATIC_VAR_IN_CLASS(cls, name) decltype(cls::name) cls::name
 
-namespace deep_ep {
+namespace nixl_ep_v2 {
 
 template <typename T>
 class LazyInit {
@@ -24,4 +24,4 @@ private:
     std::function<std::shared_ptr<T>()> factory;
 };
 
-} // namespace deep_ep
+} // namespace nixl_ep_v2

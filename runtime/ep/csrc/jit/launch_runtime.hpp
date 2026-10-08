@@ -2,14 +2,14 @@
 
 #include <ATen/cuda/CUDAContext.h>
 
-#include <deep_ep/common/exception.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
 
 #include "../utils/format.hpp"
 #include "../utils/system.hpp"
 #include "compiler.hpp"
 #include "include_parser.hpp"
 
-namespace deep_ep::jit {
+namespace nixl_ep_v2::jit {
 
 struct LaunchArgs {
     std::pair<int, int> grid_dim;
@@ -71,4 +71,4 @@ public:
     }
 };
 
-} // namespace deep_ep::jit
+} // namespace nixl_ep_v2::jit

@@ -1,13 +1,13 @@
 #pragma once
 
-#include <deep_ep/common/comm.cuh>
-#include <deep_ep/common/compiled.cuh>
-#include <deep_ep/common/layout.cuh>
-#include <deep_ep/common/nixl_transport.cuh>
-#include <deep_ep/common/ptx.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/comm.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
+#include <nixl_ep_v2/common/layout.cuh>
+#include <nixl_ep_v2/common/nixl_transport.cuh>
+#include <nixl_ep_v2/common/ptx.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
-namespace deep_ep::elastic {
+namespace nixl_ep_v2::elastic {
 
 // Host-level barrier of the live world (`ElasticBuffer::barrier`): the two per-peer barrier legs of the adaptive kernels
 // (scale-out, then scale-up) run by one block; membership, peers and transport come from the topology descriptor (`EPTopology`)
@@ -35,4 +35,4 @@ barrier_impl(void* workspace, const topology::EPTopology* topology_ptr) {
             transport, workspace_layout, topo, false, 0, thread_idx);
 }
 
-} // namespace deep_ep::elastic
+} // namespace nixl_ep_v2::elastic

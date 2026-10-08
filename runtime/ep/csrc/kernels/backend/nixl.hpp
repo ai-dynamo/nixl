@@ -8,13 +8,13 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#include <deep_ep/common/nixl_transport.cuh>
+#include <nixl_ep_v2/common/nixl_transport.cuh>
 
 // The NIXL transport of the adaptive EP kernels, host side: one symmetric region per rank (workspace followed by the
 // token buffer) registered with a NIXL agent over UCX; peers are addressed by their dense rank id in the declared
 // maximum world. `connect_ranks` / `disconnect_ranks` stage memory views, `commit` probes every connected peer's NVLink
 // pointer (`nixlGetPtr`), refuses when a same-domain peer has none or a rail peer has one, else swaps the views in and uploads the device context and the p2p table
-namespace deep_ep::elastic::nixl {
+namespace nixl_ep_v2::elastic::nixl {
 
 // What a peer must know about us besides the agent metadata (the field names say it)
 struct NIXLPeerInfo {
@@ -107,4 +107,4 @@ private:
 // topology evidence asks here instead of binding the driver itself
 bool is_fabric_handle_supported(const int& device_id);
 
-}  // namespace deep_ep::elastic::nixl
+}  // namespace nixl_ep_v2::elastic::nixl

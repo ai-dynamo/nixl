@@ -1,10 +1,10 @@
 #pragma once
 
-#include <deep_ep/common/exception.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
 
 #include "../utils/lazy_init.hpp"
 
-namespace deep_ep::jit {
+namespace nixl_ep_v2::jit {
 
 class DeviceRuntime {
     int64_t cached_clock_rate = 0;
@@ -64,4 +64,4 @@ public:
 
 static auto device_runtime = LazyInit<DeviceRuntime>([](){ return std::make_shared<DeviceRuntime>(); });
 
-} // namespace deep_ep::jit
+} // namespace nixl_ep_v2::jit

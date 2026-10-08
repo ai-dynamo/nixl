@@ -2,10 +2,10 @@
 
 #include <cuda_bf16.h>
 
-#include <deep_ep/common/compiled.cuh>
-#include <deep_ep/common/exception.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
 
-namespace deep_ep::elastic::ptx {
+namespace nixl_ep_v2::elastic::ptx {
 
 // Host-side placeholder with the same size/alignment as cuda::barrier<thread_scope_block>
 // (a single uint64_t atomic), so that sizeof(mbarrier) is consistent across host and device.
@@ -495,4 +495,4 @@ __device__ __forceinline__ void accumulate(float2& a, nv_bfloat162 b) {
 
 #endif
 
-} // namespace deep_ep::elastic::ptx
+} // namespace nixl_ep_v2::elastic::ptx

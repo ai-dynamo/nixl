@@ -1,13 +1,13 @@
 #pragma once
 
-#include <deep_ep/common/compiled.cuh>
-#include <deep_ep/common/exception.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
 #include "../../jit/compiler.hpp"
 #include "../../jit/launch_runtime.hpp"
 
-namespace deep_ep::elastic {
+namespace nixl_ep_v2::elastic {
 
 class BarrierRuntime final : public jit::LaunchRuntime<BarrierRuntime> {
 public:
@@ -25,9 +25,9 @@ public:
 
     static std::string generate_impl(const Args& args) {
         return fmt::format(R"(
-#include <deep_ep/impls/barrier.cuh>
+#include <nixl_ep_v2/impls/barrier.cuh>
 
-using namespace deep_ep::elastic;
+using namespace nixl_ep_v2::elastic;
 
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(&barrier_impl<{}, {}, {}>);
@@ -53,4 +53,4 @@ static void launch_barrier(void* workspace, const topology::EPTopology* topology
     BarrierRuntime::launch(runtime, args, stream);
 }
 
-}  // namespace deep_ep::elastic
+}  // namespace nixl_ep_v2::elastic

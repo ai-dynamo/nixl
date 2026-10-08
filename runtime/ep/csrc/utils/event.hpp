@@ -3,9 +3,9 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <memory>
 
-#include <deep_ep/common/exception.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
 
-namespace deep_ep {
+namespace nixl_ep_v2 {
 
 struct EventHandle {
     std::shared_ptr<torch::Event> event;
@@ -41,4 +41,4 @@ static void stream_wait(const at::cuda::CUDAStream& s, const EventHandle& event)
     s.unwrap().wait(*event.event);
 }
 
-}  // namespace deep_ep
+}  // namespace nixl_ep_v2

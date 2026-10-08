@@ -1,10 +1,10 @@
 #pragma once
 
-#include <deep_ep/common/compiled.cuh>
-#include <deep_ep/common/exception.cuh>
-#include <deep_ep/common/math.cuh>
-#include <deep_ep/common/ptx.cuh>
-#include <deep_ep/common/topology.cuh>
+#include <nixl_ep_v2/common/compiled.cuh>
+#include <nixl_ep_v2/common/exception.cuh>
+#include <nixl_ep_v2/common/math.cuh>
+#include <nixl_ep_v2/common/ptx.cuh>
+#include <nixl_ep_v2/common/topology.cuh>
 
 // Debug-only phase timestamps: `%globaltimer` (ns) written into workspace slots. `EP_PROFILE_STAMP`: SM 0, thread 0;
 // `EP_PROFILE_STAMP_WARP`: SM 0, lane 0 of the given warp; `EP_PROFILE_STAMP_LAST`: every warp, folded with a max (below).
@@ -62,7 +62,7 @@
 #define EP_PROFILE_COUNT(workspace_layout, slot, cond) do {} while (0)
 #endif
 
-namespace deep_ep::elastic::layout {
+namespace nixl_ep_v2::elastic::layout {
 
 // The control region of the symmetric buffer: every word a peer may write sits at an offset fixed by compile-time
 // capacities, and is zero at rest (each kernel zeroes what it used), except the monotonic per-peer barrier words
@@ -466,4 +466,4 @@ struct BufferLayout {
     }
 };
 
-}  // namespace deep_ep::elastic
+}  // namespace nixl_ep_v2::elastic

@@ -55,7 +55,7 @@ __device__ __forceinline__ longlong4_t make_longlong4_t(
 #define EP_NUM_TOPK_IDX_BITS 64
 #endif
 
-namespace deep_ep {
+namespace nixl_ep_v2 {
 
 #ifndef DISABLE_SM90_FEATURES
 constexpr bool kEnableSM90Features = true;
@@ -82,4 +82,4 @@ constexpr int kNumAlignedSFPacks = 16 / sizeof(sf_pack_t);
 // Some communication channel settings
 constexpr int kNumMaxChannels = 1024;
 
-} // namespace deep_ep
+} // namespace nixl_ep_v2
