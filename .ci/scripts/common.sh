@@ -135,7 +135,7 @@ wait_for_redis_server() {
     local port=$1
     local timeout=30
     echo "Waiting for Redis to be ready on port ${port} (timeout: ${timeout}s)..."
-    while ! redis-cli -p "${port}" ping 2>/dev/null | grep -q 'PONG'; do
+    while ! redis-cli -t 1 -p "${port}" ping 2>/dev/null | grep -q 'PONG'; do
         timeout=$((timeout - 1))
         if [ $timeout -eq 0 ]; then
             echo "Redis failed to start"
