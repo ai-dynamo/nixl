@@ -31,17 +31,9 @@
 
 class nixlUcxBackendReqH : public nixlBackendReqH {
 public:
-    // Notification to be sent after completion of all requests
-    struct Notif {
-        const std::string agent;
-        std::unique_ptr<std::string> msg;
-
-        Notif(const std::string &remote_agent, std::unique_ptr<std::string> msg)
-            : agent(remote_agent),
-              msg(std::move(msg)) {}
-    };
-
-    std::optional<Notif> notif;
+    // Notification to be sent over the bound connection after completion of all requests.
+    // Empty if there is no pending notification.
+    std::string notif;
 
 #ifdef HAVE_UCX_SGL_API
     std::optional<nixl::ucx::sglXfer> sgl;
@@ -52,13 +44,21 @@ public:
     }
 
     void
-    reserve(size_t size) {
-        requests_.reserve(size);
-        NIXL_ASSERT(conn_ == nullptr);
+    init(const ucx_connection_ptr_t &conn, const nixlUcxEp &ep) {
+        NIXL_ASSERT(requests_.empty());
+        requests_.reserve(max_requests);
+        conn_ = conn;
+        ep_ = &ep;
+    }
+
+    [[nodiscard]] const nixlUcxEp &
+    getEp() const {
+        NIXL_ASSERT(ep_ != nullptr);
+        return *ep_;
     }
 
     [[nodiscard]] nixl_status_t
-    append(nixl_status_t status, nixlUcxReq req, const ucx_connection_ptr_t &conn) {
+    append(nixl_status_t status, nixlUcxReq req) {
         if (status == NIXL_IN_PROG) [[likely]] {
             requests_.push_back(req);
         } else if (status != NIXL_SUCCESS) {
@@ -67,8 +67,6 @@ public:
             return status;
         }
 
-        NIXL_ASSERT(conn_ == nullptr || conn_ == conn);
-        conn_ = conn;
         return NIXL_SUCCESS;
     }
 
@@ -89,15 +87,13 @@ public:
             }
             worker_->reqRelease(req);
         }
-        requests_.clear();
-        conn_.reset();
+        reset();
     }
 
     [[nodiscard]] virtual nixl_status_t
     status() {
         if (requests_.empty()) {
             /* No pending transmissions */
-            conn_.reset();
             return NIXL_SUCCESS;
         }
 
@@ -133,9 +129,6 @@ public:
         }
 
         requests_.resize(incomplete_reqs);
-        if (requests_.empty()) {
-            conn_.reset();
-        }
         return out_ret;
     }
 
@@ -157,14 +150,29 @@ protected:
     }
 
 private:
+    // A post to a single endpoint issues at most three requests:
+    // one data request, one flush request, and one notification request.
+    static constexpr size_t max_requests = 3;
+
+    void
+    reset() noexcept {
+        requests_.clear();
+        conn_.reset();
+        ep_ = nullptr;
+    }
+
     [[nodiscard]] nixl_status_t
     checkConnection(const nixl_status_t status = NIXL_SUCCESS) const {
-        NIXL_ASSERT(conn_ != nullptr);
-        const nixl_status_t conn_status = conn_->getEp(getWorkerId())->checkTxState();
+        NIXL_ASSERT(ep_ != nullptr);
+        const nixl_status_t conn_status = ep_->checkTxState();
         return (conn_status != NIXL_SUCCESS) ? conn_status : status;
     }
 
+    // Keeps the connection (which owns the endpoint) alive for the lifetime
+    // of the request handle.
     ucx_connection_ptr_t conn_;
+    // Resolved endpoint over which data and notifications are sent.
+    const nixlUcxEp *ep_ = nullptr;
     std::vector<nixlUcxReq> requests_;
     nixlUcxWorker *worker_ = nullptr;
 };
