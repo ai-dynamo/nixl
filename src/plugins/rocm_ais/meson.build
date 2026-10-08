@@ -46,13 +46,13 @@ hipfile_dep = declare_dependency(
 message('Found hipFile at: ' + rocm_path)
 
 ais_common_incs = [nixl_inc_dirs, utils_inc_dirs]
-# Shared engine deps exclude TaskFlow because the common registration and
+# AIS base engine deps exclude TaskFlow because the common registration and
 # metadata path does not create workers.
 ais_common_deps = [nixl_infra, nixl_common_dep, rocm_dep, hipfile_dep, file_utils_interface]
 
-# Shared base engine + utils compiled exactly once (PIC) so it can be embedded
-# into a shared plugin or linked statically into the core without duplicate
-# symbols. No TaskFlow here.
+# AIS base engine (nixlAisEngine) + utils compiled exactly once (PIC) so it can
+# be embedded into a shared plugin or linked statically into the core without
+# duplicate symbols. No TaskFlow here.
 ais_common_lib = static_library('ais_common',
     'ais_utils.cpp', 'ais_utils.h',
     'ais_backend.cpp', 'ais_backend.h',

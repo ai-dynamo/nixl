@@ -23,8 +23,9 @@ NIXL. It is the ROCm counterpart to the CUDA
 
 The directory hosts the AIS family of backends. An abstract base engine
 (`nixlAisEngine`, in `ais_backend.h`/`.cpp`) owns everything independent of how
-I/O is submitted: the hipFile driver lifecycle, memory and file registration,
-`queryMem`, and the `prepXfer` preamble that validates a request and translates
+I/O is submitted: the local-only capability, connection and metadata entry
+points, the hipFile driver lifecycle, memory and file registration, `queryMem`,
+and the `prepXfer` preamble that validates a request and translates
 descriptors into logical `aisXferReq` entries. Concrete engines supply only the
 submission mechanism.
 

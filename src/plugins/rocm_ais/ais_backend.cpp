@@ -74,7 +74,7 @@ public:
 } // namespace
 
 nixlAisEngine::nixlAisEngine(const nixlBackendInitParams *init_params)
-    : FileEngineBase(init_params) {}
+    : nixlBackendEngine(init_params) {}
 
 nixl_status_t
 nixlAisEngine::registerMem(const nixlBlobDesc &mem,

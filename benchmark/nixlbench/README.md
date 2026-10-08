@@ -615,7 +615,7 @@ devices can differ between the initiator and target processes.
 
 Both plugins use a `thread_count` init parameter; nixlbench forwards your CLI
 `--gds_mt_num_threads` flag unchanged. Paths start at `src/plugins/cuda_gds/`,
-`src/plugins/rocm_ais/`, `src/utils/file/` (shared engine base, backend glue).
+`src/plugins/rocm_ais/`, `src/utils/file/` (shared file helpers).
 
 
 **POSIX Backend:**

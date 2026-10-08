@@ -30,7 +30,6 @@
 
 #include "ais_utils.h"
 #include "backend/backend_engine.h"
-#include "file/file_engine_base.h"
 #include "file/file_path_mode.h"
 
 // One logical mem<->file I/O produced by the shared preparation path. The
@@ -47,8 +46,9 @@ struct aisXferReq {
 };
 
 // Abstract base for the AIS (AMD Infinity Storage) family of backends. It owns
-// everything that is independent of how I/O is submitted: the hipFile driver
-// lifecycle, memory and file registration (refcounted handle cache + buffer
+// everything that is independent of how I/O is submitted: the local-only
+// capability/connection/metadata overrides, the hipFile driver lifecycle,
+// memory and file registration (refcounted handle cache + buffer
 // RAII), queryMem, and the prepXfer preamble (validation + descriptor->aisXferReq
 // translation). The only backend-specific step in preparation is finalizePrep();
 // the concrete engines additionally implement the transfer-execution virtuals
@@ -57,18 +57,51 @@ struct aisXferReq {
 // Today the only leaf is nixlAisMtEngine ("AIS_MT"). A batch engine mirroring
 // GDS's cuFile batch path slots in alongside it once hipFile's batch API is
 // adopted; finalizePrep is the hook it needs.
-//
-// The connection/metadata entry points and supported-memory set are shared with
-// the other local file backends via FileEngineBase.
-class nixlAisEngine : public FileEngineBase {
+class nixlAisEngine : public nixlBackendEngine {
 public:
     explicit nixlAisEngine(const nixlBackendInitParams *init_params);
 
+    [[nodiscard]] bool
+    supportsNotif() const override {
+        return false;
+    }
+
+    [[nodiscard]] bool
+    supportsRemote() const override {
+        return false;
+    }
+
+    [[nodiscard]] bool
+    supportsLocal() const override {
+        return true;
+    }
+
     // DRAM_SEG is not advertised until hipFile supports host buffers; the
     // DRAM_SEG registration path is kept so it only needs re-advertising.
-    nixl_mem_list_t
+    [[nodiscard]] nixl_mem_list_t
     getSupportedMems() const override {
         return {VRAM_SEG, FILE_SEG};
+    }
+
+    [[nodiscard]] nixl_status_t
+    connect(const std::string &remote_agent) override {
+        return NIXL_SUCCESS;
+    }
+
+    [[nodiscard]] nixl_status_t
+    disconnect(const std::string &remote_agent) override {
+        return NIXL_SUCCESS;
+    }
+
+    [[nodiscard]] nixl_status_t
+    loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override {
+        output = input;
+        return NIXL_SUCCESS;
+    }
+
+    [[nodiscard]] nixl_status_t
+    unloadMD(nixlBackendMD *input) override {
+        return NIXL_SUCCESS;
     }
 
     [[nodiscard]] nixl_status_t

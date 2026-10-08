@@ -66,7 +66,7 @@ public:
 } // namespace
 
 nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams *init_params)
-    : FileEngineBase(init_params) {
+    : nixlBackendEngine(init_params) {
     try {
         driver_ = std::make_unique<gdsDriverHandle>();
     }
