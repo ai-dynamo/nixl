@@ -222,14 +222,21 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 -DCMAKE_PREFIX_PATH=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
 
-# Build hiredis from source (distro packages may be too old; manylinux uses the same approach).
-RUN cd /tmp && \
-    wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
-        -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
-    tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
-    cd "hiredis-${HIREDIS_VERSION}" && \
-    make -j"${NPROC:-$(nproc)}" PREFIX=/usr/local && \
-    make install PREFIX=/usr/local && \
+# Build hiredis from source via cmake (make is avoided: LIBRARY_PATH set by the CUDA base image
+# contaminates the Makefile's pkgconfig install path).
+RUN wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+        -O "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    tar -xzf "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" -C /tmp && \
+    mkdir -p "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
+    cd "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DENABLE_SSL=ON \
+        -DBUILD_SHARED_LIBS=ON && \
+    make -j"${NPROC:-$(nproc)}" && \
+    make install && \
     ldconfig && \
     PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --atleast-version=1.0.1 hiredis && \
     rm -rf "/tmp/hiredis-${HIREDIS_VERSION}" "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz"
