@@ -105,6 +105,50 @@ TEST_P(objParamTestFixture, RegisterMemoryObjSegWithoutKey) {
     EXPECT_EQ(status, NIXL_SUCCESS);
 }
 
+TEST_P(objParamTestFixture, RegisterMemoryDuplicateObjDevId) {
+    std::vector<char> test_buffer(64, 'x');
+
+    nixlBlobDesc local_desc(
+        reinterpret_cast<uintptr_t>(test_buffer.data()), test_buffer.size(), 1, "");
+    nixlBackendMD *local_metadata = nullptr;
+    ASSERT_EQ(objEngine_->registerMem(local_desc, DRAM_SEG, local_metadata), NIXL_SUCCESS);
+
+    constexpr uint64_t dev_id = 42;
+    nixlBlobDesc registered_desc(0, 512, dev_id, "test-object-key-1");
+    nixlBlobDesc duplicate_desc(1024, 512, dev_id, "test-object-key-2");
+    nixlBackendMD *registered_metadata = nullptr;
+    nixlBackendMD *duplicate_metadata = nullptr;
+    ASSERT_EQ(objEngine_->registerMem(registered_desc, OBJ_SEG, registered_metadata), NIXL_SUCCESS);
+    ASSERT_EQ(objEngine_->registerMem(duplicate_desc, OBJ_SEG, duplicate_metadata),
+              NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(duplicate_metadata, nullptr);
+
+    // A rejected duplicate must leave the original registration usable.
+    nixl_meta_dlist_t local_descs(DRAM_SEG);
+    nixl_meta_dlist_t remote_descs(OBJ_SEG);
+    local_descs.addDesc(nixlMetaDesc(local_desc.addr, local_desc.len, local_desc.devId));
+    remote_descs.addDesc(nixlMetaDesc(registered_desc.addr, test_buffer.size(), dev_id));
+
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(objEngine_->prepXfer(
+                  NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+              NIXL_SUCCESS);
+    ASSERT_EQ(objEngine_->postXfer(
+                  NIXL_WRITE, local_descs, remote_descs, initParams_.localAgent, handle, nullptr),
+              NIXL_IN_PROG);
+    mockS3Client_->execAsync();
+    EXPECT_EQ(objEngine_->checkXfer(handle), NIXL_SUCCESS);
+    EXPECT_EQ(objEngine_->releaseReqH(handle), NIXL_SUCCESS);
+
+    ASSERT_EQ(objEngine_->deregisterMem(registered_metadata), NIXL_SUCCESS);
+
+    // Deregistration makes the devId available for a new object registration.
+    EXPECT_EQ(objEngine_->registerMem(duplicate_desc, OBJ_SEG, duplicate_metadata), NIXL_SUCCESS);
+
+    EXPECT_EQ(objEngine_->deregisterMem(duplicate_metadata), NIXL_SUCCESS);
+    EXPECT_EQ(objEngine_->deregisterMem(local_metadata), NIXL_SUCCESS);
+}
+
 TEST_P(objParamTestFixture, RegisterMemoryDramSeg) {
     nixlBlobDesc mem_desc;
     mem_desc.devId = 123;
