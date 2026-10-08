@@ -519,7 +519,7 @@ wait
 # same ASIO address and port as shown above.
 ./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
   --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
-  
+
 # UCX benchmark with VMM memory localized to locality domain 0 (use 1 for domain 1)
 ./nixlbench --runtime_type ASIO --asio_address <target-node-ip> --asio_port 23456 \
   --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM --enable_vmm --use_localized=0
