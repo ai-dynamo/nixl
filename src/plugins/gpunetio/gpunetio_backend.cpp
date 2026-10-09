@@ -19,10 +19,13 @@
 #include "gpunetio_cuda_device_guard.h"
 #include "gpunetio_completion_status.h"
 #include "serdes/serdes.h"
+#include "common/configuration.h"
 #include <arpa/inet.h>
 #include <cassert>
 #include <cstring>
 #include <cerrno>
+#include <endian.h>
+#include <sstream>
 #include <stdexcept>
 #include <unistd.h>
 #include "common/nixl_log.h"
@@ -178,6 +181,12 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     NIXL_INFO << "OOB listen port: " << local_port;
+
+    hangReportAfter_ = std::chrono::seconds(
+        nixl::config::getValueDefaulted<uint32_t>("NIXL_GPUNETIO_HANG_REPORT_SEC", 0));
+    if (hangReportAfter_.count() != 0) {
+        NIXL_INFO << "Reporting transfers stuck for " << hangReportAfter_.count() << "s";
+    }
 
     /* Open DOCA device */
     verbs_context = open_ib_device((char *)(ndevs[0].c_str()));
@@ -1589,6 +1598,10 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
     treq->postStatus = NIXL_SUCCESS;
     treq->completionState.store(nixlDocaBckndReq::completion_state::IN_PROGRESS,
                                 std::memory_order_release);
+    if (hangReportAfter_.count() != 0) {
+        treq->postTime = std::chrono::steady_clock::now();
+        treq->hangReported = false;
+    }
     for (uint32_t idx : treq->positions) {
         std::lock_guard<std::mutex> lock(postLock_);
         const uint32_t completion_index =
@@ -1635,6 +1648,11 @@ nixlDocaEngine::checkXfer(nixlBackendReqH *handle) const {
         completion_index = xferReqRingCpu[idx].id & (DOCA_MAX_COMPLETION_INFLIGHT_MASK);
 
         if (((volatile docaXferCompletion *)completion_list_cpu)[completion_index].completed != 1) {
+            if (hangReportAfter_.count() != 0 && !treq->hangReported &&
+                std::chrono::steady_clock::now() - treq->postTime >= hangReportAfter_) {
+                treq->hangReported = true;
+                reportStuckXfer(treq);
+            }
             return NIXL_IN_PROG;
         }
     }
@@ -1669,6 +1687,160 @@ nixlDocaEngine::retireRequest(nixlDocaBckndReq *request) const {
     } else if (expected == nixlDocaBckndReq::completion_state::COMPLETING) {
         request->completionState.wait(expected, std::memory_order_acquire);
     }
+}
+
+namespace {
+
+// The persistent progress kernel never finishes: only query streams and copy on a private
+// non-blocking stream, which does not wait for the other ones.
+std::string
+streamState(cudaStream_t stream) {
+    const cudaError_t err = cudaStreamQuery(stream);
+    if (err == cudaSuccess) {
+        return "idle";
+    }
+    if (err == cudaErrorNotReady) {
+        return "busy";
+    }
+    return std::string("error ") + cudaGetErrorString(err);
+}
+
+cudaError_t
+copyFromGpu(void *dst, const void *src, size_t size, cudaStream_t stream) {
+    const cudaError_t err = cudaMemcpyAsync(dst, src, size, cudaMemcpyDefault, stream);
+    return err != cudaSuccess ? err : cudaStreamSynchronize(stream);
+}
+
+} // namespace
+
+void
+nixlDocaEngine::reportQp(const char *name,
+                         doca_gpu_dev_verbs_qp *qp_gpu,
+                         bool rq,
+                         uint64_t rq_next_cqe,
+                         cudaStream_t stream) const {
+    doca_gpu_dev_verbs_qp qp;
+    cudaError_t err = copyFromGpu(&qp, qp_gpu, sizeof(qp), stream);
+    if (err != cudaSuccess) {
+        NIXL_ERROR << "GPUNETIO_HANG " << name << " qp: copy failed: " << cudaGetErrorString(err);
+        return;
+    }
+
+    __be32 dbrec = 0;
+    err = copyFromGpu(&dbrec, rq ? qp.rq_dbrec : qp.sq_dbrec, sizeof(dbrec), stream);
+    const std::string dbrec_str =
+        err == cudaSuccess ? std::to_string(be32toh(dbrec)) : cudaGetErrorString(err);
+    if (rq) {
+        NIXL_ERROR << "GPUNETIO_HANG " << name << " qp " << qp.rq_num << ": rq_wqe_pi "
+                   << qp.rq_wqe_pi << " rq_dbrec " << dbrec_str;
+    } else {
+        NIXL_ERROR << "GPUNETIO_HANG " << name << " qp " << qp.sq_num << ": sq_rsvd_index "
+                   << qp.sq_rsvd_index << " sq_ready_index " << qp.sq_ready_index << " sq_wqe_pi "
+                   << qp.sq_wqe_pi << " sq_dbrec " << dbrec_str << " need_mcst " << qp.need_mcst;
+    }
+
+    const doca_gpu_dev_verbs_cq &cq = rq ? qp.cq_rq : qp.cq_sq;
+    NIXL_ERROR << "GPUNETIO_HANG " << name << " cq " << cq.cq_num << ": cqe_ci " << cq.cqe_ci
+               << " cqe_num " << cq.cqe_num << " cqe_rsvd " << cq.cqe_rsvd;
+
+    // CQEs around the next one the GPU waits for: the last WQEs posted on a send queue, the
+    // next message on a receive queue. A CQE has arrived when its owner bit matches the pass
+    // over the CQ ring; pre-sm_90 polling also needs wqe_counter == index.
+    const uint64_t next = rq ? rq_next_cqe : qp.sq_rsvd_index;
+    const uint64_t back = rq ? 2 : 6;
+    for (uint64_t idx = next >= back ? next - back : 0; idx < next + 2; ++idx) {
+        const uint64_t idx_in_cq = idx + cq.cqe_rsvd;
+        mlx5_cqe64 cqe;
+        err = copyFromGpu(&cqe,
+                          cq.cqe_daddr + (idx_in_cq & (cq.cqe_num - 1)) * sizeof(cqe),
+                          sizeof(cqe),
+                          stream);
+        if (err != cudaSuccess) {
+            NIXL_ERROR << "GPUNETIO_HANG " << name << " cqe " << idx
+                       << ": copy failed: " << cudaGetErrorString(err);
+            return;
+        }
+        const unsigned opcode = cqe.op_own >> 4;
+        const bool arrived = (cqe.op_own & MLX5_CQE_OWNER_MASK) == !!(idx_in_cq & cq.cqe_num);
+        std::ostringstream line;
+        line << "GPUNETIO_HANG " << name << " cqe " << idx << ": opcode " << opcode << " owner "
+             << (cqe.op_own & MLX5_CQE_OWNER_MASK) << (arrived ? " (arrived)" : " (not arrived)")
+             << " wqe_counter " << be16toh(cqe.wqe_counter);
+        if (opcode == MLX5_CQE_REQ_ERR || opcode == MLX5_CQE_RESP_ERR) {
+            const auto *err_cqe = reinterpret_cast<const mlx5_err_cqe *>(&cqe);
+            line << " syndrome 0x" << std::hex << (unsigned)err_cqe->syndrome << " vendor_err 0x"
+                 << (unsigned)err_cqe->vendor_err_synd;
+        }
+        NIXL_ERROR << line.str();
+    }
+}
+
+void
+nixlDocaEngine::reportStuckXfer(nixlDocaBckndReq *request) const {
+    const auto stuck_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - request->postTime)
+                              .count();
+    NIXL_ERROR << "GPUNETIO_HANG transfer incomplete " << stuck_ms
+               << " ms after post: lastPostedReq " << lastPostedReq.load() << " wait_exit "
+               << *(volatile uint32_t *)wait_exit_cpu;
+
+    for (size_t i = 0; i < request->postedCount; ++i) {
+        const uint32_t pos = request->positions[i];
+        volatile docaXferReqGpu &req = xferReqRingCpu[pos];
+        const uint32_t slot = req.id & DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+        NIXL_ERROR << "GPUNETIO_HANG ring pos " << pos << ": completion slot " << slot << " num "
+                   << req.num << " in_use " << (unsigned)req.in_use << " last_wqe "
+                   << req.last_wqe << " notif_idx " << req.has_notif_msg_idx;
+        for (uint32_t s : {slot - 1, slot, slot + 1}) {
+            s &= DOCA_MAX_COMPLETION_INFLIGHT_MASK;
+            const volatile docaXferCompletion &completion = completion_list_cpu[s];
+            docaXferReqGpu *ring_entry = completion.xferReqRingGpu;
+            NIXL_ERROR << "GPUNETIO_HANG completion slot " << s << ": completed "
+                       << (unsigned)completion.completed << " ring pos "
+                       << (ring_entry ? std::to_string(ring_entry - xferReqRingGpu) : "none");
+        }
+    }
+
+    nixl::doca::cudaDeviceGuard guard(gdevs[0].first);
+    NIXL_ERROR << "GPUNETIO_HANG progress kernel stream " << streamState(wait_stream)
+               << ", transfer stream " << streamState(request->stream);
+
+    cudaStream_t stream;
+    const cudaError_t err = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+    if (err != cudaSuccess) {
+        NIXL_ERROR << "GPUNETIO_HANG no CUDA stream: " << cudaGetErrorString(err);
+        return;
+    }
+    for (size_t i = 0; i < request->postedCount; ++i) {
+        volatile docaXferReqGpu &req = xferReqRingCpu[request->positions[i]];
+        reportQp("data", req.qp_data, false, 0, stream);
+        reportQp("notif", req.qp_notif, false, 0, stream);
+    }
+    cudaStreamDestroy(stream);
+}
+
+void
+nixlDocaEngine::reportStuckNotif(doca_gpu_dev_verbs_qp *notif_qp_gpu) const {
+    const auto idle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - lastNotifTime_)
+                             .count();
+    const volatile docaNotif &progress = *notif_progress_cpu;
+    const uint32_t msg_last = progress.msg_last;
+    NIXL_ERROR << "GPUNETIO_HANG no notification for " << idle_ms << " ms: msg_last " << msg_last
+               << " msg_num " << progress.msg_num << " wait_exit "
+               << *(volatile uint32_t *)wait_exit_cpu;
+
+    nixl::doca::cudaDeviceGuard guard(gdevs[0].first);
+    NIXL_ERROR << "GPUNETIO_HANG progress kernel stream " << streamState(wait_stream);
+
+    cudaStream_t stream;
+    const cudaError_t err = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+    if (err != cudaSuccess) {
+        NIXL_ERROR << "GPUNETIO_HANG no CUDA stream: " << cudaGetErrorString(err);
+        return;
+    }
+    reportQp("notif", notif_qp_gpu, true, msg_last, stream);
+    cudaStreamDestroy(stream);
 }
 
 nixl_status_t
@@ -1739,6 +1911,17 @@ nixlDocaEngine::getNotifs(notif_list_t &notif_list) {
             return progress_status;
         }
         num_msg = ((volatile struct docaNotif *)notif_progress_cpu)->msg_num;
+        if (hangReportAfter_.count() != 0) {
+            const auto now = std::chrono::steady_clock::now();
+            if (num_msg > 0) {
+                lastNotifTime_ = now;
+                notifHangReported_ = false;
+            } else if (lastNotifTime_ != std::chrono::steady_clock::time_point{} &&
+                       !notifHangReported_ && now - lastNotifTime_ >= hangReportAfter_) {
+                notifHangReported_ = true;
+                reportStuckNotif(notif_qp_gpu);
+            }
+        }
         while (num_msg > 0) {
             recv_idx = notif.second->recv_pi.load() & (DOCA_MAX_NOTIF_INFLIGHT - 1);
             addr = (char *)(notif.second->recv_addr + (recv_idx * notif.second->elems_size));

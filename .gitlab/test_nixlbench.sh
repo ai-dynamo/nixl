@@ -142,7 +142,8 @@ run_nixlbench_two_workers_gpunetio() {
     while [ "$port0" = "$port1" ]; do
         port1=$(get_random_tcp_port)
     done
-    command_line="timeout --signal=INT --kill-after=15s 180s python3 '$GPUNETIO_DIAGNOSTIC_SCRIPT' -- ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
+    # Log the GPU-side state of a transfer stuck for 30s, before the capture and the timeout
+    command_line="NIXL_GPUNETIO_HANG_REPORT_SEC=30 timeout --signal=INT --kill-after=15s 180s python3 '$GPUNETIO_DIAGNOSTIC_SCRIPT' -- ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
     # Each worker keeps a GPUNetIO progress kernel running, and two processes on
     # one GPU get time-sliced: give each worker its own GPU when there are two.
     local gpus gpu0 gpu1
@@ -157,7 +158,8 @@ run_nixlbench_two_workers_gpunetio() {
 }
 
 if $HAS_GPU ; then
-    for op_type in READ WRITE; do
+    # WRITE first: so far every hang was READ, and CI stops at the first failure
+    for op_type in WRITE READ; do
         for initiator in $seg_types; do
             for target in $seg_types; do
                 run_nixlbench_two_workers_gpunetio --backend GPUNETIO --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency

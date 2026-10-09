@@ -205,6 +205,9 @@ private:
         size_t postedCount = 0;
         nixl_status_t postStatus = NIXL_SUCCESS;
         std::atomic<completion_state> completionState{completion_state::IN_PROGRESS};
+        // For NIXL_GPUNETIO_HANG_REPORT_SEC
+        std::chrono::steady_clock::time_point postTime;
+        bool hangReported = false;
 
         nixlDocaBckndReq() : nixlBackendReqH() {}
 
@@ -213,6 +216,23 @@ private:
 
     void
     retireRequest(nixlDocaBckndReq *request) const;
+
+    // Debug aid: with NIXL_GPUNETIO_HANG_REPORT_SEC=N, log the GPU-side state of a
+    // transfer, or of the notification queue, that made no progress for N seconds.
+    std::chrono::seconds hangReportAfter_{0};
+    std::chrono::steady_clock::time_point lastNotifTime_{};
+    bool notifHangReported_ = false;
+
+    void
+    reportStuckXfer(nixlDocaBckndReq *request) const;
+    void
+    reportStuckNotif(doca_gpu_dev_verbs_qp *notif_qp_gpu) const;
+    void
+    reportQp(const char *name,
+             doca_gpu_dev_verbs_qp *qp_gpu,
+             bool rq,
+             uint64_t rq_next_cqe,
+             cudaStream_t stream) const;
 
     nixl_status_t
     progressThreadStart();
