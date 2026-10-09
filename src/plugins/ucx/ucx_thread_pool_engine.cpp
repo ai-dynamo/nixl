@@ -124,13 +124,15 @@ public:
     startXfer(const std::shared_ptr<nixlUcxBackendSharedState> &shared_state,
               nixlUcxWorker *worker) {
         NIXL_ASSERT(sharedState_.get() == nullptr);
-        resetStatus();
         sharedState_ = shared_state;
         setWorker(worker);
     }
 
     void
     complete(nixl_status_t status);
+
+    [[nodiscard]] nixl_status_t
+    status() override;
 
     friend std::ostream &
     operator<<(std::ostream &os, const nixlUcxChunkBackendReqH &chunk) {
@@ -170,10 +172,20 @@ nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
         nixlUcxBackendReqH::release();
         sharedState_->status.store(status);
     }
+    sharedState_->pendingReqs.fetch_sub(1);
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
     setWorker(nullptr);
-    const auto shared_state = std::move(sharedState_);
-    shared_state->pendingReqs.fetch_sub(1);
+    sharedState_.reset();
+}
+
+nixl_status_t
+nixlUcxChunkBackendReqH::status() {
+    // First check if entire request was cancelled or failed
+    const nixl_status_t status = sharedState_->status.load();
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+    return nixlUcxBackendReqH::status();
 }
 
 /*
@@ -199,15 +211,14 @@ public:
     startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
+        sharedState_->pendingReqs.store(getNumChunks());
     }
 
     [[nodiscard]] nixlUcxChunkBackendReqH *
     startChunk(size_t idx, nixlUcxWorker *worker) {
         nixlUcxChunkBackendReqH *chunk = &sharedState_->chunks[idx];
-        NIXL_TRACE << "dedicated " << *nixlUcxThread::tlsThread() << " starting " << *chunk;
         chunk->startXfer(sharedState_, worker);
-        // execute() waits for all posting tasks before the caller can observe completion.
-        sharedState_->pendingReqs.fetch_add(1);
+        NIXL_TRACE << "dedicated " << *nixlUcxThread::tlsThread() << " starting " << *chunk;
         return chunk;
     }
 
@@ -280,7 +291,7 @@ public:
 
     void
     addRequest(nixlUcxChunkBackendReqH *handle) {
-        NIXL_TRACE << "dedicated " << *this << " tracking " << *handle;
+        NIXL_TRACE << "dedicated " << *this << " sent " << *handle;
         requests_.push_back(handle);
     }
 
@@ -456,23 +467,17 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
         const size_t chunk_start = i * batch_size / num_chunks;
         const size_t chunk_end = (i + 1) * batch_size / num_chunks;
         try {
-            // Allocate the polling slot before any operation can access transfer buffers.
-            worker.getThread().addRequest(chunk_handle);
-        }
-        catch (const std::exception &) {
-            chunk_handle->complete(NIXL_ERR_BACKEND);
-            throw;
-        }
-        try {
             const nixl_status_t ret = nixlUcxEngine::sendXferRange(
                 operation, local, remote, remote_agent, chunk_handle, chunk_start, chunk_end);
             if (ret != NIXL_SUCCESS) {
-                chunk_handle->setError(ret);
+                chunk_handle->complete(ret);
+            } else {
+                worker.getThread().addRequest(chunk_handle);
             }
             return ret;
         }
         catch (const std::exception &) {
-            chunk_handle->setError(NIXL_ERR_BACKEND);
+            chunk_handle->complete(NIXL_ERR_BACKEND);
             throw;
         }
     });

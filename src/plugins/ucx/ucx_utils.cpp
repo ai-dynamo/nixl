@@ -286,9 +286,7 @@ nixlUcxEp::write(void *laddr,
                  uint64_t raddr,
                  const nixl::ucx::rkey &rkey,
                  size_t size,
-                 nixlUcxReq &req,
-                 bool &put_attempted) {
-    put_attempted = false;
+                 nixlUcxReq &req) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
         return status;
@@ -298,8 +296,6 @@ nixlUcxEp::write(void *laddr,
     param.op_attr_mask = UCP_OP_ATTR_FIELD_MEMH | UCP_OP_ATTR_FLAG_MULTI_SEND;
     param.memh = mem.memh;
 
-    // An error from UCX may follow partial posting; rejection above cannot.
-    put_attempted = true;
     const ucs_status_ptr_t request = ucp_put_nbx(eph, laddr, size, raddr, rkey.get(), &param);
     if (UCS_PTR_IS_PTR(request)) {
         req = static_cast<nixlUcxReq>(request);
@@ -358,9 +354,7 @@ nixl_status_t
 nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
                    const ucp_dt_remote_sgl_t &remote,
                    size_t count,
-                   nixlUcxReq &req,
-                   bool &put_attempted) {
-    put_attempted = false;
+                   nixlUcxReq &req) {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         return status;
@@ -375,7 +369,6 @@ nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
         .remote_count = count,
     };
 
-    put_attempted = true;
     const ucs_status_ptr_t request =
         ucp_put_nbx(eph, &local, count, UCP_REMOTE_ADDR_INVALID, UCP_RKEY_INVALID, &param);
     if (UCS_PTR_IS_PTR(request)) {

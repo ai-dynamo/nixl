@@ -26,7 +26,6 @@
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 
-#include <exception>
 #include <optional>
 #include <string.h>
 #include "absl/strings/str_split.h"
@@ -455,17 +454,19 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
     auto &ep = conn->getEp(int_handle->getWorkerId());
     int_handle->init(conn, *ep);
 
-    nixlUcxReq req = nullptr;
-    bool put_attempted = false;
-    const nixl_status_t post_ret = sgl.post(*ep, req, put_attempted);
-    if (put_attempted) {
-        int_handle->requireRemoteCompletion();
-    }
+    nixlUcxReq req;
+    const nixl_status_t post_ret = sgl.post(*ep, req);
     if (int_handle->append(post_ret, req) != NIXL_SUCCESS) {
         return post_ret;
     }
 
-    return int_handle->flush();
+    nixlUcxReq flush_req;
+    const nixl_status_t flush_ret = ep->flushEp(flush_req);
+    if (int_handle->append(flush_ret, flush_req) != NIXL_SUCCESS) {
+        return flush_ret;
+    }
+
+    return NIXL_SUCCESS;
 }
 #endif
 
@@ -493,61 +494,63 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
     }
 #endif
 
-    int_handle->reserve(end_idx - start_idx + 2);
-
     const ucx_connection_ptr_t &conn =
         static_cast<nixlUcxPublicMetadata *>(remote[start_idx].metadataP)->conn;
     auto &ep = conn->getEp(worker_id);
     int_handle->init(conn, *ep);
 
     nixl_status_t status = NIXL_SUCCESS;
-    bool any_put_attempted = false;
+    nixlUcxReq pending_req = nullptr;
 
-    try {
-        for (size_t i = start_idx; i < end_idx; ++i) {
-            void *laddr = (void *)local[i].addr;
-            size_t lsize = local[i].len;
-            uint64_t raddr = static_cast<uint64_t>(remote[i].addr);
-            NIXL_ASSERT(lsize == remote[i].len);
+    for (size_t i = start_idx; i < end_idx; ++i) {
+        void *laddr = (void *)local[i].addr;
+        size_t lsize = local[i].len;
+        uint64_t raddr = static_cast<uint64_t>(remote[i].addr);
+        NIXL_ASSERT(lsize == remote[i].len);
 
-            const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
-            const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
-            NIXL_ASSERT(rmd->conn->getEp(worker_id).get() == ep.get());
+        const auto lmd = static_cast<nixlUcxPrivateMetadata *>(local[i].metadataP);
+        const auto rmd = static_cast<nixlUcxPublicMetadata *>(remote[i].metadataP);
+        NIXL_ASSERT(rmd->conn->getEp(worker_id).get() == ep.get());
 
-            nixlUcxReq req = nullptr;
-            bool put_attempted = false;
-            const nixl_status_t ret = operation == NIXL_READ ?
-                ep->read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
-                ep->write(
-                    laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req, put_attempted);
+        nixlUcxReq req;
+        const nixl_status_t ret = operation == NIXL_READ ?
+            ep->read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
+            ep->write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
 
-            if (put_attempted) {
-                any_put_attempted = true;
-                int_handle->requireRemoteCompletion();
+        if (ret == NIXL_IN_PROG) {
+            if (pending_req != nullptr) [[likely]] {
+                ucp_request_free(pending_req);
             }
-
-            if (int_handle->append(ret, req) != NIXL_SUCCESS) {
-                status = ret;
-                break;
+            pending_req = req;
+        } else if (ret != NIXL_SUCCESS) {
+            status = ret;
+            if (pending_req != nullptr) {
+                ucp_request_free(pending_req);
+                pending_req = nullptr;
             }
+            break;
         }
     }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to post UCX transfer range: " << e.what();
-        status = NIXL_ERR_BACKEND;
-        int_handle->setError(status);
+
+    if (status == NIXL_SUCCESS && pending_req) {
+        status = NIXL_IN_PROG;
     }
 
-    if (operation == NIXL_WRITE && !any_put_attempted) {
+    if (int_handle->append(status, pending_req) != NIXL_SUCCESS) {
         return status;
     }
 
-    const nixl_status_t flush_ret = int_handle->flush();
-    if (flush_ret != NIXL_SUCCESS) {
+    /*
+     * Flush keeps int_handle non-empty until the operation is actually
+     * completed, which can happen after local requests completion.
+     */
+    nixlUcxReq flush_req;
+    const nixl_status_t flush_ret = ep->flushEp(flush_req);
+    if (int_handle->append(flush_ret, flush_req) != NIXL_SUCCESS) {
         return flush_ret;
     }
 
-    return status;
+    return NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -570,17 +573,9 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
-    int_handle->resetStatus();
-    try {
-        ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << "Failed to post UCX transfer: " << e.what();
-        ret = NIXL_ERR_BACKEND;
-    }
+    ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
     if (ret != NIXL_SUCCESS) {
-        int_handle->setError(ret);
-        return int_handle->status();
+        return ret;
     }
 
     ret = int_handle->status();
@@ -594,14 +589,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
 
             ret = int_handle->status();
         } else if (ret == NIXL_IN_PROG) {
-            try {
-                int_handle->notif = buildNotif(opt_args->notifMsg);
-            }
-            catch (const std::exception &e) {
-                NIXL_ERROR << "Failed to prepare UCX transfer notification: " << e.what();
-                int_handle->setError(NIXL_ERR_BACKEND);
-                ret = int_handle->status();
-            }
+            int_handle->notif = buildNotif(opt_args->notifMsg);
         }
     }
 
@@ -636,11 +624,6 @@ nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
 {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
-    // Cancelling a UCX request does not establish that its RMA has stopped.
-    if (int_handle->status() == NIXL_IN_PROG) {
-        NIXL_DEBUG << "Cannot release an in-progress UCX transfer";
-        return NIXL_ERR_REPOST_ACTIVE;
-    }
     int_handle->release();
 
     /* TODO: return to a pool instead. */

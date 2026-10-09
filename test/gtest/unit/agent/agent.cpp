@@ -611,8 +611,13 @@ namespace agent {
             .WillOnce(Return(NIXL_IN_PROG))
             .WillOnce(Return(NIXL_IN_PROG))
             .WillOnce(Return(NIXL_IN_PROG))
+            .WillOnce(Return(NIXL_IN_PROG))
             .WillOnce(Return(GetParam()));
         EXPECT_EQ(local_agent_->getXferStatus(request), NIXL_IN_PROG);
+        {
+            const LogIgnoreGuard lig("still in progress and cannot be reposted");
+            EXPECT_EQ(local_agent_->postXferReq(request), NIXL_ERR_REPOST_ACTIVE);
+        }
         EXPECT_CALL(engine, releaseReqH(&backend_request)).WillOnce(Return(NIXL_ERR_REPOST_ACTIVE));
         {
             const LogIgnoreGuard lig("could not release transfer request");

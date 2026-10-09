@@ -115,10 +115,7 @@ main() {
 #endif
 
     // Write request
-    bool put_attempted = false;
-    ret = ep[0]->write(
-        buffer[0], mem[0], (uint64_t)buffer[1], *rkey[0], buf_size / 2, req, put_attempted);
-    assert(put_attempted);
+    ret = ep[0]->write(buffer[0], mem[0], (uint64_t)buffer[1], *rkey[0], buf_size / 2, req);
     completeRequest(w, std::string("WRITE"), false, ret, req);
 
     // Flush to ensure that all data is in-place

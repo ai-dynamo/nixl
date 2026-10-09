@@ -380,8 +380,6 @@ class nixlAgent {
         /**
          * @brief  Release the transfer request `req_hndl`. If the transfer is active,
          *         it will be canceled, or return an error if the transfer cannot be aborted.
-         *         On NIXL_ERR_REPOST_ACTIVE the handle remains valid: keep polling it
-         *         and retry release. Its buffers must not be reused in the meantime.
          *
          * @param  req_hndl      Transfer request handle to be released
          * @return nixl_status_t Error code if call was not successful
@@ -526,9 +524,8 @@ class nixlAgent {
          * @brief  Invalidate the remote agent metadata cached locally. This will
          *         disconnect from that agent if already connected, and no more
          *         transfers can be initiated towards that agent.
-         *         This does not cancel posted transfers. Their handles retain the
-         *         required metadata until released and remain pollable. Do not reuse
-         *         their buffers until completion or successful releaseXferReq.
+         *         Existing transfer handles remain valid for polling the backend's
+         *         completion status and must still be released.
          *
          * @param  remote_agent  Remote agent name to invalidate its metadata blob
          * @return nixl_status_t Error code if call was not successful

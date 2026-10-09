@@ -57,63 +57,17 @@ public:
         return *ep_;
     }
 
-    void
-    resetStatus() {
-        NIXL_ASSERT(requests_.empty());
-        NIXL_ASSERT(!remoteCompletionPending_ && flushReq_ == nullptr);
-        error_ = NIXL_SUCCESS;
-        notif.clear();
-    }
-
-    void
-    setError(nixl_status_t status) {
-        NIXL_ASSERT(status < 0);
-        if (error_ == NIXL_SUCCESS) {
-            NIXL_ERROR << "UCX transfer request failed with status: " << status;
-            error_ = status;
-        }
-    }
-
-    void
-    reserve(size_t size) {
-        NIXL_ASSERT(requests_.empty());
-        requests_.reserve(size);
-    }
-
     [[nodiscard]] nixl_status_t
     append(nixl_status_t status, nixlUcxReq req) {
         if (status == NIXL_IN_PROG) [[likely]] {
             requests_.push_back(req);
         } else if (status != NIXL_SUCCESS) {
-            // Previously posted operations must finish before this error is reported.
-            setError(status);
+            // Error. Release all previously initiated ops and exit:
+            release();
             return status;
         }
 
         return NIXL_SUCCESS;
-    }
-
-    void
-    requireRemoteCompletion() noexcept {
-        remoteCompletionPending_ = true;
-    }
-
-    [[nodiscard]] nixl_status_t
-    appendFlush(nixl_status_t status, nixlUcxReq req) {
-        NIXL_ASSERT(flushReq_ == nullptr);
-        if (status == NIXL_SUCCESS) {
-            remoteCompletionPending_ = false;
-        } else if (status == NIXL_IN_PROG) {
-            flushReq_ = req;
-        }
-        return append(status, req);
-    }
-
-    [[nodiscard]] nixl_status_t
-    flush() {
-        nixlUcxReq req = nullptr;
-        const nixl_status_t status = conn_->getEp(getWorkerId())->flushEp(req);
-        return appendFlush(status, req);
     }
 
     [[nodiscard]] virtual bool
@@ -139,14 +93,8 @@ public:
     [[nodiscard]] virtual nixl_status_t
     status() {
         if (requests_.empty()) {
-            // Local PUT completion does not establish remote completion after a failed flush.
-            if (remoteCompletionPending_) {
-                worker_->progressLoop();
-                if (flush() != NIXL_SUCCESS || !requests_.empty()) {
-                    return NIXL_IN_PROG;
-                }
-            }
-            return error_;
+            /* No pending transmissions */
+            return NIXL_SUCCESS;
         }
 
         worker_->progressLoop();
@@ -157,32 +105,31 @@ public:
         const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
         if (ret == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
+        } else if (ret != NIXL_SUCCESS) {
+            return checkConnection(ret);
         }
 
+        /* Last request completed successfully, all the others must be in the
+         * same state. TODO: remove extra checks? */
         size_t incomplete_reqs = 0;
+        nixl_status_t out_ret = NIXL_SUCCESS;
         for (nixlUcxReq req : requests_) {
             const nixl_status_t ret = nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
-            if (ret == NIXL_IN_PROG) {
+            if (ret == NIXL_SUCCESS) [[likely]] {
+                worker_->reqRelease(req);
+            } else if (ret == NIXL_IN_PROG) {
+                if (out_ret == NIXL_SUCCESS) {
+                    out_ret = NIXL_IN_PROG;
+                }
                 requests_[incomplete_reqs++] = req;
             } else {
-                if (req == flushReq_) {
-                    flushReq_ = nullptr;
-                    if (ret == NIXL_SUCCESS) {
-                        remoteCompletionPending_ = false;
-                    }
-                }
-                if (ret != NIXL_SUCCESS) [[unlikely]] {
-                    setError(checkConnection(ret));
-                }
-                worker_->reqRelease(req);
+                // Any other ret value is ERR and will be returned
+                out_ret = checkConnection(ret);
             }
         }
 
         requests_.resize(incomplete_reqs);
-        if (!requests_.empty() || remoteCompletionPending_) {
-            return NIXL_IN_PROG;
-        }
-        return error_;
+        return out_ret;
     }
 
     [[nodiscard]] nixlUcxWorker *
@@ -203,14 +150,13 @@ protected:
     }
 
 private:
-    // Initial reservation for SGL transfers; scalar batches reserve more.
+    // A post to a single endpoint issues at most three requests:
+    // one data request, one flush request, and one notification request.
     static constexpr size_t max_requests = 3;
 
     void
     reset() noexcept {
         requests_.clear();
-        flushReq_ = nullptr;
-        remoteCompletionPending_ = false;
         conn_.reset();
         ep_ = nullptr;
     }
@@ -229,9 +175,6 @@ private:
     const nixlUcxEp *ep_ = nullptr;
     std::vector<nixlUcxReq> requests_;
     nixlUcxWorker *worker_ = nullptr;
-    nixl_status_t error_ = NIXL_SUCCESS;
-    nixlUcxReq flushReq_ = nullptr;
-    bool remoteCompletionPending_ = false;
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H
