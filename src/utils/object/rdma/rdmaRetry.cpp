@@ -22,7 +22,7 @@ rdmaPutWithRetry(SharedCuObjClient &rdma,
                  uint64_t size) {
     ssize_t ret = -1;
     for (int attempt = 0; attempt < rdma_max_attempts; ++attempt) {
-        char *token = rdma.getToken(buf, size, 0, CUOBJ_PUT);
+        char *token = rdma.getToken(buf, size, CUOBJ_PUT);
         if (token == nullptr) {
             ret = -1;
             continue; // transient mint failure: retry
@@ -51,7 +51,7 @@ rdmaGetWithRetry(SharedCuObjClient &rdma,
     }
     ssize_t ret = -1;
     for (int attempt = 0; attempt < rdma_max_attempts; ++attempt) {
-        char *token = rdma.getToken(buf, size, 0, CUOBJ_GET);
+        char *token = rdma.getToken(buf, size, CUOBJ_GET);
         if (token == nullptr) {
             ret = -1;
             continue; // transient mint failure: retry

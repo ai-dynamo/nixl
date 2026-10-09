@@ -45,6 +45,7 @@ SharedCuObjClient::registerBuffer(void *ptr, size_t size) {
                    << " size=" << size;
         return false;
     }
+    registrations_[reinterpret_cast<uintptr_t>(ptr)] = size;
     NIXL_DEBUG << "cuMemObjGetDescriptor OK ptr=" << ptr << " size=" << size;
     return true;
 }
@@ -52,6 +53,7 @@ SharedCuObjClient::registerBuffer(void *ptr, size_t size) {
 void
 SharedCuObjClient::deregisterBuffer(void *ptr) {
     const std::lock_guard<std::mutex> lock(mutex_);
+    registrations_.erase(reinterpret_cast<uintptr_t>(ptr));
     if (client_->cuMemObjPutDescriptor(ptr) != CU_OBJ_SUCCESS) {
         NIXL_WARN << "cuMemObjPutDescriptor failed for ptr " << ptr;
     }
@@ -66,13 +68,30 @@ SharedCuObjClient::isDeviceMemory(const void *ptr) const {
 }
 
 char *
-SharedCuObjClient::getToken(void *ptr, size_t size, size_t offset, cuObjOpType_t op) {
+SharedCuObjClient::getToken(void *ptr, size_t size, cuObjOpType_t op) {
     const std::lock_guard<std::mutex> lock(mutex_);
+    const auto addr = reinterpret_cast<uintptr_t>(ptr);
+    auto it = registrations_.upper_bound(addr);
+    if (it == registrations_.begin()) {
+        NIXL_ERROR << "No RDMA registration contains ptr=" << ptr << " size=" << size;
+        return nullptr;
+    }
+    --it;
+    const auto [base, len] = *it;
+    const size_t offset = addr - base;
+    if (offset > len || size > len - offset) {
+        NIXL_ERROR << "No RDMA registration contains ptr=" << ptr << " size=" << size
+                   << " (nearest base=" << reinterpret_cast<void *>(base) << " len=" << len << ")";
+        return nullptr;
+    }
+
     char *token = nullptr;
-    cuObjErr_t rc = client_->cuMemObjGetRDMAToken(ptr, size, offset, op, &token);
+    cuObjErr_t rc =
+        client_->cuMemObjGetRDMAToken(reinterpret_cast<void *>(base), size, offset, op, &token);
     if (rc != CU_OBJ_SUCCESS || token == nullptr) {
-        NIXL_ERROR << "cuMemObjGetRDMAToken failed rc=" << rc << " ptr=" << ptr << " size=" << size
-                   << " op=" << op << " token=" << static_cast<void *>(token);
+        NIXL_ERROR << "cuMemObjGetRDMAToken failed rc=" << rc
+                   << " base=" << reinterpret_cast<void *>(base) << " offset=" << offset
+                   << " size=" << size << " op=" << op << " token=" << static_cast<void *>(token);
         return nullptr;
     }
     return token;
