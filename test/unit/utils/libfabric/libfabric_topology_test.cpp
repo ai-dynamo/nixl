@@ -27,6 +27,20 @@
 #include <optional>
 #include <thread>
 #include <bitset>
+#include <algorithm>
+#include <set>
+#include <string>
+#include <vector>
+
+// Renders a device list for an error message.
+static std::string
+joinDevices(const std::vector<std::string> &devices) {
+    std::string joined;
+    for (size_t i = 0; i < devices.size(); ++i) {
+        joined += (i == 0 ? "" : ", ") + devices[i];
+    }
+    return joined;
+}
 
 struct TestScenario {
     bool override_bandwidth;
@@ -294,6 +308,15 @@ struct DmabufMappingInfo {
     // True for instances whose all-false expectation rests on grouping staying idle, which
     // the test asserts by checking the NVIDIA and AMD accelerator counts.
     bool expect_grouping_skipped;
+    // EFA devices a VRAM registration can select for each accelerator, keyed by the
+    // accelerator's PCI address. Empty skips the check.
+    //
+    // This guards rail selection, which the mapping expectations above cannot see: swapping
+    // which NICs an accelerator holds leaves every mapping verdict unchanged, because the
+    // verdict is a property of the device rather than of the selection. On a platform
+    // carrying both routes the rows below also state that an accelerator reaches its NICs on
+    // both -- the ones under its PCIe switch and the ones it meets at the CPU.
+    std::vector<std::pair<std::string, std::vector<std::string>>> accel_efa_devices;
 };
 
 static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
@@ -374,7 +397,16 @@ static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
                                     "rdmap170s0",
                                     "rdmap191s0",
                                     "rdmap192s0"},
-     .expect_grouping_skipped = false},
+     .expect_grouping_skipped = false,
+     // Every GPU reaches four EFA devices: the two under its PCIe switch, which need the
+     // PCIe (BAR1) mapping, and the two it meets at its Grace Package, which need the
+     // platform default one. All 16 devices on the node are selectable.
+     .accel_efa_devices = {{"0000:29:00.0", {"rdmap39s0", "rdmap40s0", "rdmap54s0", "rdmap55s0"}},
+                           {"0000:3f:00.0", {"rdmap61s0", "rdmap62s0", "rdmap76s0", "rdmap77s0"}},
+                           {"0000:9c:00.0",
+                            {"rdmap154s0", "rdmap155s0", "rdmap169s0", "rdmap170s0"}},
+                           {"0000:b2:00.0",
+                            {"rdmap176s0", "rdmap177s0", "rdmap191s0", "rdmap192s0"}}}},
 
     // end of list
 };
@@ -1745,6 +1777,37 @@ testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
         NIXL_ERROR << "Unknown EFA device reported a PCIe path to an accelerator on "
                    << mapping_info.instance_type;
         rc = 4;
+    }
+
+    // Rail selection: the EFA devices a VRAM registration can reach per accelerator, and
+    // that between them the accelerators reach every device on the node. A device left out
+    // of every accelerator's list carries a correct mapping verdict that nothing ever asks
+    // for, so the expectations above pass while the device sits idle.
+    if (!mapping_info.accel_efa_devices.empty()) {
+        std::set<std::string> selectable;
+        for (const auto &[accel_pci, expected_efa_devices] : mapping_info.accel_efa_devices) {
+            std::vector<std::string> actual = topology.getEfaDevicesForPci(accel_pci);
+            std::vector<std::string> expected = expected_efa_devices;
+            std::sort(actual.begin(), actual.end());
+            std::sort(expected.begin(), expected.end());
+            selectable.insert(actual.begin(), actual.end());
+
+            if (actual != expected) {
+                NIXL_ERROR << "Wrong EFA devices for accelerator " << accel_pci << " on "
+                           << mapping_info.instance_type << ": expected [" << joinDevices(expected)
+                           << "], got [" << joinDevices(actual) << "]";
+                rc = 7;
+            }
+        }
+
+        for (const auto &device : devices) {
+            if (selectable.find(device) == selectable.end()) {
+                NIXL_ERROR << "EFA device " << device << " on " << mapping_info.instance_type
+                           << " is reachable by no accelerator, so a VRAM registration never "
+                           << "selects it";
+                rc = 8;
+            }
+        }
     }
 
     if (rc == 0) {
