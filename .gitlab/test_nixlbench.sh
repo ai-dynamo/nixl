@@ -143,11 +143,17 @@ run_nixlbench_two_workers_gpunetio() {
         port1=$(get_random_tcp_port)
     done
     command_line="timeout --signal=INT --kill-after=15s 180s python3 '$GPUNETIO_DIAGNOSTIC_SCRIPT' -- ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
+    # Each worker keeps a GPUNetIO progress kernel running, and two processes on
+    # one GPU get time-sliced: give each worker its own GPU when there are two.
+    local gpus gpu0 gpu1
+    IFS=, read -ra gpus <<< "${CUDA_VISIBLE_DEVICES:-$(nvidia-smi --query-gpu=index --format=csv,noheader | paste -sd, -)}"
+    gpu0=${gpus[0]:-0}
+    gpu1=${gpus[1]:-$gpu0}
     # Each local worker owns its listener; never share an SO_REUSEPORT endpoint.
     # Bound a failed case even if its peer is still waiting for a notification.
     parallel --line-buffer --halt now,fail=1 ::: \
-        "$command_line --gpunetio_oob_port=$port0" \
-        "sleep 4 ; $command_line --gpunetio_oob_port=$port1"
+        "CUDA_VISIBLE_DEVICES=$gpu0 $command_line --gpunetio_oob_port=$port0" \
+        "sleep 4 ; CUDA_VISIBLE_DEVICES=$gpu1 $command_line --gpunetio_oob_port=$port1"
 }
 
 if $HAS_GPU ; then
