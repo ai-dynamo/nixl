@@ -351,16 +351,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         backend_params["connection_string"] = xferBenchConfig::azure_blob_connection_string;
         std::cout << "AZURE_BLOB backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_INFINIA)) {
-        // INFINIA backend - configuration via config file
-        if (!xferBenchConfig::infinia_config_file.empty()) {
-            backend_params["config_file"] = xferBenchConfig::infinia_config_file;
-            std::cout << "INFINIA backend with config file: "
-                      << xferBenchConfig::infinia_config_file << std::endl;
-        } else {
-            std::cout << "INFINIA backend (plugin will use environment variables or defaults)"
-                      << std::endl;
-            std::cout << "  Tip: Use --infinia_config_file to specify a config file" << std::endl;
-        }
+        // INFINIA backend - configuration via RED_* environment variables or NIXL_CONFIG_FILE
+        std::cout << "INFINIA backend (plugin will use RED_* environment variables, "
+                     "NIXL_CONFIG_FILE, or defaults)"
+                  << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -614,10 +608,30 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
     CUmemAccessDesc access = {};
 
     prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-    prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
-    prop.allocFlags.gpuDirectRDMACapable = 1;
-    prop.location.id = devid;
-    prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+#if HAVE_CUDA_LOCALITY_DOMAIN
+    if (xferBenchConfig::use_localized >= 0) {
+        // Locality-domain allocations cannot also request GPUDirect RDMA
+        // capability. Match UCX perftest's cuda-localized allocator.
+        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE_LOCALITY_DOMAIN;
+        prop.location.localized.deviceId = static_cast<unsigned char>(devid);
+        prop.location.localized.localityDomainId =
+            static_cast<unsigned char>(xferBenchConfig::use_localized);
+        // NIXLBench uses this allocation across nodes, so it must remain
+        // exportable through CUDA fabric even though it is not GDR-capable.
+        prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+        prop.allocFlags.gpuDirectRDMACapable = 0;
+        std::cout << "VMM allocation: GPU " << devid << ", locality domain "
+                  << xferBenchConfig::use_localized << std::endl;
+    } else
+#endif
+    {
+        prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+        prop.allocFlags.gpuDirectRDMACapable = xferBenchConfig::vmm_gdr_capable ? 1 : 0;
+        prop.location.id = devid;
+        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        std::cout << "VMM allocation: GPU " << devid << ", non-localized, gpuDirectRDMACapable="
+                  << static_cast<int>(prop.allocFlags.gpuDirectRDMACapable) << std::endl;
+    }
 
     // Get the allocation granularity
     size_t granularity = 0;
@@ -1353,6 +1367,13 @@ xferBenchNixlWorker::exchangeMetadata() {
     return ret;
 }
 
+/**
+ * Build remote transfer IOV lists for storage backends, or exchange them with the peer.
+ *
+ * @param local_iovs Per-thread local transfer IOV lists, including batched descriptors.
+ * @param block_size Transfer block size in bytes for storage backends.
+ * @return Remote IOV lists for storage backends or the initiator; empty on peer targets.
+ */
 std::vector<std::vector<xferBenchIOV>>
 xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &local_iovs,
                                  size_t block_size) {
@@ -1375,7 +1396,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     remote_iov_list.push_back(redis_remote);
                 } else if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
-                    int obj_dev_id = list_idx * num_devices + devidx;
+                    int obj_dev_id = list_idx * xferBenchConfig::num_initiator_dev + iov.devId;
                     basic_desc = initBasicDescObj(iov.len, obj_dev_id, iov.metaInfo);
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
