@@ -86,7 +86,9 @@ private:
  */
 class nixlUcxThreadEngine : public nixlUcxEngine {
 public:
-    nixlUcxThreadEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
+    nixlUcxThreadEngine(const nixlBackendInitParams &init_params,
+                        size_t num_dedicated_workers = 0,
+                        nixl::ucx::MemoryPolicyPtr policy = {});
 
     nixl_status_t
     getNotifs(notif_list_t &notif_list) override;

@@ -20,6 +20,7 @@
 #include "ucx_thread_pool_engine.h"
 #include "ucx_backend_req.h"
 #include "ucx_sgl.h"
+#include "registration.h"
 #include "common/nixl_log.h"
 #include "serdes/serdes.h"
 #include "common/backend.h"
@@ -58,29 +59,39 @@ errHandlingModeFromParams(const nixl_b_params_t *custom_params) {
  *****************************************/
 
 std::unique_ptr<nixlUcxEngine>
-nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
+nixlUcxEngine::create(const nixlBackendInitParams &init_params, nixl::ucx::MemoryPolicyPtr policy) {
     nixlUcxEngine *engine;
     const size_t num_threads =
         nixl::getBackendParamDefaulted(init_params.customParams, "num_threads", 0u);
     if (num_threads > 0) {
-        engine = new nixlUcxThreadPoolEngine(init_params, num_threads);
+        engine = new nixlUcxThreadPoolEngine(init_params, num_threads, std::move(policy));
     } else if (init_params.enableProgTh) {
-        engine = new nixlUcxThreadEngine(init_params);
+        engine = new nixlUcxThreadEngine(init_params, 0, std::move(policy));
     } else {
-        engine = new nixlUcxEngine(init_params);
+        engine = new nixlUcxEngine(init_params, 0, std::move(policy));
     }
     return std::unique_ptr<nixlUcxEngine>(engine);
 }
 
-nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
+nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
+                             size_t num_dedicated_workers,
+                             nixl::ucx::MemoryPolicyPtr policy)
     : nixlBackendEngine(&init_params),
+      memoryPolicy_(std::move(policy)),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()) {
+    if (memoryPolicy_ && memoryPolicy_->deviceMemoryType().empty()) {
+        throw std::invalid_argument("A memory policy must name its required device memory type");
+    }
+    if (memoryPolicy_ && nixl::config::getValueDefaulted("NIXL_UCX_SGL_ENABLE", false)) {
+        throw std::invalid_argument("Strict device memory policies do not support UCX SGL");
+    }
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
-    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "device_list")) {
+    if (const auto opt = nixl::getBackendParamOptional<std::string>(custom_params, "device_list");
+        opt && !opt->empty()) {
         devs = absl::StrSplit(*opt, ", ");
     }
 
@@ -102,9 +113,13 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
                                           init_params.syncMode,
                                           num_device_channels,
                                           engine_config,
-                                          localAgent);
+                                          localAgent,
+                                          memoryPolicy_ ? memoryPolicy_->deviceMemoryType() :
+                                                          std::string_view{});
 
-    uc->warnAboutHardwareSupportMismatch();
+    if (!memoryPolicy_) {
+        uc->warnAboutHardwareSupportMismatch();
+    }
 
     workers_.reserve(num_workers);
     for (size_t i = 0; i < numSharedWorkers_; i++) {
@@ -196,20 +211,35 @@ nixl_status_t nixlUcxEngine::registerMem (const nixlBlobDesc &mem,
                                           const nixl_mem_t &nixl_mem,
                                           nixlBackendMD* &out)
 {
-    auto priv = std::make_unique<nixlUcxPrivateMetadata>();
-
-    // TODO: Add nixl_mem check?
-    const int ret = uc->memReg((void*) mem.addr, mem.len, priv->mem, nixl_mem);
-    if (ret) {
+    out = nullptr;
+    try {
+        if (memoryPolicy_) {
+            const auto status = memoryPolicy_->validateBeforeMap(mem, nixl_mem);
+            if (status != NIXL_SUCCESS) {
+                return status;
+            }
+        }
+        auto priv = std::make_unique<nixlUcxPrivateMetadata>();
+        const bool registered = nixl::ucx::registrationTransaction(
+            [&] {
+                return uc->memReg(
+                           reinterpret_cast<void *>(mem.addr), mem.len, priv->mem, nixl_mem) == 0;
+            },
+            [&] {
+                priv->rkeyStr = uc->packRkey(priv->mem);
+                return !priv->rkeyStr.empty();
+            },
+            [&]() noexcept { uc->memDereg(priv->mem); });
+        if (!registered) {
+            return NIXL_ERR_BACKEND;
+        }
+        out = priv.release();
+        return NIXL_SUCCESS;
+    }
+    catch (const std::exception &error) {
+        NIXL_ERROR << "Memory registration failed: " << error.what();
         return NIXL_ERR_BACKEND;
     }
-    priv->rkeyStr = uc->packRkey(priv->mem);
-
-    if (priv->rkeyStr.empty()) {
-        return NIXL_ERR_BACKEND;
-    }
-    out = priv.release();
-    return NIXL_SUCCESS;
 }
 
 nixl_status_t nixlUcxEngine::deregisterMem (nixlBackendMD* meta)
@@ -252,6 +282,10 @@ nixl_status_t
 nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
                                  const std::string &agent,
                                  nixlBackendMD* &output) {
+    output = nullptr;
+    if (blob.empty()) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     try {
         const auto it = remoteConnMap.find(agent);
 
@@ -270,7 +304,7 @@ nixlUcxEngine::internalMDHelper (const nixl_blob_t &blob,
             it->second, makePublicMetadataRkeys(it->second, workers_.size(), blob.data()));
         return NIXL_SUCCESS;
     }
-    catch (const std::runtime_error &e) {
+    catch (const std::exception &e) {
         NIXL_ERROR << e.what();
         return NIXL_ERR_BACKEND;
     }
@@ -284,12 +318,18 @@ nixlUcxEngine::loadLocalMD (nixlBackendMD* input,
     return internalMDHelper(input_md->rkeyStr, localAgent, output);
 }
 
-// To be cleaned up
 nixl_status_t nixlUcxEngine::loadRemoteMD (const nixlBlobDesc &input,
                                            const nixl_mem_t &nixl_mem,
                                            const std::string &remote_agent,
                                            nixlBackendMD* &output)
 {
+    output = nullptr;
+    if (!nixl::ucx::validMemoryRange(input.addr, input.len)) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    if (memoryPolicy_ && nixl_mem != DRAM_SEG && nixl_mem != VRAM_SEG) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     return internalMDHelper(input.metaInfo, remote_agent, output);
 }
 
@@ -742,6 +782,9 @@ nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_remote_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
+    if (memoryPolicy_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     const size_t worker_id = getSharedWorkerId(opt_args);
     try {
         mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));
@@ -757,6 +800,9 @@ nixl_status_t
 nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
                            nixlMemViewH &mvh,
                            const nixl_opt_b_args_t *opt_args) const {
+    if (memoryPolicy_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     const size_t worker_id = getSharedWorkerId(opt_args);
     try {
         mvh = nixl::ucx::createMemList(dlist, *getSharedWorker(worker_id));

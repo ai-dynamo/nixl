@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+subdir('musa')
+
 if enabled_plugins.get('UCX')
     if not ucx_dep.found() and is_explicit_enable
         error('UCX plugin tests requested but UCX dependency not found')
