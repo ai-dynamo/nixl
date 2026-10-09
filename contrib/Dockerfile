@@ -99,11 +99,15 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     fi
 
 # On Ubuntu 22.04, python3.12-dev is not in the default apt repos; add the deadsnakes PPA.
+# Also register python3.12 as the system python3 so meson finds it with matching dev headers
+# (Ubuntu 22.04 ships python3.10 as default but we only install 3.12-dev).
 RUN if [ "${OS}" = "ubuntu22" ] || grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then \
         apt-get update -y && \
         apt-get install -y software-properties-common && \
         add-apt-repository -y ppa:deadsnakes/ppa && \
-        apt-get update -y; \
+        apt-get update -y && \
+        apt-get install -y python3.12 && \
+        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1; \
     fi
 
 # Install build dependencies from Ubuntu repository
