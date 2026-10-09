@@ -197,8 +197,8 @@ else
     #  - Bases that already ship DOCA (nvcr.io/nvidia/pytorch bundles >=3.4): use that
     #    stack as-is. Adding a second DOCA repo would only downgrade/mismatch it, so
     #    skip the whole repo add + SDK install + RDMA reinstall.
-    if dpkg -s doca-sdk-gpunetio >/dev/null 2>&1; then
-        echo "DOCA $(dpkg-query -W -f='${Version}' doca-sdk-gpunetio) provided by base image; skipping DOCA repo add, SDK install, and RDMA reinstall"
+    if dpkg -s libdoca-sdk-gpunetio-dev >/dev/null 2>&1; then
+        echo "DOCA $(dpkg-query -W -f='${Version}' libdoca-sdk-gpunetio-dev) provided by base image; skipping DOCA repo add, SDK install, and RDMA reinstall"
     else
         ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
         MELLANOX_OS="$(. /etc/lsb-release; echo ${DISTRIB_ID}${DISTRIB_RELEASE} | tr A-Z a-z | tr -d .)"

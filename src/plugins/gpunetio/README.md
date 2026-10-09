@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,9 +34,11 @@ Stream pool mode instead is when applications mostly wants to process data on th
 
 ## Input parameters
 
-DOCA GPUNetIO backend takes 3 input parameters:
+DOCA GPUNetIO backend takes these input parameters:
 - network_devices: network device to be used during the execution (e.g. mlx5_0). Current release supports only 1 network device.
 - oob_interface: network interface to be used when exchanging control info during initiator/target connection. Optional parameter, not needed if the network device is set in Ethernet mode.
+- oob_port: TCP port used to listen for OOB connection setup. It must be an integer in the inclusive range [1, 65535] and defaults to 6544. Set a distinct port for each GPUNETIO backend sharing a host network namespace.
+- gid_index: RoCE GID table index, in [0, 255]. Defaults to 0; select the GID for the test fabric when a non-default index is required.
 - gpu_devices: GPU CUDA ID to be used during the execution (e.g. 0). Current release supports only 1 GPU device.
 - cuda_streams: how many CUDA streams the backend should created at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. If this parameter is not specified, default value is `DOCA_POST_STREAM_NUM`.
 

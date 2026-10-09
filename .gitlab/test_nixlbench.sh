@@ -24,6 +24,7 @@ ulimit -c unlimited
 
 # Parse commandline arguments with first argument being the install directory.
 INSTALL_DIR=$1
+GPUNETIO_DIAGNOSTIC_SCRIPT=$(realpath "$(dirname "$0")/capture_gpunetio_hang.py")
 
 if [ -z "$INSTALL_DIR" ]; then
     echo "Usage: $0 <install_dir>"
@@ -132,5 +133,39 @@ done
 #         done
 #     done
 # fi
+
+run_nixlbench_two_workers_gpunetio() {
+    local benchmark_group port0 port1 command_line
+    benchmark_group=$(get_random_tcp_port)-$$
+    port0=$(get_random_tcp_port)
+    port1=$(get_random_tcp_port)
+    while [ "$port0" = "$port1" ]; do
+        port1=$(get_random_tcp_port)
+    done
+    # Log the GPU-side state of a transfer stuck for 30s, before the capture and the timeout
+    command_line="NIXL_GPUNETIO_HANG_REPORT_SEC=30 timeout --signal=INT --kill-after=15s 180s python3 '$GPUNETIO_DIAGNOSTIC_SCRIPT' -- ./bin/nixlbench --etcd_endpoints ${NIXL_ETCD_ENDPOINTS} $DEFAULT_NB_PARAMS --benchmark_group gpunetio-$benchmark_group $*"
+    # Each worker keeps a GPUNetIO progress kernel running, and two processes on
+    # one GPU get time-sliced: give each worker its own GPU when there are two.
+    local gpus gpu0 gpu1
+    IFS=, read -ra gpus <<< "${CUDA_VISIBLE_DEVICES:-$(nvidia-smi --query-gpu=index --format=csv,noheader | paste -sd, -)}"
+    gpu0=${gpus[0]:-0}
+    gpu1=${gpus[1]:-$gpu0}
+    # Each local worker owns its listener; never share an SO_REUSEPORT endpoint.
+    # Bound a failed case even if its peer is still waiting for a notification.
+    parallel --line-buffer --halt now,fail=1 ::: \
+        "CUDA_VISIBLE_DEVICES=$gpu0 $command_line --gpunetio_oob_port=$port0" \
+        "sleep 4 ; CUDA_VISIBLE_DEVICES=$gpu1 $command_line --gpunetio_oob_port=$port1"
+}
+
+if $HAS_GPU ; then
+    # WRITE first: so far every hang was READ, and CI stops at the first failure
+    for op_type in WRITE READ; do
+        for initiator in $seg_types; do
+            for target in $seg_types; do
+                run_nixlbench_two_workers_gpunetio --backend GPUNETIO --op_type $op_type --initiator_seg_type $initiator --target_seg_type $target --check_consistency
+            done
+        done
+    done
+fi
 
 kill -9 $ETCD_PID 2>/dev/null || true
