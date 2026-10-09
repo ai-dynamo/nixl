@@ -50,7 +50,6 @@ if sanitizer_opts.contains('thread')
 endif
 
 subdir('mocks')
-subdir('unit')
 subdir('plugins')
 
 if ucx_gpu_device_api_available
@@ -86,6 +85,8 @@ elif cuda_dep.found()
     cpp_flags += ['-DHAVE_GPU', '-DHAVE_CUDA']
 endif
 
+subdir('unit')
+
 if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
 endif
@@ -116,7 +117,11 @@ gtest_sources = [
     'telemetry_stress_test.cpp',
     'telemetry_benchmark.cpp',
     'nixl_duration_test.cpp',
-    'configuration.cpp'
+    'blocking_queue_test.cpp',
+    'nixl_log_file_test.cpp',
+    'configuration.cpp',
+    # Hidden in libnixl_common, so the oversized-record test links its own copy.
+    '../../src/utils/common/nixl_log_file_sink.cpp',
     ]
 
 if ucx_gpu_device_api_available

@@ -74,6 +74,11 @@ public:
         return traceContext_.correlationId64();
     }
 
+    [[nodiscard]] const nixl::trace::TraceContext &
+    traceContext() const noexcept {
+        return traceContext_;
+    }
+
     friend class nixlAgent;
 
 private:

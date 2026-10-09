@@ -24,8 +24,23 @@
 
 #include <cmath>
 #include <cassert>
+#include <optional>
 #include <thread>
 #include <bitset>
+#include <algorithm>
+#include <set>
+#include <string>
+#include <vector>
+
+// Renders a device list for an error message.
+static std::string
+joinDevices(const std::vector<std::string> &devices) {
+    std::string joined;
+    for (size_t i = 0; i < devices.size(); ++i) {
+        joined += (i == 0 ? "" : ", ") + devices[i];
+    }
+    return joined;
+}
 
 struct TestScenario {
     bool override_bandwidth;
@@ -203,6 +218,201 @@ static TopologyInfo topologies[] = {
 };
 static const size_t topology_count = sizeof(topologies) / sizeof(topologies[0]);
 
+// Neuron topologies (tested separately from the NUMA-aware rail selection tests, which are
+// GPU-specific). These only need to load the XML and verify the discovered accelerator count.
+// Used to exercise the Neuron/EFA preflight in nixlLibfabricTopology::discoverTopology().
+struct NeuronTopologyInfo {
+    bool enable;
+    const char *instance_type;
+    const char *topo_file;
+    int expected_num_aws_accel; // number of Neuron devices discovered via hwloc
+    int expected_nic_count; // number of EFA NICs discovered via hwloc + fi_getinfo
+};
+
+static const NeuronTopologyInfo neuron_topologies[] = {
+    // trn2.48xlarge with all 16 EFA NICs attached at launch (the AWS-tested DI config).
+    // Captured on a live instance via `lstopo-no-graphics --whole-io --of xml`, then
+    // sanitized. Exercises the INFO summary branch of the Neuron/EFA preflight
+    // ("N NIC(s) per Neuron device").
+    {.enable = true,
+     .instance_type = "trn2.48xl",
+     .topo_file = "trn2.48xl-topo.xml",
+     .expected_num_aws_accel = 16,
+     .expected_nic_count = 16},
+
+    // trn2.48xlarge launched WITHOUT any EFA network interfaces attached (the AWS
+    // default `run-instances` behavior only attaches a single ENA NIC). Exercises the
+    // "0 EFA NIC(s)" WARN branch of the Neuron/EFA preflight -- the plugin should
+    // emit an actionable diagnostic prompting the user to relaunch with
+    // `--network-interfaces InterfaceType=efa` per NetworkCardIndex.
+    {.enable = true,
+     .instance_type = "trn2.48xl-no-efa",
+     .topo_file = "trn2.48xl-no-efa-topo.xml",
+     .expected_num_aws_accel = 16,
+     .expected_nic_count = 0},
+
+    // trn2.3xlarge in the AWS-default launch config (no EFA NIC attached). Even
+    // trn2.3xlarge supports one EFA NIC via `--network-interfaces InterfaceType=efa`,
+    // but the AWS default doesn't attach it. Exercises the same "0 EFA NIC(s)" WARN
+    // branch as the trn2.48xl-no-efa case but with a single Neuron device present.
+    {.enable = true,
+     .instance_type = "trn2.3xl",
+     .topo_file = "trn2.3xl-topo.xml",
+     .expected_num_aws_accel = 1,
+     .expected_nic_count = 0},
+
+    // trn1.32xlarge (Trainium1 previous-generation instance) with all 8 EFA NICs
+    // attached at launch. Has 16 TRN1 devices sharing 8 EFA NICs (2:1 ratio by
+    // hardware design). Exercises the "fewer EFA than Neuron" WARN branch of the
+    // preflight, which the message text specifically calls out as an expected /
+    // supported topology on trn1.32xlarge -- the plugin works correctly with this
+    // 2:1 sharing.
+    {.enable = true,
+     .instance_type = "trn1.32xl",
+     .topo_file = "trn1.32xl-topo.xml",
+     .expected_num_aws_accel = 16,
+     .expected_nic_count = 8},
+
+    // trn1.2xlarge (smallest Trainium1 instance) in the AWS-default launch config.
+    // trn1.2xlarge does not support EFA at all (per describe-instance-types:
+    // EfaSupported=False), so this always presents 0 EFA NICs. Exercises the
+    // "0 EFA NIC(s)" WARN branch analogously to trn2.48xl-no-efa / trn2.3xl,
+    // documenting that trn1.2xlarge is not usable for FI_HMEM_NEURON transfers.
+    {.enable = true,
+     .instance_type = "trn1.2xl",
+     .topo_file = "trn1.2xl-topo.xml",
+     .expected_num_aws_accel = 1,
+     .expected_nic_count = 0},
+
+    // end of list
+};
+static const size_t neuron_topology_count =
+    sizeof(neuron_topologies) / sizeof(neuron_topologies[0]);
+
+// Expected CUDA dmabuf mapping per captured topology: whether every EFA NIC on the
+// instance reaches its accelerator through a PCIe switch, which chooses between the GPU's
+// PCIe aperture (BAR1) mapping and the platform default.
+//
+// The table covers NVIDIA hosts (p-series) and Neuron hosts (trn-series). Each row holds
+// one expectation, and default_mapping_exceptions names the devices that answer
+// differently on a platform carrying both routes.
+struct DmabufMappingInfo {
+    bool enable;
+    const char *instance_type;
+    const char *topo_file;
+    size_t nic_count;
+    size_t nic_line_speed; // Gbps; only feeds the fi_getinfo mock
+    bool expect_pcie_mapping; // expectation for every device not named below
+    // devices expected to need the default mapping while the rest need the PCIe one
+    std::vector<std::string> default_mapping_exceptions;
+    // True for instances whose all-false expectation rests on grouping staying idle, which
+    // the test asserts by checking the NVIDIA and AMD accelerator counts.
+    bool expect_grouping_skipped;
+    // EFA devices a VRAM registration can select for each accelerator, keyed by the
+    // accelerator's PCI address. Empty skips the check.
+    //
+    // This guards rail selection, which the mapping expectations above cannot see: swapping
+    // which NICs an accelerator holds leaves every mapping verdict unchanged, because the
+    // verdict is a property of the device rather than of the selection. On a platform
+    // carrying both routes the rows below also state that an accelerator reaches its NICs on
+    // both -- the ones under its PCIe switch and the ones it meets at the CPU.
+    std::vector<std::pair<std::string, std::vector<std::string>>> accel_efa_devices;
+};
+
+static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
+    // p-series captures below place each EFA NIC and its GPU under a common PCIe switch,
+    // so a dmabuf for those NICs has to name BAR1.
+    {.enable = true,
+     .instance_type = "p5en.48xl",
+     .topo_file = "p5en.48xl-topo.xml",
+     .nic_count = 16,
+     .nic_line_speed = 200,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {}},
+
+    {.enable = true,
+     .instance_type = "p6-b200.48xl",
+     .topo_file = "p6-b200.48xl-topo.xml",
+     .nic_count = 8,
+     .nic_line_speed = 400,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {}},
+
+    {.enable = true,
+     .instance_type = "p5.48xl",
+     .topo_file = "p5.48xl-topo.xml",
+     .nic_count = 32,
+     .nic_line_speed = 100,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {}},
+
+    // p4d hangs its NICs and GPUs off separate bridges under one host bridge, so they meet
+    // above PCIe and the platform default mapping is the correct request.
+    {.enable = true,
+     .instance_type = "p4d.24xl",
+     .topo_file = "p4d.24xl-topo.xml",
+     .nic_count = 4,
+     .nic_line_speed = 100,
+     .expect_pcie_mapping = false,
+     .default_mapping_exceptions = {}},
+
+    // Neuron instances. Grouping collects NVIDIA and AMD accelerators and runs on a host
+    // carrying one, so every device on a Neuron-only host answers false, and
+    // expect_grouping_skipped asserts that precondition. Each EFA device on these captures
+    // sits under a common PCI bridge with its Neuron device, so the false answer states that
+    // grouping stayed idle. nic_line_speed feeds the fi_getinfo mock.
+    {.enable = true,
+     .instance_type = "trn2.48xl",
+     .topo_file = "trn2.48xl-topo.xml",
+     .nic_count = 16,
+     .nic_line_speed = 200,
+     .expect_pcie_mapping = false,
+     .default_mapping_exceptions = {},
+     .expect_grouping_skipped = true},
+
+    {.enable = true,
+     .instance_type = "trn1.32xl",
+     .topo_file = "trn1.32xl-topo.xml",
+     .nic_count = 8,
+     .nic_line_speed = 100,
+     .expect_pcie_mapping = false,
+     .default_mapping_exceptions = {},
+     .expect_grouping_skipped = true},
+
+    // p6e-gb200.36xl carries both routes to GPU memory on one machine: eight EFA devices
+    // share a PCIe switch with a GPU, and eight reach GPU memory through the Grace CPU and
+    // meet their nearest GPU at a Package object. Captured on a live instance via
+    // `lstopo-no-graphics --whole-io --of xml`, then sanitized.
+    {.enable = true,
+     .instance_type = "p6e-gb200.36xl",
+     .topo_file = "p6e-gb200.36xl-topo.xml",
+     .nic_count = 16,
+     .nic_line_speed = 400,
+     .expect_pcie_mapping = true,
+     .default_mapping_exceptions = {"rdmap54s0",
+                                    "rdmap55s0",
+                                    "rdmap76s0",
+                                    "rdmap77s0",
+                                    "rdmap169s0",
+                                    "rdmap170s0",
+                                    "rdmap191s0",
+                                    "rdmap192s0"},
+     .expect_grouping_skipped = false,
+     // Every GPU reaches four EFA devices: the two under its PCIe switch, which need the
+     // PCIe (BAR1) mapping, and the two it meets at its Grace Package, which need the
+     // platform default one. All 16 devices on the node are selectable.
+     .accel_efa_devices = {{"0000:29:00.0", {"rdmap39s0", "rdmap40s0", "rdmap54s0", "rdmap55s0"}},
+                           {"0000:3f:00.0", {"rdmap61s0", "rdmap62s0", "rdmap76s0", "rdmap77s0"}},
+                           {"0000:9c:00.0",
+                            {"rdmap154s0", "rdmap155s0", "rdmap169s0", "rdmap170s0"}},
+                           {"0000:b2:00.0",
+                            {"rdmap176s0", "rdmap177s0", "rdmap191s0", "rdmap192s0"}}}},
+
+    // end of list
+};
+static const size_t dmabuf_mapping_topology_count =
+    sizeof(dmabuf_mapping_topologies) / sizeof(dmabuf_mapping_topologies[0]);
+
 // current topology pointer - used for mocking/injection
 static const TopologyInfo *curr_topology = nullptr;
 
@@ -263,23 +473,63 @@ testNumaDramRailSelectionPolicy(const TopologyInfo &topology_info,
 static int
 testNumaDramRailSelectionPolicy(const char *instance_type);
 
+// test Neuron topology loading (verifies the Neuron/EFA preflight in
+// nixlLibfabricTopology::discoverTopology()). Loads the given lstopo XML and
+// verifies the discovered Neuron accelerator count and EFA NIC count match
+// the expected values. This exercises the preflight code path; log output can
+// be verified by a wrapper script grepping the process's stderr for the
+// expected NIXL_INFO / NIXL_WARN message.
+static int
+testNeuronTopology(const NeuronTopologyInfo &topology_info);
+
+// test Neuron topology loading for all enabled Neuron topologies
+static int
+testNeuronTopologies();
+
+// test Neuron topology loading for a single topology by instance type
+static int
+testNeuronTopology(const char *instance_type);
+
+// test the PCIe-switch classification that the CUDA dmabuf mapping type turns on
+static int
+testDmabufMappingShapes();
+
+// test the dmabuf mapping decision on every enabled captured topology
+static int
+testDmabufMappingTopologies();
+
+// test the dmabuf mapping decision on a single captured topology
+static int
+testDmabufMappingTopology(const DmabufMappingInfo &mapping_info);
+
 int
 main(int argc, char *argv[]) {
     if (argc > 1) {
-        // testing for NUMA-aware rail selection for DRAM_SEG
-        // the only parameter is the instance type
-        // this is required because hwloc caches cannot be flushed, and once it is loaded once, it
-        // retains info, and we cannot test for other instance types
-        char *instance_type = argv[1];
-        int res = testNumaDramTopology(instance_type);
+        // testing for a single instance type: either NUMA-aware DRAM_SEG rail selection
+        // (default, GPU-oriented) or Neuron preflight (`neuron:<instance>` prefix). Hwloc
+        // caches cannot be flushed once loaded, so only one topology can be tested per
+        // process invocation.
+        char *arg = argv[1];
+        static const char neuron_prefix[] = "neuron:";
+        if (strncmp(arg, neuron_prefix, sizeof(neuron_prefix) - 1) == 0) {
+            const char *instance_type = arg + sizeof(neuron_prefix) - 1;
+            return testNeuronTopology(instance_type);
+        }
+        int res = testNumaDramTopology(arg);
         if (res != 0) {
             return res;
         }
-        return testNumaDramRailSelectionPolicy(instance_type);
+        return testNumaDramRailSelectionPolicy(arg);
     }
 
     // test basic topology
     int res = testBasicTopology();
+    if (res != 0) {
+        return res;
+    }
+
+    // test Neuron topologies (exercises preflight for AWS Trainium instances)
+    res = testNeuronTopologies();
     if (res != 0) {
         return res;
     }
@@ -291,7 +541,19 @@ main(int argc, char *argv[]) {
     }
 
     // test for actual rail selection policy
-    return testNumaDramRailSelectionPolicy();
+    res = testNumaDramRailSelectionPolicy();
+    if (res != 0) {
+        return res;
+    }
+
+    // test the CUDA dmabuf mapping decision: ancestor classification first (needs no
+    // XML), then the end-to-end decision on every captured topology
+    res = testDmabufMappingShapes();
+    if (res != 0) {
+        return res;
+    }
+
+    return testDmabufMappingTopologies();
 }
 
 int
@@ -779,6 +1041,177 @@ testNumaDramTopology(const TopologyInfo &topology_info) {
     return 0;
 }
 
+// Neuron topology test: exercises nixlLibfabricTopology::discoverTopology() with a saved
+// AWS Trainium lstopo XML, verifying that Neuron accelerators and EFA NICs are discovered
+// with the expected counts. The construction of nixlLibfabricTopology also exercises the
+// Neuron/EFA preflight code path; the log output can be verified externally by a wrapper
+// script grepping stderr for the expected NIXL_INFO/NIXL_WARN message.
+//
+// For topologies with 0 EFA NICs (e.g. a Neuron instance launched without any
+// `InterfaceType=efa` network interfaces), the plugin's constructor throws because no
+// libfabric provider can be selected. The test captures this expected failure mode and
+// records that the fatal error surfaces at plugin init -- which is precisely when the
+// preflight WARN would fire in production (before construction throws). Note: for these
+// zero-NIC cases, the `expected_num_aws_accel` field of the NeuronTopologyInfo is not
+// verified (the constructor throws before accelerator-count getters can be called);
+// it is retained purely as documentation of the underlying hardware topology.
+int
+testNeuronTopology(const NeuronTopologyInfo &topology_info) {
+    // pretend an EFA-only topology (curr_topology is unused for accelerator counts, but
+    // the fi_getinfo mock reads curr_topology->nic_line_speed; provide a compatible
+    // dummy).
+    TopologyInfo dummy = {.enable = true,
+                          .instance_type = topology_info.instance_type,
+                          .topo_file = topology_info.topo_file,
+                          .numa_node_count = 0,
+                          .nic_count = static_cast<size_t>(topology_info.expected_nic_count),
+                          .nic_line_speed = 200, // arbitrary; not asserted here
+                          .nic_upstream_link_speed = 0,
+                          .switch_count = 0,
+                          .numa_capacity = 0,
+                          .numa_rail_count = 0,
+                          .test_scenarios = {},
+                          .rail_partition = {}};
+    curr_topology = &dummy;
+    NIXL_TRACE << "Testing Neuron topology: " << topology_info.instance_type;
+
+    // enable topology injection in runtime code
+    setTesting();
+
+    // tell hwloc to load topology from XML file
+    setenv("HWLOC_XMLFILE", topology_info.topo_file, 1);
+
+    // RAII guard: unconditionally undo the env changes above (clear the runtime
+    // testing flag, unset HWLOC_XMLFILE) and drop the dangling `curr_topology`
+    // pointer on every exit path, including any exception thrown from
+    // nixlLibfabricTopology's constructor. Without this, a regression that caused an
+    // unexpected throw in the positive-case branch below would leave
+    // NIXL_LIBFABRIC_TESTING set and HWLOC_XMLFILE pointing at the Trainium fixture,
+    // corrupting the subsequent DRAM_SEG tests in main(). Also nulls curr_topology
+    // to avoid dangling to the stack-local `dummy` below.
+    struct TestEnvGuard {
+        ~TestEnvGuard() {
+            clearTesting();
+            unsetenv("HWLOC_XMLFILE");
+            curr_topology = nullptr;
+        }
+    } env_guard;
+
+    int rc = 0;
+
+    // If the expected EFA NIC count is 0, the plugin's constructor throws because no
+    // libfabric provider can be discovered. This is the expected failure mode for
+    // Neuron instances launched without EFA NICs; the preflight WARN branch would
+    // fire in production before the throw.
+    if (topology_info.expected_nic_count == 0) {
+        bool did_throw = false;
+        try {
+            nixlLibfabricTopology topology;
+        }
+        catch (const std::runtime_error &) {
+            did_throw = true;
+        }
+        if (!did_throw) {
+            NIXL_ERROR << "Expected " << topology_info.instance_type
+                       << " with 0 EFA NICs to throw at topology-discovery time, but no "
+                          "exception was raised; the plugin silently accepted an unusable "
+                          "topology, which contradicts the preflight design.";
+            rc = 1;
+        } else {
+            NIXL_INFO << "   SUCCESS: Neuron topology " << topology_info.instance_type
+                      << " correctly threw at topology-discovery time (0 EFA NICs); "
+                         "in production the preflight WARN would fire before the throw.";
+        }
+    } else {
+        // Load topology and let discoverTopology() run its preflight checks. Catch any
+        // unexpected throw (which would indicate a regression in the "happy path"
+        // Neuron topology) and report it as a test failure rather than aborting the
+        // binary and leaving env vars set.
+        std::optional<nixlLibfabricTopology> topology_holder;
+        try {
+            topology_holder.emplace();
+        }
+        catch (const std::runtime_error &e) {
+            NIXL_ERROR << "Unexpected topology-discovery failure for "
+                       << topology_info.instance_type << ": " << e.what()
+                       << "; expected the topology to load successfully with "
+                       << topology_info.expected_nic_count << " EFA NIC(s).";
+            return 4;
+        }
+        const nixlLibfabricTopology &topology = *topology_holder;
+
+        // verify discovered Neuron accelerator count
+        if (topology.getNumAwsAccel() != topology_info.expected_num_aws_accel) {
+            NIXL_ERROR << "Invalid Neuron accelerator count for " << topology_info.instance_type
+                       << ", expected " << topology_info.expected_num_aws_accel << ", got "
+                       << topology.getNumAwsAccel();
+            rc = 1;
+        }
+
+        // verify discovered NIC count
+        if (static_cast<int>(topology.getTotalNicCount()) != topology_info.expected_nic_count) {
+            NIXL_ERROR << "Invalid EFA NIC count for " << topology_info.instance_type
+                       << ", expected " << topology_info.expected_nic_count << ", got "
+                       << topology.getTotalNicCount();
+            rc = 2;
+        }
+
+        // verify no unexpected NVIDIA accelerators appeared
+        if (topology.getNumNvidiaAccel() != 0) {
+            NIXL_ERROR << "Unexpected NVIDIA accelerator count for " << topology_info.instance_type
+                       << ", expected 0, got " << topology.getNumNvidiaAccel();
+            rc = 3;
+        }
+
+        if (rc == 0) {
+            NIXL_INFO << "   SUCCESS: Neuron topology " << topology_info.instance_type
+                      << " loaded (" << topology.getNumAwsAccel() << " Neuron device(s), "
+                      << topology.getTotalNicCount() << " EFA NIC(s))";
+        }
+    }
+
+    return rc;
+}
+
+int
+testNeuronTopologies() {
+    NIXL_INFO << "=== Testing Libfabric Neuron topology discovery ===";
+    int test_id = 1;
+    for (size_t i = 0; i < neuron_topology_count; ++i) {
+        if (neuron_topologies[i].enable) {
+            const char *instance_type = neuron_topologies[i].instance_type;
+            NIXL_INFO << test_id++ << ". Testing Neuron topology for instance type "
+                      << instance_type;
+            int res = testNeuronTopology(neuron_topologies[i]);
+            if (res != 0) {
+                NIXL_ERROR << "Test failed with return code: " << res;
+                return res;
+            }
+        }
+    }
+    NIXL_INFO << "=== Test completed successfully! ===";
+    return 0;
+}
+
+int
+testNeuronTopology(const char *instance_type) {
+    NIXL_INFO << "Testing Neuron topology loading on instance type " << instance_type;
+    for (size_t i = 0; i < neuron_topology_count; ++i) {
+        if (neuron_topologies[i].enable &&
+            strcmp(instance_type, neuron_topologies[i].instance_type) == 0) {
+            int res = testNeuronTopology(neuron_topologies[i]);
+            if (res == 0) {
+                NIXL_INFO << "=== Test completed successfully! ===";
+                return 0;
+            }
+            NIXL_ERROR << "Test failed with return code: " << res;
+            return res;
+        }
+    }
+    NIXL_ERROR << "Could not find Neuron topology spec for instance type " << instance_type;
+    return 2;
+}
+
 int
 testNumaDramRailSelectionPolicy() {
     NIXL_INFO << "=== Testing Libfabric DRAM_SEG NUMA-aware rail selection policy ===";
@@ -1185,4 +1618,226 @@ testNumaDramRailSelectionPolicy(const char *instance_type) {
     }
     NIXL_ERROR << "Could not find topology spec for instance type " << instance_type;
     return 2;
+}
+
+int
+testDmabufMappingShapes() {
+    NIXL_INFO << "=== Testing PCIe-switch classification behind the dmabuf mapping ===";
+
+    // isPcieSwitch() reads an object's type and attr, so hand-built objects cover the kinds
+    // of ancestor a NIC and its accelerator meet at. testDmabufMappingTopologies() covers
+    // the end-to-end decision per topology.
+    union hwloc_obj_attr_u pcie_attr = {};
+    pcie_attr.bridge.upstream_type = HWLOC_OBJ_BRIDGE_PCI;
+    hwloc_obj pcie_switch = {};
+    pcie_switch.type = HWLOC_OBJ_BRIDGE;
+    pcie_switch.attr = &pcie_attr;
+
+    union hwloc_obj_attr_u host_attr = {};
+    host_attr.bridge.upstream_type = HWLOC_OBJ_BRIDGE_HOST;
+    hwloc_obj host_bridge = {};
+    host_bridge.type = HWLOC_OBJ_BRIDGE;
+    host_bridge.attr = &host_attr;
+
+    // Grouping reports the NIC's own node as the ancestor for an unpaired NIC.
+    hwloc_obj pci_device = {};
+    pci_device.type = HWLOC_OBJ_PCI_DEVICE;
+
+    hwloc_obj machine = {};
+    machine.type = HWLOC_OBJ_MACHINE;
+
+    // A bridge carrying no attr classifies as false.
+    hwloc_obj attr_less_bridge = {};
+    attr_less_bridge.type = HWLOC_OBJ_BRIDGE;
+
+    struct MappingShapeCase {
+        const char *name;
+        hwloc_obj_t ancestor;
+        bool expected;
+    };
+
+    const MappingShapeCase cases[] = {
+        {"bridge entered from PCI (a PCIe switch)", &pcie_switch, true},
+        {"host bridge", &host_bridge, false},
+        {"PCI device (NIC grouped with no accelerator)", &pci_device, false},
+        {"machine root", &machine, false},
+        {"bridge without attributes", &attr_less_bridge, false},
+        {"no ancestor at all", nullptr, false},
+    };
+
+    int rc = 0;
+    for (const auto &test_case : cases) {
+        const bool actual = nixlLibfabricTopology::isPcieSwitch(test_case.ancestor);
+        if (actual != test_case.expected) {
+            NIXL_ERROR << "PCIe-switch classification wrong for case '" << test_case.name
+                       << "': expected " << (test_case.expected ? "true" : "false") << ", got "
+                       << (actual ? "true" : "false");
+            rc = 1;
+        }
+    }
+
+    if (rc == 0) {
+        NIXL_INFO << "   SUCCESS: PCIe-switch classification correct for every ancestor kind";
+    }
+    return rc;
+}
+
+int
+testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
+    // The fi_getinfo mock reads curr_topology for the NIC count and line speed; the rest of
+    // TopologyInfo is unused by this test.
+    TopologyInfo dummy = {.enable = true,
+                          .instance_type = mapping_info.instance_type,
+                          .topo_file = mapping_info.topo_file,
+                          .numa_node_count = 0,
+                          .nic_count = mapping_info.nic_count,
+                          .nic_line_speed = mapping_info.nic_line_speed,
+                          .nic_upstream_link_speed = 0,
+                          .switch_count = 0,
+                          .numa_capacity = 0,
+                          .numa_rail_count = 0,
+                          .test_scenarios = {},
+                          .rail_partition = {}};
+    curr_topology = &dummy;
+    NIXL_TRACE << "Testing dmabuf mapping decision on " << mapping_info.instance_type;
+
+    setTesting();
+    setenv("HWLOC_XMLFILE", mapping_info.topo_file, 1);
+
+    // Same RAII guard as testNeuronTopology(): it undoes the env changes on every exit
+    // path, so the injected topology stays local to this call.
+    struct TestEnvGuard {
+        ~TestEnvGuard() {
+            clearTesting();
+            unsetenv("HWLOC_XMLFILE");
+            curr_topology = nullptr;
+        }
+    } env_guard;
+
+    std::optional<nixlLibfabricTopology> topology_holder;
+    try {
+        topology_holder.emplace();
+    }
+    catch (const std::runtime_error &e) {
+        NIXL_ERROR << "Unexpected topology-discovery failure for " << mapping_info.instance_type
+                   << ": " << e.what();
+        return 1;
+    }
+    const nixlLibfabricTopology &topology = *topology_holder;
+
+    const std::vector<std::string> &devices = topology.getAllDevices();
+    if (devices.size() != mapping_info.nic_count) {
+        NIXL_ERROR << "Invalid EFA NIC count for " << mapping_info.instance_type << ", expected "
+                   << mapping_info.nic_count << ", got " << devices.size();
+        return 2;
+    }
+
+    int rc = 0;
+    size_t exceptions_seen = 0;
+    for (const auto &device : devices) {
+        const auto &exceptions = mapping_info.default_mapping_exceptions;
+        const bool is_exception =
+            std::find(exceptions.begin(), exceptions.end(), device) != exceptions.end();
+        const bool expected = is_exception ? false : mapping_info.expect_pcie_mapping;
+        exceptions_seen += is_exception ? 1 : 0;
+
+        const bool pcie_mapping = topology.nicSharesPcieSwitchWithAccel(device);
+        if (pcie_mapping != expected) {
+            NIXL_ERROR << "Wrong dmabuf mapping decision for EFA device " << device << " on "
+                       << mapping_info.instance_type << ": expected "
+                       << (expected ? "PCIe (BAR1)" : "default") << " mapping, got "
+                       << (pcie_mapping ? "PCIe (BAR1)" : "default");
+            rc = 3;
+        }
+    }
+
+    // Assert the precondition behind an all-false expectation: grouping runs on a host
+    // carrying an NVIDIA or AMD accelerator.
+    if (mapping_info.expect_grouping_skipped &&
+        (topology.getNumNvidiaAccel() != 0 || topology.getNumAmdAccel() != 0)) {
+        NIXL_ERROR << mapping_info.instance_type << " was expected to skip NIC/accelerator "
+                   << "grouping, but discovery reports " << topology.getNumNvidiaAccel()
+                   << " NVIDIA and " << topology.getNumAmdAccel()
+                   << " AMD accelerator(s), so grouping runs and the all-default expectation "
+                   << "does not describe this host";
+        rc = 6;
+    }
+
+    // Every named exception device appears among the discovered devices, so a row carrying
+    // both mapping types exercises the case it describes.
+    if (exceptions_seen != mapping_info.default_mapping_exceptions.size()) {
+        NIXL_ERROR << "Expected " << mapping_info.default_mapping_exceptions.size()
+                   << " default-mapping exception device(s) on " << mapping_info.instance_type
+                   << " but only " << exceptions_seen << " were discovered";
+        rc = 5;
+    }
+
+    // An unknown device answers false, so an export for it names the platform default.
+    if (topology.nicSharesPcieSwitchWithAccel("no-such-efa-device")) {
+        NIXL_ERROR << "Unknown EFA device reported a PCIe path to an accelerator on "
+                   << mapping_info.instance_type;
+        rc = 4;
+    }
+
+    // Rail selection: the EFA devices a VRAM registration can reach per accelerator, and
+    // that between them the accelerators reach every device on the node. A device left out
+    // of every accelerator's list carries a correct mapping verdict that nothing ever asks
+    // for, so the expectations above pass while the device sits idle.
+    if (!mapping_info.accel_efa_devices.empty()) {
+        std::set<std::string> selectable;
+        for (const auto &[accel_pci, expected_efa_devices] : mapping_info.accel_efa_devices) {
+            std::vector<std::string> actual = topology.getEfaDevicesForPci(accel_pci);
+            std::vector<std::string> expected = expected_efa_devices;
+            std::sort(actual.begin(), actual.end());
+            std::sort(expected.begin(), expected.end());
+            selectable.insert(actual.begin(), actual.end());
+
+            if (actual != expected) {
+                NIXL_ERROR << "Wrong EFA devices for accelerator " << accel_pci << " on "
+                           << mapping_info.instance_type << ": expected [" << joinDevices(expected)
+                           << "], got [" << joinDevices(actual) << "]";
+                rc = 7;
+            }
+        }
+
+        for (const auto &device : devices) {
+            if (selectable.find(device) == selectable.end()) {
+                NIXL_ERROR << "EFA device " << device << " on " << mapping_info.instance_type
+                           << " is reachable by no accelerator, so a VRAM registration never "
+                           << "selects it";
+                rc = 8;
+            }
+        }
+    }
+
+    if (rc == 0) {
+        const size_t exception_count = mapping_info.default_mapping_exceptions.size();
+        NIXL_INFO << "   SUCCESS: " << mapping_info.instance_type << " -- "
+                  << (devices.size() - exception_count) << " of " << devices.size()
+                  << " EFA device(s) need the "
+                  << (mapping_info.expect_pcie_mapping ? "PCIe (BAR1)" : "default")
+                  << " dmabuf mapping, " << exception_count << " the other one";
+    }
+    return rc;
+}
+
+int
+testDmabufMappingTopologies() {
+    NIXL_INFO << "=== Testing dmabuf mapping decision on captured topologies ===";
+
+    for (size_t i = 0; i < dmabuf_mapping_topology_count; i++) {
+        if (!dmabuf_mapping_topologies[i].enable) {
+            continue;
+        }
+        int res = testDmabufMappingTopology(dmabuf_mapping_topologies[i]);
+        if (res != 0) {
+            NIXL_ERROR << "dmabuf mapping test failed on instance type "
+                       << dmabuf_mapping_topologies[i].instance_type
+                       << " with return code: " << res;
+            return res;
+        }
+    }
+
+    NIXL_INFO << "=== Test completed successfully! ===";
+    return 0;
 }
