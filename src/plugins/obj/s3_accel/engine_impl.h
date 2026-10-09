@@ -7,7 +7,6 @@
 #define OBJ_PLUGIN_S3_ACCEL_ENGINE_IMPL_H
 
 #include "s3/engine_impl.h"
-#include "s3_accel/client.h"
 
 /**
  * Generic, protocol-compliant S3-over-RDMA engine (selected by `accelerated=true`
@@ -40,8 +39,8 @@ private:
     // True iff the current client is an accelerated client whose generic
     // S3-over-RDMA fast path is fully ready. Gates VRAM advertisement and buffer
     // pinning. False for an injected non-accel client (e.g. a test mock, which is
-    // not an awsS3AccelClient). Named to avoid clashing with the client's own
-    // rdmaReady().
+    // not an awsS3AccelClient). Named apart from the client's rdmaReady()
+    // because it delegates to the stronger supportsRdma().
     [[nodiscard]] bool
     rdmaEngReady() const;
 };
