@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "object/engine_utils.h"
+#include "object/rdma/rdma.h"
 #include "common/nixl_log.h"
 
 awsS3AccelClient::awsS3AccelClient(nixl_b_params_t *custom_params,
