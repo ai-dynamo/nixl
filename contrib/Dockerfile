@@ -114,7 +114,7 @@ RUN if [ "${OS}" = "ubuntu22" ] || grep -q "Ubuntu 22.04" /etc/os-release 2>/dev
 RUN apt-get update -y && \
     apt-get install -y ubuntu-keyring && \
     apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
     ninja-build \
     libclang-dev \
     cmake \
@@ -133,9 +133,9 @@ RUN apt-get update -y && \
     flex \
     libgtest-dev \
     build-essential \
-    libevent-dev \
     redis-tools \
     python3.12-dev \
+    pybind11-dev \
     clang \
     hwloc \
     libhwloc-dev \
@@ -285,8 +285,7 @@ RUN wget --tries=3 --waitretry=5 \
     rm rustup-init* && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
-RUN rm -rf /usr/lib/ucx
-RUN rm -rf /opt/hpcx/ucx
+RUN rm -rf /usr/lib/ucx /opt/hpcx/ucx
 
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src && \
      git clone "$UCX_REPO" ucx && \
@@ -368,7 +367,6 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
 
 # Keep uv's cache in /workspace, not /root (some hosts mount $HOME over /root).
 ENV UV_CACHE_DIR=/workspace/.cache/uv
-RUN mkdir -p $UV_CACHE_DIR
 # Disable build isolation, i.e. uv should not create a new virtual environment for
 # building wheels. This is faster as it skips installing dependencies twice.
 ENV UV_NO_BUILD_ISOLATION=1
@@ -379,7 +377,7 @@ ENV UV_BREAK_SYSTEM_PACKAGES=1
 # All uv pip commands target the system interpreter.
 ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
 # Build tools into system Python (no venv).
-RUN uv pip install --system --upgrade \
+RUN mkdir -p $UV_CACHE_DIR && uv pip install --system --upgrade \
     meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
 # Use system torch if present (>=2.7), else install it.
 RUN if TORCH_CHECK_ERR=$(/usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then \
@@ -448,9 +446,6 @@ RUN if [ "$BUILD_INFINIA" = "true" ]; then \
         mkdir -p /opt/ddn/red && \
         cp -a /workspace/nixl/infinia-libs/. /opt/ddn/red/; \
     fi
-
-# Install pybind11 via apt
-RUN apt-get update && apt-get install -y --no-install-recommends pybind11-dev
 
 # Set PKG_CONFIG_PATH for NIXL EP dependencies (rdma-core, UCX, DOCA)
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib/$ARCH-linux-gnu/pkgconfig
