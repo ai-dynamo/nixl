@@ -173,7 +173,7 @@ nixlPosixBackendReqH::prepXfer() {
 
 unsigned
 nixlPosixBackendReqH::requestCancellation() {
-    if (!transfer_failed_ || cancellation_requested_ || isComplete()) {
+    if (cancellation_requested_ || isComplete()) {
         return 0;
     }
 
@@ -188,7 +188,9 @@ nixlPosixBackendReqH::queueResult(nixl_status_t queue_result) {
         transfer_failed_ = true;
     }
 
-    requestCancellation();
+    if (transfer_failed_) {
+        requestCancellation();
+    }
     if (queue_result < 0 && cancels_expected_ == 0) {
         return queue_result;
     }
@@ -399,11 +401,27 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
     return NIXL_ERR_BACKEND;
 }
 
+// A request with outstanding I/O is refused rather than freed: queue entries reference it
+// as their completion callback context. The refusal requests cancellation of the remaining
+// I/O, and the caller polls the request to completion before retrying the release.
 nixl_status_t
 nixlPosixEngine::releaseReqH(nixlBackendReqH *handle) const {
-    NIXL_ASSERT(handle != nullptr);
-    delete handle;
-    return NIXL_SUCCESS;
+    try {
+        auto &posix_handle = castPosixHandle(handle);
+        NIXL_LOCK_GUARD(io_queue_lock_);
+        if (!posix_handle.isComplete()) {
+            posix_handle.requestCancellation();
+            NIXL_DEBUG << "POSIX request has outstanding completions; "
+                          "cancellation requested, not releasing";
+            return NIXL_ERR_REPOST_ACTIVE;
+        }
+        delete handle;
+        return NIXL_SUCCESS;
+    }
+    catch (const nixlPosixBackendReqH::exception &e) {
+        NIXL_ERROR << e.what();
+        return e.code();
+    }
 }
 
 nixl_status_t
