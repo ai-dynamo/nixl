@@ -136,6 +136,8 @@ RUN apt-get update -y && \
     hwloc \
     libhwloc-dev \
     pkg-config \
+    wget \
+    git \
     # aws-sdk-cpp dependencies
     libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev \
     # azure-sdk-for-cpp dependencies
@@ -334,11 +336,18 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /tmp && \
 ENV PATH=/usr/local/bin:$PATH
 
 # Build libfabric from source
+# gdrcopy headers are present in the ubuntu24 cuda-dl-base but not in the
+# plain nvidia/cuda ubuntu22 image, so only pass --with-gdrcopy when available.
 RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
     "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -O libfabric.tar.bz2 && \
     tar xjf libfabric.tar.bz2 && rm libfabric.tar.bz2 && \
     cd libfabric-* && \
     ./autogen.sh && \
+    if [ "${OS}" = "ubuntu22" ] || grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then \
+        GDRCOPY_FLAGS=""; \
+    else \
+        GDRCOPY_FLAGS="--with-gdrcopy --enable-gdrcopy-dlopen"; \
+    fi && \
     ./configure --prefix="${LIBFABRIC_INSTALL_PATH}" \
                 --disable-verbs \
                 --disable-psm3 \
@@ -348,8 +357,7 @@ RUN wget --tries=3 --waitretry=5 --timeout=30 --read-timeout=60 \
                 --enable-efa \
                 --with-cuda=/usr/local/cuda \
                 --enable-cuda-dlopen \
-                --with-gdrcopy \
-                --enable-gdrcopy-dlopen && \
+                ${GDRCOPY_FLAGS} && \
     make -j${NPROC:-$(nproc)} && \
     make install && \
     ldconfig
