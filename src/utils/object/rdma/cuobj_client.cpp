@@ -5,7 +5,9 @@
 
 #include "cuobj_client.h"
 
+#include <algorithm>
 #include <exception>
+#include <iterator>
 
 #include "common/nixl_log.h"
 
@@ -53,10 +55,11 @@ SharedCuObjClient::registerBuffer(void *ptr, size_t size) {
 void
 SharedCuObjClient::deregisterBuffer(void *ptr) {
     const std::lock_guard<std::mutex> lock(mutex_);
-    registrations_.erase(reinterpret_cast<uintptr_t>(ptr));
     if (client_->cuMemObjPutDescriptor(ptr) != CU_OBJ_SUCCESS) {
         NIXL_WARN << "cuMemObjPutDescriptor failed for ptr " << ptr;
+        return;
     }
+    registrations_.erase(reinterpret_cast<uintptr_t>(ptr));
 }
 
 bool
@@ -71,19 +74,19 @@ char *
 SharedCuObjClient::getToken(void *ptr, size_t size, cuObjOpType_t op) {
     const std::lock_guard<std::mutex> lock(mutex_);
     const auto addr = reinterpret_cast<uintptr_t>(ptr);
-    auto it = registrations_.upper_bound(addr);
-    if (it == registrations_.begin()) {
+    auto contains = [addr, size](const auto &reg) {
+        const auto &[base, len] = reg;
+        return addr - base <= len && size <= len - (addr - base);
+    };
+    const auto rit = std::find_if(std::make_reverse_iterator(registrations_.upper_bound(addr)),
+                                  registrations_.rend(),
+                                  contains);
+    if (rit == registrations_.rend()) {
         NIXL_ERROR << "No RDMA registration contains ptr=" << ptr << " size=" << size;
         return nullptr;
     }
-    --it;
-    const auto [base, len] = *it;
+    const auto [base, len] = *rit;
     const size_t offset = addr - base;
-    if (offset > len || size > len - offset) {
-        NIXL_ERROR << "No RDMA registration contains ptr=" << ptr << " size=" << size
-                   << " (nearest base=" << reinterpret_cast<void *>(base) << " len=" << len << ")";
-        return nullptr;
-    }
 
     char *token = nullptr;
     cuObjErr_t rc =

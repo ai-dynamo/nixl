@@ -210,10 +210,12 @@ runXfer(nixlBackendEngine &engine,
 
 // Registers one buffer and transfers two non-adjacent sub-ranges of it. cuObject
 // mints tokens only against a registration's base address, so this covers the
-// base + offset translation in SharedCuObjClient::getToken().
+// base + offset translation in SharedCuObjClient::getToken(). With
+// nested_registration, a smaller region inside the buffer is also registered so
+// that it is the nearest base below both transfers without containing either.
 template<nixl_mem_t memType>
 void
-testSubRangeXfer(nixlBackendEngine &engine) {
+testSubRangeXfer(nixlBackendEngine &engine, bool nested_registration = false) {
     constexpr size_t entry_size = 1 << 20;
     constexpr int num_entries = 4;
     const std::vector<int> xfer_entries = {1, 3};
@@ -224,6 +226,12 @@ testSubRangeXfer(nixlBackendEngine &engine) {
     nixlBackendMD *mem_md = nullptr;
     ASSERT_EQ(engine.registerMem(mem_desc, memType, mem_md), NIXL_SUCCESS);
     mem.setMD(mem_md);
+
+    nixlBackendMD *inner_md = nullptr;
+    if (nested_registration) {
+        const nixlBlobDesc inner_desc(mem_desc.addr + entry_size, entry_size / 2, 0, "");
+        ASSERT_EQ(engine.registerMem(inner_desc, memType, inner_md), NIXL_SUCCESS);
+    }
 
     nixl_meta_dlist_t local(memType);
     nixl_meta_dlist_t remote(OBJ_SEG);
@@ -266,11 +274,18 @@ testSubRangeXfer(nixlBackendEngine &engine) {
     for (auto *obj_md : obj_mds) {
         EXPECT_EQ(engine.deregisterMem(obj_md), NIXL_SUCCESS);
     }
+    if (inner_md) {
+        EXPECT_EQ(engine.deregisterMem(inner_md), NIXL_SUCCESS);
+    }
     EXPECT_EQ(engine.deregisterMem(mem_md), NIXL_SUCCESS);
 }
 
 TEST_P(setupObjAccelTestFixture, AccelSubRangeXferTest) {
     testSubRangeXfer<DRAM_SEG>(*localBackendEngine_);
+}
+
+TEST_P(setupObjAccelTestFixture, AccelNestedRegistrationXferTest) {
+    testSubRangeXfer<DRAM_SEG>(*localBackendEngine_, true);
 }
 
 #ifdef HAVE_CUDA
@@ -281,6 +296,15 @@ TEST_P(setupObjAccelTestFixture, AccelVramSubRangeXferTest) {
         GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
     }
     testSubRangeXfer<VRAM_SEG>(*localBackendEngine_);
+}
+
+TEST_P(setupObjAccelTestFixture, AccelVramNestedRegistrationXferTest) {
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
+    testSubRangeXfer<VRAM_SEG>(*localBackendEngine_, true);
 }
 #endif // HAVE_CUDA
 
