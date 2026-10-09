@@ -55,11 +55,10 @@ SharedCuObjClient::registerBuffer(void *ptr, size_t size) {
 void
 SharedCuObjClient::deregisterBuffer(void *ptr) {
     const std::lock_guard<std::mutex> lock(mutex_);
+    registrations_.erase(reinterpret_cast<uintptr_t>(ptr));
     if (client_->cuMemObjPutDescriptor(ptr) != CU_OBJ_SUCCESS) {
         NIXL_WARN << "cuMemObjPutDescriptor failed for ptr " << ptr;
-        return;
     }
-    registrations_.erase(reinterpret_cast<uintptr_t>(ptr));
 }
 
 bool
@@ -85,7 +84,7 @@ SharedCuObjClient::getToken(void *ptr, size_t size, cuObjOpType_t op) {
         NIXL_ERROR << "No RDMA registration contains ptr=" << ptr << " size=" << size;
         return nullptr;
     }
-    const auto [base, len] = *rit;
+    const auto base = rit->first;
     const size_t offset = addr - base;
 
     char *token = nullptr;
