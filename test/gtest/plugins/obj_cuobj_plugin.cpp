@@ -17,6 +17,7 @@
 
 #if defined HAVE_CUOBJ_CLIENT
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <cstdlib>
 
@@ -35,6 +36,7 @@ nixl_b_params_t obj_dell_params = {{"accelerated", "true"},
                                    {"type", "dell"},
                                    {"req_checksum", "required"},
                                    {"scheme", "http"}};
+constexpr const char *endpoint_env_var = "NIXL_OBJ_ENDPOINT_OVERRIDE";
 const std::string accel_agent_name = "Agent3-Accel";
 const std::string dell_agent_name = "Agent4-Dell";
 
@@ -59,32 +61,37 @@ const nixlBackendInitParams obj_dell_test_params = {.localAgent = dell_agent_nam
 class setupObjAccelTestFixture : public setupBackendTestFixture {
 protected:
     nixl_b_params_t localParams_;
-    std::string skipReason_;
+    std::string constructionError_;
 
     setupObjAccelTestFixture() {
         localParams_ = *GetParam().customParams;
-        const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
+        const char *endpoint = std::getenv(endpoint_env_var);
         if (endpoint && endpoint[0] != '\0') {
             localParams_["endpoint_override"] = endpoint;
             localParams_["req_checksum"] = "required";
-        }
-        nixlBackendInitParams initParams = GetParam();
-        initParams.customParams = &localParams_;
-        // accelerated=true has no HTTP fallback, so the engine throws when the RDMA
-        // fast path is unavailable (e.g. a cuObject build with no RDMA NIC, as the
-        // CI container produces). Skip these tests there rather than fail.
-        try {
-            localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
-        }
-        catch (const std::exception &e) {
-            skipReason_ = e.what();
+            nixlBackendInitParams initParams = GetParam();
+            initParams.customParams = &localParams_;
+            // accelerated=true has no HTTP fallback, so the engine throws when the
+            // fast path is missing. SetUp() decides whether that is a skip.
+            try {
+                localBackendEngine_ = std::make_shared<nixlObjEngine>(&initParams);
+            }
+            catch (const std::exception &e) {
+                constructionError_ = e.what();
+            }
         }
     }
 
     void
     SetUp() override {
+        const char *endpoint = std::getenv(endpoint_env_var);
+        if (!endpoint || endpoint[0] == '\0') {
+            GTEST_SKIP() << endpoint_env_var << " not set, skipping accelerated tests";
+        }
         if (!localBackendEngine_) {
-            GTEST_SKIP() << "S3 accelerated engine unavailable: " << skipReason_;
+            // Only a missing fast path is a skip; anything else must fail.
+            ASSERT_THAT(constructionError_, testing::HasSubstr("fast path is unavailable"));
+            GTEST_SKIP() << "S3 accelerated engine unavailable: " << constructionError_;
         }
         setupBackendTestFixture::SetUp();
     }
@@ -167,7 +174,7 @@ protected:
 
     setupObjDellTestFixture() {
         localParams_ = *GetParam().customParams;
-        const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
+        const char *endpoint = std::getenv(endpoint_env_var);
         if (endpoint && endpoint[0] != '\0') {
             localParams_["endpoint_override"] = endpoint;
             nixlBackendInitParams initParams = GetParam();
@@ -178,9 +185,9 @@ protected:
 
     void
     SetUp() override {
-        const char *endpoint = std::getenv("NIXL_OBJ_ENDPOINT_OVERRIDE");
+        const char *endpoint = std::getenv(endpoint_env_var);
         if (!endpoint || endpoint[0] == '\0') {
-            GTEST_SKIP() << "NIXL_OBJ_ENDPOINT_OVERRIDE not set, skipping Dell tests";
+            GTEST_SKIP() << endpoint_env_var << " not set, skipping Dell tests";
         }
         setupBackendTestFixture::SetUp();
     }
