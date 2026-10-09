@@ -524,6 +524,8 @@ class nixlAgent {
          * @brief  Invalidate the remote agent metadata cached locally. This will
          *         disconnect from that agent if already connected, and no more
          *         transfers can be initiated towards that agent.
+         *         Existing transfer handles remain valid for polling the backend's
+         *         completion status and must still be released.
          *
          * @param  remote_agent  Remote agent name to invalidate its metadata blob
          * @return nixl_status_t Error code if call was not successful
