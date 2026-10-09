@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,31 +16,82 @@
  * limitations under the License.
  */
 
+#include <exception>
 #include <string>
 
 #include "ais_mt_engine.h"
 #include "backend/backend_plugin.h"
+#include "common/backend.h"
+#include "common/nixl_log.h"
 
 namespace {
 [[nodiscard]] nixl_b_params_t
 getAisBackendOptions() {
-    return {{"thread_count", std::to_string(defaultAisMtThreadCount())}};
+    return {{"mode", "mt"}, {"thread_count", std::to_string(defaultAisMtThreadCount())}};
 }
 
-using ais_plugin_t = nixlBackendPluginCreator<nixlAisMtEngine>;
+[[nodiscard]] nixlBackendEngine *
+createAisEngine(const nixlBackendInitParams *init_params) {
+    try {
+        const std::string mode =
+            nixl::getBackendParamDefaulted(init_params->customParams, "mode", std::string("mt"));
+        if (mode == "mt") {
+            return new nixlAisMtEngine(init_params);
+        }
+
+        // Batch support is coming soon; it will be selected with mode=batch.
+        NIXL_ERROR << "AIS: invalid mode '" << mode << "'; expected 'mt'";
+        return nullptr;
+    }
+    catch (const std::exception &e) {
+        NIXL_ERROR << "Failed to create AIS engine: " << e.what();
+        return nullptr;
+    }
+}
+
+void
+destroyAisEngine(nixlBackendEngine *engine) {
+    delete engine;
+}
+
+[[nodiscard]] const char *
+getAisPluginName() {
+    return "AIS";
+}
+
+[[nodiscard]] const char *
+getAisPluginVersion() {
+    return "0.1.0";
+}
+
+// DRAM_SEG is not advertised until hipFile supports host buffers.
+[[nodiscard]] nixl_mem_list_t
+getAisBackendMems() {
+    return {VRAM_SEG, FILE_SEG};
+}
+
+[[nodiscard]] nixlBackendPlugin *
+getAisPlugin() {
+    static nixlBackendPlugin plugin = {NIXL_PLUGIN_API_VERSION,
+                                       createAisEngine,
+                                       destroyAisEngine,
+                                       getAisPluginName,
+                                       getAisPluginVersion,
+                                       getAisBackendOptions,
+                                       getAisBackendMems};
+    return &plugin;
+}
 } // namespace
 
 #ifdef STATIC_PLUGIN_AIS
 [[nodiscard]] nixlBackendPlugin *
 createStaticAISPlugin() {
-    return ais_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "AIS", "0.1.0", getAisBackendOptions(), {VRAM_SEG, FILE_SEG});
+    return getAisPlugin();
 }
 #else
 extern "C" [[nodiscard]] NIXL_PLUGIN_EXPORT nixlBackendPlugin *
 nixl_plugin_init() {
-    return ais_plugin_t::create(
-        NIXL_PLUGIN_API_VERSION, "AIS", "0.1.0", getAisBackendOptions(), {VRAM_SEG, FILE_SEG});
+    return getAisPlugin();
 }
 
 extern "C" NIXL_PLUGIN_EXPORT void

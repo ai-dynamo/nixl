@@ -45,7 +45,7 @@ static size_t PAGE_SIZE = sysconf(_SC_PAGESIZE);
 
 #define PROGRESS_WIDTH 50
 
-size_t
+[[nodiscard]] size_t
 parse_size(const char *size_str) {
     char *end;
     size_t size = strtoull(size_str, &end, 10);
@@ -92,6 +92,7 @@ print_usage(const char *program_name) {
               << "  -P, --skip-path-smoke   Skip the path-mode smoke test and run only the\n"
               << "                          DRAM/VRAM transfer against <directory_path>\n"
               << "  -N, --num-threads N     Number of CPU Threads to use (default: auto)\n"
+              << "  -M, --ais-mode MODE     AIS engine: mt (default: mt)\n"
               << "  -h, --help              Show this help message\n"
               << "\nExample:\n"
               << "  " << program_name << " -d -n 100 -s 2M -t 5 -D /path/to/dir\n";
@@ -122,7 +123,7 @@ printProgress(float progress) {
     }
 }
 
-std::string
+[[nodiscard]] std::string
 generate_timestamped_filename(const std::string &base_name) {
     std::time_t t = std::time(nullptr);
     char timestamp[100];
@@ -152,7 +153,7 @@ fill_test_pattern(void *buffer, size_t size) {
     }
 }
 
-hipError_t
+[[nodiscard]] hipError_t
 fill_gpu_test_pattern(void *gpu_buffer, size_t size) {
     char *host_buffer = static_cast<char *>(malloc(size));
     if (!host_buffer) {
@@ -170,12 +171,12 @@ clear_buffer(void *buffer, size_t size) {
     memset(buffer, 0, size);
 }
 
-hipError_t
+[[nodiscard]] hipError_t
 clear_gpu_buffer(void *gpu_buffer, size_t size) {
     return hipMemset(gpu_buffer, 0, size);
 }
 
-bool
+[[nodiscard]] bool
 validate_gpu_buffer(void *gpu_buffer, size_t size) {
     char *host_buffer = static_cast<char *>(malloc(size));
     char *expected_buffer = static_cast<char *>(malloc(size));
@@ -201,7 +202,7 @@ validate_gpu_buffer(void *gpu_buffer, size_t size) {
     return match;
 }
 
-std::string
+[[nodiscard]] std::string
 format_duration(nixlTime::us_t us) {
     nixlTime::ms_t ms = us / 1000.0;
     if (ms < 1000) {
@@ -232,8 +233,8 @@ format_duration(nixlTime::us_t us) {
 // today, use the benchmark body's -v (VRAM) with -P.
 static const char *DEFAULT_AIS_PATH_MODE_FILE = "/tmp/nixl_ais_path_mode_smoke.bin";
 
-static int
-runPathModeSmoke() {
+[[nodiscard]] static int
+runPathModeSmoke(const nixl_b_params_t &backend_params) {
     {
         nixlAgentConfig cfg;
         nixlAgent agent("AisPluginQuery", cfg);
@@ -248,7 +249,7 @@ runPathModeSmoke() {
 
     const char *env = std::getenv("NIXL_AIS_PATH_MODE_FILE");
     const char *file_path = (env != nullptr && env[0] != '\0') ? env : DEFAULT_AIS_PATH_MODE_FILE;
-    return nixl_test::runPathModeSmoke("AisPathModeSmoke", "AIS", file_path, 4096);
+    return nixl_test::runPathModeSmoke("AisPathModeSmoke", "AIS", file_path, 4096, backend_params);
 }
 
 int
@@ -276,6 +277,7 @@ main(int argc, char *argv[]) {
     int iterations = DEFAULT_ITERATIONS;
     int num_gpus = DEFAULT_NUM_GPUS;
     bool run_path_mode_smoke = true;
+    std::string ais_mode = "mt";
 
     static struct option long_options[] = {{"dram", no_argument, 0, 'd'},
                                            {"vram", no_argument, 0, 'v'},
@@ -285,13 +287,14 @@ main(int argc, char *argv[]) {
                                            {"no-write", no_argument, 0, 'w'},
                                            {"num-gpus", required_argument, 0, 'G'},
                                            {"num-threads", required_argument, 0, 'N'},
+                                           {"ais-mode", required_argument, 0, 'M'},
                                            {"iterations", required_argument, 0, 't'},
                                            {"direct", no_argument, 0, 'D'},
                                            {"skip-path-smoke", no_argument, 0, 'P'},
                                            {"help", no_argument, 0, 'h'},
                                            {0, 0, 0, 0}};
 
-    while ((opt = getopt_long(argc, argv, "dvn:s:rwt:G:DPhN:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "dvn:s:rwt:G:DPhN:M:", long_options, NULL)) != -1) {
         switch (opt) {
         case 'd':
             use_dram = true;
@@ -323,6 +326,14 @@ main(int argc, char *argv[]) {
             num_threads = atoi(optarg);
             if (num_threads <= 0) {
                 std::cerr << "Error: Number of threads must be positive\n";
+                return 1;
+            }
+            break;
+        case 'M':
+            ais_mode = optarg;
+            // Batch support is coming soon; until then "mt" is the only mode.
+            if (ais_mode != "mt") {
+                std::cerr << "Error: --ais-mode must be mt\n";
                 return 1;
             }
             break;
@@ -361,7 +372,7 @@ main(int argc, char *argv[]) {
     }
 
     if (run_path_mode_smoke) {
-        if (int rc = runPathModeSmoke(); rc != 0) {
+        if (int rc = runPathModeSmoke({{"mode", ais_mode}}); rc != 0) {
             return rc;
         }
     }
@@ -417,6 +428,7 @@ main(int argc, char *argv[]) {
               << ((transfer_size * num_transfers) / (1024.0 * 1024.0 * 1024.0)) << " GB"
               << std::endl;
     std::cout << "- Directory: " << dir_path << std::endl;
+    std::cout << "- AIS mode: " << ais_mode << std::endl;
     std::cout << "- Num Threads: " << (num_threads == 0 ? "auto" : std::to_string(num_threads))
               << std::endl;
     std::cout << "- Num GPUs to use: " << num_gpus << std::endl;
@@ -435,6 +447,7 @@ main(int argc, char *argv[]) {
 
     nixlAgent agent("AisTester", cfg);
 
+    params["mode"] = ais_mode;
     params["thread_count"] = std::to_string(num_threads);
 
     ret = agent.createBackend("AIS", params, ais);

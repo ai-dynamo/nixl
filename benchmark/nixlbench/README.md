@@ -608,7 +608,7 @@ devices can differ between the initiator and target processes.
 --gds_batch_limit NUM      # Batch limit for GDS operations (default: 128)
 ```
 
-**GDS_MT / AIS (multi-threaded file backends):**
+**GDS_MT / AIS `mt` mode (multi-threaded file backends):**
 ```
 --gds_mt_num_threads NUM   # Taskflow worker threads for GDS_MT and AIS (default: 1)
 ```
@@ -790,7 +790,7 @@ $ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --back
 ./nixlbench --backend GDS_MT --filepath /mnt/storage/testfile --gds_mt_num_threads 8
 ```
 
-**AIS (Multi-threaded ROCm Infinity Storage):**
+**AIS (AMD Infinity Storage, multi-threaded `mt` mode):**
 ```bash
 # Requires NIXL built with AIS; --filepath is a directory prefix (test files
 # are created under it). Use a hipFile-capable path (see plugin docs).

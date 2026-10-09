@@ -45,18 +45,18 @@ struct aisXferReq {
     int dev_id;
 };
 
-// Abstract base for the AIS (AMD Infinity Storage) family of backends. It owns
+// Abstract base for the AIS (AMD Infinity Storage) backend's engines. It owns
 // everything that is independent of how I/O is submitted: the local-only
 // capability/connection/metadata overrides, the hipFile driver lifecycle,
 // memory and file registration (refcounted handle cache + buffer
 // RAII), queryMem, and the prepXfer preamble (validation + descriptor->aisXferReq
-// translation). The only backend-specific step in preparation is finalizePrep();
+// translation). The only engine-specific step in preparation is finalizePrep();
 // the concrete engines additionally implement the transfer-execution virtuals
 // (postXfer/checkXfer/releaseReqH) directly.
 //
-// Today the only leaf is nixlAisMtEngine ("AIS"). A batch engine mirroring
-// GDS's cuFile batch path slots in alongside it once hipFile's batch API is
-// adopted; finalizePrep is the hook it needs.
+// Today the only leaf is nixlAisMtEngine (mode "mt"). A batch engine mirroring
+// GDS's cuFile batch path slots in alongside it as mode "batch" once hipFile's
+// batch API is adopted; finalizePrep is the hook it needs.
 class nixlAisEngine : public nixlBackendEngine {
 public:
     explicit nixlAisEngine(const nixlBackendInitParams *init_params);

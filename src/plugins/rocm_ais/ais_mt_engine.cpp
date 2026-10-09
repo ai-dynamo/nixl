@@ -109,7 +109,7 @@ runHipFileOp(const aisXferReq *req, std::atomic<nixl_status_t> *overall_status) 
 nixlAisMtReqH::~nixlAisMtReqH() {
     if (running_transfer.valid()) {
         // TODO: A follow-up should make active release nonblocking. This wait
-        // preserves the pre-consolidation AIS request-lifetime behavior.
+        // preserves the original AIS mt-mode request-lifetime behavior.
         running_transfer.wait();
     }
 }

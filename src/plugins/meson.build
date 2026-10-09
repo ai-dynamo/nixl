@@ -63,10 +63,9 @@ if enabled_plugins.get('GDS') or enabled_plugins.get('GDS_MT')
     endif
 endif
 
-# The AIS (AMD Infinity Storage) backends mirror the cuda_gds layout: one plugin
-# directory sharing an abstract hipFile engine, exposing a name per submission
-# strategy. Only "AIS" exists today; the subdir builds the per-name entry
-# points internally based on enabled_plugins.
+# The AIS (AMD Infinity Storage) plugin mirrors the cuda_gds layout: one plugin
+# directory with an abstract hipFile engine, exposed as a single "AIS" backend
+# whose "mode" parameter selects the submission strategy.
 disable_rocm_ais_backend = get_option('disable_rocm_ais_backend')
 if enabled_plugins.get('AIS')
     if (disable_rocm_ais_backend or not rocm_dep.found()) and is_explicit_enable

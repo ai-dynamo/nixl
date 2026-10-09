@@ -14,9 +14,9 @@
 # limitations under the License.
 
 # AIS (AMD Infinity Storage) plugin. The abstract base engine (nixlAisEngine)
-# is compiled once into ais_common_lib; each backend name builds a thin entry
-# point plus its concrete engine subclass. Today the only name is "AIS"; a
-# hipFile batch engine mirroring "GDS" slots in alongside it later.
+# is compiled once into ais_common_lib. The single "AIS" plugin links the
+# concrete engines and selects one from its "mode" parameter, like "GDS". Today
+# the only mode is "mt"; a hipFile batch engine slots in alongside it later.
 
 # hipFile calls are issued against HIP device memory, so the HIP runtime is
 # required even for the registration-only paths. rocm_dep also fixes the prefix
@@ -66,13 +66,13 @@ ais_common_dep = declare_dependency(
     dependencies: ais_common_deps,
     include_directories: ais_common_incs)
 
-# "AIS" backend name entry point (per-request TaskFlow strategy).
+# "AIS" plugin; "mode" selects the engine (today only mt: per-request TaskFlow).
 if enabled_plugins.get('AIS')
     if not taskflow_proj.found()
         if is_explicit_enable
             error('AIS plugin requested but Taskflow dependency not found')
         endif
-        # Otherwise silently skip building the AIS entry point.
+        # Otherwise silently skip building the AIS plugin.
     else
         ais_sources = ['ais_plugin.cpp', 'ais_mt_engine.cpp', 'ais_mt_engine.h']
         ais_deps = [ais_common_dep, taskflow_proj, thread_dep]

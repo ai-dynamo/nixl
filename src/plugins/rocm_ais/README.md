@@ -21,7 +21,8 @@ This plugin uses AMD Infinity Storage (AIS) hipFile APIs as an I/O backend for
 NIXL. It is the ROCm counterpart to the CUDA
 [GDS plugin](../cuda_gds/README.md).
 
-The directory hosts the AIS family of backends. An abstract base engine
+The plugin registers a single backend name, `AIS`, whose `mode` parameter
+selects the submission engine. An abstract base engine
 (`nixlAisEngine`, in `ais_backend.h`/`.cpp`) owns everything independent of how
 I/O is submitted: the local-only capability, connection and metadata entry
 points, the hipFile driver lifecycle, memory and file registration, `queryMem`,
@@ -29,14 +30,14 @@ and the `prepXfer` preamble that validates a request and translates
 descriptors into logical `aisXferReq` entries. Concrete engines supply only the
 submission mechanism.
 
-Today the only backend name is:
+Today the only mode is:
 
-- `AIS`: multi-threaded transfers via TaskFlow (`nixlAisMtEngine`). TaskFlow
+- `mt`: multi-threaded transfers via TaskFlow (`nixlAisMtEngine`). TaskFlow
   issues one blocking `hipFileRead` or `hipFileWrite` per prepared request,
-  mirroring the NVIDIA `GDS_MT` backend.
+  mirroring the NVIDIA `GDS` backend's `mt` mode.
 
-A batch engine mirroring GDS's cuFile batch path slots in alongside `AIS`
-once hipFile's batch API is adopted; `finalizePrep` is the hook it needs.
+A batch engine mirroring GDS's cuFile batch path slots in as mode `batch` once
+hipFile's batch API is adopted; `finalizePrep` is the hook it needs.
 
 ## Dependencies
 
@@ -46,7 +47,7 @@ once hipFile's batch API is adopted; `finalizePrep` is the hook it needs.
 - hipFile (`libhipfile.so` and `hipfile.h`), which ships inside the ROCm
   install.
 - [TaskFlow](https://github.com/taskflow/taskflow), provided by the Meson
-  subproject, for the `AIS` entry point.
+  subproject, for the `mt` engine.
 
 Both HIP and hipFile are looked for under `rocm_path`. The plugin is skipped
 silently when HIP or hipFile is not found, so a ROCm-less tree configures
@@ -85,6 +86,7 @@ silent skip.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
+| `mode` | `mt` | Submission engine. Only `mt` is supported today; `batch` will follow once hipFile's batch API is adopted. Any other value fails backend creation. |
 | `thread_count` | `max(1, hardware concurrency / 2)` | Number of persistent TaskFlow workers. The plugin advertises the computed value as a decimal string. Zero falls back to the default. |
 
 ### Supported memory types
@@ -124,6 +126,7 @@ nixlAgentConfig cfg(true);
 nixlAgent agent("AisAgent", cfg);
 
 nixl_b_params_t params;
+params["mode"] = "mt";
 params["thread_count"] = "8";
 
 nixlBackendH *ais;
@@ -133,7 +136,7 @@ nixl_status_t ret = agent.createBackend("AIS", params, ais);
 A fuller end-to-end example, covering path-mode registration and read/write
 verification, lives in
 [`test/unit/plugins/ais/nixl_ais_test.cpp`](../../../test/unit/plugins/ais/nixl_ais_test.cpp).
-Only its VRAM mode (`-v`, the default) works today. DRAM mode (`-d`) and the
+Only its VRAM buffers (`-v`, the default) work today. DRAM buffers (`-d`) and the
 path-mode smoke test, which registers host buffers and skips for now, need
 `DRAM_SEG` support. The path-mode smoke target can be overridden with the
 `NIXL_AIS_PATH_MODE_FILE` environment variable; it must name a regular file

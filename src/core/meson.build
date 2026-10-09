@@ -54,7 +54,7 @@ if 'GDS_MT' in static_plugins
     nixl_lib_deps += [ gds_mt_backend_interface, taskflow_proj, cuda_dep ]
 endif
 
-# AIS mirrors GDS_MT. The interface only exists once rocm_ais/meson.build has
+# AIS mirrors GDS. The interface only exists once rocm_ais/meson.build has
 # resolved HIP, hipFile and Taskflow; without all three it returns early via
 # subdir_done(), so guard on the variable rather than assuming it is defined.
 disable_rocm_ais_backend = get_option('disable_rocm_ais_backend')
