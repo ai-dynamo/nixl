@@ -5,8 +5,18 @@
 
 #include "obj_engine_registry.h"
 #include "obj_backend.h"
+#include "engine_utils.h"
 #include "common/nixl_log.h"
 #include <stdexcept>
+
+namespace {
+// An empty `type` means the standard, protocol-compliant engine, registered
+// under default_accel_engine_type.
+std::string
+resolveType(const std::string &type) {
+    return type.empty() ? std::string(default_accel_engine_type) : type;
+}
+} // namespace
 
 objAccelEngineRegistry &
 objAccelEngineRegistry::instance() {
@@ -27,13 +37,13 @@ objAccelEngineRegistry::add(const std::string &type, objAccelEngineEntry entry) 
 bool
 objAccelEngineRegistry::has(const std::string &type) const {
     const std::lock_guard<std::mutex> lock(mutex_);
-    return entries_.count(type) > 0;
+    return entries_.count(resolveType(type)) > 0;
 }
 
 objAccelEngineEntry
 objAccelEngineRegistry::lookupOrThrow(const std::string &type) const {
     const std::lock_guard<std::mutex> lock(mutex_);
-    auto it = entries_.find(type);
+    auto it = entries_.find(resolveType(type));
     if (it != entries_.end()) {
         return it->second;
     }

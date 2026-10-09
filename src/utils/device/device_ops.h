@@ -26,6 +26,7 @@
 namespace nixl {
 
 class deviceOps;
+class hostPublishedDeviceMem;
 class mappedHostMem;
 
 struct mappedHostMemDeleter {
@@ -79,6 +80,19 @@ public:
     allocMappedHostMem(size_t size, mappedHostMem &out) noexcept;
 
     /**
+     * @brief Allocate zeroed memory the CPU publishes words into and the GPU reads.
+     *
+     * Prefers device memory the CPU writes directly, which keeps GPU polling local, and
+     * falls back to mapped host memory.
+     * @param[out] out Owning handle; unchanged on failure.
+     * @retval NIXL_ERR_INVALID_PARAM size is zero.
+     * @note Only kernels on the device active at allocation may read it, whatever the backing.
+     * @note This instance must outlive the returned handle.
+     */
+    [[nodiscard]] nixl_status_t
+    allocHostPublishedMem(size_t size, std::unique_ptr<hostPublishedDeviceMem> &out) noexcept;
+
+    /**
      * @brief Copy between host and device memory using the default stream.
      * @note On success, H2D source storage is reusable; D2H destination data is ready.
      *       H2D device completion may still be pending.
@@ -124,6 +138,15 @@ protected:
     /** @brief Free the host allocation, not its device alias; no device switch required. */
     virtual void
     doFreeMappedHostMem(void *host_ptr) noexcept = 0;
+
+    /**
+     * @brief Allocate zeroed device memory the CPU can publish into directly.
+     * @note Assigns `out` only on success. Any failure falls back to mapped host memory.
+     */
+    [[nodiscard]] virtual nixl_status_t
+    doAllocHostPublishedMem(size_t, std::unique_ptr<hostPublishedDeviceMem> &) noexcept {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
 
 private:
     friend struct deviceMemDeleter;

@@ -31,10 +31,94 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <gflags/gflags.h>
+#include <nixl.h>
 
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
 #include "utils/utils.h"
+
+namespace {
+
+std::string
+shellQuote(const std::string &value) {
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+std::string
+buildRedisCliPrefix() {
+    std::string prefix;
+    const char *password = getenv("REDIS_PASSWORD");
+    if (password && password[0] != '\0') {
+        prefix += "REDISCLI_AUTH=" + shellQuote(password) + " ";
+    }
+
+    prefix += "redis-cli";
+    const char *host = getenv("REDIS_HOST");
+    if (host && host[0] != '\0') {
+        prefix += " -h " + shellQuote(host);
+    }
+    const char *port = getenv("REDIS_PORT");
+    if (port && port[0] != '\0') {
+        prefix += " -p " + shellQuote(port);
+    }
+    return prefix;
+}
+
+bool
+runRedisCli(const std::string &cmd, const std::string &operation) {
+    std::cout << operation << std::endl;
+    int result = system(cmd.c_str());
+    if (result != 0) {
+        std::cerr << "Failed to " << operation << " (exit code: " << result << ")" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool
+getRedisBench(size_t buffer_size, const std::string &key, void *buffer) {
+    if (buffer_size > 0 && !buffer) {
+        std::cerr << "Invalid Redis GET output buffer for key: " << key << std::endl;
+        return false;
+    }
+
+    const std::string filename = "/tmp/" + key + ".get";
+    const std::string cmd =
+        buildRedisCliPrefix() + " --raw GET " + shellQuote(key) + " > " + shellQuote(filename);
+    if (!runRedisCli(cmd, "Getting Redis key: " + key)) {
+        unlink(filename.c_str());
+        return false;
+    }
+
+    int fd = open(filename.c_str(), O_RDONLY);
+    if (fd < 0) {
+        std::cerr << "Failed to open Redis GET output: " << filename
+                  << " with error: " << strerror(errno) << std::endl;
+        unlink(filename.c_str());
+        return false;
+    }
+
+    ssize_t rc = pread(fd, buffer, buffer_size, 0);
+    close(fd);
+    unlink(filename.c_str());
+    if (rc < 0 || static_cast<size_t>(rc) != buffer_size) {
+        std::cerr << "Redis GET size mismatch for key " << key << ": expected " << buffer_size
+                  << " bytes, got " << (rc < 0 ? 0 : rc) << " bytes" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+} // namespace
 
 // Define command line parameters
 #define NB_ARG_STRING(param_name, def_val, help_text) DEFINE_string(param_name, def_val, help_text)
@@ -59,7 +143,7 @@ NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
               "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, "
-              "GUSLI, AZURE_BLOB] (only used with nixl worker)");
+              "REDIS, GUSLI, AZURE_BLOB] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
@@ -101,7 +185,12 @@ NB_ARG_INT32(num_initiator_dev, 1, "Number of device in initiator process");
 NB_ARG_INT32(num_target_dev, 1, "Number of device in target process");
 NB_ARG_BOOL(enable_pt, false, "Enable Progress Thread (only used with nixl worker)");
 NB_ARG_UINT64(progress_threads, 0, "Number of progress threads");
-NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation when DRAM is requested");
+NB_ARG_BOOL(enable_vmm, false, "Enable VMM memory allocation for VRAM buffers");
+NB_ARG_BOOL(vmm_gdr_capable, true, "Set gpuDirectRDMACapable for non-localized VMM allocations");
+NB_ARG_INT32(use_localized,
+             -1,
+             "VMM locality domain: -1 disables programmatic localization, while 0 or 1 selects "
+             "one locality domain (requires enable_vmm)");
 NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
@@ -211,11 +300,6 @@ NB_ARG_STRING(azure_blob_connection_string,
               "Connection string for Azure Blob backend (alternative to connect to Azurite for "
               "local testing)");
 
-// INFINIA options - only used when backend is INFINIA
-NB_ARG_STRING(infinia_config_file,
-              "",
-              "Path to INFINIA-specific config file (simple key=value format)");
-
 // HF3FS options - only used when backend is HF3FS
 NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
 
@@ -285,6 +369,8 @@ int xferBenchConfig::num_threads = 0;
 bool xferBenchConfig::enable_pt = false;
 size_t xferBenchConfig::progress_threads = 0;
 bool xferBenchConfig::enable_vmm = false;
+bool xferBenchConfig::vmm_gdr_capable = true;
+int xferBenchConfig::use_localized = -1;
 bool xferBenchConfig::use_hugepages = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
@@ -326,7 +412,6 @@ std::string xferBenchConfig::obj_accelerated_type = "";
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
-std::string xferBenchConfig::infinia_config_file = "";
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -432,6 +517,29 @@ setupDeviceAPIConfig() {
     return true;
 }
 
+nixl_mem_list_t xferBenchConfig::backend_mems = {};
+
+namespace {
+// Discover the memory segment types supported by the configured backend plugin.
+// Uses a transient nixlAgent to call getPluginParams; the plugin manager is a
+// singleton so this is cheap and does not affect the real agent created later
+// by the worker.
+nixl_mem_list_t
+discoverPluginMems(const std::string &backend) {
+    nixl_mem_list_t mems;
+    if (backend.empty()) {
+        return mems;
+    }
+    nixlAgent discovery_agent("nixlbench_discovery_" + std::to_string(::getpid()),
+                              nixlAgentConfig());
+    nixl_b_params_t params;
+    if (discovery_agent.getPluginParams(backend, mems, params) != NIXL_SUCCESS) {
+        mems.clear();
+    }
+    return mems;
+}
+} // namespace
+
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
     plugin_parameters.reset();
@@ -498,10 +606,33 @@ xferBenchConfig::loadParams(void) {
     // Only load NIXL-specific configurations if using NIXL worker
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         backend = NB_ARG(backend);
+        // Discover supported memory types so the storage/object/block predicates work
+        // before the real agent is created (the worker later refreshes from the engine).
+        backend_mems = discoverPluginMems(backend);
         enable_pt = NB_ARG(enable_pt);
         progress_threads = NB_ARG(progress_threads);
         device_list = NB_ARG(device_list);
         enable_vmm = NB_ARG(enable_vmm);
+        vmm_gdr_capable = NB_ARG(vmm_gdr_capable);
+        use_localized = NB_ARG(use_localized);
+
+        if (use_localized < -1 || use_localized > 1) {
+            std::cerr << "--use_localized must be -1, 0, or 1" << std::endl;
+            return -1;
+        }
+
+        if (use_localized >= 0 && !enable_vmm) {
+            std::cerr << "--use_localized requires --enable_vmm" << std::endl;
+            return -1;
+        }
+
+        if (use_localized >= 0) {
+#if !HAVE_CUDA_LOCALITY_DOMAIN
+            std::cerr << "Localized VMM allocation is not supported by this CUDA version"
+                      << std::endl;
+            return -1;
+#endif
+        }
 
         if (enable_vmm) {
 #if HAVE_ROCM
@@ -597,15 +728,15 @@ xferBenchConfig::loadParams(void) {
             azure_blob_container_name = NB_ARG(azure_blob_container_name);
             azure_blob_connection_string = NB_ARG(azure_blob_connection_string);
         }
-
-        // Load INFINIA-specific configurations if backend is INFINIA
-        if (backend == XFERBENCH_BACKEND_INFINIA) {
-            infinia_config_file = NB_ARG(infinia_config_file);
-        }
     }
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
     target_seg_type = NB_ARG(target_seg_type);
+    if (use_localized >= 0 && initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM &&
+        target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
+        std::cerr << "--use_localized requires at least one VRAM segment" << std::endl;
+        return -1;
+    }
     scheme = NB_ARG(scheme);
     mode = NB_ARG(mode);
     op_type = NB_ARG(op_type);
@@ -855,12 +986,17 @@ xferBenchConfig::printConfig() {
     }
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
-        printOption("Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB])",
-                    backend);
+        printOption(
+            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,Mooncake,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB])",
+            backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
         printOption("Device list (--device_list=dev1,dev2,...)", device_list);
         printOption("Enable VMM (--enable_vmm=[0,1])", std::to_string(enable_vmm));
+        printOption("VMM GPUDirect RDMA capable (--vmm_gdr_capable=[0,1])",
+                    std::to_string(vmm_gdr_capable));
+        printOption("VMM locality domain (--use_localized=[-1,0,1])",
+                    std::to_string(use_localized));
         printOption("Recreate xfer each iteration (--recreate_xfer=[0,1])",
                     std::to_string(recreate_xfer));
         printOption("Re-register memory each iteration (--reregister_mem=[0,1])",
@@ -1021,22 +1157,22 @@ xferBenchConfig::workerNum() {
 
 bool
 xferBenchConfig::isStorageBackend() {
-    return (XFERBENCH_BACKEND_GDS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_GDS_MT == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_HF3FS == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_POSIX == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_GUSLI == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
+    return std::any_of(backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) {
+        return m == FILE_SEG || m == BLK_SEG || m == OBJ_SEG;
+    });
 }
 
 bool
 xferBenchConfig::isObjStorageBackend() {
-    return (XFERBENCH_BACKEND_OBJ == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_AZURE_BLOB == xferBenchConfig::backend ||
-            XFERBENCH_BACKEND_INFINIA == xferBenchConfig::backend);
-};
+    return std::any_of(
+        backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == OBJ_SEG; });
+}
+
+bool
+xferBenchConfig::isBlkStorageBackend() {
+    return std::any_of(
+        backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == BLK_SEG; });
+}
 
 
 /**********
@@ -1209,8 +1345,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
 
             len = iov.len;
 
-            if (xferBenchConfig::isStorageBackend() ||
-                xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO) {
+            if (xferBenchConfig::isStorageBackend()) {
                 if (xferBenchConfig::op_type == XFERBENCH_OP_READ) {
                     if (xferBenchConfig::initiator_seg_type == XFERBENCH_SEG_TYPE_VRAM) {
                         if (posix_memalign(&addr, xferBenchConfig::page_size, len) != 0) {
@@ -1230,7 +1365,12 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
                         exit(EXIT_FAILURE);
                     }
                     is_allocated = true;
-                    if (xferBenchConfig::isObjStorageBackend()) {
+                    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
+                        if (!getRedisBench(len, iov.metaInfo, addr)) {
+                            std::cerr << "Failed to get Redis key: " << iov.metaInfo << std::endl;
+                            exit(EXIT_FAILURE);
+                        }
+                    } else if (xferBenchConfig::isObjStorageBackend()) {
                         if (!xferBenchUtils::getObj(iov.metaInfo)) {
                             std::cerr << "Failed to get object: " << iov.metaInfo << std::endl;
                             exit(EXIT_FAILURE);
@@ -1424,7 +1564,7 @@ xferBenchUtils::printStats(bool is_target,
 
     total_data_transferred = ((block_size * batch_size) * total_iter); // In Bytes
     avg_latency = (total_duration / (per_thread_iter * batch_size)); // In microsec
-    if (IS_PAIRWISE_AND_MG() ||
+    if (IS_PAIRWISE_AND_MG() || IS_MANY_TO_ONE_AND_MG() ||
         (IS_PAIRWISE_AND_SG() && xferBenchConfig::num_initiator_dev > 1 && rt->getSize() == 1)) {
         total_data_transferred *= xferBenchConfig::num_initiator_dev; // In Bytes
         avg_latency /= xferBenchConfig::num_initiator_dev; // In microsec
@@ -1509,6 +1649,26 @@ xferBenchUtils::buildAwsCredentials() {
 }
 
 bool
+xferBenchUtils::putRedis(size_t buffer_size, const std::string &key) {
+    if (buffer_size == 0) {
+        std::cerr << "Invalid Redis seed size: 0" << std::endl;
+        return false;
+    }
+
+    const std::string filename = "/tmp/" + key;
+    int fd = createFile(buffer_size, filename);
+    if (fd < 0) {
+        return false;
+    }
+
+    const std::string cmd =
+        buildRedisCliPrefix() + " -x SET " + shellQuote(key) + " < " + shellQuote(filename);
+    bool ok = runRedisCli(cmd, "Seeding Redis key for READ: " + key);
+    cleanupFile(fd, filename);
+    return ok;
+}
+
+bool
 xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
         // INFINIA backends don't need external CLI put
@@ -1545,6 +1705,11 @@ xferBenchUtils::getObj(const std::string &name) {
 bool
 xferBenchUtils::rmObj(const std::string &name) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_INFINIA) {
+        return true;
+    }
+    // REDIS uses OBJ_SEG for remote addressing, but cleanup is not S3/Azure CLI-based.
+    // Bench keys are ephemeral; skip explicit delete (same as prior DRAM_SEG teardown).
+    if (xferBenchConfig::backend == XFERBENCH_BACKEND_REDIS) {
         return true;
     }
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_OBJ) {
