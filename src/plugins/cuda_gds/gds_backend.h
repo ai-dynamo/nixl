@@ -29,6 +29,7 @@
 #include <nixl_types.h>
 
 #include "backend/backend_engine.h"
+#include "file/file_engine_base.h"
 #include "file/file_path_mode.h"
 #include "gds_utils.h"
 
@@ -49,7 +50,10 @@ struct gdsXferReq {
 // backend-specific step in preparation is finalizePrep(); the concrete engines
 // additionally implement the transfer-execution virtuals (postXfer/checkXfer/
 // releaseReqH) directly.
-class nixlGdsEngine : public nixlBackendEngine {
+//
+// The connection/metadata entry points and supported-memory set are shared with
+// the other local file backends via FileEngineBase.
+class nixlGdsEngine : public FileEngineBase {
 public:
     explicit nixlGdsEngine(const nixlBackendInitParams *init_params);
     ~nixlGdsEngine() override = default;
@@ -57,47 +61,6 @@ public:
     nixlGdsEngine(const nixlGdsEngine &) = delete;
     nixlGdsEngine &
     operator=(const nixlGdsEngine &) = delete;
-
-    bool
-    supportsNotif() const override {
-        return false;
-    }
-
-    bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    nixl_mem_list_t
-    getSupportedMems() const override {
-        return {DRAM_SEG, VRAM_SEG, FILE_SEG};
-    }
-
-    nixl_status_t
-    connect(const std::string &remote_agent) override {
-        return NIXL_SUCCESS;
-    }
-
-    nixl_status_t
-    disconnect(const std::string &remote_agent) override {
-        return NIXL_SUCCESS;
-    }
-
-    nixl_status_t
-    loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override {
-        output = input;
-        return NIXL_SUCCESS;
-    }
-
-    nixl_status_t
-    unloadMD(nixlBackendMD *input) override {
-        return NIXL_SUCCESS;
-    }
 
     nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;

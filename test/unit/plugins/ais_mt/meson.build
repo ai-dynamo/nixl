@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,24 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-nixl_worker_sources = [
-  'nixl_worker.cpp',
-  'nixl_worker.h',
-  'nixl_mem_region.cpp',
-  'nixl_mem_region.h',
-]
-
-nixl_worker_deps = [openmp_dep, nixl_lib, nixl_build, nixl_serdes, tomlplusplus_dep]
-if cuda_available
-  nixl_worker_deps += [cuda_dep]
-endif
-if nixlbench_rocm_enabled
-  nixl_worker_deps += [rocm_dep]
+if not rocm_dep.found()
+    subdir_done()
 endif
 
-nixl_worker_lib = static_library('nixl_worker',
-  nixl_worker_sources,
-  include_directories: inc_dir,
-  dependencies: nixl_worker_deps,
-  install: true,
-)
+nixl_ais_mt_app = executable('nixl_ais_mt_test',
+    'nixl_ais_mt_test.cpp',
+    dependencies: [nixl_dep, nixl_infra, rocm_dep, nixl_common_dep],
+    include_directories: [nixl_inc_dirs, utils_inc_dirs, include_directories('..')],
+    install: true)
+
+# Skips (exit 0) while AIS_MT does not advertise DRAM_SEG: the shared harness
+# registers host DRAM buffers. Runs again once DRAM_SEG is re-advertised.
+test('ais_mt_path_mode_smoke', nixl_ais_mt_app)
