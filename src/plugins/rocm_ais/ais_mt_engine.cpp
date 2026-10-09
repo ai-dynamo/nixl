@@ -71,7 +71,7 @@ runHipFileOp(const aisXferReq *req, std::atomic<nixl_status_t> *overall_status) 
     if (req->dev_id >= 0) {
         const hipError_t dev_err = hipSetDevice(req->dev_id);
         if (dev_err != hipSuccess) {
-            NIXL_ERROR << "AIS_MT: hipSetDevice failed: " << hipGetErrorString(dev_err);
+            NIXL_ERROR << "AIS: hipSetDevice failed: " << hipGetErrorString(dev_err);
             overall_status->store(NIXL_ERR_BACKEND);
             return;
         }
@@ -81,14 +81,14 @@ runHipFileOp(const aisXferReq *req, std::atomic<nixl_status_t> *overall_status) 
     if (req->op == hipFileBatchRead) {
         nbytes = hipFileRead(req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
-            NIXL_ERROR << "AIS_MT: hipFileRead failed: " << describeHipFileIoError(nbytes);
+            NIXL_ERROR << "AIS: hipFileRead failed: " << describeHipFileIoError(nbytes);
             overall_status->store(NIXL_ERR_BACKEND);
             return;
         }
     } else if (req->op == hipFileBatchWrite) {
         nbytes = hipFileWrite(req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
-            NIXL_ERROR << "AIS_MT: hipFileWrite failed: " << describeHipFileIoError(nbytes);
+            NIXL_ERROR << "AIS: hipFileWrite failed: " << describeHipFileIoError(nbytes);
             overall_status->store(NIXL_ERR_BACKEND);
             return;
         }
@@ -98,9 +98,8 @@ runHipFileOp(const aisXferReq *req, std::atomic<nixl_status_t> *overall_status) 
     }
 
     if (static_cast<size_t>(nbytes) != req->size) {
-        NIXL_ERROR << "AIS_MT: error: short "
-                   << ((req->op == hipFileBatchRead) ? "read: " : "write: ") << nbytes << " out of "
-                   << req->size << " bytes - address=" << req->addr;
+        NIXL_ERROR << "AIS: error: short " << ((req->op == hipFileBatchRead) ? "read: " : "write: ")
+                   << nbytes << " out of " << req->size << " bytes - address=" << req->addr;
         overall_status->store(NIXL_ERR_BACKEND);
         return;
     }
@@ -110,7 +109,7 @@ runHipFileOp(const aisXferReq *req, std::atomic<nixl_status_t> *overall_status) 
 nixlAisMtReqH::~nixlAisMtReqH() {
     if (running_transfer.valid()) {
         // TODO: A follow-up should make active release nonblocking. This wait
-        // preserves the pre-consolidation AIS_MT request-lifetime behavior.
+        // preserves the pre-consolidation AIS request-lifetime behavior.
         running_transfer.wait();
     }
 }
@@ -118,7 +117,7 @@ nixlAisMtReqH::~nixlAisMtReqH() {
 nixlAisMtEngine::nixlAisMtEngine(const nixlBackendInitParams *init_params)
     : nixlAisEngine(init_params),
       executor_(std::make_unique<tf::Executor>(getThreadCount(init_params))) {
-    NIXL_DEBUG << "AIS_MT: thread count=" << executor_->num_workers();
+    NIXL_DEBUG << "AIS: thread count=" << executor_->num_workers();
 }
 
 nixl_status_t

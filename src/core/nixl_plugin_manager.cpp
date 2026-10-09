@@ -836,8 +836,8 @@ void nixlPluginManager::registerBuiltinPlugins() {
     NIXL_REGISTER_STATIC_PLUGIN(Backend, GDS_MT)
 #endif
 
-#ifdef STATIC_PLUGIN_AIS_MT
-    NIXL_REGISTER_STATIC_PLUGIN(Backend, AIS_MT)
+#ifdef STATIC_PLUGIN_AIS
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, AIS)
 #endif
 
 #ifdef STATIC_PLUGIN_POSIX

@@ -43,8 +43,8 @@ if is_variable('gds_backend_interface') or is_variable(
     subdir('cuda_gds')
 endif
 
-if is_variable('ais_mt_backend_interface')
-    subdir('ais_mt')
+if is_variable('ais_backend_interface')
+    subdir('ais')
 endif
 
 cc = meson.get_compiler('cpp')

@@ -31,11 +31,11 @@ submission mechanism.
 
 Today the only backend name is:
 
-- `AIS_MT`: multi-threaded transfers via TaskFlow (`nixlAisMtEngine`). TaskFlow
+- `AIS`: multi-threaded transfers via TaskFlow (`nixlAisMtEngine`). TaskFlow
   issues one blocking `hipFileRead` or `hipFileWrite` per prepared request,
   mirroring the NVIDIA `GDS_MT` backend.
 
-A batch engine mirroring GDS's cuFile batch path slots in alongside `AIS_MT`
+A batch engine mirroring GDS's cuFile batch path slots in alongside `AIS`
 once hipFile's batch API is adopted; `finalizePrep` is the hook it needs.
 
 ## Dependencies
@@ -46,7 +46,7 @@ once hipFile's batch API is adopted; `finalizePrep` is the hook it needs.
 - hipFile (`libhipfile.so` and `hipfile.h`), which ships inside the ROCm
   install.
 - [TaskFlow](https://github.com/taskflow/taskflow), provided by the Meson
-  subproject, for the `AIS_MT` entry point.
+  subproject, for the `AIS` entry point.
 
 Both HIP and hipFile are looked for under `rocm_path`. The plugin is skipped
 silently when HIP or hipFile is not found, so a ROCm-less tree configures
@@ -54,7 +54,7 @@ unchanged.
 
 ## Build Instructions
 
-HIP is detected independently of CUDA, so `AIS_MT` can be built alongside the
+HIP is detected independently of CUDA, so `AIS` can be built alongside the
 CUDA plugins when ROCm and hipFile are both present. ROCm is requested by
 setting `-Drocm_path`.
 
@@ -70,7 +70,7 @@ Relevant Meson options (see `meson_options.txt`):
 | `rocm_path` | `''` | ROCm install prefix used for HIP and hipFile detection. Empty means ROCm is not used. |
 | `disable_rocm_ais_backend` | `false` | Disable the AIS hipFile backend entirely. |
 
-`AIS_MT` also participates in the generic `enable_plugins` / `disable_plugins` /
+`AIS` also participates in the generic `enable_plugins` / `disable_plugins` /
 `static_plugins` lists. Requesting it explicitly while it is disabled, or while
 HIP, hipFile or TaskFlow is missing, is a configure-time error rather than a
 silent skip.
@@ -79,7 +79,7 @@ silent skip.
 
 ### Backend name
 
-`AIS_MT` — pass to `nixlAgent::createBackend` or the C API equivalent.
+`AIS` — pass to `nixlAgent::createBackend` or the C API equivalent.
 
 ### Backend parameters
 
@@ -121,23 +121,23 @@ Path-mode requires a unique `devId` per registration, since in path-mode the
 
 ```cpp
 nixlAgentConfig cfg(true);
-nixlAgent agent("AisMtAgent", cfg);
+nixlAgent agent("AisAgent", cfg);
 
 nixl_b_params_t params;
 params["thread_count"] = "8";
 
-nixlBackendH *ais_mt;
-nixl_status_t ret = agent.createBackend("AIS_MT", params, ais_mt);
+nixlBackendH *ais;
+nixl_status_t ret = agent.createBackend("AIS", params, ais);
 ```
 
 A fuller end-to-end example, covering path-mode registration and read/write
 verification, lives in
-[`test/unit/plugins/ais_mt/nixl_ais_mt_test.cpp`](../../../test/unit/plugins/ais_mt/nixl_ais_mt_test.cpp).
+[`test/unit/plugins/ais/nixl_ais_test.cpp`](../../../test/unit/plugins/ais/nixl_ais_test.cpp).
 Only its VRAM mode (`-v`, the default) works today. DRAM mode (`-d`) and the
 path-mode smoke test, which registers host buffers and skips for now, need
 `DRAM_SEG` support. The path-mode smoke target can be overridden with the
-`NIXL_AIS_MT_PATH_MODE_FILE` environment variable; it must name a regular file
+`NIXL_AIS_PATH_MODE_FILE` environment variable; it must name a regular file
 on a writable filesystem, never a raw block device.
 
-For the containerised ROCm build and an interactive `AIS_MT` nixlbench run on an
+For the containerised ROCm build and an interactive `AIS` nixlbench run on an
 AMD GPU, see [`docs/rocm-ci.md`](../../../docs/rocm-ci.md).

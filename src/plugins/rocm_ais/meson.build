@@ -15,7 +15,7 @@
 
 # AIS (AMD Infinity Storage) plugin. The abstract base engine (nixlAisEngine)
 # is compiled once into ais_common_lib; each backend name builds a thin entry
-# point plus its concrete engine subclass. Today the only name is "AIS_MT"; a
+# point plus its concrete engine subclass. Today the only name is "AIS"; a
 # hipFile batch engine mirroring "GDS" slots in alongside it later.
 
 # hipFile calls are issued against HIP device memory, so the HIP runtime is
@@ -27,7 +27,7 @@ if not rocm_dep.found()
 endif
 
 # hipFile is a hard prerequisite: without it no AIS target is produced at all.
-# An explicit -Denable_plugins=AIS_MT therefore fails loudly rather than
+# An explicit -Denable_plugins=AIS therefore fails loudly rather than
 # silently building nothing, mirroring the HIP check in ../meson.build. On an
 # autodetected build a missing hipFile just skips the plugin, since ROCm has
 # other uses in this tree (UCX, libfabric) that do not need it.
@@ -35,7 +35,7 @@ hipfile_lib_path = rocm_path + '/lib'
 hipfile_lib_check = cpp.find_library('hipfile', dirs: [hipfile_lib_path], required: false)
 if not hipfile_lib_check.found() or not cpp.has_header('hipfile.h', include_directories : rocm_inc)
     if is_explicit_enable
-        error('AIS_MT plugin requested but hipFile not found under ' + rocm_path)
+        error('AIS plugin requested but hipFile not found under ' + rocm_path)
     endif
     subdir_done()
 endif
@@ -66,27 +66,27 @@ ais_common_dep = declare_dependency(
     dependencies: ais_common_deps,
     include_directories: ais_common_incs)
 
-# "AIS_MT" backend name entry point (per-request TaskFlow strategy).
-if enabled_plugins.get('AIS_MT')
+# "AIS" backend name entry point (per-request TaskFlow strategy).
+if enabled_plugins.get('AIS')
     if not taskflow_proj.found()
         if is_explicit_enable
-            error('AIS_MT plugin requested but Taskflow dependency not found')
+            error('AIS plugin requested but Taskflow dependency not found')
         endif
-        # Otherwise silently skip building the AIS_MT entry point.
+        # Otherwise silently skip building the AIS entry point.
     else
-        ais_mt_sources = ['ais_mt_plugin.cpp', 'ais_mt_engine.cpp', 'ais_mt_engine.h']
-        ais_mt_deps = [ais_common_dep, taskflow_proj, thread_dep]
-        if 'AIS_MT' in static_plugins
-            ais_mt_backend_lib = static_library('AIS_MT',
-                ais_mt_sources,
-                dependencies: ais_mt_deps,
+        ais_sources = ['ais_plugin.cpp', 'ais_mt_engine.cpp', 'ais_mt_engine.h']
+        ais_deps = [ais_common_dep, taskflow_proj, thread_dep]
+        if 'AIS' in static_plugins
+            ais_backend_lib = static_library('AIS',
+                ais_sources,
+                dependencies: ais_deps,
                 include_directories: ais_common_incs,
                 install: false,
                 name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
         else
-            ais_mt_backend_lib = shared_library('AIS_MT',
-                ais_mt_sources,
-                dependencies: ais_mt_deps,
+            ais_backend_lib = shared_library('AIS',
+                ais_sources,
+                dependencies: ais_deps,
                 include_directories: ais_common_incs,
                 install: true,
                 cpp_args: ['-fPIC'],
@@ -95,13 +95,13 @@ if enabled_plugins.get('AIS_MT')
                 install_rpath: '$ORIGIN/..')
             if get_option('buildtype') == 'debug'
                 run_command('sh', '-c',
-                    'echo "AIS_MT=' + ais_mt_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
+                    'echo "AIS=' + ais_backend_lib.full_path() + '" >> ' + plugin_build_dir + '/pluginlist',
                     check: true
                 )
             endif
         endif
-        ais_mt_backend_interface = declare_dependency(
-            link_with: ais_mt_backend_lib,
+        ais_backend_interface = declare_dependency(
+            link_with: ais_backend_lib,
             dependencies: [taskflow_proj, thread_dep])
     endif
 endif

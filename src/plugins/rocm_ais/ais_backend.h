@@ -54,7 +54,7 @@ struct aisXferReq {
 // the concrete engines additionally implement the transfer-execution virtuals
 // (postXfer/checkXfer/releaseReqH) directly.
 //
-// Today the only leaf is nixlAisMtEngine ("AIS_MT"). A batch engine mirroring
+// Today the only leaf is nixlAisMtEngine ("AIS"). A batch engine mirroring
 // GDS's cuFile batch path slots in alongside it once hipFile's batch API is
 // adopted; finalizePrep is the hook it needs.
 class nixlAisEngine : public nixlBackendEngine {

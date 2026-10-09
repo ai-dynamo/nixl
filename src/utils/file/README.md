@@ -9,7 +9,7 @@ This directory contains shared C++ utilities for NIXL file-aware backends:
   [Path-Mode File Registration](#path-mode-file-registration).
 
 All file-aware plugins (POSIX, HF3FS, CUDA GDS, which provides both the `GDS`
-and `GDS_MT` backend names, and ROCm AIS, which provides the `AIS_MT` backend
+and `GDS_MT` backend names, and ROCm AIS, which provides the `AIS` backend
 name) link `file_utils_interface` and consume both sets of helpers.
 
 ## QueryMem API Implementation through queryFileInfoList
@@ -19,7 +19,7 @@ The QueryMem API has been implemented for these file backends:
 - **POSIX Backend** (`src/plugins/posix/`)
 - **HF3FS Backend** (`src/plugins/hf3fs/`)
 - **CUDA GDS Backend** (`src/plugins/cuda_gds/`, provides both the `GDS` and `GDS_MT` backends)
-- **ROCm AIS Backend** (`src/plugins/rocm_ais/`, provides the `AIS_MT` backend)
+- **ROCm AIS Backend** (`src/plugins/rocm_ais/`, provides the `AIS` backend)
 
 The backend extracts the filenames from the input descriptors (`nixl_reg_dlist_t`) and passes them to queryFileInfoList.
 Then queryFileInfoList returns a vector of `nixl_query_resp_t` structures containing:

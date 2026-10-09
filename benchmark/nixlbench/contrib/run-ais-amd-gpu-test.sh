@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Run nixlbench with the AIS_MT backend on AMD VRAM against files under
+# Run nixlbench with the AIS backend on AMD VRAM against files under
 # FILEPATH, wrapped in hipFile's ais-stats so HIPFILE_STATS_LEVEL output can
 # confirm whether the fastpath was used.
 #
@@ -14,16 +14,16 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: run-ais-mt-amd-gpu-test.sh [--skip-ais-stats] [-h]
+Usage: run-ais-amd-gpu-test.sh [--skip-ais-stats] [-h]
 
-Runs nixlbench --backend AIS_MT under ais-stats. See docs/rocm-ci.md for the
+Runs nixlbench --backend AIS under ais-stats. See docs/rocm-ci.md for the
 docker run invocation.
 
   --skip-ais-stats  Run nixlbench directly, without the ais-stats wrapper.
 
 Environment:
   FILEPATH             Required. Existing, writable directory; nixlbench creates
-                       nixlbench_ais_mt_test_file_* under it (see nixl_worker.cpp).
+                       nixlbench_ais_test_file_* under it (see nixl_worker.cpp).
   NIXL_PREFIX          Default: /opt/nixl
   ROCM_PATH            Default: /opt/rocm
   AIS_STATS_BIN        Default: ${ROCM_PATH}/bin/ais-stats
@@ -31,7 +31,7 @@ Environment:
   NIXLBENCH_EXTRA      Extra nixlbench args, word-split (e.g. '--num_iter 500')
 
 Example:
-  FILEPATH=/data/ais-mt-run ./run-ais-mt-amd-gpu-test.sh
+  FILEPATH=/data/ais-run ./run-ais-amd-gpu-test.sh
 EOF
 }
 
@@ -55,7 +55,7 @@ if [[ -z "$FILEPATH" ]]; then
     exit 1
 fi
 if [[ ! -d "$FILEPATH" ]]; then
-    echo "ERROR: FILEPATH=${FILEPATH} is not a directory. AIS_MT creates files under it." >&2
+    echo "ERROR: FILEPATH=${FILEPATH} is not a directory. AIS creates files under it." >&2
     exit 1
 fi
 
@@ -90,10 +90,10 @@ if [[ "$SKIP_AIS_STATS" != 1 ]]; then
 fi
 
 # --gds_mt_num_threads is nixlbench's generic thread-count flag; it applies to
-# AIS_MT too despite the GDS-specific name.
+# AIS too despite the GDS-specific name.
 nb_cmd=(
     "${NIXL_PREFIX}/bin/nixlbench"
-    --backend AIS_MT
+    --backend AIS
     --filepath "$FILEPATH"
     --initiator_seg_type VRAM
     --target_seg_type VRAM
@@ -113,7 +113,7 @@ if [[ -n "${NIXLBENCH_EXTRA:-}" ]]; then
     nb_cmd+=(${NIXLBENCH_EXTRA})
 fi
 
-report="$(mktemp -t ais-mt-ais-stats.XXXXXX.log)"
+report="$(mktemp -t ais-stats.XXXXXX.log)"
 trap 'rm -f "$report"' EXIT
 
 echo "HIPFILE_STATS_LEVEL=${HIPFILE_STATS_LEVEL}"

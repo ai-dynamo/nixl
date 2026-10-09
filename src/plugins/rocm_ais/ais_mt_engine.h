@@ -41,7 +41,7 @@ public:
     std::atomic<nixl_status_t> overall_status{NIXL_SUCCESS};
 };
 
-// "AIS_MT" backend: one blocking hipFileRead/hipFileWrite per request, run
+// "AIS" backend: one blocking hipFileRead/hipFileWrite per request, run
 // across a TaskFlow executor. Only this engine pulls in TaskFlow.
 //
 // Inherits from nixlAisEngine (see ais_backend.h): registerMem/deregisterMem,

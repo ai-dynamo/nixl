@@ -24,23 +24,23 @@ scheduler runs them concurrently. `build-rocm.sh` remains the reference for the
 sequential build and for configuring NIXL/nixlbench
 (`-Dnixlbench_gpu=rocm -Drocm_path=...`).
 
-## AIS_MT on AMD GPU (docker + nixlbench)
+## AIS on AMD GPU (docker + nixlbench)
 
-For an interactive AIS_MT run on VRAM with an NVMe-backed directory mounted
+For an interactive AIS run on VRAM with an NVMe-backed directory mounted
 into the container, hipFile stats (`HIPFILE_STATS_LEVEL`), and `ais-stats`
 wrapping `nixlbench`, use
-[`benchmark/nixlbench/contrib/run-ais-mt-amd-gpu-test.sh`](../benchmark/nixlbench/contrib/run-ais-mt-amd-gpu-test.sh).
+[`benchmark/nixlbench/contrib/run-ais-amd-gpu-test.sh`](../benchmark/nixlbench/contrib/run-ais-amd-gpu-test.sh).
 
 On the host, prefer mounting a directory on a filesystem that sits on a stable
 NVMe identity path under `/dev/disk/by-id/`. Inside the container, set
 `FILEPATH` to an existing, writable **directory** under the mount (nixlbench
-creates `nixlbench_ais_mt_test_file_*` files inside it; a single pre-created
+creates `nixlbench_ais_test_file_*` files inside it; a single pre-created
 `.bin` file path will fail with “Not a directory”). The script runs
-**single-process** AIS_MT (null runtime; no etcd) which matches nixlbench’s
+**single-process** AIS (null runtime; no etcd) which matches nixlbench’s
 storage-backend layout.
 
 If the container reports `No such file or directory` for
-`run-ais-mt-amd-gpu-test.sh`, bind-mount it from the host — the image does not
+`run-ais-amd-gpu-test.sh`, bind-mount it from the host — the image does not
 ship the repo (see the `-v` line in the example below).
 
 The script does not create `FILEPATH`. If the image user cannot write your
@@ -60,11 +60,11 @@ docker run --rm -it \
   --ipc=host \
   --security-opt seccomp=unconfined \
   -v /mnt/nvme-nixlbench:/mnt/nvme-nixlbench:rw \
-  -v "$PWD/benchmark/nixlbench/contrib/run-ais-mt-amd-gpu-test.sh:/workspace/nixl/benchmark/nixlbench/contrib/run-ais-mt-amd-gpu-test.sh:ro" \
-  -e FILEPATH=/mnt/nvme-nixlbench/nixlbench-ais-mt \
+  -v "$PWD/benchmark/nixlbench/contrib/run-ais-amd-gpu-test.sh:/workspace/nixl/benchmark/nixlbench/contrib/run-ais-amd-gpu-test.sh:ro" \
+  -e FILEPATH=/mnt/nvme-nixlbench/nixlbench-ais \
   -e HIPFILE_STATS_LEVEL=1 \
   nixl-rocm:latest \
-  bash /workspace/nixl/benchmark/nixlbench/contrib/run-ais-mt-amd-gpu-test.sh
+  bash /workspace/nixl/benchmark/nixlbench/contrib/run-ais-amd-gpu-test.sh
 ```
 
 The contrib script sets `HOME=/tmp` when the image `HOME` is not executable for
@@ -76,7 +76,7 @@ before the benchmark runs.
 If nixlbench fails with `Permission denied` while **creating** files under
 `FILEPATH`, the directory exists but is not writable for the container UID
 (same UID mismatch as above). Grant write access, for example on the host
-`sudo chown -R <image-uid>:<image-gid> /mnt/.../nixlbench-ais-mt` (check with
+`sudo chown -R <image-uid>:<image-gid> /mnt/.../nixlbench-ais` (check with
 `docker run --rm <image> id`), or use the `docker run`
 example block above with `--user "$(id -u):$(id -g)"`.
 
@@ -84,23 +84,23 @@ A successful run of the `docker run` command above looks like this (numbers
 and log paths will differ):
 
 ```
-HIPFILE_STATS_LEVEL=1 (ais-stats + nixlbench log: /tmp/ais-mt-ais-stats.uYulz6.log)
-Running: /opt/nixl/bin/nixlbench --backend AIS_MT --filepath /mnt/nvme-nixlbench/nixlbench-ais-mt --initiator_seg_type VRAM --target_seg_type VRAM --gds_mt_num_threads 4 --total_buffer_size 67108864 --start_block_size 65536 --max_block_size 65536 --start_batch_size 1 --max_batch_size 1 --num_iter 200 --warmup_iter 40 --op_type WRITE --check_consistency
+HIPFILE_STATS_LEVEL=1 (ais-stats + nixlbench log: /tmp/ais-stats.uYulz6.log)
+Running: /opt/nixl/bin/nixlbench --backend AIS --filepath /mnt/nvme-nixlbench/nixlbench-ais --initiator_seg_type VRAM --target_seg_type VRAM --gds_mt_num_threads 4 --total_buffer_size 67108864 --start_block_size 65536 --max_block_size 65536 --start_batch_size 1 --max_batch_size 1 --num_iter 200 --warmup_iter 40 --op_type WRITE --check_consistency
 WARNING: Adjusting num_iter to 208 to allow equal distribution to 1 threads
 WARNING: Adjusting warmup_iter to 48 to allow equal distribution to 1 threads
 Using null runtime for storage backend without ETCD
-AIS_MT backend
-AIS_MT thread_count: 4
+AIS backend
+AIS thread_count: 4
 Waiting for all processes to start... (expecting 1 total: 1 initiators and 1 targets)
 All processes are ready to proceed
-Creating file: /mnt/nvme-nixlbench/nixlbench-ais-mt/nixlbench_ais_mt_test_file_initiator_0
+Creating file: /mnt/nvme-nixlbench/nixlbench-ais/nixlbench_ais_test_file_initiator_0
 ****************************************************************************************************************************************************************
 NIXLBench Configuration
 ****************************************************************************************************************************************************************
 Runtime (--runtime_type=[ETCD,ASIO])                        : ETCD
 ETCD Endpoint                                               : disabled (storage backend)
 Worker type (--worker_type=[nixl,nvshmem])                  : nixl
-Backend (--backend=[UCX,GDS,GDS_MT,AIS_MT,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB]): AIS_MT
+Backend (--backend=[UCX,GDS,GDS_MT,AIS,POSIX,Mooncake,HF3FS,OBJ,AZURE_BLOB]): AIS
 Enable pt (--enable_pt=[0,1])                               : 0
 Progress threads (--progress_threads=N)                     : 0
 Device list (--device_list=dev1,dev2,...)                   : all
@@ -110,8 +110,8 @@ Re-register memory each iteration (--reregister_mem=[0,1])  : 0
 Prepared xfer (prep+make) (--prepared_xfer=[0,1])           : 0
 Pipeline depth (--pipeline_depth=N)                         : 1
 Use hugepages (--use_hugepages=[0,1])                       : 0
-GDS_MT / AIS_MT thread pool (--gds_mt_num_threads=N)        : 4
-filepath (--filepath=path)                                  : /mnt/nvme-nixlbench/nixlbench-ais-mt
+GDS_MT / AIS thread pool (--gds_mt_num_threads=N)           : 4
+filepath (--filepath=path)                                  : /mnt/nvme-nixlbench/nixlbench-ais
 filenames (--filenames=filename1,filename2,...)             :
 Number of files (--num_files=N)                             : 1
 Storage enable direct (--storage_enable_direct=[0,1])       : 0
@@ -236,5 +236,5 @@ IO Size (KiB)            Fastpath Read Error Count        Fastpath Write Error C
 16384-32768                                      0                                 0                                 0                                 0
 32768-65536                                      0                                 0                                 0                                 0
 65536-...                                        0                                 0                                 0                                 0
-OK: ais-stats / hipFile output mentions fastpath (see /tmp/ais-mt-ais-stats.uYulz6.log).
+OK: ais-stats / hipFile output mentions fastpath (see /tmp/ais-stats.uYulz6.log).
 ```

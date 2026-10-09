@@ -33,7 +33,7 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, AIS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB,
+- **Storage Backend Support**: GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ (S3), AZURE_BLOB,
   GUSLI, INFINIA for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
@@ -386,7 +386,7 @@ ROCm is never detected automatically. Pass `-Drocm_path=<prefix>` (the ROCm
 install root, e.g. `/opt/rocm`) to both the NIXL and NIXLBench configures:
 
 ```bash
-# NIXL (builds the AIS_MT plugin when hipFile is found under rocm_path)
+# NIXL (builds the AIS plugin when hipFile is found under rocm_path)
 uv run meson setup build --prefix=/usr/local/nixl --buildtype=release \
   -Drocm_path=/opt/rocm
 
@@ -534,7 +534,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 --config_file PATH         # Configuraion file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, AIS_MT, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, AIS, POSIX, GPUNETIO, Mooncake, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 --etcd_endpoints URL       # ETCD server URL for coordination (default: http://localhost:2379)
 ```
@@ -587,7 +587,7 @@ devices can differ between the initiator and target processes.
 --etcd_endpoints URL       # ETCD server URL for coordination (optional for storage backends)
 ```
 
-#### Storage Backend Options (GDS, GDS_MT, AIS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
+#### Storage Backend Options (GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ, AZURE_BLOB)
 ```
 --filepath PATH            # File path for storage operations
 --num_files NUM            # Number of files used by benchmark (default: 1)
@@ -608,9 +608,9 @@ devices can differ between the initiator and target processes.
 --gds_batch_limit NUM      # Batch limit for GDS operations (default: 128)
 ```
 
-**GDS_MT / AIS_MT (multi-threaded file backends):**
+**GDS_MT / AIS (multi-threaded file backends):**
 ```
---gds_mt_num_threads NUM   # Taskflow worker threads for GDS_MT and AIS_MT (default: 1)
+--gds_mt_num_threads NUM   # Taskflow worker threads for GDS_MT and AIS (default: 1)
 ```
 
 Both plugins use a `thread_count` init parameter; nixlbench forwards your CLI
@@ -720,7 +720,7 @@ NIXL Benchmark uses an ETCD key-value store for coordination between benchmark w
 
 **ETCD Requirements:**
 - **Required**: Network backends (UCX, GPUNETIO, Mooncake, Libfabric) and multi-node setups
-- **Optional**: Storage backends (GDS, GDS_MT, AIS_MT, POSIX, HF3FS, OBJ, GUSLI)
+- **Optional**: Storage backends (GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ, GUSLI)
   running as single instances; ETCD optional unless endpoints are set explicitly
 - **Required**: Storage backends when `--etcd_endpoints` is explicitly specified
 
@@ -790,16 +790,16 @@ $ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --back
 ./nixlbench --backend GDS_MT --filepath /mnt/storage/testfile --gds_mt_num_threads 8
 ```
 
-**AIS_MT (Multi-threaded ROCm Infinity Storage):**
+**AIS (Multi-threaded ROCm Infinity Storage):**
 ```bash
-# Requires NIXL built with AIS_MT; --filepath is a directory prefix (test files
+# Requires NIXL built with AIS; --filepath is a directory prefix (test files
 # are created under it). Use a hipFile-capable path (see plugin docs).
-./nixlbench --backend AIS_MT --filepath /mnt/storage/ais-mt-dir --initiator_seg_type VRAM --gds_mt_num_threads 8
+./nixlbench --backend AIS --filepath /mnt/storage/ais-dir --initiator_seg_type VRAM --gds_mt_num_threads 8
 ```
 
 For a containerized AMD GPU + NVMe directory + `ais-stats` workflow, see
-[`contrib/run-ais-mt-amd-gpu-test.sh`](contrib/run-ais-mt-amd-gpu-test.sh) and
-[`docs/rocm-ci.md`](../../docs/rocm-ci.md) (AIS_MT on AMD GPU section).
+[`contrib/run-ais-amd-gpu-test.sh`](contrib/run-ais-amd-gpu-test.sh) and
+[`docs/rocm-ci.md`](../../docs/rocm-ci.md) (AIS on AMD GPU section).
 
 **POSIX Backend:**
 ```bash
