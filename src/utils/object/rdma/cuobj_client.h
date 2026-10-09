@@ -14,6 +14,9 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <vector>
+
+#include "rdma_token_range.h"
 
 #include <cuobjclient.h>
 
@@ -72,10 +75,14 @@ public:
     isDeviceMemory(const void *ptr) const;
 
     /**
-     * @brief Mint an RDMA token for a registered buffer.
-     * @param ptr Registered buffer.
+     * @brief Mint an RDMA token for a buffer previously passed to registerBuffer().
+     *
+     * ptr may be the registration base or any address inside it. cuObject only
+     * accepts the registered base, so the token is minted as
+     * cuMemObjGetRDMAToken(base, size, (ptr + offset) - base, op).
+     * @param ptr Address inside a registered buffer.
      * @param size Length in bytes covered by the token.
-     * @param offset Byte offset into the buffer.
+     * @param offset Extra byte offset from ptr. Pass 0 when ptr is the transfer start.
      * @param op Operation the token authorizes (CUOBJ_GET / CUOBJ_PUT).
      * @return An opaque token string (release via putToken()), or nullptr on failure.
      */
@@ -95,6 +102,9 @@ private:
     std::unique_ptr<cuObjClient> client_;
     bool connected_ = false;
     std::mutex mutex_;
+    // Registrations recorded after a successful cuMemObjGetDescriptor, so
+    // getToken() can turn an interior pointer into (base, offset).
+    std::vector<RdmaRegistration> registrations_;
 };
 
 } // namespace nixl_obj_rdma
