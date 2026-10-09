@@ -169,7 +169,7 @@ void
 copyToMem(uintptr_t dst, const std::vector<uint8_t> &src) {
 #ifdef HAVE_CUDA
     if (memType == VRAM_SEG) {
-        ASSERT_EQ(
+        EXPECT_EQ(
             cudaMemcpy(
                 reinterpret_cast<void *>(dst), src.data(), src.size(), cudaMemcpyHostToDevice),
             cudaSuccess);
