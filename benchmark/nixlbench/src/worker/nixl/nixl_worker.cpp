@@ -348,6 +348,33 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         std::cout << "INFINIA backend (plugin will use RED_* environment variables, "
                      "NIXL_CONFIG_FILE, or defaults)"
                   << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_DAOS)) {
+        backend_params["pool"] = xferBenchConfig::daos_pool;
+        backend_params["container"] = xferBenchConfig::daos_container;
+        backend_params["chunk_size"] = std::to_string(xferBenchConfig::daos_chunk_size);
+        backend_params["oclass_id"] = std::to_string(xferBenchConfig::daos_oclass_id);
+        backend_params["num_event_queues"] = std::to_string(xferBenchConfig::daos_num_event_queues);
+        backend_params["max_inflight_per_queue"] =
+            std::to_string(xferBenchConfig::daos_max_inflight_per_queue);
+        backend_params["submission_batch_size"] =
+            std::to_string(xferBenchConfig::daos_submission_batch_size);
+        backend_params["completion_batch_size"] =
+            std::to_string(xferBenchConfig::daos_completion_batch_size);
+        if (!xferBenchConfig::daos_system.empty()) {
+            backend_params["system"] = xferBenchConfig::daos_system;
+        }
+        if (!xferBenchConfig::daos_object_class.empty()) {
+            backend_params["object_class"] = xferBenchConfig::daos_object_class;
+        }
+        if (!xferBenchConfig::daos_object_class_hint.empty()) {
+            backend_params["object_class_hint"] = xferBenchConfig::daos_object_class_hint;
+        }
+        if (!xferBenchConfig::daos_progress_cpu_affinity.empty()) {
+            backend_params["progress_cpu_affinity"] = xferBenchConfig::daos_progress_cpu_affinity;
+        }
+        std::cout << "DAOS backend: pool=" << xferBenchConfig::daos_pool
+                  << ", container=" << xferBenchConfig::daos_container
+                  << ", event queues=" << xferBenchConfig::daos_num_event_queues << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);

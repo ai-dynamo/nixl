@@ -25,6 +25,10 @@ if enabled_plugins.get('POSIX')
     subdir('posix')
 endif
 
+if enabled_plugins.get('DAOS')
+    subdir('daos')
+endif
+
 if enabled_plugins.get('GPUNETIO')
     if (not cuda_dep.found() or not doca_gpunetio_dep.found()) and is_explicit_enable
         if not cuda_dep.found()
