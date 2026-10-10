@@ -70,6 +70,10 @@ public:
     [[nodiscard]] nixl_status_t
     releaseMemView(proxy_view_handle_t proxy_memview);
 
+    /** Roll back preparation before the handle becomes visible to producers. */
+    nixl_status_t
+    discardUnpublishedMemView(proxy_view_handle_t proxy_memview);
+
     [[nodiscard]] nixl_status_t
     startWorkers();
 
@@ -123,6 +127,7 @@ private:
     std::stop_source stop_source_;
     /** Bumped once per drain; each worker acks it when it has applied it. */
     alignas(64) std::atomic<uint64_t> drain_requested_{0};
+    std::atomic<bool> shutting_down_{false};
     uint64_t *shutdown_word_dev_ = nullptr;
     state_t state_ = state_t::CREATED;
 };

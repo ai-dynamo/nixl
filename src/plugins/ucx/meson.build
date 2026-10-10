@@ -38,6 +38,14 @@ ucx_backend_dependencies = [nixl_common_dep,
 ucx_backend_include_directories = [nixl_inc_dirs,
                                    utils_inc_dirs]
 
+# The engine hands out tagged device memory-view handles, which needs the
+# device memview wrapper and, through it, the device allocator.
+if cuda_dep.found()
+    ucx_backend_sources += ['ucx_proxy_transport.cpp']
+    ucx_backend_dependencies += [device_utils_interface, device_proxy_interface]
+    ucx_backend_include_directories += [nixl_device_inc_dirs]
+endif
+
 if 'UCX' in static_plugins
     ucx_backend_lib = static_library('UCX',
                ucx_backend_sources,
