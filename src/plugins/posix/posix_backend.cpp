@@ -123,8 +123,6 @@ logOnPercentStep(unsigned int completed, unsigned int total) {
 // POSIX Backend Request Handle Implementation
 // -----------------------------------------------------------------------------
 
-// NOTE: we initialize num_confirmed_ios_ to the number of descriptors, so if checkXfer is called
-// before postXfer, it will return NIXL_SUCCESS immediately.
 nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
                                            const nixl_meta_dlist_t &loc,
                                            const nixl_meta_dlist_t &rem,
@@ -132,8 +130,6 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
     : operation(op),
       local(loc),
       remote(rem),
-      queue_depth_(loc.descCount()),
-      num_confirmed_ios_(queue_depth_),
       io_queue_(io_queue) {
     NIXL_ASSERT(local.descCount());
     NIXL_ASSERT(remote.descCount());
@@ -146,7 +142,7 @@ nixlPosixBackendReqH::ioDone(uint32_t data_size, int error) {
         NIXL_ERROR << "POSIX transfer failed: an io completed short or with an error";
         transfer_failed_ = true;
     }
-    logOnPercentStep(num_confirmed_ios_, queue_depth_);
+    logOnPercentStep(num_confirmed_ios_, enqueued_ios_);
 }
 
 void
@@ -189,23 +185,28 @@ nixlPosixBackendReqH::queueResult(nixl_status_t queue_result) {
     }
 
     requestCancellation();
-    if (queue_result < 0 && cancels_expected_ == 0) {
-        return queue_result;
-    }
-
     if (!isComplete()) {
         return NIXL_IN_PROG;
+    }
+    if (queue_result < 0) {
+        return queue_result;
     }
     return transfer_failed_ ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
 }
 
 nixl_status_t
 nixlPosixBackendReqH::checkXfer() {
-    nixl_status_t queue_result = isComplete() ? NIXL_SUCCESS : io_queue_->poll();
-    if (queue_result < 0 && !isComplete()) {
-        return queue_result;
+    if (isComplete()) {
+        return queueResult(NIXL_SUCCESS);
     }
-    return queueResult(isComplete() ? NIXL_SUCCESS : queue_result);
+
+    nixl_status_t status = io_queue_->poll();
+    if (status < 0) {
+        // poll() errors are terminal and queue-wide. Outstanding work may remain.
+        return status;
+    }
+
+    return queueResult(status);
 }
 
 nixl_status_t
@@ -214,6 +215,7 @@ nixlPosixBackendReqH::postXfer() {
         NIXL_ERROR << "POSIX I/O queue is not initialized";
         return NIXL_ERR_BACKEND;
     }
+    enqueued_ios_ = 0;
     num_confirmed_ios_ = 0;
     transfer_failed_ = false;
     cancellation_requested_ = false;
@@ -235,8 +237,9 @@ nixlPosixBackendReqH::postXfer() {
         if (status != NIXL_SUCCESS) {
             // Currently we do not support partial submissions, so it's all or nothing
             NIXL_ERROR << absl::StrFormat("Error preparing I/O operation: %d", status);
-            return status;
+            return queueResult(status);
         }
+        enqueued_ios_++;
     }
 
     return queueResult(io_queue_->post());
