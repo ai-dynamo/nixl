@@ -593,6 +593,9 @@ devices can differ between the initiator and target processes.
 **GPUNETIO Backend:**
 ```
 --gpunetio_device_list LIST # Comma-separated GPU CUDA device id for GPUNETIO
+--gpunetio_oob_list IFACE  # OOB interface; set explicitly for bonded network devices
+--gpunetio_oob_port PORT   # OOB TCP port; use a distinct port per colocated backend
+--gpunetio_gid_index N     # RoCE GID table index (default: 0)
 ```
 
 **OBJ (S3) Backend:**
