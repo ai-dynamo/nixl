@@ -1015,7 +1015,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         ret2 = rem_sec_it->second->populate(remote_descs, backend, handle->targetDescs);
 
         if ((ret1 == NIXL_SUCCESS) && (ret2 == NIXL_SUCCESS)) {
-            NIXL_INFO << "Selected backend: " << backend->getType();
+            NIXL_DEBUG << "Selected backend: " << backend->getType();
             handle->engine = backend;
             break;
         }
