@@ -155,6 +155,15 @@ getPtr(nixlMemViewH mvh, size_t index) {
     return ptr;
 }
 
+template<level_t level>
+__device__ nixl_status_t
+flush(const nixlMemViewH &remote, unsigned channel_id) {
+    // TODO: Implement flush for UCX
+    (void)remote;
+    (void)channel_id;
+    return NIXL_SUCCESS;
+}
+
 } // namespace nixl::gpu::impl::ucx
 
 #endif // NIXL_SRC_API_DEVICE_GPU_IMPL_UCX_DEVICE_UCX_CUH

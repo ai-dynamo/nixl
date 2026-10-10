@@ -132,6 +132,12 @@ getPtr(nixlMemViewH mvh, size_t index) {
     return impl::getPtr<mode>(mvh, index);
 }
 
+template<level_t level = level_t::THREAD>
+__device__ nixl_status_t
+flush(const nixlMemViewH &remote, unsigned channel_id = 0) {
+    return impl::flush<level>(remote, channel_id);
+}
+
 } // namespace nixl::gpu
 
 /**
@@ -237,6 +243,12 @@ template<nixl_device_exec_mode_t mode = nixl_device_exec_mode_t::DYNAMIC>
 __device__ inline void *
 nixlGetPtr(nixlMemViewH mvh, size_t index) {
     return nixl::gpu::getPtr<mode>(mvh, index);
+}
+
+template<nixl_gpu_level_t level = nixl_gpu_level_t::THREAD>
+__device__ nixl_status_t
+nixlFlush(const nixlMemViewH &remote, unsigned channel_id = 0) {
+    return nixl::gpu::flush<level>(remote, channel_id);
 }
 
 #endif // NIXL_SRC_API_DEVICE_GPU_NIXL_DEVICE_CUH
