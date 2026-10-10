@@ -128,6 +128,36 @@ TEST_F(telemetryTest, InvalidBufferSize) {
     envHelper_.popVar();
 }
 
+TEST_F(telemetryTest, ReaderReattachSeedsCachedPos) {
+    // Cached write and read pos need to be seeded on attach
+    auto path = std::string(testDir_.string()) + "/" + testFile_;
+    sharedRingBuffer<nixlTelemetryEvent> producer(path, true, TELEMETRY_VERSION, 8);
+
+    for (size_t i = 0; i < 3; i++) {
+        EXPECT_TRUE(producer.push({nixl_telemetry_event_type_t::AGENT_TX_BYTES, i}));
+    }
+    // First consumer reads part of the stream, then gets destroyed
+    {
+        sharedRingBuffer<nixlTelemetryEvent> consumer1(path, false, TELEMETRY_VERSION);
+        nixlTelemetryEvent out;
+        for (size_t i = 0; i < 2; i++) {
+            EXPECT_TRUE(consumer1.pop(out));
+            EXPECT_EQ(out.value_, i);
+        }
+    }
+    // A second consumer attaches mid-stream, still SPSC
+    {
+        // Must see exactly the one unread event, then empty
+        sharedRingBuffer<nixlTelemetryEvent> consumer2(path, false, TELEMETRY_VERSION);
+        nixlTelemetryEvent out;
+        EXPECT_EQ(consumer2.size(), 1u);
+        EXPECT_TRUE(consumer2.pop(out));
+        EXPECT_EQ(out.value_, 2u);
+        EXPECT_FALSE(consumer2.pop(out));
+    }
+    EXPECT_FALSE(producer.full());
+}
+
 TEST_F(telemetryTest, NonexistentExporterThrows) {
     // An explicitly requested exporter that cannot be loaded must surface the
     // failure rather than silently disabling telemetry.
@@ -273,7 +303,7 @@ TEST_F(telemetryTest, AddXferStatsRxBranch) {
 TEST_F(telemetryTest, TelemetryEventStructure) {
     nixlTelemetryEvent event1(nixl_telemetry_event_type_t::AGENT_TX_BYTES, 42);
 
-    EXPECT_EQ(TELEMETRY_VERSION, 4);
+    EXPECT_EQ(TELEMETRY_VERSION, 5);
     EXPECT_EQ(sizeof(nixlTelemetryEvent), 16);
     EXPECT_EQ(event1.value_, 42);
     EXPECT_EQ(event1.eventType_, nixl_telemetry_event_type_t::AGENT_TX_BYTES);
