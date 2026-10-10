@@ -14,7 +14,7 @@ MemoryPolicy::MemoryPolicy(std::shared_ptr<const Runtime> runtime) : runtime_(st
     if (count <= 0) {
         throw std::runtime_error("MUSA_UCX requires at least one visible MUSA device");
     }
-    deviceCount_ = static_cast<uint64_t>(count);
+    device_count_ = static_cast<uint64_t>(count);
 }
 
 nixl_status_t
@@ -26,7 +26,7 @@ MemoryPolicy::validateBeforeMap(const nixlBlobDesc &desc, nixl_mem_t type) const
     if (type == DRAM_SEG) {
         return NIXL_SUCCESS;
     }
-    if (desc.devId >= deviceCount_) {
+    if (desc.devId >= device_count_) {
         return NIXL_ERR_INVALID_PARAM;
     }
     const auto attributes = runtime_->pointerAttributes(desc.addr);

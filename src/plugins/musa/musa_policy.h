@@ -6,6 +6,9 @@
 #include "musa_runtime.h"
 #include "../ucx/memory_policy.h"
 
+#include <cstdint>
+#include <string_view>
+
 namespace nixl::musa {
 class MemoryPolicy final : public nixl::ucx::MemoryRegistrationPolicy {
 public:
@@ -21,7 +24,7 @@ public:
 
 private:
     const std::shared_ptr<const Runtime> runtime_;
-    uint64_t deviceCount_;
+    uint64_t device_count_;
 };
 } // namespace nixl::musa
 

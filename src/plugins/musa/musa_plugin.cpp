@@ -7,6 +7,8 @@
 #include "common/nixl_log.h"
 
 #include <exception>
+#include <memory>
+#include <utility>
 
 namespace {
 nixlBackendEngine *

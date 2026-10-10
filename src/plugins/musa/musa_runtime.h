@@ -10,8 +10,8 @@
 namespace nixl::musa {
 
 struct PointerAttributes {
-    bool device_memory;
-    int device;
+    bool device_memory = false;
+    int device = -1;
 };
 
 class Runtime {
