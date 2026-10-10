@@ -56,6 +56,12 @@ getPtr(nixlMemViewH, size_t) {
     return nullptr;
 }
 
+template<level_t level>
+__device__ nixl_status_t
+flush(const nixlMemViewH &, unsigned) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
 } // namespace nixl::gpu::impl::ucx
 #endif
 
@@ -190,6 +196,12 @@ getPtr(nixlMemViewH mvh, size_t index) {
     default:
         return nullptr;
     }
+}
+
+template<level_t level>
+__device__ nixl_status_t
+flush(const nixlMemViewH &remote, unsigned channel_id) {
+    return ucx::flush<level>(remote, channel_id);
 }
 
 } // namespace nixl::gpu::impl
