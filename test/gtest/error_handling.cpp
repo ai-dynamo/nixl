@@ -55,6 +55,9 @@ namespace nixl {
         params["num_threads"] = std::to_string(num_threads);
         // If threadpool is configured always force split
         params["split_batch_size"] = "0";
+        // Keep these UCX settings in the per-backend config so this suite does not depend on
+        // whether another test suite initialized UCX before it.
+        params["engine_config"] = "RC_TIMEOUT=100us,RC_RETRY_COUNT=4,UD_TIMEOUT=3s";
         status = agent.createBackend(*it, params, backend_handle);
         EXPECT_EQ(NIXL_SUCCESS, status);
         EXPECT_NE(nullptr, backend_handle);
@@ -109,6 +112,8 @@ class TestErrorHandling : public nixl_test_t {
         void fillRegList(nixl_xfer_dlist_t& dlist, nixlBasicDesc& desc) const;
         std::string getLocalMD() const;
         void loadRemoteMD(const std::string& remote_name);
+        nixl_status_t
+        invalidateRemoteMD(const std::string &remote_name);
         nixl_status_t createXferReq(const nixl_xfer_op_t& op,
                                     nixl_xfer_dlist_t& sReq_descs,
                                     nixl_xfer_dlist_t& rReq_descs,
@@ -191,6 +196,7 @@ TestErrorHandling::Agent::init(const std::string &name,
                                bool use_prog_thread,
                                size_t num_workers,
                                size_t num_threads) {
+    m_name = name;
     nixlAgentConfig cfg;
     m_progThread = use_prog_thread;
     cfg.useProgThread = use_prog_thread;
@@ -231,6 +237,11 @@ std::string TestErrorHandling::Agent::getLocalMD() const {
 void TestErrorHandling::Agent::loadRemoteMD(const std::string& remote_name) {
     EXPECT_EQ(NIXL_SUCCESS, m_priv->loadRemoteMD(remote_name, m_MetaRemote))
         << "Agent " << m_name << " failed to load remote metadata";
+}
+
+nixl_status_t
+TestErrorHandling::Agent::invalidateRemoteMD(const std::string &remote_name) {
+    return m_priv->invalidateRemoteMD(remote_name);
 }
 
 nixl_status_t
@@ -310,9 +321,9 @@ TestErrorHandling::TestErrorHandling()
       progThread_(GetParam().progressThreadEnabled),
       numWorkers_(GetParam().numWorkers),
       numThreads_(GetParam().numThreads) {
-    m_env.addVar("UCX_RC_TIMEOUT", "100us");
-    m_env.addVar("UCX_RC_RETRY_COUNT", "4");
-    m_env.addVar("UCX_UD_TIMEOUT", "3s");
+    // m_env.addVar("UCX_RC_TIMEOUT", "100us");
+    // m_env.addVar("UCX_RC_RETRY_COUNT", "4");
+    // m_env.addVar("UCX_UD_TIMEOUT", "3s");
     m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
 }
 
@@ -459,7 +470,7 @@ TestErrorHandling::postXfer(enum nixl_xfer_op_t op, size_t iter) {
         // invalidates the remote data), so release the handle here to avoid
         // leaking it and its backend request handle. The caller only gets the
         // status, so it cannot release it itself.
-        m_Initiator.releaseXferReq(req_handle);
+        EXPECT_EQ(NIXL_SUCCESS, m_Initiator.releaseXferReq(req_handle));
         return status;
     }
 
