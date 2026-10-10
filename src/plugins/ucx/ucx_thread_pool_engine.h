@@ -23,7 +23,9 @@
 
 class nixlUcxThreadPoolEngine : public nixlUcxThreadEngine {
 public:
-    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params, size_t num_threads);
+    nixlUcxThreadPoolEngine(const nixlBackendInitParams &init_params,
+                            size_t num_threads,
+                            nixl::ucx::MemoryPolicyPtr policy = {});
 
     ~nixlUcxThreadPoolEngine() override;
 
