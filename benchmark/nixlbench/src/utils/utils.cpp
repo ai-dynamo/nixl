@@ -194,7 +194,7 @@ NB_ARG_INT32(use_localized,
 NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
 
 // Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
-NB_ARG_STRING(filepath, "", "File path for storage operations");
+NB_ARG_STRING(filepath, "", "Directory where storage backends create their benchmark files");
 NB_ARG_STRING(filenames, "", "Comma-separated filenames for storage operations");
 NB_ARG_INT32(num_files, 1, "Number of files used by benchmark");
 NB_ARG_BOOL(storage_enable_direct, false, "Enable direct I/O for storage operations");
@@ -777,6 +777,14 @@ xferBenchConfig::loadParams(void) {
     randomize_location_mode = NB_ARG(randomize_location_mode);
     randomize_location_mode_seed = NB_ARG(randomize_location_mode_seed);
     filepath = NB_ARG(filepath);
+    if (!filepath.empty()) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(filepath, ec)) {
+            std::cerr << "Invalid filepath: " << filepath << " is not an existing directory"
+                      << std::endl;
+            return -1;
+        }
+    }
     filenames = NB_ARG(filenames);
     num_files = NB_ARG(num_files);
     posix_api_type = NB_ARG(posix_api_type);
