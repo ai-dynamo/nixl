@@ -31,7 +31,7 @@ Note that plugin implementation is in C++ to achieve SOL, and the header files f
 
 NIXL implements a modular plugin architecture where each backend is encapsulated within a library that exposes its features through the SB API, such as [UCX](https://github.com/ai-dynamo/nixl/tree/main/src/plugins/ucx), [GPUDirect Storage (GDS)](https://github.com/ai-dynamo/nixl/tree/main/src/plugins/cuda_gds), or any other custom implementation. The Plugin Manager component within NIXL handles discovery, loading, and instantiation of backend plugins, whether they are dynamically loaded or statically built into the NIXL library. Each plugin needs to implement the SB API, as well as a few methods for the plugin manager, which are discussed in the following sections.
 
-Note that some of the methods in the SB API are not necessary to be implemented, for instance if a backend does not support notifications, it can indicate it through supportsNotif() method, and if it returns false, the agent will not send requests with notifications to this backend. There are 4 such capability indicators, which are detailed further and which APIs are required to be implemented for each of them.
+Note that some of the methods in the SB API are not necessary to be implemented, for instance if a backend does not support notifications, it can indicate it through supportsNotif() method, and if it returns false, the agent will not send requests with notifications to this backend. There are 5 such capability indicators, which are detailed further and which APIs are required to be implemented for each of them.
 
 ![NIXL SB API](figures/nixl_sb_api.png)
 
@@ -52,6 +52,7 @@ The key/value parameters are a map of strings to byte arrays that are passed fro
 * supportsRemote(): Indicates if the backend supports transfers across nodes
 * supportsNotif(): Indicates if the backend supports notifications
 * getSupportedMems(): Indicates memory types supported by the backend
+* supportsTraceContext(): Indicates if the backend carries a request's trace context to its peer. Optional and `false` by default; only in-tree plugins can implement it, since the trace context type is internal
 
 Based on the first 3 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend must have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional.
 

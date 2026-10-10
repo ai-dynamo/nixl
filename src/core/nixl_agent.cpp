@@ -194,6 +194,20 @@ makeMDConfig(const nixlAgentConfig &config) {
             std::chrono::microseconds(config.lthrDelay)};
 }
 
+template<typename logFn>
+void
+logOnce(std::atomic<bool> &logged, logFn &&log) noexcept {
+    if (logged.load(std::memory_order_relaxed) ||
+        logged.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+    try {
+        log();
+    }
+    catch (...) {
+    }
+}
+
 } // namespace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
@@ -296,6 +310,38 @@ nixlAgentData::warnAboutEfaHardwareMismatch() {
     }
 }
 
+nixl::trace::TraceContext
+nixlAgentData::makeTraceContext() {
+    try {
+        return nixl::trace::TraceContext{tracer_.get()};
+    }
+    catch (const std::exception &e) {
+        logOnce(traceContextFailureLogged_, [&e] {
+            NIXL_ERROR << "nixl::trace: could not generate a trace context (" << e.what()
+                       << "); the request continues untraced and further failures are not "
+                          "logged";
+        });
+    }
+    return {};
+}
+
+void
+nixlAgentData::warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
+                                             const nixl::trace::TraceContext &context) noexcept {
+    if (!context.sampled()) {
+        return;
+    }
+    const auto it = traceContextUnsupported_.find(backend.getType());
+    if (it == traceContextUnsupported_.end()) {
+        return;
+    }
+    logOnce(it->second, [&backend] {
+        NIXL_WARN << "nixl::trace: backend '" << backend.getType()
+                  << "' cannot carry trace contexts, so sampled transfers through it reach "
+                     "remote agents untraced; logged once per backend and agent";
+    });
+}
+
 nixl_status_t
 nixlAgent::createBackend(const nixl_backend_t &type,
                          const nixl_b_params_t &params,
@@ -395,6 +441,9 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     if (backend->supportsRemote()) {
         data->notifEngines.push_back(backend.get());
         data->connMd_[type] = conn_info;
+        if ((data->tracer_ != nullptr) && !backend->supportsTraceContext()) {
+            data->traceContextUnsupported_.try_emplace(type);
+        }
     }
 
     // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
@@ -835,7 +884,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                                                  remote_descs.getType(),
                                                  desc_count,
                                                  remote_side.remoteSectionRef,
-                                                 nixl::trace::TraceContext{data->tracer_.get()});
+                                                 data->makeTraceContext());
 
     size_t total_bytes = 0;
     const bool skip_desc_merge = extra_params && extra_params->skipDescMerge;
@@ -924,6 +973,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
         return ret;
     }
 
+    data->warnIfTraceContextUnsupported(*backend, handle->traceContext());
     req_hndl = handle.release();
     return NIXL_SUCCESS;
 }
@@ -1005,7 +1055,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
                                                  remote_descs.getType(),
                                                  local_descs.descCount(),
                                                  rem_sec_it->second,
-                                                 nixl::trace::TraceContext{data->tracer_.get()});
+                                                 data->makeTraceContext());
 
     // Currently we loop through and find first local match. Can use a
     // preference list or more exhaustive search.
@@ -1071,6 +1121,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         return ret1;
     }
 
+    data->warnIfTraceContextUnsupported(*handle->engine, handle->traceContext());
     req_hndl = handle.release();
     return NIXL_SUCCESS;
 }

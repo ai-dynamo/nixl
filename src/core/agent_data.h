@@ -22,6 +22,7 @@
 #include "nixl_metadata_context.h"
 #include "telemetry.h"
 #include "tracing/trace.h"
+#include "tracing/trace_context.h"
 #include "sync.h"
 
 #include <atomic>
@@ -46,6 +47,7 @@ class nixlAgentData final : public nixlMetadataContext {
         nixlMDManager md_;
         nixlLock        lock;
         std::atomic<bool> efaWarningChecked = false;
+        std::atomic<bool> traceContextFailureLogged_ = false;
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
@@ -65,6 +67,7 @@ class nixlAgentData final : public nixlMetadataContext {
         // backend is active.
         const std::unique_ptr<nixl::trace::Tracer> tracer_;
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendTraceSink>> traceSinks_;
+        std::unordered_map<nixl_backend_t, std::atomic<bool>> traceContextUnsupported_;
         // Bookkeeping for local connection metadata and user handles per backend
         std::unordered_map<nixl_backend_t, std::unique_ptr<nixlBackendH>> backendHandles_;
         std::unordered_map<nixl_backend_t, nixl_blob_t> connMd_;
@@ -102,6 +105,11 @@ class nixlAgentData final : public nixlMetadataContext {
                     nixl_mem_t mem_type);
         void
         warnAboutEfaHardwareMismatch();
+        [[nodiscard]] nixl::trace::TraceContext
+        makeTraceContext();
+        void
+        warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
+                                      const nixl::trace::TraceContext &context) noexcept;
 
         template<class dlist_t>
         nixl_status_t
