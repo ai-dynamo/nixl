@@ -53,7 +53,9 @@ resolveVramSegment() {
 #elif HAVE_ROCM
     return VRAM_SEG;
 #else
-    if (neuronCoreCount() > 0) return VRAM_SEG;
+    if (neuronCoreCount() > 0) {
+        return VRAM_SEG;
+    }
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     std::exit(EXIT_FAILURE);
 #endif
@@ -282,8 +284,13 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
             std::cout << "OBJ backend with standard S3 enabled" << std::endl;
         }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_REDIS)) {
-        // REDIS backend: host/port/password via REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
-        std::cout << "REDIS backend configured (using defaults or environment variables)"
+        // getPluginParams() pre-fills the plugin's advertised defaults, which take
+        // precedence over REDIS_* env vars in fromBackendParams. Clear them so
+        // REDIS_HOST, REDIS_PORT, etc. are honoured.
+        for (const char *k : {"host", "port", "username", "password", "db", "pool_size"}) {
+            backend_params.erase(k);
+        }
+        std::cout << "REDIS backend configured (using REDIS_* environment variables or defaults)"
                   << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_GUSLI)) {
         // GUSLI backend requires direct I/O - enable it automatically
@@ -1396,8 +1403,7 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                     remote_iov_list.push_back(redis_remote);
                 } else if (xferBenchConfig::isObjStorageBackend()) {
                     std::optional<xferBenchIOV> basic_desc;
-                    int obj_dev_id = list_idx * xferBenchConfig::num_initiator_dev + iov.devId;
-                    basic_desc = initBasicDescObj(iov.len, obj_dev_id, iov.metaInfo);
+                    basic_desc = initBasicDescObj(iov.len, iov.devId, iov.metaInfo);
                     if (basic_desc) {
                         remote_iov_list.push_back(basic_desc.value());
                     }

@@ -101,7 +101,6 @@ RUN apt-get update -y && \
     hwloc \
     libhwloc-dev \
     build-essential \
-    libhiredis-dev \
     libevent-dev \
     redis-tools
 
@@ -183,6 +182,7 @@ ARG LIBFABRIC_VERSION="v1.21.0"
 ARG NPROC
 ARG ABSL_TAG="lts_2025_08_14"
 ARG GRPC_TAG="v1.73.0"
+ARG HIREDIS_VERSION="1.4.0"
 
 WORKDIR /workspace
 
@@ -258,6 +258,25 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig git clone --depth 1 
     mkdir build && cd build && \
     cmake .. -DBUILD_ETCD_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release -DETCD_CMAKE_CXX_STANDARD=20 -DCMAKE_CXX_STANDARD=20 -DCMAKE_PREFIX_PATH=/usr/local && \
     make -j${NPROC:-$(nproc)} && make install
+
+# Build hiredis from source via cmake (make is avoided: LIBRARY_PATH set by the CUDA base image
+# contaminates the Makefile's pkgconfig install path).
+RUN wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+        -O "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" && \
+    tar -xzf "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz" -C /tmp && \
+    mkdir -p "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
+    cd "/tmp/hiredis-${HIREDIS_VERSION}/build" && \
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DENABLE_SSL=ON \
+        -DBUILD_SHARED_LIBS=ON && \
+    make -j"${NPROC:-$(nproc)}" && \
+    make install && \
+    ldconfig && \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig pkg-config --atleast-version=1.0.1 hiredis && \
+    rm -rf "/tmp/hiredis-${HIREDIS_VERSION}" "/tmp/hiredis-${HIREDIS_VERSION}.tar.gz"
 
 # Install AWS SDK C++ dependencies and build
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev uuid-dev zlib1g-dev hwloc libhwloc-dev

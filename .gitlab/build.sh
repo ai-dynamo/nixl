@@ -141,6 +141,9 @@ else
                                  protobuf-compiler-grpc \
                                  pybind11-dev \
                                  etcd-server \
+                                 redis-server \
+                                 libhiredis-dev \
+                                 libevent-dev \
                                  net-tools \
                                  iproute2 \
                                  pciutils \
@@ -159,6 +162,28 @@ else
     if grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
         # Upgrade pip for '--break-system-packages' support
         $SUDO pip3 install --upgrade pip
+
+        # Ubuntu 22.04 ships hiredis 0.14.x which is below the >=1.0.0 floor
+        # required by the Redis plugin. Replace it with a source build.
+        $SUDO apt-get remove -y libhiredis-dev 2>/dev/null || true
+        HIREDIS_TAG="v1.2.0"
+        ( \
+          cd "${BUILD_TMP}" && \
+          git clone --depth 1 -b "${HIREDIS_TAG}" https://github.com/redis/hiredis.git && \
+          cd hiredis && \
+          mkdir build && cd build && \
+          cmake .. \
+              -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DENABLE_SSL=ON \
+              -DBUILD_SHARED_LIBS=ON && \
+          make -j"$NPROC" && \
+          $SUDO make install && \
+          $SUDO ldconfig && \
+          cd "${BUILD_TMP}" && \
+          rm -rf hiredis \
+        )
     fi
 
     # Install python dependencies and upgrade to latest version
