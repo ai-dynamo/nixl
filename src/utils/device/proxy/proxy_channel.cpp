@@ -154,12 +154,24 @@ proxyChannel::drained() const noexcept {
     return true;
 }
 
+bool
+proxyChannel::skipAbandonedTickets() noexcept {
+    bool skipped = false;
+    for (proxyRing &ring : rings_) {
+        skipped = ring.skipAbandonedTickets() || skipped;
+    }
+    return skipped;
+}
+
 void
 proxyChannel::drainAndRearm(proxyTransport &transport) noexcept {
     for (uint32_t peer = 0; peer < rings_.size(); ++peer) {
         proxyRing &ring = rings_[peer];
         if (!ring.allocated()) {
             continue;
+        }
+        if (ring.selectDevice() != NIXL_SUCCESS) {
+            NIXL_FATAL << "Failed to select proxy ring device";
         }
         if (!ring.assertDrained()) {
             NIXL_FATAL << "Proxy ring has unfinished or unpublished producer tickets";
