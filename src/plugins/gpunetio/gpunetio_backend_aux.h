@@ -18,6 +18,7 @@
 #ifndef GPUNETIO_BACKEND_AUX_H
 #define GPUNETIO_BACKEND_AUX_H
 
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <iostream>
@@ -52,18 +53,24 @@
 
 // Local includes
 #include "common/nixl_time.h"
+#include "gpunetio_oob_endpoint.h"
 
-constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 128;
+constexpr uint32_t DOCA_EIGHT_RANK_MAX_INFLIGHT = 7 * 36 + 7;
+constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT = 512;
 constexpr uint32_t DOCA_MAX_COMPLETION_INFLIGHT_MASK = (DOCA_MAX_COMPLETION_INFLIGHT - 1);
 constexpr uint32_t RDMA_SEND_QUEUE_SIZE = 2048;
 constexpr uint32_t RDMA_RECV_QUEUE_SIZE = (RDMA_SEND_QUEUE_SIZE * 2);
 constexpr uint32_t DOCA_POST_STREAM_NUM = 4;
 constexpr uint32_t DOCA_XFER_REQ_SIZE = 512;
-constexpr uint32_t DOCA_XFER_REQ_MAX = 32;
+constexpr uint32_t DOCA_XFER_REQ_MAX = 512;
 constexpr uint32_t DOCA_XFER_REQ_MASK = (DOCA_XFER_REQ_MAX - 1);
 constexpr uint32_t DOCA_ENG_MAX_CONN = 20;
-constexpr uint32_t DOCA_RDMA_CM_LOCAL_PORT_SERVER = 6544;
 constexpr uint32_t VERBS_TEST_HOP_LIMIT = 255;
+
+static_assert((DOCA_MAX_COMPLETION_INFLIGHT & DOCA_MAX_COMPLETION_INFLIGHT_MASK) == 0);
+static_assert((DOCA_XFER_REQ_MAX & DOCA_XFER_REQ_MASK) == 0);
+static_assert(DOCA_MAX_COMPLETION_INFLIGHT >= DOCA_EIGHT_RANK_MAX_INFLIGHT);
+static_assert(DOCA_XFER_REQ_MAX >= DOCA_EIGHT_RANK_MAX_INFLIGHT);
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define DOCA_RDMA_SERVER_ADDR_LEN \
@@ -80,10 +87,14 @@ constexpr uint32_t DOCA_NOTIF_NULL = 0xFFFFFFFF;
 struct docaXferReqGpu {
     uint32_t id;
     uintptr_t lbuf[DOCA_XFER_REQ_SIZE];
+    uintptr_t lbuf2[DOCA_XFER_REQ_SIZE];
     uintptr_t rbuf[DOCA_XFER_REQ_SIZE];
     size_t size[DOCA_XFER_REQ_SIZE];
+    size_t size2[DOCA_XFER_REQ_SIZE];
     uint32_t lkey[DOCA_XFER_REQ_SIZE];
+    uint32_t lkey2[DOCA_XFER_REQ_SIZE];
     uint32_t rkey[DOCA_XFER_REQ_SIZE];
+    uint8_t num_sge[DOCA_XFER_REQ_SIZE];
     uint16_t num;
     uint8_t in_use;
     uint32_t conn_idx;
@@ -169,12 +180,12 @@ struct nixlDocaRdmaQp {
     std::unique_ptr<nixl::doca::verbs::qp> qp_data;
     uint32_t qpn_data;
     uint32_t rqpn_data;
-    uint32_t remote_gid_data;
 
     std::unique_ptr<nixl::doca::verbs::qp> qp_notif;
     uint32_t qpn_notif;
     uint32_t rqpn_notif;
-    uint32_t remote_gid_notif;
+    doca_verbs_gid remote_gid{};
+    uint32_t remote_lid = 0;
 };
 
 struct nixlDocaEngine;
@@ -184,7 +195,9 @@ nixlDocaEngineCheckCudaError(cudaError_t result, const char *message);
 void
 nixlDocaEngineCheckCuError(CUresult result, const char *message);
 int
-oob_connection_client_setup(const char *server_ip, int *oob_sock_fd);
+oob_connection_client_setup(const char *server_ip,
+                            int *oob_sock_fd,
+                            uint16_t server_port = GPUNETIO_DEFAULT_OOB_PORT);
 void
 oob_connection_client_close(int oob_sock_fd);
 void
@@ -197,7 +210,11 @@ create_verbs_ah_attr(doca_verbs_context *verbs_context,
                      enum doca_verbs_addr_type addr_type,
                      doca_verbs_ah_attr **verbs_ah_attr);
 doca_error_t
-connect_verbs_qp(nixlDocaEngine *eng, doca_verbs_qp *qp, uint32_t rqpn, uint32_t remote_gid);
+connect_verbs_qp(nixlDocaEngine *eng,
+                 doca_verbs_qp *qp,
+                 uint32_t rqpn,
+                 const doca_verbs_gid &remote_gid,
+                 uint32_t remote_lid);
 void *
 threadProgressFunc(void *arg);
 int
