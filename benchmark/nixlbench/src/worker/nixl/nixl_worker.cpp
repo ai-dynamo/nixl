@@ -1783,7 +1783,8 @@ cleanupSlots(nixlAgent *agent, nixlBackendH *backend_engine, std::vector<slotSta
 // requests. Depth=1 collapses to the original "one create, N posts, one
 // release" baseline (the previous execTransferIterations); --recreate_xfer
 // tears down and rebuilds the request between iterations, --reregister_mem
-// adds the matching registerMem/deregisterMem cycle.
+// adds the matching registerMem/deregisterMem cycle. The loop stops early on
+// *terminate_ptr, or on *abort_ptr, which another thread raises when it fails.
 static int
 execTransferLoop(nixlAgent *agent,
                  nixlBackendH *backend_engine,
@@ -1794,7 +1795,11 @@ execTransferLoop(nixlAgent *agent,
                  xferBenchStats &thread_stats,
                  const std::vector<xferBenchIOV> &local_iov,
                  const std::vector<xferBenchIOV> &remote_iov,
-                 const std::atomic<int> *terminate_ptr = nullptr) {
+                 const std::atomic<int> *terminate_ptr = nullptr,
+                 const std::atomic<bool> *abort_ptr = nullptr) {
+    auto stopping = [&] {
+        return (terminate_ptr && terminate_ptr->load()) || (abort_ptr && abort_ptr->load());
+    };
     const int depth = std::min(xferBenchConfig::pipeline_depth, num_iter);
     if (depth < xferBenchConfig::pipeline_depth) {
         std::cout << "Warning: pipeline_depth (" << xferBenchConfig::pipeline_depth
@@ -1821,7 +1826,7 @@ execTransferLoop(nixlAgent *agent,
     int completed = 0;
 
     for (int s = 0; s < depth; s++) {
-        if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
+        if (stopping()) [[unlikely]] {
             cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
@@ -1844,7 +1849,7 @@ execTransferLoop(nixlAgent *agent,
     }
 
     while (completed < num_iter) {
-        if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
+        if (stopping()) [[unlikely]] {
             cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
@@ -1873,7 +1878,7 @@ execTransferLoop(nixlAgent *agent,
                 continue;
             }
 
-            if (terminate_ptr && terminate_ptr->load()) [[unlikely]] {
+            if (stopping()) [[unlikely]] {
                 cleanupSlots(agent, backend_engine, slots);
                 return -1;
             }
@@ -1922,6 +1927,9 @@ execTransfer(nixlAgent *agent,
              const std::atomic<int> *terminate_ptr = nullptr) {
     int ret = 0;
     stats.clear();
+    // Raised by the first thread that fails, so the others stop instead of
+    // each reporting the same fault.
+    std::atomic<bool> aborted{false};
 
     xferBenchTimer total_timer;
 #pragma omp parallel num_threads(num_threads)
@@ -1948,14 +1956,20 @@ execTransfer(nixlAgent *agent,
                                       thread_stats,
                                       local_iov,
                                       remote_iov,
-                                      terminate_ptr);
+                                      terminate_ptr,
+                                      &aborted);
 
         if (result != 0) [[unlikely]] {
-            ret = result;
+            aborted = true;
         }
 
 #pragma omp critical
-        { stats.add(thread_stats); }
+        {
+            if (result != 0) {
+                ret = result;
+            }
+            stats.add(thread_stats);
+        }
     }
 
     const nixlTime::us_t total_duration = total_timer.lap();
