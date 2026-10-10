@@ -37,7 +37,6 @@
 
 #include <cuda_runtime.h>
 
-#include <ATen/cuda/CUDAContext.h>
 #include <torch/types.h>
 
 #include <pybind11/pytypes.h>
@@ -123,7 +122,7 @@ private:
     int num_experts_per_rank = 0;
 
     // Stream for communication
-    at::cuda::CUDAStream comm_stream;
+    cudaStream_t comm_stream;
 
     // After synchronization, this flag will be true
     bool available = false;
@@ -180,8 +179,7 @@ public:
 
     torch::Tensor get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset) const;
 
-    torch::Stream get_comm_stream() const;
-
+    int64_t get_comm_stream() const;
 
     void destroy();
 
