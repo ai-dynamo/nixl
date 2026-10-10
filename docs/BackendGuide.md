@@ -175,6 +175,9 @@ overridden before passing it to `createBackend` in C++ or `create_backend` in Py
 | Option key | Default | Description |
 | ---------- | ------- | ----------- |
 | `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy. `peer` requests peer failure reporting; `none` disables it. |
+| `ucx_vram_memtype_hint` | `auto` | Controls how NIXL hints the UCX memory type during VRAM registration. Supported values are exactly: `auto`, `none`, `cuda`, `cuda-managed`, `rocm`, `ze-device`. |
+
+The two options are independent; you do not need to set one to use the other.
 
 `ucx_error_handling_mode` affects UCP transport lane selection, not only error reporting.
 NIXL creates endpoints with `err_mode` set from this option, and UCP only selects lanes whose
@@ -192,6 +195,17 @@ can go undetected instead of surfacing as an error.
 `none` therefore trades remote failure visibility for transport availability. Prefer fixing lane
 eligibility in the transport over changing this option in deployments that need remote failure
 reporting.
+
+`ucx_vram_memtype_hint` controls the memory type NIXL passes to `ucp_mem_map` when registering
+VRAM. `auto` is the recommended default: it hints `ze-device` when the UCX context supports
+`ze-device` and none of `cuda`, `cuda-managed` or `rocm`, and otherwise leaves detection to UCX.
+`none` never hints, so the two differ only on those contexts, where `none` turns the `ze-device`
+hint off. The explicit values
+(`cuda`, `cuda-managed`, `rocm`, `ze-device`) force the corresponding memory type.
+
+Value matching is case-sensitive, so `CUDA` is rejected and backend creation fails with an
+invalid-argument error. The same happens when an explicit hint is not supported by the UCX context
+the backend was created with.
 
 ### Make connections (optional):
 
