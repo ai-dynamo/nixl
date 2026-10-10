@@ -159,9 +159,18 @@ nixl_status_t nixlUcxEngine::disconnect(const std::string &remote_agent) {
         return NIXL_ERR_NOT_FOUND;
     }
 
+    // Disconnect immediately on request - inflight request will be aborted
+    nixl_status_t status = NIXL_SUCCESS;
+    for (const auto &worker : workers_) {
+        const nixl_status_t ret = worker->disconnect(*it->second->getEp(worker->getId()));
+        if (ret != NIXL_SUCCESS) {
+            status = ret;
+        }
+    }
+
     // thread safety?
     remoteConnMap.erase(it);
-    return NIXL_SUCCESS;
+    return status;
 }
 
 nixl_status_t nixlUcxEngine::loadRemoteConnInfo (const std::string &remote_agent,

@@ -47,12 +47,6 @@ private:
 
     void
     setState(nixl::ucx::ep_state_t new_state);
-    nixl_status_t
-    closeImpl();
-
-    /* Connection */
-    nixl_status_t
-    disconnect_nb();
 
     static void
     sendAmCallback(void *request, ucs_status_t status, void *user_data);
@@ -71,6 +65,9 @@ public:
     nixlUcxEp(const nixlUcxEp &) = delete;
     nixlUcxEp &
     operator=(const nixlUcxEp &) = delete;
+
+    [[nodiscard]] nixl_status_t
+    disconnect(uint32_t flags = 0);
 
     /**
      * @brief Send an active message that owns its payload
@@ -222,6 +219,8 @@ public:
     epAddr();
     [[nodiscard]] std::unique_ptr<nixlUcxEp>
     connect(void *addr);
+    [[nodiscard]] nixl_status_t
+    disconnect(nixlUcxEp &ep);
 
     /* Active message handling */
     int

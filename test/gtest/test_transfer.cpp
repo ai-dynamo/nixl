@@ -285,7 +285,7 @@ protected:
     invalidateMD(size_t start, size_t end) {
         // Invalidate each other's metadata for the agents in the specified range
         for (size_t i = start; i <= end; i++) {
-            for (size_t j = start; j < end; j++) {
+            for (size_t j = start; j <= end; j++) {
                 if (i == j)
                     continue;
                 nixl_status_t status = agents[j]->invalidateRemoteMD(

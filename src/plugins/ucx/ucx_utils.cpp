@@ -91,14 +91,14 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
                << ", UCX error handling callback was invoked with status " << status << " ("
                << ucs_status_string(status) << ")";
 
-    NIXL_ASSERT(eph == ucp_ep);
-
     switch (current_state) {
     case nixl::ucx::ep_state_t::UNINITIALIZED:
     case nixl::ucx::ep_state_t::FAILED:
+    case nixl::ucx::ep_state_t::CLOSED:
         // The error was already handled, nothing to do
         return;
     case nixl::ucx::ep_state_t::CONNECTED:
+        NIXL_ASSERT(eph == ucp_ep);
         setState(nixl::ucx::ep_state_t::FAILED);
         return;
     }
@@ -123,13 +123,12 @@ ucpEpClose(ucp_ep_h ep, uint32_t flags) {
 } // namespace
 
 nixl_status_t
-nixlUcxEp::closeImpl() {
+nixlUcxEp::disconnect(uint32_t flags) {
     const nixl::ucx::ep_state_t current_state = state_;
 
     switch (current_state) {
     case nixl::ucx::ep_state_t::UNINITIALIZED:
-        // The EP has not been connected.
-        // Nothing to do.
+    case nixl::ucx::ep_state_t::CLOSED:
         NIXL_ASSERT(eph == nullptr);
         return NIXL_SUCCESS;
     case nixl::ucx::ep_state_t::FAILED: {
@@ -138,22 +137,24 @@ nixlUcxEp::closeImpl() {
             ucp_request_free(request);
         }
         eph = nullptr;
-        return NIXL_ERR_REMOTE_DISCONNECT;
+        setState(nixl::ucx::ep_state_t::CLOSED);
+        return NIXL_SUCCESS;
     }
     case nixl::ucx::ep_state_t::CONNECTED: {
-        ucs_status_ptr_t request = ucpEpClose(eph, 0);
+        ucs_status_ptr_t request = ucpEpClose(eph, flags);
+        eph = nullptr;
+        setState(nixl::ucx::ep_state_t::CLOSED);
         if (request == nullptr) {
-            eph = nullptr;
             return NIXL_SUCCESS;
         }
 
         if (UCS_PTR_IS_ERR(request)) {
-            eph = nullptr;
-            return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+            const nixl_status_t status = nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+            // At step of disconnect we can ignore the remote disconnect error.
+            return (status == NIXL_ERR_REMOTE_DISCONNECT) ? NIXL_SUCCESS : status;
         }
 
         ucp_request_free(request);
-        eph = nullptr;
         return NIXL_SUCCESS;
     }
     }
@@ -180,20 +181,8 @@ nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t er
 }
 
 nixlUcxEp::~nixlUcxEp() {
-    nixl_status_t status = disconnect_nb();
+    nixl_status_t status = disconnect();
     if (status) NIXL_ERROR << "Failed to disconnect ep with status " << status;
-}
-
-/* ===========================================
- * EP management
- * =========================================== */
-
-nixl_status_t
-nixlUcxEp::disconnect_nb() {
-    const nixl_status_t status = closeImpl();
-
-    // At step of disconnect we can ignore the remote disconnect error.
-    return (status == NIXL_ERR_REMOTE_DISCONNECT) ? NIXL_SUCCESS : status;
 }
 
 /* ===========================================
@@ -624,6 +613,13 @@ nixlUcxWorker::connect(void *addr) {
         NIXL_ERROR << *this << ": UCX endpoint create failed: " << e.what();
         return {};
     }
+}
+
+nixl_status_t
+nixlUcxWorker::disconnect(nixlUcxEp &ep) {
+    const uint32_t flags =
+        err_handling_mode_ == UCP_ERR_HANDLING_MODE_PEER ? UCP_EP_CLOSE_FLAG_FORCE : 0;
+    return ep.disconnect(flags);
 }
 
 /* ===========================================
