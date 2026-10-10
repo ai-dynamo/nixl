@@ -376,6 +376,10 @@ void Buffer::disconnect_ranks(const std::vector<int>& remote_ranks_list) {
     EP_HOST_ASSERT(remote_ranks_list.size() <= remote_ranks.size());
 
     CUDA_CHECK(cudaDeviceSynchronize());
+    // The views still reference the removed ranks; NIXL refuses to invalidate
+    // metadata a live view uses, so release them before disconnecting.
+    _nixl_ep_memory_views_destroy(staged_memory_views);
+    _nixl_ep_memory_views_destroy(active_memory_views);
 
     // Update mask buffer to mark ranks as inactive
     for (int removed_rank : remote_ranks_list) {
