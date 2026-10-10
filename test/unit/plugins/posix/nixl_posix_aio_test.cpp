@@ -92,12 +92,17 @@ struct aioTest {
             throw std::runtime_error("mkstemp failed");
         }
         unlink(path);
+        if (queue->registerFile(fd, "") != NIXL_SUCCESS) {
+            close(fd);
+            throw std::runtime_error("file registration failed");
+        }
         for (size_t i = 0; i < buffers.size(); i++) {
             std::memset(buffers[i].data(), static_cast<int>(i + 1), buffers[i].size());
         }
     }
 
     ~aioTest() {
+        queue->deregisterFile(fd);
         queue.reset();
         close(fd);
     }
@@ -339,7 +344,7 @@ main() {
                       static_cast<ssize_t>(expected.size()));
             std::memset(test.buffers[0].data(), 0, block_size);
         }
-        nixlPosixFileMD file_md(test.fd, "");
+        nixlPosixFileMD file_md(test.fd);
         aioRequest transfer(test, file_md, 0, 1, read ? NIXL_READ : NIXL_WRITE, partial_io_offset);
         AIO_CHECK(transfer.request.postXfer() == NIXL_IN_PROG);
         AIO_CHECK(waitFor(transfer) == NIXL_SUCCESS);
@@ -378,7 +383,7 @@ main() {
         }
         std::memset(test.buffers[0].data(), 0, block_size);
 
-        nixlPosixFileMD file_md(test.fd, "");
+        nixlPosixFileMD file_md(test.fd);
         aioRequest read(test, file_md, 0, 1, NIXL_READ);
         AIO_CHECK(read.request.postXfer() == NIXL_IN_PROG);
         AIO_CHECK(waitFor(read) == NIXL_ERR_BACKEND && submit_calls == (file_size ? 2 : 1));
@@ -388,7 +393,7 @@ main() {
     {
         setSubmitMode(submitMode::PARTIAL_THEN_ERROR);
         aioTest test(request_count + 1);
-        nixlPosixFileMD file_md(test.fd, "");
+        nixlPosixFileMD file_md(test.fd);
         aioRequest failed(test, file_md, 0, request_count);
         aioRequest unrelated(test, file_md, request_count, 1);
 
@@ -412,7 +417,7 @@ main() {
         constexpr int completion_error_request_count = 65;
         setSubmitMode(submitMode::COMPLETION_ERROR);
         aioTest test(completion_error_request_count);
-        nixlPosixFileMD file_md(test.fd, "");
+        nixlPosixFileMD file_md(test.fd);
         aioRequest failed(test, file_md, 0, completion_error_request_count);
 
         AIO_CHECK(failed.request.postXfer() == NIXL_IN_PROG);

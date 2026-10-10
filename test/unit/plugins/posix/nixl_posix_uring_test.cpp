@@ -81,12 +81,17 @@ struct uringTest {
             throw std::runtime_error("mkstemp failed");
         }
         unlink(path);
+        if (queue->registerFile(fd, "") != NIXL_SUCCESS) {
+            close(fd);
+            throw std::runtime_error("file registration failed");
+        }
         for (size_t i = 0; i < buffers.size(); i++) {
             std::memset(buffers[i].data(), static_cast<int>(i + 1), buffers[i].size());
         }
     }
 
     ~uringTest() {
+        queue->deregisterFile(fd);
         queue.reset();
         close(fd);
     }
@@ -257,7 +262,7 @@ main() {
                         static_cast<ssize_t>(expected.size()));
             std::memset(test.buffers[0].data(), 0, block_size);
         }
-        nixlPosixFileMD file_md(test.fd, "");
+        nixlPosixFileMD file_md(test.fd);
         uringRequest transfer(test, file_md, 0, read ? NIXL_READ : NIXL_WRITE, partial_io_offset);
         URING_CHECK(transfer.request.postXfer() == NIXL_IN_PROG);
         URING_CHECK(waitFor(transfer) == NIXL_SUCCESS && partial_io_submissions == 3);
@@ -291,7 +296,7 @@ main() {
                         ftruncate(test.fd, file_size) == 0);
         }
         std::memset(test.buffers[0].data(), 0, block_size);
-        nixlPosixFileMD file_md(test.fd, "");
+        nixlPosixFileMD file_md(test.fd);
         uringRequest read(test, file_md, 0, NIXL_READ);
         URING_CHECK(read.request.postXfer() == NIXL_IN_PROG);
         URING_CHECK(waitFor(read) == NIXL_ERR_BACKEND && submit_calls == (file_size ? 2 : 1));
@@ -325,7 +330,7 @@ main() {
     }
     {
         uringTest test(submit_mode_t::PASS_THROUGH);
-        nixlPosixFileMD file_md(test.fd, "");
+        nixlPosixFileMD file_md(test.fd);
         uringRequest cancelled(test, file_md, 0), unrelated(test, file_md, 1);
         nixl_status_t cancelled_status = cancelled.request.postXfer();
         URING_CHECK(cancelled_status >= NIXL_IN_PROG);
