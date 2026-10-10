@@ -10,8 +10,14 @@
 #include <iterator>
 
 #include "common/nixl_log.h"
+#include "rdma_protocol.h"
 
 namespace nixl_obj_rdma {
+
+// cuObject refuses one registration of CUOBJ_MAX_MEMORY_REG_SIZE or more (4 GiB in
+// cuObject 13.2, 4 GiB - 64 KiB in 13.4); larger buffers are registered as
+// consecutive pieces of this length.
+constexpr size_t registration_piece_size = size_t{2} << 30;
 
 SharedCuObjClient::SharedCuObjClient() {
     try {
@@ -41,23 +47,46 @@ SharedCuObjClient::instance() {
 bool
 SharedCuObjClient::registerBuffer(void *ptr, size_t size) {
     const std::lock_guard<std::mutex> lock(mutex_);
-    cuObjErr_t rc = client_->cuMemObjGetDescriptor(ptr, size);
-    if (rc != CU_OBJ_SUCCESS) {
-        NIXL_ERROR << "cuMemObjGetDescriptor failed rc=" << rc << " ptr=" << ptr
-                   << " size=" << size;
-        return false;
+    const auto pieces = registrationPieces(
+        reinterpret_cast<uintptr_t>(ptr), size, CUOBJ_MAX_MEMORY_REG_SIZE, registration_piece_size);
+    for (size_t i = 0; i < pieces.size(); ++i) {
+        const auto [start, len] = pieces[i];
+        cuObjErr_t rc = client_->cuMemObjGetDescriptor(reinterpret_cast<void *>(start), len);
+        if (rc != CU_OBJ_SUCCESS) {
+            NIXL_ERROR << "cuMemObjGetDescriptor failed rc=" << rc << " ptr=" << ptr
+                       << " size=" << size << " piece=" << i << "/" << pieces.size();
+            // Roll back the pieces already registered.
+            for (size_t j = 0; j < i; ++j) {
+                registrations_.erase(pieces[j].first);
+                client_->cuMemObjPutDescriptor(reinterpret_cast<void *>(pieces[j].first));
+            }
+            return false;
+        }
+        registrations_[start] = len;
     }
-    registrations_[reinterpret_cast<uintptr_t>(ptr)] = size;
-    NIXL_DEBUG << "cuMemObjGetDescriptor OK ptr=" << ptr << " size=" << size;
+    if (pieces.size() > 1) {
+        pieced_buffers_[reinterpret_cast<uintptr_t>(ptr)] = size;
+    }
+    NIXL_DEBUG << "cuMemObjGetDescriptor OK ptr=" << ptr << " size=" << size
+               << " pieces=" << pieces.size();
     return true;
 }
 
 void
 SharedCuObjClient::deregisterBuffer(void *ptr) {
     const std::lock_guard<std::mutex> lock(mutex_);
-    registrations_.erase(reinterpret_cast<uintptr_t>(ptr));
-    if (client_->cuMemObjPutDescriptor(ptr) != CU_OBJ_SUCCESS) {
-        NIXL_WARN << "cuMemObjPutDescriptor failed for ptr " << ptr;
+    std::vector<std::pair<uintptr_t, size_t>> pieces{{reinterpret_cast<uintptr_t>(ptr), 0}};
+    if (const auto it = pieced_buffers_.find(reinterpret_cast<uintptr_t>(ptr));
+        it != pieced_buffers_.end()) {
+        pieces = registrationPieces(
+            it->first, it->second, CUOBJ_MAX_MEMORY_REG_SIZE, registration_piece_size);
+        pieced_buffers_.erase(it);
+    }
+    for (const auto &[start, len] : pieces) {
+        registrations_.erase(start);
+        if (client_->cuMemObjPutDescriptor(reinterpret_cast<void *>(start)) != CU_OBJ_SUCCESS) {
+            NIXL_WARN << "cuMemObjPutDescriptor failed for ptr " << reinterpret_cast<void *>(start);
+        }
     }
 }
 
@@ -81,7 +110,14 @@ SharedCuObjClient::getToken(void *ptr, size_t size, cuObjOpType_t op) {
                                   registrations_.rend(),
                                   contains);
     if (rit == registrations_.rend()) {
-        NIXL_ERROR << "No RDMA registration contains ptr=" << ptr << " size=" << size;
+        if (std::any_of(pieced_buffers_.begin(), pieced_buffers_.end(), contains)) {
+            NIXL_ERROR << "RDMA range ptr=" << ptr << " size=" << size
+                       << " crosses a registration piece boundary: buffers of "
+                       << CUOBJ_MAX_MEMORY_REG_SIZE << " bytes or more are registered as "
+                       << registration_piece_size << "-byte pieces";
+        } else {
+            NIXL_ERROR << "No RDMA registration contains ptr=" << ptr << " size=" << size;
+        }
         return nullptr;
     }
     const auto base = rit->first;

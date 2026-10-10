@@ -315,6 +315,103 @@ TEST_P(setupObjAccelTestFixture, AccelVramNestedRegistrationXferTest) {
 }
 #endif // HAVE_CUDA
 
+// Registers a buffer above cuObject's single-registration limit (4 GiB), which
+// SharedCuObjClient registers as 2 GiB pieces, and transfers 1 MiB ranges in two
+// different pieces, one beyond 4 GiB. A range that crosses a piece boundary must
+// be rejected instead of being minted against the wrong registration.
+template<nixl_mem_t memType>
+void
+testLargeRegistrationXfer(nixlBackendEngine &engine) {
+    constexpr size_t entry_size = 1 << 20;
+    constexpr size_t buffer_size = size_t{5} << 30;
+    const std::vector<int> xfer_entries = {1024, 4608}; // at 1 GiB and at 4.5 GiB
+
+    memoryHandler<memType> mem(buffer_size, 0);
+    nixlBlobDesc mem_desc;
+    mem.populateBlobDesc(&mem_desc);
+    nixlBackendMD *mem_md = nullptr;
+    ASSERT_EQ(engine.registerMem(mem_desc, memType, mem_md), NIXL_SUCCESS);
+    mem.setMD(mem_md);
+
+    nixl_meta_dlist_t local(memType);
+    nixl_meta_dlist_t remote(OBJ_SEG);
+    std::vector<nixlBackendMD *> obj_mds;
+    for (size_t i = 0; i <= xfer_entries.size(); ++i) {
+        nixlBlobDesc obj_desc(0, entry_size, i, "test-obj-key-large-" + std::to_string(i));
+        nixlBackendMD *obj_md = nullptr;
+        ASSERT_EQ(engine.registerMem(obj_desc, OBJ_SEG, obj_md), NIXL_SUCCESS);
+        obj_mds.push_back(obj_md);
+    }
+    for (size_t i = 0; i < xfer_entries.size(); ++i) {
+        nixlMetaDesc local_desc;
+        mem.populateMetaDesc(&local_desc, xfer_entries[i], entry_size);
+        local.addDesc(local_desc);
+        remote.addDesc(nixlMetaDesc(0, entry_size, i, obj_mds[i]));
+    }
+
+    std::mt19937 rng(4096);
+    std::vector<std::vector<uint8_t>> patterns;
+    for (const int e : xfer_entries) {
+        std::vector<uint8_t> pattern(entry_size);
+        std::generate(
+            pattern.begin(), pattern.end(), [&rng] { return static_cast<uint8_t>(rng()); });
+        copyToMem<memType>(mem_desc.addr + e * entry_size, pattern);
+        patterns.push_back(std::move(pattern));
+        // The neighbours must stay zero through the read-back.
+        copyToMem<memType>(mem_desc.addr + (e - 1) * entry_size,
+                           std::vector<uint8_t>(entry_size, 0));
+        copyToMem<memType>(mem_desc.addr + (e + 1) * entry_size,
+                           std::vector<uint8_t>(entry_size, 0));
+    }
+
+    EXPECT_EQ(runXfer(engine, NIXL_WRITE, local, remote), NIXL_SUCCESS);
+    for (const int e : xfer_entries) {
+        copyToMem<memType>(mem_desc.addr + e * entry_size, std::vector<uint8_t>(entry_size, 0));
+    }
+    EXPECT_EQ(runXfer(engine, NIXL_READ, local, remote), NIXL_SUCCESS);
+
+    for (size_t i = 0; i < xfer_entries.size(); ++i) {
+        const int e = xfer_entries[i];
+        EXPECT_EQ(copyFromMem<memType>(mem_desc.addr + e * entry_size, entry_size), patterns[i])
+            << "entry " << e << " was not read back";
+        for (const int n : {e - 1, e + 1}) {
+            EXPECT_EQ(copyFromMem<memType>(mem_desc.addr + n * entry_size, entry_size),
+                      std::vector<uint8_t>(entry_size, 0))
+                << "entry " << n << " was modified";
+        }
+    }
+
+    // 1 MiB centred on the boundary between the first two 2 GiB pieces.
+    nixl_meta_dlist_t cross_local(memType);
+    nixl_meta_dlist_t cross_remote(OBJ_SEG);
+    nixlMetaDesc cross_desc;
+    mem.populateMetaDesc(&cross_desc, 0, entry_size);
+    cross_desc.addr = mem_desc.addr + (size_t{2} << 30) - entry_size / 2;
+    cross_local.addDesc(cross_desc);
+    cross_remote.addDesc(nixlMetaDesc(0, entry_size, xfer_entries.size(), obj_mds.back()));
+    EXPECT_NE(runXfer(engine, NIXL_WRITE, cross_local, cross_remote), NIXL_SUCCESS);
+
+    for (auto *obj_md : obj_mds) {
+        EXPECT_EQ(engine.deregisterMem(obj_md), NIXL_SUCCESS);
+    }
+    EXPECT_EQ(engine.deregisterMem(mem_md), NIXL_SUCCESS);
+}
+
+TEST_P(setupObjAccelTestFixture, AccelLargeRegistrationXferTest) {
+    testLargeRegistrationXfer<DRAM_SEG>(*localBackendEngine_);
+}
+
+#ifdef HAVE_CUDA
+TEST_P(setupObjAccelTestFixture, AccelVramLargeRegistrationXferTest) {
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        GTEST_SKIP() << "No CUDA devices available, skipping VRAM test";
+    }
+    testLargeRegistrationXfer<VRAM_SEG>(*localBackendEngine_);
+}
+#endif // HAVE_CUDA
+
 INSTANTIATE_TEST_SUITE_P(ObjAccelTests,
                          setupObjAccelTestFixture,
                          testing::Values(obj_accel_test_params));

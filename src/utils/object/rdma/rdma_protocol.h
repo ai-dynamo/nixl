@@ -16,6 +16,7 @@
 
 #include <sys/types.h> // ssize_t
 
+#include <algorithm>
 #include <charconv>
 #include <cinttypes>
 #include <cstdint>
@@ -23,6 +24,8 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
+#include <vector>
 
 namespace nixl_obj_rdma {
 
@@ -92,6 +95,32 @@ parseRdmaReply(const std::string &reply) {
         return 0;
     }
     return value;
+}
+
+/**
+ * @brief Split a buffer into the pieces that cuObject can register.
+ *
+ * cuObject refuses a single registration of CUOBJ_MAX_MEMORY_REG_SIZE or more
+ * (4 GiB in cuObject 13.2, 4 GiB - 64 KiB in 13.4), so a larger buffer is
+ * registered as consecutive pieces. A transfer can then use any range that
+ * lies inside one piece.
+ * @param base Start of the buffer.
+ * @param len Buffer length in bytes.
+ * @param limit A buffer of this many bytes or more is split.
+ * @param piece Length of every piece but the last; must be non-zero and below limit.
+ * @return (start, length) of each piece in address order. A buffer below limit,
+ *         or an unusable piece length, gives one piece covering the buffer.
+ */
+[[nodiscard]] inline std::vector<std::pair<uintptr_t, size_t>>
+registrationPieces(uintptr_t base, size_t len, size_t limit, size_t piece) {
+    if (len < limit || piece == 0 || piece >= limit) {
+        return {{base, len}};
+    }
+    std::vector<std::pair<uintptr_t, size_t>> pieces;
+    for (size_t off = 0; off < len; off += piece) {
+        pieces.emplace_back(base + off, std::min(piece, len - off));
+    }
+    return pieces;
 }
 
 } // namespace nixl_obj_rdma

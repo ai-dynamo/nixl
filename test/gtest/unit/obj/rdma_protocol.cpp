@@ -72,4 +72,38 @@ TEST(RdmaProtocol, ProtocolConstantsHaveExpectedValues) {
     EXPECT_EQ(rdma_error, -1);
 }
 
+TEST(RdmaProtocol, RegistrationPiecesBelowLimitIsOnePiece) {
+    const auto pieces = registrationPieces(0x10000, 4096, 8192, 2048);
+    ASSERT_EQ(pieces.size(), 1u);
+    EXPECT_EQ(pieces[0], std::make_pair(uintptr_t{0x10000}, size_t{4096}));
+}
+
+TEST(RdmaProtocol, RegistrationPiecesCoverTheBufferInOrder) {
+    // At the limit and above it: consecutive pieces, the last one shorter.
+    const auto at_limit = registrationPieces(0x10000, 8192, 8192, 2048);
+    ASSERT_EQ(at_limit.size(), 4u);
+    const auto pieces = registrationPieces(0x10000, 8192 + 100, 8192, 2048);
+    ASSERT_EQ(pieces.size(), 5u);
+    uintptr_t next = 0x10000;
+    for (const auto &[start, len] : pieces) {
+        EXPECT_EQ(start, next);
+        next = start + len;
+    }
+    EXPECT_EQ(next, uintptr_t{0x10000 + 8192 + 100});
+    EXPECT_EQ(pieces.back().second, 100u);
+}
+
+TEST(RdmaProtocol, RegistrationPiecesRealLimits) {
+    // 5 GiB with the cuObject limit (4 GiB) and 2 GiB pieces: 2 + 2 + 1 GiB.
+    constexpr size_t gib = size_t{1} << 30;
+    const auto pieces = registrationPieces(0, 5 * gib, 4 * gib, 2 * gib);
+    ASSERT_EQ(pieces.size(), 3u);
+    EXPECT_EQ(pieces[2], std::make_pair(uintptr_t{4 * gib}, gib));
+}
+
+TEST(RdmaProtocol, RegistrationPiecesUnusablePieceLengthKeepsOnePiece) {
+    EXPECT_EQ(registrationPieces(0x10000, 8192, 8192, 0).size(), 1u);
+    EXPECT_EQ(registrationPieces(0x10000, 8192, 8192, 8192).size(), 1u);
+}
+
 } // namespace

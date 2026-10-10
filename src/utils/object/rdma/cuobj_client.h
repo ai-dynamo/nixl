@@ -51,6 +51,12 @@ public:
 
     /**
      * @brief Pin a buffer for RDMA. Required before minting a token for it.
+     *
+     * A buffer of CUOBJ_MAX_MEMORY_REG_SIZE or more (4 GiB in cuObject 13.2,
+     * 4 GiB - 64 KiB in 13.4) is registered as consecutive 2 GiB pieces,
+     * because cuObject refuses one registration of that size. A transfer may
+     * use any range inside one piece; a range that crosses a piece boundary
+     * gets no token.
      * @param ptr Start of the buffer to register.
      * @param size Buffer length in bytes.
      * @return true on success, false if registration failed.
@@ -59,7 +65,8 @@ public:
     registerBuffer(void *ptr, size_t size);
 
     /**
-     * @brief Release a buffer registration acquired via registerBuffer().
+     * @brief Release a buffer registration acquired via registerBuffer(),
+     *        including every piece of a buffer registered in pieces.
      * @param ptr Buffer previously passed to registerBuffer().
      */
     void
@@ -102,6 +109,8 @@ private:
     bool connected_ = false;
     std::mutex mutex_;
     std::map<uintptr_t, size_t> registrations_;
+    // Buffers registered in pieces: start address -> buffer length.
+    std::map<uintptr_t, size_t> pieced_buffers_;
 };
 
 } // namespace nixl_obj_rdma
