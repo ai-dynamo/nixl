@@ -122,8 +122,9 @@ private:
 } // namespace
 
 nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_params,
-                                         size_t num_dedicated_workers)
-    : nixlUcxEngine(init_params, num_dedicated_workers) {
+                                         size_t num_dedicated_workers,
+                                         nixl::ucx::MemoryPolicyPtr policy)
+    : nixlUcxEngine(init_params, num_dedicated_workers, std::move(policy)) {
     if (!init_params.enableProgTh) {
         return;
     }
