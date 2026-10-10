@@ -413,8 +413,7 @@ def _run_xfer_telemetry_check(agent1, agent2, expect_telemetry: bool = True) -> 
             pass
 
         if not expect_telemetry:
-            with pytest.raises(bindings.nixlNoTelemetryError):
-                agent1.get_xfer_telemetry(handle)
+            assert agent1.get_xfer_telemetry(handle) is None
             agent1.release_xfer_handle(handle)
             return
 
