@@ -19,6 +19,15 @@ if get_option('install_headers')
         'device_types.cuh',
         install_dir: prefix_inc + '/gpu',
     )
-    install_headers('impl/device_dispatch.cuh', install_dir: prefix_inc + '/gpu/impl')
+    install_headers(
+        'impl/device_dispatch.cuh',
+        'impl/level_utils.cuh',
+        install_dir: prefix_inc + '/gpu/impl',
+    )
     install_headers('impl/ucx/device_ucx.cuh', install_dir: prefix_inc + '/gpu/impl/ucx')
+    install_headers(
+        'impl/proxy/device_proxy.cuh',
+        'impl/proxy/device_proxy_ring.cuh',
+        install_dir: prefix_inc + '/gpu/impl/proxy',
+    )
 endif

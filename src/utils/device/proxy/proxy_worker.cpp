@@ -33,6 +33,7 @@ nixl_status_t
 proxyWorker::start() noexcept {
     try {
         thread_ = std::jthread([this]() {
+            selectOwnedDevice();
             while (!ctx_.stop.stop_requested()) {
                 runOnce();
             }
@@ -49,6 +50,17 @@ void
 proxyWorker::join() noexcept {
     if (thread_.joinable()) {
         thread_.join();
+    }
+}
+
+void
+proxyWorker::selectOwnedDevice() noexcept {
+    if (index_ >= ctx_.channels.size()) {
+        return;
+    }
+    const proxyRing &ring = ctx_.channels[index_].ring(0);
+    if (ring.allocated() && ring.selectDevice() != NIXL_SUCCESS) {
+        NIXL_FATAL << "Failed to select proxy ring device";
     }
 }
 
@@ -109,14 +121,27 @@ proxyWorker::logUndrainedRings() {
     });
 }
 
+bool
+proxyWorker::skipOwnedAbandonedTickets() {
+    bool skipped = false;
+    forEachOwnedChannel(
+        [&](proxyChannel &channel) { skipped = channel.skipAbandonedTickets() || skipped; });
+    return skipped;
+}
+
 void
 proxyWorker::drainOwnedChannels() {
     auto next_warning = std::chrono::steady_clock::now() + proxy_drain_warning_interval;
-    while (!ownedChannelsDrained()) {
-        passOwnedChannels();
-        if (std::chrono::steady_clock::now() >= next_warning) {
-            logUndrainedRings();
-            next_warning += proxy_drain_warning_interval;
+    for (;;) {
+        while (!ownedChannelsDrained()) {
+            passOwnedChannels();
+            if (std::chrono::steady_clock::now() >= next_warning) {
+                logUndrainedRings();
+                next_warning += proxy_drain_warning_interval;
+            }
+        }
+        if (!ctx_.shutting_down.load(std::memory_order_acquire) || !skipOwnedAbandonedTickets()) {
+            break;
         }
     }
 
