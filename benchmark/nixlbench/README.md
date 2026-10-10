@@ -576,7 +576,10 @@ devices can differ between the initiator and target processes.
 ```
 --gds_batch_pool_size NUM  # Batch pool size for GDS operations (default: 32)
 --gds_batch_limit NUM      # Batch limit for GDS operations (default: 128)
+--gds_max_request_size NUM # Max bytes per cuFile batch entry, larger requests are split (default: 16777216)
 ```
+
+If `cuFileBatchIOSubmit` rejects a block size with `err=5040`, lower `--gds_max_request_size` below the cuFile per-entry limit of your system. In the tested B200, Gen5 NVMe, cuFile 1.15.1.6, ext4, and O_DIRECT configuration, that limit was 983040 bytes. Other P2PDMA-only configurations may differ. Split entries past the first go through cuFile bounce buffers, so expect lower throughput than with whole entries.
 
 **GDS_MT Backend:**
 ```
@@ -746,6 +749,9 @@ $ host2 > sleep 2 && ./nixlbench --etcd_endpoints http://etcd-server:2379 --back
 
 # GDS with custom batch settings
 ./nixlbench --backend GDS --filepath /mnt/storage/testfile --gds_batch_pool_size 64 --gds_batch_limit 256
+
+# GDS with blocks above the cuFile per-entry limit, split into 960KiB entries
+./nixlbench --backend GDS --filepath /mnt/storage/testfile --start_block_size 2097152 --gds_max_request_size 983040
 ```
 
 **GDS_MT (Multi-threaded GDS):**

@@ -204,6 +204,10 @@ NB_ARG_INT32(gds_batch_pool_size,
              32,
              "Batch pool size for GDS operations (only used with GDS backend)");
 NB_ARG_INT32(gds_batch_limit, 128, "Batch limit for GDS operations (only used with GDS backend)");
+NB_ARG_INT32(gds_max_request_size,
+             16 * 1024 * 1024,
+             "Max bytes per cuFile batch entry, larger requests are split (only used with GDS "
+             "backend)");
 NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin");
 
 // TODO: We should take rank wise device list as input to extend support
@@ -381,6 +385,7 @@ uint64_t xferBenchConfig::randomize_location_mode_seed = 0;
 std::string xferBenchConfig::benchmark_group = "default";
 int xferBenchConfig::gds_batch_pool_size = 0;
 int xferBenchConfig::gds_batch_limit = 0;
+int xferBenchConfig::gds_max_request_size = 0;
 int xferBenchConfig::gds_mt_num_threads = 0;
 std::string xferBenchConfig::gpunetio_device_list = "";
 std::string xferBenchConfig::gpunetio_oob_list = "";
@@ -647,6 +652,7 @@ xferBenchConfig::loadParams(void) {
         if (backend == XFERBENCH_BACKEND_GDS) {
             gds_batch_pool_size = NB_ARG(gds_batch_pool_size);
             gds_batch_limit = NB_ARG(gds_batch_limit);
+            gds_max_request_size = NB_ARG(gds_max_request_size);
         }
 
         if (backend == XFERBENCH_BACKEND_GDS_MT) {
@@ -1011,6 +1017,8 @@ xferBenchConfig::printConfig() {
             printOption("GDS batch pool size (--gds_batch_pool_size=N)",
                         std::to_string(gds_batch_pool_size));
             printOption("GDS batch limit (--gds_batch_limit=N)", std::to_string(gds_batch_limit));
+            printOption("GDS max request size (--gds_max_request_size=N)",
+                        std::to_string(gds_max_request_size));
         }
 
         if (backend == XFERBENCH_BACKEND_GDS_MT) {

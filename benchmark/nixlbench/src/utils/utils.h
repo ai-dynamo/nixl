@@ -209,6 +209,7 @@ public:
     static int pipeline_depth;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
+    static int gds_max_request_size;
     static int gds_mt_num_threads;
     static std::string gpunetio_device_list;
     static std::string gpunetio_oob_list;
