@@ -37,7 +37,7 @@ namespace nixl::telemetry::mp {
 // On-disk schema version for the per-process metric-state store. Independent of
 // the event-buffer TELEMETRY_VERSION: this is a different file format. Bump on
 // any layout change so a reader rejects incompatible files.
-inline constexpr uint32_t MP_STORE_SCHEMA_VERSION = 1;
+inline constexpr uint32_t MP_STORE_SCHEMA_VERSION = 2;
 
 // Store file naming shared by the writer (exporter) and the collector so the
 // collector can discover peer files by globbing "<prefix>*<suffix>".

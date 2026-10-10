@@ -14,14 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#include "nop_exporter.h"
 #include "telemetry/telemetry_plugin.h"
 
-// Plugin type alias for convenience
-using nop_exporter_plugin_t = nixlTelemetryPluginCreator<nixlTelemetryNopExporter>;
-
-nixlTelemetryPlugin *
-createStaticNOPPlugin() {
-    return nop_exporter_plugin_t::create(NIXL_TELEMETRY_PLUGIN_API_VERSION, "nop", "1.0.0");
+extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT nixlTelemetryPlugin *
+nixl_telemetry_plugin_init() {
+    static nixlTelemetryPlugin plugin(
+        nixl_telemetry_plugin_api_version::V2, "mock_stale", "0.0.1", nullptr);
+    return &plugin;
 }
+
+extern "C" NIXL_TELEMETRY_PLUGIN_EXPORT void
+nixl_telemetry_plugin_fini() {}
