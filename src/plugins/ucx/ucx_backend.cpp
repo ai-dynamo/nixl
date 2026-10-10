@@ -30,10 +30,8 @@
 #include <string.h>
 #include "absl/strings/str_split.h"
 
-#ifdef HAVE_NIXL_DEVICE_API
 #include "device/device_memview.h"
 #include "device/device_ops.h"
-#endif
 
 namespace {
 [[nodiscard]] bool
@@ -757,7 +755,6 @@ nixlUcxEngine::prepMemView(const nixl_meta_dlist_t &dlist,
     return prepMemViewImpl(dlist, mvh, opt_args, "local");
 }
 
-#ifdef HAVE_NIXL_DEVICE_API
 template<typename DlistT>
 nixl_status_t
 nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
@@ -784,7 +781,7 @@ nixlUcxEngine::prepMemViewImpl(const DlistT &dlist,
     // build-time choice, so what leaves here is a tagged wrapper rather than
     // the bare backend handle.
     const nixl_status_t status =
-        nixlDeviceMemViewAllocate(*ops, nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
+        nixl::deviceMemViewAllocate(*ops, nixl_device_exec_mode_t::UCX_DIRECT, backend_mvh, mvh);
     if (status != NIXL_SUCCESS) {
         nixl::ucx::releaseMemList(backend_mvh);
     }
@@ -800,26 +797,12 @@ nixlUcxEngine::releaseMemView(nixlMemViewH mem_view) const {
     // prepMemView allocated the wrapper through the same process-wide instance.
     nixl::deviceOps &ops = *nixl::getDeviceOps();
     nixlMemViewH backend_mvh = nullptr;
-    if (nixlDeviceMemViewGetBackend(ops, mem_view, backend_mvh) != NIXL_SUCCESS) {
+    if (nixl::deviceMemViewGetBackend(ops, mem_view, backend_mvh) != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to read device memview wrapper for handle " << mem_view;
-        nixlDeviceMemViewFree(ops, mem_view);
+        nixl::deviceMemViewFree(ops, mem_view);
         return;
     }
 
     nixl::ucx::releaseMemList(backend_mvh);
-    nixlDeviceMemViewFree(ops, mem_view);
+    nixl::deviceMemViewFree(ops, mem_view);
 }
-#else
-template<typename DlistT>
-nixl_status_t
-nixlUcxEngine::prepMemViewImpl(const DlistT &,
-                               nixlMemViewH &,
-                               const nixl_opt_b_args_t *,
-                               const char *) const {
-    NIXL_ERROR << "The GPU Device API requires a CUDA-enabled NIXL build";
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-
-void
-nixlUcxEngine::releaseMemView(nixlMemViewH) const {}
-#endif

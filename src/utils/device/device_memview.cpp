@@ -10,17 +10,19 @@
 
 static_assert(sizeof(nixl_device_exec_mode_t) == 1);
 
+namespace nixl {
+
 nixl_status_t
-nixlDeviceMemViewAllocate(nixl::deviceOps &ops,
-                          nixl_device_exec_mode_t execution_mode,
-                          nixlMemViewH backend_memview,
-                          nixl::deviceViewHandle &wrapper_out) noexcept {
+deviceMemViewAllocate(deviceOps &ops,
+                      nixl_device_exec_mode_t execution_mode,
+                      nixlMemViewH backend_memview,
+                      deviceViewHandle &wrapper_out) noexcept {
     wrapper_out = nullptr;
     if (backend_memview == nullptr) {
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    nixl::deviceMem wrapper_mem;
+    deviceMem wrapper_mem;
     auto status = ops.allocDeviceMem(sizeof(nixlDeviceMemViewWrapper), wrapper_mem);
     if (status != NIXL_SUCCESS) {
         return status;
@@ -33,21 +35,21 @@ nixlDeviceMemViewAllocate(nixl::deviceOps &ops,
     status = ops.copy(wrapper_mem.get(),
                       &host_wrapper,
                       sizeof(host_wrapper),
-                      nixl::deviceOps::copyDirection::HostToDevice);
+                      deviceOps::copyDirection::HostToDevice);
     if (status != NIXL_SUCCESS) {
         return status;
     }
 
     /* Ownership crosses the public handle boundary; reclaimed in
-     * nixlDeviceMemViewFree. */
+     * deviceMemViewFree. */
     wrapper_out = wrapper_mem.release();
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlDeviceMemViewGetBackend(nixl::deviceOps &ops,
-                            nixl::deviceViewHandle wrapper,
-                            nixlMemViewH &backend_out) noexcept {
+deviceMemViewGetBackend(deviceOps &ops,
+                        deviceViewHandle wrapper,
+                        nixlMemViewH &backend_out) noexcept {
     backend_out = nullptr;
     if (wrapper == nullptr) {
         return NIXL_ERR_INVALID_PARAM;
@@ -55,7 +57,7 @@ nixlDeviceMemViewGetBackend(nixl::deviceOps &ops,
 
     nixlDeviceMemViewWrapper host_wrapper{};
     const auto status = ops.copy(
-        &host_wrapper, wrapper, sizeof(host_wrapper), nixl::deviceOps::copyDirection::DeviceToHost);
+        &host_wrapper, wrapper, sizeof(host_wrapper), deviceOps::copyDirection::DeviceToHost);
     if (status != NIXL_SUCCESS) {
         return status;
     }
@@ -65,6 +67,8 @@ nixlDeviceMemViewGetBackend(nixl::deviceOps &ops,
 }
 
 void
-nixlDeviceMemViewFree(nixl::deviceOps &ops, nixl::deviceViewHandle wrapper) noexcept {
-    nixl::deviceMem owner(wrapper, nixl::deviceMemDeleter{&ops});
+deviceMemViewFree(deviceOps &ops, deviceViewHandle wrapper) noexcept {
+    deviceMem owner(wrapper, deviceMemDeleter{&ops});
 }
+
+} // namespace nixl

@@ -18,6 +18,7 @@
 #define NIXL_SRC_API_DEVICE_GPU_IMPL_PROXY_DEVICE_PROXY_RING_CUH
 
 #include <cuda/atomic>
+#include <cassert>
 
 #include "../../device_types.cuh"
 #include "../level_utils.cuh"
@@ -27,30 +28,28 @@ namespace nixl::gpu::impl::proxy {
 
 // Overlay struct written into xferStatusH::storage by enqueue()
 // and read back by pollXferStatus().  Must fit within the 64-byte opaque blob.
-struct ProxyXferStatus {
+struct proxyXferStatus {
     nixlProxyCompletionSlot *slot; // device pointer to the channel's nixlProxyCompletionSlot
-    uint64_t op_idx;
+    uint64_t opIdx;
 };
 
-static_assert(sizeof(ProxyXferStatus) <= xfer_status_payload_size,
-              "ProxyXferStatus must fit in the transfer-status payload");
+static_assert(sizeof(proxyXferStatus) <= xfer_status_payload_size,
+              "proxyXferStatus must fit in the transfer-status payload");
 
 __device__ __forceinline__ uint64_t
 proxyHostViewFromHandle(nixlMemViewH mvh) {
     return static_cast<const nixlProxyDeviceMemView *>(mvh)->host_view;
 }
 
-struct ProxyDeviceContext;
+struct proxyDeviceContext;
 
-__device__ __forceinline__ const ProxyDeviceContext *
+__device__ __forceinline__ const proxyDeviceContext *
 proxyContextFromMemView(const nixlProxyDeviceMemView *memview) {
-    if (memview == nullptr || memview->context == nullptr) {
-        return nullptr;
-    }
-    return reinterpret_cast<const ProxyDeviceContext *>(memview->context);
+    assert(memview != nullptr && memview->context != nullptr);
+    return reinterpret_cast<const proxyDeviceContext *>(memview->context);
 }
 
-struct ProxyDeviceContext : nixlProxyDeviceContextData {
+struct proxyDeviceContext : nixlProxyDeviceContextData {
 
     __device__ __forceinline__ size_t
     ringIndex(uint32_t peer_index, uint32_t channel_id) const {
@@ -61,9 +60,7 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
     enqueue(nixlProxyCommand command,
             uint32_t channel_id,
             xferStatusH *xfer_status = nullptr) const {
-        if (command.peerIndex() >= max_peers || num_channels == 0) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
+        assert(command.peerIndex() < max_peers && num_channels != 0);
         channel_id %= num_channels;
 
         cuda::atomic_ref<uint64_t, cuda::thread_scope_system> shut(*shutdown_word);
@@ -73,9 +70,7 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
         }
 
         nixlProxyRingDesc &ring_desc = rings[ringIndex(command.peerIndex(), channel_id)];
-        if (ring_desc.work_ring == nullptr || ring_desc.completion_slot == nullptr) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
+        assert(ring_desc.work_ring != nullptr && ring_desc.completion_slot != nullptr);
         nixlProxyWorkRing *ring = ring_desc.work_ring;
 
         cuda::atomic_ref<uint64_t, cuda::thread_scope_device> producer_idx(*ring->producer_idx);
@@ -111,8 +106,8 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
         command_op_idx.store(submission_op_idx, cuda::memory_order_release);
 
         if (xfer_status != nullptr) {
-            ProxyXferStatus pxs{ring_desc.completion_slot, submission_op_idx};
-            memcpy(xfer_status->storage, &pxs, sizeof(ProxyXferStatus));
+            proxyXferStatus pxs{ring_desc.completion_slot, submission_op_idx};
+            memcpy(xfer_status->storage, &pxs, sizeof(proxyXferStatus));
         }
 
         return NIXL_IN_PROG;
@@ -126,20 +121,18 @@ struct ProxyDeviceContext : nixlProxyDeviceContextData {
     // - otherwise                 => this op is still pending
     __device__ inline static nixl_status_t
     pollXferStatus(const xferStatusH &xfer_status) {
-        const ProxyXferStatus *pxs = reinterpret_cast<const ProxyXferStatus *>(xfer_status.storage);
-        if (pxs->slot == nullptr) {
-            return NIXL_ERR_BACKEND;
-        }
+        const proxyXferStatus *pxs = reinterpret_cast<const proxyXferStatus *>(xfer_status.storage);
+        assert(pxs->slot != nullptr);
 
         cuda::atomic_ref<uint64_t, cuda::thread_scope_system> comp_idx(pxs->slot->completed_idx);
         cuda::atomic_ref<uint64_t, cuda::thread_scope_system> fail_idx(pxs->slot->failed_idx);
         const uint64_t completed_idx = comp_idx.load(cuda::memory_order_acquire);
         const uint64_t failed_idx = fail_idx.load(cuda::memory_order_acquire);
 
-        if (failed_idx != 0 && pxs->op_idx >= failed_idx) {
+        if (failed_idx != 0 && pxs->opIdx >= failed_idx) {
             return pxs->slot->completion_status;
         }
-        return completed_idx >= pxs->op_idx ? NIXL_SUCCESS : NIXL_IN_PROG;
+        return completed_idx >= pxs->opIdx ? NIXL_SUCCESS : NIXL_IN_PROG;
     }
 };
 

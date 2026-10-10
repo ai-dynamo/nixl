@@ -26,12 +26,12 @@ template<level_t level>
 __device__ __forceinline__ nixl_status_t
 getXferStatus(xferStatusH &xfer_status) {
     if constexpr (level == level_t::GRID) {
-        return ProxyDeviceContext::pollXferStatus(xfer_status);
+        return proxyDeviceContext::pollXferStatus(xfer_status);
     }
 
     nixl_status_t status = NIXL_IN_PROG;
     if (isLeader<level>()) {
-        status = ProxyDeviceContext::pollXferStatus(xfer_status);
+        status = proxyDeviceContext::pollXferStatus(xfer_status);
     }
     return broadcastStatus<level>(status);
 }
@@ -42,28 +42,24 @@ put(const memViewElem &src,
     const memViewElem &dst,
     size_t size,
     unsigned channel_id,
-    uint64_t flags,
+    uint64_t,
     xferStatusH *xfer_status) {
     nixl_status_t status = NIXL_IN_PROG;
     if (isLeader<level>()) {
-        static_cast<void>(flags);
-        const auto *src_memview = static_cast<const nixlProxyDeviceMemView *>(src.mvh);
-        const auto *dst_memview = static_cast<const nixlProxyDeviceMemView *>(dst.mvh);
-        const auto *ctx = proxyContextFromMemView(dst_memview);
-        if (ctx == nullptr || src_memview->context != dst_memview->context) {
-            status = NIXL_ERR_INVALID_PARAM;
-        } else {
-            status = ctx->enqueue(nixlProxyCommand{.operand = static_cast<uint64_t>(src.offset),
-                                                   .dst_offset = static_cast<uint64_t>(dst.offset),
-                                                   .size = static_cast<uint64_t>(size),
-                                                   .src_view = proxyHostViewFromHandle(src.mvh),
-                                                   .dst_view = proxyHostViewFromHandle(dst.mvh),
-                                                   .src_index = static_cast<uint32_t>(src.index),
-                                                   .dst_index = static_cast<uint32_t>(dst.index),
-                                                   .opcode = nixl_proxy_opcode_t::PUT},
-                                  channel_id,
-                                  xfer_status);
-        }
+        auto src_memview = static_cast<const nixlProxyDeviceMemView *>(src.mvh);
+        auto dst_memview = static_cast<const nixlProxyDeviceMemView *>(dst.mvh);
+        auto ctx = proxyContextFromMemView(dst_memview);
+        assert(src_memview->context == dst_memview->context);
+        status = ctx->enqueue(nixlProxyCommand{.operand = static_cast<uint64_t>(src.offset),
+                                               .dst_offset = static_cast<uint64_t>(dst.offset),
+                                               .size = static_cast<uint64_t>(size),
+                                               .src_view = proxyHostViewFromHandle(src.mvh),
+                                               .dst_view = proxyHostViewFromHandle(dst.mvh),
+                                               .src_index = static_cast<uint32_t>(src.index),
+                                               .dst_index = static_cast<uint32_t>(dst.index),
+                                               .opcode = nixl_proxy_opcode_t::PUT},
+                              channel_id,
+                              xfer_status);
     }
     return broadcastStatus<level>(status);
 }
@@ -73,37 +69,29 @@ __device__ __forceinline__ nixl_status_t
 atomicAdd(uint64_t value,
           const memViewElem &counter,
           unsigned channel_id,
-          uint64_t flags,
+          uint64_t,
           xferStatusH *xfer_status) {
     nixl_status_t status = NIXL_IN_PROG;
     if (isLeader<level>()) {
-        static_cast<void>(flags);
-        const auto *memview = static_cast<const nixlProxyDeviceMemView *>(counter.mvh);
-        const auto *ctx = proxyContextFromMemView(memview);
-        if (ctx == nullptr) {
-            status = NIXL_ERR_INVALID_PARAM;
-        } else {
-            status =
-                ctx->enqueue(nixlProxyCommand{.operand = value,
-                                              .dst_offset = static_cast<uint64_t>(counter.offset),
-                                              .dst_view = proxyHostViewFromHandle(counter.mvh),
-                                              .dst_index = static_cast<uint32_t>(counter.index),
-                                              .opcode = nixl_proxy_opcode_t::ATOMIC_ADD},
-                             channel_id,
-                             xfer_status);
-        }
+        auto memview = static_cast<const nixlProxyDeviceMemView *>(counter.mvh);
+        auto ctx = proxyContextFromMemView(memview);
+        status = ctx->enqueue(nixlProxyCommand{.operand = value,
+                                               .dst_offset = static_cast<uint64_t>(counter.offset),
+                                               .dst_view = proxyHostViewFromHandle(counter.mvh),
+                                               .dst_index = static_cast<uint32_t>(counter.index),
+                                               .opcode = nixl_proxy_opcode_t::ATOMIC_ADD},
+                              channel_id,
+                              xfer_status);
     }
     return broadcastStatus<level>(status);
 }
 
 __device__ __forceinline__ void *
 getPtr(nixlMemViewH mvh, size_t index) {
-    if (mvh == nullptr) {
-        return nullptr;
-    }
-
-    const auto *memview = static_cast<const nixlProxyDeviceMemView *>(mvh);
-    if (proxyContextFromMemView(memview) == nullptr || index >= memview->direct_ptr_count) {
+    auto memview = static_cast<const nixlProxyDeviceMemView *>(mvh);
+    assert(memview != nullptr && memview->context != nullptr);
+    // A proxied view may have no direct pointer for an element; that is not an error.
+    if (index >= memview->direct_ptr_count) {
         return nullptr;
     }
 

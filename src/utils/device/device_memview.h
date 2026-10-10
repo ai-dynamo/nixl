@@ -17,7 +17,6 @@ class deviceOps;
  * holds. The same type as nixlMemViewH; the name says which of its meanings is meant.
  */
 using deviceViewHandle = nixlMemViewH;
-} // namespace nixl
 
 /**
  * Wrap a backend memview into the device-dispatch handle. The backend that
@@ -26,17 +25,19 @@ using deviceViewHandle = nixlMemViewH;
  * free it through the same @p ops.
  */
 [[nodiscard]] nixl_status_t
-nixlDeviceMemViewAllocate(nixl::deviceOps &ops,
-                          nixl_device_exec_mode_t execution_mode,
-                          nixlMemViewH backend_memview,
-                          nixl::deviceViewHandle &wrapper_out) noexcept;
+deviceMemViewAllocate(deviceOps &ops,
+                      nixl_device_exec_mode_t execution_mode,
+                      nixlMemViewH backend_memview,
+                      deviceViewHandle &wrapper_out) noexcept;
 
 [[nodiscard]] nixl_status_t
-nixlDeviceMemViewGetBackend(nixl::deviceOps &ops,
-                            nixl::deviceViewHandle wrapper,
-                            nixlMemViewH &backend_out) noexcept;
+deviceMemViewGetBackend(deviceOps &ops,
+                        deviceViewHandle wrapper,
+                        nixlMemViewH &backend_out) noexcept;
 
 void
-nixlDeviceMemViewFree(nixl::deviceOps &ops, nixl::deviceViewHandle wrapper) noexcept;
+deviceMemViewFree(deviceOps &ops, deviceViewHandle wrapper) noexcept;
+
+} // namespace nixl
 
 #endif // NIXL_SRC_UTILS_DEVICE_DEVICE_MEMVIEW_H
