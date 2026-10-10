@@ -86,6 +86,13 @@ awsS3Client::putObjectAsync(std::string_view key,
             const Aws::S3::Model::PutObjectRequest &,
             const Aws::S3::Model::PutObjectOutcome &outcome,
             const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+            if (!outcome.IsSuccess()) {
+                const auto &error = outcome.GetError();
+                NIXL_ERROR << absl::StrFormat("putObjectAsync: failed - %s: %s (HTTP %d)",
+                                              error.GetExceptionName().c_str(),
+                                              error.GetMessage().c_str(),
+                                              static_cast<int>(error.GetResponseCode()));
+            }
             callback(outcome.IsSuccess());
         },
         nullptr);
@@ -116,6 +123,13 @@ awsS3Client::getObjectAsync(std::string_view key,
                                    const Aws::S3::Model::GetObjectRequest &,
                                    const Aws::S3::Model::GetObjectOutcome &outcome,
                                    const std::shared_ptr<const Aws::Client::AsyncCallerContext> &) {
+            if (!outcome.IsSuccess()) {
+                const auto &error = outcome.GetError();
+                NIXL_ERROR << absl::StrFormat("getObjectAsync: failed - %s: %s (HTTP %d)",
+                                              error.GetExceptionName().c_str(),
+                                              error.GetMessage().c_str(),
+                                              static_cast<int>(error.GetResponseCode()));
+            }
             callback(outcome.IsSuccess());
         },
         nullptr);
