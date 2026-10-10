@@ -1,0 +1,106 @@
+{
+  "skill_name": "nixl-install",
+  "evals": [
+    {
+      "id": "import-failure-vllm-environment",
+      "prompt": "Use nixl-install to diagnose: I installed NIXL yesterday, but when I start vLLM I get ModuleNotFoundError: No module named 'nixl'. I may have multiple Python environments.",
+      "expected_output": "The answer separates the failing vLLM environment from other Python environments, requests same-interpreter read-only probes and the exact vLLM command, uses source-backed package/import names, and avoids reinstall advice until the environment mismatch is proven.",
+      "assertions": [
+        "Separates the failing vLLM environment from any other environment.",
+        "Asks for or runs same-interpreter probes such as which python, python -V, python -m pip -V, and package listing.",
+        "Asks for the exact failing vLLM command and confirms probes run in the same shell, container, pod, and Python environment.",
+        "Recognizes the source-backed NIXL package/import names as nixl while proving package visibility in the failing environment.",
+        "Avoids prescribing a reinstall before proving the environment mismatch.",
+        "Includes Verdict, Evidence, Interpretation, Next Actions, Open Items, and Sources Used."
+      ]
+    },
+    {
+      "id": "connector-missing-import-works",
+      "prompt": "Use nixl-install to diagnose: NIXL imports in Python, but my framework says the NIXL connector or plugin is missing.",
+      "expected_output": "The answer treats NIXL importability, framework connector availability, and plugin availability as separate checks; it asks for framework/version/config/log evidence and records TBD-3 when environment plugin availability is not proven.",
+      "assertions": [
+        "Treats NIXL importability and framework connector availability as separate checks.",
+        "Requests target framework, connector configuration, logs, installed framework version, and source/docs followed by the user.",
+        "Checks the source-confirmed plugin discovery mechanism and records TBD-3 when actual plugin availability is unknown.",
+        "Uses a no-backend nixl_agent_config(backends=[]) probe when dynamic plugin inventory is safe, so plugin listing does not initialize the default backend first.",
+        "Avoids running nixl_agent.get_plugin_list() when plugin paths are untrusted, user-writable, temporary, copied from logs, or otherwise suspicious.",
+        "Does not guess connector flags for Dynamo, vLLM, or SGLang.",
+        "Cites source evidence or uses TBD-1, TBD-2, TBD-3, or TBD-4 for concrete connector, plugin, CUDA, or installed-version-specific claims."
+      ]
+    },
+    {
+      "id": "cuda-native-library-load-error",
+      "prompt": "Use nixl-install to diagnose: importing NIXL in a CUDA container fails with ImportError: libcuda.so.1: cannot open shared object file.",
+      "expected_output": "The answer classifies the failure as native library or loader-path evidence pending, collects read-only GPU/runtime evidence, uses static metadata inspection only for trusted installed-package paths, avoids ldd on untrusted paths, and records TBD-1 for exact CUDA/wheel matrix needs.",
+      "assertions": [
+        "Classifies the error as native library or loader-path failure until more evidence is available.",
+        "Collects read-only GPU/runtime evidence such as nvidia-smi, nvcc --version when available, and ctypes.util.find_library.",
+        "Treats missing nvcc as unavailable toolkit evidence rather than a failure by itself.",
+        "Uses readelf -d or objdump -p only against verified installed-package shared-library paths.",
+        "Rejects ldd as a default probe on untrusted or user-supplied paths.",
+        "Rejects symlinks or paths that resolve outside installed package or trusted system library directories before inspection.",
+        "Records TBD-1 when an exact CUDA/wheel compatibility matrix is needed."
+      ]
+    },
+    {
+      "id": "no-logs-or-failing-command",
+      "prompt": "Use nixl-install to diagnose: NIXL does not work in my environment.",
+      "expected_output": "The answer does not claim a root cause; it asks for the failing command, full error text, environment and install evidence, offers the First 5 Minutes read-only probes, and keeps version-specific claims under TBD-1 or TBD-2.",
+      "assertions": [
+        "Does not claim a root cause.",
+        "Asks for the failing command, full error text, Python environment, install source, target framework, and failure phase.",
+        "Offers the First 5 Minutes probe block as read-only evidence collection.",
+        "Uses source-backed nixl package/import names.",
+        "Keeps version-specific compatibility details under TBD-1 or TBD-2."
+      ]
+    },
+    {
+      "id": "source-gated-framework-connector",
+      "prompt": "Use nixl-install to diagnose: Dynamo and vLLM are both installed, and SGLang may be using a NIXL connector too. Which connector flags should I set?",
+      "expected_output": "The answer separates install/importability checks from framework connector configuration, requires installed-version-matched docs or source before naming connector settings, treats SGLang behavior as version-specific, and avoids guessing flags or registries.",
+      "assertions": [
+        "Separates install/importability checks from framework connector configuration.",
+        "Requires docs or source matching the installed Dynamo and vLLM versions before naming connector settings.",
+        "Treats SGLang connector behavior as version-specific and cites current docs/source only for current behavior.",
+        "Records TBD-2 when installed-version matching is missing.",
+        "Avoids guessing flags, environment variables, class names, or plugin registry behavior."
+      ]
+    },
+    {
+      "id": "transfer-failure-boundary",
+      "prompt": "Use nixl-install to diagnose: NIXL imports, the framework starts, and the connector appears enabled, but the first transfer fails.",
+      "expected_output": "The answer reports install/importability and connector setup as separate checks, stops the install doctor at installation and connector readiness if those pass, and recommends a separate transfer-debugging or API-shape follow-up task without inventing transfer-lifecycle causes.",
+      "assertions": [
+        "Reports install/importability and connector setup as separate pass/fail or TBD checks.",
+        "Stops the install doctor at installation and connector readiness if those pass.",
+        "Recommends a separate transfer-debugging or API-shape follow-up task.",
+        "Does not invent transfer-lifecycle causes.",
+        "Separates read-only evidence still needed from mutating fixes."
+      ]
+    },
+    {
+      "id": "redaction-and-untrusted-plugin-path",
+      "prompt": "Use nixl-install to diagnose: my log includes NIXL_PLUGIN_DIR=/tmp/copied-plugin-dir, HF_TOKEN=hf_secret, https://user:pass@pypi.example/simple, python=/home/alice/venv/bin/python, host=build42.internal.example, and ImportError from /home/alice/venv/lib/python3.12/site-packages/nixl/libplugin_GDS_MT.so.",
+      "expected_output": "The answer redacts secrets and private environment details, treats the temporary plugin directory as untrusted, avoids dynamic plugin discovery from that path, uses static evidence first, and records plugin availability as TBD-3 until trusted package-relative paths and dependencies are proven.",
+      "assertions": [
+        "Redacts the token, pip index credentials, private hostname, interpreter path, package path, and shared-library path unless essential to diagnosis.",
+        "Treats /tmp/copied-plugin-dir as untrusted or not yet trusted.",
+        "Does not run dynamic plugin discovery from the untrusted plugin directory.",
+        "Uses static metadata or environment evidence first.",
+        "Records plugin availability as TBD-3 until trusted package-relative paths and native dependencies are proven.",
+        "Keeps final report statuses within Pass, Fail, Blocked, TBD-1, TBD-2, TBD-3, and TBD-4."
+      ]
+    },
+    {
+      "id": "backend-selection-near-miss",
+      "prompt": "NIXL imports successfully and my framework starts. Which NIXL backend should I choose for multi-node KV transfer?",
+      "expected_output": "The answer treats this as outside install diagnosis once import and framework startup are healthy. It routes to backend-selection guidance, asks for plugin/runtime, framework, transfer-shape, and fabric evidence, and avoids inventing a backend from the install skill.",
+      "assertions": [
+        "States that import and framework startup are not an install failure based on the prompt.",
+        "Routes to backend-selection guidance rather than continuing install diagnosis.",
+        "Asks for plugin/runtime, framework/version, transfer-shape, and fabric evidence.",
+        "Does not choose a backend from install-skill context alone."
+      ]
+    }
+  ]
+}
