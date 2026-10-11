@@ -37,7 +37,7 @@ def _fabric_info(pynvml, handle):
 
 def _fabric_handle_supported(device_idx):
     # The CUDA driver attribute `HANDLE_TYPE_FABRIC_SUPPORTED`, read by the extension (no driver binding of our own)
-    import nixl_ep_v2._C as _C
+    from .. import _C
     return bool(_C.is_fabric_handle_supported(device_idx))
 
 

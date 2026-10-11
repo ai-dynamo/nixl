@@ -1,9 +1,30 @@
 import functools
+import importlib
 import subprocess
 import torch
 import os
+import sys
+from contextlib import contextmanager
 
-from .utils.find_pkgs import find_nixl_root, find_ucx_root
+
+def _deepbind_enabled() -> bool:
+    value = os.getenv("NIXL_UCX_DEEPBIND", "0").strip().lower()
+    return value not in {"0", "false", "no", "off", "disable", "disabled"}
+
+
+@contextmanager
+def _rtld_deepbind_import():
+    deepbind = getattr(os, "RTLD_DEEPBIND", 0)
+    if not deepbind or not _deepbind_enabled() or not hasattr(sys, "getdlopenflags"):
+        yield
+        return
+
+    old_flags = sys.getdlopenflags()
+    sys.setdlopenflags(old_flags | deepbind)
+    try:
+        yield
+    finally:
+        sys.setdlopenflags(old_flags)
 
 # Set some default environment provided at setup
 try:
@@ -14,6 +35,23 @@ try:
             os.environ[key] = value
 except ImportError:
     pass
+
+
+with _rtld_deepbind_import():
+    _torch_mm = "".join(torch.__version__.split(".")[:2])
+    _C = importlib.import_module(
+        f".nixl_ep_v2_cpp_torch{_torch_mm}", __package__
+    )
+sys.modules[f"{__package__}._C"] = _C
+
+from .utils.find_pkgs import find_nixl_root, find_ucx_root
+
+if requested_topk_idx_bits := os.getenv("NIXL_EP_NUM_TOPK_IDX_BITS"):
+    compiled_topk_idx_bits = torch.iinfo(_C.topk_idx_t).bits
+    if int(requested_topk_idx_bits) != compiled_topk_idx_bits:
+        raise RuntimeError(
+            f'NIXL_EP_NUM_TOPK_IDX_BITS={requested_topk_idx_bits}, but the extension uses {compiled_topk_idx_bits}'
+        )
 
 # Initialize
 @functools.lru_cache()
@@ -45,8 +83,6 @@ def init_jit():
     """
     Initialize the JIT compilation runtime. Sets up the CUDA, NIXL and UCX root paths for the JIT compiler.
     """
-    # noinspection PyUnresolvedReferences
-    import nixl_ep_v2._C as _C
     library_root_path = os.path.dirname(os.path.abspath(__file__))
     _C.init_jit(library_root_path,  # Library root directory path
                 find_cuda_home(),   # CUDA home
@@ -64,6 +100,6 @@ from .utils.event import EventOverlap, EventHandle
 from .utils.envs import get_physical_domain_size, get_logical_domain_size
 
 # noinspection PyUnresolvedReferences
-from nixl_ep_v2._C import topk_idx_t
+from ._C import topk_idx_t
 
 __version__ = '2.1.0'

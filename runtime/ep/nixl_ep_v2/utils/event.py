@@ -2,7 +2,7 @@ import torch
 from typing import Any, Optional, Tuple, Callable
 
 # noinspection PyUnresolvedReferences
-from nixl_ep_v2._C import EventHandle
+from .._C import EventHandle
 
 
 class EventOverlap:
