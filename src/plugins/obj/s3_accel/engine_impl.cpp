@@ -7,7 +7,12 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
+
+#ifdef HAVE_CUDA
+#include <cuda_runtime.h>
+#endif
 
 #include "client.h"
 #include "object/engine_utils.h"
@@ -16,6 +21,40 @@
 #include "common/nixl_log.h"
 
 namespace {
+
+#ifdef HAVE_CUDA
+// cuObject registers device memory in the calling thread's current CUDA context.
+// A thread that never selected a device has none, so the buffer's device is
+// selected for the registration and the caller's device is restored afterwards.
+class scopedCudaDevice {
+public:
+    explicit scopedCudaDevice(int device) {
+        if (cudaGetDevice(&saved_) != cudaSuccess) {
+            saved_ = -1;
+        }
+        err_ = cudaSetDevice(device);
+    }
+
+    ~scopedCudaDevice() {
+        if (saved_ >= 0) {
+            cudaSetDevice(saved_);
+        }
+    }
+
+    scopedCudaDevice(const scopedCudaDevice &) = delete;
+    scopedCudaDevice &
+    operator=(const scopedCudaDevice &) = delete;
+
+    [[nodiscard]] cudaError_t
+    error() const {
+        return err_;
+    }
+
+private:
+    int saved_ = -1;
+    cudaError_t err_ = cudaSuccess;
+};
+#endif
 
 // Registered-memory metadata for the accel engine. It records what to clean up
 // on deregister: an OBJ_SEG key mapping, or a DRAM/VRAM buffer pinned for RDMA.
@@ -112,6 +151,17 @@ S3AccelObjEngineImpl::registerMem(const nixlBlobDesc &mem,
     // fast path is ready a registration failure is a hard error rather than a
     // silent success that fails later at transfer time.
     if (rdmaEngReady()) {
+#ifdef HAVE_CUDA
+        std::optional<scopedCudaDevice> device;
+        if (nixl_mem == VRAM_SEG) {
+            device.emplace(static_cast<int>(mem.devId));
+            if (device->error() != cudaSuccess) {
+                NIXL_ERROR << "cudaSetDevice(" << mem.devId
+                           << ") failed: " << cudaGetErrorString(device->error());
+                return NIXL_ERR_BACKEND;
+            }
+        }
+#endif
         auto *rdma = nixl_obj_rdma::SharedCuObjClient::instance();
         if (!rdma || !rdma->registerBuffer(reinterpret_cast<void *>(mem.addr), mem.len)) {
             NIXL_ERROR << "RDMA buffer registration failed; the accelerated path has no HTTP "
